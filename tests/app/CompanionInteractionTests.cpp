@@ -1,4 +1,5 @@
 #include "../TestSupport.h"
+#include "app/ManualInputController.h"
 #include "app/ProcessSupervisor.h"
 #include "app/RuntimeConnection.h"
 #include "app/RuntimePanels.h"
@@ -8,6 +9,7 @@
 #include "app/WorkspacePanels.h"
 #include "control/ControlSchema.h"
 #include <cmath>
+#include <thread>
 
 #include <SDL3/SDL.h>
 #include <cstdlib>
@@ -134,6 +136,73 @@ class Interaction
 		Require(std::char_traits<char>::length(input) == length + 1, "Text input stopped responding");
 	}
 };
+void CheckDocking()
+{
+	Interaction test;
+	const auto draw = [&]
+	{
+		Eventually(
+			[&]
+			{
+				return test.window.PollEvents() && test.renderer.BeginFrame();
+			},
+			"Docking UI stalled");
+		test.workspace.BeginFrame(test.runtime);
+		test.workspace.DrawDockspace();
+		test.workspace.Draw(test.runtime);
+		test.runtime.Draw(test.workspace.Mode());
+		Require(test.renderer.Render(), "Docking frame did not render");
+	};
+	for (int i = 0; i < 4; ++i)
+		draw();
+	const auto previewDock = ImGui::FindWindowByName("GPU preview")->DockId;
+	const auto toolsDock = ImGui::FindWindowByName("Device controls")->DockId;
+	Require(previewDock && toolsDock && previewDock != toolsDock, "Default tools should be beside the preview");
+	test.workspace.SetMode(WorkspaceMode::Automation);
+	for (int i = 0; i < 4; ++i)
+		draw();
+	Require(ImGui::FindWindowByName("Recording")->DockId == toolsDock, "Recording has no predictable dock");
+	ImGui::DockBuilderDockWindow("Recording", previewDock);
+	for (int i = 0; i < 3; ++i)
+		draw();
+	for (const auto mode : {WorkspaceMode::Simulator, WorkspaceMode::Debug, WorkspaceMode::Automation})
+	{
+		test.workspace.SetMode(mode);
+		for (int i = 0; i < 4; ++i)
+			draw();
+	}
+	Require(ImGui::FindWindowByName("Recording")->DockId == previewDock,
+			"Tool switching undocked a user-positioned recording panel");
+	test.workspace.SetMode(WorkspaceMode::Simulator);
+	for (int i = 0; i < 3; ++i)
+		draw();
+	// Exercise the actual toolbar toggle, including keeping the old dockspace alive.
+	const auto toggle = [&]
+	{
+		const auto toolbar = ImGui::FindWindowByName("##Workspace toolbar");
+		float x = toolbar->Pos.x + ImGui::GetStyle().WindowPadding.x;
+		for (const auto label : {"Simulator", "Inspect frames", "Record & replay"})
+			x += ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2 + ImGui::GetStyle().ItemSpacing.x;
+		auto& io = ImGui::GetIO();
+		io.AddMousePosEvent(x + 5, toolbar->Pos.y + ImGui::GetStyle().WindowPadding.y + 5);
+		draw();
+		io.AddMouseButtonEvent(0, true);
+		draw();
+		io.AddMouseButtonEvent(0, false);
+		draw();
+		for (int i = 0; i < 3; ++i)
+			draw();
+	};
+	toggle();
+	const auto expanded = ImGui::FindWindowByName("GPU preview");
+	Require(expanded->DockId == 0 && expanded->Size.x >= ImGui::GetMainViewport()->WorkSize.x - 1,
+			"Expand view did not fill the workspace");
+	toggle();
+	Require(ImGui::FindWindowByName("GPU preview")->DockId == previewDock, "Showing tools lost the preview dock");
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Docking generated validation errors");
+	std::cout << "PASS user docking survives tool switches; expand/restore preserves layout\n";
+}
 // Opt-in walkthrough against a separately launched application, never the user's session.
 void PilotLiveRuntime(const char* endpoint)
 {
@@ -230,8 +299,13 @@ void PilotLiveRuntime(const char* endpoint)
 	event.key.key = SDLK_W;
 	event.key.down = true;
 	SDL_PushEvent(&event);
+	const auto pilotStarted = std::chrono::steady_clock::now();
+	const auto appliedBefore = test.runtime.Snapshot().appliedPilotUpdates;
 	for (unsigned index = 0; index < 30; ++index)
 		frame();
+	std::cout << "Piloting with rendering: " << test.runtime.Snapshot().appliedPilotUpdates - appliedBefore
+			  << " applied updates over 30 UI frames in "
+			  << std::chrono::duration<double>(std::chrono::steady_clock::now() - pilotStarted).count() << " seconds\n";
 	event.type = SDL_EVENT_KEY_UP;
 	event.key.down = false;
 	SDL_PushEvent(&event);
@@ -319,6 +393,47 @@ void PilotLiveRuntime(const char* endpoint)
 		frame();
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Validation errors during actual application piloting");
+	// Keep the renderer idle: delivery must not depend on UI reply harvesting.
+	for (unsigned index = 0; index < 8; ++index)
+		frame();
+	ManualInputController input;
+	const auto target = test.runtime.Snapshot();
+	input.SetTarget({endpoint, target.session, target.generation});
+	Eventually(
+		[&]
+		{
+			return input.Snapshot().observation != 0;
+		},
+		"Input worker did not observe the session");
+	auto pose = ObservedDevicePose(input.Snapshot().state, simxr::ControlChannel::Head);
+	const auto start = std::chrono::steady_clock::now();
+	for (unsigned index = 0; index < 120; ++index)
+	{
+		pose.pose.position.x += 0.001f;
+		ManualTransaction edit;
+		edit.commands = {simxr::TakeControl{simxr::ControlChannel::Head, false}, simxr::SetHeadPose{pose}};
+		Require(input.Submit(edit, true), "Continuous input was not accepted");
+		std::this_thread::sleep_for(std::chrono::milliseconds(8));
+	}
+	Eventually(
+		[&]
+		{
+			const auto state = input.Snapshot();
+			Require(state.error.empty(), state.error.c_str());
+			return !state.posePending &&
+				   distance(pose, ObservedDevicePose(state.state, simxr::ControlChannel::Head)) < 0.001f;
+		},
+		"Latest pose did not arrive with the UI idle");
+	const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+	std::cout << "PASS input delivery with UI idle: " << input.Snapshot().appliedPoses << " applied poses in "
+			  << seconds << " seconds; final pose matches\n";
+	Require(input.Submit(ReleaseManualInputs{}), "Worker could not release manual controls");
+	Eventually(
+		[&]
+		{
+			return input.Snapshot().result.fields.empty();
+		},
+		"Manual release did not complete with the UI idle");
 }
 void CaptureLayouts(const std::filesystem::path& directory)
 {
@@ -425,6 +540,7 @@ int main()
 			test.renderer.WaitIdle();
 		}
 		Require(validation->errors.load() == 0, "Vulkan validation errors during interaction or teardown");
+		CheckDocking();
 		if (const auto endpoint = std::getenv("SIMXR_UI_PILOT_ENDPOINT"))
 			PilotLiveRuntime(endpoint);
 		if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))

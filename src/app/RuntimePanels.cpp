@@ -3,6 +3,7 @@
 #include "app/DeviceControlPanel.h"
 #include "app/ImageExportTask.h"
 #include "app/InspectionWorkspace.h"
+#include "app/ManualInputController.h"
 #include "app/PreviewImages.h"
 #include "app/RecordingPanel.h"
 #include "app/RuntimeConnection.h"
@@ -12,6 +13,7 @@
 #include "control/ImageInspection.h"
 #include "control/InspectionDocument.h"
 #include "control/SimulationControl.h"
+#include <imgui_internal.h>
 
 #include <algorithm>
 #include <array>
@@ -52,20 +54,7 @@ std::vector<std::byte> InspectionMember(std::span<const std::byte> bytes, std::s
 	}
 	return {};
 }
-wire::Message InspectionNode(std::span<const std::byte> bytes)
-{
-	wire::Message node;
-	node.fields = wire::DecodeFields(bytes).fields;
-	return node;
-}
-std::uint64_t InspectionNumber(std::span<const std::byte> bytes, std::string_view name)
-{
-	return U64(InspectionNode(InspectionMember(bytes, name)), 3);
-}
-std::string InspectionText(std::span<const std::byte> bytes, std::string_view name)
-{
-	return Text(InspectionNode(InspectionMember(bytes, name)), 3);
-}
+
 const char* ConnectionName(RuntimeConnectionState state)
 {
 	switch (state)
@@ -189,6 +178,7 @@ class RuntimePanels::Impl
 		snapshot.selectedCapture = m_workspace.SelectedId();
 		snapshot.captures = m_workspace.Captures().size();
 		snapshot.images = m_preview.ReadyCount();
+		snapshot.appliedPilotUpdates = m_appliedPilotUpdates;
 		snapshot.pending = m_requests.Pending() || m_exports.Busy();
 		snapshot.error = m_detail.empty() ? connection.detail : m_detail;
 		snapshot.operationPending = m_debugger.Pending();
@@ -228,7 +218,6 @@ class RuntimePanels::Impl
 		{
 			m_debugger.ResetEpoch();
 			SelectionChanged();
-			m_transaction = 1;
 			m_exports.ResetEpoch();
 			m_nextPreview = {};
 		}
@@ -247,12 +236,25 @@ class RuntimePanels::Impl
 			m_debugger.Poll();
 			const auto selected = m_debugger.Selected();
 			const auto now = Clock::now();
-			if (selected.id && now >= m_nextSimulation && !m_requests.Has(Work::SimulationStatus) &&
-				(U64(m_debugger.Status(), tag::Capabilities) &
-				 static_cast<std::uint64_t>(wire::Capability::SimulationCommands)))
+			m_manualInput.SetTarget(
+				selected.id && (U64(m_debugger.Status(), tag::Capabilities) &
+								static_cast<std::uint64_t>(wire::Capability::SimulationCommands))
+					? ManualInputTarget{m_requests.Snapshot().path, selected.id, selected.generation}
+					: ManualInputTarget{});
+			const auto input = m_manualInput.Snapshot();
+			m_appliedPilotUpdates = input.appliedPoses;
+			m_posePending = input.posePending;
+			m_simulationState = input.state;
+			m_simulationResult = input.result;
+			if (m_observation != input.observation)
 			{
-				m_requests.Send(wire::OpCode::SimulationStatus, Work::SimulationStatus, SimulationFields());
-				m_nextSimulation = now + std::chrono::milliseconds(m_piloting || m_pilotInFlight ? 16 : 500);
+				m_observation = input.observation;
+				m_devices.ObservePoses(input.state);
+			}
+			if (!input.error.empty())
+			{
+				m_detail = input.error;
+				StopPilot(true);
 			}
 			if (m_preview.Following() && selected.id && now >= m_nextPreview && !m_requests.Has(Work::Preview) &&
 				!m_preview.HasPendingLive() &&
@@ -263,6 +265,8 @@ class RuntimePanels::Impl
 				m_nextPreview = now + std::chrono::milliseconds(m_piloting ? 16 : 33);
 			}
 		}
+		if (m_requests.Snapshot().state != RuntimeConnectionState::Connected)
+			m_manualInput.SetTarget({});
 		m_exports.Poll();
 		m_preview.Poll();
 		for (auto error :
@@ -272,7 +276,7 @@ class RuntimePanels::Impl
 	}
 	void Draw(WorkspaceMode mode)
 	{
-		if (mode == WorkspaceMode::Simulator || mode == WorkspaceMode::Custom)
+		if (!m_previewExpanded && (mode == WorkspaceMode::Simulator || mode == WorkspaceMode::Custom))
 			DeviceControls();
 		const auto selected = m_debugger.Selected();
 		if (mode != WorkspaceMode::Simulator && mode != WorkspaceMode::Custom)
@@ -295,12 +299,12 @@ class RuntimePanels::Impl
 #else
 		constexpr bool replayAvailable = false;
 #endif
-		if (mode == WorkspaceMode::Automation || mode == WorkspaceMode::Custom)
+		if (!m_previewExpanded && (mode == WorkspaceMode::Automation || mode == WorkspaceMode::Custom))
 			if (auto replay = m_recording.Draw(canRecord, replayAvailable))
 				m_recordingReplay = RecordingReplay{std::move(*replay), m_debugger.Scope()};
 		m_preview.BeginFrame();
 		const auto state = m_requests.Snapshot();
-		if (mode == WorkspaceMode::Debug || mode == WorkspaceMode::Custom)
+		if (!m_previewExpanded && (mode == WorkspaceMode::Debug || mode == WorkspaceMode::Custom))
 		{
 			ImGui::Begin("Frame controls");
 			ImGui::BeginDisabled(!selected.id || state.state != RuntimeConnectionState::Connected);
@@ -408,7 +412,23 @@ class RuntimePanels::Impl
 			m_focusPreview = false;
 		}
 		bool pilotArea = false;
-		if (ImGui::Begin("GPU preview"))
+		ImGuiWindowFlags previewFlags = 0;
+		if (m_previewExpanded)
+		{
+			if (!m_wasExpanded)
+				if (const auto window = ImGui::FindWindowByName("GPU preview"))
+					m_previewDock = window->DockId;
+			const auto viewport = ImGui::GetMainViewport();
+			ImGui::SetNextWindowDockID(0, ImGuiCond_Always);
+			ImGui::SetNextWindowPos(viewport->WorkPos);
+			ImGui::SetNextWindowSize(viewport->WorkSize);
+			previewFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoDocking |
+						   ImGuiWindowFlags_NoSavedSettings;
+		}
+		else if (m_wasExpanded && ImGui::DockBuilderGetNode(m_previewDock))
+			ImGui::SetNextWindowDockID(m_previewDock, ImGuiCond_Always);
+		m_wasExpanded = m_previewExpanded;
+		if (ImGui::Begin("GPU preview", nullptr, previewFlags))
 		{
 			const auto image = m_preview.Selected();
 			const bool live = m_preview.Following();
@@ -462,9 +482,22 @@ class RuntimePanels::Impl
 				ImGui::Checkbox("Fit", &m_fitPreview);
 				ImGui::SameLine();
 				ImGui::SetNextItemWidth(120);
-				if (ImGui::SliderFloat("Zoom", &m_zoom, 0.25f, 16.0f, "%.2fx", ImGuiSliderFlags_Logarithmic))
+				if (ImGui::SliderFloat("Zoom", &m_zoom, 0.05f, 16.0f, "%.2fx", ImGuiSliderFlags_Logarithmic))
 					m_fitPreview = false;
-				if (mode == WorkspaceMode::Debug || mode == WorkspaceMode::Custom)
+				ImGui::SameLine();
+				if (ImGui::Button("1:1"))
+				{
+					m_fitPreview = false;
+					m_zoom = 1;
+				}
+				ImGui::SameLine();
+				ImGui::TextDisabled("(?)");
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("Pilot the selected device: hold right mouse over the live image.\n"
+									  "WASD move; Q/E down/up; Shift faster; Escape releases the pointer.\n"
+									  "Inspect: Fit shows the whole image; 1:1 shows native pixels.\n"
+									  "Drag with the middle mouse button to pan a zoomed image.");
+				if (!m_previewExpanded && (mode == WorkspaceMode::Debug || mode == WorkspaceMode::Custom))
 				{
 					if (ImGui::CollapsingHeader("Image details and export"))
 					{
@@ -478,13 +511,17 @@ class RuntimePanels::Impl
 						ImGui::EndDisabled();
 					}
 				}
-				if ((mode == WorkspaceMode::Simulator || mode == WorkspaceMode::Custom) && m_window)
-					ImGui::TextWrapped("Pilot %s: hold right mouse in the image. WASD move, Q/E down/up, Shift faster. "
-									   "Escape releases the pointer.",
-									   m_devices.PilotChannel() == ControlChannel::Head		  ? "head"
-									   : m_devices.PilotChannel() == ControlChannel::LeftPose ? "left hand"
-																							  : "right hand");
 				ImGui::BeginChild("Image area", {0, 0}, 0, ImGuiWindowFlags_HorizontalScrollbar);
+				if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Middle) && !m_fitPreview)
+					m_panning = true;
+				if (!ImGui::IsMouseDown(ImGuiMouseButton_Middle) || m_fitPreview)
+					m_panning = false;
+				if (m_panning)
+				{
+					ImGui::SetScrollX(ImGui::GetScrollX() - ImGui::GetIO().MouseDelta.x);
+					ImGui::SetScrollY(ImGui::GetScrollY() - ImGui::GetIO().MouseDelta.y);
+					ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+				}
 				const auto available = ImGui::GetContentRegionAvail();
 				const auto& description = image->description;
 				const float slices = m_previewView < 0 ? static_cast<float>(image->slices) : 1;
@@ -497,6 +534,14 @@ class RuntimePanels::Impl
 				}
 				const float totalWidth = width * slices + 12 * (slices - 1);
 				const float height = width * description.height / description.width;
+				if (m_fitPreview)
+					m_zoom = width / description.width;
+				else if (totalWidth != m_previousImageSize.x || height != m_previousImageSize.y)
+				{
+					ImGui::SetScrollX(std::max(0.0f, (totalWidth - available.x) / 2));
+					ImGui::SetScrollY(std::max(0.0f, (height - available.y) / 2));
+				}
+				m_previousImageSize = {totalWidth, height};
 				ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (available.x - totalWidth) / 2));
 				ImGui::SetCursorPosY(ImGui::GetCursorPosY() + std::max(0.0f, (available.y - height) / 2));
 				m_preview.DrawSelected(width,
@@ -523,7 +568,7 @@ class RuntimePanels::Impl
 		ImGui::End();
 		if (!pilotArea)
 			StopPilot(true);
-		if (mode != WorkspaceMode::Debug && mode != WorkspaceMode::Custom)
+		if (m_previewExpanded || (mode != WorkspaceMode::Debug && mode != WorkspaceMode::Custom))
 			return;
 		ImGui::Begin("Historical state");
 		m_nodesDrawn = 0;
@@ -567,12 +612,12 @@ class RuntimePanels::Impl
 		ImGui::End();
 	}
 
-	void DrawConnection()
+	void DrawConnection(bool* open)
 	{
 		const auto selected = m_debugger.Selected();
 		const auto sessions = m_debugger.Sessions();
 		ImGui::SetNextWindowSize({600, 400}, ImGuiCond_FirstUseEver);
-		if (!ImGui::Begin("Runtime connection"))
+		if (!ImGui::Begin("Runtime connection", open))
 		{
 			ImGui::End();
 			return;
@@ -634,19 +679,14 @@ class RuntimePanels::Impl
 	{
 		StopPilot(true);
 		m_devices.ClearHeldInputs();
-		m_pilotInFlight = m_pilotSource = 0;
+		m_manualInput.SetTarget({});
+		m_observation = 0;
 		m_devices.ResetObservations();
 		m_simulationState = {};
 		m_simulationResult = {};
-		m_nextSimulation = {};
+		m_manualInput.Refresh();
 		m_workspace.SetScope(m_debugger.Scope());
 		m_preview.SetScope(m_debugger.Scope());
-	}
-	Fields SimulationFields() const
-	{
-		auto fields = m_debugger.SessionFields();
-		fields.push_back(wire::Field::U32(tag::SourceKind, static_cast<std::uint32_t>(CommandSourceKind::Manual)));
-		return fields;
 	}
 	void Reply(const PanelReply& response)
 	{
@@ -676,8 +716,6 @@ class RuntimePanels::Impl
 				  (error == static_cast<std::uint32_t>(wire::ErrorCode::Busy) ||
 				   error == static_cast<std::uint32_t>(wire::ErrorCode::UnsupportedCommand))))
 				m_detail = failure;
-			if (task.kind == Work::Simulate || task.kind == Work::SimulationStatus)
-				StopPilot(true);
 			m_debugger.Failed(task, static_cast<wire::ErrorCode>(error), failure);
 			m_workspace.SetScope(m_debugger.Scope(), false);
 			m_preview.SetScope(m_debugger.Scope());
@@ -725,39 +763,6 @@ class RuntimePanels::Impl
 			break;
 		case Work::Share:
 			m_preview.Shared(task.id, reply);
-			break;
-		case Work::Simulate:
-			m_simulationResult = message;
-			if (const auto document = message.Find(tag::Document))
-			{
-				m_pilotSource = InspectionNumber(InspectionMember(document->value, "source"), "id");
-				PilotOutcome(document->value);
-			}
-			m_nextSimulation = {};
-			break;
-		case Work::SimulationStatus:
-			m_simulationState = message;
-			m_devices.ObservePoses(message);
-			++m_observation;
-			if (const auto document = message.Find(tag::Document))
-			{
-				const auto transactions = InspectionNode(InspectionMember(document->value, "transactions"));
-				if (const auto data = transactions.Find(3))
-					for (const auto& page : wire::DecodeFields(data->value).fields)
-						for (const auto& entry : wire::DecodeFields(page.value).fields)
-						{
-							PilotOutcome(entry.value);
-							if (const auto latest = m_simulationResult.Find(tag::Document);
-								latest &&
-								InspectionNumber(entry.value, "transaction_id") ==
-									InspectionNumber(latest->value, "transaction_id") &&
-								InspectionMember(entry.value, "source") == InspectionMember(latest->value, "source"))
-							{
-								m_simulationResult.fields = {wire::Field::Bytes(tag::Document, entry.value)};
-								break;
-							}
-						}
-			}
 			break;
 		default:
 			break;
@@ -827,29 +832,16 @@ class RuntimePanels::Impl
 			ImGui::Text("%s: unavailable", label);
 		ImGui::PopID();
 	}
-	void PilotOutcome(std::span<const std::byte> outcome)
-	{
-		if (!m_pilotInFlight || InspectionNumber(outcome, "transaction_id") != m_pilotInFlight ||
-			InspectionNumber(InspectionMember(outcome, "source"), "id") != m_pilotSource)
-			return;
-		const auto phase = InspectionText(outcome, "phase");
-		if (phase == "queued" || phase == "rescheduled")
-			return;
-		m_pilotInFlight = 0;
-		if (phase != "applied")
-		{
-			m_detail =
-				"Piloting stopped: input " + phase + ". Check Applied state and input owners in Device controls.";
-			StopPilot(true);
-		}
-	}
 	void StopPilot(bool discard)
 	{
 		if (m_window)
 			m_window->CapturePointer(false);
 		m_piloting = m_startPilot = false;
 		if (discard)
+		{
 			m_pilotDirty = false;
+			m_manualInput.DiscardUnsentPose();
+		}
 	}
 	void Pilot(bool available, bool hovered)
 	{
@@ -863,15 +855,14 @@ class RuntimePanels::Impl
 		}
 		if (!ImGui::IsMouseDown(ImGuiMouseButton_Right))
 			StopPilot(false);
-		if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !ImGui::IsAnyItemActive() && !m_pilotInFlight &&
-			!m_pilotDirty)
+		if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !ImGui::IsAnyItemActive() && !m_pilotDirty)
 		{
 			m_startPilot = true;
 			m_startObservation = m_observation;
 			m_pilotChannel = m_devices.PilotChannel();
-			m_nextSimulation = {};
+			m_manualInput.Refresh();
 		}
-		if (m_startPilot && m_observation != m_startObservation)
+		if (m_startPilot && m_observation != m_startObservation && !m_posePending)
 		{
 			try
 			{
@@ -906,7 +897,7 @@ class RuntimePanels::Impl
 			}
 		}
 		// Keep only the newest desired pose, including the final mouse-up update.
-		if (m_pilotDirty && !m_pilotInFlight && !m_requests.Has(Work::Simulate))
+		if (m_pilotDirty)
 		{
 			ManualTransaction edit;
 			edit.commands.push_back(TakeControl{m_pilotChannel, false});
@@ -915,13 +906,10 @@ class RuntimePanels::Impl
 			else
 				edit.commands.push_back(
 					SetControllerPose{m_pilotChannel == ControlChannel::LeftPose ? 0u : 1u, {m_pilotPose, true}});
-			const auto before = m_transaction;
-			m_pilotInFlight = before;
-			SubmitEdit(edit);
 			m_pilotDirty = false;
-			if (m_transaction == before)
+			if (!m_manualInput.Submit(edit, true))
 			{
-				m_pilotInFlight = 0;
+				m_detail = "Piloting input could not be queued";
 				StopPilot(true);
 			}
 		}
@@ -934,22 +922,10 @@ class RuntimePanels::Impl
 			m_detail = "Connect to a running session before editing simulated devices";
 			return;
 		}
-		try
-		{
-			auto packet =
-				EncodeSimulationEdit(edit, selected.id, selected.generation, m_transaction, m_simulationState);
-			const auto kind = std::holds_alternative<ManualTransaction>(edit) ? Work::Simulate : Work::SimulationStatus;
-			if (!m_requests.Send(static_cast<wire::OpCode>(packet.message.opcode), kind,
-								 std::move(packet.message.fields)))
-				m_detail = "Input could not be queued. Check the connection, then apply or release again.";
-			else if (kind == Work::Simulate)
-				++m_transaction;
-		}
-		catch (const std::exception& error)
-		{
-			m_detail = error.what();
-		}
+		if (!m_manualInput.Submit(edit))
+			m_detail = "Input could not be queued. Check the connection, then apply or release again.";
 	}
+
 	void DeviceControls()
 	{
 		const auto selected = m_debugger.Selected();
@@ -962,26 +938,24 @@ class RuntimePanels::Impl
 		const bool supported = selected.id && (U64(status, tag::Capabilities) &
 											   static_cast<std::uint64_t>(wire::Capability::SimulationCommands));
 		m_nodesDrawn = 0;
-		if (const auto value = m_simulationResult.Find(tag::Document))
+		const auto phase = SimulationEditPhase(m_simulationResult);
+		if (ImGui::SmallButton(phase.empty() ? "Input details" : ("Input: " + phase + "##Input details").c_str()))
+			ImGui::OpenPopup("Input details");
+		ImGui::SetNextWindowSizeConstraints({240, 0}, ImGui::GetMainViewport()->WorkSize);
+		if (ImGui::BeginPopup("Input details"))
 		{
-			const auto phaseBytes = InspectionMember(value->value, "phase");
-			wire::Message phase;
-			phase.fields = wire::DecodeFields(phaseBytes).fields;
-			ImGui::SeparatorText("Input request");
-			ImGui::TextWrapped("%s", Text(phase, 3, "Waiting for acknowledgement").c_str());
-			if (ImGui::TreeNode("Request details"))
+			if (const auto value = m_simulationResult.Find(tag::Document))
 			{
+				ImGui::SeparatorText("Latest request");
 				Document(value->value);
-				ImGui::TreePop();
 			}
-		}
-		if (const auto value = m_simulationState.Find(tag::Document);
-			value && ImGui::CollapsingHeader("Applied state and input owners"))
-		{
-			ImGui::TextWrapped(
-				"Owner source kinds: 0 Manual, 1 MCP, 2 Rig. Owner array follows the channel order shown above.");
-			ImGui::SeparatorText("Observed owners and applied state");
-			Document(value->value);
+			if (const auto value = m_simulationState.Find(tag::Document))
+			{
+				ImGui::SeparatorText("Applied state and input owners");
+				ImGui::TextWrapped("Owner kinds: 0 Manual, 1 MCP, 2 Rig.");
+				Document(value->value);
+			}
+			ImGui::EndPopup();
 		}
 		if (auto edit = m_devices.Draw(supported))
 		{
@@ -990,6 +964,17 @@ class RuntimePanels::Impl
 		}
 		ImGui::End();
 	}
+
+  public:
+	void SetPreviewExpanded(bool expanded)
+	{
+		m_previewExpanded = expanded;
+	}
+
+  private:
+	bool m_previewExpanded = false;
+	bool m_wasExpanded = false, m_panning = false;
+	ImGuiID m_previewDock = 0;
 	RuntimePanelRequests m_requests;
 	DebuggerPanelController m_debugger;
 	InspectionWorkspace m_workspace;
@@ -998,12 +983,13 @@ class RuntimePanels::Impl
 	std::array<char, 256> m_endpoint{};
 	std::vector<std::string> m_endpoints;
 	Window* m_window = nullptr;
+	bool m_posePending = false;
 	bool m_piloting = false, m_startPilot = false, m_pilotDirty = false;
-	std::uint64_t m_observation = 0, m_startObservation = 0, m_pilotInFlight = 0, m_pilotSource = 0;
+	std::uint64_t m_observation = 0, m_startObservation = 0, m_appliedPilotUpdates = 0;
 	ControlChannel m_pilotChannel = ControlChannel::Head;
 	PoseSample m_pilotPose;
 	wire::Message m_simulationState, m_simulationResult;
-	std::uint64_t m_transaction = 1;
+	ManualInputController m_manualInput;
 	RecordingPanel m_recording;
 	struct RecordingReplay
 	{
@@ -1012,12 +998,13 @@ class RuntimePanels::Impl
 	};
 	std::optional<RecordingReplay> m_recordingReplay;
 	DeviceControlPanel m_devices;
-	Clock::time_point m_nextSimulation{}, m_nextPreview{};
+	Clock::time_point m_nextPreview{};
 	std::string m_detail;
 	std::array<char, 512> m_exportFile{};
 	bool m_autoSelect = true, m_focusPreview = true, m_fitPreview = true;
-	float m_zoom = 4;
-	int m_previewView = -1;
+	float m_zoom = 1;
+	ImVec2 m_previousImageSize{};
+	int m_previewView = 0;
 	int m_rawLayer = 0, m_rawView = 0;
 	std::uint32_t m_nodesDrawn = 0;
 	std::uint64_t m_documentEpoch = 0;
@@ -1035,9 +1022,9 @@ void RuntimePanels::Draw(WorkspaceMode mode)
 {
 	m_impl->Draw(mode);
 }
-void RuntimePanels::DrawConnection()
+void RuntimePanels::DrawConnection(bool* open)
 {
-	m_impl->DrawConnection();
+	m_impl->DrawConnection(open);
 }
 std::vector<VkSemaphore> RuntimePanels::ReadyWaits() const
 {
@@ -1097,3 +1084,8 @@ std::optional<automation::SavedRecording> RuntimePanels::TakeRecordingReplay()
 	return m_impl->TakeRecordingReplay();
 }
 } // namespace simxr::app
+
+void simxr::app::RuntimePanels::SetPreviewExpanded(bool expanded)
+{
+	m_impl->SetPreviewExpanded(expanded);
+}

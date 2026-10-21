@@ -17,6 +17,9 @@ struct ReleaseManualInputs
 };
 using SimulationEdit = std::variant<ManualTransaction, ReleaseManualInputs>;
 
+std::string SimulationEditPhase(const control::Message& result);
+std::optional<control::Message> ObservedEditResult(const control::Message& state, const control::Message& receipt);
+
 PoseSample ObservedDevicePose(const control::Message& state, ControlChannel channel);
 PoseSample PilotPose(PoseSample pose, XrVector3f movement, float yaw, float pitch, float seconds, float speed = 1);
 

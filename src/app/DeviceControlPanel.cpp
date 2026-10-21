@@ -128,6 +128,14 @@ void DeviceControlPanel::ClearHeldInputs()
 }
 void DeviceControlPanel::ObservePoses(const control::Message& state)
 {
+	try
+	{
+		m_observedHead = ObservedDevicePose(state, ControlChannel::Head);
+	}
+	catch (const std::exception&)
+	{
+	}
+
 	for (unsigned index = 0; index < m_poseObserved.size(); ++index)
 	{
 		if (m_poseObserved[index])
@@ -173,6 +181,7 @@ void DeviceControlPanel::DrawHead()
 	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
 		ImGui::SetTooltip("Makes the current head position and facing direction the new origin.\nThis changes the "
 						  "reference space; it does not reset the head pose.");
+	DrawHandRest();
 	ImGui::SeparatorText("Head pose");
 	ImGui::TextUnformatted("Position / metres (X, Y, Z)");
 	ImGui::DragFloat3("##Head position", &head.pose.position.x, 0.01f, 0, 0, "%.2f");
@@ -197,12 +206,40 @@ void DeviceControlPanel::DrawHead()
 	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
 		ImGui::SetTooltip("Restores the default standing head pose in the current reference space.");
 }
+void DeviceControlPanel::DrawHandRest()
+{
+	ImGui::BeginDisabled(!m_poseObserved[0]);
+	if (ImGui::Button("Upright hands", {-1, 0}))
+	{
+		const auto q = m_observedHead.pose.orientation;
+		const auto yaw = std::atan2(2 * (q.x * q.z + q.w * q.y), 1 - 2 * (q.x * q.x + q.y * q.y));
+		const XrPosef reference{EulerAngles(yaw, 0, 0), m_observedHead.pose.position};
+		std::vector<SimulationCommand> commands;
+		for (std::uint32_t hand = 0; hand != 2; ++hand)
+		{
+			const auto channel = hand ? ControlChannel::RightPose : ControlChannel::LeftPose;
+			PoseSample pose{Compose(reference, {EulerAngles(0, std::numbers::pi_v<float> / 2, 0),
+												{hand ? 0.24f : -0.24f, -0.55f, -0.30f}}),
+							TrackedPoseFlags};
+			SetPose(channel, pose);
+			commands.push_back(TakeControl{channel, m_replaceOwner});
+			commands.push_back(SetControllerPose{hand, {pose, m_authoredTracking.controllers[hand].connected}});
+		}
+		Apply(std::move(commands));
+	}
+	ImGui::EndDisabled();
+	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+		ImGui::SetTooltip(
+			"Places both controllers near the waist, slightly forward and pointing upward.\n"
+			"Uses the head's current position and facing direction. Precise pose controls remain adjustable.");
+}
 void DeviceControlPanel::DrawController()
 {
 	const auto hand = static_cast<std::uint32_t>(m_controlHand);
 	auto& controller = m_authoredTracking.controllers[hand];
 	auto& controls = m_authoredControls[hand];
 	auto& angles = m_controllerAngles[hand];
+	DrawHandRest();
 	ImGui::SeparatorText("Buttons and axes");
 	bool edited = ImGui::Checkbox("Primary", &controls.primary);
 	ImGui::SameLine();

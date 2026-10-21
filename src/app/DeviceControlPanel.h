@@ -31,6 +31,7 @@ class DeviceControlPanel
 	void DrawOwnership();
 	void DrawDetailFooter();
 	void DrawHead();
+	void DrawHandRest();
 	void DrawController();
 	void DrawBody();
 	void DrawGaze();
@@ -53,6 +54,7 @@ class DeviceControlPanel
 	int m_selectedTracker = 0;
 	int m_trackerRole = 0;
 	TrackingState m_authoredTracking;
+	PoseSample m_observedHead = TrackingState{}.head;
 	std::array<ControllerControls, 2> m_authoredControls;
 	std::array<float, 3> m_headAngles{};
 	std::array<std::array<float, 3>, 2> m_controllerAngles{};

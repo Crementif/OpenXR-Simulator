@@ -115,6 +115,7 @@ add_library(simxr_connection STATIC
     src/app/RuntimeConnection.cpp
     src/app/RigLaunchAttachment.cpp
     src/app/SimulationEdits.cpp
+    src/app/ManualInputController.cpp
     src/app/WorkerConnection.cpp
     src/app/RuntimePanelRequests.cpp
     src/app/DebuggerPanelController.cpp

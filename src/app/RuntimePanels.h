@@ -20,7 +20,7 @@ struct RuntimePanelSnapshot
 {
 	bool connected = false, sessionAvailable = false, manual = false;
 	std::string connectionState;
-	std::uint64_t session = 0, generation = 0;
+	std::uint64_t session = 0, generation = 0, appliedPilotUpdates = 0;
 	std::uint64_t selectedFrame = 0, selectedCapture = 0, selectedReader = 0;
 	std::size_t images = 0, captures = 0;
 	bool pending = false;
@@ -37,7 +37,8 @@ class RuntimePanels
 	~RuntimePanels();
 	void Poll();
 	void Draw(WorkspaceMode mode = WorkspaceMode::Simulator);
-	void DrawConnection();
+	void DrawConnection(bool* open = nullptr);
+	void SetPreviewExpanded(bool expanded);
 	std::vector<VkSemaphore> ReadyWaits() const;
 	void Submitted(std::uint64_t serial);
 	RuntimePanelSnapshot Snapshot() const;

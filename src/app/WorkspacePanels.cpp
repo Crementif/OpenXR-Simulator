@@ -55,6 +55,7 @@ template <std::size_t N> void Copy(std::array<char, N>& buffer, const std::strin
 struct WorkspacePanels::Impl
 {
 	bool enabled = false, showLaunch = false, showSettings = false, reset = false, dirty = false;
+	bool previewExpanded = false;
 	bool showConnection = false;
 	WorkspaceMode mode = WorkspaceMode::Simulator;
 	std::filesystem::path path;
@@ -216,10 +217,8 @@ struct WorkspacePanels::Impl
 	}
 	void SelectMode(WorkspaceMode selected)
 	{
-		if (mode == selected)
-			return;
 		mode = selected;
-		reset = true;
+		previewExpanded = false;
 	}
 	void LaunchSelected()
 	{
@@ -268,6 +267,9 @@ struct WorkspacePanels::Impl
 				ImGui::PopStyleColor();
 			ImGui::SameLine();
 		}
+		if (ImGui::Button(previewExpanded ? "Show tools" : "Expand view"))
+			previewExpanded = !previewExpanded;
+		ImGui::SameLine();
 		if (ImGui::Button("Release inputs"))
 			runtime.ReleaseInputs();
 		ImGui::SameLine();
@@ -288,7 +290,10 @@ struct WorkspacePanels::Impl
 									  selectedProfile == static_cast<int>(index)))
 					EditProfile(static_cast<int>(index));
 			if (ImGui::Selectable("Add or edit applications..."))
+			{
 				showLaunch = true;
+				previewExpanded = false;
+			}
 			ImGui::EndCombo();
 		}
 		ImGui::SameLine();
@@ -296,6 +301,7 @@ struct WorkspacePanels::Impl
 		ImGui::BeginDisabled(process.state == LaunchState::Starting || process.state == LaunchState::Running);
 		if (ImGui::Button(selectedProfile >= 0 ? "Launch" : "Set up"))
 		{
+			previewExpanded = false;
 			if (selectedProfile >= 0)
 				LaunchSelected();
 			else
@@ -304,7 +310,10 @@ struct WorkspacePanels::Impl
 		ImGui::EndDisabled();
 		ImGui::SameLine();
 		if (ImGui::Button(snapshot.connected ? "Connection" : "Connect"))
+		{
 			showConnection = !showConnection;
+			previewExpanded = false;
+		}
 		ImGui::SameLine();
 		ImGui::BeginDisabled(!snapshot.sessionAvailable || snapshot.operationPending);
 		if (ImGui::Button(snapshot.manual ? "Resume" : "Pause"))
@@ -323,10 +332,15 @@ struct WorkspacePanels::Impl
 		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
 			ImGui::SetTooltip("Pause the application, then advance one XR frame (F7)");
 		ImGui::End();
+		runtime.SetPreviewExpanded(previewExpanded);
 	}
 	void DrawDockspace()
 	{
-		const auto dock = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+		const auto dock = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(),
+													   previewExpanded ? ImGuiDockNodeFlags_KeepAliveOnly
+																	   : ImGuiDockNodeFlags_AutoHideTabBar);
+		if (previewExpanded)
+			return;
 		const auto* node = ImGui::DockBuilderGetNode(dock);
 		if (!reset && node && node->IsSplitNode())
 			return;
@@ -336,31 +350,14 @@ struct WorkspacePanels::Impl
 		const auto size = ImGui::GetMainViewport()->WorkSize;
 		ImGui::DockBuilderSetNodeSize(dock, size);
 		ImGuiID preview, controls;
-		const float controlWidth = std::clamp(360.0f * settings.scale / std::max(size.x, 1.0f), 0.28f, 0.48f);
+		const float controlWidth = std::clamp(360.0f * settings.scale / std::max(size.x, 1.0f), 0.18f, 0.48f);
 		ImGui::DockBuilderSplitNode(dock, ImGuiDir_Right, controlWidth, &controls, &preview);
 		ImGui::DockBuilderDockWindow("GPU preview", preview);
-		if (mode == WorkspaceMode::Simulator)
-			ImGui::DockBuilderDockWindow("Device controls", controls);
-		else if (mode == WorkspaceMode::Automation)
-		{
-			ImGui::DockBuilderDockWindow("Rigs", controls);
-			ImGui::DockBuilderDockWindow("Recording", controls);
-		}
-		else
-		{
-			ImGuiID upper, lower;
-			ImGui::DockBuilderSplitNode(controls, ImGuiDir_Up, 0.45f, &upper, &lower);
-			ImGui::DockBuilderDockWindow("Frame controls", upper);
-			ImGui::DockBuilderDockWindow("Captures", lower);
-			ImGui::DockBuilderDockWindow("Historical state", lower);
-			ImGui::DockBuilderDockWindow("Action and binding inspector", lower);
-			if (mode == WorkspaceMode::Custom)
-			{
-				ImGui::DockBuilderDockWindow("Device controls", upper);
-				ImGui::DockBuilderDockWindow("Rigs", lower);
-				ImGui::DockBuilderDockWindow("Recording", lower);
-			}
-		}
+		// Every tool has a stable home, even while another tool is selected.
+		for (const auto name : {"Device controls", "Rigs", "Recording", "Frame controls", "Captures",
+								"Historical state", "Action and binding inspector", "Runtime connection",
+								"Workspace settings", "Launch profiles", "Workspace error"})
+			ImGui::DockBuilderDockWindow(name, controls);
 		ImGui::DockBuilderFinish(dock);
 	}
 	void DrawMainMenu(RuntimePanels& runtime)
@@ -369,8 +366,10 @@ struct WorkspacePanels::Impl
 		{
 			if (ImGui::BeginMenu("Simulator"))
 			{
-				ImGui::MenuItem("Launch profiles", nullptr, &showLaunch);
-				ImGui::MenuItem("Workspace settings", nullptr, &showSettings);
+				if (ImGui::MenuItem("Launch profiles", nullptr, &showLaunch))
+					previewExpanded = false;
+				if (ImGui::MenuItem("Workspace settings", nullptr, &showSettings))
+					previewExpanded = false;
 				ImGui::Separator();
 				if (ImGui::MenuItem("Pause", "F6"))
 					runtime.Command(control::CommandKind::Pause);
@@ -430,10 +429,12 @@ struct WorkspacePanels::Impl
 			rigs.ReplayRecording(runtime, recording->path, recording->seed);
 		if (enabled)
 			rigs.ObserveLaunch(launcher.Snapshot());
-		rigs.Draw(runtime, mode == WorkspaceMode::Automation || mode == WorkspaceMode::Custom);
+		rigs.Draw(runtime, !previewExpanded && (mode == WorkspaceMode::Automation || mode == WorkspaceMode::Custom));
 #endif
+		if (previewExpanded)
+			return;
 		if (showConnection)
-			runtime.DrawConnection();
+			runtime.DrawConnection(&showConnection);
 		if (!error.empty())
 		{
 			ImGui::Begin("Workspace error");

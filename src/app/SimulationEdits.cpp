@@ -97,6 +97,34 @@ FrameId NextObservedFrame(const wire::Message& state)
 }
 } // namespace
 
+std::string SimulationEditPhase(const control::Message& result)
+{
+	const auto document = result.Find(wire::tag::Document);
+	if (!document)
+		return {};
+	const auto phase = Member(DecodeNode(document->value), "phase");
+	return std::string(NodeData(phase, wire::InspectionType::Text).AsText().value_or("invalid"));
+}
+std::optional<control::Message> ObservedEditResult(const control::Message& state, const control::Message& receipt)
+{
+	const auto document = state.Find(wire::tag::Document), received = receipt.Find(wire::tag::Document);
+	if (!document || !received)
+		return {};
+	const auto expected = DecodeNode(received->value);
+	const auto identity = [](const wire::Message& node, std::string_view key)
+	{
+		return NodeData(Member(node, key), wire::InspectionType::Unsigned).AsU64();
+	};
+	for (const auto& outcome : Elements(Member(DecodeNode(document->value), "transactions")))
+		if (identity(outcome, "transaction_id") == identity(expected, "transaction_id") &&
+			identity(Member(outcome, "source"), "id") == identity(Member(expected, "source"), "id"))
+		{
+			wire::Message result;
+			result.fields = {wire::Field::Bytes(wire::tag::Document, wire::EncodeFields(outcome.fields))};
+			return result;
+		}
+	return {};
+}
 PoseSample ObservedDevicePose(const control::Message& state, ControlChannel channel)
 {
 	NextObservedFrame(state);

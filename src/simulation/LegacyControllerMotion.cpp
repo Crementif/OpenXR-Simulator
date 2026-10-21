@@ -30,8 +30,8 @@ float Interpolate(float from, float to, float progress)
 } // namespace
 LegacyControllerMotion::LegacyControllerMotion()
 {
-	m_controllers[0].local = {{-0.2f, -0.3f, -0.4f}, 0, -0.3f, 0};
-	m_controllers[1].local = {{0.2f, -0.3f, -0.4f}, 0, -0.3f, 0};
+	m_controllers[0].local = {{-0.2f, -0.3f, -0.4f}, 0, std::numbers::pi_v<float> / 2, 0};
+	m_controllers[1].local = {{0.2f, -0.3f, -0.4f}, 0, std::numbers::pi_v<float> / 2, 0};
 }
 std::size_t LegacyControllerMotion::HandIndex(ControllerHand hand)
 {
@@ -125,7 +125,7 @@ std::optional<bool> LegacyControllerMotion::ApplyKeyboard(const ControllerKeyboa
 	{
 		right.position = {0.2f, -0.3f, -0.4f};
 		right.yaw = 0;
-		right.pitch = -0.3f;
+		right.pitch = std::numbers::pi_v<float> / 2;
 		m_animationEnabled = false;
 	}
 	for (std::size_t hand = 0; hand < m_controllers.size(); ++hand)
