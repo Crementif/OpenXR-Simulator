@@ -5120,8 +5120,8 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
     };
     std::shared_ptr<const simxr::FrameLayers> prepared;
     auto validation = simxr::BuildLayers(*info, context,
-        [core](XrSpace space, simxr::RuntimeTime time, simxr::PoseSample& pose) {
-            return core->Spaces().WorldPose(space, time, pose);
+        [core](XrSpace space, simxr::RuntimeTime time, simxr::SpaceSample& pose) {
+            return core->Spaces().Sample(space, time, pose);
         }, prepared);
     if (XR_FAILED(validation)) return validation;
     // Reentrance guard: when our preview swapchain calls Present(), Steam's overlay

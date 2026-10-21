@@ -1,13 +1,16 @@
 #include "presentation/PresentationController.h"
+#include "presentation/FrameHistory.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <limits>
 #include <stdexcept>
 #include <utility>
 
 namespace simxr
 {
-PresentationController::PresentationController(std::size_t capacity) : m_capacity(capacity)
+PresentationController::PresentationController(std::size_t capacity, FrameHistory* history)
+	: m_capacity(capacity), m_history(history)
 {
 	if (!capacity)
 		throw std::invalid_argument("Presentation queue requires capacity");
@@ -194,6 +197,19 @@ std::optional<PresentationTick> PresentationController::Advance(RuntimeTime now,
 			m_liveClear.reset();
 		}
 		m_latest = next;
+		if (m_history)
+		{
+			const auto kind = next.kind == PresentationKind::NewFrame ? FrameTraceKind::DisplaySelected
+				: next.kind == PresentationKind::Repeat ? FrameTraceKind::DisplayRepeated
+				: next.kind == PresentationKind::Clear ? FrameTraceKind::DisplayCleared
+				: FrameTraceKind::DisplayEmpty;
+			char detail[96];
+			std::snprintf(detail, sizeof(detail), "skipped_ticks=%llu; content=%s",
+				static_cast<unsigned long long>(next.skippedTicks),
+				m_current ? (m_current->output ? "image" : "clear") : "empty");
+			m_history->Trace(kind, next.source.value_or(FrameKey{m_generation, {}}), next.time, XR_SUCCESS,
+				FrameDiagnosticCategory::Timing, next.tick.value, detail);
+		}
 		if (m_current)
 			next.output = m_current->output;
 		result = std::move(next);

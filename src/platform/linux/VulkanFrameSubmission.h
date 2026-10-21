@@ -15,6 +15,7 @@ class VulkanBackend;
 class VulkanFrame;
 class VulkanImage;
 class VulkanInspection;
+enum class VulkanInspectionKind;
 class VulkanInspectionTransfer;
 
 class VulkanFrameBindings
@@ -53,8 +54,12 @@ class VulkanFrameSubmission final
 	XrResult PrepareLayers(const XrFrameEndInfo& info);
 	XrResult PrepareOutputs();
 	XrResult PrepareCaptures();
-	XrResult PrepareCapture(const LayerImageDescription& image, Capture& capture,
+	XrResult PrepareQuadHistory();
+	XrResult PrepareFilteredCapture(CaptureTarget target);
+	XrResult PrepareCapture(const LayerImageDescription& image, const LayerDepthDescription* depth, Capture& capture,
 							std::shared_ptr<FrameReservation> reservation);
+	std::unique_ptr<VulkanInspectionTransfer> PrepareInspection(std::shared_ptr<VulkanFrame> source,
+		CaptureTarget target, VulkanInspectionKind kind);
 	XrResult Submit();
 	void DropLiveOutput();
 	void AbandonUnsubmitted(const std::shared_ptr<VulkanFrame>& producer, CaptureTarget target = {});

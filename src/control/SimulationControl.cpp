@@ -31,14 +31,9 @@ InspectionValue PoseValue(const XrPosef& pose)
 }
 InspectionValue ReferenceSpaces(const ReferenceSpaceState& spaces)
 {
-	const auto origin = [](const XrPosef& pose)
-	{
-		return InspectionValue::Object(
-			{{"position", Vector(pose.position)}, {"orientation", Orientation(pose.orientation)}});
-	};
 	return InspectionValue::Object(
-		{{"local", origin(spaces.local)},
-		 {"stage", origin(spaces.stage)},
+		{{"local", PoseValue(spaces.local)},
+		 {"stage", PoseValue(spaces.stage)},
 		 {"stage_bounds", spaces.stageBounds
 							  ? InspectionValue::Array({InspectionValue::Float(spaces.stageBounds->width),
 														InspectionValue::Float(spaces.stageBounds->height)})

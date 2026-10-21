@@ -33,6 +33,8 @@ struct LayerSpaceDescription
 	XrSpace source = XR_NULL_HANDLE;
 	XrCompositionLayerFlags flags = 0;
 	PoseSample worldPose;
+	XrReferenceSpaceType referenceType = XR_REFERENCE_SPACE_TYPE_MAX_ENUM;
+	XrPosef poseOffset{{0, 0, 0, 1}, {0, 0, 0}};
 };
 
 struct ProjectionViewDescription
@@ -75,8 +77,9 @@ struct FrameLayers
 	const std::vector<LayerDescription> layers;
 };
 
-using LayerSpaceResolver = std::function<XrResult(XrSpace, RuntimeTime, PoseSample&)>;
+using LayerSpaceResolver = std::function<XrResult(XrSpace, RuntimeTime, SpaceSample&)>;
 XrResult BuildLayers(const XrFrameEndInfo& info, const LayerValidationContext& validation,
 					 const LayerSpaceResolver& resolve, std::shared_ptr<const FrameLayers>& output);
 std::optional<LayerImageDescription> FindLayerImage(const FrameLayers& frame, std::uint32_t layer, std::uint32_t view);
+const LayerDepthDescription* FindLayerDepth(const FrameLayers& frame, std::uint32_t layer, std::uint32_t view);
 } // namespace simxr

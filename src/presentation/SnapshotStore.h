@@ -1,9 +1,11 @@
 #pragma once
 
 #include "graphics/FramePool.h"
+#include "presentation/CaptureTypes.h"
 #include "presentation/FrameHistory.h"
 #include "presentation/PresentationController.h"
 
+#include <array>
 #include <compare>
 #include <cstddef>
 #include <cstdint>
@@ -15,17 +17,15 @@
 
 namespace simxr
 {
-struct CaptureId
-{
-	std::uint64_t value = 0;
-	auto operator<=>(const CaptureId&) const = default;
-};
-
 enum class CaptureKind
 {
 	ComposedEyes,
 	LayerView,
-	VirtualDisplay
+	VirtualDisplay,
+	LayerDepth,
+	LayerDepthLinear,
+	ProjectionLayers,
+	QuadLayers
 };
 
 struct CaptureTarget
@@ -33,7 +33,32 @@ struct CaptureTarget
 	CaptureKind kind = CaptureKind::ComposedEyes;
 	std::uint32_t layer = 0;
 	std::uint32_t view = 0;
+	bool IsDepth() const { return kind == CaptureKind::LayerDepth || kind == CaptureKind::LayerDepthLinear; }
+	bool IsLayerImage() const { return kind == CaptureKind::LayerView || IsDepth(); }
+	bool IsFilteredComposition() const
+	{
+		return kind == CaptureKind::ProjectionLayers || kind == CaptureKind::QuadLayers;
+	}
+	bool IsAdditionalImage() const { return IsLayerImage() || IsFilteredComposition(); }
 	auto operator<=>(const CaptureTarget&) const = default;
+};
+
+enum class ImageRecordingPhase
+{
+	Idle,
+	Recording,
+	Stopped,
+	Overrun
+};
+struct ImageRecordingSnapshot
+{
+	ImageRecordingPhase phase = ImageRecordingPhase::Idle;
+	CaptureTarget target;
+	std::uint32_t capacity = 0;
+	std::uint64_t captured = 0;
+	std::uint64_t requested = 0;
+	std::optional<FrameKey> missed;
+	std::vector<CaptureId> captures;
 };
 
 enum class SnapshotPhase
@@ -68,25 +93,11 @@ struct SnapshotRecord
 	std::shared_ptr<FrameReservation> m_retention;
 };
 
-enum class SnapshotAdmission
-{
-	Accepted,
-	Capacity,
-	Closed,
-	Unsupported,
-	Invalid
-};
-
-struct CaptureReservation
-{
-	SnapshotAdmission result;
-	CaptureId id;
-};
-
 struct CaptureOutput
 {
 	CaptureTarget target;
 	std::shared_ptr<const FrameOutput> output;
+	std::optional<std::array<XrRect2Di, 2>> quadBounds;
 };
 
 struct SnapshotStoreState
@@ -102,7 +113,8 @@ struct SnapshotStoreState
 class SnapshotStore
 {
   public:
-	explicit SnapshotStore(std::size_t capacity = 32);
+	// History outlives the store and retains no image or reservation readers.
+	explicit SnapshotStore(std::size_t capacity = 32, FrameHistory* history = nullptr);
 	~SnapshotStore();
 	void Start(SessionGeneration generation);
 	void Stop() noexcept;
@@ -132,6 +144,8 @@ class SnapshotStore
 	std::size_t Capacity() const;
 	bool Release(CaptureId id) noexcept;
 	void RetireAll() noexcept;
+	// Marks only sequence-owned tickets; Poll releases native readers outside caller locks.
+	void RetireSequenceCaptures(CommandSource owner) noexcept;
 	// Observes producers outside the store mutex. It submits no graphics work.
 	void Poll() noexcept;
 
@@ -143,9 +157,12 @@ class SnapshotStore
 		std::shared_ptr<FrameReservation> producer;
 		std::shared_ptr<FrameReservation> composedProducer;
 		bool released = false;
+		bool terminalTraced = false;
 		std::uint64_t revision = 0;
 	};
 	void CancelPendingLocked() noexcept;
+	void TraceTerminal(Entry& entry) noexcept;
+	FrameHistory* const m_history;
 	FramePool m_slots;
 	mutable std::mutex m_mutex;
 	bool m_running = false;

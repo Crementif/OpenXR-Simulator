@@ -4,6 +4,7 @@
 #include "control/ControlSchema.h"
 #include "simulation/CommandTypes.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -24,6 +25,35 @@ struct ScriptGameOperation
 	std::uint64_t game = 0;
 };
 
+struct ScriptCaptureTarget
+{
+	control::TargetKind kind = control::TargetKind::ComposedEyes;
+	std::uint32_t layer = 0;
+	std::uint32_t view = 0;
+};
+struct ScriptCapture
+{
+	std::uint64_t identity = 0;
+	std::string phase;
+	std::optional<std::uint64_t> frame;
+	bool imageAvailable = false;
+};
+struct ScriptImageRecording
+{
+	std::string phase;
+	std::uint64_t capacity = 0;
+	std::uint64_t captured = 0;
+	std::uint64_t requested = 0;
+	std::optional<std::uint64_t> missedFrame;
+	std::vector<std::uint64_t> captures;
+	bool available = false;
+};
+struct ScriptInspection
+{
+	std::vector<std::byte> document;
+	std::uint64_t identity = 0;
+};
+
 class RigProgress;
 
 class RigRuntime
@@ -38,12 +68,31 @@ class RigRuntime
 	std::vector<std::byte> AwaitTransaction(std::uint64_t transaction);
 	void PauseApplication();
 	void ResumeApplication();
-	ScriptStep StepApplication(std::optional<std::uint32_t> layer, std::uint32_t view);
+	ScriptStep StepApplication(ScriptCaptureTarget target);
 	ScriptStep StepDisplay();
-	std::vector<std::byte> Inspect(std::uint64_t capture);
+	void StartImageRecording(ScriptCaptureTarget target, std::uint32_t capacity, std::uint64_t frames);
+	void StopImageRecording();
+	ScriptImageRecording ImageRecording();
+	ScriptCapture Capture(std::uint64_t capture);
+	std::vector<std::byte> StartInputRecording();
+	std::vector<std::byte> StopInputRecording();
+	std::vector<std::byte> ReadInputRecording(std::uint64_t offset, std::uint64_t count);
+	ScriptInspection Inspect(std::uint64_t capture);
+	std::vector<std::byte> ProjectionHistory(std::uint32_t count);
+	std::vector<std::byte> ImageHistory(std::uint32_t count, control::TargetKind target);
+	void ExportHistory(std::uint64_t frame, const std::string& path, std::optional<std::uint32_t> arraySlice,
+		control::TargetKind target);
+	ScriptInspection BeginImageWindow(control::TargetKind target);
+	std::vector<std::byte> ImageWindow(std::uint64_t window);
+	void ExportWindowImage(std::uint64_t window, std::uint64_t frame, const std::string& path,
+		std::optional<std::uint32_t> arraySlice);
+	void ReleaseImageWindow(std::uint64_t window);
+	std::vector<std::byte> Revision(std::uint64_t revision);
+	void ReleaseInspection(std::uint64_t inspection);
 	std::vector<std::byte> State();
 	void ReleaseInputs();
-	void Export(std::uint64_t capture, const std::string& path);
+	void Export(std::uint64_t capture, const std::string& path,
+				std::optional<ScriptCaptureTarget> target, std::optional<std::uint32_t> arraySlice);
 	void ReleaseCapture(std::uint64_t capture);
 	ScriptGameOperation GameCommand(std::uint32_t kind, std::string payload);
 	std::vector<std::byte> AwaitGame(std::uint64_t game, std::uint64_t operation);
@@ -58,13 +107,20 @@ class RigRuntime
 	std::uint64_t m_nextTransaction = 1;
 	std::uint64_t m_nextCommand = 1;
 	std::uint64_t m_lease = 0;
+	std::uint64_t m_imageWindow = 0;
+	bool m_inputRecording = false;
+	std::chrono::steady_clock::time_point m_nextRenew;
 	std::vector<std::uint64_t> m_captures;
+	std::vector<std::uint64_t> m_inspections;
 	Fields Session() const;
 	Fields Source() const;
 	control::Message Call(control::OpCode opcode, Fields fields);
+	control::Message Exchange(control::OpCode opcode, Fields fields);
+	void CleanupCall(control::OpCode opcode, Fields fields);
 	control::Message Debug(control::CommandKind kind, Fields fields = {});
 	ScriptStep CaptureStep(control::CommandKind kind, Fields fields = {});
 	void ReleaseUnchecked(control::OpCode opcode, std::uint16_t tag, std::uint64_t id) noexcept;
+	void ExportImage(std::uint64_t reader, const std::string& path, std::optional<std::uint32_t> arraySlice);
 	class RemoteResource;
 };
 } // namespace simxr::automation

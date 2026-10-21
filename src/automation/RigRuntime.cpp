@@ -36,11 +36,30 @@ std::vector<std::byte> Document(const wire::Message& message)
 		throw std::runtime_error("Runtime omitted an inspection document");
 	return document->value;
 }
+wire::Message Nested(const wire::Message& message, std::uint16_t name)
+{
+	const auto* field = message.Find(name);
+	if (!field)
+		throw std::runtime_error("Runtime omitted expected nested fields");
+	auto decoded = wire::DecodeFields(field->value);
+	if (decoded.error != wire::DecodeError::None)
+		throw std::runtime_error("Runtime returned invalid nested fields");
+	wire::Message result;
+	result.fields = std::move(decoded.fields);
+	return result;
+}
 std::uint64_t Next(std::uint64_t& counter)
 {
 	if (counter == std::numeric_limits<std::uint64_t>::max())
 		throw std::length_error("Rig command identifiers exhausted");
 	return counter++;
+}
+control::Field EncodeTarget(ScriptCaptureTarget target)
+{
+	const std::vector fields{
+		control::Field::U32(tag::CaptureKind, static_cast<std::uint32_t>(target.kind), true),
+		control::Field::U32(tag::Layer, target.layer), control::Field::U32(tag::View, target.view)};
+	return control::Field::Bytes(tag::Target, control::EncodeFields(fields));
 }
 void PollAgain()
 {
@@ -83,11 +102,12 @@ RigRuntime::RigRuntime(RigExchange exchange, RigProgress& progress)
 }
 void RigRuntime::Configure(control::ControlSessionId session, std::uint64_t generation)
 {
-	if (m_lease || !m_captures.empty())
+	if (m_lease || m_inputRecording || !m_captures.empty() || !m_inspections.empty())
 		throw std::logic_error("Release rig runtime resources before configuring another run");
 	m_session = session;
 	m_generation = generation;
 	m_lease = 0;
+	m_nextRenew = {};
 	m_captures.clear();
 }
 RigRuntime::Fields RigRuntime::Session() const
@@ -104,6 +124,20 @@ RigRuntime::Fields RigRuntime::Source() const
 control::Message RigRuntime::Call(control::OpCode opcode, Fields fields)
 {
 	m_progress.Check();
+	const auto now = std::chrono::steady_clock::now();
+	const bool sessionOperation = opcode == control::OpCode::Status || opcode == control::OpCode::Submit ||
+		opcode == control::OpCode::Operation || opcode == control::OpCode::SimulationStatus;
+	if (m_lease && sessionOperation && now >= m_nextRenew)
+	{
+		auto renewal = Session();
+		renewal.push_back(control::Field::U64(tag::Lease, m_lease, true));
+		Exchange(control::OpCode::Renew, std::move(renewal));
+		m_nextRenew = now + std::chrono::seconds{1};
+	}
+	return Exchange(opcode, std::move(fields));
+}
+control::Message RigRuntime::Exchange(control::OpCode opcode, Fields fields)
+{
 	auto response = m_exchange(opcode, std::move(fields));
 	const auto* error = response.Find(tag::Error);
 	if (!error || !error->AsU32() || *error->AsU32() != static_cast<std::uint32_t>(control::ErrorCode::Ok))
@@ -186,16 +220,79 @@ void RigRuntime::ResumeApplication()
 {
 	Debug(control::CommandKind::Resume);
 }
-ScriptStep RigRuntime::StepApplication(std::optional<std::uint32_t> layer, std::uint32_t view)
+ScriptStep RigRuntime::StepApplication(ScriptCaptureTarget target)
 {
-	Fields target{control::Field::U32(tag::CaptureKind, layer ? 2 : 1, true)};
-	if (layer)
+	return CaptureStep(control::CommandKind::Step,
+		{EncodeTarget(target), control::Field::U32(tag::Lookahead, 1)});
+}
+std::vector<std::byte> RigRuntime::StartInputRecording()
+{
+	const auto response = Call(control::OpCode::StartRecording, Source());
+	m_inputRecording = true;
+	return Document(response);
+}
+std::vector<std::byte> RigRuntime::StopInputRecording()
+{
+	const auto response = Call(control::OpCode::StopRecording, Source());
+	m_inputRecording = false;
+	return Document(response);
+}
+std::vector<std::byte> RigRuntime::ReadInputRecording(std::uint64_t offset, std::uint64_t count)
+{
+	if (offset > 1024 || count > 16)
+		throw std::invalid_argument("Input recording pages require offset <= 1024 and count <= 16");
+	auto fields = Session();
+	fields.push_back(control::Field::U64(tag::Offset, offset));
+	fields.push_back(control::Field::U64(tag::Length, count));
+	return Document(Call(control::OpCode::ReadRecording, std::move(fields)));
+}
+void RigRuntime::StartImageRecording(ScriptCaptureTarget target, std::uint32_t capacity, std::uint64_t frames)
+{
+	if (capacity < 1 || capacity > 4)
+		throw std::invalid_argument("Image recording capacity must be in [1, 4]");
+	Debug(control::CommandKind::StartImageRecording,
+		{EncodeTarget(target), control::Field::U32(tag::Capacity, capacity), control::Field::U64(tag::Length, frames)});
+}
+void RigRuntime::StopImageRecording()
+{
+	Debug(control::CommandKind::StopImageRecording);
+}
+ScriptImageRecording RigRuntime::ImageRecording()
+{
+	const auto status = Call(control::OpCode::Status, Session());
+	const auto record = Nested(status, tag::ImageRecording);
+	ScriptImageRecording result;
+	result.available =
+		(Number(status, tag::Capabilities) & static_cast<std::uint64_t>(control::Capability::ImageRecording)) != 0;
+	result.phase = Text(record, tag::Phase);
+	result.capacity = Number(record, tag::Capacity);
+	result.captured = Number(record, tag::Length);
+	result.requested = Number(record, tag::TotalFrames);
+	if (record.Find(tag::Frame))
+		result.missedFrame = Number(Nested(record, tag::Frame), tag::FrameId);
+	for (const auto& capture : Nested(record, tag::Captures).fields)
 	{
-		target.push_back(control::Field::U32(tag::Layer, *layer));
-		target.push_back(control::Field::U32(tag::View, view));
+		if (!capture.AsU64())
+			throw std::runtime_error("Runtime returned an invalid recording capture identity");
+		result.captures.push_back(*capture.AsU64());
 	}
-	return CaptureStep(control::CommandKind::Step, {control::Field::Bytes(tag::Target, control::EncodeFields(target)),
-													control::Field::U32(tag::Lookahead, 1)});
+	return result;
+}
+ScriptCapture RigRuntime::Capture(std::uint64_t capture)
+{
+	auto fields = Session();
+	fields.push_back(control::Field::U64(tag::CaptureId, capture, true));
+	const auto response = Call(control::OpCode::Capture, std::move(fields));
+	ScriptCapture result;
+	result.identity = Number(response, tag::CaptureId);
+	result.phase = Text(response, tag::Phase);
+	if (response.Find(tag::Frame))
+		result.frame = Number(Nested(response, tag::Frame), tag::FrameId);
+	const auto* available = response.Find(tag::ImageAvailable);
+	if (!available || !available->AsBool())
+		throw std::runtime_error("Runtime omitted capture image availability");
+	result.imageAvailable = *available->AsBool();
+	return result;
 }
 ScriptStep RigRuntime::StepDisplay()
 {
@@ -234,16 +331,83 @@ ScriptStep RigRuntime::CaptureStep(control::CommandKind kind, Fields fields)
 	}
 	return step;
 }
-std::vector<std::byte> RigRuntime::Inspect(std::uint64_t capture)
+std::vector<std::byte> RigRuntime::ProjectionHistory(std::uint32_t count)
 {
+	if (!count || count > 64)
+		throw std::invalid_argument("Projection history count must be in [1,64]");
+	auto fields = Session();
+	fields.push_back(control::Field::U64(tag::Length, count));
+	return Document(Call(control::OpCode::ReadProjectionHistory, std::move(fields)));
+}
+std::vector<std::byte> RigRuntime::ImageHistory(std::uint32_t count, control::TargetKind target)
+{
+	if (!count || count > 10)
+		throw std::invalid_argument("Image history count must be in [1,10]");
+	auto fields = Session();
+	fields.push_back(control::Field::U64(tag::Length, count));
+	fields.push_back(EncodeTarget({target}));
+	return Document(Call(control::OpCode::ReadImageHistory, std::move(fields)));
+}
+void RigRuntime::ExportHistory(std::uint64_t frame, const std::string& path, std::optional<std::uint32_t> arraySlice,
+	control::TargetKind target)
+{
+	auto fields = Session();
+	fields.push_back(control::Field::U64(tag::FrameId, frame, true));
+	fields.push_back(EncodeTarget({target}));
+	const auto response = Call(control::OpCode::RetainHistoricalImage, std::move(fields));
+	if (!response.Find(tag::ImageReaderId))
+		throw std::runtime_error("Historical frame has no ready GPU image");
+	ExportImage(Number(response, tag::ImageReaderId), path, arraySlice);
+}
+ScriptInspection RigRuntime::BeginImageWindow(control::TargetKind target)
+{
+	if (m_imageWindow)
+		throw std::runtime_error("Release the rig's previous image window before beginning another");
+	auto fields = Session();
+	fields.push_back(EncodeTarget({target}));
+	const auto response = Call(control::OpCode::BeginImageWindow, std::move(fields));
+	// Record ownership before copying or decoding the returned document can fail.
+	m_imageWindow = Number(response, tag::ImageWindowId);
+	return {Document(response), m_imageWindow};
+}
+std::vector<std::byte> RigRuntime::ImageWindow(std::uint64_t window)
+{
+	return Document(Call(control::OpCode::ReadImageWindow, {control::Field::U64(tag::ImageWindowId, window, true)}));
+}
+void RigRuntime::ExportWindowImage(std::uint64_t window, std::uint64_t frame, const std::string& path,
+	std::optional<std::uint32_t> arraySlice)
+{
+	const auto response = Call(control::OpCode::RetainWindowImage,
+		{control::Field::U64(tag::ImageWindowId, window, true), control::Field::U64(tag::FrameId, frame, true)});
+	ExportImage(Number(response, tag::ImageReaderId), path, arraySlice);
+}
+void RigRuntime::ReleaseImageWindow(std::uint64_t window)
+{
+	Call(control::OpCode::ReleaseImageWindow, {control::Field::U64(tag::ImageWindowId, window, true)});
+	if (m_imageWindow == window)
+		m_imageWindow = 0;
+}
+ScriptInspection RigRuntime::Inspect(std::uint64_t capture)
+{
+	// Reserve ownership bookkeeping before acquiring a remote reader.
+	if (m_inspections.size() == m_inspections.capacity())
+		m_inspections.reserve(m_inspections.size() + 1);
 	auto fields = Session();
 	fields.push_back(control::Field::U64(tag::CaptureId, capture, true));
 	const auto response = Call(control::OpCode::InspectFrame, std::move(fields));
-	RemoteResource inspection{*this, control::OpCode::ReleaseInspection, tag::InspectionId,
-							  Number(response, tag::InspectionId)};
-	auto document = Document(response);
-	inspection.Release();
-	return document;
+	const auto identity = Number(response, tag::InspectionId);
+	if (std::find(m_inspections.begin(), m_inspections.end(), identity) == m_inspections.end())
+		m_inspections.push_back(identity);
+	return {Document(response), identity};
+}
+std::vector<std::byte> RigRuntime::Revision(std::uint64_t revision)
+{
+	return Document(Call(control::OpCode::FeatureRevision, {control::Field::U64(tag::RevisionId, revision, true)}));
+}
+void RigRuntime::ReleaseInspection(std::uint64_t inspection)
+{
+	Call(control::OpCode::ReleaseInspection, {control::Field::U64(tag::InspectionId, inspection, true)});
+	std::erase(m_inspections, inspection);
 }
 std::vector<std::byte> RigRuntime::State()
 {
@@ -253,13 +417,23 @@ void RigRuntime::ReleaseInputs()
 {
 	Call(control::OpCode::ReleaseControl, Source());
 }
-void RigRuntime::Export(std::uint64_t capture, const std::string& path)
+void RigRuntime::Export(std::uint64_t capture, const std::string& path,
+						std::optional<ScriptCaptureTarget> target, std::optional<std::uint32_t> arraySlice)
 {
 	auto fields = Session();
 	fields.push_back(control::Field::U64(tag::CaptureId, capture, true));
+	if (target)
+		fields.push_back(EncodeTarget(*target));
 	const auto image = Number(Call(control::OpCode::RetainImage, std::move(fields)), tag::ImageReaderId);
+	ExportImage(image, path, arraySlice);
+}
+void RigRuntime::ExportImage(std::uint64_t image, const std::string& path, std::optional<std::uint32_t> arraySlice)
+{
 	RemoteResource reader{*this, control::OpCode::ReleaseImage, tag::ImageReaderId, image};
-	const auto start = Call(control::OpCode::StartExport, {control::Field::U64(tag::ImageReaderId, image, true)});
+	Fields exportFields{control::Field::U64(tag::ImageReaderId, image, true)};
+	if (arraySlice)
+		exportFields.push_back(control::Field::U32(tag::Layer, *arraySlice));
+	const auto start = Call(control::OpCode::StartExport, std::move(exportFields));
 	const auto exported = Number(start, tag::ExportId);
 	RemoteResource ticket{*this, control::OpCode::ReleaseExport, tag::ExportId, exported};
 	const auto total = Number(start, tag::TotalBytes);
@@ -347,20 +521,44 @@ void RigRuntime::ReleaseUnchecked(control::OpCode opcode, std::uint16_t field, s
 	{
 	}
 }
+void RigRuntime::CleanupCall(control::OpCode opcode, Fields fields)
+{
+	const auto response = m_exchange(opcode, std::move(fields));
+	const auto* field = response.Find(tag::Error);
+	if (!field || !field->AsU32())
+		throw std::runtime_error("Runtime omitted cleanup result");
+	const auto code = static_cast<control::ErrorCode>(*field->AsU32());
+	if (code != control::ErrorCode::Ok && code != control::ErrorCode::Closed &&
+		code != control::ErrorCode::StaleGeneration && code != control::ErrorCode::NotFound)
+		throw std::runtime_error(Text(response, tag::Detail));
+}
 std::string RigRuntime::Cleanup()
 {
 	std::string error;
+	if (m_imageWindow)
+	{
+		ReleaseUnchecked(control::OpCode::ReleaseImageWindow, tag::ImageWindowId, m_imageWindow);
+		m_imageWindow = 0;
+	}
+	for (const auto inspection : m_inspections)
+		ReleaseUnchecked(control::OpCode::ReleaseInspection, tag::InspectionId, inspection);
+	m_inspections.clear();
+	if (m_inputRecording)
+	{
+		try
+		{
+			CleanupCall(control::OpCode::StopRecording, Source());
+		}
+		catch (const std::exception& failure)
+		{
+			error = std::string{"Input recording stop failed: "} + failure.what();
+		}
+		m_inputRecording = false;
+	}
 	// Cancellation must not prevent releasing source-owned controls or the lease.
 	try
 	{
-		const auto response = m_exchange(control::OpCode::ReleaseControl, Source());
-		const auto* field = response.Find(tag::Error);
-		if (!field || !field->AsU32())
-			throw std::runtime_error("Runtime omitted cleanup result");
-		const auto code = static_cast<control::ErrorCode>(*field->AsU32());
-		if (code != control::ErrorCode::Ok && code != control::ErrorCode::Closed &&
-			code != control::ErrorCode::StaleGeneration && code != control::ErrorCode::NotFound)
-			throw std::runtime_error(Text(response, tag::Detail));
+		CleanupCall(control::OpCode::ReleaseControl, Source());
 	}
 	catch (const std::exception& failure)
 	{

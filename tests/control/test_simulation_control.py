@@ -12,6 +12,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'sdk/python'))
+sys.path.insert(0, str(ROOT / 'mcp-server'))
 from simxr_control import (Client, CommandKind, Capability, ControlError, ProtocolError,
                            collect_recording, to_luau, encode_command, decode_command, Scenario)
 from simxr_control.protocol import Tag
@@ -82,7 +83,10 @@ class SimulationTests(unittest.TestCase):
                     commands = [{'kind': 'take_control', 'channel': 'head'},
                                 {'kind': 'head_pose', 'position': [2, 1.7, -3]},
                                 {'kind': 'take_control', 'channel': 'left_controls'},
-                                {'kind': 'controller_controls', 'hand': 0, 'trigger': .75, 'primary': True}]
+                                {'kind': 'controller_controls', 'hand': 0, 'trigger': .75, 'primary': True},
+                                {'kind': 'take_control', 'channel': 'trackers'},
+                                {'kind': 'tracker', 'index': 0, 'identity': 1, 'role': 0,
+                                 'position': [1, 1, -1]}]
                     queued = client.schedule(session, commands, frame=1, transaction_id=1)
                     self.assertEqual(queued['phase'], 'queued')
                     marker.touch()
@@ -93,6 +97,11 @@ class SimulationTests(unittest.TestCase):
                     state = client.simulation_status(session)['document']
                     self.assertEqual(state['configuration']['head']['position'][0], 2)
                     self.assertEqual(state['configuration']['controllers'][0]['controls']['trigger'], .75)
+                    trackers = state['configuration']['trackers']
+                    self.assertEqual(trackers[0]['pose_override']['position'], [1, 1, -1])
+                    self.assertIsNone(trackers[0]['anchor'])
+                    self.assertEqual(trackers[1]['anchor'], 0)
+                    self.assertIsNone(trackers[1]['pose_override'])
                     changed = client.schedule(session, [{'kind': 'head_pose', 'position': [9, 9, 9]}], frame=1, transaction_id=1)
                     self.assertEqual(changed['phase'], 'conflict')
                     client.stop_recording(session)

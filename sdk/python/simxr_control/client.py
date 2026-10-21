@@ -32,6 +32,7 @@ class Client:
         self.path = str(path)
         self._lock = threading.Lock()
         self._next_command = 1
+        self._next_program = 1
         self._connection = PacketConnection(path, timeout)
         try:
             self.hello = self.request(OpCode.HELLO, [Field.text(Tag.CLIENT_NAME, name),
@@ -90,7 +91,7 @@ class Client:
         return self.request(OpCode.RELINQUISH, self._lease(lease))
 
     def submit(self, lease, command, *, command_id=None, lookahead=1, target=TargetKind.COMPOSED_EYES,
-               layer=0, view=0, operation=None, capture=None):
+               layer=0, view=0, operation=None, capture=None, recording_capacity=2, recording_frames=0):
         if command_id is None:
             with self._lock:
                 command_id = self._next_command
@@ -102,6 +103,9 @@ class Client:
             Field.u32(Tag.COMMAND_KIND, command, True), Field.u32(Tag.LOOKAHEAD, lookahead),
             Field.nested(Tag.TARGET, [Field.u32(Tag.CAPTURE_KIND, target, True),
                                       Field.u32(Tag.LAYER, layer), Field.u32(Tag.VIEW, view)])]
+        if command == CommandKind.START_IMAGE_RECORDING:
+            fields.append(Field.u32(Tag.CAPACITY, recording_capacity, True))
+            fields.append(Field.u64(Tag.LENGTH, recording_frames, True))
         if operation is not None:
             fields.append(Field.u64(Tag.OPERATION_ID, operation))
         if capture is not None:
@@ -128,11 +132,44 @@ class Client:
     def release_inspection(self, inspection):
         return self.request(OpCode.RELEASE_INSPECTION, [Field.u64(Tag.INSPECTION_ID, inspection, True)])
 
-    def retain_image(self, session, capture):
-        return self.request(OpCode.RETAIN_IMAGE, self._session(session) + [Field.u64(Tag.CAPTURE_ID, capture, True)])
+    def retain_image(self, session, capture, *, target=None, layer=0, view=0):
+        fields = self._session(session) + [Field.u64(Tag.CAPTURE_ID, capture, True)]
+        if target is not None:
+            fields.append(Field.nested(Tag.TARGET, [Field.u32(Tag.CAPTURE_KIND, target, True),
+                                                  Field.u32(Tag.LAYER, layer), Field.u32(Tag.VIEW, view)], True))
+        return self.request(OpCode.RETAIN_IMAGE, fields)
 
     def image_info(self, image_reader):
         return self.request(OpCode.IMAGE_INFO, [Field.u64(Tag.IMAGE_READER_ID, image_reader, True)])
+
+    def _history_fields(self, session, target):
+        fields = self._session(session)
+        if target is not None:
+            fields.append(Field.nested(Tag.TARGET, [Field.u32(Tag.CAPTURE_KIND, target, True),
+                                                  Field.u32(Tag.LAYER, 0), Field.u32(Tag.VIEW, 0)], True))
+        return fields
+
+    def begin_image_window(self, session, *, target=None):
+        return self.request(OpCode.BEGIN_IMAGE_WINDOW, self._history_fields(session, target))
+
+    def image_window(self, window):
+        return self.request(OpCode.READ_IMAGE_WINDOW, [Field.u64(Tag.IMAGE_WINDOW_ID, window, True)])
+
+    def retain_window_image(self, window, frame):
+        return self.request(OpCode.RETAIN_WINDOW_IMAGE, [Field.u64(Tag.IMAGE_WINDOW_ID, window, True),
+                                                       Field.u64(Tag.FRAME_ID, frame, True)])
+
+    def release_image_window(self, window):
+        return self.request(OpCode.RELEASE_IMAGE_WINDOW, [Field.u64(Tag.IMAGE_WINDOW_ID, window, True)])
+
+    def image_history(self, session, *, count=10, target=None):
+        if type(count) is not int or not 1 <= count <= 10:
+            raise ProtocolError('Image history count must be in [1,10]')
+        return self.request(OpCode.READ_IMAGE_HISTORY, self._history_fields(session, target) + [Field.u64(Tag.LENGTH, count)])
+
+    def retain_historical_image(self, session, frame, *, target=None):
+        return self.request(OpCode.RETAIN_HISTORICAL_IMAGE,
+                            self._history_fields(session, target) + [Field.u64(Tag.FRAME_ID, frame, True)])
 
     def retain_preview(self, session):
         """Retain the current completed display image, or observe its actual clear."""
@@ -239,6 +276,57 @@ class Client:
         """Cancel pending source work and release held inputs/ownership."""
         return self.request(OpCode.RELEASE_CONTROL, self._session(session) + [Field.u32(Tag.SOURCE_KIND, source)])
 
+    def upload_sequence(self, session, program, *, program_id=None, source=1):
+        """Upload JSON lines without executing them; one staged program per connection."""
+        if isinstance(program, str):
+            program = program.encode('utf-8')
+        if not isinstance(program, bytes) or len(program) > 16 * 1024 * 1024:
+            raise ProtocolError('Sequence programs must be JSON-lines bytes or text, at most 16 MiB')
+        if not self.hello['capabilities'] & Capability.POSE_SEQUENCES:
+            raise ProtocolError('Pose sequences are unavailable on this connection')
+        with self._lock:
+            if program_id is None:
+                program_id = self._next_program
+            if type(program_id) is not int or not 0 < program_id < 2**64:
+                raise ProtocolError('A positive uint64 program ID is required')
+            self._next_program = max(self._next_program, program_id + 1)
+        chunk_size = 256 * 1024
+        for offset in range(0, max(1, len(program)), chunk_size):
+            chunk = program[offset:offset + chunk_size]
+            response = self.request(OpCode.UPLOAD_SEQUENCE, self._session(session) + [
+                Field.u32(Tag.SOURCE_KIND, source), Field.u64(Tag.PROGRAM_ID, program_id, True),
+                Field.u64(Tag.OFFSET, offset, True), Field.u64(Tag.TOTAL_BYTES, len(program), True),
+                Field(Tag.BYTES, chunk, True)])
+            document = response['document']
+            if (document['program_id'] != program_id or document['total'] != len(program) or
+                    not offset + len(chunk) <= document['received'] <= len(program)):
+                raise ProtocolError('Sequence upload acknowledgement changed identity or offset')
+        return program_id
+
+    def start_sequence(self, session, program_id, *, loop=False, source=1):
+        """Start at the next ordinary frame boundary. Retrying a program does not restart it."""
+        if type(loop) is not bool:
+            raise ProtocolError('Sequence loop must be boolean')
+        return self.request(OpCode.START_SEQUENCE, self._session(session) + [
+            Field.u32(Tag.SOURCE_KIND, source), Field.u64(Tag.PROGRAM_ID, program_id, True), Field.boolean(Tag.LOOP, loop)])
+
+    def sequence_status(self, session, sequence=None, *, after=0, count=32, source=1):
+        if type(after) is not int or not 0 <= after < 2**64 or type(count) is not int or not 1 <= count <= 64:
+            raise ProtocolError('Sequence pages require a uint64 cursor and count in [1,64]')
+        fields = self._session(session) + [Field.u32(Tag.SOURCE_KIND, source),
+                                         Field.u64(Tag.OFFSET, after), Field.u64(Tag.LENGTH, count)]
+        if sequence is not None:
+            fields.append(Field.u64(Tag.SEQUENCE_ID, sequence, True))
+        return self.request(OpCode.READ_SEQUENCE, fields)
+
+    def stop_sequence(self, session, sequence, *, source=1):
+        return self.request(OpCode.STOP_SEQUENCE, self._session(session) + [
+            Field.u32(Tag.SOURCE_KIND, source), Field.u64(Tag.SEQUENCE_ID, sequence, True)])
+
+    def release_sequence_capture(self, session, capture):
+        return self.request(OpCode.RELEASE_SEQUENCE_CAPTURE,
+                            self._session(session) + [Field.u64(Tag.CAPTURE_ID, capture, True)])
+
     def start_recording(self, session, *, source=1):
         return self.request(OpCode.START_RECORDING, self._session(session) + [Field.u32(Tag.SOURCE_KIND, source)])
 
@@ -264,6 +352,13 @@ class Client:
                 raise TimeoutError(f'Simulation transaction {transaction} remains unfinished')
             time.sleep(interval)
 
+
+    def projection_history(self, session, *, count=64):
+        """Read bounded submitted projection metadata without a lease or GPU capture."""
+        if type(count) is not int or not 1 <= count <= 64:
+            raise ProtocolError('Projection history count must be in [1,64]')
+        return self.request(OpCode.READ_PROJECTION_HISTORY,
+                            self._session(session) + [Field.u64(Tag.LENGTH, count)])
 
     def diagnostics(self, session, *, after=0, count=128, frame=None):
         if type(after) is not int or not 0 <= after < 2**64 or type(count) is not int or not 0 <= count <= 256:

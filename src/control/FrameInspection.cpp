@@ -1,5 +1,6 @@
 #include "control/FrameInspection.h"
 #include "control/SimulationControl.h"
+#include "graphics/FrameOutput.h"
 #include "simulation/BodyModel.h"
 
 #include <algorithm>
@@ -697,6 +698,7 @@ InspectionValue InspectHaptics(const std::vector<HapticOutput>& value, const Act
 class LayerEncoder
 {
   public:
+	InspectionValue Projection(const ProjectionLayerDescription& layer) { return Layer(layer); }
 	InspectionValue InspectLayers(const FrameLayers& value)
 	{
 		return InspectionValue::Object({{"identity_scope", InspectionValue::Text("frame")},
@@ -740,9 +742,13 @@ class LayerEncoder
 	}
 	InspectionValue Space(const LayerSpaceDescription& value)
 	{
+		const auto referenceType = value.referenceType == XR_REFERENCE_SPACE_TYPE_MAX_ENUM ?
+			InspectionValue::Null() : InspectionValue::Signed(value.referenceType);
 		return InspectionValue::Object({{"source", Identity(m_spaces, value.source)},
 										{"flags", InspectionValue::Unsigned(value.flags)},
-										{"world_pose", InspectPoseSample(value.worldPose)}});
+										{"world_pose", InspectPoseSample(value.worldPose)},
+										{"reference_type", referenceType},
+										{"pose_offset", InspectPose(value.poseOffset)}});
 	}
 	InspectionValue InspectDepth(const LayerDepthDescription& depth)
 	{
@@ -852,12 +858,28 @@ InspectionValue InspectSubmissionSummary(const FrameSubmissionState& submission)
 		 {"drop_reason", InspectionValue::Text(DropReasonName(submission.dropReason))}});
 }
 
+InspectionValue InspectViewQuery(const ViewQuerySnapshot& query)
+{
+	return InspectionValue::Object(
+		{{"correlation", InspectionValue::Text("last_successful_query_at_submission_time")},
+		 {"display_time", InspectionValue::Signed(query.displayTime.value.count())},
+		 {"sample_time", InspectionValue::Signed(query.sampleTime.value.count())},
+		 {"foveated_requested", InspectionValue::Boolean(query.foveatedRequested)},
+		 {"gaze_active", InspectionValue::Boolean(query.gazeActive)},
+		 {"fovs", InspectArray(query.fieldsOfView, InspectFov)}});
+}
+
 InspectionValue InspectAvailability(const FrameSubmissionState& submission)
 {
 	const auto diagnosticAvailability = submission.diagnostics ? "recorded_at_submission" : "not_recorded";
 	return InspectionValue::Object(
-		{{"applied_foveation", InspectionValue::Text("not_recorded")},
+		{{"applied_foveation", InspectionValue::Text(submission.viewQuery ? "query_recorded" : "not_recorded")},
 		 {"applied_commands", InspectionValue::Text(submission.commands ? "recorded" : "not_recorded")},
+		 {"tracking", InspectionValue::Text(submission.tracking ? "recorded" : "not_recorded")},
+		 {"action_dictionary", InspectionValue::Text(submission.actions.dictionary ? "recorded" : "not_recorded")},
+		 {"fb_foveation", InspectionValue::Text("unsupported")},
+		 {"validation_scope", InspectionValue::Text("runtime_submitted_layers")},
+		 {"native_driver_validation", InspectionValue::Text("not_recorded")},
 		 {"validation_events", InspectionValue::Text(diagnosticAvailability)},
 		 {"frame_trace", InspectionValue::Text(diagnosticAvailability)}});
 }
@@ -868,7 +890,8 @@ InspectionValue InspectDiagnostics(const FrameDiagnostics& diagnostics)
 									  "submitted",		  "discarded",		  "cancelled",		  "native_submitted",
 									  "gpu_complete",	  "gpu_failed",		  "display_selected", "display_repeated",
 									  "display_cleared",  "capture_ready",	  "capture_failed",	  "preview_dropped",
-									  "commands_applied", "command_rejected", "api_error",		  "validation"};
+									  "commands_applied", "command_rejected", "api_error",		  "validation",
+									  "display_empty", "image_retired"};
 	static constexpr std::array categories{"timing", "performance", "api_error", "validation", "command"};
 	return InspectionValue::Object(
 		{{"capacity", InspectionValue::Unsigned(diagnostics.capacity)},
@@ -895,6 +918,91 @@ InspectionValue InspectDiagnostics(const FrameDiagnostics& diagnostics)
 					   {"related", InspectionValue::Unsigned(event.related)}});
 			  })}});
 }
+namespace
+{
+InspectionValue InspectHistoricalImage(const HistoricalImage& image)
+{
+	const auto& frame = *image.metadata;
+	const auto completion = image.output ? image.output->PollCompletion() : CompletionStatus::Failed;
+	const auto phase = image.output ? (completion == CompletionStatus::Complete ? "ready"
+		: completion == CompletionStatus::Pending ? "pending" : "failed")
+		: ((image.view == ImageHistoryView::Quads && !image.quadVisible) ||
+			(frame.submission && !frame.submission->layerCount)) ? "clear" : "unavailable";
+	return InspectionValue::Object(
+		{{"frame_id", InspectionValue::Unsigned(frame.key.frame.value)}, {"phase", InspectionValue::Text(phase)},
+		 {"quad_rectangles", image.view == ImageHistoryView::Quads ? InspectArray(image.quadBounds, [](const auto& rectangle)
+			{
+				return InspectionValue::Object({{"x", InspectionValue::Signed(rectangle.offset.x)},
+					{"y", InspectionValue::Signed(rectangle.offset.y)}, {"width", InspectionValue::Signed(rectangle.extent.width)},
+					{"height", InspectionValue::Signed(rectangle.extent.height)}});
+			}) : InspectionValue::Null()}});
+}
+} // namespace
+InspectionValue InspectImageHistory(const ImageHistorySnapshot& history)
+{
+	return InspectionValue::Object(
+		{{"generation", InspectionValue::Unsigned(history.generation.value)},
+		 {"target", InspectionValue::Text(history.view == ImageHistoryView::Quads ? "quad_layers" : "composed_eyes")},
+		 {"capacity", InspectionValue::Unsigned(FrameImageHistory::Capacity)},
+		 {"evicted", InspectionValue::Unsigned(history.evicted)},
+		 {"unavailable", InspectionValue::Unsigned(history.unavailable)},
+		 {"entries", InspectArray(history.entries, InspectHistoricalImage)}});
+}
+InspectionValue InspectImageWindow(const ImageWindowSnapshot& window)
+{
+	const auto phase = window.interrupted ? "interrupted" :
+		window.postCount == FrameImageWindow::PostCount ? "complete" : "collecting";
+	return InspectionValue::Object(
+		{{"generation", InspectionValue::Unsigned(window.generation.value)},
+		 {"target", InspectionValue::Text(window.view == ImageHistoryView::Quads ? "quad_layers" : "composed_eyes")},
+		 {"trigger_frame", InspectionValue::Unsigned(window.trigger.value)},
+		 {"capacity", InspectionValue::Unsigned(FrameImageWindow::Capacity)},
+		 {"pre_count", InspectionValue::Unsigned(window.preCount)},
+		 {"post_count", InspectionValue::Unsigned(window.postCount)},
+		 {"post_requested", InspectionValue::Unsigned(FrameImageWindow::PostCount)},
+		 {"phase", InspectionValue::Text(phase)},
+		 {"entries", InspectArray(window.entries, InspectHistoricalImage)}});
+}
+
+InspectionValue InspectProjectionHistory(const FrameHistorySnapshot& history, std::size_t count)
+{
+	if (!count || count > 64)
+		throw std::invalid_argument("Projection history count must be in [1,64]");
+	std::vector<InspectionValue> entries;
+	entries.reserve(count);
+	std::size_t available = 0;
+	for (auto frame = history.frames.rbegin(); frame != history.frames.rend(); ++frame)
+	{
+		if (!(*frame)->submission || !(*frame)->submission->layers)
+			continue;
+		const auto& submission = *(*frame)->submission;
+		const auto& layers = submission.layers->layers;
+		LayerEncoder encoder;
+		for (std::size_t index = layers.size(); index > 0; --index)
+		{
+			const auto* projection = std::get_if<ProjectionLayerDescription>(&layers[index - 1]);
+			if (!projection)
+				continue;
+			++available;
+			if (entries.size() == count)
+				continue;
+			entries.push_back(InspectionValue::Object(
+				{{"frame_id", InspectionValue::Unsigned((*frame)->key.frame.value)},
+				 {"display_time", InspectionValue::Signed(submission.displayTime.value.count())},
+				 {"layer", InspectionValue::Unsigned(index - 1)},
+				 {"ipd", InspectionValue::Float(submission.viewSettings.ipd)},
+				 {"projection", encoder.Projection(*projection)}}));
+		}
+	}
+	std::reverse(entries.begin(), entries.end());
+	return InspectionValue::Object(
+		{{"generation", InspectionValue::Unsigned(history.generation.value)},
+		 {"capacity", InspectionValue::Unsigned(history.capacity)},
+		 {"evicted_frames", InspectionValue::Unsigned(history.evicted)},
+		 {"omitted_entries", InspectionValue::Unsigned(available - entries.size())},
+		 {"entries", InspectionValue::Array(std::move(entries))}});
+}
+
 std::shared_ptr<const InspectionRecord> InspectFrame(InspectionStore& store, ControlSessionId session,
 													 const FrameRecord& frame)
 {
@@ -945,6 +1053,7 @@ std::shared_ptr<const InspectionRecord> InspectFrame(InspectionStore& store, Con
 						{"tracking", state.tracking ? InspectTracking(*state.tracking, revisions[*skeleton])
 													: InspectionValue::Null()},
 						{"view_settings", InspectionValue::Revision(revisions[0])},
+						{"view_query", state.viewQuery ? InspectViewQuery(*state.viewQuery) : InspectionValue::Null()},
 						{"applied_commands",
 						 commands ? InspectionValue::Revision(revisions[*commands]) : InspectionValue::Null()},
 						{"frame_trace",

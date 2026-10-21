@@ -54,7 +54,7 @@ def main():
                     return 77
                 arguments = [sys.argv[2], '--connect', str(path), '--runtime-smoke', '--hidden', '--validation']
                 if pixels:
-                    arguments += ['--export', str(data / 'raw.rgba'), '--screenshot', str(data / 'companion.bmp')]
+                    arguments += ['--export', str(data / 'frame.ppm'), '--screenshot', str(data / 'companion.bmp')]
                 companion = subprocess.Popen(arguments, env=environment, stdout=subprocess.PIPE,
                                              stderr=subprocess.STDOUT)
                 output = ''
@@ -94,13 +94,18 @@ def main():
                 require((data / 'control.destroyed').exists(), 'Companion finished before actual application-device teardown')
                 require(not observer.sessions(), 'Public XR sessions survived teardown')
                 if pixels:
-                    source = (data / 'raw.rgba').read_bytes()
-                    expected = (137, 188, 225, 255) if midtone and srgb else (
-                        (64, 128, 191, 255) if midtone else (255, 0, 0, 255))
-                    require(len(source) == 64 * 48 * 4 and
-                            all(abs(value - expected[index % 4]) <= (1 if midtone else 0)
+                    ppm = (data / 'frame.ppm').read_bytes()
+                    header, source = ppm.split(b'\n255\n', 1)
+                    require(header.startswith(b'P6\n# session=') and b'frame=4 capture=' in header and
+                            b'target=2 layer=0 view=0 slices=1 slice_height=48' in header and
+                            header.endswith(b'\n64 48'),
+                            'Viewable companion export lost frame identity or dimensions')
+                    expected = (137, 188, 225) if midtone and srgb else (
+                        (64, 128, 191) if midtone else (255, 0, 0))
+                    require(len(source) == 64 * 48 * 3 and
+                            all(abs(value - expected[index % 3]) <= (1 if midtone else 0)
                                 for index, value in enumerate(source)),
-                            f'Explicit source export changed color encoding: {list(source[:4])}')
+                            f'Explicit source export changed color encoding: {list(source[:3])}')
                     screenshot = (data / 'companion.bmp').read_bytes()
                     require(screenshot[:2] == b'BM', 'Companion screenshot missing')
                     offset = struct.unpack_from('<I', screenshot, 10)[0]
@@ -112,7 +117,7 @@ def main():
                         destination = Path(destination) / ('srgb' if srgb else 'unorm') if midtone else Path(destination)
                         destination.mkdir(parents=True, exist_ok=True)
                         shutil.copy(data / 'companion.bmp', destination / 'companion.bmp')
-                        shutil.copy(data / 'raw.rgba', destination / 'raw.rgba')
+                        shutil.copy(data / 'frame.ppm', destination / 'frame.ppm')
                     require(matching > 2000,
                             f'Actual companion window did not show display-encoded RGB {display}: {matching}')
                     print(f'PASS unchanged source bytes and actual display-encoded window pixels: {matching}')

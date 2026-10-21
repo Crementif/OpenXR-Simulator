@@ -335,4 +335,42 @@ std::optional<XrRect2Di> PreviewQuadBounds(const PreviewQuadEye& geometry, Previ
 		return {};
 	return XrRect2Di{{left, top}, {right - left, bottom - top}};
 }
+std::array<XrRect2Di, 2> CompositionQuadBounds(const CompositionPlan& plan)
+{
+	std::array<XrRect2Di, 2> result{};
+	for (const auto& draw : plan.draws)
+	{
+		if (draw.constants.control[0] != 1 || draw.eye >= result.size())
+			continue;
+		const auto& constants = draw.constants;
+		const auto& rotation = constants.sourceFromEyeRotation;
+		const auto& position = constants.sourceFromEyePosition;
+		const auto eyeFromQuad = RelativePose(IdentityPose(),
+			{{rotation[0], rotation[1], rotation[2], rotation[3]}, {position[0], position[1], position[2]}});
+		const float halfWidth = 0.5f / constants.quadParameters[0];
+		const float halfHeight = 0.5f / constants.quadParameters[1];
+		PreviewQuadEye geometry;
+		geometry.tangents = constants.eyeTangents;
+		const std::array<XrVector3f, 4> corners{{{-halfWidth, halfHeight, 0}, {halfWidth, halfHeight, 0},
+			{halfWidth, -halfHeight, 0}, {-halfWidth, -halfHeight, 0}}};
+		for (std::size_t index = 0; index < corners.size(); ++index)
+			geometry.viewCorners[index] = Compose(eyeFromQuad, {{0, 0, 0, 1}, corners[index]}).position;
+		const auto bounds = PreviewQuadBounds(geometry, {0, 0, static_cast<float>(plan.width), static_cast<float>(plan.height)},
+			{static_cast<std::int32_t>(plan.width), static_cast<std::int32_t>(plan.height)});
+		if (!bounds)
+			continue;
+		auto& combined = result[draw.eye];
+		if (!combined.extent.width || !combined.extent.height)
+			combined = *bounds;
+		else
+		{
+			const auto left = std::min(combined.offset.x, bounds->offset.x);
+			const auto top = std::min(combined.offset.y, bounds->offset.y);
+			const auto right = std::max(combined.offset.x + combined.extent.width, bounds->offset.x + bounds->extent.width);
+			const auto bottom = std::max(combined.offset.y + combined.extent.height, bounds->offset.y + bounds->extent.height);
+			combined = {{left, top}, {right - left, bottom - top}};
+		}
+	}
+	return result;
+}
 } // namespace simxr

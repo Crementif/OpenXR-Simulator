@@ -35,7 +35,9 @@ enum class FrameTraceKind
 	CommandsApplied,
 	CommandRejected,
 	ApiError,
-	Validation
+	Validation,
+	DisplayEmpty,
+	ImageRetired
 };
 enum class FrameDiagnosticCategory
 {
@@ -88,7 +90,13 @@ class FrameDiagnosticsJournal
 						  std::string_view detail = {}) noexcept;
 	FrameDiagnostics Read(std::uint64_t after = 0, std::size_t count = 128, std::optional<FrameKey> frame = {}) const;
 
+	// Caller reserves storage before native acceptance. Failure leaves the prior snapshot intact.
+	bool ReadInto(FrameDiagnostics& snapshot, std::uint64_t after, std::size_t count,
+				  std::optional<FrameKey> frame = {}) const noexcept;
+
   private:
+	void CopyLocked(FrameDiagnostics& snapshot, std::uint64_t after, std::size_t count,
+					std::optional<FrameKey> frame) const noexcept;
 	static std::size_t ValidateCapacity(std::size_t capacity);
 	static void CopyDetail(FrameDiagnostic& event, std::string_view detail) noexcept;
 	TimestampSource m_timestamp;

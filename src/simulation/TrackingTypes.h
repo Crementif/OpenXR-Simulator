@@ -21,6 +21,14 @@ struct PoseSample
 	std::optional<RuntimeTime> eyeGazeSampleTime{};
 };
 
+// A value snapshot of one space lookup; it does not retain the space handle.
+struct SpaceSample
+{
+	PoseSample worldPose;
+	XrReferenceSpaceType referenceType = XR_REFERENCE_SPACE_TYPE_MAX_ENUM;
+	XrPosef poseOffset{{0, 0, 0, 1}, {0, 0, 0}};
+};
+
 struct ControllerPose
 {
 	PoseSample pose;

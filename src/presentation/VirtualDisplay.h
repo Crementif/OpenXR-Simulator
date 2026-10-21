@@ -15,7 +15,8 @@ namespace simxr
 class VirtualDisplay
 {
   public:
-	explicit VirtualDisplay(std::shared_ptr<Clock> clock = std::make_shared<SteadyClock>(), std::size_t capacity = 8);
+	explicit VirtualDisplay(std::shared_ptr<Clock> clock = std::make_shared<SteadyClock>(), std::size_t capacity = 8,
+							FrameHistory* history = nullptr);
 	~VirtualDisplay();
 	VirtualDisplay(const VirtualDisplay&) = delete;
 	VirtualDisplay& operator=(const VirtualDisplay&) = delete;

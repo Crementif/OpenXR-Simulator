@@ -41,6 +41,18 @@ float3 Rotate(float4 q, float3 v)
 }
 float4 PSMain(VertexOutput input) : SV_Target
 {
+    if (layer.control.x == 2)
+    {
+        int2 pixel = int2(layer.imageRectangle.xy + input.uv * layer.imageRectangle.zw);
+        float sample = sourceTexture.Load(int3(pixel, 0)).r;
+        float value = saturate((sample - layer.quadParameters.x) / (layer.quadParameters.y - layer.quadParameters.x));
+        if (layer.control.y != 0 && value > 0 && value < 1)
+        {
+            float numerator = layer.quadParameters.z * value;
+            value = numerator / (layer.quadParameters.w * (1 - value) + numerator);
+        }
+        return float4(value, value, value, 1);
+    }
     float3 eyeRay = float3(lerp(layer.eyeTangents.x, layer.eyeTangents.y, input.uv.x),
         lerp(layer.eyeTangents.z, layer.eyeTangents.w, input.uv.y), -1);
     float3 ray = Rotate(layer.sourceFromEyeRotation, eyeRay);

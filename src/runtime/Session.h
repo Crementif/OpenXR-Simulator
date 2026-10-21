@@ -69,9 +69,17 @@ class Session
 	std::shared_ptr<Clock> ClockSource() const;
 	FrameScheduler& Scheduler();
 	FrameHistory& History();
+	XrResult EnableImageHistory();
+	bool SupportsImageHistory() const;
+	FrameImageHistory& ImageHistory();
 	VirtualDisplay& Display();
 	SnapshotStore& Captures();
-	XrResult ConfigureCapturePool(FramePool pool, bool layerViews = false, CapturePromoter promoter = {});
+	XrResult ConfigureCapturePool(FramePool pool, bool layerViews = false, CapturePromoter promoter = {}, bool depthViews = false, bool filteredComposition = false);
+	SnapshotAdmission StartImageRecording(CaptureTarget target, std::uint32_t capacity, std::uint64_t frames = 0,
+		std::span<CaptureId> captures = {});
+	void StopImageRecording() noexcept;
+	ImageRecordingSnapshot ImageRecording() const;
+	CaptureId RefillImageRecording(CaptureId released);
 	CaptureReservation ReserveCapture(CaptureTarget target = {});
 	XrResult PrepareCaptureProducer(FrameKey frame, std::shared_ptr<FrameReservation>& producer,
 									CaptureTarget target = {});
@@ -91,8 +99,9 @@ class Session
 	// Serializes CPU-only control mutation against Begin/End/Close. The callback
 	// may access Commands/ReleaseCommandSource, but must not change lifecycle,
 	// perform I/O, wait for GPU work or reenter a generation gate.
-	bool WithCommandGeneration(SessionGeneration generation, const std::function<void()>& work);
+	bool WithCommandGeneration(SessionGeneration generation, const std::function<void()>& work, bool requireRunning = true);
 	void ReleaseCommandSource(CommandSource source, bool retire = false);
+	void StopPoseSequence(CommandSource source);
 	XrResult ConfigureCommands(std::uint64_t seed, std::optional<CommandConfiguration> initial = {},
 							   bool overrideInitial = true);
 	CommandConfiguration CommandConfigurationSnapshot() const;
@@ -117,8 +126,8 @@ class Session
 	SessionSnapshot m_state;
 	std::shared_ptr<Clock> m_clock;
 	FrameScheduler m_scheduler;
-	VirtualDisplay m_display;
 	FrameHistory m_history;
+	VirtualDisplay m_display;
 	SessionCaptureCoordinator m_captures;
 	SessionInteraction m_interaction;
 	SessionPublication m_publication;

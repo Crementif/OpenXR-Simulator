@@ -113,11 +113,12 @@ int Application::Run()
 							panels->Command(control::CommandKind::Step);
 						else if (state.selectedReady && state.selectedFrame == 3)
 						{
+							panels->InspectSelected();
 							holdUntil = renderer.SubmittedFrames() + 4;
 							runtimeStage = 3;
 						}
 					}
-					else if (runtimeStage == 3 && renderer.CompletedFrames() >= holdUntil)
+					else if (runtimeStage == 3 && state.inspectedFrame == 3 && renderer.CompletedFrames() >= holdUntil)
 					{
 						panels->Command(control::CommandKind::Step, 0, true);
 						runtimeStage = 4;

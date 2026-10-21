@@ -175,6 +175,19 @@ void Launch(const std::filesystem::path& executable)
 			"Child cwd, manifest, environment and literal argv applied");
 	Require((std::getenv("XR_RUNTIME_JSON") ? std::getenv("XR_RUNTIME_JSON") : "") == before,
 			"Parent runtime selection unchanged");
+	const auto validManifest = profile.runtimeManifest;
+	profile.runtimeManifest = (directory.path / "missing-runtime.json").string();
+	Require(launcher.Launch(profile), "Admit missing runtime launch");
+	Eventually(
+		[&]
+		{
+			state = launcher.Snapshot();
+			return state.state == LaunchState::Failed || state.state == LaunchState::Exited;
+		},
+		"Missing runtime launch did not settle");
+	Require(state.state == LaunchState::Failed && state.detail.find("Runtime manifest") != std::string::npos,
+			"Missing runtime must fail before starting the application");
+	profile.runtimeManifest = validManifest;
 	profile.executable = "/no/such/executable";
 	Require(launcher.Launch(profile), "Admit failed launch");
 	do

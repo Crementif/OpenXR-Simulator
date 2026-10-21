@@ -2,6 +2,7 @@
 
 #include "graphics/backends/vulkan/VulkanDevice.h"
 
+#include <functional>
 #include <memory>
 
 namespace simxr
@@ -21,6 +22,8 @@ class VulkanImage
 	VkExtent2D extent{};
 	std::uint32_t layers = 0;
 	VkImageUsageFlags usage = 0;
+	// Set before publication; observes actual native image destruction only.
+	std::function<void()> retired;
 	VkImageAspectFlags Aspect() const;
 	VkImageLayout ApplicationLayout() const;
 

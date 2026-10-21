@@ -81,10 +81,21 @@ XrResult VulkanSwapchain::Create(VulkanBackend& backend, const XrSwapchainCreate
 	auto copied = description;
 	copied.next = nullptr;
 	auto prepared = std::unique_ptr<VulkanSwapchain>(new VulkanSwapchain(copied));
+	auto usage = ImageUsage(description);
+	if (DepthFormat(static_cast<VkFormat>(description.format)) && !(usage & VK_IMAGE_USAGE_SAMPLED_BIT))
+	{
+		VkImageFormatProperties properties{};
+		if (vkGetPhysicalDeviceImageFormatProperties(backend.Device()->binding.physicalDevice,
+			static_cast<VkFormat>(description.format), VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
+			usage | VK_IMAGE_USAGE_SAMPLED_BIT, 0, &properties) == VK_SUCCESS &&
+			description.width <= properties.maxExtent.width && description.height <= properties.maxExtent.height &&
+			description.arraySize <= properties.maxArrayLayers && (properties.sampleCounts & VK_SAMPLE_COUNT_1_BIT))
+			usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+	}
 	for (auto& image : prepared->m_images)
 		image.resource =
 			backend.CreateImage(static_cast<VkFormat>(description.format), {description.width, description.height},
-								description.arraySize, ImageUsage(description));
+								description.arraySize, usage);
 	output = std::move(prepared);
 	return XR_SUCCESS;
 }

@@ -240,6 +240,42 @@ void RetainedActionInterpretation()
 	Require(dictionaryLifetime.expired(), "Retained dictionary leaked after its last historical frame reader");
 }
 
+void SubmissionObserverLifetime()
+{
+	using namespace simxr;
+	std::shared_ptr<FrameDiagnosticsJournal> observer;
+	FrameKey key;
+	{
+		FrameHistory history(2, 16);
+		observer = history.DiagnosticsJournal();
+		key = {history.StartGeneration(), {1}};
+		const FramePrediction prediction{key.frame, {1}, {Duration{100}}, Duration{10}};
+		history.Issue(prediction);
+		history.Begin(prediction.id);
+		FrameSubmissionState submission;
+		submission.displayTime = prediction.displayTime;
+		const auto result = history.Submit(prediction.id, submission,
+			[&]
+			{
+				observer->Trace(FrameTraceKind::NativeSubmitted, key, prediction.displayTime);
+				failDiagnosticAllocation = true;
+				return XR_SUCCESS;
+			});
+		const bool allocationFree = std::exchange(failDiagnosticAllocation, false);
+		const auto record = history.Find(key);
+		const auto& events = record->submission->diagnostics->events;
+		Require(result == XR_SUCCESS && allocationFree && events.size() == 4 &&
+			events[2].kind == FrameTraceKind::NativeSubmitted && events[3].kind == FrameTraceKind::Submitted,
+			"Accepted native milestone must enter immutable CPU trace without post-acceptance allocation");
+		FrameDiagnostics unreserved;
+		Require(!observer->ReadInto(unreserved, 0, 16, key) && unreserved.events.empty(),
+			"Allocation-free read must reject insufficient caller storage");
+	}
+	Require(observer->Trace(FrameTraceKind::ImageRetired, key, {Duration{100}}).sequence == 5 &&
+		observer->Read(0, 16, key).events.back().kind == FrameTraceKind::ImageRetired,
+		"Late native image retirement must not depend on a destroyed session/history");
+}
+
 void DiagnosticHistory()
 {
 	using namespace simxr;
@@ -443,5 +479,6 @@ int main()
 	DiagnosticClockLifetime();
 	RetainedActionInterpretation();
 	DiagnosticHistory();
+	SubmissionObserverLifetime();
 	std::cout << "Frame history tests passed\n";
 }

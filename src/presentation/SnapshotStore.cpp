@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -30,26 +31,26 @@ bool Pending(SnapshotPhase phase)
 
 bool HasLayerView(const FrameRecord& metadata, CaptureTarget target)
 {
-	if (target.kind != CaptureKind::LayerView)
+	if (!target.IsLayerImage())
 		return true;
 	if (!metadata.submission || !metadata.submission->layers ||
 		target.layer >= metadata.submission->layers->layers.size())
 		return false;
 	const auto& layer = metadata.submission->layers->layers[target.layer];
 	if (const auto* projection = std::get_if<ProjectionLayerDescription>(&layer))
-		return target.view < projection->views.size();
-	return target.view == 0;
+		return target.view < projection->views.size() && (!target.IsDepth() || projection->views[target.view].depth.has_value());
+	return !target.IsDepth() && target.view == 0;
 }
 
 bool Valid(CaptureTarget target)
 {
-	return target.kind == CaptureKind::LayerView ||
-		   ((target.kind == CaptureKind::ComposedEyes || target.kind == CaptureKind::VirtualDisplay) && !target.layer &&
-			!target.view);
+	return target.IsLayerImage() ||
+		   ((target.kind == CaptureKind::ComposedEyes || target.kind == CaptureKind::VirtualDisplay ||
+			 target.IsFilteredComposition()) && !target.layer && !target.view);
 }
 } // namespace
 
-SnapshotStore::SnapshotStore(std::size_t capacity) : m_slots(capacity)
+SnapshotStore::SnapshotStore(std::size_t capacity, FrameHistory* history) : m_history(history), m_slots(capacity)
 {
 	m_entries.reserve(capacity);
 }
@@ -90,7 +91,65 @@ void SnapshotStore::CancelPendingLocked() noexcept
 			entry.producer.reset();
 			entry.composedProducer.reset();
 			++entry.revision;
+			TraceTerminal(entry);
 		}
+}
+
+void SnapshotStore::TraceTerminal(Entry& entry) noexcept
+{
+	if (!m_history || entry.terminalTraced)
+		return;
+	const auto& record = entry.record;
+	const char* phase = nullptr;
+	bool ready = false;
+	switch (record.phase)
+	{
+	case SnapshotPhase::Ready:
+		phase = "ready";
+		ready = true;
+		break;
+	case SnapshotPhase::Clear:
+		phase = "clear";
+		ready = true;
+		break;
+	case SnapshotPhase::Empty:
+		phase = "empty";
+		ready = true;
+		break;
+	case SnapshotPhase::Discarded:
+		phase = "discarded";
+		break;
+	case SnapshotPhase::Cancelled:
+		phase = "cancelled";
+		break;
+	case SnapshotPhase::Failed:
+		phase = "failed";
+		break;
+	case SnapshotPhase::Unavailable:
+		phase = "unavailable";
+		break;
+	default:
+		return;
+	}
+	RuntimeTime time;
+	if (record.display)
+		time = record.display->time;
+	else if (record.metadata)
+		time = record.metadata->submission ? record.metadata->submission->displayTime
+										   : record.metadata->prediction.displayTime;
+	const auto target = record.target.kind == CaptureKind::ComposedEyes ? "composed"
+		: record.target.kind == CaptureKind::LayerView ? "layer_view"
+		: record.target.kind == CaptureKind::LayerDepth ? "layer_depth"
+		: record.target.kind == CaptureKind::LayerDepthLinear ? "layer_depth_linear"
+		: record.target.kind == CaptureKind::ProjectionLayers ? "projection_layers"
+		: record.target.kind == CaptureKind::QuadLayers ? "quad_layers" : "display";
+	char detail[128];
+	std::snprintf(detail, sizeof(detail), "phase=%s; target=%s; layer=%u; view=%u",
+		phase, target, record.target.layer, record.target.view);
+	m_history->Trace(ready ? FrameTraceKind::CaptureReady : FrameTraceKind::CaptureFailed,
+		record.frame.value_or(FrameKey{record.generation, {}}), time, record.result,
+		FrameDiagnosticCategory::Timing, record.id.value, detail);
+	entry.terminalTraced = true;
 }
 
 void SnapshotStore::Stop() noexcept
@@ -207,6 +266,7 @@ CaptureReservation SnapshotStore::Pin(std::shared_ptr<const FrameRecord> metadat
 				entry->composedProducer.reset();
 			}
 			++entry->revision;
+			TraceTerminal(*entry);
 		}
 	}
 	if (!valid)
@@ -265,6 +325,7 @@ void SnapshotStore::Update(std::shared_ptr<const FrameRecord> metadata, std::spa
 			entry.composedProducer.reset();
 		}
 		++entry.revision;
+		TraceTerminal(entry);
 	}
 }
 
@@ -290,6 +351,7 @@ bool SnapshotStore::PublishDisplay(CaptureId id, const PresentationTick& tick,
 	if (entry->record.phase == SnapshotPhase::Unavailable)
 		entry->record.result = XR_ERROR_FEATURE_UNSUPPORTED;
 	++entry->revision;
+	TraceTerminal(*entry);
 	return true;
 }
 
@@ -326,7 +388,7 @@ bool SnapshotStore::SetProducer(FrameKey frame, std::shared_ptr<FrameReservation
 		return !entry.released && entry.record.frame == frame &&
 			   (entry.record.phase == SnapshotPhase::Issued || entry.record.phase == SnapshotPhase::Begun) &&
 			   (entry.record.target == target ||
-				(target == CaptureTarget{} && entry.record.target.kind == CaptureKind::LayerView));
+				(target == CaptureTarget{} && entry.record.target.IsAdditionalImage()));
 	};
 	for (const auto& entry : m_entries)
 		if (matches(entry) && (entry.record.target == target ? entry.producer : entry.composedProducer))
@@ -383,6 +445,7 @@ void SnapshotStore::Fail(FrameKey frame, XrResult result, std::shared_ptr<const 
 			entry.producer.reset();
 			entry.composedProducer.reset();
 			++entry.revision;
+			TraceTerminal(entry);
 		}
 }
 
@@ -456,6 +519,23 @@ bool SnapshotStore::Release(CaptureId id) noexcept
 	return true;
 }
 
+void SnapshotStore::RetireSequenceCaptures(CommandSource owner) noexcept
+{
+	std::lock_guard lock(m_mutex);
+	for (auto& entry : m_entries)
+	{
+		const auto& metadata = entry.record.metadata;
+		if (!metadata || !metadata->sequenceCapture)
+			continue;
+		const auto& capture = *metadata->sequenceCapture;
+		if (capture.request.owner != owner || capture.reservation.id != entry.record.id)
+			continue;
+		entry.released = true;
+		entry.producer.reset();
+		entry.composedProducer.reset();
+	}
+}
+
 void SnapshotStore::RetireAll() noexcept
 {
 	{
@@ -507,6 +587,7 @@ void SnapshotStore::Poll() noexcept
 					if (completion == CompletionStatus::Failed)
 						entry->record.result = XR_ERROR_RUNTIME_FAILURE;
 				}
+				TraceTerminal(*entry);
 				if (entry->released && !Pending(entry->record.phase))
 				{
 					released = std::move(*entry);

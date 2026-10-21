@@ -56,7 +56,8 @@ inline constexpr std::uint16_t Error = 1, Detail = 2, Session = 3, Generation = 
 							   Pose = 150, Position = 151, Orientation = 152, Controls = 153, Proportions = 154,
 							   Scenario = 155, Seed = 156, Overflow = 158, Recording = 159, Ownership = 160,
 							   Transactions = 161, Revision = 162, AppliedFrame = 163, AppliedTime = 164,
-							   Rescheduled = 165, GameId = 166, GameKind = 167;
+							   Rescheduled = 165, GameId = 166, GameKind = 167, ImageRecording = 168, TotalFrames = 169,
+							   ImageWindowId = 180, ProgramId = 181, SequenceId = 182, Loop = 183;
 }
 
 enum class Capability : std::uint64_t
@@ -75,7 +76,15 @@ enum class Capability : std::uint64_t
 	SimulationCommands = 1ULL << 11,
 	CommandRecording = 1ULL << 12,
 	FrameDiagnostics = 1ULL << 13,
-	GameBridge = 1ULL << 14
+	GameBridge = 1ULL << 14,
+	DepthCapture = 1ULL << 15,
+	ImageRecording = 1ULL << 16,
+	FilteredComposition = 1ULL << 17,
+	ProjectionHistory = 1ULL << 18,
+	ImageHistory = 1ULL << 19,
+	ImageWindow = 1ULL << 20,
+	QuadImageHistory = 1ULL << 21,
+	PoseSequences = 1ULL << 22
 };
 
 // Wire values are explicit and independent of the core's enum representation.
@@ -87,12 +96,18 @@ enum class CommandKind : std::uint32_t
 	DisplayStep = 4,
 	Resume = 5,
 	Cancel = 6,
-	Release = 7
+	Release = 7,
+	StartImageRecording = 8,
+	StopImageRecording = 9
 };
 enum class TargetKind : std::uint32_t
 {
 	ComposedEyes = 1,
 	LayerView = 2,
-	VirtualDisplay = 3
+	VirtualDisplay = 3,
+	LayerDepth = 4,
+	LayerDepthLinear = 5,
+	ProjectionLayers = 6,
+	QuadLayers = 7
 };
 } // namespace simxr::control

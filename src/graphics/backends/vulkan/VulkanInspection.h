@@ -12,10 +12,17 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace simxr
 {
+enum class VulkanInspectionKind
+{
+	Required,
+	History
+};
+struct CompositionPlan;
 class VulkanFrame;
 class VulkanInspection;
 class VulkanInspectionTransfer;
@@ -93,6 +100,11 @@ class VulkanInspectionFrame final : public FrameOutput
 {
   public:
 	~VulkanInspectionFrame();
+	// One retained source per draw; crop/slice coordinates address those images.
+	// All sources must belong to the same owned queue. Pending input returns
+	// empty; failed input, invalid bindings or exhausted capacity throw.
+	static std::shared_ptr<VulkanInspectionFrame> Compose(const CompositionPlan& plan,
+		std::span<const std::shared_ptr<const VulkanInspectionFrame>> sources);
 	CompletionStatus PollCompletion() const noexcept override;
 	const VulkanImage& Image() const;
 	VkImageView View(std::uint32_t eye) const;
@@ -141,7 +153,10 @@ class VulkanInspection
 	~VulkanInspection();
 	VulkanInspection(const VulkanInspection&) = delete;
 	VulkanInspection& operator=(const VulkanInspection&) = delete;
-	std::unique_ptr<VulkanInspectionTransfer> Prepare(std::shared_ptr<VulkanFrame> source);
+	// Observers are installed before worker publication and never retain source images.
+	std::unique_ptr<VulkanInspectionTransfer> Prepare(std::shared_ptr<VulkanFrame> source,
+		std::function<void(CompletionStatus)> completed = {}, std::function<void()> retired = {},
+		VulkanInspectionKind kind = VulkanInspectionKind::Required);
 	VkResult Drain(std::uint64_t timeout = 5000000000ULL);
 	VkResult Close(std::uint64_t timeout = 5000000000ULL);
 	bool CanShare() const noexcept;

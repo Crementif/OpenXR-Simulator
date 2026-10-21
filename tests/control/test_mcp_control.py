@@ -83,8 +83,26 @@ class FakeClient:
     def release_inspection(self, inspection):
         return {**self._call('release_inspection', inspection), 'inspection_id': inspection, 'released': True}
 
-    def retain_image(self, session, capture):
-        return {**self._call('retain_image', session, capture), 'image_reader_id': 2**63 + 3}
+    def retain_image(self, session, capture, **selection):
+        return {**self._call('retain_image', session, capture, **selection), 'image_reader_id': 2**63 + 3}
+
+    def image_history(self, session, **selection):
+        return self._call('image_history', session, **selection)
+
+    def retain_historical_image(self, session, frame, **selection):
+        return self._call('retain_historical_image', session, frame, **selection)
+
+    def begin_image_window(self, session, **selection):
+        return {**self._call('begin_image_window', session, **selection), 'image_window_id': 2**63 + 5}
+
+    def image_window(self, window):
+        return self._call('image_window', window)
+
+    def retain_window_image(self, window, frame):
+        return self._call('retain_window_image', window, frame)
+
+    def release_image_window(self, window):
+        return self._call('release_image_window', window)
 
     def image_info(self, image):
         return {**self._call('image_info', image), 'image_reader_id': image,
@@ -146,6 +164,25 @@ class AdapterTests(unittest.TestCase):
     def tearDown(self):
         self.tools.close()
 
+    def test_window_routing_and_exact_identity(self):
+        started = self.tools.call('debug_begin_image_window', dict(self.common, target='quad_layers'))
+        self.assertTrue(started['ok'], started)
+        self.assertEqual(started['image_window_id'], str(2**63 + 5))
+        self.assertEqual(self.client.calls[-1][2]['target'], TargetKind.QUAD_LAYERS)
+        scope = {'connection': self.connection, 'window': started['image_window_id']}
+        for name in ('debug_image_window', 'debug_release_image_window'):
+            self.assertTrue(self.tools.call(name, scope)['ok'])
+            self.assertEqual(self.client.calls[-1][1], (2**63 + 5,))
+        self.assertTrue(self.tools.call('debug_retain_window_image', dict(scope, frame=str(2**63 + 6)))['ok'])
+        self.assertEqual(self.client.calls[-1][1], (2**63 + 5, 2**63 + 6))
+        for target in ('composed_eyes', 'quad_layers'):
+            self.assertTrue(self.tools.call('debug_image_history', dict(self.common, target=target))['ok'])
+            self.assertEqual(self.client.calls[-1][2]['target'], TargetKind[target.upper()])
+            self.assertTrue(self.tools.call('debug_retain_history', dict(self.common, target=target, frame='7'))['ok'])
+        self.assertEqual(self.tools.call('debug_begin_image_window', dict(self.common, target='layer_view'))['error'],
+                         'invalid_arguments')
+        self.assertEqual(self.tools.call('debug_image_window', dict(scope, window=2**63))['error'], 'invalid_arguments')
+
     def test_schemas_require_explicit_mutation_identity(self):
         definitions = {definition['name']: definition for definition in adapter.TOOL_DEFINITIONS}
         for name in ('debug_pause', 'debug_step', 'debug_strict_admission', 'debug_display_step',
@@ -162,6 +199,30 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(self.tools.call('debug_export_image', self.common)['error'], 'unsupported_tool')
         self.assertEqual(self.tools.call('debug_capture', {**self.common, 'capture': 1, 'filename': 'legacy.png'})['error'],
                          'invalid_arguments')
+
+    def test_realtime_recording_identity_and_budget(self):
+        result = self.tools.call('debug_start_image_recording', {**self.leased, 'command_id': '42',
+                                'target': 'layer_depth', 'view': 1, 'capacity': 2, 'frames': '0'})
+        self.assertTrue(result['ok'], result)
+        method, arguments, keywords = self.client.calls[-1]
+        self.assertEqual(arguments[1], CommandKind.START_IMAGE_RECORDING)
+        self.assertEqual(keywords, {'command_id': 42, 'target': TargetKind.LAYER_DEPTH, 'layer': 0, 'view': 1,
+                                   'recording_capacity': 2, 'recording_frames': 0})
+        self.assertEqual(self.tools.call('debug_start_image_recording', {**self.leased, 'command_id': 43,
+                                                                      'capacity': 5})['error'], 'invalid_arguments')
+
+    def test_exact_depth_selection(self):
+        for name in ('layer_depth', 'layer_depth_linear'):
+            result = self.tools.call('debug_retain_image', {**self.common, 'capture': '42',
+                                    'target': name, 'layer': 2, 'view': 1})
+            self.assertTrue(result['ok'], result)
+            method, arguments, keywords = self.client.calls[-1]
+            self.assertEqual(method, 'retain_image')
+            self.assertEqual(arguments[-1], 42)
+            self.assertEqual(keywords, {'target': TargetKind[name.upper()], 'layer': 2, 'view': 1})
+        definition = next(item for item in adapter.TOOL_DEFINITIONS if item['name'] == 'debug_retain_image')
+        self.assertNotIn('default', definition['inputSchema']['properties']['target'])
+        self.assertNotIn('target', definition['inputSchema']['required'])
 
     def test_forwarding_and_metadata_only(self):
         commands = [('debug_pause', CommandKind.PAUSE), ('debug_step', CommandKind.STEP),
@@ -249,7 +310,7 @@ class AdapterTests(unittest.TestCase):
             calls.append((lease, command, kwargs))
             return {'operation_id': full, 'command_id': full, 'captures': [1, full],
                     'diagnostics': [full], 'frame': {'frame_id': full, 'generation': 0},
-                    'display': {'tick': full}, 'pipeline': {'next_admission': full},
+                    'trigger_frame': full, 'image_window_id': full, 'display': {'tick': full}, 'pipeline': {'next_admission': full},
                     'presentation': {'last_submitted': full}, 'time': 2**60, 'count': 17}
 
         self.client.submit = submit
@@ -263,6 +324,8 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(response['diagnostics'], [str(full)])
         self.assertEqual(response['frame'], {'frame_id': str(full), 'generation': '0'})
         self.assertEqual(response['display']['tick'], str(full))
+        self.assertEqual(response['trigger_frame'], str(full))
+        self.assertEqual(response['image_window_id'], str(full))
         self.assertEqual(response['pipeline']['next_admission'], str(full))
         self.assertEqual(response['presentation']['last_submitted'], str(full))
         self.assertEqual(response['time'], str(2**60))

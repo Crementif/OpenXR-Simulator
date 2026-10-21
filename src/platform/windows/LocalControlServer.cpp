@@ -58,6 +58,7 @@ struct LocalControlServer::State
 	std::wstring wide;
 	std::size_t capacity;
 	native::Security security;
+	native::Handle endpoint;
 	native::Handle stopping = native::Event();
 	std::unique_ptr<native::Channel> listener;
 	std::thread acceptor;
@@ -70,6 +71,17 @@ struct LocalControlServer::State
 		if (!capacity || capacity > 64)
 			throw std::invalid_argument("Invalid control pipe client capacity");
 		workers.reserve(capacity);
+		// Keep an explicit simulator-owner reservation on Wine as well as Windows.
+		auto suffix = wide.substr(std::wstring_view(L"\\\\.\\pipe\\").size());
+		for (auto& character : suffix)
+			if (character >= L'A' && character <= L'Z')
+				character += L'a' - L'A';
+		const auto name = L"Local\\" + suffix;
+		SetLastError(ERROR_SUCCESS);
+		endpoint = native::Handle(CreateMutexW(&security.attributes, FALSE, name.c_str()));
+		const auto error = GetLastError();
+		if (!endpoint.value || error == ERROR_ALREADY_EXISTS)
+			throw native::Error("Local control endpoint already reserved or unavailable", error);
 	}
 	std::unique_ptr<native::Channel> Create(bool first)
 	{
@@ -249,5 +261,6 @@ void LocalControlServer::Close() noexcept
 			worker->thread.join();
 	m_state->workers.clear();
 	m_state->listener.reset();
+	m_state->endpoint.Close();
 }
 } // namespace simxr::control

@@ -40,7 +40,9 @@ enum class DebugCommand
 	DisplayStep,
 	Resume,
 	Cancel,
-	Release
+	Release,
+	StartImageRecording,
+	StopImageRecording
 };
 struct DebugRequest
 {
@@ -52,6 +54,8 @@ struct DebugRequest
 	CaptureId capture;
 	// Zero keeps direct internal callers unbound. Remote commands bind the run.
 	SessionGeneration generation;
+	std::uint32_t recordingCapacity = 2;
+	std::uint64_t recordingFrames = 0;
 	auto operator<=>(const DebugRequest&) const = default;
 };
 enum class DebugAdmission
@@ -96,7 +100,9 @@ enum class DebugProgress
 	Unsupported,
 	Busy,
 	SessionEnded,
-	LeaseExpired
+	LeaseExpired,
+	RecordingStarted,
+	RecordingStopped
 };
 struct DebugOperation
 {
@@ -142,8 +148,11 @@ struct DebugControllerSnapshot
 	std::size_t commands = 0;
 	bool composedEyes = false;
 	bool layerViews = false;
+	bool depthViews = false;
+	bool filteredComposition = false;
 	FramePipelineState pipeline;
 	SnapshotStoreState retention;
+	ImageRecordingSnapshot imageRecording;
 };
 
 // One controller owns one session. Commands are bounded and idempotent for the
@@ -218,6 +227,7 @@ class DebugController
 	std::vector<OwnedCapture> m_owned;
 	// Protected by execute, not state.
 	bool m_manual = false;
+	std::optional<DebugLeaseId> m_recordingLease;
 	bool m_boundaryCaptured = false;
 	SessionGeneration m_generation;
 	std::optional<FrameKey> m_cursor;

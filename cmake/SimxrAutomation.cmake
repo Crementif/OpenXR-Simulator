@@ -37,6 +37,9 @@ if(BUILD_TESTING)
             "${PROJECT_SOURCE_DIR}/tests/control/test_simulation_control.py" "$<TARGET_FILE:control_endpoint_host>"
             "$<TARGET_FILE:simxr_runner>")
         set_tests_properties(simulation_control PROPERTIES TIMEOUT 30)
+        add_test(NAME sequence_control COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/control/test_sequence_control.py" "$<TARGET_FILE:control_endpoint_host>")
+        set_tests_properties(sequence_control PROPERTIES TIMEOUT 30)
     endif()
 endif()
 install(TARGETS simxr_runner RUNTIME DESTINATION bin)

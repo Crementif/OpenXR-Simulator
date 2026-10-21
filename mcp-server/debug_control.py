@@ -43,7 +43,8 @@ _SESSION = {'connection': _CONNECTION, 'session': _ID, 'generation': _GENERATION
 _GAME = {'connection': _CONNECTION, 'session': _ID, 'generation': _GENERATION}
 _LEASE = {**_SESSION, 'lease': _ID}
 _COMMAND = {**_LEASE, 'command_id': _ID}
-_TARGET = {'target': {'type': 'string', 'enum': ['composed_eyes', 'layer_view'], 'default': 'composed_eyes'},
+_HISTORY_TARGET = {'type': 'string', 'enum': ['composed_eyes', 'quad_layers'], 'default': 'composed_eyes'}
+_TARGET = {'target': {'type': 'string', 'enum': ['composed_eyes', 'layer_view', 'layer_depth', 'layer_depth_linear', 'projection_layers', 'quad_layers'], 'default': 'composed_eyes'},
            'layer': {'type': 'integer', 'minimum': 0, 'maximum': 2**32 - 1, 'default': 0},
            'view': {'type': 'integer', 'minimum': 0, 'maximum': 2**32 - 1, 'default': 0},
            'lookahead': {'type': 'integer', 'minimum': 1, 'maximum': 4, 'default': 1}}
@@ -72,6 +73,11 @@ TOOL_DEFINITIONS = [
           {**_COMMAND, **_TARGET}, list(_COMMAND)),
     _tool('debug_strict_admission', 'Reserve one exact future capture and grant one application-frame admission.',
           {**_COMMAND, **_TARGET}, list(_COMMAND)),
+    _tool('debug_start_image_recording', 'Reserve a bounded real-time image stream without changing pacing. Status reports capture IDs and explicit overrun; releasing a consumed capture replenishes its slot.',
+          {**_COMMAND, **{key: value for key, value in _TARGET.items() if key != 'lookahead'},
+           'capacity': {'type': 'integer', 'minimum': 1, 'maximum': 4, 'default': 2},
+           'frames': {**_GENERATION, 'description': 'Frame count as uint64; zero records until explicitly stopped.'}}, list(_COMMAND)),
+    _tool('debug_stop_image_recording', 'Stop reserving new stream frames. Bound captures remain readable until released; overrun evidence is preserved.', _COMMAND),
     _tool('debug_display_step', 'Advance one virtual display tick while paused; this does not issue an XR frame.', _COMMAND),
     _tool('debug_resume', 'Resume the original execution mode while retaining explicitly captured snapshots.', _COMMAND),
     _tool('debug_cancel', 'Cancel unused permits for an operation; issued XR work is not cancelled.',
@@ -88,8 +94,23 @@ TOOL_DEFINITIONS = [
           {'connection': _CONNECTION, 'revision': _ID}),
     _tool('debug_release_inspection', 'Release an independent CPU inspection reader and its unused revision references.',
           {'connection': _CONNECTION, 'inspection': _ID}),
-    _tool('debug_retain_image', 'Retain an independent exact ready capture image reader; this does not read pixels.',
-          {**_SESSION, 'capture': _ID}),
+    _tool('debug_retain_image', 'Retain an exact captured image, optionally selecting another already retained target from the same frame; never admits work or reads pixels.',
+          {**_SESSION, 'capture': _ID,
+           'target': {key: value for key, value in _TARGET['target'].items() if key != 'default'},
+           'layer': _TARGET['layer'], 'view': _TARGET['view']}, [*_SESSION, 'capture']),
+    _tool('debug_image_history', 'Read bounded GPU history with exact frame identities and explicit missing/evicted images.',
+          {**_SESSION, 'count': {'type': 'integer', 'minimum': 1, 'maximum': 10, 'default': 10},
+           'target': _HISTORY_TARGET}, list(_SESSION)),
+    _tool('debug_retain_history', 'Retain an exact existing historical image without admission or pixel readback.',
+          {**_SESSION, 'frame': _ID, 'target': _HISTORY_TARGET}, [*_SESSION, 'frame']),
+    _tool('debug_begin_image_window', 'Retain available prehistory and twelve following submissions without changing application admission.',
+          {**_SESSION, 'target': _HISTORY_TARGET}, list(_SESSION)),
+    _tool('debug_image_window', 'Read a connection-owned image window, including exact frames, collection state and missing pixels.',
+          {'connection': _CONNECTION, 'window': _ID}),
+    _tool('debug_retain_window_image', 'Retain an exact image from a window independently of the window lifetime.',
+          {'connection': _CONNECTION, 'window': _ID, 'frame': _ID}),
+    _tool('debug_release_image_window', 'Release a window and interrupt unfinished collection; independent image readers survive.',
+          {'connection': _CONNECTION, 'window': _ID}),
     _tool('debug_retain_preview', 'Retain the currently selected completed virtual-display image, or report its actual clear; no admission or pixel readback.',
           _SESSION),
     _tool('debug_image_info', 'Inspect retained image metadata and capabilities without reading pixels.',
@@ -143,7 +164,8 @@ TOOL_DEFINITIONS = [
 _SCHEMAS = {tool['name']: tool['inputSchema'] for tool in TOOL_DEFINITIONS}
 _COMMAND_NAMES = {'debug_pause': 'PAUSE', 'debug_step': 'STEP', 'debug_strict_admission': 'STRICT_ADMISSION',
                   'debug_display_step': 'DISPLAY_STEP', 'debug_resume': 'RESUME', 'debug_cancel': 'CANCEL',
-                  'debug_release': 'RELEASE'}
+                  'debug_release': 'RELEASE', 'debug_start_image_recording': 'START_IMAGE_RECORDING',
+                  'debug_stop_image_recording': 'STOP_IMAGE_RECORDING'}
 
 
 def _validate(name, args):
@@ -161,7 +183,7 @@ def _validate(name, args):
     for key, value in args.items():
         rule = schema['properties'][key]
         if 'anyOf' in rule:
-            minimum = 0 if key in ('generation', 'offset', 'after') else 1
+            minimum = 0 if key in ('generation', 'offset', 'after', 'frames') else 1
             if isinstance(value, str):
                 if len(value) > 20 or re.fullmatch(r'0|[1-9][0-9]*', value) is None:
                     raise ValueError(f'{key} must be a canonical decimal uint64 string')
@@ -192,7 +214,7 @@ def _validate(name, args):
             raise ValueError(f'{key} must be a nonempty string')
         if 'enum' in rule and value not in rule['enum']:
             raise ValueError(f'Unsupported {key}')
-    if name in ('debug_step', 'debug_strict_admission') and args.get('target', 'composed_eyes') == 'composed_eyes' and (args.get('layer', 0) or args.get('view', 0)):
+    if name in ('debug_step', 'debug_strict_admission', 'debug_start_image_recording') and args.get('target', 'composed_eyes') in ('composed_eyes', 'projection_layers', 'quad_layers') and (args.get('layer', 0) or args.get('view', 0)):
         raise ValueError('Composed-eye capture has no layer/view index')
     if name.startswith('game_bridge_') and (('session' in args) != ('generation' in args)):
         raise ValueError('Supply both session and generation, or omit both for the independent game bridge')
@@ -208,7 +230,7 @@ def _validate(name, args):
 
 
 _IDENTIFIER_FIELDS = {'session', 'generation', 'lease', 'command_id', 'operation_id', 'capture_id',
-                      'frame_id', 'tick', 'next_admission', 'last_submitted', 'request_id', 'revision_id', 'inspection_id',
+                      'frame_id', 'trigger_frame', 'image_window_id', 'tick', 'next_admission', 'last_submitted', 'request_id', 'revision_id', 'inspection_id',
                       'game_id', 'transaction_id', 'applied_frame', 'origin_frame', 'seed', 'identity', 'image_reader_id', 'delivery_id', 'export_id', 'pool_generation', 'shared_image_id'}
 _IDENTIFIER_LISTS = {'captures', 'diagnostics'}
 
@@ -355,6 +377,10 @@ class DebugTools:
                 record = getattr(client, name.removeprefix('debug_'))(args['image'])
             elif name in ('debug_delivery_info', 'debug_release_delivery'):
                 record = getattr(client, name.removeprefix('debug_'))(args['delivery'])
+            elif name in ('debug_image_window', 'debug_release_image_window'):
+                record = getattr(client, name.removeprefix('debug_'))(args['window'])
+            elif name == 'debug_retain_window_image':
+                record = client.retain_window_image(args['window'], args['frame'])
             elif name == 'debug_start_export':
                 record = client.start_export(args['image'], layer=args.get('layer'))
             elif name in ('debug_export_info', 'debug_release_export'):
@@ -399,7 +425,19 @@ class DebugTools:
                 elif name == 'debug_inspect':
                     record = client.inspect(session, args['capture'])
                 elif name == 'debug_retain_image':
-                    record = client.retain_image(session, args['capture'])
+                    selection = {}
+                    if 'target' in args:
+                        selection = dict(target=sdk.TargetKind[args['target'].upper()],
+                                         layer=args.get('layer', 0), view=args.get('view', 0))
+                    record = client.retain_image(session, args['capture'], **selection)
+                elif name == 'debug_image_history':
+                    record = client.image_history(session, count=args.get('count', 10),
+                                                  target=sdk.TargetKind[args.get('target', 'composed_eyes').upper()])
+                elif name == 'debug_retain_history':
+                    record = client.retain_historical_image(session, args['frame'],
+                                                            target=sdk.TargetKind[args.get('target', 'composed_eyes').upper()])
+                elif name == 'debug_begin_image_window':
+                    record = client.begin_image_window(session, target=sdk.TargetKind[args.get('target', 'composed_eyes').upper()])
                 elif name == 'debug_retain_preview':
                     record = client.retain_preview(session)
                 else:
@@ -411,11 +449,14 @@ class DebugTools:
                     elif name == 'debug_acknowledge':
                         record = client.acknowledge(lease, args['through'])
                     else:
-                        target = sdk.TargetKind.LAYER_VIEW if args.get('target') == 'layer_view' else sdk.TargetKind.COMPOSED_EYES
+                        target = sdk.TargetKind[args.get('target', 'composed_eyes').upper()]
                         extra = {'command_id': args['command_id']}
                         if name in ('debug_step', 'debug_strict_admission'):
                             extra.update(target=target, layer=args.get('layer', 0), view=args.get('view', 0),
                                          lookahead=args.get('lookahead', 1))
+                        if name == 'debug_start_image_recording':
+                            extra.update(target=target, layer=args.get('layer', 0), view=args.get('view', 0),
+                                         recording_capacity=args.get('capacity', 2), recording_frames=args.get('frames', 0))
                         if name == 'debug_cancel':
                             extra['operation'] = args['operation']
                         if name == 'debug_release':

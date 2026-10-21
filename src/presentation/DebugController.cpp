@@ -156,8 +156,8 @@ DebugSubmission DebugController::Submit(DebugLeaseId lease, const DebugRequest& 
 		return {DebugAdmission::LeaseRequired, {}};
 	if (request.id <= m_retiredFloor)
 		return {DebugAdmission::Retired, {}};
-	if (!request.id.value || request.command > DebugCommand::Release || !request.lookahead ||
-		request.lookahead > m_config.maxLookahead ||
+	if (!request.id.value || request.command > DebugCommand::StopImageRecording || !request.lookahead ||
+		request.lookahead > m_config.maxLookahead || !request.recordingCapacity || request.recordingCapacity > 4 ||
 		(request.command == DebugCommand::Cancel && !request.operation.value) ||
 		(request.command == DebugCommand::Release && !request.capture.value))
 		return {DebugAdmission::Invalid, {}};
@@ -245,8 +245,11 @@ DebugControllerSnapshot DebugController::Snapshot() const
 	snapshot.maxLookahead = m_config.maxLookahead;
 	snapshot.composedEyes = m_session->SupportsCapture();
 	snapshot.layerViews = m_session->SupportsCapture({CaptureKind::LayerView});
+	snapshot.depthViews = m_session->SupportsCapture({CaptureKind::LayerDepth});
+	snapshot.filteredComposition = m_session->SupportsCapture({CaptureKind::ProjectionLayers});
 	snapshot.pipeline = m_session->Scheduler().Snapshot();
 	snapshot.retention = m_session->Captures().Snapshot();
+	snapshot.imageRecording = m_session->ImageRecording();
 	return snapshot;
 }
 
@@ -469,9 +472,17 @@ void DebugController::Own(DebugLeaseId lease, CaptureId capture)
 
 void DebugController::RetireOwned(std::optional<DebugLeaseId> lease)
 {
+	if (m_recordingLease && (!lease || *m_recordingLease == *lease))
+	{
+		m_session->StopImageRecording();
+		m_recordingLease.reset();
+	}
 	for (const auto& owned : m_owned)
 		if (!lease || owned.lease == *lease)
+		{
 			m_session->Captures().Release(owned.capture);
+			m_session->RefillImageRecording(owned.capture);
+		}
 	std::erase_if(m_owned, [&](const auto& owned) { return !lease || owned.lease == *lease; });
 	for (std::size_t index = 0;; ++index)
 	{
@@ -513,7 +524,7 @@ void DebugController::Inspect(DebugOperation& operation, const SnapshotRecord& r
 	std::erase_if(m_cursors,
 				  [&](const auto& cursor)
 				  {
-					  return cursor.target.kind == CaptureKind::LayerView &&
+					  return cursor.target.IsLayerImage() &&
 							 std::none_of(retained.begin(), retained.end(),
 										  [&](auto id)
 										  {
@@ -635,8 +646,42 @@ void DebugController::Process(DebugOperation& operation)
 		Fail(operation, DebugProgress::Unsupported, XR_ERROR_FEATURE_UNSUPPORTED);
 		return;
 	}
+	if (command == DebugCommand::StartImageRecording)
+	{
+		if (m_manual)
+		{
+			Fail(operation, DebugProgress::Busy, XR_ERROR_CALL_ORDER_INVALID);
+			return;
+		}
+		operation.captures.resize(operation.request.recordingCapacity);
+		operation.retention = m_session->StartImageRecording(operation.request.target, operation.request.recordingCapacity,
+			operation.request.recordingFrames, operation.captures);
+		if (operation.retention != SnapshotAdmission::Accepted)
+		{
+			operation.captures.clear();
+			Fail(operation, operation.retention == SnapshotAdmission::Unsupported ? DebugProgress::Unsupported
+				: DebugProgress::RetentionFailure, XR_ERROR_LIMIT_REACHED);
+			return;
+		}
+		m_recordingLease = operation.lease;
+		for (const auto capture : operation.captures)
+			Own(operation.lease, capture);
+		operation.phase = DebugPhase::Complete;
+		operation.progress = DebugProgress::RecordingStarted;
+		return;
+	}
+	if (command == DebugCommand::StopImageRecording)
+	{
+		m_session->StopImageRecording();
+		m_recordingLease.reset();
+		operation.phase = DebugPhase::Complete;
+		operation.progress = DebugProgress::RecordingStopped;
+		return;
+	}
 	if (command == DebugCommand::Resume)
 	{
+		m_session->StopImageRecording();
+		m_recordingLease.reset();
 		Interrupt(operation.lease, DebugProgress::Resumed, operation.id);
 		if (!ResumeSession())
 			Fail(operation, DebugProgress::SessionEnded, XR_ERROR_RUNTIME_FAILURE);
@@ -679,6 +724,8 @@ void DebugController::Process(DebugOperation& operation)
 			operation.phase = DebugPhase::Complete;
 			operation.progress = DebugProgress::Released;
 			std::erase_if(m_owned, [&](const auto& owned) { return owned.capture == operation.request.capture; });
+			if (const auto replacement = m_session->RefillImageRecording(operation.request.capture); replacement.value)
+				Own(operation.lease, replacement);
 		}
 		return;
 	}
@@ -708,6 +755,8 @@ void DebugController::Process(DebugOperation& operation)
 	}
 	if (command == DebugCommand::Pause)
 	{
+		m_session->StopImageRecording();
+		m_recordingLease.reset();
 		m_session->Scheduler().Pause();
 		m_session->CancelCaptureReservations();
 		Interrupt(operation.lease, DebugProgress::Pausing, operation.id);

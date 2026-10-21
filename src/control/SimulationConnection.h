@@ -1,6 +1,7 @@
 #pragma once
 
 #include "control/ProtocolTypes.h"
+#include "control/SequenceControl.h"
 #include "control/WireProtocol.h"
 #include "simulation/CommandTypes.h"
 
@@ -27,7 +28,9 @@ class SimulationConnection
 	~SimulationConnection();
 	SimulationConnection(const SimulationConnection&) = delete;
 	SimulationConnection& operator=(const SimulationConnection&) = delete;
-	Message Dispatch(const Message& request, const ControlSession& binding, Message response);
+	Message Dispatch(const Message& request, const ControlSession& binding, Message response,
+		std::vector<SnapshotRecord>& held);
+	bool OwnsSequenceCapture(const SnapshotRecord& capture) const noexcept;
 
   private:
 	std::optional<CommandSource> Source(std::optional<CommandSourceKind> requested) const;
@@ -43,5 +46,6 @@ class SimulationConnection
 	GameBridge& m_game;
 	std::optional<CommandSourceKind> m_kind;
 	std::vector<Use> m_uses;
+	SequenceControl m_sequences;
 };
 } // namespace simxr::control

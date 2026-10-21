@@ -309,7 +309,9 @@ void NegotiationAndReplay()
 					 static_cast<std::uint64_t>(wire::Capability::ImmutableRevisions) |
 					 static_cast<std::uint64_t>(wire::Capability::SimulationCommands) |
 					 static_cast<std::uint64_t>(wire::Capability::CommandRecording) |
-					 static_cast<std::uint64_t>(wire::Capability::FrameDiagnostics)) &&
+					 static_cast<std::uint64_t>(wire::Capability::FrameDiagnostics) |
+					 static_cast<std::uint64_t>(wire::Capability::ProjectionHistory) |
+					 static_cast<std::uint64_t>(wire::Capability::PoseSequences)) &&
 				response.Find(wire::tag::PayloadLimit)->AsU32() == wire::MaxPayload,
 			"Hello negotiation/capability limits changed");
 	Require(wire::Encode(f.service.Handle(client.connection, hello)) == wire::Encode(response),
@@ -369,6 +371,14 @@ void LegacyMinorNegotiation()
 	const auto rejected = f.service.Handle(client.connection, unknown);
 	Require(Error(rejected) == wire::ErrorCode::UnsupportedCommand && rejected.minor == 0,
 			"Command error silently upgraded negotiated minor");
+	Client previous(f.service);
+	auto versionFour = previous.Request(wire::OpCode::Hello);
+	versionFour.minor = 4;
+	const auto negotiated = f.service.Handle(previous.connection, versionFour);
+	Require(Error(negotiated) == wire::ErrorCode::Ok && negotiated.minor == 4 &&
+		!(U64(negotiated, wire::tag::Capabilities) & static_cast<std::uint64_t>(wire::Capability::PoseSequences)) &&
+		Error(previous.Call(wire::OpCode::UploadSequence)) == wire::ErrorCode::UnsupportedCommand,
+		"Minor four advertised or admitted sequence control");
 }
 
 void LeaseOwnerRetirementAndRollback()
@@ -668,7 +678,8 @@ void CapabilityAndValidation()
 							 static_cast<std::uint64_t>(wire::Capability::LayerViewCapture) |
 							 static_cast<std::uint64_t>(wire::Capability::GpuPreview) |
 							 static_cast<std::uint64_t>(wire::Capability::ImageExport) |
-							 static_cast<std::uint64_t>(wire::Capability::FullFrameState);
+							 static_cast<std::uint64_t>(wire::Capability::FullFrameState) |
+							 static_cast<std::uint64_t>(wire::Capability::DepthCapture);
 	Require((U64(status, wire::tag::Capabilities) & unsupported) == 0,
 			"Unconfigured backend advertised unavailable images or omitted full state");
 	const auto unknown = client.Submit(1, static_cast<wire::CommandKind>(0xffffffff));
@@ -971,6 +982,68 @@ class ObservedImageProvider final : public wire::ImageInspectionProvider
   private:
 	ImageOwnerObservations& m_observations;
 };
+
+void ImageWindowPublicationAndRelease()
+{
+#if defined(__GNUC__)
+	bool exercisedPublicationRollback = false;
+	for (std::size_t skip = 0; skip < 24 && !exercisedPublicationRollback; ++skip)
+	{
+		Fixture fixture(false, false);
+		Require(fixture.session->ConfigureCapturePool(FramePool{8}, false,
+			[](const auto&, const auto&, const auto&) { return SnapshotAdmission::Accepted; }) == XR_SUCCESS &&
+			fixture.session->EnableImageHistory() == XR_SUCCESS, "Configure window history");
+		fixture.Begin();
+		ImageOwnerObservations observations;
+		wire::ControlService service(fixture.runtime, 2, std::make_shared<ObservedImageProvider>(observations));
+		Client client(service);
+		client.Hello();
+		client.Discover();
+		auto metadata = std::make_shared<FrameRecord>();
+		metadata->key = {{client.generation}, {1}};
+		metadata->submission.emplace();
+		metadata->submission->layerCount = 1;
+		auto output = std::make_shared<Output>();
+		fixture.session->ImageHistory().Append({metadata, output});
+		const auto request = client.Request(wire::OpCode::BeginImageWindow, client.Common());
+		wire::Message response;
+		bool rejected = false;
+		{
+			MatchingAllocationFailure failure(sizeof(std::uint64_t), skip);
+			try
+			{
+				response = service.Handle(client.connection, request);
+			}
+			catch (const std::bad_alloc&)
+			{
+				rejected = true;
+			}
+		}
+		if (!rejected && Error(response) == wire::ErrorCode::Ok)
+		{
+			client.Call(wire::OpCode::ReleaseImageWindow,
+				{wire::Field::U64(wire::tag::ImageWindowId, U64(response, wire::tag::ImageWindowId))});
+			continue;
+		}
+		Require(rejected || Error(response) == wire::ErrorCode::Capacity, "Window allocation failure was not reported");
+		const auto replacement = client.Call(wire::OpCode::BeginImageWindow, client.Common());
+		Require(Error(replacement) == wire::ErrorCode::Ok, "Unpublished window leaked collection admission");
+		const auto id = U64(replacement, wire::tag::ImageWindowId);
+		exercisedPublicationRollback = id > 1;
+		fixture.session->ImageHistory().Clear();
+		bool reentered = false;
+		output->destroy = [&]
+		{
+			reentered = Error(client.Call(wire::OpCode::Status, client.Common())) == wire::ErrorCode::Ok;
+		};
+		output.reset();
+		Require(Error(client.Call(wire::OpCode::ReleaseImageWindow,
+			{wire::Field::U64(wire::tag::ImageWindowId, id)})) == wire::ErrorCode::Ok && reentered,
+			"Window release leaked its native owner or destroyed it inside the request gate");
+	}
+	Require(exercisedPublicationRollback, "No allocation failure exercised stored-window publication rollback");
+#endif
+}
 
 void ImageOwnerPublicationAndDeferredRelease()
 {
@@ -1437,6 +1510,7 @@ int main()
 		DiscoveryFailurePreservesIdentityRegistry();
 		AcknowledgeLastReaderReentry();
 		ImageOwnerPublicationAndDeferredRelease();
+		ImageWindowPublicationAndRelease();
 		ImagePublicationRollbackReentry();
 		RequestReplayOwnership();
 		RequestCloseSettlementAndRollback();

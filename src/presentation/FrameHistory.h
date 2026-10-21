@@ -1,6 +1,7 @@
 #pragma once
 
 #include "graphics/LayerBuilder.h"
+#include "presentation/CaptureTypes.h"
 #include "presentation/FrameDiagnosticsJournal.h"
 #include "presentation/FrameTypes.h"
 #include "simulation/ActionRegistry.h"
@@ -54,6 +55,7 @@ struct FrameSubmissionState
 	std::shared_ptr<const FrameDiagnostics> diagnostics;
 	std::optional<TrackingSnapshot> tracking;
 	ViewSettings viewSettings;
+	std::optional<ViewQuerySnapshot> viewQuery;
 	std::vector<HapticOutput> haptics;
 	std::shared_ptr<const FrameLayers> layers;
 	// Submitted records CPU/native acceptance, never GPU completion.
@@ -62,12 +64,18 @@ struct FrameSubmissionState
 	ViewLayout viewLayout = ViewLayout::Stereo;
 };
 
+struct SequenceCaptureRecord
+{
+	SequenceCaptureIntent request;
+	CaptureReservation reservation;
+};
 struct FrameRecord
 {
 	FrameKey key;
 	FramePrediction prediction;
 	FrameStage stage = FrameStage::Issued;
 	std::optional<FrameSubmissionState> submission;
+	std::optional<SequenceCaptureRecord> sequenceCapture;
 };
 
 struct FrameHistorySnapshot
@@ -89,12 +97,14 @@ class FrameHistory
 						  std::string_view detail = {}) noexcept;
 	FrameDiagnostics Diagnostics(std::uint64_t after = 0, std::size_t count = 128,
 								 std::optional<FrameKey> frame = {}) const;
+	// GPU observers retain only this bounded journal, never the session or its images.
+	std::shared_ptr<FrameDiagnosticsJournal> DiagnosticsJournal() const { return m_diagnostics; }
 	SessionGeneration StartGeneration();
 	// Reserve copied diagnostic ownership before committing issue. The callback
 	// must not reenter history. Failure rolls back insertion and eviction.
 	void Issue(const FramePrediction& prediction,
 			   const std::function<void(std::shared_ptr<const FrameRecord>, std::shared_ptr<const FrameRecord>)>&
-				   reserve = {});
+				   reserve = {}, std::optional<SequenceCaptureRecord> sequenceCapture = {});
 	void Begin(FrameId frame, std::optional<FrameId> discarded = {});
 	// Allocates the immutable record before admission. The callback may submit
 	// native work at the permitted API boundary, but must not reenter this history.
@@ -118,6 +128,6 @@ class FrameHistory
 	SessionGeneration m_generation;
 	std::uint64_t m_evicted = 0;
 	Records m_records;
-	FrameDiagnosticsJournal m_diagnostics;
+	std::shared_ptr<FrameDiagnosticsJournal> m_diagnostics;
 };
 } // namespace simxr

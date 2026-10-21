@@ -129,9 +129,9 @@ void HistoricalSubmission()
 	std::shared_ptr<const FrameLayers> accepted;
 	Require(BuildLayers(
 				info, validation,
-				[&](XrSpace space, RuntimeTime time, PoseSample& pose)
+				[&](XrSpace space, RuntimeTime time, SpaceSample& pose)
 				{
-					return session.Spaces().WorldPose(space, time, pose);
+					return session.Spaces().Sample(space, time, pose);
 				},
 				accepted) == XR_SUCCESS,
 			"Prepare accepted quad at displayTime");

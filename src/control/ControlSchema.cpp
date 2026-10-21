@@ -9,23 +9,35 @@ namespace simxr::control
 {
 namespace
 {
+constexpr std::array uploadSequence{tag::Session, tag::Generation, tag::SourceKind, tag::ProgramId,
+	tag::Offset, tag::TotalBytes, tag::Bytes};
+constexpr std::array startSequence{tag::Session, tag::Generation, tag::SourceKind, tag::ProgramId, tag::Loop};
+constexpr std::array sequence{tag::Session, tag::Generation, tag::SourceKind, tag::SequenceId, tag::Offset, tag::Length};
+constexpr std::array sequenceCapture{tag::Session, tag::Generation, tag::CaptureId};
 constexpr std::array simulation{tag::Session,	tag::Generation, tag::TransactionId, tag::ApplyFrame,
 								tag::ApplyTime, tag::LatePolicy, tag::SourceKind,	 tag::Commands};
 constexpr std::array simulationStatus{tag::Session, tag::Generation, tag::TransactionId, tag::SourceKind};
 constexpr std::array game{tag::Session,	  tag::Generation,	tag::GameId, tag::GameKind,
 						  tag::CommandId, tag::OperationId, tag::Detail};
 constexpr std::array diagnostics{tag::Session, tag::Generation, tag::Offset, tag::Length, tag::FrameId};
+constexpr std::array historicalImage{tag::Session, tag::Generation, tag::FrameId, tag::Target};
+constexpr std::array imageHistory{tag::Session, tag::Generation, tag::Length, tag::Target};
+constexpr std::array beginImageWindow{tag::Session, tag::Generation, tag::Target};
+constexpr std::array projectionHistory{tag::Session, tag::Generation, tag::Length};
 constexpr std::array recording{tag::Session, tag::Generation, tag::SourceKind, tag::Offset, tag::Length};
 constexpr std::array common{tag::Session, tag::Generation};
 constexpr std::array hello{tag::ClientName, tag::RequiredCapabilities, tag::OptionalCapabilities};
 constexpr std::array submit{tag::Session,	tag::Generation, tag::Lease,	   tag::CommandId, tag::CommandKind,
-							tag::Lookahead, tag::Target,	 tag::OperationId, tag::CaptureId};
+							tag::Lookahead, tag::Target,	 tag::OperationId, tag::CaptureId, tag::Capacity, tag::Length};
 constexpr std::array leased{tag::Session, tag::Generation, tag::Lease};
 constexpr std::array operation{tag::Session, tag::Generation, tag::OperationId};
 constexpr std::array acknowledge{tag::Session, tag::Generation, tag::Lease, tag::CommandId};
 constexpr std::array capture{tag::Session, tag::Generation, tag::CaptureId};
+constexpr std::array retainImage{tag::Session, tag::Generation, tag::CaptureId, tag::Target};
 constexpr std::array revision{tag::RevisionId};
 constexpr std::array releaseInspection{tag::InspectionId};
+constexpr std::array imageWindow{tag::ImageWindowId};
+constexpr std::array windowImage{tag::ImageWindowId, tag::FrameId};
 constexpr std::array image{tag::ImageReaderId};
 constexpr std::array share{tag::ImageReaderId, tag::DeviceUuid, tag::DriverUuid};
 constexpr std::array delivery{tag::DeliveryId};
@@ -43,9 +55,16 @@ constexpr std::array Schemas{RequestSchema{OpCode::Hello, RequestDomain::Connect
 							 RequestSchema{OpCode::Acknowledge, RequestDomain::Debugger, 0, acknowledge},
 							 RequestSchema{OpCode::Capture, RequestDomain::Inspection, 0, capture},
 							 RequestSchema{OpCode::InspectFrame, RequestDomain::Inspection, 0, capture},
+							 RequestSchema{OpCode::ReadProjectionHistory, RequestDomain::Inspection, 4, projectionHistory},
+							 RequestSchema{OpCode::BeginImageWindow, RequestDomain::Inspection, 4, beginImageWindow},
+							 RequestSchema{OpCode::ReadImageWindow, RequestDomain::Images, 4, imageWindow},
+							 RequestSchema{OpCode::ReleaseImageWindow, RequestDomain::Images, 4, imageWindow},
+							 RequestSchema{OpCode::RetainWindowImage, RequestDomain::Images, 4, windowImage},
+							 RequestSchema{OpCode::ReadImageHistory, RequestDomain::Inspection, 4, imageHistory},
+							 RequestSchema{OpCode::RetainHistoricalImage, RequestDomain::Inspection, 4, historicalImage},
 							 RequestSchema{OpCode::FeatureRevision, RequestDomain::Inspection, 0, revision},
 							 RequestSchema{OpCode::ReleaseInspection, RequestDomain::Inspection, 0, releaseInspection},
-							 RequestSchema{OpCode::RetainImage, RequestDomain::Images, 2, capture},
+							 RequestSchema{OpCode::RetainImage, RequestDomain::Images, 2, retainImage},
 							 RequestSchema{OpCode::ImageInfo, RequestDomain::Images, 2, image},
 							 RequestSchema{OpCode::ReleaseImage, RequestDomain::Images, 2, image},
 							 RequestSchema{OpCode::ShareImage, RequestDomain::Images, 2, share},
@@ -56,6 +75,11 @@ constexpr std::array Schemas{RequestSchema{OpCode::Hello, RequestDomain::Connect
 							 RequestSchema{OpCode::ReleaseExport, RequestDomain::Images, 2, exportId},
 							 RequestSchema{OpCode::ReadExport, RequestDomain::Images, 2, readExport},
 							 RequestSchema{OpCode::RetainPreview, RequestDomain::Images, 3, common},
+							 RequestSchema{OpCode::UploadSequence, RequestDomain::Simulation, 5, uploadSequence},
+							 RequestSchema{OpCode::StartSequence, RequestDomain::Simulation, 5, startSequence},
+							 RequestSchema{OpCode::ReadSequence, RequestDomain::Simulation, 5, sequence},
+							 RequestSchema{OpCode::StopSequence, RequestDomain::Simulation, 5, sequence},
+							 RequestSchema{OpCode::ReleaseSequenceCapture, RequestDomain::Inspection, 5, sequenceCapture},
 							 RequestSchema{OpCode::SubmitSimulation, RequestDomain::Simulation, 4, simulation},
 							 RequestSchema{OpCode::SimulationStatus, RequestDomain::Simulation, 4, simulationStatus},
 							 RequestSchema{OpCode::CancelSimulation, RequestDomain::Simulation, 4, simulationStatus},

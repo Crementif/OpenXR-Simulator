@@ -4,9 +4,11 @@
 #include "json.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <istream>
 #include <limits>
+#include <stdexcept>
 #include <utility>
 
 namespace simxr
@@ -35,6 +37,31 @@ std::optional<bool> ReadButton(const json::Object& document, const char* name)
 		return whenFalse;
 	const auto number = ReadNumber(document, name);
 	return number ? std::optional{*number != 0} : std::nullopt;
+}
+
+std::optional<std::uint64_t> SequenceFrame(const json::Object& document)
+{
+	if (!document.has("frame"))
+		return 0;
+	auto text = document.raw("frame");
+	if (text.empty())
+		return {};
+	const bool quoted = text.size() >= 2 && text.front() == '"' && text.back() == '"';
+	if (quoted)
+		text = text.substr(1, text.size() - 2);
+	if (text.empty())
+		return {};
+	std::uint64_t frame = 0;
+	const auto parsed = std::from_chars(text.data(), text.data() + text.size(), frame);
+	if (parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size())
+		return frame;
+	if (quoted)
+		return {};
+	// Preserve legacy fractional/exponent inputs only where double conversion is exact enough.
+	const double value = document.number("frame", std::numeric_limits<double>::quiet_NaN());
+	if (!std::isfinite(value) || value > 9007199254740991.0)
+		return {};
+	return static_cast<std::uint64_t>(std::max(0.0, value));
 }
 
 void ApplyPosition(XrVector3f& position, const std::array<std::optional<float>, 3>& update)
@@ -180,19 +207,20 @@ void LegacyInput::Apply(LegacyInputCommand command, const std::string& text)
 
 LegacyInput::Sequence LegacyInput::ReadSequence(std::istream& input, bool loop)
 {
-	Sequence prepared;
-	auto& sequence = prepared.m_steps;
+	std::vector<PoseSequenceStep> sequence;
 	std::string line;
-	while (sequence.size() < 100000 && std::getline(input, line))
+	while (std::getline(input, line))
 	{
 		const json::Object document(line.c_str());
 		if (!document.valid())
 			continue;
-		const double frame = document.number("frame", 0.0);
-		if (!std::isfinite(frame) || frame >= std::ldexp(1.0, 64))
+		const auto frame = SequenceFrame(document);
+		if (!frame)
 			continue;
-		SequenceStep step;
-		step.frame = {static_cast<std::uint64_t>(std::max(0.0, frame))};
+		if (sequence.size() == PoseSequence::MaxSteps)
+			throw std::length_error("Pose sequence exceeds its step limit");
+		PoseSequenceStep step;
+		step.frame = {*frame};
 		const auto head = document.object("head");
 		if (head.valid())
 			step.head = DecodeHead(head);
@@ -205,39 +233,19 @@ LegacyInput::Sequence LegacyInput::ReadSequence(std::istream& input, bool loop)
 		step.capture = document.boolean("capture", false);
 		sequence.push_back(std::move(step));
 	}
-	std::stable_sort(sequence.begin(), sequence.end(),
-					 [](const auto& left, const auto& right)
-					 {
-						 return left.frame.value < right.frame.value;
-					 });
-	prepared.m_loop = loop;
-	return prepared;
+	return {std::move(sequence), loop};
 }
 
 void LegacyInput::StartSequence(Sequence sequence, FrameId origin)
 {
-	m_sequence.swap(sequence.m_steps);
-	m_sequenceOrigin = origin;
-	m_sequenceIndex = 0;
-	m_sequenceLoop = sequence.m_loop;
+	m_sequence.Start(std::move(sequence), origin);
 }
 
 bool LegacyInput::AdvanceSequence(FrameId submitted)
 {
-	if (m_sequence.empty() || submitted.value < m_sequenceOrigin.value)
-		return false;
-	auto elapsed = submitted.value - m_sequenceOrigin.value;
-	if (m_sequenceLoop && elapsed > m_sequence.back().frame.value)
-	{
-		const auto cycle = m_sequence.back().frame.value + 1;
-		elapsed %= cycle;
-		m_sequenceOrigin = {submitted.value - elapsed};
-		m_sequenceIndex = 0;
-	}
 	bool capture = false;
-	while (m_sequenceIndex < m_sequence.size() && m_sequence[m_sequenceIndex].frame.value <= elapsed)
+	for (const auto& step : m_sequence.Advance(submitted))
 	{
-		const auto& step = m_sequence[m_sequenceIndex++];
 		if (step.head)
 			ApplyHead(*step.head);
 		for (std::size_t hand = 0; hand < step.controllers.size(); ++hand)

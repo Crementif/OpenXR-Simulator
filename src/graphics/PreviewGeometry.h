@@ -125,6 +125,8 @@ struct PreviewQuadGeometry
 std::optional<PreviewQuadGeometry> PreparePreviewQuad(const QuadLayerDescription& quad, const LocatedViews& views,
 													  XrExtent2Di sourceExtent);
 std::array<float, 28> PreviewQuadConstants(const PreviewQuadGeometry& geometry, std::uint32_t eye, bool opaque);
+// Union of visible quad pixels per eye, from the exact accepted shader constants.
+std::array<XrRect2Di, 2> CompositionQuadBounds(const CompositionPlan& plan);
 std::optional<XrRect2Di> PreviewQuadBounds(const PreviewQuadEye& geometry, PreviewRectangle viewport,
 										   XrExtent2Di targetExtent);
 } // namespace simxr

@@ -49,13 +49,21 @@ class InspectionTests(unittest.TestCase):
         layers = frame['layers']['layers']
         self.assertEqual([layer['kind'] for layer in layers], ['projection', 'quad'])
         self.assertEqual(layers[0]['space']['source'], layers[1]['space']['source'])
+        self.assertEqual(layers[0]['space']['reference_type'], 2)  # XR_REFERENCE_SPACE_TYPE_LOCAL
+        self.assertEqual(layers[0]['space']['pose_offset']['position']['y'], 1.0)
         self.assertEqual(layers[0]['views'][0]['color']['source'], layers[1]['color']['source'])
         self.assertEqual(layers[0]['views'][0]['depth']['image']['source'], 1)
         self.assertEqual(layers[0]['views'][0]['color']['source'], 2)
         self.assertEqual(layers[0]['views'][0]['color']['array_slice'], 2)
         self.assertEqual(layers[0]['views'][0]['color']['rectangle'], {'x': 4, 'y': 8, 'width': 12, 'height': 16})
         self.assertEqual(layers[0]['views'][0]['depth']['far_z'], '+Infinity')
-        self.assertEqual(set(frame['availability'].values()), {'not_recorded'})
+        for key, expected in {
+                'tracking': 'recorded', 'action_dictionary': 'recorded',
+                'applied_foveation': 'not_recorded', 'applied_commands': 'not_recorded',
+                'fb_foveation': 'unsupported', 'validation_scope': 'runtime_submitted_layers',
+                'native_driver_validation': 'not_recorded', 'validation_events': 'not_recorded',
+                'frame_trace': 'not_recorded'}.items():
+            self.assertEqual(frame['availability'][key], expected, key)
 
     def test_scalar_widths_and_nonfinite(self):
         self.assertEqual(decode_inspection(node(2, struct.pack('<Q', 2**64 - 1))), 2**64 - 1)

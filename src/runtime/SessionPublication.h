@@ -6,6 +6,7 @@
 #include "simulation/CommandScheduler.h"
 #include "simulation/SpaceSystem.h"
 
+#include <array>
 #include <deque>
 
 namespace simxr
@@ -42,7 +43,7 @@ class SessionPublication
 		FrameBoundary(SessionPublication& owner, bool focused, const ReferenceSpaceState& spaces);
 		FrameBoundary(const FrameBoundary&) = delete;
 		FrameBoundary& operator=(const FrameBoundary&) = delete;
-		void Reserve(const FramePrediction& prediction, const std::function<void()>& reserveHistory);
+		void Reserve(const FramePrediction& prediction, const std::function<void(const AppliedCommandSnapshot&)>& reserveHistory);
 		const AppliedCommandSnapshot& Applied() const;
 		std::optional<XrSessionState> StateTransition(XrSessionState current);
 		void Publish();
@@ -59,11 +60,13 @@ class SessionPublication
 	void Configure(std::uint64_t seed, std::optional<CommandConfiguration> initial, bool overrideInitial);
 	void Stop();
 	bool ReleaseSource(CommandSource source, bool retire);
+	void StopPoseSequence(CommandSource source);
 	void PublishTracking(RuntimeTime time, TrackingState state, const ViewSettings& settings, bool focused);
 	XrResult PublishInput(InputSnapshot input);
 	CommandConfiguration ConfigurationSnapshot(const FramePrediction& lastIssued) const;
 	void StartRecording(const ReferenceSpaceState& spaces);
 	void CaptureFrame(FrameId frame, FrameSubmissionState& submission) const;
+	void RecordViewQuery(ViewQuerySnapshot query);
 	bool TakeProfileChange() noexcept;
 	CommandScheduler& Commands();
 	InputState& Input();
@@ -75,6 +78,7 @@ class SessionPublication
 	XrResult ValidatePoseAction(XrAction action, XrPath subaction) const;
 
   private:
+	bool ReleaseChannels(const std::array<bool, ControlChannelCount>& channels);
 	struct ViewRevision
 	{
 		RuntimeTime time;
@@ -96,6 +100,7 @@ class SessionPublication
 	bool m_sessionOverride = false;
 	bool m_profileChanged = false;
 	std::deque<ViewRevision> m_viewHistory;
+	std::deque<ViewQuerySnapshot> m_viewQueries;
 	ViewLayout m_layout = ViewLayout::Stereo;
 };
 } // namespace simxr

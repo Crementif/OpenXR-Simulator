@@ -4,6 +4,7 @@
 #include "graphics/SwapchainWaits.h"
 #include "graphics/backends/vulkan/VulkanDevice.h"
 #include "presentation/FrameTypes.h"
+#include "runtime/HandleRegistry.h"
 
 #include <chrono>
 #include <memory>
@@ -21,7 +22,6 @@ class LegacyFileChannel;
 class Session;
 class VulkanBackend;
 class VulkanCaptureBindings;
-class VulkanFrameBindings;
 class VulkanInspection;
 class VulkanLegacyCapture;
 class VulkanSwapchain;
@@ -30,11 +30,14 @@ struct CompositionPlan;
 struct VulkanInspectionValidation;
 
 // Native operations require the adapter's queue/binding serialization. BeginClose
-// closes CPU admission under that gate; Drain waits outside it. FinishClose runs
-// after native child retirement. Capabilities are immutable after construction.
+// closes native admission under that gate; the caller closes the core session
+// and drains outside it. FinishClose retires native children before the backend.
+// Capabilities are immutable.
 class VulkanSessionGraphics final
 {
   public:
+	using SwapchainRef = HandleRef<XrSwapchain, VulkanSwapchain>;
+
 	static XrResult Create(const VulkanBinding& binding, std::shared_ptr<Session> session,
 						   std::shared_ptr<LegacyFileChannel> files, std::shared_ptr<flicker::Diagnostics> diagnostics,
 						   bool validation, std::unique_ptr<VulkanSessionGraphics>& output);
@@ -42,11 +45,12 @@ class VulkanSessionGraphics final
 	VulkanSessionGraphics(const VulkanSessionGraphics&) = delete;
 	VulkanSessionGraphics& operator=(const VulkanSessionGraphics&) = delete;
 	control::ImageCapabilities Capabilities() const noexcept;
-	XrResult CreateSwapchain(const XrSwapchainCreateInfo& description, std::unique_ptr<VulkanSwapchain>& output);
+	XrResult CreateSwapchain(const XrSwapchainCreateInfo& description, XrSwapchain& output);
+	SwapchainRef FindSwapchain(XrSwapchain handle) const;
+	void DestroySwapchain(SwapchainRef swapchain);
 	XrResult Acquire(VulkanSwapchain& swapchain, std::uint32_t& index);
 	std::optional<SwapchainWaits::Registration> EnterWait();
-	XrResult EndFrame(const XrFrameEndInfo& info, const VulkanFrameBindings& frames,
-					  const VulkanCaptureBindings& captures);
+	XrResult EndFrame(const XrFrameEndInfo& info);
 	void RequestCapture(LegacyCaptureRequest request, FrameId frame);
 	void PollCaptures();
 	void BeginClose();
@@ -54,6 +58,8 @@ class VulkanSessionGraphics final
 	XrResult FinishClose();
 
   private:
+	class FrameBindings;
+
 	enum class CloseStage
 	{
 		Pending,
@@ -74,6 +80,7 @@ class VulkanSessionGraphics final
 	const std::shared_ptr<LegacyFileChannel> m_files;
 	const std::shared_ptr<flicker::Diagnostics> m_diagnostics;
 	std::unique_ptr<VulkanBackend> m_backend;
+	HandleRegistry<XrSwapchain, VulkanSwapchain, const Session*> m_swapchains;
 	std::shared_ptr<VulkanInspectionValidation> m_validation;
 	std::unique_ptr<VulkanInspection> m_inspection;
 	std::unique_ptr<VulkanLegacyCapture> m_capture;
@@ -81,5 +88,6 @@ class VulkanSessionGraphics final
 	SwapchainWaits m_waits;
 	std::mutex m_closeMutex;
 	CloseStage m_closeStage = CloseStage::Pending;
+	bool m_closing = false;
 };
 } // namespace simxr

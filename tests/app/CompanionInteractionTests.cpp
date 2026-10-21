@@ -22,6 +22,8 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <iostream>
+#include <fstream>
+#include <sstream>
 
 namespace
 {
@@ -40,6 +42,8 @@ class Interaction
 	ImVec2 inputCenter;
 	char input[32]{};
 	unsigned clicks = 0;
+	bool live = false;
+	Interaction(bool launch = false) : workspace(processes, launch, ""), live(launch) {}
 
 	void Frame()
 	{
@@ -50,7 +54,18 @@ class Interaction
 				return renderer.BeginFrame();
 			},
 			"UI frame admission stalled");
+		if (live)
+			runtime.Poll();
 		workspace.BeginFrame(runtime);
+		if (live)
+		{
+			workspace.DrawDockspace();
+			workspace.Draw(runtime);
+			runtime.Draw(workspace.Mode());
+			Require(renderer.Render(runtime.ReadyWaits()), "Live launch UI frame was not rendered");
+			runtime.Submitted(renderer.SubmittedFrames());
+			return;
+		}
 		ImGui::SetNextWindowPos({20, 140}, ImGuiCond_Always);
 		ImGui::SetNextWindowSize({350, 420}, ImGuiCond_Always);
 		workspace.Draw(runtime);
@@ -66,7 +81,8 @@ class Interaction
 		const auto inputMinimum = ImGui::GetItemRectMin();
 		inputCenter = {inputMinimum.x + 10, inputMinimum.y + 10};
 		ImGui::End();
-		Require(renderer.Render(), "Admitted UI frame was not rendered");
+		Require(renderer.Render(runtime.ReadyWaits()), "Admitted UI frame was not rendered");
+		runtime.Submitted(renderer.SubmittedFrames());
 	}
 	void Click(ImVec2 position)
 	{
@@ -803,6 +819,128 @@ void ConfigureObservedDevices()
 	Require(test.validation->errors.load() == 0, "Configuration UI produced Vulkan validation errors");
 	std::cout << "PASS production settings panels: observed values, categories, scenario recovery and reconnect\n";
 }
+
+#ifdef __linux__
+void CheckDebuggerWorkflow(const char* endpoint)
+{
+	const auto destination = std::getenv("SIMXR_DEBUG_QA_DIRECTORY");
+	Require(destination, "Debugger QA requires a new private output directory");
+	const std::filesystem::path directory(destination);
+	Require(directory.is_absolute() && std::filesystem::create_directory(directory), "Debugger output must be new");
+	Require(::setenv("SIMXR_COMPANION_SETTINGS", (directory / "companion.settings").c_str(), 1) == 0,
+			"Isolate debugger settings");
+	Interaction test(true);
+	test.runtime.ConnectEndpoint(endpoint);
+	const auto wait = [&](const auto& ready, const char* failure)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+		do
+		{
+			test.Frame();
+			if (std::chrono::steady_clock::now() >= deadline)
+			{
+				const auto state = test.runtime.Snapshot();
+				throw std::runtime_error(std::string(failure) + ": " + state.phase + "/" + state.progress + " " + state.error);
+			}
+		} while (!ready(test.runtime.Snapshot()));
+	};
+	wait([](const auto& state) { return state.selectedReady; }, "Debugger did not attach live output");
+	test.SelectWorkspace(WorkspaceMode::Debug);
+	test.runtime.SetLive(false);
+	test.runtime.Command(simxr::control::CommandKind::Pause);
+	wait([](const auto& state) { return !state.operationPending && state.progress == "paused"; }, "Pause failed");
+	test.runtime.Command(simxr::control::CommandKind::StrictAdmission);
+	wait([](const auto& state) { return !state.operationPending && state.progress == "issued" && state.selectedReady &&
+		state.selectedImageCapture == state.selectedCapture; },
+		"One admitted frame did not produce a retained image");
+	const auto exact = test.runtime.Snapshot();
+	test.runtime.InspectSelected();
+	wait([&](const auto& state) { return state.inspectedFrame == exact.selectedFrame; }, "Exact state inspection failed");
+	test.runtime.RequestExport((directory / "composed.ppm").string());
+	wait([&](const auto& state) { return !state.pending && std::filesystem::exists(directory / "composed.ppm"); },
+		"Composed export failed");
+	test.renderer.RequestScreenshot((directory / "inspected.bmp").string());
+	test.Frame();
+	test.runtime.Command(simxr::control::CommandKind::StrictAdmission, 0, true, 0, 0);
+	wait([&](const auto& state) { return !state.operationPending && state.selectedFrame > exact.selectedFrame &&
+		state.selectedReady && state.selectedLayers == 1 && state.selectedImageCapture == state.selectedCapture; }, "Selected layer view did not produce a retained image");
+	const auto raw = test.runtime.Snapshot();
+	Require(raw.selectedFrame == exact.selectedFrame + 1, "Strict step admitted more than one frame");
+	test.runtime.RequestExport((directory / "layer.ppm").string());
+	wait([&](const auto& state) { return !state.pending && std::filesystem::exists(directory / "layer.ppm"); },
+		"Layer export failed");
+	for (const auto capture : test.runtime.CaptureIds())
+		test.runtime.Command(simxr::control::CommandKind::Release, capture);
+	wait([](const auto& state) { return !state.operationPending; }, "Capture release failed");
+	test.runtime.Command(simxr::control::CommandKind::Resume);
+	test.runtime.SetLive(true);
+	wait([&](const auto& state) { return !state.operationPending && !state.manual && state.selectedFrame > raw.selectedFrame; },
+		"Resume did not restore advancing live output");
+	test.renderer.RequestScreenshot((directory / "resumed.bmp").string());
+	test.Frame();
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Debugger workflow reported Vulkan validation errors");
+	std::ofstream(directory / "frames.txt") << "composed=" << exact.selectedFrame << " layer=" << raw.selectedFrame
+		<< " inspected=" << exact.selectedFrame << " resumed=" << test.runtime.Snapshot().selectedFrame << '\n';
+	std::cout << "PASS production pause/strict-step/inspect/composed-and-layer-export/resume: frame "
+		<< exact.selectedFrame << " -> " << raw.selectedFrame << '\n';
+}
+
+void CheckToolbarLaunch(const char* executable)
+{
+	const auto directoryValue = std::getenv("SIMXR_LAUNCH_QA_DIRECTORY");
+	Require(directoryValue != nullptr, "Launch QA requires a new private directory");
+	const std::filesystem::path directory(directoryValue);
+	Require(directory.is_absolute() && std::filesystem::create_directory(directory), "Launch QA directory must be new and absolute");
+	const auto settingsPath = directory / "companion.settings";
+	Require(::setenv("SIMXR_COMPANION_SETTINGS", settingsPath.c_str(), 1) == 0, "Set isolated settings path");
+	CompanionSettings settings;
+	LaunchProfile profile;
+	profile.name = "Isolated launch QA";
+	profile.executable = executable;
+	profile.runtimeManifest = std::getenv("XR_RUNTIME_JSON") ? std::getenv("XR_RUNTIME_JSON") : "";
+	if (const auto cwd = std::getenv("SIMXR_LAUNCH_QA_CWD"))
+		profile.workingDirectory = cwd;
+	if (const auto arguments = std::getenv("SIMXR_LAUNCH_QA_ARGUMENTS"))
+	{
+		std::istringstream lines(arguments);
+		for (std::string argument; std::getline(lines, argument);)
+			profile.arguments.push_back(argument);
+	}
+	profile.environment = {{"SIMXR_DATA_DIR", directory.string()}, {"SIMXR_CONTROL_SOCKET", ""}};
+	settings.profiles.push_back(profile);
+	settings.activeProfile = profile.name;
+	SaveSettings(settingsPath, settings);
+	Interaction test(true);
+	for (unsigned frame = 0; frame < 4; ++frame)
+		test.Frame();
+	test.renderer.RequestScreenshot((directory / "before-launch.bmp").string());
+	test.Frame();
+	const auto* toolbar = ImGui::FindWindowByName("##Workspace toolbar");
+	Require(toolbar != nullptr, "Launch toolbar absent");
+	const auto& style = ImGui::GetStyle();
+	const auto width = std::max(100.0f, std::min(220.0f, ImGui::GetMainViewport()->WorkSize.x * 0.30f));
+	test.Click({toolbar->Pos.x + style.WindowPadding.x + width + style.ItemSpacing.x + 12,
+		toolbar->Pos.y + style.WindowPadding.y + ImGui::GetFrameHeightWithSpacing() + ImGui::GetFrameHeight() / 2});
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+	while (!test.runtime.Snapshot().selectedReady)
+	{
+		test.Frame();
+		Require(std::chrono::steady_clock::now() < deadline, "Toolbar launch did not attach and display live pixels");
+	}
+	const auto state = test.runtime.Snapshot();
+	Require(state.connected && state.sessionAvailable && state.selectedLayers == 2, "Launched stereo session not selected");
+	Require(std::filesystem::path(state.endpoint).parent_path() == directory, "Launch selected unrelated endpoint");
+	std::ofstream(directory / "attached.endpoint") << state.endpoint;
+	test.renderer.RequestScreenshot((directory / "toolbar-launch.bmp").string());
+	test.Frame();
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Validation errors in launched preview");
+	std::cout << "PASS toolbar launched and attached stereo runtime " << state.endpoint << '\n';
+}
+
+#endif
+
 void CaptureLayouts(const std::filesystem::path& directory)
 {
 	std::filesystem::create_directories(directory);
@@ -888,6 +1026,19 @@ int main()
 {
 	try
 	{
+
+#ifdef __linux__
+		if (const auto endpoint = std::getenv("SIMXR_DEBUG_QA_ENDPOINT"))
+		{
+			CheckDebuggerWorkflow(endpoint);
+			return 0;
+		}
+		if (const auto executable = std::getenv("SIMXR_LAUNCH_QA_EXECUTABLE"))
+		{
+			CheckToolbarLaunch(executable);
+			return 0;
+		}
+#endif
 		auto validation = std::make_shared<ValidationLog>();
 		{
 			Interaction test;

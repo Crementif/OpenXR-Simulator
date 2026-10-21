@@ -15,6 +15,7 @@ class CommandState
 {
   public:
 	using ChannelMask = std::array<bool, ControlChannelCount>;
+	static ControlChannel ScenarioChannel(FailureScenario scenario);
 	CommandState() = default;
 	explicit CommandState(std::optional<CommandConfiguration> initial);
 	void BeginBoundary(const ReferenceSpaceState& spaces);
@@ -22,6 +23,7 @@ class CommandState
 	CommandConfiguration Merge(const CommandConfiguration& baseline) const;
 	CommandRecordingOrigin RecordingOrigin(const CommandConfiguration& baseline, RuntimeTime time) const;
 	void Capture(AppliedCommandSnapshot& snapshot, const CommandConfiguration& baseline, RuntimeTime time) const;
+	ChannelMask OwnedChannels(CommandSource source) const noexcept;
 	ChannelMask ReleaseSource(CommandSource source) noexcept;
 	void ClearOwnership() noexcept;
 	void Swap(CommandState& other) noexcept;
@@ -35,7 +37,6 @@ class CommandState
 	ChannelOwners m_owners{};
 	ScenarioMask m_scenarios{};
 
-	static ControlChannel ScenarioChannel(FailureScenario scenario);
 	static ControlChannel ChannelFor(const SetHeadPose& command);
 	static ControlChannel ChannelFor(const SetControllerPose& command);
 	static ControlChannel ChannelFor(const SetControllerControls& command);

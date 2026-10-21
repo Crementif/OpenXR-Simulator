@@ -37,6 +37,7 @@ class VulkanDevice
 	const VulkanBinding binding;
 	VkQueue queue = VK_NULL_HANDLE;
 	std::atomic<bool> lost{false};
+	bool HasNativeOwner() const noexcept;
 	std::uint32_t MemoryType(std::uint32_t bits, VkMemoryPropertyFlags required) const;
 
   private:

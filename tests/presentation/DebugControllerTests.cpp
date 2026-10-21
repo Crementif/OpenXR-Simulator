@@ -122,6 +122,51 @@ DebugOperation Status(DebugController& controller, DebugOperationId operation)
 	Require(status.has_value(), "Missing operation status");
 	return *status;
 }
+void RealtimeRecordingBudget()
+{
+	Fixture fixture;
+	DebugController controller(fixture.session, fixture.clock, ManualConfig());
+	const auto lease = controller.Acquire();
+	Require(lease.has_value(), "Acquire recording lease");
+	const auto start = Command(controller, lease->id, 1, DebugCommand::StartImageRecording);
+	controller.Poll();
+	Require(Status(controller, start).progress == DebugProgress::RecordingStarted &&
+		!controller.Snapshot().pipeline.paused, "Recording changed application pacing");
+	const auto first = fixture.Issue();
+	fixture.Submit(first);
+	const auto oldCapture = controller.Snapshot().imageRecording.captures.front();
+	const auto released = Command(controller, lease->id, 2, DebugCommand::Release, 1, {}, oldCapture);
+	controller.Poll();
+	Require(Status(controller, released).progress == DebugProgress::Released &&
+		controller.Snapshot().imageRecording.captures.size() == 2,
+		"Acknowledged recording capture did not replenish its bounded reservation");
+	fixture.Submit(fixture.Issue());
+	fixture.Submit(fixture.Issue());
+	const auto missed = fixture.Issue();
+	fixture.Submit(missed);
+	const auto state = controller.Snapshot();
+	Require(state.imageRecording.phase == ImageRecordingPhase::Overrun &&
+		state.imageRecording.missed == FrameKey{fixture.session->Snapshot().generation, missed.id} &&
+		state.imageRecording.captured == 3 && !state.pipeline.paused && !state.pipeline.permits,
+		"Slow recorder silently dropped a frame or changed normal pacing");
+	fixture.clock->time = 2000000000;
+	controller.Poll();
+	Require(controller.Snapshot().imageRecording.captures.empty() && !controller.Snapshot().manual,
+		"Expired recording lease kept reservations or paused the application");
+	FrameSchedulerConfig timing;
+	timing.epoch = {500ns};
+	timing.period = 10ns;
+	timing.mode = ExecutionMode::Deterministic;
+	const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
+	Require(fixture.session->RequestExit(timing.epoch) == XR_SUCCESS && fixture.session->End(timing.epoch) == XR_SUCCESS &&
+		fixture.session->Ready(timing.epoch) == XR_SUCCESS && fixture.session->Begin(begin, timing) == XR_SUCCESS,
+		"Restart recording session");
+	const auto restarted = controller.Snapshot().imageRecording;
+	Require(restarted.phase == ImageRecordingPhase::Idle && !restarted.captured && !restarted.capacity &&
+		!restarted.requested && !restarted.missed && restarted.captures.empty(),
+		"Recording state from an old generation escaped into the replacement run");
+}
+
 void Pause(DebugController& controller, DebugLeaseId lease)
 {
 	const auto paused = Command(controller, lease, 1, DebugCommand::Pause);
@@ -849,6 +894,7 @@ int main()
 			++failures;
 		}
 	};
+	run("Realtime recording budget and lease recovery", RealtimeRecordingBudget);
 	run("Idempotence and reclamation", IdempotenceAndReclamation);
 	run("Long run acknowledgement", LongRunAcknowledgement);
 	run("Pending boundary and exact order", PendingBoundaryAndExactOrder);

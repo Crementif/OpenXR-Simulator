@@ -95,10 +95,16 @@ static int runProbe()
     const char *env = std::getenv("SIMXR_DATA_DIR");
     CHECK(env && *env);
     std::filesystem::path data(env);
+    const bool creationRollback = std::getenv("SIMXR_PROBE_CREATION_ROLLBACK") != nullptr;
+    const auto unselectedDirectory = data / ("pre-instance-unselected." + std::to_string(getpid()));
+    if (creationRollback) CHECK(setenv("SIMXR_DATA_DIR", unselectedDirectory.c_str(), 1) == 0);
     bool v1 = std::getenv("SIMXR_PROBE_V1") != nullptr;
     const bool bodyTracking = std::getenv("SIMXR_PROBE_BODY") != nullptr;
+    const bool depthMode = std::getenv("SIMXR_PROBE_DEPTH") != nullptr;
     const bool quadMode = std::getenv("SIMXR_PROBE_QUAD") != nullptr;
-    const bool verifyLegacyCapture = quadMode || !std::getenv("SIMXR_PROBE_GPU_INSPECTION");
+    const bool foveatedMode = std::getenv("SIMXR_PROBE_FOVEATED") != nullptr;
+    CHECK(!foveatedMode || quadMode);
+    const bool verifyLegacyCapture = !foveatedMode && (quadMode || !std::getenv("SIMXR_PROBE_GPU_INSPECTION"));
     const uint32_t activeViewCount = quadMode ? 4 : 2;
     const auto activeViewType = quadMode ? XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO : XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
     const bool devicesMode = std::getenv("SIMXR_PROBE_DEVICES") != nullptr;
@@ -112,14 +118,17 @@ static int runProbe()
         return std::strcmp(extension.extensionName, XR_VARJO_QUAD_VIEWS_EXTENSION_NAME) == 0;
     });
     CHECK(quadExtension != advertised.end() && quadExtension->extensionVersion == XR_VARJO_quad_views_SPEC_VERSION);
+    CHECK(std::any_of(advertised.begin(), advertised.end(), [](const auto& extension) {
+        return std::strcmp(extension.extensionName, XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME) == 0;
+    }));
     CHECK(std::none_of(advertised.begin(), advertised.end(), [](const auto& extension) {
-        return std::strcmp(extension.extensionName, XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME) == 0 ||
-            std::strcmp(extension.extensionName, XR_FB_FOVEATION_EXTENSION_NAME) == 0;
+        return std::strcmp(extension.extensionName, XR_FB_FOVEATION_EXTENSION_NAME) == 0;
     }));
     std::vector<const char*> extensions = {v1 ? XR_KHR_VULKAN_ENABLE_EXTENSION_NAME : XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME,
                                 XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME,
                                 XR_KHR_CONVERT_TIMESPEC_TIME_EXTENSION_NAME};
     if (quadMode) extensions.push_back(XR_VARJO_QUAD_VIEWS_EXTENSION_NAME);
+    if (foveatedMode) extensions.push_back(XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME);
     if (bodyTracking)
         extensions.insert(extensions.end(), {XR_FB_BODY_TRACKING_EXTENSION_NAME, XR_META_BODY_TRACKING_FULL_BODY_EXTENSION_NAME,
             XR_BD_BODY_TRACKING_EXTENSION_NAME, XR_META_BODY_TRACKING_CALIBRATION_EXTENSION_NAME, XR_META_BODY_TRACKING_FIDELITY_EXTENSION_NAME});
@@ -130,8 +139,25 @@ static int runProbe()
     std::strcpy(ci.applicationInfo.applicationName, "SimXR Linux Probe");
     ci.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
     ci.enabledExtensionNames = extensions.data();
+    if (creationRollback) CHECK(setenv("SIMXR_DATA_DIR", data.c_str(), 1) == 0);
+    // Native configuration failure must release CPU admission and file workers,
+    // so correcting the profile can create a fresh instance in the same process.
+    if (creationRollback)
+    {
+        const auto* configured = std::getenv("SIMXR_HEADSET_PROFILE");
+        const bool hadProfile = configured != nullptr;
+        const std::string previous = configured ? configured : "";
+        CHECK(setenv("SIMXR_HEADSET_PROFILE", "simxr-deliberately-invalid-profile", 1) == 0);
+        XrInstance rejected = XR_NULL_HANDLE;
+        const auto failure = xrCreateInstance(&ci, &rejected);
+        if (hadProfile) CHECK(setenv("SIMXR_HEADSET_PROFILE", previous.c_str(), 1) == 0);
+        else CHECK(unsetenv("SIMXR_HEADSET_PROFILE") == 0);
+        CHECK(failure == XR_ERROR_RUNTIME_FAILURE);
+        CHECK(rejected == XR_NULL_HANDLE);
+    }
     XrInstance instance = XR_NULL_HANDLE;
     XR(xrCreateInstance(&ci, &instance));
+    if (creationRollback) CHECK(!std::filesystem::exists(unselectedDirectory));
     XrInstanceProperties props{XR_TYPE_INSTANCE_PROPERTIES};
     XR(xrGetInstanceProperties(instance, &props));
     std::printf("runtime: %s\n", props.runtimeName);
@@ -165,6 +191,22 @@ static int runProbe()
     CHECK(recommended[0].next == &unknown && recommended[0].recommendedImageRectWidth > 0 &&
         recommended[0].recommendedImageRectHeight > 0);
     if (quadMode) CHECK(recommended[2].recommendedImageRectWidth > 0 && recommended[2].recommendedImageRectHeight > 0);
+    if (foveatedMode)
+    {
+        std::vector<XrFoveatedViewConfigurationViewVARJO> requests(activeViewCount,
+            {XR_TYPE_FOVEATED_VIEW_CONFIGURATION_VIEW_VARJO, nullptr, XR_TRUE});
+        for (uint32_t index = 0; index < activeViewCount; ++index) recommended[index].next = &requests[index];
+        XR(xrEnumerateViewConfigurationViews(instance, system, activeViewType, activeViewCount, &count, recommended.data()));
+        CHECK(recommended[0].recommendedImageRectWidth > 0 && recommended[2].recommendedImageRectWidth > 0);
+        requests[0].foveatedRenderingActive = 2;
+        CHECK(xrEnumerateViewConfigurationViews(instance, system, activeViewType, activeViewCount, &count,
+            recommended.data()) == XR_ERROR_VALIDATION_FAILURE);
+        for (auto& view : recommended) view.next = nullptr;
+        XrSystemFoveatedRenderingPropertiesVARJO foveation{XR_TYPE_SYSTEM_FOVEATED_RENDERING_PROPERTIES_VARJO};
+        XrSystemProperties properties{XR_TYPE_SYSTEM_PROPERTIES, &foveation};
+        XR(xrGetSystemProperties(instance, system, &properties));
+        CHECK(foveation.supportsFoveatedRendering);
+    }
     XrSystemBodyTrackingPropertiesFB fbProperties{XR_TYPE_SYSTEM_BODY_TRACKING_PROPERTIES_FB};
     XrSystemBodyTrackingPropertiesBD bdProperties{XR_TYPE_SYSTEM_BODY_TRACKING_PROPERTIES_BD};
     XrSystemPropertiesBodyTrackingFullBodyMETA fullProperties{XR_TYPE_SYSTEM_PROPERTIES_BODY_TRACKING_FULL_BODY_META};
@@ -554,6 +596,17 @@ static int runProbe()
     actionSpace.poseInActionSpace.orientation.w = 1;
     XrSpace hand;
     XR(xrCreateActionSpace(session, &actionSpace, &hand));
+    XrSpace renderGaze = XR_NULL_HANDLE;
+    XrReferenceSpaceCreateInfo renderGazeInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO, nullptr,
+        XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO, {{0, 0, 0, 1}, {0, 0, 0}}};
+    if (foveatedMode)
+    {
+        XR(xrCreateReferenceSpace(session, &renderGazeInfo, &renderGaze));
+        XR(xrEnumerateReferenceSpaces(session, 0, &count, nullptr));
+        CHECK(count == 4);
+    }
+    else
+        CHECK(xrCreateReferenceSpace(session, &renderGazeInfo, &renderGaze) == XR_ERROR_REFERENCE_SPACE_UNSUPPORTED);
     XrSpace gazeSpace = XR_NULL_HANDLE, trackerSpace = XR_NULL_HANDLE, persistentSpace = XR_NULL_HANDLE;
     XrPosef firstGaze{};
     if (devicesMode)
@@ -633,7 +686,40 @@ static int runProbe()
     chain.usageFlags = XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
     XrSwapchain depth;
     XR(xrCreateSwapchain(session, &chain, &depth));
-    XR(xrDestroySwapchain(depth));
+    std::vector<XrSwapchainImageVulkanKHR> depthImages;
+    VkBuffer depthUpload = VK_NULL_HANDLE;
+    VkDeviceMemory depthMemory = VK_NULL_HANDLE;
+    float* depthPixels = nullptr;
+    if (depthMode)
+    {
+        XR(xrEnumerateSwapchainImages(depth, 0, &count, nullptr));
+        depthImages.resize(count, {XR_TYPE_SWAPCHAIN_IMAGE_VULKAN_KHR});
+        XR(xrEnumerateSwapchainImages(depth, count, &count,
+            reinterpret_cast<XrSwapchainImageBaseHeader*>(depthImages.data())));
+        VkBufferCreateInfo buffer{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        buffer.size = 64 * 48 * activeViewCount * sizeof(float);
+        buffer.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        VK(vkCreateBuffer(device, &buffer, nullptr, &depthUpload));
+        VkMemoryRequirements requirements;
+        vkGetBufferMemoryRequirements(device, depthUpload, &requirements);
+        VkPhysicalDeviceMemoryProperties memory;
+        vkGetPhysicalDeviceMemoryProperties(physical, &memory);
+        uint32_t type = 0;
+        constexpr auto properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        while (type < memory.memoryTypeCount && (!(requirements.memoryTypeBits & (1U << type)) ||
+            (memory.memoryTypes[type].propertyFlags & properties) != properties)) ++type;
+        CHECK(type < memory.memoryTypeCount);
+        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        allocation.allocationSize = requirements.size;
+        allocation.memoryTypeIndex = type;
+        VK(vkAllocateMemory(device, &allocation, nullptr, &depthMemory));
+        VK(vkBindBufferMemory(device, depthUpload, depthMemory, 0));
+        void* mapped = nullptr;
+        VK(vkMapMemory(device, depthMemory, 0, VK_WHOLE_SIZE, 0, &mapped));
+        depthPixels = static_cast<float*>(mapped);
+    }
+    else
+        XR(xrDestroySwapchain(depth));
     XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
     CHECK(xrReleaseSwapchainImage(swapchain, &release) == XR_ERROR_CALL_ORDER_INVALID);
     VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
@@ -689,11 +775,14 @@ static int runProbe()
     CHECK(!std::filesystem::exists(data / "screenshot.bmp"));
     command(data, "head_pose_command.json", R"({"x":0.3,"y":1.8,"z":-0.4,"yaw":0.2,"pitch":-0.1,"roll":0.15})");
     command(data, "controller_hold_command.json", R"({"hand":1,"trigger":0.75,"stickX":-1})");
-    command(data, "sequence.jsonl",
-            "{\"frame\":1,\"head\":{\"x\":0.4}}\n{\"frame\":2,\"head\":{\"x\":0.5}}\n{\"frame\":3,\"head\":{"
-            "\"x\":0.6}}\n");
-    std::string sequenceCommand = "{\"path\":\"" + (data / "sequence.jsonl").string() + "\"}";
-    command(data, "sequence_command.json", sequenceCommand.c_str());
+    if (!std::getenv("SIMXR_PROBE_CANONICAL_SEQUENCE"))
+    {
+        command(data, "sequence.jsonl",
+                "{\"frame\":1,\"head\":{\"x\":0.4}}\n{\"frame\":2,\"head\":{\"x\":0.5}}\n{\"frame\":3,\"head\":{"
+                "\"x\":0.6}}\n");
+        std::string sequenceCommand = "{\"path\":\"" + (data / "sequence.jsonl").string() + "\"}";
+        command(data, "sequence_command.json", sequenceCommand.c_str());
+    }
     XrTime firstTime = 0;
     XrTime prior = 0;
     int frames = 4;
@@ -713,6 +802,19 @@ static int runProbe()
     }
     for (int frame = 0; frame < frames; ++frame)
     {
+        if (interactive)
+        {
+            event = {XR_TYPE_EVENT_DATA_BUFFER};
+            while (xrPollEvent(instance, &event) == XR_SUCCESS)
+            {
+                if (event.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED)
+                    std::printf("Interactive session state: %d\n",
+                        reinterpret_cast<const XrEventDataSessionStateChanged*>(&event)->state);
+                if (event.type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING)
+                    std::puts("Interactive reference space changed");
+                event = {XR_TYPE_EVENT_DATA_BUFFER};
+            }
+        }
         XrFrameState fs{XR_TYPE_FRAME_STATE};
         XrFrameWaitInfo wait{XR_TYPE_FRAME_WAIT_INFO};
         if (nextWait.valid())
@@ -723,7 +825,7 @@ static int runProbe()
         }
         else
             XR(xrWaitFrame(session, &wait, &fs));
-        CHECK(fs.shouldRender && fs.predictedDisplayTime > prior);
+        CHECK((interactive || fs.shouldRender) && fs.predictedDisplayTime > prior);
         auto previousDisplay = prior;
         prior = fs.predictedDisplayTime;
         if (frame == 0)
@@ -734,7 +836,8 @@ static int runProbe()
         XrActionsSyncInfo sync{XR_TYPE_ACTIONS_SYNC_INFO};
         sync.countActiveActionSets = 1;
         sync.activeActionSets = &active;
-        XR(xrSyncActions(session, &sync));
+        const auto syncResult = xrSyncActions(session, &sync);
+        CHECK(syncResult == XR_SUCCESS || (interactive && syncResult == XR_SESSION_NOT_FOCUSED));
         if (frame == 0)
         {
             XrHapticActionInfo target{XR_TYPE_HAPTIC_ACTION_INFO, nullptr, haptic, right};
@@ -749,9 +852,9 @@ static int runProbe()
         get.subactionPath = right;
         XrActionStateFloat value{XR_TYPE_ACTION_STATE_FLOAT};
         XR(xrGetActionStateFloat(session, &get, &value));
-        CHECK(value.isActive);
         if (!interactive || frame < 4)
         {
+            CHECK(value.isActive);
             CHECK(std::fabs(value.currentState - .75f) < .0001f);
             CHECK(!value.changedSinceLastSync);
         }
@@ -763,7 +866,9 @@ static int runProbe()
         if (!interactive || frame < 4)
             CHECK(std::fabs(loc.pose.position.x - (.3f + .1f * std::min(frame, 3))) < .0001f &&
                   std::fabs(loc.pose.position.y - 1.8f) < .0001f);
-        if (frame > 0 && frame < 4)
+        if (foveatedMode && (frame == 3 || frame == 4))
+            CHECK(!(velocity.velocityFlags & XR_SPACE_VELOCITY_LINEAR_VALID_BIT));
+        else if (frame > 0 && frame < 4)
         {
             CHECK((velocity.velocityFlags & XR_SPACE_VELOCITY_LINEAR_VALID_BIT) != 0);
             CHECK(std::fabs(velocity.linearVelocity.x - .1f * 1.e9f / float(prior - previousDisplay)) < .001f);
@@ -862,6 +967,9 @@ static int runProbe()
             locations.jointCount = XR_BODY_JOINT_COUNT_FB;
             XR(locateBody(upperBody, &bodyInfo, &locations));
             CHECK(locations.isActive);
+            skeletonInfo.jointCount = XR_BODY_JOINT_COUNT_FB;
+            XR(skeletonBody(upperBody, &skeletonInfo));
+            CHECK(skeleton[XR_BODY_JOINT_HEAD_FB].joint == XR_BODY_JOINT_HEAD_FB);
             std::vector<XrBodyJointLocationBD> bdJoints(XR_BODY_JOINT_COUNT_BD);
             XrBodyJointLocationsBD bdLocations{XR_TYPE_BODY_JOINT_LOCATIONS_BD};
             bdLocations.jointLocationCount = static_cast<uint32_t>(bdJoints.size());
@@ -891,7 +999,17 @@ static int runProbe()
             state.close();
             std::filesystem::rename(data / "probe_state.json.tmp", data / "probe_state.json");
         }
+        XrViewLocateFoveatedRenderingVARJO foveated{XR_TYPE_VIEW_LOCATE_FOVEATED_RENDERING_VARJO, nullptr,
+            static_cast<XrBool32>(frame == 1 ? XR_FALSE : XR_TRUE)};
         XrViewLocateInfo locate{XR_TYPE_VIEW_LOCATE_INFO};
+        if (foveatedMode)
+        {
+            locate.next = &foveated;
+            XrSpaceLocation renderingGaze{XR_TYPE_SPACE_LOCATION};
+            XR(xrLocateSpace(renderGaze, head, fs.predictedDisplayTime, &renderingGaze));
+            CHECK((renderingGaze.locationFlags & XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT) ==
+                (frame == 3 ? 0 : XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT));
+        }
         locate.viewConfigurationType = activeViewType;
         locate.displayTime = fs.predictedDisplayTime;
         locate.space = head;
@@ -922,6 +1040,16 @@ static int runProbe()
         XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
         wi.timeout = XR_INFINITE_DURATION;
         XR(xrWaitSwapchainImage(swapchain, &wi));
+        uint32_t depthIndex = 0;
+        if (depthMode)
+        {
+            XR(xrAcquireSwapchainImage(depth, &acquire, &depthIndex));
+            XR(xrWaitSwapchainImage(depth, &wi));
+            for (uint32_t eye = 0; eye < activeViewCount; ++eye)
+                for (uint32_t y = 0; y < 48; ++y)
+                    for (uint32_t x = 0; x < 64; ++x)
+                        depthPixels[(eye * 48 + y) * 64 + x] = .1f * (frame % 4 + 1) + .15f * eye + .05f * (x / 16) + .025f * (y / 12);
+        }
         VK(vkResetCommandPool(device, pool, 0));
         VkCommandBufferBeginInfo cb{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         VK(vkBeginCommandBuffer(cmd, &cb));
@@ -938,6 +1066,9 @@ static int runProbe()
         VkClearColorValue colors[4] = {{{1, 0, 0, 1}}, {{0, 0, 1, 1}}, {{0, 1, 0, 1}}, {{1, 1, 0, 1}}};
         if (std::getenv("SIMXR_PROBE_MIDTONE"))
             colors[0] = {{0.25f, 0.5f, 0.75f, 1.0f}};
+
+        if (std::getenv("SIMXR_PROBE_DYNAMIC_COLOR") && frame % 2)
+            colors[0] = colors[2];
         for (uint32_t eye = 0; eye < activeViewCount; ++eye)
         {
             VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, eye, 1};
@@ -950,6 +1081,34 @@ static int runProbe()
         barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
         vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0,
                              nullptr, 0, nullptr, 1, &barrier);
+        if (depthMode)
+        {
+            VkMemoryBarrier upload{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            upload.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
+            upload.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                1, &upload, 0, nullptr, 0, nullptr);
+            auto depthBarrier = barrier;
+            depthBarrier.image = depthImages[depthIndex].image;
+            depthBarrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            depthBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            depthBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+            depthBarrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+            depthBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                0, nullptr, 0, nullptr, 1, &depthBarrier);
+            VkBufferImageCopy copy{};
+            copy.imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, activeViewCount};
+            copy.imageExtent = {64, 48, 1};
+            vkCmdCopyBufferToImage(cmd, depthUpload, depthImages[depthIndex].image,
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+            depthBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            depthBarrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            depthBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            depthBarrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
+                0, nullptr, 0, nullptr, 1, &depthBarrier);
+        }
         VK(vkEndCommandBuffer(cmd));
         VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
         submit.commandBufferCount = 1;
@@ -971,12 +1130,23 @@ static int runProbe()
         if (frame != 2)
             VK(vkQueueWaitIdle(queue));
         XR(xrReleaseSwapchainImage(swapchain, &release));
+        if (depthMode) XR(xrReleaseSwapchainImage(depth, &release));
+        std::vector<XrCompositionLayerDepthInfoKHR> depths(activeViewCount, {XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR});
         std::vector<XrCompositionLayerProjectionView> pv(activeViewCount, {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW});
         for (uint32_t e = 0; e < activeViewCount; ++e)
         {
             pv[e].pose = views[e].pose;
             pv[e].fov = views[e].fov;
             pv[e].subImage = {swapchain, {{0, 0}, {64, 48}}, e};
+            if (depthMode)
+            {
+                depths[e].subImage = {depth, {{1, 1}, {62, 46}}, e};
+                depths[e].minDepth = 0;
+                depths[e].maxDepth = 1;
+                depths[e].nearZ = frame == 2 ? 10.f : .1f;
+                depths[e].farZ = frame >= 3 ? std::numeric_limits<float>::infinity() : (frame == 2 ? .1f : 10.f);
+                pv[e].next = &depths[e];
+            }
         }
         XrCompositionLayerProjection projection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
         projection.space = head;
@@ -987,6 +1157,8 @@ static int runProbe()
         quad.eyeVisibility = XR_EYE_VISIBILITY_RIGHT;
         quad.pose.orientation.w = 1;
         quad.pose.position.z = -2;
+        if (std::getenv("SIMXR_PROBE_MOVING_QUAD"))
+            quad.pose.position.x = frame % 2 ? 0.25f : -0.25f;
         quad.size = {1, 1};
         quad.subImage = {swapchain, {{16, 12}, {32, 24}}, 0};
         const XrCompositionLayerBaseHeader *submitted[] = {(const XrCompositionLayerBaseHeader *)&projection,
@@ -996,6 +1168,8 @@ static int runProbe()
         end.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
         end.layerCount = quadMode ? 1 : 2;
         end.layers = submitted;
+        if (const auto* clearFrame = std::getenv("SIMXR_PROBE_CLEAR_FRAME"); clearFrame && std::atoi(clearFrame) == frame + 3)
+            end.layerCount = 0;
         if (frame == 2 && verifyLegacyCapture)
             command(data, "screenshot_request.json", R"({"eye":"both","layer":"projection"})");
         if (frame == 3 && verifyLegacyCapture)
@@ -1040,6 +1214,17 @@ static int runProbe()
         }
         XR(ended);
         CHECK(xrEndFrame(session, &end) == XR_ERROR_CALL_ORDER_INVALID);
+        if (std::getenv("SIMXR_PROBE_RECORDING"))
+        {
+            const auto gate = "recording." + std::to_string(frame + 3);
+            std::ofstream(data / (gate + ".ready")).put('1');
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+            while (!std::filesystem::exists(data / (gate + ".continue")))
+            {
+                CHECK(std::chrono::steady_clock::now() < deadline);
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
     }
     // Let the runtime's deferred readback retire on later frame calls.
     VK(vkQueueWaitIdle(queue));
@@ -1146,11 +1331,19 @@ static int runProbe()
     XrHapticActionInfo inactiveHaptic{XR_TYPE_HAPTIC_ACTION_INFO, nullptr, haptic, right};
     CHECK(xrStopHapticFeedback(session, &inactiveHaptic) == XR_SESSION_NOT_FOCUSED);
     XR(xrDestroySwapchain(swapchain));
+    if (depthMode)
+    {
+        XR(xrDestroySwapchain(depth));
+        vkUnmapMemory(device, depthMemory);
+        vkDestroyBuffer(device, depthUpload, nullptr);
+        vkFreeMemory(device, depthMemory, nullptr);
+    }
     if (devicesMode)
     {
         XR(xrDestroySpace(gazeSpace));
         XR(xrDestroySpace(trackerSpace));
     }
+    if (renderGaze) XR(xrDestroySpace(renderGaze));
     XR(xrDestroySpace(hand));
     XR(xrDestroySpace(head));
     XR(xrDestroySpace(stage));
@@ -1232,6 +1425,14 @@ static int runProbe()
     XR(xrDestroySession(replacement));
     XR(xrDestroyActionSet(set));
     XR(xrDestroyInstance(instance));
+    if (creationRollback)
+    {
+        XrInstance recreated = XR_NULL_HANDLE;
+        XR(xrCreateInstance(&ci, &recreated));
+        XrInstanceProperties recreatedProperties{XR_TYPE_INSTANCE_PROPERTIES};
+        XR(xrGetInstanceProperties(recreated, &recreatedProperties));
+        XR(xrDestroyInstance(recreated));
+    }
     vkDestroySemaphore(device, deferredSemaphore, nullptr);
     vkDestroyCommandPool(device, pool, nullptr);
     vkDestroyDevice(device, nullptr);

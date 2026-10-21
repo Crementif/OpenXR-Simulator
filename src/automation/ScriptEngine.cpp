@@ -97,6 +97,49 @@ std::string StringField(lua_State* state, int table, const char* key, std::strin
 	lua_pop(state, 1);
 	return value;
 }
+ScriptCaptureTarget CaptureTarget(lua_State* state, int index)
+{
+	if (!lua_istable(state, index))
+		throw std::invalid_argument("Capture options require a table");
+	const auto name = StringField(state, index, "target", "composed");
+	ScriptCaptureTarget target;
+	if (name == "composed")
+		target.kind = wire::TargetKind::ComposedEyes;
+	else if (name == "layer_view")
+		target.kind = wire::TargetKind::LayerView;
+	else if (name == "layer_depth")
+		target.kind = wire::TargetKind::LayerDepth;
+	else if (name == "layer_depth_linear")
+		target.kind = wire::TargetKind::LayerDepthLinear;
+	else if (name == "projection_layers")
+		target.kind = wire::TargetKind::ProjectionLayers;
+	else if (name == "quad_layers")
+		target.kind = wire::TargetKind::QuadLayers;
+	else
+		throw std::invalid_argument("Unknown capture target");
+	target.layer = IndexField(state, index, "layer", 0);
+	target.view = IndexField(state, index, "view", 0);
+	if ((target.kind == wire::TargetKind::ComposedEyes || target.kind == wire::TargetKind::ProjectionLayers ||
+		target.kind == wire::TargetKind::QuadLayers) && (target.layer || target.view))
+		throw std::invalid_argument("Composed capture cannot select a source layer/view");
+	return target;
+}
+wire::TargetKind HistoryTarget(lua_State* state, int index)
+{
+	const auto target = lua_isnoneornil(state, index) ? ScriptCaptureTarget{} : CaptureTarget(state, index);
+	if (target.kind != wire::TargetKind::ComposedEyes && target.kind != wire::TargetKind::QuadLayers)
+		throw std::invalid_argument("History target must be composed or quad_layers");
+	return target.kind;
+}
+std::optional<std::uint32_t> HistorySlice(lua_State* state, int index)
+{
+	if (lua_isnoneornil(state, index))
+		return {};
+	const auto slice = Integer(state, index);
+	if (slice > 1)
+		throw std::invalid_argument("Historical eye slice must be 0 or 1");
+	return static_cast<std::uint32_t>(slice);
+}
 std::vector<float> Vector(lua_State* state, int table, const char* key, std::initializer_list<float> fallback)
 {
 	lua_getfield(state, table, key);
@@ -343,6 +386,11 @@ void PushInteger(lua_State* state, std::uint64_t value)
 	const auto text = std::to_string(value);
 	lua_pushlstring(state, text.data(), text.size());
 }
+void PushIntegerField(lua_State* state, const char* name, std::uint64_t value)
+{
+	PushInteger(state, value);
+	lua_setfield(state, -2, name);
+}
 void PushInspection(lua_State* state, std::span<const std::byte> bytes, unsigned depth = 0)
 {
 	if (depth > 32)
@@ -377,7 +425,7 @@ void PushInspection(lua_State* state, std::span<const std::byte> bytes, unsigned
 		if (!data->AsI64())
 			throw std::runtime_error("Invalid inspection integer");
 		const auto value = std::to_string(*data->AsI64());
-		lua_pushlstring(state, value.data(), value.size());
+		lua_pushlstring(state, value.empty() ? "" : value.data(), value.size());
 		break;
 	}
 	case wire::InspectionType::Float:
@@ -390,7 +438,7 @@ void PushInspection(lua_State* state, std::span<const std::byte> bytes, unsigned
 		if (!data->AsText())
 			throw std::runtime_error("Invalid inspection text");
 		const auto value = *data->AsText();
-		lua_pushlstring(state, value.data(), value.size());
+		lua_pushlstring(state, value.empty() ? "" : value.data(), value.size());
 		break;
 	}
 	case wire::InspectionType::Object:
@@ -581,18 +629,19 @@ class ScriptEngine::Impl
 	}
 	int Step(lua_State* state)
 	{
-		std::optional<std::uint32_t> layer;
-		std::uint32_t view = 0;
-		if (!lua_isnoneornil(state, 1))
+		ScriptCaptureTarget target;
+		if (lua_istable(state, 1))
+			target = CaptureTarget(state, 1);
+		else if (!lua_isnoneornil(state, 1))
 		{
 			const auto layerIndex = Integer(state, 1);
 			const auto viewIndex = lua_isnoneornil(state, 2) ? 0 : Integer(state, 2);
 			if (layerIndex > UINT32_MAX || viewIndex > UINT32_MAX)
 				throw std::invalid_argument("Capture index exceeds uint32");
-			layer = static_cast<std::uint32_t>(layerIndex);
-			view = static_cast<std::uint32_t>(viewIndex);
+			target = {wire::TargetKind::LayerView, static_cast<std::uint32_t>(layerIndex),
+				static_cast<std::uint32_t>(viewIndex)};
 		}
-		const auto step = m_runtime.StepApplication(layer, view);
+		const auto step = m_runtime.StepApplication(target);
 		if (step.capture)
 			PushInteger(state, *step.capture);
 		else
@@ -600,10 +649,137 @@ class ScriptEngine::Impl
 		lua_pushlstring(state, step.progress.data(), step.progress.size());
 		return 2;
 	}
+	int StartInputRecording(lua_State* state)
+	{
+		PushInspection(state, m_runtime.StartInputRecording());
+		return 1;
+	}
+	int StopInputRecording(lua_State* state)
+	{
+		PushInspection(state, m_runtime.StopInputRecording());
+		return 1;
+	}
+	int ReadInputRecording(lua_State* state)
+	{
+		const auto offset = lua_isnoneornil(state, 1) ? 0 : Integer(state, 1);
+		const auto count = lua_isnoneornil(state, 2) ? 16 : Integer(state, 2);
+		PushInspection(state, m_runtime.ReadInputRecording(offset, count));
+		return 1;
+	}
+	int StartImageRecording(lua_State* state)
+	{
+		ScriptCaptureTarget target;
+		std::uint32_t capacity = 2;
+		std::uint64_t frames = 0;
+		if (!lua_isnoneornil(state, 1))
+		{
+			target = CaptureTarget(state, 1);
+			capacity = IndexField(state, 1, "capacity", 2);
+			frames = IntegerField(state, 1, "frames", 0);
+		}
+		m_runtime.StartImageRecording(target, capacity, frames);
+		return 0;
+	}
+	int StopImageRecording(lua_State*)
+	{
+		m_runtime.StopImageRecording();
+		return 0;
+	}
+	int ImageRecording(lua_State* state)
+	{
+		const auto recording = m_runtime.ImageRecording();
+		lua_newtable(state);
+		lua_pushlstring(state, recording.phase.data(), recording.phase.size());
+		lua_setfield(state, -2, "phase");
+		lua_pushboolean(state, recording.available);
+		lua_setfield(state, -2, "available");
+		PushIntegerField(state, "capacity", recording.capacity);
+		PushIntegerField(state, "captured", recording.captured);
+		PushIntegerField(state, "requested", recording.requested);
+		if (recording.missedFrame)
+			PushIntegerField(state, "missed_frame", *recording.missedFrame);
+		lua_newtable(state);
+		int index = 1;
+		for (const auto capture : recording.captures)
+		{
+			PushInteger(state, capture);
+			lua_rawseti(state, -2, index++);
+		}
+		lua_setfield(state, -2, "captures");
+		return 1;
+	}
+	int Capture(lua_State* state)
+	{
+		const auto capture = m_runtime.Capture(Integer(state, 1));
+		lua_newtable(state);
+		PushIntegerField(state, "capture_id", capture.identity);
+		lua_pushlstring(state, capture.phase.data(), capture.phase.size());
+		lua_setfield(state, -2, "phase");
+		lua_pushboolean(state, capture.imageAvailable);
+		lua_setfield(state, -2, "image_available");
+		if (capture.frame)
+			PushIntegerField(state, "frame_id", *capture.frame);
+		return 1;
+	}
+	int ImageHistory(lua_State* state)
+	{
+		const auto count = lua_isnoneornil(state, 1) ? 10 : Integer(state, 1);
+		if (!count || count > 10)
+			throw std::invalid_argument("Image history count must be in [1,10]");
+		PushInspection(state, m_runtime.ImageHistory(static_cast<std::uint32_t>(count), HistoryTarget(state, 2)));
+		return 1;
+	}
+	int ExportHistory(lua_State* state)
+	{
+		m_runtime.ExportHistory(Integer(state, 1), String(state, 2), HistorySlice(state, 3), HistoryTarget(state, 4));
+		return 0;
+	}
+	int BeginImageWindow(lua_State* state)
+	{
+		const auto window = m_runtime.BeginImageWindow(HistoryTarget(state, 1));
+		PushInspection(state, window.document);
+		PushInteger(state, window.identity);
+		return 2;
+	}
+	int ImageWindow(lua_State* state)
+	{
+		PushInspection(state, m_runtime.ImageWindow(Integer(state, 1)));
+		return 1;
+	}
+	int ExportWindowImage(lua_State* state)
+	{
+		m_runtime.ExportWindowImage(Integer(state, 1), Integer(state, 2), String(state, 3), HistorySlice(state, 4));
+		return 0;
+	}
+	int ReleaseImageWindow(lua_State* state)
+	{
+		m_runtime.ReleaseImageWindow(Integer(state, 1));
+		return 0;
+	}
+	int ProjectionHistory(lua_State* state)
+	{
+		const auto count = lua_isnoneornil(state, 1) ? 64 : Integer(state, 1);
+		if (!count || count > 64)
+			throw std::invalid_argument("Projection history count must be in [1,64]");
+		PushInspection(state, m_runtime.ProjectionHistory(static_cast<std::uint32_t>(count)));
+		return 1;
+	}
 	int Inspect(lua_State* state)
 	{
-		PushInspection(state, m_runtime.Inspect(Integer(state, 1)));
+		const auto inspection = m_runtime.Inspect(Integer(state, 1));
+		PushInspection(state, inspection.document);
+		PushInteger(state, inspection.identity);
+		return 2;
+	}
+	int Revision(lua_State* state)
+	{
+		PushInspection(state, m_runtime.Revision(Integer(state, 1)));
 		return 1;
+	}
+	int ReleaseInspection(lua_State* state)
+	{
+		m_runtime.ReleaseInspection(Integer(state, 1));
+		return 0;
 	}
 	int StepDisplay(lua_State* state)
 	{
@@ -631,7 +807,24 @@ class ScriptEngine::Impl
 	}
 	int Export(lua_State* state)
 	{
-		m_runtime.Export(Integer(state, 1), String(state, 2));
+		std::optional<ScriptCaptureTarget> target;
+		std::optional<std::uint32_t> arraySlice;
+		if (!lua_isnoneornil(state, 3))
+		{
+			if (!lua_istable(state, 3))
+				throw std::invalid_argument("Export options require a table");
+			lua_getfield(state, 3, "target");
+			const bool selectTarget = !lua_isnil(state, -1);
+			lua_pop(state, 1);
+			if (selectTarget)
+				target = CaptureTarget(state, 3);
+			lua_getfield(state, 3, "array_slice");
+			const bool selectSlice = !lua_isnil(state, -1);
+			lua_pop(state, 1);
+			if (selectSlice)
+				arraySlice = IndexField(state, 3, "array_slice", 0);
+		}
+		m_runtime.Export(Integer(state, 1), String(state, 2), target, arraySlice);
 		return 0;
 	}
 	int ReleaseCapture(lua_State* state)
@@ -717,7 +910,23 @@ class ScriptEngine::Impl
 		bind("pause", Binding<&Impl::Pause>);
 		bind("resume", Binding<&Impl::Resume>);
 		bind("step", Binding<&Impl::Step>);
+		bind("start_input_recording", Binding<&Impl::StartInputRecording>);
+		bind("stop_input_recording", Binding<&Impl::StopInputRecording>);
+		bind("read_input_recording", Binding<&Impl::ReadInputRecording>);
+		bind("start_image_recording", Binding<&Impl::StartImageRecording>);
+		bind("stop_image_recording", Binding<&Impl::StopImageRecording>);
+		bind("image_recording", Binding<&Impl::ImageRecording>);
+		bind("capture", Binding<&Impl::Capture>);
 		bind("inspect", Binding<&Impl::Inspect>);
+		bind("projection_history", Binding<&Impl::ProjectionHistory>);
+		bind("image_history", Binding<&Impl::ImageHistory>);
+		bind("export_history", Binding<&Impl::ExportHistory>);
+		bind("begin_image_window", Binding<&Impl::BeginImageWindow>);
+		bind("image_window", Binding<&Impl::ImageWindow>);
+		bind("export_window_image", Binding<&Impl::ExportWindowImage>);
+		bind("release_image_window", Binding<&Impl::ReleaseImageWindow>);
+		bind("revision", Binding<&Impl::Revision>);
+		bind("release_inspection", Binding<&Impl::ReleaseInspection>);
 		bind("checkpoint", Binding<&Impl::Checkpoint>);
 		bind("state", Binding<&Impl::State>);
 		bind("release_inputs", Binding<&Impl::ReleaseInputs>);

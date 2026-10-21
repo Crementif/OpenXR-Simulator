@@ -1,6 +1,7 @@
 #include "../TestSupport.h"
 #include "Math.h"
 #include "graphics/Compositor.h"
+#include "graphics/PreviewGeometry.h"
 
 #include <cmath>
 #include <iostream>
@@ -153,6 +154,34 @@ void OrderingAndAlpha()
 	const auto linear = CompositeReferenceColor({decodedHalf, decodedHalf, decodedHalf, 0.5f}, {0, 0, 0, 1}, 3);
 	Near(linear.r, 0.10702057f, "sRGB view must decode before linear alpha composition");
 }
+void QuadCropBounds()
+{
+	Fixture fixture;
+	fixture.target.width = 96;
+	fixture.target.height = 64;
+	for (int scenario = 0; scenario < 4; ++scenario)
+	{
+		auto quad = fixture.Quad();
+		quad.eyes = XR_EYE_VISIBILITY_RIGHT;
+		quad.worldPose.pose.position.x = scenario == 1 ? 1.8f : 0.2f;
+		quad.worldPose.pose.position.z = scenario == 2 ? -0.1f : scenario == 3 ? 2.0f : -2.0f;
+		quad.worldPose.pose.orientation = EulerAngles(0.4f, 0.2f, 0.1f);
+		CompositionPlan plan;
+		Require(PrepareComposition(fixture.Frame({fixture.Projection(), quad}), fixture.target, fixture.extent, plan) == XR_SUCCESS,
+			"Prepare cropped quad fixture");
+		const auto bounds = CompositionQuadBounds(plan);
+		Require(bounds[0].extent.width == 0, "Projection or wrong-eye geometry contaminated UI bounds");
+		const auto& rectangle = bounds[1];
+		for (std::int32_t y = 0; y < 64; ++y)
+			for (std::int32_t x = 0; x < 96; ++x)
+				if (EvaluateCompositionSample(plan.draws.back(), {(x + 0.5f) / 96, (y + 0.5f) / 64}))
+					Require(x >= rectangle.offset.x && y >= rectangle.offset.y &&
+						x < rectangle.offset.x + rectangle.extent.width && y < rectangle.offset.y + rectangle.extent.height,
+						"Historical crop excluded a pixel accepted by the compositor ray equation");
+		if (scenario == 3)
+			Require(rectangle.extent.width == 0, "Behind-eye quad produced a visible UI rectangle");
+	}
+}
 void Rejection()
 {
 	Fixture f;
@@ -209,5 +238,6 @@ int main()
 	Quad();
 	OrderingAndAlpha();
 	Rejection();
+	QuadCropBounds();
 	std::cout << "Compositor plan/ray/linear-alpha reference tests passed; no GPU execution claimed\n";
 }

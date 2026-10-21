@@ -60,14 +60,14 @@ void CopiedMetadata()
 {
 	Fixture f;
 	std::uint32_t resolutions = 0;
-	LayerSpaceResolver resolve = [&](XrSpace space, RuntimeTime time, PoseSample& result)
+	LayerSpaceResolver resolve = [&](XrSpace space, RuntimeTime time, SpaceSample& result)
 	{
 		Require(space == f.space && time == RuntimeTime{Duration{1000}}, "Submission time changed during resolution");
 		++resolutions;
-		result = {IdentityPose(), TrackedPoseFlags, time};
+		result.worldPose = {IdentityPose(), TrackedPoseFlags, time};
 		const float half = std::sqrt(0.5f);
-		result.pose.orientation = {0, half, 0, half};
-		result.pose.position = {10, 1, 0};
+		result.worldPose.pose.orientation = {0, half, 0, half};
+		result.worldPose.pose.position = {10, 1, 0};
 		return XR_SUCCESS;
 	};
 	std::shared_ptr<const FrameLayers> prepared;
@@ -117,8 +117,8 @@ void HistoricalAndFourViews()
 			"Historical view space");
 	f.quad.space = f.projection.space = f.space;
 	f.validation.viewCount = f.projection.viewCount = 4;
-	LayerSpaceResolver resolve = [&](XrSpace space, RuntimeTime time, PoseSample& result)
-	{ return spaces.WorldPose(space, time, result); };
+	LayerSpaceResolver resolve = [&](XrSpace space, RuntimeTime time, SpaceSample& result)
+	{ return spaces.Sample(space, time, result); };
 	std::shared_ptr<const FrameLayers> prepared;
 	Require(BuildLayers(f.info, f.validation, resolve, prepared) == XR_SUCCESS, "Four-view CPU metadata build");
 	const auto& projection = std::get<ProjectionLayerDescription>(prepared->layers[1]);
@@ -140,15 +140,15 @@ void HistoricalAndFourViews()
 			"Quad selection accepted a projection view or missing layer index");
 	const auto old = prepared;
 	Require(BuildLayers(
-				f.info, f.validation, [](XrSpace, RuntimeTime, PoseSample&) { return XR_ERROR_HANDLE_INVALID; },
+				f.info, f.validation, [](XrSpace, RuntimeTime, SpaceSample&) { return XR_ERROR_HANDLE_INVALID; },
 				prepared) == XR_ERROR_HANDLE_INVALID &&
 				prepared == old,
 			"Resolution failure replaced prior metadata");
 	Require(BuildLayers(
 				f.info, f.validation,
-				[](XrSpace, RuntimeTime time, PoseSample& pose)
+				[](XrSpace, RuntimeTime time, SpaceSample& pose)
 				{
-					pose = {IdentityPose(),
+					pose.worldPose = {IdentityPose(),
 							XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_POSITION_TRACKED_BIT, time};
 					return XR_SUCCESS;
 				},
@@ -173,9 +173,9 @@ void TransactionalSubmission()
 			"Submission frame issue");
 	const auto key = FrameKey{session.Snapshot().generation, prediction.id};
 	std::shared_ptr<const FrameLayers> prepared;
-	LayerSpaceResolver resolve = [](XrSpace, RuntimeTime time, PoseSample& pose)
+	LayerSpaceResolver resolve = [](XrSpace, RuntimeTime time, SpaceSample& pose)
 	{
-		pose = {IdentityPose(), TrackedPoseFlags, time};
+		pose.worldPose = {IdentityPose(), TrackedPoseFlags, time};
 		return XR_SUCCESS;
 	};
 	f.views[0].pose.orientation.w = 0;

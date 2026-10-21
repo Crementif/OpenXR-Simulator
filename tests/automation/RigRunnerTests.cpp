@@ -3,6 +3,7 @@
 #include "automation/RigRunner.h"
 #include "control/ControlSchema.h"
 #include "control/ControlService.h"
+#include "control/InspectionDocument.h"
 #include "control/SimulationControl.h"
 #include "runtime/Runtime.h"
 
@@ -10,6 +11,7 @@
 #include <cstring>
 #include <iostream>
 #include <limits>
+#include <thread>
 
 using namespace simxr;
 namespace wire = control;
@@ -127,6 +129,58 @@ void CheckBindingPauseAndStep()
 	}
 }
 
+void CheckInputRecording()
+{
+	Fixture fixture;
+	automation::RigRunner runner([&](auto opcode, auto fields) { return fixture.Exchange(opcode, std::move(fields)); });
+	runner.Start(fixture.Options(R"(
+assert(simxr.start_input_recording().active)
+local transaction = simxr.schedule({frame="1", commands={
+    {kind="take_control", channel="head"}, {kind="head_pose", position={0.25, 1.7, 0}},
+}})
+simxr.await_transaction(transaction)
+assert(not simxr.stop_input_recording().active)
+local recording = simxr.read_input_recording("0", "16")
+assert(recording.total == "1" and recording.transactions[1].phase == "applied")
+assert(not pcall(function() simxr.read_input_recording(0, 17) end))
+)"));
+	runner.Join();
+	Require(runner.Snapshot().phase == automation::RigPhase::Complete, runner.Snapshot().error.c_str());
+	runner.Start(fixture.Options("simxr.start_input_recording() error('injected recording script failure')"));
+	runner.Join();
+	Require(runner.Snapshot().phase == automation::RigPhase::Failed &&
+		!fixture.session->Commands().Recorder().Snapshot(0, 0).active,
+		"Failed rig left input recording active");
+	runner.Start(fixture.Options("simxr.start_input_recording() simxr.stop_input_recording()"));
+	runner.Join();
+	Require(runner.Snapshot().phase == automation::RigPhase::Complete, "Input recording ownership survived cleanup");
+}
+
+void CheckLeaseRenewal()
+{
+	Fixture fixture;
+	DebugControllerConfig config;
+	config.leaseDuration = std::chrono::milliseconds{1500};
+	const auto controller = fixture.runtime.Debugger(fixture.session, config);
+	Require(controller != nullptr, "Lease fixture debugger unavailable");
+	unsigned renewals = 0;
+	automation::RigRunner runner(
+		[&](auto opcode, auto fields)
+		{
+			if (opcode == wire::OpCode::Renew)
+				++renewals;
+			if (opcode == wire::OpCode::SimulationStatus)
+				std::this_thread::sleep_for(std::chrono::milliseconds{40});
+			return fixture.Exchange(opcode, std::move(fields));
+		});
+	auto options = fixture.Options("simxr.pause() for i = 1, 55 do simxr.state() end simxr.resume()");
+	options.deadline = std::chrono::seconds{6};
+	runner.Start(std::move(options));
+	runner.Join();
+	Require(runner.Snapshot().phase == automation::RigPhase::Complete && renewals >= 2,
+		"Active rig lost its lease during status polling");
+}
+
 void CheckTemporaryResourceCleanup()
 {
 	for (const bool inspect : {false, true})
@@ -181,6 +235,76 @@ void CheckTemporaryResourceCleanup()
 		else
 			Require(releasedImages == 1 && releasedExports == 1,
 					"Failed output open leaked or double-released export resources");
+	}
+}
+
+void CheckImageWindowCleanup()
+{
+	for (int mode = 0; mode < 4; ++mode)
+	{
+		std::size_t releasedWindows = 0, releasedImages = 0, releasedExports = 0;
+		std::atomic<bool> begun = false;
+		constexpr std::uint64_t window = 9007199254740993ULL;
+		automation::RigRunner runner([&](auto opcode, auto fields)
+		{
+			wire::Message response;
+			response.fields.push_back(wire::Field::U32(wire::tag::Error, 0));
+			if (opcode == wire::OpCode::BeginImageWindow)
+			{
+				begun = true;
+				response.fields.push_back(wire::Field::U64(wire::tag::ImageWindowId, window));
+				const auto document = wire::InspectionValue::Object({{"phase", wire::InspectionValue::Text("complete")}}).Encode();
+				response.fields.push_back(wire::Field::Bytes(wire::tag::Document,
+					mode == 0 ? std::span<const std::byte>{} : std::span<const std::byte>{document}));
+			}
+			else if (opcode == wire::OpCode::RetainWindowImage || opcode == wire::OpCode::ReleaseImageWindow)
+			{
+				wire::Message request;
+				request.fields = std::move(fields);
+				Require(!request.Find(wire::tag::Session) &&
+					request.Find(wire::tag::ImageWindowId)->AsU64() == window,
+					"Window operation lost its exact connection-owned identity");
+				if (opcode == wire::OpCode::ReleaseImageWindow)
+					++releasedWindows;
+				else
+					response.fields.push_back(wire::Field::U64(wire::tag::ImageReaderId, 41));
+			}
+			else if (opcode == wire::OpCode::StartExport)
+			{
+				response.fields.push_back(wire::Field::U64(wire::tag::ExportId, 42));
+				response.fields.push_back(wire::Field::U64(wire::tag::TotalBytes, 4));
+			}
+			else if (opcode == wire::OpCode::ExportInfo)
+				response.fields.push_back(wire::Field::Text(wire::tag::Phase, "complete"));
+			else if (opcode == wire::OpCode::ReleaseImage)
+				++releasedImages;
+			else if (opcode == wire::OpCode::ReleaseExport)
+				++releasedExports;
+			else
+				Require(opcode == wire::OpCode::ReleaseControl, "Unexpected window cleanup operation");
+			return response;
+		});
+		automation::RigOptions options;
+		options.session = wire::ControlSessionId{1};
+		options.generation = 1;
+		options.source = "local document, window = simxr.begin_image_window({target='quad_layers'})\n"
+			"assert(window == '9007199254740993' and document.phase == 'complete')\n";
+		options.source += mode == 2 ? "simxr.release_image_window(window)"
+			: mode == 3 ? "while true do end" : "simxr.export_window_image(window, '7', '')";
+		runner.Start(std::move(options));
+		if (mode == 3)
+		{
+			for (int attempt = 0; attempt < 1000 && !begun; ++attempt)
+				std::this_thread::sleep_for(std::chrono::milliseconds{1});
+			Require(begun, "Rig did not acquire its window before cancellation");
+			runner.Cancel();
+		}
+		runner.Join();
+		Require(releasedWindows == 1 && releasedImages == (mode == 1 ? 1 : 0) &&
+			releasedExports == (mode == 1 ? 1 : 0), "Window/export ownership leaked or was released twice");
+		Require(runner.Snapshot().phase == (mode == 2 ? automation::RigPhase::Complete :
+			mode == 3 ? automation::RigPhase::Cancelled : automation::RigPhase::Failed),
+			"Window cleanup test did not exercise its expected result");
 	}
 }
 
@@ -365,6 +489,9 @@ simxr.checkpoint("fresh VM, persistent IDs", applied.applied_frame == "3")
 				"Restart reused transaction IDs or retained failed VM state");
 		CheckBindingPauseAndStep();
 		CheckTemporaryResourceCleanup();
+		CheckImageWindowCleanup();
+		CheckLeaseRenewal();
+		CheckInputRecording();
 		CheckExactFrameArithmetic();
 		CheckEditableCommands();
 		std::cout << "PASS Luau worker, exact shared input, cleanup, reports and cancellation\n";

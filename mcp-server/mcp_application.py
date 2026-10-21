@@ -46,7 +46,7 @@ class McpApplication:
         )
         self._diagnostics = RuntimeDiagnostics(self._artifacts)
         self._projection = ProjectionWorkflow(self._artifacts)
-        self._capture = CaptureWorkflow(self._artifacts, self._projection)
+        self._capture = CaptureWorkflow(self._artifacts)
         self._preview_incidents = IncidentWorkflow(self._artifacts)
         self._ui_incidents = IncidentWorkflow(self._artifacts, ui=True)
         self._handlers = {
@@ -167,7 +167,19 @@ class McpApplication:
             # SDK connection/source retirement happens after all callers settle,
             # without holding application state or artifact locks.
             try:
-                self._legacy.close()
+                try:
+                    self._capture.disconnect()
+                finally:
+                    try:
+                        self._projection.disconnect()
+                    finally:
+                        try:
+                            self._preview_incidents.disconnect()
+                        finally:
+                            try:
+                                self._ui_incidents.disconnect()
+                            finally:
+                                self._legacy.close()
             finally:
                 try:
                     self._debug.close()

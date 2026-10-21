@@ -53,6 +53,15 @@ struct LocatedViews
 	std::vector<ViewSample> views;
 };
 
+struct ViewQuerySnapshot
+{
+	RuntimeTime displayTime;
+	RuntimeTime sampleTime;
+	bool foveatedRequested = false;
+	bool gazeActive = false;
+	std::vector<XrFovf> fieldsOfView;
+};
+
 class ViewConfiguration
 {
 public:

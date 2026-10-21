@@ -41,6 +41,45 @@ PresentationSubmission Submission(std::uint64_t frame, std::int64_t target,
 	return {{{generation}, {frame}}, {Duration{target}}, std::move(output)};
 }
 
+void DisplayHistory()
+{
+	FrameHistory history(4, 8);
+	PresentationController controller(2, &history);
+	controller.Start({1}, {{Duration{100}}, Duration{10}});
+	controller.Advance({Duration{100}});
+	auto image = std::make_shared<Output>();
+	std::weak_ptr<Output> lifetime = image;
+	Require(controller.Submit(Submission(1, 110, image)) == PresentationAdmission::Accepted, "Queue traced image");
+	controller.Advance({Duration{110}});
+	Require(history.Diagnostics().events.back().kind == FrameTraceKind::DisplayEmpty,
+			"Pending GPU image was traced as displayed");
+	image->state = CompletionStatus::Complete;
+	controller.Advance({Duration{120}});
+	controller.Advance({Duration{150}});
+	Require(controller.Submit(Submission(2, 160)) == PresentationAdmission::Accepted, "Queue traced clear");
+	controller.Advance({Duration{160}});
+	controller.Advance({Duration{170}});
+	const auto events = history.Diagnostics().events;
+	Require(events.size() == 6 && events[2].kind == FrameTraceKind::DisplaySelected &&
+			events[2].frame == FrameKey{{1}, {1}} && events[2].related == 2 &&
+			events[3].kind == FrameTraceKind::DisplayRepeated && events[3].related == 5 &&
+			events[3].Detail() == "skipped_ticks=2; content=image" &&
+			events[4].kind == FrameTraceKind::DisplayCleared && events[4].frame == FrameKey{{1}, {2}} &&
+			events[5].Detail() == "skipped_ticks=0; content=clear",
+			"Display journal lost actual selection, repeat, clear or skipped-tick identity");
+	image.reset();
+	Require(lifetime.expired(), "Display history retained a GPU image after clear");
+	controller.Stop();
+	controller.Start({2}, {{Duration{200}}, Duration{10}});
+	controller.Advance({Duration{200}});
+	Require(history.Diagnostics().events.back().frame == FrameKey{{2}, {}},
+			"Empty display history reused the previous generation");
+	for (int tick = 1; tick < 12; ++tick)
+		controller.Advance({Duration{200 + tick * 10}});
+	Require(history.Diagnostics().events.size() == 8 && history.Diagnostics().dropped > 0 &&
+			events[2].frame == FrameKey{{1}, {1}}, "Display history was unbounded or mutated a reader");
+}
+
 void Selection()
 {
 	PresentationController controller(6);
@@ -312,6 +351,7 @@ void LiveClearMailbox()
 
 int main()
 {
+	DisplayHistory();
 	Selection();
 	FailureAndShutdown();
 	PhaseAndConcurrency();

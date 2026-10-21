@@ -264,6 +264,12 @@ int main()
 	auto partial = TrackingSystem::Evaluate({Duration{8000000000}}, partialHead, BodyModel{});
 	Require(partial.gaze.flags == ValidPoseFlags, "Eye tracking flags became uncoupled");
 	Require(trackers.Publish(first) == XR_ERROR_TIME_INVALID, "Older inventory changed current tracker state");
+	const auto retainedPath = trackers.Paths()[0].persistentPath;
+	trackers.BeginSession();
+	Require(trackers.Paths()[0].persistentPath == retainedPath && trackers.Publish(first) == XR_SUCCESS,
+		"Session restart must preserve tracker paths and accept its restarted deterministic clock");
+	Require(trackers.Publish(unassigned) == XR_SUCCESS && trackers.Publish(first) == XR_ERROR_TIME_INVALID,
+		"Restarted session must still reject its own stale inventory");
 	InputSnapshot malformed;
 	malformed.devices.push_back({{InputDeviceKind::Tracker, 1}, {"/user/vive_tracker_htcx/serial//broken"}, "/interaction_profiles/htc/vive_tracker_htcx"});
 	Require(inputs.Publish(malformed) == XR_ERROR_PATH_FORMAT_INVALID, "Malformed device alias accepted");

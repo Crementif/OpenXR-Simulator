@@ -1,7 +1,5 @@
 #include "app/RigPanel.h"
-#include "app/RigLaunchAttachment.h"
-#include "app/RuntimeConnection.h"
-#include "app/RuntimeEndpoints.h"
+#include "app/LaunchAttachment.h"
 #include "app/RuntimePanels.h"
 #include "app/Utf8Path.h"
 #include "app/WorkerConnection.h"
@@ -77,14 +75,11 @@ struct RigPanel::Impl
 #ifdef SIMXR_COMPANION_AUTOMATION
 	std::unique_ptr<automation::RigRunner> runner;
 	std::shared_ptr<WorkerConnection> transport;
-	RuntimeConnection discovery;
 	std::string boundEndpoint;
 	std::uint64_t boundSession = 0, boundGeneration = 0;
 	struct Launch
 	{
 		std::string source, name;
-		RigLaunchAttachment attachment;
-		Launch(RuntimeConnection& discovery, const LaunchProfile& profile) : attachment(discovery, profile) {}
 	};
 	std::unique_ptr<Launch> launch;
 #endif
@@ -146,18 +141,12 @@ struct RigPanel::Impl
 		if (!output.write(bytes.data(), static_cast<std::streamsize>(bytes.size())) || !output.flush())
 			throw std::runtime_error("Cannot write rig report destination");
 	}
-	void PollLaunch(RuntimePanels& runtime)
+	void Attach(const LaunchedSession& session)
 	{
 		if (!launch)
 			return;
-		if (auto session = launch->attachment.Poll())
-		{
-			auto source = std::move(launch->source);
-			auto name = std::move(launch->name);
-			launch.reset();
-			runtime.ConnectEndpoint(session->endpoint);
-			Start(session->endpoint, session->session, session->generation, std::move(source), std::move(name));
-		}
+		auto pending = std::move(launch);
+		Start(session.endpoint, session.session, session.generation, std::move(pending->source), std::move(pending->name));
 	}
 #endif
 	void Prepare(const LaunchProfile& profile)
@@ -172,7 +161,7 @@ struct RigPanel::Impl
 #if defined(SIMXR_COMPANION_AUTOMATION) && (defined(__linux__) || defined(_WIN32))
 		if (runner && Active(runner->Snapshot().phase))
 			throw std::runtime_error("Stop the current rig before launching another rig profile");
-		auto pending = std::make_unique<Launch>(discovery, profile);
+		auto pending = std::make_unique<Launch>();
 		auto file = Utf8Path(profile.rig);
 		if (!file.is_absolute())
 		{
@@ -189,37 +178,8 @@ struct RigPanel::Impl
 		throw std::runtime_error("This companion build does not provide native rig execution");
 #endif
 	}
-	void Observe(const LaunchSnapshot& process)
-	{
-#ifdef SIMXR_COMPANION_AUTOMATION
-		if (!launch)
-			return;
-		try
-		{
-			launch->attachment.Observe(process);
-		}
-		catch (const std::exception& failure)
-		{
-			error = failure.what();
-			launch.reset();
-		}
-#else
-		(void)process;
-#endif
-	}
 	void Draw(RuntimePanels& runtime, bool visible)
 	{
-#ifdef SIMXR_COMPANION_AUTOMATION
-		try
-		{
-			PollLaunch(runtime);
-		}
-		catch (const std::exception& failure)
-		{
-			error = failure.what();
-			launch.reset();
-		}
-#endif
 		if (!visible)
 			return;
 		if (!ImGui::Begin("Rigs"))
@@ -422,8 +382,12 @@ void RigPanel::PrepareLaunch(const LaunchProfile& profile)
 {
 	m_impl->Prepare(profile);
 }
-void RigPanel::ObserveLaunch(const LaunchSnapshot& process)
+void RigPanel::AttachLaunch(const LaunchedSession& session)
 {
-	m_impl->Observe(process);
+#ifdef SIMXR_COMPANION_AUTOMATION
+	m_impl->Attach(session);
+#else
+	(void)session;
+#endif
 }
 } // namespace simxr::app

@@ -35,11 +35,13 @@ void SessionPublication::PreparedStart::Commit()
 {
 	if (m_committed)
 		throw std::logic_error("Session publication start was already committed");
+	m_owner.m_instance.Trackers().BeginSession();
 	m_owner.m_tracking.Reset();
 	m_owner.m_baseline = std::move(m_baseline);
 	m_owner.m_epoch = m_epoch;
 	m_owner.m_sessionOverride = false;
 	m_owner.m_viewHistory.clear();
+	m_owner.m_viewQueries.clear();
 	m_owner.m_layout = m_layout;
 	m_committed = true;
 }
@@ -66,15 +68,15 @@ SessionPublication::FrameBoundary::FrameBoundary(SessionPublication& owner, bool
 }
 
 void SessionPublication::FrameBoundary::Reserve(const FramePrediction& prediction,
-												const std::function<void()>& reserveHistory)
+												const std::function<void(const AppliedCommandSnapshot&)>& reserveHistory)
 {
 	if (m_applied)
 		throw std::logic_error("Frame publication was already reserved");
 	const SimulationTime time{prediction.displayTime.value - m_epoch.value};
 	m_applied = m_owner.m_commands.Apply(prediction.id, time, prediction.displayTime, m_baseline,
-										 [&](const auto&)
+										 [&](const auto& applied)
 										 {
-											 reserveHistory();
+											 reserveHistory(*applied);
 										 });
 }
 
@@ -134,7 +136,14 @@ void SessionPublication::Stop()
 
 bool SessionPublication::ReleaseSource(CommandSource source, bool retire)
 {
-	const auto channels = m_commands.ReleaseSource(source, retire);
+	return ReleaseChannels(m_commands.ReleaseSource(source, retire));
+}
+void SessionPublication::StopPoseSequence(CommandSource source)
+{
+	ReleaseChannels(m_commands.StopPoseSequence(source));
+}
+bool SessionPublication::ReleaseChannels(const std::array<bool, ControlChannelCount>& channels)
+{
 	const std::array<bool, 2> released{channels[static_cast<std::size_t>(ControlChannel::LeftControls)],
 									   channels[static_cast<std::size_t>(ControlChannel::RightControls)]};
 	m_input.ReleaseControls(released);
@@ -241,9 +250,20 @@ void SessionPublication::PublishEffective(RuntimeTime time, const CommandConfigu
 		m_viewHistory.pop_front();
 }
 
+void SessionPublication::RecordViewQuery(ViewQuerySnapshot query)
+{
+	std::erase_if(m_viewQueries, [&](const auto& previous) { return previous.displayTime == query.displayTime; });
+	m_viewQueries.push_back(std::move(query));
+	while (m_viewQueries.size() > 128)
+		m_viewQueries.pop_front();
+}
+
 void SessionPublication::CaptureFrame(FrameId frame, FrameSubmissionState& submission) const
 {
 	submission.viewLayout = m_layout;
+	for (const auto& query : m_viewQueries)
+		if (query.displayTime == submission.displayTime)
+			submission.viewQuery = query;
 	submission.input = m_input.Snapshot();
 	submission.actions = m_actions.Snapshot();
 	submission.commands = m_commands.At(frame);

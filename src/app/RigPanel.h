@@ -12,6 +12,7 @@ namespace simxr::app
 {
 class RuntimePanels;
 struct RuntimePanelSnapshot;
+struct LaunchedSession;
 class RigPanel
 {
   public:
@@ -28,7 +29,7 @@ class RigPanel
 	// Called only for an explicit launch action. A rig is never attached to a
 	// previously connected application or an ambiguous/stale socket.
 	void PrepareLaunch(const LaunchProfile& profile);
-	void ObserveLaunch(const LaunchSnapshot& process);
+	void AttachLaunch(const LaunchedSession& session);
 
   private:
 	struct Impl;

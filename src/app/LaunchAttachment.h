@@ -14,7 +14,7 @@
 namespace simxr::app
 {
 class RuntimeConnection;
-struct RigSessionAttachment
+struct LaunchedSession
 {
 	std::string endpoint;
 	std::uint64_t session = 0;
@@ -22,15 +22,15 @@ struct RigSessionAttachment
 };
 
 // The dedicated discovery worker outlives this UI-thread attachment attempt.
-class RigLaunchAttachment
+class LaunchAttachment
 {
   public:
-	RigLaunchAttachment(RuntimeConnection& discovery, const LaunchProfile& profile);
-	~RigLaunchAttachment();
-	RigLaunchAttachment(const RigLaunchAttachment&) = delete;
-	RigLaunchAttachment& operator=(const RigLaunchAttachment&) = delete;
+	LaunchAttachment(RuntimeConnection& discovery, const LaunchProfile& profile);
+	~LaunchAttachment();
+	LaunchAttachment(const LaunchAttachment&) = delete;
+	LaunchAttachment& operator=(const LaunchAttachment&) = delete;
 	void Observe(const LaunchSnapshot& process);
-	std::optional<RigSessionAttachment> Poll();
+	std::optional<LaunchedSession> Poll();
 
   private:
 	struct WaitingForProcess

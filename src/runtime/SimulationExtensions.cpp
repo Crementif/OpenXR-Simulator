@@ -20,6 +20,8 @@ std::span<const ExtensionDefinition> SimulationExtensions(SimulationExtensionCap
 	static constexpr std::array coreDependency{ExtensionDependency{{}, XR_MAKE_VERSION(1, 0, 0)}};
 	static constexpr std::array dependsFB{DependencyClause{fbDependency}};
 	static constexpr std::array dependsFidelity{DependencyClause{fbDependency}, DependencyClause{coreDependency}};
+	static constexpr std::array quadDependency{ExtensionDependency{XR_VARJO_QUAD_VIEWS_EXTENSION_NAME}};
+	static constexpr std::array dependsQuad{DependencyClause{quadDependency}};
 	static const std::array definitions{
 		ExtensionDefinition{XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME, XR_EXT_eye_gaze_interaction_SPEC_VERSION, {}},
 		ExtensionDefinition{XR_HTCX_VIVE_TRACKER_INTERACTION_EXTENSION_NAME,
@@ -34,8 +36,11 @@ std::span<const ExtensionDefinition> SimulationExtensions(SimulationExtensionCap
 							XR_META_body_tracking_calibration_SPEC_VERSION, calibrationCommands, dependsFB},
 		ExtensionDefinition{XR_META_BODY_TRACKING_FIDELITY_EXTENSION_NAME, XR_META_body_tracking_fidelity_SPEC_VERSION,
 							fidelityCommands, dependsFidelity},
-		ExtensionDefinition{XR_VARJO_QUAD_VIEWS_EXTENSION_NAME, XR_VARJO_quad_views_SPEC_VERSION, {}}};
-	return std::span{definitions}.first(capabilities.quadViews ? definitions.size() : definitions.size() - 1);
+		ExtensionDefinition{XR_VARJO_QUAD_VIEWS_EXTENSION_NAME, XR_VARJO_quad_views_SPEC_VERSION, {}},
+		ExtensionDefinition{XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME, XR_VARJO_foveated_rendering_SPEC_VERSION,
+							{}, dependsQuad}};
+	const auto additional = capabilities.quadViews ? (capabilities.foveatedRendering ? 2 : 1) : 0;
+	return std::span{definitions}.first(definitions.size() - 2 + additional);
 }
 
 XrResult FillSimulationProperties(const EnabledExtensions& enabled, XrSystemProperties* properties,
@@ -56,6 +61,8 @@ XrResult FillSimulationProperties(const EnabledExtensions& enabled, XrSystemProp
 		known.push_back(XR_TYPE_SYSTEM_PROPERTIES_BODY_TRACKING_FIDELITY_META);
 	if (enabled.Contains(XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME))
 		known.push_back(XR_TYPE_SYSTEM_EYE_GAZE_INTERACTION_PROPERTIES_EXT);
+	if (enabled.Contains(XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME))
+		known.push_back(XR_TYPE_SYSTEM_FOVEATED_RENDERING_PROPERTIES_VARJO);
 	StructureChain chain(properties->next);
 	auto result = chain.Validate(known);
 	if (XR_FAILED(result))
@@ -64,6 +71,11 @@ XrResult FillSimulationProperties(const EnabledExtensions& enabled, XrSystemProp
 	{
 		switch (type)
 		{
+		case XR_TYPE_SYSTEM_FOVEATED_RENDERING_PROPERTIES_VARJO:
+			if (auto output = const_cast<XrSystemFoveatedRenderingPropertiesVARJO*>(
+					chain.Find<XrSystemFoveatedRenderingPropertiesVARJO>(type)))
+				output->supportsFoveatedRendering = XR_TRUE;
+			break;
 		case XR_TYPE_SYSTEM_EYE_GAZE_INTERACTION_PROPERTIES_EXT:
 			if (auto output = const_cast<XrSystemEyeGazeInteractionPropertiesEXT*>(
 					chain.Find<XrSystemEyeGazeInteractionPropertiesEXT>(type)))

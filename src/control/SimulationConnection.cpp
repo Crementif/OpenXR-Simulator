@@ -115,7 +115,15 @@ void SimulationConnection::Track(const std::shared_ptr<Session>& session, Comman
 	}
 	m_kind = source.kind;
 }
-Message SimulationConnection::Dispatch(const Message& request, const ControlSession& binding, Message response)
+bool SimulationConnection::OwnsSequenceCapture(const SnapshotRecord& capture) const noexcept
+{
+	if (!m_kind || !capture.metadata || !capture.metadata->sequenceCapture)
+		return false;
+	const auto& receipt = *capture.metadata->sequenceCapture;
+	return receipt.request.owner == CommandSource{*m_kind, m_connection.value} && receipt.reservation.id == capture.id;
+}
+Message SimulationConnection::Dispatch(const Message& request, const ControlSession& binding, Message response,
+	std::vector<SnapshotRecord>& held)
 {
 	const auto& session = binding.session;
 	const auto opcode = static_cast<OpCode>(request.opcode);
@@ -129,6 +137,13 @@ Message SimulationConnection::Dispatch(const Message& request, const ControlSess
 	{
 		switch (static_cast<OpCode>(request.opcode))
 		{
+		case OpCode::UploadSequence:
+		case OpCode::StartSequence:
+		case OpCode::ReadSequence:
+		case OpCode::StopSequence:
+			Track(session, source);
+			document = m_sequences.Dispatch(request, binding, source, response, held);
+			break;
 		case OpCode::ReadDiagnostics:
 			document = ReadDiagnostics(*session, request);
 			break;
@@ -191,12 +206,18 @@ Message SimulationConnection::Dispatch(const Message& request, const ControlSess
 	};
 	const bool mutating = opcode == OpCode::SubmitSimulation || opcode == OpCode::CancelSimulation ||
 						  opcode == OpCode::ReleaseControl || opcode == OpCode::StartRecording ||
-						  opcode == OpCode::StopRecording;
+						  opcode == OpCode::StopRecording || opcode == OpCode::UploadSequence ||
+						  opcode == OpCode::StartSequence || opcode == OpCode::StopSequence;
 	if (mutating)
 	{
 		if (!session->WithCommandGeneration({RequireRequestU64(request, tag::Generation)}, execute))
 			throw ControlRequestError{ErrorCode::StaleGeneration,
 									  "Session ended or generation changed before command admission"};
+	}
+	else if (opcode == OpCode::ReadSequence)
+	{
+		if (!session->WithCommandGeneration({RequireRequestU64(request, tag::Generation)}, execute, false))
+			throw ControlRequestError{ErrorCode::StaleGeneration, "Sequence generation changed before observation"};
 	}
 	else
 		execute();

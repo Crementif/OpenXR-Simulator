@@ -1,6 +1,7 @@
 #pragma once
 
 #include "presentation/SnapshotStore.h"
+#include "presentation/FrameImageHistory.h"
 
 #include <functional>
 #include <memory>
@@ -35,10 +36,14 @@ class SessionCaptureCoordinator
   public:
 	class Submission;
 	class Boundary;
+	class SequenceCapture;
 	explicit SessionCaptureCoordinator(FrameHistory& history);
 	~SessionCaptureCoordinator();
-	XrResult Configure(FramePool&& pool, bool layerViews, CapturePromoter&& promoter);
-	void Start(SessionGeneration generation);
+	XrResult Configure(FramePool&& pool, bool layerViews, CapturePromoter&& promoter, bool depthViews, bool filteredComposition);
+	FrameImageHistory::Retired Start(SessionGeneration generation);
+	XrResult EnableImageHistory();
+	bool SupportsImageHistory() const;
+	FrameImageHistory& Images() { return m_images; }
 	void Stop() noexcept;
 	void Retire() noexcept;
 	SnapshotStore& Snapshots();
@@ -46,7 +51,13 @@ class SessionCaptureCoordinator
 	// May release completed native owners. Call outside Session/caller locks.
 	void Collect() const;
 	CaptureReservation Reserve(CaptureTarget target);
+	SequenceCapture PrepareSequenceCapture(const std::optional<SequenceCaptureIntent>& request);
 	std::pair<XrResult, std::shared_ptr<FrameReservation>> PrepareProducer(FrameKey frame, CaptureTarget target);
+	SnapshotAdmission StartImageRecording(CaptureTarget target, std::uint32_t capacity, std::uint64_t frames = 0,
+		std::span<CaptureId> captures = {});
+	void StopImageRecording() noexcept;
+	ImageRecordingSnapshot ImageRecording() const;
+	CaptureId RefillImageRecording(CaptureId released);
 	void BindIssued(std::shared_ptr<const FrameRecord> issued, std::shared_ptr<const FrameRecord> cancelled);
 	void ObserveFrame(FrameKey frame);
 	std::size_t CancelQueued() noexcept;
@@ -55,6 +66,8 @@ class SessionCaptureCoordinator
 
   private:
 	bool SupportsLocked(CaptureTarget target) const;
+	CaptureReservation ReserveLocked(CaptureTarget target);
+	void StopImageRecordingLocked() noexcept;
 	bool HasRequest(FrameKey frame, CaptureTarget target) const;
 	std::size_t CancelQueuedLocked() noexcept;
 	SnapshotAdmission Promote(const std::shared_ptr<const FrameOutput>& output,
@@ -63,13 +76,37 @@ class SessionCaptureCoordinator
 	mutable std::mutex m_mutex;
 	std::optional<FramePool> m_pool;
 	bool m_layerViews = false;
+	bool m_depthViews = false;
+	bool m_filteredComposition = false;
+	bool m_imageHistory = false;
+	FrameImageHistory m_images;
 	CapturePromoter m_promoter;
 	bool m_running = false;
 	SessionGeneration m_generation;
 	std::vector<CaptureId> m_queued;
+	ImageRecordingSnapshot m_imageRecording;
+	std::vector<CaptureId> m_recordingQueued;
 	// Destroy the store before configuration/mutex so reentrant last readers can
 	// still inspect this coordinator while SnapshotStore detaches its entries.
 	SnapshotStore m_store;
+};
+
+// Reserves before history publication. Failed issue releases the unused producer;
+// Bind runs last in the issue callback, after every throwing admission step.
+class SessionCaptureCoordinator::SequenceCapture
+{
+  public:
+	SequenceCapture(SessionCaptureCoordinator& owner, const std::optional<SequenceCaptureIntent>& request);
+	~SequenceCapture();
+	SequenceCapture(const SequenceCapture&) = delete;
+	SequenceCapture& operator=(const SequenceCapture&) = delete;
+	const std::optional<SequenceCaptureRecord>& Record() const noexcept;
+	void Bind(std::shared_ptr<const FrameRecord> issued, std::shared_ptr<const FrameRecord> cancelled);
+
+  private:
+	SessionCaptureCoordinator& m_owner;
+	std::optional<SequenceCaptureRecord> m_record;
+	bool m_committed = false;
 };
 
 // Construct before taking the Session lock. The retained outputs and rollback
@@ -97,6 +134,7 @@ class SessionCaptureCoordinator::Submission
 	FrameKey m_frame;
 	XrResult m_validation = XR_SUCCESS;
 	bool m_committed = false;
+	FrameImageHistory::Retired m_retiredImage;
 };
 
 // Retains all selected native readers until after the caller's lock is gone.
@@ -120,6 +158,7 @@ class SessionCaptureCoordinator::Boundary
 	};
 	void Rollback() noexcept;
 	SessionCaptureCoordinator& m_owner;
+	FrameImageHistory::Retired m_retiredImages;
 	std::vector<PresentationSubmission> m_retained;
 	std::vector<Source> m_sources;
 	std::vector<CaptureId> m_created;

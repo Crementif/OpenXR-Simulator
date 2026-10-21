@@ -1,5 +1,7 @@
 #include "app/WorkspacePanels.h"
 #include "app/ProcessLauncher.h"
+#include "app/LaunchAttachment.h"
+#include "app/RuntimeConnection.h"
 #include "app/RuntimePanels.h"
 #include "app/TimelinePanel.h"
 #include "simulation/HeadsetProfiles.h"
@@ -64,6 +66,8 @@ struct WorkspacePanels::Impl
 	CompanionSettings settings;
 	ProcessLauncher launcher;
 	TimelinePanel timeline;
+	RuntimeConnection launchDiscovery;
+	std::unique_ptr<LaunchAttachment> attachment;
 #ifdef SIMXR_COMPANION_AUTOMATION
 	RigPanel rigs;
 #endif
@@ -231,17 +235,47 @@ struct WorkspacePanels::Impl
 		try
 		{
 			const auto profile = Profile();
+			auto pending = std::make_unique<LaunchAttachment>(launchDiscovery, profile);
 #ifdef SIMXR_COMPANION_AUTOMATION
 			rigs.PrepareLaunch(profile);
 #else
 			if (!profile.rig.empty())
 				throw std::runtime_error("This build does not support launch rigs");
 #endif
-			launcher.Launch(profile);
+			if (launcher.Launch(profile))
+			{
+				attachment = std::move(pending);
+				error.clear();
+			}
 		}
 		catch (const std::exception& failure)
 		{
 			error = failure.what();
+#ifdef SIMXR_COMPANION_AUTOMATION
+			rigs.PrepareLaunch({});
+#endif
+		}
+	}
+	void PollLaunch(RuntimePanels& runtime)
+	{
+		if (!attachment)
+			return;
+		try
+		{
+			attachment->Observe(launcher.Snapshot());
+			if (auto session = attachment->Poll())
+			{
+				attachment.reset();
+				runtime.ConnectEndpoint(session->endpoint);
+#ifdef SIMXR_COMPANION_AUTOMATION
+				rigs.AttachLaunch(*session);
+#endif
+			}
+		}
+		catch (const std::exception& failure)
+		{
+			error = failure.what();
+			attachment.reset();
 #ifdef SIMXR_COMPANION_AUTOMATION
 			rigs.PrepareLaunch({});
 #endif
@@ -461,11 +495,10 @@ struct WorkspacePanels::Impl
 	}
 	void Draw(RuntimePanels& runtime)
 	{
+		PollLaunch(runtime);
 #ifdef SIMXR_COMPANION_AUTOMATION
 		if (const auto recording = runtime.TakeRecordingReplay())
 			rigs.ReplayRecording(runtime, recording->path, recording->seed);
-		if (enabled)
-			rigs.ObserveLaunch(launcher.Snapshot());
 		rigs.Draw(runtime, !previewExpanded && (mode == WorkspaceMode::Automation || mode == WorkspaceMode::Custom));
 		runtime.SetReplayActive(rigs.IsActive());
 		timeline.ObserveRig(runtime.Snapshot(), rigs.RunId(), rigs.Snapshot(), rigs.MatchesTarget(runtime.Snapshot()));

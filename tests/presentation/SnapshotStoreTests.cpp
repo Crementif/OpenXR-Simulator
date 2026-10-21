@@ -55,6 +55,51 @@ Records Frame(SessionGeneration generation, std::uint64_t frame, std::uint32_t l
 			std::make_shared<const FrameRecord>(begun), std::make_shared<const FrameRecord>(submitted)};
 }
 
+void CaptureHistory()
+{
+	FrameHistory history;
+	SnapshotStore store(4, &history);
+	store.Start({1});
+	const auto records = Frame({1}, 1);
+	auto image = std::make_shared<Output>();
+	std::weak_ptr<Output> lifetime = image;
+	const auto capture = store.Pin(records.submitted, {}, image);
+	store.Poll();
+	Require(history.Diagnostics().events.empty(), "Pending capture claimed a terminal result");
+	image->status = CompletionStatus::Complete;
+	store.Poll();
+	store.Poll();
+	Require(store.Release(capture.id), "Release traced capture");
+	image.reset();
+	const auto ready = history.Diagnostics().events;
+	Require(ready.size() == 1 && ready[0].kind == FrameTraceKind::CaptureReady &&
+			ready[0].frame == records.submitted->key && ready[0].related == capture.id.value && lifetime.expired(),
+			"Capture completion was duplicated, lost after release, or retained the GPU image");
+	const auto clear = store.Pin(Frame({1}, 2, 0).submitted);
+	const auto unavailable = store.Pin(Frame({1}, 3).submitted);
+	const auto cancelled = store.Reserve();
+	store.Stop();
+	const auto terminal = history.Diagnostics().events;
+	Require(terminal.size() == 4 && terminal[1].related == clear.id.value &&
+			terminal[1].Detail().starts_with("phase=clear;") &&
+			terminal[2].related == unavailable.id.value && terminal[2].kind == FrameTraceKind::CaptureFailed &&
+			terminal[2].result == XR_ERROR_FEATURE_UNSUPPORTED && terminal[3].related == cancelled.id.value &&
+			terminal[3].frame == FrameKey{{1}, {}} && terminal[3].Detail().starts_with("phase=cancelled;"),
+			"Clear, unavailable or unissued cancellation lost its capture identity");
+	store.Release(clear.id);
+	store.Release(unavailable.id);
+	store.Release(cancelled.id);
+	store.Start({2});
+	auto failedImage = std::make_shared<Output>();
+	const auto failed = store.Pin(Frame({2}, 1).submitted, {}, failedImage);
+	failedImage->status = CompletionStatus::Failed;
+	store.Poll();
+	const auto failure = history.Diagnostics().events.back();
+	Require(failure.related == failed.id.value && failure.frame == FrameKey{{2}, {1}} &&
+			failure.kind == FrameTraceKind::CaptureFailed && failure.result == XR_ERROR_RUNTIME_FAILURE,
+			"GPU failure or restarted capture correlation was fabricated");
+}
+
 void RetentionAndCompletion()
 {
 	SnapshotStore store(2);
@@ -197,6 +242,34 @@ void TargetsAndGenerations()
 	Require(!store.Bind(newCapture.id, records.issued, records.cancelled), "Old frame bound into a new generation");
 	Require(store.Reserve({CaptureKind::ComposedEyes, 1, 0}).result == SnapshotAdmission::Invalid,
 			"Invalid composed target accepted");
+}
+
+void DepthRequiresSubmittedSource()
+{
+	SnapshotStore store(4);
+	store.Start({3});
+	const CaptureTarget depth{CaptureKind::LayerDepth, 0, 0};
+	const CaptureTarget missing{CaptureKind::LayerDepthLinear, 0, 1};
+	const auto retained = store.Reserve(depth), absent = store.Reserve(missing);
+	auto records = Frame({3}, 1);
+	auto described = *records.submitted;
+	ProjectionLayerDescription projection;
+	projection.views.resize(2);
+	projection.views[0].depth = LayerDepthDescription{};
+	described.submission->layers = std::make_shared<const FrameLayers>(
+		described.prediction.displayTime, XR_ENVIRONMENT_BLEND_MODE_OPAQUE,
+		std::vector<LayerDescription>{projection});
+	records.submitted = std::make_shared<const FrameRecord>(std::move(described));
+	Require(store.Bind(retained.id, records.issued, records.cancelled) &&
+		store.Bind(absent.id, records.issued, records.cancelled), "Bind exact depth targets");
+	auto output = std::make_shared<Output>();
+	output->status.store(CompletionStatus::Complete);
+	const std::array outputs{CaptureOutput{depth, output}, CaptureOutput{missing, output}};
+	store.Update(records.submitted, outputs);
+	store.Poll();
+	Require(store.Read(retained.id)->phase == SnapshotPhase::Ready && store.Read(retained.id)->output == output &&
+		store.Read(absent.id)->phase == SnapshotPhase::Unavailable && !store.Read(absent.id)->output,
+		"Depth target accepted pixels without the corresponding submitted depth source");
 }
 
 void DisplayAndProducerReservation()
@@ -343,10 +416,12 @@ void TargetProducerOwnership()
 
 int main()
 {
+	CaptureHistory();
 	RetentionAndCompletion();
 	PendingRetirementAndReentry();
 	TargetsAndGenerations();
 	TargetProducerOwnership();
+	DepthRequiresSubmittedSource();
 	DisplayAndProducerReservation();
 	ConcurrentObservation();
 	DestructorReentry();

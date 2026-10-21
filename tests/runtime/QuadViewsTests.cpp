@@ -14,7 +14,7 @@ using namespace simxr;
 
 void EnabledLayout()
 {
-	const std::array enabled{XR_VARJO_QUAD_VIEWS_EXTENSION_NAME};
+	const std::array enabled{XR_VARJO_QUAD_VIEWS_EXTENSION_NAME, XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME};
 	Instance instance(reinterpret_cast<XrInstance>(401), enabled, XR_MAKE_VERSION(1, 0, 27));
 	Session session(reinterpret_cast<XrSession>(402), instance);
 	FrameSchedulerConfig timing;
@@ -69,6 +69,28 @@ void EnabledLayout()
 	Require(session.LocateViews(inactive, &state, 0, &count, nullptr) == XR_ERROR_VALIDATION_FAILURE,
 			"Locate inactive supported configuration accepted");
 
+	const auto fixedInset = views[2].fov;
+	tracking.gaze.yaw = 0.3f;
+	session.PublishTracking(prediction.displayTime, tracking, settings, prediction.id);
+	XrSpace combined;
+	Require(session.Spaces().CreateReferenceSpace(XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO, IdentityPose(), combined) == XR_SUCCESS,
+		"Create enabled rendering-gaze space");
+	SpaceLocation gaze;
+	Require(session.Spaces().Locate(combined, stage, prediction.displayTime, gaze) == XR_SUCCESS &&
+		(gaze.pose.flags & XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT), "Rendering gaze availability");
+	XrViewLocateFoveatedRenderingVARJO foveated{XR_TYPE_VIEW_LOCATE_FOVEATED_RENDERING_VARJO, nullptr, XR_TRUE};
+	locate.next = &foveated;
+	Require(session.LocateViews(locate, &state, 4, &count, views.data()) == XR_SUCCESS &&
+		views[2].fov.angleLeft < fixedInset.angleLeft, "Timestamped gaze must move the inset FOV");
+	foveated.foveatedRenderingActive = 2;
+	Require(session.LocateViews(locate, &state, 4, &count, views.data()) == XR_ERROR_VALIDATION_FAILURE,
+		"Invalid application foveation boolean accepted");
+	foveated.foveatedRenderingActive = XR_TRUE;
+	foveated.next = &foveated;
+	Require(session.LocateViews(locate, &state, 4, &count, views.data()) == XR_ERROR_VALIDATION_FAILURE,
+		"Cyclic foveation chain accepted");
+	foveated.next = nullptr;
+
 	std::array<XrCompositionLayerProjectionView, 4> submitted;
 	const auto image = reinterpret_cast<XrSwapchain>(403);
 	for (std::size_t index = 0; index < submitted.size(); ++index)
@@ -88,8 +110,8 @@ void EnabledLayout()
 	validation.swapchain = [&](XrSwapchain value) -> std::optional<SwapchainDescription>
 	{ return value == image ? std::optional{SwapchainDescription{64, 48, 4, true}} : std::nullopt; };
 	std::shared_ptr<const FrameLayers> prepared;
-	auto resolve = [&](XrSpace space, RuntimeTime time, PoseSample& pose)
-	{ return session.Spaces().WorldPose(space, time, pose); };
+	auto resolve = [&](XrSpace space, RuntimeTime time, SpaceSample& pose)
+	{ return session.Spaces().Sample(space, time, pose); };
 	projection.viewCount = 2;
 	Require(BuildLayers(end, validation, resolve, prepared) == XR_ERROR_LAYER_INVALID &&
 				session.Scheduler().Snapshot().begun->id == prediction.id,
@@ -117,7 +139,32 @@ void EnabledLayout()
 	Require(retained && retained->submission && retained->submission->viewLayout == ViewLayout::StereoWithInset &&
 				std::get<ProjectionLayerDescription>(retained->submission->layers->layers[0]).views.size() == 4,
 			"Historical submission lost inset metadata");
-	Require(session.RequestExit(prediction.displayTime) == XR_SUCCESS &&
+	Require(retained->submission->viewQuery && retained->submission->viewQuery->gazeActive &&
+		retained->submission->viewQuery->foveatedRequested &&
+		retained->submission->viewQuery->displayTime == prediction.displayTime,
+		"Submitted frame lost its timestamp-matched foveation query");
+	foveated.foveatedRenderingActive = XR_FALSE;
+	Require(session.LocateViews(locate, &state, 4, &count, views.data()) == XR_SUCCESS &&
+		views[2].fov.angleLeft == fixedInset.angleLeft && retained->submission->viewQuery->gazeActive,
+		"Per-call fixed request changed retained foveation evidence");
+	FramePrediction next;
+	Require(session.WaitFrame(next) == XR_SUCCESS && session.BeginFrame() == XR_SUCCESS, "Issue gaze-loss frame");
+	tracking.gaze.available = false;
+	session.PublishTracking(next.displayTime, tracking, settings, next.id);
+	foveated.foveatedRenderingActive = XR_TRUE;
+	locate.displayTime = next.displayTime.value.count();
+	Require(session.LocateViews(locate, &state, 4, &count, views.data()) == XR_SUCCESS &&
+		views[2].fov.angleLeft == fixedInset.angleLeft, "Unavailable gaze must fall back to fixed insets");
+	Require(session.Spaces().Locate(combined, stage, next.displayTime, gaze) == XR_SUCCESS &&
+		!(gaze.pose.flags & XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT), "Unavailable rendering gaze remains tracked");
+	locate.displayTime = prediction.displayTime.value.count();
+	Require(session.LocateViews(locate, &state, 4, &count, views.data()) == XR_SUCCESS &&
+		views[2].fov.angleLeft < fixedInset.angleLeft &&
+		session.Spaces().Locate(combined, stage, prediction.displayTime, gaze) == XR_SUCCESS &&
+		(gaze.pose.flags & XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT),
+		"Historical query substituted the latest unavailable gaze");
+	Require(session.EndFrame(next) == XR_SUCCESS, "Submit gaze-loss frame");
+	Require(session.RequestExit(next.displayTime) == XR_SUCCESS &&
 				session.End(prediction.displayTime) == XR_SUCCESS &&
 				session.Ready(prediction.displayTime) == XR_SUCCESS,
 			"Stop quad layout");
@@ -144,6 +191,24 @@ int main()
 	const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO};
 	Require(session.Begin(begin, timing) == XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED && !session.Snapshot().running,
 			"Quad configuration usable without enabled extension");
+	XrSpace unsupported;
+	Require(session.Spaces().CreateReferenceSpace(XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO, IdentityPose(), unsupported) ==
+		XR_ERROR_REFERENCE_SPACE_UNSUPPORTED, "Disabled combined-eye reference space accepted");
+	const auto foveated = SimulationExtensions({true, true});
+	ExtensionRegistry registry(foveated);
+	const std::array<const char*, 1> missingDependency{XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME};
+	Require(registry.Validate(missingDependency, XR_MAKE_VERSION(1, 0, 27)) == XR_ERROR_EXTENSION_NOT_PRESENT,
+		"Foveation quad dependency missing");
+	const std::array<const char*, 2> both{XR_VARJO_QUAD_VIEWS_EXTENSION_NAME, XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME};
+	Require(registry.Validate(both, XR_MAKE_VERSION(1, 0, 27)) == XR_SUCCESS, "Select foveation extension");
+	EnabledExtensions selected(both);
+	XrSystemFoveatedRenderingPropertiesVARJO capability{XR_TYPE_SYSTEM_FOVEATED_RENDERING_PROPERTIES_VARJO};
+	XrSystemProperties properties{XR_TYPE_SYSTEM_PROPERTIES, &capability};
+	Require(FillSimulationProperties(selected, &properties) == XR_SUCCESS && capability.supportsFoveatedRendering,
+		"Foveation capability missing");
+	capability.supportsFoveatedRendering = 42;
+	Require(FillSimulationProperties(EnabledExtensions{}, &properties) == XR_SUCCESS &&
+		capability.supportsFoveatedRendering == 42, "Disabled capability output was modified");
 	EnabledLayout();
 	std::cout << "PASS: enabled quad layout, historical views, ordered composition and selected inset identities\n";
 }

@@ -90,7 +90,7 @@ class RuntimePanels::Impl
 		  m_endpoints(DiscoverRuntimeEndpoints()), m_window(window)
 	{
 		std::snprintf(m_endpoint.data(), m_endpoint.size(), "%s", path.c_str());
-		std::snprintf(m_exportFile.data(), m_exportFile.size(), "%s", "snapshot.rgba");
+		std::snprintf(m_exportFile.data(), m_exportFile.size(), "%s", "snapshot.ppm");
 		if (!path.empty())
 			m_requests.Connect(path);
 	}
@@ -211,6 +211,10 @@ class RuntimePanels::Impl
 		m_workspace.ReleaseSelected();
 		m_preview.ReleaseSelected();
 	}
+	void InspectSelected()
+	{
+		m_workspace.InspectSelected();
+	}
 	void RequestExport(std::string path)
 	{
 		const auto image = m_preview.Selected();
@@ -284,10 +288,13 @@ class RuntimePanels::Impl
 		if (const auto image = m_preview.Selected())
 		{
 			snapshot.selectedFrame = image->frame;
+			snapshot.selectedImageCapture = image->capture;
 			snapshot.selectedReader = image->reader;
 			snapshot.selectedReady = image->ready;
 			snapshot.selectedLayers = image->description.arrayLayers;
 		}
+		if (const auto capture = m_workspace.Selected(); capture && capture->document.Find(tag::Document))
+			snapshot.inspectedFrame = panel::Frame(capture->document);
 		return snapshot;
 	}
 	std::optional<automation::SavedRecording> TakeRecordingReplay()
@@ -345,6 +352,17 @@ class RuntimePanels::Impl
 			{
 				m_detail = input.error;
 				StopPilot(true);
+			}
+			if (const auto capture = m_workspace.Selected(); capture && !capture->released &&
+				capture->scope == m_debugger.Scope() && now >= m_nextCapture &&
+				(capture->phase == "pending" || capture->phase == "reserved" || capture->phase == "issued" ||
+				 capture->phase == "begun" || capture->phase == "gpu_pending") &&
+				!m_requests.Has(Work::Capture, capture->id))
+			{
+				auto fields = m_debugger.SessionFields();
+				fields.push_back(wire::Field::U64(tag::CaptureId, capture->id, true));
+				m_requests.Send(wire::OpCode::Capture, Work::Capture, std::move(fields), capture->id);
+				m_nextCapture = now + std::chrono::milliseconds(100);
 			}
 			if (m_preview.Following() && selected.id && now >= m_nextPreview && !m_requests.Has(Work::Preview) &&
 				!m_preview.HasPendingLive() &&
@@ -639,11 +657,13 @@ class RuntimePanels::Impl
 						const auto& description = image->description;
 						ImGui::Text("%u x %u / %u views / format %u", description.width, description.height,
 									description.arrayLayers, description.format);
-						ImGui::InputText("RGBA file", m_exportFile.data(), m_exportFile.size());
+						ImGui::InputText("Image file (.ppm or .rgba)", m_exportFile.data(), m_exportFile.size());
 						ImGui::BeginDisabled(!image->reader || image->scope.epoch != epoch || m_exports.Busy());
-						if (ImGui::Button("Export raw RGBA"))
+						if (ImGui::Button("Export image"))
 							RequestExport(m_exportFile.data());
 						ImGui::EndDisabled();
+						ImGui::TextWrapped("PPM stacks views vertically and includes frame identity; alpha is omitted. "
+							"Use RGBA to preserve all four channels.");
 					}
 				}
 				ImGui::BeginChild("Image area", {0, 0}, 0, ImGuiWindowFlags_HorizontalScrollbar);
@@ -1180,7 +1200,7 @@ class RuntimePanels::Impl
 	};
 	std::optional<RecordingReplay> m_recordingReplay;
 	DeviceControlPanel m_devices;
-	Clock::time_point m_nextPreview{};
+	Clock::time_point m_nextPreview{}, m_nextCapture{};
 	std::string m_detail;
 	std::array<char, 512> m_exportFile{};
 	bool m_autoSelect = true, m_focusPreview = true, m_fitPreview = true;
@@ -1279,6 +1299,11 @@ std::vector<std::uint64_t> RuntimePanels::CaptureIds() const
 {
 	return m_impl->CaptureIds();
 }
+void RuntimePanels::InspectSelected()
+{
+	m_impl->InspectSelected();
+}
+
 void RuntimePanels::RequestExport(std::string path)
 {
 	m_impl->RequestExport(std::move(path));

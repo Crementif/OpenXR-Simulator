@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstring>
 #include <iostream>
 #include <limits>
@@ -177,7 +178,8 @@ FrameRecord Fixture()
 	const auto space = reinterpret_cast<XrSpace>(0xabcdefab12345678ULL);
 	const PoseSample pose{{{0, 0, 0, 1}, {0, 1, 0}}, TrackedPoseFlags, {117ns}};
 	ProjectionLayerDescription projection;
-	projection.space = {space, XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT, pose};
+	projection.space = {space, XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT, pose,
+		XR_REFERENCE_SPACE_TYPE_LOCAL, pose.pose};
 	ProjectionViewDescription view{
 		pose.pose,
 		pose,
@@ -233,6 +235,82 @@ void FrameStateAndRevisions()
 	Require(std::search(encoded.begin(), encoded.end(), raw.begin(), raw.end()) == encoded.end(),
 			"Native source handle escaped in CPU document");
 }
+void DepthEncodingPreservesNonfiniteBits()
+{
+	const auto firstElement = [](std::span<const std::byte> array)
+	{
+		const auto pages = Fields(Find(Fields(array), 3).value);
+		return Fields(pages.at(0).value).at(0).value;
+	};
+	for (const auto bits : {0x7f800000U, 0xff800000U, 0x7fc01234U, 0x80000000U})
+	{
+		auto frame = Fixture();
+		auto projection = std::get<ProjectionLayerDescription>(frame.submission->layers->layers.front());
+		projection.views.front().depth->nearZ = std::bit_cast<float>(bits);
+		projection.views.front().depth->farZ = std::bit_cast<float>(bits);
+		frame.submission->layers = std::make_shared<const FrameLayers>(
+			frame.submission->displayTime, frame.submission->blendMode, std::vector<LayerDescription>{projection});
+		InspectionStore store;
+		const auto record = InspectFrame(store, {7}, frame);
+		const auto layer = firstElement(Member(Member(record->document, "layers"), "layers"));
+		const auto view = firstElement(Member(layer, "views"));
+		const auto depth = Member(view, "depth");
+		for (const auto name : {"near_z", "far_z"})
+		{
+			const auto value = Fields(Member(depth, name));
+			Require(Find(value, 2).AsU32() == static_cast<std::uint32_t>(InspectionType::Float) &&
+					Find(value, 3).AsU32() == bits, "Historical depth changed a float's type, sign or NaN payload");
+		}
+	}
+}
+
+void ProjectionHistoryBoundaries()
+{
+	FrameHistorySnapshot history;
+	history.generation = Fixture().key.generation;
+	history.capacity = 128;
+	history.evicted = 7;
+	const auto first = Fixture().key.frame.value;
+	for (std::uint64_t index = 0; index < 64; ++index)
+	{
+		auto frame = Fixture();
+		frame.key.frame.value += index;
+		auto projection = std::get<ProjectionLayerDescription>(frame.submission->layers->layers.front());
+		projection.views.resize(4, projection.views.front());
+		frame.submission->layers = std::make_shared<const FrameLayers>(frame.submission->displayTime,
+			frame.submission->blendMode, std::vector<LayerDescription>{projection, QuadLayerDescription{}, projection});
+		history.frames.push_back(std::make_shared<const FrameRecord>(std::move(frame)));
+	}
+	const auto document = InspectProjectionHistory(history, 3).Encode();
+	Require(Unsigned(Member(document, "generation")) == history.generation.value &&
+		Unsigned(Member(document, "evicted_frames")) == 7 && Unsigned(Member(document, "omitted_entries")) == 125,
+		"Projection history omitted its full-width identity or bounded retention evidence");
+	const auto pages = Fields(Find(Fields(Member(document, "entries")), 3).value);
+	const auto entries = Fields(pages.front().value);
+	Require(entries.size() == 3 && Unsigned(Member(entries[0].value, "frame_id")) == first + 62 &&
+		Unsigned(Member(entries[0].value, "layer")) == 2 &&
+		Unsigned(Member(entries[1].value, "frame_id")) == first + 63 &&
+		Unsigned(Member(entries[1].value, "layer")) == 0 && Unsigned(Member(entries[2].value, "layer")) == 2,
+		"Projection history changed submitted frame/layer order or included a quad");
+	const auto bounded = InspectProjectionHistory(history, 64).Encode();
+	Require(bounded.size() < MaxPayload - 1024, "Maximum projection history exceeds the wire response budget");
+	const auto raw = Field::U64(1, 0xf0e1d2c3b4a59687ULL).value;
+	Require(std::search(bounded.begin(), bounded.end(), raw.begin(), raw.end()) == bounded.end(),
+		"Projection history exposed a native source handle");
+	for (const auto count : {0U, 65U})
+	{
+		bool rejected = false;
+		try
+		{
+			InspectProjectionHistory(history, count);
+		}
+		catch (const std::invalid_argument&)
+		{
+			rejected = true;
+		}
+		Require(rejected, "Projection history accepted an unbounded request");
+	}
+}
 void ArrayBoundaries()
 {
 	std::vector<V> values;
@@ -267,6 +345,8 @@ int main(int argc, char** argv)
 		CatalogTransactionsAndReaders();
 		FrameStateAndRevisions();
 		ArrayBoundaries();
+		ProjectionHistoryBoundaries();
+		DepthEncodingPreservesNonfiniteBits();
 		std::cout << "Immutable inspection transactions, revision deduplication, reader capacity and historical state "
 					 "passed\n";
 		return 0;
