@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstring>
 #include <iostream>
 #include <limits>
@@ -233,6 +234,35 @@ void FrameStateAndRevisions()
 	Require(std::search(encoded.begin(), encoded.end(), raw.begin(), raw.end()) == encoded.end(),
 			"Native source handle escaped in CPU document");
 }
+void DepthEncodingPreservesNonfiniteBits()
+{
+	const auto firstElement = [](std::span<const std::byte> array)
+	{
+		const auto pages = Fields(Find(Fields(array), 3).value);
+		return Fields(pages.at(0).value).at(0).value;
+	};
+	for (const auto bits : {0x7f800000U, 0xff800000U, 0x7fc01234U, 0x80000000U})
+	{
+		auto frame = Fixture();
+		auto projection = std::get<ProjectionLayerDescription>(frame.submission->layers->layers.front());
+		projection.views.front().depth->nearZ = std::bit_cast<float>(bits);
+		projection.views.front().depth->farZ = std::bit_cast<float>(bits);
+		frame.submission->layers = std::make_shared<const FrameLayers>(
+			frame.submission->displayTime, frame.submission->blendMode, std::vector<LayerDescription>{projection});
+		InspectionStore store;
+		const auto record = InspectFrame(store, {7}, frame);
+		const auto layer = firstElement(Member(Member(record->document, "layers"), "layers"));
+		const auto view = firstElement(Member(layer, "views"));
+		const auto depth = Member(view, "depth");
+		for (const auto name : {"near_z", "far_z"})
+		{
+			const auto value = Fields(Member(depth, name));
+			Require(Find(value, 2).AsU32() == static_cast<std::uint32_t>(InspectionType::Float) &&
+					Find(value, 3).AsU32() == bits, "Historical depth changed a float's type, sign or NaN payload");
+		}
+	}
+}
+
 void ProjectionHistoryBoundaries()
 {
 	FrameHistorySnapshot history;
@@ -315,6 +345,7 @@ int main(int argc, char** argv)
 		FrameStateAndRevisions();
 		ArrayBoundaries();
 		ProjectionHistoryBoundaries();
+		DepthEncodingPreservesNonfiniteBits();
 		std::cout << "Immutable inspection transactions, revision deduplication, reader capacity and historical state "
 					 "passed\n";
 		return 0;

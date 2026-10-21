@@ -55,7 +55,13 @@ class InspectionTests(unittest.TestCase):
         self.assertEqual(layers[0]['views'][0]['color']['array_slice'], 2)
         self.assertEqual(layers[0]['views'][0]['color']['rectangle'], {'x': 4, 'y': 8, 'width': 12, 'height': 16})
         self.assertEqual(layers[0]['views'][0]['depth']['far_z'], '+Infinity')
-        self.assertEqual(set(frame['availability'].values()), {'not_recorded'})
+        for key, expected in {
+                'tracking': 'recorded', 'action_dictionary': 'recorded',
+                'applied_foveation': 'not_recorded', 'applied_commands': 'not_recorded',
+                'fb_foveation': 'unsupported', 'validation_scope': 'runtime_submitted_layers',
+                'native_driver_validation': 'not_recorded', 'validation_events': 'not_recorded',
+                'frame_trace': 'not_recorded'}.items():
+            self.assertEqual(frame['availability'][key], expected, key)
 
     def test_scalar_widths_and_nonfinite(self):
         self.assertEqual(decode_inspection(node(2, struct.pack('<Q', 2**64 - 1))), 2**64 - 1)
