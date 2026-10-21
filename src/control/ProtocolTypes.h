@@ -68,7 +68,11 @@ enum class OpCode : std::uint16_t
 	GameOperation = 35,
 	ReadProjectionHistory = 36,
 	ReadImageHistory = 37,
-	RetainHistoricalImage = 38
+	RetainHistoricalImage = 38,
+	BeginImageWindow = 39,
+	ReadImageWindow = 40,
+	RetainWindowImage = 41,
+	ReleaseImageWindow = 42
 };
 
 enum class ErrorCode : std::uint32_t

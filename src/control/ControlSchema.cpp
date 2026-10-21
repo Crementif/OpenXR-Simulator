@@ -29,6 +29,8 @@ constexpr std::array capture{tag::Session, tag::Generation, tag::CaptureId};
 constexpr std::array retainImage{tag::Session, tag::Generation, tag::CaptureId, tag::Target};
 constexpr std::array revision{tag::RevisionId};
 constexpr std::array releaseInspection{tag::InspectionId};
+constexpr std::array imageWindow{tag::ImageWindowId};
+constexpr std::array windowImage{tag::ImageWindowId, tag::FrameId};
 constexpr std::array image{tag::ImageReaderId};
 constexpr std::array share{tag::ImageReaderId, tag::DeviceUuid, tag::DriverUuid};
 constexpr std::array delivery{tag::DeliveryId};
@@ -47,6 +49,10 @@ constexpr std::array Schemas{RequestSchema{OpCode::Hello, RequestDomain::Connect
 							 RequestSchema{OpCode::Capture, RequestDomain::Inspection, 0, capture},
 							 RequestSchema{OpCode::InspectFrame, RequestDomain::Inspection, 0, capture},
 							 RequestSchema{OpCode::ReadProjectionHistory, RequestDomain::Inspection, 4, projectionHistory},
+							 RequestSchema{OpCode::BeginImageWindow, RequestDomain::Inspection, 4, common},
+							 RequestSchema{OpCode::ReadImageWindow, RequestDomain::Images, 4, imageWindow},
+							 RequestSchema{OpCode::ReleaseImageWindow, RequestDomain::Images, 4, imageWindow},
+							 RequestSchema{OpCode::RetainWindowImage, RequestDomain::Images, 4, windowImage},
 							 RequestSchema{OpCode::ReadImageHistory, RequestDomain::Inspection, 4, projectionHistory},
 							 RequestSchema{OpCode::RetainHistoricalImage, RequestDomain::Inspection, 4, historicalImage},
 							 RequestSchema{OpCode::FeatureRevision, RequestDomain::Inspection, 0, revision},

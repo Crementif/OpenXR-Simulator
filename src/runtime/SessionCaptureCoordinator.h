@@ -114,7 +114,7 @@ class SessionCaptureCoordinator::Submission
 	FrameKey m_frame;
 	XrResult m_validation = XR_SUCCESS;
 	bool m_committed = false;
-	HistoricalImage m_retiredImage;
+	FrameImageHistory::Retired m_retiredImage;
 };
 
 // Retains all selected native readers until after the caller's lock is gone.

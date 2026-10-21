@@ -51,6 +51,10 @@ class OpCode(IntEnum):
     READ_PROJECTION_HISTORY = 36
     READ_IMAGE_HISTORY = 37
     RETAIN_HISTORICAL_IMAGE = 38
+    BEGIN_IMAGE_WINDOW = 39
+    READ_IMAGE_WINDOW = 40
+    RETAIN_WINDOW_IMAGE = 41
+    RELEASE_IMAGE_WINDOW = 42
 
 
 class ErrorCode(IntEnum):
@@ -91,6 +95,7 @@ class Capability(IntFlag):
     FILTERED_COMPOSITION = 1 << 17
     PROJECTION_HISTORY = 1 << 18
     IMAGE_HISTORY = 1 << 19
+    IMAGE_WINDOW = 1 << 20
 
 
 class CommandKind(IntEnum):
@@ -186,6 +191,7 @@ class Tag(IntEnum):
     DOCUMENT = 102
     REVISION_KIND = 103
     RELEASED = 104
+    IMAGE_WINDOW_ID = 180
     IMAGE_READER_ID = 105
     DELIVERY_ID = 106
     POOL_GENERATION = 107

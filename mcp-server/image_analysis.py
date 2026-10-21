@@ -45,7 +45,7 @@ def to_jpeg(
 
 
 def build_flicker_contact_sheet(
-    incident_dir: Path, max_frames: int = 8
+    incident_dir: Path, max_frames: int = 8, *, entire_window: bool = False
 ) -> Optional[bytes]:
     """Build an in-memory JPEG from simulator-composed preview frames for LLM review."""
     from io import BytesIO
@@ -54,7 +54,12 @@ def build_flicker_contact_sheet(
     candidates = sorted(
         incident_dir.glob("frame*_preview.bmp"),
         key=lambda path: int(re.search(r"frame(\d+)", path.name).group(1)),
-    )[-max(2, min(max_frames, 12)) :]
+    )
+    limit = max(2, min(max_frames, 12))
+    if entire_window and len(candidates) > limit:
+        candidates = [candidates[index * (len(candidates) - 1) // (limit - 1)] for index in range(limit)]
+    else:
+        candidates = candidates[-limit:]
     if len(candidates) < 2:
         return None
     cells = []

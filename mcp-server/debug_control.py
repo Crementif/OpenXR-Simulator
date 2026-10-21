@@ -220,7 +220,7 @@ def _validate(name, args):
 
 
 _IDENTIFIER_FIELDS = {'session', 'generation', 'lease', 'command_id', 'operation_id', 'capture_id',
-                      'frame_id', 'tick', 'next_admission', 'last_submitted', 'request_id', 'revision_id', 'inspection_id',
+                      'frame_id', 'trigger_frame', 'image_window_id', 'tick', 'next_admission', 'last_submitted', 'request_id', 'revision_id', 'inspection_id',
                       'game_id', 'transaction_id', 'applied_frame', 'origin_frame', 'seed', 'identity', 'image_reader_id', 'delivery_id', 'export_id', 'pool_generation', 'shared_image_id'}
 _IDENTIFIER_LISTS = {'captures', 'diagnostics'}
 

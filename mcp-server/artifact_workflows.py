@@ -15,6 +15,7 @@ from image_analysis import (
 )
 from runtime_artifacts import Artifact
 from retained_screenshot import RetainedScreenshot
+from retained_incident import RetainedIncident
 from projection_history import ProjectionHistory
 from tool_results import ImageResult, TextResult
 
@@ -272,6 +273,7 @@ class IncidentWorkflow:
     def __init__(self, artifacts, *, ui=False):
         self._artifacts = artifacts
         self._ui = ui
+        self._retained = None if ui else RetainedIncident(artifacts.directory)
         self._status = Artifact.UI_FLICKER if ui else Artifact.FLICKER
         self._request = (
             "ui_flicker_capture_request.json" if ui else "flicker_capture_request.json"
@@ -281,7 +283,23 @@ class IncidentWorkflow:
     def close(self):
         self._lane.close()
 
+    def disconnect(self):
+        if self._retained is not None:
+            self._retained.close()
+
+    def _retained_result(self, document, frames, include_images=True):
+        result = [TextResult(json.dumps(document, indent=2))]
+        if include_images:
+            sheet = build_flicker_contact_sheet(self._artifacts.incident_directory(document['incidentDirectory']),
+                                                frames, entire_window=True)
+            if sheet:
+                result.append(ImageResult(sheet))
+        return result
+
     def status(self, arguments):
+        if self._retained is not None and self._retained.latest is not None:
+            return self._retained_result(self._retained.latest, int(arguments.get('max_frames', 8)),
+                                         arguments.get('include_images', True))
         document = self._artifacts.read_json(self._status)
         if document is None:
             if not self._artifacts.exists(self._status):
@@ -319,6 +337,10 @@ class IncidentWorkflow:
         timeout = max(1.0, min(_timeout(arguments.get("timeout", 5)), 15))
         frames = max(2, min(int(arguments.get("max_frames", 12)), 12))
         with self._lane.admit():
+            if self._retained is not None:
+                document = self._retained.capture(timeout, self._lane.wait)
+                if document is not None:
+                    return self._retained_result(document, frames)
             previous = self._artifacts.read_json(self._status, {}).get(
                 "lastIncidentDirectory", ""
             )

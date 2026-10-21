@@ -915,6 +915,19 @@ InspectionValue InspectDiagnostics(const FrameDiagnostics& diagnostics)
 					   {"related", InspectionValue::Unsigned(event.related)}});
 			  })}});
 }
+namespace
+{
+InspectionValue InspectHistoricalImage(const HistoricalImage& image)
+{
+	const auto& frame = *image.metadata;
+	const auto completion = image.output ? image.output->PollCompletion() : CompletionStatus::Failed;
+	const auto phase = image.output ? (completion == CompletionStatus::Complete ? "ready"
+		: completion == CompletionStatus::Pending ? "pending" : "failed")
+		: frame.submission && !frame.submission->layerCount ? "clear" : "unavailable";
+	return InspectionValue::Object(
+		{{"frame_id", InspectionValue::Unsigned(frame.key.frame.value)}, {"phase", InspectionValue::Text(phase)}});
+}
+} // namespace
 InspectionValue InspectImageHistory(const ImageHistorySnapshot& history)
 {
 	return InspectionValue::Object(
@@ -922,17 +935,21 @@ InspectionValue InspectImageHistory(const ImageHistorySnapshot& history)
 		 {"capacity", InspectionValue::Unsigned(FrameImageHistory::Capacity)},
 		 {"evicted", InspectionValue::Unsigned(history.evicted)},
 		 {"unavailable", InspectionValue::Unsigned(history.unavailable)},
-		 {"entries", InspectArray(history.entries, [](const HistoricalImage& image)
-			{
-				const auto& frame = *image.metadata;
-				const auto completion = image.output ? image.output->PollCompletion() : CompletionStatus::Failed;
-				const auto phase = image.output ? (completion == CompletionStatus::Complete ? "ready"
-					: completion == CompletionStatus::Pending ? "pending" : "failed")
-					: frame.submission && !frame.submission->layerCount ? "clear" : "unavailable";
-				return InspectionValue::Object(
-					{{"frame_id", InspectionValue::Unsigned(frame.key.frame.value)},
-					 {"phase", InspectionValue::Text(phase)}});
-			})}});
+		 {"entries", InspectArray(history.entries, InspectHistoricalImage)}});
+}
+InspectionValue InspectImageWindow(const ImageWindowSnapshot& window)
+{
+	const auto phase = window.interrupted ? "interrupted" :
+		window.postCount == FrameImageWindow::PostCount ? "complete" : "collecting";
+	return InspectionValue::Object(
+		{{"generation", InspectionValue::Unsigned(window.generation.value)},
+		 {"trigger_frame", InspectionValue::Unsigned(window.trigger.value)},
+		 {"capacity", InspectionValue::Unsigned(FrameImageWindow::Capacity)},
+		 {"pre_count", InspectionValue::Unsigned(window.preCount)},
+		 {"post_count", InspectionValue::Unsigned(window.postCount)},
+		 {"post_requested", InspectionValue::Unsigned(FrameImageWindow::PostCount)},
+		 {"phase", InspectionValue::Text(phase)},
+		 {"entries", InspectArray(window.entries, InspectHistoricalImage)}});
 }
 
 InspectionValue InspectProjectionHistory(const FrameHistorySnapshot& history, std::size_t count)

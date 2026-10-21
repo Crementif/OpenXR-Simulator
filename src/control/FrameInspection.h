@@ -7,6 +7,7 @@
 namespace simxr::control
 {
 InspectionValue InspectDiagnostics(const FrameDiagnostics& diagnostics);
+InspectionValue InspectImageWindow(const ImageWindowSnapshot& window);
 InspectionValue InspectImageHistory(const ImageHistorySnapshot& history);
 InspectionValue InspectProjectionHistory(const FrameHistorySnapshot& history, std::size_t count);
 

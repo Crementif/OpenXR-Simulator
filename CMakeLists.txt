@@ -77,6 +77,7 @@ add_library(simxr_control STATIC
     src/control/ControlService.cpp
     src/control/ControlSessions.cpp
     src/control/ControlSchema.cpp
+    src/control/ConnectionImageWindows.cpp
     src/control/ConnectionImages.cpp
     src/control/ConnectionLeases.cpp
     src/control/ConnectionRequests.cpp
@@ -588,6 +589,16 @@ if(SIMXR_BUILD_PROBES)
                             ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
                             TIMEOUT 90 SKIP_RETURN_CODE 77)
                     endif()
+                    add_test(NAME linux_vulkan_image_window COMMAND "${Python3_EXECUTABLE}"
+                        "${PROJECT_SOURCE_DIR}/tests/control/test_native_image_window.py" "$<TARGET_FILE:xr_probe_linux>")
+                    set_tests_properties(linux_vulkan_image_window PROPERTIES
+                        ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
+                        TIMEOUT 90 SKIP_RETURN_CODE 77)
+                    add_test(NAME linux_vulkan_mcp_incident COMMAND "${Python3_EXECUTABLE}"
+                        "${PROJECT_SOURCE_DIR}/tests/control/test_native_mcp_incident.py" "$<TARGET_FILE:xr_probe_linux>")
+                    set_tests_properties(linux_vulkan_mcp_incident PROPERTIES
+                        ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
+                        TIMEOUT 90 SKIP_RETURN_CODE 77)
                     add_test(NAME linux_vulkan_filtered_capture COMMAND "${Python3_EXECUTABLE}"
                         "${PROJECT_SOURCE_DIR}/tests/control/test_native_filtered_capture.py" "$<TARGET_FILE:xr_probe_linux>")
                     set_tests_properties(linux_vulkan_filtered_capture PROPERTIES

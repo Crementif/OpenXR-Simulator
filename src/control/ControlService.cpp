@@ -1,5 +1,6 @@
 #include "control/ControlService.h"
 #include "control/ConnectionImages.h"
+#include "control/ConnectionImageWindows.h"
 #include "control/ConnectionLeases.h"
 #include "control/ConnectionRequests.h"
 #include "control/ControlRequestError.h"
@@ -73,6 +74,7 @@ class ControlService::State
 		ConnectionLeases leases;
 		InspectionStore inspections;
 		ConnectionImages images;
+		ConnectionImageWindows windows;
 		// Destroy admission first so its close observer can still retire the
 		// connection's leases and simulation source using live member owners.
 		ConnectionRequests requests;
@@ -95,15 +97,20 @@ class ControlService::State
 	struct Publication
 	{
 		InspectionStore& store;
+		ConnectionImageWindows& windows;
+		ImageWindowReader& retiredWindow;
+		std::optional<std::uint64_t> window;
 		ConnectionImages::Publication images;
 		std::optional<std::uint64_t> inspection;
 		bool committed = false;
-		Publication(Client& client, ConnectionImages::RetiredResource& retired)
-			: store(client.inspections), images(client.images, retired)
+		Publication(Client& client, ConnectionImages::RetiredResource& retired, ImageWindowReader& retiredWindow)
+			: store(client.inspections), windows(client.windows), retiredWindow(retiredWindow), images(client.images, retired)
 		{
 		}
 		~Publication()
 		{
+			if (window && !committed)
+				retiredWindow = windows.Release(*window);
 			if (inspection && !committed)
 				store.Release(*inspection);
 		}
@@ -117,6 +124,9 @@ class ControlService::State
 	{
 		ControlSessions::Snapshot sessions;
 		ImageHistorySnapshot history;
+		ImageWindowReader window;
+		ImageWindowReader retiredWindow;
+		FrameImageHistory::StartedWindow startedWindow;
 		HistoricalImage historicalImage;
 		std::shared_ptr<DebugController> controller;
 		std::optional<SnapshotRecord> capture;
@@ -238,12 +248,68 @@ class ControlService::State
 		response.fields.push_back(Field::Bytes(tag::Document, document.Encode(), true));
 		return response;
 	}
+	Message DispatchWindow(Client& client, const Message& request, HeldReaders& held, Publication& publication,
+		Message response)
+	{
+		const auto opcode = static_cast<OpCode>(request.opcode);
+		const auto id = RequireRequestU64(request, tag::ImageWindowId);
+		if (opcode == OpCode::ReleaseImageWindow)
+		{
+			held.window = client.windows.Release(id);
+			response.fields.push_back(Field::Bool(tag::Released, held.window.window != nullptr));
+			return response;
+		}
+		held.window = client.windows.Read(id);
+		if (opcode == OpCode::ReadImageWindow)
+		{
+			response.fields.push_back(Field::Bytes(tag::Document, InspectImageWindow(held.window.window->Snapshot()).Encode(), true));
+			return response;
+		}
+		held.historicalImage = held.window.window->Find({RequireRequestU64(request, tag::FrameId)});
+		const auto& image = held.historicalImage;
+		if (!image.metadata)
+			throw ControlRequestError{ErrorCode::NotFound, "Frame is not in this image window"};
+		if (!image.output)
+			throw ControlRequestError{ErrorCode::UnsupportedCommand, "Window frame has no retained GPU image"};
+		const auto completion = image.output->PollCompletion();
+		if (completion != CompletionStatus::Complete)
+			throw ControlRequestError{completion == CompletionStatus::Pending ? ErrorCode::Busy : ErrorCode::Internal,
+				"Window image is not GPU-ready"};
+		client.images.Retain(response, {held.window.session, image.metadata->key, {}, {}}, image.output,
+			*m_images, client.nativeHandles, publication.images);
+		return response;
+	}
 	Message DispatchFrame(Client& client, const Message& request, const ControlSession& binding, HeldReaders& held,
 						  Publication& publication, Message response)
 	{
 		const auto& session = binding.session;
 		switch (static_cast<OpCode>(request.opcode))
 		{
+		case OpCode::BeginImageWindow:
+		{
+			if (!session->SupportsImageHistory())
+				throw ControlRequestError{ErrorCode::UnsupportedCommand, "GPU image windows are unavailable"};
+			held.startedWindow = session->ImageHistory().BeginWindow();
+			held.window = {binding.id, held.startedWindow.window};
+			if (!held.window.window)
+				throw ControlRequestError{ErrorCode::Busy, "History is empty or another window is collecting"};
+			try
+			{
+				const auto snapshot = held.window.window->Snapshot();
+				if (snapshot.generation.value != RequireRequestU64(request, tag::Generation))
+					throw ControlRequestError{ErrorCode::StaleGeneration, "Image window belongs to another run"};
+				const auto id = client.windows.Store(binding.id, held.window.window);
+				publication.window = id;
+				response.fields.push_back(Field::U64(tag::ImageWindowId, id));
+				response.fields.push_back(Field::Bytes(tag::Document, InspectImageWindow(snapshot).Encode(), true));
+				return response;
+			}
+			catch (...)
+			{
+				held.window.window->Cancel();
+				throw;
+			}
+		}
 		case OpCode::ReadImageHistory:
 		{
 			if (!session->SupportsImageHistory())
@@ -416,7 +482,8 @@ class ControlService::State
 				capabilities |= static_cast<std::uint64_t>(Capability::ComposedCapture) |
 					static_cast<std::uint64_t>(Capability::ImageRecording);
 			if (session->SupportsImageHistory())
-				capabilities |= static_cast<std::uint64_t>(Capability::ImageHistory);
+				capabilities |= static_cast<std::uint64_t>(Capability::ImageHistory) |
+					static_cast<std::uint64_t>(Capability::ImageWindow);
 			if (status.filteredComposition)
 				capabilities |= static_cast<std::uint64_t>(Capability::FilteredComposition);
 			if (status.depthViews)
@@ -509,6 +576,10 @@ class ControlService::State
 		{
 			if (!m_images)
 				throw ControlRequestError{ErrorCode::UnsupportedCommand, "Image inspection service unavailable"};
+			if (opcode == OpCode::ReadImageWindow || opcode == OpCode::ReleaseImageWindow || opcode == OpCode::RetainWindowImage)
+			{
+				return DispatchWindow(client, request, held, publication, std::move(response));
+			}
 			if (opcode != OpCode::RetainImage && opcode != OpCode::RetainPreview)
 				return client.images.Dispatch(incoming, outgoing, client.requests.Minor(), client.nativeHandles,
 											  publication.images, held.images);
@@ -643,7 +714,7 @@ ControlPacket ControlService::State::HandlePacket(ConnectionId connection, const
 		}
 		// Failed response/cache construction removes unannounced resources before
 		// reopening admission. Actual GPU ownership remains backend-managed.
-		Publication publication{*client, held.images};
+		Publication publication{*client, held.images, held.retiredWindow};
 		ControlPacket response;
 		try
 		{

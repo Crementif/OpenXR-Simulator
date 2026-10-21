@@ -273,7 +273,7 @@ class AdapterTests(unittest.TestCase):
             calls.append((lease, command, kwargs))
             return {'operation_id': full, 'command_id': full, 'captures': [1, full],
                     'diagnostics': [full], 'frame': {'frame_id': full, 'generation': 0},
-                    'display': {'tick': full}, 'pipeline': {'next_admission': full},
+                    'trigger_frame': full, 'image_window_id': full, 'display': {'tick': full}, 'pipeline': {'next_admission': full},
                     'presentation': {'last_submitted': full}, 'time': 2**60, 'count': 17}
 
         self.client.submit = submit
@@ -287,6 +287,8 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(response['diagnostics'], [str(full)])
         self.assertEqual(response['frame'], {'frame_id': str(full), 'generation': '0'})
         self.assertEqual(response['display']['tick'], str(full))
+        self.assertEqual(response['trigger_frame'], str(full))
+        self.assertEqual(response['image_window_id'], str(full))
         self.assertEqual(response['pipeline']['next_admission'], str(full))
         self.assertEqual(response['presentation']['last_submitted'], str(full))
         self.assertEqual(response['time'], str(2**60))

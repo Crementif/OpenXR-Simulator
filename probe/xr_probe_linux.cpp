@@ -1160,6 +1160,8 @@ static int runProbe()
         end.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
         end.layerCount = quadMode ? 1 : 2;
         end.layers = submitted;
+        if (const auto* clearFrame = std::getenv("SIMXR_PROBE_CLEAR_FRAME"); clearFrame && std::atoi(clearFrame) == frame + 3)
+            end.layerCount = 0;
         if (frame == 2 && verifyLegacyCapture)
             command(data, "screenshot_request.json", R"({"eye":"both","layer":"projection"})");
         if (frame == 3 && verifyLegacyCapture)

@@ -64,6 +64,54 @@ void BoundedOwnership()
 	}
 	Require(retiredCount == 12, "Restart failed to release detached native owners");
 }
+void WindowOwnership()
+{
+	FrameImageHistory history;
+	history.Start({1});
+	for (std::uint64_t frame = 1; frame <= 10; ++frame)
+		history.Append(Image(frame, std::make_shared<Output>()));
+	auto started = history.BeginWindow();
+	auto window = std::move(started.window);
+	Require(window && !history.BeginWindow().window, "Concurrent collecting window was admitted");
+	for (std::uint64_t frame = 11; frame <= 40; ++frame)
+		history.Append(Image(frame, frame == 15 ? nullptr : std::make_shared<Output>()));
+	const auto snapshot = window->Snapshot();
+	Require(snapshot.trigger.value == 10 && snapshot.preCount == 10 && snapshot.postCount == 12 &&
+		!snapshot.interrupted && snapshot.entries.size() == 22, "Window changed trigger or collection bounds");
+	for (std::size_t index = 0; index < snapshot.entries.size(); ++index)
+		Require(snapshot.entries[index].metadata->key.frame.value == index + 1, "Window skipped or substituted a frame");
+	Require(window->Find({15}).metadata && !window->Find({15}).output && !window->Find({23}).metadata,
+		"Missing window pixels or following frames were misrepresented");
+	auto next = history.BeginWindow().window;
+	Require(next && next->Snapshot().trigger.value == 40, "Completed window prevented subsequent capture");
+	history.Append(Image(41, std::make_shared<Output>()));
+	history.Start({2});
+	Require(next->Snapshot().interrupted && next->Snapshot().postCount == 1,
+		"Generation restart did not interrupt the collecting window");
+	Require(window->Find({1}).output && !window->Snapshot().interrupted,
+		"Restart invalidated a completed independent window");
+}
+void WindowDestructionReentry()
+{
+	FrameImageHistory history;
+	history.Start({1});
+	auto output = std::make_shared<Output>();
+	history.Append(Image(1, output));
+	auto started = history.BeginWindow();
+	auto window = std::move(started.window);
+	bool reentered = false;
+	output->destroyed = [&, raw = window.get()]
+	{
+		Require(raw->Snapshot().entries.empty() && history.Snapshot().entries.empty(),
+			"Window retirement reentered partly destroyed ownership");
+		reentered = true;
+	};
+	output.reset();
+	history.Clear();
+	Require(window->Snapshot().interrupted, "Clearing history did not interrupt its window");
+	window.reset();
+	Require(reentered, "Released window leaked its final native output");
+}
 void MissingImagesAndDestruction()
 {
 	auto history = std::make_unique<FrameImageHistory>();
@@ -89,6 +137,8 @@ int main()
 	try
 	{
 		BoundedOwnership();
+		WindowOwnership();
+		WindowDestructionReentry();
 		MissingImagesAndDestruction();
 		std::cout << "Bounded image history, restart, independent readers and retirement reentry passed\n";
 		return 0;

@@ -6,6 +6,75 @@
 
 namespace simxr
 {
+FrameImageWindow::~FrameImageWindow()
+{
+	std::array<HistoricalImage, Capacity> retired;
+	std::lock_guard lock(m_mutex);
+	retired.swap(m_entries);
+	m_preCount = m_postCount = 0;
+}
+ImageWindowSnapshot FrameImageWindow::Snapshot() const
+{
+	ImageWindowSnapshot result;
+	result.entries.reserve(Capacity);
+	std::lock_guard lock(m_mutex);
+	result.generation = m_generation;
+	result.trigger = m_trigger;
+	result.preCount = m_preCount;
+	result.postCount = m_postCount;
+	result.interrupted = m_interrupted;
+	result.entries.insert(result.entries.end(), m_entries.begin(), m_entries.begin() + m_preCount + m_postCount);
+	return result;
+}
+HistoricalImage FrameImageWindow::Find(FrameId frame) const
+{
+	std::lock_guard lock(m_mutex);
+	for (std::size_t i = 0; i < m_preCount + m_postCount; ++i)
+		if (m_entries[i].metadata->key.frame == frame)
+			return m_entries[i];
+	return {};
+}
+void FrameImageWindow::Cancel() noexcept
+{
+	std::lock_guard lock(m_mutex);
+	if (m_postCount != PostCount)
+		m_interrupted = true;
+}
+void FrameImageWindow::Append(const HistoricalImage& image) noexcept
+{
+	std::lock_guard lock(m_mutex);
+	if (m_interrupted || m_postCount == PostCount)
+		return;
+	m_entries[m_preCount + m_postCount++] = image;
+}
+FrameImageHistory::StartedWindow FrameImageHistory::BeginWindow()
+{
+	StartedWindow started{std::make_shared<FrameImageWindow>(), {}};
+	std::lock_guard lock(m_mutex);
+	started.previous = m_window.lock();
+	if (started.previous)
+	{
+		std::lock_guard previousLock(started.previous->m_mutex);
+		if (!started.previous->m_interrupted && started.previous->m_postCount != FrameImageWindow::PostCount)
+		{
+			started.window.reset();
+			return started;
+		}
+	}
+	if (!m_count)
+	{
+		started.window.reset();
+		return started;
+	}
+	auto& window = *started.window;
+	window.m_generation = m_generation;
+	window.m_preCount = m_count;
+	for (std::size_t i = 0; i < m_count; ++i)
+		window.m_entries[i] = m_entries[(m_next + Capacity - m_count + i) % Capacity];
+	window.m_trigger = window.m_entries[m_count - 1].metadata->key.frame;
+	m_window = started.window;
+	return started;
+}
 FrameImageHistory::~FrameImageHistory()
 {
 	auto retired = Clear();
@@ -14,7 +83,11 @@ FrameImageHistory::Retired FrameImageHistory::Start(SessionGeneration generation
 {
 	Retired retired;
 	std::lock_guard lock(m_mutex);
-	retired.swap(m_entries);
+	retired.images.swap(m_entries);
+	retired.window = m_window.lock();
+	m_window.reset();
+	if (retired.window)
+		retired.window->Cancel();
 	m_generation = generation;
 	m_next = m_count = 0;
 	m_evicted = m_unavailable = 0;
@@ -24,19 +97,30 @@ FrameImageHistory::Retired FrameImageHistory::Clear() noexcept
 {
 	Retired retired;
 	std::lock_guard lock(m_mutex);
-	retired.swap(m_entries);
+	retired.images.swap(m_entries);
+	retired.window = m_window.lock();
+	m_window.reset();
+	if (retired.window)
+		retired.window->Cancel();
 	m_evicted += m_count;
 	m_next = m_count = 0;
 	return retired;
 }
-HistoricalImage FrameImageHistory::Append(HistoricalImage image) noexcept
+FrameImageHistory::Retired FrameImageHistory::Append(HistoricalImage image) noexcept
 {
+	Retired retired;
 	std::lock_guard lock(m_mutex);
 	if (!image.metadata || image.metadata->key.generation != m_generation)
-		return image;
+	{
+		retired.images[0] = std::move(image);
+		return retired;
+	}
+	retired.window = m_window.lock();
+	if (retired.window)
+		retired.window->Append(image);
 	if (!image.output && image.metadata->submission && image.metadata->submission->layerCount)
 		++m_unavailable;
-	auto retired = std::exchange(m_entries[m_next], std::move(image));
+	retired.images[0] = std::exchange(m_entries[m_next], std::move(image));
 	m_next = (m_next + 1) % Capacity;
 	if (m_count == Capacity)
 		++m_evicted;

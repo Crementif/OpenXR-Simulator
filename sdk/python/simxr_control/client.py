@@ -141,6 +141,19 @@ class Client:
     def image_info(self, image_reader):
         return self.request(OpCode.IMAGE_INFO, [Field.u64(Tag.IMAGE_READER_ID, image_reader, True)])
 
+    def begin_image_window(self, session):
+        return self.request(OpCode.BEGIN_IMAGE_WINDOW, self._session(session))
+
+    def image_window(self, window):
+        return self.request(OpCode.READ_IMAGE_WINDOW, [Field.u64(Tag.IMAGE_WINDOW_ID, window, True)])
+
+    def retain_window_image(self, window, frame):
+        return self.request(OpCode.RETAIN_WINDOW_IMAGE, [Field.u64(Tag.IMAGE_WINDOW_ID, window, True),
+                                                       Field.u64(Tag.FRAME_ID, frame, True)])
+
+    def release_image_window(self, window):
+        return self.request(OpCode.RELEASE_IMAGE_WINDOW, [Field.u64(Tag.IMAGE_WINDOW_ID, window, True)])
+
     def image_history(self, session, *, count=10):
         if type(count) is not int or not 1 <= count <= 10:
             raise ProtocolError('Image history count must be in [1,10]')

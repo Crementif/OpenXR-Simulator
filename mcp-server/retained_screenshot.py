@@ -4,6 +4,7 @@ import time
 
 from legacy_control import SessionBinding
 from runtime_artifacts import CaptureFailed
+from retained_image import read_stereo_image
 
 
 class RetainedScreenshot:
@@ -89,7 +90,6 @@ class RetainedScreenshot:
                 return None
             from simxr_control import Capability, ControlError
             from simxr_control.protocol import ErrorCode
-            from PIL import Image
             client, session = self._binding.client, self._binding.session
             if client.sessions() != [session]:
                 self._binding.close()
@@ -119,39 +119,8 @@ class RetainedScreenshot:
                 if composition is not None and composition['frame'] != {key: str(value) for key, value in info['frame'].items()}:
                     raise CaptureFailed('Captured image and composition settings have different frame identities')
                 descriptor = info['image_descriptor']
-                width, height, layers = (descriptor[key] for key in ('width', 'height', 'array_layers'))
-                if descriptor['format'] != 43 or layers != 2 or width <= 0 or height <= 0:
-                    raise CaptureFailed('Retained screenshot requires the canonical RGBA8 sRGB stereo image')
                 slices = (0, 1) if eye == 'both' else (0,) if eye == 'left' else (1,)
-                size = width * height * 4
-                if size * len(slices) > self.MAX_BYTES:
-                    raise CaptureFailed('Retained screenshot exceeds the 128 MiB image budget')
-                output = Image.new('RGBA', (width * len(slices), height))
-                for position, array_slice in enumerate(slices):
-                    started = client.start_export(reader, layer=array_slice)
-                    ticket = started['export_id']
-                    try:
-                        if started['total_bytes'] != size:
-                            raise CaptureFailed('Retained export dimensions do not match its image')
-                        while True:
-                            status = client.export_info(ticket)
-                            if status['phase'] == 'complete':
-                                break
-                            if status['phase'] != 'pending':
-                                raise CaptureFailed('Retained screenshot export failed: ' + status['phase'])
-                            self._wait(deadline, wait)
-                        pixels = bytearray()
-                        while len(pixels) < size:
-                            part = client.read_export(ticket, offset=len(pixels), length=min(size - len(pixels), 65536))
-                            chunk = part['bytes']
-                            if part['offset'] != len(pixels) or not chunk or len(chunk) > size - len(pixels):
-                                raise CaptureFailed('Retained export returned an invalid pixel chunk')
-                            pixels.extend(chunk)
-                            if time.monotonic() > deadline:
-                                raise CaptureFailed('Retained screenshot read timed out')
-                        output.paste(Image.frombytes('RGBA', (width, height), bytes(pixels)), (position * width, 0))
-                    finally:
-                        client.release_export(ticket)
+                output = read_stereo_image(client, reader, descriptor, slices, deadline, wait, self.MAX_BYTES)
                 encoded = BytesIO()
                 output.save(encoded, format='PNG')
                 metadata = {'transport': 'retained_preview' if layer == 'all' else 'retained_capture',
