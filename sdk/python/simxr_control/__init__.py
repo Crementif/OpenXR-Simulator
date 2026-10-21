@@ -10,3 +10,6 @@ __all__ += ['SourceKind', 'LatePolicy', 'ControlChannel', 'Scenario', 'encode_co
 
 from .recording import collect_recording, to_luau
 __all__ += ['collect_recording', 'to_luau']
+
+from .frame_recording import record_frames
+__all__ += ['record_frames']
