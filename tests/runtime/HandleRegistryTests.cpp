@@ -113,6 +113,12 @@ int main()
 	});
 	Require(sessions.Find(constructed)->value == 42, "Factory object not published");
 	Require(spaces.Erase(space), "Erase child");
+	{
+		auto retired = spaces.RetireAll();
+	}
+	auto restartedSpace = spaces.Insert(session, std::make_unique<Object>());
+	Require(spaces.Find(restartedSpace, static_cast<XrSession>(session))->value == 7,
+			"Cleared registry did not admit new child handles");
 	Require(AbiBoundary<Throw>::Invoke(true) == XR_ERROR_OUT_OF_MEMORY, "Allocation exception escaped ABI");
 	Require(AbiBoundary<Throw>::Invoke(false) == XR_ERROR_RUNTIME_FAILURE, "Exception escaped ABI");
 	std::cout << "Handle registry tests passed\n";

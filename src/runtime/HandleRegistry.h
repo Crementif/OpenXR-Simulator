@@ -74,6 +74,7 @@ template <typename Handle, typename Object, typename Parent> class HandleRegistr
 		Parent parent;
 		std::shared_ptr<Object> object;
 	};
+	using Records = std::unordered_map<Handle, Record>;
 
   public:
 	class Retired
@@ -85,13 +86,15 @@ template <typename Handle, typename Object, typename Parent> class HandleRegistr
 
 		template <typename Visitor> void ForEach(Visitor visitor) const
 		{
-			for (const auto& [handle, record] : m_objects)
+			if (!m_objects)
+				return;
+			for (const auto& [handle, record] : *m_objects)
 				visitor(HandleRef<Handle, Object>{handle, record.object});
 		}
 
 	  private:
 		friend class HandleRegistry;
-		std::unordered_map<Handle, Record> m_objects;
+		std::unique_ptr<Records> m_objects;
 	};
 
 	~HandleRegistry()
@@ -105,7 +108,7 @@ template <typename Handle, typename Object, typename Parent> class HandleRegistr
 		Retired retired;
 		{
 			std::lock_guard lock(m_mutex);
-			retired.m_objects.swap(m_objects);
+			retired.m_objects = std::move(m_objects);
 		}
 		return retired;
 	}
@@ -123,30 +126,37 @@ template <typename Handle, typename Object, typename Parent> class HandleRegistr
 
 	template <typename Factory> HandleRef<Handle, Object> Create(Parent parent, Factory factory)
 	{
-		auto handle = AllocateHandle<Handle>();
+		const auto handle = AllocateHandle<Handle>();
 		std::shared_ptr<Object> retained(factory(handle));
 		if (!retained)
 			throw std::invalid_argument("Missing handle object");
 		std::lock_guard lock(m_mutex);
-		m_objects.emplace(handle, Record{parent, retained});
+		if (!m_objects)
+			m_objects = std::make_unique<Records>();
+		m_objects->emplace(handle, Record{parent, retained});
 		return {handle, std::move(retained)};
 	}
 
 	HandleRef<Handle, Object> Find(Handle handle) const
 	{
 		std::lock_guard lock(m_mutex);
-		auto it = m_objects.find(handle);
-		return it == m_objects.end() ? HandleRef<Handle, Object>{}
-									 : HandleRef<Handle, Object>{handle, it->second.object};
+		if (!m_objects)
+			return {};
+		const auto found = m_objects->find(handle);
+		if (found == m_objects->end())
+			return {};
+		return {handle, found->second.object};
 	}
 
 	HandleRef<Handle, Object> Find(Handle handle, Parent parent) const
 	{
 		std::lock_guard lock(m_mutex);
-		auto it = m_objects.find(handle);
-		if (it == m_objects.end() || it->second.parent != parent)
+		if (!m_objects)
 			return {};
-		return {handle, it->second.object};
+		const auto found = m_objects->find(handle);
+		if (found == m_objects->end() || found->second.parent != parent)
+			return {};
+		return {handle, found->second.object};
 	}
 
 	bool Erase(Handle handle)
@@ -154,11 +164,13 @@ template <typename Handle, typename Object, typename Parent> class HandleRegistr
 		std::shared_ptr<Object> retired;
 		{
 			std::lock_guard lock(m_mutex);
-			auto it = m_objects.find(handle);
-			if (it == m_objects.end())
+			if (!m_objects)
 				return false;
-			retired = std::move(it->second.object);
-			m_objects.erase(it);
+			const auto found = m_objects->find(handle);
+			if (found == m_objects->end())
+				return false;
+			retired = std::move(found->second.object);
+			m_objects->erase(found);
 		}
 		return true;
 	}
@@ -167,14 +179,15 @@ template <typename Handle, typename Object, typename Parent> class HandleRegistr
 	{
 		std::lock_guard lock(m_mutex);
 		std::vector<Handle> children;
-		for (const auto& [handle, record] : m_objects)
-			if (record.parent == parent)
-				children.push_back(handle);
+		if (m_objects)
+			for (const auto& [handle, record] : *m_objects)
+				if (record.parent == parent)
+					children.push_back(handle);
 		return children;
 	}
 
   private:
 	mutable std::mutex m_mutex;
-	std::unordered_map<Handle, Record> m_objects;
+	std::unique_ptr<Records> m_objects;
 };
 } // namespace simxr
