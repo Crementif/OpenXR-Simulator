@@ -146,7 +146,7 @@ XrResult VulkanSessionGraphics::GraphicsFailure(VkResult result)
 
 XrResult VulkanSessionGraphics::CreateSwapchain(const XrSwapchainCreateInfo& description, XrSwapchain& output)
 {
-	if (m_session->Snapshot().closed)
+	if (m_closing || m_session->Snapshot().closed)
 		return XR_ERROR_SESSION_LOST;
 	try
 	{
@@ -176,7 +176,7 @@ void VulkanSessionGraphics::DestroySwapchain(SwapchainRef swapchain)
 
 XrResult VulkanSessionGraphics::Acquire(VulkanSwapchain& swapchain, std::uint32_t& index)
 {
-	if (m_session->Snapshot().closed)
+	if (m_closing || m_session->Snapshot().closed)
 		return XR_ERROR_SESSION_LOST;
 	try
 	{
@@ -195,6 +195,8 @@ std::optional<SwapchainWaits::Registration> VulkanSessionGraphics::EnterWait()
 
 XrResult VulkanSessionGraphics::EndFrame(const XrFrameEndInfo& info)
 {
+	if (m_closing)
+		return XR_ERROR_SESSION_LOST;
 	if (!m_session->Snapshot().running)
 		return XR_ERROR_SESSION_NOT_RUNNING;
 	const auto begun = m_session->Scheduler().Snapshot().begun;
@@ -256,7 +258,7 @@ void VulkanSessionGraphics::PollCaptures()
 
 void VulkanSessionGraphics::BeginClose()
 {
-	m_session->Close();
+	m_closing = true;
 	m_waits.Close();
 	for (const auto handle : m_swapchains.Children(m_session.get()))
 		FindSwapchain(handle)->Close();

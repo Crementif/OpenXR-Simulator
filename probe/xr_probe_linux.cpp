@@ -95,6 +95,9 @@ static int runProbe()
     const char *env = std::getenv("SIMXR_DATA_DIR");
     CHECK(env && *env);
     std::filesystem::path data(env);
+    const bool creationRollback = std::getenv("SIMXR_PROBE_CREATION_ROLLBACK") != nullptr;
+    const auto unselectedDirectory = data / ("pre-instance-unselected." + std::to_string(getpid()));
+    if (creationRollback) CHECK(setenv("SIMXR_DATA_DIR", unselectedDirectory.c_str(), 1) == 0);
     bool v1 = std::getenv("SIMXR_PROBE_V1") != nullptr;
     const bool bodyTracking = std::getenv("SIMXR_PROBE_BODY") != nullptr;
     const bool quadMode = std::getenv("SIMXR_PROBE_QUAD") != nullptr;
@@ -130,8 +133,25 @@ static int runProbe()
     std::strcpy(ci.applicationInfo.applicationName, "SimXR Linux Probe");
     ci.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
     ci.enabledExtensionNames = extensions.data();
+    if (creationRollback) CHECK(setenv("SIMXR_DATA_DIR", data.c_str(), 1) == 0);
+    // Native configuration failure must release CPU admission and file workers,
+    // so correcting the profile can create a fresh instance in the same process.
+    if (creationRollback)
+    {
+        const auto* configured = std::getenv("SIMXR_HEADSET_PROFILE");
+        const bool hadProfile = configured != nullptr;
+        const std::string previous = configured ? configured : "";
+        CHECK(setenv("SIMXR_HEADSET_PROFILE", "simxr-deliberately-invalid-profile", 1) == 0);
+        XrInstance rejected = XR_NULL_HANDLE;
+        const auto failure = xrCreateInstance(&ci, &rejected);
+        if (hadProfile) CHECK(setenv("SIMXR_HEADSET_PROFILE", previous.c_str(), 1) == 0);
+        else CHECK(unsetenv("SIMXR_HEADSET_PROFILE") == 0);
+        CHECK(failure == XR_ERROR_RUNTIME_FAILURE);
+        CHECK(rejected == XR_NULL_HANDLE);
+    }
     XrInstance instance = XR_NULL_HANDLE;
     XR(xrCreateInstance(&ci, &instance));
+    if (creationRollback) CHECK(!std::filesystem::exists(unselectedDirectory));
     XrInstanceProperties props{XR_TYPE_INSTANCE_PROPERTIES};
     XR(xrGetInstanceProperties(instance, &props));
     std::printf("runtime: %s\n", props.runtimeName);
@@ -1230,6 +1250,14 @@ static int runProbe()
     XR(xrDestroySession(replacement));
     XR(xrDestroyActionSet(set));
     XR(xrDestroyInstance(instance));
+    if (creationRollback)
+    {
+        XrInstance recreated = XR_NULL_HANDLE;
+        XR(xrCreateInstance(&ci, &recreated));
+        XrInstanceProperties recreatedProperties{XR_TYPE_INSTANCE_PROPERTIES};
+        XR(xrGetInstanceProperties(recreated, &recreatedProperties));
+        XR(xrDestroyInstance(recreated));
+    }
     vkDestroySemaphore(device, deferredSemaphore, nullptr);
     vkDestroyCommandPool(device, pool, nullptr);
     vkDestroyDevice(device, nullptr);

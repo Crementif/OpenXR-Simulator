@@ -189,7 +189,8 @@ if(SIMXR_BUILD_RUNTIME)
             src/platform/windows/D3D12Preview.cpp
             src/platform/windows/D3D12PreviewPipelines.cpp)
     else()
-        set(SIMXR_RUNTIME_SOURCE src/runtime_linux.cpp src/platform/linux/VulkanFrameSubmission.cpp
+        set(SIMXR_RUNTIME_SOURCE src/runtime_linux.cpp src/platform/linux/LinuxRuntime.cpp
+            src/platform/linux/VulkanFrameSubmission.cpp
             src/platform/linux/VulkanSessionGraphics.cpp src/platform/linux/VulkanInstanceGraphics.cpp)
     endif()
     add_library(openxr_simulator SHARED ${SIMXR_RUNTIME_SOURCE})
@@ -520,7 +521,7 @@ if(SIMXR_BUILD_PROBES)
             target_link_libraries(xr_probe_linux PRIVATE ${SIMXR_OPENXR_LOADER_TARGET}
                 "${SIMXR_VULKAN_LIBRARY}" Threads::Threads ${CMAKE_DL_LIBS})
             if(BUILD_TESTING AND SIMXR_BUILD_RUNTIME)
-                foreach(probe_mode IN ITEMS default v1 threaded bgra body devices quad close_retry)
+                foreach(probe_mode IN ITEMS default v1 threaded bgra body devices quad close_retry creation_rollback)
                     if(probe_mode STREQUAL "default")
                         set(probe_test linux_vulkan_loader)
                     else()
@@ -537,6 +538,9 @@ if(SIMXR_BUILD_PROBES)
                         list(APPEND probe_environment "SIMXR_PROBE_QUAD=1" "SIMXR_PROBE_GPU_INSPECTION=1")
                     elseif(probe_mode STREQUAL "close_retry")
                         list(APPEND probe_environment "SIMXR_PROBE_CLOSE_RETRY=1")
+                    elseif(probe_mode STREQUAL "creation_rollback")
+                        list(APPEND probe_environment "SIMXR_PROBE_CREATION_ROLLBACK=1"
+                            "SIMXR_CONTROL_SOCKET=${CMAKE_BINARY_DIR}/creation.sock")
                     elseif(probe_mode STREQUAL "devices")
                         list(APPEND probe_environment "SIMXR_PROBE_DEVICES=1")
                     elseif(probe_mode STREQUAL "body")

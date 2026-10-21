@@ -30,8 +30,9 @@ struct CompositionPlan;
 struct VulkanInspectionValidation;
 
 // Native operations require the adapter's queue/binding serialization. BeginClose
-// closes CPU admission under that gate; Drain waits outside it. FinishClose
-// retires native children before the backend. Capabilities are immutable.
+// closes native admission under that gate; the caller closes the core session
+// and drains outside it. FinishClose retires native children before the backend.
+// Capabilities are immutable.
 class VulkanSessionGraphics final
 {
   public:
@@ -87,5 +88,6 @@ class VulkanSessionGraphics final
 	SwapchainWaits m_waits;
 	std::mutex m_closeMutex;
 	CloseStage m_closeStage = CloseStage::Pending;
+	bool m_closing = false;
 };
 } // namespace simxr
