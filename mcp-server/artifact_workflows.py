@@ -14,6 +14,7 @@ from image_analysis import (
     validate_stereo_image,
 )
 from runtime_artifacts import Artifact
+from retained_screenshot import RetainedScreenshot
 from tool_results import ImageResult, TextResult
 
 
@@ -111,12 +112,25 @@ class CaptureWorkflow:
         self._artifacts = artifacts
         self._projections = projections
         self._lane = RequestLane()
+        self._retained = RetainedScreenshot(artifacts.directory)
+        self._capture_metadata = None
 
     def close(self):
         self._lane.close()
 
+    def disconnect(self):
+        # The application owner calls this after admitted workers have joined.
+        self._retained.close()
+
     def _capture(self, timeout, eye="both", layer="projection", source="mcp"):
         timeout = _timeout(timeout)
+        self._capture_metadata = None
+        if layer == "all":
+            retained = self._retained.capture(eye, timeout, self._lane.wait)
+            if retained is not None:
+                data, self._capture_metadata = retained
+                return data
+        self._capture_metadata = {"transport": "legacy_files", "eye": eye, "layer": layer}
         self._artifacts.clear_screenshots(layer)
         requested_at = time.time()
         self._artifacts.publish(
@@ -151,7 +165,8 @@ class CaptureWorkflow:
                 return [TextResult(f"Failed to request screenshot: {error}")]
             if data:
                 try:
-                    jpeg = to_jpeg(data, eye=eye)
+                    canonical = self._capture_metadata is not None and self._capture_metadata["transport"] == "retained_preview"
+                    jpeg = to_jpeg(data, eye="both" if canonical else eye)
                 except Exception as error:
                     return [
                         TextResult(
@@ -163,6 +178,7 @@ class CaptureWorkflow:
                     TextResult(
                         f"Screenshot captured ({len(data)} bytes raw -> {len(jpeg)} bytes JPEG "
                         f"@ q{SCREENSHOT_JPEG_QUALITY}, max width {SCREENSHOT_MAX_WIDTH}px, eye={eye})"
+                        + ("\n" + json.dumps(self._capture_metadata) if self._capture_metadata is not None else "")
                     ),
                     ImageResult(jpeg),
                 ]

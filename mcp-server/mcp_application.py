@@ -167,7 +167,10 @@ class McpApplication:
             # SDK connection/source retirement happens after all callers settle,
             # without holding application state or artifact locks.
             try:
-                self._legacy.close()
+                try:
+                    self._capture.disconnect()
+                finally:
+                    self._legacy.close()
             finally:
                 try:
                     self._debug.close()

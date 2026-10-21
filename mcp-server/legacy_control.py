@@ -14,8 +14,9 @@ TOOLS = frozenset({'set_head_pose', 'set_controller_pose', 'hold_controller_inpu
 
 class SessionBinding:
     """Own the chosen endpoint and reject redirection across session lifetimes."""
-    def __init__(self, directory):
+    def __init__(self, directory, *, require_commands=True):
         self._directory = directory
+        self._require_commands = require_commands
         self._sdk = None
         self._client = None
         self._session = None
@@ -52,7 +53,7 @@ class SessionBinding:
             raise ValueError('Multiple runtimes found; set SIMXR_CONTROL_SOCKET to select one explicitly')
         client = sdk.Client(paths[0], required=sdk.Capability(0), name='MCP compatibility controls')
         try:
-            if not client.hello['capabilities'] & sdk.Capability.SIMULATION_COMMANDS:
+            if self._require_commands and not client.hello['capabilities'] & sdk.Capability.SIMULATION_COMMANDS:
                 raise ValueError('The selected runtime does not support simulation commands')
             sessions = client.sessions()
             if len(sessions) != 1:
