@@ -2,6 +2,7 @@
 #include "runtime/HandleRegistry.h"
 #include "../TestSupport.h"
 
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -18,8 +19,59 @@ XrResult XRAPI_PTR Throw(bool allocation)
 	throw std::runtime_error("ABI failure");
 }
 
+void ReentrantRetirement()
+{
+	struct ReentrantObject
+	{
+		std::function<void()> destroy;
+		~ReentrantObject()
+		{
+			destroy();
+		}
+	};
+	using Registry = simxr::HandleRegistry<XrSession, ReentrantObject, XrInstance>;
+	const auto parent = reinterpret_cast<XrInstance>(1);
+	for (const bool explicitRetirement : {false, true})
+	{
+		std::size_t destroyed = 0;
+		bool emptyDuringDestruction = true;
+		{
+			Registry registry;
+			for (std::size_t index = 0; index < 3; ++index)
+			{
+				registry.Create(parent,
+								[&](XrSession handle)
+								{
+									auto object = std::make_unique<ReentrantObject>();
+									object->destroy = [&, handle]
+									{
+										emptyDuringDestruction &= registry.Children(parent).empty() &&
+																  !registry.Find(handle) && !registry.Erase(handle);
+										++destroyed;
+									};
+									return object;
+								});
+			}
+			if (explicitRetirement)
+			{
+				auto retired = registry.RetireAll();
+				Require(destroyed == 0 && registry.Children(parent).empty(), "Retirement released its owners early");
+				std::size_t retained = 0;
+				retired.ForEach(
+					[&](const auto& object)
+					{
+						retained += static_cast<bool>(object);
+					});
+				Require(retained == 3, "Retirement lost detached owners");
+			}
+		}
+		Require(destroyed == 3 && emptyDuringDestruction, "Registry destruction exposed partially retired entries");
+	}
+}
+
 int main()
 {
+	ReentrantRetirement();
 	using namespace simxr;
 	HandleRegistry<XrSession, Object, XrInstance> sessions;
 	HandleRegistry<XrSpace, Object, XrSession> spaces;

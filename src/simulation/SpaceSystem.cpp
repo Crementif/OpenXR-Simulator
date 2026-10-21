@@ -93,8 +93,7 @@ void SpaceSystem::RemoveAction(XrAction action)
 
 void SpaceSystem::Clear()
 {
-	for (auto handle : m_spaces.Children(m_ownerSession))
-		m_spaces.Erase(handle);
+	auto retired = m_spaces.RetireAll();
 }
 
 bool SpaceSystem::Owns(XrSpace space) const

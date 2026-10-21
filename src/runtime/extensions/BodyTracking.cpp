@@ -345,9 +345,7 @@ BodyTrackingCapabilities BodyTracking::Capabilities() const
 
 void BodyTracking::Clear()
 {
-	for (auto tracker : m_fb.Children(m_owner))
-		m_fb.Erase(tracker);
-	for (auto tracker : m_bd.Children(m_owner))
-		m_bd.Erase(tracker);
+	auto retiredFB = m_fb.RetireAll();
+	auto retiredBD = m_bd.RetireAll();
 }
 }

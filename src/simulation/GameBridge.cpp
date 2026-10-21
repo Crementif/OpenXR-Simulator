@@ -4,6 +4,7 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <string_view>
 
 namespace simxr
 {
@@ -114,7 +115,11 @@ std::optional<GameCommandRecord> GameBridge::Submit(std::uint64_t game, std::uin
 				return {};
 			return command;
 		}
-	auto cursor = std::find_if(m_sources.begin(), m_sources.end(), [&](const auto& c) { return c.source == source; });
+	auto cursor = std::find_if(m_sources.begin(), m_sources.end(),
+							   [&](const auto& cursor)
+							   {
+								   return cursor.source == source;
+							   });
 	if ((cursor == m_sources.end() && m_sources.size() == 64) ||
 		(cursor != m_sources.end() && clientId <= cursor->last))
 		return {};
@@ -281,7 +286,18 @@ bool GameBridge::FillApi(std::uint32_t version, SimxrGameBridgeApi& api) noexcep
 			return 0;
 		}
 	};
-	api.shutdown = [](void* context) -> int { try { static_cast<GameBridge*>(context)->Close(); return 1; } catch (...) { return 0; } };
+	api.shutdown = [](void* context) -> int
+	{
+		try
+		{
+			static_cast<GameBridge*>(context)->Close();
+			return 1;
+		}
+		catch (...)
+		{
+			return 0;
+		}
+	};
 	return true;
 }
 } // namespace simxr

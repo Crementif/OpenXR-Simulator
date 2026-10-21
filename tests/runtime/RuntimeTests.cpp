@@ -6,11 +6,34 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <future>
 #include <iostream>
+#include <new>
 #include <thread>
+
+namespace
+{
+thread_local bool rejectTeardownAllocation = false;
+}
+[[gnu::noinline]] void* operator new(std::size_t size)
+{
+	if (rejectTeardownAllocation)
+		throw std::bad_alloc{};
+	if (void* memory = std::malloc(size ? size : 1))
+		return memory;
+	throw std::bad_alloc{};
+}
+[[gnu::noinline]] void operator delete(void* memory) noexcept
+{
+	std::free(memory);
+}
+[[gnu::noinline]] void operator delete(void* memory, std::size_t) noexcept
+{
+	std::free(memory);
+}
 
 namespace
 {
@@ -23,6 +46,84 @@ XrInstanceCreateInfo InstanceInfo()
 	info.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
 	std::strcpy(info.applicationInfo.applicationName, "Runtime ownership tests");
 	return info;
+}
+
+void AllocationFreeShutdown()
+{
+	Runtime runtime{ExtensionRegistry{SimulationExtensions()}};
+	auto info = InstanceInfo();
+	const char* extension = XR_FB_BODY_TRACKING_EXTENSION_NAME;
+	info.enabledExtensionCount = 1;
+	info.enabledExtensionNames = &extension;
+	Runtime::InstanceRef instance;
+	Runtime::SessionRef session;
+	Require(runtime.CreateInstance(&info, instance) == XR_SUCCESS &&
+				runtime.CreateSession(instance, session) == XR_SUCCESS,
+			"Create teardown graph");
+	XrSpace space{};
+	Require(session->Spaces().CreateReferenceSpace(XR_REFERENCE_SPACE_TYPE_LOCAL, {{0, 0, 0, 1}, {}}, space) ==
+				XR_SUCCESS,
+			"Create teardown space");
+	XrBodyTrackerFB body{};
+	const XrBodyTrackerCreateInfoFB bodyInfo{XR_TYPE_BODY_TRACKER_CREATE_INFO_FB, nullptr,
+											 XR_BODY_JOINT_SET_DEFAULT_FB};
+	Require(session->Body().CreateFB(&bodyInfo, &body) == XR_SUCCESS, "Create teardown body tracker");
+	FrameSchedulerConfig timing;
+	timing.mode = ExecutionMode::Deterministic;
+	const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
+	FramePrediction prediction;
+	Require(session->Ready(timing.epoch) == XR_SUCCESS && session->Begin(begin, timing) == XR_SUCCESS &&
+				session->WaitFrame(prediction) == XR_SUCCESS && session->BeginFrame() == XR_SUCCESS,
+			"Begin pending application frame before teardown");
+	bool allocated = false;
+	{
+		struct RestoreAllocation
+		{
+			~RestoreAllocation()
+			{
+				rejectTeardownAllocation = false;
+			}
+		} restore;
+		rejectTeardownAllocation = true;
+		try
+		{
+			runtime.Close();
+		}
+		catch (const std::bad_alloc&)
+		{
+			allocated = true;
+		}
+	}
+	Require(!allocated, "Runtime graph teardown required a new allocation");
+	Require(runtime.Instances().empty() && !runtime.FindSession(session) && session->Snapshot().closed &&
+				!session->Spaces().Owns(space) && !session->Body().OwnsFB(body),
+			"Shutdown left public child handles alive");
+}
+
+void GameBridgeLifetime()
+{
+	Runtime runtime{ExtensionRegistry{SimulationExtensions()}};
+	const auto game = runtime.Game().Register(SIMXR_GAME_CAN_COMMAND);
+	Require(game != 0, "Register game independently of XR");
+	auto command = runtime.Game().Submit(game, 1, 1, SIMXR_GAME_COMMAND, "checkpoint");
+	Require(command.has_value(), "Queue game command before XR creation");
+	auto info = InstanceInfo();
+	Runtime::InstanceRef instance;
+	Require(runtime.CreateInstance(&info, instance) == XR_SUCCESS && runtime.DestroyInstance(instance) == XR_SUCCESS,
+			"Create and destroy optional XR instance");
+	SimxrGameCommand delivered{};
+	Require(runtime.Game().Poll(game, delivered) && delivered.id == command->id,
+			"XR instance teardown interrupted the independent game bridge");
+	Require(runtime.CreateInstance(&info, instance) == XR_SUCCESS &&
+				runtime.Game().Complete(game, delivered.id, true, "applied"),
+			"XR recreation lost the game command");
+	command = runtime.Game().Submit(game, 1, 2, SIMXR_GAME_COMMAND, "pending");
+	Require(command.has_value(), "Queue game command before runtime shutdown");
+	runtime.Close();
+	const auto interrupted = runtime.Game().Read(game, 1, command->id);
+	Require(interrupted && interrupted->phase == GameCommandPhase::Interrupted &&
+				!runtime.Game().Poll(game, delivered) && !runtime.Game().Register(SIMXR_GAME_CAN_COMMAND),
+			"Runtime shutdown left the game bridge accepting work");
 }
 
 void Lifecycle()
@@ -350,6 +451,8 @@ void DebuggerLifetime()
 
 int main()
 {
+	AllocationFreeShutdown();
+	GameBridgeLifetime();
 	Lifecycle();
 	NativeLifetime();
 	ReusedSessionReference();
