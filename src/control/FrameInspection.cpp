@@ -852,11 +852,22 @@ InspectionValue InspectSubmissionSummary(const FrameSubmissionState& submission)
 		 {"drop_reason", InspectionValue::Text(DropReasonName(submission.dropReason))}});
 }
 
+InspectionValue InspectViewQuery(const ViewQuerySnapshot& query)
+{
+	return InspectionValue::Object(
+		{{"correlation", InspectionValue::Text("last_successful_query_at_submission_time")},
+		 {"display_time", InspectionValue::Signed(query.displayTime.value.count())},
+		 {"sample_time", InspectionValue::Signed(query.sampleTime.value.count())},
+		 {"foveated_requested", InspectionValue::Boolean(query.foveatedRequested)},
+		 {"gaze_active", InspectionValue::Boolean(query.gazeActive)},
+		 {"fovs", InspectArray(query.fieldsOfView, InspectFov)}});
+}
+
 InspectionValue InspectAvailability(const FrameSubmissionState& submission)
 {
 	const auto diagnosticAvailability = submission.diagnostics ? "recorded_at_submission" : "not_recorded";
 	return InspectionValue::Object(
-		{{"applied_foveation", InspectionValue::Text("not_recorded")},
+		{{"applied_foveation", InspectionValue::Text(submission.viewQuery ? "query_recorded" : "not_recorded")},
 		 {"applied_commands", InspectionValue::Text(submission.commands ? "recorded" : "not_recorded")},
 		 {"validation_events", InspectionValue::Text(diagnosticAvailability)},
 		 {"frame_trace", InspectionValue::Text(diagnosticAvailability)}});
@@ -946,6 +957,7 @@ std::shared_ptr<const InspectionRecord> InspectFrame(InspectionStore& store, Con
 						{"tracking", state.tracking ? InspectTracking(*state.tracking, revisions[*skeleton])
 													: InspectionValue::Null()},
 						{"view_settings", InspectionValue::Revision(revisions[0])},
+						{"view_query", state.viewQuery ? InspectViewQuery(*state.viewQuery) : InspectionValue::Null()},
 						{"applied_commands",
 						 commands ? InspectionValue::Revision(revisions[*commands]) : InspectionValue::Null()},
 						{"frame_trace",

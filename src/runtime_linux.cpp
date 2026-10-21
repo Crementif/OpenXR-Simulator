@@ -166,9 +166,20 @@ FN(xrEnumerateViewConfigurationViews)(XrInstance handle, XrSystemId system, XrVi
     *n = count;
     if (!c) return XR_SUCCESS;
     if (c < count) return XR_ERROR_SIZE_INSUFFICIENT;
+    const bool foveationEnabled = instance->core->Extensions().Contains(XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME);
+    const std::array known{XR_TYPE_FOVEATED_VIEW_CONFIGURATION_VIEW_VARJO};
     for (uint32_t index = 0; index < count; ++index)
-        if (p[index].type != XR_TYPE_VIEW_CONFIGURATION_VIEW || XR_FAILED(simxr::StructureChain(p[index].next).Validate({})))
+    {
+        const simxr::StructureChain chain(p[index].next);
+        if (p[index].type != XR_TYPE_VIEW_CONFIGURATION_VIEW ||
+            XR_FAILED(chain.Validate(std::span(known).first(foveationEnabled ? 1 : 0))))
             return XR_ERROR_VALIDATION_FAILURE;
+        if (foveationEnabled)
+            if (const auto request = chain.Find<XrFoveatedViewConfigurationViewVARJO>(known[0]);
+                request && request->foveatedRenderingActive > XR_TRUE)
+                return XR_ERROR_VALIDATION_FAILURE;
+    }
+    // Fixed and gaze-steered insets use the same qualified texture dimensions.
     const auto& settings = instance->Input().Views();
     for (uint32_t index = 0; index < count; ++index)
     {
@@ -501,9 +512,11 @@ FN(xrEnumerateReferenceSpaces)(XrSession sHandle, uint32_t c, uint32_t *n, XrRef
     std::lock_guard<std::recursive_mutex> apiLock(sim::Host().Mutex());
     if (!sim::valid(s))
         return XR_ERROR_HANDLE_INVALID;
-    return sim::enumerate(c, n, p,
-                          std::vector<XrReferenceSpaceType>{XR_REFERENCE_SPACE_TYPE_VIEW, XR_REFERENCE_SPACE_TYPE_LOCAL,
-                                                            XR_REFERENCE_SPACE_TYPE_STAGE});
+    std::vector<XrReferenceSpaceType> types{XR_REFERENCE_SPACE_TYPE_VIEW, XR_REFERENCE_SPACE_TYPE_LOCAL,
+                                            XR_REFERENCE_SPACE_TYPE_STAGE};
+    if (s->core->Extensions().Contains(XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME))
+        types.push_back(XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO);
+    return sim::enumerate(c, n, p, types);
 }
 FN(xrCreateReferenceSpace)(XrSession handle, const XrReferenceSpaceCreateInfo *info, XrSpace *out)
 {

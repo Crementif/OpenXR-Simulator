@@ -36,18 +36,31 @@ XrResult LocateSpace(SpaceSystem& spaces, XrSpace space, XrSpace base, XrTime ti
 }
 
 XrResult LocateViews(SpaceSystem& spaces, const ViewConfiguration& configuration, const TrackingSnapshot& snapshot,
-	const XrViewLocateInfo& info, XrViewState* state, std::uint32_t capacity, std::uint32_t* count, XrView* views)
+	const XrViewLocateInfo& info, XrViewState* state, std::uint32_t capacity, std::uint32_t* count, XrView* views,
+	const EnabledExtensions* enabled, ViewQuerySnapshot* query)
 {
 	if (info.type != XR_TYPE_VIEW_LOCATE_INFO || !state || state->type != XR_TYPE_VIEW_STATE ||
 		!count || (capacity && !views))
 		return XR_ERROR_VALIDATION_FAILURE;
-	if (XR_FAILED(StructureChain(info.next).Validate({})) || XR_FAILED(StructureChain(state->next).Validate({})))
+	const bool foveationEnabled = enabled && enabled->Contains(XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME);
+	const std::array known{XR_TYPE_VIEW_LOCATE_FOVEATED_RENDERING_VARJO};
+	const StructureChain chain(info.next);
+	if (XR_FAILED(chain.Validate(std::span(known).first(foveationEnabled ? 1 : 0))) ||
+		XR_FAILED(StructureChain(state->next).Validate({})))
 		return XR_ERROR_VALIDATION_FAILURE;
+	bool foveated = false;
+	if (foveationEnabled)
+		if (const auto request = chain.Find<XrViewLocateFoveatedRenderingVARJO>(known[0]))
+		{
+			if (request->foveatedRenderingActive > XR_TRUE)
+				return XR_ERROR_VALIDATION_FAILURE;
+			foveated = request->foveatedRenderingActive == XR_TRUE;
+		}
 	PoseSample base;
 	auto result = spaces.WorldPose(info.space, {Duration{info.displayTime}}, base);
 	if (XR_FAILED(result))
 		return result;
-	const auto samples = configuration.Locate(snapshot);
+	const auto samples = configuration.Locate(snapshot, foveated);
 	*count = static_cast<std::uint32_t>(samples.views.size());
 	if (capacity && capacity < *count)
 		return XR_ERROR_SIZE_INSUFFICIENT;
@@ -74,6 +87,12 @@ XrResult LocateViews(SpaceSystem& spaces, const ViewConfiguration& configuration
 	{
 		views[index].pose = RelativePose(samples.views[index].pose.pose, base.pose);
 		views[index].fov = samples.views[index].fov;
+	}
+	if (query && capacity)
+	{
+		*query = {{Duration{info.displayTime}}, snapshot.time, foveated, samples.gazeActive};
+		for (const auto& view : samples.views)
+			query->fieldsOfView.push_back(view.fov);
 	}
 	return XR_SUCCESS;
 }

@@ -561,6 +561,16 @@ if(SIMXR_BUILD_PROBES)
                     set_tests_properties(linux_vulkan_control_quad PROPERTIES
                         ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
                         TIMEOUT 90 SKIP_RETURN_CODE 77)
+                    add_test(NAME linux_vulkan_control_foveated COMMAND "${Python3_EXECUTABLE}"
+                        "${PROJECT_SOURCE_DIR}/tests/control/test_native_quad.py" "$<TARGET_FILE:xr_probe_linux>" --foveated)
+                    set_tests_properties(linux_vulkan_control_foveated PROPERTIES
+                        ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
+                        TIMEOUT 90 SKIP_RETURN_CODE 77)
+                    add_test(NAME linux_vulkan_control_foveated_raw COMMAND "${Python3_EXECUTABLE}"
+                        "${PROJECT_SOURCE_DIR}/tests/control/test_native_quad.py" "$<TARGET_FILE:xr_probe_linux>" --foveated --raw-views)
+                    set_tests_properties(linux_vulkan_control_foveated_raw PROPERTIES
+                        ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
+                        TIMEOUT 90 SKIP_RETURN_CODE 77)
                     add_test(NAME linux_vulkan_control_images COMMAND "${Python3_EXECUTABLE}"
                         "${PROJECT_SOURCE_DIR}/tests/control/test_native_images.py" "$<TARGET_FILE:xr_probe_linux>"
                         "$<TARGET_FILE:vulkan_control_image_probe>")

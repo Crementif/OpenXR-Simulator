@@ -101,7 +101,9 @@ static int runProbe()
     bool v1 = std::getenv("SIMXR_PROBE_V1") != nullptr;
     const bool bodyTracking = std::getenv("SIMXR_PROBE_BODY") != nullptr;
     const bool quadMode = std::getenv("SIMXR_PROBE_QUAD") != nullptr;
-    const bool verifyLegacyCapture = quadMode || !std::getenv("SIMXR_PROBE_GPU_INSPECTION");
+    const bool foveatedMode = std::getenv("SIMXR_PROBE_FOVEATED") != nullptr;
+    CHECK(!foveatedMode || quadMode);
+    const bool verifyLegacyCapture = !foveatedMode && (quadMode || !std::getenv("SIMXR_PROBE_GPU_INSPECTION"));
     const uint32_t activeViewCount = quadMode ? 4 : 2;
     const auto activeViewType = quadMode ? XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO : XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
     const bool devicesMode = std::getenv("SIMXR_PROBE_DEVICES") != nullptr;
@@ -115,14 +117,17 @@ static int runProbe()
         return std::strcmp(extension.extensionName, XR_VARJO_QUAD_VIEWS_EXTENSION_NAME) == 0;
     });
     CHECK(quadExtension != advertised.end() && quadExtension->extensionVersion == XR_VARJO_quad_views_SPEC_VERSION);
+    CHECK(std::any_of(advertised.begin(), advertised.end(), [](const auto& extension) {
+        return std::strcmp(extension.extensionName, XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME) == 0;
+    }));
     CHECK(std::none_of(advertised.begin(), advertised.end(), [](const auto& extension) {
-        return std::strcmp(extension.extensionName, XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME) == 0 ||
-            std::strcmp(extension.extensionName, XR_FB_FOVEATION_EXTENSION_NAME) == 0;
+        return std::strcmp(extension.extensionName, XR_FB_FOVEATION_EXTENSION_NAME) == 0;
     }));
     std::vector<const char*> extensions = {v1 ? XR_KHR_VULKAN_ENABLE_EXTENSION_NAME : XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME,
                                 XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME,
                                 XR_KHR_CONVERT_TIMESPEC_TIME_EXTENSION_NAME};
     if (quadMode) extensions.push_back(XR_VARJO_QUAD_VIEWS_EXTENSION_NAME);
+    if (foveatedMode) extensions.push_back(XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME);
     if (bodyTracking)
         extensions.insert(extensions.end(), {XR_FB_BODY_TRACKING_EXTENSION_NAME, XR_META_BODY_TRACKING_FULL_BODY_EXTENSION_NAME,
             XR_BD_BODY_TRACKING_EXTENSION_NAME, XR_META_BODY_TRACKING_CALIBRATION_EXTENSION_NAME, XR_META_BODY_TRACKING_FIDELITY_EXTENSION_NAME});
@@ -185,6 +190,22 @@ static int runProbe()
     CHECK(recommended[0].next == &unknown && recommended[0].recommendedImageRectWidth > 0 &&
         recommended[0].recommendedImageRectHeight > 0);
     if (quadMode) CHECK(recommended[2].recommendedImageRectWidth > 0 && recommended[2].recommendedImageRectHeight > 0);
+    if (foveatedMode)
+    {
+        std::vector<XrFoveatedViewConfigurationViewVARJO> requests(activeViewCount,
+            {XR_TYPE_FOVEATED_VIEW_CONFIGURATION_VIEW_VARJO, nullptr, XR_TRUE});
+        for (uint32_t index = 0; index < activeViewCount; ++index) recommended[index].next = &requests[index];
+        XR(xrEnumerateViewConfigurationViews(instance, system, activeViewType, activeViewCount, &count, recommended.data()));
+        CHECK(recommended[0].recommendedImageRectWidth > 0 && recommended[2].recommendedImageRectWidth > 0);
+        requests[0].foveatedRenderingActive = 2;
+        CHECK(xrEnumerateViewConfigurationViews(instance, system, activeViewType, activeViewCount, &count,
+            recommended.data()) == XR_ERROR_VALIDATION_FAILURE);
+        for (auto& view : recommended) view.next = nullptr;
+        XrSystemFoveatedRenderingPropertiesVARJO foveation{XR_TYPE_SYSTEM_FOVEATED_RENDERING_PROPERTIES_VARJO};
+        XrSystemProperties properties{XR_TYPE_SYSTEM_PROPERTIES, &foveation};
+        XR(xrGetSystemProperties(instance, system, &properties));
+        CHECK(foveation.supportsFoveatedRendering);
+    }
     XrSystemBodyTrackingPropertiesFB fbProperties{XR_TYPE_SYSTEM_BODY_TRACKING_PROPERTIES_FB};
     XrSystemBodyTrackingPropertiesBD bdProperties{XR_TYPE_SYSTEM_BODY_TRACKING_PROPERTIES_BD};
     XrSystemPropertiesBodyTrackingFullBodyMETA fullProperties{XR_TYPE_SYSTEM_PROPERTIES_BODY_TRACKING_FULL_BODY_META};
@@ -574,6 +595,17 @@ static int runProbe()
     actionSpace.poseInActionSpace.orientation.w = 1;
     XrSpace hand;
     XR(xrCreateActionSpace(session, &actionSpace, &hand));
+    XrSpace renderGaze = XR_NULL_HANDLE;
+    XrReferenceSpaceCreateInfo renderGazeInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO, nullptr,
+        XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO, {{0, 0, 0, 1}, {0, 0, 0}}};
+    if (foveatedMode)
+    {
+        XR(xrCreateReferenceSpace(session, &renderGazeInfo, &renderGaze));
+        XR(xrEnumerateReferenceSpaces(session, 0, &count, nullptr));
+        CHECK(count == 4);
+    }
+    else
+        CHECK(xrCreateReferenceSpace(session, &renderGazeInfo, &renderGaze) == XR_ERROR_REFERENCE_SPACE_UNSUPPORTED);
     XrSpace gazeSpace = XR_NULL_HANDLE, trackerSpace = XR_NULL_HANDLE, persistentSpace = XR_NULL_HANDLE;
     XrPosef firstGaze{};
     if (devicesMode)
@@ -797,7 +829,9 @@ static int runProbe()
         if (!interactive || frame < 4)
             CHECK(std::fabs(loc.pose.position.x - (.3f + .1f * std::min(frame, 3))) < .0001f &&
                   std::fabs(loc.pose.position.y - 1.8f) < .0001f);
-        if (frame > 0 && frame < 4)
+        if (foveatedMode && (frame == 3 || frame == 4))
+            CHECK(!(velocity.velocityFlags & XR_SPACE_VELOCITY_LINEAR_VALID_BIT));
+        else if (frame > 0 && frame < 4)
         {
             CHECK((velocity.velocityFlags & XR_SPACE_VELOCITY_LINEAR_VALID_BIT) != 0);
             CHECK(std::fabs(velocity.linearVelocity.x - .1f * 1.e9f / float(prior - previousDisplay)) < .001f);
@@ -928,7 +962,17 @@ static int runProbe()
             state.close();
             std::filesystem::rename(data / "probe_state.json.tmp", data / "probe_state.json");
         }
+        XrViewLocateFoveatedRenderingVARJO foveated{XR_TYPE_VIEW_LOCATE_FOVEATED_RENDERING_VARJO, nullptr,
+            static_cast<XrBool32>(frame == 1 ? XR_FALSE : XR_TRUE)};
         XrViewLocateInfo locate{XR_TYPE_VIEW_LOCATE_INFO};
+        if (foveatedMode)
+        {
+            locate.next = &foveated;
+            XrSpaceLocation renderingGaze{XR_TYPE_SPACE_LOCATION};
+            XR(xrLocateSpace(renderGaze, head, fs.predictedDisplayTime, &renderingGaze));
+            CHECK((renderingGaze.locationFlags & XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT) ==
+                (frame == 3 ? 0 : XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT));
+        }
         locate.viewConfigurationType = activeViewType;
         locate.displayTime = fs.predictedDisplayTime;
         locate.space = head;
@@ -1186,6 +1230,7 @@ static int runProbe()
         XR(xrDestroySpace(gazeSpace));
         XR(xrDestroySpace(trackerSpace));
     }
+    if (renderGaze) XR(xrDestroySpace(renderGaze));
     XR(xrDestroySpace(hand));
     XR(xrDestroySpace(head));
     XR(xrDestroySpace(stage));

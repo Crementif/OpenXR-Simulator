@@ -34,9 +34,9 @@ PoseSample ApplyPoseOffset(PoseSample source, XrPosef offset)
 } // namespace
 
 SpaceSystem::SpaceSystem(XrSession owner, const TrackingSystem& tracking, ActionSource source,
-						 ActionValidator validator, EventQueue* events)
+						 ActionValidator validator, EventQueue* events, bool combinedEye)
 	: m_ownerSession(owner), m_tracking(tracking), m_actionSource(std::move(source)),
-	  m_actionValidator(std::move(validator)), m_eventQueue(events)
+	  m_actionValidator(std::move(validator)), m_eventQueue(events), m_combinedEye(combinedEye)
 {
 	if (owner == XR_NULL_HANDLE)
 		throw std::invalid_argument("Missing space owner");
@@ -46,7 +46,7 @@ SpaceSystem::SpaceSystem(XrSession owner, const TrackingSystem& tracking, Action
 
 XrResult SpaceSystem::CreateReferenceSpace(XrReferenceSpaceType type, XrPosef offset, XrSpace& output)
 {
-	if (!IsSupportedReferenceSpace(type))
+	if (!IsSupportedReferenceSpace(type) && !(m_combinedEye && type == XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO))
 		return XR_ERROR_REFERENCE_SPACE_UNSUPPORTED;
 	const auto normalized = NormalizedPose(offset);
 	if (!normalized)
@@ -116,11 +116,13 @@ PoseSample SpaceSystem::Resolve(const SpaceRecord& record, RuntimeTime time, con
 	PoseSample result;
 	if (record.action != XR_NULL_HANDLE)
 		result = m_actionSource(record.action, record.subactionPath, time);
-	else if (record.referenceType == XR_REFERENCE_SPACE_TYPE_VIEW)
+	else if (record.referenceType == XR_REFERENCE_SPACE_TYPE_VIEW ||
+			 record.referenceType == XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO)
 	{
 		auto sample = m_tracking.Sample(time);
 		if (sample)
-			result = sample->head;
+			result = record.referenceType == XR_REFERENCE_SPACE_TYPE_VIEW ? sample->head : sample->gaze;
+		result.eyeGazeSampleTime.reset();
 	}
 	else if (origin)
 		result = {record.referenceType == XR_REFERENCE_SPACE_TYPE_LOCAL ? origin->local : origin->stage,
@@ -234,7 +236,7 @@ XrResult SpaceSystem::Locate(XrSpace space, XrSpace base, RuntimeTime time, Spac
 
 XrResult SpaceSystem::Bounds(XrReferenceSpaceType type, XrExtent2Df& output) const
 {
-	if (!IsSupportedReferenceSpace(type))
+	if (!IsSupportedReferenceSpace(type) && !(m_combinedEye && type == XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO))
 		return XR_ERROR_REFERENCE_SPACE_UNSUPPORTED;
 	std::lock_guard lock(m_mutex);
 	output = {};

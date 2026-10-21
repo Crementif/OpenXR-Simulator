@@ -30,7 +30,7 @@ Session::Session(XrSession handle, Instance& instance, std::shared_ptr<Clock> cl
 		  {
 			  return m_publication.ValidatePoseAction(action, path);
 		  },
-		  &instance.Events()),
+		  &instance.Events(), instance.Extensions().Contains(XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME)),
 	  m_body(handle, m_publication.Tracking(), m_spaces, instance.Extensions())
 {
 	if (handle == XR_NULL_HANDLE)
@@ -681,8 +681,12 @@ XrResult Session::LocateViews(const XrViewLocateInfo& info, XrViewState* state, 
 		return XR_ERROR_VALIDATION_FAILURE;
 	const RuntimeTime time{Duration{info.displayTime}};
 	auto sample = m_publication.Tracking().Sample(time).value_or(TrackingSnapshot{});
-	return simxr::LocateViews(m_spaces, m_publication.ConfigurationAt(time), sample, info, state, capacity, count,
-							  views);
+	ViewQuerySnapshot query;
+	const auto result = simxr::LocateViews(m_spaces, m_publication.ConfigurationAt(time), sample, info, state,
+										 capacity, count, views, &m_instance.Extensions(), &query);
+	if (XR_SUCCEEDED(result) && capacity)
+		m_publication.RecordViewQuery(std::move(query));
+	return result;
 }
 
 XrViewConfigurationType Session::ActiveViewConfiguration() const

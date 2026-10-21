@@ -41,6 +41,7 @@ void SessionPublication::PreparedStart::Commit()
 	m_owner.m_epoch = m_epoch;
 	m_owner.m_sessionOverride = false;
 	m_owner.m_viewHistory.clear();
+	m_owner.m_viewQueries.clear();
 	m_owner.m_layout = m_layout;
 	m_committed = true;
 }
@@ -242,9 +243,20 @@ void SessionPublication::PublishEffective(RuntimeTime time, const CommandConfigu
 		m_viewHistory.pop_front();
 }
 
+void SessionPublication::RecordViewQuery(ViewQuerySnapshot query)
+{
+	std::erase_if(m_viewQueries, [&](const auto& previous) { return previous.displayTime == query.displayTime; });
+	m_viewQueries.push_back(std::move(query));
+	while (m_viewQueries.size() > 128)
+		m_viewQueries.pop_front();
+}
+
 void SessionPublication::CaptureFrame(FrameId frame, FrameSubmissionState& submission) const
 {
 	submission.viewLayout = m_layout;
+	for (const auto& query : m_viewQueries)
+		if (query.displayTime == submission.displayTime)
+			submission.viewQuery = query;
 	submission.input = m_input.Snapshot();
 	submission.actions = m_actions.Snapshot();
 	submission.commands = m_commands.At(frame);

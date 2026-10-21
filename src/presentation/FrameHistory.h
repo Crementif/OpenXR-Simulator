@@ -54,6 +54,7 @@ struct FrameSubmissionState
 	std::shared_ptr<const FrameDiagnostics> diagnostics;
 	std::optional<TrackingSnapshot> tracking;
 	ViewSettings viewSettings;
+	std::optional<ViewQuerySnapshot> viewQuery;
 	std::vector<HapticOutput> haptics;
 	std::shared_ptr<const FrameLayers> layers;
 	// Submitted records CPU/native acceptance, never GPU completion.

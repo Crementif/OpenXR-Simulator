@@ -64,6 +64,7 @@ class SessionPublication
 	CommandConfiguration ConfigurationSnapshot(const FramePrediction& lastIssued) const;
 	void StartRecording(const ReferenceSpaceState& spaces);
 	void CaptureFrame(FrameId frame, FrameSubmissionState& submission) const;
+	void RecordViewQuery(ViewQuerySnapshot query);
 	bool TakeProfileChange() noexcept;
 	CommandScheduler& Commands();
 	InputState& Input();
@@ -96,6 +97,7 @@ class SessionPublication
 	bool m_sessionOverride = false;
 	bool m_profileChanged = false;
 	std::deque<ViewRevision> m_viewHistory;
+	std::deque<ViewQuerySnapshot> m_viewQueries;
 	ViewLayout m_layout = ViewLayout::Stereo;
 };
 } // namespace simxr

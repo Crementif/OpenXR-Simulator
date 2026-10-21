@@ -28,7 +28,7 @@ class SpaceSystem
 	using ActionValidator = std::function<XrResult(XrAction, XrPath)>;
 
 	SpaceSystem(XrSession owner, const TrackingSystem& tracking, ActionSource source = {},
-				ActionValidator validator = {}, EventQueue* events = nullptr);
+				ActionValidator validator = {}, EventQueue* events = nullptr, bool combinedEye = false);
 	XrResult CreateReferenceSpace(XrReferenceSpaceType type, XrPosef offset, XrSpace& output);
 	XrResult CreateActionSpace(XrAction action, XrPath subaction, XrPosef offset, XrSpace& output);
 	XrResult Destroy(XrSpace space);
@@ -73,6 +73,7 @@ class SpaceSystem
 	ActionSource m_actionSource;
 	ActionValidator m_actionValidator;
 	EventQueue* const m_eventQueue;
+	const bool m_combinedEye;
 	HandleRegistry<XrSpace, SpaceRecord, XrSession> m_spaces;
 	mutable std::mutex m_mutex;
 	std::vector<Origin> m_origins;
