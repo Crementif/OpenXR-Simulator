@@ -46,7 +46,7 @@ class McpApplication:
         )
         self._diagnostics = RuntimeDiagnostics(self._artifacts)
         self._projection = ProjectionWorkflow(self._artifacts)
-        self._capture = CaptureWorkflow(self._artifacts, self._projection)
+        self._capture = CaptureWorkflow(self._artifacts)
         self._preview_incidents = IncidentWorkflow(self._artifacts)
         self._ui_incidents = IncidentWorkflow(self._artifacts, ui=True)
         self._handlers = {

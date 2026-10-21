@@ -109,6 +109,9 @@ def main():
                         metadata = json.loads(next(value.text for value in values if isinstance(value, TextResult)).split('\n')[-1])
                         require(metadata['transport'] == 'retained_capture' and metadata['frame']['frame_id'] == str(frame)
                                 and metadata['layer'] == layer, metadata)
+                        require(metadata['composition']['frame'] == metadata['frame'] and
+                                len(metadata['composition']['fovs']) == 2 and metadata['composition']['ipd'] > 0,
+                                'Filtered screenshot lost its exact composition geometry')
                         with Image.open(BytesIO(pictures[0].data)) as picture:
                             require(picture.size == ((128 if eye == 'both' else 64), 48), picture.size)
                             right_center = picture.getpixel((picture.width - 32, 24))

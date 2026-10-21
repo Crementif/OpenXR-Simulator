@@ -49,7 +49,16 @@ class RetainedScreenshot:
                     renewal = time.monotonic() + 1
                 snapshot = client.capture(session, capture)
                 if snapshot['phase'] == 'ready':
+                    inspection = client.inspect(session, capture)
+                    try:
+                        frame = inspection['document']
+                        settings = client.revision(frame['view_settings']['revision_id'])['document']
+                        composition = {'frame': {'generation': str(frame['generation']), 'frame_id': str(frame['frame_id'])},
+                                       'ipd': settings['ipd'], 'fovs': settings['outer_fov']}
+                    finally:
+                        client.release_inspection(inspection['inspection_id'])
                     retained = client.retain_image(session, capture)
+                    retained['composition'] = composition
                     return retained
                 if snapshot['phase'] not in ('reserved', 'issued', 'begun', 'gpu_pending'):
                     raise CaptureFailed('Filtered screenshot is unavailable: ' + snapshot['phase'])
@@ -106,6 +115,9 @@ class RetainedScreenshot:
                 raise CaptureFailed('The current preview is cleared; no retained image is available')
             try:
                 info = client.image_info(reader)
+                composition = retained.get('composition')
+                if composition is not None and composition['frame'] != {key: str(value) for key, value in info['frame'].items()}:
+                    raise CaptureFailed('Captured image and composition settings have different frame identities')
                 descriptor = info['image_descriptor']
                 width, height, layers = (descriptor[key] for key in ('width', 'height', 'array_layers'))
                 if descriptor['format'] != 43 or layers != 2 or width <= 0 or height <= 0:
@@ -147,6 +159,8 @@ class RetainedScreenshot:
                             'frame': {key: str(value) for key, value in info['frame'].items()},
                             'target': info['target'], 'width': output.width, 'height': output.height,
                             'eye': eye, 'format': descriptor['format']}
+                if composition is not None:
+                    metadata['composition'] = composition
                 return encoded.getvalue(), metadata
             finally:
                 client.release_image(reader)

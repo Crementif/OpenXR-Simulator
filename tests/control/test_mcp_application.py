@@ -14,7 +14,8 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "mcp-server"))
@@ -79,6 +80,31 @@ class ApplicationTests(unittest.TestCase):
         )
         self.addCleanup(self.directory.cleanup)
         self.addCleanup(self.app.close)
+
+    def test_stereo_analysis_uses_only_matching_captured_composition(self):
+        frusta = object()
+        analysis = SimpleNamespace(RESIDUAL_THRESHOLD=.1, frusta_from_fov=Mock(return_value=frusta),
+                                   analyze_bytes=Mock(return_value=(SimpleNamespace(score=1), None)),
+                                   describe=lambda report: "checked")
+        fov = {"left": -.5, "right": .7}
+        first = str(2**53 + 1)
+        metadata = {"frame": {"generation": "1", "frame_id": first},
+                    "composition": {"frame": {"generation": "1", "frame_id": first},
+                                    "fovs": [fov, fov], "ipd": .07}}
+        def capture(*args, **kwargs):
+            self.app._capture._capture_metadata = metadata
+            if analysis.analyze_bytes.call_count:
+                metadata["frame"] = {"generation": "1", "frame_id": str(2**53 + 2)}
+            return b"captured image"
+        with patch.dict(sys.modules, {"stereo_consistency": analysis}), \
+             patch.object(self.app._capture, "_capture", side_effect=capture), \
+             patch.object(self.app._projection, "read", side_effect=AssertionError("Live geometry substituted")):
+            result = self.app.call("analyze_stereo_consistency", {"frames": 2, "interval": 0, "include_image": False})
+        analysis.frusta_from_fov.assert_called_once_with({"aL": -.5, "aR": .7}, {"aL": -.5, "aR": .7}, .07)
+        self.assertIs(analysis.analyze_bytes.call_args_list[0].kwargs["frusta"], frusta)
+        self.assertIsNone(analysis.analyze_bytes.call_args_list[1].kwargs["frusta"])
+        self.assertIn("frame=" + first + ", geometry=captured composition", result[0].text)
+        self.assertIn("geometry=unavailable", result[0].text)
 
     def test_modern_errors_and_full_u64_never_fall_back_to_files(self):
         result = self.app.call("debug_start_export", {"image": str(2**64 - 1)})

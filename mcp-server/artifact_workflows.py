@@ -117,9 +117,8 @@ class CaptureWorkflow:
     Close interrupts waits without resubmitting a request.
     """
 
-    def __init__(self, artifacts, projections):
+    def __init__(self, artifacts):
         self._artifacts = artifacts
-        self._projections = projections
         self._lane = RequestLane()
         self._retained = RetainedScreenshot(artifacts.directory)
         self._capture_metadata = None
@@ -222,7 +221,6 @@ class CaptureWorkflow:
         if not math.isfinite(threshold):
             raise ValueError("A finite stereo threshold is required")
         with self._lane.admit():
-            frusta = self._frusta(analysis)
             worst, worst_sheet, lines = None, None, []
             for index in range(frames):
                 started = time.monotonic()
@@ -230,10 +228,13 @@ class CaptureWorkflow:
                 if data is None:
                     lines.append(f"[{index}] screenshot timeout")
                     continue
+                frusta = self._frusta(analysis)
                 report, sheet = analysis.analyze_bytes(
                     data, threshold=threshold, frusta=frusta
                 )
-                lines.append(f"[{index}] {analysis.describe(report)}")
+                geometry = "captured composition" if frusta is not None else "unavailable"
+                frame = (self._capture_metadata or {}).get("frame", {}).get("frame_id", "unknown")
+                lines.append(f"[{index}] frame={frame}, geometry={geometry}: {analysis.describe(report)}")
                 if worst is None or report.score > worst.score:
                     worst, worst_sheet = report, sheet
                 if index + 1 < frames:
@@ -254,13 +255,14 @@ class CaptureWorkflow:
             return result
 
     def _frusta(self, analysis):
+        metadata = self._capture_metadata or {}
+        composition = metadata.get("composition")
+        if composition is None or composition.get("frame") != metadata.get("frame"):
+            return None
         try:
-            document = self._projections.read(timeout=2)
-            entry = document["entries"][-1]
-            settings = self._artifacts.read_json(Artifact.SETTINGS, {})
-            ipd = float(entry["ipd"]) if "ipd" in entry else float(settings.get("ipd_mm", 64)) / 1000
-            return analysis.frusta_from_fov(entry["left_fov"], entry["right_fov"], ipd)
-        except (WorkflowBusy, OSError, ValueError, KeyError, IndexError, TypeError):
+            fovs = [{"aL": eye["left"], "aR": eye["right"]} for eye in composition["fovs"]]
+            return analysis.frusta_from_fov(fovs[0], fovs[1], float(composition["ipd"]))
+        except (ValueError, KeyError, IndexError, TypeError):
             return None
 
 
