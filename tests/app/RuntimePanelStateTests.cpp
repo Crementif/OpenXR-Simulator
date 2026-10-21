@@ -35,8 +35,11 @@ void ScopedInspectionReaders()
 	app::InspectionWorkspace workspace(requests);
 	const app::PanelScope original{1, 11, 5}, restarted{1, 11, 6}, reconnect{2, 11, 6};
 	workspace.SetScope(original);
-	Require(workspace.Add(7, 101) && workspace.Select(7), "Retain original capture identity");
+	Require(workspace.Add(7, 0) && workspace.Select(7), "Retain provisional capture identity");
 	const auto originalLocal = workspace.Selected()->local;
+	Require(workspace.Add(7, 101) && workspace.Captures().size() == 1 && workspace.Selected()->frame == 101 &&
+				workspace.Selected()->local == originalLocal,
+			"Completed capture did not update its provisional entry");
 	workspace.Handle({app::PanelWork::Inspect, 7},
 					 Message({wire::Field::U64(tag::InspectionId, 19),
 							  wire::Field::Text(tag::Detail, "original immutable document")}));

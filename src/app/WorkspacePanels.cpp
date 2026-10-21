@@ -1,6 +1,7 @@
 #include "app/WorkspacePanels.h"
 #include "app/ProcessLauncher.h"
 #include "app/RuntimePanels.h"
+#include "app/TimelinePanel.h"
 #include "simulation/HeadsetProfiles.h"
 #ifdef SIMXR_COMPANION_AUTOMATION
 #include "app/RigPanel.h"
@@ -62,6 +63,7 @@ struct WorkspacePanels::Impl
 	std::filesystem::path path;
 	CompanionSettings settings;
 	ProcessLauncher launcher;
+	TimelinePanel timeline;
 #ifdef SIMXR_COMPANION_AUTOMATION
 	RigPanel rigs;
 #endif
@@ -215,6 +217,8 @@ struct WorkspacePanels::Impl
 		}
 		DrawMainMenu(runtime);
 		DrawToolbar(runtime);
+		if (timeline.Draw(runtime))
+			SelectMode(WorkspaceMode::Debug);
 	}
 	void SelectMode(WorkspaceMode selected)
 	{
@@ -342,28 +346,6 @@ struct WorkspacePanels::Impl
 			showConnection = !showConnection;
 			previewExpanded = false;
 		}
-		ImGui::SameLine();
-		ImGui::BeginDisabled(!snapshot.sessionAvailable || snapshot.operationPending);
-		if (ImGui::Button(snapshot.manual ? "Continue" : "Pause"))
-		{
-			if (snapshot.manual)
-				runtime.ResumeLive();
-			else
-				runtime.Command(control::CommandKind::Pause);
-		}
-		ImGui::EndDisabled();
-		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-			ImGui::SetTooltip("%s", !snapshot.sessionAvailable ? "Connect to a running XR application first"
-									: snapshot.operationPending
-										? "Waiting for the runtime to finish the previous operation"
-										: "F6 pauses. F8 continues the application and follows live output.");
-		ImGui::SameLine();
-		ImGui::BeginDisabled(!snapshot.sessionAvailable || !snapshot.manual || snapshot.operationPending);
-		if (ImGui::Button("Next frame"))
-			runtime.Command(control::CommandKind::Step);
-		ImGui::EndDisabled();
-		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-			ImGui::SetTooltip("Pause the application, then advance one XR frame (F7)");
 		if (snapshot.recording)
 		{
 			ImGui::TextColored({1, .38f, .36f, 1}, "%s / %llu changes",
@@ -486,6 +468,7 @@ struct WorkspacePanels::Impl
 			rigs.ObserveLaunch(launcher.Snapshot());
 		rigs.Draw(runtime, !previewExpanded && (mode == WorkspaceMode::Automation || mode == WorkspaceMode::Custom));
 		runtime.SetReplayActive(rigs.IsActive());
+		timeline.ObserveRig(runtime.Snapshot(), rigs.RunId(), rigs.Snapshot(), rigs.MatchesTarget(runtime.Snapshot()));
 		if (focusRecording && ImGui::FindWindowByName("Recording"))
 		{
 			ImGui::SetWindowFocus("Recording");

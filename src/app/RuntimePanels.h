@@ -16,6 +16,17 @@ namespace simxr::app
 {
 class UiRenderer;
 class Window;
+struct RuntimeFrameRun
+{
+	std::uint64_t epoch = 0, session = 0, generation = 0;
+	bool operator==(const RuntimeFrameRun&) const = default;
+};
+struct RuntimeFrame
+{
+	RuntimeFrameRun run;
+	std::uint64_t local = 0, capture = 0, frame = 0;
+	bool selected = false, imageReady = false, stateReady = false, remoteAvailable = false;
+};
 struct RuntimePanelSnapshot
 {
 	bool connected = false, sessionAvailable = false, manual = false;
@@ -23,7 +34,7 @@ struct RuntimePanelSnapshot
 	bool recording = false, recordingBusy = false, recordingOverflow = false;
 	std::uint64_t recordedChanges = 0;
 	std::string connectionState;
-	std::uint64_t session = 0, generation = 0, appliedPilotUpdates = 0;
+	std::uint64_t epoch = 0, session = 0, generation = 0, appliedPilotUpdates = 0, latestFrame = 0;
 	std::uint64_t selectedFrame = 0, selectedCapture = 0, selectedReader = 0;
 	std::size_t images = 0, captures = 0;
 	bool pending = false;
@@ -48,6 +59,8 @@ class RuntimePanels
 	void Command(control::CommandKind kind, std::uint64_t capture = 0, bool raw = false, std::uint32_t layer = 0,
 				 std::uint32_t view = 0);
 	void SelectCapture(std::uint64_t capture);
+	std::vector<RuntimeFrame> TimelineFrames() const;
+	void SelectFrame(std::uint64_t local);
 	void ReleaseSelected();
 	void CancelPending();
 	void ReleaseInputs();

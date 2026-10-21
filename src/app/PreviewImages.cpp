@@ -63,6 +63,9 @@ bool PreviewImages::SelectCapture(PanelScope scope, std::uint64_t capture)
 {
 	m_selectedCapture = capture;
 	m_follow = false;
+	// A newly selected snapshot must never display the previous frame while
+	// its private image is still being requested.
+	m_selectedImage = 0;
 	for (const auto& image : m_images)
 		if (!image->release && image->capture == capture && image->epoch == scope.epoch &&
 			image->session == scope.session && image->generation == scope.generation)

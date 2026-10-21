@@ -122,6 +122,53 @@ class RuntimePanels::Impl
 		fields.push_back(wire::Field::U64(tag::CaptureId, capture, true));
 		m_requests.Send(wire::OpCode::Capture, Work::Capture, std::move(fields), capture);
 	}
+	std::vector<RuntimeFrame> TimelineFrames() const
+	{
+		std::vector<RuntimeFrame> frames;
+		const auto images = m_preview.Images();
+		const auto selected = m_workspace.Selected();
+		for (const auto& capture : m_workspace.Captures())
+		{
+			if (!capture.frame)
+				continue;
+			const bool imageReady =
+				std::any_of(images.begin(), images.end(),
+							[&](const auto& image)
+							{
+								return image.scope == capture.scope && image.capture == capture.id &&
+									   image.frame == capture.frame && image.ready && !image.released;
+							});
+			frames.push_back({{capture.scope.epoch, capture.scope.session, capture.scope.generation},
+							  capture.local,
+							  capture.id,
+							  capture.frame,
+							  !m_preview.Following() && selected && selected->local == capture.local,
+							  imageReady,
+							  capture.document.Find(tag::Document) != nullptr,
+							  !capture.released && capture.scope == m_debugger.Scope() &&
+								  m_requests.Snapshot().state == RuntimeConnectionState::Connected});
+		}
+		return frames;
+	}
+	void SelectFrame(std::uint64_t local)
+	{
+		for (const auto& capture : m_workspace.Captures())
+			if (capture.local == local)
+			{
+				if (capture.scope == m_debugger.Scope())
+					Select(capture.id);
+				else
+				{
+					m_workspace.SelectLocal(local);
+					if (!m_preview.SelectCapture(capture.scope, capture.id))
+						m_preview.ClearSelection();
+					m_preview.Follow(false);
+					m_focusPreview = true;
+				}
+				return;
+			}
+	}
+
 	void Command(wire::CommandKind kind, std::uint64_t capture = 0, bool raw = false, std::uint32_t layer = 0,
 				 std::uint32_t view = 0)
 	{
@@ -207,6 +254,8 @@ class RuntimePanels::Impl
 		snapshot.connectionState = ConnectionName(connection.state);
 		snapshot.endpoint = connection.path;
 		snapshot.sessionAvailable = selected.id != 0;
+		snapshot.epoch = m_requests.Epoch();
+		snapshot.latestFrame = U64(Nested(m_debugger.Status().Find(tag::Presentation)), tag::LastSubmitted);
 		snapshot.session = selected.id;
 		snapshot.generation = selected.generation;
 		snapshot.manual = m_debugger.Manual();
@@ -425,17 +474,7 @@ class RuntimePanels::Impl
 								   (capture.released ? " (released)" : "");
 				ImGui::PushID(static_cast<int>(capture.local));
 				if (ImGui::Selectable(label.c_str(), capture.local == selectedRecord))
-				{
-					if (capture.scope.epoch == epoch && capture.scope.session == selected.id &&
-						capture.scope.generation == selected.generation)
-						Select(capture.id);
-					else
-					{
-						m_workspace.SelectLocal(capture.local);
-						m_preview.ClearSelection();
-						m_preview.Follow(false);
-					}
-				}
+					SelectFrame(capture.local);
 				ImGui::PopID();
 			}
 			ImGui::SeparatorText("Private GPU images");
@@ -875,7 +914,7 @@ class RuntimePanels::Impl
 			{
 				if (effect.released)
 					m_workspace.MarkReleased(effect.capture);
-				else if (m_workspace.Add(effect.capture, effect.frame) && m_autoSelect)
+				else if (m_workspace.Add(effect.capture, effect.frame) && effect.frame && m_autoSelect)
 					Select(effect.capture);
 			}
 			return;
@@ -1187,6 +1226,14 @@ void RuntimePanels::Command(control::CommandKind kind, std::uint64_t capture, bo
 							std::uint32_t view)
 {
 	m_impl->Command(kind, capture, raw, layer, view);
+}
+std::vector<RuntimeFrame> RuntimePanels::TimelineFrames() const
+{
+	return m_impl->TimelineFrames();
+}
+void RuntimePanels::SelectFrame(std::uint64_t local)
+{
+	m_impl->SelectFrame(local);
 }
 void RuntimePanels::SelectCapture(std::uint64_t capture)
 {

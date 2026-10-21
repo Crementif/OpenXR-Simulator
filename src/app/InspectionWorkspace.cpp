@@ -31,8 +31,15 @@ InspectionCapture* InspectionWorkspace::Find(std::uint64_t id)
 }
 bool InspectionWorkspace::Add(std::uint64_t id, std::uint64_t frame)
 {
-	if (!id || Find(id))
+	if (!id)
 		return false;
+	if (auto capture = Find(id))
+	{
+		// Pause can announce a reserved capture before a later Step completes it.
+		if (frame)
+			capture->frame = frame;
+		return true;
+	}
 	if (m_captures.size() == 32)
 	{
 		const auto recyclable =

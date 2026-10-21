@@ -72,6 +72,7 @@ struct RigPanel::Impl
 	int deadlineSeconds = 30, memoryMiB = 64;
 	std::string error;
 	bool showTransport = false;
+	std::uint64_t runId = 0;
 	bool recordingReplay = false;
 #ifdef SIMXR_COMPANION_AUTOMATION
 	std::unique_ptr<automation::RigRunner> runner;
@@ -130,6 +131,7 @@ struct RigPanel::Impl
 		options.deadline = std::chrono::seconds(std::clamp(deadlineSeconds, 1, 3600));
 		options.memoryLimit = static_cast<std::size_t>(std::clamp(memoryMiB, 1, 512)) * 1024 * 1024;
 		runner->Start(std::move(options));
+		++runId;
 		boundEndpoint = endpoint;
 		boundSession = session;
 		boundGeneration = generation;
@@ -322,6 +324,28 @@ RigPanel::~RigPanel() = default;
 void RigPanel::Draw(RuntimePanels& runtime, bool visible)
 {
 	m_impl->Draw(runtime, visible);
+}
+std::uint64_t RigPanel::RunId() const
+{
+	return m_impl->runId;
+}
+automation::RigSnapshot RigPanel::Snapshot() const
+{
+#ifdef SIMXR_COMPANION_AUTOMATION
+	return m_impl->runner ? m_impl->runner->Snapshot() : automation::RigSnapshot{};
+#else
+	return {};
+#endif
+}
+bool RigPanel::MatchesTarget(const RuntimePanelSnapshot& state) const
+{
+#ifdef SIMXR_COMPANION_AUTOMATION
+	return state.endpoint == m_impl->boundEndpoint && state.session == m_impl->boundSession &&
+		   state.generation == m_impl->boundGeneration;
+#else
+	(void)state;
+	return false;
+#endif
 }
 bool RigPanel::IsActive() const
 {

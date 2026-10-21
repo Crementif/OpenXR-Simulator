@@ -241,7 +241,8 @@ void PilotLiveRuntime(const char* endpoint)
 	const auto activate = [&](const char* window, const char* label)
 	{
 		auto* target = ImGui::FindWindowByName(window);
-		Require(target != nullptr, "Recording control window is missing");
+		Require(target != nullptr, "Control window is missing");
+		ImGui::SetWindowFocus(target->Name);
 		ImGui::ActivateItemByID(target->GetID(label));
 		frame();
 	};
@@ -257,6 +258,13 @@ void PilotLiveRuntime(const char* endpoint)
 		},
 		"Initial recording read did not finish");
 	activate("Recording", "Start recording");
+	const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+	if (!popups.empty() && popups.back().Window &&
+		popups.back().PopupId == ImGui::FindWindowByName("Recording")->GetID("Replace unsaved take?"))
+	{
+		ImGui::ActivateItemByID(popups.back().Window->GetID("Start new take"));
+		frame();
+	}
 	Eventually(
 		[&]
 		{
@@ -541,7 +549,7 @@ void PilotLiveRuntime(const char* endpoint)
 
 	// Exercise the inspection context on the same isolated real application.
 	test.workspace.SetMode(WorkspaceMode::Debug);
-	test.runtime.Command(simxr::control::CommandKind::Pause);
+	activate("##Frame timeline", "Pause");
 	Eventually(
 		[&]
 		{
@@ -549,7 +557,7 @@ void PilotLiveRuntime(const char* endpoint)
 			return test.runtime.Snapshot().manual && !test.runtime.Snapshot().operationPending;
 		},
 		"Application did not pause");
-	test.runtime.Command(simxr::control::CommandKind::Step);
+	activate("##Frame timeline", "Next frame");
 	Eventually(
 		[&]
 		{
@@ -559,6 +567,19 @@ void PilotLiveRuntime(const char* endpoint)
 		},
 		"Step did not select its captured frame");
 	const auto retained = test.runtime.Snapshot().selectedCapture;
+	activate("##Frame timeline", "Next frame");
+	Eventually(
+		[&]
+		{
+			frame();
+			const auto state = test.runtime.Snapshot();
+			return !state.operationPending && state.selectedReady && state.selectedCapture != retained;
+		},
+		"Timeline next frame did not capture another snapshot");
+	activate("##Frame timeline", "Previous snapshot");
+	Require(test.runtime.Snapshot().selectedCapture == retained && test.runtime.Snapshot().manual,
+			"Timeline did not select the earlier snapshot while paused");
+
 	const auto captureContext = [&](const char* name)
 	{
 		if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
@@ -574,7 +595,28 @@ void PilotLiveRuntime(const char* endpoint)
 	for (int i = 0; i < 3; ++i)
 		frame();
 	captureContext("cemu-inspection-paused.bmp");
-	test.runtime.ResumeLive();
+	test.workspace.SetScale(1.5f);
+	for (int i = 0; i < 4; ++i)
+		frame();
+	captureContext("cemu-timeline-150.bmp");
+	activate("##Frame timeline", "Rig events");
+	captureContext("cemu-timeline-events.bmp");
+	SDL_Event escape{};
+	escape.type = SDL_EVENT_KEY_DOWN;
+	escape.key.windowID = SDL_GetWindowID(test.window.Native());
+	escape.key.key = SDLK_ESCAPE;
+	escape.key.scancode = SDL_SCANCODE_ESCAPE;
+	escape.key.down = true;
+	SDL_PushEvent(&escape);
+	frame();
+	escape.type = SDL_EVENT_KEY_UP;
+	escape.key.down = false;
+	SDL_PushEvent(&escape);
+	frame();
+	test.workspace.SetScale(1.0f);
+	for (int i = 0; i < 4; ++i)
+		frame();
+	activate("##Frame timeline", "Continue");
 	Eventually(
 		[&]
 		{
@@ -583,7 +625,10 @@ void PilotLiveRuntime(const char* endpoint)
 			return !state.operationPending && !state.manual && state.following;
 		},
 		"Continue did not resume and follow live output");
-	test.runtime.SelectCapture(retained);
+	activate("##Frame timeline", "Previous snapshot");
+	activate("##Frame timeline", "Previous snapshot");
+	Require(test.runtime.Snapshot().selectedCapture == retained,
+			"Timeline did not return to the historical snapshot while running");
 	for (int i = 0; i < 6; ++i)
 		frame();
 	Require(!test.runtime.Snapshot().manual && !test.runtime.Snapshot().following,
