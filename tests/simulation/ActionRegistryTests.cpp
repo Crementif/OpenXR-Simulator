@@ -278,6 +278,99 @@ void HistoricalDictionaryAndFrozenBindings()
 			"Dictionary borrowed registry storage after instance/action lifetime ended");
 }
 
+void RegistryAdmissionRollback()
+{
+#ifndef SIMXR_TEST_TSAN_ALLOCATOR
+	unsigned pathFailures = 0;
+	bool pathCompleted = false;
+	for (int allocation = 0; allocation < 128; ++allocation)
+	{
+		EnabledExtensions enabled;
+		ActionRegistry registry(reinterpret_cast<XrInstance>(70), enabled);
+		const auto seed = Path(registry, "/seed");
+		constexpr auto text = "/user/vive_tracker_htcx/serial/transactional_path";
+		XrPath published = XR_NULL_PATH;
+		bool failed = false;
+		try
+		{
+			AllocationFailure failure(allocation);
+			Require(registry.StringToPath(text, published) == XR_SUCCESS, "Intern transactional path");
+		}
+		catch (const std::bad_alloc&)
+		{
+			failed = true;
+			++pathFailures;
+		}
+		Require(!failed || published == XR_NULL_PATH, "Failed path admission modified caller output");
+		const auto retried = Path(registry, text);
+		Require(Path(registry, text) == retried && registry.PathString(retried) == text,
+				"Path retry did not round-trip to one identity");
+		for (auto consumed = seed + 1; consumed < retried; ++consumed)
+			Require(!registry.PathString(consumed), "Failed path admission left an orphaned reverse lookup");
+		if (!failed)
+		{
+			pathCompleted = true;
+			break;
+		}
+	}
+	Require(pathCompleted && pathFailures, "Path allocation sweep did not complete");
+	unsigned bindingFailures = 0;
+	bool bindingsCompleted = false;
+	for (int allocation = 0; allocation < 128; ++allocation)
+	{
+		EnabledExtensions enabled;
+		ActionRegistry registry(reinterpret_cast<XrInstance>(71), enabled);
+		const std::array paths{Path(registry, "/user/hand/left")};
+		const auto set = Set(registry, "bindings");
+		const auto action = Action(registry, set, "trigger", XR_ACTION_TYPE_FLOAT_INPUT, paths);
+		const auto profile = Path(registry, "/interaction_profiles/oculus/touch_controller");
+		const XrActionSuggestedBinding binding{action, Path(registry, "/user/hand/left/input/trigger/value")};
+		const XrInteractionProfileSuggestedBinding suggest{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING, nullptr,
+														   profile, 1, &binding};
+		bool failed = false;
+		try
+		{
+			AllocationFailure failure(allocation);
+			Require(registry.SuggestBindings(suggest) == XR_SUCCESS, "Suggest transactional binding");
+		}
+		catch (const std::bad_alloc&)
+		{
+			failed = true;
+			++bindingFailures;
+		}
+		if (failed)
+			Require(registry.Bindings(action, profile).empty() && registry.SelectProfile({}, paths[0]) == XR_NULL_PATH,
+					"Failed binding admission partially published its profile");
+		Require(registry.SuggestBindings(suggest) == XR_SUCCESS && registry.Bindings(action, profile).size() == 1 &&
+					registry.SelectProfile({}, paths[0]) == profile,
+				"Binding admission could not retry");
+		if (!failed)
+		{
+			bindingsCompleted = true;
+			break;
+		}
+	}
+	Require(bindingsCompleted && bindingFailures, "Binding allocation sweep did not complete");
+	std::cout << "Registry admission rollback covered " << pathFailures << " path and " << bindingFailures
+			  << " binding allocations\n";
+#endif
+}
+
+void InputPathLimits()
+{
+	InputState input;
+	InputSnapshot valid;
+	std::string path = "/user/vive_tracker_htcx/serial/";
+	path.resize(XR_MAX_PATH_LENGTH - 1, 'a');
+	valid.devices.push_back({{InputDeviceKind::Tracker, 1}, {path}});
+	Require(input.Publish(valid) == XR_SUCCESS, "Reject maximum valid input path");
+	auto invalid = valid;
+	invalid.devices[0].userPaths[0] += 'a';
+	Require(input.Publish(std::move(invalid)) == XR_ERROR_PATH_FORMAT_INVALID && input.Revision() == 1 &&
+				input.Snapshot().devices[0].userPaths[0] == path,
+			"Oversized input path bypassed admission validation");
+}
+
 void DictionaryAllocationRollback()
 {
 #ifndef SIMXR_TEST_TSAN_ALLOCATOR
@@ -487,5 +580,7 @@ int main()
 
 	HistoricalDictionaryAndFrozenBindings();
 	DictionaryAllocationRollback();
+	RegistryAdmissionRollback();
+	InputPathLimits();
 	std::cout << "Action registry tests passed\n";
 }

@@ -1,4 +1,5 @@
 #include "simulation/InputState.h"
+#include "runtime/validation/Path.h"
 
 #include <algorithm>
 #include <cmath>
@@ -36,26 +37,7 @@ XrResult InputState::Validate(const InputSnapshot& snapshot)
 		std::set<std::string_view> uniquePaths;
 		for (const auto& path : device.userPaths)
 		{
-			if (!path.starts_with("/user/") || path.back() == '/')
-				return XR_ERROR_PATH_FORMAT_INVALID;
-			bool segmentHasName = false;
-			for (char character : std::string_view(path).substr(1))
-			{
-				if (character == '/')
-				{
-					if (!segmentHasName)
-						return XR_ERROR_PATH_FORMAT_INVALID;
-					segmentHasName = false;
-				}
-				else
-				{
-					if (!((character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') ||
-						  character == '_' || character == '-' || character == '.'))
-						return XR_ERROR_PATH_FORMAT_INVALID;
-					segmentHasName |= character != '.';
-				}
-			}
-			if (!segmentHasName)
+			if (!IsValidXrPath(path) || !path.starts_with("/user/"))
 				return XR_ERROR_PATH_FORMAT_INVALID;
 			if (!uniquePaths.insert(path).second ||
 				(device.identity.kind == InputDeviceKind::EyeGaze && path != "/user/eyes_ext") ||

@@ -1,4 +1,5 @@
 #include "simulation/ActionRegistry.h"
+#include "runtime/validation/Path.h"
 
 #include <algorithm>
 #include <cmath>
@@ -27,28 +28,6 @@ struct ProfileComponent
 constexpr ProfileComponent s_components[]{
 #include "simulation/InteractionProfiles.inc"
 };
-
-bool ValidPath(std::string_view path)
-{
-	if (path.size() < 2 || path.size() >= XR_MAX_PATH_LENGTH || path.front() != '/' || path.back() == '/')
-		return false;
-	bool segmentHasName = false;
-	for (char character : path.substr(1))
-	{
-		if (character == '/')
-		{
-			if (!segmentHasName)
-				return false;
-			segmentHasName = false;
-			continue;
-		}
-		if (!((character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character == '_' ||
-			  character == '-' || character == '.'))
-			return false;
-		segmentHasName |= character != '.';
-	}
-	return segmentHasName;
-}
 
 bool ValidName(std::string_view name)
 {
@@ -297,7 +276,7 @@ ActionRegistry::ActionRegistry(XrInstance owner, const EnabledExtensions& enable
 
 XrResult ActionRegistry::StringToPath(std::string_view text, XrPath& path)
 {
-	if (!ValidPath(text))
+	if (!IsValidXrPath(text))
 		return XR_ERROR_PATH_FORMAT_INVALID;
 	std::lock_guard lock(m_mutex);
 	auto found = m_pathIds.find(std::string(text));
@@ -309,8 +288,16 @@ XrResult ActionRegistry::StringToPath(std::string_view text, XrPath& path)
 	if (m_nextPath == std::numeric_limits<XrPath>::max())
 		return XR_ERROR_PATH_COUNT_EXCEEDED;
 	auto identity = m_nextPath++;
-	m_paths.emplace(identity, text);
-	m_pathIds.emplace(text, identity);
+	const auto inserted = m_paths.emplace(identity, text).first;
+	try
+	{
+		m_pathIds.emplace(text, identity);
+	}
+	catch (...)
+	{
+		m_paths.erase(inserted);
+		throw;
+	}
 	path = identity;
 	return XR_SUCCESS;
 }
@@ -724,8 +711,12 @@ XrResult ActionRegistry::SuggestBindings(const XrInteractionProfileSuggestedBind
 		if (m_sets.Find(action->set)->attached)
 			return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED;
 	}
-	m_bindings[info.interactionProfile] = std::move(prepared);
-	if (std::find(m_profiles.begin(), m_profiles.end(), info.interactionProfile) == m_profiles.end())
+	const bool newProfile =
+		std::find(m_profiles.begin(), m_profiles.end(), info.interactionProfile) == m_profiles.end();
+	if (newProfile)
+		m_profiles.reserve(m_profiles.size() + 1);
+	m_bindings.insert_or_assign(info.interactionProfile, std::move(prepared));
+	if (newProfile)
 		m_profiles.push_back(info.interactionProfile);
 	return XR_SUCCESS;
 }

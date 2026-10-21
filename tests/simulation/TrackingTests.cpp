@@ -61,6 +61,16 @@ int main()
 	tracking.SetBodyProportions(proportions);
 	auto changed = tracking.Publish({Duration{20}}, state);
 	Require(changed.body.skeletonRevision == 2 && tracking.Sample({Duration{15}})->body.skeletonRevision == 1, "Skeleton configuration leaked backward");
+	TrackingSystem wideRange(2);
+	TrackingState endpoints;
+	endpoints.head.pose.position.x = -2.0e38f;
+	wideRange.Publish({Duration{10}}, endpoints);
+	endpoints.head.pose.position.x = 2.0e38f;
+	wideRange.Publish({Duration{20}}, endpoints);
+	const auto midpoint = wideRange.Sample({Duration{15}});
+	Require(midpoint && std::isfinite(midpoint->head.pose.position.x) && midpoint->head.pose.position.x == 0,
+			"Finite tracking endpoints overflowed during interpolation");
+
 	std::atomic_bool failed = false;
 	std::thread reader([&] {
 		for (int count = 0; count < 100; ++count)
