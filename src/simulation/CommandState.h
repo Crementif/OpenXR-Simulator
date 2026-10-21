@@ -15,6 +15,7 @@ class CommandState
 {
   public:
 	using ChannelMask = std::array<bool, ControlChannelCount>;
+	static ControlChannel ScenarioChannel(FailureScenario scenario);
 	CommandState() = default;
 	explicit CommandState(std::optional<CommandConfiguration> initial);
 	void BeginBoundary(const ReferenceSpaceState& spaces);
@@ -35,7 +36,6 @@ class CommandState
 	ChannelOwners m_owners{};
 	ScenarioMask m_scenarios{};
 
-	static ControlChannel ScenarioChannel(FailureScenario scenario);
 	static ControlChannel ChannelFor(const SetHeadPose& command);
 	static ControlChannel ChannelFor(const SetControllerPose& command);
 	static ControlChannel ChannelFor(const SetControllerControls& command);

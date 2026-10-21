@@ -1,5 +1,6 @@
 #include "app/DeviceControlPanel.h"
 #include "Math.h"
+#include "simulation/CommandState.h"
 #include <numbers>
 
 #include <cstdio>
@@ -240,9 +241,11 @@ void DeviceControlPanel::DrawScenarios()
 		ImGui::Combo("Scenario", &m_selectedScenario, scenarios, IM_ARRAYSIZE(scenarios));
 		ImGui::Checkbox("Scenario enabled", &m_scenarioEnabled);
 		if (ImGui::Button("Apply scenario"))
-			Apply({SetScenario{static_cast<FailureScenario>(m_selectedScenario), m_scenarioEnabled}});
-		ImGui::TextWrapped("Scenarios are opt-in and require the affected channel's ownership. Disable a scenario "
-						   "explicitly to recover.");
+		{
+			const auto scenario = static_cast<FailureScenario>(m_selectedScenario);
+			ApplyOwned(CommandState::ScenarioChannel(scenario), SetScenario{scenario, m_scenarioEnabled});
+		}
+		ImGui::TextWrapped("Apply claims the affected input channel. Disable a scenario explicitly to recover.");
 	}
 }
 } // namespace simxr::app

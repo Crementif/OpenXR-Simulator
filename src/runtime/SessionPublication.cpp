@@ -35,6 +35,7 @@ void SessionPublication::PreparedStart::Commit()
 {
 	if (m_committed)
 		throw std::logic_error("Session publication start was already committed");
+	m_owner.m_instance.Trackers().BeginSession();
 	m_owner.m_tracking.Reset();
 	m_owner.m_baseline = std::move(m_baseline);
 	m_owner.m_epoch = m_epoch;

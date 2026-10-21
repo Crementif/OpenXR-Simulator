@@ -21,6 +21,13 @@ TrackerInteraction::TrackerInteraction(ActionRegistry& registry, const EnabledEx
 	}
 }
 
+void TrackerInteraction::BeginSession()
+{
+	std::lock_guard lock(m_mutex);
+	// Persistent tracker paths survive a session; its deterministic clock does not.
+	m_time = {};
+}
+
 XrResult TrackerInteraction::Publish(const TrackingSnapshot& snapshot, std::vector<XrPath>* changedPaths)
 {
 	if (!m_enabled)

@@ -21,6 +21,7 @@ class TrackerInteraction
 {
 public:
 	TrackerInteraction(ActionRegistry& registry, const EnabledExtensions& enabled, EventQueue& events);
+	void BeginSession();
 	XrResult Publish(const TrackingSnapshot& snapshot, std::vector<XrPath>* changedPaths = nullptr);
 	XrResult Enumerate(std::uint32_t capacity, std::uint32_t* count, XrViveTrackerPathsHTCX* paths) const;
 	void ContributeInput(const TrackingSnapshot& snapshot, InputSnapshot& input) const;

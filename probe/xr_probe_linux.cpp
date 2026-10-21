@@ -733,6 +733,19 @@ static int runProbe()
     }
     for (int frame = 0; frame < frames; ++frame)
     {
+        if (interactive)
+        {
+            event = {XR_TYPE_EVENT_DATA_BUFFER};
+            while (xrPollEvent(instance, &event) == XR_SUCCESS)
+            {
+                if (event.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED)
+                    std::printf("Interactive session state: %d\n",
+                        reinterpret_cast<const XrEventDataSessionStateChanged*>(&event)->state);
+                if (event.type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING)
+                    std::puts("Interactive reference space changed");
+                event = {XR_TYPE_EVENT_DATA_BUFFER};
+            }
+        }
         XrFrameState fs{XR_TYPE_FRAME_STATE};
         XrFrameWaitInfo wait{XR_TYPE_FRAME_WAIT_INFO};
         if (nextWait.valid())
@@ -743,7 +756,7 @@ static int runProbe()
         }
         else
             XR(xrWaitFrame(session, &wait, &fs));
-        CHECK(fs.shouldRender && fs.predictedDisplayTime > prior);
+        CHECK((interactive || fs.shouldRender) && fs.predictedDisplayTime > prior);
         auto previousDisplay = prior;
         prior = fs.predictedDisplayTime;
         if (frame == 0)
@@ -754,7 +767,8 @@ static int runProbe()
         XrActionsSyncInfo sync{XR_TYPE_ACTIONS_SYNC_INFO};
         sync.countActiveActionSets = 1;
         sync.activeActionSets = &active;
-        XR(xrSyncActions(session, &sync));
+        const auto syncResult = xrSyncActions(session, &sync);
+        CHECK(syncResult == XR_SUCCESS || (interactive && syncResult == XR_SESSION_NOT_FOCUSED));
         if (frame == 0)
         {
             XrHapticActionInfo target{XR_TYPE_HAPTIC_ACTION_INFO, nullptr, haptic, right};
@@ -769,9 +783,9 @@ static int runProbe()
         get.subactionPath = right;
         XrActionStateFloat value{XR_TYPE_ACTION_STATE_FLOAT};
         XR(xrGetActionStateFloat(session, &get, &value));
-        CHECK(value.isActive);
         if (!interactive || frame < 4)
         {
+            CHECK(value.isActive);
             CHECK(std::fabs(value.currentState - .75f) < .0001f);
             CHECK(!value.changedSinceLastSync);
         }
@@ -882,6 +896,9 @@ static int runProbe()
             locations.jointCount = XR_BODY_JOINT_COUNT_FB;
             XR(locateBody(upperBody, &bodyInfo, &locations));
             CHECK(locations.isActive);
+            skeletonInfo.jointCount = XR_BODY_JOINT_COUNT_FB;
+            XR(skeletonBody(upperBody, &skeletonInfo));
+            CHECK(skeleton[XR_BODY_JOINT_HEAD_FB].joint == XR_BODY_JOINT_HEAD_FB);
             std::vector<XrBodyJointLocationBD> bdJoints(XR_BODY_JOINT_COUNT_BD);
             XrBodyJointLocationsBD bdLocations{XR_TYPE_BODY_JOINT_LOCATIONS_BD};
             bdLocations.jointLocationCount = static_cast<uint32_t>(bdJoints.size());

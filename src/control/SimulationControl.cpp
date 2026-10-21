@@ -24,16 +24,16 @@ InspectionValue PoseValue(const PoseSample& sample)
 									{"orientation", Orientation(sample.pose.orientation)},
 									{"flags", InspectionValue::Unsigned(sample.flags)}});
 }
+InspectionValue PoseValue(const XrPosef& pose)
+{
+	return InspectionValue::Object(
+		{{"position", Vector(pose.position)}, {"orientation", Orientation(pose.orientation)}});
+}
 InspectionValue ReferenceSpaces(const ReferenceSpaceState& spaces)
 {
-	const auto origin = [](const XrPosef& pose)
-	{
-		return InspectionValue::Object(
-			{{"position", Vector(pose.position)}, {"orientation", Orientation(pose.orientation)}});
-	};
 	return InspectionValue::Object(
-		{{"local", origin(spaces.local)},
-		 {"stage", origin(spaces.stage)},
+		{{"local", PoseValue(spaces.local)},
+		 {"stage", PoseValue(spaces.stage)},
 		 {"stage_bounds", spaces.stageBounds
 							  ? InspectionValue::Array({InspectionValue::Float(spaces.stageBounds->width),
 														InspectionValue::Float(spaces.stageBounds->height)})
@@ -85,7 +85,12 @@ InspectionValue Configuration(const CommandConfiguration& configuration)
 			InspectionValue::Object({{"id", InspectionValue::Unsigned(tracker.identity.value)},
 									 {"role", InspectionValue::Unsigned(static_cast<std::uint32_t>(tracker.role))},
 									 {"connected", InspectionValue::Boolean(tracker.connected)},
-									 {"tracked", InspectionValue::Boolean(tracker.tracked)}}));
+									 {"tracked", InspectionValue::Boolean(tracker.tracked)},
+									 {"anchor", tracker.anchor
+														? InspectionValue::Unsigned(static_cast<std::uint32_t>(*tracker.anchor))
+														: InspectionValue::Null()},
+									 {"pose_override", tracker.poseOverride ? PoseValue(*tracker.poseOverride)
+																		  : InspectionValue::Null()}}));
 	return InspectionValue::Object(
 		{{"head", PoseValue(configuration.tracking.head)},
 		 {"controllers", InspectionValue::Array(std::move(controllers))},
