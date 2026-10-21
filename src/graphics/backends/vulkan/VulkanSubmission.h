@@ -77,7 +77,7 @@ class VulkanFrame final : public FrameOutput
 	friend class VulkanInspection;
 	friend class VulkanInspectionTransfer;
 	friend class VulkanInspectionWork;
-	explicit VulkanFrame(std::shared_ptr<VulkanSubmission> submission);
+	explicit VulkanFrame(std::shared_ptr<VulkanSubmission> submission, std::span<const FrameView> views = {});
 	UniqueFd ExportReady();
 	bool ClaimInspection();
 	void CancelInspection() noexcept;

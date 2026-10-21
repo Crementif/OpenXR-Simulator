@@ -125,7 +125,7 @@ class VulkanInspectionFrame final : public FrameOutput
 	friend class VulkanInspection;
 	friend class VulkanInspectionTransfer;
 	class Resources;
-	explicit VulkanInspectionFrame(std::shared_ptr<Resources> resources);
+	explicit VulkanInspectionFrame(std::shared_ptr<Resources> resources, std::span<const FrameView> views);
 	std::shared_ptr<Resources> m_resources;
 };
 

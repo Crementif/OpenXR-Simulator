@@ -1,4 +1,5 @@
 #pragma once
+#include "graphics/SnapshotBudget.h"
 
 // CPU-only service/transport fixture. Its memfd and pipe are deliberately not
 // Vulkan image/semaphore handles; native GPU qualification lives in the probes.
@@ -240,7 +241,7 @@ struct Fixture
 	Runtime runtime{ExtensionRegistry{std::span<const ExtensionDefinition>{}}};
 	Runtime::InstanceRef instance;
 	Runtime::SessionRef session;
-	FramePool pool{16};
+	FramePool pool{SnapshotBudget::Capacity() + 2};
 	std::shared_ptr<State> state = std::make_shared<State>();
 	std::shared_ptr<Provider> provider = std::make_shared<Provider>(state);
 	ControlService service{runtime, 16, provider};

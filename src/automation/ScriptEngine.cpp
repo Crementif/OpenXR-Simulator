@@ -226,6 +226,13 @@ BodyControls ReadBody(lua_State* state, int table)
 	body.active = BoolField(state, table, "active", true);
 	body.confidence = FloatField(state, table, "confidence", 1);
 	body.preset = static_cast<BodyPreset>(IndexField(state, table, "preset", 0));
+	lua_getfield(state, table, "root_pose");
+	if (!lua_isnil(state, -1))
+	{
+		if (!lua_istable(state, -1)) throw std::invalid_argument("Invalid body root pose");
+		body.rootPose = Pose(state, lua_absindex(state, -1)).pose;
+	}
+	lua_pop(state, 1);
 	lua_getfield(state, table, "controls");
 	if (!lua_isnil(state, -1))
 	{

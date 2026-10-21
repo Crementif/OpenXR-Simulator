@@ -1,3 +1,4 @@
+#include "graphics/SnapshotBudget.h"
 #include "graphics/backends/vulkan/VulkanBackend.h"
 #include "shaders/generated/CompositorSpirv.h"
 
@@ -213,7 +214,7 @@ struct VulkanBackend::State
 	std::shared_ptr<VulkanExternalDevice> external;
 	std::shared_ptr<Retirement> retirement = std::make_shared<Retirement>();
 	State(std::size_t capacity, std::size_t liveCapacity)
-		: reservations(capacity,
+		: reservations([capacity] { return capacity ? capacity : SnapshotBudget::Capacity(); },
 					   [weak = std::weak_ptr<Retirement>(retirement)]
 					   {
 						   if (const auto retained = weak.lock())
@@ -246,8 +247,6 @@ VulkanBackend::VulkanBackend(const VulkanBinding& binding, std::size_t frameCapa
 							 std::size_t liveCapacity)
 	: m_state(std::make_unique<State>(frameCapacity, liveCapacity))
 {
-	if (!frameCapacity)
-		throw std::invalid_argument("Vulkan backend requires private frame capacity");
 	m_state->device = std::make_shared<VulkanDevice>(binding);
 	const auto enabled = [&](const char* name)
 	{
@@ -298,6 +297,7 @@ std::shared_ptr<VulkanImage> VulkanBackend::CreateImage(VkFormat format, VkExten
 	if (m_state->closed || m_state->failed || m_state->device->lost.load())
 		throw std::logic_error("Vulkan backend closed");
 	auto image = VulkanImage::Create(m_state->device, format, extent, layers, usage);
+	SnapshotBudget::ObserveImageBytes(image->allocationSize);
 	m_state->images.push_back(image);
 	return image;
 }
@@ -411,7 +411,7 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 	if (!reservation)
 		return XR_ERROR_LIMIT_REACHED;
 	auto job = std::shared_ptr<VulkanSubmission>(new VulkanSubmission(m_state->device));
-	auto frame = std::shared_ptr<VulkanFrame>(new VulkanFrame(job));
+	auto frame = std::shared_ptr<VulkanFrame>(new VulkanFrame(job, plan.views));
 	m_state->submissions.push_back(job);
 	auto& resources = *job->m_resources;
 	resources.pipeline = m_state->pipeline;
@@ -422,6 +422,7 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 		spec.arrayLayers = outputLayers;
 		resources.external = m_state->external->CreateExportable(spec);
 		resources.output = resources.external->Image();
+		SnapshotBudget::ObserveImageBytes(resources.external->Descriptor().allocationSize);
 		m_state->images.push_back(resources.output);
 		resources.ready = m_state->external->CreateExportableSemaphore();
 	}
@@ -640,6 +641,7 @@ XrResult VulkanBackend::PrepareCapture(const LayerImageDescription& description,
 	spec.arrayLayers = 1;
 	resources.external = m_state->external->CreateExportable(spec);
 	resources.output = resources.external->Image();
+		SnapshotBudget::ObserveImageBytes(resources.external->Descriptor().allocationSize);
 	m_state->images.push_back(resources.output);
 	resources.ready = m_state->external->CreateExportableSemaphore();
 	resources.outputViews[0] = View(*resources.output, 0);

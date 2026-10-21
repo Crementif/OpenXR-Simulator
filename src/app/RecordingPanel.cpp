@@ -122,20 +122,16 @@ void RecordingPanel::Save()
 std::optional<automation::SavedRecording> RecordingPanel::Draw(bool supported, bool replayAvailable, bool replayActive)
 {
 	std::optional<automation::SavedRecording> replay;
-	if (!ImGui::Begin("Recording"))
-	{
-		ImGui::End();
-		return replay;
-	}
+	ImGui::SeparatorText("Takes");
 	const auto state = Snapshot();
 	const bool active = state.page && state.page->active;
 	ImGui::SeparatorText("Capture input");
-	ImGui::TextWrapped("Record head and hand movement, buttons and simulated device changes while using the app.");
 	if (!supported)
-		ImGui::TextWrapped("Connect to a runtime with input recording support to start a take. Saved recordings remain "
-						   "available below.");
+		ImGui::TextUnformatted("Recording unavailable");
 	ImGui::BeginDisabled(!supported || state.busy || replayActive);
-	if (ImGui::Button(active ? "Stop recording" : "Start recording", {-1, 0}))
+	const bool clicked = ImGui::Button(active ? "Stop recording" : "Start recording", {-1, 0});
+	const bool requested = std::exchange(m_startRequested, false);
+	if ((clicked || (requested && !active)) && supported && !state.busy && !replayActive)
 	{
 		if (active)
 			Stop();
@@ -169,8 +165,7 @@ std::optional<automation::SavedRecording> RecordingPanel::Draw(bool supported, b
 						   "%s / %llu input changes", active ? "Recording" : "Stopped",
 						   static_cast<unsigned long long>(state.page->total));
 		if (state.page->overflow)
-			ImGui::TextWrapped("The recording reached its limit. Stop and start a shorter take; this incomplete take "
-							   "cannot be saved.");
+			ImGui::TextUnformatted("Recording full");
 	}
 	ImGui::TextUnformatted("Take name");
 	ImGui::SetNextItemWidth(-1);
@@ -213,7 +208,7 @@ std::optional<automation::SavedRecording> RecordingPanel::Draw(bool supported, b
 
 	ImGui::SeparatorText("Saved takes");
 	if (m_files.empty())
-		ImGui::TextWrapped("Saved takes appear here and remain available after restarting the companion.");
+		ImGui::TextUnformatted("No takes");
 	else if (ImGui::BeginListBox("##Saved takes", {-1, ImGui::GetTextLineHeightWithSpacing() * 4.5f}))
 	{
 		for (const auto& path : m_files)
@@ -235,8 +230,6 @@ std::optional<automation::SavedRecording> RecordingPanel::Draw(bool supported, b
 			replay = m_selected;
 	}
 	ImGui::EndDisabled();
-	ImGui::TextWrapped("Replay restores simulated devices and input at relative XR frames. It does not rewind the "
-					   "game's world or save state. Cancel replay releases its inputs.");
 	if (ImGui::CollapsingHeader("Open file and script details"))
 	{
 		ImGui::TextWrapped("Folder: %s", PathText(m_directory).c_str());
@@ -250,7 +243,6 @@ std::optional<automation::SavedRecording> RecordingPanel::Draw(bool supported, b
 		if (m_selected)
 			ImGui::TextWrapped("Selected: %s\nSeed: %llu", m_selected->path.c_str(),
 							   static_cast<unsigned long long>(m_selected->seed));
-		ImGui::TextWrapped("Takes are editable Luau files. Advanced script execution and reports remain in Rigs.");
 	}
 	if (!m_error.empty())
 		ImGui::TextWrapped("%s", m_error.c_str());
@@ -288,7 +280,7 @@ std::optional<automation::SavedRecording> RecordingPanel::Draw(bool supported, b
 			ImGui::PopID();
 		}
 	}
-	ImGui::End();
+
 	return replay;
 }
 } // namespace simxr::app

@@ -9,6 +9,8 @@ struct ManualTransaction
 {
 	// An absent selector uses the next frame after the observed command publication.
 	std::optional<FrameId> frame;
+	bool continuous = false;
+	bool releaseEdge = false;
 	CommandLatePolicy latePolicy = CommandLatePolicy::RescheduleNext;
 	std::vector<SimulationCommand> commands;
 };
@@ -25,10 +27,13 @@ struct ObservedSetup
 	std::uint64_t frame = 0;
 	bool trackerAttachmentsAvailable = true;
 	bool bodyOverridesAvailable = true;
+	bool bodyRootAvailable = true;
 };
+std::optional<TrackingSnapshot> ReadInspectionTracking(const control::Message& state);
 ObservedSetup ReadObservedSetup(const control::Message& state);
 ControlChannel ScenarioInputChannel(FailureScenario scenario);
 
+std::optional<CommandSource> SimulationEditSource(const control::Message& receipt);
 std::string SimulationEditPhase(const control::Message& result);
 std::optional<control::Message> ObservedEditResult(const control::Message& state, const control::Message& receipt);
 

@@ -1,3 +1,4 @@
+#include "graphics/SnapshotBudget.h"
 #include "presentation/DebugController.h"
 #include "runtime/Session.h"
 
@@ -36,8 +37,8 @@ DebugController::DebugController(std::shared_ptr<Session> session, std::shared_p
 	if (!m_session || !m_clock || !config.ledgerCapacity || !config.maxLookahead || config.maxLookahead > 32 ||
 		config.leaseDuration <= Duration::zero() || config.pollInterval <= Duration::zero())
 		throw std::invalid_argument("Invalid debug controller configuration");
-	m_owned.reserve(m_session->Captures().Snapshot().capacity);
-	m_cursors.reserve(m_session->Captures().Capacity() + 1);
+	m_owned.reserve(std::max(SnapshotBudget::MaxCapacity, m_session->Captures().Capacity()));
+	m_cursors.reserve(std::max(SnapshotBudget::MaxCapacity, m_session->Captures().Capacity()) + 1);
 	if (config.startWorker)
 		m_worker = std::thread([this] { Run(); });
 }
@@ -156,10 +157,13 @@ DebugSubmission DebugController::Submit(DebugLeaseId lease, const DebugRequest& 
 		return {DebugAdmission::LeaseRequired, {}};
 	if (request.id <= m_retiredFloor)
 		return {DebugAdmission::Retired, {}};
-	if (!request.id.value || request.command > DebugCommand::StopImageRecording || !request.lookahead ||
+	if ((request.command == DebugCommand::ConfigureSnapshots &&
+		 (request.snapshotBudgetMiB < SnapshotBudget::MinMiB || request.snapshotBudgetMiB > SnapshotBudget::MaxMiB)) ||
+		!request.id.value || request.command > DebugCommand::ConfigureSnapshots || !request.lookahead ||
 		request.lookahead > m_config.maxLookahead || !request.recordingCapacity || request.recordingCapacity > 4 ||
 		(request.command == DebugCommand::Cancel && !request.operation.value) ||
-		(request.command == DebugCommand::Release && !request.capture.value))
+		((request.command == DebugCommand::Release || request.command == DebugCommand::PinSnapshot ||
+		  request.command == DebugCommand::UnpinSnapshot) && !request.capture.value))
 		return {DebugAdmission::Invalid, {}};
 	if (m_operations.size() >= m_config.ledgerCapacity || m_nextOperation == std::numeric_limits<std::uint64_t>::max())
 		return {DebugAdmission::Capacity, {}};
@@ -516,6 +520,8 @@ void DebugController::Inspect(DebugOperation& operation, const SnapshotRecord& r
 						 : record.phase == SnapshotPhase::Discarded ? DebugProgress::Discarded
 						 : record.phase == SnapshotPhase::Cancelled ? DebugProgress::Cancelled
 																	: DebugProgress::RetentionFailure;
+	if (operation.request.advanceDisplay && operation.request.command == DebugCommand::Step && record.metadata)
+		m_session->Display().Advance(record.metadata->prediction.displayTime);
 	m_cursor = record.frame;
 	m_cursorTarget = record.target;
 	// Raw requests only target future submissions. Once their retained records
@@ -689,6 +695,25 @@ void DebugController::Process(DebugOperation& operation)
 		{
 			operation.phase = DebugPhase::Complete;
 			operation.progress = DebugProgress::Resumed;
+		}
+		return;
+	}
+	if (command == DebugCommand::ConfigureSnapshots)
+	{
+		SnapshotBudget::Configure(operation.request.snapshotBudgetMiB);
+		operation.phase = DebugPhase::Complete;
+		operation.progress = DebugProgress::SnapshotReady;
+		return;
+	}
+	if (command == DebugCommand::PinSnapshot || command == DebugCommand::UnpinSnapshot)
+	{
+		if (!m_session->Captures().SetPinned(operation.request.capture, command == DebugCommand::PinSnapshot))
+			Fail(operation, DebugProgress::RetentionFailure, XR_ERROR_HANDLE_INVALID);
+		else
+		{
+			operation.capture = operation.request.capture;
+			operation.phase = DebugPhase::Complete;
+			operation.progress = DebugProgress::SnapshotReady;
 		}
 		return;
 	}

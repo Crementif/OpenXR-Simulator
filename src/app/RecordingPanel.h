@@ -18,6 +18,10 @@ class RecordingPanel
 	void Poll(bool supported);
 	RecordingSnapshot Snapshot() const;
 	void Stop();
+	void RequestStart()
+	{
+		m_startRequested = true;
+	}
 	std::optional<automation::SavedRecording> Draw(bool supported, bool replayAvailable, bool replayActive = false);
 
   private:
@@ -31,7 +35,7 @@ class RecordingPanel
 	std::optional<automation::SavedRecording> m_selected;
 	std::chrono::steady_clock::time_point m_nextRead{};
 	std::string m_error;
-	bool m_saving = false;
+	bool m_saving = false, m_startRequested = false;
 	std::uint64_t m_offset = 0;
 	std::array<char, 128> m_name{};
 	std::array<char, 2048> m_path{};

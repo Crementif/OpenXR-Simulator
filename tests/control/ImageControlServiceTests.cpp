@@ -1,3 +1,4 @@
+#include "graphics/SnapshotBudget.h"
 #include "FakeImageInspection.h"
 
 #include <array>
@@ -169,7 +170,7 @@ void BoundedImageReadersAndReentry()
 	wire::test::Fixture fixture;
 	Client client(fixture.service);
 	std::vector<std::uint64_t> readers;
-	for (int index = 0; index < 8; ++index)
+	for (std::size_t index = 0; index < simxr::SnapshotBudget::Capacity(); ++index)
 	{
 		const auto capture = index ? fixture.Submit() : fixture.capture;
 		const auto retained = client.Retain(capture);
@@ -180,7 +181,7 @@ void BoundedImageReadersAndReentry()
 		fixture.session->Display().Step();
 	}
 	const auto ninth = fixture.Submit();
-	Require(Error(client.Retain(ninth)) == wire::ErrorCode::Capacity && fixture.state->retains == 8,
+	Require(Error(client.Retain(ninth)) == wire::ErrorCode::Capacity && fixture.state->retains == simxr::SnapshotBudget::Capacity(),
 			"Image reader capacity checked after provider Retain");
 	bool reentered = false;
 	fixture.state->onReaderDestroyed = [&]
@@ -217,7 +218,7 @@ void PublicationFailureRollback()
 	Require(Error(exported) == wire::ErrorCode::Capacity && !exported.message.Find(tag::ExportId) &&
 				fixture.state->exportsDestroyed == 1 && fixture.state->reads == 0,
 			"Failed export publication retained unannounced ticket");
-	for (int index = 0; index < 8; ++index)
+	for (std::size_t index = 0; index < simxr::SnapshotBudget::Capacity(); ++index)
 	{
 		Require(Error(client.Send(client.Share(image))) == wire::ErrorCode::Ok,
 				"Delivery publication failure consumed bounded capacity");
@@ -232,7 +233,7 @@ void BoundedTables()
 	Client client(fixture.service);
 	const auto image = Id(client.Retain(fixture.capture), tag::ImageReaderId);
 	std::vector<std::uint64_t> deliveries, exports;
-	for (int index = 0; index < 8; ++index)
+	for (std::size_t index = 0; index < simxr::SnapshotBudget::Capacity(); ++index)
 	{
 		auto response = client.Send(client.Share(image));
 		Require(Error(response) == wire::ErrorCode::Ok, "Fill bounded delivery table");
@@ -241,10 +242,10 @@ void BoundedTables()
 		Require(Error(exported) == wire::ErrorCode::Ok, "Fill independent export table");
 		exports.push_back(Id(exported, tag::ExportId));
 	}
-	Require(Error(client.Send(client.Share(image))) == wire::ErrorCode::Capacity && fixture.state->shares == 8 &&
+	Require(Error(client.Send(client.Share(image))) == wire::ErrorCode::Capacity && fixture.state->shares == simxr::SnapshotBudget::Capacity() &&
 				Error(client.Call(wire::OpCode::StartExport, {wire::Field::U64(tag::ImageReaderId, image)})) ==
 					wire::ErrorCode::Capacity &&
-				fixture.state->exports == 8,
+				fixture.state->exports == simxr::SnapshotBudget::Capacity(),
 			"Table capacity checked after provider side effects");
 	client.Call(wire::OpCode::ReleaseDelivery, {wire::Field::U64(tag::DeliveryId, deliveries.front())});
 	client.Call(wire::OpCode::ReleaseExport, {wire::Field::U64(tag::ExportId, exports.front())});

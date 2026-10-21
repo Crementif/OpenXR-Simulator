@@ -7,7 +7,7 @@
 
 namespace simxr
 {
-SessionCaptureCoordinator::SessionCaptureCoordinator(FrameHistory& history) : m_history(history), m_store(32, &history)
+SessionCaptureCoordinator::SessionCaptureCoordinator(FrameHistory& history) : m_history(history), m_store(0, &history)
 {
 	m_queued.reserve(m_store.Capacity());
 	m_imageRecording.captures.reserve(4);
@@ -116,6 +116,25 @@ void SessionCaptureCoordinator::Collect() const
 	}
 	if (pool)
 		pool->Collect();
+}
+
+void SessionCaptureCoordinator::ReclaimSnapshots(std::size_t producers)
+{
+	Collect();
+	m_store.Poll();
+	std::optional<FramePool> pool;
+	{
+		std::lock_guard lock(m_mutex);
+		pool = m_pool;
+	}
+	while (m_store.Snapshot().heldSlots >= m_store.Capacity() ||
+		(pool && pool->InUse() + producers > pool->Capacity()))
+	{
+		if (!m_store.EvictOldest())
+			break;
+		if (pool)
+			pool->Collect();
+	}
 }
 
 CaptureReservation SessionCaptureCoordinator::Reserve(CaptureTarget target)

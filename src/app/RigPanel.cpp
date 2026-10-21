@@ -146,7 +146,8 @@ struct RigPanel::Impl
 		if (!launch)
 			return;
 		auto pending = std::move(launch);
-		Start(session.endpoint, session.session, session.generation, std::move(pending->source), std::move(pending->name));
+		Start(session.endpoint, session.session, session.generation, std::move(pending->source),
+			  std::move(pending->name));
 	}
 #endif
 	void Prepare(const LaunchProfile& profile)
@@ -182,21 +183,25 @@ struct RigPanel::Impl
 	{
 		if (!visible)
 			return;
-		if (!ImGui::Begin("Rigs"))
-		{
-			ImGui::End();
-			return;
-		}
+		ImGui::SeparatorText("Scripts");
 #ifdef SIMXR_COMPANION_AUTOMATION
 		const auto current = runtime.Snapshot();
-		ImGui::InputText("Luau script", script.data(), script.size());
-		ImGui::InputScalar("Seed", ImGuiDataType_U64, &seed);
-		ImGui::InputInt("Deadline seconds", &deadlineSeconds);
-		ImGui::InputInt("Memory MiB", &memoryMiB);
+		ImGui::TextUnformatted("Luau script");
+		ImGui::SetNextItemWidth(-1);
+		ImGui::InputText("##Luau script", script.data(), script.size());
+		ImGui::TextUnformatted("Seed");
+		ImGui::SetNextItemWidth(-1);
+		ImGui::InputScalar("##Seed", ImGuiDataType_U64, &seed);
+		ImGui::TextUnformatted("Deadline seconds");
+		ImGui::SetNextItemWidth(-1);
+		ImGui::InputInt("##Deadline seconds", &deadlineSeconds);
+		ImGui::TextUnformatted("Memory MiB");
+		ImGui::SetNextItemWidth(-1);
+		ImGui::InputInt("##Memory MiB", &memoryMiB);
 		const auto state = runner ? runner->Snapshot() : automation::RigSnapshot{};
 		ImGui::BeginDisabled(!current.connected || !current.sessionAvailable || Active(state.phase) ||
 							 launch != nullptr);
-		if (ImGui::Button("Start selected rig"))
+		if (ImGui::Button("Run script"))
 			try
 			{
 				recordingReplay = false;
@@ -209,22 +214,19 @@ struct RigPanel::Impl
 			}
 		ImGui::EndDisabled();
 		ImGui::BeginDisabled(!runner || !Active(state.phase));
-		if (ImGui::Button("Pause rig"))
+		if (ImGui::Button("Pause script"))
 			runner->Pause();
 		ImGui::SameLine();
-		if (ImGui::Button("Step rig binding"))
+		if (ImGui::Button("Step script"))
 			runner->Step();
-		ImGui::SameLine();
-		if (ImGui::Button("Resume rig"))
+		if (ImGui::Button("Resume script"))
 			runner->Resume();
-		if (ImGui::Button("Stop and release rig inputs"))
+		if (ImGui::Button("Stop script"))
 			runner->Cancel();
 		ImGui::EndDisabled();
 		if (launch)
-			ImGui::TextWrapped("Waiting for the explicitly launched process's new endpoint and unique running session; "
-							   "existing connections are excluded.");
-		ImGui::Text("Rig: %s; transactions: %llu; captures: %llu", PhaseName(state.phase),
-					static_cast<unsigned long long>(state.transactions),
+			ImGui::TextUnformatted("Waiting for session");
+		ImGui::Text("%s / %llu / %llu", PhaseName(state.phase), static_cast<unsigned long long>(state.transactions),
 					static_cast<unsigned long long>(state.captures));
 		if (!boundEndpoint.empty())
 			ImGui::TextWrapped("Bound to %s / session %llu / run %llu", boundEndpoint.c_str(),
@@ -232,8 +234,7 @@ struct RigPanel::Impl
 							   static_cast<unsigned long long>(boundGeneration));
 		if (Active(state.phase) && (current.endpoint != boundEndpoint || current.session != boundSession ||
 									current.generation != boundGeneration))
-			ImGui::TextWrapped("The inspector currently selects another connection or session. This rig remains bound "
-							   "to its original run.");
+			ImGui::TextUnformatted("Different session");
 		if (!state.error.empty())
 			ImGui::TextWrapped("%s", state.error.c_str());
 		for (std::size_t index = 0; index < state.checkpoints.size(); ++index)
@@ -245,7 +246,9 @@ struct RigPanel::Impl
 		if (ImGui::CollapsingHeader("Script output"))
 			for (const auto& line : state.output)
 				ImGui::TextUnformatted(line.c_str());
-		ImGui::InputText("Report path", report.data(), report.size());
+		ImGui::TextUnformatted("Report path");
+		ImGui::SetNextItemWidth(-1);
+		ImGui::InputText("##Report path", report.data(), report.size());
 		ImGui::BeginDisabled(!runner);
 		if (ImGui::Button("Save JSON report"))
 			try
@@ -267,8 +270,6 @@ struct RigPanel::Impl
 				error = failure.what();
 			}
 		ImGui::EndDisabled();
-		ImGui::TextWrapped("Rig pause/step controls script binding boundaries. XR frame admission is controlled "
-						   "separately through simxr.pause/step/resume in the script.");
 #else
 		(void)runtime;
 		ImGui::TextWrapped(
@@ -276,7 +277,6 @@ struct RigPanel::Impl
 #endif
 		if (!error.empty())
 			ImGui::TextWrapped("%s", error.c_str());
-		ImGui::End();
 	}
 };
 RigPanel::RigPanel() : m_impl(std::make_unique<Impl>()) {}
@@ -326,7 +326,7 @@ void RigPanel::DrawTransport()
 		return;
 	const auto state = m_impl->runner ? m_impl->runner->Snapshot() : automation::RigSnapshot{};
 	const bool active = IsActive();
-	ImGui::Text("%s: %s", m_impl->recordingReplay ? "Replay" : "Rig",
+	ImGui::Text("%s: %s", m_impl->recordingReplay ? "Replay" : "Script",
 				m_impl->error.empty() ? PhaseName(state.phase) : "Failed");
 	ImGui::SameLine();
 	if (active)

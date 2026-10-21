@@ -77,7 +77,8 @@ enum class OpCode : std::uint16_t
 	StartSequence = 44,
 	ReadSequence = 45,
 	StopSequence = 46,
-	ReleaseSequenceCapture = 47
+	ReleaseSequenceCapture = 47,
+	ReadFrameHistory = 48
 };
 
 enum class ErrorCode : std::uint32_t

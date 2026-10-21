@@ -517,6 +517,7 @@ std::shared_ptr<VulkanExternalImage> VulkanExternalDevice::CreateExportable(cons
 	CheckVulkan(vkAllocateMemory(m_device->binding.device, &allocation, nullptr, &memory),
 				"Allocate dedicated exportable image memory");
 	image->memory = memory;
+	image->allocationSize = descriptor.allocationSize;
 	CheckVulkan(vkBindImageMemory(m_device->binding.device, image->image, image->memory, 0),
 				"Bind exportable image allocation");
 	return std::shared_ptr<VulkanExternalImage>(
@@ -560,6 +561,7 @@ std::shared_ptr<VulkanExternalImage> VulkanExternalDevice::ImportImage(const Vul
 				"Import exact dedicated image FD");
 	imported.Release();
 	image->memory = memory;
+	image->allocationSize = descriptor.allocationSize;
 	CheckVulkan(vkBindImageMemory(m_device->binding.device, image->image, image->memory, 0),
 				"Bind imported image allocation");
 	auto result =

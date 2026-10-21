@@ -50,6 +50,12 @@ class PreviewImages
 
   private:
 	struct Image;
+	struct PendingImage
+	{
+		control::Message message;
+		bool live = false;
+	};
+	std::optional<PendingImage> m_pending;
 	Image* Find(std::uint64_t id) const;
 	PreviewImageSummary Summary(const Image& image) const;
 	UiRenderer& m_renderer;

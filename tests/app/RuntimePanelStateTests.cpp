@@ -2,6 +2,7 @@
 #include "app/DebuggerPanelController.h"
 #include "app/ImageExportTask.h"
 #include "app/InspectionWorkspace.h"
+#include "graphics/SnapshotBudget.h"
 #include "app/Utf8Path.h"
 
 #include <filesystem>
@@ -65,24 +66,27 @@ void ScopedInspectionReaders()
 
 	app::InspectionWorkspace bounded(requests);
 	bounded.SetScope(original);
-	for (std::uint64_t id = 1; id <= 32; ++id)
+	const auto capacity = simxr::SnapshotBudget::Capacity();
+	for (std::uint64_t id = 1; id <= capacity; ++id)
 		Require(bounded.Add(id, id), "Admit bounded catalog entry");
-	Require(!bounded.Add(33, 33) && bounded.Captures().size() == 32, "Capture catalog exceeded its bound");
-	bounded.MarkReleased(3);
-	Require(bounded.Add(33, 33) && bounded.Captures().size() == 32, "Released catalog entry did not make room");
-	bounded.Select(1);
-	bounded.Handle({app::PanelWork::Inspect, 1},
+	Require(bounded.Add(capacity + 1, capacity + 1) && bounded.Captures().size() == capacity &&
+		bounded.Captures().front().id == 2, "Catalog did not evict oldest unselected entry");
+	bounded.MarkReleased(2);
+	Require(bounded.Add(capacity + 2, capacity + 2) && bounded.Captures().size() == capacity, "Released catalog entry did not make room");
+	bounded.Select(3);
+	bounded.Handle({app::PanelWork::Inspect, 3},
 				   Message({wire::Field::U64(tag::InspectionId, 77),
 							wire::Field::Text(tag::Detail, "kept until catalog pressure")}));
 	const auto retainedLocal = bounded.Selected()->local;
 	bounded.SetScope(reconnect);
 	bounded.SelectLocal(retainedLocal);
-	Require(bounded.Captures().size() == 32 && bounded.Selected()->inspection == 77 &&
+	Require(bounded.Captures().size() == capacity && bounded.Selected()->inspection == 77 &&
 				app::panel::Text(bounded.Selected()->document, tag::Detail) == "kept until catalog pressure",
 			"Reconnect prematurely discarded historical capture bytes");
-	for (std::uint64_t id = 101; id <= 132; ++id)
+	Require(bounded.Add(101, 101) && bounded.Select(101), "Select a new-run frame");
+	for (std::uint64_t id = 102; id <= 101 + capacity; ++id)
 		Require(bounded.Add(id, id), "Expired endpoint IDs permanently exhausted the capture catalog");
-	Require(bounded.Captures().size() == 32 && bounded.Captures().front().scope == reconnect &&
+	Require(bounded.Captures().size() == capacity && bounded.Captures().front().scope == reconnect &&
 				bounded.Captures().back().scope == reconnect,
 			"Reconnect catalog recycling exceeded its bound");
 	// Another session in this endpoint can still release its connection-owned
@@ -92,7 +96,7 @@ void ScopedInspectionReaders()
 	bounded.SetScope({reconnect.epoch, 99, 1});
 	bounded.SelectLocal(anotherSessionLocal);
 	bounded.ReleaseSelected();
-	Require(bounded.Selected()->released && bounded.Add(133, 133) && bounded.Captures().size() == 32,
+	Require(bounded.Selected()->released && bounded.Add(133, 133) && bounded.Captures().size() == capacity,
 			"Historical selection from another session remained non-recyclable");
 }
 std::filesystem::path Directory()

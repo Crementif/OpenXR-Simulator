@@ -1,0 +1,64 @@
+#pragma once
+#include "app/PilotBindings.h"
+#include "app/PlayerRig.h"
+#include "app/Window.h"
+#include <imgui.h>
+
+namespace simxr::app
+{
+class ManualInputController;
+enum class PilotTarget
+{
+	Player,
+	Head,
+	Left,
+	Right
+};
+class PilotController
+{
+  public:
+	explicit PilotController(PlayerRig& rig);
+	void Configure(const PilotBindings& keys, const GamepadBindings& gamepad);
+	void Update(Window& window, ManualInputController& input, bool available, bool hovered);
+	void Stop(Window* window, ManualInputController& input, bool discard, bool forceButtons = false);
+	void DrawHelp() const;
+	bool DrawHud(ImVec2 imageMin, ImVec2 imageMax, ManualInputController& input);
+	bool Active() const
+	{
+		return m_captured || m_starting;
+	}
+	bool Locked() const
+	{
+		return m_locked;
+	}
+	PilotTarget Target() const
+	{
+		return m_target;
+	}
+	const std::string& Error() const
+	{
+		return m_error;
+	}
+
+  private:
+	bool Down(PilotAction action) const;
+	bool Pressed(PilotAction action) const;
+	void Submit(ManualInputController& input, const ObservedSetup& observed, bool poseChanged,
+				const std::array<ControllerControls, 2>& controls, bool final = false);
+	PlayerRig& m_rig;
+	PilotBindings m_keys = DefaultPilotBindings();
+	GamepadBindings m_gamepad;
+	std::array<ImGuiKey, static_cast<std::size_t>(PilotAction::Count)> m_resolved{};
+	PilotTarget m_target = PilotTarget::Player;
+	unsigned m_hand = 1, m_handEdits = 0;
+	bool m_poseEngaged = false;
+	bool m_captured = false, m_starting = false, m_locked = false, m_gamepadActive = false;
+	std::uint64_t m_startObservation = 0;
+	std::array<ControllerControls, 2> m_controls{};
+	std::array<bool, 2> m_engaged{};
+	std::array<bool, 4> m_dpad{};
+	PoseSample m_devicePose;
+	std::string m_error;
+	double m_lastInput = 0;
+};
+} // namespace simxr::app

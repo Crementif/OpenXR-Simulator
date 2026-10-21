@@ -23,12 +23,13 @@ constexpr std::array diagnostics{tag::Session, tag::Generation, tag::Offset, tag
 constexpr std::array historicalImage{tag::Session, tag::Generation, tag::FrameId, tag::Target};
 constexpr std::array imageHistory{tag::Session, tag::Generation, tag::Length, tag::Target};
 constexpr std::array beginImageWindow{tag::Session, tag::Generation, tag::Target};
+constexpr std::array frameHistory{tag::Session, tag::Generation, tag::Offset, tag::Length};
 constexpr std::array projectionHistory{tag::Session, tag::Generation, tag::Length};
 constexpr std::array recording{tag::Session, tag::Generation, tag::SourceKind, tag::Offset, tag::Length};
 constexpr std::array common{tag::Session, tag::Generation};
 constexpr std::array hello{tag::ClientName, tag::RequiredCapabilities, tag::OptionalCapabilities};
 constexpr std::array submit{tag::Session,	tag::Generation, tag::Lease,	   tag::CommandId, tag::CommandKind,
-							tag::Lookahead, tag::Target,	 tag::OperationId, tag::CaptureId, tag::Capacity, tag::Length};
+							tag::Lookahead, tag::Target,	 tag::OperationId, tag::CaptureId, tag::Capacity, tag::Length, tag::AdvanceDisplay, tag::SnapshotBudgetMiB};
 constexpr std::array leased{tag::Session, tag::Generation, tag::Lease};
 constexpr std::array operation{tag::Session, tag::Generation, tag::OperationId};
 constexpr std::array acknowledge{tag::Session, tag::Generation, tag::Lease, tag::CommandId};
@@ -55,6 +56,7 @@ constexpr std::array Schemas{RequestSchema{OpCode::Hello, RequestDomain::Connect
 							 RequestSchema{OpCode::Acknowledge, RequestDomain::Debugger, 0, acknowledge},
 							 RequestSchema{OpCode::Capture, RequestDomain::Inspection, 0, capture},
 							 RequestSchema{OpCode::InspectFrame, RequestDomain::Inspection, 0, capture},
+							 RequestSchema{OpCode::ReadFrameHistory, RequestDomain::Inspection, 4, frameHistory},
 							 RequestSchema{OpCode::ReadProjectionHistory, RequestDomain::Inspection, 4, projectionHistory},
 							 RequestSchema{OpCode::BeginImageWindow, RequestDomain::Inspection, 4, beginImageWindow},
 							 RequestSchema{OpCode::ReadImageWindow, RequestDomain::Images, 4, imageWindow},

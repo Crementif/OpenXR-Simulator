@@ -1,3 +1,4 @@
+#include "graphics/SnapshotBudget.h"
 #include "app/PreviewTexture.h"
 #ifdef __linux__
 #include "control/backends/vulkan/VulkanImageConsumer.h"
@@ -67,18 +68,20 @@ struct PreviewTexture::State
 struct PreviewTexture::State::Retirement
 {
 	std::mutex mutex;
-	std::array<bool, 8> reserved{};
-	std::array<std::unique_ptr<State>, 8> preserved;
+	std::array<bool, SnapshotBudget::MaxCapacity> reserved{};
+	std::array<std::unique_ptr<State>, SnapshotBudget::MaxCapacity> preserved;
 	std::size_t Reserve()
 	{
 		std::lock_guard lock(mutex);
+		if (static_cast<std::size_t>(std::count(reserved.begin(), reserved.end(), true)) >= SnapshotBudget::Capacity())
+			throw std::runtime_error("Companion texture snapshot budget exhausted");
 		for (std::size_t index = 0; index < reserved.size(); ++index)
 			if (!reserved[index])
 			{
 				reserved[index] = true;
 				return index;
 			}
-		throw std::runtime_error("Eight companion textures are retained; release an image before importing another");
+		throw std::runtime_error("Companion texture preservation capacity exhausted");
 	}
 	void Release(std::size_t index) noexcept
 	{

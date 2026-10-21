@@ -1,5 +1,6 @@
 #pragma once
 
+#include "graphics/FrameOutput.h"
 #include "graphics/LayerBuilder.h"
 
 #include <array>
@@ -47,6 +48,7 @@ struct CompositionPlan
 	std::uint32_t width = 0;
 	std::uint32_t height = 0;
 	std::vector<CompositionDraw> draws;
+	std::vector<FrameView> views;
 };
 using CompositionExtentResolver = std::function<std::optional<XrExtent2Di>(XrSwapchain)>;
 XrResult PrepareComposition(const FrameLayers& frame, const CompositionTarget& target,

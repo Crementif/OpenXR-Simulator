@@ -78,6 +78,11 @@ void Persistence()
 	Require(LoadSettings(file) == CompanionSettings{}, "Missing config has defaults");
 	CompanionSettings settings;
 	settings.scale = 1.375f;
+	settings.snapshotBudgetMiB = 2048;
+	settings.pilotBindings[static_cast<std::size_t>(PilotAction::Forward)] = {"UpArrow", 2};
+	settings.gamepadBindings.primary[1] = "x";
+	settings.gamepadBindings.gyroHold = "paddle1";
+	settings.gamepadBindings.deadzone = .2f;
 	settings.endpoint = "/tmp/control.9.sock";
 	settings.activeProfile = "A profile";
 	settings.activeLayout = "Wide";

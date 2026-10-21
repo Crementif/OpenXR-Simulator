@@ -1,3 +1,4 @@
+#include "graphics/SnapshotBudget.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
 #include "graphics/backends/vulkan/VulkanBackend.h"
 #include "graphics/backends/vulkan/VulkanInspectionDevice.h"
@@ -648,8 +649,8 @@ class VulkanInspection::State
 {
   public:
 	State(VulkanInspectionDevice device, std::size_t capacity)
-		: m_queue(std::make_shared<VulkanInspectionQueue>(std::move(device))), m_capacity(capacity + 3),
-		  m_admissions(capacity)
+		: m_queue(std::make_shared<VulkanInspectionQueue>(std::move(device))), m_capacity((capacity ? capacity : SnapshotBudget::MaxCapacity) + 3),
+		  m_admissions([capacity] { return capacity ? capacity : SnapshotBudget::Capacity(); })
 	{
 		m_jobs.reserve(m_capacity);
 		m_worker = std::thread(
@@ -800,7 +801,7 @@ class VulkanInspection::State
 	std::thread m_worker;
 };
 
-VulkanInspectionFrame::VulkanInspectionFrame(std::shared_ptr<Resources> resources) : m_resources(std::move(resources))
+VulkanInspectionFrame::VulkanInspectionFrame(std::shared_ptr<Resources> resources, std::span<const FrameView> views) : FrameOutput(views), m_resources(std::move(resources))
 {
 }
 std::shared_ptr<VulkanInspectionFrame> VulkanInspectionFrame::Compose(const CompositionPlan& plan,
@@ -826,7 +827,7 @@ std::shared_ptr<VulkanInspectionFrame> VulkanInspectionFrame::Compose(const Comp
 		return {};
 	auto frame = queue->PrepareComposition(plan, retained);
 	auto resources = Resources::Create(queue, frame->RetainImage(), frame->Reservation(), {}, frame);
-	auto output = std::shared_ptr<VulkanInspectionFrame>(new VulkanInspectionFrame(std::move(resources)));
+	auto output = std::shared_ptr<VulkanInspectionFrame>(new VulkanInspectionFrame(std::move(resources), frame->Views()));
 	queue->SubmitComposition(frame);
 	return output;
 }
@@ -981,7 +982,7 @@ std::shared_ptr<VulkanInspectionFrame> VulkanInspectionTransfer::Output() const
 VulkanInspection::VulkanInspection(const VulkanExternalIdentity& identity, std::size_t capacity,
 								   std::shared_ptr<VulkanInspectionValidation> validation)
 {
-	if (!capacity || capacity > 32)
+	if (capacity > SnapshotBudget::MaxCapacity)
 		throw std::invalid_argument("Invalid inspection capacity");
 	m_state = std::make_unique<State>(VulkanInspectionDevice(identity, std::move(validation)), capacity);
 }
@@ -1016,7 +1017,7 @@ std::unique_ptr<VulkanInspectionTransfer> VulkanInspection::Prepare(std::shared_
 	work->Image()->retired = std::move(retired);
 	auto resources = VulkanInspectionFrame::Resources::Create(m_state->Queue(), work->Image(), source->Reservation(),
 		std::move(completed));
-	auto output = std::shared_ptr<VulkanInspectionFrame>(new VulkanInspectionFrame(std::move(resources)));
+	auto output = std::shared_ptr<VulkanInspectionFrame>(new VulkanInspectionFrame(std::move(resources), source->Views()));
 	auto job =
 		std::make_shared<VulkanInspectionTransfer::State>(std::move(admission), std::move(work), std::move(output));
 	auto transfer = std::unique_ptr<VulkanInspectionTransfer>(new VulkanInspectionTransfer(job));

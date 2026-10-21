@@ -2,6 +2,7 @@
 #include "Math.h"
 #include "control/ControlSchema.h"
 #include "control/SimulationControl.h"
+#include "simulation/BodyModel.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -137,6 +138,66 @@ FrameId NextObservedFrame(const wire::Message& state)
 }
 } // namespace
 
+std::optional<CommandSource> SimulationEditSource(const control::Message& receipt)
+{
+	const auto document = receipt.Find(wire::tag::Document);
+	if (!document)
+		return {};
+	const auto source = FindMember(DecodeNode(document->value), "source");
+	if (!source)
+		return {};
+	return CommandSource{static_cast<CommandSourceKind>(Unsigned(Member(*source, "kind"))),
+						 Unsigned(Member(*source, "id"))};
+}
+std::optional<TrackingSnapshot> ReadInspectionTracking(const control::Message& state)
+{
+	const auto document = state.Find(wire::tag::Document);
+	if (!document)
+		return {};
+	const auto tracking = FindMember(DecodeNode(document->value), "tracking");
+	if (!tracking || Null(*tracking))
+		return {};
+	const auto sample = [](const wire::Message& node)
+	{
+		const auto pose = Member(node, "pose"), position = Member(pose, "position"),
+				   orientation = Member(pose, "orientation");
+		const auto normalized = NormalizedPose(
+			{{Number(Member(orientation, "x")), Number(Member(orientation, "y")), Number(Member(orientation, "z")),
+			  Number(Member(orientation, "w"))},
+			 {Number(Member(position, "x")), Number(Member(position, "y")), Number(Member(position, "z"))}});
+		if (!normalized)
+			throw std::runtime_error("Invalid historical device pose");
+		return PoseSample{*normalized, Unsigned(Member(node, "flags"))};
+	};
+	TrackingSnapshot result;
+	result.head = sample(Member(*tracking, "head"));
+	result.gaze = sample(Member(*tracking, "gaze"));
+	const auto controllers = Elements(Member(*tracking, "controllers")),
+			   trackers = Elements(Member(*tracking, "trackers"));
+	if (controllers.size() != 2 || trackers.size() != 4)
+		throw std::runtime_error("Invalid historical device count");
+	for (std::size_t hand = 0; hand < 2; ++hand)
+		result.controllers[hand] = {sample(Member(controllers[hand], "sample")),
+									Boolean(Member(controllers[hand], "connected"))};
+	for (std::size_t slot = 0; slot < 4; ++slot)
+	{
+		result.trackers[slot].pose = sample(Member(trackers[slot], "sample"));
+		result.trackers[slot].device.connected = Boolean(Member(Member(trackers[slot], "device"), "connected"));
+	}
+	const auto proportions = Member(*tracking, "proportions");
+	result.proportions = {Number(Member(proportions, "height")), Number(Member(proportions, "shoulder_width")),
+						  Number(Member(proportions, "hip_width"))};
+	const auto body = Member(*tracking, "body");
+	const auto joints = Elements(Member(body, "joints"));
+	if (joints.size() != BodyJointCount)
+		throw std::runtime_error("Invalid historical joint count");
+	result.body.active = Boolean(Member(body, "active"));
+	const BodyModel model(result.proportions);
+	std::copy(model.Skeleton().begin(), model.Skeleton().end(), result.body.skeleton.begin());
+	for (std::size_t joint = 0; joint < joints.size(); ++joint)
+		result.body.joints[joint] = sample(Member(joints[joint], "sample"));
+	return result;
+}
 ObservedSetup ReadObservedSetup(const control::Message& state)
 {
 	NextObservedFrame(state);
@@ -191,6 +252,10 @@ ObservedSetup ReadObservedSetup(const control::Message& state)
 	const auto body = Member(config, "body"), gaze = Member(config, "gaze"),
 			   proportions = Member(config, "proportions");
 	values.tracking.body.active = Boolean(Member(body, "active"));
+	const auto bodyRoot = FindMember(body, "root_pose");
+	result.bodyRootAvailable = bodyRoot.has_value();
+	if (bodyRoot && !Null(*bodyRoot))
+		values.tracking.body.rootPose = ReadPose(*bodyRoot);
 	values.tracking.body.confidence = Number(Member(body, "confidence"));
 	values.tracking.body.preset = static_cast<BodyPreset>(Unsigned(Member(body, "preset")));
 	const auto bodyControls = FindMember(body, "controls"), bodyJoints = FindMember(body, "joints");

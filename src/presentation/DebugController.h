@@ -42,7 +42,10 @@ enum class DebugCommand
 	Cancel,
 	Release,
 	StartImageRecording,
-	StopImageRecording
+	StopImageRecording,
+	PinSnapshot,
+	UnpinSnapshot,
+	ConfigureSnapshots
 };
 struct DebugRequest
 {
@@ -56,6 +59,8 @@ struct DebugRequest
 	SessionGeneration generation;
 	std::uint32_t recordingCapacity = 2;
 	std::uint64_t recordingFrames = 0;
+	bool advanceDisplay = false;
+	std::uint32_t snapshotBudgetMiB = 1024;
 	auto operator<=>(const DebugRequest&) const = default;
 };
 enum class DebugAdmission

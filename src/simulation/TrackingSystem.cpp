@@ -35,6 +35,8 @@ TrackingSnapshot TrackingSystem::Evaluate(RuntimeTime time, const TrackingState&
 	TrackingSnapshot snapshot;
 	snapshot.time = time;
 	snapshot.input = state;
+	if (state.body.rootPose)
+		snapshot.input.body.rootPose = Normalize({*state.body.rootPose, ValidPoseFlags}, time).pose;
 	snapshot.input.gaze.yaw = std::remainder(state.gaze.yaw, 2 * std::numbers::pi_v<float>);
 	snapshot.input.gaze.pitch = std::remainder(state.gaze.pitch, 2 * std::numbers::pi_v<float>);
 	snapshot.proportions = body.Proportions();

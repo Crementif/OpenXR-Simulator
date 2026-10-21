@@ -38,6 +38,7 @@ std::shared_ptr<VulkanImage> VulkanImage::Create(std::shared_ptr<VulkanDevice> d
 	vkGetImageMemoryRequirements(result->device->binding.device, result->image, &requirements);
 	VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
 	allocation.allocationSize = requirements.size;
+	result->allocationSize = requirements.size;
 	try
 	{
 		allocation.memoryTypeIndex =

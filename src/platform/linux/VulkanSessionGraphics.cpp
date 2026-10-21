@@ -111,13 +111,13 @@ VulkanSessionGraphics::VulkanSessionGraphics(const VulkanBinding& binding, std::
 							 !vkGetDeviceProcAddr(binding.device, "vkGetSemaphoreFdKHR") ||
 							 !vkGetDeviceProcAddr(binding.device, "vkImportSemaphoreFdKHR")))
 		throw std::invalid_argument("Vulkan sharing extensions were not enabled on the device");
-	m_backend = std::make_unique<VulkanBackend>(binding, 8, sharing, VK_API_VERSION_1_1);
+	m_backend = std::make_unique<VulkanBackend>(binding, 0, sharing, VK_API_VERSION_1_1);
 	if (m_backend->Sharing())
 	{
 		VulkanExternalDevice external(m_backend->Device(), sharing, VK_API_VERSION_1_1);
 		if (validation)
 			m_validation = std::make_shared<VulkanInspectionValidation>();
-		m_inspection = std::make_unique<VulkanInspection>(external.Identity(), 8, m_validation);
+		m_inspection = std::make_unique<VulkanInspection>(external.Identity(), 0, m_validation);
 		m_capabilities = {m_inspection->CanShare(), true};
 	}
 	m_capture = std::make_unique<VulkanLegacyCapture>(m_backend->Device(), m_session, m_files, m_diagnostics);

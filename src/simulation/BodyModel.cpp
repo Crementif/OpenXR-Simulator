@@ -462,7 +462,14 @@ BodySample BodyModel::Evaluate(const PoseSample& inputHead, const BodyControls& 
 	auto forward = Rotate(head.pose.orientation, {0, 0, -1});
 	float yaw = std::atan2(-forward.x, -forward.z);
 	auto orientation = EulerAngles(yaw, 0, 0);
-	const float headHeight = head.pose.position.y;
+	XrPosef root{orientation, {head.pose.position.x, 0, head.pose.position.z}};
+	if (controls.rootPose)
+	{
+		const auto normalized = NormalizedPose(*controls.rootPose);
+		if (!normalized) throw std::invalid_argument("Invalid body root pose");
+		root = *normalized;
+	}
+	const float headHeight = head.pose.position.y - root.position.y;
 	std::array<XrVector3f, 5> defaults{{
 		{0, headHeight * 0.53f, 0.05f}, {0, headHeight * 0.76f, 0.04f},
 		{0, headHeight, 0}, {-m_proportions.hipWidth / 2, 0.08f, 0.02f}, {m_proportions.hipWidth / 2, 0.08f, 0.02f}}};
@@ -528,9 +535,16 @@ BodySample BodyModel::Evaluate(const PoseSample& inputHead, const BodyControls& 
 			position.y = 0;
 		auto& location = sample.joints[Index(name)];
 		location.sampleTime = time;
-		location.pose = Compose({orientation, {head.pose.position.x, 0, head.pose.position.z}}, {{0, 0, 0, 1}, position});
+		location.pose = Compose(root, {{0, 0, 0, 1}, position});
 		if (name == BodyJoint::Head)
+		{
 			location.pose.orientation = head.pose.orientation;
+			if (controls.rootPose)
+			{
+				const auto offset = Rotate(root.orientation, shifts[2]);
+				location.pose.position = {head.pose.position.x + offset.x, head.pose.position.y + offset.y, head.pose.position.z + offset.z};
+			}
+		}
 		location.flags = sample.active ? ValidPoseFlags : 0;
 		if (sample.active && controls.controls[control].tracked)
 			location.flags |= head.flags & (XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT | XR_SPACE_LOCATION_POSITION_TRACKED_BIT);
@@ -542,7 +556,7 @@ BodySample BodyModel::Evaluate(const PoseSample& inputHead, const BodyControls& 
 				auto& q = pose.orientation;
 				float length = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
 				q = {q.x / length, q.y / length, q.z / length, q.w / length};
-				location.pose = Compose({orientation, {head.pose.position.x, 0, head.pose.position.z}}, pose);
+				location.pose = Compose(root, pose);
 			}
 			if (!override->tracked)
 				location.flags &= ValidPoseFlags;

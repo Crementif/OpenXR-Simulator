@@ -1,3 +1,4 @@
+#include "graphics/SnapshotBudget.h"
 #include "../TestSupport.h"
 #include "presentation/SnapshotStore.h"
 
@@ -5,6 +6,7 @@
 #include <atomic>
 #include <future>
 #include <iostream>
+#include <limits>
 
 using namespace simxr;
 
@@ -412,10 +414,79 @@ void TargetProducerOwnership()
 	Require(pool.InUse() == 0, "Released capture retained raw/composed producer budgets");
 }
 
+void EvictionAndPins()
+{
+	SnapshotStore store(3);
+	store.Start({1});
+	const auto pinned = store.Pin(Frame({1}, 1, 0).submitted);
+	Require(store.SetPinned(pinned.id, true), "Pin snapshot");
+	const auto displayed = store.Pin(Frame({1}, 2, 0).submitted);
+	auto reader = store.Read(displayed.id);
+	for (std::uint64_t frame = 3; frame < 203; ++frame)
+	{
+		if (store.Snapshot().heldSlots == store.Capacity())
+			Require(store.EvictOldest(), "Evict oldest unpinned snapshot");
+		Require(store.Pin(Frame({1}, frame, 0).submitted).result == SnapshotAdmission::Accepted,
+			"200 snapshots exhausted retention");
+		Require(store.Read(pinned.id)->pinned && store.Read(displayed.id).has_value(),
+			"Evicted pinned or actively read snapshot");
+	}
+	Require(store.EvictOldest() && !store.EvictOldest(), "Eviction did not protect all remaining readers");
+	reader.reset();
+	Require(store.EvictOldest() && !store.Read(displayed.id), "Released reader still blocks eviction");
+	Require(!store.EvictOldest() && store.SetPinned(pinned.id, false) && store.EvictOldest(),
+		"Unpin did not restore capacity");
+	const auto busy = store.Reserve();
+	Require(!store.EvictOldest(), "Unsubmitted reservation was evicted");
+	store.Release(busy.id);
+	bool destroyed = false;
+	auto output = std::make_shared<Output>();
+	output->store = &store;
+	output->destroyed = &destroyed;
+	output->status = CompletionStatus::Complete;
+	output->id = store.Pin(Frame({1}, 204).submitted, {}, output).id;
+	store.Poll();
+	Require(!store.EvictOldest(), "External image reader was evicted");
+	output.reset();
+	Require(store.EvictOldest() && destroyed, "Eviction did not release through reentrant retirement");
+	FramePool pool(3);
+	auto a = pool.Reserve(), b = pool.Reserve();
+	pool.SetCapacity(1);
+	Require(pool.InUse() == 2 && !pool.Reserve(), "Shrinking lost existing charges");
+	a.reset();
+	Require(!pool.Reserve(), "Full shrunken pool admitted another reader");
+	b.reset();
+	Require(bool(pool.Reserve()), "Retired charges did not restore shrunken capacity");
+}
+
+void SharedBudgetPolicy()
+{
+	SnapshotBudget::Configure(1024);
+	Require(SnapshotBudget::Capacity() == 16, "Default budget does not reserve all four image copies");
+	SnapshotStore store;
+	FramePool pool{SnapshotBudget::Capacity};
+	SnapshotBudget::Configure(256);
+	Require(pool.Capacity() == 4 && store.Capacity() == pool.Capacity(), "Budget owners disagree");
+	auto a = pool.Reserve(), b = pool.Reserve(), c = pool.Reserve();
+	SnapshotBudget::Configure(128);
+	Require(pool.InUse() == 3 && pool.Capacity() == 2 && !pool.Reserve(), "Budget shrink lost outstanding charges");
+	a.reset();
+	b.reset();
+	Require(bool(pool.Reserve()), "Retirement did not make room after budget shrink");
+	SnapshotBudget::Configure(1024);
+	SnapshotBudget::ObserveImageBytes(32 * 1024 * 1024);
+	Require(pool.Capacity() == 8 && store.Capacity() == 8, "Larger native allocations did not reduce every capacity");
+	SnapshotBudget::ObserveImageBytes(1);
+	Require(pool.Capacity() == 8, "Smaller images forgot outstanding larger allocations");
+	SnapshotBudget::ObserveImageBytes(std::numeric_limits<std::uint64_t>::max());
+	Require(pool.Capacity() == 0 && !pool.Reserve(), "Oversized image overflowed the budget calculation");
+}
+
 } // namespace
 
 int main()
 {
+	EvictionAndPins();
 	CaptureHistory();
 	RetentionAndCompletion();
 	PendingRetirementAndReentry();
@@ -425,5 +496,6 @@ int main()
 	DisplayAndProducerReservation();
 	ConcurrentObservation();
 	DestructorReentry();
+	SharedBudgetPolicy();
 	std::cout << "Snapshot ownership and reservation tests passed\n";
 }

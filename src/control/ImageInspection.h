@@ -39,6 +39,7 @@ struct ImageDescription
 	bool dedicated = false;
 	std::uint32_t producerQueueFamily = 0, layout = 0;
 	std::uint32_t handleKind = 0;
+	std::vector<FrameView> views;
 };
 Field EncodeImageDescription(const ImageDescription& description, bool external = false);
 ImageDescription DecodeImageDescription(const Field& field);

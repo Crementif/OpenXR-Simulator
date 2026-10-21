@@ -1,3 +1,4 @@
+#include "graphics/SnapshotBudget.h"
 #include "control/backends/vulkan/VulkanImageConsumer.h"
 #include "graphics/FramePool.h"
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
@@ -18,7 +19,7 @@ namespace
 {
 FramePool& ConsumerBudget()
 {
-	static FramePool budget{8};
+	static FramePool budget{SnapshotBudget::Capacity};
 	return budget;
 }
 bool Rejected(VkResult result)
@@ -61,7 +62,7 @@ VulkanExternalImageDescriptor NativeDescription(const ImageDescription& value)
 } // namespace
 struct VulkanImageConsumer::State
 {
-	VulkanNativePreservation<State, 8>::Reservation preservation{"Eight native consumer owners are retained"};
+	VulkanNativePreservation<State, SnapshotBudget::MaxCapacity>::Reservation preservation{"Native consumer preservation budget exhausted"};
 	std::shared_ptr<FrameReservation> slot;
 	std::shared_ptr<VulkanDevice> device;
 	VulkanExternalDevice external;
@@ -83,7 +84,7 @@ struct VulkanImageConsumer::State
 		: slot(ConsumerBudget().Reserve()), device(std::move(owner)), external(device, extensions, api)
 	{
 		if (!slot || !ConsumerBudget().Consume(slot))
-			throw VulkanError(VK_ERROR_OUT_OF_POOL_MEMORY, "Eight native consumer images are already retained");
+			throw VulkanError(VK_ERROR_OUT_OF_POOL_MEMORY, "Native consumer snapshot budget exhausted");
 		completion = external.CreateExportableFence();
 		VkFenceCreateInfo create{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
 		CheckVulkan(vkCreateFence(device->binding.device, &create, nullptr, &retirement), "create consumer retirement");
@@ -207,6 +208,9 @@ void VulkanImageConsumer::Import(const ImageDescription& description,
 	if (m_state->image || m_state->submitted || handles.size() != 2 || description.identity != Identity())
 		throw std::invalid_argument("Image import requires one compatible delivery and two native handles");
 	const auto native = NativeDescription(description);
+	SnapshotBudget::ObserveImageBytes(description.allocationSize);
+	if (ConsumerBudget().InUse() > ConsumerBudget().Capacity())
+		throw VulkanError(VK_ERROR_OUT_OF_POOL_MEMORY, "Snapshot image exceeds current retention capacity");
 	// TransferHandle has shared ownership. Duplicate into independent native RAII
 	// before a Vulkan helper consumes its own successful import ownership.
 	const auto duplicate = [](const std::shared_ptr<TransferHandle>& handle)

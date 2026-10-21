@@ -57,7 +57,7 @@ inline constexpr std::uint16_t Error = 1, Detail = 2, Session = 3, Generation = 
 							   Scenario = 155, Seed = 156, Overflow = 158, Recording = 159, Ownership = 160,
 							   Transactions = 161, Revision = 162, AppliedFrame = 163, AppliedTime = 164,
 							   Rescheduled = 165, GameId = 166, GameKind = 167, ImageRecording = 168, TotalFrames = 169,
-							   ImageWindowId = 180, ProgramId = 181, SequenceId = 182, Loop = 183;
+							   ImageWindowId = 180, ProgramId = 181, SequenceId = 182, Loop = 183, ImageViews = 184, Pinned = 185, AdvanceDisplay = 186, SnapshotBudgetMiB = 187, SnapshotImageBytes = 188, Frames = 189;
 }
 
 enum class Capability : std::uint64_t
@@ -84,7 +84,9 @@ enum class Capability : std::uint64_t
 	ImageHistory = 1ULL << 19,
 	ImageWindow = 1ULL << 20,
 	QuadImageHistory = 1ULL << 21,
-	PoseSequences = 1ULL << 22
+	PoseSequences = 1ULL << 22,
+	SnapshotPins = 1ULL << 23,
+	FrameHistory = 1ULL << 24
 };
 
 // Wire values are explicit and independent of the core's enum representation.
@@ -98,7 +100,10 @@ enum class CommandKind : std::uint32_t
 	Cancel = 6,
 	Release = 7,
 	StartImageRecording = 8,
-	StopImageRecording = 9
+	StopImageRecording = 9,
+	PinSnapshot = 10,
+	UnpinSnapshot = 11,
+	ConfigureSnapshots = 12
 };
 enum class TargetKind : std::uint32_t
 {

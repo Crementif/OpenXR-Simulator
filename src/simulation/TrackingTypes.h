@@ -168,6 +168,7 @@ struct BodyControls
 	bool active = true;
 	float confidence = 1;
 	BodyPreset preset = BodyPreset::Standing;
+	std::optional<XrPosef> rootPose;
 	std::array<BodyControlOverride, static_cast<std::size_t>(BodyControl::Count)> controls;
 	std::array<std::optional<BodyJointOverride>, BodyJointCount> joints;
 };

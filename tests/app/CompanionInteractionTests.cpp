@@ -1,11 +1,16 @@
 #include "../TestSupport.h"
+#include "Math.h"
 #include "app/DeviceControlPanel.h"
 #include "app/ManualInputController.h"
 #include "app/ProcessSupervisor.h"
 #include "app/RecordingController.h"
 #include "app/RuntimeConnection.h"
 #include "app/RuntimePanels.h"
+#include "app/HistoryStore.h"
+#include "app/TimelineCanvas.h"
+#include <functional>
 #include "app/SimulationEdits.h"
+#include "app/SpatialMath.h"
 #include "app/UiRenderer.h"
 #include "app/Window.h"
 #include "app/WorkspacePanels.h"
@@ -19,16 +24,34 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <iostream>
-#include <fstream>
 #include <sstream>
 
 namespace
 {
 using namespace simxr::app;
 
+ImGuiWindow* FindPanel(const char* name)
+{
+	if (auto* exact = ImGui::FindWindowByName(name))
+		return exact;
+	std::string leaf = name;
+	if (leaf == "Device controls" || leaf == "Recording" || leaf == "Rigs" || leaf == "Historical state" ||
+		leaf == "Action and binding inspector" || leaf == "Captures" || leaf == "Frame controls")
+		leaf = "Inspector";
+	if (leaf == "##Workspace toolbar")
+		leaf = "Top bar";
+	if (leaf == "##Frame timeline")
+		leaf = "Timeline";
+	const std::string pattern = "/" + leaf + "_";
+	for (auto* window : ImGui::GetCurrentContext()->Windows)
+		if (std::string_view(window->Name).find(pattern) != std::string_view::npos)
+			return window;
+	return nullptr;
+}
 class Interaction
 {
   public:
@@ -41,6 +64,7 @@ class Interaction
 	ImVec2 buttonCenter;
 	ImVec2 inputCenter;
 	char input[32]{};
+	std::function<void()> extraDraw;
 	unsigned clicks = 0;
 	bool live = false;
 	Interaction(bool launch = false) : workspace(processes, launch, ""), live(launch) {}
@@ -55,13 +79,15 @@ class Interaction
 			},
 			"UI frame admission stalled");
 		if (live)
+		{
+			if (window.TakeFocusLost())
+				runtime.FocusLost();
 			runtime.Poll();
+		}
 		workspace.BeginFrame(runtime);
 		if (live)
 		{
-			workspace.DrawDockspace();
 			workspace.Draw(runtime);
-			runtime.Draw(workspace.Mode());
 			Require(renderer.Render(runtime.ReadyWaits()), "Live launch UI frame was not rendered");
 			runtime.Submitted(renderer.SubmittedFrames());
 			return;
@@ -81,6 +107,7 @@ class Interaction
 		const auto inputMinimum = ImGui::GetItemRectMin();
 		inputCenter = {inputMinimum.x + 10, inputMinimum.y + 10};
 		ImGui::End();
+		if (extraDraw) extraDraw();
 		Require(renderer.Render(runtime.ReadyWaits()), "Admitted UI frame was not rendered");
 		runtime.Submitted(renderer.SubmittedFrames());
 	}
@@ -106,20 +133,11 @@ class Interaction
 		Frame();
 		Frame();
 	}
-	void SelectWorkspace(simxr::app::WorkspaceMode mode)
+	void SelectWorkspace(Selection selection)
 	{
-		const auto* toolbar = ImGui::FindWindowByName("##Workspace toolbar");
-		Require(toolbar != nullptr, "Workspace toolbar is missing");
-		float x = toolbar->Pos.x + ImGui::GetStyle().WindowPadding.x;
-		const char* labels[] = {"Simulate", "Inspect", "Record & replay"};
-		for (int index = 0; index < static_cast<int>(mode); ++index)
-			x += ImGui::CalcTextSize(labels[index]).x + ImGui::GetStyle().FramePadding.x * 2 +
-				 ImGui::GetStyle().ItemSpacing.x;
-		Click({x + 10, toolbar->Pos.y + ImGui::GetStyle().WindowPadding.y + ImGui::GetFrameHeight() / 2});
-		Require(workspace.Mode() == mode, "Toolbar click did not switch workspace");
-		const auto* rigs = ImGui::FindWindowByName("Rigs");
-		Require((rigs && rigs->Active) == (mode == simxr::app::WorkspaceMode::Automation),
-				"Rigs visibility does not follow the selected workspace");
+		workspace.Select(std::move(selection));
+		Frame();
+		Require(FindPanel("Inspector") != nullptr, "Inspector is missing");
 	}
 	void CheckFocusLoss()
 	{
@@ -133,17 +151,13 @@ class Interaction
 	}
 	void CheckControls()
 	{
-		auto* rigs = ImGui::FindWindowByName("Rigs");
-		Require(rigs && !rigs->Collapsed, "Rigs must initially be expanded");
-		const ImVec2 collapse{rigs->Pos.x + ImGui::GetStyle().FramePadding.x + ImGui::GetFontSize() / 2,
-							  rigs->Pos.y + rigs->TitleBarHeight / 2};
-		Click(collapse);
-		Require(rigs->Collapsed, "SDL click did not collapse Rigs");
+		workspace.Select(DeviceSel{});
+		Frame();
 		const auto before = clicks;
 		Click(buttonCenter);
-		Require(clicks == before + 1, "Other controls stopped responding with Rigs collapsed");
-		Click(collapse);
-		Require(!rigs->Collapsed, "SDL click did not reopen Rigs");
+		Require(clicks == before + 1, "Other controls stopped responding after selection");
+		workspace.Select(LibrarySel{});
+		Frame();
 		Click(inputCenter);
 		const auto length = std::char_traits<char>::length(input);
 		SDL_Event text{};
@@ -156,79 +170,110 @@ class Interaction
 		Require(std::char_traits<char>::length(input) == length + 1, "Text input stopped responding");
 	}
 };
-void CheckDocking()
+void CheckTimelineCanvas(Interaction& test)
+{
+	HistoryStore history;
+	for (std::uint64_t frame = 1; frame <= 54000; ++frame)
+		history.Append({{1, 1, frame}, 1, 0, double(frame) / 90, 11.11f, frame == 200 ? HistoryDropped : 0U});
+	HistoryStore emptyHistory;
+	bool populated = true;
+	double canvasSeconds = 0;
+	TimelineCanvas canvas;
+	canvas.Fit();
+	TimelineGesture selected;
+	ImVec2 point;
+	test.extraDraw = [&]
+	{
+		ImGui::SetNextWindowPos({30, 170}, ImGuiCond_Always);
+		ImGui::SetNextWindowSize({740, 240}, ImGuiCond_Always);
+		ImGui::Begin("Timeline interaction");
+		const auto top = ImGui::GetCursorScreenPos();
+		const auto available = ImGui::GetContentRegionAvail();
+		const float labels = std::min(available.x * .25f, ImGui::GetFontSize() * 6);
+		point = {top.x + labels + (available.x - labels) * .5f, top.y + 10};
+		const auto drawStarted = std::chrono::steady_clock::now();
+		const auto gesture = canvas.Draw(populated ? history : emptyHistory, false);
+		canvasSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - drawStarted).count();
+		if (gesture.first || gesture.marker)
+			selected = gesture;
+		ImGui::End();
+	};
+	for (int i = 0; i < 3; ++i)
+		test.Frame();
+	test.Click(point);
+	Require(selected.first && !selected.last && *selected.first > 26000 && *selected.first < 28000,
+			"Canvas click did not hit-test ten-minute history");
+	SDL_Event key{};
+	key.type = SDL_EVENT_KEY_DOWN;
+	key.key.windowID = SDL_GetWindowID(test.window.Native());
+	key.key.key = SDLK_M;
+	key.key.scancode = SDL_SCANCODE_M;
+	key.key.down = true;
+	SDL_PushEvent(&key);
+	test.Frame();
+	key.type = SDL_EVENT_KEY_UP;
+	key.key.down = false;
+	SDL_PushEvent(&key);
+	test.Frame();
+	Require(selected.marker.has_value(), "M did not mark the hovered timeline frame");
+	populated = false;
+	const auto baselineStarted = std::chrono::steady_clock::now();
+	for (int i = 0; i < 60; ++i)
+		test.Frame();
+	const double baseline = std::chrono::duration<double>(std::chrono::steady_clock::now() - baselineStarted).count();
+	populated = true;
+	canvasSeconds = 0;
+	const auto started = std::chrono::steady_clock::now();
+	for (int i = 0; i < 120; ++i)
+		test.Frame();
+	const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+	std::cout << "PASS native canvas hit-testing and marker; 54000 records, " << 120 / elapsed << " UI frames/s; empty "
+			  << 60 / baseline << "; canvas CPU " << canvasSeconds * 1000 / 120 << " ms/frame\n";
+	test.extraDraw = {};
+	test.Frame();
+}
+
+void CheckShell()
 {
 	Interaction test;
-	const auto draw = [&]
-	{
-		Eventually(
-			[&]
-			{
-				return test.window.PollEvents() && test.renderer.BeginFrame();
-			},
-			"Docking UI stalled");
-		test.workspace.BeginFrame(test.runtime);
-		test.workspace.DrawDockspace();
-		test.workspace.Draw(test.runtime);
-		test.runtime.Draw(test.workspace.Mode());
-		Require(test.renderer.Render(), "Docking frame did not render");
-	};
 	for (int i = 0; i < 4; ++i)
-		draw();
-	const auto previewDock = ImGui::FindWindowByName("GPU preview")->DockId;
-	const auto toolsDock = ImGui::FindWindowByName("Device controls")->DockId;
-	Require(previewDock && toolsDock && previewDock != toolsDock, "Default tools should be beside the preview");
-	test.workspace.SetMode(WorkspaceMode::Automation);
-	for (int i = 0; i < 4; ++i)
-		draw();
-	Require(ImGui::FindWindowByName("Recording")->DockId == toolsDock, "Recording has no predictable dock");
-	ImGui::DockBuilderDockWindow("Recording", previewDock);
-	for (int i = 0; i < 3; ++i)
-		draw();
-	for (const auto mode : {WorkspaceMode::Simulator, WorkspaceMode::Debug, WorkspaceMode::Automation})
+		test.Frame();
+	const auto preview = FindPanel("GPU preview");
+	const auto inspector = FindPanel("Inspector");
+	Require(preview && inspector && !preview->DockId && !inspector->DockId, "Shell still uses docks");
+	Require(preview->Pos.x + preview->Size.x <= inspector->Pos.x + 1, "Inspector overlaps the wide preview");
+	for (int index = 0; index < 9; ++index)
 	{
-		test.workspace.SetMode(mode);
-		for (int i = 0; i < 4; ++i)
-			draw();
+		auto* rail = FindPanel("Device rail");
+		Require(rail != nullptr, "Rail missing");
+		test.Click({rail->Pos.x + 12, rail->Pos.y + ImGui::GetStyle().WindowPadding.y +
+										  index * (28 + ImGui::GetStyle().ItemSpacing.y) + 10});
+		const auto& selection = test.workspace.State().selection;
+		if (index < 7)
+			Require(std::holds_alternative<DeviceSel>(selection) &&
+						static_cast<int>(std::get<DeviceSel>(selection).page) == index,
+					("Rail device selection failed at " + std::to_string(index)).c_str());
+		else
+			Require(std::holds_alternative<SessionItemSel>(selection), "Session selection failed");
 	}
-	Require(ImGui::FindWindowByName("Recording")->DockId == previewDock,
-			"Tool switching undocked a user-positioned recording panel");
-	test.workspace.SetMode(WorkspaceMode::Simulator);
-	for (int i = 0; i < 3; ++i)
-		draw();
-	// Exercise the actual toolbar toggle, including keeping the old dockspace alive.
-	const auto toggle = [&]
-	{
-		const auto toolbar = ImGui::FindWindowByName("##Workspace toolbar");
-		float x = toolbar->Pos.x + ImGui::GetStyle().WindowPadding.x;
-		for (const auto label : {"Simulator", "Inspect frames", "Record & replay"})
-			x += ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2 + ImGui::GetStyle().ItemSpacing.x;
-		auto& io = ImGui::GetIO();
-		io.AddMousePosEvent(x + 5, toolbar->Pos.y + ImGui::GetStyle().WindowPadding.y + 5);
-		draw();
-		io.AddMouseButtonEvent(0, true);
-		draw();
-		io.AddMouseButtonEvent(0, false);
-		draw();
-		for (int i = 0; i < 3; ++i)
-			draw();
-	};
-	toggle();
-	const auto expanded = ImGui::FindWindowByName("GPU preview");
-	Require(expanded->DockId == 0 && expanded->Size.x >= ImGui::GetMainViewport()->WorkSize.x - 1,
-			"Expand view did not fill the workspace");
-	toggle();
-	Require(ImGui::FindWindowByName("GPU preview")->DockId == previewDock, "Showing tools lost the preview dock");
+	const auto width = preview->Size.x;
+	test.workspace.SetPreviewExpanded(true);
+	test.Frame();
+	test.Frame();
+	Require(FindPanel("GPU preview")->Size.x > width, "Full preview did not expand");
+	test.workspace.SetPreviewExpanded(false);
+	test.Frame();
+	test.Frame();
+	Require(std::abs(FindPanel("GPU preview")->Size.x - width) < 1, "Preview restore changed layout");
 	test.renderer.WaitIdle();
-	Require(test.validation->errors.load() == 0, "Docking generated validation errors");
-	std::cout << "PASS user docking survives tool switches; expand/restore preserves layout\n";
+	Require(test.validation->errors.load() == 0, "Shell generated validation errors");
 }
 // Opt-in walkthrough against a separately launched application, never the user's session.
 void PilotLiveRuntime(const char* endpoint)
 {
 	Interaction test;
 	test.runtime.ConnectEndpoint(endpoint);
-	test.workspace.SetMode(WorkspaceMode::Simulator);
+	test.workspace.Select(DeviceSel{});
 	const auto frame = [&]
 	{
 		Eventually(
@@ -238,12 +283,10 @@ void PilotLiveRuntime(const char* endpoint)
 			},
 			"Pilot UI stalled");
 		if (test.window.TakeFocusLost())
-			test.runtime.ReleaseInputs();
+			test.runtime.FocusLost();
 		test.runtime.Poll();
 		test.workspace.BeginFrame(test.runtime);
-		test.workspace.DrawDockspace();
 		test.workspace.Draw(test.runtime);
-		test.runtime.Draw(test.workspace.Mode());
 		Require(test.renderer.Render(test.runtime.ReadyWaits()), "Pilot UI frame was not rendered");
 		test.runtime.Submitted(test.renderer.SubmittedFrames());
 	};
@@ -256,14 +299,14 @@ void PilotLiveRuntime(const char* endpoint)
 		"Application did not supply a live preview");
 	const auto activate = [&](const char* window, const char* label)
 	{
-		auto* target = ImGui::FindWindowByName(window);
+		auto* target = FindPanel(window);
 		Require(target != nullptr, "Control window is missing");
 		ImGui::SetWindowFocus(target->Name);
 		ImGui::ActivateItemByID(target->GetID(label));
 		frame();
 	};
 	Require(std::getenv("SIMXR_COMPANION_SETTINGS"), "Isolated recording checks need a dedicated settings path");
-	test.workspace.SetMode(WorkspaceMode::Automation);
+	test.workspace.Select(LibrarySel{});
 	for (int i = 0; i < 4; ++i)
 		frame();
 	Eventually(
@@ -276,7 +319,7 @@ void PilotLiveRuntime(const char* endpoint)
 	activate("Recording", "Start recording");
 	const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
 	if (!popups.empty() && popups.back().Window &&
-		popups.back().PopupId == ImGui::FindWindowByName("Recording")->GetID("Replace unsaved take?"))
+		popups.back().PopupId == FindPanel("Recording")->GetID("Replace unsaved take?"))
 	{
 		ImGui::ActivateItemByID(popups.back().Window->GetID("Start new take"));
 		frame();
@@ -288,7 +331,7 @@ void PilotLiveRuntime(const char* endpoint)
 			return test.runtime.Snapshot().recording;
 		},
 		"Recording did not start through the panel");
-	test.workspace.SetMode(WorkspaceMode::Simulator);
+	test.workspace.Select(DeviceSel{});
 	for (int i = 0; i < 4; ++i)
 		frame();
 
@@ -325,7 +368,7 @@ void PilotLiveRuntime(const char* endpoint)
 		return *pose;
 	};
 	const auto before = observe();
-	auto* preview = ImGui::FindWindowByName("GPU preview");
+	auto* preview = FindPanel("GPU preview");
 	ImVec2 center = preview->InnerRect.GetCenter();
 	for (auto* child : preview->DC.ChildWindows)
 		if (std::strstr(child->Name, "Image area"))
@@ -395,8 +438,7 @@ void PilotLiveRuntime(const char* endpoint)
 		frame();
 		frame();
 	}
-	auto* devices = ImGui::FindWindowByName("Device controls");
-	auto* tabs = ImGui::GetCurrentContext()->TabBars.GetByKey(devices->GetID("Devices"));
+	auto* rail = FindPanel("Device rail");
 	const auto click = [&](ImVec2 point, Uint8 button, bool down)
 	{
 		SDL_Event pointer{};
@@ -414,8 +456,7 @@ void PilotLiveRuntime(const char* endpoint)
 		SDL_PushEvent(&pointer);
 		frame();
 	};
-	const ImVec2 handTab{tabs->BarRect.Min.x + tabs->Tabs[1].Offset + tabs->Tabs[1].Width / 2,
-						 tabs->BarRect.GetCenter().y};
+	const ImVec2 handTab{rail->Pos.x + 12, rail->Pos.y + 2 * (28 + ImGui::GetStyle().ItemSpacing.y) + 10};
 	click(handTab, SDL_BUTTON_LEFT, true);
 	click(handTab, SDL_BUTTON_LEFT, false);
 	const auto handBefore = observe(simxr::ControlChannel::LeftPose);
@@ -508,7 +549,7 @@ void PilotLiveRuntime(const char* endpoint)
 		},
 		"Stop recording failed outside the recording workspace");
 	Require(test.runtime.Snapshot().recordedChanges > 0, "Real piloting produced no recorded input");
-	test.workspace.SetMode(WorkspaceMode::Automation);
+	test.workspace.Select(LibrarySel{});
 	for (int i = 0; i < 4; ++i)
 		frame();
 	Eventually(
@@ -550,7 +591,7 @@ void PilotLiveRuntime(const char* endpoint)
 			return test.runtime.Snapshot().manual;
 		},
 		"Saved take did not enter replay");
-	test.workspace.SetMode(WorkspaceMode::Simulator);
+	test.workspace.Select(DeviceSel{});
 	for (int i = 0; i < 3; ++i)
 		frame();
 	activate("##Workspace toolbar", "Cancel replay");
@@ -564,7 +605,7 @@ void PilotLiveRuntime(const char* endpoint)
 	std::cout << "PASS Cemu record while piloting, global stop, save, independent reopen, replay and global cancel\n";
 
 	// Exercise the inspection context on the same isolated real application.
-	test.workspace.SetMode(WorkspaceMode::Debug);
+	test.workspace.Select(FrameSel{});
 	activate("##Frame timeline", "Pause");
 	Eventually(
 		[&]
@@ -662,7 +703,8 @@ void PilotLiveRuntime(const char* endpoint)
 void ConfigureObservedDevices()
 {
 	Interaction test;
-	DeviceControlPanel panel;
+	PlayerRig rig;
+	DeviceControlPanel panel{rig};
 	simxr::CommandConfiguration initial;
 	initial.views.ipd = 0.073f;
 	initial.views.outerWidth = 1760;
@@ -680,6 +722,7 @@ void ConfigureObservedDevices()
 		panel.ObserveState(state);
 	};
 	observe(1);
+	Selection selection = SessionItemSel{SessionItem::Headset};
 	std::optional<SimulationEdit> edit;
 	const auto frame = [&]
 	{
@@ -688,96 +731,81 @@ void ConfigureObservedDevices()
 			{
 				return test.window.PollEvents() && test.renderer.BeginFrame();
 			},
-			"Configuration UI stalled");
+			"Live field UI stalled");
 		ImGui::SetNextWindowPos({20, 20}, ImGuiCond_Always);
 		ImGui::SetNextWindowSize({400, 650}, ImGuiCond_Always);
 		ImGui::Begin("Configuration workflow");
-		edit = panel.Draw(true);
+		edit = panel.Draw(true, &selection);
 		ImGui::End();
-		Require(test.renderer.Render(), "Configuration frame did not render");
+		Require(test.renderer.Render(), "Live field frame did not render");
 	};
 	for (int i = 0; i < 3; ++i)
 		frame();
-	auto* window = ImGui::FindWindowByName("Configuration workflow");
-	auto* tabs = ImGui::GetCurrentContext()->TabBars.GetByKey(window->GetID("Devices"));
-	Require(tabs && tabs->Tabs.Size == 4, "Configuration tab missing");
-	ImGui::TabBarQueueFocus(tabs, &tabs->Tabs[3]);
-	frame();
-	frame();
-	const auto details = [&]() -> ImGuiWindow*
-	{
-		for (auto* child : window->DC.ChildWindows)
-			if (std::strstr(child->Name, "Configuration details"))
-				return child;
-		throw std::runtime_error("Setup detail panel is missing");
-	};
+	auto* window = FindPanel("Configuration workflow");
 	const auto activate = [&](const char* label)
 	{
-		ImGui::ActivateItemByID(details()->GetID(label));
+		ImGui::SetWindowFocus(window->Name);
+		ImGui::ActivateItemByID(window->GetID(label));
 		frame();
 		Require(edit && std::holds_alternative<ManualTransaction>(*edit),
-				(std::string("Configuration action did not issue an edit: ") + label).c_str());
+				(std::string("Live field did not submit: ") + label).c_str());
 		return std::get<ManualTransaction>(*edit);
 	};
-	auto transaction = activate("Apply view settings");
-	const auto views = std::get<simxr::SetViewSettings>(transaction.commands.back()).value;
-	Require(views.ipd == 0.073f && views.outerWidth == 1760,
-			"Applying the view panel overwrote observed configuration with defaults");
-	const auto selectSection = [&](int index)
+	const auto typeValue = [&](const char* label, const char* value)
 	{
-		ImGui::ActivateItemByID(ImHashStr("##Setup section", 0, tabs->Tabs[3].ID));
+		ImGui::SetWindowFocus(window->Name);
+		ImGui::ActivateItemByID(window->GetID(label));
+		ImGui::GetCurrentContext()->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
 		frame();
+		auto& io = ImGui::GetIO();
+		io.AddKeyEvent(ImGuiMod_Ctrl, true);
+		io.AddKeyEvent(ImGuiKey_A, true);
 		frame();
-		auto* popup = ImGui::FindWindowByName("##Combo_00");
-		Require(popup && popup->Active, "Setup categories are not browsable");
-		const ImVec2 point{popup->WorkRect.Min.x + 30, popup->WorkRect.Min.y + ImGui::GetTextLineHeight() / 2 +
-														   index * ImGui::GetTextLineHeightWithSpacing()};
-		SDL_Event event{};
-		event.type = SDL_EVENT_MOUSE_MOTION;
-		event.motion.windowID = SDL_GetWindowID(test.window.Native());
-		event.motion.x = point.x;
-		event.motion.y = point.y;
-		SDL_PushEvent(&event);
+		io.AddKeyEvent(ImGuiKey_A, false);
+		io.AddKeyEvent(ImGuiMod_Ctrl, false);
 		frame();
-		event = {};
-		event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
-		event.button.windowID = SDL_GetWindowID(test.window.Native());
-		event.button.button = SDL_BUTTON_LEFT;
-		event.button.down = true;
-		SDL_PushEvent(&event);
+		io.AddInputCharactersUTF8(value);
 		frame();
-		event.type = SDL_EVENT_MOUSE_BUTTON_UP;
-		event.button.down = false;
-		SDL_PushEvent(&event);
+		const auto changed = edit;
+		io.AddKeyEvent(ImGuiKey_Enter, true);
 		frame();
+		io.AddKeyEvent(ImGuiKey_Enter, false);
 		frame();
-		if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
-		{
-			std::filesystem::create_directories(directory);
-			test.renderer.RequestScreenshot(
-				(std::filesystem::path(directory) / ("configuration-section-" + std::to_string(index) + ".bmp"))
-					.string());
-			frame();
-			frame();
-		}
+		Require(changed && std::holds_alternative<ManualTransaction>(*changed), "Typing did not submit a live value");
+		return std::get<ManualTransaction>(*changed);
 	};
-	selectSection(1);
-	transaction = activate("Apply body pose");
+	auto transaction = typeValue("##IPD", "0.075");
+	const auto views = std::get<simxr::SetViewSettings>(transaction.commands.back()).value;
+	Require(std::abs(views.ipd - .075f) < .0001f && views.outerWidth == 1760,
+			"Live view edit overwrote unrelated observed configuration");
+	panel.ObserveDelivery(false, "Owned by script");
+	frame();
+	bool rejectedBorder = false;
+	for (const auto& vertex : window->DrawList->VtxBuffer)
+		rejectedBorder |= vertex.col == IM_COL32(229, 72, 77, 255);
+	Require(rejectedBorder, "Rejected field has no red feedback");
+	transaction = typeValue("##Inset half angle", "12");
+	Require(std::abs(std::get<simxr::SetViewSettings>(transaction.commands.back()).value.ipd - initial.views.ipd) <
+				.0001f,
+			"Rejected field did not revert to the observed value");
+	selection = DeviceSel{DevicePage::Body};
+	frame();
+	transaction = activate("Body active");
 	Require(std::get<simxr::SetBodyControls>(transaction.commands.back()).value.preset == simxr::BodyPreset::Seated,
-			"Body UI lost the observed preset");
-	selectSection(2);
-	transaction = activate("Apply gaze");
-	Require(std::get<simxr::SetGaze>(transaction.commands.back()).value.yaw == 0.25f,
-			"Gaze UI started from a default instead of observed values");
-	selectSection(3);
-	transaction = activate("Apply tracker");
-	Require(std::get<simxr::SetTracker>(transaction.commands.back()).value.identity.value ==
-				initial.tracking.trackers[0].identity.value,
-			"Tracker UI changed device identity");
-	selectSection(4);
+			"Live body edit lost observed preset");
+	selection = DeviceSel{DevicePage::Gaze};
+	frame();
+	transaction = activate("Gaze tracked");
+	Require(std::get<simxr::SetGaze>(transaction.commands.back()).value.yaw == .25f, "Live gaze edit lost direction");
+	selection = DeviceSel{DevicePage::Trackers};
+	frame();
+	transaction = activate("Tracker tracked");
+	Require(std::get<simxr::SetTracker>(transaction.commands.back()).value.identity ==
+				initial.tracking.trackers[0].identity,
+			"Live tracker edit changed identity");
+	selection = SessionItemSel{SessionItem::Scenarios};
+	frame();
 	transaction = activate("Activate scenario");
-	Require(std::get<simxr::TakeControl>(transaction.commands.front()).channel == simxr::ControlChannel::Head,
-			"Scenario action did not claim its affected channel");
 	simxr::CommandTransaction command;
 	command.id = 1;
 	command.source = {simxr::CommandSourceKind::Manual, 77};
@@ -785,39 +813,35 @@ void ConfigureObservedDevices()
 	command.commands = transaction.commands;
 	scheduler.Submit(command);
 	observe(2);
+	panel.ObserveDelivery(false, {});
 	frame();
 	transaction = activate("Restore normal behavior");
 	Require(!std::get<simxr::SetScenario>(transaction.commands.back()).enabled,
-			"Scenario recovery did not clear the failure");
+			"Scenario recovery did not clear failure");
 	command.id = 2;
 	command.target.frame = simxr::FrameId{3};
 	command.commands = transaction.commands;
 	scheduler.Submit(command);
 	observe(3);
+	panel.ObserveDelivery(false, {});
 	frame();
-	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
-	{
-		std::filesystem::create_directories(directory);
-		test.renderer.RequestScreenshot((std::filesystem::path(directory) / "configuration-recovery.bmp").string());
-		frame();
-		frame();
-	}
 	panel.ResetObservations();
 	frame();
-	ImGui::ActivateItemByID(details()->GetID("Activate scenario"));
+	ImGui::ActivateItemByID(window->GetID("Activate scenario"));
 	frame();
-	Require(!edit, "A disconnected panel applied values from its previous session");
-	initial.views.ipd = 0.061f;
+	Require(!edit, "Disconnected field submitted stale settings");
+	initial.views.ipd = .061f;
 	scheduler.Start(0, initial);
 	observe(1);
 	frame();
-	selectSection(0);
-	transaction = activate("Apply view settings");
-	Require(std::get<simxr::SetViewSettings>(transaction.commands.back()).value.ipd == 0.061f,
-			"Reconnection retained stale configuration");
+	selection = SessionItemSel{SessionItem::Headset};
+	frame();
+	transaction = typeValue("##IPD", "0.063");
+	Require(std::abs(std::get<simxr::SetViewSettings>(transaction.commands.back()).value.ipd - .063f) < .0001f,
+			"Reconnected field did not send the new value");
 	test.renderer.WaitIdle();
-	Require(test.validation->errors.load() == 0, "Configuration UI produced Vulkan validation errors");
-	std::cout << "PASS production settings panels: observed values, categories, scenario recovery and reconnect\n";
+	Require(!test.validation->errors.load(), "Live fields generated validation errors");
+	std::cout << "PASS live configuration: immediate changes, preserved configuration, scenario recovery, reconnect\n";
 }
 
 #ifdef __linux__
@@ -840,50 +864,768 @@ void CheckDebuggerWorkflow(const char* endpoint)
 			if (std::chrono::steady_clock::now() >= deadline)
 			{
 				const auto state = test.runtime.Snapshot();
-				throw std::runtime_error(std::string(failure) + ": " + state.phase + "/" + state.progress + " " + state.error);
+				throw std::runtime_error(std::string(failure) + ": " + state.phase + "/" + state.progress + " " +
+										 state.error);
 			}
 		} while (!ready(test.runtime.Snapshot()));
 	};
-	wait([](const auto& state) { return state.selectedReady; }, "Debugger did not attach live output");
-	test.SelectWorkspace(WorkspaceMode::Debug);
+	wait(
+		[](const auto& state)
+		{
+			return state.selectedReady;
+		},
+		"Debugger did not attach live output");
+	test.SelectWorkspace(FrameSel{});
 	test.runtime.SetLive(false);
 	test.runtime.Command(simxr::control::CommandKind::Pause);
-	wait([](const auto& state) { return !state.operationPending && state.progress == "paused"; }, "Pause failed");
+	wait(
+		[](const auto& state)
+		{
+			return !state.operationPending && state.progress == "paused";
+		},
+		"Pause failed");
 	test.runtime.Command(simxr::control::CommandKind::StrictAdmission);
-	wait([](const auto& state) { return !state.operationPending && state.progress == "issued" && state.selectedReady &&
-		state.selectedImageCapture == state.selectedCapture; },
+	wait(
+		[](const auto& state)
+		{
+			return !state.operationPending && state.progress == "issued" && state.selectedReady &&
+				   state.selectedImageCapture == state.selectedCapture;
+		},
 		"One admitted frame did not produce a retained image");
 	const auto exact = test.runtime.Snapshot();
 	test.runtime.InspectSelected();
-	wait([&](const auto& state) { return state.inspectedFrame == exact.selectedFrame; }, "Exact state inspection failed");
+	wait(
+		[&](const auto& state)
+		{
+			return state.inspectedFrame == exact.selectedFrame;
+		},
+		"Exact state inspection failed");
 	test.runtime.RequestExport((directory / "composed.ppm").string());
-	wait([&](const auto& state) { return !state.pending && std::filesystem::exists(directory / "composed.ppm"); },
+	wait(
+		[&](const auto& state)
+		{
+			return !state.pending && std::filesystem::exists(directory / "composed.ppm");
+		},
 		"Composed export failed");
 	test.renderer.RequestScreenshot((directory / "inspected.bmp").string());
 	test.Frame();
 	test.runtime.Command(simxr::control::CommandKind::StrictAdmission, 0, true, 0, 0);
-	wait([&](const auto& state) { return !state.operationPending && state.selectedFrame > exact.selectedFrame &&
-		state.selectedReady && state.selectedLayers == 1 && state.selectedImageCapture == state.selectedCapture; }, "Selected layer view did not produce a retained image");
+	wait(
+		[&](const auto& state)
+		{
+			return !state.operationPending && state.selectedFrame > exact.selectedFrame && state.selectedReady &&
+				   state.selectedLayers == 1 && state.selectedImageCapture == state.selectedCapture;
+		},
+		"Selected layer view did not produce a retained image");
 	const auto raw = test.runtime.Snapshot();
 	Require(raw.selectedFrame == exact.selectedFrame + 1, "Strict step admitted more than one frame");
 	test.runtime.RequestExport((directory / "layer.ppm").string());
-	wait([&](const auto& state) { return !state.pending && std::filesystem::exists(directory / "layer.ppm"); },
+	wait(
+		[&](const auto& state)
+		{
+			return !state.pending && std::filesystem::exists(directory / "layer.ppm");
+		},
 		"Layer export failed");
 	for (const auto capture : test.runtime.CaptureIds())
 		test.runtime.Command(simxr::control::CommandKind::Release, capture);
-	wait([](const auto& state) { return !state.operationPending; }, "Capture release failed");
+	wait(
+		[](const auto& state)
+		{
+			return !state.operationPending;
+		},
+		"Capture release failed");
 	test.runtime.Command(simxr::control::CommandKind::Resume);
 	test.runtime.SetLive(true);
-	wait([&](const auto& state) { return !state.operationPending && !state.manual && state.selectedFrame > raw.selectedFrame; },
+	wait(
+		[&](const auto& state)
+		{
+			return !state.operationPending && !state.manual && state.selectedFrame > raw.selectedFrame;
+		},
 		"Resume did not restore advancing live output");
 	test.renderer.RequestScreenshot((directory / "resumed.bmp").string());
 	test.Frame();
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Debugger workflow reported Vulkan validation errors");
-	std::ofstream(directory / "frames.txt") << "composed=" << exact.selectedFrame << " layer=" << raw.selectedFrame
-		<< " inspected=" << exact.selectedFrame << " resumed=" << test.runtime.Snapshot().selectedFrame << '\n';
+	std::ofstream(directory / "frames.txt")
+		<< "composed=" << exact.selectedFrame << " layer=" << raw.selectedFrame << " inspected=" << exact.selectedFrame
+		<< " resumed=" << test.runtime.Snapshot().selectedFrame << '\n';
 	std::cout << "PASS production pause/strict-step/inspect/composed-and-layer-export/resume: frame "
-		<< exact.selectedFrame << " -> " << raw.selectedFrame << '\n';
+			  << exact.selectedFrame << " -> " << raw.selectedFrame << '\n';
+}
+
+void CheckManualEdges(const RuntimePanelSnapshot& target)
+{
+	RecordingController recording;
+	recording.SetTarget({target.endpoint, target.session, target.generation});
+	Require(recording.Request(RecordingAction::Start), "Start edge recording");
+	Eventually(
+		[&]
+		{
+			const auto s = recording.Snapshot();
+			Require(s.error.empty(), s.error.c_str());
+			return s.page && s.page->active && !s.busy;
+		},
+		"Edge recording did not start");
+	ManualInputController input;
+	input.SetTarget({target.endpoint, target.session, target.generation});
+	Eventually(
+		[&]
+		{
+			return input.Snapshot().observation != 0;
+		},
+		"Edge worker did not connect");
+	simxr::ControllerControls controls;
+	controls.primary = true;
+	ManualTransaction press;
+	press.commands = {simxr::TakeControl{simxr::ControlChannel::RightControls, false},
+					  simxr::SetControllerControls{1, controls}};
+	Require(input.Submit(press), "Press was refused");
+	std::this_thread::sleep_for(std::chrono::milliseconds(30));
+	controls.primary = false;
+	ManualTransaction release;
+	release.releaseEdge = true;
+	release.commands = {simxr::TakeControl{simxr::ControlChannel::RightControls, false},
+						simxr::SetControllerControls{1, controls}};
+	Require(input.Submit(release), "Release was refused");
+	Eventually(
+		[&]
+		{
+			const auto s = input.Snapshot();
+			Require(s.error.empty(), s.error.c_str());
+			return !s.editPending;
+		},
+		"Button edges did not apply");
+	Require(!ReadObservedSetup(input.Snapshot().state).values.input.controllers[1].primary, "Primary remained held");
+	Require(recording.Request(RecordingAction::Stop), "Stop edge recording");
+	Eventually(
+		[&]
+		{
+			const auto s = recording.Snapshot();
+			Require(s.error.empty(), s.error.c_str());
+			return s.page && !s.page->active && !s.busy;
+		},
+		"Edge recording did not stop");
+	Require(recording.Request(RecordingAction::Read), "Read recorded edges");
+	Eventually(
+		[&]
+		{
+			const auto s = recording.Snapshot();
+			Require(s.error.empty(), s.error.c_str());
+			return s.page && !s.busy;
+		},
+		"Edge recording read did not finish");
+	std::uint64_t pressFrame = 0, releaseFrame = 0;
+	for (const auto& transaction : recording.Snapshot().page->transactions)
+		for (const auto& command : transaction.commands)
+			if (const auto value = std::get_if<simxr::SetControllerControls>(&command); value && value->hand == 1)
+			{
+				Require(transaction.phase == "applied", "Recorded edge was not applied");
+				if (value->value.primary)
+					pressFrame = transaction.frame.value;
+				else if (pressFrame)
+					releaseFrame = transaction.frame.value;
+			}
+	Require(pressFrame && releaseFrame > pressFrame, "30 ms tap was not applied at distinct frames");
+	Require(input.Submit(ReleaseManualInputs{}), "Final release refused");
+	Eventually(
+		[&]
+		{
+			return !input.Snapshot().editPending;
+		},
+		"Final release did not complete");
+	// Losing a transaction must also retire held inputs from this source.
+	ManualInputController rival;
+	rival.SetTarget({target.endpoint, target.session, target.generation});
+	Eventually(
+		[&]
+		{
+			return rival.Snapshot().observation != 0;
+		},
+		"Rival worker did not connect");
+	ManualTransaction headClaim;
+	headClaim.commands = {simxr::TakeControl{simxr::ControlChannel::Head, false}};
+	Require(rival.Submit(headClaim), "Rival claim refused");
+	Eventually(
+		[&]
+		{
+			return !rival.Snapshot().editPending;
+		},
+		"Rival claim did not apply");
+	Require(input.Submit(press), "Held press refused");
+	Eventually(
+		[&]
+		{
+			return !input.Snapshot().editPending;
+		},
+		"Held press did not apply");
+	Require(input.Submit(headClaim), "Conflict submission refused");
+	Eventually(
+		[&]
+		{
+			return !input.Snapshot().error.empty();
+		},
+		"Conflict did not reject");
+	Eventually(
+		[&]
+		{
+			return !ReadObservedSetup(input.Snapshot().state).values.input.controllers[1].primary;
+		},
+		"Rejected transaction stranded a held primary button");
+	Require(rival.Submit(ReleaseManualInputs{}), "Rival release refused");
+	Eventually(
+		[&]
+		{
+			return !rival.Snapshot().editPending;
+		},
+		"Rival release did not complete");
+	std::cout << "PASS native rejection retires held inputs\n";
+	std::cout << "PASS native 30 ms tap: press frame " << pressFrame << ", release frame " << releaseFrame << "\n";
+}
+
+void CheckNativePlayerRig(const RuntimePanelSnapshot& target)
+{
+	ManualInputController input;
+	input.SetTarget({target.endpoint, target.session, target.generation});
+	Eventually(
+		[&]
+		{
+			return input.Snapshot().observation != 0;
+		},
+		"Rig worker did not connect");
+	PlayerRig rig;
+	rig.Reset(ReadObservedSetup(input.Snapshot().state));
+	const auto submit = [&]
+	{
+		const auto before = input.Snapshot();
+		Require(input.Submit(rig.Transaction(ReadObservedSetup(before.state), before.source)), "Rig edit refused");
+		Eventually(
+			[&]
+			{
+				const auto state = input.Snapshot();
+				Require(state.error.empty(), state.error.c_str());
+				return !state.editPending;
+			},
+			"Rig edit did not apply");
+		return ReadObservedSetup(input.Snapshot().state);
+	};
+	const auto close = [](XrPosef a, XrPosef b)
+	{
+		return std::abs(a.position.x - b.position.x) + std::abs(a.position.y - b.position.y) +
+				   std::abs(a.position.z - b.position.z) <
+			   .0001f;
+	};
+	std::uint64_t previousFrame = 0;
+	for (int frame = 0; frame < 8; ++frame)
+	{
+		rig.Move({0, 0, -1}, .04f, 0, .05f);
+		const auto observed = submit();
+		Require(observed.frame > previousFrame, "Rig observation did not advance");
+		previousFrame = observed.frame;
+		Require(close(observed.values.tracking.head.pose, rig.Head()) &&
+					close(observed.values.tracking.controllers[0].pose.pose, rig.Hand(0)) &&
+					close(observed.values.tracking.controllers[1].pose.pose, rig.Hand(1)),
+				"Head and body-anchored hands did not arrive in one observed frame");
+	}
+	rig.SetHandAnchor(1, Anchor::World);
+	const auto stationary = rig.Hand(1);
+	for (int frame = 0; frame < 4; ++frame)
+	{
+		rig.Move({0, 0, -1}, -.04f, 0, .05f);
+		const auto observed = submit();
+		Require(close(observed.values.tracking.controllers[1].pose.pose, stationary),
+				"World-anchored hand moved while walking");
+		Require(close(observed.values.tracking.head.pose, rig.Head()), "Player stopped walking with a World anchor");
+	}
+	Require(input.Submit(ReleaseManualInputs{}), "Rig release refused");
+	Eventually(
+		[&]
+		{
+			return !input.Snapshot().editPending;
+		},
+		"Rig release did not complete");
+	std::cout << "PASS native Player rig: 8 atomic walk/turn frames, 4 World-anchor frames\n";
+}
+
+void CheckPreviewPilot(Interaction& test)
+{
+	const auto target = test.runtime.Snapshot();
+	ManualInputController observer;
+	observer.SetTarget({target.endpoint, target.session, target.generation});
+	const auto pump = [&](int count)
+	{
+		for (int index = 0; index < count; ++index)
+		{
+			test.Frame();
+			SDL_Delay(10);
+		}
+	};
+	const auto observed = [&]
+	{
+		const auto before = observer.Snapshot().observation;
+		observer.Refresh();
+		Eventually(
+			[&]
+			{
+				pump(1);
+				return observer.Snapshot().observation > before;
+			},
+			"Pilot observation stalled");
+		return ReadObservedSetup(observer.Snapshot().state);
+	};
+	const auto key = [&](SDL_Scancode code, bool down, SDL_Keymod modifiers = SDL_KMOD_NONE)
+	{
+		SDL_Event event{};
+		event.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+		event.key.windowID = SDL_GetWindowID(test.window.Native());
+		event.key.scancode = code;
+		event.key.key = SDL_GetKeyFromScancode(code, modifiers, false);
+		event.key.mod = modifiers;
+		event.key.down = down;
+		Require(SDL_PushEvent(&event), "Push pilot key");
+		pump(1);
+	};
+	const auto button = [&](unsigned code, bool down)
+	{
+		if (code == SDL_BUTTON_RIGHT && down)
+		{
+			const auto center = FindPanel("Image area")->InnerRect.GetCenter();
+			SDL_Event pointer{};
+			pointer.type = SDL_EVENT_MOUSE_MOTION;
+			pointer.motion.windowID = SDL_GetWindowID(test.window.Native());
+			pointer.motion.x = center.x;
+			pointer.motion.y = center.y;
+			Require(SDL_PushEvent(&pointer), "Position capture pointer");
+		}
+		SDL_Event event{};
+		event.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+		event.button.windowID = SDL_GetWindowID(test.window.Native());
+		event.button.button = code;
+		event.button.down = down;
+		Require(SDL_PushEvent(&event), "Push pilot button");
+		pump(1);
+	};
+	const auto motion = [&](float x, float y)
+	{
+		SDL_Event event{};
+		event.type = SDL_EVENT_MOUSE_MOTION;
+		event.motion.windowID = SDL_GetWindowID(test.window.Native());
+		event.motion.xrel = x;
+		event.motion.yrel = y;
+		Require(SDL_PushEvent(&event), "Push pilot motion");
+		pump(1);
+	};
+	Require(SDL_ShowWindow(test.window.Native()), "Show isolated pilot window");
+	SDL_RaiseWindow(test.window.Native());
+	Eventually(
+		[&]
+		{
+			pump(1);
+			return test.window.Focused();
+		},
+		"Isolated pilot window did not receive focus");
+	pump(3);
+	auto* area = FindPanel("Image area");
+	Require(area, "Image area missing for pilot");
+	const auto center = area->InnerRect.GetCenter();
+	SDL_WarpMouseInWindow(test.window.Native(), center.x, center.y);
+	pump(3);
+	const auto before = observed();
+	button(SDL_BUTTON_RIGHT, true);
+	Eventually(
+		[&]
+		{
+			pump(1);
+			return SDL_GetWindowRelativeMouseMode(test.window.Native());
+		},
+		"Preview did not capture pointer");
+	const auto started = std::chrono::steady_clock::now();
+	const auto updates = test.runtime.Snapshot().appliedPilotUpdates;
+	key(SDL_SCANCODE_W, true);
+	motion(50, 12);
+	pump(20);
+	key(SDL_SCANCODE_W, false);
+	pump(5);
+	const auto walked = observed();
+	Require(std::abs(walked.values.tracking.head.pose.position.z - before.values.tracking.head.pose.position.z) > .04f,
+			"Preview walk did not move player");
+	const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+	std::cout << "PASS preview applied-update rate: "
+			  << (test.runtime.Snapshot().appliedPilotUpdates - updates) / seconds << " /s\n";
+	key(SDL_SCANCODE_R, true);
+	pump(5);
+	Require(observed().values.input.controllers[1].primary, "Preview primary press missing");
+	key(SDL_SCANCODE_R, false);
+	button(SDL_BUTTON_LEFT, true);
+	pump(5);
+	Require(observed().values.input.controllers[1].trigger > .99f, "Preview trigger missing");
+	button(SDL_BUTTON_LEFT, false);
+	pump(5);
+	const auto handBefore = observed().values.tracking.controllers[1].pose.pose;
+	key(SDL_SCANCODE_X, true);
+	motion(50, -25);
+	pump(5);
+	key(SDL_SCANCODE_X, false);
+	const auto handAfter = observed().values.tracking.controllers[1].pose.pose;
+	Require(std::abs(handAfter.position.x - handBefore.position.x) > .03f, "Preview reach did not move right hand");
+	key(SDL_SCANCODE_X, true);
+	key(SDL_SCANCODE_LALT, true, SDL_KMOD_ALT);
+	motion(35, 15);
+	pump(5);
+	key(SDL_SCANCODE_LALT, false);
+	key(SDL_SCANCODE_X, false);
+	const auto rotated = observed().values.tracking.controllers[1].pose.pose;
+	Require(std::abs(rotated.orientation.y - handAfter.orientation.y) +
+					std::abs(rotated.orientation.x - handAfter.orientation.x) >
+				.01f,
+			"Preview hand rotation did not rotate the right hand");
+	const auto rootBefore = observed().values.tracking.body.rootPose;
+	Require(rootBefore.has_value(), "Player did not publish body root");
+	key(SDL_SCANCODE_LALT, true, SDL_KMOD_ALT);
+	motion(40, 0);
+	pump(5);
+	key(SDL_SCANCODE_LALT, false);
+	const auto looked = observed();
+	Require(looked.values.tracking.body.rootPose &&
+				std::abs(looked.values.tracking.body.rootPose->orientation.y - rootBefore->orientation.y) < .0001f,
+			"Free look rotated body root");
+	key(SDL_SCANCODE_R, true);
+	pump(4);
+	key(SDL_SCANCODE_ESCAPE, true);
+	pump(5);
+	Require(!SDL_GetWindowRelativeMouseMode(test.window.Native()), "Escape retained capture");
+	Require(!observed().values.input.controllers[1].primary && observed().values.input.controllers[1].trigger == 0,
+			"Escape retained held inputs");
+	const auto escaped = observed();
+	Require(std::abs(escaped.values.tracking.head.pose.position.z - looked.values.tracking.head.pose.position.z) <
+				.001f,
+			"Escape reset the player position");
+	key(SDL_SCANCODE_ESCAPE, false);
+	key(SDL_SCANCODE_R, false);
+	button(SDL_BUTTON_RIGHT, false);
+	pump(3);
+	SDL_WarpMouseInWindow(test.window.Native(), center.x, center.y);
+	pump(2);
+	key(SDL_SCANCODE_LCTRL, true, SDL_KMOD_CTRL);
+	button(SDL_BUTTON_RIGHT, true);
+	Eventually(
+		[&]
+		{
+			pump(1);
+			return SDL_GetWindowRelativeMouseMode(test.window.Native());
+		},
+		"Locked capture did not start");
+	button(SDL_BUTTON_RIGHT, false);
+	key(SDL_SCANCODE_LCTRL, false);
+	pump(3);
+	Require(SDL_GetWindowRelativeMouseMode(test.window.Native()), "Capture lock ended on RMB release");
+	key(SDL_SCANCODE_R, true);
+	pump(5);
+	Require(observed().values.input.controllers[1].primary, "Locked capture did not apply primary");
+	SDL_Event focus{};
+	focus.type = SDL_EVENT_WINDOW_FOCUS_LOST;
+	focus.window.windowID = SDL_GetWindowID(test.window.Native());
+	SDL_PushEvent(&focus);
+	pump(5);
+	Require(!SDL_GetWindowRelativeMouseMode(test.window.Native()) && !observed().values.input.controllers[1].primary,
+			"Focus loss retained capture or held primary");
+	focus.type = SDL_EVENT_WINDOW_FOCUS_GAINED;
+	SDL_PushEvent(&focus);
+	key(SDL_SCANCODE_R, false);
+	pump(3);
+	std::cout << "PASS native capture lock and focus-loss release\n";
+	SDL_VirtualJoystickDesc padDescription{};
+	SDL_INIT_INTERFACE(&padDescription);
+	padDescription.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+	padDescription.naxes = SDL_GAMEPAD_AXIS_COUNT;
+	padDescription.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+	padDescription.axis_mask = (1u << SDL_GAMEPAD_AXIS_COUNT) - 1;
+	padDescription.button_mask = (1u << SDL_GAMEPAD_BUTTON_COUNT) - 1;
+	padDescription.name = "SimXR isolated input QA";
+	const auto padId = SDL_AttachVirtualJoystick(&padDescription);
+	Require(padId != 0, "Attach virtual gamepad");
+	auto* pad = SDL_OpenJoystick(padId);
+	Require(pad, "Open virtual gamepad");
+	SDL_SetJoystickVirtualAxis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, -32768);
+	SDL_SetJoystickVirtualAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, -32768);
+	pump(4);
+	SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_SOUTH, true);
+	SDL_SetJoystickVirtualAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 32767);
+	SDL_SetJoystickVirtualAxis(pad, SDL_GAMEPAD_AXIS_LEFTX, 20000);
+	pump(10);
+	const auto gamepad = observed();
+	const auto rawPad = test.window.ReadGamepad(GamepadBindings{});
+	std::cout << "Gamepad QA observed primary=" << gamepad.values.input.controllers[1].primary
+			  << " trigger=" << gamepad.values.input.controllers[1].trigger
+			  << " stick=" << gamepad.values.input.controllers[0].stick.x << "; sampled connected=" << rawPad.connected
+			  << " primary=" << rawPad.controls[1].primary << " trigger=" << rawPad.controls[1].trigger
+			  << " stick=" << rawPad.controls[0].stick.x << "\n";
+
+	Require(gamepad.values.input.controllers[1].primary && gamepad.values.input.controllers[1].trigger > .99f &&
+				gamepad.values.input.controllers[0].stick.x > .4f,
+			"Gamepad button, trigger or thumbstick did not reach runtime");
+	SDL_CloseJoystick(pad);
+	Require(SDL_DetachVirtualJoystick(padId), "Detach virtual gamepad");
+	pump(10);
+	const auto unplugged = observed();
+	Require(!unplugged.values.input.controllers[1].primary && unplugged.values.input.controllers[1].trigger == 0 &&
+				unplugged.values.input.controllers[0].stick.x == 0,
+			"Gamepad unplug left held input");
+	std::cout << "PASS native gamepad mapping and unplug release\n";
+	Require(test.validation->errors.load() == 0, "Validation during preview piloting");
+	std::cout << "PASS native preview walk, look, reach, primary, trigger and Escape release\n";
+}
+
+void CheckSpatialEditing(Interaction& test)
+{
+	using namespace simxr;
+	const auto target = test.runtime.Snapshot();
+	Require(target.selectedViews.size() == 2, "Displayed image omitted exact compositor views");
+	ManualInputController observer;
+	observer.SetTarget({target.endpoint, target.session, target.generation});
+	const auto pump = [&](int count)
+	{
+		for (int index = 0; index < count; ++index)
+		{
+			test.Frame();
+			SDL_Delay(10);
+		}
+	};
+	const auto observe = [&]
+	{
+		const auto previous = observer.Snapshot().observation;
+		observer.Refresh();
+		Eventually(
+			[&]
+			{
+				pump(1);
+				return observer.Snapshot().observation > previous;
+			},
+			"Spatial observation stalled");
+		return ReadObservedSetup(observer.Snapshot().state);
+	};
+	const auto pointer = [&](ImVec2 position, int button)
+	{
+		SDL_Event event{};
+		event.type = SDL_EVENT_MOUSE_MOTION;
+		event.motion.windowID = SDL_GetWindowID(test.window.Native());
+		event.motion.x = position.x;
+		event.motion.y = position.y;
+		Require(SDL_PushEvent(&event), "Push spatial pointer");
+		if (button >= 0)
+		{
+			event = {};
+			event.type = button ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+			event.button.windowID = SDL_GetWindowID(test.window.Native());
+			event.button.button = SDL_BUTTON_LEFT;
+			event.button.down = button != 0;
+			Require(SDL_PushEvent(&event), "Push spatial button");
+		}
+		pump(1);
+	};
+	const auto drag = [&](ImVec2 from, ImVec2 to)
+	{
+		pointer(from, 1);
+		for (int step = 1; step <= 6; ++step)
+			pointer({from.x + (to.x - from.x) * step / 6, from.y + (to.y - from.y) * step / 6}, -1);
+		pointer(to, 0);
+		pump(8);
+	};
+	SDL_ShowWindow(test.window.Native());
+	SDL_RaiseWindow(test.window.Native());
+	test.window.Resize(1920, 1080);
+	test.workspace.SetScale(1);
+	test.workspace.Select(DeviceSel{DevicePage::Right});
+	pump(6);
+	auto before = observe();
+	PlayerRig rig;
+	rig.Reset(before);
+	auto hand = RelativePose(before.values.tracking.controllers[1].pose.pose, rig.Root());
+	auto reach = test.runtime.Snapshot().reachMap;
+	Require(reach.width > 100 && reach.height > 100, "Reach map not laid out");
+	const ImVec2 center{reach.x + (reach.width - 28) / 2, reach.y + reach.height / 2};
+	const float pixels = std::min(reach.height * .44f, (reach.width - 32) * .45f) / .9f;
+	drag({center.x + hand.position.x * pixels, center.y + hand.position.z * pixels},
+		 {center.x + hand.position.x * pixels, center.y - .30f * pixels});
+	auto after = observe();
+	hand = RelativePose(after.values.tracking.controllers[1].pose.pose, rig.Root());
+	std::cout << "Spatial QA reach rect=" << reach.x << "," << reach.y << "," << reach.width << "," << reach.height
+			  << " applied=" << hand.position.x << "," << hand.position.y << "," << hand.position.z << "\n";
+	if (std::abs(hand.position.z + .30f) >= .015f)
+		if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
+		{
+			test.renderer.RequestScreenshot((std::filesystem::path(directory) / "spatial-failure.bmp").string());
+			pump(1);
+			test.renderer.WaitIdle();
+		}
+	Require(std::abs(hand.position.z + .30f) < .015f, "Reach map did not place the right hand 30 cm forward");
+	const auto ball = test.runtime.Snapshot().rotationBall;
+	Require(ball.width > 100, "Rotation ball missing");
+	const ImVec2 resetPoint{ball.x + ball.width * .65f, ball.y + ball.height * .60f};
+	pointer(resetPoint, 1);
+	pointer(resetPoint, 0);
+	pointer(resetPoint, 1);
+	pointer(resetPoint, 0);
+	pump(8);
+	after = observe();
+	const auto inspector = FindPanel("Inspector");
+	Require(inspector, "Spatial inspector missing");
+	ImGui::ActivateItemByID(ImHashStr("Top", 0, inspector->GetID("Rig view")));
+	pump(2);
+	const auto view = EulerAngles(0, -1.56f, 0);
+	const auto local =
+		RelativePose({after.values.tracking.controllers[1].pose.pose.orientation, {}}, {view, {}}).orientation;
+	const auto forward = Rotate(local, {0, 0, -1});
+	const ImVec2 tip{ball.x + ball.width / 2 + forward.x * ball.width * .46f * .75f,
+					 ball.y + ball.height / 2 - forward.y * ball.width * .46f * .75f};
+	pointer(tip, 1);
+	pointer(tip, 0);
+	pump(8);
+	after = observe();
+	Require(Rotate(after.values.tracking.controllers[1].pose.pose.orientation, {0, 0, -1}).y > .99f,
+			"Rotation ball did not point the hand up");
+	std::cout << "PASS spatial reach 30 cm and arcball pointing up through native observed state\n";
+	hand = RelativePose(after.values.tracking.controllers[1].pose.pose, rig.Root());
+	drag({center.x + hand.position.x * pixels, center.y + hand.position.z * pixels},
+		 {center.x + 8 * pixels, center.y - .3f * pixels});
+	after = observe();
+	Require(RelativePose(after.values.tracking.controllers[1].pose.pose, rig.Root()).position.x > 5,
+			"Off-screen test hand did not move");
+	pump(10);
+	const auto marker = test.runtime.Snapshot().markers[2];
+	Require(marker.width > 0, "Off-screen recovery marker missing");
+	const ImVec2 arrow{marker.x + marker.width / 2, marker.y + marker.height / 2};
+	pointer(arrow, 1);
+	pointer(arrow, 0);
+	pump(8);
+	after = observe();
+	hand = RelativePose(after.values.tracking.controllers[1].pose.pose, rig.Root());
+	Require(std::abs(hand.position.x - .2f) < .015f && std::abs(hand.position.z + .55f) < .015f,
+			"One-click off-screen recovery did not apply Forward");
+	std::cout << "PASS one-click off-screen recovery\n";
+	const auto gizmoState = test.runtime.Snapshot();
+	const auto world = after.values.tracking.controllers[1].pose.pose;
+	const auto projected = ProjectPoint(gizmoState.selectedViews.front(), world.position);
+	const auto xAxis =
+		ProjectPoint(gizmoState.selectedViews.front(), {world.position.x + .1f, world.position.y, world.position.z});
+	const float length = std::hypot(xAxis.uv.x - projected.uv.x, xAxis.uv.y - projected.uv.y);
+	const ImVec2 direction{(xAxis.uv.x - projected.uv.x) / length, (xAxis.uv.y - projected.uv.y) / length};
+	const auto handle = gizmoState.markers[2];
+	const ImVec2 origin{handle.x + handle.width / 2, handle.y + handle.height / 2};
+	drag({origin.x + direction.x * 28, origin.y + direction.y * 28},
+		 {origin.x + direction.x * 65, origin.y + direction.y * 65});
+	after = observe();
+	Require(after.values.tracking.controllers[1].pose.pose.position.x > world.position.x + .01f,
+			"Preview gizmo did not translate the right hand");
+	std::cout << "PASS preview gizmo translation through native observed state\n";
+	ImGui::ActivateItemByID(ImHashStr("Expand", 0, inspector->GetID("Rig view")));
+	pump(3);
+	Require(test.runtime.Snapshot().rigExpanded, "Rig view did not expand");
+	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
+	{
+		test.renderer.RequestScreenshot((std::filesystem::path(directory) / "spatial-expanded.bmp").string());
+		pump(1);
+	}
+	const auto imageArea = FindPanel("Image area");
+	Require(imageArea, "Expanded rig view missing");
+	ImGui::ActivateItemByID(ImHashStr("Restore", 0, imageArea->GetID("Rig view")));
+	pump(3);
+	Require(!test.runtime.Snapshot().rigExpanded, "Rig view did not restore the image");
+	std::cout << "PASS expanded rig view and picture-in-picture restore\n";
+
+	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
+	{
+		for (float scale : {1.0f, 1.5f})
+		{
+			test.workspace.SetScale(scale);
+			pump(4);
+			test.renderer.RequestScreenshot(
+				(std::filesystem::path(directory) / (scale == 1 ? "spatial-100.bmp" : "spatial-150.bmp")).string());
+			pump(1);
+		}
+		test.renderer.WaitIdle();
+	}
+	Require(test.validation->errors.load() == 0, "Spatial preview validation errors");
+}
+
+void CheckSnapshotRetention(Interaction& test)
+{
+	const auto wait = [&](const auto& ready, const char* failure)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+		for (;;)
+		{
+			test.Frame();
+			const auto state = test.runtime.Snapshot();
+			if (ready(state))
+				return;
+			if (std::chrono::steady_clock::now() >= deadline)
+				throw std::runtime_error(std::string(failure) + ": " + state.phase + "/" + state.progress + " " +
+										 state.error);
+		}
+	};
+	wait(
+		[](const auto& state)
+		{
+			return !state.operationPending;
+		},
+		"Initial retention configuration");
+	test.runtime.Command(simxr::control::CommandKind::Pause);
+	wait(
+		[](const auto& state)
+		{
+			return state.manual && !state.operationPending && state.selectedReady;
+		},
+		"Pause for retention");
+	test.runtime.Command(simxr::control::CommandKind::Step);
+	wait([](const auto& state)
+	{
+		return !state.operationPending && state.selectedReady && state.selectedCapture &&
+			state.selectedImageCapture == state.selectedCapture;
+	}, "Initial exact snapshot");
+	const auto pinned = test.runtime.Snapshot().selectedCapture;
+	Require(pinned != 0, "Pause did not retain a boundary snapshot");
+	test.runtime.Command(simxr::control::CommandKind::PinSnapshot, pinned);
+	wait(
+		[](const auto& state)
+		{
+			return !state.operationPending && state.selectedPinned;
+		},
+		"Pin boundary snapshot");
+	for (int index = 0; index < 200; ++index)
+	{
+		const auto previous = test.runtime.Snapshot().selectedCapture;
+		const auto timeline = FindPanel("##Frame timeline");
+		Require(timeline, "Retention timeline missing");
+		ImGui::ActivateItemByID(timeline->GetID("Next frame"));
+		test.Frame();
+		wait(
+			[&](const auto& state)
+			{
+				return !state.operationPending && state.selectedReady && state.selectedCapture != previous &&
+					   state.selectedImageCapture == state.selectedCapture;
+			},
+			"Next frame did not retire and replace its snapshot");
+		Require(test.runtime.Snapshot().phase != "failed", "Next frame failed under retention pressure");
+		if ((index + 1) % 25 == 0)
+			std::cout << "Retention QA " << index + 1 << "/200 frames\n" << std::flush;
+	}
+	const auto frames = test.runtime.TimelineFrames();
+	const auto saved = std::find_if(frames.begin(), frames.end(),
+									[&](const auto& frame)
+									{
+										return frame.capture == pinned;
+									});
+	Require(saved != frames.end(), "Pinned snapshot disappeared from the catalog");
+	test.runtime.SelectFrame(saved->local);
+	wait(
+		[&](const auto& state)
+		{
+			return state.selectedReady && state.selectedImageCapture == pinned && state.selectedPinned;
+		},
+		"Pinned image did not survive 200 steps");
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Validation errors during rolling retention");
+	std::cout << "PASS 200 native Next frame actions with pinned snapshot surviving; normalReadback=0\n";
 }
 
 void CheckToolbarLaunch(const char* executable)
@@ -891,7 +1633,8 @@ void CheckToolbarLaunch(const char* executable)
 	const auto directoryValue = std::getenv("SIMXR_LAUNCH_QA_DIRECTORY");
 	Require(directoryValue != nullptr, "Launch QA requires a new private directory");
 	const std::filesystem::path directory(directoryValue);
-	Require(directory.is_absolute() && std::filesystem::create_directory(directory), "Launch QA directory must be new and absolute");
+	Require(directory.is_absolute() && std::filesystem::create_directory(directory),
+			"Launch QA directory must be new and absolute");
 	const auto settingsPath = directory / "companion.settings";
 	Require(::setenv("SIMXR_COMPANION_SETTINGS", settingsPath.c_str(), 1) == 0, "Set isolated settings path");
 	CompanionSettings settings;
@@ -916,12 +1659,13 @@ void CheckToolbarLaunch(const char* executable)
 		test.Frame();
 	test.renderer.RequestScreenshot((directory / "before-launch.bmp").string());
 	test.Frame();
-	const auto* toolbar = ImGui::FindWindowByName("##Workspace toolbar");
+	const auto* toolbar = FindPanel("##Workspace toolbar");
 	Require(toolbar != nullptr, "Launch toolbar absent");
-	const auto& style = ImGui::GetStyle();
-	const auto width = std::max(100.0f, std::min(220.0f, ImGui::GetMainViewport()->WorkSize.x * 0.30f));
-	test.Click({toolbar->Pos.x + style.WindowPadding.x + width + style.ItemSpacing.x + 12,
-		toolbar->Pos.y + style.WindowPadding.y + ImGui::GetFrameHeightWithSpacing() + ImGui::GetFrameHeight() / 2});
+	test.Click({toolbar->Pos.x + 20, toolbar->Pos.y + ImGui::GetFrameHeight() / 2});
+	const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+	Require(!popups.empty() && popups.back().Window, "App picker did not open");
+	ImGui::ActivateItemByID(popups.back().Window->GetID(profile.name.c_str()));
+	test.Frame();
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
 	while (!test.runtime.Snapshot().selectedReady)
 	{
@@ -929,9 +1673,23 @@ void CheckToolbarLaunch(const char* executable)
 		Require(std::chrono::steady_clock::now() < deadline, "Toolbar launch did not attach and display live pixels");
 	}
 	const auto state = test.runtime.Snapshot();
-	Require(state.connected && state.sessionAvailable && state.selectedLayers == 2, "Launched stereo session not selected");
+	Require(state.connected && state.sessionAvailable && state.selectedLayers == 2,
+			"Launched stereo session not selected");
 	Require(std::filesystem::path(state.endpoint).parent_path() == directory, "Launch selected unrelated endpoint");
 	std::ofstream(directory / "attached.endpoint") << state.endpoint;
+	if (std::getenv("SIMXR_INPUT_QA"))
+		CheckManualEdges(state);
+	if (std::getenv("SIMXR_RIG_QA"))
+		CheckNativePlayerRig(state);
+	if (std::getenv("SIMXR_PILOT_QA"))
+		CheckPreviewPilot(test);
+	if (std::getenv("SIMXR_SPATIAL_QA"))
+		CheckSpatialEditing(test);
+	if (std::getenv("SIMXR_RETENTION_QA"))
+		CheckSnapshotRetention(test);
+	Eventually([&] { test.Frame(); return test.runtime.History().Size() > 0; },
+		"Launched runtime did not populate timeline history");
+	Require(test.runtime.Snapshot().error.empty(), "Launched runtime reported a control error");
 	test.renderer.RequestScreenshot((directory / "toolbar-launch.bmp").string());
 	test.Frame();
 	test.renderer.WaitIdle();
@@ -945,81 +1703,40 @@ void CaptureLayouts(const std::filesystem::path& directory)
 {
 	std::filesystem::create_directories(directory);
 	Interaction test;
+	test.live = true;
 	for (const auto size : {ImVec2{1280, 720}, ImVec2{1920, 1080}})
 		for (const float scale : {1.0f, 1.5f})
 		{
 			test.window.Resize(static_cast<int>(size.x), static_cast<int>(size.y));
-			test.workspace.SetMode(WorkspaceMode::Simulator);
 			test.workspace.SetScale(scale);
-			const auto path = directory / (std::to_string(static_cast<int>(size.x)) + "-" +
-										   std::to_string(static_cast<int>(scale * 100)) + ".bmp");
-			ImVec2 handTab{};
-			for (unsigned frame = 0; frame < 36; ++frame)
+			for (int page = 0; page < 10; ++page)
 			{
-				if (frame >= 12 && frame <= 14)
+				if (page < 7)
+					test.workspace.Select(DeviceSel{static_cast<DevicePage>(page)});
+				else if (page < 9)
+					test.workspace.Select(SessionItemSel{static_cast<SessionItem>(page - 7)});
+				else
+					test.workspace.Select(LibrarySel{});
+				for (int frame = 0; frame < 4; ++frame)
+					test.Frame();
+				for (const char* name : {"Top bar", "Device rail", "Inspector", "Timeline", "GPU preview"})
 				{
-					SDL_Event event{};
-					if (frame == 12)
-					{
-						event.type = SDL_EVENT_MOUSE_MOTION;
-						event.motion.windowID = SDL_GetWindowID(test.window.Native());
-						event.motion.x = handTab.x;
-						event.motion.y = handTab.y;
-					}
-					else
-					{
-						event.type = frame == 13 ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
-						event.button.windowID = SDL_GetWindowID(test.window.Native());
-						event.button.button = SDL_BUTTON_LEFT;
-						event.button.down = frame == 13;
-					}
-					Require(SDL_PushEvent(&event), "Cannot select hand tab");
+					const auto* window = FindPanel(name);
+					Require(window && !window->ScrollbarX, "Shell region has horizontal scrolling");
+					Require(window->Pos.x >= 0 && window->Pos.x + window->Size.x <= size.x + 1,
+							"Shell region extends beyond window");
 				}
-				Eventually(
-					[&]
-					{
-						return test.window.PollEvents() && test.renderer.BeginFrame();
-					},
-					"Layout frame stalled");
-				test.runtime.Poll();
-				test.workspace.BeginFrame(test.runtime);
-				test.workspace.DrawDockspace();
-				test.workspace.Draw(test.runtime);
-				test.runtime.Draw(test.workspace.Mode());
-				auto* devices = ImGui::FindWindowByName("Device controls");
-				Require(devices != nullptr, "Device controls are missing");
-				auto* tabs = ImGui::GetCurrentContext()->TabBars.GetByKey(devices->GetID("Devices"));
-				Require(tabs && tabs->Tabs.Size >= 3, "Device tabs are missing");
-				if (frame == 0)
-					ImGui::TabBarQueueFocus(tabs, &tabs->Tabs[0]);
-				if (frame == 11)
-				{
-					Require(tabs->SelectedTabId == tabs->Tabs[0].ID, "Head layout capture did not select the head tab");
-					handTab = {tabs->BarRect.Min.x + tabs->Tabs[1].Offset + tabs->Tabs[1].Width / 2,
-							   tabs->BarRect.GetCenter().y};
-					test.renderer.RequestScreenshot(path.string());
-				}
-				if (frame == 23)
-				{
-					Require(tabs->SelectedTabId == tabs->Tabs[1].ID, "Disconnected device tabs must remain browsable");
-					test.renderer.RequestScreenshot(
-						(path.parent_path() / (path.stem().string() + "-hand.bmp")).string());
-					Require(tabs->Tabs.Size == 4, "Setup tab is missing");
-					ImGui::TabBarQueueFocus(tabs, &tabs->Tabs[3]);
-				}
-				if (frame == 35)
-				{
-					Require(tabs->SelectedTabId == tabs->Tabs[3].ID, "Setup is not reachable while disconnected");
-					test.renderer.RequestScreenshot(
-						(path.parent_path() / (path.stem().string() + "-setup.bmp")).string());
-				}
-				Require(test.renderer.Render(), "Layout frame was not rendered");
+				const auto path =
+					directory / (std::to_string(static_cast<int>(size.x)) + "-" +
+								 std::to_string(static_cast<int>(scale * 100)) + "-" + std::to_string(page) + ".bmp");
+				test.renderer.RequestScreenshot(path.string());
+				test.Frame();
 			}
-			test.CheckFocusLoss();
-			test.renderer.WaitIdle();
 		}
+	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Validation errors during layout capture");
 }
+
 } // namespace
 
 int main()
@@ -1028,6 +1745,30 @@ int main()
 	{
 
 #ifdef __linux__
+		if (const auto endpoint = std::getenv("SIMXR_PREVIEW_PILOT_ENDPOINT"))
+		{
+			Interaction test;
+			test.live = true;
+			test.runtime.ConnectEndpoint(endpoint);
+			Eventually(
+				[&]
+				{
+					test.Frame();
+					return test.runtime.Snapshot().selectedReady;
+				},
+				"Existing isolated app did not supply a preview");
+			if (std::getenv("SIMXR_SPATIAL_QA"))
+				CheckSpatialEditing(test);
+			else
+				CheckPreviewPilot(test);
+			if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
+			{
+				test.renderer.RequestScreenshot((std::filesystem::path(directory) / "cemu-gameplay.bmp").string());
+				test.Frame();
+				test.renderer.WaitIdle();
+			}
+			return 0;
+		}
 		if (const auto endpoint = std::getenv("SIMXR_DEBUG_QA_ENDPOINT"))
 		{
 			CheckDebuggerWorkflow(endpoint);
@@ -1045,11 +1786,11 @@ int main()
 			validation = test.validation;
 			for (unsigned frame = 0; frame < 4; ++frame)
 				test.Frame();
-			test.SelectWorkspace(simxr::app::WorkspaceMode::Automation);
+			test.SelectWorkspace(LibrarySel{});
 			test.CheckControls();
-			test.SelectWorkspace(simxr::app::WorkspaceMode::Simulator);
-			test.SelectWorkspace(simxr::app::WorkspaceMode::Debug);
-			test.SelectWorkspace(simxr::app::WorkspaceMode::Automation);
+			test.SelectWorkspace(DeviceSel{});
+			test.SelectWorkspace(FrameSel{});
+			test.SelectWorkspace(LibrarySel{});
 			for (const auto size : {ImVec2{800, 600}, ImVec2{1024, 700}, ImVec2{900, 640}})
 			{
 				const auto rebuilds = test.renderer.RebuildCount();
@@ -1063,17 +1804,18 @@ int main()
 					"Resize did not rebuild the swapchain");
 				test.CheckControls();
 			}
+			CheckTimelineCanvas(test);
 			test.CheckFocusLoss();
 			test.renderer.WaitIdle();
 		}
 		Require(validation->errors.load() == 0, "Vulkan validation errors during interaction or teardown");
-		CheckDocking();
+		CheckShell();
 		ConfigureObservedDevices();
 		if (const auto endpoint = std::getenv("SIMXR_UI_PILOT_ENDPOINT"))
 			PilotLiveRuntime(endpoint);
 		if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
 			CaptureLayouts(directory);
-		std::cout << "PASS workspace switching and SDL clicks collapse/reopen production Rigs across three resizes\n";
+		std::cout << "PASS fixed shell, rail selection and SDL input across three resizes\n";
 		return 0;
 	}
 	catch (const std::exception& error)

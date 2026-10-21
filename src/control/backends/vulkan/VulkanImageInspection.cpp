@@ -57,18 +57,30 @@ ImageDeviceIdentity Identity(const VulkanExternalIdentity& value)
 {
 	ImageDeviceIdentity result;
 	std::transform(value.deviceUuid.begin(), value.deviceUuid.end(), result.device.begin(),
-				   [](auto byte) { return static_cast<std::byte>(byte); });
+				   [](auto byte)
+				   {
+					   return static_cast<std::byte>(byte);
+				   });
 	std::transform(value.driverUuid.begin(), value.driverUuid.end(), result.driver.begin(),
-				   [](auto byte) { return static_cast<std::byte>(byte); });
+				   [](auto byte)
+				   {
+					   return static_cast<std::byte>(byte);
+				   });
 	return result;
 }
 VulkanExternalIdentity Identity(const ImageDeviceIdentity& value)
 {
 	VulkanExternalIdentity result;
 	std::transform(value.device.begin(), value.device.end(), result.deviceUuid.begin(),
-				   [](auto byte) { return std::to_integer<std::uint8_t>(byte); });
+				   [](auto byte)
+				   {
+					   return std::to_integer<std::uint8_t>(byte);
+				   });
 	std::transform(value.driver.begin(), value.driver.end(), result.driverUuid.begin(),
-				   [](auto byte) { return std::to_integer<std::uint8_t>(byte); });
+				   [](auto byte)
+				   {
+					   return std::to_integer<std::uint8_t>(byte);
+				   });
 	return result;
 }
 ImageDescription Describe(const VulkanExternalImageDescriptor& value)
@@ -112,6 +124,7 @@ ImageDescription Describe(const VulkanInspectionFrame& frame)
 	result.usage = image.usage;
 	result.producerQueueFamily = image.device->binding.queueFamily;
 	result.layout = VK_IMAGE_LAYOUT_GENERAL;
+	result.views.assign(frame.Views().begin(), frame.Views().end());
 	return result;
 }
 struct ExportCharge;
@@ -188,14 +201,19 @@ std::shared_ptr<const void> ReserveExport(std::uint64_t bytes, std::function<voi
 class Delivery final : public ImageDelivery
 {
   public:
-	explicit Delivery(std::shared_ptr<VulkanImageDelivery> native) : m_native(std::move(native)) {}
+	explicit Delivery(std::shared_ptr<VulkanImageDelivery> native, std::vector<FrameView> views)
+		: m_native(std::move(native)), m_views(std::move(views))
+	{
+	}
 	SharedImageKey Key() const noexcept override
 	{
 		return m_native->Key();
 	}
 	ImageDescription Description() const override
 	{
-		return Describe(m_native->Descriptor());
+		auto result = Describe(m_native->Descriptor());
+		result.views = m_views;
+		return result;
 	}
 	CompletionStatus ProducerCompletion() const noexcept override
 	{
@@ -225,6 +243,7 @@ class Delivery final : public ImageDelivery
 
   private:
 	const std::shared_ptr<VulkanImageDelivery> m_native;
+	const std::vector<FrameView> m_views;
 };
 class Export final : public ImageExport
 {
@@ -299,7 +318,7 @@ class Reader final : public ImageReader
 				UniqueFd fd(value);
 				auto delivery = m_frame->Share();
 				delivery->RegisterConsumer(Identity(identity), fd);
-				return std::make_shared<Delivery>(std::move(delivery));
+				return std::make_shared<Delivery>(std::move(delivery), m_description.views);
 			});
 	}
 	std::shared_ptr<ImageExport> Export(std::optional<std::uint32_t> layer) const override

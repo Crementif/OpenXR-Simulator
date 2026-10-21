@@ -151,7 +151,8 @@ std::shared_ptr<VulkanImage> VulkanFrame::RetainImage() const
 	return {m_submission, m_submission->m_resources->output.get()};
 }
 
-VulkanFrame::VulkanFrame(std::shared_ptr<VulkanSubmission> submission) : m_submission(std::move(submission)) {}
+VulkanFrame::VulkanFrame(std::shared_ptr<VulkanSubmission> submission, std::span<const FrameView> views)
+	: FrameOutput(views), m_submission(std::move(submission)) {}
 
 CompletionStatus VulkanFrame::PollCompletion() const noexcept
 {

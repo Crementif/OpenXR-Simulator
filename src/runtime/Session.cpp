@@ -556,7 +556,7 @@ CaptureReservation Session::ReserveCapture(CaptureTarget target)
 		if (!m_captures.Supports(target))
 			return {SnapshotAdmission::Unsupported, {}};
 	}
-	m_captures.Collect();
+	m_captures.ReclaimSnapshots(target.IsAdditionalImage() ? 2 : 1);
 	std::lock_guard lock(m_mutex);
 	if (!m_state.running || m_state.closed)
 		return {SnapshotAdmission::Closed, {}};

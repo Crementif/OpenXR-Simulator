@@ -21,6 +21,7 @@ add_library(simxr_core STATIC
     src/Math.cpp
     src/platform/windows/PreviewFrameSchedule.cpp
     src/platform/windows/PreviewCapturePixels.cpp
+    src/graphics/SnapshotBudget.cpp
     src/graphics/FramePool.cpp
     src/simulation/ActionRegistry.cpp
     src/simulation/InputState.cpp
@@ -120,6 +121,10 @@ add_library(simxr_connection STATIC
     src/app/RuntimeConnection.cpp
     src/app/LaunchAttachment.cpp
     src/app/SimulationEdits.cpp
+    src/app/PlayerRig.cpp
+    src/app/FrameHistoryFeed.cpp
+    src/app/HistoryStore.cpp
+    src/app/SpatialMath.cpp
     src/app/ManualInputController.cpp
     src/app/WorkerConnection.cpp
     src/app/RuntimePanelRequests.cpp
@@ -245,6 +250,12 @@ if(BUILD_TESTING)
     target_link_libraries(legacy_controller_motion_tests PRIVATE simxr_core)
     simxr_add_test(command_scheduler_tests tests/simulation/CommandSchedulerTests.cpp command_scheduler)
     target_link_libraries(command_scheduler_tests PRIVATE simxr_core)
+    simxr_add_test(history_store_tests tests/app/HistoryStoreTests.cpp history_store)
+    target_link_libraries(history_store_tests PRIVATE simxr_connection)
+    simxr_add_test(player_rig_tests tests/app/PlayerRigTests.cpp player_rig)
+    target_link_libraries(player_rig_tests PRIVATE simxr_connection)
+    simxr_add_test(spatial_math_tests tests/app/SpatialMathTests.cpp spatial_math)
+    target_link_libraries(spatial_math_tests PRIVATE simxr_connection)
     simxr_add_test(simulation_edits_tests tests/app/SimulationEditsTests.cpp simulation_edits)
     target_link_libraries(simulation_edits_tests PRIVATE simxr_connection)
     simxr_add_test(runtime_panel_state_tests tests/app/RuntimePanelStateTests.cpp runtime_panel_state)

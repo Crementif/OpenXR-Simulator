@@ -15,9 +15,10 @@ struct ManualInputTarget
 struct ManualInputSnapshot
 {
 	control::Message state, result;
+	std::optional<CommandSource> source;
 	std::uint64_t observation = 0, appliedPoses = 0;
 	std::string error;
-	bool posePending = false;
+	bool posePending = false, editPending = false;
 };
 // One persistent manual source. Pose delivery and acknowledgement never wait for a UI render.
 class ManualInputController

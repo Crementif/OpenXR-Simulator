@@ -1,3 +1,4 @@
+#include "graphics/SnapshotBudget.h"
 #include "control/DebugProtocol.h"
 #include "control/ControlRequestError.h"
 #include "control/ControlSchema.h"
@@ -144,6 +145,12 @@ DebugCommand DecodeCommandKind(std::uint32_t kind)
 		return DebugCommand::Release;
 	case CommandKind::StartImageRecording:
 		return DebugCommand::StartImageRecording;
+	case CommandKind::ConfigureSnapshots:
+		return DebugCommand::ConfigureSnapshots;
+	case CommandKind::PinSnapshot:
+		return DebugCommand::PinSnapshot;
+	case CommandKind::UnpinSnapshot:
+		return DebugCommand::UnpinSnapshot;
 	case CommandKind::StopImageRecording:
 		return DebugCommand::StopImageRecording;
 	}
@@ -385,11 +392,19 @@ DebugRequest DecodeDebugRequest(const Message& request)
 	DebugRequest command;
 	command.id = {RequireU64(request, tag::CommandId)};
 	command.command = DecodeCommandKind(ReadU32(request, tag::CommandKind));
+	command.snapshotBudgetMiB = ReadU32(request, tag::SnapshotBudgetMiB, SnapshotBudget::DefaultMiB);
 	command.lookahead = ReadU32(request, tag::Lookahead, 1);
 	command.target = DecodeCaptureTarget(request);
 	command.recordingCapacity = ReadU32(request, tag::Capacity, 2);
 	if (request.Find(tag::Length))
 		command.recordingFrames = RequireU64(request, tag::Length);
+	if (const auto field = request.Find(tag::AdvanceDisplay))
+	{
+		const auto advance = field->AsBool();
+		if (!advance)
+			throw ControlRequestError{ErrorCode::Invalid, "Invalid display advancement flag"};
+		command.advanceDisplay = *advance;
+	}
 	command.generation = {RequireU64(request, tag::Generation)};
 	if (!command.generation.value)
 		throw ControlRequestError{ErrorCode::Closed, "Session has not started"};
@@ -403,6 +418,8 @@ void EncodeDebuggerStatus(Message& response, const DebugControllerSnapshot& stat
 						  const PresentationSnapshot& display, std::uint64_t capabilities)
 {
 	response.fields.push_back(Field::U64(tag::Capabilities, capabilities));
+	response.fields.push_back(Field::U32(tag::SnapshotBudgetMiB, SnapshotBudget::MiB()));
+	response.fields.push_back(Field::U64(tag::SnapshotImageBytes, SnapshotBudget::ImageBytes()));
 	response.fields.push_back(Field::I64(tag::State, state.state));
 	response.fields.push_back(Field::Bool(tag::Running, state.running));
 	response.fields.push_back(Field::Bool(tag::Closed, state.closed));
@@ -432,6 +449,7 @@ void EncodeDebuggerStatus(Message& response, const DebugControllerSnapshot& stat
 	response.fields.push_back(Nested(tag::Retention, {Field::U64(tag::Capacity, status.retention.capacity),
 													  Field::U64(tag::HeldSlots, status.retention.heldSlots),
 													  Field::U64(tag::Retiring, status.retention.retiring),
+		Field::U64(tag::Pinned, status.retention.pinned),
 													  EncodeCaptureIds(tag::Captures, status.retention.captures)}));
 	std::vector<Field> presented{Field::U64(tag::LastSubmitted, display.lastSubmitted.value),
 								 Field::U64(tag::CoalescedClears, display.coalescedLiveClears)};
@@ -464,6 +482,7 @@ void EncodeCaptureMetadata(Message& response, const SnapshotRecord& capture)
 {
 	response.fields.push_back(Field::U64(tag::CaptureId, capture.id.value));
 	response.fields.push_back(Field::Text(tag::Phase, Name(capture.phase)));
+	response.fields.push_back(Field::Bool(tag::Pinned, capture.pinned));
 	response.fields.push_back(Field::I64(tag::Result, capture.result));
 	response.fields.push_back(EncodeCaptureTarget(capture.target));
 	response.fields.push_back(
@@ -482,5 +501,23 @@ void EncodeDebugAdmission(Message& response, const DebugSubmission& admitted)
 	if (admitted.operation.value)
 		response.fields.push_back(Field::U64(tag::OperationId, admitted.operation.value));
 	response.fields.push_back(Field::Bool(tag::Duplicate, admitted.result == DebugAdmission::Duplicate));
+}
+void EncodeFrameHistory(Message& response, const FrameHistorySnapshot& history, std::uint64_t after, std::size_t count)
+{
+	std::vector<Field> frames;
+	frames.reserve(std::min(count, history.frames.size()));
+	for (const auto& frame : history.frames)
+	{
+		if (frame->key.frame.value <= after || frame->stage == FrameStage::Issued || frame->stage == FrameStage::Begun)
+			continue;
+		auto encoded = EncodeFrameMetadata(*frame);
+		encoded.tag = static_cast<std::uint16_t>(frames.size() + 1);
+		frames.push_back(std::move(encoded));
+		if (frames.size() == count)
+			break;
+	}
+	response.fields.push_back(Field::U64(tag::Capacity, history.capacity));
+	response.fields.push_back(Field::U64(tag::Offset, history.frames.empty() ? 0 : history.frames.front()->key.frame.value));
+	response.fields.push_back(Nested(tag::Frames, std::move(frames)));
 }
 } // namespace simxr::control

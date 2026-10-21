@@ -131,9 +131,15 @@ void DebuggerPanelController::Command(wire::CommandKind kind, std::uint64_t capt
 																				  : wire::TargetKind::ComposedEyes)),
 				wire::Field::U32(tag::Layer, layer), wire::Field::U32(tag::View, view)})));
 	}
+	if (kind == wire::CommandKind::Step &&
+		(U64(m_status, tag::Capabilities) & static_cast<std::uint64_t>(wire::Capability::SnapshotPins)))
+		fields.push_back(wire::Field::Bool(tag::AdvanceDisplay, true));
+	if (kind == wire::CommandKind::ConfigureSnapshots)
+		fields.push_back(wire::Field::U32(tag::SnapshotBudgetMiB, static_cast<std::uint32_t>(capture), true));
 	if (kind == wire::CommandKind::Cancel)
 		fields.push_back(wire::Field::U64(tag::OperationId, capture, true));
-	if (kind == wire::CommandKind::Release)
+	if (kind == wire::CommandKind::Release || kind == wire::CommandKind::PinSnapshot ||
+		kind == wire::CommandKind::UnpinSnapshot)
 		fields.push_back(wire::Field::U64(tag::CaptureId, capture, true));
 	DebuggerOperation prepared;
 	prepared.local = m_nextOperation++;
@@ -276,6 +282,9 @@ bool DebuggerPanelController::Handle(const PanelTask& task, const wire::Message&
 				std::vector<DebuggerCaptureEvent> pending;
 				if (Terminal(phase))
 				{
+					if (phase == "complete" && (operation.kind == wire::CommandKind::PinSnapshot ||
+						operation.kind == wire::CommandKind::UnpinSnapshot))
+						pending.push_back({operation.subject, 0, false, true});
 					if (operation.kind == wire::CommandKind::Release && prepared.progress == "released")
 						pending.push_back({operation.subject, 0, true});
 					if (const auto capture = U64(message, tag::CaptureId))

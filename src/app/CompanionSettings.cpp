@@ -107,9 +107,29 @@ std::filesystem::path CompanionSettingsPath()
 }
 void ValidateSettings(const CompanionSettings& settings)
 {
+	if (settings.snapshotBudgetMiB < SnapshotBudget::MinMiB || settings.snapshotBudgetMiB > SnapshotBudget::MaxMiB)
+		throw std::invalid_argument("Invalid snapshot budget");
 	if (!std::isfinite(settings.scale) || settings.scale < 0.75f || settings.scale > 2.5f ||
+		!std::isfinite(settings.inspectorWidth) || settings.inspectorWidth < 280 || settings.inspectorWidth > 520 ||
+		!std::isfinite(settings.timelineHeight) || settings.timelineHeight < 56 || settings.timelineHeight > 4096 ||
 		settings.profiles.size() > 32 || settings.layouts.size() > 16)
 		throw std::invalid_argument("Invalid scale or companion settings capacity");
+	for (const auto& binding : settings.pilotBindings)
+	{
+		TextValid(binding.key);
+		if (binding.key.size() > 64 || binding.modifiers > 15)
+			throw std::invalid_argument("Invalid pilot binding");
+	}
+	if (!std::isfinite(settings.gamepadBindings.deadzone) || settings.gamepadBindings.deadzone < 0 ||
+		settings.gamepadBindings.deadzone >= 1)
+		throw std::invalid_argument("Invalid gamepad deadzone");
+	TextValid(settings.gamepadBindings.gyroHold);
+	for (const auto* bindings :
+		 {&settings.gamepadBindings.stickX, &settings.gamepadBindings.stickY, &settings.gamepadBindings.trigger,
+		  &settings.gamepadBindings.grip, &settings.gamepadBindings.primary, &settings.gamepadBindings.secondary,
+		  &settings.gamepadBindings.menu, &settings.gamepadBindings.stickClick})
+		for (const auto& binding : *bindings)
+			TextValid(binding);
 	TextValid(settings.endpoint);
 	TextValid(settings.activeProfile);
 	TextValid(settings.activeLayout);
@@ -192,6 +212,39 @@ CompanionSettings LoadSettings(const std::filesystem::path& path)
 	for (auto count = reader.Count(16); count; --count)
 		result.layouts.push_back({reader.Text(), reader.Text()});
 	if (!reader.bytes.empty())
+	{
+		if (reader.Number() != 2)
+			throw std::runtime_error("Unknown shell settings version");
+		result.inspectorWidth = reader.Number() / 1000.0f;
+		result.timelineHeight = reader.Number() / 1000.0f;
+		result.railCollapsed = reader.Count(1) != 0;
+		result.timelineResized = reader.Count(1) != 0;
+	}
+	if (!reader.bytes.empty())
+	{
+		if (reader.Number() != 3)
+			throw std::runtime_error("Unknown input settings version");
+		for (auto& binding : result.pilotBindings)
+		{
+			binding.key = reader.Text();
+			binding.modifiers = reader.Count(15);
+		}
+		for (auto* bindings :
+			 {&result.gamepadBindings.stickX, &result.gamepadBindings.stickY, &result.gamepadBindings.trigger,
+			  &result.gamepadBindings.grip, &result.gamepadBindings.primary, &result.gamepadBindings.secondary,
+			  &result.gamepadBindings.menu, &result.gamepadBindings.stickClick})
+			for (auto& binding : *bindings)
+				binding = reader.Text();
+		result.gamepadBindings.gyroHold = reader.Text();
+		result.gamepadBindings.deadzone = reader.Number() / 1000.0f;
+	}
+	if (!reader.bytes.empty())
+	{
+		if (reader.Number() != 4)
+			throw std::runtime_error("Unknown retention settings version");
+		result.snapshotBudgetMiB = reader.Number();
+	}
+	if (!reader.bytes.empty())
 		throw std::runtime_error("Unexpected trailing companion settings data");
 	ValidateSettings(result);
 	return result;
@@ -231,6 +284,27 @@ void SaveSettings(const std::filesystem::path& path, const CompanionSettings& se
 		Put(bytes, layout.name);
 		Put(bytes, layout.ini);
 	}
+	Put(bytes, 2);
+	Put(bytes, static_cast<std::uint32_t>(std::lround(settings.inspectorWidth * 1000)));
+	Put(bytes, static_cast<std::uint32_t>(std::lround(settings.timelineHeight * 1000)));
+	Put(bytes, static_cast<std::uint32_t>(settings.railCollapsed));
+	Put(bytes, static_cast<std::uint32_t>(settings.timelineResized));
+	Put(bytes, 3);
+	for (const auto& binding : settings.pilotBindings)
+	{
+		Put(bytes, binding.key);
+		Put(bytes, binding.modifiers);
+	}
+	for (const auto* bindings :
+		 {&settings.gamepadBindings.stickX, &settings.gamepadBindings.stickY, &settings.gamepadBindings.trigger,
+		  &settings.gamepadBindings.grip, &settings.gamepadBindings.primary, &settings.gamepadBindings.secondary,
+		  &settings.gamepadBindings.menu, &settings.gamepadBindings.stickClick})
+		for (const auto& binding : *bindings)
+			Put(bytes, binding);
+	Put(bytes, settings.gamepadBindings.gyroHold);
+	Put(bytes, static_cast<std::uint32_t>(std::lround(settings.gamepadBindings.deadzone * 1000)));
+	Put(bytes, std::uint32_t{4});
+	Put(bytes, settings.snapshotBudgetMiB);
 	if (bytes.size() > MaxFile)
 		throw std::invalid_argument("Companion settings exceed the file budget");
 	std::filesystem::create_directories(path.parent_path());

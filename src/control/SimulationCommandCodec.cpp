@@ -183,14 +183,20 @@ std::vector<Field> EncodeBodyControls(const BodyControls& body)
 			fields.push_back(EncodePose(*joint->pose));
 		joints.push_back(EncodeNested(static_cast<std::uint16_t>(index + 1), fields));
 	}
-	return {Field::Bool(tag::Enabled, body.active, true), Field::F32(tag::Values, body.confidence, true),
-			Field::U32(tag::Kind, static_cast<std::uint32_t>(body.preset), true), EncodeNested(tag::Controls, controls),
-			EncodeNested(tag::Proportions, joints)};
+	std::vector<Field> result{Field::Bool(tag::Enabled, body.active, true),
+							  Field::F32(tag::Values, body.confidence, true),
+							  Field::U32(tag::Kind, static_cast<std::uint32_t>(body.preset), true),
+							  EncodeNested(tag::Controls, controls), EncodeNested(tag::Proportions, joints)};
+	if (body.rootPose)
+		result.push_back(EncodePose(*body.rootPose));
+	return result;
 }
 BodyControls DecodeBodyControls(const Message& payload)
 {
 	BodyControls body;
 	body.active = ReadBoolean(payload, tag::Enabled);
+	if (const auto* root = payload.Find(tag::Pose))
+		body.rootPose = DecodePose(*root);
 	body.confidence = ReadFloat(RequireField(payload, tag::Values));
 	body.preset = static_cast<BodyPreset>(ReadU32(payload, tag::Kind));
 	const auto controls = DecodeOrderedFields(RequireField(payload, tag::Controls));
@@ -309,11 +315,12 @@ CommandPayload EncodeCommand(const SetReferenceSpaces& command)
 	const auto& stage = command.value.stage;
 	const auto bounds = command.value.stageBounds.value_or(XrExtent2Df{});
 	return {SimulationCommandKind::ReferenceSpaces,
-		{EncodeFloats(1, {local.orientation.x, local.orientation.y, local.orientation.z, local.orientation.w,
-			local.position.x, local.position.y, local.position.z}),
-		 EncodeFloats(2, {stage.orientation.x, stage.orientation.y, stage.orientation.z, stage.orientation.w,
-			stage.position.x, stage.position.y, stage.position.z}),
-		 Field::Bool(3, command.value.stageBounds.has_value(), true), EncodeFloats(4, {bounds.width, bounds.height})}};
+			{EncodeFloats(1, {local.orientation.x, local.orientation.y, local.orientation.z, local.orientation.w,
+							  local.position.x, local.position.y, local.position.z}),
+			 EncodeFloats(2, {stage.orientation.x, stage.orientation.y, stage.orientation.z, stage.orientation.w,
+							  stage.position.x, stage.position.y, stage.position.z}),
+			 Field::Bool(3, command.value.stageBounds.has_value(), true),
+			 EncodeFloats(4, {bounds.width, bounds.height})}};
 }
 } // namespace
 
@@ -361,8 +368,8 @@ SimulationCommand DecodeSimulationCommand(const Field& field)
 									 DecodeControllerControls(RequireField(fields, tag::Controls))};
 	}
 	case SimulationCommandKind::BodyControls:
-		return SetBodyControls{DecodeBodyControls(
-			DecodePayload(payload, {tag::Enabled, tag::Values, tag::Kind, tag::Controls, tag::Proportions}))};
+		return SetBodyControls{DecodeBodyControls(DecodePayload(
+			payload, {tag::Enabled, tag::Values, tag::Kind, tag::Controls, tag::Proportions, tag::Pose}))};
 	case SimulationCommandKind::Gaze:
 	{
 		const auto fields = DecodePayload(payload, {tag::Values, tag::Enabled, tag::Running});

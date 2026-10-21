@@ -485,6 +485,50 @@ void ReleasedComposedCursorDoesNotRepin()
 			"Released composed snapshot leaked hidden retention after final reader");
 }
 
+void RollingStepsAndPins()
+{
+	Fixture fixture(4);
+	DebugController controller(fixture.session, fixture.clock, ManualConfig());
+	const auto lease = controller.Acquire()->id;
+	Pause(controller, lease);
+	Require(controller.Acknowledge(lease, {1}), "Acknowledge initial pause");
+	std::uint64_t command = 2;
+	CaptureId pinned;
+	for (int index = 0; index < 200; ++index)
+	{
+		DebugRequest request{{command}, DebugCommand::Step};
+		request.advanceDisplay = true;
+		const auto admitted = controller.Submit(lease, request);
+		Require(admitted.result == DebugAdmission::Accepted, "Admit rolling step");
+		const auto step = admitted.operation;
+		controller.Poll();
+		Require(Status(controller, step).phase != DebugPhase::Failed, "Rolling step exhausted capacity");
+		const auto frame = fixture.Issue();
+		auto output = fixture.Image(frame);
+		output->state = CompletionStatus::Complete;
+		fixture.Submit(frame, std::move(output));
+		controller.Poll();
+		const auto completed = Status(controller, step);
+		Require(completed.phase == DebugPhase::Complete, "Rolling step did not complete");
+		Require(controller.Acknowledge(lease, {command++}), "Acknowledge rolling step");
+		if (!index)
+		{
+			Require(completed.capture.has_value(), "Completed step omitted capture");
+			pinned = *completed.capture;
+			const auto pin = Command(controller, lease, command, DebugCommand::PinSnapshot, 1, {}, pinned);
+			controller.Poll();
+			Require(Status(controller, pin).phase == DebugPhase::Complete, "Pin command failed");
+			Require(controller.Acknowledge(lease, {command++}), "Acknowledge pin");
+		}
+		const auto retained = fixture.session->Captures().Read(pinned);
+		Require(retained && retained->pinned, "Rolling stepping evicted pinned snapshot");
+	}
+	const auto unpin = Command(controller, lease, command, DebugCommand::UnpinSnapshot, 1, {}, pinned);
+	controller.Poll();
+	Require(Status(controller, unpin).phase == DebugPhase::Complete &&
+		!fixture.session->Captures().Read(pinned)->pinned, "Unpin command failed");
+}
+
 void CapacityAndUnsupported()
 {
 	Fixture fixture(1);
@@ -899,6 +943,7 @@ int main()
 	run("Long run acknowledgement", LongRunAcknowledgement);
 	run("Pending boundary and exact order", PendingBoundaryAndExactOrder);
 	run("Lookahead stall and cancellation", LookaheadStallAndCancellation);
+	run("Rolling steps and pins", RollingStepsAndPins);
 	run("Capacity and unsupported targets", CapacityAndUnsupported);
 	run("Selected layer-view requests", SelectedLayerViewRequests);
 	run("Released composed cursor does not repin", ReleasedComposedCursorDoesNotRepin);

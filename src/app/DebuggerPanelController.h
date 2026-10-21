@@ -18,7 +18,7 @@ struct DebuggerOperation
 struct DebuggerCaptureEvent
 {
 	std::uint64_t capture = 0, frame = 0;
-	bool released = false;
+	bool released = false, refresh = false;
 };
 // Owns one selected session's lease, command identity and bounded operation
 // ledger. Widgets observe const values and request transitions, never edit them.

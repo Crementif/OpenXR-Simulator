@@ -79,5 +79,16 @@ int main()
 		rejected = true;
 	}
 	Require(rejected, "Body accepts invalid head orientation");
+	controls = {};
+	controls.rootPose = XrPosef{EulerAngles(.4f, 0, 0), {2, .1f, -3}};
+	head.pose = {EulerAngles(1.2f, .2f, 0), {2.2f, 1.8f, -3.1f}};
+	const auto rooted = body.Evaluate(head, controls, {Duration{700}});
+	const auto root = rooted.joints[index(BodyJoint::Root)].pose;
+	Require(std::abs(root.position.x - 2) < .0001f && std::abs(root.position.y - .1f) < .0001f && std::abs(root.position.z + 3) < .0001f,
+		"Body root did not retain independent floor position");
+	Require(std::abs(RelativePose(root, *controls.rootPose).orientation.w) > .99999f, "Head look rotated body root");
+	const auto bodyHead = rooted.joints[index(BodyJoint::Head)].pose;
+	Require(std::abs(bodyHead.position.x - head.pose.position.x) < .0001f && std::abs(bodyHead.position.y - head.pose.position.y) < .0001f,
+		"Body head lost the actual head pose during free look");
 	std::cout << "Body model tests passed\n";
 }

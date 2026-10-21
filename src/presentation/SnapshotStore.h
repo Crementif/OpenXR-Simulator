@@ -84,6 +84,7 @@ struct SnapshotRecord
 	std::optional<FrameKey> frame;
 	SnapshotPhase phase = SnapshotPhase::Reserved;
 	XrResult result = XR_SUCCESS;
+	bool pinned = false;
 	std::shared_ptr<const FrameRecord> metadata;
 	std::shared_ptr<const FrameOutput> output;
 	std::optional<PresentationTick> display;
@@ -107,6 +108,7 @@ struct SnapshotStoreState
 	std::size_t capacity = 0;
 	std::size_t heldSlots = 0;
 	std::size_t retiring = 0;
+	std::size_t pinned = 0;
 	std::vector<CaptureId> captures;
 };
 
@@ -114,7 +116,7 @@ class SnapshotStore
 {
   public:
 	// History outlives the store and retains no image or reservation readers.
-	explicit SnapshotStore(std::size_t capacity = 32, FrameHistory* history = nullptr);
+	explicit SnapshotStore(std::size_t capacity = 0, FrameHistory* history = nullptr);
 	~SnapshotStore();
 	void Start(SessionGeneration generation);
 	void Stop() noexcept;
@@ -143,6 +145,10 @@ class SnapshotStore
 	SnapshotStoreState Snapshot() const;
 	std::size_t Capacity() const;
 	bool Release(CaptureId id) noexcept;
+	bool SetPinned(CaptureId id, bool pinned) noexcept;
+	// Call outside caller locks: eviction releases native owners through normal retirement.
+	bool EvictOldest() noexcept;
+	void SetCapacity(std::size_t capacity);
 	void RetireAll() noexcept;
 	// Marks only sequence-owned tickets; Poll releases native readers outside caller locks.
 	void RetireSequenceCaptures(CommandSource owner) noexcept;
@@ -160,6 +166,7 @@ class SnapshotStore
 		bool terminalTraced = false;
 		std::uint64_t revision = 0;
 	};
+	std::optional<Entry> ReleaseLocked(std::vector<Entry>::iterator entry) noexcept;
 	void CancelPendingLocked() noexcept;
 	void TraceTerminal(Entry& entry) noexcept;
 	FrameHistory* const m_history;

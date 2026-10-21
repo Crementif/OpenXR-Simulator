@@ -1,3 +1,4 @@
+#include "graphics/SnapshotBudget.h"
 #include "control/ConnectionImages.h"
 #include "control/DebugProtocol.h"
 #include "control/ControlSchema.h"
@@ -21,11 +22,11 @@ template <class Resource> class ImageTable
   public:
 	ImageTable()
 	{
-		m_entries.reserve(8);
+		m_entries.reserve(SnapshotBudget::Capacity());
 	}
 	void CheckCapacity() const
 	{
-		if (m_entries.size() == 8 || m_next == std::numeric_limits<std::uint64_t>::max())
+		if (m_entries.size() >= SnapshotBudget::Capacity() || m_next == std::numeric_limits<std::uint64_t>::max())
 			throw ConnectionImages::RequestFailure{ErrorCode::Capacity, "Connection image resource capacity exhausted"};
 	}
 	std::shared_ptr<const ImageEntry<Resource>> Find(std::uint64_t id) const

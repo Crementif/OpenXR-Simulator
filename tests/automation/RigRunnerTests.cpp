@@ -1,4 +1,5 @@
 #include "../TestSupport.h"
+#include "Math.h"
 #include "automation/Recording.h"
 #include "automation/RigRunner.h"
 #include "control/ControlSchema.h"
@@ -349,6 +350,7 @@ void CheckEditableCommands()
 	body.active = false;
 	body.confidence = .625f;
 	body.preset = BodyPreset::Seated;
+	body.rootPose = XrPosef{EulerAngles(.4f, 0, 0), {2, .1f, -3}};
 	body.controls[0].offset = XrVector3f{.125f, -.25f, .75f};
 	body.controls[4].tracked = false;
 	body.joints[3] = BodyJointOverride{XrPosef{{.1f, .2f, .3f, .9f}, {.5f, .25f, -.125f}}, false};

@@ -1,3 +1,4 @@
+#include "graphics/SnapshotBudget.h"
 #include "presentation/SnapshotStore.h"
 
 #include <algorithm>
@@ -50,9 +51,9 @@ bool Valid(CaptureTarget target)
 }
 } // namespace
 
-SnapshotStore::SnapshotStore(std::size_t capacity, FrameHistory* history) : m_history(history), m_slots(capacity)
+SnapshotStore::SnapshotStore(std::size_t capacity, FrameHistory* history) : m_history(history), m_slots([capacity] { return capacity ? capacity : SnapshotBudget::Capacity(); })
 {
-	m_entries.reserve(capacity);
+	m_entries.reserve(m_slots.Capacity());
 }
 
 SnapshotStore::~SnapshotStore()
@@ -487,7 +488,11 @@ SnapshotStoreState SnapshotStore::Snapshot() const
 		if (entry.released)
 			++state.retiring;
 		else
+		{
 			state.captures.push_back(entry.record.id);
+			if (entry.record.pinned)
+				++state.pinned;
+		}
 	return state;
 }
 
@@ -496,27 +501,70 @@ std::size_t SnapshotStore::Capacity() const
 	return m_slots.Capacity();
 }
 
+std::optional<SnapshotStore::Entry> SnapshotStore::ReleaseLocked(std::vector<Entry>::iterator entry) noexcept
+{
+	entry->released = true;
+	entry->producer.reset();
+	entry->composedProducer.reset();
+	if (Pending(entry->record.phase))
+		return {};
+	std::optional<Entry> released{std::move(*entry)};
+	m_entries.erase(entry);
+	return released;
+}
+
 bool SnapshotStore::Release(CaptureId id) noexcept
 {
 	std::optional<Entry> released;
 	{
 		std::lock_guard lock(m_mutex);
-		auto entry =
-			std::find_if(m_entries.begin(), m_entries.end(), [&](const auto& value) { return value.record.id == id; });
+		auto entry = std::find_if(m_entries.begin(), m_entries.end(),
+			[&](const auto& value) { return value.record.id == id; });
 		if (entry == m_entries.end() || entry->released)
 			return false;
-		entry->released = true;
-		// Native preparation/producer owners retain their own reservation reader.
-		// Abandoning an unsubmitted capture must not pin unused GPU capacity.
-		entry->producer.reset();
-		entry->composedProducer.reset();
-		if (!Pending(entry->record.phase))
-		{
-			released = std::move(*entry);
-			m_entries.erase(entry);
-		}
+		released = ReleaseLocked(entry);
 	}
 	return true;
+}
+
+bool SnapshotStore::SetPinned(CaptureId id, bool pinned) noexcept
+{
+	std::lock_guard lock(m_mutex);
+	for (auto& entry : m_entries)
+		if (entry.record.id == id && !entry.released)
+		{
+			entry.record.pinned = pinned;
+			return true;
+		}
+	return false;
+}
+
+bool SnapshotStore::EvictOldest() noexcept
+{
+	std::optional<Entry> released;
+	{
+		std::lock_guard lock(m_mutex);
+		const auto entry = std::find_if(m_entries.begin(), m_entries.end(), [](const Entry& value)
+		{
+			const auto& record = value.record;
+			return !value.released && !record.pinned && record.phase != SnapshotPhase::Reserved &&
+				!Pending(record.phase) && record.m_retention.use_count() == 1 &&
+				(!record.output || record.output.use_count() == 1) &&
+				(!record.metadata || !record.metadata->sequenceCapture ||
+				 record.metadata->sequenceCapture->reservation.id != record.id);
+		});
+		if (entry == m_entries.end())
+			return false;
+		released = ReleaseLocked(entry);
+	}
+	return true;
+}
+
+void SnapshotStore::SetCapacity(std::size_t capacity)
+{
+	std::lock_guard lock(m_mutex);
+	m_entries.reserve(capacity);
+	m_slots.SetCapacity(capacity);
 }
 
 void SnapshotStore::RetireSequenceCaptures(CommandSource owner) noexcept

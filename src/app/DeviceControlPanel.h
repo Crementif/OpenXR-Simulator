@@ -1,9 +1,13 @@
 #pragma once
 
+#include "app/PlayerRig.h"
+#include "app/ShellState.h"
 #include "app/SimulationEdits.h"
 
 #include <array>
 #include <optional>
+#include <set>
+#include <string>
 
 namespace simxr::app
 {
@@ -11,27 +15,39 @@ namespace simxr::app
 class DeviceControlPanel
 {
   public:
-	DeviceControlPanel();
-	std::optional<SimulationEdit> Draw(bool supported);
+	explicit DeviceControlPanel(PlayerRig& rig);
+	std::optional<SimulationEdit> Draw(bool supported, const Selection* selection = nullptr);
 	void ClearHeldInputs();
-	ControlChannel PilotChannel() const
+	int SelectedTracker() const
 	{
-		return m_pilotChannel;
+		return m_selectedTracker;
 	}
-	void SetPose(ControlChannel channel, PoseSample pose);
+	void SetRigPiloting(bool piloting)
+	{
+		m_rigPiloting = piloting;
+	}
+	ManualTransaction PlayerEdit(bool includeWorld = false) const;
+	void SetManualSource(std::optional<CommandSource> source)
+	{
+		m_manualSource = source;
+	}
 	void ObserveState(const control::Message& state);
 	void ResetObservations();
+	void ObserveDelivery(bool pending, const std::string& error);
+	std::optional<SimulationEdit> DrawAdvanced();
 
   private:
 	void Apply(std::vector<SimulationCommand> commands);
 	void ApplyOwned(ControlChannel channel, SimulationCommand command);
 	void DrawOwnership();
-	void DrawDetailFooter();
 	void LoadObservedSettings();
 	void DrawOwner(ControlChannel channel);
 	bool DrawScenarioNotice(ControlChannel channel);
 	void ReloadRecoveredChannel(ControlChannel channel);
+	void DrawPlayer();
+	void DrawAnchor(bool tracker, std::size_t index);
 	void DrawHead();
+	void DrawExactPose(int device);
 	void DrawHandRest();
 	void DrawController();
 	void DrawBody();
@@ -40,29 +56,31 @@ class DeviceControlPanel
 	void DrawViews();
 	void DrawScenarios();
 
+	PlayerRig& m_playerRig;
+	std::optional<CommandSource> m_manualSource;
+	bool m_rigPiloting = false;
 	std::optional<SimulationEdit> m_edit;
 	std::uint64_t m_applyFrame = 0;
 	bool m_reschedule = true;
-	bool m_autoApply = true;
-	bool m_replaceOwner = false;
+	bool m_pending = false, m_continuousEdit = false;
+	std::set<std::string> m_pendingFields, m_rejectedFields;
+	std::string m_deliveryError, m_fieldScope;
+	double m_rejectedUntil = 0;
+	bool Field(const char* key, bool changed, bool continuous = false);
+	bool m_replaceOwner = false, m_exactAnchor = false;
 	bool m_configurationLoaded = false;
-	bool m_headAvailable = false;
 	std::optional<ObservedSetup> m_observed;
 	std::string m_observationError;
 	std::uint64_t m_loadedFrame = 0;
 	int m_setupSection = 0;
 	int m_selectedChannel = 0;
 	int m_controlHand = 0;
-	ControlChannel m_pilotChannel = ControlChannel::Head;
 	int m_selectedScenario = 0;
 	int m_bodyPreset = 0;
 	int m_selectedTracker = 0;
 	int m_trackerRole = 0;
 	TrackingState m_authoredTracking;
-	PoseSample m_observedHead = TrackingState{}.head;
 	std::array<ControllerControls, 2> m_authoredControls;
-	std::array<float, 3> m_headAngles{};
-	std::array<std::array<float, 3>, 2> m_controllerAngles{};
 	BodyProportions m_authoredProportions;
 	ViewSettings m_authoredViews;
 	std::array<std::array<char, 256>, 2> m_controllerProfiles{};

@@ -82,6 +82,7 @@ InspectionValue BodyValue(const BodyControls& body)
 										 {"tracked", InspectionValue::Boolean(joint->tracked)},
 										 {"pose", joint->pose ? PoseValue(*joint->pose) : InspectionValue::Null()}}));
 	return InspectionValue::Object({{"active", InspectionValue::Boolean(body.active)},
+		{"root_pose", body.rootPose ? PoseValue(*body.rootPose) : InspectionValue::Null()},
 									{"confidence", InspectionValue::Float(body.confidence)},
 									{"preset", InspectionValue::Unsigned(static_cast<std::uint32_t>(body.preset))},
 									{"controls", InspectionValue::Array(std::move(controls))},

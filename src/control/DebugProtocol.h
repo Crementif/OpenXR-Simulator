@@ -9,6 +9,7 @@ struct SessionSnapshot;
 }
 namespace simxr::control
 {
+void EncodeFrameHistory(Message& response, const FrameHistorySnapshot& history, std::uint64_t after, std::size_t count);
 Field EncodeCaptureTarget(CaptureTarget target);
 CaptureTarget DecodeCaptureTarget(const Message& request);
 Field EncodeFrameKey(std::uint16_t tag, FrameKey frame);

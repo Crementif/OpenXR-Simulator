@@ -2,6 +2,7 @@
 #include "app/WorkerConnection.h"
 #include "control/ControlSchema.h"
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
@@ -70,20 +71,24 @@ class ManualInputController::State
 		std::uint64_t bound = 0, transaction = 1;
 		wire::Message observed, receipt;
 		std::optional<wire::Message> waiting;
+		bool waitingPose = false;
 		auto nextRead = Clock::time_point::max();
 		for (;;)
 		{
 			ManualInputTarget selected;
 			std::optional<SimulationEdit> edit;
-			bool continuous = false, read = false;
+			bool read = false;
 			{
 				std::unique_lock lock(mutex);
-				changed.wait_until(lock, nextRead,
-								   [&]
-								   {
-									   return stopping || bound != revision || refresh || !edits.empty() ||
-											  (pose && !waiting);
-								   });
+				changed.wait_until(
+					lock, nextRead,
+					[&]
+					{
+						return stopping || bound != revision || refresh ||
+							   (!edits.empty() &&
+								(!waiting || std::holds_alternative<ReleaseManualInputs>(edits.front()))) ||
+							   (pose && !waiting);
+					});
 				if (stopping)
 					return;
 				if (bound != revision)
@@ -103,7 +108,7 @@ class ManualInputController::State
 					nextRead = Clock::time_point::max();
 					continue;
 				}
-				if (!edits.empty())
+				if (!edits.empty() && (!waiting || std::holds_alternative<ReleaseManualInputs>(edits.front())))
 				{
 					edit = std::move(edits.front());
 					edits.pop_front();
@@ -114,7 +119,6 @@ class ManualInputController::State
 				{
 					edit = std::move(pose);
 					pose.reset();
-					continuous = true;
 				}
 				refresh = false;
 			}
@@ -147,11 +151,18 @@ class ManualInputController::State
 					{
 						++transaction;
 						receipt = std::move(result);
-						if (continuous)
 						{
 							if (!Pending(receipt) && SimulationEditPhase(receipt) != "applied")
-								throw std::runtime_error("Piloting stopped: " + SimulationEditPhase(receipt));
+								throw std::runtime_error("Input rejected: " + SimulationEditPhase(receipt));
 							waiting = receipt;
+							const auto& commands = std::get<ManualTransaction>(*edit).commands;
+							waitingPose = std::any_of(commands.begin(), commands.end(),
+													  [](const SimulationCommand& command)
+													  {
+														  return std::holds_alternative<SetHeadPose>(command) ||
+																 std::holds_alternative<SetControllerPose>(command) ||
+																 std::holds_alternative<SetTracker>(command);
+													  });
 						}
 					}
 					nextRead = Clock::now();
@@ -172,10 +183,10 @@ class ManualInputController::State
 						{
 							waiting.reset();
 							if (SimulationEditPhase(*outcome) != "applied")
-								throw std::runtime_error("Piloting stopped: " + SimulationEditPhase(*outcome) +
+								throw std::runtime_error("Input rejected: " + SimulationEditPhase(*outcome) +
 														 ". Check input ownership.");
 							std::lock_guard lock(mutex);
-							if (bound == revision)
+							if (bound == revision && waitingPose)
 								++snapshot.appliedPoses;
 						}
 					nextRead = Clock::now() + std::chrono::milliseconds(waiting ? 4 : 500);
@@ -184,8 +195,11 @@ class ManualInputController::State
 				if (bound == revision)
 				{
 					snapshot.posePending = waiting.has_value() || pose.has_value();
+					snapshot.editPending = snapshot.posePending || !edits.empty();
 					snapshot.state = observed;
 					snapshot.result = receipt;
+					if (auto source = SimulationEditSource(receipt))
+						snapshot.source = source;
 					if (read)
 						++snapshot.observation;
 				}
@@ -198,14 +212,15 @@ class ManualInputController::State
 				{
 					snapshot.error = error.what();
 					snapshot.posePending = false;
+					snapshot.editPending = false;
 					pose.reset();
 					edits.clear();
 				}
-				if (connection && connection->Failed())
-				{
-					current.reset();
-					connection.reset();
-				}
+				// A rejected release must not strand an earlier press. Retiring this
+				// source invokes the runtime's disconnect release before reconnecting.
+				current.reset();
+				connection.reset();
+				snapshot.source.reset();
 				nextRead = Clock::now() + std::chrono::milliseconds(500);
 			}
 		}
@@ -230,22 +245,41 @@ void ManualInputController::SetTarget(ManualInputTarget target)
 bool ManualInputController::Submit(SimulationEdit edit, bool continuous)
 {
 	std::lock_guard lock(m_state->mutex);
-	if (m_state->target.endpoint.empty() || !m_state->target.session ||
-		(!std::holds_alternative<ReleaseManualInputs>(edit) && m_state->edits.size() >= 16))
+	if (m_state->target.endpoint.empty() || !m_state->target.session)
 		return false;
+	if (const auto transaction = std::get_if<ManualTransaction>(&edit))
+	{
+		continuous |= transaction->continuous;
+		if (!continuous && m_state->edits.size() + (m_state->pose ? 1 : 0) >= 32)
+		{
+			m_state->snapshot.error = "Input queue full — release inputs";
+			if (!transaction->releaseEdge)
+				return false;
+			// A safety release retires queued presses rather than losing a release edge.
+			edit = ReleaseManualInputs{};
+		}
+	}
 	if (std::holds_alternative<ReleaseManualInputs>(edit))
 	{
 		m_state->edits.clear();
 		m_state->pose.reset();
 	}
 	m_state->snapshot.error.clear();
+	m_state->snapshot.editPending = true;
 	if (continuous)
 	{
 		m_state->pose = std::move(edit);
 		m_state->snapshot.posePending = true;
 	}
 	else
+	{
+		if (m_state->pose)
+		{
+			m_state->edits.push_back(std::move(*m_state->pose));
+			m_state->pose.reset();
+		}
 		m_state->edits.push_back(std::move(edit));
+	}
 	m_state->changed.notify_all();
 	return true;
 }

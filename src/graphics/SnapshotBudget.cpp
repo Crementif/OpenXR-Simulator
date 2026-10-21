@@ -1,0 +1,39 @@
+#include "graphics/SnapshotBudget.h"
+
+#include <algorithm>
+#include <atomic>
+#include <stdexcept>
+
+namespace simxr
+{
+namespace
+{
+std::atomic<std::uint32_t> s_budgetMiB{SnapshotBudget::DefaultMiB};
+std::atomic<std::uint64_t> s_imageBytes{16 * 1024 * 1024};
+} // namespace
+void SnapshotBudget::Configure(std::uint32_t mib)
+{
+	if (mib < MinMiB || mib > MaxMiB)
+		throw std::invalid_argument("Snapshot budget is outside its supported range");
+	s_budgetMiB.store(mib);
+}
+void SnapshotBudget::ObserveImageBytes(std::uint64_t bytes) noexcept
+{
+	auto previous = s_imageBytes.load();
+	while (previous < bytes && !s_imageBytes.compare_exchange_weak(previous, bytes))
+	{
+	}
+}
+std::uint32_t SnapshotBudget::MiB() noexcept
+{
+	return s_budgetMiB.load();
+}
+std::uint64_t SnapshotBudget::ImageBytes() noexcept
+{
+	return s_imageBytes.load();
+}
+std::size_t SnapshotBudget::Capacity() noexcept
+{
+	return std::min<std::uint64_t>(MaxCapacity, std::uint64_t{MiB()} * 1024 * 1024 / ImageBytes() / 4);
+}
+} // namespace simxr

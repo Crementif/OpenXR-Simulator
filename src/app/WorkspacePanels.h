@@ -1,7 +1,7 @@
 #pragma once
 
 #include "app/CompanionSettings.h"
-#include "app/WorkspaceMode.h"
+#include "app/ShellState.h"
 
 #include <memory>
 #include <string>
@@ -19,9 +19,9 @@ class WorkspacePanels
 	std::string InitialEndpoint() const;
 	void BeginFrame(RuntimePanels& runtime);
 	void Draw(RuntimePanels& runtime);
-	void DrawDockspace();
-	WorkspaceMode Mode() const;
-	void SetMode(WorkspaceMode mode);
+	const ShellState& State() const;
+	void Select(Selection selection);
+	void SetPreviewExpanded(bool expanded);
 	void SetScale(float scale);
 	void Finish();
 

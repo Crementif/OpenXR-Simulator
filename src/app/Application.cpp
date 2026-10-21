@@ -58,7 +58,7 @@ int Application::Run()
 		{
 			running = window.PollEvents();
 			if (window.TakeFocusLost() && panels)
-				panels->ReleaseInputs();
+				panels->FocusLost();
 			if (!running)
 				break;
 			if ((m_options.smokeFrames || m_options.proofDescriptor >= 0 || m_options.runtimeSmoke) &&
@@ -86,9 +86,7 @@ int Application::Run()
 			{
 				panels->Poll();
 				workspace.BeginFrame(*panels);
-				workspace.DrawDockspace();
 				workspace.Draw(*panels);
-				panels->Draw(workspace.Mode());
 				if (m_options.runtimeSmoke)
 				{
 					const auto state = panels->Snapshot();

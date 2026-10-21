@@ -32,7 +32,8 @@ enum class PanelWork
 	ExportInfo,
 	ExportRead,
 	Simulate,
-	SimulationStatus
+	SimulationStatus,
+	FrameHistory
 };
 struct PanelSession
 {

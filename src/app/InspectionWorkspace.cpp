@@ -1,4 +1,5 @@
 #include "app/InspectionWorkspace.h"
+#include "graphics/SnapshotBudget.h"
 
 #include <algorithm>
 #include <utility>
@@ -10,7 +11,7 @@ namespace tag = wire::tag;
 using namespace panel;
 InspectionWorkspace::InspectionWorkspace(RuntimePanelRequests& requests) : m_requests(requests)
 {
-	m_captures.reserve(32);
+	m_captures.reserve(SnapshotBudget::Capacity());
 }
 void InspectionWorkspace::SetScope(PanelScope scope, bool clearSelection)
 {
@@ -40,23 +41,27 @@ bool InspectionWorkspace::Add(std::uint64_t id, std::uint64_t frame)
 			capture->frame = frame;
 		return true;
 	}
-	if (m_captures.size() == 32)
+	if (m_captures.size() >= SnapshotBudget::Capacity())
 	{
-		const auto recyclable =
+		const auto oldest =
 			std::find_if(m_captures.begin(), m_captures.end(),
 						 [&](const auto& capture)
 						 {
-							 // Expired endpoint IDs are historical metadata, not live remote
-							 // owners. Keep their bytes until one catalog slot is needed.
-							 return capture.scope.epoch != m_scope.epoch || (capture.released && !capture.inspection);
+							 return capture.local != m_selectedLocal && !Boolean(capture.metadata, tag::Pinned);
 						 });
-		if (recyclable != m_captures.end())
-			m_captures.erase(recyclable);
-	}
-	if (m_captures.size() == 32)
-	{
-		m_error = "Local capture catalog is full; release snapshots before further steps";
-		return false;
+		if (oldest == m_captures.end())
+		{
+			if (std::all_of(m_captures.begin(), m_captures.end(),
+							[](const auto& capture)
+							{
+								return Boolean(capture.metadata, tag::Pinned);
+							}))
+				m_error = "History full — unpin snapshots";
+			return false;
+		}
+		if (oldest->inspection && oldest->scope.epoch == m_scope.epoch)
+			m_requests.Release(wire::OpCode::ReleaseInspection, tag::InspectionId, oldest->inspection);
+		m_captures.erase(oldest);
 	}
 	InspectionCapture capture;
 	capture.id = id;

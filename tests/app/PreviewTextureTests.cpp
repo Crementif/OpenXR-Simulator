@@ -1,3 +1,4 @@
+#include "graphics/SnapshotBudget.h"
 #include "../TestSupport.h"
 #include "app/PreviewTexture.h"
 #include "app/UiRenderer.h"
@@ -51,7 +52,7 @@ void BoundAndRollback(const app::VulkanDeviceAccess& access)
 		rejected = true;
 	}
 	Require(rejected, "Mismatched device identity created a preview texture");
-	std::array<std::unique_ptr<app::PreviewTexture>, 8> textures;
+	std::vector<std::unique_ptr<app::PreviewTexture>> textures(SnapshotBudget::Capacity());
 	for (auto& texture : textures)
 		texture = std::make_unique<app::PreviewTexture>(access, description);
 	rejected = false;

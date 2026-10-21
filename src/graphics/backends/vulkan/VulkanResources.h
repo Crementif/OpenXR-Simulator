@@ -18,6 +18,7 @@ class VulkanImage
 	const std::shared_ptr<VulkanDevice> device;
 	VkImage image = VK_NULL_HANDLE;
 	VkDeviceMemory memory = VK_NULL_HANDLE;
+	VkDeviceSize allocationSize = 0;
 	VkFormat format = VK_FORMAT_UNDEFINED;
 	VkExtent2D extent{};
 	std::uint32_t layers = 0;

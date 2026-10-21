@@ -1,6 +1,8 @@
 #include "app/Window.h"
 
 #include <SDL3/SDL.h>
+#include <algorithm>
+#include <cmath>
 #include <imgui_impl_sdl3.h>
 #include <stdexcept>
 #include <string>
@@ -9,7 +11,7 @@ namespace simxr::app
 {
 Window::Window(bool hidden)
 {
-	if (!SDL_Init(SDL_INIT_VIDEO))
+	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD))
 		throw std::runtime_error(std::string("SDL video unavailable: ") + SDL_GetError());
 	const float scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
 	SDL_WindowFlags flags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
@@ -27,6 +29,8 @@ Window::Window(bool hidden)
 
 Window::~Window()
 {
+	if (m_gamepad)
+		SDL_CloseGamepad(m_gamepad);
 	SDL_DestroyWindow(m_window);
 	SDL_Quit();
 }
@@ -58,6 +62,14 @@ bool Window::PollEvents()
 		}
 		else
 			ImGui_ImplSDL3_ProcessEvent(&event);
+		if (event.type == SDL_EVENT_GAMEPAD_ADDED)
+			OpenGamepad();
+		if (event.type == SDL_EVENT_GAMEPAD_REMOVED && m_gamepad && SDL_GetGamepadID(m_gamepad) == event.gdevice.which)
+		{
+			SDL_CloseGamepad(m_gamepad);
+			m_gamepad = nullptr;
+			OpenGamepad();
+		}
 		if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST && event.window.windowID == SDL_GetWindowID(m_window))
 		{
 			m_focusLost = true;
@@ -68,6 +80,61 @@ bool Window::PollEvents()
 			running = false;
 	}
 	return running;
+}
+
+bool Window::Focused() const
+{
+	return (SDL_GetWindowFlags(m_window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+}
+void Window::OpenGamepad()
+{
+	if (m_gamepad)
+		return;
+	int count = 0;
+	auto ids = SDL_GetGamepads(&count);
+	for (int index = 0; index < count && !m_gamepad; ++index)
+		m_gamepad = SDL_OpenGamepad(ids[index]);
+	SDL_free(ids);
+	if (m_gamepad && SDL_GamepadHasSensor(m_gamepad, SDL_SENSOR_GYRO))
+		SDL_SetGamepadSensorEnabled(m_gamepad, SDL_SENSOR_GYRO, true);
+}
+GamepadSample Window::ReadGamepad(const GamepadBindings& bindings)
+{
+	OpenGamepad();
+	GamepadSample result;
+	if (!m_gamepad)
+		return result;
+	result.connected = true;
+	const auto button = [&](const std::string& name)
+	{
+		const auto key = SDL_GetGamepadButtonFromString(name.c_str());
+		return key != SDL_GAMEPAD_BUTTON_INVALID && SDL_GetGamepadButton(m_gamepad, key);
+	};
+	const auto axis = [&](const std::string& name)
+	{
+		const auto key = SDL_GetGamepadAxisFromString(name.c_str());
+		if (key == SDL_GAMEPAD_AXIS_INVALID)
+			return 0.0f;
+		const float raw = std::clamp(SDL_GetGamepadAxis(m_gamepad, key) / 32767.0f, -1.0f, 1.0f);
+		if (std::abs(raw) <= bindings.deadzone)
+			return 0.0f;
+		return std::copysign((std::abs(raw) - bindings.deadzone) / (1 - bindings.deadzone), raw);
+	};
+	for (std::size_t hand = 0; hand < 2; ++hand)
+	{
+		auto& controls = result.controls[hand];
+		controls.stick = {axis(bindings.stickX[hand]), -axis(bindings.stickY[hand])};
+		controls.trigger = std::max(0.0f, axis(bindings.trigger[hand]));
+		controls.grip = button(bindings.grip[hand]) ? 1 : 0;
+		controls.primary = button(bindings.primary[hand]);
+		controls.secondary = button(bindings.secondary[hand]);
+		controls.menu = button(bindings.menu[hand]);
+		controls.thumbClick = button(bindings.stickClick[hand]);
+	}
+	result.dpad = {button("dpup"), button("dpdown"), button("dpleft"), button("dpright")};
+	result.gyroActive = button(bindings.gyroHold) && SDL_GamepadHasSensor(m_gamepad, SDL_SENSOR_GYRO) &&
+						SDL_GetGamepadSensorData(m_gamepad, SDL_SENSOR_GYRO, result.gyro.data(), 3);
+	return result;
 }
 
 bool Window::TakeFocusLost()

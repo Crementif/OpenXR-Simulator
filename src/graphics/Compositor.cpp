@@ -81,7 +81,9 @@ XrResult PrepareComposition(const FrameLayers& frame, const CompositionTarget& t
 	for (std::size_t eye = 0; eye < target.eyes.size(); ++eye)
 		if (!NormalizedPose(target.eyes[eye].worldPose.pose) || !FovTangents(target.eyes[eye].fov, eyeTangents[eye]))
 			return XR_ERROR_POSE_INVALID;
-	CompositionPlan plan{target.width, target.height, {}};
+	CompositionPlan plan{target.width, target.height, {}, {}};
+	for (const auto& eye : target.eyes)
+		plan.views.push_back({*NormalizedPose(eye.worldPose.pose), eye.fov});
 	for (const auto& layer : frame.layers)
 	{
 		if (const auto* projection = std::get_if<ProjectionLayerDescription>(&layer))

@@ -28,6 +28,7 @@ namespace
 {
 constexpr std::uint64_t CommonCapabilities = static_cast<std::uint64_t>(Capability::DebugCommands) |
 											 static_cast<std::uint64_t>(Capability::SnapshotMetadata) |
+	static_cast<std::uint64_t>(Capability::SnapshotPins) |
 											 static_cast<std::uint64_t>(Capability::PipelineInspection) |
 											 static_cast<std::uint64_t>(Capability::HistoricalCpuState) |
 											 static_cast<std::uint64_t>(Capability::ImmutableRevisions);
@@ -171,7 +172,8 @@ class ControlService::State
 			capabilities |= static_cast<std::uint64_t>(Capability::SimulationCommands) |
 							static_cast<std::uint64_t>(Capability::CommandRecording) |
 							static_cast<std::uint64_t>(Capability::FrameDiagnostics) |
-							static_cast<std::uint64_t>(Capability::ProjectionHistory);
+							static_cast<std::uint64_t>(Capability::ProjectionHistory) |
+							static_cast<std::uint64_t>(Capability::FrameHistory);
 			if (m_runtime.Game().Snapshot().capabilities)
 				capabilities |= static_cast<std::uint64_t>(Capability::GameBridge);
 		}
@@ -365,6 +367,18 @@ class ControlService::State
 					"Historical image is not GPU-ready"};
 			client.images.Retain(response, {binding.id, frame, {}, HistoryTarget(image.view)}, image.output, *m_images,
 				client.nativeHandles, publication.images, false);
+			return response;
+		}
+		case OpCode::ReadFrameHistory:
+		{
+			const auto count = request.Find(tag::Length) ? RequireRequestU64(request, tag::Length) : 128;
+			const auto after = request.Find(tag::Offset) ? RequireRequestU64(request, tag::Offset) : 0;
+			if (!count || count > 128)
+				throw ControlRequestError{ErrorCode::Invalid, "Frame history count must be in [1,128]"};
+			const auto history = session->History().Snapshot();
+			if (history.generation.value != RequireRequestU64(request, tag::Generation))
+				throw ControlRequestError{ErrorCode::StaleGeneration, "Frame history belongs to another run"};
+			EncodeFrameHistory(response, history, after, static_cast<std::size_t>(count));
 			return response;
 		}
 		case OpCode::ReadProjectionHistory:

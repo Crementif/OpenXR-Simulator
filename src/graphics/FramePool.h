@@ -36,6 +36,7 @@ class FramePool
 	// Reclamation may observe completed producers and release their owners, but
 	// must not submit/wait for GPU work or recursively reserve from this pool.
 	explicit FramePool(std::size_t capacity, std::function<void()> reclaim = {});
+	explicit FramePool(std::function<std::size_t()> capacity, std::function<void()> reclaim = {});
 	// Call Collect outside caller locks that native owners may reenter. A caller
 	// that already collected can reserve without running that callback again.
 	void Collect() const;
@@ -45,6 +46,8 @@ class FramePool
 	void CloseAdmission() const;
 	std::size_t InUse() const;
 	std::size_t Capacity() const;
+	// Existing reservations remain charged after shrinking.
+	void SetCapacity(std::size_t capacity) const;
 
   private:
 	std::shared_ptr<detail::FramePoolState> m_state;

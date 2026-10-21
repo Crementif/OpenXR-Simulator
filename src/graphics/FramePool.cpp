@@ -15,7 +15,8 @@ struct FramePoolState
 	{
 	}
 	std::mutex mutex;
-	const std::size_t capacity;
+	std::size_t capacity;
+	std::function<std::size_t()> capacityProvider;
 	const std::function<void()> reclaim;
 	std::size_t inUse = 0;
 	bool closed = false;
@@ -47,6 +48,14 @@ FramePool::FramePool(std::size_t capacity, std::function<void()> reclaim)
 		throw std::invalid_argument("Frame pool requires capacity");
 }
 
+FramePool::FramePool(std::function<std::size_t()> capacity, std::function<void()> reclaim)
+	: FramePool(1, std::move(reclaim))
+{
+	if (!capacity)
+		throw std::invalid_argument("Frame pool requires a capacity provider");
+	m_state->capacityProvider = std::move(capacity);
+}
+
 void FramePool::Collect() const
 {
 	if (m_state->reclaim)
@@ -65,7 +74,7 @@ std::shared_ptr<FrameReservation> FramePool::Reserve(bool collect) const
 	if (collect)
 		Collect();
 	std::lock_guard lock(m_state->mutex);
-	if (m_state->closed || m_state->inUse == m_state->capacity)
+	if (m_state->closed || m_state->inUse >= (m_state->capacityProvider ? m_state->capacityProvider() : m_state->capacity))
 		return {};
 	auto reservation = std::shared_ptr<FrameReservation>(new FrameReservation(m_state));
 	reservation->m_acquired = true;
@@ -103,6 +112,15 @@ std::size_t FramePool::InUse() const
 
 std::size_t FramePool::Capacity() const
 {
-	return m_state->capacity;
+	std::lock_guard lock(m_state->mutex);
+	return m_state->capacityProvider ? m_state->capacityProvider() : m_state->capacity;
+}
+void FramePool::SetCapacity(std::size_t capacity) const
+{
+	if (!capacity)
+		throw std::invalid_argument("Frame pool requires capacity");
+	std::lock_guard lock(m_state->mutex);
+	m_state->capacityProvider = {};
+	m_state->capacity = capacity;
 }
 } // namespace simxr

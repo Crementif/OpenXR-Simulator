@@ -12,6 +12,9 @@
 #include <filesystem>
 #include <fstream>
 #include <imgui.h>
+
+#include <ImGuizmo.h>
+
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
 #include <limits>
@@ -316,7 +319,7 @@ struct UiRenderer::Impl
 			Check(vkCreateFence(device, &fence, nullptr, &frame.fence));
 		}
 		context = ImGui::CreateContext();
-		ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_DockingEnable;
+		ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 		ImGui::GetIO().IniFilename = nullptr;
 		ImGui::StyleColorsDark();
 		if (const auto base = SDL_GetBasePath())
@@ -701,6 +704,7 @@ struct UiRenderer::Impl
 		ImGui_ImplVulkan_NewFrame();
 		ImGui_ImplSDL3_NewFrame();
 		ImGui::NewFrame();
+		ImGuizmo::BeginFrame();
 		m_frameStarted = true;
 		return true;
 	}

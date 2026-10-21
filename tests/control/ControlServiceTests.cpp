@@ -287,6 +287,46 @@ struct Fixture
 	}
 };
 
+void ContinuousFrameHistory()
+{
+	Fixture f;
+	Client client(f.service);
+	client.Hello();
+	client.Discover();
+	const auto first = f.Issue();
+	const auto empty = client.Call(wire::OpCode::ReadFrameHistory, client.Common());
+	if (Error(empty) != wire::ErrorCode::Ok)
+		throw std::runtime_error(std::string(Text(empty, wire::tag::Detail)));
+	Require(Nested(empty, wire::tag::Frames).fields.empty(),
+		"Unsettled frame entered continuous history");
+	f.Clear(first);
+	const auto second = f.Issue();
+	f.Clear(second);
+	const auto batch = client.Call(wire::OpCode::ReadFrameHistory, client.Common());
+	Require(Error(batch) == wire::ErrorCode::Ok && Nested(batch, wire::tag::Frames).fields.size() == 2,
+		"Multiple frame summaries collided in the wire page");
+	auto fields = client.Common();
+	fields.push_back(wire::Field::U64(wire::tag::Length, 1));
+	const auto response = client.Call(wire::OpCode::ReadFrameHistory, fields);
+	const auto frames = Nested(response, wire::tag::Frames);
+	Require(Error(response) == wire::ErrorCode::Ok && frames.fields.size() == 1,
+		"Continuous history pagination failed");
+	const auto frame = Nested(frames, frames.fields.front().tag);
+	Require(U64(frame, wire::tag::FrameId) == first.id.value &&
+		Nested(frame, wire::tag::Prediction).Find(wire::tag::Time)->AsI64() == first.displayTime.value.count(),
+		"Continuous history lost runtime frame identity or timestamp");
+	fields.push_back(wire::Field::U64(wire::tag::Offset, first.id.value));
+	const auto next = Nested(client.Call(wire::OpCode::ReadFrameHistory, fields), wire::tag::Frames);
+	Require(next.fields.size() == 1 && U64(Nested(next, next.fields.front().tag), wire::tag::FrameId) == second.id.value,
+		"Continuous history skipped or repeated a clear frame");
+	fields = client.Common();
+	fields.push_back(wire::Field::U64(wire::tag::Length, 129));
+	Require(Error(client.Call(wire::OpCode::ReadFrameHistory, fields)) == wire::ErrorCode::Invalid,
+		"Continuous history accepted an unbounded request");
+	f.Restart();
+	Require(Error(client.Call(wire::OpCode::ReadFrameHistory, client.Common())) == wire::ErrorCode::StaleGeneration,
+		"Continuous history crossed a run boundary");
+}
 void NegotiationAndReplay()
 {
 	Fixture f;
@@ -304,6 +344,7 @@ void NegotiationAndReplay()
 				U64(response, wire::tag::Capabilities) ==
 					(static_cast<std::uint64_t>(wire::Capability::DebugCommands) |
 					 static_cast<std::uint64_t>(wire::Capability::SnapshotMetadata) |
+				 static_cast<std::uint64_t>(wire::Capability::SnapshotPins) |
 					 static_cast<std::uint64_t>(wire::Capability::PipelineInspection) |
 					 static_cast<std::uint64_t>(wire::Capability::HistoricalCpuState) |
 					 static_cast<std::uint64_t>(wire::Capability::ImmutableRevisions) |
@@ -311,6 +352,7 @@ void NegotiationAndReplay()
 					 static_cast<std::uint64_t>(wire::Capability::CommandRecording) |
 					 static_cast<std::uint64_t>(wire::Capability::FrameDiagnostics) |
 					 static_cast<std::uint64_t>(wire::Capability::ProjectionHistory) |
+					 static_cast<std::uint64_t>(wire::Capability::FrameHistory) |
 					 static_cast<std::uint64_t>(wire::Capability::PoseSequences)) &&
 				response.Find(wire::tag::PayloadLimit)->AsU32() == wire::MaxPayload,
 			"Hello negotiation/capability limits changed");
@@ -1495,6 +1537,7 @@ int main()
 {
 	try
 	{
+		ContinuousFrameHistory();
 		NegotiationAndReplay();
 		LegacyMinorNegotiation();
 		OwnershipAndExactClear();

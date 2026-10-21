@@ -1,5 +1,6 @@
 #include "app/PreviewImages.h"
 #include "app/UiRenderer.h"
+#include "graphics/SnapshotBudget.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -22,7 +23,7 @@ struct PreviewImages::Image
 PreviewImages::PreviewImages(UiRenderer& renderer, RuntimePanelRequests& requests)
 	: m_renderer(renderer), m_requests(requests)
 {
-	m_images.reserve(8);
+	m_images.reserve(SnapshotBudget::Capacity());
 }
 PreviewImages::~PreviewImages()
 {
@@ -48,6 +49,13 @@ PreviewImages::Image* PreviewImages::Find(std::uint64_t id) const
 }
 void PreviewImages::SetScope(PanelScope scope)
 {
+	if (scope != m_scope && m_pending)
+	{
+		if (scope.epoch == m_scope.epoch)
+			m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId,
+							   U64(m_pending->message, tag::ImageReaderId));
+		m_pending.reset();
+	}
 	if (scope.epoch != m_scope.epoch)
 		for (auto& image : m_images)
 		{
@@ -71,7 +79,7 @@ bool PreviewImages::SelectCapture(PanelScope scope, std::uint64_t capture)
 			image->session == scope.session && image->generation == scope.generation)
 		{
 			m_selectedImage = image->id;
-			return true;
+			return image->reader != 0;
 		}
 	return false;
 }
@@ -204,16 +212,20 @@ void PreviewImages::Retained(const wire::Message& message, bool preview)
 			image->live == preview && image->session == U64(message, tag::Session) &&
 			image->generation == U64(message, tag::Generation))
 		{
-			if (image->reader != reader)
+			if (!image->reader)
+				image->reader = reader;
+			else if (image->reader != reader)
 				m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId, reader);
 			if ((preview && m_follow) || (!preview && m_selectedCapture == capture))
 				m_selectedImage = image->id;
 			return;
 		}
-	if (m_images.size() >= 8)
+	if (m_images.size() >= SnapshotBudget::Capacity())
 	{
-		m_error = "Eight GPU images are retained; release a snapshot to continue";
-		m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId, reader);
+		if (m_pending)
+			m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId,
+							   U64(m_pending->message, tag::ImageReaderId));
+		m_pending = PendingImage{message, preview};
 		return;
 	}
 #ifdef __linux__
@@ -310,6 +322,19 @@ void PreviewImages::ShareFailed(std::uint64_t id)
 }
 void PreviewImages::Poll()
 {
+	std::size_t retained = std::count_if(m_images.begin(), m_images.end(),
+										 [](const auto& image)
+										 {
+											 return !image->release;
+										 });
+	const auto capacity = SnapshotBudget::Capacity();
+	const auto cacheLimit = capacity > 2 ? capacity - 2 : 1;
+	for (auto& image : m_images)
+		if (retained > cacheLimit && image->id != m_selectedImage && !image->release && image->texture->Ready())
+		{
+			image->release = true;
+			--retained;
+		}
 #ifdef __linux__
 	for (auto& image : m_images)
 	{
@@ -345,7 +370,8 @@ void PreviewImages::Poll()
 				m_requests.Release(wire::OpCode::ReleaseDelivery, tag::DeliveryId, image.delivery);
 				image.delivery = 0;
 			}
-			if ((image.release || (image.live && image.texture->Ready())) && image.reader)
+			if ((image.release || (image.live && image.texture->Ready())) &&
+				image.reader)
 			{
 				m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId, image.reader);
 				image.reader = 0;
@@ -378,6 +404,12 @@ void PreviewImages::Poll()
 		if (m_selectedImage == image.id)
 			m_selectedImage = 0;
 		iterator = m_images.erase(iterator);
+	}
+	if (m_pending && m_images.size() < SnapshotBudget::Capacity())
+	{
+		auto pending = std::move(*m_pending);
+		m_pending.reset();
+		Retained(pending.message, pending.live);
 	}
 }
 } // namespace simxr::app

@@ -1,4 +1,6 @@
 #pragma once
+#include "app/PilotBindings.h"
+#include "graphics/SnapshotBudget.h"
 
 #include <filesystem>
 #include <string>
@@ -28,6 +30,11 @@ struct SavedLayout
 struct CompanionSettings
 {
 	float scale = 1;
+	std::uint32_t snapshotBudgetMiB = SnapshotBudget::DefaultMiB;
+	PilotBindings pilotBindings = DefaultPilotBindings();
+	GamepadBindings gamepadBindings;
+	float inspectorWidth = 340, timelineHeight = 132;
+	bool railCollapsed = false, timelineResized = false;
 	std::string endpoint;
 	std::string activeProfile;
 	std::string activeLayout;

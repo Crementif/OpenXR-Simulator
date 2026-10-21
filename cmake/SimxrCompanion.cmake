@@ -18,11 +18,17 @@ FetchContent_Declare(simxr_imgui
     URL https://codeload.github.com/ocornut/imgui/tar.gz/af84778eeaab75bee0b54420f3157cf3ee00618f
     URL_HASH SHA256=60f709af3e53ef89874eba3162f4426f87beb5fd0682a681cc3189f0d7d246ad
     DOWNLOAD_EXTRACT_TIMESTAMP FALSE)
-FetchContent_MakeAvailable(simxr_sdl simxr_imgui)
+FetchContent_Declare(simxr_imguizmo
+    URL https://codeload.github.com/CedricGuillemet/ImGuizmo/tar.gz/105e4fde45e4e74aae8973d98750820ef7aca7e2
+    URL_HASH SHA256=d625a9f3207f15b7a5b7706269747676f17b7e4df00f898ced9480e5063d493a
+    SOURCE_SUBDIR simxr-source-only
+    DOWNLOAD_EXTRACT_TIMESTAMP FALSE)
+FetchContent_MakeAvailable(simxr_sdl simxr_imgui simxr_imguizmo)
 find_path(SIMXR_VULKAN_INCLUDE_DIR vulkan/vulkan.h HINTS "$ENV{VULKAN_SDK}/include" REQUIRED)
 find_library(SIMXR_VULKAN_LIBRARY NAMES vulkan vulkan-1 libvulkan.so.1 HINTS "$ENV{VULKAN_SDK}/lib" REQUIRED)
 
 add_library(simxr_imgui STATIC
+    ${simxr_imguizmo_SOURCE_DIR}/src/ImGuizmo.cpp
     ${simxr_imgui_SOURCE_DIR}/imgui.cpp
     ${simxr_imgui_SOURCE_DIR}/imgui_draw.cpp
     ${simxr_imgui_SOURCE_DIR}/imgui_tables.cpp
@@ -30,13 +36,16 @@ add_library(simxr_imgui STATIC
     ${simxr_imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
     ${simxr_imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp)
 target_compile_features(simxr_imgui PRIVATE cxx_std_20)
-target_include_directories(simxr_imgui SYSTEM PUBLIC ${simxr_imgui_SOURCE_DIR} ${simxr_imgui_SOURCE_DIR}/backends "${SIMXR_VULKAN_INCLUDE_DIR}")
+target_include_directories(simxr_imgui SYSTEM PUBLIC ${simxr_imguizmo_SOURCE_DIR}/src ${simxr_imgui_SOURCE_DIR} ${simxr_imgui_SOURCE_DIR}/backends "${SIMXR_VULKAN_INCLUDE_DIR}")
 target_link_libraries(simxr_imgui PUBLIC SDL3::SDL3-static "${SIMXR_VULKAN_LIBRARY}")
 
 add_library(simxr_app STATIC src/app/Application.cpp src/app/Window.cpp src/app/UiRenderer.cpp src/app/RuntimePanels.cpp src/app/PreviewTexture.cpp src/app/PreviewImages.cpp src/app/DeviceControlPanel.cpp src/app/WorkspacePanels.cpp)
 simxr_configure_target(simxr_app)
 target_include_directories(simxr_app PRIVATE "${PROJECT_SOURCE_DIR}/shaders/generated")
-target_sources(simxr_app PRIVATE src/app/RecordingPanel.cpp src/app/TimelinePanel.cpp)
+target_sources(simxr_app PRIVATE src/app/RecordingPanel.cpp src/app/TimelinePanel.cpp src/app/TimelineCanvas.cpp src/app/ShellState.cpp
+    src/app/PilotController.cpp src/app/SpatialEditor.cpp src/app/widgets/LiveField.cpp
+    src/app/widgets/SpatialWidgets.cpp src/app/widgets/ArcballWidget.cpp
+    src/app/widgets/ReachMap.cpp src/app/widgets/RigView.cpp)
 target_link_libraries(simxr_app PUBLIC simxr_imgui simxr_connection simxr_app_settings simxr_recording_controller)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(simxr_app PRIVATE simxr_vulkan_control)
@@ -106,3 +115,5 @@ install(TARGETS simxr_companion RUNTIME DESTINATION bin)
 
 install(FILES ${simxr_sdl_SOURCE_DIR}/LICENSE.txt DESTINATION share/licenses/simxr_companion RENAME SDL3.txt)
 install(FILES ${simxr_imgui_SOURCE_DIR}/LICENSE.txt DESTINATION share/licenses/simxr_companion RENAME ImGui.txt)
+
+install(FILES ${simxr_imguizmo_SOURCE_DIR}/LICENSE DESTINATION share/licenses/simxr_companion RENAME ImGuizmo.txt)
