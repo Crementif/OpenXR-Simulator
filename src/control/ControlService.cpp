@@ -360,6 +360,8 @@ class ControlService::State
 			if (status.composedEyes)
 				capabilities |= static_cast<std::uint64_t>(Capability::ComposedCapture) |
 					static_cast<std::uint64_t>(Capability::ImageRecording);
+			if (status.filteredComposition)
+				capabilities |= static_cast<std::uint64_t>(Capability::FilteredComposition);
 			if (status.depthViews)
 				capabilities |= static_cast<std::uint64_t>(Capability::DepthCapture);
 			if (status.layerViews)

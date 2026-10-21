@@ -246,6 +246,7 @@ DebugControllerSnapshot DebugController::Snapshot() const
 	snapshot.composedEyes = m_session->SupportsCapture();
 	snapshot.layerViews = m_session->SupportsCapture({CaptureKind::LayerView});
 	snapshot.depthViews = m_session->SupportsCapture({CaptureKind::LayerDepth});
+	snapshot.filteredComposition = m_session->SupportsCapture({CaptureKind::ProjectionLayers});
 	snapshot.pipeline = m_session->Scheduler().Snapshot();
 	snapshot.retention = m_session->Captures().Snapshot();
 	snapshot.imageRecording = m_session->ImageRecording();

@@ -85,6 +85,7 @@ class Capability(IntFlag):
     GAME_BRIDGE = 1 << 14
     DEPTH_CAPTURE = 1 << 15
     IMAGE_RECORDING = 1 << 16
+    FILTERED_COMPOSITION = 1 << 17
 
 
 class CommandKind(IntEnum):
@@ -105,6 +106,8 @@ class TargetKind(IntEnum):
     VIRTUAL_DISPLAY = 3
     LAYER_DEPTH = 4
     LAYER_DEPTH_LINEAR = 5
+    PROJECTION_LAYERS = 6
+    QUAD_LAYERS = 7
 
 
 class Tag(IntEnum):

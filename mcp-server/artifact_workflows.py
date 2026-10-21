@@ -125,11 +125,10 @@ class CaptureWorkflow:
     def _capture(self, timeout, eye="both", layer="projection", source="mcp"):
         timeout = _timeout(timeout)
         self._capture_metadata = None
-        if layer == "all":
-            retained = self._retained.capture(eye, timeout, self._lane.wait)
-            if retained is not None:
-                data, self._capture_metadata = retained
-                return data
+        retained = self._retained.capture(eye, timeout, self._lane.wait, layer)
+        if retained is not None:
+            data, self._capture_metadata = retained
+            return data
         self._capture_metadata = {"transport": "legacy_files", "eye": eye, "layer": layer}
         self._artifacts.clear_screenshots(layer)
         requested_at = time.time()
@@ -165,7 +164,7 @@ class CaptureWorkflow:
                 return [TextResult(f"Failed to request screenshot: {error}")]
             if data:
                 try:
-                    canonical = self._capture_metadata is not None and self._capture_metadata["transport"] == "retained_preview"
+                    canonical = self._capture_metadata is not None and self._capture_metadata["transport"] in ("retained_preview", "retained_capture")
                     jpeg = to_jpeg(data, eye="both" if canonical else eye)
                 except Exception as error:
                     return [

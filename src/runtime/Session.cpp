@@ -488,14 +488,15 @@ SnapshotStore& Session::Captures()
 	return m_captures.Snapshots();
 }
 
-XrResult Session::ConfigureCapturePool(FramePool pool, bool layerViews, CapturePromoter promoter, bool depthViews)
+XrResult Session::ConfigureCapturePool(FramePool pool, bool layerViews, CapturePromoter promoter, bool depthViews,
+	bool filteredComposition)
 {
 	std::lock_guard lock(m_mutex);
 	if (m_state.closed)
 		return XR_ERROR_SESSION_LOST;
 	if (m_state.running)
 		return XR_ERROR_CALL_ORDER_INVALID;
-	return m_captures.Configure(std::move(pool), layerViews, std::move(promoter), depthViews);
+	return m_captures.Configure(std::move(pool), layerViews, std::move(promoter), depthViews, filteredComposition);
 }
 
 SnapshotAdmission Session::StartImageRecording(CaptureTarget target, std::uint32_t capacity, std::uint64_t frames,

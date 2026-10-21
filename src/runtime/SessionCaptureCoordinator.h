@@ -37,7 +37,7 @@ class SessionCaptureCoordinator
 	class Boundary;
 	explicit SessionCaptureCoordinator(FrameHistory& history);
 	~SessionCaptureCoordinator();
-	XrResult Configure(FramePool&& pool, bool layerViews, CapturePromoter&& promoter, bool depthViews);
+	XrResult Configure(FramePool&& pool, bool layerViews, CapturePromoter&& promoter, bool depthViews, bool filteredComposition);
 	void Start(SessionGeneration generation);
 	void Stop() noexcept;
 	void Retire() noexcept;
@@ -71,6 +71,7 @@ class SessionCaptureCoordinator
 	std::optional<FramePool> m_pool;
 	bool m_layerViews = false;
 	bool m_depthViews = false;
+	bool m_filteredComposition = false;
 	CapturePromoter m_promoter;
 	bool m_running = false;
 	SessionGeneration m_generation;

@@ -1,4 +1,5 @@
 """Legacy screenshot name using the canonical live preview/export protocol."""
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 import json
 import os
@@ -78,10 +79,59 @@ def main():
                         'Screenshot granted application admission')
                 require(not (data / 'screenshot_request.json').exists() and not (data / 'screenshot_status.json').exists(),
                         'Canonical screenshot used an overwrite-prone file request')
-                application.close()
-                application = None
+                busy = application.call('capture_screenshot', {'layer': 'projection'})
+                require(not any(isinstance(value, ImageResult) for value in busy), 'Filtered capture stole debugger ownership')
                 observer.wait(session, observer.submit(lease, CommandKind.RESUME)['operation_id'])
                 observer.relinquish(lease)
+                timed_out = application.call('capture_screenshot', {'layer': 'quad', 'timeout': .02})
+                require('timed out' in str(timed_out), timed_out)
+                require(observer.status(session)['image_recording']['phase'] != 'recording', 'Timed-out recording remained active')
+                with ThreadPoolExecutor(max_workers=1) as workers:
+                    for frame, layer, eye in ((4, 'projection', 'both'), (5, 'quad', 'both'), (6, 'projection', 'right')):
+                        before = observer.status(session)
+                        result = workers.submit(application.call, 'capture_screenshot', {'layer': layer, 'eye': eye})
+                        deadline = time.monotonic() + 5
+                        while observer.status(session)['image_recording']['phase'] != 'recording':
+                            require(not result.done(), result.result() if result.done() else 'Capture ended before admission')
+                            require(time.monotonic() < deadline, 'Filtered capture did not reserve a slot')
+                            time.sleep(.005)
+                        (data / f'recording.{frame - 1}.continue').touch()
+                        values = result.result(timeout=10)
+                        pictures = [value for value in values if isinstance(value, ImageResult)]
+                        require(len(pictures) == 1, values)
+                        metadata = json.loads(next(value.text for value in values if isinstance(value, TextResult)).split('\n')[-1])
+                        require(metadata['transport'] == 'retained_capture' and metadata['frame']['frame_id'] == str(frame)
+                                and metadata['layer'] == layer, metadata)
+                        with Image.open(BytesIO(pictures[0].data)) as picture:
+                            require(picture.size == ((128 if eye == 'both' else 64), 48), picture.size)
+                            right_center = picture.getpixel((picture.width - 32, 24))
+                            right_corner = picture.getpixel((picture.width - 8, 8))
+                            if layer == 'projection':
+                                require(right_center[2] > 200 and right_center[0] < 40, right_center)
+                                require(right_corner[2] > 200 and right_corner[0] < 40, right_corner)
+                            else:
+                                require(right_center[0] > 200 and right_center[2] < 40, right_center)
+                                require(max(right_corner) < 40 and max(picture.getpixel((32, 24))) < 40,
+                                        'Quad screenshot lost its right-eye visibility')
+                        after = observer.status(session)
+                        require(after['manual'] == before['manual'] == False and
+                                after['pipeline']['permits'] == before['pipeline']['permits'],
+                                'Filtered screenshot altered application pacing')
+                        require(after['image_recording']['phase'] != 'recording', 'Screenshot left recording active')
+                    cancelled = workers.submit(application.call, 'capture_screenshot', {'layer': 'quad'})
+                    deadline = time.monotonic() + 5
+                    while observer.status(session)['image_recording']['phase'] != 'recording':
+                        require(not cancelled.done(), 'Cancellation fixture did not start')
+                        require(time.monotonic() < deadline, 'Cancellation fixture did not reserve a slot')
+                        time.sleep(.005)
+                    application.close()
+                    require(not any(isinstance(value, ImageResult) for value in cancelled.result(timeout=5)),
+                            'Cancelled capture returned an image without a new frame')
+                    require(observer.status(session)['image_recording']['phase'] != 'recording',
+                            'Cancelled capture left its reservation active')
+                require(not (data / 'screenshot_request.json').exists(), 'Filtered capture used legacy files')
+                application.close()
+                application = None
                 for frame in range(3, 7):
                     (data / f'recording.{frame}.continue').touch()
                 wait_file(data / 'control.destroyed', host)

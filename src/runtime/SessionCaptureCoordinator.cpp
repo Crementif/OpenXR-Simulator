@@ -29,7 +29,8 @@ SessionCaptureCoordinator::~SessionCaptureCoordinator()
 	// Release callback captures outside the lock while the store and mutex live.
 }
 
-XrResult SessionCaptureCoordinator::Configure(FramePool&& pool, bool layerViews, CapturePromoter&& promoter, bool depthViews)
+XrResult SessionCaptureCoordinator::Configure(FramePool&& pool, bool layerViews, CapturePromoter&& promoter, bool depthViews,
+	bool filteredComposition)
 {
 	std::lock_guard lock(m_mutex);
 	if (m_running || m_pool)
@@ -37,6 +38,7 @@ XrResult SessionCaptureCoordinator::Configure(FramePool&& pool, bool layerViews,
 	m_pool = std::move(pool);
 	m_layerViews = layerViews;
 	m_depthViews = layerViews && depthViews;
+	m_filteredComposition = layerViews && filteredComposition;
 	m_promoter = std::move(promoter);
 	return XR_SUCCESS;
 }
@@ -79,7 +81,8 @@ SnapshotStore& SessionCaptureCoordinator::Snapshots()
 bool SessionCaptureCoordinator::SupportsLocked(CaptureTarget target) const
 {
 	return m_pool && (target == CaptureTarget{} || (m_layerViews && target.kind == CaptureKind::LayerView) ||
-		(m_depthViews && target.IsDepth()));
+		(m_depthViews && target.IsDepth()) ||
+		(m_filteredComposition && target.IsFilteredComposition() && !target.layer && !target.view));
 }
 
 bool SessionCaptureCoordinator::Supports(CaptureTarget target) const
@@ -120,7 +123,7 @@ CaptureReservation SessionCaptureCoordinator::ReserveLocked(CaptureTarget target
 	if (!producer)
 		return {SnapshotAdmission::Capacity, {}};
 	std::shared_ptr<FrameReservation> composedProducer;
-	if (target.IsLayerImage())
+	if (target.IsAdditionalImage())
 	{
 		composedProducer = m_pool->Reserve(false);
 		if (!composedProducer)
@@ -135,7 +138,7 @@ bool SessionCaptureCoordinator::HasRequest(FrameKey frame, CaptureTarget target)
 	{
 		if (requested == target)
 			return true;
-		if (target == CaptureTarget{} && requested.IsLayerImage())
+		if (target == CaptureTarget{} && requested.IsAdditionalImage())
 			return true;
 	}
 	return false;
@@ -346,7 +349,7 @@ SessionCaptureCoordinator::Submission::Submission(SessionCaptureCoordinator& own
 	for (std::size_t index = 0; index < m_outputs.size(); ++index)
 	{
 		const auto& capture = m_outputs[index];
-		if (!capture.target.IsLayerImage() || std::any_of(m_outputs.begin(), m_outputs.begin() + index,
+		if (!capture.target.IsAdditionalImage() || std::any_of(m_outputs.begin(), m_outputs.begin() + index,
 																		 [&](const auto& prior)
 																		 {
 																			 return prior.target == capture.target;

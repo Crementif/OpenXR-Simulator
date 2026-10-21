@@ -65,6 +65,12 @@ Field EncodeCaptureTarget(CaptureTarget target)
 	case CaptureKind::LayerDepthLinear:
 		kind = TargetKind::LayerDepthLinear;
 		break;
+	case CaptureKind::ProjectionLayers:
+		kind = TargetKind::ProjectionLayers;
+		break;
+	case CaptureKind::QuadLayers:
+		kind = TargetKind::QuadLayers;
+		break;
 	case CaptureKind::VirtualDisplay:
 		kind = TargetKind::VirtualDisplay;
 		break;
@@ -101,6 +107,14 @@ CaptureTarget DecodeCaptureTarget(const Message& request)
 		return {CaptureKind::LayerDepth, layer, view};
 	case TargetKind::LayerDepthLinear:
 		return {CaptureKind::LayerDepthLinear, layer, view};
+	case TargetKind::ProjectionLayers:
+		if (!layer && !view)
+			return {CaptureKind::ProjectionLayers};
+		break;
+	case TargetKind::QuadLayers:
+		if (!layer && !view)
+			return {CaptureKind::QuadLayers};
+		break;
 	case TargetKind::VirtualDisplay:
 		if (layer || view)
 			break;

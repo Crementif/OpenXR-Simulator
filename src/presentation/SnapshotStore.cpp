@@ -45,8 +45,8 @@ bool HasLayerView(const FrameRecord& metadata, CaptureTarget target)
 bool Valid(CaptureTarget target)
 {
 	return target.IsLayerImage() ||
-		   ((target.kind == CaptureKind::ComposedEyes || target.kind == CaptureKind::VirtualDisplay) && !target.layer &&
-			!target.view);
+		   ((target.kind == CaptureKind::ComposedEyes || target.kind == CaptureKind::VirtualDisplay ||
+			 target.IsFilteredComposition()) && !target.layer && !target.view);
 }
 } // namespace
 
@@ -140,7 +140,9 @@ void SnapshotStore::TraceTerminal(Entry& entry) noexcept
 	const auto target = record.target.kind == CaptureKind::ComposedEyes ? "composed"
 		: record.target.kind == CaptureKind::LayerView ? "layer_view"
 		: record.target.kind == CaptureKind::LayerDepth ? "layer_depth"
-		: record.target.kind == CaptureKind::LayerDepthLinear ? "layer_depth_linear" : "display";
+		: record.target.kind == CaptureKind::LayerDepthLinear ? "layer_depth_linear"
+		: record.target.kind == CaptureKind::ProjectionLayers ? "projection_layers"
+		: record.target.kind == CaptureKind::QuadLayers ? "quad_layers" : "display";
 	char detail[128];
 	std::snprintf(detail, sizeof(detail), "phase=%s; target=%s; layer=%u; view=%u",
 		phase, target, record.target.layer, record.target.view);
@@ -386,7 +388,7 @@ bool SnapshotStore::SetProducer(FrameKey frame, std::shared_ptr<FrameReservation
 		return !entry.released && entry.record.frame == frame &&
 			   (entry.record.phase == SnapshotPhase::Issued || entry.record.phase == SnapshotPhase::Begun) &&
 			   (entry.record.target == target ||
-				(target == CaptureTarget{} && entry.record.target.IsLayerImage()));
+				(target == CaptureTarget{} && entry.record.target.IsAdditionalImage()));
 	};
 	for (const auto& entry : m_entries)
 		if (matches(entry) && (entry.record.target == target ? entry.producer : entry.composedProducer))

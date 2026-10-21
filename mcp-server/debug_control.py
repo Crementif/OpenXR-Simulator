@@ -43,7 +43,7 @@ _SESSION = {'connection': _CONNECTION, 'session': _ID, 'generation': _GENERATION
 _GAME = {'connection': _CONNECTION, 'session': _ID, 'generation': _GENERATION}
 _LEASE = {**_SESSION, 'lease': _ID}
 _COMMAND = {**_LEASE, 'command_id': _ID}
-_TARGET = {'target': {'type': 'string', 'enum': ['composed_eyes', 'layer_view', 'layer_depth', 'layer_depth_linear'], 'default': 'composed_eyes'},
+_TARGET = {'target': {'type': 'string', 'enum': ['composed_eyes', 'layer_view', 'layer_depth', 'layer_depth_linear', 'projection_layers', 'quad_layers'], 'default': 'composed_eyes'},
            'layer': {'type': 'integer', 'minimum': 0, 'maximum': 2**32 - 1, 'default': 0},
            'view': {'type': 'integer', 'minimum': 0, 'maximum': 2**32 - 1, 'default': 0},
            'lookahead': {'type': 'integer', 'minimum': 1, 'maximum': 4, 'default': 1}}
@@ -200,7 +200,7 @@ def _validate(name, args):
             raise ValueError(f'{key} must be a nonempty string')
         if 'enum' in rule and value not in rule['enum']:
             raise ValueError(f'Unsupported {key}')
-    if name in ('debug_step', 'debug_strict_admission', 'debug_start_image_recording') and args.get('target', 'composed_eyes') == 'composed_eyes' and (args.get('layer', 0) or args.get('view', 0)):
+    if name in ('debug_step', 'debug_strict_admission', 'debug_start_image_recording') and args.get('target', 'composed_eyes') in ('composed_eyes', 'projection_layers', 'quad_layers') and (args.get('layer', 0) or args.get('view', 0)):
         raise ValueError('Composed-eye capture has no layer/view index')
     if name.startswith('game_bridge_') and (('session' in args) != ('generation' in args)):
         raise ValueError('Supply both session and generation, or omit both for the independent game bridge')

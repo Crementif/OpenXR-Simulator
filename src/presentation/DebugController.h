@@ -149,6 +149,7 @@ struct DebugControllerSnapshot
 	bool composedEyes = false;
 	bool layerViews = false;
 	bool depthViews = false;
+	bool filteredComposition = false;
 	FramePipelineState pipeline;
 	SnapshotStoreState retention;
 	ImageRecordingSnapshot imageRecording;

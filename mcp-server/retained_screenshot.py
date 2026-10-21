@@ -1,4 +1,4 @@
-"""Explicit composed screenshots through retained preview/export ownership."""
+"""Explicit screenshots through retained GPU image/export ownership."""
 from io import BytesIO
 import time
 
@@ -22,10 +22,59 @@ class RetainedScreenshot:
             raise CaptureFailed('Retained screenshot timed out')
         wait(min(.005, remaining))
 
-    def capture(self, eye, timeout, wait):
+    def _retain_filtered(self, client, session, layer, deadline, wait):
+        from simxr_control import CommandKind, TargetKind
+        target = TargetKind.PROJECTION_LAYERS if layer == 'projection' else TargetKind.QUAD_LAYERS
+        lease = client.acquire(session)
+        retained = None
+        renewal = time.monotonic() + 1
+        try:
+            operation = client.submit(lease, CommandKind.START_IMAGE_RECORDING, target=target,
+                                      recording_capacity=1, recording_frames=1)['operation_id']
+            while True:
+                if time.monotonic() >= renewal:
+                    client.renew(lease)
+                    renewal = time.monotonic() + 1
+                result = client.operation(session, operation)
+                if result['phase'] not in ('queued', 'pending'):
+                    break
+                self._wait(deadline, wait)
+            if result['phase'] != 'complete':
+                raise CaptureFailed('Filtered screenshot could not start: ' + result['progress'])
+            capture, = result['captures']
+            client.acknowledge(lease, result['command_id'])
+            while True:
+                if time.monotonic() >= renewal:
+                    client.renew(lease)
+                    renewal = time.monotonic() + 1
+                snapshot = client.capture(session, capture)
+                if snapshot['phase'] == 'ready':
+                    retained = client.retain_image(session, capture)
+                    return retained
+                if snapshot['phase'] not in ('reserved', 'issued', 'begun', 'gpu_pending'):
+                    raise CaptureFailed('Filtered screenshot is unavailable: ' + snapshot['phase'])
+                self._wait(deadline, wait)
+        except BaseException as error:
+            if self._binding.is_uncertain(error):
+                self._binding.invalidate(error)
+            raise
+        finally:
+            # Relinquish stops the finite recording and releases its reserved/captured slots.
+            # A successfully retained reader owns its image independently.
+            if self._binding.client is client:
+                try:
+                    client.relinquish(lease)
+                except BaseException:
+                    if retained is not None:
+                        client.release_image(retained['image_reader_id'])
+                    raise
+
+    def capture(self, eye, timeout, wait, layer='all'):
         """None selects legacy only before admission, for absent capability/discovery."""
         if eye not in ('both', 'left', 'right'):
             raise ValueError('Screenshot eye must be both, left or right')
+        if layer not in ('all', 'projection', 'quad'):
+            raise ValueError('Screenshot layer must be all, projection or quad')
         try:
             if not self._binding.connect():
                 return None
@@ -36,18 +85,22 @@ class RetainedScreenshot:
             if client.sessions() != [session]:
                 self._binding.close()
                 raise RuntimeError('Screenshot session changed; reconnect explicitly')
-            needed = Capability.LIVE_PREVIEW | Capability.IMAGE_EXPORT
+            needed = Capability.IMAGE_EXPORT | (Capability.LIVE_PREVIEW if layer == 'all' else
+                     Capability.IMAGE_RECORDING | Capability.FILTERED_COMPOSITION)
             if client.status(session)['capabilities'] & needed != needed:
                 return None
             deadline = time.monotonic() + timeout
-            while True:
-                try:
-                    retained = client.retain_preview(session)
-                    break
-                except ControlError as error:
-                    if error.code not in (ErrorCode.BUSY, ErrorCode.NOT_FOUND):
-                        raise
-                    self._wait(deadline, wait)
+            if layer != 'all':
+                retained = self._retain_filtered(client, session, layer, deadline, wait)
+            else:
+                while True:
+                    try:
+                        retained = client.retain_preview(session)
+                        break
+                    except ControlError as error:
+                        if error.code not in (ErrorCode.BUSY, ErrorCode.NOT_FOUND):
+                            raise
+                        self._wait(deadline, wait)
             reader = retained.get('image_reader_id')
             if reader is None:
                 raise CaptureFailed('The current preview is cleared; no retained image is available')
@@ -62,8 +115,8 @@ class RetainedScreenshot:
                 if size * len(slices) > self.MAX_BYTES:
                     raise CaptureFailed('Retained screenshot exceeds the 128 MiB image budget')
                 output = Image.new('RGBA', (width * len(slices), height))
-                for position, layer in enumerate(slices):
-                    started = client.start_export(reader, layer=layer)
+                for position, array_slice in enumerate(slices):
+                    started = client.start_export(reader, layer=array_slice)
                     ticket = started['export_id']
                     try:
                         if started['total_bytes'] != size:
@@ -89,7 +142,8 @@ class RetainedScreenshot:
                         client.release_export(ticket)
                 encoded = BytesIO()
                 output.save(encoded, format='PNG')
-                metadata = {'transport': 'retained_preview', 'session': str(info['session']),
+                metadata = {'transport': 'retained_preview' if layer == 'all' else 'retained_capture',
+                            'layer': layer, 'session': str(info['session']),
                             'frame': {key: str(value) for key, value in info['frame'].items()},
                             'target': info['target'], 'width': output.width, 'height': output.height,
                             'eye': eye, 'format': descriptor['format']}

@@ -6,6 +6,7 @@
 #include "runtime/Session.h"
 #include "runtime/validation/LayerValidation.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace simxr
@@ -154,6 +155,37 @@ XrResult VulkanFrameSubmission::PrepareCapture(const LayerImageDescription& imag
 	}
 }
 
+XrResult VulkanFrameSubmission::PrepareFilteredCapture(CaptureTarget target)
+{
+	auto plan = m_composition;
+	const bool projection = target.kind == CaptureKind::ProjectionLayers;
+	std::erase_if(plan.draws,
+		[projection](const CompositionDraw& draw)
+		{
+			return (draw.constants.control[0] == 0) != projection;
+		});
+	if (plan.draws.empty())
+		return XR_SUCCESS;
+	m_captures.push_back({target, XR_NULL_HANDLE, {}, {}});
+	auto& capture = m_captures.back();
+	std::shared_ptr<FrameReservation> reservation;
+	auto result = m_session.PrepareCaptureProducer(m_key, reservation, target);
+	if (XR_FAILED(result))
+		return result;
+	if (!reservation)
+	{
+		m_captures.pop_back();
+		return XR_SUCCESS;
+	}
+	result = m_backend.Prepare(plan, [this](XrSwapchain swapchain) { return m_bindings.ReleasedImage(swapchain); },
+		capture.producer, std::move(reservation));
+	if (XR_FAILED(result))
+		return result;
+	capture.transfer = PrepareInspection(capture.producer, target);
+	m_captureOutputs.push_back({target, capture.transfer->Output()});
+	return XR_SUCCESS;
+}
+
 XrResult VulkanFrameSubmission::PrepareCaptures()
 {
 	const auto targets = m_session.Captures().RequestedTargets(m_key);
@@ -161,6 +193,13 @@ XrResult VulkanFrameSubmission::PrepareCaptures()
 	m_captureOutputs.reserve(targets.size());
 	for (const auto target : targets)
 	{
+		if (target.IsFilteredComposition())
+		{
+			const auto result = PrepareFilteredCapture(target);
+			if (XR_FAILED(result))
+				return result;
+			continue;
+		}
 		if (!target.IsLayerImage())
 			continue;
 		const auto* depth = target.IsDepth() ? FindLayerDepth(*m_layers, target.layer, target.view) : nullptr;
@@ -211,6 +250,8 @@ VulkanFrameSubmission::PrepareInspection(std::shared_ptr<VulkanFrame> source, Ca
 	const auto label = target.kind == CaptureKind::LayerDepth ? "owned_depth_view:"
 		: target.kind == CaptureKind::LayerDepthLinear ? "owned_linear_depth_view:" : "owned_layer_view:";
 	const auto detail = target.kind == CaptureKind::ComposedEyes ? std::string{"owned_composed"}
+		: target.kind == CaptureKind::ProjectionLayers ? std::string{"owned_projection_layers"}
+		: target.kind == CaptureKind::QuadLayers ? std::string{"owned_quad_layers"}
 		: label + std::to_string(target.layer) + ":" + std::to_string(target.view);
 	return m_inspection->Prepare(std::move(source),
 		[journal, key, time, detail](CompletionStatus status)
@@ -234,8 +275,10 @@ XrResult VulkanFrameSubmission::Submit()
 		const auto completion = m_composed->Completion();
 		for (const auto& draw : m_composition.draws)
 			m_bindings.MarkReleasedUsed(draw.source.source, completion);
+		// Filtered draws are a subset of the composed draws and share this batch completion.
 		for (const auto& capture : m_captures)
-			m_bindings.MarkReleasedUsed(capture.source, completion);
+			if (capture.source != XR_NULL_HANDLE)
+				m_bindings.MarkReleasedUsed(capture.source, completion);
 	}
 	if (XR_SUCCEEDED(result))
 	{

@@ -111,11 +111,16 @@ ScriptCaptureTarget CaptureTarget(lua_State* state, int index)
 		target.kind = wire::TargetKind::LayerDepth;
 	else if (name == "layer_depth_linear")
 		target.kind = wire::TargetKind::LayerDepthLinear;
+	else if (name == "projection_layers")
+		target.kind = wire::TargetKind::ProjectionLayers;
+	else if (name == "quad_layers")
+		target.kind = wire::TargetKind::QuadLayers;
 	else
 		throw std::invalid_argument("Unknown capture target");
 	target.layer = IndexField(state, index, "layer", 0);
 	target.view = IndexField(state, index, "view", 0);
-	if (target.kind == wire::TargetKind::ComposedEyes && (target.layer || target.view))
+	if ((target.kind == wire::TargetKind::ComposedEyes || target.kind == wire::TargetKind::ProjectionLayers ||
+		target.kind == wire::TargetKind::QuadLayers) && (target.layer || target.view))
 		throw std::invalid_argument("Composed capture cannot select a source layer/view");
 	return target;
 }

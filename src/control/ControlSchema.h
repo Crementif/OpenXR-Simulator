@@ -77,7 +77,8 @@ enum class Capability : std::uint64_t
 	FrameDiagnostics = 1ULL << 13,
 	GameBridge = 1ULL << 14,
 	DepthCapture = 1ULL << 15,
-	ImageRecording = 1ULL << 16
+	ImageRecording = 1ULL << 16,
+	FilteredComposition = 1ULL << 17
 };
 
 // Wire values are explicit and independent of the core's enum representation.
@@ -99,6 +100,8 @@ enum class TargetKind : std::uint32_t
 	LayerView = 2,
 	VirtualDisplay = 3,
 	LayerDepth = 4,
-	LayerDepthLinear = 5
+	LayerDepthLinear = 5,
+	ProjectionLayers = 6,
+	QuadLayers = 7
 };
 } // namespace simxr::control
