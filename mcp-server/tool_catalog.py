@@ -539,7 +539,7 @@ def tool_definitions(platform=None):
                 ),
                 dict(
                     name="run_pose_sequence",
-                    description="Replay frame-indexed Linux simulator pose/action JSONL from an absolute path. Each line may contain frame, head, left, right and capture.",
+                    description="Replay frame-indexed pose/action JSONL at ordinary application frames. Returns acknowledged sequence identity; capture flags save bounded exact-frame stereo PNG results. Use get_pose_sequence for progress and stop_pose_sequence to cancel. Each line may contain frame, head, left, right and capture.",
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -548,6 +548,16 @@ def tool_definitions(platform=None):
                         },
                         "required": ["path"],
                     },
+                ),
+                dict(
+                    name="get_pose_sequence",
+                    description="Read acknowledged sequence status, capture failures and the latest bounded saved stereo images.",
+                    inputSchema={"type": "object", "properties": {"sequence_id": {"type": "string"}}},
+                ),
+                dict(
+                    name="stop_pose_sequence",
+                    description="Cancel this owner's current acknowledged sequence and release its held inputs; drain already admitted captures.",
+                    inputSchema={"type": "object", "properties": {"sequence_id": {"type": "string"}}},
                 ),
             ]
         )

@@ -284,6 +284,8 @@ if(BUILD_TESTING)
         if(Python3_Interpreter_FOUND)
             add_test(NAME python_recording COMMAND "${Python3_EXECUTABLE}"
                 "${PROJECT_SOURCE_DIR}/tests/control/test_recording.py")
+            add_test(NAME python_pose_sequence_adapter COMMAND "${Python3_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/tests/control/test_pose_sequence_adapter.py")
             add_test(NAME python_legacy_control COMMAND "${Python3_EXECUTABLE}"
                 "${PROJECT_SOURCE_DIR}/tests/control/test_legacy_control.py")
             set(SIMXR_MCP_APPLICATION_PYTHON "${Python3_EXECUTABLE}")
@@ -563,6 +565,11 @@ if(SIMXR_BUILD_PROBES)
                     set_tests_properties(linux_vulkan_control PROPERTIES
                         ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
                         TIMEOUT 60 SKIP_RETURN_CODE 77)
+                    add_test(NAME linux_vulkan_mcp_sequence COMMAND "${Python3_EXECUTABLE}"
+                        "${PROJECT_SOURCE_DIR}/tests/control/test_native_mcp_sequence.py" "$<TARGET_FILE:xr_probe_linux>")
+                    set_tests_properties(linux_vulkan_mcp_sequence PROPERTIES
+                        ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
+                        TIMEOUT 90 SKIP_RETURN_CODE 77)
                     add_test(NAME linux_vulkan_sequence COMMAND "${Python3_EXECUTABLE}"
                         "${PROJECT_SOURCE_DIR}/tests/control/test_native_sequence.py" "$<TARGET_FILE:xr_probe_linux>")
                     set_tests_properties(linux_vulkan_sequence PROPERTIES

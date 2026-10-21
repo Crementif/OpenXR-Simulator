@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'sdk/python'))
+sys.path.insert(0, str(ROOT / 'mcp-server'))
 from simxr_control import Capability, ControlError, ControlTimeout, ProtocolError, Session
 from simxr_control.compatibility import parse_edit
 

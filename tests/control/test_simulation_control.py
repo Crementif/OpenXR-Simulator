@@ -12,6 +12,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'sdk/python'))
+sys.path.insert(0, str(ROOT / 'mcp-server'))
 from simxr_control import (Client, CommandKind, Capability, ControlError, ProtocolError,
                            collect_recording, to_luau, encode_command, decode_command, Scenario)
 from simxr_control.protocol import Tag

@@ -166,19 +166,33 @@ class LegacyControl:
         self._lock = threading.Lock()
         self._binding = SessionBinding(directory)
         self._admission = TransactionAdmission()
+        from pose_sequence import PoseSequenceControl
+        self._sequence = PoseSequenceControl(self._binding, self._lock, directory)
 
     def close(self):
-        with self._lock:
-            self._binding.close()
+        try:
+            self._sequence.close()
+        finally:
+            with self._lock:
+                self._binding.close()
 
     def call(self, name, arguments):
         """None selects the older file adapter only when no command endpoint exists."""
-        if name not in TOOLS:
+        from pose_sequence import TOOLS as SEQUENCE_TOOLS
+        if name not in TOOLS | SEQUENCE_TOOLS:
             return None
         with self._lock:
             try:
+                if name == 'get_pose_sequence':
+                    failed = self._sequence.failed_status(arguments)
+                    if failed is not None:
+                        return failed
                 if not self._binding.connect():
+                    if name in SEQUENCE_TOOLS and name != 'run_pose_sequence':
+                        raise RuntimeError('Acknowledged sequence control is unavailable')
                     return None
+                if name in SEQUENCE_TOOLS:
+                    return self._sequence.call(name, arguments)
                 from simxr_control.compatibility import HeadPoseEdit, parse_edit
                 edit = parse_edit(name, arguments)
                 document = self._binding.observe()
@@ -198,7 +212,8 @@ class LegacyControl:
             except Exception as error:
                 if self._binding.is_uncertain(error):
                     self._binding.invalidate(error)
-                result = {'ok': False, 'transport': 'simulation_commands', 'error': str(error)}
+                result = {'ok': False, 'transport': 'pose_sequences' if name in SEQUENCE_TOOLS else 'simulation_commands',
+                          'error': str(error)}
                 code = self._binding.error_code(error)
                 if code is not None:
                     result['code'] = code
