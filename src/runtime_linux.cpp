@@ -52,16 +52,13 @@
 
 struct InstanceData;
 struct SessionData;
-struct SwapchainData;
 
 namespace sim
 {
 using InstanceRef = simxr::HandleRef<XrInstance, InstanceData>;
 using SessionRef = simxr::HandleRef<XrSession, SessionData>;
-using SwapchainRef = simxr::HandleRef<XrSwapchain, SwapchainData>;
 static simxr::NativeBindings<XrInstance, simxr::Instance, InstanceData> instances;
 static simxr::NativeBindings<XrSession, simxr::Session, SessionData> sessions;
-static simxr::HandleRegistry<XrSwapchain, SwapchainData, XrSession> swapchains;
 static simxr::Runtime& RuntimeState();
 static InstanceRef FindInstance(XrInstance handle)
 {
@@ -124,15 +121,6 @@ struct SessionData
 	const simxr::Runtime::SessionRef core;
 	const std::unique_ptr<simxr::VulkanSessionGraphics> graphics;
 };
-struct SwapchainData
-{
-	SwapchainData(sim::SessionRef owner, std::unique_ptr<simxr::VulkanSwapchain> images)
-		: session(std::move(owner)), native(std::move(images))
-	{
-	}
-	const sim::SessionRef session;
-	const std::unique_ptr<simxr::VulkanSwapchain> native;
-};
 namespace sim
 {
 static InstanceRef instance;
@@ -168,58 +156,11 @@ static bool valid(XrSession s)
 {
     return static_cast<bool>(RuntimeState().FindSession(s));
 }
-static bool valid(XrSwapchain s)
-{
-    return static_cast<bool>(swapchains.Find(s, session));
-}
 static void log(const std::string& message)
 {
     if (instance)
         instance->files->Log(message);
 }
-class FrameBindings final : public simxr::VulkanCaptureBindings, public simxr::VulkanFrameBindings
-{
-  public:
-	explicit FrameBindings(SessionRef session) : m_session(std::move(session))
-	{
-	}
-	std::optional<simxr::SwapchainDescription> Describe(XrSwapchain swapchain) const override
-	{
-		const auto chain = sim::swapchains.Find(swapchain, m_session);
-		return chain ? std::optional{chain->native->Description()} : std::nullopt;
-	}
-	std::shared_ptr<simxr::VulkanImage> ReleasedImage(XrSwapchain swapchain) const override
-	{
-		const auto chain = sim::swapchains.Find(swapchain, m_session);
-		return chain ? chain->native->ReleasedImage() : nullptr;
-	}
-	void MarkReleasedUsed(XrSwapchain swapchain,
-						  const std::shared_ptr<const simxr::GpuCompletion>& completion) const noexcept override
-	{
-		if (const auto chain = sim::swapchains.Find(swapchain, m_session))
-			chain->native->MarkReleasedUsed(completion);
-	}
-	std::optional<simxr::VulkanCaptureSource> ResolveSource(const simxr::LayerImageDescription& image) const override
-	{
-		const auto chain = swapchains.Find(image.source, m_session);
-		if (!chain)
-			return {};
-		const auto source = chain->native->Resolve(image);
-		if (!source)
-			return {};
-		return simxr::VulkanCaptureSource{source->region, image.source, source->imageIndex};
-	}
-	void MarkSourceUsed(const simxr::VulkanCaptureSource& source,
-						const std::shared_ptr<simxr::VulkanReadbackBatch>& completion) const noexcept override
-	{
-		if (const auto chain = swapchains.Find(source.swapchain, m_session))
-			chain->native->MarkUsed(source.imageIndex, completion);
-	}
-
-  private:
-	const SessionRef m_session;
-};
-
 static void PollInputCommands(SessionData& native, simxr::FrameId submitted)
 {
     auto& target = *native.owner.Shared();
@@ -235,11 +176,6 @@ static void PollInputCommands(SessionData& native, simxr::FrameId submitted)
         target.legacyInput.StartSequence(std::move(*commands.sequence), submitted);
     if (target.legacyInput.AdvanceSequence(submitted))
         native.graphics->RequestCapture({"both", "all"}, submitted);
-}
-static void DestroySwapchainBinding(sim::SwapchainRef chain)
-{
-	chain->native->Close();
-	swapchains.Erase(chain);
 }
 static simxr::RuntimeTime SessionTime(const SessionData& session)
 {
@@ -782,66 +718,65 @@ FN(xrCreateSwapchain)(XrSession handle, const XrSwapchainCreateInfo* info, XrSwa
 		return XR_ERROR_SESSION_LOST;
 	if (!info || !output)
 		return XR_ERROR_VALIDATION_FAILURE;
-	std::unique_ptr<simxr::VulkanSwapchain> images;
-	const auto result = session->graphics->CreateSwapchain(*info, images);
-	if (XR_FAILED(result))
-		return result;
-	auto candidate = std::make_unique<SwapchainData>(session, std::move(images));
-	*output = sim::swapchains.Insert(session, std::move(candidate));
-	return XR_SUCCESS;
+	return session->graphics->CreateSwapchain(*info, *output);
 }
 FN(xrEnumerateSwapchainImages)(XrSwapchain handle, uint32_t capacity, uint32_t* count, XrSwapchainImageBaseHeader* images)
 {
-	auto chain = sim::swapchains.Find(handle);
 	std::lock_guard lock(sim::runtimeMutex);
-	if (!sim::valid(chain))
+	const auto session = sim::session;
+	const auto chain = session ? session->graphics->FindSwapchain(handle) : simxr::VulkanSessionGraphics::SwapchainRef{};
+	if (!chain)
 		return XR_ERROR_HANDLE_INVALID;
-	return chain->native->EnumerateImages(capacity, count, images);
+	return chain->EnumerateImages(capacity, count, images);
 }
 FN(xrAcquireSwapchainImage)(XrSwapchain handle, const XrSwapchainImageAcquireInfo* info, uint32_t* index)
 {
-	auto chain = sim::swapchains.Find(handle);
 	std::lock_guard lock(sim::runtimeMutex);
-	if (!sim::valid(chain))
+	const auto session = sim::session;
+	const auto chain = session ? session->graphics->FindSwapchain(handle) : simxr::VulkanSessionGraphics::SwapchainRef{};
+	if (!chain)
 		return XR_ERROR_HANDLE_INVALID;
-	if (chain->session->core->Snapshot().closed)
+	if (session->core->Snapshot().closed)
 		return XR_ERROR_SESSION_LOST;
 	if (!index || (info && info->type != XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO))
 		return XR_ERROR_VALIDATION_FAILURE;
-	return chain->session->graphics->Acquire(*chain->native, *index);
+	return session->graphics->Acquire(*chain.Shared(), *index);
 }
 FN(xrWaitSwapchainImage)(XrSwapchain handle, const XrSwapchainImageWaitInfo* info)
 {
-	auto chain = sim::swapchains.Find(handle);
 	std::unique_lock lock(sim::runtimeMutex);
-	if (!sim::valid(chain))
+	const auto session = sim::session;
+	const auto chain = session ? session->graphics->FindSwapchain(handle) : simxr::VulkanSessionGraphics::SwapchainRef{};
+	if (!chain)
 		return XR_ERROR_HANDLE_INVALID;
 	if (!info || info->type != XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO || info->timeout < 0)
 		return XR_ERROR_VALIDATION_FAILURE;
-	auto registered = chain->session->graphics->EnterWait();
+	auto registered = session->graphics->EnterWait();
 	if (!registered)
 		return XR_ERROR_SESSION_LOST;
 	lock.unlock();
-	return chain->native->Wait(info->timeout);
+	return chain->Wait(info->timeout);
 }
 FN(xrReleaseSwapchainImage)(XrSwapchain handle, const XrSwapchainImageReleaseInfo* info)
 {
-	auto chain = sim::swapchains.Find(handle);
 	std::lock_guard lock(sim::runtimeMutex);
-	if (!sim::valid(chain))
+	const auto session = sim::session;
+	const auto chain = session ? session->graphics->FindSwapchain(handle) : simxr::VulkanSessionGraphics::SwapchainRef{};
+	if (!chain)
 		return XR_ERROR_HANDLE_INVALID;
 	if (info && info->type != XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO)
 		return XR_ERROR_VALIDATION_FAILURE;
-	return chain->native->Release();
+	return chain->Release();
 }
 FN(xrDestroySwapchain)(XrSwapchain handle)
 {
-	auto chain = sim::swapchains.Find(handle);
 	std::lock_guard lock(sim::runtimeMutex);
-	if (!sim::valid(chain))
+	const auto session = sim::session;
+	const auto chain = session ? session->graphics->FindSwapchain(handle) : simxr::VulkanSessionGraphics::SwapchainRef{};
+	if (!chain)
 		return XR_ERROR_HANDLE_INVALID;
-	chain->session->graphics->PollCaptures();
-	sim::DestroySwapchainBinding(chain);
+	session->graphics->PollCaptures();
+	session->graphics->DestroySwapchain(chain);
 	return XR_SUCCESS;
 }
 FN(xrEndFrame)(XrSession handle, const XrFrameEndInfo* info)
@@ -861,8 +796,7 @@ FN(xrEndFrame)(XrSession handle, const XrFrameEndInfo* info)
 		return XR_ERROR_TIME_INVALID;
 	if (info->environmentBlendMode != XR_ENVIRONMENT_BLEND_MODE_OPAQUE)
 		return XR_ERROR_ENVIRONMENT_BLEND_MODE_UNSUPPORTED;
-	const sim::FrameBindings bindings(session);
-	const auto result = session->graphics->EndFrame(*info, bindings, bindings);
+	const auto result = session->graphics->EndFrame(*info);
 	if (XR_FAILED(result))
 		return result;
 	try
@@ -1134,10 +1068,7 @@ FN(xrDestroySession)(XrSession handle)
 	std::unique_lock lock(sim::runtimeMutex);
 	if (!sim::valid(session))
 		return XR_ERROR_HANDLE_INVALID;
-	const auto children = sim::swapchains.Children(session);
 	session->graphics->BeginClose();
-	for (const auto child : children)
-		sim::swapchains.Find(child, session)->native->Close();
 	lock.unlock();
 	sim::RuntimeState().CloseDebugger(session);
 	const auto drained = session->graphics->Drain();
@@ -1148,8 +1079,6 @@ FN(xrDestroySession)(XrSession handle)
 		return XR_ERROR_HANDLE_INVALID;
 	session->core->Display().PollRetired();
 	session->core->Captures().Poll();
-	for (const auto child : sim::swapchains.Children(session))
-		sim::DestroySwapchainBinding(sim::swapchains.Find(child, session));
 	const auto closed = session->graphics->FinishClose();
 	if (XR_FAILED(closed))
 		return closed;

@@ -29,6 +29,47 @@ SnapshotAdmission PromoteInspectionCapture(const std::shared_ptr<const FrameOutp
 }
 } // namespace
 
+class VulkanSessionGraphics::FrameBindings final : public VulkanCaptureBindings, public VulkanFrameBindings
+{
+  public:
+	explicit FrameBindings(const VulkanSessionGraphics& graphics) : m_graphics(graphics) {}
+	std::optional<SwapchainDescription> Describe(XrSwapchain swapchain) const override
+	{
+		const auto chain = m_graphics.FindSwapchain(swapchain);
+		return chain ? std::optional{chain->Description()} : std::nullopt;
+	}
+	std::shared_ptr<VulkanImage> ReleasedImage(XrSwapchain swapchain) const override
+	{
+		const auto chain = m_graphics.FindSwapchain(swapchain);
+		return chain ? chain->ReleasedImage() : nullptr;
+	}
+	void MarkReleasedUsed(XrSwapchain swapchain,
+						  const std::shared_ptr<const GpuCompletion>& completion) const noexcept override
+	{
+		if (const auto chain = m_graphics.FindSwapchain(swapchain))
+			chain->MarkReleasedUsed(completion);
+	}
+	std::optional<VulkanCaptureSource> ResolveSource(const LayerImageDescription& image) const override
+	{
+		const auto chain = m_graphics.FindSwapchain(image.source);
+		if (!chain)
+			return {};
+		const auto source = chain->Resolve(image);
+		if (!source)
+			return {};
+		return VulkanCaptureSource{source->region, image.source, source->imageIndex};
+	}
+	void MarkSourceUsed(const VulkanCaptureSource& source,
+						const std::shared_ptr<VulkanReadbackBatch>& completion) const noexcept override
+	{
+		if (const auto chain = m_graphics.FindSwapchain(source.swapchain))
+			chain->MarkUsed(source.imageIndex, completion);
+	}
+
+  private:
+	const VulkanSessionGraphics& m_graphics;
+};
+
 XrResult VulkanSessionGraphics::Create(const VulkanBinding& binding, std::shared_ptr<Session> session,
 									   std::shared_ptr<LegacyFileChannel> files,
 									   std::shared_ptr<flicker::Diagnostics> diagnostics, bool validation,
@@ -103,19 +144,34 @@ XrResult VulkanSessionGraphics::GraphicsFailure(VkResult result)
 	return VulkanGraphicsFailure(result);
 }
 
-XrResult VulkanSessionGraphics::CreateSwapchain(const XrSwapchainCreateInfo& description,
-												std::unique_ptr<VulkanSwapchain>& output)
+XrResult VulkanSessionGraphics::CreateSwapchain(const XrSwapchainCreateInfo& description, XrSwapchain& output)
 {
 	if (m_session->Snapshot().closed)
 		return XR_ERROR_SESSION_LOST;
 	try
 	{
-		return VulkanSwapchain::Create(*m_backend, description, output);
+		std::unique_ptr<VulkanSwapchain> candidate;
+		const auto result = VulkanSwapchain::Create(*m_backend, description, candidate);
+		if (XR_FAILED(result))
+			return result;
+		output = m_swapchains.Insert(m_session.get(), std::move(candidate));
+		return XR_SUCCESS;
 	}
 	catch (const VulkanError& error)
 	{
 		return GraphicsFailure(error.Result());
 	}
+}
+
+VulkanSessionGraphics::SwapchainRef VulkanSessionGraphics::FindSwapchain(XrSwapchain handle) const
+{
+	return m_swapchains.Find(handle, m_session.get());
+}
+
+void VulkanSessionGraphics::DestroySwapchain(SwapchainRef swapchain)
+{
+	swapchain->Close();
+	m_swapchains.Erase(swapchain);
 }
 
 XrResult VulkanSessionGraphics::Acquire(VulkanSwapchain& swapchain, std::uint32_t& index)
@@ -137,19 +193,19 @@ std::optional<SwapchainWaits::Registration> VulkanSessionGraphics::EnterWait()
 	return m_waits.Enter();
 }
 
-XrResult VulkanSessionGraphics::EndFrame(const XrFrameEndInfo& info, const VulkanFrameBindings& frames,
-										 const VulkanCaptureBindings& captures)
+XrResult VulkanSessionGraphics::EndFrame(const XrFrameEndInfo& info)
 {
 	if (!m_session->Snapshot().running)
 		return XR_ERROR_SESSION_NOT_RUNNING;
 	const auto begun = m_session->Scheduler().Snapshot().begun;
 	if (!begun)
 		return XR_ERROR_CALL_ORDER_INVALID;
-	VulkanFrameSubmission submission(*m_session, *m_backend, m_inspection.get(), frames,
+	const FrameBindings bindings(*this);
+	VulkanFrameSubmission submission(*m_session, *m_backend, m_inspection.get(), bindings,
 									 {m_session->Snapshot().generation, begun->id});
 	const auto result = submission.Execute(info);
 	if (XR_SUCCEEDED(result))
-		ObserveFrame(info, submission.Composition(), captures);
+		ObserveFrame(info, submission.Composition(), bindings);
 	return result;
 }
 
@@ -202,6 +258,8 @@ void VulkanSessionGraphics::BeginClose()
 {
 	m_session->Close();
 	m_waits.Close();
+	for (const auto handle : m_swapchains.Children(m_session.get()))
+		FindSwapchain(handle)->Close();
 }
 
 XrResult VulkanSessionGraphics::Drain(std::chrono::nanoseconds timeout)
@@ -247,6 +305,8 @@ XrResult VulkanSessionGraphics::FinishClose()
 		return XR_SUCCESS;
 	if (m_closeStage != CloseStage::Drained)
 		return XR_ERROR_CALL_ORDER_INVALID;
+	for (const auto handle : m_swapchains.Children(m_session.get()))
+		DestroySwapchain(FindSwapchain(handle));
 	const auto result = m_backend->Close();
 	if (XR_FAILED(result))
 		return result;
