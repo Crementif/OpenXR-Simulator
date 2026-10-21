@@ -352,11 +352,6 @@ struct UiRenderer::Impl
 		// retires UI work and must not wait for that independent queue.
 		Check(vkQueueWaitIdle(queue));
 		completed = submitted;
-		if (rendererReady)
-		{
-			ImGui_ImplVulkan_Shutdown();
-			rendererReady = false;
-		}
 		DestroySwapchain();
 		VkSurfaceCapabilitiesKHR capabilities;
 		Check(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical, surface, &capabilities));
@@ -467,22 +462,32 @@ struct UiRenderer::Impl
 			VkSemaphoreCreateInfo semaphore{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
 			Check(vkCreateSemaphore(device, &semaphore, nullptr, &rendered[index]));
 		}
-		ImGui_ImplVulkan_InitInfo backend{};
-		backend.ApiVersion = VK_API_VERSION_1_1;
-		backend.CheckVkResultFn = Check;
-		backend.Instance = instance;
-		backend.PhysicalDevice = physical;
-		backend.Device = device;
-		backend.QueueFamily = family;
-		backend.Queue = queue;
-		backend.DescriptorPool = descriptors;
-		backend.MinImageCount = std::max(2u, capabilities.minImageCount);
-		backend.ImageCount = count;
-		backend.PipelineInfoMain.RenderPass = renderPass;
-		backend.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-		if (!ImGui_ImplVulkan_Init(&backend))
-			throw std::runtime_error("ImGui Vulkan initialization failed");
-		rendererReady = true;
+		ImGui_ImplVulkan_PipelineInfo pipeline{};
+		pipeline.RenderPass = renderPass;
+		pipeline.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+		if (rendererReady)
+			ImGui_ImplVulkan_CreateMainPipeline(&pipeline);
+		else
+		{
+			ImGui_ImplVulkan_InitInfo backend{};
+			backend.ApiVersion = VK_API_VERSION_1_1;
+			backend.CheckVkResultFn = Check;
+			backend.Instance = instance;
+			backend.PhysicalDevice = physical;
+			backend.Device = device;
+			backend.QueueFamily = family;
+			backend.Queue = queue;
+			backend.DescriptorPool = descriptors;
+			// ImGui's upload ring follows our in-flight submissions, not the
+			// swapchain image count. Keep both backends alive across resizes:
+			// Vulkan backend shutdown also destroys platform viewport handles.
+			backend.MinImageCount = static_cast<std::uint32_t>(frames.size());
+			backend.ImageCount = static_cast<std::uint32_t>(frames.size());
+			backend.PipelineInfoMain = pipeline;
+			if (!ImGui_ImplVulkan_Init(&backend))
+				throw std::runtime_error("ImGui Vulkan initialization failed");
+			rendererReady = true;
+		}
 		rebuild = false;
 		++creations;
 	}
