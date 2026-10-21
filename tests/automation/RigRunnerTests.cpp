@@ -127,6 +127,58 @@ void CheckBindingPauseAndStep()
 	}
 }
 
+void CheckInputRecording()
+{
+	Fixture fixture;
+	automation::RigRunner runner([&](auto opcode, auto fields) { return fixture.Exchange(opcode, std::move(fields)); });
+	runner.Start(fixture.Options(R"(
+assert(simxr.start_input_recording().active)
+local transaction = simxr.schedule({frame="1", commands={
+    {kind="take_control", channel="head"}, {kind="head_pose", position={0.25, 1.7, 0}},
+}})
+simxr.await_transaction(transaction)
+assert(not simxr.stop_input_recording().active)
+local recording = simxr.read_input_recording("0", "16")
+assert(recording.total == "1" and recording.transactions[1].phase == "applied")
+assert(not pcall(function() simxr.read_input_recording(0, 17) end))
+)"));
+	runner.Join();
+	Require(runner.Snapshot().phase == automation::RigPhase::Complete, runner.Snapshot().error.c_str());
+	runner.Start(fixture.Options("simxr.start_input_recording() error('injected recording script failure')"));
+	runner.Join();
+	Require(runner.Snapshot().phase == automation::RigPhase::Failed &&
+		!fixture.session->Commands().Recorder().Snapshot(0, 0).active,
+		"Failed rig left input recording active");
+	runner.Start(fixture.Options("simxr.start_input_recording() simxr.stop_input_recording()"));
+	runner.Join();
+	Require(runner.Snapshot().phase == automation::RigPhase::Complete, "Input recording ownership survived cleanup");
+}
+
+void CheckLeaseRenewal()
+{
+	Fixture fixture;
+	DebugControllerConfig config;
+	config.leaseDuration = std::chrono::milliseconds{1500};
+	const auto controller = fixture.runtime.Debugger(fixture.session, config);
+	Require(controller != nullptr, "Lease fixture debugger unavailable");
+	unsigned renewals = 0;
+	automation::RigRunner runner(
+		[&](auto opcode, auto fields)
+		{
+			if (opcode == wire::OpCode::Renew)
+				++renewals;
+			if (opcode == wire::OpCode::SimulationStatus)
+				std::this_thread::sleep_for(std::chrono::milliseconds{40});
+			return fixture.Exchange(opcode, std::move(fields));
+		});
+	auto options = fixture.Options("simxr.pause() for i = 1, 55 do simxr.state() end simxr.resume()");
+	options.deadline = std::chrono::seconds{6};
+	runner.Start(std::move(options));
+	runner.Join();
+	Require(runner.Snapshot().phase == automation::RigPhase::Complete && renewals >= 2,
+		"Active rig lost its lease during status polling");
+}
+
 void CheckTemporaryResourceCleanup()
 {
 	for (const bool inspect : {false, true})
@@ -365,6 +417,8 @@ simxr.checkpoint("fresh VM, persistent IDs", applied.applied_frame == "3")
 				"Restart reused transaction IDs or retained failed VM state");
 		CheckBindingPauseAndStep();
 		CheckTemporaryResourceCleanup();
+		CheckLeaseRenewal();
+		CheckInputRecording();
 		CheckExactFrameArithmetic();
 		CheckEditableCommands();
 		std::cout << "PASS Luau worker, exact shared input, cleanup, reports and cancellation\n";

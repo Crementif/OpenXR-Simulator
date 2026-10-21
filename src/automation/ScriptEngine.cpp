@@ -365,6 +365,11 @@ void PushInteger(lua_State* state, std::uint64_t value)
 	const auto text = std::to_string(value);
 	lua_pushlstring(state, text.data(), text.size());
 }
+void PushIntegerField(lua_State* state, const char* name, std::uint64_t value)
+{
+	PushInteger(state, value);
+	lua_setfield(state, -2, name);
+}
 void PushInspection(lua_State* state, std::span<const std::byte> bytes, unsigned depth = 0)
 {
 	if (depth > 32)
@@ -623,6 +628,78 @@ class ScriptEngine::Impl
 		lua_pushlstring(state, step.progress.data(), step.progress.size());
 		return 2;
 	}
+	int StartInputRecording(lua_State* state)
+	{
+		PushInspection(state, m_runtime.StartInputRecording());
+		return 1;
+	}
+	int StopInputRecording(lua_State* state)
+	{
+		PushInspection(state, m_runtime.StopInputRecording());
+		return 1;
+	}
+	int ReadInputRecording(lua_State* state)
+	{
+		const auto offset = lua_isnoneornil(state, 1) ? 0 : Integer(state, 1);
+		const auto count = lua_isnoneornil(state, 2) ? 16 : Integer(state, 2);
+		PushInspection(state, m_runtime.ReadInputRecording(offset, count));
+		return 1;
+	}
+	int StartImageRecording(lua_State* state)
+	{
+		ScriptCaptureTarget target;
+		std::uint32_t capacity = 2;
+		std::uint64_t frames = 0;
+		if (!lua_isnoneornil(state, 1))
+		{
+			target = CaptureTarget(state, 1);
+			capacity = IndexField(state, 1, "capacity", 2);
+			frames = IntegerField(state, 1, "frames", 0);
+		}
+		m_runtime.StartImageRecording(target, capacity, frames);
+		return 0;
+	}
+	int StopImageRecording(lua_State*)
+	{
+		m_runtime.StopImageRecording();
+		return 0;
+	}
+	int ImageRecording(lua_State* state)
+	{
+		const auto recording = m_runtime.ImageRecording();
+		lua_newtable(state);
+		lua_pushlstring(state, recording.phase.data(), recording.phase.size());
+		lua_setfield(state, -2, "phase");
+		lua_pushboolean(state, recording.available);
+		lua_setfield(state, -2, "available");
+		PushIntegerField(state, "capacity", recording.capacity);
+		PushIntegerField(state, "captured", recording.captured);
+		PushIntegerField(state, "requested", recording.requested);
+		if (recording.missedFrame)
+			PushIntegerField(state, "missed_frame", *recording.missedFrame);
+		lua_newtable(state);
+		int index = 1;
+		for (const auto capture : recording.captures)
+		{
+			PushInteger(state, capture);
+			lua_rawseti(state, -2, index++);
+		}
+		lua_setfield(state, -2, "captures");
+		return 1;
+	}
+	int Capture(lua_State* state)
+	{
+		const auto capture = m_runtime.Capture(Integer(state, 1));
+		lua_newtable(state);
+		PushIntegerField(state, "capture_id", capture.identity);
+		lua_pushlstring(state, capture.phase.data(), capture.phase.size());
+		lua_setfield(state, -2, "phase");
+		lua_pushboolean(state, capture.imageAvailable);
+		lua_setfield(state, -2, "image_available");
+		if (capture.frame)
+			PushIntegerField(state, "frame_id", *capture.frame);
+		return 1;
+	}
 	int Inspect(lua_State* state)
 	{
 		const auto inspection = m_runtime.Inspect(Integer(state, 1));
@@ -769,6 +846,13 @@ class ScriptEngine::Impl
 		bind("pause", Binding<&Impl::Pause>);
 		bind("resume", Binding<&Impl::Resume>);
 		bind("step", Binding<&Impl::Step>);
+		bind("start_input_recording", Binding<&Impl::StartInputRecording>);
+		bind("stop_input_recording", Binding<&Impl::StopInputRecording>);
+		bind("read_input_recording", Binding<&Impl::ReadInputRecording>);
+		bind("start_image_recording", Binding<&Impl::StartImageRecording>);
+		bind("stop_image_recording", Binding<&Impl::StopImageRecording>);
+		bind("image_recording", Binding<&Impl::ImageRecording>);
+		bind("capture", Binding<&Impl::Capture>);
 		bind("inspect", Binding<&Impl::Inspect>);
 		bind("revision", Binding<&Impl::Revision>);
 		bind("release_inspection", Binding<&Impl::ReleaseInspection>);

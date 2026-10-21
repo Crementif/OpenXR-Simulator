@@ -36,6 +36,18 @@ std::vector<std::byte> Document(const wire::Message& message)
 		throw std::runtime_error("Runtime omitted an inspection document");
 	return document->value;
 }
+wire::Message Nested(const wire::Message& message, std::uint16_t name)
+{
+	const auto* field = message.Find(name);
+	if (!field)
+		throw std::runtime_error("Runtime omitted expected nested fields");
+	auto decoded = wire::DecodeFields(field->value);
+	if (decoded.error != wire::DecodeError::None)
+		throw std::runtime_error("Runtime returned invalid nested fields");
+	wire::Message result;
+	result.fields = std::move(decoded.fields);
+	return result;
+}
 std::uint64_t Next(std::uint64_t& counter)
 {
 	if (counter == std::numeric_limits<std::uint64_t>::max())
@@ -90,11 +102,12 @@ RigRuntime::RigRuntime(RigExchange exchange, RigProgress& progress)
 }
 void RigRuntime::Configure(control::ControlSessionId session, std::uint64_t generation)
 {
-	if (m_lease || !m_captures.empty() || !m_inspections.empty())
+	if (m_lease || m_inputRecording || !m_captures.empty() || !m_inspections.empty())
 		throw std::logic_error("Release rig runtime resources before configuring another run");
 	m_session = session;
 	m_generation = generation;
 	m_lease = 0;
+	m_nextRenew = {};
 	m_captures.clear();
 }
 RigRuntime::Fields RigRuntime::Session() const
@@ -111,6 +124,20 @@ RigRuntime::Fields RigRuntime::Source() const
 control::Message RigRuntime::Call(control::OpCode opcode, Fields fields)
 {
 	m_progress.Check();
+	const auto now = std::chrono::steady_clock::now();
+	const bool sessionOperation = opcode == control::OpCode::Status || opcode == control::OpCode::Submit ||
+		opcode == control::OpCode::Operation || opcode == control::OpCode::SimulationStatus;
+	if (m_lease && sessionOperation && now >= m_nextRenew)
+	{
+		auto renewal = Session();
+		renewal.push_back(control::Field::U64(tag::Lease, m_lease, true));
+		Exchange(control::OpCode::Renew, std::move(renewal));
+		m_nextRenew = now + std::chrono::seconds{1};
+	}
+	return Exchange(opcode, std::move(fields));
+}
+control::Message RigRuntime::Exchange(control::OpCode opcode, Fields fields)
+{
 	auto response = m_exchange(opcode, std::move(fields));
 	const auto* error = response.Find(tag::Error);
 	if (!error || !error->AsU32() || *error->AsU32() != static_cast<std::uint32_t>(control::ErrorCode::Ok))
@@ -197,6 +224,75 @@ ScriptStep RigRuntime::StepApplication(ScriptCaptureTarget target)
 {
 	return CaptureStep(control::CommandKind::Step,
 		{EncodeTarget(target), control::Field::U32(tag::Lookahead, 1)});
+}
+std::vector<std::byte> RigRuntime::StartInputRecording()
+{
+	const auto response = Call(control::OpCode::StartRecording, Source());
+	m_inputRecording = true;
+	return Document(response);
+}
+std::vector<std::byte> RigRuntime::StopInputRecording()
+{
+	const auto response = Call(control::OpCode::StopRecording, Source());
+	m_inputRecording = false;
+	return Document(response);
+}
+std::vector<std::byte> RigRuntime::ReadInputRecording(std::uint64_t offset, std::uint64_t count)
+{
+	if (offset > 1024 || count > 16)
+		throw std::invalid_argument("Input recording pages require offset <= 1024 and count <= 16");
+	auto fields = Session();
+	fields.push_back(control::Field::U64(tag::Offset, offset));
+	fields.push_back(control::Field::U64(tag::Length, count));
+	return Document(Call(control::OpCode::ReadRecording, std::move(fields)));
+}
+void RigRuntime::StartImageRecording(ScriptCaptureTarget target, std::uint32_t capacity, std::uint64_t frames)
+{
+	if (capacity < 1 || capacity > 4)
+		throw std::invalid_argument("Image recording capacity must be in [1, 4]");
+	Debug(control::CommandKind::StartImageRecording,
+		{EncodeTarget(target), control::Field::U32(tag::Capacity, capacity), control::Field::U64(tag::Length, frames)});
+}
+void RigRuntime::StopImageRecording()
+{
+	Debug(control::CommandKind::StopImageRecording);
+}
+ScriptImageRecording RigRuntime::ImageRecording()
+{
+	const auto status = Call(control::OpCode::Status, Session());
+	const auto record = Nested(status, tag::ImageRecording);
+	ScriptImageRecording result;
+	result.available =
+		(Number(status, tag::Capabilities) & static_cast<std::uint64_t>(control::Capability::ImageRecording)) != 0;
+	result.phase = Text(record, tag::Phase);
+	result.capacity = Number(record, tag::Capacity);
+	result.captured = Number(record, tag::Length);
+	result.requested = Number(record, tag::TotalFrames);
+	if (record.Find(tag::Frame))
+		result.missedFrame = Number(Nested(record, tag::Frame), tag::FrameId);
+	for (const auto& capture : Nested(record, tag::Captures).fields)
+	{
+		if (!capture.AsU64())
+			throw std::runtime_error("Runtime returned an invalid recording capture identity");
+		result.captures.push_back(*capture.AsU64());
+	}
+	return result;
+}
+ScriptCapture RigRuntime::Capture(std::uint64_t capture)
+{
+	auto fields = Session();
+	fields.push_back(control::Field::U64(tag::CaptureId, capture, true));
+	const auto response = Call(control::OpCode::Capture, std::move(fields));
+	ScriptCapture result;
+	result.identity = Number(response, tag::CaptureId);
+	result.phase = Text(response, tag::Phase);
+	if (response.Find(tag::Frame))
+		result.frame = Number(Nested(response, tag::Frame), tag::FrameId);
+	const auto* available = response.Find(tag::ImageAvailable);
+	if (!available || !available->AsBool())
+		throw std::runtime_error("Runtime omitted capture image availability");
+	result.imageAvailable = *available->AsBool();
+	return result;
 }
 ScriptStep RigRuntime::StepDisplay()
 {
@@ -365,23 +461,39 @@ void RigRuntime::ReleaseUnchecked(control::OpCode opcode, std::uint16_t field, s
 	{
 	}
 }
+void RigRuntime::CleanupCall(control::OpCode opcode, Fields fields)
+{
+	const auto response = m_exchange(opcode, std::move(fields));
+	const auto* field = response.Find(tag::Error);
+	if (!field || !field->AsU32())
+		throw std::runtime_error("Runtime omitted cleanup result");
+	const auto code = static_cast<control::ErrorCode>(*field->AsU32());
+	if (code != control::ErrorCode::Ok && code != control::ErrorCode::Closed &&
+		code != control::ErrorCode::StaleGeneration && code != control::ErrorCode::NotFound)
+		throw std::runtime_error(Text(response, tag::Detail));
+}
 std::string RigRuntime::Cleanup()
 {
 	std::string error;
 	for (const auto inspection : m_inspections)
 		ReleaseUnchecked(control::OpCode::ReleaseInspection, tag::InspectionId, inspection);
 	m_inspections.clear();
+	if (m_inputRecording)
+	{
+		try
+		{
+			CleanupCall(control::OpCode::StopRecording, Source());
+		}
+		catch (const std::exception& failure)
+		{
+			error = std::string{"Input recording stop failed: "} + failure.what();
+		}
+		m_inputRecording = false;
+	}
 	// Cancellation must not prevent releasing source-owned controls or the lease.
 	try
 	{
-		const auto response = m_exchange(control::OpCode::ReleaseControl, Source());
-		const auto* field = response.Find(tag::Error);
-		if (!field || !field->AsU32())
-			throw std::runtime_error("Runtime omitted cleanup result");
-		const auto code = static_cast<control::ErrorCode>(*field->AsU32());
-		if (code != control::ErrorCode::Ok && code != control::ErrorCode::Closed &&
-			code != control::ErrorCode::StaleGeneration && code != control::ErrorCode::NotFound)
-			throw std::runtime_error(Text(response, tag::Detail));
+		CleanupCall(control::OpCode::ReleaseControl, Source());
 	}
 	catch (const std::exception& failure)
 	{
