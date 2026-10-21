@@ -932,7 +932,8 @@ XrResult ActionSyncState::Attach(const XrSessionActionSetsAttachInfo& info, cons
 	return XR_SUCCESS;
 }
 
-XrResult ActionSyncState::Sync(const XrActionsSyncInfo& info, const InputSnapshot& input, bool focused)
+XrResult ActionSyncState::Sync(const XrActionsSyncInfo& info, const InputSnapshot& input, bool focused,
+							   bool* profilesChanged)
 {
 	if (info.type != XR_TYPE_ACTIONS_SYNC_INFO || (info.countActiveActionSets && !info.activeActionSets))
 		return XR_ERROR_VALIDATION_FAILURE;
@@ -1058,8 +1059,11 @@ XrResult ActionSyncState::Sync(const XrActionsSyncInfo& info, const InputSnapsho
 		action.definition = *next.dictionary->FindAction(action.definition.handle);
 	if (m_snapshot.dictionary && *m_snapshot.dictionary == *next.dictionary)
 		next.dictionary = m_snapshot.dictionary;
+	const bool changed = next.profiles != m_snapshot.profiles;
 	m_snapshot = std::move(next);
 	m_queryFocused = focused;
+	if (profilesChanged)
+		*profilesChanged = changed;
 	return focused ? XR_SUCCESS : XR_SESSION_NOT_FOCUSED;
 }
 

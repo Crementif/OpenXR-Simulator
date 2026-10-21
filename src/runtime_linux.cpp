@@ -331,22 +331,24 @@ FN(xrWaitFrame)(XrSession sHandle, const XrFrameWaitInfo *info, XrFrameState *p)
     auto core = s->core.Shared();
     apiLock.unlock();
     simxr::FramePrediction prediction;
-    auto result = core->WaitFrame(prediction);
-    apiLock.lock();
-    if (!sim::valid(s) || s->core.Shared() != core)
-        return XR_ERROR_HANDLE_INVALID;
-    if (XR_FAILED(result))
-        return result;
-    s->graphics->PollCaptures();
-    if (s->owner->PollCommands(s->core->Snapshot().lastSubmitted))
-        s->graphics->RequestCapture({"both", "all"}, s->core->Snapshot().lastSubmitted);
-    const auto& input = s->owner->Input();
-    const auto tracking = input.Tracking(s->core->Snapshot().state == XR_SESSION_STATE_FOCUSED);
-    s->core->PublishTracking(prediction.displayTime, tracking, input.Views(), prediction.id);
-    p->predictedDisplayTime = s->core->Snapshot().lastIssued.displayTime.value.count();
-    p->predictedDisplayPeriod = prediction.displayPeriod.count();
-    p->shouldRender = s->core->Snapshot().state == XR_SESSION_STATE_VISIBLE || s->core->Snapshot().state == XR_SESSION_STATE_FOCUSED;
-    return XR_SUCCESS;
+	const auto publishNative = [&](const simxr::FramePrediction& admitted) -> XrResult
+	{
+		std::lock_guard nativeLock(sim::Host().Mutex());
+		if (!sim::valid(s) || s->core.Shared() != core)
+			return XR_ERROR_HANDLE_INVALID;
+		s->graphics->PollCaptures();
+		if (s->owner->PollCommands(s->core->Snapshot().lastSubmitted))
+			s->graphics->RequestCapture({"both", "all"}, s->core->Snapshot().lastSubmitted);
+		const auto& input = s->owner->Input();
+		const auto tracking = input.Tracking(s->core->Snapshot().state == XR_SESSION_STATE_FOCUSED);
+		s->core->PublishTracking(admitted.displayTime, tracking, input.Views(), admitted.id);
+		p->predictedDisplayTime = s->core->Snapshot().lastIssued.displayTime.value.count();
+		p->predictedDisplayPeriod = admitted.displayPeriod.count();
+		p->shouldRender = s->core->Snapshot().state == XR_SESSION_STATE_VISIBLE ||
+						  s->core->Snapshot().state == XR_SESSION_STATE_FOCUSED;
+		return XR_SUCCESS;
+	};
+	return core->WaitFrame(prediction, publishNative);
 }
 FN(xrBeginFrame)(XrSession sHandle, const XrFrameBeginInfo *info)
 {

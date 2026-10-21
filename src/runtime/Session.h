@@ -55,7 +55,10 @@ class Session
 	XrResult End(RuntimeTime time);
 	XrResult SetState(XrSessionState state, RuntimeTime time);
 	void Close();
-	XrResult WaitFrame(FramePrediction& prediction);
+	// Native publication runs after admission with session/publication locks released.
+	// Failure retires only the admitted generation, including partially published state.
+	XrResult WaitFrame(FramePrediction& prediction,
+					   const std::function<XrResult(const FramePrediction&)>& publishNative = {});
 	XrResult BeginFrame();
 	XrResult EndFrame(FramePrediction& prediction, const XrFrameEndInfo* info = nullptr,
 					  std::shared_ptr<const FrameLayers> prepared = {}, std::shared_ptr<const FrameOutput> output = {},
@@ -114,6 +117,7 @@ class Session
 	LocatedViews ViewsAt(RuntimeTime time, bool foveated = false) const;
 
   private:
+	void Close(std::optional<SessionGeneration> expectedGeneration);
 	friend class DebugController;
 	bool WithDebugGeneration(SessionGeneration generation, const std::function<void()>& work,
 							 bool requireRunning = true);

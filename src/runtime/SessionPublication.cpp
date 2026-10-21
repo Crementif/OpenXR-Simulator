@@ -26,6 +26,12 @@ SessionPublication::PreparedStart::PreparedStart(SessionPublication& owner, Runt
 	owner.m_commands.Start(owner.m_seed, owner.m_overrideInitial ? owner.m_initial : std::nullopt);
 }
 
+SessionPublication::PreparedStart::~PreparedStart()
+{
+	if (!m_committed)
+		m_owner.m_commands.Close();
+}
+
 const ReferenceSpaceState& SessionPublication::PreparedStart::ReferenceSpaces() const
 {
 	return m_baseline.referenceSpaces;
