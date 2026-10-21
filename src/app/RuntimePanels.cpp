@@ -109,6 +109,11 @@ class RuntimePanels::Impl
 	{
 		m_debugger.CancelPending();
 	}
+	void ReleaseInputs()
+	{
+		if (m_debugger.Selected().id && m_debugger.Selected().running)
+			SubmitEdit(ReleaseManualInputs{});
+	}
 	void ReleaseSelected()
 	{
 		if (const auto capture = m_workspace.Selected();
@@ -157,6 +162,7 @@ class RuntimePanels::Impl
 		const auto connection = m_requests.Snapshot();
 		const auto selected = m_debugger.Selected();
 		snapshot.connected = connection.state == RuntimeConnectionState::Connected;
+		snapshot.connectionState = ConnectionName(connection.state);
 		snapshot.endpoint = connection.path;
 		snapshot.sessionAvailable = selected.id != 0;
 		snapshot.session = selected.id;
@@ -166,7 +172,7 @@ class RuntimePanels::Impl
 		snapshot.captures = m_workspace.Captures().size();
 		snapshot.images = m_preview.ReadyCount();
 		snapshot.pending = m_requests.Pending() || m_exports.Busy();
-		snapshot.error = m_detail;
+		snapshot.error = m_detail.empty() ? connection.detail : m_detail;
 		snapshot.operationPending = m_debugger.Pending();
 		if (!m_debugger.Operations().empty())
 		{
@@ -246,11 +252,11 @@ class RuntimePanels::Impl
 			if (!error.empty())
 				m_detail = std::move(error);
 	}
-	void Draw()
+	void Draw(WorkspaceMode mode)
 	{
-		DeviceControls();
+		if (mode == WorkspaceMode::Simulator || mode == WorkspaceMode::Custom)
+			DeviceControls();
 		const auto selected = m_debugger.Selected();
-		const auto sessions = m_debugger.Sessions();
 		const auto& status = m_debugger.Status();
 		const auto captures = m_workspace.Captures();
 		const bool manual = m_debugger.Manual(), lease = m_debugger.HasLease();
@@ -269,198 +275,200 @@ class RuntimePanels::Impl
 #else
 		constexpr bool replayAvailable = false;
 #endif
-		if (auto replay = m_recording.Draw(canRecord, replayAvailable))
-			m_recordingReplay = RecordingReplay{std::move(*replay), m_debugger.Scope()};
+		if (mode == WorkspaceMode::Automation || mode == WorkspaceMode::Custom)
+			if (auto replay = m_recording.Draw(canRecord, replayAvailable))
+				m_recordingReplay = RecordingReplay{std::move(*replay), m_debugger.Scope()};
 		m_preview.BeginFrame();
-		ImGui::Begin("Runtime connection");
 		const auto state = m_requests.Snapshot();
-		ImGui::TextUnformatted(ConnectionName(state.state));
-		ImGui::TextUnformatted("Endpoint");
-		ImGui::SetNextItemWidth(-1);
-		ImGui::InputText("##Endpoint", m_endpoint.data(), m_endpoint.size());
-		if (ImGui::Button("Find runtimes"))
-			m_endpoints = DiscoverRuntimeEndpoints();
-		ImGui::SameLine();
-		if (ImGui::Button("Connect"))
-			m_requests.Connect(m_endpoint.data());
-		ImGui::SameLine();
-		if (ImGui::Button("Disconnect"))
-			m_requests.Disconnect();
-		for (const auto& path : m_endpoints)
+		if (mode == WorkspaceMode::Debug || mode == WorkspaceMode::Custom)
 		{
-			if (ImGui::Selectable(std::filesystem::path(path).filename().string().c_str(), path == m_endpoint.data()))
-				std::snprintf(m_endpoint.data(), m_endpoint.size(), "%s", path.c_str());
-			if (ImGui::BeginItemTooltip())
+			ImGui::Begin("Frame controls");
+			ImGui::BeginDisabled(!selected.id || state.state != RuntimeConnectionState::Connected);
+			if (ImGui::Button("Pause"))
+				Command(wire::CommandKind::Pause);
+			ImGui::SameLine();
+			if (ImGui::Button("Step"))
+				Command(wire::CommandKind::Step);
+			ImGui::SameLine();
+			if (ImGui::Button("Resume"))
+				Command(wire::CommandKind::Resume);
+			if (ImGui::Button("Cancel pending operation"))
+				CancelPending();
+			if (ImGui::Button("Display step"))
+				Command(wire::CommandKind::DisplayStep);
+			ImGui::SameLine();
+			if (ImGui::Button("Strict admission"))
+				Command(wire::CommandKind::StrictAdmission);
+			ImGui::SetNextItemWidth(140);
+			ImGui::InputInt("Layer", &m_rawLayer);
+			ImGui::SetNextItemWidth(140);
+			ImGui::InputInt("View", &m_rawView);
+			if (ImGui::Button("Step source view"))
+				Command(wire::CommandKind::Step, 0, true, static_cast<std::uint32_t>(std::max(0, m_rawLayer)),
+						static_cast<std::uint32_t>(std::max(0, m_rawView)));
+			ImGui::EndDisabled();
+			if (!selected.id)
+				ImGui::TextWrapped("Session unavailable; retained GPU snapshots remain usable.");
+			else
+				ImGui::TextWrapped("Admission: %s; controller: %s", manual ? "manual" : "automatic",
+								   lease ? "owned by this connection" : "observer");
+			const auto pipeline = Nested(status.Find(tag::Pipeline));
+			if (!selected.id && status.Find(tag::Pipeline))
+				ImGui::TextUnformatted("Last observed pipeline:");
+			if (status.Find(tag::Pipeline))
+				ImGui::TextWrapped("Permits: %u; wait pending: %s", U32(pipeline, tag::Permits),
+								   Boolean(pipeline, tag::WaitPending) ? "yes" : "no");
+			for (const auto field : {tag::Waited, tag::Begun})
+				if (const auto value = pipeline.Find(field))
+					ImGui::Text("%s frame: %llu", field == tag::Waited ? "Waited" : "Begun",
+								static_cast<unsigned long long>(U64(Nested(value), tag::FrameId)));
+			const auto presentation = Nested(status.Find(tag::Presentation));
+			const auto display = Nested(presentation.Find(tag::Display));
+			if (status.Find(tag::Presentation))
+				ImGui::TextWrapped("Last submitted: %llu; display tick: %llu; selection: %s",
+								   static_cast<unsigned long long>(U64(presentation, tag::LastSubmitted)),
+								   static_cast<unsigned long long>(U64(display, tag::Tick)),
+								   Text(display, tag::Kind).c_str());
+			for (const auto& operation : m_debugger.Operations())
+				ImGui::TextWrapped("Operation %llu: %s / %s", static_cast<unsigned long long>(operation.id),
+								   operation.phase.c_str(), operation.progress.c_str());
+			ImGui::End();
+			ImGui::Begin("Captures");
+			ImGui::Checkbox("Select completed steps", &m_autoSelect);
+			for (const auto& capture : captures)
 			{
-				ImGui::TextWrapped("%s", path.c_str());
-				ImGui::EndTooltip();
-			}
-		}
-		if (!state.detail.empty())
-			ImGui::TextWrapped("%s", state.detail.c_str());
-		for (const auto& session : sessions)
-		{
-			const auto label = "Session " + std::to_string(session.id) + " / run " + std::to_string(session.generation);
-			if (ImGui::Selectable(label.c_str(),
-								  session.id == selected.id && session.generation == selected.generation))
-				ChooseSession(session);
-		}
-		ImGui::TextWrapped("Queued: %zu; replies: %zu; exchange: %s", state.queued, state.ready,
-						   state.inFlight ? "pending" : "idle");
-		if (!m_detail.empty())
-		{
-			ImGui::Separator();
-			ImGui::TextWrapped("%s", m_detail.c_str());
-			if (ImGui::SmallButton("Dismiss"))
-				m_detail.clear();
-		}
-		ImGui::End();
-		ImGui::Begin("Frame controls");
-		ImGui::BeginDisabled(!selected.id || state.state != RuntimeConnectionState::Connected);
-		if (ImGui::Button("Pause"))
-			Command(wire::CommandKind::Pause);
-		ImGui::SameLine();
-		if (ImGui::Button("Step"))
-			Command(wire::CommandKind::Step);
-		ImGui::SameLine();
-		if (ImGui::Button("Resume"))
-			Command(wire::CommandKind::Resume);
-		if (ImGui::Button("Cancel pending operation"))
-			CancelPending();
-		if (ImGui::Button("Display step"))
-			Command(wire::CommandKind::DisplayStep);
-		ImGui::SameLine();
-		if (ImGui::Button("Strict admission"))
-			Command(wire::CommandKind::StrictAdmission);
-		ImGui::SetNextItemWidth(140);
-		ImGui::InputInt("Layer", &m_rawLayer);
-		ImGui::SetNextItemWidth(140);
-		ImGui::InputInt("View", &m_rawView);
-		if (ImGui::Button("Step source view"))
-			Command(wire::CommandKind::Step, 0, true, static_cast<std::uint32_t>(std::max(0, m_rawLayer)),
-					static_cast<std::uint32_t>(std::max(0, m_rawView)));
-		ImGui::EndDisabled();
-		if (!selected.id)
-			ImGui::TextWrapped("Session unavailable; retained GPU snapshots remain usable.");
-		else
-			ImGui::TextWrapped("Admission: %s; controller: %s", manual ? "manual" : "automatic",
-							   lease ? "owned by this connection" : "observer");
-		const auto pipeline = Nested(status.Find(tag::Pipeline));
-		if (!selected.id && status.Find(tag::Pipeline))
-			ImGui::TextUnformatted("Last observed pipeline:");
-		if (status.Find(tag::Pipeline))
-			ImGui::TextWrapped("Permits: %u; wait pending: %s", U32(pipeline, tag::Permits),
-							   Boolean(pipeline, tag::WaitPending) ? "yes" : "no");
-		for (const auto field : {tag::Waited, tag::Begun})
-			if (const auto value = pipeline.Find(field))
-				ImGui::Text("%s frame: %llu", field == tag::Waited ? "Waited" : "Begun",
-							static_cast<unsigned long long>(U64(Nested(value), tag::FrameId)));
-		const auto presentation = Nested(status.Find(tag::Presentation));
-		const auto display = Nested(presentation.Find(tag::Display));
-		if (status.Find(tag::Presentation))
-			ImGui::TextWrapped("Last submitted: %llu; display tick: %llu; selection: %s",
-							   static_cast<unsigned long long>(U64(presentation, tag::LastSubmitted)),
-							   static_cast<unsigned long long>(U64(display, tag::Tick)),
-							   Text(display, tag::Kind).c_str());
-		for (const auto& operation : m_debugger.Operations())
-			ImGui::TextWrapped("Operation %llu: %s / %s", static_cast<unsigned long long>(operation.id),
-							   operation.phase.c_str(), operation.progress.c_str());
-		ImGui::End();
-		ImGui::Begin("Captures");
-		ImGui::Checkbox("Select completed steps", &m_autoSelect);
-		for (const auto& capture : captures)
-		{
-			const auto label = "Capture " + std::to_string(capture.id) + " / frame " + std::to_string(capture.frame) +
-							   " / " + capture.phase + (capture.released ? " (released)" : "");
-			ImGui::PushID(static_cast<int>(capture.local));
-			if (ImGui::Selectable(label.c_str(), capture.local == selectedRecord))
-			{
-				if (capture.scope.epoch == epoch && capture.scope.session == selected.id &&
-					capture.scope.generation == selected.generation)
-					Select(capture.id);
-				else
+				const auto label = "Capture " + std::to_string(capture.id) + " / frame " +
+								   std::to_string(capture.frame) + " / " + capture.phase +
+								   (capture.released ? " (released)" : "");
+				ImGui::PushID(static_cast<int>(capture.local));
+				if (ImGui::Selectable(label.c_str(), capture.local == selectedRecord))
 				{
-					m_workspace.SelectLocal(capture.local);
-					m_preview.ClearSelection();
-					m_preview.Follow(false);
+					if (capture.scope.epoch == epoch && capture.scope.session == selected.id &&
+						capture.scope.generation == selected.generation)
+						Select(capture.id);
+					else
+					{
+						m_workspace.SelectLocal(capture.local);
+						m_preview.ClearSelection();
+						m_preview.Follow(false);
+					}
 				}
+				ImGui::PopID();
 			}
-			ImGui::PopID();
-		}
-		ImGui::SeparatorText("Private GPU images");
-		for (const auto& image : m_preview.Images())
-		{
-			const auto label = "Frame " + std::to_string(image.frame) + " / session " +
-							   std::to_string(image.scope.session) + " / run " +
-							   std::to_string(image.scope.generation) +
-							   (image.live ? " / live" : " / capture " + std::to_string(image.capture));
-			ImGui::PushID(static_cast<int>(image.id));
-			if (ImGui::Selectable(label.c_str(), image.id == m_preview.SelectedId()))
+			ImGui::SeparatorText("Private GPU images");
+			for (const auto& image : m_preview.Images())
 			{
-				m_preview.SelectImage(image.id);
-				m_workspace.SelectImage(image.scope, image.capture);
-				m_focusPreview = true;
+				const auto label = "Frame " + std::to_string(image.frame) + " / session " +
+								   std::to_string(image.scope.session) + " / run " +
+								   std::to_string(image.scope.generation) +
+								   (image.live ? " / live" : " / capture " + std::to_string(image.capture));
+				ImGui::PushID(static_cast<int>(image.id));
+				if (ImGui::Selectable(label.c_str(), image.id == m_preview.SelectedId()))
+				{
+					m_preview.SelectImage(image.id);
+					m_workspace.SelectImage(image.scope, image.capture);
+					m_focusPreview = true;
+				}
+				ImGui::PopID();
 			}
-			ImGui::PopID();
+			if (ImGui::Button("Release selected snapshot"))
+				ReleaseSelected();
+			const auto capture = m_workspace.Selected();
+			ImGui::BeginDisabled(!capture || capture->released || capture->scope.epoch != epoch ||
+								 capture->scope.session != selected.id ||
+								 capture->scope.generation != selected.generation);
+			if (ImGui::Button("Inspect frame state"))
+				m_workspace.InspectSelected();
+			ImGui::EndDisabled();
+			ImGui::End();
 		}
-		if (ImGui::Button("Release selected snapshot"))
-			ReleaseSelected();
-		const auto capture = m_workspace.Selected();
-		ImGui::BeginDisabled(!capture || capture->released || capture->scope.epoch != epoch ||
-							 capture->scope.session != selected.id || capture->scope.generation != selected.generation);
-		if (ImGui::Button("Inspect submitted CPU state"))
-			m_workspace.InspectSelected();
-		ImGui::EndDisabled();
-		ImGui::End();
 		if (m_focusPreview)
 		{
 			ImGui::SetNextWindowFocus();
 			m_focusPreview = false;
 		}
-		ImGui::Begin("GPU preview");
-		bool follow = m_preview.Following();
-		if (ImGui::Checkbox("Follow virtual display", &follow))
-			m_preview.Follow(follow);
-		ImGui::Checkbox("Fit image", &m_fitPreview);
-		ImGui::SameLine();
-		ImGui::SetNextItemWidth(160);
-		if (ImGui::SliderFloat("Zoom", &m_zoom, 0.25f, 16.0f, "%.2fx", ImGuiSliderFlags_Logarithmic))
-			m_fitPreview = false;
-
-		if (auto image = m_preview.Selected(); image && image->ready && !image->released)
+		if (ImGui::Begin("GPU preview"))
 		{
-			const auto& description = image->description;
-			ImGui::Text("Frame %llu; %u x %u; %u slices; format %u", static_cast<unsigned long long>(image->frame),
-						description.width, description.height, description.arrayLayers, description.format);
-			const auto available = ImGui::GetContentRegionAvail();
-			const auto height = std::max(120.0f, available.y - 120);
-			auto width = description.width * m_zoom;
-			if (m_fitPreview)
+			const auto image = m_preview.Selected();
+			const bool live = m_preview.Following();
+			ImGui::TextColored(!connected ? ImVec4{0.65f, 0.68f, 0.72f, 1}
+										  : (live ? ImVec4{0.35f, 0.85f, 0.65f, 1} : ImVec4{1, 0.75f, 0.35f, 1}),
+							   "%s",
+							   live ? (!connected ? (image ? "LAST LIVE FRAME / DISCONNECTED" : "NOT CONNECTED")
+									   : manual	  ? "LIVE VIEW / PAUSED"
+												  : "LIVE VIEW")
+									: "RETAINED FRAME");
+			if (!live)
 			{
-				const auto slices = static_cast<float>(image->slices);
-				const auto horizontalFit = (available.x - 12 * (slices - 1)) / slices;
-				const auto verticalFit = height * description.width / description.height;
-				width = std::max(16.0f, std::min(horizontalFit, verticalFit));
+				ImGui::SameLine();
+				if (ImGui::Button("Return to live"))
+					m_preview.Follow(true);
 			}
-			ImGui::BeginChild("Image area", {0, height}, 0, ImGuiWindowFlags_HorizontalScrollbar);
-			m_preview.DrawSelected(width);
-			ImGui::EndChild();
-			ImGui::TextUnformatted("Export RGBA path");
-			ImGui::SetNextItemWidth(-1);
-			ImGui::InputText("##Export file", m_exportFile.data(), m_exportFile.size());
-			ImGui::BeginDisabled(!image->reader || image->scope.epoch != epoch || m_exports.Busy());
-			if (ImGui::Button("Export pixels explicitly"))
-				RequestExport(m_exportFile.data());
-			ImGui::EndDisabled();
+			if (!m_exports.Detail().empty())
+				ImGui::TextWrapped("%s", m_exports.Detail().c_str());
+			if (!m_detail.empty())
+			{
+				ImGui::SeparatorText("Runtime message");
+				ImGui::TextWrapped("%s", m_detail.c_str());
+				if (ImGui::SmallButton("Dismiss message"))
+					m_detail.clear();
+			}
+			if (!state.detail.empty())
+				ImGui::TextWrapped("%s", state.detail.c_str());
+			if (image && image->ready && !image->released)
+			{
+				ImGui::SameLine();
+				ImGui::TextDisabled("Frame %llu", static_cast<unsigned long long>(image->frame));
+				ImGui::Checkbox("Fit", &m_fitPreview);
+				ImGui::SameLine();
+				ImGui::SetNextItemWidth(120);
+				if (ImGui::SliderFloat("Zoom", &m_zoom, 0.25f, 16.0f, "%.2fx", ImGuiSliderFlags_Logarithmic))
+					m_fitPreview = false;
+				if (mode == WorkspaceMode::Debug || mode == WorkspaceMode::Custom)
+				{
+					if (ImGui::CollapsingHeader("Image details and export"))
+					{
+						const auto& description = image->description;
+						ImGui::Text("%u x %u / %u views / format %u", description.width, description.height,
+									description.arrayLayers, description.format);
+						ImGui::InputText("RGBA file", m_exportFile.data(), m_exportFile.size());
+						ImGui::BeginDisabled(!image->reader || image->scope.epoch != epoch || m_exports.Busy());
+						if (ImGui::Button("Export raw RGBA"))
+							RequestExport(m_exportFile.data());
+						ImGui::EndDisabled();
+					}
+				}
+				const auto available = ImGui::GetContentRegionAvail();
+				const auto& description = image->description;
+				float width = description.width * m_zoom;
+				if (m_fitPreview)
+				{
+					const float slices = static_cast<float>(image->slices);
+					width = std::max(16.0f,
+									 std::min((available.x - 12 * (slices - 1)) / slices,
+											  std::max(16.0f, available.y) * description.width / description.height));
+				}
+				ImGui::BeginChild("Image area", {0, 0}, 0, ImGuiWindowFlags_HorizontalScrollbar);
+				m_preview.DrawSelected(width);
+				ImGui::EndChild();
+			}
+			else
+			{
+				ImGui::Spacing();
+				ImGui::SeparatorText(connected ? "Waiting for an image" : "Your application appears here");
+				ImGui::TextWrapped(
+					"%s",
+					!connected	   ? "Choose an application above to launch it, or use Connect to select an already "
+									 "running OpenXR application."
+					: !selected.id ? "The runtime is connected. Start an XR session in the application to see its view."
+					: m_preview.SelectedId()
+						? "Receiving the selected frame..."
+						: "The application has not supplied a visible frame. If it is paused, use Step or Resume.");
+			}
 		}
-		else
-			ImGui::TextWrapped("%s",
-							   m_preview.SelectedId()
-								   ? "Image copy is pending"
-								   : "No selected image. A display clear or missing capture has no pixel payload.");
-		if (!m_exports.Detail().empty())
-			ImGui::TextWrapped("%s", m_exports.Detail().c_str());
 		ImGui::End();
+		if (mode != WorkspaceMode::Debug && mode != WorkspaceMode::Custom)
+			return;
 		ImGui::Begin("Historical state");
 		m_nodesDrawn = 0;
 		if (auto capture = m_workspace.Selected(); capture && capture->document.Find(tag::Document))
@@ -499,6 +507,67 @@ class RuntimePanels::Impl
 		{
 			ImGui::TextWrapped("Select a retained frame and use Inspect submitted CPU state in Captures. This "
 							   "inspector preserves the selected historical action-sync serial.");
+		}
+		ImGui::End();
+	}
+
+	void DrawConnection()
+	{
+		const auto selected = m_debugger.Selected();
+		const auto sessions = m_debugger.Sessions();
+		ImGui::SetNextWindowSize({600, 400}, ImGuiCond_FirstUseEver);
+		if (!ImGui::Begin("Runtime connection"))
+		{
+			ImGui::End();
+			return;
+		}
+		const auto state = m_requests.Snapshot();
+		ImGui::TextUnformatted(ConnectionName(state.state));
+		ImGui::TextWrapped("Select an existing runtime, or launch an application from the toolbar.");
+		if (ImGui::Button("Refresh applications"))
+			m_endpoints = DiscoverRuntimeEndpoints();
+		if (state.state == RuntimeConnectionState::Connected)
+		{
+			ImGui::SameLine();
+			if (ImGui::Button("Disconnect"))
+				m_requests.Disconnect();
+		}
+		if (m_endpoints.empty())
+			ImGui::TextWrapped("No runtimes found. Launch an application with the simulator runtime, then refresh.");
+		for (const auto& path : m_endpoints)
+		{
+			if (ImGui::Selectable(std::filesystem::path(path).filename().string().c_str(), path == m_endpoint.data()))
+				ConnectEndpoint(path);
+			if (ImGui::BeginItemTooltip())
+			{
+				ImGui::TextWrapped("%s", path.c_str());
+				ImGui::EndTooltip();
+			}
+		}
+		if (!state.detail.empty())
+			ImGui::TextWrapped("%s", state.detail.c_str());
+		for (const auto& session : sessions)
+		{
+			const auto label = "Session " + std::to_string(session.id) + " / run " + std::to_string(session.generation);
+			if (ImGui::Selectable(label.c_str(),
+								  session.id == selected.id && session.generation == selected.generation))
+				ChooseSession(session);
+		}
+		if (ImGui::CollapsingHeader("Advanced connection"))
+		{
+			ImGui::SetNextItemWidth(-1);
+			ImGui::InputText("##Endpoint", m_endpoint.data(), m_endpoint.size());
+			if (ImGui::Button("Connect to endpoint"))
+				m_requests.Connect(m_endpoint.data());
+			ImGui::TextWrapped("Queued: %zu; replies: %zu; exchange: %s", state.queued, state.ready,
+							   state.inFlight ? "pending" : "idle");
+		}
+		if (!m_detail.empty())
+		{
+			ImGui::Separator();
+			ImGui::TextWrapped("%s", m_detail.c_str());
+			if (ImGui::SmallButton("Dismiss"))
+				m_detail.clear();
 		}
 		ImGui::End();
 	}
@@ -697,7 +766,11 @@ class RuntimePanels::Impl
 	{
 		const auto selected = m_debugger.Selected();
 		const auto& status = m_debugger.Status();
-		ImGui::Begin("Device controls");
+		if (!ImGui::Begin("Device controls"))
+		{
+			ImGui::End();
+			return;
+		}
 		const bool supported = selected.id && (U64(status, tag::Capabilities) &
 											   static_cast<std::uint64_t>(wire::Capability::SimulationCommands));
 		if (auto edit = m_devices.Draw(supported))
@@ -705,10 +778,19 @@ class RuntimePanels::Impl
 		m_nodesDrawn = 0;
 		if (const auto value = m_simulationResult.Find(tag::Document))
 		{
-			ImGui::SeparatorText("Last transaction outcome");
-			Document(value->value);
+			const auto phaseBytes = InspectionMember(value->value, "phase");
+			wire::Message phase;
+			phase.fields = wire::DecodeFields(phaseBytes).fields;
+			ImGui::SeparatorText("Input request");
+			ImGui::TextWrapped("%s", Text(phase, 3, "Waiting for acknowledgement").c_str());
+			if (ImGui::TreeNode("Request details"))
+			{
+				Document(value->value);
+				ImGui::TreePop();
+			}
 		}
-		if (const auto value = m_simulationState.Find(tag::Document))
+		if (const auto value = m_simulationState.Find(tag::Document);
+			value && ImGui::CollapsingHeader("Applied state and input owners"))
 		{
 			ImGui::TextWrapped(
 				"Owner source kinds: 0 Manual, 1 MCP, 2 Rig. Owner array follows the channel order shown above.");
@@ -752,9 +834,13 @@ void RuntimePanels::Poll()
 {
 	m_impl->Poll();
 }
-void RuntimePanels::Draw()
+void RuntimePanels::Draw(WorkspaceMode mode)
 {
-	m_impl->Draw();
+	m_impl->Draw(mode);
+}
+void RuntimePanels::DrawConnection()
+{
+	m_impl->DrawConnection();
 }
 std::vector<VkSemaphore> RuntimePanels::ReadyWaits() const
 {
@@ -784,6 +870,10 @@ void RuntimePanels::ReleaseSelected()
 void RuntimePanels::CancelPending()
 {
 	m_impl->CancelPending();
+}
+void RuntimePanels::ReleaseInputs()
+{
+	m_impl->ReleaseInputs();
 }
 std::string RuntimePanels::Endpoint() const
 {

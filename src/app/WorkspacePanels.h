@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/CompanionSettings.h"
+#include "app/WorkspaceMode.h"
 
 #include <memory>
 #include <string>
@@ -18,7 +19,10 @@ class WorkspacePanels
 	std::string InitialEndpoint() const;
 	void BeginFrame(RuntimePanels& runtime);
 	void Draw(RuntimePanels& runtime);
-	bool TakeLayoutReset();
+	void DrawDockspace();
+	WorkspaceMode Mode() const;
+	void SetMode(WorkspaceMode mode);
+	void SetScale(float scale);
 	void Finish();
 
   private:

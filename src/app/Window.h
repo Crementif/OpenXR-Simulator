@@ -16,9 +16,11 @@ class Window
 	SDL_Window* Native() const;
 	std::pair<int, int> PixelSize() const;
 	bool PollEvents();
+	bool TakeFocusLost();
 	void Resize(int width, int height);
 
   private:
 	SDL_Window* m_window = nullptr;
+	bool m_focusLost = false;
 };
 } // namespace simxr::app
