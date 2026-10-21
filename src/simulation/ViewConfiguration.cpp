@@ -5,9 +5,28 @@
 #include <cmath>
 #include <numbers>
 #include <stdexcept>
+#include <utility>
 
 namespace simxr
 {
+namespace
+{
+std::pair<float, float> InsetRange(float center, float minimum, float maximum, double halfAngle)
+{
+	const auto clamped = std::clamp(static_cast<double>(center), static_cast<double>(minimum) + halfAngle,
+									static_cast<double>(maximum) - halfAngle);
+	auto lower = static_cast<float>(clamped - halfAngle);
+	auto upper = static_cast<float>(clamped + halfAngle);
+	if (lower == upper)
+	{
+		// Preserve a nonzero representable interval when both endpoints round to the center.
+		lower = std::nextafter(lower, minimum);
+		upper = std::nextafter(upper, maximum);
+	}
+	return {lower, upper};
+}
+} // namespace
+
 ViewConfiguration::ViewConfiguration(ViewLayout layout, const ViewSettings& settings) : m_layout(layout), m_settings(settings)
 {
 	if ((layout != ViewLayout::Stereo && layout != ViewLayout::StereoWithInset) ||
@@ -17,11 +36,13 @@ ViewConfiguration::ViewConfiguration(ViewLayout layout, const ViewSettings& sett
 	for (const auto& fov : settings.outerFov)
 	{
 		const auto halfPi = std::numbers::pi_v<float> / 2;
-		if (!std::isfinite(fov.angleLeft) || !std::isfinite(fov.angleRight) || !std::isfinite(fov.angleDown) || !std::isfinite(fov.angleUp) ||
-			std::abs(fov.angleLeft) >= halfPi || std::abs(fov.angleRight) >= halfPi ||
-			std::abs(fov.angleDown) >= halfPi || std::abs(fov.angleUp) >= halfPi ||
-			fov.angleLeft >= fov.angleRight || fov.angleDown >= fov.angleUp ||
-			(layout == ViewLayout::StereoWithInset && (2 * settings.insetHalfAngle > fov.angleRight - fov.angleLeft || 2 * settings.insetHalfAngle > fov.angleUp - fov.angleDown)))
+		if (!std::isfinite(fov.angleLeft) || !std::isfinite(fov.angleRight) || !std::isfinite(fov.angleDown) ||
+			!std::isfinite(fov.angleUp) || std::abs(fov.angleLeft) >= halfPi || std::abs(fov.angleRight) >= halfPi ||
+			std::abs(fov.angleDown) >= halfPi || std::abs(fov.angleUp) >= halfPi || fov.angleLeft >= fov.angleRight ||
+			fov.angleDown >= fov.angleUp ||
+			(layout == ViewLayout::StereoWithInset &&
+			 (2.0 * settings.insetHalfAngle > static_cast<double>(fov.angleRight) - fov.angleLeft ||
+			  2.0 * settings.insetHalfAngle > static_cast<double>(fov.angleUp) - fov.angleDown)))
 			throw std::invalid_argument("Invalid profile field of view");
 	}
 }
@@ -66,10 +87,9 @@ LocatedViews ViewConfiguration::Locate(const TrackingSnapshot& snapshot, bool fo
 		auto fov = m_settings.outerFov[description.eye];
 		if (description.role == ViewRole::Inset)
 		{
-			auto halfAngle = m_settings.insetHalfAngle;
-			auto x = std::clamp(horizontal, fov.angleLeft + halfAngle, fov.angleRight - halfAngle);
-			auto y = std::clamp(vertical, fov.angleDown + halfAngle, fov.angleUp - halfAngle);
-			fov = {x - halfAngle, x + halfAngle, y + halfAngle, y - halfAngle};
+			const auto [left, right] = InsetRange(horizontal, fov.angleLeft, fov.angleRight, m_settings.insetHalfAngle);
+			const auto [down, up] = InsetRange(vertical, fov.angleDown, fov.angleUp, m_settings.insetHalfAngle);
+			fov = {left, right, up, down};
 		}
 		result.views.push_back({description, eye, fov});
 	}

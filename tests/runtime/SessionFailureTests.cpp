@@ -36,6 +36,110 @@ thread_local bool allocationFailed = false;
 
 namespace
 {
+void HapticPublicationFailure()
+{
+	using namespace simxr;
+	const std::array devices{InputDeviceId{InputDeviceKind::Controller, 0},
+							 InputDeviceId{InputDeviceKind::Controller, 1}, InputDeviceId{InputDeviceKind::Tracker, 3}};
+	const auto action = reinterpret_cast<XrAction>(951);
+	for (int failure = 0; failure < 256; ++failure)
+	{
+		HapticState haptics(8);
+		XrHapticVibration vibration{XR_TYPE_HAPTIC_VIBRATION, nullptr, XR_INFINITE_DURATION, 100, 0.25f};
+		Require(haptics.Apply(std::span(devices).first(2), action, 17, vibration, {Duration{10}}, true) == XR_SUCCESS,
+				"Prepare haptic replacement");
+		const auto previous = haptics.Snapshot({Duration{20}});
+		vibration.amplitude = 0.8f;
+		allocationFailed = false;
+		allocationCountdown = failure;
+		try
+		{
+			Require(haptics.Apply(devices, action, 18, vibration, {Duration{20}}, true) == XR_SUCCESS,
+					"Apply haptic replacement");
+		}
+		catch (const std::bad_alloc&)
+		{
+		}
+		allocationCountdown = -1;
+		const bool failed = allocationFailed;
+		if (failed)
+		{
+			const auto unchanged = haptics.Snapshot({Duration{20}});
+			Require(unchanged.size() == previous.size() &&
+						std::equal(unchanged.begin(), unchanged.end(), previous.begin(),
+								   [](const auto& left, const auto& right)
+								   {
+									   return left.sequence == right.sequence && left.device == right.device &&
+											  left.action == right.action &&
+											  left.subactionPath == right.subactionPath &&
+											  left.amplitude == right.amplitude && left.frequency == right.frequency &&
+											  left.requestedDuration == right.requestedDuration &&
+											  left.start == right.start && left.end == right.end &&
+											  left.status == right.status;
+								   }),
+					"Failed haptic replacement partially changed active output or history");
+			Require(haptics.Apply(devices, action, 18, vibration, {Duration{20}}, true) == XR_SUCCESS,
+					"Retry haptic replacement");
+		}
+		const auto committed = haptics.Snapshot({Duration{20}});
+		Require(committed.size() == 5 && committed.back().sequence == 5 &&
+					std::count_if(committed.begin(), committed.end(),
+								  [](const auto& output)
+								  {
+									  return output.status == HapticStatus::Active;
+								  }) == 3,
+				"Haptic replacement lost output or consumed sequence on failure");
+		if (!failed)
+		{
+			std::cout << "Haptic publication allocation sweep: " << failure << " failures\n";
+			return;
+		}
+	}
+	throw std::runtime_error("Haptic allocation sweep exceeded its bound");
+}
+
+void HapticRetirementWithoutAllocation()
+{
+	using namespace simxr;
+	HapticState haptics(8);
+	const std::array devices{InputDeviceId{InputDeviceKind::Controller, 0},
+							 InputDeviceId{InputDeviceKind::Controller, 1}};
+	const auto action = reinterpret_cast<XrAction>(952);
+	for (int iteration = 0; iteration < 128; ++iteration)
+	{
+		const RuntimeTime start{Duration{iteration * 10 + 1}};
+		const RuntimeTime finish{start.value + Duration{2}};
+		XrHapticVibration vibration{XR_TYPE_HAPTIC_VIBRATION, nullptr, iteration % 4 == 3 ? 1 : XR_INFINITE_DURATION,
+									100, 0.5f};
+		Require(haptics.Apply(devices, action, 0, vibration, start, true) == XR_SUCCESS, "Prepare haptic retirement");
+		allocationCountdown = 0;
+		switch (iteration % 4)
+		{
+		case 0:
+			haptics.LoseFocus(finish);
+			break;
+		case 1:
+			haptics.RemoveAction(action, finish);
+			break;
+		case 2:
+			Require(haptics.Stop(devices, action, finish, true) == XR_SUCCESS, "Stop haptics");
+			break;
+		case 3:
+			Require(haptics.Stop(std::span<const InputDeviceId>{}, action, finish, true) == XR_SUCCESS,
+					"Expire haptics");
+			break;
+		}
+		allocationCountdown = -1;
+		const auto snapshot = haptics.Snapshot(finish);
+		Require(snapshot.size() <= 8 && std::none_of(snapshot.begin(), snapshot.end(),
+													 [](const auto& output)
+													 {
+														 return output.status == HapticStatus::Active;
+													 }),
+				"Haptic retirement left active output");
+	}
+}
+
 void TrackerPublicationFailure()
 {
 	using namespace simxr;
@@ -323,6 +427,8 @@ int main()
 		FailedStart();
 		ProfileNotificationFailure();
 		TrackerPublicationFailure();
+		HapticRetirementWithoutAllocation();
+		HapticPublicationFailure();
 		return 0;
 	}
 	catch (const std::exception& error)
