@@ -60,6 +60,7 @@ add_library(simxr_core STATIC
     src/presentation/DebugController.cpp
     src/presentation/PresentationController.cpp
     src/presentation/VirtualDisplay.cpp
+    src/presentation/RotationalDisplay.cpp
     src/presentation/DisplayTimeline.cpp
     src/presentation/FrameScheduler.cpp)
 simxr_configure_target(simxr_core)
@@ -331,6 +332,8 @@ if(BUILD_TESTING)
     target_link_libraries(presentation_controller_tests PRIVATE simxr_core)
     simxr_add_test(virtual_display_tests tests/presentation/VirtualDisplayTests.cpp virtual_display)
     target_link_libraries(virtual_display_tests PRIVATE simxr_core)
+    simxr_add_test(rotational_display_tests tests/presentation/RotationalDisplayTests.cpp rotational_display)
+    target_link_libraries(rotational_display_tests PRIVATE simxr_core)
     simxr_add_test(frame_scheduler_tests tests/presentation/FrameSchedulerTests.cpp frame_scheduler)
     target_link_libraries(frame_scheduler_tests PRIVATE simxr_core)
     simxr_add_test(layer_builder_tests tests/graphics/LayerBuilderTests.cpp layer_builder)

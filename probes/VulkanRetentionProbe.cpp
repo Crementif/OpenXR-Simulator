@@ -273,14 +273,49 @@ void VerifySubmittedLayers(RetainedSubmission retained, bool verifyPixels)
 				}
 			reference.push_back(std::move(pixels));
 		}
+	VirtualDisplay display;
+	auto head = retained.head;
+	const RuntimeTime epoch{Duration{std::max<std::int64_t>(1, head.sampleTime.value.count())}};
+	display.ConfigurePolicy(PresentationPolicy::Rotational,
+							[&](RuntimeTime)
+							{
+								return head;
+							});
+	display.Start({1}, {epoch, std::chrono::milliseconds(1)}, ExecutionMode::Deterministic);
+	Require(display.Pause(), "Pause native display for exact output inspection");
+	const FrameKey source{{1}, {1}};
+	Require(display.Submit({source, epoch, retained.baseline, {}, {retained.source}}) ==
+				PresentationAdmission::Accepted,
+			"Submit surviving retained layers to rotational display");
+	std::uint64_t priorImageTick = 0;
 	for (const float yaw : {0.0f, 0.25f, 3.14159265f})
 	{
-		auto head = retained.head;
+		head = retained.head;
+		head.sampleTime = {epoch.value + Duration{static_cast<std::int64_t>(display.NextTick().value) * 1000000}};
 		head.pose.orientation = Compose(head.pose, {EulerAngles(yaw, 0, 0), {}}).orientation;
-		std::shared_ptr<const FrameOutput> output;
-		Require(retained.source->Reproject(head, output) == XR_SUCCESS && output,
-				"Reproject submitted layers after device teardown");
-		Await(*output);
+		auto selected = display.Step();
+		Require(selected && selected->source == source, "Display changed the submitted source identity");
+		const auto submissionTime = selected->reprojectionSubmissionTime;
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+		while (yaw != 0 && (!selected->reprojected || selected->displayHead->sampleTime != head.sampleTime))
+		{
+			Require(selected->output && selected->output->PollCompletion() == CompletionStatus::Complete &&
+						std::chrono::steady_clock::now() < deadline,
+					"Rotational display published pending work or failed to complete");
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			selected = display.Step();
+			Require(selected.has_value(), "Native display stopped advancing");
+		}
+		const auto output = display.Snapshot().latest->output;
+		Require(output == selected->output && selected->source == source && selected->imageTick &&
+					(yaw == 0 ? output == retained.baseline && !selected->reprojected
+							  : selected->imageTick->value > priorImageTick),
+				"Native displayed output, image tick and source identity disagree");
+		priorImageTick = selected->imageTick->value;
+		std::printf("case=rotational-display format=%d yaw=%.3f sourceFrame=1 imageTick=%llu "
+					"enqueueCpuUs=%.3f observedCompletionUs=%.3f\n",
+					retained.format, yaw, static_cast<unsigned long long>(priorImageTick),
+					submissionTime.count() / 1000.0, selected->reprojectionCompletionLatency.count() / 1000.0);
 		if (verifyPixels)
 		{
 			CompositionPlan expected;

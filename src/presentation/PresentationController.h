@@ -42,6 +42,24 @@ enum class PresentationKind
 	Empty
 };
 
+enum class PresentationPolicy
+{
+	Repeat,
+	Rotational
+};
+
+struct PresentationImage
+{
+	std::shared_ptr<const FrameOutput> output;
+	std::optional<PoseSample> head;
+	bool reprojected = false;
+	XrResult result = XR_SUCCESS;
+	// CPU enqueue cost and wall time until completion is observed this tick.
+	// Completion latency includes queueing/polling; it is not GPU execution time.
+	Duration submissionTime{};
+	Duration completionLatency{};
+};
+
 struct PresentationTick
 {
 	DisplayTick tick;
@@ -54,6 +72,12 @@ struct PresentationTick
 	ReprojectionInput reprojection;
 	// First display tick selecting this image; unchanged when repeating it.
 	std::optional<DisplayTick> imageTick;
+	PresentationPolicy policy = PresentationPolicy::Repeat;
+	std::optional<PoseSample> displayHead;
+	bool reprojected = false;
+	XrResult reprojectionResult = XR_SUCCESS;
+	Duration reprojectionSubmissionTime{};
+	Duration reprojectionCompletionLatency{};
 };
 
 struct PresentationSnapshot
@@ -83,7 +107,11 @@ class PresentationController
 	PresentationAdmission
 	SubmitLiveClearWithMetadata(PresentationSubmission submission,
 								const std::function<std::shared_ptr<const FrameRecord>()>& commit);
-	std::optional<PresentationTick> Advance(RuntimeTime now, std::optional<SessionGeneration> generation = {});
+	// The transform runs outside presentation locks and returns a completed image.
+	// Stop/restart or another committed advance invalidates its pending publication.
+	using ImageTransform = std::function<PresentationImage(const PresentationTick&)>;
+	std::optional<PresentationTick> Advance(RuntimeTime now, std::optional<SessionGeneration> generation = {},
+											const ImageTransform& transform = {});
 	void Stop() noexcept;
 	std::size_t PollRetired();
 	PresentationSnapshot Snapshot() const;
@@ -110,6 +138,7 @@ class PresentationController
 	FrameId m_lastSubmitted;
 	FrameId m_lastSelected;
 	std::optional<PresentationSubmission> m_current;
+	std::shared_ptr<const FrameOutput> m_displayOutput;
 	// The internal tick record contains metadata only. Snapshot/Advance attach
 	// a CPU reference to the current output when returning it to a reader.
 	std::optional<PresentationTick> m_latest;

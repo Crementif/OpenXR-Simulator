@@ -37,6 +37,10 @@ class RetainedSource final : public RotationalSource
 	{
 		return CompletionStatus::Complete;
 	}
+	PoseSample SubmittedHead() const noexcept override
+	{
+		return {};
+	}
 	XrResult Reproject(const PoseSample&, std::shared_ptr<const FrameOutput>&) const override
 	{
 		return XR_ERROR_FEATURE_UNSUPPORTED;

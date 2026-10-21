@@ -2,6 +2,7 @@
 
 #include "platform/Clock.h"
 #include "presentation/PresentationController.h"
+#include "presentation/RotationalDisplay.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -20,6 +21,10 @@ class VirtualDisplay
 	~VirtualDisplay();
 	VirtualDisplay(const VirtualDisplay&) = delete;
 	VirtualDisplay& operator=(const VirtualDisplay&) = delete;
+	using HeadSampler = std::function<PoseSample(RuntimeTime)>;
+	// Configure only while stopped. The sampler must not acquire session/lifecycle locks.
+	void ConfigurePolicy(PresentationPolicy policy, HeadSampler sampleHead = {});
+	PresentationPolicy Policy() const;
 	void Start(SessionGeneration generation, const DisplayTimeline& timeline, ExecutionMode mode,
 			   std::optional<HostTime> hostEpoch = {});
 	void Stop() noexcept;
@@ -43,11 +48,15 @@ class VirtualDisplay
 	std::size_t PollRetired();
 
   private:
+	std::optional<PresentationTick> AdvanceTick(RuntimeTime time, std::optional<SessionGeneration> generation = {});
 	void StopLocked() noexcept;
 	void Run() noexcept;
 	std::shared_ptr<Clock> m_clock;
 	std::shared_ptr<Clock> m_waiter;
 	PresentationController m_controller;
+	RotationalDisplay m_reprojection;
+	PresentationPolicy m_policy = PresentationPolicy::Repeat;
+	HeadSampler m_sampleHead;
 	std::mutex m_control;
 	mutable std::mutex m_mutex;
 	std::condition_variable m_changed;

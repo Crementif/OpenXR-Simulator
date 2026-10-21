@@ -12,6 +12,7 @@ namespace simxr
 class RotationalSource : public GpuCompletion
 {
   public:
+	virtual PoseSample SubmittedHead() const noexcept = 0;
 	// Success publishes a new output; timeout/capacity/failure leave it unchanged.
 	// PollCompletion observes input readiness only and never submits GPU work.
 	virtual XrResult Reproject(const PoseSample& head, std::shared_ptr<const FrameOutput>& output) const = 0;

@@ -44,6 +44,10 @@ class VulkanRotationalSource final : public RotationalSource
 		}
 		return status;
 	}
+	PoseSample SubmittedHead() const noexcept override
+	{
+		return m_head;
+	}
 	XrResult Reproject(const PoseSample& head, std::shared_ptr<const FrameOutput>& output) const override
 	{
 		const auto status = PollCompletion();
