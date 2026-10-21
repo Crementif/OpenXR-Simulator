@@ -2,6 +2,8 @@
 
 #include <cerrno>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <spawn.h>
 #include <stdexcept>
@@ -91,6 +93,14 @@ ChildProcess::ChildProcess() : m_state(std::make_unique<State>()) {}
 ChildProcess::~ChildProcess() = default;
 std::unique_ptr<ChildProcess> ChildProcess::Launch(const LaunchProfile& profile)
 {
+	if (!profile.runtimeManifest.empty())
+	{
+		auto manifest = std::filesystem::path(profile.runtimeManifest);
+		if (manifest.is_relative())
+			manifest = std::filesystem::path(profile.workingDirectory) / manifest;
+		if (!std::filesystem::is_regular_file(manifest) || !std::ifstream(manifest).good())
+			throw std::runtime_error("Runtime manifest is not a readable file: " + manifest.string());
+	}
 	ChildEnvironment environment(profile);
 	auto arguments = profile.arguments;
 	arguments.insert(arguments.begin(), profile.executable);
