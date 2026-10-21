@@ -38,7 +38,7 @@ struct VulkanExternalIdentity
 	bool operator==(const VulkanExternalIdentity&) const = default;
 };
 
-// The first production subset is RGBA8 UNORM/sRGB, one or two slices, optimal
+// Native transfers preserve RGBA8/BGRA8 UNORM/sRGB, one or two slices, optimal
 // 2D tiling, one mip, one sample and no image-create flags. All creation fields
 // remain explicit in transport metadata; unsupported variants are rejected.
 struct VulkanExternalImageSpec

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "graphics/FrameOutput.h"
+#include "graphics/RotationalSource.h"
 #include "presentation/DisplayTimeline.h"
 
 #include <cstddef>
@@ -22,6 +22,7 @@ struct PresentationSubmission
 	// A null output represents an explicit zero-layer clear, without GPU work.
 	std::shared_ptr<const FrameOutput> output;
 	std::shared_ptr<const FrameRecord> metadata;
+	ReprojectionInput reprojection;
 };
 
 enum class PresentationAdmission
@@ -50,6 +51,7 @@ struct PresentationTick
 	std::shared_ptr<const FrameOutput> output;
 	std::uint64_t skippedTicks = 0;
 	std::shared_ptr<const FrameRecord> metadata;
+	ReprojectionInput reprojection;
 };
 
 struct PresentationSnapshot

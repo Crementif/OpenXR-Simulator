@@ -824,6 +824,7 @@ void DebugController::Process(DebugOperation& operation)
 			return;
 		}
 		operation.display = *tick;
+		operation.display->reprojection.source.reset();
 		operation.capture = capture.id;
 		operation.frame = tick->source;
 		operation.phase = DebugPhase::Complete;

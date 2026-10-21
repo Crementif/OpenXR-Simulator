@@ -100,27 +100,6 @@ bool ValidNames(std::uint32_t count, const char* const* names)
 }
 } // namespace
 
-XrResult VulkanGraphicsFailure(VkResult result)
-{
-	switch (result)
-	{
-	case VK_ERROR_OUT_OF_HOST_MEMORY:
-	case VK_ERROR_OUT_OF_DEVICE_MEMORY:
-		return XR_ERROR_OUT_OF_MEMORY;
-	case VK_ERROR_FORMAT_NOT_SUPPORTED:
-		return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
-	case VK_ERROR_OUT_OF_POOL_MEMORY:
-	case VK_ERROR_TOO_MANY_OBJECTS:
-		return XR_ERROR_LIMIT_REACHED;
-	case VK_ERROR_EXTENSION_NOT_PRESENT:
-	case VK_ERROR_FEATURE_NOT_PRESENT:
-		return XR_ERROR_FEATURE_UNSUPPORTED;
-	case VK_ERROR_DEVICE_LOST:
-		return XR_ERROR_SESSION_LOST;
-	default:
-		return XR_ERROR_RUNTIME_FAILURE;
-	}
-}
 
 std::vector<const char*> VulkanSharingExtensions(VkPhysicalDevice physicalDevice)
 {

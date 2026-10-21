@@ -159,6 +159,7 @@ if((SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES) AND NOT WIN32)
         src/graphics/backends/vulkan/VulkanDevice.cpp
         src/graphics/backends/vulkan/VulkanResources.cpp
         src/graphics/backends/vulkan/VulkanExternal.cpp
+        src/graphics/backends/vulkan/VulkanReprojection.cpp
         src/graphics/backends/vulkan/VulkanInspection.cpp
         src/graphics/backends/vulkan/VulkanInspectionWork.cpp
         src/graphics/backends/vulkan/VulkanReadbackBatch.cpp
@@ -428,7 +429,8 @@ if(SIMXR_BUILD_PROBES)
         simxr_set_output_directory(vulkan_compositor_probe)
         target_link_libraries(vulkan_compositor_probe PRIVATE simxr_vulkan)
         add_executable(vulkan_inspection_probe probes/VulkanInspectionProbe.cpp probes/VulkanImageDeliveryProbe.cpp
-            probes/VulkanReprojectionProbe.cpp)
+            probes/VulkanReprojectionProbe.cpp probes/VulkanRetentionProbe.cpp
+            src/platform/linux/VulkanFrameSubmission.cpp)
         simxr_configure_target(vulkan_inspection_probe)
         simxr_set_output_directory(vulkan_inspection_probe)
         target_link_libraries(vulkan_inspection_probe PRIVATE simxr_vulkan)

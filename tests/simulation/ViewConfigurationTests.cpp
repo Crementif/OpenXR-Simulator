@@ -16,6 +16,9 @@ int main()
 	ViewConfiguration stereo;
 	Require(stereo.EyeCount() == 2 && stereo.Describe().size() == 2, "Stereo views");
 	auto views = stereo.Locate(snapshot);
+	Require(views.head.sampleTime == snapshot.head.sampleTime && views.head.flags == snapshot.head.flags &&
+				views.head.pose.orientation.y == snapshot.head.pose.orientation.y,
+			"Located eyes lost the head from their exact tracking sample");
 	Require(std::abs(views.views[0].pose.pose.position.z - 0.032f) < 0.00001f, "Rotated eye separation");
 	Require(std::abs(views.views[1].pose.pose.position.z + 0.032f) < 0.00001f, "Rotated right eye");
 	ViewSettings narrow;

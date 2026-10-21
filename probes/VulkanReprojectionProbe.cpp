@@ -93,7 +93,13 @@ void Verify(const CompositionPlan& plan, const VulkanImagePixels& output,
 					if (!uv)
 						continue;
 					const auto index = reinterpret_cast<std::uintptr_t>(draw.source.source) - 1;
-					color = CompositeReferenceColor(Sample(*sources.at(index), *uv), color, draw.constants.control[1]);
+					const auto& source = *sources.at(index);
+					const auto& rectangle = draw.constants.imageRectangle;
+					const XrVector2f clamped{std::clamp(uv->x, rectangle[0] + 0.5f / source.width,
+														rectangle[0] + rectangle[2] - 0.5f / source.width),
+											 std::clamp(uv->y, rectangle[1] + 0.5f / source.height,
+														rectangle[1] + rectangle[3] - 0.5f / source.height)};
+					color = CompositeReferenceColor(Sample(source, clamped), color, draw.constants.control[1]);
 					// The SRGB render attachment quantizes after each blended draw.
 					color.r = Decode(std::round(Encode(color.r) * 255) / 255);
 					color.g = Decode(std::round(Encode(color.g) * 255) / 255);
@@ -103,8 +109,13 @@ void Verify(const CompositionPlan& plan, const VulkanImagePixels& output,
 				for (std::size_t channel = 0; channel < 4; ++channel)
 				{
 					const std::int32_t actual = output.rgba.at(((eye * plan.height + y) * plan.width + x) * 4 + channel);
-					Require(std::abs(actual - static_cast<std::int32_t>(std::round(expected[channel] * 255))) <= 3,
-						"Retained per-layer composition pixels differ from geometry/linear-alpha reference");
+					const auto wanted = static_cast<std::int32_t>(std::round(expected[channel] * 255));
+					if (std::abs(actual - wanted) > 3)
+						std::fprintf(stderr,
+									 "Composition mismatch eye=%u x=%u y=%u channel=%zu actual=%d expected=%d\n", eye,
+									 x, y, channel, actual, wanted);
+					Require(std::abs(actual - wanted) <= 3,
+							"Retained per-layer composition pixels differ from geometry/linear-alpha reference");
 				}
 			}
 }
@@ -238,6 +249,12 @@ void Exercise(std::vector<std::shared_ptr<VulkanInspectionFrame>> sources,
 	std::puts("case=owned-per-layer-composition afterApplicationTeardown=1 boundedOutputs=3 PASS");
 }
 } // namespace
+void VerifyCompositionPixels(const CompositionPlan& plan, const VulkanInspectionFrame& output,
+							 const std::vector<std::shared_ptr<const VulkanImagePixels>>& sources)
+{
+	Verify(plan, *Pixels(output), sources);
+}
+
 void VerifyRetainedComposition(std::vector<std::shared_ptr<VulkanInspectionFrame>> linear,
 	std::vector<std::shared_ptr<VulkanInspectionFrame>> srgb, bool verifyPixels)
 {

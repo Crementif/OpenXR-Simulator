@@ -64,8 +64,8 @@ PresentationController::SubmitWithMetadata(PresentationSubmission submission,
 		return PresentationAdmission::Closed;
 	if (submission.key.generation != m_generation)
 		return PresentationAdmission::StaleGeneration;
-	if (!submission.key.frame.value || submission.key.frame <= m_lastSubmitted ||
-		submission.targetTime.value.count() <= 0)
+	if ((submission.reprojection.source && !submission.output) || !submission.key.frame.value ||
+		submission.key.frame <= m_lastSubmitted || submission.targetTime.value.count() <= 0)
 		return PresentationAdmission::Invalid;
 	if (m_entries.size() >= m_capacity)
 		return PresentationAdmission::QueueFull;
@@ -96,8 +96,8 @@ PresentationController::SubmitLiveClearWithMetadata(PresentationSubmission submi
 		return PresentationAdmission::Closed;
 	if (submission.key.generation != m_generation)
 		return PresentationAdmission::StaleGeneration;
-	if (submission.output || !submission.key.frame.value || submission.key.frame <= m_lastSubmitted ||
-		submission.targetTime.value.count() <= 0)
+	if (submission.output || submission.reprojection.source || !submission.key.frame.value ||
+		submission.key.frame <= m_lastSubmitted || submission.targetTime.value.count() <= 0)
 		return PresentationAdmission::Invalid;
 	if (commit)
 		submission.metadata = commit();
@@ -173,6 +173,7 @@ std::optional<PresentationTick> PresentationController::Advance(RuntimeTime now,
 		{
 			next.source = m_current->key;
 			next.metadata = m_current->metadata;
+			next.reprojection.status = m_current->reprojection.status;
 		}
 		for (auto entry = m_entries.begin(); entry != m_entries.end();)
 		{
@@ -211,7 +212,10 @@ std::optional<PresentationTick> PresentationController::Advance(RuntimeTime now,
 				FrameDiagnosticCategory::Timing, next.tick.value, detail);
 		}
 		if (m_current)
+		{
 			next.output = m_current->output;
+			next.reprojection = m_current->reprojection;
+		}
 		result = std::move(next);
 	}
 	return result;
@@ -267,7 +271,10 @@ PresentationSnapshot PresentationController::Snapshot() const
 	result.liveClear = m_liveClear ? std::optional{m_liveClear->key} : std::nullopt;
 	result.coalescedLiveClears = m_coalescedLiveClears;
 	if (result.latest && m_current)
+	{
 		result.latest->output = m_current->output;
+		result.latest->reprojection = m_current->reprojection;
+	}
 	for (const auto& entry : m_entries)
 		(entry.retiring ? result.retiring : result.queued).push_back(entry.submission.key);
 	return result;

@@ -20,7 +20,8 @@ namespace simxr
 enum class VulkanInspectionKind
 {
 	Required,
-	History
+	History,
+	Reprojection
 };
 struct CompositionPlan;
 class VulkanFrame;

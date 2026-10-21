@@ -310,7 +310,7 @@ XrResult Session::BeginFrame()
 XrResult Session::EndFrame(FramePrediction& prediction, const XrFrameEndInfo* info,
 						   std::shared_ptr<const FrameLayers> prepared, std::shared_ptr<const FrameOutput> output,
 						   const std::function<XrResult()>& submit, std::span<const CaptureOutput> captures,
-						   FrameSubmissionPolicy policy)
+						   FrameSubmissionPolicy policy, ReprojectionInput reprojection)
 {
 	auto captureSubmission = m_captures.PrepareSubmission(output, captures);
 	if (XR_FAILED(captureSubmission.Validation()))
@@ -338,7 +338,8 @@ XrResult Session::EndFrame(FramePrediction& prediction, const XrFrameEndInfo* in
 	const bool live = policy == FrameSubmissionPolicy::Live && !captureSubmission.Requested();
 	if (captureSubmission.Requested() && info && info->layerCount && !output)
 		return XR_ERROR_LIMIT_REACHED;
-	if ((output && (!info || !info->layerCount)) || (submit && !output && (!live || !info || !info->layerCount)))
+	if ((reprojection.source && !output) || (output && (!info || !info->layerCount)) ||
+		(submit && !output && (!live || !info || !info->layerCount)))
 		return XR_ERROR_VALIDATION_FAILURE;
 	const auto promoted = captureSubmission.Promote();
 	if (XR_FAILED(promoted))
@@ -390,7 +391,8 @@ XrResult Session::EndFrame(FramePrediction& prediction, const XrFrameEndInfo* in
 		try
 		{
 			const bool liveClear = live && submission.layerCount == 0;
-			const PresentationSubmission presented{{m_state.generation, pending->id}, submission.displayTime, output};
+			const PresentationSubmission presented{
+				{m_state.generation, pending->id}, submission.displayTime, output, {}, reprojection};
 			const auto admission = liveClear ? m_display.SubmitLiveClearWithMetadata(presented, commit)
 											 : m_display.SubmitWithMetadata(presented, commit);
 			if (admission == PresentationAdmission::QueueFull)

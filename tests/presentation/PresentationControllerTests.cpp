@@ -41,6 +41,56 @@ PresentationSubmission Submission(std::uint64_t frame, std::int64_t target,
 	return {{{generation}, {frame}}, {Duration{target}}, std::move(output)};
 }
 
+class RetainedSource final : public RotationalSource
+{
+  public:
+	CompletionStatus PollCompletion() const noexcept override
+	{
+		return CompletionStatus::Complete;
+	}
+	XrResult Reproject(const PoseSample&, std::shared_ptr<const FrameOutput>&) const override
+	{
+		return XR_ERROR_FEATURE_UNSUPPORTED;
+	}
+};
+
+void ReprojectionOwnership()
+{
+	PresentationController controller(2);
+	controller.Start({1}, {{Duration{100}}, Duration{10}});
+	auto screenshot = std::make_shared<Output>(CompletionStatus::Complete);
+	auto source = std::make_shared<RetainedSource>();
+	std::weak_ptr<RotationalSource> lifetime = source;
+	auto submission = Submission(1, 100, screenshot);
+	submission.reprojection.source = std::move(source);
+	Require(controller.Submit(std::move(submission)) == PresentationAdmission::Accepted, "Queue retained layers");
+	auto tick = controller.Advance({Duration{100}});
+	Require(tick && tick->reprojection.source && controller.Snapshot().latest->reprojection.source,
+			"Selected presentation lost its retained inputs");
+	auto repeat = controller.Advance({Duration{110}});
+	Require(repeat && repeat->reprojection.source == tick->reprojection.source, "Repeat lost retained inputs");
+	repeat.reset();
+	controller.Stop();
+	Require(!lifetime.expired() && !controller.Snapshot().latest->reprojection.source,
+			"Stop discarded an independent reader or retained inputs in metadata history");
+	tick.reset();
+	Require(lifetime.expired() && screenshot->PollCompletion() == CompletionStatus::Complete,
+			"A screenshot reader unnecessarily retained per-layer inputs");
+	controller.Start({2}, {{Duration{200}}, Duration{10}});
+	auto unavailable = Submission(1, 200, screenshot, 2);
+	unavailable.reprojection.status = XR_ERROR_LIMIT_REACHED;
+	Require(controller.Submit(unavailable) == PresentationAdmission::Accepted, "Queue baseline without retention");
+	const auto baseline = controller.Advance({Duration{200}});
+	Require(baseline && baseline->output == screenshot && !baseline->reprojection.source &&
+				baseline->reprojection.status == XR_ERROR_LIMIT_REACHED,
+			"Optional retention failure discarded baseline/reason");
+	auto invalid = Submission(2, 210, {}, 2);
+	invalid.reprojection.source = std::make_shared<RetainedSource>();
+	Require(controller.Submit(invalid) == PresentationAdmission::Invalid &&
+				controller.SubmitLiveClearWithMetadata(invalid, {}) == PresentationAdmission::Invalid,
+			"Clear admitted unrelated retained images");
+}
+
 void DisplayHistory()
 {
 	FrameHistory history(4, 8);
@@ -351,6 +401,7 @@ void LiveClearMailbox()
 
 int main()
 {
+	ReprojectionOwnership();
 	DisplayHistory();
 	Selection();
 	FailureAndShutdown();

@@ -42,6 +42,7 @@ LocatedViews ViewConfiguration::Locate(const TrackingSnapshot& snapshot, bool fo
 {
 	LocatedViews result;
 	result.time = snapshot.time;
+	result.head = snapshot.head;
 	result.gazeActive = foveated && m_layout == ViewLayout::StereoWithInset &&
 		(snapshot.gaze.flags & TrackedPoseFlags) == TrackedPoseFlags;
 	float horizontal = 0;

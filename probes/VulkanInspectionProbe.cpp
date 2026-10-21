@@ -1,7 +1,8 @@
 #include "Math.h"
 #include "VulkanImageDeliveryProbe.h"
-#include "VulkanReprojectionProbe.h"
 #include "VulkanProbeInstance.h"
+#include "VulkanReprojectionProbe.h"
+#include "VulkanRetentionProbe.h"
 #include "graphics/backends/vulkan/VulkanBackend.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
 #include "graphics/backends/vulkan/VulkanInspectionDevice.h"
@@ -1035,6 +1036,7 @@ bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validat
 	std::shared_ptr<VulkanInspectionFrame> retained, resized, closedOutput;
 	std::optional<SnapshotRecord> retainedCpuReader, sequenceRetention;
 	RawRetention rawRetention, srgbRawRetention;
+	std::vector<simxr::probe::RetainedSubmission> automatic;
 	std::vector<SnapshotRecord> liveRetention;
 	{
 		simxr::probe::Instance instance;
@@ -1046,6 +1048,22 @@ bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validat
 			return false;
 		}
 		const VulkanBinding binding{instance.handle, device.physical, device.native, device.family, device.index};
+		for (const auto format :
+			 {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_B8G8R8A8_SRGB, VK_FORMAT_B8G8R8A8_UNORM})
+		{
+			VulkanBackend backend(binding, 2, SharingExtensions, VK_API_VERSION_1_1);
+			VulkanExternalDevice external(backend.Device(), SharingExtensions, VK_API_VERSION_1_1);
+			VulkanInspection inspection(external.Identity(), 1, validation);
+			auto source = backend.CreateImage(format, {16, 16}, 4, SourceUsage);
+			Check(backend.InitializeImage(source)->Wait(Timeout), "Initialize automatic retention source");
+			PaintRaw(device, backend, *source);
+			automatic.push_back(simxr::probe::RetainSubmittedLayers(backend, inspection, source));
+			Paint(device, *source, Reused);
+			Check(inspection.Close(Timeout), "Close automatic retention inspector");
+			Check(backend.Drain(Timeout), "Drain automatic retention producers");
+			source.reset();
+			Require(backend.Close() == XR_SUCCESS, "Automatic retention kept borrowed native images alive");
+		}
 		sequenceRetention = CaptureSequence(device, binding, validation);
 		liveRetention = LiveCapacity(device, binding, validation);
 		rawRetention = CaptureRaw(device, binding, validation, VK_FORMAT_R8G8B8A8_UNORM);
@@ -1191,6 +1209,9 @@ bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validat
 	}
 	rawRetention.readers.clear();
 	srgbRawRetention.readers.clear();
+	for (auto& retained : automatic)
+		simxr::probe::VerifySubmittedLayers(std::move(retained), verify);
+	automatic.clear();
 	simxr::probe::VerifyRetainedComposition(std::move(rawRetention.frames), std::move(srgbRawRetention.frames), verify);
 	std::printf("case=owned-retention-after-borrowed-instance-and-device-destruction normalReadback=%s PASS\n",
 				verify ? "explicit-verification-only" : "none");

@@ -342,6 +342,7 @@ bool SnapshotStore::PublishDisplay(CaptureId id, const PresentationTick& tick,
 		return false;
 	entry->record.frame = tick.source;
 	entry->record.display = tick;
+	entry->record.display->reprojection.source.reset();
 	entry->record.metadata = std::move(metadata);
 	entry->record.output = tick.output;
 	entry->record.phase = tick.kind == PresentationKind::Empty ? SnapshotPhase::Empty
