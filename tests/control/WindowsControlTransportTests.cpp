@@ -60,6 +60,18 @@ void ServiceLifecycle()
 		conflict = true;
 	}
 	Require(conflict, "First instance prevents another server from claiming its endpoint");
+	auto alias = path;
+	alias.replace(alias.find(".test."), 6, ".TEST.");
+	conflict = false;
+	try
+	{
+		wire::LocalControlServer duplicate(service, alias, 2);
+	}
+	catch (const std::exception&)
+	{
+		conflict = true;
+	}
+	Require(conflict, "Endpoint reservation respects case-insensitive pipe names");
 	wire::LocalControlClient client(path, 50ms);
 	const auto hello = Finish(client, Request(wire::OpCode::Hello));
 	Require(hello.message.Find(wire::tag::Error)->AsU32() == 0 && hello.handles.empty(),
