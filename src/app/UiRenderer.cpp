@@ -1,4 +1,5 @@
 #include "app/UiRenderer.h"
+#include "CompanionSpirv.h"
 #include "app/Window.h"
 
 #include <SDL3/SDL.h>
@@ -26,6 +27,11 @@ void Check(VkResult result)
 {
 	if (result != VK_SUCCESS)
 		throw std::runtime_error("Vulkan operation failed: " + std::to_string(result));
+}
+
+bool IsSrgb(VkFormat format)
+{
+	return format == VK_FORMAT_B8G8R8A8_SRGB || format == VK_FORMAT_R8G8B8A8_SRGB;
 }
 
 VKAPI_ATTR VkBool32 VKAPI_CALL Report(VkDebugUtilsMessageSeverityFlagBitsEXT severity, VkDebugUtilsMessageTypeFlagsEXT,
@@ -396,6 +402,10 @@ struct UiRenderer::Impl
 		for (const auto& value : formats)
 			if (value.format == VK_FORMAT_B8G8R8A8_UNORM && value.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
 				selected = value;
+		if (selected.colorSpace != VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+			throw std::runtime_error("The companion requires an sRGB display surface");
+		if (rendererReady && IsSrgb(format) != IsSrgb(selected.format))
+			throw std::runtime_error("Display color encoding changed; reopen the companion for the new surface");
 		format = selected.format;
 		extent = capabilities.currentExtent;
 		if (extent.width == std::numeric_limits<std::uint32_t>::max())
@@ -513,6 +523,10 @@ struct UiRenderer::Impl
 			backend.MinImageCount = static_cast<std::uint32_t>(frames.size());
 			backend.ImageCount = static_cast<std::uint32_t>(frames.size());
 			backend.PipelineInfoMain = pipeline;
+			const bool srgb = IsSrgb(format);
+			backend.CustomShaderFragCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+			backend.CustomShaderFragCreateInfo.codeSize = srgb ? sizeof(shader::srgb) : sizeof(shader::unorm);
+			backend.CustomShaderFragCreateInfo.pCode = srgb ? shader::srgb.data() : shader::unorm.data();
 			if (!ImGui_ImplVulkan_Init(&backend))
 				throw std::runtime_error("ImGui Vulkan initialization failed");
 			rendererReady = true;
