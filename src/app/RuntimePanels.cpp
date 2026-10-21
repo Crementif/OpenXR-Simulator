@@ -136,6 +136,15 @@ class RuntimePanels::Impl
 		m_debugger.Command(wire::CommandKind::Resume);
 	}
 
+	void StopRecording()
+	{
+		m_recording.Stop();
+	}
+	void SetReplayActive(bool active)
+	{
+		m_replayActive = active;
+	}
+
 	void CancelPending()
 	{
 		m_debugger.CancelPending();
@@ -202,6 +211,11 @@ class RuntimePanels::Impl
 		snapshot.generation = selected.generation;
 		snapshot.manual = m_debugger.Manual();
 		snapshot.following = m_preview.Following();
+		const auto recording = m_recording.Snapshot();
+		snapshot.recording = recording.page && recording.page->active;
+		snapshot.recordingOverflow = recording.page && recording.page->overflow;
+		snapshot.recordingBusy = recording.busy;
+		snapshot.recordedChanges = recording.page ? recording.page->total : 0;
 		snapshot.selectedCapture = m_workspace.SelectedId();
 		snapshot.captures = m_workspace.Captures().size();
 		snapshot.images = m_preview.ReadyCount();
@@ -334,13 +348,14 @@ class RuntimePanels::Impl
 		const bool canRecord =
 			connected && selected.id &&
 			(U64(status, tag::Capabilities) & static_cast<std::uint64_t>(wire::Capability::CommandRecording));
+		m_recording.Poll(canRecord);
 #ifdef SIMXR_COMPANION_AUTOMATION
-		constexpr bool replayAvailable = true;
+		const bool replayAvailable = connected && selected.id && !m_replayActive;
 #else
 		constexpr bool replayAvailable = false;
 #endif
 		if (!m_previewExpanded && (mode == WorkspaceMode::Automation || mode == WorkspaceMode::Custom))
-			if (auto replay = m_recording.Draw(canRecord, replayAvailable))
+			if (auto replay = m_recording.Draw(canRecord, replayAvailable, m_replayActive))
 				m_recordingReplay = RecordingReplay{std::move(*replay), m_debugger.Scope()};
 		m_preview.BeginFrame();
 		const auto state = m_requests.Snapshot();
@@ -1118,6 +1133,7 @@ class RuntimePanels::Impl
 	wire::Message m_simulationState, m_simulationResult;
 	ManualInputController m_manualInput;
 	RecordingPanel m_recording;
+	bool m_replayActive = false;
 	struct RecordingReplay
 	{
 		automation::SavedRecording saved;
@@ -1195,6 +1211,14 @@ std::string RuntimePanels::Endpoint() const
 void RuntimePanels::ConnectEndpoint(std::string endpoint)
 {
 	m_impl->ConnectEndpoint(std::move(endpoint));
+}
+void RuntimePanels::StopRecording()
+{
+	m_impl->StopRecording();
+}
+void RuntimePanels::SetReplayActive(bool active)
+{
+	m_impl->SetReplayActive(active);
 }
 void RuntimePanels::ResumeLive()
 {

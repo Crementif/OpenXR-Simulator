@@ -56,6 +56,7 @@ struct WorkspacePanels::Impl
 {
 	bool enabled = false, showLaunch = false, showSettings = false, reset = false, dirty = false;
 	bool previewExpanded = false;
+	bool focusRecording = false;
 	bool showConnection = false;
 	WorkspaceMode mode = WorkspaceMode::Simulator;
 	std::filesystem::path path;
@@ -218,6 +219,7 @@ struct WorkspacePanels::Impl
 	void SelectMode(WorkspaceMode selected)
 	{
 		mode = selected;
+		focusRecording = selected == WorkspaceMode::Automation;
 		previewExpanded = false;
 	}
 	void LaunchSelected()
@@ -246,8 +248,12 @@ struct WorkspacePanels::Impl
 		const auto snapshot = runtime.Snapshot();
 		auto* viewport = ImGui::GetMainViewport();
 		const float row = ImGui::GetFrameHeightWithSpacing();
+		bool transport = snapshot.recording;
+#ifdef SIMXR_COMPANION_AUTOMATION
+		transport |= rigs.HasStatus();
+#endif
 		if (!ImGui::BeginViewportSideBar("##Workspace toolbar", viewport, ImGuiDir_Up,
-										 row * 2 + ImGui::GetStyle().WindowPadding.y * 2,
+										 row * (transport ? 3 : 2) + ImGui::GetStyle().WindowPadding.y * 2,
 										 ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings))
 		{
 			ImGui::End();
@@ -358,6 +364,28 @@ struct WorkspacePanels::Impl
 		ImGui::EndDisabled();
 		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
 			ImGui::SetTooltip("Pause the application, then advance one XR frame (F7)");
+		if (snapshot.recording)
+		{
+			ImGui::TextColored({1, .38f, .36f, 1}, "%s / %llu changes",
+							   snapshot.recordingOverflow ? "Recording full" : "Recording",
+							   static_cast<unsigned long long>(snapshot.recordedChanges));
+			ImGui::SameLine();
+			ImGui::BeginDisabled(snapshot.recordingBusy);
+			if (ImGui::Button("Stop recording"))
+				runtime.StopRecording();
+			ImGui::EndDisabled();
+			ImGui::SameLine();
+			if (ImGui::SmallButton("Show take"))
+				SelectMode(WorkspaceMode::Automation);
+		}
+#ifdef SIMXR_COMPANION_AUTOMATION
+		if (rigs.HasStatus())
+		{
+			if (snapshot.recording)
+				ImGui::SameLine();
+			rigs.DrawTransport();
+		}
+#endif
 		ImGui::End();
 		runtime.SetPreviewExpanded(previewExpanded);
 	}
@@ -457,6 +485,12 @@ struct WorkspacePanels::Impl
 		if (enabled)
 			rigs.ObserveLaunch(launcher.Snapshot());
 		rigs.Draw(runtime, !previewExpanded && (mode == WorkspaceMode::Automation || mode == WorkspaceMode::Custom));
+		runtime.SetReplayActive(rigs.IsActive());
+		if (focusRecording && ImGui::FindWindowByName("Recording"))
+		{
+			ImGui::SetWindowFocus("Recording");
+			focusRecording = false;
+		}
 #endif
 		if (previewExpanded)
 			return;

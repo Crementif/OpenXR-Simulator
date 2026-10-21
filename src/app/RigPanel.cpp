@@ -71,6 +71,8 @@ struct RigPanel::Impl
 	std::uint64_t seed = 0;
 	int deadlineSeconds = 30, memoryMiB = 64;
 	std::string error;
+	bool showTransport = false;
+	bool recordingReplay = false;
 #ifdef SIMXR_COMPANION_AUTOMATION
 	std::unique_ptr<automation::RigRunner> runner;
 	std::shared_ptr<WorkerConnection> transport;
@@ -105,6 +107,7 @@ struct RigPanel::Impl
 	void Start(const std::string& endpoint, std::uint64_t session, std::uint64_t generation, std::string source,
 			   std::string name)
 	{
+		showTransport = true;
 		if (runner && Active(runner->Snapshot().phase))
 			throw std::runtime_error("Stop the current rig before starting another");
 		if (endpoint.empty() || !session || !generation)
@@ -234,6 +237,7 @@ struct RigPanel::Impl
 		if (ImGui::Button("Start selected rig"))
 			try
 			{
+				recordingReplay = false;
 				Start(current.endpoint, current.session, current.generation, LoadScript(Utf8Path(script.data())),
 					  script.data());
 			}
@@ -319,9 +323,57 @@ void RigPanel::Draw(RuntimePanels& runtime, bool visible)
 {
 	m_impl->Draw(runtime, visible);
 }
+bool RigPanel::IsActive() const
+{
+#ifdef SIMXR_COMPANION_AUTOMATION
+	return m_impl->runner && simxr::app::Active(m_impl->runner->Snapshot().phase);
+#else
+	return false;
+#endif
+}
+bool RigPanel::HasStatus() const
+{
+	return m_impl->showTransport;
+}
+void RigPanel::DrawTransport()
+{
+#ifdef SIMXR_COMPANION_AUTOMATION
+	if (!m_impl->showTransport)
+		return;
+	const auto state = m_impl->runner ? m_impl->runner->Snapshot() : automation::RigSnapshot{};
+	const bool active = IsActive();
+	ImGui::Text("%s: %s", m_impl->recordingReplay ? "Replay" : "Rig",
+				m_impl->error.empty() ? PhaseName(state.phase) : "Failed");
+	ImGui::SameLine();
+	if (active)
+	{
+		if (ImGui::Button("Cancel replay"))
+			m_impl->runner->Cancel();
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("Stops the script and releases its simulated inputs and frame-control lease.");
+	}
+	else if (ImGui::SmallButton("Dismiss replay status"))
+		m_impl->showTransport = false;
+	if (!state.error.empty() || !m_impl->error.empty())
+	{
+		ImGui::SameLine();
+		if (ImGui::SmallButton("Replay details"))
+			ImGui::OpenPopup("Replay outcome");
+		if (ImGui::BeginPopup("Replay outcome"))
+		{
+			ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetFontSize() * 26);
+			ImGui::TextWrapped("%s", m_impl->error.empty() ? state.error.c_str() : m_impl->error.c_str());
+			ImGui::PopTextWrapPos();
+			ImGui::EndPopup();
+		}
+	}
+#endif
+}
 void RigPanel::ReplayRecording(RuntimePanels& runtime, const std::string& path, std::uint64_t seed)
 {
 #ifdef SIMXR_COMPANION_AUTOMATION
+	m_impl->showTransport = true;
+	m_impl->recordingReplay = true;
 	try
 	{
 		const auto selected = runtime.Snapshot();

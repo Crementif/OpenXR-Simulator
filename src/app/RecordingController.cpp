@@ -3,6 +3,8 @@
 #include "app/WorkerConnection.h"
 #include "control/ControlSchema.h"
 
+#include <charconv>
+#include <chrono>
 #include <condition_variable>
 #include <fstream>
 #include <mutex>
@@ -82,11 +84,23 @@ class RecordingController::State
 			result.savedSeed = collection.Recording().seed;
 			result.savedPath = job.path;
 			result.page = std::make_shared<const automation::InputRecording>(collection.Recording());
-			std::ofstream output(Utf8Path(job.path), std::ios::binary | std::ios::trunc);
-			output.write(script.data(), static_cast<std::streamsize>(script.size()));
-			output.close();
-			if (!output)
-				throw std::runtime_error("Cannot write recorded rig destination");
+			const auto temporary = Utf8Path(
+				job.path + ".writing-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+			try
+			{
+				std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+				output.write(script.data(), static_cast<std::streamsize>(script.size()));
+				output.close();
+				if (!output)
+					throw std::runtime_error("Cannot write recording destination");
+				std::filesystem::rename(temporary, Utf8Path(job.path));
+			}
+			catch (...)
+			{
+				std::error_code ignored;
+				std::filesystem::remove(temporary, ignored);
+				throw;
+			}
 			return result;
 		}
 		wire::Message response;
@@ -173,7 +187,7 @@ class RecordingController::State
 						result.page = m_snapshot.page;
 						result.offset = m_snapshot.offset;
 					}
-					if (result.savedPath.empty())
+					if (result.savedPath.empty() && !(job->action == RecordingAction::Start && result.error.empty()))
 					{
 						result.savedPath = std::move(m_snapshot.savedPath);
 						result.savedSeed = m_snapshot.savedSeed;
@@ -239,6 +253,28 @@ RecordingSnapshot RecordingController::State::Snapshot() const
 {
 	std::lock_guard lock(m_mutex);
 	return m_snapshot;
+}
+automation::SavedRecording OpenSavedRecording(const std::string& path)
+{
+	std::error_code error;
+	const auto size = std::filesystem::file_size(Utf8Path(path), error);
+	if (error || size == 0 || size > control::MaxPayload)
+		throw std::runtime_error("Recording must be a readable file of 1–1048576 bytes");
+	std::ifstream input(Utf8Path(path), std::ios::binary);
+	std::string signature, seedLine;
+	std::getline(input, signature);
+	std::getline(input, seedLine);
+	if (!seedLine.empty() && seedLine.back() == '\r')
+		seedLine.pop_back();
+	constexpr std::string_view prefix = "-- Launch simxr_runner with --seed ";
+	if (!signature.starts_with("-- OpenXR Simulator recorded inputs, schema 1.") || !seedLine.starts_with(prefix))
+		throw std::runtime_error("This is not a saved simulator recording. Open other Luau scripts in Rigs.");
+	const auto text = std::string_view(seedLine).substr(prefix.size());
+	std::uint64_t seed = 0;
+	const auto parsed = std::from_chars(text.data(), text.data() + text.size(), seed);
+	if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size())
+		throw std::runtime_error("The recording's seed is invalid");
+	return {path, seed};
 }
 RecordingController::RecordingController() : m_state(std::make_unique<State>()) {}
 RecordingController::~RecordingController() = default;

@@ -2,6 +2,7 @@
 #include "app/DeviceControlPanel.h"
 #include "app/ManualInputController.h"
 #include "app/ProcessSupervisor.h"
+#include "app/RecordingController.h"
 #include "app/RuntimeConnection.h"
 #include "app/RuntimePanels.h"
 #include "app/SimulationEdits.h"
@@ -237,6 +238,36 @@ void PilotLiveRuntime(const char* endpoint)
 			return test.runtime.Snapshot().selectedReady;
 		},
 		"Application did not supply a live preview");
+	const auto activate = [&](const char* window, const char* label)
+	{
+		auto* target = ImGui::FindWindowByName(window);
+		Require(target != nullptr, "Recording control window is missing");
+		ImGui::ActivateItemByID(target->GetID(label));
+		frame();
+	};
+	Require(std::getenv("SIMXR_COMPANION_SETTINGS"), "Isolated recording checks need a dedicated settings path");
+	test.workspace.SetMode(WorkspaceMode::Automation);
+	for (int i = 0; i < 4; ++i)
+		frame();
+	Eventually(
+		[&]
+		{
+			frame();
+			return !test.runtime.Snapshot().recordingBusy;
+		},
+		"Initial recording read did not finish");
+	activate("Recording", "Start recording");
+	Eventually(
+		[&]
+		{
+			frame();
+			return test.runtime.Snapshot().recording;
+		},
+		"Recording did not start through the panel");
+	test.workspace.SetMode(WorkspaceMode::Simulator);
+	for (int i = 0; i < 4; ++i)
+		frame();
+
 	namespace wire = simxr::control;
 	RuntimeConnection observer;
 	observer.Connect(endpoint);
@@ -437,6 +468,77 @@ void PilotLiveRuntime(const char* endpoint)
 			return input.Snapshot().result.fields.empty();
 		},
 		"Manual release did not complete with the UI idle");
+	Eventually(
+		[&]
+		{
+			frame();
+			return !test.runtime.Snapshot().recordingBusy;
+		},
+		"Recording refresh did not finish");
+	activate("##Workspace toolbar", "Stop recording");
+	Eventually(
+		[&]
+		{
+			frame();
+			return !test.runtime.Snapshot().recording && !test.runtime.Snapshot().recordingBusy;
+		},
+		"Stop recording failed outside the recording workspace");
+	Require(test.runtime.Snapshot().recordedChanges > 0, "Real piloting produced no recorded input");
+	test.workspace.SetMode(WorkspaceMode::Automation);
+	for (int i = 0; i < 4; ++i)
+		frame();
+	Eventually(
+		[&]
+		{
+			frame();
+			return !test.runtime.Snapshot().recordingBusy;
+		},
+		"Recorder remained busy before saving");
+	activate("Recording", "Save take");
+	const auto library = CompanionSettingsPath().parent_path() / "recordings";
+	std::string savedPath;
+	Eventually(
+		[&]
+		{
+			frame();
+			if (test.runtime.Snapshot().recordingBusy || !std::filesystem::exists(library))
+				return false;
+			for (const auto& entry : std::filesystem::directory_iterator(library))
+				if (entry.path().extension() == ".luau")
+					savedPath = entry.path().string();
+			return !savedPath.empty();
+		},
+		"Save take did not produce a persistent file");
+	Require(!OpenSavedRecording(savedPath).path.empty(), "Saved take cannot be reopened independently");
+	for (int i = 0; i < 4; ++i)
+		frame();
+	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
+	{
+		test.renderer.RequestScreenshot((std::filesystem::path(directory) / "cemu-recording-saved.bmp").string());
+		frame();
+		frame();
+	}
+	activate("Recording", "Replay selected take");
+	Eventually(
+		[&]
+		{
+			frame();
+			return test.runtime.Snapshot().manual;
+		},
+		"Saved take did not enter replay");
+	test.workspace.SetMode(WorkspaceMode::Simulator);
+	for (int i = 0; i < 3; ++i)
+		frame();
+	activate("##Workspace toolbar", "Cancel replay");
+	Eventually(
+		[&]
+		{
+			frame();
+			return !test.runtime.Snapshot().manual;
+		},
+		"Cancelling replay did not release frame control");
+	std::cout << "PASS Cemu record while piloting, global stop, save, independent reopen, replay and global cancel\n";
+
 	// Exercise the inspection context on the same isolated real application.
 	test.workspace.SetMode(WorkspaceMode::Debug);
 	test.runtime.Command(simxr::control::CommandKind::Pause);
