@@ -870,6 +870,11 @@ InspectionValue InspectAvailability(const FrameSubmissionState& submission)
 	return InspectionValue::Object(
 		{{"applied_foveation", InspectionValue::Text(submission.viewQuery ? "query_recorded" : "not_recorded")},
 		 {"applied_commands", InspectionValue::Text(submission.commands ? "recorded" : "not_recorded")},
+		 {"tracking", InspectionValue::Text(submission.tracking ? "recorded" : "not_recorded")},
+		 {"action_dictionary", InspectionValue::Text(submission.actions.dictionary ? "recorded" : "not_recorded")},
+		 {"fb_foveation", InspectionValue::Text("unsupported")},
+		 {"validation_scope", InspectionValue::Text("runtime_submitted_layers")},
+		 {"native_driver_validation", InspectionValue::Text("not_recorded")},
 		 {"validation_events", InspectionValue::Text(diagnosticAvailability)},
 		 {"frame_trace", InspectionValue::Text(diagnosticAvailability)}});
 }
