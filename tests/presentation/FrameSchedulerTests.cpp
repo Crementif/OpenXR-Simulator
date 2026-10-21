@@ -33,6 +33,33 @@ class FakeClock final : public Clock
 	std::atomic<std::int64_t> m_time{0};
 };
 
+void HostElapsedOverflow()
+{
+	Require(HostTimeDifference(HostTime::max(), HostTime{}) == HostTime::duration::max() &&
+				HostTimeDifference(HostTime::min(), HostTime{}) == HostTime::duration::min() &&
+				HostTimeDifference(HostTime{}, HostTime::min() + HostTime::duration{1}) == HostTime::duration::max() &&
+				HostTimeDifference(HostTime{}, HostTime::max()) == -HostTime::duration::max(),
+			"Representable host interval boundary was rejected or changed");
+	for (bool forward : {true, false})
+	{
+		auto clock = std::make_shared<FakeClock>();
+		clock->Advance(
+			Duration{forward ? std::numeric_limits<std::int64_t>::max() : std::numeric_limits<std::int64_t>::min()});
+		FrameScheduler scheduler(clock);
+		FrameSchedulerConfig config;
+		config.hostEpoch = forward ? HostTime::min() : HostTime::max();
+		scheduler.Start(config);
+		FramePrediction frame{{77}};
+		Require(scheduler.WaitFrame(frame) == XR_ERROR_RUNTIME_FAILURE && frame.id == FrameId{77} &&
+					!scheduler.Snapshot().waitPending && !scheduler.Snapshot().waited &&
+					scheduler.Snapshot().nextAdmission == DisplayTick{},
+				"Host elapsed overflow fabricated admission or changed output");
+		config.hostEpoch = clock->Now();
+		scheduler.Start(config);
+		Require(scheduler.WaitFrame(frame) == XR_SUCCESS && frame.id == FrameId{1},
+				"Restart after elapsed overflow did not recover");
+	}
+}
 void ManualAdmission()
 {
 	auto clock = std::make_shared<FakeClock>();
@@ -246,6 +273,7 @@ void PauseReservationBoundaryAndLimits()
 
 int main()
 {
+	HostElapsedOverflow();
 	ManualAdmission();
 	PauseDuringPacingAndRebase();
 	AlignPausedDisplayBoundary();

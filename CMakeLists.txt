@@ -19,6 +19,7 @@ target_include_directories(simxr_openxr_headers INTERFACE "${CMAKE_CURRENT_SOURC
 
 add_library(simxr_core STATIC
     src/Math.cpp
+    src/platform/Clock.cpp
     src/platform/windows/PreviewFrameSchedule.cpp
     src/platform/windows/PreviewCapturePixels.cpp
     src/graphics/FramePool.cpp

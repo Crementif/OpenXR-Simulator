@@ -289,7 +289,7 @@ void VirtualDisplay::Run() noexcept
 				m_waiter->WaitUntil(m_changed, lock, anchor);
 				continue;
 			}
-			const auto elapsed = std::chrono::duration_cast<Duration>(hostNow - anchor);
+			const auto elapsed = std::chrono::duration_cast<Duration>(HostTimeDifference(hostNow, anchor));
 			const auto anchorTime = timeline.TimeAt(anchorTick);
 			if (elapsed.count() > std::numeric_limits<std::int64_t>::max() - anchorTime.value.count())
 				throw std::overflow_error("Virtual display time exhausted");

@@ -254,6 +254,21 @@ void SharedManualTiming()
 	display.Stop();
 }
 
+void HostElapsedOverflow()
+{
+	auto clock = std::make_shared<TestClock>();
+	clock->time = std::numeric_limits<std::int64_t>::max();
+	VirtualDisplay display(clock);
+	display.Start({1}, {{Duration{100}}, 10ns}, ExecutionMode::RealTime, HostTime::min());
+	Eventually(
+		[&]
+		{
+			return display.Faulted() && !display.Snapshot().running;
+		},
+		"Display host elapsed overflow was not reported");
+	Require(!display.Snapshot().latest, "Display host elapsed overflow fabricated a tick");
+	display.Stop();
+}
 void Fault()
 {
 	auto clock = std::make_shared<TestClock>();
@@ -426,6 +441,7 @@ int main()
 	ExplicitTimeAndRestart();
 	ManualTicksAndResume();
 	SharedManualTiming();
+	HostElapsedOverflow();
 	Fault();
 	SessionClear();
 	DeterministicSessionCapacity();

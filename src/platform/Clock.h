@@ -9,6 +9,9 @@ namespace simxr
 {
 using HostTime = std::chrono::steady_clock::time_point;
 
+// Reject an unrepresentable interval before signed chrono subtraction.
+HostTime::duration HostTimeDifference(HostTime end, HostTime begin);
+
 class Clock
 {
 public:
