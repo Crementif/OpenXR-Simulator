@@ -52,9 +52,9 @@ XrResult VulkanFrameSubmission::PrepareLayers(const XrFrameEndInfo& info)
 	};
 	const auto result = BuildLayers(
 		info, validation,
-		[this](XrSpace space, RuntimeTime time, PoseSample& pose)
+		[this](XrSpace space, RuntimeTime time, SpaceSample& pose)
 		{
-			return m_session.Spaces().WorldPose(space, time, pose);
+			return m_session.Spaces().Sample(space, time, pose);
 		},
 		m_layers);
 	if (XR_FAILED(result) || info.layerCount == 0)

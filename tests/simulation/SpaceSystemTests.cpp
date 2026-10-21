@@ -163,6 +163,10 @@ int main()
 			"Create view offset");
 	Require(spaces.CreateActionSpace(action, 2, IdentityPose(), controller) == XR_SUCCESS, "Create action");
 	Require(spaces.CreateActionSpace(action, 2, offset, controllerOffset) == XR_SUCCESS, "Create action offset");
+	SpaceSample sampled;
+	Require(spaces.Sample(controllerOffset, first, sampled) == XR_SUCCESS &&
+		sampled.referenceType == XR_REFERENCE_SPACE_TYPE_MAX_ENUM && sampled.poseOffset.position.z == -1,
+		"Action-space snapshot fabricated a reference-space attachment");
 	XrSpace unchanged = shifted;
 	Require(spaces.CreateActionSpace(reinterpret_cast<XrAction>(999), 2, IdentityPose(), unchanged) ==
 					XR_ERROR_HANDLE_INVALID &&

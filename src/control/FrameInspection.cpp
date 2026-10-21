@@ -742,9 +742,13 @@ class LayerEncoder
 	}
 	InspectionValue Space(const LayerSpaceDescription& value)
 	{
+		const auto referenceType = value.referenceType == XR_REFERENCE_SPACE_TYPE_MAX_ENUM ?
+			InspectionValue::Null() : InspectionValue::Signed(value.referenceType);
 		return InspectionValue::Object({{"source", Identity(m_spaces, value.source)},
 										{"flags", InspectionValue::Unsigned(value.flags)},
-										{"world_pose", InspectPoseSample(value.worldPose)}});
+										{"world_pose", InspectPoseSample(value.worldPose)},
+										{"reference_type", referenceType},
+										{"pose_offset", InspectPose(value.poseOffset)}});
 	}
 	InspectionValue InspectDepth(const LayerDepthDescription& depth)
 	{

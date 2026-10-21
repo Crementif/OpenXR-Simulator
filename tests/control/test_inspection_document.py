@@ -49,6 +49,8 @@ class InspectionTests(unittest.TestCase):
         layers = frame['layers']['layers']
         self.assertEqual([layer['kind'] for layer in layers], ['projection', 'quad'])
         self.assertEqual(layers[0]['space']['source'], layers[1]['space']['source'])
+        self.assertEqual(layers[0]['space']['reference_type'], 2)  # XR_REFERENCE_SPACE_TYPE_LOCAL
+        self.assertEqual(layers[0]['space']['pose_offset']['position']['y'], 1.0)
         self.assertEqual(layers[0]['views'][0]['color']['source'], layers[1]['color']['source'])
         self.assertEqual(layers[0]['views'][0]['depth']['image']['source'], 1)
         self.assertEqual(layers[0]['views'][0]['color']['source'], 2)

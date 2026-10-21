@@ -110,8 +110,8 @@ void EnabledLayout()
 	validation.swapchain = [&](XrSwapchain value) -> std::optional<SwapchainDescription>
 	{ return value == image ? std::optional{SwapchainDescription{64, 48, 4, true}} : std::nullopt; };
 	std::shared_ptr<const FrameLayers> prepared;
-	auto resolve = [&](XrSpace space, RuntimeTime time, PoseSample& pose)
-	{ return session.Spaces().WorldPose(space, time, pose); };
+	auto resolve = [&](XrSpace space, RuntimeTime time, SpaceSample& pose)
+	{ return session.Spaces().Sample(space, time, pose); };
 	projection.viewCount = 2;
 	Require(BuildLayers(end, validation, resolve, prepared) == XR_ERROR_LAYER_INVALID &&
 				session.Scheduler().Snapshot().begun->id == prediction.id,

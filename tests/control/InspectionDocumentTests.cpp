@@ -178,7 +178,8 @@ FrameRecord Fixture()
 	const auto space = reinterpret_cast<XrSpace>(0xabcdefab12345678ULL);
 	const PoseSample pose{{{0, 0, 0, 1}, {0, 1, 0}}, TrackedPoseFlags, {117ns}};
 	ProjectionLayerDescription projection;
-	projection.space = {space, XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT, pose};
+	projection.space = {space, XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT, pose,
+		XR_REFERENCE_SPACE_TYPE_LOCAL, pose.pose};
 	ProjectionViewDescription view{
 		pose.pose,
 		pose,

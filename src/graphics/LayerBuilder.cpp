@@ -39,10 +39,12 @@ XrResult BuildLayers(const XrFrameEndInfo& info, const LayerValidationContext& v
 	for (std::uint32_t index = 0; index < info.layerCount; ++index)
 	{
 		const auto& layer = *info.layers[index];
-		LayerSpaceDescription space{layer.space, layer.layerFlags, {}};
-		result = resolve(layer.space, time, space.worldPose);
+		SpaceSample sample;
+		result = resolve(layer.space, time, sample);
 		if (XR_FAILED(result))
 			return result;
+		LayerSpaceDescription space{
+			layer.space, layer.layerFlags, sample.worldPose, sample.referenceType, sample.poseOffset};
 		if (layer.type == XR_TYPE_COMPOSITION_LAYER_PROJECTION)
 		{
 			const auto& projection = reinterpret_cast<const XrCompositionLayerProjection&>(layer);

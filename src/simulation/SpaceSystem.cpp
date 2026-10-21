@@ -167,12 +167,21 @@ PoseSample SpaceSystem::Relative(const SpaceRecord& target, const SpaceRecord& b
 
 XrResult SpaceSystem::WorldPose(XrSpace space, RuntimeTime time, PoseSample& output) const
 {
+	SpaceSample sample;
+	const auto result = Sample(space, time, sample);
+	if (XR_SUCCEEDED(result))
+		output = sample.worldPose;
+	return result;
+}
+
+XrResult SpaceSystem::Sample(XrSpace space, RuntimeTime time, SpaceSample& output) const
+{
 	auto record = m_spaces.Find(space, m_ownerSession);
 	if (!record)
 		return XR_ERROR_HANDLE_INVALID;
 	if (time.value.count() <= 0)
 		return XR_ERROR_TIME_INVALID;
-	output = Resolve(*record.operator->(), time, OriginAt(time));
+	output = {Resolve(*record.operator->(), time, OriginAt(time)), record->referenceType, record->poseOffset};
 	return XR_SUCCESS;
 }
 

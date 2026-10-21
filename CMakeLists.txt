@@ -138,6 +138,7 @@ add_library(simxr_graphics STATIC
     src/graphics/SwapchainWaits.cpp
     src/graphics/LayerBuilder.cpp
     src/graphics/Compositor.cpp
+    src/graphics/RotationalReprojection.cpp
     src/graphics/PreviewGeometry.cpp)
 simxr_configure_target(simxr_graphics)
 target_link_libraries(simxr_graphics PUBLIC simxr_core)
@@ -332,6 +333,8 @@ if(BUILD_TESTING)
     target_link_libraries(frame_scheduler_tests PRIVATE simxr_core)
     simxr_add_test(layer_builder_tests tests/graphics/LayerBuilderTests.cpp layer_builder)
     target_link_libraries(layer_builder_tests PRIVATE simxr_graphics)
+    simxr_add_test(rotational_reprojection_tests tests/graphics/RotationalReprojectionTests.cpp rotational_reprojection)
+    target_link_libraries(rotational_reprojection_tests PRIVATE simxr_graphics)
     simxr_add_test(compositor_tests tests/graphics/CompositorTests.cpp compositor)
     target_link_libraries(compositor_tests PRIVATE simxr_graphics)
     simxr_add_test(preview_geometry_tests tests/graphics/PreviewGeometryTests.cpp preview_geometry)

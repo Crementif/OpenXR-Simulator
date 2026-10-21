@@ -35,6 +35,7 @@ class SpaceSystem
 	void RemoveAction(XrAction action);
 	void Clear();
 	bool Owns(XrSpace space) const;
+	XrResult Sample(XrSpace space, RuntimeTime time, SpaceSample& output) const;
 	XrResult WorldPose(XrSpace space, RuntimeTime time, PoseSample& output) const;
 	XrResult Locate(XrSpace space, XrSpace base, RuntimeTime time, SpaceLocation& output) const;
 	XrResult Bounds(XrReferenceSpaceType type, XrExtent2Df& output) const;
