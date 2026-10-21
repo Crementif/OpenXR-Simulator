@@ -815,13 +815,31 @@ void DebugController::Process(DebugOperation& operation)
 			Fail(operation, DebugProgress::RetentionFailure, XR_ERROR_LIMIT_REACHED);
 			return;
 		}
-		Own(operation.lease, capture.id);
-		const auto tick = m_session->Display().Step();
-		if (!tick || !m_session->Captures().PublishDisplay(capture.id, *tick, tick->metadata))
+		const auto release = [&]
 		{
 			m_session->Captures().Release(capture.id);
-			Fail(operation, DebugProgress::SessionEnded, XR_ERROR_RUNTIME_FAILURE);
-			return;
+			std::erase_if(m_owned,
+						  [&](const auto& owned)
+						  {
+							  return owned.capture == capture.id;
+						  });
+		};
+		std::optional<PresentationTick> tick;
+		try
+		{
+			Own(operation.lease, capture.id);
+			tick = m_session->Display().Step();
+			if (!tick || !m_session->Captures().PublishDisplay(capture.id, *tick, tick->metadata))
+			{
+				release();
+				Fail(operation, DebugProgress::SessionEnded, XR_ERROR_RUNTIME_FAILURE);
+				return;
+			}
+		}
+		catch (...)
+		{
+			release();
+			throw;
 		}
 		operation.display = *tick;
 		operation.display->reprojection.source.reset();

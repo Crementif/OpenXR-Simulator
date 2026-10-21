@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <limits>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 
 namespace simxr
@@ -72,7 +73,10 @@ PresentationController::SubmitWithMetadata(PresentationSubmission submission,
 	if (m_entries.size() >= m_capacity)
 		return PresentationAdmission::QueueFull;
 	const auto frame = submission.key.frame;
-	m_entries.push_back({std::move(submission), false});
+	// Allocate before transferring readers: allocation failure must release them after unlock.
+	static_assert(std::is_nothrow_move_assignable_v<PresentationSubmission>);
+	m_entries.emplace_back();
+	m_entries.back().submission = std::move(submission);
 	try
 	{
 		if (commit)

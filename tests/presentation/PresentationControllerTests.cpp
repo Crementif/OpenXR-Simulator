@@ -3,11 +3,35 @@
 #include "presentation/PresentationController.h"
 
 #include <atomic>
+#include <cstdlib>
 #include <future>
 #include <iostream>
 #include <limits>
+#include <new>
 #include <stdexcept>
 #include <thread>
+#include <utility>
+
+namespace
+{
+thread_local bool refusePresentationAllocation = false;
+}
+[[gnu::noinline]] void* operator new(std::size_t size)
+{
+	if (std::exchange(refusePresentationAllocation, false))
+		throw std::bad_alloc{};
+	if (void* memory = std::malloc(size ? size : 1))
+		return memory;
+	throw std::bad_alloc{};
+}
+[[gnu::noinline]] void operator delete(void* memory) noexcept
+{
+	std::free(memory);
+}
+[[gnu::noinline]] void operator delete(void* memory, std::size_t) noexcept
+{
+	std::free(memory);
+}
 
 namespace
 {
@@ -308,6 +332,55 @@ void PhaseAndConcurrency()
 			"Latest-due tick overflowed at time limit");
 }
 
+void FailedQueueAllocationReleasesOutsideLock()
+{
+	PresentationController controller(64);
+	controller.Start({1}, {{Duration{100}}, Duration{10}});
+	std::atomic<bool> inspect = false;
+	auto observer = std::async(std::launch::async,
+							   [&]
+							   {
+								   Eventually(
+									   [&]
+									   {
+										   return inspect.load();
+									   },
+									   "Destructor observation was not requested");
+								   return controller.Snapshot();
+							   });
+	bool failed = false, outsideLock = false;
+	std::uint64_t identity = 1;
+	for (; identity <= 64; ++identity)
+	{
+		auto output = std::make_shared<Output>();
+		const auto raw = output.get();
+		output->destroy = [&]
+		{
+			inspect = true;
+			outsideLock = observer.wait_for(std::chrono::seconds{1}) == std::future_status::ready;
+		};
+		auto submission = Submission(identity, 100, std::move(output));
+		refusePresentationAllocation = true;
+		try
+		{
+			controller.SubmitWithMetadata(std::move(submission), {});
+		}
+		catch (const std::bad_alloc&)
+		{
+			failed = true;
+		}
+		refusePresentationAllocation = false;
+		if (failed)
+			break;
+		raw->destroy = {};
+	}
+	inspect = true;
+	const auto state = observer.get();
+	Require(failed && outsideLock, "Failed queue allocation destroyed its image under the presentation lock");
+	Require(state.lastSubmitted == FrameId{identity - 1} && state.queued.size() == identity - 1 &&
+				controller.Submit(Submission(identity, 100)) == PresentationAdmission::Accepted,
+			"Failed queue allocation changed history or prevented retry");
+}
 void Reservation()
 {
 	PresentationController controller(1);
@@ -411,6 +484,7 @@ int main()
 	Selection();
 	FailureAndShutdown();
 	PhaseAndConcurrency();
+	FailedQueueAllocationReleasesOutsideLock();
 	Reservation();
 	LiveClearMailbox();
 	std::cout << "Portable presentation selection tests passed; no hardware display exercised\n";

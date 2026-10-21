@@ -4,10 +4,33 @@
 #include "runtime/Session.h"
 
 #include <atomic>
+#include <cstdlib>
 #include <functional>
 #include <future>
 #include <iostream>
+#include <new>
 #include <thread>
+
+namespace
+{
+thread_local int debugAllocationCountdown = -1;
+}
+[[gnu::noinline]] void* operator new(std::size_t size)
+{
+	if (debugAllocationCountdown >= 0 && debugAllocationCountdown-- == 0)
+		throw std::bad_alloc{};
+	if (void* memory = std::malloc(size ? size : 1))
+		return memory;
+	throw std::bad_alloc{};
+}
+[[gnu::noinline]] void operator delete(void* memory) noexcept
+{
+	std::free(memory);
+}
+[[gnu::noinline]] void operator delete(void* memory, std::size_t) noexcept
+{
+	std::free(memory);
+}
 
 using namespace simxr;
 using namespace std::chrono_literals;
@@ -121,6 +144,49 @@ DebugOperation Status(DebugController& controller, DebugOperationId operation)
 	const auto status = controller.Read(operation);
 	Require(status.has_value(), "Missing operation status");
 	return *status;
+}
+void DisplayStepAllocationRecovery()
+{
+	unsigned failures = 0;
+	for (int allocation = 0; allocation < 256; ++allocation)
+	{
+		Fixture fixture(4);
+		const auto frame = fixture.Issue();
+		auto image = fixture.Image(frame);
+		image->state = CompletionStatus::Complete;
+		fixture.Submit(frame, image);
+		DebugController controller(fixture.session, fixture.clock, ManualConfig());
+		const auto lease = controller.Acquire()->id;
+		Command(controller, lease, 1, DebugCommand::Pause);
+		controller.Poll();
+		const auto step = Command(controller, lease, 2, DebugCommand::DisplayStep);
+		debugAllocationCountdown = allocation;
+		controller.Poll();
+		const bool injected = debugAllocationCountdown < 0;
+		debugAllocationCountdown = -1;
+		for (const auto capture : fixture.session->Captures().Snapshot().captures)
+			Require(fixture.session->Captures().Read(capture)->phase != SnapshotPhase::Reserved,
+					"Failed display step stranded a reserved capture");
+		controller.Poll();
+		const auto status = Status(controller, step);
+		Require(status.phase == DebugPhase::Complete || status.phase == DebugPhase::Failed,
+				"Display step did not settle after allocation recovery");
+		if (status.phase == DebugPhase::Failed)
+		{
+			const auto retry = Command(controller, lease, 3, DebugCommand::DisplayStep);
+			controller.Poll();
+			Require(Status(controller, retry).phase == DebugPhase::Complete,
+					"Failed display step exhausted capacity needed by the next request");
+		}
+		if (!injected)
+		{
+			Require(failures > 0, "Display step allocation sweep did not exercise failures");
+			std::cout << "Display step allocation sweep: " << failures << " failures\n";
+			return;
+		}
+		++failures;
+	}
+	throw std::runtime_error("Display step allocation sweep did not complete");
 }
 void RealtimeRecordingBudget()
 {
@@ -894,6 +960,7 @@ int main()
 			++failures;
 		}
 	};
+	run("Display step allocation recovery", DisplayStepAllocationRecovery);
 	run("Realtime recording budget and lease recovery", RealtimeRecordingBudget);
 	run("Idempotence and reclamation", IdempotenceAndReclamation);
 	run("Long run acknowledgement", LongRunAcknowledgement);
