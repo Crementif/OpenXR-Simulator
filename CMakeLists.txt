@@ -585,6 +585,11 @@ if(SIMXR_BUILD_PROBES)
                     set_tests_properties(linux_vulkan_sequence PROPERTIES
                         ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
                         TIMEOUT 90 SKIP_RETURN_CODE 77)
+                    add_test(NAME linux_vulkan_reprojection COMMAND "${Python3_EXECUTABLE}"
+                        "${PROJECT_SOURCE_DIR}/tests/control/test_native_reprojection.py" "$<TARGET_FILE:xr_probe_linux>")
+                    set_tests_properties(linux_vulkan_reprojection PROPERTIES
+                        ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json"
+                        TIMEOUT 90)
                     add_test(NAME linux_vulkan_realtime_recording COMMAND "${Python3_EXECUTABLE}"
                         "${PROJECT_SOURCE_DIR}/tests/control/test_native_realtime_recording.py" "$<TARGET_FILE:xr_probe_linux>")
                     set_tests_properties(linux_vulkan_realtime_recording PROPERTIES

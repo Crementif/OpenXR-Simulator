@@ -291,6 +291,17 @@ XrResult LinuxRuntime::BeginSession(XrSession handle, const XrSessionBeginInfo* 
 		if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size())
 			return XR_ERROR_VALIDATION_FAILURE;
 	}
+	PresentationPolicy policy = PresentationPolicy::Repeat;
+	if (const auto* text = std::getenv("SIMXR_PRESENTATION_POLICY"))
+	{
+		const std::string_view value{text};
+		if (value == "rotational")
+			policy = PresentationPolicy::Rotational;
+		else if (value != "repeat")
+			return XR_ERROR_VALIDATION_FAILURE;
+	}
+	if (policy == PresentationPolicy::Rotational && !session->graphics->SupportsReprojection())
+		return XR_ERROR_FEATURE_UNSUPPORTED;
 	CommandConfiguration baseline;
 	baseline.tracking = session->owner->Input().Tracking();
 	baseline.input = session->core->Input().Snapshot();
@@ -300,7 +311,7 @@ XrResult LinuxRuntime::BeginSession(XrSession handle, const XrSessionBeginInfo* 
 	if (XR_FAILED(configured))
 		return configured;
 	lock.unlock();
-	return session->core->Begin(*info, config);
+	return session->core->Begin(*info, config, policy);
 }
 
 XrResult LinuxRuntime::EndSession(XrSession handle)

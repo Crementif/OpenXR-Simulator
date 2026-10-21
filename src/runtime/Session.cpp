@@ -68,9 +68,10 @@ XrResult Session::Ready(RuntimeTime time)
 	return XR_SUCCESS;
 }
 
-XrResult Session::Begin(const XrSessionBeginInfo& info, const FrameSchedulerConfig& config)
+XrResult Session::Begin(const XrSessionBeginInfo& info, const FrameSchedulerConfig& config, PresentationPolicy policy)
 {
-	if (info.type != XR_TYPE_SESSION_BEGIN_INFO)
+	if (info.type != XR_TYPE_SESSION_BEGIN_INFO ||
+		(policy != PresentationPolicy::Repeat && policy != PresentationPolicy::Rotational))
 		return XR_ERROR_VALIDATION_FAILURE;
 	if (info.primaryViewConfigurationType != XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO &&
 		(info.primaryViewConfigurationType != XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO ||
@@ -99,12 +100,19 @@ XrResult Session::Begin(const XrSessionBeginInfo& info, const FrameSchedulerConf
 	{
 		retiredHistory = m_captures.Start(m_state.generation);
 		m_scheduler.Start(timing);
+		m_display.ConfigurePolicy(policy,
+								  [this](RuntimeTime time)
+								  {
+									  const auto sample = m_publication.Tracking().Sample(time);
+									  return sample ? sample->head : PoseSample{};
+								  });
 		m_display.Start(m_state.generation, {timing.epoch, timing.period}, timing.mode, timing.hostEpoch);
 		if (XR_FAILED(m_spaces.StartGeneration(timing.epoch, publication.ReferenceSpaces())))
 			throw std::invalid_argument("Invalid session reference-space origin");
 	}
 	catch (...)
 	{
+		m_display.Stop();
 		m_scheduler.Stop();
 		m_history.CancelPending();
 		m_captures.Stop();
