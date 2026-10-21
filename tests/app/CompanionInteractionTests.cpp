@@ -11,6 +11,8 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <iostream>
+#include <fstream>
+#include <sstream>
 
 namespace
 {
@@ -23,12 +25,14 @@ class Interaction
 	std::shared_ptr<ValidationLog> validation = std::make_shared<ValidationLog>();
 	UiRenderer renderer{window, true, validation, true};
 	ProcessSupervisor processes;
-	WorkspacePanels workspace{processes, false, ""};
+	WorkspacePanels workspace;
 	RuntimePanels runtime{renderer, ""};
 	ImVec2 buttonCenter;
 	ImVec2 inputCenter;
 	char input[32]{};
 	unsigned clicks = 0;
+	bool live = false;
+	Interaction(bool launch = false) : workspace(processes, launch, ""), live(launch) {}
 
 	void Frame()
 	{
@@ -39,7 +43,18 @@ class Interaction
 				return renderer.BeginFrame();
 			},
 			"UI frame admission stalled");
+		if (live)
+			runtime.Poll();
 		workspace.BeginFrame(runtime);
+		if (live)
+		{
+			workspace.DrawDockspace();
+			workspace.Draw(runtime);
+			runtime.Draw(workspace.Mode());
+			Require(renderer.Render(runtime.ReadyWaits()), "Live launch UI frame was not rendered");
+			runtime.Submitted(renderer.SubmittedFrames());
+			return;
+		}
 		ImGui::SetNextWindowPos({20, 140}, ImGuiCond_Always);
 		ImGui::SetNextWindowSize({350, 420}, ImGuiCond_Always);
 		workspace.Draw(runtime);
@@ -55,7 +70,8 @@ class Interaction
 		const auto inputMinimum = ImGui::GetItemRectMin();
 		inputCenter = {inputMinimum.x + 10, inputMinimum.y + 10};
 		ImGui::End();
-		Require(renderer.Render(), "Admitted UI frame was not rendered");
+		Require(renderer.Render(runtime.ReadyWaits()), "Admitted UI frame was not rendered");
+		runtime.Submitted(renderer.SubmittedFrames());
 	}
 	void Click(ImVec2 position)
 	{
@@ -129,6 +145,63 @@ class Interaction
 		Require(std::char_traits<char>::length(input) == length + 1, "Text input stopped responding");
 	}
 };
+
+#ifdef __linux__
+void CheckToolbarLaunch(const char* executable)
+{
+	const auto directoryValue = std::getenv("SIMXR_LAUNCH_QA_DIRECTORY");
+	Require(directoryValue != nullptr, "Launch QA requires a new private directory");
+	const std::filesystem::path directory(directoryValue);
+	Require(directory.is_absolute() && std::filesystem::create_directory(directory), "Launch QA directory must be new and absolute");
+	const auto settingsPath = directory / "companion.settings";
+	Require(::setenv("SIMXR_COMPANION_SETTINGS", settingsPath.c_str(), 1) == 0, "Set isolated settings path");
+	CompanionSettings settings;
+	LaunchProfile profile;
+	profile.name = "Isolated launch QA";
+	profile.executable = executable;
+	profile.runtimeManifest = std::getenv("XR_RUNTIME_JSON") ? std::getenv("XR_RUNTIME_JSON") : "";
+	if (const auto cwd = std::getenv("SIMXR_LAUNCH_QA_CWD"))
+		profile.workingDirectory = cwd;
+	if (const auto arguments = std::getenv("SIMXR_LAUNCH_QA_ARGUMENTS"))
+	{
+		std::istringstream lines(arguments);
+		for (std::string argument; std::getline(lines, argument);)
+			profile.arguments.push_back(argument);
+	}
+	profile.environment = {{"SIMXR_DATA_DIR", directory.string()}, {"SIMXR_CONTROL_SOCKET", ""}};
+	settings.profiles.push_back(profile);
+	settings.activeProfile = profile.name;
+	SaveSettings(settingsPath, settings);
+	Interaction test(true);
+	for (unsigned frame = 0; frame < 4; ++frame)
+		test.Frame();
+	test.renderer.RequestScreenshot((directory / "before-launch.bmp").string());
+	test.Frame();
+	const auto* toolbar = ImGui::FindWindowByName("##Workspace toolbar");
+	Require(toolbar != nullptr, "Launch toolbar absent");
+	const auto& style = ImGui::GetStyle();
+	const auto width = std::max(100.0f, std::min(220.0f, ImGui::GetMainViewport()->WorkSize.x * 0.30f));
+	test.Click({toolbar->Pos.x + style.WindowPadding.x + width + style.ItemSpacing.x + 12,
+		toolbar->Pos.y + style.WindowPadding.y + ImGui::GetFrameHeightWithSpacing() + ImGui::GetFrameHeight() / 2});
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+	while (!test.runtime.Snapshot().selectedReady)
+	{
+		test.Frame();
+		Require(std::chrono::steady_clock::now() < deadline, "Toolbar launch did not attach and display live pixels");
+	}
+	const auto state = test.runtime.Snapshot();
+	Require(state.connected && state.sessionAvailable && state.selectedLayers == 2, "Launched stereo session not selected");
+	Require(std::filesystem::path(state.endpoint).parent_path() == directory, "Launch selected unrelated endpoint");
+	std::ofstream(directory / "attached.endpoint") << state.endpoint;
+	test.renderer.RequestScreenshot((directory / "toolbar-launch.bmp").string());
+	test.Frame();
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Validation errors in launched preview");
+	std::cout << "PASS toolbar launched and attached stereo runtime " << state.endpoint << '\n';
+}
+
+#endif
+
 void CaptureLayouts(const std::filesystem::path& directory)
 {
 	std::filesystem::create_directories(directory);
@@ -169,6 +242,14 @@ int main()
 {
 	try
 	{
+
+#ifdef __linux__
+		if (const auto executable = std::getenv("SIMXR_LAUNCH_QA_EXECUTABLE"))
+		{
+			CheckToolbarLaunch(executable);
+			return 0;
+		}
+#endif
 		auto validation = std::make_shared<ValidationLog>();
 		{
 			Interaction test;

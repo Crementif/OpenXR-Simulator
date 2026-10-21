@@ -113,7 +113,7 @@ target_link_libraries(simxr_app_settings PUBLIC Threads::Threads)
 
 add_library(simxr_connection STATIC
     src/app/RuntimeConnection.cpp
-    src/app/RigLaunchAttachment.cpp
+    src/app/LaunchAttachment.cpp
     src/app/SimulationEdits.cpp
     src/app/WorkerConnection.cpp
     src/app/RuntimePanelRequests.cpp
@@ -252,7 +252,7 @@ if(BUILD_TESTING)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         simxr_add_test(recording_controller_tests tests/app/RecordingControllerTests.cpp recording_controller)
         target_link_libraries(recording_controller_tests PRIVATE simxr_recording_controller)
-        simxr_add_test(rig_launch_attachment_tests tests/app/RigLaunchAttachmentTests.cpp rig_launch_attachment)
+        simxr_add_test(rig_launch_attachment_tests tests/app/LaunchAttachmentTests.cpp rig_launch_attachment)
         target_link_libraries(rig_launch_attachment_tests PRIVATE simxr_connection)
         simxr_add_test(control_fd_tests tests/control/ControlFdTests.cpp control_fd)
         target_link_libraries(control_fd_tests PRIVATE simxr_control)

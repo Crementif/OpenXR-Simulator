@@ -1,4 +1,4 @@
-#include "app/RigLaunchAttachment.h"
+#include "app/LaunchAttachment.h"
 #include "app/RuntimeConnection.h"
 #include "app/RuntimeEndpoints.h"
 #include "control/ControlSchema.h"
@@ -39,10 +39,10 @@ std::filesystem::path DataDirectory(const LaunchProfile& profile)
 		return std::filesystem::path(directory) / "OpenXR-Simulator";
 	if (const auto home = Environment(profile, "HOME"); !home.empty())
 		return std::filesystem::path(home) / ".local/share/OpenXR-Simulator";
-	throw std::runtime_error("A launch with a rig needs an explicit absolute SIMXR_DATA_DIR or HOME");
+	throw std::runtime_error("Launch attachment needs an explicit absolute SIMXR_DATA_DIR or HOME");
 }
 #endif
-std::optional<RigSessionAttachment> UniqueSession(const control::Message& message, const std::string& endpoint)
+std::optional<LaunchedSession> UniqueSession(const control::Message& message, const std::string& endpoint)
 {
 	const auto* error = message.Find(control::tag::Error);
 	if (!error || error->AsU32() != static_cast<std::uint32_t>(control::ErrorCode::Ok))
@@ -53,7 +53,7 @@ std::optional<RigSessionAttachment> UniqueSession(const control::Message& messag
 	const auto sessions = control::DecodeFields(catalog->value);
 	if (sessions.error != control::DecodeError::None)
 		throw std::runtime_error("Launched runtime returned a malformed session catalog");
-	std::optional<RigSessionAttachment> selected;
+	std::optional<LaunchedSession> selected;
 	for (const auto& entry : sessions.fields)
 	{
 		auto decoded = control::DecodeFields(entry.value);
@@ -72,13 +72,13 @@ std::optional<RigSessionAttachment> UniqueSession(const control::Message& messag
 			throw std::runtime_error("Invalid launched session identity");
 		if (selected)
 			throw std::runtime_error("Launched runtime has multiple running sessions; select one explicitly");
-		selected = RigSessionAttachment{endpoint, *id->AsU64(), *generation->AsU64()};
+		selected = LaunchedSession{endpoint, *id->AsU64(), *generation->AsU64()};
 	}
 	return selected;
 }
 } // namespace
 
-RigLaunchAttachment::RigLaunchAttachment(RuntimeConnection& discovery, const LaunchProfile& profile)
+LaunchAttachment::LaunchAttachment(RuntimeConnection& discovery, const LaunchProfile& profile)
 	: m_discovery(discovery), m_customEndpoint(Environment(profile, "SIMXR_CONTROL_SOCKET")),
 	  m_deadline(std::chrono::steady_clock::now() + std::chrono::seconds{30})
 {
@@ -89,7 +89,7 @@ RigLaunchAttachment::RigLaunchAttachment(RuntimeConnection& discovery, const Lau
 	{
 		(void)LocalPipePath(m_customEndpoint);
 		if (RuntimeEndpointExists(m_customEndpoint))
-			throw std::runtime_error("A launch with a rig requires a new local control endpoint");
+			throw std::runtime_error("Launch attachment requires a new local control endpoint");
 	}
 #else
 	m_directory = DataDirectory(profile);
@@ -105,31 +105,31 @@ RigLaunchAttachment::RigLaunchAttachment(RuntimeConnection& discovery, const Lau
 	}
 	if (!m_customEndpoint.empty() &&
 		(!std::filesystem::path(m_customEndpoint).is_absolute() || std::filesystem::exists(m_customEndpoint)))
-		throw std::runtime_error("A launch with a rig requires a new absolute local control endpoint");
+		throw std::runtime_error("Launch attachment requires a new absolute local control endpoint");
 #endif
 }
-RigLaunchAttachment::~RigLaunchAttachment()
+LaunchAttachment::~LaunchAttachment()
 {
 	if (const auto* connecting = std::get_if<Connecting>(&m_state))
 		m_discovery.Disconnect(connecting->epoch);
 	else if (const auto* waiting = std::get_if<WaitingForSession>(&m_state))
 		m_discovery.Disconnect(waiting->epoch);
 }
-void RigLaunchAttachment::Observe(const LaunchSnapshot& process)
+void LaunchAttachment::Observe(const LaunchSnapshot& process)
 {
 	if (std::holds_alternative<Complete>(m_state))
 		return;
 	if (process.state == LaunchState::Failed || process.state == LaunchState::Exited)
-		throw std::runtime_error("Launched application ended before rig attachment: " + process.detail);
+		throw std::runtime_error("Launched application ended before attachment: " + process.detail);
 	if (process.state != LaunchState::Running || !process.process)
 		return;
 	if (m_process && *m_process != process.process)
-		throw std::runtime_error("Launched process identity changed during rig attachment");
+		throw std::runtime_error("Launched process identity changed during attachment");
 	m_process = process.process;
 	if (std::holds_alternative<WaitingForProcess>(m_state))
 		m_state = WaitingForEndpoint{process.process};
 }
-std::string RigLaunchAttachment::ExpectedEndpoint(std::uint64_t process) const
+std::string LaunchAttachment::ExpectedEndpoint(std::uint64_t process) const
 {
 	if (!m_customEndpoint.empty())
 		return m_customEndpoint;
@@ -139,7 +139,7 @@ std::string RigLaunchAttachment::ExpectedEndpoint(std::uint64_t process) const
 	return (m_directory / ("control." + std::to_string(process) + ".sock")).string();
 #endif
 }
-bool RigLaunchAttachment::EndpointExists(const std::string& endpoint) const
+bool LaunchAttachment::EndpointExists(const std::string& endpoint) const
 {
 #ifdef _WIN32
 	return RuntimeEndpointExists(endpoint);
@@ -148,7 +148,7 @@ bool RigLaunchAttachment::EndpointExists(const std::string& endpoint) const
 	return std::filesystem::is_socket(endpoint, error);
 #endif
 }
-std::optional<RigSessionAttachment> RigLaunchAttachment::Poll()
+std::optional<LaunchedSession> LaunchAttachment::Poll()
 {
 	if (std::holds_alternative<Complete>(m_state))
 		return {};
@@ -161,7 +161,7 @@ std::optional<RigSessionAttachment> RigLaunchAttachment::Poll()
 	{
 		const auto endpoint = ExpectedEndpoint(waiting->process);
 		if (m_previous.contains(endpoint))
-			throw std::runtime_error("Refusing to attach a launch rig to a pre-existing endpoint");
+			throw std::runtime_error("Refusing to attach a launch to a pre-existing endpoint");
 		if (!EndpointExists(endpoint))
 			return {};
 		m_state = Connecting{endpoint, m_discovery.Connect(endpoint)};

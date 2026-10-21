@@ -1,5 +1,5 @@
 #include "../TestSupport.h"
-#include "app/RigLaunchAttachment.h"
+#include "app/LaunchAttachment.h"
 #include "app/RuntimeConnection.h"
 #include "control/ControlService.h"
 #include "control/LocalControlServer.h"
@@ -101,7 +101,7 @@ void FreshEndpointAndRunningSession()
 	app::RuntimeConnection discovery;
 	std::uint64_t completedEpoch;
 	{
-		app::RigLaunchAttachment attachment{discovery, directory.Profile()};
+		app::LaunchAttachment attachment{discovery, directory.Profile()};
 		Require(!attachment.Poll(), "Unobserved launch attached to another runtime");
 		attachment.Observe(Running());
 		Require(!attachment.Poll(), "Absent endpoint attached");
@@ -114,7 +114,7 @@ void FreshEndpointAndRunningSession()
 			},
 			"Discovery did not connect asynchronously");
 		runtime.Begin();
-		std::optional<app::RigSessionAttachment> result;
+		std::optional<app::LaunchedSession> result;
 		Eventually(
 			[&]
 			{
@@ -138,7 +138,7 @@ void ExistingEndpointAndChangedProcess()
 	app::RuntimeConnection discovery;
 	std::ofstream(directory.Endpoint()) << "pre-existing";
 	{
-		app::RigLaunchAttachment attachment{discovery, directory.Profile()};
+		app::LaunchAttachment attachment{discovery, directory.Profile()};
 		attachment.Observe(Running());
 		Reject(
 			[&]
@@ -152,10 +152,10 @@ void ExistingEndpointAndChangedProcess()
 	Reject(
 		[&]
 		{
-			app::RigLaunchAttachment attachment{discovery, custom};
+			app::LaunchAttachment attachment{discovery, custom};
 		},
 		"new absolute local control endpoint");
-	app::RigLaunchAttachment attachment{discovery, directory.Profile()};
+	app::LaunchAttachment attachment{discovery, directory.Profile()};
 	attachment.Observe(Running());
 	auto changed = Running();
 	++changed.process;
@@ -173,7 +173,7 @@ void DiscoveryEpochOwnership()
 	app::RuntimeConnection discovery;
 	std::uint64_t replacementEpoch;
 	{
-		app::RigLaunchAttachment attachment{discovery, directory.Profile()};
+		app::LaunchAttachment attachment{discovery, directory.Profile()};
 		runtime.Listen(directory.Endpoint());
 		attachment.Observe(Running());
 		Require(!attachment.Poll(), "Connecting discovery attached synchronously");
@@ -189,7 +189,7 @@ void DiscoveryEpochOwnership()
 				discovery.Snapshot().state != app::RuntimeConnectionState::Disconnected,
 			"Old attachment disconnected a replacement discovery connection");
 	{
-		app::RigLaunchAttachment notStarted{discovery, directory.Profile()};
+		app::LaunchAttachment notStarted{discovery, directory.Profile()};
 	}
 	Require(discovery.Snapshot().epoch == replacementEpoch, "Unstarted attachment changed discovery lifetime");
 }
