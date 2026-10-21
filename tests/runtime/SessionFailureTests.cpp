@@ -2,6 +2,7 @@
 #include "runtime/Session.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -35,6 +36,59 @@ thread_local bool allocationFailed = false;
 
 namespace
 {
+void TrackerPublicationFailure()
+{
+	using namespace simxr;
+	for (int failure = 0; failure < 256; ++failure)
+	{
+		const std::array extensions{XR_HTCX_VIVE_TRACKER_INTERACTION_EXTENSION_NAME};
+		Instance instance(reinterpret_cast<XrInstance>(941), extensions, XR_MAKE_VERSION(1, 0, 27));
+		auto& trackers = instance.Trackers();
+		const auto previous = trackers.Paths();
+		const auto eventCount = instance.Events().Observe().size();
+		TrackingState state;
+		for (auto& tracker : state.trackers)
+			tracker.identity.value += 10;
+		const auto snapshot = TrackingSystem::Evaluate({Duration{2}}, state, BodyModel{});
+		std::vector<XrPath> changed{777};
+		allocationFailed = false;
+		allocationCountdown = failure;
+		try
+		{
+			Require(trackers.Publish(snapshot, &changed) == XR_SUCCESS, "Publish replacement tracker inventory");
+		}
+		catch (const std::bad_alloc&)
+		{
+		}
+		allocationCountdown = -1;
+		const bool failed = allocationFailed;
+		if (failed)
+		{
+			const auto unchanged = trackers.Paths();
+			Require(unchanged.size() == previous.size() &&
+						std::equal(unchanged.begin(), unchanged.end(), previous.begin(),
+								   [](const auto& left, const auto& right)
+								   {
+									   return left.identity == right.identity &&
+											  left.persistentPath == right.persistentPath &&
+											  left.rolePath == right.rolePath && left.connected == right.connected;
+								   }) &&
+						changed == std::vector<XrPath>{777} && instance.Events().Observe().size() == eventCount,
+					"Failed tracker publication leaked state or connection events");
+			Require(trackers.Publish(snapshot, &changed) == XR_SUCCESS, "Retry tracker publication");
+		}
+		Require(instance.Events().Observe().size() == eventCount + state.trackers.size() &&
+					trackers.Paths().front().identity == state.trackers.front().identity,
+				"Tracker publication lost or duplicated committed connection events");
+		if (!failed)
+		{
+			std::cout << "Tracker publication allocation sweep: " << failure << " failures\n";
+			return;
+		}
+	}
+	throw std::runtime_error("Tracker publication allocation sweep exceeded its bound");
+}
+
 void ProfileNotificationFailure()
 {
 	using namespace simxr;
@@ -268,6 +322,7 @@ int main()
 		ReplacedGeneration();
 		FailedStart();
 		ProfileNotificationFailure();
+		TrackerPublicationFailure();
 		return 0;
 	}
 	catch (const std::exception& error)
