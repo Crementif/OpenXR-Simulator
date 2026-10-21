@@ -110,7 +110,7 @@ XrResult VulkanFrameSubmission::PrepareOutputs()
 	m_output = m_composed;
 	if (m_inspection)
 	{
-		m_composedTransfer = m_inspection->Prepare(m_composed);
+		m_composedTransfer = PrepareInspection(m_composed);
 		m_output = m_composedTransfer->Output();
 		result = PrepareCaptures();
 		if (XR_FAILED(result))
@@ -182,7 +182,7 @@ XrResult VulkanFrameSubmission::PrepareCaptures()
 		}
 		if (XR_FAILED(result))
 			return result;
-		capture.transfer = m_inspection->Prepare(capture.producer);
+		capture.transfer = PrepareInspection(capture.producer, target);
 		m_captureOutputs.push_back({target, capture.transfer->Output()});
 	}
 	return XR_SUCCESS;
@@ -194,6 +194,28 @@ void VulkanFrameSubmission::DropLiveOutput()
 	m_output.reset();
 	m_captureOutputs.clear();
 	m_batch.clear();
+}
+
+std::unique_ptr<VulkanInspectionTransfer>
+VulkanFrameSubmission::PrepareInspection(std::shared_ptr<VulkanFrame> source, CaptureTarget target)
+{
+	const auto journal = m_session.History().DiagnosticsJournal();
+	const auto key = m_key;
+	const auto time = m_layers->displayTime;
+	const auto detail = target.kind == CaptureKind::ComposedEyes ? std::string{"owned_composed"}
+		: "owned_layer_view:" + std::to_string(target.layer) + ":" + std::to_string(target.view);
+	return m_inspection->Prepare(std::move(source),
+		[journal, key, time, detail](CompletionStatus status)
+		{
+			journal->Trace(status == CompletionStatus::Complete ? FrameTraceKind::GpuComplete : FrameTraceKind::GpuFailed,
+				key, time, status == CompletionStatus::Complete ? XR_SUCCESS : XR_ERROR_RUNTIME_FAILURE,
+				FrameDiagnosticCategory::Timing, 0, detail);
+		},
+		[journal, key, time, detail]
+		{
+			journal->Trace(FrameTraceKind::ImageRetired, key, time, XR_SUCCESS,
+				FrameDiagnosticCategory::Timing, 0, detail);
+		});
 }
 
 XrResult VulkanFrameSubmission::Submit()
@@ -209,6 +231,8 @@ XrResult VulkanFrameSubmission::Submit()
 	}
 	if (XR_SUCCEEDED(result))
 	{
+		m_session.History().Trace(FrameTraceKind::NativeSubmitted, m_key, m_layers->displayTime,
+			XR_SUCCESS, FrameDiagnosticCategory::Timing, 0, "application_queue");
 		if (m_composedTransfer)
 			m_composedTransfer->Commit();
 		for (const auto& capture : m_captures)
@@ -225,7 +249,11 @@ XrResult VulkanFrameSubmission::Execute(const XrFrameEndInfo& info)
 		return XR_ERROR_CALL_ORDER_INVALID;
 	auto result = PrepareLayers(info);
 	if (XR_FAILED(result))
+	{
+		m_session.History().Trace(FrameTraceKind::Validation, m_key, {Duration{info.displayTime}}, result,
+			FrameDiagnosticCategory::Validation, 0, "submitted_layers");
 		return result;
+	}
 	if (info.layerCount)
 	{
 		try

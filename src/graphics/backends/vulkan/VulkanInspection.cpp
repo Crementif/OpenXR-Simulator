@@ -417,12 +417,14 @@ class VulkanInspectionFrame::Resources
   public:
 	static std::shared_ptr<Resources> Create(std::shared_ptr<VulkanInspectionQueue> queue,
 											 std::shared_ptr<VulkanImage> image,
-											 std::shared_ptr<FrameReservation> budget)
+											 std::shared_ptr<FrameReservation> budget,
+											 std::function<void(CompletionStatus)> completed)
 	{
 		// Construct the owner before any view acquisition. A later view failure
 		// destroys all earlier views while the owned device/image remain alive.
 		auto resources =
 			std::shared_ptr<Resources>(new Resources(std::move(queue), std::move(image), std::move(budget)));
+		resources->m_completed = std::move(completed);
 		if (resources->m_image->layers > resources->m_views.size())
 			throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Inspection supports at most two image slices");
 		for (std::uint32_t eye = 0; eye < resources->m_image->layers; ++eye)
@@ -462,10 +464,21 @@ class VulkanInspectionFrame::Resources
 	{
 		return m_status.load();
 	}
-	void PublishTerminal(CompletionStatus completion) noexcept
+	void PublishTerminal(CompletionStatus completion, bool observed) noexcept
 	{
 		auto expected = CompletionStatus::Pending;
-		m_status.compare_exchange_strong(expected, completion);
+		if (m_status.compare_exchange_strong(expected, completion))
+		{
+			try
+			{
+				if (observed && m_completed)
+					m_completed(completion);
+			}
+			catch (...)
+			{
+				// Observation cannot change the terminal GPU result.
+			}
+		}
 	}
 	std::shared_ptr<FrameReservation> Budget() const
 	{
@@ -497,6 +510,7 @@ class VulkanInspectionFrame::Resources
 	std::array<VkImageView, 2> m_views{};
 	mutable std::mutex m_retentionMutex;
 	std::atomic<CompletionStatus> m_status{CompletionStatus::Pending};
+	std::function<void(CompletionStatus)> m_completed;
 };
 
 class VulkanInspectionTransfer::State
@@ -592,7 +606,7 @@ class VulkanInspectionTransfer::State
 	};
 	void Publish(CompletionStatus status) noexcept
 	{
-		m_output->m_resources->PublishTerminal(status);
+		m_output->m_resources->PublishTerminal(status, m_gate.load() == Gate::Committed);
 	}
 	std::atomic<Gate> m_gate{Gate::Prepared};
 	std::mutex m_gateMutex;
@@ -921,7 +935,8 @@ VulkanInspection::~VulkanInspection()
 	Close();
 }
 
-std::unique_ptr<VulkanInspectionTransfer> VulkanInspection::Prepare(std::shared_ptr<VulkanFrame> source)
+std::unique_ptr<VulkanInspectionTransfer> VulkanInspection::Prepare(std::shared_ptr<VulkanFrame> source,
+	std::function<void(CompletionStatus)> completed, std::function<void()> retired)
 {
 	if (!source || !source->ExternalImage())
 		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Frame is not externally shareable");
@@ -939,7 +954,9 @@ std::unique_ptr<VulkanInspectionTransfer> VulkanInspection::Prepare(std::shared_
 		}
 	} claim{source};
 	auto work = m_state->Queue()->ImportCopy(source);
-	auto resources = VulkanInspectionFrame::Resources::Create(m_state->Queue(), work->Image(), source->Reservation());
+	work->Image()->retired = std::move(retired);
+	auto resources = VulkanInspectionFrame::Resources::Create(m_state->Queue(), work->Image(), source->Reservation(),
+		std::move(completed));
 	auto output = std::shared_ptr<VulkanInspectionFrame>(new VulkanInspectionFrame(std::move(resources)));
 	auto job =
 		std::make_shared<VulkanInspectionTransfer::State>(std::move(admission), std::move(work), std::move(output));

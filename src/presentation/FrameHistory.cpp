@@ -30,7 +30,7 @@ bool Pending(FrameStage stage)
 } // namespace
 
 FrameHistory::FrameHistory(std::size_t capacity, std::size_t diagnosticCapacity)
-	: m_capacity(capacity), m_diagnostics(diagnosticCapacity)
+	: m_capacity(capacity), m_diagnostics(std::make_shared<FrameDiagnosticsJournal>(diagnosticCapacity))
 {
 	if (capacity < 2)
 		throw std::invalid_argument("Frame history requires pipeline capacity");
@@ -40,12 +40,12 @@ FrameDiagnostic FrameHistory::Trace(FrameTraceKind kind, FrameKey frame, Runtime
 									FrameDiagnosticCategory category, std::uint64_t related,
 									std::string_view detail) noexcept
 {
-	return m_diagnostics.Trace(kind, frame, time, result, category, related, detail);
+	return m_diagnostics->Trace(kind, frame, time, result, category, related, detail);
 }
 
 FrameDiagnostics FrameHistory::Diagnostics(std::uint64_t after, std::size_t count, std::optional<FrameKey> frame) const
 {
-	return m_diagnostics.Read(after, count, frame);
+	return m_diagnostics->Read(after, count, frame);
 }
 
 SessionGeneration FrameHistory::StartGeneration()
@@ -160,8 +160,9 @@ XrResult FrameHistory::Submit(FrameId frame, FrameSubmissionState state, const s
 	auto record = std::make_shared<FrameRecord>(*current->record);
 	record->stage = FrameStage::Submitted;
 	record->submission = std::move(state);
-	auto diagnostics = std::make_shared<FrameDiagnostics>(Diagnostics(0, 255, record->key));
-	diagnostics->events.reserve(diagnostics->events.size() + 1);
+	auto diagnostics = std::make_shared<FrameDiagnostics>();
+	diagnostics->events.reserve(256);
+	diagnostics->truncated = !m_diagnostics->ReadInto(*diagnostics, 0, 255, record->key);
 	record->submission->diagnostics = diagnostics;
 	if (beforeCommit)
 	{
@@ -174,8 +175,12 @@ XrResult FrameHistory::Submit(FrameId frame, FrameSubmissionState state, const s
 		}
 	}
 	const auto submitted = Trace(FrameTraceKind::Submitted, record->key, record->submission->displayTime);
-	diagnostics->events.push_back(submitted); // Reserved before native acceptance.
-	diagnostics->next = submitted.sequence + 1;
+	if (!m_diagnostics->ReadInto(*diagnostics, 0, 256, record->key))
+	{
+		diagnostics->events.push_back(submitted); // Reserved before native acceptance.
+		diagnostics->next = submitted.sequence + 1;
+		diagnostics->truncated = true;
+	}
 	if (record->submission->outputDisposition == FrameOutputDisposition::Dropped)
 		Trace(FrameTraceKind::PreviewDropped, record->key, record->submission->displayTime, XR_SUCCESS,
 			  FrameDiagnosticCategory::Performance, static_cast<std::uint64_t>(record->submission->dropReason));

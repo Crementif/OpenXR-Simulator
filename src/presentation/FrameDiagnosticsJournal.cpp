@@ -80,13 +80,39 @@ FrameDiagnostics FrameDiagnosticsJournal::Read(std::uint64_t after, std::size_t 
 {
 	if (count > 256)
 		throw std::invalid_argument("Frame diagnostic page exceeds 256 events");
-	std::lock_guard lock(m_mutex);
 	FrameDiagnostics snapshot;
+	snapshot.events.reserve(std::min(count, m_events.size()));
+	std::lock_guard lock(m_mutex);
+	CopyLocked(snapshot, after, count, frame);
+	return snapshot;
+}
+
+bool FrameDiagnosticsJournal::ReadInto(FrameDiagnostics& snapshot, std::uint64_t after, std::size_t count,
+									  std::optional<FrameKey> frame) const noexcept
+{
+	if (count > 256 || snapshot.events.capacity() < std::min(count, m_events.size()))
+		return false;
+	try
+	{
+		std::lock_guard lock(m_mutex);
+		CopyLocked(snapshot, after, count, frame);
+		return true;
+	}
+	catch (...)
+	{
+		return false;
+	}
+}
+
+void FrameDiagnosticsJournal::CopyLocked(FrameDiagnostics& snapshot, std::uint64_t after, std::size_t count,
+										std::optional<FrameKey> frame) const noexcept
+{
+	snapshot.events.clear();
+	snapshot.truncated = false;
 	snapshot.capacity = m_events.size();
 	snapshot.next = m_next;
 	snapshot.oldest = m_next - m_retained;
 	snapshot.dropped = snapshot.oldest - 1;
-	snapshot.events.reserve(std::min(count, m_retained));
 	for (auto sequence = snapshot.oldest; sequence < snapshot.next; ++sequence)
 	{
 		const auto& event = m_events[(sequence - 1) % m_events.size()];
@@ -99,6 +125,5 @@ FrameDiagnostics FrameDiagnosticsJournal::Read(std::uint64_t after, std::size_t 
 		}
 		snapshot.events.push_back(event);
 	}
-	return snapshot;
 }
 } // namespace simxr

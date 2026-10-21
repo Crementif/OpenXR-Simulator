@@ -90,6 +90,8 @@ class FrameHistory
 						  std::string_view detail = {}) noexcept;
 	FrameDiagnostics Diagnostics(std::uint64_t after = 0, std::size_t count = 128,
 								 std::optional<FrameKey> frame = {}) const;
+	// GPU observers retain only this bounded journal, never the session or its images.
+	std::shared_ptr<FrameDiagnosticsJournal> DiagnosticsJournal() const { return m_diagnostics; }
 	SessionGeneration StartGeneration();
 	// Reserve copied diagnostic ownership before committing issue. The callback
 	// must not reenter history. Failure rolls back insertion and eviction.
@@ -119,6 +121,6 @@ class FrameHistory
 	SessionGeneration m_generation;
 	std::uint64_t m_evicted = 0;
 	Records m_records;
-	FrameDiagnosticsJournal m_diagnostics;
+	std::shared_ptr<FrameDiagnosticsJournal> m_diagnostics;
 };
 } // namespace simxr

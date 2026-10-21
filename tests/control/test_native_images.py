@@ -111,7 +111,37 @@ def main():
                 for capture in captures:
                     operation = client.submit(lease, CommandKind.RELEASE, capture=capture)['operation_id']
                     require(client.wait(session, operation)['progress'] == 'released', 'Capture release failed')
-                diagnostics = client.diagnostics(session, count=256)['document']
+                # Drain older presentation readers without permitting another application frame.
+                for _ in range(16):
+                    operation = client.submit(lease, CommandKind.DISPLAY_STEP)['operation_id']
+                    displayed = client.wait(session, operation)
+                    require(displayed['phase'] == 'complete', displayed)
+                    image = client.capture(session, displayed['capture_id'])
+                    released = client.submit(lease, CommandKind.RELEASE,
+                                             capture=displayed['capture_id'])['operation_id']
+                    require(client.wait(session, released)['progress'] == 'released', 'Display release failed')
+                    client.acknowledge(lease, displayed['command_id'])
+                    if (image.get('frame') or {}).get('frame_id') == 6:
+                        break
+                else:
+                    raise AssertionError('Paused display never selected the latest retained frame')
+                deadline = time.monotonic() + 3
+                while True:
+                    diagnostics = client.diagnostics(session, count=256)['document']
+                    retired = [event for event in diagnostics['events'] if event['kind'] == 'image_retired']
+                    if any(event['frame_id'] == 4 and event['detail'] == 'owned_composed' for event in retired):
+                        break
+                    require(time.monotonic() < deadline, 'Released private image never retired')
+                    time.sleep(.005)
+                require(not any(event['frame_id'] == 5 and event['detail'] == 'owned_layer_view:0:0'
+                                for event in retired), 'Retained raw image retired before its readers released')
+                for frame in (3, 4, 5, 6):
+                    events = [event for event in diagnostics['events'] if event['frame_id'] == frame]
+                    native = [event for event in events if event['kind'] == 'native_submitted']
+                    ready = [event for event in events if event['kind'] == 'gpu_complete'
+                             and event['detail'] == 'owned_composed']
+                    require(len(native) == len(ready) == 1 and native[0]['sequence'] < ready[0]['sequence'],
+                            f'Native queue acceptance/completion identity incorrect: {frame}')
                 for (frame, target), capture_id in exact.items():
                     events = [event for event in diagnostics['events']
                               if event['kind'] == 'capture_ready' and event['related'] == capture_id]

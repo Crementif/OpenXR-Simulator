@@ -60,6 +60,15 @@ VulkanImage::~VulkanImage()
 		vkDestroyImage(device->binding.device, image, nullptr);
 	if (memory)
 		vkFreeMemory(device->binding.device, memory, nullptr);
+	try
+	{
+		if (retired)
+			retired();
+	}
+	catch (...)
+	{
+		// Observers cannot alter resource retirement.
+	}
 }
 
 VkImageAspectFlags VulkanImage::Aspect() const

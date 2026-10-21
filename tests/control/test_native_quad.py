@@ -123,6 +123,13 @@ def main():
                     captures.append(record['capture_id'])
                     inspected = client.inspect(session, record['capture_id'])
                     historical = inspected['document']
+                    milestones = historical['frame_trace']['events']
+                    require(any(event['kind'] == 'native_submitted' and event['frame_id'] == frame
+                                for event in milestones), 'Immutable trace omitted native acceptance')
+                    if frame == 5:
+                        require(any(event['kind'] == 'validation' and event['detail'] == 'submitted_layers'
+                                    and event['frame_id'] == frame and event['result'] < 0
+                                    for event in milestones), 'Rejected layer lost its exact frame validation event')
                     projection = historical['layers']['layers'][0]
                     require(projection['kind'] == 'projection' and len(projection['views']) == 4,
                             'Historical four-view projection metadata missing')

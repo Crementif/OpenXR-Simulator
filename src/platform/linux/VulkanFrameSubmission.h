@@ -55,6 +55,8 @@ class VulkanFrameSubmission final
 	XrResult PrepareCaptures();
 	XrResult PrepareCapture(const LayerImageDescription& image, Capture& capture,
 							std::shared_ptr<FrameReservation> reservation);
+	std::unique_ptr<VulkanInspectionTransfer> PrepareInspection(std::shared_ptr<VulkanFrame> source,
+		CaptureTarget target = {});
 	XrResult Submit();
 	void DropLiveOutput();
 	void AbandonUnsubmitted(const std::shared_ptr<VulkanFrame>& producer, CaptureTarget target = {});
