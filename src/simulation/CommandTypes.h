@@ -156,7 +156,8 @@ enum class CommandResult
 	Invalid,
 	Capacity,
 	Closed,
-	NotFound
+	NotFound,
+	Released
 };
 struct CommandOutcome
 {
@@ -168,6 +169,9 @@ struct CommandOutcome
 	std::optional<CommandTarget> effectiveTarget;
 	// Exact immutable retry identity, separate from normalized acknowledged values.
 	std::shared_ptr<const CommandTransaction> requested;
+	// Release events have no client transaction ID. Cleanup between boundaries
+	// follows appliedFrame; cleanup during a boundary precedes its snapshot.
+	bool afterFrame = false;
 };
 struct CommandConfiguration
 {
@@ -217,7 +221,7 @@ struct CommandRecordingOrigin
 };
 struct CommandRecording
 {
-	std::uint32_t version = 1;
+	std::uint32_t version = 2;
 	bool active = false, overflow = false;
 	std::size_t total = 0;
 	CommandRecordingOrigin origin;

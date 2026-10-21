@@ -320,10 +320,10 @@ std::vector<SimulationCommand> ReplayInitialCommands(const InputRecording& recor
 
 std::string EditableRig(const InputRecording& recording)
 {
-	if (recording.version != 1 || recording.active || recording.overflow ||
+	if ((recording.version != 1 && recording.version != 2) || recording.active || recording.overflow ||
 		recording.total != recording.transactions.size() || recording.total > 1024 ||
 		recording.initial.size() + ChannelNames.size() + ScenarioNames.size() > 64)
-		throw std::invalid_argument("Export requires a stopped, complete version 1 recording");
+		throw std::invalid_argument("Export requires a stopped, complete supported recording");
 	const auto initialCommands = ReplayInitialCommands(recording);
 	std::string script;
 	const auto line = [&](std::string value)
@@ -332,7 +332,8 @@ std::string EditableRig(const InputRecording& recording)
 			throw std::length_error("Editable rig exceeds the runner's one-MiB source limit");
 		script += value + '\n';
 	};
-	line("-- OpenXR Simulator recorded inputs, schema 1. Edit the command tables below.");
+	line("-- OpenXR Simulator recorded inputs, schema " + std::to_string(recording.version) +
+		 ". Edit the command tables below.");
 	line("-- Launch simxr_runner with --seed " + std::to_string(recording.seed));
 	line("assert(simxr.seed == " + Quote(std::to_string(recording.seed)) + ", \"Recording seed differs\")");
 	line("simxr.pause()");
@@ -364,7 +365,16 @@ std::string EditableRig(const InputRecording& recording)
 	{
 		if (transaction.commands.empty() || transaction.commands.size() > 64)
 			throw std::invalid_argument("Recorded transaction has an invalid command count");
-		if (transaction.phase != "applied")
+		const bool released = transaction.phase == "released";
+		if ((transaction.afterFrame && !released) ||
+			(released && (recording.version != 2 || transaction.id != 0 ||
+						  !std::all_of(transaction.commands.begin(), transaction.commands.end(),
+									   [](const auto& command)
+									   {
+										   return std::holds_alternative<ReleaseControl>(command);
+									   }))))
+			throw std::invalid_argument("Malformed recorded release event");
+		if (transaction.phase != "applied" && !released)
 		{
 			constexpr std::array phases{"queued",  "late",	   "rescheduled", "conflict", "cancelled",
 										"invalid", "capacity", "closed",	  "not_found"};
@@ -373,9 +383,17 @@ std::string EditableRig(const InputRecording& recording)
 			line("-- Observed transaction " + std::to_string(transaction.id) + ": " + transaction.phase);
 			continue;
 		}
-		if (transaction.frame <= recording.originFrame)
+		if (transaction.frame < recording.originFrame ||
+			(transaction.frame == recording.originFrame && !transaction.afterFrame))
 			throw std::invalid_argument("Applied transaction precedes recording origin");
-		frames[transaction.frame.value - recording.originFrame.value].push_back(&transaction);
+		auto relative = transaction.frame.value - recording.originFrame.value;
+		if (transaction.afterFrame)
+		{
+			if (relative == std::numeric_limits<std::uint64_t>::max())
+				throw std::overflow_error("Release event exceeds replay frame range");
+			++relative;
+		}
+		frames[relative].push_back(&transaction);
 	}
 	for (const auto& [relative, transactions] : frames)
 	{

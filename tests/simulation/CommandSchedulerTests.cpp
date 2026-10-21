@@ -520,6 +520,121 @@ void LateAdmissionRollback()
 	throw std::runtime_error("Late admission allocation sweep exceeded its bound");
 }
 
+void SourceReleaseRecording()
+{
+	CommandScheduler scheduler;
+	scheduler.Start();
+	scheduler.StartRecording({}, {});
+	ControllerControls held;
+	held.trigger = .75f;
+	scheduler.Submit(Request(1, 1, {TakeControl{ControlChannel::LeftControls}, SetControllerControls{0, held}}));
+	Tick(scheduler, 1);
+	scheduler.ReleaseSource(Manual);
+	scheduler.Submit(Request(1, 3, {TakeControl{ControlChannel::Gaze}, SetGaze{{.2f}}}, Mcp));
+	Require(Tick(scheduler, 2)->configuration.input.controllers[0].trigger == 0, "Live cleanup did not release input");
+	Tick(scheduler, 3);
+	scheduler.Recorder().Stop();
+	const auto recording = scheduler.Recorder().Snapshot();
+	Require(recording.total == 3 && !recording.overflow, "Recording omitted intermediate source release");
+	const auto& release = recording.transactions[1];
+	Require(release.result == CommandResult::Released && release.transaction.id == 0 &&
+				release.transaction.source == Manual && release.afterFrame && release.appliedFrame == FrameId{1} &&
+				release.appliedTime == SimulationTime{Duration{10}} && release.transaction.commands.size() == 1 &&
+				std::get<ReleaseControl>(release.transaction.commands[0]).channel == ControlChannel::LeftControls,
+			"Release lost its source, channel or position after the committed boundary");
+	CommandScheduler replay;
+	replay.Start(recording.origin.seed, recording.origin.configuration);
+	std::uint64_t id = 0;
+	for (const auto& outcome : recording.transactions)
+		Require(
+			replay.Submit(Request(++id, outcome.appliedFrame.value + outcome.afterFrame, outcome.transaction.commands))
+					.result == CommandResult::Queued,
+			"Replay admission failed");
+	Require(Tick(replay, 1)->configuration.input.controllers[0].trigger == .75f &&
+				Tick(replay, 2)->configuration.input.controllers[0].trigger == 0 &&
+				Tick(replay, 3)->configuration.tracking.gaze.yaw == .2f,
+			"Replay moved cleanup to the held frame or after the later command");
+	Require(scheduler.Read(Manual, 1)->result == CommandResult::Applied &&
+				scheduler.Submit(Request(2, 4, {TakeControl{ControlChannel::LeftControls}})).result ==
+					CommandResult::Queued,
+			"Internal release event changed client retry history or cursor");
+}
+void SourceReleaseRecordingFailure()
+{
+	int failures = 0;
+	for (int allocation = 0; allocation < 256; ++allocation)
+	{
+		CommandScheduler scheduler;
+		scheduler.StartRecording({}, {});
+		ControllerControls controls;
+		controls.trigger = .75f;
+		scheduler.Submit(
+			Request(1, 1, {TakeControl{ControlChannel::LeftControls}, SetControllerControls{0, controls}}));
+		Tick(scheduler, 1);
+		commandAllocationCountdown = allocation;
+		scheduler.ReleaseSource(Manual);
+		commandAllocationCountdown = -1;
+		const auto recording = scheduler.Recorder().Snapshot();
+		Require(scheduler.Merge({}).input.controllers[0].trigger == 0, "Recording failure prevented live release");
+		if (!recording.overflow)
+		{
+			Require(recording.total == 2 && recording.transactions.back().result == CommandResult::Released,
+					"Complete recording omitted release");
+			scheduler.ReleaseSource(Manual);
+			Require(scheduler.Recorder().Snapshot().total == 2, "No-op release duplicated an event");
+			Require(failures > 0, "Release allocation sweep missed fallible recording work");
+			std::cout << "Source release allocation sweep: " << failures << " failures\n";
+			return;
+		}
+		++failures;
+		Require(!recording.active, "Failed cleanup recording still claims completeness");
+	}
+	throw std::runtime_error("Source release allocation sweep did not complete");
+}
+void SequenceReleaseRecording()
+{
+	for (bool stop : {false, true})
+	{
+		CommandScheduler scheduler;
+		const auto baseline = SequenceBaseline();
+		scheduler.StartRecording(baseline, {});
+		scheduler.StartPoseSequence(Mcp, SequenceProgram(true));
+		Tick(scheduler, 1, baseline);
+		if (stop)
+			scheduler.StopPoseSequence(Mcp);
+		else
+		{
+			scheduler.Submit(Request(1, 2, {TakeControl{ControlChannel::Head, true}, SetHeadPose{Pose(7)}}));
+			bool rejected = false;
+			try
+			{
+				scheduler.Apply({2}, {Duration{20}}, {Duration{120}}, baseline,
+								[](const auto&)
+								{
+									throw std::bad_alloc{};
+								});
+			}
+			catch (const std::bad_alloc&)
+			{
+				rejected = true;
+			}
+			Require(rejected && scheduler.Recorder().Snapshot().total == 1,
+					"Failed boundary published sequence release");
+			Tick(scheduler, 2, baseline);
+		}
+		const auto recording = scheduler.Recorder().Snapshot();
+		const auto& release = recording.transactions.back();
+		Require(release.result == CommandResult::Released && release.afterFrame == stop &&
+					release.appliedFrame == FrameId{stop ? 1u : 2u},
+				"Sequence release lost boundary timing");
+		Require(stop || std::none_of(release.transaction.commands.begin(), release.transaction.commands.end(),
+									 [](const auto& command)
+									 {
+										 return std::get<ReleaseControl>(command).channel == ControlChannel::Head;
+									 }),
+				"Conflict cleanup released the new owner's channel");
+	}
+}
 void RecordingOutcomeConsistency()
 {
 	CommandScheduler late;
@@ -700,7 +815,7 @@ void BodyViewsScenariosRecording()
 	scheduler.Recorder().Stop();
 	const auto recording = scheduler.Recorder().Snapshot();
 	Require(!recording.active && recording.origin.seed == 77 &&
-				recording.origin.configuration.tracking.head.pose.position.x == 6 && recording.transactions.size() == 2,
+				recording.origin.configuration.tracking.head.pose.position.x == 6 && recording.transactions.size() == 3,
 			"Recording initial state and normalized acknowledged transactions");
 	CommandRecorder tiny(1);
 	tiny.Start({2});
@@ -1181,6 +1296,9 @@ int main()
 		PoseSequenceFailureAndCaptureOnly();
 		PreparedBoundaryAllocationRollback();
 		ImmutableRecordingPublication();
+		SourceReleaseRecording();
+		SourceReleaseRecordingFailure();
+		SequenceReleaseRecording();
 		RecordingOutcomeConsistency();
 		ControllerProfilePathValidation();
 		LateAdmissionRollback();

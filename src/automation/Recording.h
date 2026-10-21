@@ -22,6 +22,7 @@ struct RecordedTransaction
 	std::string phase;
 	FrameId frame;
 	std::vector<SimulationCommand> commands;
+	bool afterFrame = false;
 };
 struct InputRecording
 {

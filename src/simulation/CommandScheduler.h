@@ -60,6 +60,7 @@ class CommandScheduler
 	std::optional<PoseSequenceExecution> m_sequence;
 	std::optional<CommandSource> m_replacedSequence;
 	std::uint64_t m_nextSequence = 1;
+	std::array<bool, ControlChannelCount> ReleaseSourceLocked(CommandSource source) noexcept;
 	std::array<bool, ControlChannelCount> StopPoseSequenceLocked(CommandSource owner) noexcept;
 };
 } // namespace simxr

@@ -67,11 +67,18 @@ class RecordingHost
 	{
 		PoseSample head;
 		head.pose.position = {static_cast<float>(frame), 1.7f, -2};
-		const CommandTransaction transaction{frame,
-											 source,
-											 {FrameId{frame}, {}},
-											 CommandLatePolicy::Reject,
-											 {TakeControl{ControlChannel::Head}, SetHeadPose{head}}};
+		CommandTransaction transaction{frame,
+									   source,
+									   {FrameId{frame}, {}},
+									   CommandLatePolicy::Reject,
+									   {TakeControl{ControlChannel::Head}, SetHeadPose{head}}};
+		if (frame == 1)
+		{
+			ControllerControls held;
+			held.trigger = .75f;
+			transaction.commands.push_back(TakeControl{ControlChannel::LeftControls});
+			transaction.commands.push_back(SetControllerControls{0, held});
+		}
 		Require(session->Commands().Submit(transaction).result == CommandResult::Queued, "Queue head edit");
 		Frame();
 	}
@@ -121,7 +128,7 @@ void Replay(RecordingHost& host, const std::string& script, std::uint64_t seed)
 	options.seed = seed;
 	options.source = script;
 	options.deadline = std::chrono::seconds{5};
-	std::atomic<bool> stopping{false}, failed{false};
+	std::atomic<bool> stopping{false}, failed{false}, heldFrame{false}, releasedFrame{false};
 	std::thread application(
 		[&]
 		{
@@ -139,6 +146,11 @@ void Replay(RecordingHost& host, const std::string& script, std::uint64_t seed)
 						failed = true;
 					return;
 				}
+				const auto applied = host.session->Commands().At(prediction.id);
+				if (applied && applied->configuration.tracking.head.pose.position.x == 7)
+					heldFrame = applied->configuration.input.controllers[0].trigger == .75f;
+				if (applied && applied->configuration.tracking.head.pose.position.x == 8)
+					releasedFrame = applied->configuration.input.controllers[0].trigger == 0;
 				std::this_thread::sleep_for(std::chrono::milliseconds{1});
 			}
 		});
@@ -159,7 +171,8 @@ void Replay(RecordingHost& host, const std::string& script, std::uint64_t seed)
 	application.join();
 	const auto result = runner.Snapshot();
 	Require(!failed && result.phase == automation::RigPhase::Complete, result.error.c_str());
-	Require(result.transactions == 21 && result.checkpoints.size() == 1 && result.checkpoints.front().passed,
+	Require(result.transactions == 22 && heldFrame && releasedFrame && result.checkpoints.size() == 1 &&
+				result.checkpoints.front().passed,
 			"Complete saved rig did not execute every recorded transaction");
 }
 #endif
@@ -181,16 +194,20 @@ void SaveAndReplay()
 				host.session->Commands().Recorder().Snapshot().active,
 			"Active save modified destination or disconnected recording owner");
 	for (std::uint64_t frame = 1; frame <= 20; ++frame)
+	{
 		host.RecordHead(frame);
+		if (frame == 7)
+			host.session->ReleaseCommandSource(host.source);
+	}
 	const auto stopped = Request(controller, app::RecordingAction::Stop);
-	Require(stopped.error.empty() && stopped.page && !stopped.page->active && stopped.page->total == 20,
+	Require(stopped.error.empty() && stopped.page && !stopped.page->active && stopped.page->total == 21,
 			"Stop recording lost acknowledged transactions");
 	const auto badDestination =
 		Request(controller, app::RecordingAction::Save, (host.path / "missing" / "rig").string());
 	Require(!badDestination.error.empty() && badDestination.savedPath.empty(), "Failed write reported a saved file");
 	const auto saved = Request(controller, app::RecordingAction::Save, destination.string());
 	Require(saved.error.empty() && saved.savedPath == destination.string() && saved.page &&
-				saved.page->transactions.size() == 20,
+				saved.page->transactions.size() == 21,
 			"Save did not collect beyond its first page");
 	const auto script = Contents(destination);
 	Require(script.find("recorded frame +20") != std::string::npos &&

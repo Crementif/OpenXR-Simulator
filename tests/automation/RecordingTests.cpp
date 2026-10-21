@@ -142,6 +142,72 @@ void CollectionIdentityAndRollback()
 		},
 		"Truncated document accepted");
 }
+void ReleaseEventExport()
+{
+	CommandRecorder recorder;
+	recorder.Start({73, {}, {}, FrameId{10}});
+	CommandOutcome held;
+	held.result = CommandResult::Applied;
+	held.transaction.id = 1;
+	held.appliedFrame = FrameId{11};
+	held.transaction.commands = {TakeControl{ControlChannel::LeftControls}, SetControllerControls{}};
+	recorder.Observe(held);
+	CommandOutcome release;
+	release.result = CommandResult::Released;
+	release.appliedFrame = FrameId{11};
+	release.afterFrame = true;
+	release.transaction.commands = {ReleaseControl{ControlChannel::LeftControls}};
+	recorder.Observe(release);
+	held.transaction.id = 2;
+	held.appliedFrame = FrameId{13};
+	recorder.Observe(held);
+	recorder.Stop();
+	auto recording = rigs::DecodeRecordingPage(Page(recorder, 0, 16)).recording;
+	Require(recording.version == 2 && recording.transactions[1].afterFrame &&
+				recording.transactions[1].phase == "released",
+			"Decoder lost release timing");
+	const auto script = rigs::EditableRig(recording);
+	Require(script.find("recorded frame +1") < script.find("recorded frame +2") &&
+				script.find("recorded frame +2") < script.find("kind = \"release_control\"") &&
+				script.find("kind = \"release_control\"") < script.find("recorded frame +3"),
+			"Editable replay omitted or mistimed source release");
+	for (int change = 0; change < 5; ++change)
+	{
+		auto invalid = recording;
+		auto& event = invalid.transactions[1];
+		switch (change)
+		{
+		case 0:
+			invalid.version = 1;
+			break;
+		case 1:
+			event.id = 1;
+			break;
+		case 2:
+			event.commands = {SetGaze{}};
+			break;
+		case 3:
+			event.frame = invalid.originFrame;
+			event.afterFrame = false;
+			break;
+		case 4:
+			invalid.originFrame = FrameId{};
+			event.frame = FrameId{std::numeric_limits<std::uint64_t>::max()};
+			break;
+		}
+		Rejected(
+			[&]
+			{
+				(void)rigs::EditableRig(invalid);
+			},
+			"Malformed cleanup event exported");
+	}
+	recording.transactions[1].afterFrame = false;
+	const auto during = rigs::EditableRig(recording);
+	Require(during.find("recorded frame +2") == std::string::npos &&
+				during.find("kind = \"release_control\"") < during.find("recorded frame +3"),
+			"In-boundary sequence cleanup moved to a later boundary");
+}
 void ScenarioOriginAndSharedCoreReplay()
 {
 	Instance instance(reinterpret_cast<XrInstance>(1901), {}, XR_MAKE_VERSION(1, 0, 27));
@@ -403,7 +469,7 @@ void ExportRequirements()
 			invalid.total = 1;
 			break;
 		case 3:
-			invalid.version = 2;
+			invalid.version = 3;
 			break;
 		case 4:
 			invalid.total = 1;
@@ -476,6 +542,7 @@ int main()
 	try
 	{
 		CollectionIdentityAndRollback();
+		ReleaseEventExport();
 		ScenarioOriginAndSharedCoreReplay();
 		ReferenceSpaceOriginReplay();
 		ExportRequirements();

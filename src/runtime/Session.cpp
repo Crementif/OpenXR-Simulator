@@ -283,8 +283,9 @@ XrResult Session::WaitFrame(FramePrediction& prediction,
 			boundary->Publish();
 			const auto& applied = boundary->Applied();
 			for (const auto& outcome : applied.outcomes)
-				m_history.Trace(outcome.result == CommandResult::Applied ? FrameTraceKind::CommandsApplied
-																		 : FrameTraceKind::CommandRejected,
+				m_history.Trace(outcome.result == CommandResult::Applied || outcome.result == CommandResult::Released
+									? FrameTraceKind::CommandsApplied
+									: FrameTraceKind::CommandRejected,
 								{generation, prediction.id}, prediction.displayTime, XR_SUCCESS,
 								FrameDiagnosticCategory::Command, outcome.transaction.id);
 			bool spaceChangeRequested = false;

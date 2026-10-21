@@ -12,7 +12,7 @@ _MAX_COMMANDS = 64
 _MAX_COMMAND_BYTES = 64 * 1024
 _U64_MAX = 2**64 - 1
 _PHASES = frozenset(('queued', 'applied', 'late', 'rescheduled', 'conflict',
-                     'cancelled', 'invalid', 'capacity', 'closed', 'not_found'))
+                     'cancelled', 'invalid', 'capacity', 'closed', 'not_found', 'released'))
 _IDENTITY_FIELDS = ('version', 'seed', 'origin_frame', 'origin_time', 'total',
                     'initial', 'initial_commands', 'initial_scenarios')
 
@@ -61,8 +61,8 @@ def _commands(records):
 
 
 def _validate_document(document):
-    if not isinstance(document, dict) or type(document.get('version')) is not int or document['version'] != 1:
-        raise ProtocolError('A v1 recording is required')
+    if not isinstance(document, dict) or type(document.get('version')) is not int or document['version'] not in (1, 2):
+        raise ProtocolError('A v1 or v2 recording is required')
     if document.get('active') is not False:
         raise ProtocolError('Stop recording before saving an immutable replay')
     if document.get('overflow') is not False:
@@ -92,11 +92,21 @@ def _validate_document(document):
         if (not isinstance(transaction, dict) or not isinstance(transaction.get('phase'), str)
                 or transaction['phase'] not in _PHASES):
             raise ProtocolError('Unknown recording transaction phase')
-        _integer(transaction.get('transaction_id'), 'transaction_id', minimum=1)
+        released = transaction['phase'] == 'released'
+        identity = _integer(transaction.get('transaction_id'), 'transaction_id', minimum=0 if released else 1)
+        after = transaction.get('after_frame', False) if document['version'] == 1 else transaction.get('after_frame')
+        if type(after) is not bool or (after and not released):
+            raise ProtocolError('Invalid recorded release timing')
+        commands = _commands(transaction.get('commands'))
+        if released and (document['version'] != 2 or identity != 0 or not commands
+                         or any(command['kind'] != 'release_control' for command in commands)):
+            raise ProtocolError('Malformed recorded release event')
         frame = _integer(transaction.get('applied_frame'), 'applied_frame')
-        if transaction['phase'] == 'applied' and frame <= document['origin_frame']:
+        if (transaction['phase'] == 'applied' or released) and (
+                frame < document['origin_frame'] or (frame == document['origin_frame'] and not after)):
             raise ProtocolError('Applied transaction precedes the recording origin')
-        _commands(transaction.get('commands'))
+        if frame - document['origin_frame'] + after > _U64_MAX:
+            raise ProtocolError('Release event exceeds replay frame range')
 
 
 class _RecordingCollection:
@@ -208,7 +218,7 @@ def to_luau(recording):
     if len(origins) != 1:
         raise ProtocolError('Recording requires one exact reference-space origin')
     seed = recording['seed']
-    lines = ['-- OpenXR Simulator recorded inputs, schema 1. Edit the command tables below.',
+    lines = [f"-- OpenXR Simulator recorded inputs, schema {recording['version']}. Edit the command tables below.",
              '-- Launch simxr_runner with --seed ' + str(seed),
              'assert(simxr.seed == ' + _quote(str(seed)) + ', "Recording seed differs")',
              'simxr.pause()',
@@ -240,10 +250,10 @@ def to_luau(recording):
               'advance(baseFrame)', 'simxr.await_transaction(initial)']
     groups = {}
     for transaction in recording['transactions']:
-        if transaction['phase'] != 'applied':
+        if transaction['phase'] not in ('applied', 'released'):
             lines.append('-- Observed transaction ' + str(transaction['transaction_id']) + ': ' + transaction['phase'])
             continue
-        relative = transaction['applied_frame'] - recording['origin_frame']
+        relative = transaction['applied_frame'] - recording['origin_frame'] + transaction.get('after_frame', False)
         groups.setdefault(relative, []).append(transaction)
     for relative, transactions in sorted(groups.items()):
         lines += ['do -- recorded frame +' + str(relative),
