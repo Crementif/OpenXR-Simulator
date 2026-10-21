@@ -1,15 +1,36 @@
 #include "app/RecordingPanel.h"
+#include "app/CompanionSettings.h"
+#include "app/Utf8Path.h"
 
 #include <algorithm>
 #include <cstdio>
+#include <ctime>
 #include <imgui.h>
 #include <utility>
 
 namespace simxr::app
 {
+namespace
+{
+std::string PathText(const std::filesystem::path& path)
+{
+	const auto text = path.u8string();
+	return {text.begin(), text.end()};
+}
+} // namespace
 RecordingPanel::RecordingPanel()
 {
-	std::snprintf(m_path.data(), m_path.size(), "%s", "recording.luau");
+	const auto now = std::time(nullptr);
+	std::strftime(m_name.data(), m_name.size(), "Take %Y-%m-%d %H-%M-%S", std::localtime(&now));
+	try
+	{
+		m_directory = CompanionSettingsPath().parent_path() / "recordings";
+		RefreshFiles();
+	}
+	catch (const std::exception& error)
+	{
+		m_error = error.what();
+	}
 }
 void RecordingPanel::SetTarget(RecordingTarget target)
 {
@@ -18,67 +39,246 @@ void RecordingPanel::SetTarget(RecordingTarget target)
 	m_controller.SetTarget(target);
 	m_target = std::move(target);
 	m_offset = 0;
+	m_nextRead = {};
+	m_saving = false;
 }
-std::optional<automation::SavedRecording> RecordingPanel::Draw(bool supported, bool replayAvailable)
+RecordingSnapshot RecordingPanel::Snapshot() const
+{
+	return m_controller.Snapshot();
+}
+void RecordingPanel::Stop()
+{
+	m_controller.Request(RecordingAction::Stop);
+}
+void RecordingPanel::Poll(bool supported)
+{
+	const auto state = Snapshot();
+	if (m_saving && !state.busy)
+	{
+		m_saving = false;
+		if (state.error.empty())
+		{
+			RefreshFiles();
+			SelectFile(state.savedPath);
+		}
+	}
+	const auto now = std::chrono::steady_clock::now();
+	if (supported && !state.busy && state.error.empty() && now >= m_nextRead)
+	{
+		m_controller.Request(RecordingAction::Read, m_offset);
+		m_nextRead = now + std::chrono::seconds(1);
+	}
+}
+void RecordingPanel::RefreshFiles()
+{
+	m_files.clear();
+	if (m_directory.empty())
+		return;
+	std::error_code error;
+	if (!std::filesystem::exists(m_directory, error))
+		return;
+	for (std::filesystem::directory_iterator it(m_directory, error), end; !error && it != end; it.increment(error))
+	{
+		if (it->is_regular_file(error) && it->path().extension() == ".luau")
+			m_files.push_back(PathText(it->path()));
+		if (m_files.size() >= 128)
+			break;
+	}
+	std::sort(m_files.begin(), m_files.end(), std::greater<>());
+	if (error)
+		m_error = "Cannot read the recordings folder: " + error.message();
+}
+void RecordingPanel::SelectFile(const std::string& path)
+{
+	try
+	{
+		m_selected = OpenSavedRecording(path);
+		m_error.clear();
+	}
+	catch (const std::exception& error)
+	{
+		m_selected.reset();
+		m_error = error.what();
+	}
+}
+void RecordingPanel::Save()
+{
+	try
+	{
+		const std::string name = m_name.data();
+		if (m_directory.empty())
+			throw std::runtime_error("The recordings folder is unavailable");
+		if (name.empty() || name == "." || name == ".." || name.find_first_of("/\\:") != std::string::npos)
+			throw std::runtime_error("Give the recording a name without folder separators or a colon");
+		std::filesystem::create_directories(m_directory);
+		m_saving = m_controller.Request(RecordingAction::Save, 0, PathText(m_directory / Utf8Path(name + ".luau")));
+		m_error.clear();
+	}
+	catch (const std::exception& error)
+	{
+		m_error = error.what();
+	}
+}
+std::optional<automation::SavedRecording> RecordingPanel::Draw(bool supported, bool replayAvailable, bool replayActive)
 {
 	std::optional<automation::SavedRecording> replay;
-	ImGui::Begin("Recording");
-	const auto snapshot = m_controller.Snapshot();
-	ImGui::BeginDisabled(!supported || snapshot.busy);
-	if (ImGui::Button("Start recording"))
-		m_controller.Request(RecordingAction::Start);
-	ImGui::SameLine();
-	if (ImGui::Button("Stop recording"))
-		m_controller.Request(RecordingAction::Stop);
-	if (ImGui::Button("Read recording"))
-		m_controller.Request(RecordingAction::Read, m_offset);
-	ImGui::SetNextItemWidth(160);
-	ImGui::InputScalar("Transaction offset", ImGuiDataType_U64, &m_offset);
-	m_offset = std::min<std::uint64_t>(1024, m_offset);
-	ImGui::BeginDisabled(m_offset == 0);
-	if (ImGui::Button("Previous page"))
+	if (!ImGui::Begin("Recording"))
 	{
-		m_offset = m_offset > 16 ? m_offset - 16 : 0;
-		m_controller.Request(RecordingAction::Read, m_offset);
+		ImGui::End();
+		return replay;
 	}
-	ImGui::EndDisabled();
-	ImGui::SameLine();
-	if (ImGui::Button("Next page"))
+	const auto state = Snapshot();
+	const bool active = state.page && state.page->active;
+	ImGui::SeparatorText("Capture input");
+	ImGui::TextWrapped("Record head and hand movement, buttons and simulated device changes while using the app.");
+	if (!supported)
+		ImGui::TextWrapped("Connect to a runtime with input recording support to start a take. Saved recordings remain "
+						   "available below.");
+	ImGui::BeginDisabled(!supported || state.busy || replayActive);
+	if (ImGui::Button(active ? "Stop recording" : "Start recording", {-1, 0}))
 	{
-		m_offset = std::min<std::uint64_t>(snapshot.page ? snapshot.page->total : 1024, m_offset + 16);
-		m_controller.Request(RecordingAction::Read, m_offset);
-	}
-	ImGui::TextUnformatted("Editable rig destination");
-	ImGui::InputText("##Recording destination", m_path.data(), m_path.size());
-	ImGui::BeginDisabled(snapshot.page && (snapshot.page->active || snapshot.page->overflow));
-	if (ImGui::Button("Save editable rig"))
-		m_controller.Request(RecordingAction::Save, 0, m_path.data());
-	ImGui::EndDisabled();
-	ImGui::BeginDisabled(!replayAvailable || snapshot.savedPath.empty());
-	if (ImGui::Button("Replay saved rig"))
-		replay = automation::SavedRecording{snapshot.savedPath, snapshot.savedSeed};
-	ImGui::EndDisabled();
-	ImGui::EndDisabled();
-	if (snapshot.busy)
-		ImGui::TextUnformatted("Recording request in progress");
-	if (!snapshot.savedPath.empty())
-		ImGui::TextWrapped("Saved: %s", snapshot.savedPath.c_str());
-	if (!snapshot.error.empty())
-		ImGui::TextWrapped("%s", snapshot.error.c_str());
-	ImGui::TextWrapped("Saving collects the complete stopped recording on its worker. Edit the saved command tables "
-					   "before replaying them in Rigs. Ownership conflicts and recording overflow remain explicit.");
-	if (const auto& page = snapshot.page)
-	{
-		ImGui::Text("%s; seed %llu; %llu transactions", page->active ? "Recording" : "Stopped",
-					static_cast<unsigned long long>(page->seed), static_cast<unsigned long long>(page->total));
-		if (page->overflow)
-			ImGui::TextUnformatted("Recording overflowed; a complete replay cannot be saved");
-		int index = 0;
-		for (const auto& transaction : page->transactions)
+		if (active)
+			Stop();
+		else if (state.page && state.page->total && state.savedPath.empty())
+			ImGui::OpenPopup("Replace unsaved take?");
+		else
 		{
-			ImGui::PushID(index++);
-			const auto label = "Transaction " + std::to_string(transaction.id) + " / " + transaction.phase +
-							   " / frame " + std::to_string(transaction.frame.value);
+			m_controller.Request(RecordingAction::Start);
+			m_offset = 0;
+		}
+	}
+	if (ImGui::BeginPopup("Replace unsaved take?"))
+	{
+		ImGui::TextUnformatted(
+			"Starting a new take replaces the unsaved input.\nSave it first if you want to keep it.");
+		if (ImGui::Button("Start new take"))
+		{
+			m_controller.Request(RecordingAction::Start);
+			m_offset = 0;
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Keep current take"))
+			ImGui::CloseCurrentPopup();
+		ImGui::EndPopup();
+	}
+	ImGui::EndDisabled();
+	if (state.page)
+	{
+		ImGui::TextColored(active ? ImVec4{1, .38f, .36f, 1} : ImGui::GetStyleColorVec4(ImGuiCol_Text),
+						   "%s / %llu input changes", active ? "Recording" : "Stopped",
+						   static_cast<unsigned long long>(state.page->total));
+		if (state.page->overflow)
+			ImGui::TextWrapped("The recording reached its limit. Stop and start a shorter take; this incomplete take "
+							   "cannot be saved.");
+	}
+	ImGui::TextUnformatted("Take name");
+	ImGui::SetNextItemWidth(-1);
+	ImGui::InputText("##Take name", m_name.data(), m_name.size());
+	ImGui::BeginDisabled(!supported || state.busy || !state.page || active || (state.page && state.page->overflow));
+	if (ImGui::Button("Save take", {-1, 0}))
+	{
+		std::error_code error;
+		if (std::filesystem::exists(m_directory / Utf8Path(std::string(m_name.data()) + ".luau"), error))
+			ImGui::OpenPopup("Replace saved take?");
+		else
+			Save();
+	}
+	if (ImGui::BeginPopup("Replace saved take?"))
+	{
+		ImGui::TextUnformatted("A take with this name already exists.");
+		if (ImGui::Button("Replace file"))
+		{
+			Save();
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel"))
+			ImGui::CloseCurrentPopup();
+		ImGui::EndPopup();
+	}
+	ImGui::EndDisabled();
+	if (state.busy)
+		ImGui::TextDisabled("%s", m_saving ? "Saving complete take..." : "Updating recording...");
+	if (!state.savedPath.empty())
+		ImGui::TextWrapped("Saved: %s", PathText(Utf8Path(state.savedPath).filename()).c_str());
+	if (!state.error.empty())
+	{
+		ImGui::TextWrapped("%s", state.error.c_str());
+		ImGui::BeginDisabled(!supported || state.busy);
+		if (ImGui::Button("Refresh recording state"))
+			m_controller.Request(RecordingAction::Read, m_offset);
+		ImGui::EndDisabled();
+	}
+
+	ImGui::SeparatorText("Saved takes");
+	if (m_files.empty())
+		ImGui::TextWrapped("Saved takes appear here and remain available after restarting the companion.");
+	else if (ImGui::BeginListBox("##Saved takes", {-1, ImGui::GetTextLineHeightWithSpacing() * 4.5f}))
+	{
+		for (const auto& path : m_files)
+		{
+			ImGui::PushID(path.c_str());
+			if (ImGui::Selectable(PathText(Utf8Path(path).stem()).c_str(), m_selected && m_selected->path == path))
+				SelectFile(path);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", path.c_str());
+			ImGui::PopID();
+		}
+		ImGui::EndListBox();
+	}
+	ImGui::BeginDisabled(!replayAvailable || !m_selected || active);
+	if (ImGui::Button("Replay selected take", {-1, 0}))
+	{
+		SelectFile(m_selected->path);
+		if (m_selected)
+			replay = m_selected;
+	}
+	ImGui::EndDisabled();
+	ImGui::TextWrapped("Replay restores simulated devices and input at relative XR frames. It does not rewind the "
+					   "game's world or save state. Cancel replay releases its inputs.");
+	if (ImGui::CollapsingHeader("Open file and script details"))
+	{
+		ImGui::TextWrapped("Folder: %s", PathText(m_directory).c_str());
+		if (ImGui::Button("Refresh saved takes"))
+			RefreshFiles();
+		ImGui::TextUnformatted("Saved recording file (.luau)");
+		ImGui::SetNextItemWidth(-1);
+		ImGui::InputText("##Recording file", m_path.data(), m_path.size());
+		if (ImGui::Button("Open recording"))
+			SelectFile(m_path.data());
+		if (m_selected)
+			ImGui::TextWrapped("Selected: %s\nSeed: %llu", m_selected->path.c_str(),
+							   static_cast<unsigned long long>(m_selected->seed));
+		ImGui::TextWrapped("Takes are editable Luau files. Advanced script execution and reports remain in Rigs.");
+	}
+	if (!m_error.empty())
+		ImGui::TextWrapped("%s", m_error.c_str());
+	if (state.page && ImGui::CollapsingHeader("Recorded input details"))
+	{
+		const auto total = state.page->total;
+		ImGui::Text("Changes %llu–%llu of %llu", static_cast<unsigned long long>(total ? state.offset + 1 : 0),
+					static_cast<unsigned long long>(std::min(total, state.offset + state.page->transactions.size())),
+					static_cast<unsigned long long>(total));
+		ImGui::BeginDisabled(!supported || state.busy || state.offset == 0);
+		if (ImGui::Button("Previous"))
+		{
+			m_offset = state.offset > 16 ? state.offset - 16 : 0;
+			m_controller.Request(RecordingAction::Read, m_offset);
+		}
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		ImGui::BeginDisabled(!supported || state.busy || state.offset + 16 >= total);
+		if (ImGui::Button("Next"))
+		{
+			m_offset = state.offset + 16;
+			m_controller.Request(RecordingAction::Read, m_offset);
+		}
+		ImGui::EndDisabled();
+		for (const auto& transaction : state.page->transactions)
+		{
+			ImGui::PushID(static_cast<int>(transaction.id));
+			const auto label = "Frame " + std::to_string(transaction.frame.value) + " / " + transaction.phase;
 			if (ImGui::TreeNode(label.c_str()))
 			{
 				for (const auto& command : transaction.commands)

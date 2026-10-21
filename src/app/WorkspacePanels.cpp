@@ -3,6 +3,7 @@
 #include "app/LaunchAttachment.h"
 #include "app/RuntimeConnection.h"
 #include "app/RuntimePanels.h"
+#include "app/TimelinePanel.h"
 #include "simulation/HeadsetProfiles.h"
 #ifdef SIMXR_COMPANION_AUTOMATION
 #include "app/RigPanel.h"
@@ -57,11 +58,14 @@ template <std::size_t N> void Copy(std::array<char, N>& buffer, const std::strin
 struct WorkspacePanels::Impl
 {
 	bool enabled = false, showLaunch = false, showSettings = false, reset = false, dirty = false;
+	bool previewExpanded = false;
+	bool focusRecording = false;
 	bool showConnection = false;
 	WorkspaceMode mode = WorkspaceMode::Simulator;
 	std::filesystem::path path;
 	CompanionSettings settings;
 	ProcessLauncher launcher;
+	TimelinePanel timeline;
 	RuntimeConnection launchDiscovery;
 	std::unique_ptr<LaunchAttachment> attachment;
 #ifdef SIMXR_COMPANION_AUTOMATION
@@ -217,13 +221,14 @@ struct WorkspacePanels::Impl
 		}
 		DrawMainMenu(runtime);
 		DrawToolbar(runtime);
+		if (timeline.Draw(runtime))
+			SelectMode(WorkspaceMode::Debug);
 	}
 	void SelectMode(WorkspaceMode selected)
 	{
-		if (mode == selected)
-			return;
 		mode = selected;
-		reset = true;
+		focusRecording = selected == WorkspaceMode::Automation;
+		previewExpanded = false;
 	}
 	void LaunchSelected()
 	{
@@ -281,8 +286,12 @@ struct WorkspacePanels::Impl
 		const auto snapshot = runtime.Snapshot();
 		auto* viewport = ImGui::GetMainViewport();
 		const float row = ImGui::GetFrameHeightWithSpacing();
+		bool transport = snapshot.recording;
+#ifdef SIMXR_COMPANION_AUTOMATION
+		transport |= rigs.HasStatus();
+#endif
 		if (!ImGui::BeginViewportSideBar("##Workspace toolbar", viewport, ImGuiDir_Up,
-										 row * 2 + ImGui::GetStyle().WindowPadding.y * 2,
+										 row * (transport ? 3 : 2) + ImGui::GetStyle().WindowPadding.y * 2,
 										 ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings))
 		{
 			ImGui::End();
@@ -290,24 +299,52 @@ struct WorkspacePanels::Impl
 		}
 		for (const auto view : {WorkspaceMode::Simulator, WorkspaceMode::Debug, WorkspaceMode::Automation})
 		{
-			const auto label = view == WorkspaceMode::Simulator ? "Simulator"
-							   : view == WorkspaceMode::Debug	? "Debug"
-																: "Automation";
+			const auto label = view == WorkspaceMode::Simulator ? "Simulate"
+							   : view == WorkspaceMode::Debug	? "Inspect"
+																: "Record & replay";
 			const bool active = view == mode;
 			if (active)
 				ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
 			if (ImGui::Button(label))
 				SelectMode(view);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip(
+					"%s", view == WorkspaceMode::Simulator ? "Pilot the head and hands; configure simulated devices."
+						  : view == WorkspaceMode::Debug ? "Inspect captured frames, submitted images and application "
+														   "state. Switching tools does not pause the app."
+														 : "Record simulated input, save sequences and replay them.");
 			if (active)
 				ImGui::PopStyleColor();
 			ImGui::SameLine();
 		}
-		ImGui::TextDisabled("  %s",
-							snapshot.sessionAvailable
-								? (snapshot.operationPending ? "Updating..."
-								   : snapshot.manual		 ? "Paused"
-															 : "Running")
-								: (snapshot.connected ? "Waiting for application" : snapshot.connectionState.c_str()));
+		if (ImGui::Button(previewExpanded ? "Show tools" : "Expand view"))
+			previewExpanded = !previewExpanded;
+		ImGui::SameLine();
+		if (ImGui::Button("Release inputs"))
+			runtime.ReleaseInputs();
+		ImGui::SameLine();
+		const bool paused = snapshot.connected && snapshot.sessionAvailable && snapshot.manual;
+		const bool inspecting = !snapshot.following && snapshot.selectedFrame;
+		const bool disconnectedImage = !snapshot.connected && snapshot.selectedFrame;
+		const ImVec4 accent = !snapshot.connected ? ImVec4{0.62f, 0.66f, 0.72f, 1}
+							  : paused			  ? ImVec4{0.96f, 0.69f, 0.32f, 1}
+							  : inspecting		  ? ImVec4{0.48f, 0.72f, 0.95f, 1}
+												  : ImVec4{0.35f, 0.80f, 0.65f, 1};
+		ImGui::TextColored(accent, "%s",
+						   !snapshot.connected ? (disconnectedImage ? "Disconnected / image retained" : "Disconnected")
+						   : !snapshot.sessionAvailable ? "Waiting for application"
+						   : snapshot.operationPending	? "Updating..."
+						   : paused						? "Application paused"
+						   : inspecting					? "Inspecting / app running"
+														: "Application running");
+		if (paused || inspecting || disconnectedImage)
+		{
+			const auto position = viewport->Pos, size = viewport->Size;
+			const float inset = 2 * settings.scale;
+			ImGui::GetForegroundDrawList(viewport)->AddRect(
+				{position.x + inset, position.y + inset}, {position.x + size.x - inset, position.y + size.y - inset},
+				ImGui::ColorConvertFloat4ToU32(accent), 0, 0, 3 * settings.scale);
+		}
 		ImGui::SetNextItemWidth(std::max(100.0f, std::min(220.0f * settings.scale, viewport->WorkSize.x * 0.30f)));
 		if (ImGui::BeginCombo("##Launch profile",
 							  selectedProfile >= 0
@@ -319,7 +356,10 @@ struct WorkspacePanels::Impl
 									  selectedProfile == static_cast<int>(index)))
 					EditProfile(static_cast<int>(index));
 			if (ImGui::Selectable("Add or edit applications..."))
+			{
 				showLaunch = true;
+				previewExpanded = false;
+			}
 			ImGui::EndCombo();
 		}
 		ImGui::SameLine();
@@ -327,6 +367,7 @@ struct WorkspacePanels::Impl
 		ImGui::BeginDisabled(process.state == LaunchState::Starting || process.state == LaunchState::Running);
 		if (ImGui::Button(selectedProfile >= 0 ? "Launch" : "Set up"))
 		{
+			previewExpanded = false;
 			if (selectedProfile >= 0)
 				LaunchSelected();
 			else
@@ -335,29 +376,42 @@ struct WorkspacePanels::Impl
 		ImGui::EndDisabled();
 		ImGui::SameLine();
 		if (ImGui::Button(snapshot.connected ? "Connection" : "Connect"))
+		{
 			showConnection = !showConnection;
-		ImGui::SameLine();
-		ImGui::BeginDisabled(!snapshot.sessionAvailable || snapshot.operationPending);
-		if (ImGui::Button(snapshot.manual ? "Resume" : "Pause"))
-			runtime.Command(snapshot.manual ? control::CommandKind::Resume : control::CommandKind::Pause);
-		ImGui::EndDisabled();
-		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-			ImGui::SetTooltip("%s", !snapshot.sessionAvailable ? "Connect to a running XR application first"
-									: snapshot.operationPending
-										? "Waiting for the runtime to finish the previous operation"
-										: "F6 Pause / F8 Resume");
-		ImGui::SameLine();
-		ImGui::BeginDisabled(!snapshot.sessionAvailable || !snapshot.manual || snapshot.operationPending);
-		if (ImGui::Button("Step"))
-			runtime.Command(control::CommandKind::Step);
-		ImGui::EndDisabled();
-		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-			ImGui::SetTooltip("Pause the application, then advance one XR frame (F7)");
+			previewExpanded = false;
+		}
+		if (snapshot.recording)
+		{
+			ImGui::TextColored({1, .38f, .36f, 1}, "%s / %llu changes",
+							   snapshot.recordingOverflow ? "Recording full" : "Recording",
+							   static_cast<unsigned long long>(snapshot.recordedChanges));
+			ImGui::SameLine();
+			ImGui::BeginDisabled(snapshot.recordingBusy);
+			if (ImGui::Button("Stop recording"))
+				runtime.StopRecording();
+			ImGui::EndDisabled();
+			ImGui::SameLine();
+			if (ImGui::SmallButton("Show take"))
+				SelectMode(WorkspaceMode::Automation);
+		}
+#ifdef SIMXR_COMPANION_AUTOMATION
+		if (rigs.HasStatus())
+		{
+			if (snapshot.recording)
+				ImGui::SameLine();
+			rigs.DrawTransport();
+		}
+#endif
 		ImGui::End();
+		runtime.SetPreviewExpanded(previewExpanded);
 	}
 	void DrawDockspace()
 	{
-		const auto dock = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+		const auto dock = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(),
+													   previewExpanded ? ImGuiDockNodeFlags_KeepAliveOnly
+																	   : ImGuiDockNodeFlags_AutoHideTabBar);
+		if (previewExpanded)
+			return;
 		const auto* node = ImGui::DockBuilderGetNode(dock);
 		if (!reset && node && node->IsSplitNode())
 			return;
@@ -367,31 +421,14 @@ struct WorkspacePanels::Impl
 		const auto size = ImGui::GetMainViewport()->WorkSize;
 		ImGui::DockBuilderSetNodeSize(dock, size);
 		ImGuiID preview, controls;
-		const float controlWidth = std::clamp(360.0f * settings.scale / std::max(size.x, 1.0f), 0.28f, 0.48f);
+		const float controlWidth = std::clamp(360.0f * settings.scale / std::max(size.x, 1.0f), 0.18f, 0.48f);
 		ImGui::DockBuilderSplitNode(dock, ImGuiDir_Right, controlWidth, &controls, &preview);
 		ImGui::DockBuilderDockWindow("GPU preview", preview);
-		if (mode == WorkspaceMode::Simulator)
-			ImGui::DockBuilderDockWindow("Device controls", controls);
-		else if (mode == WorkspaceMode::Automation)
-		{
-			ImGui::DockBuilderDockWindow("Rigs", controls);
-			ImGui::DockBuilderDockWindow("Recording", controls);
-		}
-		else
-		{
-			ImGuiID upper, lower;
-			ImGui::DockBuilderSplitNode(controls, ImGuiDir_Up, 0.45f, &upper, &lower);
-			ImGui::DockBuilderDockWindow("Frame controls", upper);
-			ImGui::DockBuilderDockWindow("Captures", lower);
-			ImGui::DockBuilderDockWindow("Historical state", lower);
-			ImGui::DockBuilderDockWindow("Action and binding inspector", lower);
-			if (mode == WorkspaceMode::Custom)
-			{
-				ImGui::DockBuilderDockWindow("Device controls", upper);
-				ImGui::DockBuilderDockWindow("Rigs", lower);
-				ImGui::DockBuilderDockWindow("Recording", lower);
-			}
-		}
+		// Every tool has a stable home, even while another tool is selected.
+		for (const auto name : {"Device controls", "Rigs", "Recording", "Frame controls", "Captures",
+								"Historical state", "Action and binding inspector", "Runtime connection",
+								"Workspace settings", "Launch profiles", "Workspace error"})
+			ImGui::DockBuilderDockWindow(name, controls);
 		ImGui::DockBuilderFinish(dock);
 	}
 	void DrawMainMenu(RuntimePanels& runtime)
@@ -400,15 +437,17 @@ struct WorkspacePanels::Impl
 		{
 			if (ImGui::BeginMenu("Simulator"))
 			{
-				ImGui::MenuItem("Launch profiles", nullptr, &showLaunch);
-				ImGui::MenuItem("Workspace settings", nullptr, &showSettings);
+				if (ImGui::MenuItem("Launch profiles", nullptr, &showLaunch))
+					previewExpanded = false;
+				if (ImGui::MenuItem("Workspace settings", nullptr, &showSettings))
+					previewExpanded = false;
 				ImGui::Separator();
 				if (ImGui::MenuItem("Pause", "F6"))
 					runtime.Command(control::CommandKind::Pause);
 				if (ImGui::MenuItem("Step", "F7"))
 					runtime.Command(control::CommandKind::Step);
-				if (ImGui::MenuItem("Resume", "F8"))
-					runtime.Command(control::CommandKind::Resume);
+				if (ImGui::MenuItem("Continue", "F8"))
+					runtime.ResumeLive();
 				if (ImGui::MenuItem("Cancel pending operation", "Shift+F7"))
 					runtime.CancelPending();
 				ImGui::EndMenu();
@@ -451,7 +490,7 @@ struct WorkspacePanels::Impl
 					runtime.Command(control::CommandKind::Step);
 			}
 			if (ImGui::IsKeyPressed(ImGuiKey_F8, false))
-				runtime.Command(control::CommandKind::Resume);
+				runtime.ResumeLive();
 		}
 	}
 	void Draw(RuntimePanels& runtime)
@@ -460,10 +499,19 @@ struct WorkspacePanels::Impl
 #ifdef SIMXR_COMPANION_AUTOMATION
 		if (const auto recording = runtime.TakeRecordingReplay())
 			rigs.ReplayRecording(runtime, recording->path, recording->seed);
-		rigs.Draw(runtime, mode == WorkspaceMode::Automation || mode == WorkspaceMode::Custom);
+		rigs.Draw(runtime, !previewExpanded && (mode == WorkspaceMode::Automation || mode == WorkspaceMode::Custom));
+		runtime.SetReplayActive(rigs.IsActive());
+		timeline.ObserveRig(runtime.Snapshot(), rigs.RunId(), rigs.Snapshot(), rigs.MatchesTarget(runtime.Snapshot()));
+		if (focusRecording && ImGui::FindWindowByName("Recording"))
+		{
+			ImGui::SetWindowFocus("Recording");
+			focusRecording = false;
+		}
 #endif
+		if (previewExpanded)
+			return;
 		if (showConnection)
-			runtime.DrawConnection();
+			runtime.DrawConnection(&showConnection);
 		if (!error.empty())
 		{
 			ImGui::Begin("Workspace error");
@@ -522,8 +570,8 @@ struct WorkspacePanels::Impl
 				}
 				ImGui::PopID();
 			}
-			ImGui::TextWrapped(
-				"F6 Pause · F7 Step · Shift+F7 Cancel · F8 Resume. Shortcuts are disabled while editing fields.");
+			ImGui::TextWrapped("F6 Pause · F7 Next frame · Shift+F7 Cancel · F8 Continue. Shortcuts are disabled while "
+							   "editing fields.");
 			ImGui::End();
 		}
 		if (showLaunch)

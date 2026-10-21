@@ -253,8 +253,8 @@ struct TrackingState
 {
 	PoseSample head{{{0, 0, 0, 1}, {0, 1.7f, 0}}, TrackedPoseFlags};
 	std::array<ControllerPose, 2> controllers{{
-		{{{{0, 0, 0, 1}, {-0.2f, 1.4f, -0.4f}}, TrackedPoseFlags}, true},
-		{{{{0, 0, 0, 1}, {0.2f, 1.4f, -0.4f}}, TrackedPoseFlags}, true}}};
+		{{{{0.70710678f, 0, 0, 0.70710678f}, {-0.2f, 1.4f, -0.4f}}, TrackedPoseFlags}, true},
+		{{{{0.70710678f, 0, 0, 0.70710678f}, {0.2f, 1.4f, -0.4f}}, TrackedPoseFlags}, true}}};
 	GazeInput gaze;
 	BodyControls body;
 	bool focused = true;

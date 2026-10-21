@@ -20,6 +20,8 @@ def require(condition, message):
 
 def main():
     pixels = '--verify-pixels' in sys.argv[3:]
+    midtone = '--midtone' in sys.argv[3:]
+    srgb = '--srgb' in sys.argv[3:]
     companion = None
     with tempfile.TemporaryDirectory(prefix='simxr-companion-runtime-') as temporary:
         data = Path(temporary)
@@ -27,6 +29,10 @@ def main():
                            SIMXR_PROBE_RETAIN_CONTROL='1', SIMXR_PROBE_GPU_INSPECTION='1')
         environment['SIMXR_CONTROL_TRACE'] = '1'
         environment.pop('SIMXR_CONTROL_SOCKET', None)
+        if midtone:
+            environment['SIMXR_PROBE_MIDTONE'] = '1'
+        if srgb:
+            environment['SIMXR_PROBE_SRGB'] = '1'
         host = subprocess.Popen([sys.argv[1]], env=environment, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True)
         try:
@@ -89,23 +95,32 @@ def main():
                 require(not observer.sessions(), 'Public XR sessions survived teardown')
                 if pixels:
                     ppm = (data / 'frame.ppm').read_bytes()
-                    header, rgb = ppm.split(b'\n255\n', 1)
+                    header, source = ppm.split(b'\n255\n', 1)
                     require(header.startswith(b'P6\n# session=') and b'frame=4 capture=' in header and
                             b'target=2 layer=0 view=0 slices=1 slice_height=48' in header and
-                            header.endswith(b'\n64 48') and rgb == b'\xff\x00\x00' * (64 * 48),
-                            'Viewable companion export lost pixels, frame identity or dimensions')
+                            header.endswith(b'\n64 48'),
+                            'Viewable companion export lost frame identity or dimensions')
+                    expected = (137, 188, 225) if midtone and srgb else (
+                        (64, 128, 191) if midtone else (255, 0, 0))
+                    require(len(source) == 64 * 48 * 3 and
+                            all(abs(value - expected[index % 3]) <= (1 if midtone else 0)
+                                for index, value in enumerate(source)),
+                            f'Explicit source export changed color encoding: {list(source[:3])}')
                     screenshot = (data / 'companion.bmp').read_bytes()
                     require(screenshot[:2] == b'BM', 'Companion screenshot missing')
                     offset = struct.unpack_from('<I', screenshot, 10)[0]
                     rgba = screenshot[offset:]
-                    red = sum(rgba[index] < 8 and rgba[index + 1] < 8 and rgba[index + 2] > 247
-                              for index in range(0, len(rgba), 4))
+                    display = (137, 188, 225) if midtone else (255, 0, 0)
+                    matching = sum(all(abs(rgba[index + 2 - channel] - display[channel]) <= 2
+                                       for channel in range(3)) for index in range(0, len(rgba), 4))
                     if destination := os.getenv('SIMXR_COMPANION_QA_OUTPUT'):
-                        Path(destination).mkdir(parents=True, exist_ok=True)
-                        shutil.copy(data / 'companion.bmp', Path(destination) / 'companion.bmp')
-                        shutil.copy(data / 'frame.ppm', Path(destination) / 'frame.ppm')
-                    require(red > 2000, f'Actual companion window did not display retained raw red pixels: {red}')
-                    print(f'PASS explicit source bytes and actual window pixels: red={red}')
+                        destination = Path(destination) / ('srgb' if srgb else 'unorm') if midtone else Path(destination)
+                        destination.mkdir(parents=True, exist_ok=True)
+                        shutil.copy(data / 'companion.bmp', destination / 'companion.bmp')
+                        shutil.copy(data / 'frame.ppm', destination / 'frame.ppm')
+                    require(matching > 2000,
+                            f'Actual companion window did not show display-encoded RGB {display}: {matching}')
+                    print(f'PASS unchanged source bytes and actual display-encoded window pixels: {matching}')
             (data / 'control.retained.continue').touch()
             host_output = host_prefix + host.communicate(timeout=10)[0]
             require(host.returncode == 0, host_output)

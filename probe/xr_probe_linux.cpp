@@ -1064,6 +1064,9 @@ static int runProbe()
         vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
                              nullptr, 1, &barrier);
         VkClearColorValue colors[4] = {{{1, 0, 0, 1}}, {{0, 0, 1, 1}}, {{0, 1, 0, 1}}, {{1, 1, 0, 1}}};
+        if (std::getenv("SIMXR_PROBE_MIDTONE"))
+            colors[0] = {{0.25f, 0.5f, 0.75f, 1.0f}};
+
         if (std::getenv("SIMXR_PROBE_DYNAMIC_COLOR") && frame % 2)
             colors[0] = colors[2];
         for (uint32_t eye = 0; eye < activeViewCount; ++eye)

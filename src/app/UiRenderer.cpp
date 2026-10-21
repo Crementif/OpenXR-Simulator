@@ -1,4 +1,5 @@
 #include "app/UiRenderer.h"
+#include "CompanionSpirv.h"
 #include "app/Window.h"
 
 #include <SDL3/SDL.h>
@@ -8,8 +9,8 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
-#include <fstream>
 #include <filesystem>
+#include <fstream>
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
@@ -26,6 +27,11 @@ void Check(VkResult result)
 {
 	if (result != VK_SUCCESS)
 		throw std::runtime_error("Vulkan operation failed: " + std::to_string(result));
+}
+
+bool IsSrgb(VkFormat format)
+{
+	return format == VK_FORMAT_B8G8R8A8_SRGB || format == VK_FORMAT_R8G8B8A8_SRGB;
 }
 
 VKAPI_ATTR VkBool32 VKAPI_CALL Report(VkDebugUtilsMessageSeverityFlagBitsEXT severity, VkDebugUtilsMessageTypeFlagsEXT,
@@ -320,6 +326,25 @@ struct UiRenderer::Impl
 				ImGui::GetIO().Fonts->AddFontFromFileTTF(font.string().c_str(), 17);
 		}
 		auto& style = ImGui::GetStyle();
+		// Keep controls quiet; reserve accent colors for selection and runtime state.
+		style.Colors[ImGuiCol_WindowBg] = {0.075f, 0.085f, 0.105f, 1};
+		style.Colors[ImGuiCol_PopupBg] = {0.105f, 0.12f, 0.145f, 1};
+		style.Colors[ImGuiCol_Border] = {0.22f, 0.25f, 0.29f, 1};
+		style.Colors[ImGuiCol_FrameBg] = {0.13f, 0.15f, 0.18f, 1};
+		style.Colors[ImGuiCol_FrameBgHovered] = {0.19f, 0.23f, 0.28f, 1};
+		style.Colors[ImGuiCol_FrameBgActive] = {0.22f, 0.29f, 0.35f, 1};
+		style.Colors[ImGuiCol_Button] = {0.16f, 0.19f, 0.23f, 1};
+		style.Colors[ImGuiCol_ButtonHovered] = {0.23f, 0.29f, 0.35f, 1};
+		style.Colors[ImGuiCol_ButtonActive] = {0.18f, 0.40f, 0.48f, 1};
+		style.Colors[ImGuiCol_Header] = {0.14f, 0.18f, 0.22f, 1};
+		style.Colors[ImGuiCol_HeaderHovered] = {0.20f, 0.29f, 0.35f, 1};
+		style.Colors[ImGuiCol_HeaderActive] = {0.18f, 0.40f, 0.48f, 1};
+		style.Colors[ImGuiCol_Tab] = {0.11f, 0.14f, 0.17f, 1};
+		style.Colors[ImGuiCol_TabSelected] = {0.18f, 0.28f, 0.34f, 1};
+		style.Colors[ImGuiCol_TabHovered] = {0.22f, 0.35f, 0.42f, 1};
+		style.Colors[ImGuiCol_TitleBgActive] = {0.12f, 0.17f, 0.21f, 1};
+		style.Colors[ImGuiCol_SliderGrab] = {0.35f, 0.67f, 0.75f, 1};
+		style.Colors[ImGuiCol_CheckMark] = {0.45f, 0.78f, 0.83f, 1};
 		style.WindowPadding = {14, 12};
 		style.FramePadding = {8, 5};
 		style.FrameRounding = 3;
@@ -377,6 +402,10 @@ struct UiRenderer::Impl
 		for (const auto& value : formats)
 			if (value.format == VK_FORMAT_B8G8R8A8_UNORM && value.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
 				selected = value;
+		if (selected.colorSpace != VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+			throw std::runtime_error("The companion requires an sRGB display surface");
+		if (rendererReady && IsSrgb(format) != IsSrgb(selected.format))
+			throw std::runtime_error("Display color encoding changed; reopen the companion for the new surface");
 		format = selected.format;
 		extent = capabilities.currentExtent;
 		if (extent.width == std::numeric_limits<std::uint32_t>::max())
@@ -494,6 +523,10 @@ struct UiRenderer::Impl
 			backend.MinImageCount = static_cast<std::uint32_t>(frames.size());
 			backend.ImageCount = static_cast<std::uint32_t>(frames.size());
 			backend.PipelineInfoMain = pipeline;
+			const bool srgb = IsSrgb(format);
+			backend.CustomShaderFragCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+			backend.CustomShaderFragCreateInfo.codeSize = srgb ? sizeof(shader::srgb) : sizeof(shader::unorm);
+			backend.CustomShaderFragCreateInfo.pCode = srgb ? shader::srgb.data() : shader::unorm.data();
 			if (!ImGui_ImplVulkan_Init(&backend))
 				throw std::runtime_error("ImGui Vulkan initialization failed");
 			rendererReady = true;

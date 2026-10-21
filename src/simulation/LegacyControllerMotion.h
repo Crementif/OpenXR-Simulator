@@ -54,7 +54,7 @@ struct ControllerPoseEdit
 	ControllerHand hand = ControllerHand::Right;
 	XrVector3f position{0.2f, -0.3f, -0.4f};
 	float yaw = 0;
-	float pitch = -0.3f;
+	float pitch = 1.5707963268f;
 	std::chrono::duration<double, std::milli> duration{};
 	double receivedSeconds = 0;
 	std::optional<float> trigger;

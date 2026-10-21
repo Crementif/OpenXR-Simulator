@@ -197,7 +197,11 @@ void SaveAndReplay()
 				script.find("position = {20,") != std::string::npos,
 			"Saved rig omitted its last page or editable values");
 #ifdef SIMXR_TEST_AUTOMATION
-	Replay(host, script, saved.savedSeed);
+	// Reopen from disk as a fresh companion does; replay must recover its original seed.
+	const auto reopened = app::OpenSavedRecording(destination.string());
+	Require(reopened.seed == saved.savedSeed && reopened.path == destination.string(),
+			"Reopening lost recording metadata");
+	Replay(host, Contents(reopened.path), reopened.seed);
 #endif
 }
 void TargetRetirement()

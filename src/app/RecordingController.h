@@ -28,6 +28,9 @@ struct RecordingSnapshot
 	std::string error, savedPath;
 	std::uint64_t savedSeed = 0;
 };
+// Read the metadata of an editable recording without executing its script.
+automation::SavedRecording OpenSavedRecording(const std::string& path);
+
 // One joined worker owns recording control, transport and explicit persistence.
 class RecordingController
 {

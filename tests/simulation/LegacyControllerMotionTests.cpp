@@ -32,12 +32,14 @@ void HeadSpaceAndTimedMoves()
 {
 	LegacyControllerMotion motion;
 	const auto original = motion.Snapshot();
+	const auto pointing = simxr::Rotate(original.hands[1].worldPose.orientation, {0, 0, -1});
+	Near(pointing.y, 1, "Default controller must point upward");
 	Position(original.hands[0].local.position, {-0.2f, -0.3f, -0.4f}, "Left default pose changed");
 	Position(original.hands[1].local.position, {0.2f, -0.3f, -0.4f}, "Right default pose changed");
 	ControllerHeadPose head{{2, 3, 4}, std::numbers::pi_v<float> / 2, 0.7f};
 	const auto rotated = motion.Snapshot(head);
 	Position(rotated.hands[1].worldPose.position, {1.6f, 2.7f, 3.8f}, "Controller offset must rotate by head yaw only");
-	const auto expected = simxr::EulerAngles(head.yaw, head.pitch - 0.3f, 0);
+	const auto expected = simxr::EulerAngles(head.yaw, head.pitch + 1.5707963268f, 0);
 	Near(rotated.hands[1].worldPose.orientation.x, expected.x, "Controller pitch did not follow head pitch");
 	Near(rotated.hands[1].worldPose.orientation.z, expected.z, "Controller orientation order changed");
 
@@ -57,7 +59,7 @@ void HeadSpaceAndTimedMoves()
 	result = motion.Update(Frame(1.5));
 	Position(result.snapshot.hands[1].local.position, {0.7f, -0.2f, -0.5f}, "Glide midpoint is not linear");
 	Near(result.snapshot.hands[1].local.yaw, 0.5f, "Glide yaw midpoint changed");
-	Near(result.snapshot.hands[1].local.pitch, -0.05f, "Glide pitch midpoint changed");
+	Near(result.snapshot.hands[1].local.pitch, (1.5707963268f + 0.2f) / 2, "Glide pitch midpoint changed");
 	result = motion.Update(Frame(2.5));
 	Position(result.snapshot.hands[1].local.position, frame.pose->position, "Glide did not clamp at its endpoint");
 	Position(original.hands[1].local.position, {0.2f, -0.3f, -0.4f}, "A copied observation changed after update");

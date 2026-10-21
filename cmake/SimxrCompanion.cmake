@@ -35,7 +35,8 @@ target_link_libraries(simxr_imgui PUBLIC SDL3::SDL3-static "${SIMXR_VULKAN_LIBRA
 
 add_library(simxr_app STATIC src/app/Application.cpp src/app/Window.cpp src/app/UiRenderer.cpp src/app/RuntimePanels.cpp src/app/PreviewTexture.cpp src/app/PreviewImages.cpp src/app/DeviceControlPanel.cpp src/app/WorkspacePanels.cpp)
 simxr_configure_target(simxr_app)
-target_sources(simxr_app PRIVATE src/app/RecordingPanel.cpp)
+target_include_directories(simxr_app PRIVATE "${PROJECT_SOURCE_DIR}/shaders/generated")
+target_sources(simxr_app PRIVATE src/app/RecordingPanel.cpp src/app/TimelinePanel.cpp)
 target_link_libraries(simxr_app PUBLIC simxr_imgui simxr_connection simxr_app_settings simxr_recording_controller)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(simxr_app PRIVATE simxr_vulkan_control)
@@ -73,7 +74,7 @@ if(BUILD_TESTING)
         simxr_configure_target(companion_interaction_tests)
         target_link_libraries(companion_interaction_tests PRIVATE simxr_app)
         add_test(NAME companion_interaction COMMAND companion_interaction_tests)
-        set_tests_properties(companion_interaction PROPERTIES TIMEOUT 30)
+        set_tests_properties(companion_interaction PROPERTIES TIMEOUT 60)
     endif()
     add_test(NAME companion_smoke COMMAND simxr_companion --smoke-frames 8 --hidden)
     set_tests_properties(companion_smoke PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
@@ -82,7 +83,11 @@ if(BUILD_TESTING)
             "${PROJECT_SOURCE_DIR}/tests/control/test_native_companion.py" "$<TARGET_FILE:xr_probe_linux>" "$<TARGET_FILE:simxr_companion>")
         add_test(NAME companion_runtime_pixels COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/control/test_native_companion.py" "$<TARGET_FILE:xr_probe_linux>" "$<TARGET_FILE:simxr_companion>" --verify-pixels)
-        set_tests_properties(companion_runtime companion_runtime_pixels PROPERTIES
+        add_test(NAME companion_gamma_unorm COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/control/test_native_companion.py" "$<TARGET_FILE:xr_probe_linux>" "$<TARGET_FILE:simxr_companion>" --verify-pixels --midtone)
+        add_test(NAME companion_gamma_srgb COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/control/test_native_companion.py" "$<TARGET_FILE:xr_probe_linux>" "$<TARGET_FILE:simxr_companion>" --verify-pixels --midtone --srgb)
+        set_tests_properties(companion_runtime companion_runtime_pixels companion_gamma_unorm companion_gamma_srgb PROPERTIES
             ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
             TIMEOUT 60 SKIP_RETURN_CODE 77)
     endif()

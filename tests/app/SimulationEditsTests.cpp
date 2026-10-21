@@ -1,8 +1,11 @@
 #include "../TestSupport.h"
+#include "Math.h"
 #include "app/SimulationEdits.h"
 #include "control/ControlSchema.h"
 #include "control/SimulationControl.h"
 #include "simulation/CommandScheduler.h"
+#include <cmath>
+#include <numbers>
 
 #include <iostream>
 #include <limits>
@@ -67,6 +70,125 @@ void ObservedFrameScheduling()
 	transaction = wire::DecodeSimulationTransaction(packet.message, 55);
 	Require(transaction.target.frame == FrameId{12} && transaction.latePolicy == CommandLatePolicy::Reject,
 			"Explicit edit target and late policy were overwritten by observation");
+}
+void DirectPiloting()
+{
+	CommandScheduler scheduler;
+	scheduler.Start();
+	Apply(scheduler, 1);
+	PoseSample origin;
+	origin.flags = TrackedPoseFlags;
+	origin.pose.position = {2, 1.7f, -4};
+	origin.pose.orientation = EulerAngles(-std::numbers::pi_v<float> / 2, 0, 0);
+	app::ManualTransaction edit;
+	edit.commands = {TakeControl{ControlChannel::Head},		 SetHeadPose{origin},
+					 TakeControl{ControlChannel::LeftPose},	 SetControllerPose{0, {origin, true}},
+					 TakeControl{ControlChannel::RightPose}, SetControllerPose{1, {origin, false}}};
+	auto transaction =
+		wire::DecodeSimulationTransaction(app::EncodeSimulationEdit(edit, 1, 1, 1, Observation(scheduler)).message, 55);
+	Require(scheduler.Submit(std::move(transaction)).result == CommandResult::Queued,
+			"Initial pilot pose was rejected");
+	Apply(scheduler, 2);
+	const auto state = Observation(scheduler);
+	const auto observed = app::ObservedDevicePose(state, ControlChannel::Head);
+	Require(observed.pose.position.x == 2 && observed.pose.position.z == -4, "Piloting jumped to a default pose");
+	Require(app::ObservedDevicePose(state, ControlChannel::LeftPose).pose.position.x == 2,
+			"Hand piloting read the wrong pose");
+	Rejected(
+		[&]
+		{
+			app::ObservedDevicePose(state, ControlChannel::RightPose);
+		});
+	const auto moved = app::PilotPose(observed, {0, 0, -1}, 0, 0, 0.02f);
+	Require(std::abs(moved.pose.position.x - 2.02f) < 0.0001f && std::abs(moved.pose.position.z + 4) < 0.0001f,
+			"Forward piloting ignored the device orientation");
+	const auto fast = app::PilotPose(observed, {0, 0, -1}, 0, 0, 0.02f, 3);
+	Require(std::abs(fast.pose.position.x - 2.06f) < 0.0001f, "Speed modifier depends on frame rate");
+	const auto stalled = app::PilotPose(observed, {0, 0, -1}, 0, 0, 10);
+	Require(stalled.pose.position.x <= 2.051f, "A UI stall teleported the device");
+	const auto rotated = app::PilotPose(observed, {}, 0, 100, 0.02f);
+	Require(NormalizedPose(rotated.pose).has_value() && Rotate(rotated.pose.orientation, {0, 0, -1}).y < 1,
+			"Pointer motion flipped or invalidated the device pose");
+}
+void PreserveObservedConfiguration()
+{
+	CommandConfiguration initial;
+	initial.views.ipd = 0.071f;
+	initial.views.outerWidth = 1728;
+	initial.views.insetHeight = 640;
+	initial.views.outerFov[1].angleRight = 0.61f;
+	initial.input.preferredProfiles[1] = "/interaction_profiles/valve/index_controller";
+	initial.input.controllers[0].gripForce = 0.63f;
+	initial.input.controllers[0].thumbrestTouch = true;
+	initial.input.controllers[0].trackpad = {0.3f, -0.2f};
+	initial.tracking.body.controls[0].offset = XrVector3f{0.1f, 0.2f, 0.3f};
+	initial.tracking.body.joints[3] = BodyJointOverride{XrPosef{{0, 0, 0, 1}, {0.2f, 1.2f, 0}}, false};
+	initial.tracking.trackers[2].anchor = BodyJoint::Hips;
+	initial.tracking.trackers[2].poseOverride = XrPosef{{0, 0, 0, 1}, {0.1f, 1.4f, -0.5f}};
+	CommandScheduler scheduler;
+	scheduler.Start(0, initial);
+	Apply(scheduler, 1);
+	const auto state = Observation(scheduler);
+	const auto observed = app::ReadObservedSetup(state);
+	Require(observed.bodyOverridesAvailable && observed.trackerAttachmentsAvailable,
+			"Hidden configuration is not exposed for safe editing");
+	Require(observed.values.input.preferredProfiles == initial.input.preferredProfiles,
+			"Controller profiles were replaced by a shared default");
+	auto views = observed.values.views;
+	views.ipd = 0.067f;
+	auto tracker = observed.values.tracking.trackers[2];
+	tracker.role = TrackerRole::Camera;
+	auto body = observed.values.tracking.body;
+	body.preset = BodyPreset::Seated;
+	auto controls = observed.values.input.controllers[0];
+	controls.primary = true;
+	app::ManualTransaction edit;
+	edit.commands = {TakeControl{ControlChannel::Views},		SetViewSettings{views},
+					 TakeControl{ControlChannel::Trackers},		SetTracker{2, tracker},
+					 TakeControl{ControlChannel::Body},			SetBodyControls{body},
+					 TakeControl{ControlChannel::LeftControls}, SetControllerControls{0, controls}};
+	const auto packet = app::EncodeSimulationEdit(edit, 1, 1, 1, state);
+	scheduler.Submit(wire::DecodeSimulationTransaction(packet.message, 55));
+	const auto applied = Apply(scheduler, 2);
+	Require(applied->outcomes.back().result == CommandResult::Applied, "Observed configuration edit did not apply");
+	const auto& result = applied->configuration;
+	Require(result.views.ipd == 0.067f && result.views.outerWidth == 1728 && result.views.insetHeight == 640 &&
+				result.views.outerFov[1].angleRight == 0.61f,
+			"IPD edit reset hidden view settings");
+	Require(result.tracking.trackers[2].role == TrackerRole::Camera &&
+				result.tracking.trackers[2].anchor == BodyJoint::Hips &&
+				result.tracking.trackers[2].poseOverride->position.z == -0.5f,
+			"Tracker role edit reset its attachment or pose");
+	Require(result.tracking.body.preset == BodyPreset::Seated && result.tracking.body.controls[0].offset->y == 0.2f &&
+				result.tracking.body.joints[3]->pose->position.y == 1.2f && !result.tracking.body.joints[3]->tracked,
+			"Body preset edit reset joint overrides");
+	Require(result.input.controllers[0].primary && result.input.controllers[0].thumbrestTouch &&
+				result.input.controllers[0].gripForce == 0.63f && result.input.controllers[0].trackpad.x == 0.3f,
+			"Button edit reset unexposed inputs");
+	Require(result.input.preferredProfiles == initial.input.preferredProfiles,
+			"An unrelated edit changed controller profiles");
+
+	for (const bool enabled : {true, false})
+	{
+		edit.commands = {TakeControl{app::ScenarioInputChannel(FailureScenario::HeadUntracked)},
+						 SetScenario{FailureScenario::HeadUntracked, enabled}};
+		scheduler.Submit(wire::DecodeSimulationTransaction(
+			app::EncodeSimulationEdit(edit, 1, 1, enabled ? 2 : 3, Observation(scheduler)).message, 55));
+		Apply(scheduler, enabled ? 3 : 4);
+		const auto after = Observation(scheduler);
+		Require(app::ReadObservedSetup(after).scenarios[static_cast<std::size_t>(FailureScenario::HeadUntracked)] ==
+					enabled,
+				"Scenario state did not follow activation/recovery");
+		if (enabled)
+			Rejected(
+				[&]
+				{
+					app::ObservedDevicePose(after, ControlChannel::Head);
+				});
+		else
+			Require(app::ObservedDevicePose(after, ControlChannel::Head).flags == TrackedPoseFlags,
+					"Recovery did not restore tracking");
+	}
 }
 void FirstPublicationAndStateFailures()
 {
@@ -133,6 +255,8 @@ int main()
 	try
 	{
 		ObservedFrameScheduling();
+		DirectPiloting();
+		PreserveObservedConfiguration();
 		FirstPublicationAndStateFailures();
 		std::cout << "PASS simulation edits\n";
 		return 0;
