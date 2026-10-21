@@ -141,6 +141,29 @@ void FileWorkerAndChunkValidation()
 		Require(result->status == app::ImageExportWriteResult::Status::Saved &&
 					Read(directory / "exact.rgba") == expected,
 				"Export worker changed RGBA bytes");
+		const app::ImageExportMetadata metadata{7, 8, 9, 10, 1, 1, 1, 37, 2, 3, 4};
+		Require(writer.Save(PathString(directory / "frame.ppm"), expected, metadata), "Admit viewable image");
+		Eventually([&] { result = writer.TakeResult(); return result.has_value(); }, "PPM write did not settle");
+		const auto ppm = Read(directory / "frame.ppm");
+		const std::string header = "P6\n# session=7 generation=8 frame=9 capture=10\n"
+			"# target=2 layer=3 view=4 slices=1 slice_height=1 format=37 alpha=omitted\n1 1\n255\n";
+		Require(result->status == app::ImageExportWriteResult::Status::Saved && ppm.size() == header.size() + 3 &&
+			std::equal(header.begin(), header.end(), reinterpret_cast<const char*>(ppm.data())) &&
+			std::equal(expected.begin(), expected.begin() + 3, ppm.begin() + header.size()),
+			"Viewable export lost exact RGB, dimensions or frame/target identity");
+		bool rejected = false;
+		try
+		{
+			auto wrong = metadata;
+			wrong.width = 2;
+			writer.Save(PathString(directory / "bad.ppm"), expected, wrong);
+		}
+		catch (const std::invalid_argument&)
+		{
+			rejected = true;
+		}
+		Require(rejected && !std::filesystem::exists(directory / "bad.ppm"),
+			"Mismatched image dimensions wrote a misleading artifact");
 		const auto unicode = directory / app::Utf8Path("目-étude.rgba");
 		Require(writer.Save(PathString(unicode), expected), "Admit UTF-8 destination");
 		Eventually(

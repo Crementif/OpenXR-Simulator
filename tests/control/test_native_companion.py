@@ -48,7 +48,7 @@ def main():
                     return 77
                 arguments = [sys.argv[2], '--connect', str(path), '--runtime-smoke', '--hidden', '--validation']
                 if pixels:
-                    arguments += ['--export', str(data / 'raw.rgba'), '--screenshot', str(data / 'companion.bmp')]
+                    arguments += ['--export', str(data / 'frame.ppm'), '--screenshot', str(data / 'companion.bmp')]
                 companion = subprocess.Popen(arguments, env=environment, stdout=subprocess.PIPE,
                                              stderr=subprocess.STDOUT)
                 output = ''
@@ -88,8 +88,12 @@ def main():
                 require((data / 'control.destroyed').exists(), 'Companion finished before actual application-device teardown')
                 require(not observer.sessions(), 'Public XR sessions survived teardown')
                 if pixels:
-                    require((data / 'raw.rgba').read_bytes() == b'\xff\x00\x00\xff' * (64 * 48),
-                            'Explicit companion export substituted pixels')
+                    ppm = (data / 'frame.ppm').read_bytes()
+                    header, rgb = ppm.split(b'\n255\n', 1)
+                    require(header.startswith(b'P6\n# session=') and b'frame=4 capture=' in header and
+                            b'target=2 layer=0 view=0 slices=1 slice_height=48' in header and
+                            header.endswith(b'\n64 48') and rgb == b'\xff\x00\x00' * (64 * 48),
+                            'Viewable companion export lost pixels, frame identity or dimensions')
                     screenshot = (data / 'companion.bmp').read_bytes()
                     require(screenshot[:2] == b'BM', 'Companion screenshot missing')
                     offset = struct.unpack_from('<I', screenshot, 10)[0]
@@ -99,7 +103,7 @@ def main():
                     if destination := os.getenv('SIMXR_COMPANION_QA_OUTPUT'):
                         Path(destination).mkdir(parents=True, exist_ok=True)
                         shutil.copy(data / 'companion.bmp', Path(destination) / 'companion.bmp')
-                        shutil.copy(data / 'raw.rgba', Path(destination) / 'raw.rgba')
+                        shutil.copy(data / 'frame.ppm', Path(destination) / 'frame.ppm')
                     require(red > 2000, f'Actual companion window did not display retained raw red pixels: {red}')
                     print(f'PASS explicit source bytes and actual window pixels: red={red}')
             (data / 'control.retained.continue').touch()

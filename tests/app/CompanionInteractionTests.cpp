@@ -147,6 +147,71 @@ class Interaction
 };
 
 #ifdef __linux__
+void CheckDebuggerWorkflow(const char* endpoint)
+{
+	const auto destination = std::getenv("SIMXR_DEBUG_QA_DIRECTORY");
+	Require(destination, "Debugger QA requires a new private output directory");
+	const std::filesystem::path directory(destination);
+	Require(directory.is_absolute() && std::filesystem::create_directory(directory), "Debugger output must be new");
+	Require(::setenv("SIMXR_COMPANION_SETTINGS", (directory / "companion.settings").c_str(), 1) == 0,
+			"Isolate debugger settings");
+	Interaction test(true);
+	test.runtime.ConnectEndpoint(endpoint);
+	const auto wait = [&](const auto& ready, const char* failure)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+		do
+		{
+			test.Frame();
+			if (std::chrono::steady_clock::now() >= deadline)
+			{
+				const auto state = test.runtime.Snapshot();
+				throw std::runtime_error(std::string(failure) + ": " + state.phase + "/" + state.progress + " " + state.error);
+			}
+		} while (!ready(test.runtime.Snapshot()));
+	};
+	wait([](const auto& state) { return state.selectedReady; }, "Debugger did not attach live output");
+	test.SelectWorkspace(WorkspaceMode::Debug);
+	test.runtime.SetLive(false);
+	test.runtime.Command(simxr::control::CommandKind::Pause);
+	wait([](const auto& state) { return !state.operationPending && state.progress == "paused"; }, "Pause failed");
+	test.runtime.Command(simxr::control::CommandKind::StrictAdmission);
+	wait([](const auto& state) { return !state.operationPending && state.progress == "issued" && state.selectedReady &&
+		state.selectedImageCapture == state.selectedCapture; },
+		"One admitted frame did not produce a retained image");
+	const auto exact = test.runtime.Snapshot();
+	test.runtime.InspectSelected();
+	wait([&](const auto& state) { return state.inspectedFrame == exact.selectedFrame; }, "Exact state inspection failed");
+	test.runtime.RequestExport((directory / "composed.ppm").string());
+	wait([&](const auto& state) { return !state.pending && std::filesystem::exists(directory / "composed.ppm"); },
+		"Composed export failed");
+	test.renderer.RequestScreenshot((directory / "inspected.bmp").string());
+	test.Frame();
+	test.runtime.Command(simxr::control::CommandKind::StrictAdmission, 0, true, 0, 0);
+	wait([&](const auto& state) { return !state.operationPending && state.selectedFrame > exact.selectedFrame &&
+		state.selectedReady && state.selectedLayers == 1 && state.selectedImageCapture == state.selectedCapture; }, "Selected layer view did not produce a retained image");
+	const auto raw = test.runtime.Snapshot();
+	Require(raw.selectedFrame == exact.selectedFrame + 1, "Strict step admitted more than one frame");
+	test.runtime.RequestExport((directory / "layer.ppm").string());
+	wait([&](const auto& state) { return !state.pending && std::filesystem::exists(directory / "layer.ppm"); },
+		"Layer export failed");
+	for (const auto capture : test.runtime.CaptureIds())
+		test.runtime.Command(simxr::control::CommandKind::Release, capture);
+	wait([](const auto& state) { return !state.operationPending; }, "Capture release failed");
+	test.runtime.Command(simxr::control::CommandKind::Resume);
+	test.runtime.SetLive(true);
+	wait([&](const auto& state) { return !state.operationPending && !state.manual && state.selectedFrame > raw.selectedFrame; },
+		"Resume did not restore advancing live output");
+	test.renderer.RequestScreenshot((directory / "resumed.bmp").string());
+	test.Frame();
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Debugger workflow reported Vulkan validation errors");
+	std::ofstream(directory / "frames.txt") << "composed=" << exact.selectedFrame << " layer=" << raw.selectedFrame
+		<< " inspected=" << exact.selectedFrame << " resumed=" << test.runtime.Snapshot().selectedFrame << '\n';
+	std::cout << "PASS production pause/strict-step/inspect/composed-and-layer-export/resume: frame "
+		<< exact.selectedFrame << " -> " << raw.selectedFrame << '\n';
+}
+
 void CheckToolbarLaunch(const char* executable)
 {
 	const auto directoryValue = std::getenv("SIMXR_LAUNCH_QA_DIRECTORY");
@@ -244,6 +309,11 @@ int main()
 	{
 
 #ifdef __linux__
+		if (const auto endpoint = std::getenv("SIMXR_DEBUG_QA_ENDPOINT"))
+		{
+			CheckDebuggerWorkflow(endpoint);
+			return 0;
+		}
 		if (const auto executable = std::getenv("SIMXR_LAUNCH_QA_EXECUTABLE"))
 		{
 			CheckToolbarLaunch(executable);

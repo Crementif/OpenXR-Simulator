@@ -1,6 +1,9 @@
 #include "app/ImageExportTask.h"
 #include "app/Utf8Path.h"
+#include "control/ImageInspection.h"
 
+#include <algorithm>
+#include <array>
 #include <cstdio>
 #include <utility>
 
@@ -9,6 +12,31 @@ namespace simxr::app
 namespace wire = control;
 namespace tag = wire::tag;
 using namespace panel;
+namespace
+{
+bool WritePpm(std::FILE* file, const ImageExportMetadata& image, std::span<const std::byte> rgba) noexcept
+{
+	const auto height = static_cast<std::uint64_t>(image.height) * image.slices;
+	if (std::fprintf(file, "P6\n# session=%llu generation=%llu frame=%llu capture=%llu\n"
+		"# target=%u layer=%u view=%u slices=%u slice_height=%u format=%u alpha=omitted\n%u %llu\n255\n",
+		static_cast<unsigned long long>(image.session), static_cast<unsigned long long>(image.generation),
+		static_cast<unsigned long long>(image.frame), static_cast<unsigned long long>(image.capture),
+		image.target, image.layer, image.view, image.slices, image.height, image.format, image.width,
+		static_cast<unsigned long long>(height)) < 0)
+		return false;
+	std::array<std::byte, 12288> rgb;
+	for (std::size_t offset = 0; offset < rgba.size();)
+	{
+		const auto pixels = std::min(rgb.size() / 3, (rgba.size() - offset) / 4);
+		for (std::size_t pixel = 0; pixel < pixels; ++pixel)
+			std::copy_n(rgba.data() + offset + pixel * 4, 3, rgb.data() + pixel * 3);
+		if (std::fwrite(rgb.data(), 3, pixels, file) != pixels)
+			return false;
+		offset += pixels * 4;
+	}
+	return true;
+}
+} // namespace
 ImageExportWriter::ImageExportWriter()
 	: m_worker(
 		  [this]
@@ -26,16 +54,29 @@ ImageExportWriter::~ImageExportWriter()
 	m_changed.notify_all();
 	m_worker.join();
 }
-bool ImageExportWriter::Save(std::string path, std::vector<std::byte> bytes)
+bool ImageExportWriter::Save(std::string path, std::vector<std::byte> bytes, ImageExportMetadata metadata)
 {
 	if (path.empty() || path.find('\0') != std::string::npos || bytes.size() > 512ULL * 1024 * 1024)
 		throw std::invalid_argument("Invalid explicit export destination or byte capacity");
 	// Native path conversion can allocate or fail; finish it before admission.
 	auto destination = Utf8Path(path);
+	const bool ppm = destination.extension() == ".ppm";
+	if (ppm)
+	{
+		// Division avoids overflow from untrusted dimensions before any file is opened.
+		if (!metadata.width || !metadata.height || !metadata.slices || !metadata.session ||
+			!metadata.generation || !metadata.frame || bytes.size() % 4 ||
+			bytes.size() / 4 / metadata.width / metadata.height != metadata.slices ||
+			static_cast<std::uint64_t>(metadata.width) * metadata.height * metadata.slices != bytes.size() / 4 ||
+			(metadata.format != 37 && metadata.format != 43))
+			throw std::invalid_argument("PPM export requires an exact RGBA8 image and frame identity");
+	}
+	else if (destination.extension() != ".rgba")
+		throw std::invalid_argument("Use .ppm for a viewable image or .rgba for exact bytes");
 	std::lock_guard lock(m_mutex);
 	if (m_stopping || m_busy)
 		return false;
-	m_job.emplace(Job{std::move(path), std::move(destination), std::move(bytes)});
+	m_job.emplace(Job{std::move(path), std::move(destination), std::move(bytes), metadata, ppm});
 	m_busy = true;
 	m_result.reset();
 	m_changed.notify_all();
@@ -78,9 +119,10 @@ void ImageExportWriter::Run() noexcept
 #endif
 		if (file)
 		{
-			const auto written = std::fwrite(job->bytes.data(), 1, job->bytes.size(), file);
+			const bool written = job->ppm ? WritePpm(file, job->metadata, job->bytes)
+				: std::fwrite(job->bytes.data(), 1, job->bytes.size(), file) == job->bytes.size();
 			const auto closed = std::fclose(file);
-			status = written == job->bytes.size() && !closed ? ImageExportWriteResult::Status::Saved
+			status = written && !closed ? ImageExportWriteResult::Status::Saved
 															 : ImageExportWriteResult::Status::WriteFailed;
 		}
 		std::lock_guard lock(m_mutex);
@@ -102,6 +144,7 @@ void ImageExportTask::ResetEpoch()
 	m_id = m_offset = m_size = 0;
 	m_requested = false;
 	m_bytes.clear();
+	m_metadata = {};
 }
 bool ImageExportTask::Request(std::uint64_t reader, std::string path)
 {
@@ -142,6 +185,15 @@ bool ImageExportTask::Handle(const PanelTask& task, const wire::Message& message
 			m_id = U64(message, tag::ExportId);
 			m_size = U64(message, tag::TotalBytes);
 			m_offset = 0;
+			m_metadata = {};
+			if (const auto description = message.Find(tag::ImageDescriptor))
+			{
+				const auto image = wire::DecodeImageDescription(*description);
+				const auto target = Nested(message.Find(tag::Target));
+				m_metadata = {U64(message, tag::Session), U64(message, tag::Generation), Frame(message),
+					U64(message, tag::CaptureId), image.width, image.height, image.arrayLayers, image.format,
+					U32(target, tag::CaptureKind), U32(target, tag::Layer), U32(target, tag::View)};
+			}
 			if (!m_id || !m_size || m_size > 512ULL * 1024 * 1024)
 				throw std::runtime_error("Runtime export exceeds the exact image byte capacity");
 			m_bytes.clear();
@@ -177,10 +229,10 @@ bool ImageExportTask::Handle(const PanelTask& task, const wire::Message& message
 			m_offset = next;
 			if (next == m_size)
 			{
-				if (!m_writer.Save(m_path, std::move(m_bytes)))
+				if (!m_writer.Save(m_path, std::move(m_bytes), m_metadata))
 					throw std::runtime_error("Explicit image file worker is already occupied");
 				ReleaseRemote();
-				m_detail = "Writing exact RGBA bytes";
+				m_detail = "Writing captured image";
 			}
 		}
 	}
@@ -199,7 +251,8 @@ void ImageExportTask::Poll()
 		switch (result->status)
 		{
 		case ImageExportWriteResult::Status::Saved:
-			m_detail = "Saved exact RGBA bytes to " + result->path;
+			m_detail = (Utf8Path(result->path).extension() == ".ppm" ? "Saved viewable image with frame identity to "
+				: "Saved exact RGBA bytes to ") + result->path;
 			break;
 		case ImageExportWriteResult::Status::OpenFailed:
 			m_detail = "Cannot open image export destination";

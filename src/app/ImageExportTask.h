@@ -12,6 +12,12 @@ namespace simxr::app
 {
 // Bounded single-job file worker. It owns only explicit CPU export bytes, never
 // native resources or control handles, and performs all file I/O off the UI.
+struct ImageExportMetadata
+{
+	std::uint64_t session = 0, generation = 0, frame = 0, capture = 0;
+	std::uint32_t width = 0, height = 0, slices = 0, format = 0;
+	std::uint32_t target = 0, layer = 0, view = 0;
+};
 struct ImageExportWriteResult
 {
 	enum class Status
@@ -28,7 +34,7 @@ class ImageExportWriter
   public:
 	ImageExportWriter();
 	~ImageExportWriter();
-	bool Save(std::string path, std::vector<std::byte> bytes);
+	bool Save(std::string path, std::vector<std::byte> bytes, ImageExportMetadata metadata = {});
 	bool Busy() const;
 	std::optional<ImageExportWriteResult> TakeResult();
 
@@ -38,6 +44,8 @@ class ImageExportWriter
 		std::string path;
 		std::filesystem::path destination;
 		std::vector<std::byte> bytes;
+		ImageExportMetadata metadata;
+		bool ppm = false;
 	};
 	void Run() noexcept;
 	mutable std::mutex m_mutex;
@@ -70,5 +78,6 @@ class ImageExportTask
 	bool m_requested = false;
 	std::vector<std::byte> m_bytes;
 	std::string m_path, m_detail;
+	ImageExportMetadata m_metadata;
 };
 } // namespace simxr::app
