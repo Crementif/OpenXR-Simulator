@@ -1,0 +1,51 @@
+#pragma once
+
+#include "simulation/CommandRecorder.h"
+#include "simulation/CommandState.h"
+#include <deque>
+#include <mutex>
+
+namespace simxr
+{
+class CommandScheduler
+{
+  public:
+	explicit CommandScheduler(std::size_t pendingCapacity = 128, std::size_t historyCapacity = 256);
+	void Start(std::uint64_t seed = 0, std::optional<CommandConfiguration> initial = {});
+	void Close();
+	CommandOutcome Submit(CommandTransaction transaction);
+	std::optional<CommandOutcome> Read(CommandSource source, std::uint64_t id) const;
+	CommandSchedulerSnapshot Snapshot() const;
+	CommandResult Cancel(CommandSource source, std::uint64_t id);
+	std::array<bool, ControlChannelCount> ReleaseSource(CommandSource source, bool retire = false);
+	// One commit per increasing frame; later native publications use Merge only.
+	// reserve runs while command admission is locked. It may inspect the recorder,
+	// but must not reenter this scheduler or mutate recording. It must complete all
+	// throwing external allocation before its own publication/acceptance.
+	std::shared_ptr<const AppliedCommandSnapshot>
+	Apply(FrameId frame, SimulationTime time, RuntimeTime runtimeTime, const CommandConfiguration& baseline,
+		  const std::function<void(const std::shared_ptr<const AppliedCommandSnapshot>&)>& reserve = {});
+	CommandConfiguration Merge(const CommandConfiguration& baseline) const;
+	std::shared_ptr<const AppliedCommandSnapshot> At(FrameId frame) const;
+	// Capture origin and start recording under command admission serialization.
+	void StartRecording(const CommandConfiguration& baseline, const ReferenceSpaceState& spaces);
+	CommandRecorder& Recorder();
+
+  private:
+	class PreparedCommandBoundary;
+	struct SourceCursor
+	{
+		CommandSource source;
+		std::uint64_t last = 0;
+	};
+	const std::size_t m_pendingCapacity, m_historyCapacity;
+	mutable std::mutex m_mutex;
+	bool m_closed = false;
+	std::uint64_t m_seed = 0, m_revision = 0;
+	CommandState m_state;
+	std::deque<CommandOutcome> m_pending, m_outcomes;
+	std::vector<SourceCursor> m_sources;
+	std::deque<std::shared_ptr<const AppliedCommandSnapshot>> m_applied;
+	CommandRecorder m_recorder;
+};
+} // namespace simxr

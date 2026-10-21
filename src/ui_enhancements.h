@@ -1,8 +1,10 @@
 // UI Enhancements for OpenXR Simulator
 // Provides dark theme, menu system, and view controls
 #pragma once
+#include "simulation/HeadsetProfiles.h"
 
 #include <windows.h>
+#include <cstdint>
 #include <dwmapi.h>
 #include <string>
 #include <functional>
@@ -11,17 +13,13 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
-#include <atomic>
 
 #include "json.h"
-#include "preview_title.h"
 
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "uxtheme.lib")
 
 namespace ui {
-
-inline preview_title::Mailbox g_previewTitle;
 
 // Menu command IDs
 enum MenuCommand {
@@ -65,8 +63,6 @@ enum MenuCommand {
     ID_TOOLS_SCREENSHOT = 1401,
     ID_TOOLS_RESET_VIEW = 1402,
     ID_TOOLS_TOGGLE_STATS = 1403,
-    ID_TOOLS_FRAME_TIMING = 1404,
-    ID_TOOLS_GPU_TIMING = 1405,
 
     // Help
     ID_HELP_CONTROLS = 1501,
@@ -151,8 +147,10 @@ struct UIState {
     // Zoom scales the image inside the window; it never changes the application's render
     // resolution. zoomLevel is an absolute content scale (1.0 = one panel pixel per screen
     // pixel) and pan offsets the scaled image from centred, in client pixels. With
-    // fitToWindow set, the compositor stretches the image to the entire client area so a
-    // low or supersampled source occupies the same screen space.
+    // fitToWindow set, the compositor scales the image up or down until it just fits the
+    // client area, so a low or supersampled source occupies the same screen space. The
+    // scale stays uniform and the leftover client area is left black: a window the user
+    // dragged to some other shape must not be reported back as a squeezed render.
     float zoomLevel = 1.0f;
     bool fitToWindow = true;
     float panX = 0.0f;
@@ -193,28 +191,6 @@ inline UIState g_uiState;
 // blanking it until the next tick.
 inline int g_lastFps = 0;
 
-// Tools > Frame Timing (F4). Set by the runtime, which knows where the viewer lives.
-inline void (*g_openFrameTiming)() = nullptr;
-
-// Tools > GPU Timing: GPU timestamps around each frame on the app's queue, for the
-// frame timeline. Saved with the settings; the runtime reads it as each frame
-// begins. Outside UIState because only the runtime's frame calls use it.
-inline std::atomic<bool> g_gpuTiming{true};
-
-// OPENXR_SIM_GPU_TIMING=0/1 overrides the menu for scripted runs: -1 when unset.
-inline int GpuTimingForced() {
-    static const int forced = [] {
-        const char* value = getenv("OPENXR_SIM_GPU_TIMING");
-        return value && *value ? (atoi(value) != 0 ? 1 : 0) : -1;
-    }();
-    return forced;
-}
-
-inline bool GpuTimingOn() {
-    const int forced = GpuTimingForced();
-    return forced >= 0 ? forced != 0 : g_gpuTiming.load();
-}
-
 // Everything that varies per headset, in one table.
 //
 // panelWidth/panelHeight is the native per-eye panel resolution: the shape the preview
@@ -227,43 +203,9 @@ inline bool GpuTimingOn() {
 // (https://risa2000.github.io/hmdgdb/), which records what each headset's runtime
 // actually reports. Real hardware is not exactly mirrored, so each eye carries its own
 // measured values rather than one being derived from the other.
-struct EyeFov {
-    float angleLeft, angleRight, angleUp, angleDown;
-};
-
-struct HeadsetSpec {
-    const char*    id;          // settings key and MCP set_headset_profile name
-    const wchar_t* shortName;   // title bar
-    const wchar_t* menuLabel;
-    uint32_t       panelWidth;
-    uint32_t       panelHeight;
-    int            ipdMm;       // nominal default, not the database's per-session value
-    EyeFov         eye[2];      // [0] = left, [1] = right
-};
-
-// GenericSymmetric takes its FOV from g_uiState.fovDegrees, so its angles are unused.
-inline constexpr HeadsetSpec kHeadsetSpecs[] = {
-    { "generic",  L"Generic",    L"&Generic Symmetric", 1440, 1440, 64,
-      {{   0.00f,  0.00f,  0.00f,   0.00f }, {   0.00f,  0.00f,  0.00f,   0.00f }} },
-    { "quest2",   L"Quest 2",    L"Meta Quest &2",      1832, 1920, 64,
-      {{ -52.00f, 45.00f, 48.00f, -50.00f }, { -45.00f, 52.00f, 48.00f, -50.00f }} },
-    { "quest3",   L"Quest 3",    L"Meta Quest &3",      2064, 2208, 64,
-      {{ -54.00f, 40.00f, 43.98f, -54.27f }, { -40.00f, 54.00f, 43.98f, -54.27f }} },
-    { "questpro", L"Quest Pro",  L"Meta Quest &Pro",    1800, 1920, 64,
-      {{ -54.00f, 39.86f, 42.00f, -53.57f }, { -39.86f, 54.00f, 42.00f, -53.57f }} },
-    { "index",    L"Index",      L"Valve &Index",       1440, 1600, 63,
-      {{ -54.00f, 42.98f, 54.63f, -54.52f }, { -42.95f, 54.06f, 54.66f, -54.50f }} },
-    { "vivepro2", L"Vive Pro 2", L"HTC &Vive Pro 2",    2448, 2448, 63,
-      {{ -58.26f, 39.94f, 48.21f, -48.11f }, { -39.89f, 58.26f, 48.44f, -48.20f }} },
-    { "reverbg2", L"Reverb G2",  L"HP &Reverb G2",      2160, 2160, 64,
-      {{ -49.37f, 42.14f, 45.53f, -45.35f }, { -42.17f, 49.48f, 45.78f, -45.05f }} },
-    { "psvr2",    L"PS VR2",     L"&Sony PS VR2",       2000, 2040, 64,
-      {{ -61.50f, 43.45f, 53.04f, -53.04f }, { -43.45f, 61.50f, 53.04f, -53.04f }} },
-    { "pico4",    L"PICO 4",     L"PIC&O 4",            2160, 2160, 64,
-      {{ -52.00f, 52.00f, 52.00f, -52.00f }, { -52.00f, 52.00f, 52.00f, -52.00f }} },
-    { "beyond",   L"Beyond",     L"&Bigscreen Beyond",  2560, 2560, 64,
-      {{ -48.97f, 39.58f, 38.01f, -50.52f }, { -40.02f, 48.56f, 38.13f, -50.43f }} },
-};
+using EyeFov = simxr::HeadsetEyeFov;
+using HeadsetSpec = simxr::HeadsetSpec;
+inline constexpr auto& kHeadsetSpecs = simxr::HeadsetProfileTable;
 
 inline constexpr int kHeadsetProfileCount =
     (int)(sizeof(kHeadsetSpecs) / sizeof(kHeadsetSpecs[0]));
@@ -279,6 +221,26 @@ inline const HeadsetSpec& GetHeadsetSpec(HeadsetProfile profile) {
 
 inline const HeadsetSpec& GetActiveHeadsetSpec() {
     return GetHeadsetSpec(g_uiState.headsetProfile);
+}
+
+// Whether the reported frustum is the profile's measured geometry rather than the
+// symmetric fallback. The generic profile has no geometry of its own, so it stays
+// symmetric even if a stale settings file asks for asymmetry.
+inline bool UsesProfileFov() {
+    return g_uiState.useAsymmetricFov &&
+           g_uiState.headsetProfile != HeadsetProfile::GenericSymmetric;
+}
+
+// Aspect of the reported frustum in tangent space -- the shape of the rectangle it cuts
+// out of a plane, which is what a render target has to match. Both eyes give the same
+// answer: real geometry is asymmetric per eye but mirrored between them.
+inline float ActiveFovAspect() {
+    if (!UsesProfileFov()) return 1.0f;   // equal half-angles all round
+    const EyeFov& e = GetActiveHeadsetSpec().eye[0];
+    const float DEG2RAD = 3.14159265f / 180.0f;
+    const float w = tanf(e.angleRight * DEG2RAD) - tanf(e.angleLeft * DEG2RAD);
+    const float h = tanf(e.angleUp * DEG2RAD) - tanf(e.angleDown * DEG2RAD);
+    return (w > 0.0f && h > 0.0f) ? w / h : 1.0f;
 }
 
 // Index into kHeadsetSpecs, or -1 when `s` names no known profile.
@@ -298,7 +260,8 @@ struct RenderResolutionPreset {
 // These are recommendations, not preview-window sizes. Applications may round them for
 // alignment (BetterVR rounds 2064 to 2080, for example), but choosing a lower entry still
 // directly reduces the render target and depth-buffer cost in applications that follow it.
-// The 0x0 entry follows the active headset profile.
+// The 0x0 entry follows the active headset profile. Only the width of an entry is
+// advertised as written -- GetRenderResolution derives the height from the reported FOV.
 inline constexpr RenderResolutionPreset kRenderResolutionPresets[] = {
     {    0,    0, L"&Headset Native" },
     {  960, 1080, L"&960 x 1080 (Low)" },
@@ -321,25 +284,48 @@ inline bool IsRenderResolutionCommand(int cmd) {
            cmd < ID_RENDER_RESOLUTION_FIRST + kRenderResolutionPresetCount;
 }
 
+inline constexpr int kMinRenderWidth = 320;
+inline constexpr int kMinRenderHeight = 240;
+// Also what xrEnumerateViewConfigurationViews reports as maxImageRect, so nothing we
+// recommend can land outside what we told the application it may ask for.
+inline constexpr int kMaxRenderExtent = 4096;
+
 inline void SetRenderResolution(int width, int height) {
     if (width <= 0 || height <= 0) {
         g_uiState.renderWidth = 0;
         g_uiState.renderHeight = 0;
         return;
     }
-    g_uiState.renderWidth = (std::max)(320, (std::min)(4096, width));
-    g_uiState.renderHeight = (std::max)(240, (std::min)(4096, height));
+    g_uiState.renderWidth = (std::max)(kMinRenderWidth, (std::min)(kMaxRenderExtent, width));
+    g_uiState.renderHeight = (std::max)(kMinRenderHeight, (std::min)(kMaxRenderExtent, height));
 }
 
+// What xrEnumerateViewConfigurationViews advertises. A preset is a pixel budget, not a
+// shape: an application renders the frustum we report into the target we recommend, so
+// the two have to agree on aspect or everything it draws comes out anamorphic -- and
+// nothing downstream can tell that from a deliberate squeeze. Real optics never disagree
+// here because both numbers describe one lens; ours are independent, so the chosen width
+// stands and the height follows the frustum.
 inline void GetRenderResolution(uint32_t& width, uint32_t& height) {
     if (g_uiState.renderWidth > 0 && g_uiState.renderHeight > 0) {
         width = (uint32_t)g_uiState.renderWidth;
         height = (uint32_t)g_uiState.renderHeight;
-        return;
+    } else {
+        const HeadsetSpec& spec = GetActiveHeadsetSpec();
+        width = spec.panelWidth;
+        height = spec.panelHeight;
     }
-    const HeadsetSpec& spec = GetActiveHeadsetSpec();
-    width = spec.panelWidth;
-    height = spec.panelHeight;
+
+    const float aspect = ActiveFovAspect();
+    if (width == 0 || !(aspect > 0.0f)) return;
+
+    long snapped = lroundf((float)width / aspect);
+    if (snapped > kMaxRenderExtent) {
+        // Losing some width beats recommending a target past our own maxImageRect.
+        width = (uint32_t)lroundf((float)kMaxRenderExtent * aspect);
+        snapped = kMaxRenderExtent;
+    }
+    height = (uint32_t)(std::max)(1L, snapped);
 }
 
 inline int GetRenderResolutionPresetIndex() {
@@ -350,10 +336,17 @@ inline int GetRenderResolutionPresetIndex() {
     return -1;
 }
 
-inline void GetHeadsetPanelResolution(uint32_t& width, uint32_t& height) {
+// The shape one eye is shown at. The panel sets the scale, but the frustum sets the
+// aspect: it is the frustum the application renders, and the two are not the same shape
+// (Quest 3 0.935 vs 0.941, PS VR2 0.980 vs 1.049). Showing a frustum-shaped render in a
+// panel-shaped frame is a stretch, and a stretch is indistinguishable from a real one.
+inline void GetDisplayEyeSize(uint32_t& width, uint32_t& height) {
     const HeadsetSpec& spec = GetActiveHeadsetSpec();
     width = spec.panelWidth;
-    height = spec.panelHeight;
+    const float aspect = ActiveFovAspect();
+    const long h = (aspect > 0.0f) ? lroundf((float)spec.panelWidth / aspect)
+                                   : (long)spec.panelHeight;
+    height = (uint32_t)(std::max)(1L, h);
 }
 
 inline int GetIpdMillimeters() {
@@ -652,7 +645,6 @@ inline std::string SerializeSettings() {
         "  \"window_height\": %d,\n"
         "  \"full_render\": %s,\n"
         "  \"show_stats\": %s,\n"
-        "  \"gpu_timing\": %s,\n"
         "  \"move_speed\": %.2f,\n"
         "  \"move_boost\": %.2f,\n"
         "  \"input_polling\": \"%s\",\n"
@@ -666,13 +658,12 @@ inline std::string SerializeSettings() {
         g_uiState.useAsymmetricFov ? "true" : "false",
         g_uiState.fovDegrees,
         GetIpdMillimeters(),
-        g_uiState.fitToWindow ? "fill" : "scale",
+        g_uiState.fitToWindow ? "fit" : "scale",
         g_uiState.zoomLevel,
         g_uiState.windowWidth,
         g_uiState.windowHeight,
         g_uiState.showFullRender ? "true" : "false",
         g_uiState.showStats ? "true" : "false",
-        g_gpuTiming.load() ? "true" : "false",
         g_uiState.moveSpeed,
         g_uiState.moveBoost,
         InputPollingName(g_uiState.inputPolling),
@@ -723,7 +714,7 @@ inline void ApplySettingsJson(const char* text) {
         o.number("fov_degrees", g_uiState.fovDegrees)));
     SetIpdMillimeters(o.number("ipd_mm", GetIpdMillimeters()));
 
-    // The mirror always opens in Fill at 100%: zoom/scale is a transient inspection
+    // The mirror always opens fitted at 100%: zoom/scale is a transient inspection
     // tool, and a session that ended zoomed or panned must not pin the next one there.
     // "zoom_mode"/"zoom_scale" in the file are deliberately ignored on load.
     g_uiState.fitToWindow = true;
@@ -737,7 +728,6 @@ inline void ApplySettingsJson(const char* text) {
     g_uiState.windowHeight = (std::max)(0, o.number("window_height", g_uiState.windowHeight));
     g_uiState.showFullRender = o.boolean("full_render", g_uiState.showFullRender);
     g_uiState.showStats = o.boolean("show_stats", g_uiState.showStats);
-    g_gpuTiming = o.boolean("gpu_timing", g_gpuTiming.load());
 
     SetMoveSpeed(o.number("move_speed", g_uiState.moveSpeed));
     g_uiState.moveBoost = (std::max)(1.0f, (std::min)(50.0f,
@@ -967,7 +957,7 @@ inline HMENU CreateAppMenu() {
 
     // Zoom Menu
     HMENU zoomMenu = CreatePopupMenu();
-    AppendMenuW(zoomMenu, MF_STRING, ID_ZOOM_FIT, L"&Fill Window\tF");
+    AppendMenuW(zoomMenu, MF_STRING, ID_ZOOM_FIT, L"&Fit to Window\tF");
     AppendMenuW(zoomMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(zoomMenu, MF_STRING, ID_ZOOM_25, L"25%\t1");
     AppendMenuW(zoomMenu, MF_STRING, ID_ZOOM_50, L"50%\t2");
@@ -1017,9 +1007,6 @@ inline HMENU CreateAppMenu() {
     AppendMenuW(toolsMenu, MF_STRING, ID_TOOLS_RESET_VIEW, L"&Reset View\tHome");
     AppendMenuW(toolsMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(toolsMenu, MF_STRING, ID_TOOLS_TOGGLE_STATS, L"Show &Statistics\tF3");
-    AppendMenuW(toolsMenu, MF_STRING, ID_TOOLS_FRAME_TIMING, L"&Frame Timing...\tF4");
-    AppendMenuW(toolsMenu, MF_STRING, ID_TOOLS_GPU_TIMING,
-                GpuTimingForced() >= 0 ? L"&GPU Timing (set by OPENXR_SIM_GPU_TIMING)" : L"&GPU Timing");
     AppendMenuW(toolsMenu, MF_SEPARATOR, 0, nullptr);
 
     HMENU renderResolutionMenu = CreatePopupMenu();
@@ -1100,8 +1087,6 @@ inline void UpdateMenuState(HMENU menu) {
     // Stats toggle
     CheckMenuItem(menu, ID_TOOLS_TOGGLE_STATS,
         g_uiState.showStats ? MF_CHECKED : MF_UNCHECKED);
-    CheckMenuItem(menu, ID_TOOLS_GPU_TIMING, GpuTimingOn() ? MF_CHECKED : MF_UNCHECKED);
-    EnableMenuItem(menu, ID_TOOLS_GPU_TIMING, GpuTimingForced() >= 0 ? MF_GRAYED : MF_ENABLED);
 
     // FOV checks
     CheckMenuItem(menu, ID_FOV_SYMMETRIC, !g_uiState.useAsymmetricFov ? MF_CHECKED : MF_UNCHECKED);
@@ -1183,7 +1168,7 @@ inline void ShowControlsDialog(HWND parent) {
         L"  L - Left eye only\n"
         L"  R - Right eye only\n\n"
         L"Preview Scaling (independent of render resolution):\n"
-        L"  F - Fill the entire window (upscale or downscale)\n"
+        L"  F - Fit to the window (upscale or downscale, never stretched)\n"
         L"  1-4 - Zoom presets (25%-100% of panel resolution)\n"
         L"  +/- - Zoom in/out\n"
         L"  Mouse wheel - Zoom at the cursor\n"
@@ -1201,7 +1186,6 @@ inline void ShowControlsDialog(HWND parent) {
         L"Other:\n"
         L"  F12 - Screenshot\n"
         L"  F3 - Toggle stats\n"
-        L"  F4 - Frame timing window (every frame, hitch and late frame)\n"
         L"  Home - Reset view (head pose, zoom and pan)";
 
     MessageBoxW(parent, helpText, L"Controls", MB_OK | MB_ICONINFORMATION);
@@ -1255,30 +1239,36 @@ inline void CalculateWindowSize(int srcWidth, int srcHeight, int& outWidth, int&
     outHeight = (std::max)(outHeight, 240);
 }
 
-// Uniform scale at which the whole image just fits the window. Fill mode can be
-// non-uniform, but this remains the sensible starting point when +/- leaves that mode.
-inline float FitScale() {
-    const PreviewGeometry& g = g_previewGeom;
+// Scale at which the whole image just fits the window, and so also the scale fit mode
+// runs at -- which is what makes +/- start from what the window was already showing.
+//
+// Each of these takes the geometry to measure rather than reading g_previewGeom, because
+// the render path lays a frame out off geometry of its own and reaches them through
+// ComputePreviewRect. g_previewGeom belongs to the input handlers and is not necessarily
+// populated on the thread compositing the frame.
+inline float FitScale(const PreviewGeometry& g) {
     if (g.contentW <= 0 || g.contentH <= 0 || g.clientW <= 0 || g.clientH <= 0) return 1.0f;
     return (std::min)((float)g.clientW / (float)g.contentW,
                       (float)g.clientH / (float)g.contentH);
 }
+inline float FitScale() { return FitScale(g_previewGeom); }
 
 // D3D viewport coordinates are bounded to +-32768, and on a headset whose panel pair is
 // already 5120 wide the image's own size crosses that well before kMaxZoom does. Cap the
 // scale rather than hand the rasterizer a rect it cannot address.
-inline float MaxZoom() {
-    const int span = (std::max)(g_previewGeom.contentW, g_previewGeom.contentH);
+inline float MaxZoom(const PreviewGeometry& g) {
+    const int span = (std::max)(g.contentW, g.contentH);
     if (span <= 0) return kMaxZoom;
     return (std::min)(kMaxZoom, 32000.0f / (float)span);
 }
+inline float MaxZoom() { return MaxZoom(g_previewGeom); }
 
-// The representative scale for zoom transitions. Fill mode itself is handled as an exact
-// client rect in ComputePreviewRect because its X and Y scales may differ.
-inline float EffectiveScale() {
-    return g_uiState.fitToWindow ? FitScale()
-                                 : (std::min)(g_uiState.zoomLevel, MaxZoom());
+// The scale in force, whichever mode is on.
+inline float EffectiveScale(const PreviewGeometry& g) {
+    return g_uiState.fitToWindow ? FitScale(g)
+                                 : (std::min)(g_uiState.zoomLevel, MaxZoom(g));
 }
+inline float EffectiveScale() { return EffectiveScale(g_previewGeom); }
 
 // Keep the image covering the window: there is nothing to pan while it is smaller than
 // the client area, and once it is larger its edges may not come inside it.
@@ -1297,11 +1287,9 @@ inline PreviewRect ComputePreviewRect(const PreviewGeometry& g) {
     if (g.contentW <= 0 || g.contentH <= 0 || g.clientW <= 0 || g.clientH <= 0) {
         return { 0.0f, 0.0f, (float)(std::max)(g.clientW, 1), (float)(std::max)(g.clientH, 1) };
     }
-    if (g_uiState.fitToWindow) {
-        return { 0.0f, 0.0f, (float)g.clientW, (float)g.clientH };
-    }
-
-    const float scale = EffectiveScale();
+    // Fit mode needs no case of its own: EffectiveScale hands back the scale at which the
+    // image just fits, so the centring below leaves the bars.
+    const float scale = EffectiveScale(g);
     PreviewRect r;
     r.w = (float)g.contentW * scale;
     r.h = (float)g.contentH * scale;
@@ -1517,16 +1505,6 @@ inline bool HandleMenuCommand(HWND hwnd, WPARAM wParam,
             if (menuT) UpdateMenuState(menuT);
             return true;
         }
-        case ID_TOOLS_FRAME_TIMING:
-            if (g_openFrameTiming) g_openFrameTiming();
-            return true;
-        case ID_TOOLS_GPU_TIMING: {
-            if (GpuTimingForced() < 0) g_gpuTiming = !g_gpuTiming;
-            SaveSettings();
-            HMENU menuT = GetMenu(hwnd);
-            if (menuT) UpdateMenuState(menuT);
-            return true;
-        }
 
         // Help
         case ID_HELP_CONTROLS:
@@ -1653,8 +1631,6 @@ inline bool HandleKeyboardShortcut(HWND hwnd, WPARAM vk,
             return true;
         case VK_F3:
             return HandleMenuCommand(hwnd, ID_TOOLS_TOGGLE_STATS, resizeCallback, screenshotCallback, resetViewCallback, settingsChangedCallback);
-        case VK_F4:
-            return HandleMenuCommand(hwnd, ID_TOOLS_FRAME_TIMING, resizeCallback, screenshotCallback, resetViewCallback, settingsChangedCallback);
         case VK_F12:
             if (screenshotCallback) screenshotCallback();
             return true;
@@ -1729,10 +1705,10 @@ inline void UpdateWindowTitle(HWND hwnd, const StatsInfo* stats = nullptr) {
     if (g_uiState.viewMode == ViewMode::LeftEyeOnly) viewModeStr = L"Left Eye";
     else if (g_uiState.viewMode == ViewMode::RightEyeOnly) viewModeStr = L"Right Eye";
 
-    // Fill is resolution-independent: the source always occupies the whole client area.
+    // Fit is resolution-independent, so there is no percentage to show for it.
     wchar_t zoomStr[32];
     if (g_uiState.fitToWindow) {
-        swprintf_s(zoomStr, L"Fill");
+        swprintf_s(zoomStr, L"Fit");
     } else {
         swprintf_s(zoomStr, L"%d%%", (int)(g_uiState.zoomLevel * 100.0f + 0.5f));
     }
@@ -1779,7 +1755,7 @@ inline void UpdateWindowTitle(HWND hwnd, const StatsInfo* stats = nullptr) {
         }
     }
 
-    g_previewTitle.Publish(hwnd,title);
+    SetWindowTextW(hwnd, title);
 }
 
 } // namespace ui

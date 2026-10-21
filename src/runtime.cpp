@@ -15,7 +15,6 @@
 #include <d3d11.h>
 #include <d3d12.h>
 #include <d3d11on12.h>
-#include <d3dcompiler.h>
 #include <dxgi.h>
 #include <dxgi1_6.h>
 
@@ -24,95 +23,51 @@
 #include <vulkan/vulkan.h>
 
 #include "flicker_detector.h"
-#include "frame_timeline.h"
-#include "gpu_frame_timer.h"
-namespace {
-// Per-frame timing feed for the frame-time viewer (shared memory, always on
-// unless OPENXR_SIM_FRAME_TIMELINE=0).
-perf::timeline::Recorder g_frameTimeline;
-// Set by anything that changes what the timeline's session info describes;
-// xrEndFrame, the timeline's one writer, republishes it.
-std::atomic<bool> g_sessionInfoDirty{true};
-}
+#include "presentation/FrameScheduler.h"
+#include "graphics/Swapchain.h"
+#include "runtime/EventQueue.h"
+#include "runtime/DispatchTable.h"
+#include "runtime/EntryPoints.h"
+#include "runtime/Instance.h"
+#include "runtime/Session.h"
+#include "runtime/Runtime.h"
+#include "runtime/SimulationExtensions.h"
+#include "runtime/SpaceQueries.h"
+#include "Math.h"
+#include "runtime/validation/LayerValidation.h"
+#include "graphics/LayerBuilder.h"
+#include "runtime/validation/StructureChain.h"
+#include "platform/windows/WindowsClock.h"
+#include "platform/windows/D3D11Preview.h"
+#include "graphics/PreviewGeometry.h"
+#include "platform/windows/OpenGLPreviewReadback.h"
+#include "platform/windows/OpenGLSwapchain.h"
+#include "platform/windows/D3D11PreviewContext.h"
+#include "platform/windows/D3D12Preview.h"
+#include "platform/windows/D3D12PreviewPipelines.h"
+#include "simulation/LegacyControllerMotion.h"
+#include "control/ControlService.h"
+#include "control/LocalControlServer.h"
+#include <charconv>
+#include <memory>
+
+static simxr::Runtime& RuntimeState();
 
 // OpenGL headers - minimal definitions for what we need
 #include <GL/gl.h>
 
-// OpenGL extension constants and types (from glext.h / wglext.h)
-// We define these inline since Windows doesn't ship with glext.h
 #ifndef GL_SRGB8_ALPHA8
-#define GL_SRGB8_ALPHA8                   0x8C43
-#endif
-#ifndef GL_RGBA8
-#define GL_RGBA8                          0x8058
-#endif
-#ifndef GL_BGRA
-#define GL_BGRA                           0x80E1
-#endif
-#ifndef GL_RGBA16F
-#define GL_RGBA16F                        0x881A
-#endif
-#ifndef GL_RGBA32F
-#define GL_RGBA32F                        0x8814
-#endif
-#ifndef GL_RGB10_A2
-#define GL_RGB10_A2                       0x8059
-#endif
-#ifndef GL_DEPTH_COMPONENT32F
-#define GL_DEPTH_COMPONENT32F             0x8CAC
-#endif
-#ifndef GL_DEPTH24_STENCIL8
-#define GL_DEPTH24_STENCIL8               0x88F0
-#endif
-#ifndef GL_DEPTH_COMPONENT16
-#define GL_DEPTH_COMPONENT16              0x81A5
-#endif
-#ifndef GL_DEPTH_STENCIL
-#define GL_DEPTH_STENCIL                  0x84F9
-#endif
-#ifndef GL_UNSIGNED_INT_24_8
-#define GL_UNSIGNED_INT_24_8              0x84FA
-#endif
-#ifndef GL_TEXTURE_2D_ARRAY
-#define GL_TEXTURE_2D_ARRAY               0x8C1A
-#endif
-#ifndef GL_FRAMEBUFFER
-#define GL_FRAMEBUFFER                    0x8D40
-#endif
-#ifndef GL_COLOR_ATTACHMENT0
-#define GL_COLOR_ATTACHMENT0              0x8CE0
-#endif
-#ifndef GL_FRAMEBUFFER_COMPLETE
-#define GL_FRAMEBUFFER_COMPLETE           0x8CD5
+#define GL_SRGB8_ALPHA8 0x8C43
 #endif
 
-// Function pointer types for GL extension functions
-typedef void (APIENTRY *PFNGLTEXIMAGE3DPROC)(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLenum format, GLenum type, const void* pixels);
-typedef void (APIENTRY *PFNGLGENFRAMEBUFFERSPROC)(GLsizei n, GLuint* framebuffers);
-typedef void (APIENTRY *PFNGLDELETEFRAMEBUFFERSPROC)(GLsizei n, const GLuint* framebuffers);
-typedef void (APIENTRY *PFNGLBINDFRAMEBUFFERPROC)(GLenum target, GLuint framebuffer);
-typedef void (APIENTRY *PFNGLFRAMEBUFFERTEXTURE2DPROC)(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level);
-typedef GLenum (APIENTRY *PFNGLCHECKFRAMEBUFFERSTATUSPROC)(GLenum target);
-typedef void (APIENTRY *PFNGLREADPIXELSPROC)(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void* pixels);
-
-// GL function pointers (loaded at runtime)
-static PFNGLTEXIMAGE3DPROC g_glTexImage3D = nullptr;
-static PFNGLGENFRAMEBUFFERSPROC g_glGenFramebuffers = nullptr;
-static PFNGLDELETEFRAMEBUFFERSPROC g_glDeleteFramebuffers = nullptr;
-static PFNGLBINDFRAMEBUFFERPROC g_glBindFramebuffer = nullptr;
-static PFNGLFRAMEBUFFERTEXTURE2DPROC g_glFramebufferTexture2D = nullptr;
-static PFNGLCHECKFRAMEBUFFERSTATUSPROC g_glCheckFramebufferStatus = nullptr;
 #include <string>
-#include <array>
 #include <vector>
 #include <unordered_map>
-#include <unordered_set>
 #include <optional>
 #include <cstring>
 #include <cstdlib>
 #include <thread>
 #include <mutex>
-#include <condition_variable>
 #include <atomic>
 #include <deque>
 #include <algorithm>
@@ -121,24 +76,16 @@ static PFNGLCHECKFRAMEBUFFERSTATUSPROC g_glCheckFramebufferStatus = nullptr;
 #include <cstdarg>
 #include <cstdio>
 #include <share.h>
+#include <array>
+#include <span>
+#include <string_view>
 #include <chrono>
 
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 #include <loader_interfaces.h>
 #include "mcp_integration.h"
-#include "action_state.h"
-#include "interaction_query.h"
-#include "api_validation.h"
-#include "enum_strings.h"
-#include "composition_validation.h"
-#include "composition_render.h"
-#include "controller_poses.h"
-#include "frame_state.h"
-#include "pose_math.h"
-#include "preview_focus.h"
 #include "projection_timing.h"
-#include "swapchain_state.h"
 #include "ui_enhancements.h"
 
 using Microsoft::WRL::ComPtr;
@@ -154,20 +101,10 @@ inline UINT D3D12CalcSubresource(UINT MipSlice, UINT ArraySlice, UINT PlaneSlice
     return MipSlice + ArraySlice * MipLevels + PlaneSlice * MipLevels * ArraySize;
 }
 
-// OPENXR_SIM_REFRESH_HZ=<30..500>: the refresh rate simulated (90 by default, also for
-// values outside that range).
-static double SimulatorRefreshHz() {
-    static const double hz = []() {
-        const char* value = getenv("OPENXR_SIM_REFRESH_HZ");
-        const double requested = value ? atof(value) : 90.0;
-        return requested >= 30.0 && requested <= 500.0 ? requested : 90.0;
-    }();
-    return hz;
-}
 
-// Debugger and file writes can block unpredictably even for one log per second.
-// Keep them on the bounded diagnostics worker; frame calls only publish memory.
-// Verbose per-frame messages remain opt-in to keep that queue useful.
+// File output is owned by the active instance's joined compatibility worker.
+static std::mutex g_LogMutex;
+static std::weak_ptr<mcp::WindowsLegacyChannel> g_logChannel;
 static const bool g_logVerbose = []() {
     char v[16]{};
     const DWORD n = GetEnvironmentVariableA("SIMXR_VERBOSE", v, (DWORD)sizeof(v));
@@ -175,9 +112,14 @@ static const bool g_logVerbose = []() {
 }();
 
 static void Log(const char* msg) {
-    flicker::PublishRuntimeLog(msg);
+    std::shared_ptr<mcp::WindowsLegacyChannel> files;
+    { std::lock_guard lock(g_LogMutex); files = g_logChannel.lock(); }
+    if (files) {
+        try { files->Log(msg); } catch (...) {}
+    } else {
+        OutputDebugStringA(msg); // Loader/startup diagnostics before an instance exists.
+    }
 }
-static void Log(const std::string& msg) { Log(msg.c_str()); }
 static void Logf(const char* fmt, ...) {
     char buf[2048];
     va_list ap; va_start(ap, fmt);
@@ -201,7 +143,6 @@ static void PumpMessages(HWND filter) {
     }
 }
 
-static void LogV(const char* msg) { if (g_logVerbose) Log(msg); }
 static void LogVf(const char* fmt, ...) {
     if (!g_logVerbose) return;
     char buf[2048];
@@ -210,75 +151,6 @@ static void LogVf(const char* fmt, ...) {
     va_end(ap);
     Log(buf);
 }
-
-// Helper to load glTexImage3D (OpenGL 1.2+ function not in Windows GL headers)
-static bool EnsureGLTexImage3D() {
-    if (g_glTexImage3D) return true;
-    g_glTexImage3D = (PFNGLTEXIMAGE3DPROC)wglGetProcAddress("glTexImage3D");
-    if (!g_glTexImage3D) {
-        Log("[SimXR] Failed to load glTexImage3D");
-        return false;
-    }
-    return true;
-}
-
-static bool EnsureGLFramebufferFuncs() {
-    if (g_glGenFramebuffers) return true;
-    g_glGenFramebuffers = (PFNGLGENFRAMEBUFFERSPROC)wglGetProcAddress("glGenFramebuffers");
-    g_glDeleteFramebuffers = (PFNGLDELETEFRAMEBUFFERSPROC)wglGetProcAddress("glDeleteFramebuffers");
-    g_glBindFramebuffer = (PFNGLBINDFRAMEBUFFERPROC)wglGetProcAddress("glBindFramebuffer");
-    g_glFramebufferTexture2D = (PFNGLFRAMEBUFFERTEXTURE2DPROC)wglGetProcAddress("glFramebufferTexture2D");
-    g_glCheckFramebufferStatus = (PFNGLCHECKFRAMEBUFFERSTATUSPROC)wglGetProcAddress("glCheckFramebufferStatus");
-    if (!g_glGenFramebuffers || !g_glDeleteFramebuffers || !g_glBindFramebuffer ||
-        !g_glFramebufferTexture2D || !g_glCheckFramebufferStatus) {
-        Log("[SimXR] Failed to load GL framebuffer functions");
-        return false;
-    }
-    return true;
-}
-
-static XrQuaternionf QuatFromYawPitch(float yaw, float pitch) {
-    const float cy = cosf(yaw * 0.5f);
-    const float sy = sinf(yaw * 0.5f);
-    const float cp = cosf(pitch * 0.5f);
-    const float sp = sinf(pitch * 0.5f);
-    XrQuaternionf q{};
-    q.x = sp * cy;
-    q.y = cp * sy;
-    q.z = -sp * sy;
-    q.w = cp * cy;
-    return q;
-}
-
-// Yaw / Pitch / Roll head orientation (Y-X-Z intrinsic Euler).
-// Roll is rotation about the head's forward axis, used by the diagnostic
-// pose-injection paths so app coordinate-system bugs that only manifest
-// off-axis (e.g. inverted-roll quaternion handedness) become visible.
-static XrQuaternionf QuatFromYawPitchRoll(float yaw, float pitch, float roll) {
-    // Build q_yaw, q_pitch, q_roll separately and compose: q = q_yaw * q_pitch * q_roll
-    // (apply roll first in head-local frame, then pitch, then yaw).
-    const float hy = yaw   * 0.5f, cy = cosf(hy), sy = sinf(hy);
-    const float hp = pitch * 0.5f, cp = cosf(hp), sp = sinf(hp);
-    const float hr = roll  * 0.5f, cr = cosf(hr), sr = sinf(hr);
-
-    // q_yaw  = (0, sy, 0, cy)   -- about +Y
-    // q_pitch= (sp, 0, 0, cp)   -- about +X
-    // q_roll = (0, 0, sr, cr)   -- about +Z (head forward = -Z, so roll feels intuitive)
-    // q = q_yaw * q_pitch * q_roll
-    XrQuaternionf qyp;  // q_yaw * q_pitch
-    qyp.x = cy * sp;
-    qyp.y = sy * cp;
-    qyp.z = -sy * sp;
-    qyp.w = cy * cp;
-
-    XrQuaternionf q;  // qyp * q_roll
-    q.x = qyp.x * cr + qyp.y * sr;
-    q.y = qyp.y * cr - qyp.x * sr;
-    q.z = qyp.z * cr + qyp.w * sr;
-    q.w = qyp.w * cr - qyp.z * sr;
-    return q;
-}
-
 
 // Helper function to convert a typed format to typeless
 static DXGI_FORMAT ToTypeless(DXGI_FORMAT format) {
@@ -324,13 +196,6 @@ static DXGI_FORMAT ToTypeless(DXGI_FORMAT format) {
 // Released from WndProc and instance teardown, both of which run long before the D3D12
 // preview path where it is defined.
 namespace rt { struct Session; }
-
-// QPC-derived time helpers, defined further down. Integer math only - the same
-// conversion xrConvertWin32PerformanceCounterToTimeKHR performs. File-scope statics:
-// unqualified calls inside namespace rt resolve to these through the enclosing scope.
-static XrTime QpcToNs(long long counter, long long freq);
-static XrTime CurrentXrTime();
-
 // Runtime state
 namespace rt {
 
@@ -339,24 +204,18 @@ struct Swapchain;
 // Forward declarations
 void PushState(XrSession s, XrSessionState newState);
 
-// Event queue drained by xrPollEvent. Lives in this early block so functions like
-// xrDestroySession can discard queued events that reference destroyed handles.
-static std::vector<XrEventDataBuffer> g_eventQueue;
-// MCP is consumed by the frame thread. Deliver focus events on xrPollEvent's
-// thread rather than concurrently mutating its event queue from xrWaitFrame.
-static std::atomic<int> g_requestedSessionFocus{-1};
-
 // Global adapter LUID that we'll use consistently
 static LUID g_adapterLuid = {};
 static bool g_adapterLuidSet = false;
+
 // Global persistent window that survives session creation/destruction
 // The preview window needs a thread we own. Only the creating thread can retrieve a
 // window's messages, and hosts differ over which thread calls which entry point; putting
 // it on the app's render thread instead wedged Cemu inside SetWindowText on the first
 // composited frame.
 //
-// Captions are coalesced onto this thread without blocking the frame path.
-// Window resizing still needs this message loop to remain responsive.
+// The frame path calls in synchronously (SetWindowText, SetWindowPos), so this thread must
+// stay in its message loop: whatever blocks here stalls the application's rendering.
 struct PreviewUi {
     std::thread       thread;
     std::atomic<HWND> hwnd{nullptr};
@@ -364,6 +223,8 @@ struct PreviewUi {
     std::atomic<DWORD> threadId{0};
 };
 static PreviewUi g_previewUi;
+static std::mutex g_coreMutex;
+static std::mutex g_instanceLifecycleMutex;
 
 static HWND g_persistentWindow = nullptr;
 static std::mutex g_windowMutex;
@@ -372,108 +233,43 @@ static UINT g_persistentWidth = 1920;
 static UINT g_persistentHeight = 540;
 static std::atomic<bool> g_windowClassRegistered{false};
 
-// Latest XR swapchain (per-eye) source dimensions, populated by presentProjection.
+// Latest XR swapchain (per-eye) source dimensions, populated by RenderProjection.
 // Used by menu/keyboard resize callbacks to compute a target window size.
 static std::atomic<UINT> g_sourceWidth{0};
 static std::atomic<UINT> g_sourceHeight{0};
 
 struct Instance {
     XrInstance handle{XR_NULL_HANDLE};
-    // applicationInfo.apiVersion: OpenXR 1.1 commands, spaces and paths exist only
-    // on an instance created for 1.1.
-    XrVersion apiVersion{0};
-    std::vector<std::string> enabledExtensions;
-    // Per spec (each graphics-binding extension chapter), xrCreateSession must return
-    // XR_ERROR_GRAPHICS_REQUIREMENTS_CALL_MISSING unless the matching requirements
-    // function was already called for this instance (there is only one systemId).
-    bool d3d11RequirementsCalled{false};
-    bool d3d12RequirementsCalled{false};
-    bool openglRequirementsCalled{false};
-    bool vulkanRequirementsCalled{false};
-    // Adapter LUIDs reported by the requirements functions, used to validate the app's
-    // device at xrCreateSession (XR_ERROR_GRAPHICS_DEVICE_INVALID on mismatch).
-    LUID d3d11RequirementsLuid{};
-    LUID d3d12RequirementsLuid{};
+    std::shared_ptr<simxr::Instance> core;
+    std::shared_ptr<simxr::legacy::LegacyControllerMotion> controllerMotion;
+    std::shared_ptr<mcp::WindowsLegacyChannel> compatibilityFiles;
+    std::shared_ptr<mcp::WindowsLegacyCapture> compatibilityCapture;
+    std::shared_ptr<flicker::Diagnostics> diagnostics;
 };
 
-// The D3D12 preview back buffer is always BGRA8, whatever the app submits: that is the
-// byte layout of the GDI DIB section it is copied into, so the readback needs no swizzle.
+// Private D3D12 composition uses BGRA8 with a separate sRGB view for quad blending.
 static constexpr DXGI_FORMAT kPreviewRTFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
-// Composition is rendered through the sRGB view so linear formats are encoded and sRGB
-// formats are decoded before blending. The plain view remains useful for clear/readback
-// descriptions. The resource itself is TYPELESS to allow both views.
-static constexpr DXGI_FORMAT kPreviewRTFormatTypeless = DXGI_FORMAT_B8G8R8A8_TYPELESS;
-static constexpr DXGI_FORMAT kPreviewRTFormatSrgb = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
-// Shader-visible SRVs, ringed so a descriptor is not rewritten while a command list that
-// reads it is still in flight. A frame takes one per eye plus one per quad layer, and
-// kPreviewFrames of them can be queued at once, so this has to cover the busiest frame an
-// app submits times that. 64 is three frames of twenty layers and costs a few kilobytes;
-// an app with more layers than that in one frame only wraps within its own frame.
-static constexpr UINT kPreviewSrvSlots = 64;
-// c0..c3, tans, uvRect, opts - see kPreviewQuadHLSL.
-static constexpr UINT kQuadConstantCount = 28;
-
-// Preview frames in flight. The preview used to submit its blit and then block the
-// calling thread on a fence until the GPU had finished it, so the readback could be
-// mapped in the same call. That thread is the app's render thread, inside xrEndFrame,
-// and the fence sits behind the app's whole frame (the cross-queue wait in
-// presentProjection puts it there) â€” so the wait did not cost the blit, it cost the
-// entire GPU frame, every frame, and CPU/GPU overlap stopped existing. Three slots let
-// the composite be submitted and picked up a frame or two later instead, with the CPU
-// never waiting on the GPU at all.
-static constexpr UINT kPreviewFrames = 3;
-// D3D11 forced captures can queue several consecutive frames before their EVENT queries
-// complete. Eight lazy staging slots preserve cadence without permanently reserving memory;
-// only slots the GPU actually needs are allocated.
-static constexpr UINT kD3D11ReadbackFrames = 8;
-// The desktop window can be maximized on a 4K display, but reading and scanning
-// a full 4K GDI surface on the application's xrEndFrame thread costs more than
-// an entire 90 Hz frame. Keep the mirror's internal surface at a diagnostic-
-// quality 1080p envelope and let the final StretchDIBits scale it to the window.
-// Eye swapchain resolution is untouched; this affects only the desktop mirror.
+static constexpr UINT kQuadConstantCount = simxr::windows::D3D12PreviewPipelines::QuadConstantCount;
+static constexpr UINT kPreviewFrames = simxr::windows::PreviewFrameSchedule::Capacity;
 static constexpr UINT kPreviewMaxWidth = 1920;
 static constexpr UINT kPreviewMaxHeight = 1080;
 
-// D3D11 normally presents its composited swapchain backbuffer directly. During a forced
-// detector capture or MCP burst, three staging slots copy that final backbuffer before
-// Present and are mapped only after an EVENT query says the GPU finished. This preserves
-// normal D3D11 performance and avoids changing the temporal behavior being diagnosed.
-struct PreviewFrame11 {
-    ComPtr<ID3D11Texture2D> staging;
-    ComPtr<ID3D11Query> ready;
-    UINT width{0}, height{0};
-    DXGI_FORMAT format{DXGI_FORMAT_UNKNOWN};
-    bool pending{false};
-    uint64_t generation{0};
-    uint32_t frame{0};
-    bool hasProjection{false};
-    float headYaw{0}, headPitch{0}, headRoll{0};
-    float headX{0}, headY{0}, headZ{0};
-    mcp::ProjLogEntry proj{};
-};
-
-struct PreviewFrame12 {
-    ComPtr<ID3D12CommandAllocator> alloc;
-    ComPtr<ID3D12Resource> readback;   // composited frame, kPreviewRTFormat rows at previewReadbackPitch
-    UINT rtWidth{0}, rtHeight{0};      // size the composite in `readback` was rendered at
-    UINT64 fenceValue{0};              // last value signalled for this slot; 0 = never submitted
-    bool pending{false};               // submitted, not yet painted into the back buffer
-    bool recording{false};             // the RT is open and this frame has layers in it
-
-    // What the frame in this slot was, captured when it was recorded rather than when it
-    // is painted. The painter runs a frame or two later, so anything it read live would
-    // label the image with a pose the image was not rendered with -- which is precisely
-    // the question a burst exists to answer.
+// Copied submission metadata; native acquisition, submission and retirement belong
+// to D3D12Preview. A delayed explicit readback retains the matching source identity.
+struct PreviewFrameMetadata12 {
     uint32_t frame{0};
     bool hasProjection{false};
     uint32_t quadLayers{0};
     bool quadComposed{false};
     int32_t quadRects[2][4]{};
     float quadSourceAlphaCoverage{0.0f};
-    float headYaw{0}, headPitch{0}, headRoll{0};
-    float headX{0}, headY{0}, headZ{0};
-    mcp::ProjLogEntry proj{};          // pose the app submitted for this frame
-    ui_auto::Frame geometry;          // cameras/viewport/quad poses belonging to these pixels
+    float headYaw{0};
+    float headPitch{0};
+    float headRoll{0};
+    float headX{0};
+    float headY{0};
+    float headZ{0};
+    mcp::ProjLogEntry proj{};
 };
 
 // Everything a Vulkan session needs on top of the D3D12 compositor it shares with a
@@ -488,7 +284,7 @@ struct VulkanSession {
     VkCommandBuffer cmdBuffer{VK_NULL_HANDLE};
     // One shared D3D12 fence imported as a timeline VkSemaphore orders the app's queue
     // against the preview queue. Values are a single monotonic counter (Vulkan signals
-    // one, D3D12 signals the next) rather than a two-state ping-pong: AMD rejects a
+    // one, D3D12 signals the next) rather than a two-state ping-pong: some drivers reject a
     // timeline signal that does not strictly increase.
     ComPtr<ID3D12Fence> fence;
     HANDLE fenceHandle{nullptr};
@@ -498,29 +294,16 @@ struct VulkanSession {
     uint64_t previewSignalled{0};   // last value the preview queue signalled, 0 = never
     uint64_t previewWaited{0};      // last previewSignalled the app's queue was made to wait on
     bool timeline{false};           // false: fall back to CPU waits around the composite
-    uint32_t queueFamilyIndex{0};
-    // GPU frame timing (vkrt::InitGpuTimer): one pre-recorded command buffer per query,
-    // each resetting and writing a timestamp on the app's queue.
-    VkQueryPool timingPool{VK_NULL_HANDLE};
-    VkCommandPool timingCmdPool{VK_NULL_HANDLE};
-    VkCommandBuffer timingBuffers[perf::gpu::kSlots * 2]{};
-    VkFence timingFences[perf::gpu::kSlots]{};  // signalled when a slot's end has run
-    perf::gpu::SlotRing timingSlots;
-    perf::gpu::Calibration timingCalibration;
-    uint64_t timingTickFrequency{0};
-    uint64_t timingMask{~0ull};
-    bool timingQpcDomain{false};    // the device can relate its clock to QPC
-    bool timing{false};
 };
 
 struct Session {
     XrSession handle{XR_NULL_HANDLE};
+    std::shared_ptr<simxr::Session> core;
+    std::shared_ptr<simxr::legacy::LegacyControllerMotion> controllerMotion;
+    std::shared_ptr<mcp::WindowsLegacyChannel> compatibilityFiles;
+    std::shared_ptr<mcp::WindowsLegacyCapture> compatibilityCapture;
+    std::shared_ptr<flicker::Diagnostics> diagnostics;
     XrSessionState state{XR_SESSION_STATE_IDLE};
-    bool running{false};
-    bool exitRequested{false};
-    frame_state::Lifecycle frameLifecycle;
-    std::mutex frameMutex;
-    std::condition_variable frameCondition;
     ComPtr<ID3D11Device> d3d11Device;
     ComPtr<ID3D11DeviceContext> d3d11Context;
     // DX12 support
@@ -535,99 +318,27 @@ struct Session {
     HGLRC glRC{nullptr};
     bool usesOpenGL{false};
 
-    // DX12 preview resources (GDI-based to avoid DXGI Present hook conflicts with Steam overlay / UEVR)
-    ComPtr<ID3D12CommandQueue> previewQueue12;
-    ComPtr<ID3D12Fence> crossQueueFence;
-    UINT64 crossQueueFenceValue{0};
-    ComPtr<ID3D12Resource> previewRT12;         // offscreen render target (replaces swapchain backbuffer)
-    UINT previewReadbackPitch{0};               // row pitch aligned to D3D12_TEXTURE_DATA_PITCH_ALIGNMENT
-    // Frames in flight. The composite of each one hangs off its own slot, so nothing is
-    // mapped while the GPU may still be writing it and nothing has to be waited for to
-    // be reused.
-    PreviewFrame12 previewFrames[kPreviewFrames];
-    UINT previewSlot{0};                        // slot this frame records into
-    bool previewSlotOpen{false};                // previewSlot's allocator is reset and being recorded
-    // Preview back buffer (D3D12/GDI): every layer paints into this memory DC, which is
-    // blitted to the window once per frame. Painting layers straight to the window makes
-    // the eye blit erase overlays for the length of the quad readback that follows it,
-    // which shows up as a flickering 2D layer.
-    ComPtr<ID3D12GraphicsCommandList> previewCmdList;
-    ComPtr<ID3D12Fence> previewFence;
-    HANDLE previewFenceEvent{nullptr};
-    UINT64 previewFenceValue{0};                // last value signalled on previewQueue12
-    // Scaling pipeline for the D3D12 preview. The eyes are drawn into the RT at the size
-    // the window shows them, so the readback that follows is the window's pixel count and
-    // not the stereo render's - a 5120x1440 submission mirrored into a 1280x360 fit rect
-    // is 30MB a frame off the GPU and a CPU-side resample either way without this.
-    ComPtr<ID3D12RootSignature> previewRootSig;
-    // Projection layers use the same three OpenXR alpha modes as quad layers.
-    ComPtr<ID3D12PipelineState> previewPSO[3];
-    // Quad layers are rasterised into the same RT through an sRGB view; one PSO per
-    // rt::LayerBlend mode.
-    ComPtr<ID3D12RootSignature> previewQuadRootSig;
-    ComPtr<ID3D12PipelineState> previewQuadPSO[3];
-    ComPtr<ID3D12DescriptorHeap> previewSrvHeap;
-    // Two RTVs over previewRT12: [0] plain for clears/copies; [1] sRGB for composition.
-    ComPtr<ID3D12DescriptorHeap> previewRtvHeap;
-    UINT previewRtvStride{0};
-    UINT previewSrvStride{0};
-    UINT previewSrvSlot{0};
+    std::shared_ptr<simxr::windows::D3D12Preview> preview12;
+    PreviewFrameMetadata12 previewMetadata12[kPreviewFrames];
+	std::shared_ptr<const simxr::windows::D3D12PreviewPipelines> previewPipelines12;
 
-    // On-demand D3D11 diagnostic readback. Slots are consumed asynchronously on later
-    // xrEndFrame calls; pending slots are never overwritten or waited on.
-    PreviewFrame11 previewFrames11[kD3D11ReadbackFrames];
-    UINT previewReadback11Slot{0};
-    uint64_t previewReadback11Generation{0};
-
-    // Blit resources
-    ComPtr<ID3D11VertexShader> blitVS;
-    ComPtr<ID3D11PixelShader> blitPS;
-    ComPtr<ID3D11SamplerState> samplerState;
-    ComPtr<ID3D11RasterizerState> noCullRS;  // Rasterizer state with culling disabled
-    ComPtr<ID3D11BlendState> anaglyphRedBS;
-    ComPtr<ID3D11BlendState> anaglyphCyanBS;
-    // Quad layers are positioned by their four projected corners rather than by the
-    // viewport, so they need their own VS and a constant buffer to carry the corners.
-    ComPtr<ID3D11VertexShader> quadVS;
-    ComPtr<ID3D11Buffer> quadCB;
-    // Keyed by (mode << 8) | writeMask; see GetLayerBlendState.
-    std::unordered_map<uint32_t, ComPtr<ID3D11BlendState>> layerBlendStates;
-
-    // Reusable staging for the D3D11 mirror. blitViewToHalf and renderQuadLayer used
-    // to create a texture and an SRV per eye/quad on every mirrored frame; these small
-    // caches (two entries rotating, so the two eyes each keep their own) turn that into
-    // a plain copy into an existing texture. A size or format change just recreates.
-    struct TempTexEntry {
-        UINT width = 0, height = 0;
-        DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
-        ComPtr<ID3D11Texture2D> texture;
-        ComPtr<ID3D11ShaderResourceView> srv;
-    };
-    TempTexEntry blitTempCache[2];
-    UINT blitTempNext{0};
-    TempTexEntry quadTempCache[2];
-    UINT quadTempNext{0};
+	std::unique_ptr<simxr::windows::D3D11Preview> preview11;
 
     // OpenGL preview: readback buffers and upload textures reused across frames
     // instead of being reallocated per frame.
     std::vector<uint8_t> glEyePixels[2];
     std::vector<uint8_t> glQuadPixels;
-    std::vector<uint8_t> glEyeReadback[2];
-    std::vector<uint8_t> glQuadReadback;
-    ComPtr<ID3D11Texture2D> glEyeTex[2];
-    ComPtr<ID3D11ShaderResourceView> glEyeSrv[2];
-    UINT glEyeTexW{0}, glEyeTexH{0};
-    DXGI_FORMAT glEyeSrvFormat[2]{DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_UNKNOWN};
+
 
     // Desktop preview window (no thread - handled on main thread)
     HWND hwnd{nullptr};
-    std::atomic<bool> previewInputFocused{false};
+    std::atomic<bool> isFocused{false};
     ComPtr<IDXGISwapChain1> previewSwapchain;
     UINT previewWidth{1920};
     UINT previewHeight{540};
     DXGI_FORMAT previewFormat{DXGI_FORMAT_UNKNOWN};  // Track format for matching
     // Current client area of the preview window (updated on WM_SIZE).
-    // 0 means "not yet known" â€” use an initial sensible size for the first frame.
+    // 0 means "not yet known" — use an initial sensible size for the first frame.
     std::atomic<UINT> clientWidth{0};
     std::atomic<UINT> clientHeight{0};
     std::mutex previewMutex;
@@ -636,7 +347,7 @@ struct Session {
 struct Swapchain {
     XrSwapchain handle{(XrSwapchain)1};
     DXGI_FORMAT format{DXGI_FORMAT_R8G8B8A8_UNORM};
-    uint32_t width{0}, height{0}, arraySize{2}, faceCount{1};
+    uint32_t width{0}, height{0}, arraySize{2};
     uint32_t mipCount{1};
     // Backend type and images
     enum class Backend { D3D11, D3D12, OpenGL } backend{Backend::D3D11};
@@ -652,32 +363,51 @@ struct Swapchain {
     std::vector<VkImage> imagesVk;
     std::vector<VkDeviceMemory> memoryVk;
     std::vector<HANDLE> sharedHandles;
-    std::vector<GLuint> imagesGL;                     // OpenGL path
-    GLenum glInternalFormat{GL_RGBA8};                // OpenGL internal format
+	std::unique_ptr<simxr::windows::OpenGLSwapchain> glImages;
+    std::unique_ptr<simxr::Swapchain> state;
     uint32_t lastAcquired{UINT32_MAX};  // Initialize to invalid
     uint32_t lastReleased{UINT32_MAX};  // Initialize to invalid
-    uint64_t releaseSerial{0};          // increments on every successful release
-    uint64_t lastProjectionReleaseSerial{0}; // last serial submitted in a projection
     uint32_t imageCount{3};
-    swapchain_state::Lifecycle lifecycle;
 };
 
 static Instance g_instance{};
 static Session g_session{};
 static std::unordered_map<XrSwapchain, Swapchain> g_swapchains;
-static uintptr_t g_nextSwapchainHandle{2};
+
+static std::shared_ptr<simxr::Session> RetainSession(XrSession handle)
+{
+    return RuntimeState().FindSession(handle).Shared();
+}
+
+static std::shared_ptr<simxr::Session> RetainSession()
+{
+    XrSession handle;
+    { std::lock_guard lock(g_coreMutex); handle = g_session.handle; }
+    return RetainSession(handle);
+}
+
+// Retain the owner associated with this exact native/core session pair.
+// Detaching an instance never resets controller state beneath an in-flight call.
+static std::shared_ptr<simxr::legacy::LegacyControllerMotion>
+RetainControllerMotion(const std::shared_ptr<simxr::Session>& session)
+{
+	std::lock_guard lock(g_coreMutex);
+	if (!session || session != g_session.core)
+		return {};
+	return g_session.controllerMotion;
+}
+
+static std::shared_ptr<mcp::WindowsLegacyCapture> RetainCompatibilityCapture()
+{
+    std::lock_guard lock(g_coreMutex);
+    return g_instance.compatibilityCapture;
+}
 
 // Head tracking state for mouse look and WASD movement
 static XrVector3f g_headPos = {0.0f, 1.7f, 0.0f};  // Start at standing eye height
 static float g_headYaw = 0.0f;    // Rotation around Y axis (left/right)
-// Deterministic fixture runs must not interpret typing in another app as WASD.
-// Normal interactive sessions leave this unset.
-static const bool g_automationOnly = []() {
-    char value[8]{};
-    return GetEnvironmentVariableA("SIMXR_AUTOMATION_ONLY",value,sizeof(value))>0 && strcmp(value,"1")==0;
-}();
 static float g_headPitch = 0.0f;  // Rotation around X axis (up/down)
-static float g_headRoll = 0.0f;   // Rotation around forward axis (head tilt). MCP-only â€” no keyboard binding.
+static float g_headRoll = 0.0f;   // Rotation around forward axis (head tilt). MCP-only — no keyboard binding.
 
 // ---------- Diagnostic state: settable IPD and asymmetric per-eye FOV ----------
 //
@@ -713,10 +443,9 @@ static XrFovf MakeFovDeg(float angleLeft, float angleRight, float angleUp, float
 }
 
 static XrFovf GetUiFov(uint32_t eyeIndex) {
-    // The generic profile has no geometry of its own, so it stays symmetric even
-    // if a stale settings file asks for asymmetry.
-    if (!ui::g_uiState.useAsymmetricFov ||
-        ui::g_uiState.headsetProfile == ui::HeadsetProfile::GenericSymmetric) {
+    // Shared with ui::ActiveFovAspect, which snaps the recommended render target to the
+    // shape of whatever this returns.
+    if (!ui::UsesProfileFov()) {
         int fovDeg = ui::g_uiState.fovDegrees;
         if (fovDeg <= 0 || fovDeg > 180) fovDeg = 90;
         float fovRadians = fovDeg * 0.5f * 3.14159265f / 180.0f;
@@ -749,14 +478,11 @@ static bool g_anaglyphPreview = false;
 
 // Pose sweep: auto-oscillate yaw / pitch / roll on a sine wave so the
 // app sees a continuous range of head orientations. Catches off-axis
-// quaternion bugs in seconds â€” anything mis-converted from OpenXR's
+// quaternion bugs in seconds — anything mis-converted from OpenXR's
 // right-handed frame to a left-handed game frame becomes a "world
 // wobbles wrong direction" symptom that's hard to miss.
 static bool  g_poseSweepEnabled  = false;
 static float g_poseSweepStartT   = 0.0f;
-static float g_poseSweepBaseYaw  = 0.0f;
-static float g_poseSweepBasePitch = 0.0f;
-static float g_poseSweepBaseRoll = 0.0f;
 static float g_poseSweepYawAmp   = 0.5f;   // radians (~28 deg)
 static float g_poseSweepPitchAmp = 0.3f;   // radians (~17 deg)
 static float g_poseSweepRollAmp  = 0.3f;   // radians (~17 deg)
@@ -794,148 +520,106 @@ static POINT g_panLastPos = {0, 0};
 // Inside a WM_ENTERSIZEMOVE/WM_EXITSIZEMOVE pair: the user is dragging the window's
 // frame, and every step of it would otherwise rewrite settings.json.
 static bool g_sizingDrag = false;
-// The drag changed the client size, so its end gets one frame-timeline marker.
-static bool g_resizedDuringDrag = false;
 
-// Controller tracking state for motion controller emulation
-// Positions are relative to head position, orientation follows head by default
-struct ControllerState {
-    XrVector3f posOffset;  // Offset from head position (in head-local space)
-    float yawOffset;       // Additional yaw relative to head
-    float pitchOffset;     // Additional pitch relative to head
-    bool isTracking;       // Whether controller is "tracked"
+static double InputClockSeconds()
+{
+	LARGE_INTEGER now, frequency;
+	QueryPerformanceCounter(&now);
+	QueryPerformanceFrequency(&frequency);
+	return static_cast<double>(now.QuadPart) / static_cast<double>(frequency.QuadPart);
+}
 
-    // Input state for button/trigger emulation
-    bool triggerPressed;   // Primary trigger (fire)
-    bool gripPressed;      // Grip button
-    bool menuPressed;      // Menu button
-    bool primaryPressed;   // Primary button (A/X)
-    bool secondaryPressed; // Secondary button (B/Y)
-    bool thumbstickPressed;// Thumbstick click
-    float triggerValue;    // 0.0-1.0 trigger analog value
-    float gripValue;       // 0.0-1.0 grip analog value
-    XrVector2f thumbstick; // -1.0 to 1.0 thumbstick position
+static simxr::legacy::ControllerKeyboardSample PollControllerKeyboard(float frameSeconds)
+{
+	const auto down = [](int key)
+	{
+		return (GetAsyncKeyState(key) & 0x8000) != 0;
+	};
+	simxr::legacy::ControllerKeyboardSample input;
+	input.active = true;
+	input.frameSeconds = frameSeconds;
+	input.animationKeyDown = down('M');
+	input.resetRight = down(VK_NUMPAD5);
+	input.translationDirection = {static_cast<float>(down(VK_NUMPAD6) - down(VK_NUMPAD4)),
+								  static_cast<float>(down(VK_ADD) - down(VK_SUBTRACT)),
+								  static_cast<float>(down(VK_NUMPAD2) - down(VK_NUMPAD8))};
+	input.rotationDirection = {static_cast<float>(down(VK_NUMPAD9) - down(VK_NUMPAD7)),
+							   static_cast<float>(down(VK_NUMPAD1) - down(VK_NUMPAD3))};
+	auto& left = input.hands[0];
+	left.trigger = down(VK_LCONTROL);
+	left.grip = down(VK_LMENU);
+	left.menu = down('G');
+	left.primary = down('V');
+	left.secondary = down('B');
+	if (down('I'))
+		left.stick.y = 1;
+	if (down('K'))
+		left.stick.y = -1;
+	if (down('J'))
+		left.stick.x = -1;
+	if (down('L'))
+		left.stick.x = 1;
+	auto& right = input.hands[1];
+	right.trigger = down(VK_SPACE);
+	right.grip = down('F');
+	right.menu = down(VK_TAB);
+	right.primary = down('R');
+	right.secondary = down('T');
+	right.thumbClick = down(VK_RETURN);
+	if (down(VK_UP))
+		right.stick.y = 1;
+	if (down(VK_DOWN))
+		right.stick.y = -1;
+	if (down(VK_LEFT))
+		right.stick.x = -1;
+	if (down(VK_RIGHT))
+		right.stick.x = 1;
+	return input;
+}
 
-    // Velocity tracking for motion detection
-    XrVector3f prevPosWorld;    // Previous frame world position
-    XrVector3f linearVelocity;  // m/s in world space
-    XrVector3f angularVelocity; // rad/s
-    float prevYaw;              // Previous yaw for angular velocity
-    float prevPitch;            // Previous pitch for angular velocity
-};
-static ControllerState g_leftController = {
-    {-0.2f, -0.3f, -0.4f}, 0.0f, -0.3f, true,  // Position/orientation
-    false, false, false, false, false, false,   // Button states
-    0.0f, 0.0f, {0.0f, 0.0f},                   // Analog values
-    {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f  // Velocity tracking
-};
-static ControllerState g_rightController = {
-    {0.2f, -0.3f, -0.4f}, 0.0f, -0.3f, true,   // Position/orientation
-    false, false, false, false, false, false,   // Button states
-    0.0f, 0.0f, {0.0f, 0.0f},                   // Analog values
-    {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f  // Velocity tracking
-};
+static simxr::legacy::ControllerOverrideEdit<float> DecodeHoldAxis(float value, float presentMinimum,
+																   float activeMinimum)
+{
+	using Edit = simxr::legacy::ControllerOverrideEdit<float>;
+	if (!(value >= presentMinimum))
+		return {};
+	if (value < activeMinimum)
+		return Edit::Release();
+	return Edit::Set(value);
+}
 
-struct ActionSpace {
-    XrAction action{XR_NULL_HANDLE};
-    XrPath subactionPath{XR_NULL_PATH};
-    int sourceMask{0}; // 0 = combined; otherwise one core action source
-    XrPosef poseInActionSpace{pose_math::Identity()};
-};
-static std::unordered_map<XrSpace, ActionSpace> g_controllerSpaces;
-static uintptr_t g_nextSpaceHandle{100};
+static simxr::legacy::ControllerOverrideEdit<bool> DecodeHoldButton(float value)
+{
+	using Edit = simxr::legacy::ControllerOverrideEdit<bool>;
+	if (!(value >= -0.5f))
+		return {};
+	if (value < 0)
+		return Edit::Release();
+	return Edit::Set(value >= 0.5f);
+}
 
-// Composition layers carry a pose plus the space it is in, and VIEW (head-locked)
-// against STAGE (world) changes where the layer belongs entirely.
-struct RefSpace {
-    XrReferenceSpaceType type;
-    XrPosef poseInRef;   // space origin expressed in that reference space
-};
-static std::unordered_map<XrSpace, RefSpace> g_referenceSpaces;
-
-// Map XrPath to path string for controller detection
-static std::unordered_map<XrPath, std::string> g_pathStrings;
-static std::unordered_map<std::string, XrPath> g_stringPaths;
-static XrPath g_nextPath{1};
-
-// Interaction profiles the app suggested bindings for, in suggestion order, and
-// the one xrGetCurrentInteractionProfile reports back once action sets attach.
-static std::vector<XrPath> g_suggestedProfiles;
-static XrPath g_activeProfile = XR_NULL_PATH;
-
-enum class ActionInput {
-    Unknown,
-    Trigger,
-    Grip,
-    Menu,
-    Primary,
-    Secondary,
-    Thumbstick,
-    Pose,
-    Haptic,
-};
-
-struct ActionBinding {
-    XrPath profile{XR_NULL_PATH};
-    XrPath sourcePath{XR_NULL_PATH};
-    std::string collisionKey;
-    int sourceMask{0};
-    ActionInput input{ActionInput::Unknown};
-    bool gripPose{false}; // input/grip/pose rather than input/aim/pose
-};
-
-struct ActionSetRecord {
-    uint32_t priority{0};
-    bool everAttached{false};
-    std::string name;
-    std::string localizedName;
-    std::unordered_set<XrPath> declaredSubactionPaths;
-};
-
-struct ActionRecord {
-    XrActionSet actionSet{XR_NULL_HANDLE};
-    XrActionType type{XR_ACTION_TYPE_BOOLEAN_INPUT};
-    std::string name;
-    std::string localizedName;
-    int declaredSourceMask{interaction_query::kAllActionSources};
-    std::unordered_set<XrPath> declaredSubactionPaths;
-    std::vector<ActionBinding> bindings;
-    // Slot 0 is combined; slots 1-4 are left, right, head, and gamepad.
-    std::array<input::ActionSlot, 5> slots;
-};
-
-static std::unordered_map<XrActionSet, ActionSetRecord> g_actionSets;
-static std::unordered_set<XrActionSet> g_attachedActionSets;
-static std::unordered_map<XrActionSet, int> g_activeActionSetSources;
-static std::unordered_map<XrAction, ActionRecord> g_actions;
-static bool g_sessionActionSetsAttached{false};
-
-// Time tracking for velocity calculation
-static XrTime g_lastFrameTime = 0;
-
-// Get controller world pose (combines head pose with controller offset)
-static void GetControllerPose(const ControllerState& ctrl, XrPosef* outPose) {
-    std::lock_guard<std::recursive_mutex> lock(ui_auto::g_mutex);
-    const int hand = (&ctrl == &g_leftController) ? 0 : 1;
-    if (ui_auto::g_pointer[hand].owned) {
-        *outPose = ui_auto::g_pointer[hand].pose;
-        return;
-    }
-    // Controller orientation = head orientation + controller offsets
-    float totalYaw = g_headYaw + ctrl.yawOffset;
-    float totalPitch = g_headPitch + ctrl.pitchOffset;
-    outPose->orientation = QuatFromYawPitch(totalYaw, totalPitch);
-
-    // Controller position = head position + rotated offset
-    // Rotate the offset by head yaw only (not pitch) for natural hand movement
-    XrQuaternionf headYawQ = QuatFromYawPitch(g_headYaw, 0.0f);
-
-    // Simple rotation of offset by head yaw
-    float cosY = cosf(g_headYaw);
-    float sinY = sinf(g_headYaw);
-    outPose->position.x = g_headPos.x + ctrl.posOffset.x * cosY + ctrl.posOffset.z * sinY;
-    outPose->position.y = g_headPos.y + ctrl.posOffset.y;
-    outPose->position.z = g_headPos.z - ctrl.posOffset.x * sinY + ctrl.posOffset.z * cosY;
+static simxr::legacy::ControllerHoldEdit DecodeControllerHold(const mcp::ControllerHoldCommand& command)
+{
+	using namespace simxr::legacy;
+	ControllerHoldEdit edit;
+	if (command.hand >= 0)
+		edit.hand = command.hand == 0 ? ControllerHand::Left : ControllerHand::Right;
+	edit.clear = command.clear;
+	edit.trigger = DecodeHoldAxis(command.trigger, -0.5f, 0);
+	edit.grip = DecodeHoldAxis(command.grip, -0.5f, 0);
+	edit.primary = DecodeHoldButton(command.primary);
+	edit.secondary = DecodeHoldButton(command.secondary);
+	edit.menu = DecodeHoldButton(command.menu);
+	edit.thumbClick = DecodeHoldButton(command.thumbClick);
+	edit.stickX = DecodeHoldAxis(command.stickX, -1.5f, -1);
+	edit.stickY = DecodeHoldAxis(command.stickY, -1.5f, -1);
+	if (command.yaw != mcp::kHoldAngleUnset)
+		edit.yaw = ControllerOverrideEdit<float>::Set(command.yaw);
+	if (command.pitch != mcp::kHoldAngleUnset)
+		edit.pitch = ControllerOverrideEdit<float>::Set(command.pitch);
+	if (command.roll != mcp::kHoldAngleUnset)
+		edit.roll = ControllerOverrideEdit<float>::Set(command.roll);
+	return edit;
 }
 
 // Helper function to create quaternion from yaw and pitch
@@ -977,16 +661,20 @@ XrQuaternionf QuatFromYawPitchRoll(float yaw, float pitch, float roll) {
 }
 
 static inline XrQuaternionf MultiplyQuaternions(const XrQuaternionf& a, const XrQuaternionf& b) {
-    return pose_math::Multiply(a, b);
+    return XrQuaternionf{
+        a.w*b.x + a.x*b.w + a.y*b.z - a.z*b.y,
+        a.w*b.y - a.x*b.z + a.y*b.w + a.z*b.x,
+        a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w,
+        a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z
+    };
 }
 
 // Rotate a vector by a quaternion (q * v * q^-1)
 static inline XrVector3f RotateVectorByQuaternion(const XrQuaternionf& q, const XrVector3f& v) {
-    return pose_math::Rotate(q, v);
-}
-
-static inline XrPosef ComposePose(const XrPosef& parent, const XrPosef& child) {
-    return pose_math::Compose(parent, child);
+    const XrQuaternionf qv{ v.x, v.y, v.z, 0.0f };
+    const XrQuaternionf qinv{ -q.x, -q.y, -q.z, q.w };
+    const XrQuaternionf r = MultiplyQuaternions(MultiplyQuaternions(q, qv), qinv);
+    return XrVector3f{ r.x, r.y, r.z };
 }
 
 static void GetEffectiveHeadAngles(float& yaw, float& pitch, float& roll) {
@@ -995,26 +683,9 @@ static void GetEffectiveHeadAngles(float& yaw, float& pitch, float& roll) {
     const float t = (float)GetTickCount64() * 0.001f - g_poseSweepStartT;
     const float TWO_PI = 6.2831853f;
     const float w = TWO_PI * g_poseSweepFreq;
-    // Every axis begins at the existing head pose and returns there when the
-    // sweep is disabled.  The old phase offsets started pitch at 84% and roll
-    // at 91% of their amplitudes, creating a large one-frame camera snap that
-    // looked like a stereo-mode transition.  Harmonics still exercise all
-    // three axes without that discontinuity.
-    yaw   = g_poseSweepBaseYaw   + g_poseSweepYawAmp   * sinf(w * t);
-    pitch = g_poseSweepBasePitch + g_poseSweepPitchAmp * sinf(2.0f * w * t);
-    roll  = g_poseSweepBaseRoll  + g_poseSweepRollAmp  * sinf(3.0f * w * t);
-}
-
-// Angles are passed in, not sampled here, so both eyes of a frame come from one
-// instant of the pose sweep.
-static XrPosef ViewPoseFromAngles(uint32_t eye, float yaw, float pitch, float roll) {
-    XrPosef pose{};
-    pose.orientation = QuatFromYawPitchRoll(yaw, pitch, roll);
-    const float ipd = g_useCustomIpd ? g_customIpd : GetUiIpdMeters();
-    const float offset = (eye == 0) ? -ipd * 0.5f : ipd * 0.5f;
-    const XrVector3f rotated = RotateVectorByQuaternion(pose.orientation, XrVector3f{ offset, 0.0f, 0.0f });
-    pose.position = { g_headPos.x + rotated.x, g_headPos.y + rotated.y, g_headPos.z + rotated.z };
-    return pose;
+    yaw   = g_poseSweepYawAmp   * sinf(w * t);
+    pitch = g_poseSweepPitchAmp * sinf(w * t + 1.0f);
+    roll  = g_poseSweepRollAmp  * sinf(w * t + 2.0f);
 }
 
 static XrFovf GetViewFov(uint32_t eye) {
@@ -1027,8 +698,13 @@ static XrFovf GetViewFov(uint32_t eye) {
 // BLEND_TEXTURE_SOURCE_ALPHA is set, and is premultiplied into the colour channels unless
 // UNPREMULTIPLIED_ALPHA says otherwise. CORRECT_CHROMATIC_ABERRATION is a legitimate no-op
 // here - the preview draws no distortion mesh to correct.
-using composition_render::LayerBlend;
-using composition_render::BlendForLayerFlags;
+enum class LayerBlend { Opaque, Premultiplied, Unpremultiplied };
+
+static inline LayerBlend BlendForLayerFlags(XrCompositionLayerFlags flags) {
+    if (!(flags & XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT)) return LayerBlend::Opaque;
+    return (flags & XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT) ? LayerBlend::Unpremultiplied
+                                                                    : LayerBlend::Premultiplied;
+}
 
 // The preview swapchain is created UNORM because FLIP_DISCARD rejects _SRGB, so every render
 // target view over it has to opt back into the gamma encode by hand. Without this the GPU
@@ -1052,242 +728,23 @@ static bool CreatePreviewRtv(Session& s, ID3D11Texture2D* backbuffer,
     return SUCCEEDED(s.d3d11Device->CreateRenderTargetView(backbuffer, nullptr, out.ReleaseAndGetAddressOf()));
 }
 
-// --- Quad layer geometry --------------------------------------------------------------------------
-// LOCAL and STAGE are the same world here, VIEW is head-locked, and an unknown handle falls
-// back to LOCAL the way xrLocateSpace does.
-static XrPosef QuadWorldPose(const XrCompositionLayerQuad& quad, float yaw, float pitch, float roll,
-                             bool* outHeadLocked = nullptr) {
-    XrPosef spaceOrigin{};
-    spaceOrigin.orientation = { 0.0f, 0.0f, 0.0f, 1.0f };
-    spaceOrigin.position = { 0.0f, 0.0f, 0.0f };
-    bool headLocked = false;
-    auto spaceIt = g_referenceSpaces.find(quad.space);
-    if (spaceIt != g_referenceSpaces.end()) {
-        headLocked = (spaceIt->second.type == XR_REFERENCE_SPACE_TYPE_VIEW);
-        spaceOrigin = spaceIt->second.poseInRef;
-    }
-    if (headLocked) {
-        XrPosef head{};
-        head.orientation = QuatFromYawPitchRoll(yaw, pitch, roll);
-        head.position = g_headPos;
-        spaceOrigin = ComposePose(head, spaceOrigin);
-    }
-    if (outHeadLocked) *outHeadLocked = headLocked;
-    return ComposePose(spaceOrigin, quad.pose);
-}
-
-// Corners come back in fan order: top-left, top-right, bottom-right, bottom-left. A triangle
-// strip wants TL, TR, BL, BR instead, so it has to walk these as {0, 1, 3, 2}.
-static void QuadWorldCorners(const XrCompositionLayerQuad& quad, float yaw, float pitch, float roll,
-                             XrVector3f outCorners[4], bool* outHeadLocked) {
-    const XrPosef quadWorld = QuadWorldPose(quad, yaw, pitch, roll, outHeadLocked);
-
-    const float halfW = quad.size.width * 0.5f;
-    const float halfH = quad.size.height * 0.5f;
-    const XrVector3f localCorners[4] = {
-        { -halfW,  halfH, 0.0f }, {  halfW,  halfH, 0.0f },
-        {  halfW, -halfH, 0.0f }, { -halfW, -halfH, 0.0f },
-    };
-    for (int i = 0; i < 4; ++i) {
-        const XrVector3f r = RotateVectorByQuaternion(quadWorld.orientation, localCorners[i]);
-        outCorners[i] = { quadWorld.position.x + r.x, quadWorld.position.y + r.y, quadWorld.position.z + r.z };
-    }
-}
-
-// View space matches xrLocateViews: -Z forward, so a visible point has z < 0.
-static inline XrVector3f WorldToView(const XrVector3f& world, const XrPosef& view) {
-    const XrVector3f d{ world.x - view.position.x, world.y - view.position.y, world.z - view.position.z };
-    const XrQuaternionf toView{ -view.orientation.x, -view.orientation.y,
-                                -view.orientation.z,  view.orientation.w };
-    return RotateVectorByQuaternion(toView, d);
-}
-
-static inline bool QuadVisibleInEye(XrEyeVisibility visibility, uint32_t eye) {
-    if (visibility == XR_EYE_VISIBILITY_LEFT)  return eye == 0;
-    if (visibility == XR_EYE_VISIBILITY_RIGHT) return eye == 1;
-    return true;
-}
-
-// Initialize shader resources for blitting
-bool InitBlitResources(Session& s) {
-    if (s.blitVS && s.blitPS && s.quadVS && s.quadCB && s.samplerState && s.noCullRS &&
-        s.anaglyphRedBS && s.anaglyphCyanBS) {
-        return true;
-    }
-
-    // Compile shaders
-    const char* shaderSource = R"(
-        Texture2D txDiffuse : register(t0);
-        SamplerState samLinear : register(s0);
-
-        struct VS_OUTPUT {
-            float4 Pos : SV_POSITION;
-            float2 Tex : TEXCOORD;
-        };
-
-        // Vertex Shader (generates fullscreen quad with correct UV mapping)
-        VS_OUTPUT VSMain(uint vertexId : SV_VertexID) {
-            VS_OUTPUT output;
-            // Generate (0,0), (2,0), (0,2), (2,2) pattern
-            float2 xy = float2((vertexId << 1) & 2, vertexId & 2);
-
-            // Clip-space position: xy goes 0-2, we need -1 to 1
-            // x: 0->-1, 2->1  means x_clip = xy.x - 1
-            // y: 0->1, 2->-1  means y_clip = 1 - xy.y
-            output.Pos = float4(xy.x - 1.0, 1.0 - xy.y, 0.0, 1.0);
-
-            // Normalized UVs (0-1 range, not 0-2)
-            output.Tex = xy * 0.5;
-
-            return output;
-        }
-
-        // Corners arrive in clip space rather than NDC so that w survives to the rasterizer:
-        // that is what keeps texture interpolation perspective-correct on an angled quad, and
-        // what lets the GPU clip a quad straddling the near plane instead of dropping it.
-        cbuffer QuadCB : register(b0) {
-            float4 gCorners[4];
-        };
-
-        VS_OUTPUT QuadVSMain(uint vertexId : SV_VertexID) {
-            VS_OUTPUT output;
-            output.Pos = gCorners[vertexId];
-            output.Tex = float2(vertexId & 1, (vertexId >> 1) & 1);
-            return output;
-        }
-
-        // Pixel Shader - GPU handles sRGB conversion automatically with proper formats
-        float4 PSMain(VS_OUTPUT input) : SV_TARGET {
-            return txDiffuse.Sample(samLinear, input.Tex);
-        }
-    )";
-
-    ComPtr<ID3DBlob> vsBlob, psBlob, errorBlob;
-    HRESULT hr;
-    UINT compileFlags = D3DCOMPILE_OPTIMIZATION_LEVEL3;
-
-    // Compile VS
-    hr = D3DCompile(shaderSource, strlen(shaderSource), "BlitShader", nullptr, nullptr, 
-                    "VSMain", "vs_5_0", compileFlags, 0, vsBlob.GetAddressOf(), errorBlob.GetAddressOf());
-    if (FAILED(hr)) {
-        Logf("[SimXR] Failed to compile VS: %s", errorBlob ? (char*)errorBlob->GetBufferPointer() : "Unknown error");
-        return false;
-    }
-    hr = s.d3d11Device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), 
-                                           nullptr, s.blitVS.GetAddressOf());
-    if (FAILED(hr)) { Logf("[SimXR] Failed to create VS: 0x%08X", hr); return false; }
-
-    // Compile PS
-    hr = D3DCompile(shaderSource, strlen(shaderSource), "BlitShader", nullptr, nullptr, 
-                    "PSMain", "ps_5_0", compileFlags, 0, psBlob.GetAddressOf(), errorBlob.GetAddressOf());
-    if (FAILED(hr)) {
-        Logf("[SimXR] Failed to compile PS: %s", errorBlob ? (char*)errorBlob->GetBufferPointer() : "Unknown error");
-        return false;
-    }
-    hr = s.d3d11Device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(),
-                                          nullptr, s.blitPS.GetAddressOf());
-    if (FAILED(hr)) { Logf("[SimXR] Failed to create PS: 0x%08X", hr); return false; }
-
-    // Compile the quad VS. It shares the source (and so the PS) with the blit path but is a
-    // separate shader because it reads a constant buffer, and the blit call sites bind none.
-    ComPtr<ID3DBlob> quadVsBlob;
-    hr = D3DCompile(shaderSource, strlen(shaderSource), "BlitShader", nullptr, nullptr,
-                    "QuadVSMain", "vs_5_0", compileFlags, 0, quadVsBlob.GetAddressOf(), errorBlob.ReleaseAndGetAddressOf());
-    if (FAILED(hr)) {
-        Logf("[SimXR] Failed to compile quad VS: %s", errorBlob ? (char*)errorBlob->GetBufferPointer() : "Unknown error");
-        return false;
-    }
-    hr = s.d3d11Device->CreateVertexShader(quadVsBlob->GetBufferPointer(), quadVsBlob->GetBufferSize(),
-                                           nullptr, s.quadVS.GetAddressOf());
-    if (FAILED(hr)) { Logf("[SimXR] Failed to create quad VS: 0x%08X", hr); return false; }
-
-    D3D11_BUFFER_DESC cbDesc{};
-    cbDesc.ByteWidth = sizeof(float) * 4 * 4;   // float4 gCorners[4]
-    cbDesc.Usage = D3D11_USAGE_DYNAMIC;
-    cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-    cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-    hr = s.d3d11Device->CreateBuffer(&cbDesc, nullptr, s.quadCB.GetAddressOf());
-    if (FAILED(hr)) { Logf("[SimXR] Failed to create quad constant buffer: 0x%08X", hr); return false; }
-
-    // Create Sampler State
-    D3D11_SAMPLER_DESC sampDesc = {};
-    sampDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
-    sampDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
-    sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
-    sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-    sampDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
-    sampDesc.MinLOD = 0; 
-    sampDesc.MaxLOD = D3D11_FLOAT32_MAX;
-    hr = s.d3d11Device->CreateSamplerState(&sampDesc, s.samplerState.GetAddressOf());
-    if (FAILED(hr)) { Logf("[SimXR] Failed to create SamplerState: 0x%08X", hr); return false; }
-
-    // Create Rasterizer State with culling disabled
-    D3D11_RASTERIZER_DESC rsDesc{};
-    rsDesc.FillMode = D3D11_FILL_SOLID;
-    rsDesc.CullMode = D3D11_CULL_NONE;  // Disable culling to prevent triangles from being discarded
-    rsDesc.FrontCounterClockwise = FALSE;
-    rsDesc.DepthClipEnable = TRUE;
-    rsDesc.ScissorEnable = FALSE;
-    rsDesc.MultisampleEnable = FALSE;
-    rsDesc.AntialiasedLineEnable = FALSE;
-    hr = s.d3d11Device->CreateRasterizerState(&rsDesc, s.noCullRS.GetAddressOf());
-    if (FAILED(hr)) { Logf("[SimXR] Failed to create RasterizerState: 0x%08X", hr); return false; }
-
-    // Create blend states for anaglyph rendering
-    D3D11_BLEND_DESC blendDesc{};
-    blendDesc.AlphaToCoverageEnable = FALSE;
-    blendDesc.IndependentBlendEnable = FALSE;
-    blendDesc.RenderTarget[0].BlendEnable = FALSE;
-    blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_RED;
-    hr = s.d3d11Device->CreateBlendState(&blendDesc, s.anaglyphRedBS.GetAddressOf());
-    if (FAILED(hr)) { Logf("[SimXR] Failed to create anaglyph red blend state: 0x%08X", hr); return false; }
-
-    blendDesc.RenderTarget[0].RenderTargetWriteMask =
-        D3D11_COLOR_WRITE_ENABLE_GREEN | D3D11_COLOR_WRITE_ENABLE_BLUE;
-    hr = s.d3d11Device->CreateBlendState(&blendDesc, s.anaglyphCyanBS.GetAddressOf());
-    if (FAILED(hr)) { Logf("[SimXR] Failed to create anaglyph cyan blend state: 0x%08X", hr); return false; }
-
-    Log("[SimXR] Blit resources initialized successfully.");
-    return true;
-}
-
-// Three spec blend modes times three anaglyph channel masks is more combinations than are
-// worth naming, and an app only ever reaches a couple, so they are built on demand and cached.
-static ID3D11BlendState* GetLayerBlendState(Session& s, LayerBlend mode, UINT8 writeMask) {
-    const uint32_t key = ((uint32_t)mode << 8) | writeMask;
-    auto it = s.layerBlendStates.find(key);
-    if (it != s.layerBlendStates.end()) return it->second.Get();
-
-    D3D11_BLEND_DESC desc{};
-    desc.AlphaToCoverageEnable = FALSE;
-    desc.IndependentBlendEnable = FALSE;
-    auto& target = desc.RenderTarget[0];
-    target.BlendOp = D3D11_BLEND_OP_ADD;
-    target.BlendOpAlpha = D3D11_BLEND_OP_ADD;
-    target.RenderTargetWriteMask = writeMask;
-    if (mode == LayerBlend::Opaque) {
-        // Source alpha is ignored rather than written: dropping it from the write mask leaves
-        // the destination at the 1.0 the black clear put there, which is what an OPAQUE
-        // environment blend mode expects of the composited result.
-        target.BlendEnable = FALSE;
-        target.RenderTargetWriteMask &= (UINT8)(D3D11_COLOR_WRITE_ENABLE_RED |
-                                                D3D11_COLOR_WRITE_ENABLE_GREEN |
-                                                D3D11_COLOR_WRITE_ENABLE_BLUE);
-    } else {
-        target.BlendEnable = TRUE;
-        // Premultiplied content already carries the src.rgb * src.a term.
-        target.SrcBlend = (mode == LayerBlend::Unpremultiplied) ? D3D11_BLEND_SRC_ALPHA : D3D11_BLEND_ONE;
-        target.DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
-        target.SrcBlendAlpha = D3D11_BLEND_ONE;
-        target.DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
-    }
-
-    ComPtr<ID3D11BlendState> state;
-    if (FAILED(s.d3d11Device->CreateBlendState(&desc, state.GetAddressOf()))) {
-        Logf("[SimXR] Failed to create layer blend state (mode=%d, mask=0x%02X)", (int)mode, writeMask);
-        return nullptr;
-    }
-    return s.layerBlendStates.emplace(key, state).first->second.Get();
+static simxr::windows::D3D11Preview* EnsureD3D11Preview(Session& session)
+{
+	if (!session.d3d11Device)
+		return nullptr;
+	if (session.preview11 && session.preview11->IsFor(session.d3d11Device.Get()))
+		return session.preview11.get();
+	try
+	{
+		auto replacement = std::make_unique<simxr::windows::D3D11Preview>(session.d3d11Device.Get());
+		session.preview11 = std::move(replacement);
+		return session.preview11.get();
+	}
+	catch (const std::exception& error)
+	{
+		Logf("[SimXR] D3D11 preview initialization failed: %s", error.what());
+		return nullptr;
+	}
 }
 
 // Compute the natural canvas size for the current stereo layout, expressed in
@@ -1315,22 +772,48 @@ static void ComputeContentDims(int srcW, int srcH,
     if (contentH <= 0) contentH = 1;
 }
 
-// Largest rect with (contentW : contentH) aspect that fits inside (dstW Ã— dstH),
+// Largest rect with (contentW : contentH) aspect that fits inside (dstW × dstH),
 // centered. Used to letterbox/pillarbox the stereo image into the window.
 struct FitRect { float x, y, w, h; };
+static simxr::PreviewEyePacking PreviewPacking(ui::DisplayLayout layout)
+{
+	switch (layout)
+	{
+	case ui::DisplayLayout::OverUnder:
+		return simxr::PreviewEyePacking::OverUnder;
+	case ui::DisplayLayout::Anaglyph:
+		return simxr::PreviewEyePacking::Anaglyph;
+	default:
+		return simxr::PreviewEyePacking::SideBySide;
+	}
+}
+
+static simxr::PreviewEyeLayout
+PrepareNativeEyeLayout(const FitRect& rectangle, ui::ViewMode selection, ui::DisplayLayout packing,
+					   simxr::PreviewPixelAlignment alignment = simxr::PreviewPixelAlignment::Fractional)
+{
+	auto eyes = simxr::PreviewEyeSelection::Both;
+	if (selection == ui::ViewMode::LeftEyeOnly)
+		eyes = simxr::PreviewEyeSelection::Left;
+	else if (selection == ui::ViewMode::RightEyeOnly)
+		eyes = simxr::PreviewEyeSelection::Right;
+	return simxr::PreparePreviewEyeLayout({rectangle.x, rectangle.y, rectangle.w, rectangle.h}, eyes,
+										  PreviewPacking(packing), alignment);
+}
+
 static FitRect ComputeFitRect(int contentW, int contentH, int dstW, int dstH) {
     FitRect r{0.0f, 0.0f, (float)dstW, (float)dstH};
     if (contentW <= 0 || contentH <= 0 || dstW <= 0 || dstH <= 0) return r;
     double ca = (double)contentW / (double)contentH;
     double da = (double)dstW / (double)dstH;
     if (ca > da) {
-        // Content wider than dest â†’ pillar (full width, shorter height)
+        // Content wider than dest → pillar (full width, shorter height)
         r.w = (float)dstW;
         r.h = (float)((double)dstW / ca);
         r.x = 0.0f;
         r.y = ((float)dstH - r.h) * 0.5f;
     } else {
-        // Content taller than dest â†’ letterbox (full height, narrower width)
+        // Content taller than dest → letterbox (full height, narrower width)
         r.h = (float)dstH;
         r.w = (float)((double)dstH * ca);
         r.x = ((float)dstW - r.w) * 0.5f;
@@ -1352,38 +835,16 @@ static void ClampToWorkArea(int& w, int& h) {
     h = (std::max)(240, (int)(h * scale));
 }
 
-// The shape the preview maps the eyes onto: the headset's panel, laid out for the
-// current view mode. This is deliberately NOT the app's buffer size. The app renders
-// the frustum we report, which is taller than it is wide; into a 16:9 buffer that is
-// non-square pixels, and showing those pixels 1:1 stretches the image ~2x horizontally.
-// Scaling the buffer into the panel's shape is what a real compositor does.
+// The shape the preview maps the eyes onto: the reported frustum at panel scale, laid out
+// for the current view mode. This is deliberately NOT the app's buffer size. An app may
+// render the frustum into a buffer of any shape - a 16:9 one has non-square pixels, and
+// showing those 1:1 stretches the image ~2x horizontally. Resampling the buffer into the
+// frustum's shape is what a real compositor does.
 static void ComputeDisplayDims(int& contentW, int& contentH) {
-    uint32_t panelW = 0, panelH = 0;
-    ui::GetHeadsetPanelResolution(panelW, panelH);
-    ComputeContentDims((int)panelW, (int)panelH, ui::g_uiState.viewMode, ui::g_uiState.displayLayout,
+    uint32_t eyeW = 0, eyeH = 0;
+    ui::GetDisplayEyeSize(eyeW, eyeH);
+    ComputeContentDims((int)eyeW, (int)eyeH, ui::g_uiState.viewMode, ui::g_uiState.displayLayout,
                        contentW, contentH);
-}
-
-// The region of a swapchain image the app declared valid (XrSwapchainSubImage::imageRect),
-// clamped to the texture. Apps commonly render a 16:9 eye into a larger or square
-// swapchain and describe it with this rect, so everything downstream - the copy, the
-// preview size, the window aspect - has to work from it and not from the texture.
-// The "show full render" diagnostic may expand a non-empty subimage, but a legal empty
-// subimage remains empty and therefore contributes no pixels.
-using SubImageRect = composition_render::SubImageRect;
-static SubImageRect ResolveSubImageRect(const XrRect2Di& rect, uint32_t texW, uint32_t texH,
-                                        const char* label) {
-    const SubImageRect resolved = composition_render::ResolveSubImageRect(
-        rect, texW, texH, ui::g_uiState.showFullRender);
-    if ((rect.extent.width > 0 && rect.extent.height > 0) &&
-        (resolved.w == 0 || resolved.h == 0)) {
-        static int badRect = 0;
-        if (++badRect % 60 == 1) {
-            Logf("[SimXR] %s: unusable imageRect (offset=%d,%d extent=%dx%d, texture %ux%u); skipping",
-                 label, rect.offset.x, rect.offset.y, rect.extent.width, rect.extent.height, texW, texH);
-        }
-    }
-    return resolved;
 }
 
 static perf::ProjectionTimingTracker g_projectionTiming;
@@ -1433,10 +894,10 @@ static void GetPreviewClientSize(rt::Session& s, int srcW, int srcH, int& outW, 
         return;
     }
     // Initial fallback (first frame, before WM_SIZE has fired)
-    uint32_t panelW = 0, panelH = 0;
-    ui::GetHeadsetPanelResolution(panelW, panelH);
+    uint32_t eyeW = 0, eyeH = 0;
+    ui::GetDisplayEyeSize(eyeW, eyeH);
     int tw = 0, th = 0;
-    ui::CalculateWindowSize((int)panelW, (int)panelH, tw, th);
+    ui::CalculateWindowSize((int)eyeW, (int)eyeH, tw, th);
     ClampToWorkArea(tw, th);
     outW = tw;
     outH = th;
@@ -1458,8 +919,9 @@ static void RefreshPreviewGeometry(HWND hWnd) {
 }
 
 // Where the stereo image lands inside a dstW x dstH target, in that target's pixels.
-// "Fill Window" gives the entire target; any other zoom is an absolute content scale
-// placed by the pan offset, which the target then clips.
+// "Fit to Window" gives the largest centred rect of the content's own aspect that fits;
+// any other zoom is an absolute content scale placed by the pan offset, which the target
+// then clips. Either way the target is cleared first, so whatever is left over is black.
 static FitRect ComputePresentRect(int dstW, int dstH) {
     int contentW = 0, contentH = 0;
     ComputeDisplayDims(contentW, contentH);
@@ -1478,11 +940,7 @@ static void ComputePreviewRTSize(rt::Session& s, int& outW, int& outH) {
         (double)kPreviewMaxWidth / (std::max)(1, clientW),
         (double)kPreviewMaxHeight / (std::max)(1, clientH),
     });
-    // Stereo capture/debug tooling splits this surface into equal eye halves.
-    // Window clients can be odd-width (for example 1533 px after a manual
-    // resize), so keep the internal mirror even without changing the window.
-    outW = (std::max)(2, (int)std::lround(clientW * scale));
-    outW &= ~1;
+    outW = (std::max)(1, (int)std::lround(clientW * scale));
     outH = (std::max)(1, (int)std::lround(clientH * scale));
 }
 
@@ -1492,9 +950,9 @@ static void ComputePreviewRTSize(rt::Session& s, int& outW, int& outH) {
 // WM_SIZE, and from the render path when the content aspect itself changes.
 static void FitWindowToContentAspect(HWND hWnd) {
     if (!hWnd) return;
-    // Fill mode deliberately permits any window/monitor aspect. The compositor scales the
-    // source to the full client rect, so maximizing must stay maximized instead of being
-    // snapped back to an aspect-correct floating window.
+    // Fit mode deliberately permits any window/monitor aspect: it letterboxes into
+    // whatever it is given, so maximizing must stay maximized instead of being snapped
+    // back to an aspect-correct floating window.
     if (ui::g_uiState.fitToWindow) return;
 
     RECT cr{};
@@ -1549,72 +1007,19 @@ static void ResizeWindowForContent(HWND hWnd) {
                  SWP_NOMOVE | SWP_NOZORDER);
 }
 
-// Block until the last composite handed to the preview queue has run. Leaves the pending
-// slots alone, so whatever is waiting to be painted still gets painted.
-static void WaitForPreviewFence(rt::Session& s) {
-    if (!s.previewFence || !s.previewFenceEvent || s.previewFenceValue == 0) return;
-    if (s.previewFence->GetCompletedValue() < s.previewFenceValue) {
-        s.previewFence->SetEventOnCompletion(s.previewFenceValue, s.previewFenceEvent);
-        WaitForSingleObject(s.previewFenceEvent, 1000);
-    }
+// Teardown/source destruction requires actual completion; a timeout is not idle.
+static bool WaitForPreviewIdle(rt::Session& session)
+{
+	return !session.preview12 || session.preview12->WaitIdle();
 }
 
-// Block until nothing the preview queue has submitted is still running, so the
-// resources it reads can be dropped.
-static void WaitForPreviewIdle(rt::Session& s) {
-    WaitForPreviewFence(s);
-    // Nothing is in flight any more, so no slot is waiting to be picked up either.
-    for (UINT i = 0; i < rt::kPreviewFrames; ++i) {
-        s.previewFrames[i].pending = false;
-        s.previewFrames[i].recording = false;
-    }
-    s.previewSlotOpen = false;
+static void ResetD3D12PreviewResources(rt::Session& session)
+{
+	auto preview = std::move(session.preview12);
+	if (preview)
+		preview->Close();
+	session.previewPipelines12.reset();
 }
-
-// Just the resources that depend on the preview's size. The window is resizable and
-// the RT tracks its fit rect, so this runs on every resize step - the queue, fences
-// and command list have to survive it. Recreating the cross-queue fence in particular
-// would drop a signal the app's own queue is mid-flight on.
-static void ResetD3D12PreviewSurfaces(rt::Session& s) {
-    WaitForPreviewIdle(s);
-    s.previewRT12.Reset();
-    s.previewRtvHeap.Reset();
-    for (UINT i = 0; i < rt::kPreviewFrames; ++i) {
-        s.previewFrames[i].readback.Reset();
-        s.previewFrames[i].rtWidth = s.previewFrames[i].rtHeight = 0;
-    }
-    s.previewReadbackPitch = 0;
-}
-
-static void ResetD3D12PreviewResources(rt::Session& s) {
-    // Same reason xrDestroySwapchain waits: nothing the preview queue has submitted keeps
-    // the resources it reads alive, and it is no longer drained by the frame that queued it.
-    WaitForPreviewIdle(s);
-    s.previewRT12.Reset();
-    for (UINT i = 0; i < rt::kPreviewFrames; ++i) {
-        s.previewFrames[i] = rt::PreviewFrame12{};
-    }
-    s.previewSlot = 0;
-    s.previewSlotOpen = false;
-    s.previewReadbackPitch = 0;
-    s.previewCmdList.Reset();
-    s.previewFence.Reset();
-    s.previewFenceValue = 0;
-    s.previewQueue12.Reset();
-    // Device-owned, so they cannot outlive the session that created them.
-    s.previewRtvHeap.Reset();
-    s.previewSrvHeap.Reset();
-    for (auto& pso : s.previewPSO) pso.Reset();
-    s.previewRootSig.Reset();
-    s.previewSrvSlot = 0;
-    s.crossQueueFence.Reset();
-    s.crossQueueFenceValue = 0;
-    if (s.previewFenceEvent) {
-        CloseHandle(s.previewFenceEvent);
-        s.previewFenceEvent = nullptr;
-    }
-}
-
 static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     // Dark menu bar: the WM_UAH* custom-draw messages plus the light seam
     // DefWindowProc leaves under the bar on WM_NCPAINT/WM_NCACTIVATE.
@@ -1623,50 +1028,41 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         return darkMenuResult;
     }
     switch (msg) {
-        case preview_title::kApplyMessage:
-            ui::g_previewTitle.Apply(hWnd);
-            return 0;
         case WM_CLOSE:
             if (rt::g_session.handle != XR_NULL_HANDLE) {
-                bool running = false;
-                {
-                    std::lock_guard<std::mutex> lock(rt::g_session.frameMutex);
-                    running = rt::g_session.running;
-                    if (running) rt::g_session.exitRequested = true;
-                }
-                if (running) rt::PushState(rt::g_session.handle, XR_SESSION_STATE_STOPPING);
+                rt::PushState(rt::g_session.handle, XR_SESSION_STATE_EXITING);
             }
             Log("[SimXR] WndProc: WM_CLOSE received");
             DestroyWindow(hWnd);
             return 0;
         case WM_DESTROY:
-            ui::g_previewTitle.Forget(hWnd);
             // DON'T call PostQuitMessage - we're a DLL, not the main app!
             // PostQuitMessage would tell the host application to exit.
             Log("[SimXR] WndProc: WM_DESTROY received");
             return 0;
-        case WM_ACTIVATE: {
-            if (rt::g_automationOnly) return 0;
-            const bool active = LOWORD(wParam) != WA_INACTIVE;
-            const preview_focus::ActivationEffects effects =
-                preview_focus::OnActivation(active, rt::g_session.state);
-            rt::g_session.previewInputFocused = effects.inputFocused;
-            Log(active
-                ? "[SimXR] WndProc: preview input focused"
-                : "[SimXR] WndProc: preview input unfocused");
-            if (effects.releaseMouseCapture) {
-                rt::SetMouseLook(hWnd, false);
+        case WM_ACTIVATE:
+            if (LOWORD(wParam) != WA_INACTIVE) {
+                rt::g_session.isFocused = true;
+                Log("[SimXR] WndProc: WM_ACTIVATE -> focused");
+                // Push FOCUSED state if we were VISIBLE
+                if (rt::g_session.state == XR_SESSION_STATE_VISIBLE) {
+                    rt::PushState(rt::g_session.handle, XR_SESSION_STATE_FOCUSED);
+                }
+            } else {
+                rt::g_session.isFocused = false;
+                Log("[SimXR] WndProc: WM_ACTIVATE -> unfocused");
+                rt::SetMouseLook(hWnd, false);  // also puts the hidden cursor back
                 rt::g_panDrag = false;
                 ReleaseCapture();
-            }
-            if (effects.sessionState != rt::g_session.state) {
-                rt::PushState(rt::g_session.handle, effects.sessionState);
+                // Push VISIBLE state if we were FOCUSED
+                if (rt::g_session.state == XR_SESSION_STATE_FOCUSED) {
+                    rt::PushState(rt::g_session.handle, XR_SESSION_STATE_VISIBLE);
+                }
             }
             return 0;
-        }
         case WM_LBUTTONDOWN:
-            Logf("[SimXR] WM_LBUTTONDOWN: focused=%d", rt::g_session.previewInputFocused.load());
-            if (rt::g_session.previewInputFocused) {
+            Logf("[SimXR] WM_LBUTTONDOWN: focused=%d", rt::g_session.isFocused.load());
+            if (rt::g_session.isFocused) {
                 rt::SetMouseLook(hWnd, true);
             }
             return 0;
@@ -1692,19 +1088,11 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         case WM_EXITSIZEMOVE:
             rt::g_sizingDrag = false;
             ui::SaveSettings();
-            if (rt::g_resizedDuringDrag) {
-                rt::g_resizedDuringDrag = false;
-                RECT client{};
-                GetClientRect(hWnd, &client);
-                g_frameTimeline.Marker(perf::timeline::MarkerKind::WindowResize,
-                                       client.right - client.left, client.bottom - client.top);
-                g_sessionInfoDirty = true;
-            }
             return 0;
         case WM_SIZING: {
-            // Fill mode accepts arbitrary window shapes and performs the up/downscale in
-            // the preview compositor. Manual zoom mode keeps the aspect-locked inspector
-            // behavior that makes pixel-scale comparisons predictable.
+            // Fit mode accepts arbitrary window shapes and letterboxes into them. Manual
+            // zoom mode keeps the aspect-locked inspector behavior that makes pixel-scale
+            // comparisons predictable.
             if (ui::g_uiState.fitToWindow) break;
 
             // Constrain interactive resize to the current content aspect ratio
@@ -1731,9 +1119,9 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 
             UINT edge = (UINT)wParam;
             // Decide which axis drives the constraint:
-            //   left/right edge â†’ width is canonical
-            //   top/bottom edge â†’ height is canonical
-            //   corner â†’ use whichever side the user pulled "further" so
+            //   left/right edge → width is canonical
+            //   top/bottom edge → height is canonical
+            //   corner → use whichever side the user pulled "further" so
             //            dragging outward grows the window in both axes
             bool widthCanonical;
             switch (edge) {
@@ -1802,7 +1190,10 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         case WM_PAINT: {
             // The frame path owns the client area and never goes through WM_PAINT, so fall
             // through and leave it alone. Mirror off is the exception: nothing paints then.
-            if (ui::g_uiState.previewFps > 0) break;
+            if (ui::g_uiState.previewFps > 0) {
+                if (rt::g_session.usesD3D12) { ValidateRect(hWnd, nullptr); return 0; }
+                break;
+            }
             PAINTSTRUCT ps;
             if (HDC hdc = BeginPaint(hWnd, &ps)) {
                 FillRect(hdc, &ps.rcPaint, (HBRUSH)GetStockObject(BLACK_BRUSH));
@@ -1822,7 +1213,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         case WM_SIZE: {
             // Capture the new client area. The render path picks this up next
             // frame and resizes the swapchain (D3D11/GL) or recomputes the
-            // letterbox destination (D3D12 GDI). Ignore minimize (0Ã—0).
+            // letterbox destination (D3D12 GDI). Ignore minimize (0×0).
             UINT cw = LOWORD(lParam);
             UINT ch = HIWORD(lParam);
             if (cw == 0 || ch == 0) return 0;
@@ -1836,15 +1227,9 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
             ui::g_uiState.windowWidth = (int)cw;
             ui::g_uiState.windowHeight = (int)ch;
             if (!rt::g_sizingDrag) ui::SaveSettings();
-            if (rt::g_sizingDrag) {
-                rt::g_resizedDuringDrag = true;
-            } else {
-                g_frameTimeline.Marker(perf::timeline::MarkerKind::WindowResize, cw, ch);
-                g_sessionInfoDirty = true;
-            }
 
-            // Fill mode means exactly that: keep the dimensions Windows assigned, including
-            // a maximized client area, and let ComputePreviewRect cover every pixel.
+            // Fit mode keeps the dimensions Windows assigned, including a maximized client
+            // area, and lets ComputePreviewRect centre the image in them.
             if (ui::g_uiState.fitToWindow) return 0;
 
             // WM_SIZING constrains interactive drags, but maximize, snap, and
@@ -1946,7 +1331,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
             rt::RefreshPreviewGeometry(hWnd);
             if (ui::HandleMenuCommand(hWnd, wParam,
                 [hWnd]() { rt::ResizeWindowForContent(hWnd); },
-                []() { mcp::g_screenshotRequested = true; },
+                []() { if (auto capture = rt::RetainCompatibilityCapture()) capture->RequestScreenshot(); },
                 []() {
                     rt::g_resetPoseRequested.store(true);
                     ui::SetFitToWindow();
@@ -1954,14 +1339,11 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                 },
                 [](int cmd) { rt::HandleUiSettingsCommand(cmd); }
             )) {
-                g_frameTimeline.Marker(perf::timeline::MarkerKind::UiCommand, LOWORD(wParam), 0, "menu");
-                g_sessionInfoDirty = true;
                 rt::RefreshTitleNow(hWnd);
                 return 0;
             }
             break;
         case WM_KEYDOWN:
-            if (rt::g_automationOnly) return 0;
             // Ahead of the gate below, which swallows every key while look mode is on.
             if (wParam == VK_ESCAPE && rt::g_mouseCapture) {
                 rt::SetMouseLook(hWnd, false);
@@ -1971,7 +1353,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                 rt::RefreshPreviewGeometry(hWnd);
                 if (ui::HandleKeyboardShortcut(hWnd, wParam,
                     [hWnd]() { rt::ResizeWindowForContent(hWnd); },
-                    []() { mcp::g_screenshotRequested = true; },
+                    []() { if (auto capture = rt::RetainCompatibilityCapture()) capture->RequestScreenshot(); },
                     []() {
                         rt::g_resetPoseRequested.store(true);
                         ui::SetFitToWindow();
@@ -1979,8 +1361,6 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
                     },
                     [](int cmd) { rt::HandleUiSettingsCommand(cmd); }
                 )) {
-                    g_frameTimeline.Marker(perf::timeline::MarkerKind::UiCommand, (int64_t)wParam, 1, "key");
-                    g_sessionInfoDirty = true;
                     rt::RefreshTitleNow(hWnd);
                     return 0;
                 }
@@ -2001,34 +1381,6 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
     return DefWindowProcW(hWnd, msg, wParam, lParam);
 }
 
-static void ensurePreview(Session& s) {
-    if (s.hwnd) return;
-    WNDCLASSW wc{}; wc.lpfnWndProc = WndProc; wc.hInstance = GetModuleHandleW(nullptr); wc.lpszClassName = L"OpenXR Simulator";
-    RegisterClassW(&wc);
-    s.hwnd = CreateWindowExW(0, wc.lpszClassName, L"OpenXR Simulator", WS_OVERLAPPEDWINDOW,
-                             CW_USEDEFAULT, CW_USEDEFAULT, (int)s.previewWidth, (int)s.previewHeight, nullptr, nullptr, wc.hInstance, nullptr);
-    Logf("[SimXR] ensurePreview: hwnd=%p size=%ux%u usesD3D12=%d", s.hwnd, s.previewWidth, s.previewHeight, s.usesD3D12);
-
-    // Make sure window is shown and updated
-    if (s.hwnd) {
-        ShowWindow(s.hwnd, SW_SHOWNOACTIVATE);
-        UpdateWindow(s.hwnd);
-
-        // Check if window has focus
-        if (GetForegroundWindow() == s.hwnd) {
-            s.previewInputFocused = true;
-            Log("[SimXR] Window created with focus");
-        } else {
-            s.previewInputFocused = false;
-            Log("[SimXR] Window created without focus");
-        }
-    }
-
-    // Swapchain creation is now handled in ensurePreviewSized for both D3D11 and D3D12
-}
-
-// Window thread functions removed - window now handled on main thread
-
 } // namespace rt
 
 // ============ Vulkan sessions (XR_KHR_vulkan_enable / XR_KHR_vulkan_enable2) ============
@@ -2039,8 +1391,7 @@ static void ensurePreview(Session& s) {
 // VkImages and the preview, quad, screenshot and burst-capture paths read the very same
 // pixels as ID3D12Resources without knowing a second API exists.
 //
-// The interop rules here are the ones BetterVR's own Vulkan/D3D12 bridge arrived at
-// against real AMD and NVIDIA drivers: ALLOW_SIMULTANEOUS_ACCESS on colour so the D3D12
+// Interop needs ALLOW_SIMULTANEOUS_ACCESS on colour so the D3D12
 // side is uncompressed, a typeless format for depth, an explicit
 // D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT, and a timeline semaphore driven by one
 // strictly increasing counter rather than a two-value ping-pong.
@@ -2073,19 +1424,6 @@ struct Dispatch {
     PFN_vkBeginCommandBuffer BeginCommandBuffer{nullptr};
     PFN_vkEndCommandBuffer EndCommandBuffer{nullptr};
     PFN_vkCmdPipelineBarrier CmdPipelineBarrier{nullptr};
-    // GPU frame timing; optional, timing stays off without them.
-    PFN_vkGetPhysicalDeviceQueueFamilyProperties GetPhysicalDeviceQueueFamilyProperties{nullptr};
-    PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsEXT GetPhysicalDeviceCalibrateableTimeDomains{nullptr};
-    PFN_vkCreateQueryPool CreateQueryPool{nullptr};
-    PFN_vkDestroyQueryPool DestroyQueryPool{nullptr};
-    PFN_vkCmdResetQueryPool CmdResetQueryPool{nullptr};
-    PFN_vkCmdWriteTimestamp CmdWriteTimestamp{nullptr};
-    PFN_vkGetQueryPoolResults GetQueryPoolResults{nullptr};
-    PFN_vkGetCalibratedTimestampsEXT GetCalibratedTimestamps{nullptr};
-    PFN_vkCreateFence CreateFence{nullptr};
-    PFN_vkDestroyFence DestroyFence{nullptr};
-    PFN_vkGetFenceStatus GetFenceStatus{nullptr};
-    PFN_vkResetFences ResetFences{nullptr};
 };
 
 static Dispatch g_d{};
@@ -2100,10 +1438,6 @@ static PFN_vkGetInstanceProcAddr g_appGipa = nullptr;
 // VkInstance only resolves the four global entry points. xrCreateVulkanDeviceKHR is not
 // handed an instance, so remember the one the app created or asked about.
 static VkInstance g_lastInstance = VK_NULL_HANDLE;
-
-// Physical device last reported through xrGetVulkanGraphicsDeviceKHR/2KHR, against which
-// xrCreateVulkanDeviceKHR validates the app's chosen vulkanPhysicalDevice.
-static VkPhysicalDevice g_reportedPhysicalDevice = VK_NULL_HANDLE;
 
 static PFN_vkGetInstanceProcAddr Gipa() {
     if (g_appGipa) return g_appGipa;
@@ -2144,10 +1478,6 @@ static bool LoadInstanceLevel(VkInstance inst) {
     g_d.GetPhysicalDeviceProperties2 = InstFn<PFN_vkGetPhysicalDeviceProperties2>(
         inst, "vkGetPhysicalDeviceProperties2", "vkGetPhysicalDeviceProperties2KHR");
     g_d.GetPhysicalDeviceMemoryProperties = InstFn<PFN_vkGetPhysicalDeviceMemoryProperties>(inst, "vkGetPhysicalDeviceMemoryProperties");
-    g_d.GetPhysicalDeviceQueueFamilyProperties = InstFn<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(
-        inst, "vkGetPhysicalDeviceQueueFamilyProperties");
-    g_d.GetPhysicalDeviceCalibrateableTimeDomains = InstFn<PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsEXT>(
-        inst, "vkGetPhysicalDeviceCalibrateableTimeDomainsKHR", "vkGetPhysicalDeviceCalibrateableTimeDomainsEXT");
     return g_d.GetDeviceProcAddr && g_d.EnumeratePhysicalDevices && g_d.GetPhysicalDeviceProperties2;
 }
 
@@ -2174,18 +1504,6 @@ static bool LoadDeviceLevel(VkDevice dev) {
     g_d.BeginCommandBuffer = DevFn<PFN_vkBeginCommandBuffer>(dev, "vkBeginCommandBuffer");
     g_d.EndCommandBuffer = DevFn<PFN_vkEndCommandBuffer>(dev, "vkEndCommandBuffer");
     g_d.CmdPipelineBarrier = DevFn<PFN_vkCmdPipelineBarrier>(dev, "vkCmdPipelineBarrier");
-    g_d.CreateQueryPool = DevFn<PFN_vkCreateQueryPool>(dev, "vkCreateQueryPool");
-    g_d.DestroyQueryPool = DevFn<PFN_vkDestroyQueryPool>(dev, "vkDestroyQueryPool");
-    g_d.CmdResetQueryPool = DevFn<PFN_vkCmdResetQueryPool>(dev, "vkCmdResetQueryPool");
-    g_d.CmdWriteTimestamp = DevFn<PFN_vkCmdWriteTimestamp>(dev, "vkCmdWriteTimestamp");
-    g_d.GetQueryPoolResults = DevFn<PFN_vkGetQueryPoolResults>(dev, "vkGetQueryPoolResults");
-    // Only resolves when the device enabled calibrated timestamps.
-    g_d.GetCalibratedTimestamps = DevFn<PFN_vkGetCalibratedTimestampsEXT>(
-        dev, "vkGetCalibratedTimestampsKHR", "vkGetCalibratedTimestampsEXT");
-    g_d.CreateFence = DevFn<PFN_vkCreateFence>(dev, "vkCreateFence");
-    g_d.DestroyFence = DevFn<PFN_vkDestroyFence>(dev, "vkDestroyFence");
-    g_d.GetFenceStatus = DevFn<PFN_vkGetFenceStatus>(dev, "vkGetFenceStatus");
-    g_d.ResetFences = DevFn<PFN_vkResetFences>(dev, "vkResetFences");
 
     const void* required[] = {
         (const void*)g_d.GetDeviceQueue, (const void*)g_d.QueueSubmit, (const void*)g_d.CreateImage,
@@ -2200,10 +1518,10 @@ static bool LoadDeviceLevel(VkDevice dev) {
 }
 
 // --- formats ------------------------------------------------------------------------------
-// The pairing is the DXGI format the shared resource is created with. Color keeps the
-// typed sRGB/UNORM format so composition samples it with the declared transfer function;
-// depth goes typeless, which is both what a DSV wants and what BetterVR's own shared depth
-// textures use.
+// The pairing is the DXGI format the shared resource is created with. Colour keeps the
+// typed sRGB/UNORM format (the projection binding selects a UNORM sampling view, so
+// the encoded bytes pass through unchanged); depth goes typeless, which is both what a DSV
+// wants and what BetterVR's own shared depth textures use.
 struct FormatPair { int64_t vk; DXGI_FORMAT typed; DXGI_FORMAT resource; bool depth; };
 
 static const FormatPair kFormats[] = {
@@ -2396,19 +1714,19 @@ static void InitFrameSync(rt::Session& s) {
     s.vk.timeline = false;
     char noTimeline[8]{};
     if (GetEnvironmentVariableA("SIMXR_VK_NO_TIMELINE", noTimeline, (DWORD)sizeof(noTimeline)) > 0 && noTimeline[0] != '0') {
-        Log("[SimXR][VK] SIMXR_VK_NO_TIMELINE set; using CPU frame sync");
+        Log("[SimXR][VK] SIMXR_VK_NO_TIMELINE set; preview unavailable without external timeline synchronization");
         return;
     }
     if (!g_d.CreateSemaphore || !g_d.ImportSemaphoreWin32HandleKHR || !g_d.QueueSubmit) {
-        Log("[SimXR][VK] no external-semaphore entry points; falling back to CPU frame sync");
+        Log("[SimXR][VK] no external-semaphore entry points; preview unavailable without external timeline synchronization");
         return;
     }
     if (FAILED(s.d3d12Device->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(s.vk.fence.GetAddressOf())))) {
-        Log("[SimXR][VK] CreateFence(SHARED) failed; falling back to CPU frame sync");
+        Log("[SimXR][VK] CreateFence(SHARED) failed; preview unavailable without external timeline synchronization");
         return;
     }
     if (FAILED(s.d3d12Device->CreateSharedHandle(s.vk.fence.Get(), nullptr, GENERIC_ALL, nullptr, &s.vk.fenceHandle))) {
-        Log("[SimXR][VK] CreateSharedHandle(fence) failed; falling back to CPU frame sync");
+        Log("[SimXR][VK] CreateSharedHandle(fence) failed; preview unavailable without external timeline synchronization");
         s.vk.fence.Reset();
         return;
     }
@@ -2419,7 +1737,7 @@ static void InitFrameSync(rt::Session& s) {
     VkSemaphoreCreateInfo semInfo{ VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
     semInfo.pNext = &timelineInfo;
     if (g_d.CreateSemaphore(s.vk.device, &semInfo, nullptr, &s.vk.semaphore) != VK_SUCCESS) {
-        Log("[SimXR][VK] timeline VkSemaphore creation failed; falling back to CPU frame sync");
+        Log("[SimXR][VK] timeline VkSemaphore creation failed; preview unavailable without external timeline synchronization");
         s.vk.semaphore = VK_NULL_HANDLE;
         return;
     }
@@ -2429,7 +1747,7 @@ static void InitFrameSync(rt::Session& s) {
     import.handle = s.vk.fenceHandle;
     const VkResult r = g_d.ImportSemaphoreWin32HandleKHR(s.vk.device, &import);
     if (r != VK_SUCCESS) {
-        Logf("[SimXR][VK] ImportSemaphoreWin32HandleKHR failed (%d); falling back to CPU frame sync", (int)r);
+        Logf("[SimXR][VK] ImportSemaphoreWin32HandleKHR failed (%d); preview unavailable without external timeline synchronization", (int)r);
         g_d.DestroySemaphore(s.vk.device, s.vk.semaphore, nullptr);
         s.vk.semaphore = VK_NULL_HANDLE;
         return;
@@ -2438,155 +1756,10 @@ static void InitFrameSync(rt::Session& s) {
     Log("[SimXR][VK] frame sync: shared ID3D12Fence imported as a timeline VkSemaphore");
 }
 
-// --- GPU frame timing -----------------------------------------------------------------------
-// Timestamps on the app's queue around each frame (the scheme is in gpu_frame_timer.h).
-// Durations always; times on the CPU clock when the device enabled calibrated timestamps,
-// which xrCreateVulkanDeviceKHR asks for where it is available.
-static void ShutdownGpuTimer(rt::Session& s) {
-    for (VkFence& fence : s.vk.timingFences) {
-        if (fence && g_d.DestroyFence) g_d.DestroyFence(s.vk.device, fence, nullptr);
-        fence = VK_NULL_HANDLE;
-    }
-    if (s.vk.timingCmdPool && g_d.DestroyCommandPool) g_d.DestroyCommandPool(s.vk.device, s.vk.timingCmdPool, nullptr);
-    if (s.vk.timingPool && g_d.DestroyQueryPool) g_d.DestroyQueryPool(s.vk.device, s.vk.timingPool, nullptr);
-    s.vk.timingCmdPool = VK_NULL_HANDLE;
-    s.vk.timingPool = VK_NULL_HANDLE;
-    s.vk.timing = false;
-}
-
-static void CalibrateGpuTimer(rt::Session& s) {
-    if (!s.vk.timingQpcDomain || !g_d.GetCalibratedTimestamps) return;
-    VkCalibratedTimestampInfoEXT infos[2] = {
-        {VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_EXT, nullptr, VK_TIME_DOMAIN_DEVICE_EXT},
-        {VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_EXT, nullptr, VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_EXT},
-    };
-    uint64_t stamps[2] = {}, deviation = 0;
-    if (g_d.GetCalibratedTimestamps(s.vk.device, 2, infos, stamps, &deviation) != VK_SUCCESS) return;
-    s.vk.timingCalibration = perf::gpu::Calibration{true, stamps[0] & s.vk.timingMask, stamps[1],
-                                                    s.vk.timingTickFrequency, perf::gpu::QpcFrequency()};
-}
-
-static void InitGpuTimer(rt::Session& s) {
-    if (!g_d.CreateQueryPool || !g_d.DestroyQueryPool || !g_d.CmdResetQueryPool || !g_d.CmdWriteTimestamp ||
-        !g_d.GetQueryPoolResults || !g_d.GetPhysicalDeviceQueueFamilyProperties || !g_d.GetPhysicalDeviceProperties2 ||
-        !g_d.CreateFence || !g_d.DestroyFence || !g_d.GetFenceStatus || !g_d.ResetFences) {
-        Log("[SimXR][VK] GPU timing off: query entry points missing");
-        return;
-    }
-    uint32_t families = 0;
-    g_d.GetPhysicalDeviceQueueFamilyProperties(s.vk.physicalDevice, &families, nullptr);
-    std::vector<VkQueueFamilyProperties> props(families);
-    g_d.GetPhysicalDeviceQueueFamilyProperties(s.vk.physicalDevice, &families, props.data());
-    const uint32_t bits = s.vk.queueFamilyIndex < families ? props[s.vk.queueFamilyIndex].timestampValidBits : 0;
-    VkPhysicalDeviceProperties2 device{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
-    g_d.GetPhysicalDeviceProperties2(s.vk.physicalDevice, &device);
-    const double periodNs = device.properties.limits.timestampPeriod;
-    if (!bits || periodNs <= 0.0) {
-        Log("[SimXR][VK] GPU timing off: the app's queue family has no timestamps");
-        return;
-    }
-    s.vk.timingMask = bits >= 64 ? ~0ull : ((1ull << bits) - 1);
-    s.vk.timingTickFrequency = uint64_t(1.0e9 / periodNs + 0.5);
-
-    VkQueryPoolCreateInfo qi{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
-    qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
-    qi.queryCount = perf::gpu::kSlots * 2;
-    VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-    pci.queueFamilyIndex = s.vk.queueFamilyIndex;
-    VkCommandBufferAllocateInfo cbi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-    cbi.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cbi.commandBufferCount = perf::gpu::kSlots * 2;
-    if (g_d.CreateQueryPool(s.vk.device, &qi, nullptr, &s.vk.timingPool) != VK_SUCCESS ||
-        g_d.CreateCommandPool(s.vk.device, &pci, nullptr, &s.vk.timingCmdPool) != VK_SUCCESS ||
-        (cbi.commandPool = s.vk.timingCmdPool, g_d.AllocateCommandBuffers(s.vk.device, &cbi, s.vk.timingBuffers)) != VK_SUCCESS) {
-        Log("[SimXR][VK] GPU timing off: could not create its queries");
-        ShutdownGpuTimer(s);
-        return;
-    }
-    for (VkFence& fence : s.vk.timingFences) {
-        VkFenceCreateInfo fi{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-        if (g_d.CreateFence(s.vk.device, &fi, nullptr, &fence) != VK_SUCCESS) {
-            Log("[SimXR][VK] GPU timing off: could not create its fences");
-            ShutdownGpuTimer(s);
-            return;
-        }
-    }
-    for (uint32_t q = 0; q < perf::gpu::kSlots * 2; ++q) {
-        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-        begin.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
-        g_d.BeginCommandBuffer(s.vk.timingBuffers[q], &begin);
-        g_d.CmdResetQueryPool(s.vk.timingBuffers[q], s.vk.timingPool, q, 1);
-        g_d.CmdWriteTimestamp(s.vk.timingBuffers[q], VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, s.vk.timingPool, q);
-        if (g_d.EndCommandBuffer(s.vk.timingBuffers[q]) != VK_SUCCESS) {
-            ShutdownGpuTimer(s);
-            return;
-        }
-    }
-    if (g_d.GetPhysicalDeviceCalibrateableTimeDomains && g_d.GetCalibratedTimestamps) {
-        uint32_t domains = 0;
-        g_d.GetPhysicalDeviceCalibrateableTimeDomains(s.vk.physicalDevice, &domains, nullptr);
-        std::vector<VkTimeDomainEXT> list(domains);
-        g_d.GetPhysicalDeviceCalibrateableTimeDomains(s.vk.physicalDevice, &domains, list.data());
-        const bool device = std::find(list.begin(), list.end(), VK_TIME_DOMAIN_DEVICE_EXT) != list.end();
-        const bool qpc = std::find(list.begin(), list.end(), VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_EXT) != list.end();
-        s.vk.timingQpcDomain = device && qpc;
-    }
-    s.vk.timingSlots = perf::gpu::SlotRing{};
-    s.vk.timing = true;
-    CalibrateGpuTimer(s);
-    Logf("[SimXR][VK] GPU timing on: %u-bit timestamps every %.3f ns, %s", bits, periodNs,
-         s.vk.timingCalibration.valid ? "on the CPU clock" : "durations only (no calibrated timestamps)");
-}
-
-static void SubmitTimestamp(rt::Session& s, uint32_t query, VkFence fence = VK_NULL_HANDLE) {
-    VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-    si.commandBufferCount = 1;
-    si.pCommandBuffers = &s.vk.timingBuffers[query];
-    g_d.QueueSubmit(s.vk.queue, 1, &si, fence);
-}
-
-static void GpuBegin(rt::Session& s) {
-    if (!s.vk.timing) return;
-    const int slot = s.vk.timingSlots.OpenForBegin();
-    if (slot >= 0) SubmitTimestamp(s, uint32_t(slot) * 2);
-}
-
-static void GpuEnd(rt::Session& s, uint64_t frameId) {
-    if (!s.vk.timing) return;
-    const int slot = s.vk.timingSlots.OpenForEnd();
-    if (slot < 0) return;
-    SubmitTimestamp(s, uint32_t(slot) * 2 + 1, s.vk.timingFences[slot]);
-    s.vk.timingSlots.Close(slot, frameId);
-}
-
-static void GpuCollect(rt::Session& s, std::vector<perf::gpu::GpuRecord>& out) {
-    if (!s.vk.timing) return;
-    for (int slot = s.vk.timingSlots.Oldest(); slot >= 0; slot = s.vk.timingSlots.Oldest()) {
-        // Until its submit has run, a query still holds what it held 16 frames ago.
-        if (g_d.GetFenceStatus(s.vk.device, s.vk.timingFences[slot]) != VK_SUCCESS) break;
-        const bool begun = s.vk.timingSlots[slot].begun;
-        struct { uint64_t value, available; } q[2] = {};
-        const uint32_t first = uint32_t(slot) * 2 + (begun ? 0 : 1), count = begun ? 2 : 1;
-        g_d.GetQueryPoolResults(s.vk.device, s.vk.timingPool, first, count, sizeof(q), q, sizeof(q[0]),
-                                VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
-        if (!q[count - 1].available || (begun && !q[0].available)) break;  // not there yet
-        const uint64_t begin = begun ? q[0].value & s.vk.timingMask : 0;
-        uint64_t end = q[count - 1].value & s.vk.timingMask;
-        // A counter narrower than 64 bits wraps (36 bits at 52 ns: hourly).
-        if (begun && end < begin && s.vk.timingMask != ~0ull) end += s.vk.timingMask + 1;
-        out.push_back(perf::gpu::MakeRecord(perf::timeline::GpuApi::Vulkan, s.vk.timingSlots[slot].frameId,
-                                            begin, end, s.vk.timingTickFrequency, s.vk.timingCalibration));
-        g_d.ResetFences(s.vk.device, 1, &s.vk.timingFences[slot]);
-        s.vk.timingSlots.Free(slot);
-    }
-    if (perf::timeline::Qpc() - s.vk.timingCalibration.cpuQpc > perf::gpu::QpcFrequency()) CalibrateGpuTimer(s);
-}
-
 static bool InitSession(rt::Session& s, const XrGraphicsBindingVulkanKHR& b) {
     s.vk = rt::VulkanSession{};
     s.vk.physicalDevice = b.physicalDevice;
     s.vk.device = b.device;
-    s.vk.queueFamilyIndex = b.queueFamilyIndex;
 
     if (!LoadInstanceLevel(b.instance)) { Log("[SimXR][VK] instance-level entry points missing"); return false; }
     if (!LoadDeviceLevel(b.device)) { Log("[SimXR][VK] device-level entry points missing (external memory not enabled?)"); return false; }
@@ -2618,7 +1791,6 @@ static bool InitSession(rt::Session& s, const XrGraphicsBindingVulkanKHR& b) {
 static void ShutdownSession(rt::Session& s) {
     if (s.vk.device) {
         if (g_d.DeviceWaitIdle) g_d.DeviceWaitIdle(s.vk.device);
-        ShutdownGpuTimer(s);
         if (s.vk.semaphore && g_d.DestroySemaphore) g_d.DestroySemaphore(s.vk.device, s.vk.semaphore, nullptr);
         if (s.vk.cmdPool && g_d.DestroyCommandPool) g_d.DestroyCommandPool(s.vk.device, s.vk.cmdPool, nullptr);
     }
@@ -2696,10 +1868,11 @@ static XrResult CreateSwapchainImages(rt::Session& s, rt::Swapchain& chain, cons
     chain.format = fp->typed;
     chain.backend = rt::Swapchain::Backend::D3D12;
     chain.mipCount = mips;
+    chain.imageCount = (ci.createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) ? 1 : 3;
 
     D3D12_RESOURCE_DESC rd{};
     rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-    // AMD needs this spelled out on a shared committed resource; 0 (let the runtime pick)
+    // Some drivers need this spelled out on a shared committed resource; 0 (let the runtime pick)
     // produces a resource whose Vulkan import fails.
     rd.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
     rd.Width = chain.width;
@@ -2726,7 +1899,6 @@ static XrResult CreateSwapchainImages(rt::Session& s, rt::Swapchain& chain, cons
     if (ci.usageFlags & XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT) usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     if (ci.usageFlags & XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
     if (ci.usageFlags & XR_SWAPCHAIN_USAGE_SAMPLED_BIT) usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
-    if (ci.usageFlags & XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT) usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     if (ci.usageFlags & XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT) usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     if (ci.usageFlags & XR_SWAPCHAIN_USAGE_UNORDERED_ACCESS_BIT) usage |= VK_IMAGE_USAGE_STORAGE_BIT;
     if (!(usage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT))) {
@@ -2866,11 +2038,10 @@ static void FrameSyncBegin(rt::Session& s) {
               (unsigned long long)(s.vk.fence ? s.vk.fence->GetCompletedValue() : 0));
         return;
     }
-    // No timeline semaphore: block instead. Correct, just serialised - the app's frame has
-    // to land before the preview reads it, and the previous composite has to be off the
-    // GPU before the app reuses those images after this call returns.
-    rt::WaitForPreviewFence(s);
-    if (g_d.QueueWaitIdle) g_d.QueueWaitIdle(s.vk.queue);
+    // Without a shared timeline the private compositor cannot order source
+    // reuse. This optional preview is disabled rather than serializing the app
+    // through CPU queue-idle waits or presenting an unsafe source.
+    return;
 }
 
 // Runs after the composite has been submitted: the app's queue is made to wait for the
@@ -2895,127 +2066,138 @@ static void FrameSyncEnd(rt::Session& s) {
 
 } // namespace vkrt
 
-// GPU frame timing for whichever API the session uses. Vulkan's timer lives in vkrt
-// (it needs the loaded entry points); OpenGL's starts once the app's context is current
-// in a frame call, since GL entry points only resolve with a context.
-static perf::gpu::D3D12Timer g_gpuD3D12;
-static perf::gpu::D3D11Timer g_gpuD3D11;
-static perf::gpu::GlTimer g_gpuGl;
-static bool g_gpuTimerStarted = false;  // this session's timer is set up, or failed to be
-static bool g_gpuGlTried = false;       // OpenGL's starts inside a frame call, once
-static bool g_gpuTimingFrame = false;   // the frame in flight is timed
-// D3D11's immediate context is not thread-safe. xrEndFrame already uses it, so
-// xrBeginFrame stamps only from the thread that calls xrEndFrame.
-static std::atomic<DWORD> g_d3d11FrameThread{0};
+static constexpr XrVersion SupportedApiVersion = XR_MAKE_VERSION(1, 0, 27);
 
-// Tools > GPU Timing, unless OPENXR_SIM_GPU_TIMING overrides it. Asked as each frame
-// begins, so it switches live. The timestamps need the frame timeline to land in.
-static bool GpuTimingWanted() { return ui::GpuTimingOn() && g_frameTimeline.Enabled(); }
-
-static bool GlContextCurrent(const rt::Session& s) {
-    return s.usesOpenGL && s.glRC && wglGetCurrentContext() == s.glRC;
+static const simxr::ExtensionRegistry& Extensions()
+{
+	static constexpr std::array<std::string_view, 1> d3d11Commands{"xrGetD3D11GraphicsRequirementsKHR"};
+	static constexpr std::array<std::string_view, 1> d3d12Commands{"xrGetD3D12GraphicsRequirementsKHR"};
+	static constexpr std::array<std::string_view, 1> openGLCommands{"xrGetOpenGLGraphicsRequirementsKHR"};
+	static constexpr std::array<std::string_view, 4> vulkanCommands{
+		"xrGetVulkanInstanceExtensionsKHR", "xrGetVulkanDeviceExtensionsKHR",
+		"xrGetVulkanGraphicsDeviceKHR", "xrGetVulkanGraphicsRequirementsKHR"};
+	static constexpr std::array<std::string_view, 4> vulkan2Commands{
+		"xrCreateVulkanInstanceKHR", "xrCreateVulkanDeviceKHR",
+		"xrGetVulkanGraphicsDevice2KHR", "xrGetVulkanGraphicsRequirements2KHR"};
+	static constexpr std::array<std::string_view, 2> timeCommands{
+		"xrConvertWin32PerformanceCounterToTimeKHR", "xrConvertTimeToWin32PerformanceCounterKHR"};
+	static const std::vector<simxr::ExtensionDefinition> definitions = [] {
+        std::vector<simxr::ExtensionDefinition> result{
+		{XR_KHR_D3D11_ENABLE_EXTENSION_NAME, XR_KHR_D3D11_enable_SPEC_VERSION, d3d11Commands},
+		{XR_KHR_D3D12_ENABLE_EXTENSION_NAME, XR_KHR_D3D12_enable_SPEC_VERSION, d3d12Commands},
+		{XR_KHR_OPENGL_ENABLE_EXTENSION_NAME, XR_KHR_opengl_enable_SPEC_VERSION, openGLCommands},
+		{XR_KHR_VULKAN_ENABLE_EXTENSION_NAME, XR_KHR_vulkan_enable_SPEC_VERSION, vulkanCommands},
+		{XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME, XR_KHR_vulkan_enable2_SPEC_VERSION, vulkan2Commands},
+		{XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME, XR_KHR_composition_layer_depth_SPEC_VERSION, {}},
+		{XR_KHR_WIN32_CONVERT_PERFORMANCE_COUNTER_TIME_EXTENSION_NAME,
+			XR_KHR_win32_convert_performance_counter_time_SPEC_VERSION, timeCommands}};
+        const auto simulation = simxr::SimulationExtensions();
+        result.insert(result.end(), simulation.begin(), simulation.end());
+        return result;
+    }();
+	static const simxr::ExtensionRegistry registry(definitions);
+	return registry;
 }
 
-static void GpuTimingStart(rt::Session& s) {
-    g_gpuTimerStarted = true;
-    if (s.usesVulkan) {
-        vkrt::InitGpuTimer(s);
-    } else if (s.usesOpenGL) {
-        return;  // GpuTimingBegin starts it inside a frame call
-    } else if (s.usesD3D12 && s.d3d12Device && s.d3d12Queue) {
-        Logf("[SimXR] GPU timing %s (D3D12)", g_gpuD3D12.Init(s.d3d12Device.Get(), s.d3d12Queue.Get()) ? "on" : "unavailable");
-    } else if (s.d3d11Device && s.d3d11Context) {
-        Logf("[SimXR] GPU timing %s (D3D11, durations only)",
-             g_gpuD3D11.Init(s.d3d11Device.Get(), s.d3d11Context.Get()) ? "on" : "unavailable");
-    }
+static simxr::Runtime& RuntimeState()
+{
+    static simxr::Runtime runtime(Extensions());
+    return runtime;
 }
 
-static void GpuTimingStop() {
-    g_gpuD3D12.Shutdown();
-    g_gpuD3D11 = perf::gpu::D3D11Timer{};
-    g_gpuGl = perf::gpu::GlTimer{};  // its queries die with the app's context
-    g_gpuTimerStarted = false;
-    g_gpuGlTried = false;
-    g_gpuTimingFrame = false;
-    g_d3d11FrameThread = 0;
-}
-
-// Each session starts from no timer: the last one may have held another API's queue.
-static void GpuTimingNewSession(rt::Session& s) {
-    GpuTimingStop();
-    if (GpuTimingWanted()) GpuTimingStart(s);
-}
-
-// Switched off, frames just go unstamped: the timer stays until the session ends, so
-// results in flight still land and switching back on costs nothing.
-static void GpuTimingBegin() {
-    rt::Session& s = rt::g_session;
-    g_gpuTimingFrame = GpuTimingWanted();
-    if (!g_gpuTimingFrame) return;
-    if (!g_gpuTimerStarted) GpuTimingStart(s);
-    if (s.usesVulkan) {
-        vkrt::GpuBegin(s);
-    } else if (s.usesOpenGL) {
-        if (!GlContextCurrent(s)) return;
-        if (!g_gpuGl.Active() && !g_gpuGlTried) {
-            g_gpuGlTried = true;
-            Log(g_gpuGl.Init() ? "[SimXR] GPU timing on (OpenGL)" : "[SimXR] GPU timing unavailable (OpenGL)");
+struct NativeControlEndpoint
+{
+    std::mutex mutex;
+    std::unique_ptr<simxr::control::ControlService> service;
+    std::unique_ptr<simxr::control::LocalControlServer> server;
+    bool permanentlyClosed = false;
+    ~NativeControlEndpoint() { Close(); }
+    bool Start()
+    {
+        std::lock_guard lock(mutex);
+        if (permanentlyClosed) return false;
+        if (server) return true;
+        try {
+            const auto* selected = std::getenv("SIMXR_CONTROL_SOCKET");
+            const auto path = selected && *selected ? std::string(selected)
+                : std::string(R"(\\.\pipe\SimXR.Control.)") + std::to_string(GetCurrentProcessId());
+            auto nextService = std::make_unique<simxr::control::ControlService>(RuntimeState(), 16);
+            auto nextServer = std::make_unique<simxr::control::LocalControlServer>(*nextService, path, 16);
+            service = std::move(nextService);
+            server = std::move(nextServer);
+            Logf("[SimXR] Local control endpoint: %s (CPU control/inspection; native GPU transport unavailable)", path.c_str());
+            return true;
         }
-        if (g_gpuGl.Active()) g_gpuGl.Begin();
-    } else if (s.usesD3D12) {
-        if (g_gpuD3D12.Active()) g_gpuD3D12.Begin();
-    } else if (g_gpuD3D11.Active() && GetCurrentThreadId() == g_d3d11FrameThread.load()) {
-        g_gpuD3D11.Begin();
+        catch (const std::exception& error) { Logf("[SimXR] Local control endpoint unavailable: %s", error.what()); return false; }
     }
+    void Close(bool permanent = false) noexcept
+    {
+        std::unique_ptr<simxr::control::ControlService> previousService;
+        std::unique_ptr<simxr::control::LocalControlServer> previousServer;
+        {
+            std::lock_guard lock(mutex);
+            permanentlyClosed = permanentlyClosed || permanent;
+            previousServer = std::move(server); previousService = std::move(service);
+        }
+        // No runtime/native lock spans transport joins or lease/input cleanup.
+        if (previousServer) previousServer->Close();
+        if (previousService) previousService->Close();
+    }
+};
+static NativeControlEndpoint& ControlEndpoint()
+{
+    // Construct after RuntimeState so endpoint workers are joined first.
+    (void)RuntimeState();
+    static NativeControlEndpoint endpoint;
+    return endpoint;
+}
+extern "C" __declspec(dllexport) int simxrGetGameBridgeApi(std::uint32_t version, SimxrGameBridgeApi* api) noexcept
+{
+    if (!api || version != SIMXR_GAME_BRIDGE_VERSION || api->size < sizeof(*api)) return 0;
+    try {
+        if (!ControlEndpoint().Start()) return 0;
+        if (!RuntimeState().Game().FillApi(version, *api)) return 0;
+        api->shutdown = [](void*) -> int {
+            try {
+                if (!RuntimeState().Instances().empty()) return 0;
+                // The caller stops XR initialization before explicit shutdown.
+                // Runtime.Close permanently rejects new instances; native joins
+                // run here, outside DLL detach and outside runtime graph locks.
+                RuntimeState().Close();
+                ControlEndpoint().Close(true);
+                return 1;
+            }
+            catch (...) { return 0; }
+        };
+        return 1;
+    }
+    catch (...) { return 0; }
 }
 
-// First thing in xrEndFrame: behind the app's frame, ahead of the simulator's own GPU work.
-static void GpuTimingEnd(uint64_t frameId) {
-    if (!g_gpuTimingFrame) return;
-    rt::Session& s = rt::g_session;
-    if (s.usesVulkan) {
-        vkrt::GpuEnd(s, frameId);
-    } else if (s.usesOpenGL) {
-        if (g_gpuGl.Active() && GlContextCurrent(s)) g_gpuGl.End(frameId);
-    } else if (s.usesD3D12) {
-        if (g_gpuD3D12.Active()) g_gpuD3D12.End(frameId);
-    } else if (g_gpuD3D11.Active()) {
-        g_d3d11FrameThread = GetCurrentThreadId();
-        g_gpuD3D11.End(frameId);
-    }
+static XrResult RequireExtension(XrInstance instance, std::string_view extension)
+{
+	if (!RuntimeState().FindInstance(instance))
+		return XR_ERROR_HANDLE_INVALID;
+	if (!rt::g_instance.core || !rt::g_instance.core->Extensions().Contains(extension))
+		return XR_ERROR_FUNCTION_UNSUPPORTED;
+	return XR_SUCCESS;
 }
 
-static void GpuTimingCollect() {
-    static std::vector<perf::gpu::GpuRecord> results;
-    results.clear();
-    rt::Session& s = rt::g_session;
-    if (s.usesVulkan) vkrt::GpuCollect(s, results);
-    else if (s.usesOpenGL) { if (g_gpuGl.Active() && GlContextCurrent(s)) g_gpuGl.Collect(results); }
-    else if (s.usesD3D12) { if (g_gpuD3D12.Active()) g_gpuD3D12.Collect(results); }
-    else if (g_gpuD3D11.Active()) g_gpuD3D11.Collect(results);
-    for (const perf::gpu::GpuRecord& r : results) g_frameTimeline.Gpu(r);
+static XrResult RequireGraphicsExtension(XrInstance instance, XrSystemId system, std::string_view extension)
+{
+	auto result = RequireExtension(instance, extension);
+	if (XR_FAILED(result))
+		return result;
+	return system == 1 ? XR_SUCCESS : XR_ERROR_SYSTEM_INVALID;
 }
 
 // ----------------- OpenXR runtime exports -----------------
 
-// The API version xrCreateInstance accepts: 1.1, unless the loader negotiated 1.0.
-// The default covers a host that loads the runtime without the loader.
-static XrVersion g_negotiatedApiVersion = XR_API_VERSION_1_1;
-
-static bool IsValidInstance(XrInstance instance) {
-    return instance != XR_NULL_HANDLE && instance == rt::g_instance.handle;
-}
-
-static bool InstanceUsesApi1_1() {
-    return rt::g_instance.handle != XR_NULL_HANDLE &&
-           XR_VERSION_MINOR(rt::g_instance.apiVersion) >= 1;
-}
-
-static bool IsValidSystem(XrSystemId systemId) {
-    return systemId == (XrSystemId)1;
-}
-
 static XrResult XRAPI_PTR xrGetInstanceProcAddr_runtime(XrInstance, const char* name, PFN_xrVoidFunction* fn);
+static XrResult XRAPI_PTR xrDestroySession_runtime(XrSession session);
+static XrResult DestroyNativeSession(XrSession session);
+static void ConsumeCompletedPreviewFrame(rt::Session& session);
+static XrResult XRAPI_PTR xrDestroySwapchain_runtime(XrSwapchain swapchain);
 
 extern "C" __declspec(dllexport) XrResult XRAPI_CALL xrNegotiateLoaderRuntimeInterface(const XrNegotiateLoaderInfo* loaderInfo,
                                                                             XrNegotiateRuntimeRequest* runtimeRequest) {
@@ -3025,25 +2207,11 @@ extern "C" __declspec(dllexport) XrResult XRAPI_CALL xrNegotiateLoaderRuntimeInt
             Log("[SimXR] xrNegotiateLoaderRuntimeInterface: ERROR - null parameters");
             return XR_ERROR_INITIALIZATION_FAILED;
         }
-        if (loaderInfo->structType != XR_LOADER_INTERFACE_STRUCT_LOADER_INFO ||
-            loaderInfo->structVersion != XR_LOADER_INFO_STRUCT_VERSION ||
-            loaderInfo->structSize != sizeof(XrNegotiateLoaderInfo) ||
-            runtimeRequest->structType != XR_LOADER_INTERFACE_STRUCT_RUNTIME_REQUEST ||
-            runtimeRequest->structVersion != XR_RUNTIME_INFO_STRUCT_VERSION ||
-            runtimeRequest->structSize != sizeof(XrNegotiateRuntimeRequest) ||
-            loaderInfo->minInterfaceVersion > XR_CURRENT_LOADER_RUNTIME_VERSION ||
-            loaderInfo->maxInterfaceVersion < XR_CURRENT_LOADER_RUNTIME_VERSION) {
-            return XR_ERROR_INITIALIZATION_FAILED;
-        }
-        const XrVersion negotiated =
-            api_validation::NegotiateApiVersion(loaderInfo->minApiVersion, loaderInfo->maxApiVersion);
-        if (negotiated == 0) return XR_ERROR_INITIALIZATION_FAILED;
-        g_negotiatedApiVersion = negotiated;
-
+        
         // The loader FreeLibrary's the runtime after xrDestroyInstance. That drops the last
         // reference this process may hold on d3d12/dxgi/opengl32, and unloading those out
         // from under a live Vulkan driver - the same driver, in a Vulkan session - hangs the
-        // process on NVIDIA. Pinning also settles the older hazard of a preview window
+        // process. Pinning also settles the older hazard of a preview window
         // outliving its WndProc.
         {
             HMODULE self = nullptr;
@@ -3052,17 +2220,25 @@ extern "C" __declspec(dllexport) XrResult XRAPI_CALL xrNegotiateLoaderRuntimeInt
         }
 
         Logf("[SimXR] xrNegotiateLoaderRuntimeInterface: loaderInfo=%p, runtimeRequest=%p", loaderInfo, runtimeRequest);
-        Logf("[SimXR]   Loader minInterfaceVersion=%u, maxInterfaceVersion=%u, minApiVersion=0x%llX, maxApiVersion=0x%llX",
+        Logf("[SimXR]   Loader minInterfaceVersion=%u, maxInterfaceVersion=%u, minApiVersion=0x%X, maxApiVersion=0x%X",
              loaderInfo->minInterfaceVersion, loaderInfo->maxInterfaceVersion,
-             (unsigned long long)loaderInfo->minApiVersion,
-             (unsigned long long)loaderInfo->maxApiVersion);
+             loaderInfo->minApiVersion, loaderInfo->maxApiVersion);
         
+        if (loaderInfo->structType != XR_LOADER_INTERFACE_STRUCT_LOADER_INFO ||
+            loaderInfo->structVersion != XR_LOADER_INFO_STRUCT_VERSION || loaderInfo->structSize != sizeof(*loaderInfo) ||
+            runtimeRequest->structType != XR_LOADER_INTERFACE_STRUCT_RUNTIME_REQUEST ||
+            runtimeRequest->structVersion != XR_RUNTIME_INFO_STRUCT_VERSION || runtimeRequest->structSize != sizeof(*runtimeRequest) ||
+            loaderInfo->minInterfaceVersion > XR_CURRENT_LOADER_RUNTIME_VERSION ||
+            loaderInfo->maxInterfaceVersion < XR_CURRENT_LOADER_RUNTIME_VERSION ||
+            loaderInfo->maxApiVersion < XR_MAKE_VERSION(1, 0, 0) || loaderInfo->minApiVersion > SupportedApiVersion)
+            return XR_ERROR_INITIALIZATION_FAILED;
+
         runtimeRequest->runtimeInterfaceVersion = XR_CURRENT_LOADER_RUNTIME_VERSION;
-        runtimeRequest->getInstanceProcAddr = xrGetInstanceProcAddr_runtime;
-        runtimeRequest->runtimeApiVersion = negotiated;
+        runtimeRequest->getInstanceProcAddr = simxr::AbiBoundary<xrGetInstanceProcAddr_runtime>::Invoke;
+        runtimeRequest->runtimeApiVersion = std::min(loaderInfo->maxApiVersion, SupportedApiVersion);
         
-        Logf("[SimXR] xrNegotiateLoaderRuntimeInterface: SUCCESS - runtimeApiVersion=0x%llX",
-             (unsigned long long)runtimeRequest->runtimeApiVersion);
+        Logf("[SimXR] xrNegotiateLoaderRuntimeInterface: SUCCESS - runtimeApiVersion=0x%X (%u)", 
+             runtimeRequest->runtimeApiVersion, runtimeRequest->runtimeApiVersion);
         return XR_SUCCESS;
     } catch (...) {
         Log("[SimXR] xrNegotiateLoaderRuntimeInterface: EXCEPTION caught!");
@@ -3073,14 +2249,17 @@ extern "C" __declspec(dllexport) XrResult XRAPI_CALL xrNegotiateLoaderRuntimeInt
 // xrGetD3D12GraphicsRequirementsKHR (XR_KHR_D3D12_enable)
 static XrResult XRAPI_PTR xrGetD3D12GraphicsRequirementsKHR_runtime(
     XrInstance instance, XrSystemId systemId, XrGraphicsRequirementsD3D12KHR* req) {
+    auto result = RequireGraphicsExtension(instance, systemId, XR_KHR_D3D12_ENABLE_EXTENSION_NAME);
+    if (XR_FAILED(result)) return result;
+    if (!req || req->type != XR_TYPE_GRAPHICS_REQUIREMENTS_D3D12_KHR) return XR_ERROR_VALIDATION_FAILURE;
+
     Logf("[SimXR] xrGetD3D12GraphicsRequirementsKHR called: instance=%p, systemId=%llu, req=%p",
          instance, (unsigned long long)systemId, req);
-    if (!IsValidInstance(instance)) return XR_ERROR_HANDLE_INVALID;
-    if (!IsValidSystem(systemId)) return XR_ERROR_SYSTEM_INVALID;
-    if (!req || req->type != XR_TYPE_GRAPHICS_REQUIREMENTS_D3D12_KHR) {
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
+    if (!req) return XR_ERROR_VALIDATION_FAILURE;
 
+    req->type = XR_TYPE_GRAPHICS_REQUIREMENTS_D3D12_KHR;
+
+    req->adapterLuid = {};
     Microsoft::WRL::ComPtr<IDXGIFactory1> f;
     HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(f.GetAddressOf()));
     if (FAILED(hr)) return XR_ERROR_RUNTIME_FAILURE;
@@ -3093,20 +2272,20 @@ static XrResult XRAPI_PTR xrGetD3D12GraphicsRequirementsKHR_runtime(
         req->adapterLuid = d.AdapterLuid;
         break;
     }
-    rt::g_instance.d3d12RequirementsLuid = req->adapterLuid;
     req->minFeatureLevel = D3D_FEATURE_LEVEL_11_0;
-    rt::g_instance.d3d12RequirementsCalled = true;
     Log("[SimXR] xrGetD3D12GraphicsRequirementsKHR: SUCCESS");
     return XR_SUCCESS;
 }
 // xrGetD3D11GraphicsRequirementsKHR (XR_KHR_D3D11_enable)
 static XrResult XRAPI_PTR xrGetD3D11GraphicsRequirementsKHR_runtime(
     XrInstance instance, XrSystemId systemId, XrGraphicsRequirementsD3D11KHR* req) {
+    auto result = RequireGraphicsExtension(instance, systemId, XR_KHR_D3D11_ENABLE_EXTENSION_NAME);
+    if (XR_FAILED(result)) return result;
+    if (!req || req->type != XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR) return XR_ERROR_VALIDATION_FAILURE;
+
     Logf("[SimXR] xrGetD3D11GraphicsRequirementsKHR called: instance=%p, systemId=%llu, req=%p",
          instance, (unsigned long long)systemId, req);
-    if (!IsValidInstance(instance)) return XR_ERROR_HANDLE_INVALID;
-    if (!IsValidSystem(systemId)) return XR_ERROR_SYSTEM_INVALID;
-    if (!req || req->type != XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR) {
+    if (!req) {
         Log("[SimXR] xrGetD3D11GraphicsRequirementsKHR: ERROR - null req");
         return XR_ERROR_VALIDATION_FAILURE;
     }
@@ -3114,11 +2293,9 @@ static XrResult XRAPI_PTR xrGetD3D11GraphicsRequirementsKHR_runtime(
     Logf("[SimXR] xrGetD3D11GraphicsRequirementsKHR: req struct size = %zu, expected = %zu",
          sizeof(*req), sizeof(XrGraphicsRequirementsD3D11KHR));
     
-    // Check if the struct type is already set (Unity might pre-fill it)
-    if (req->type != 0) {
-        Logf("[SimXR] xrGetD3D11GraphicsRequirementsKHR: req->type already set to %d", req->type);
-    }
+    req->type = XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR;
     
+    req->adapterLuid = {};
     Microsoft::WRL::ComPtr<IDXGIFactory1> f;
     HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(f.GetAddressOf()));
     if (FAILED(hr)) { 
@@ -3169,7 +2346,6 @@ static XrResult XRAPI_PTR xrGetD3D11GraphicsRequirementsKHR_runtime(
         // Save this LUID for later validation
         rt::g_adapterLuid = bestDesc.AdapterLuid;
         rt::g_adapterLuidSet = true;
-        rt::g_instance.d3d11RequirementsLuid = bestDesc.AdapterLuid;
         
         Logf("[SimXR] xrGetD3D11GraphicsRequirementsKHR: Returning:");
         Logf("[SimXR]   type = %d (expected %d)", req->type, XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR);
@@ -3181,7 +2357,6 @@ static XrResult XRAPI_PTR xrGetD3D11GraphicsRequirementsKHR_runtime(
         Logf("[SimXR]   minFeatureLevel = 0x%X (D3D_FEATURE_LEVEL_11_0 = 0x%X)", 
              req->minFeatureLevel, D3D_FEATURE_LEVEL_11_0);
         
-        rt::g_instance.d3d11RequirementsCalled = true;
         Log("[SimXR] xrGetD3D11GraphicsRequirementsKHR: SUCCESS - Returning XR_SUCCESS");
         return XR_SUCCESS;
     }
@@ -3194,14 +2369,18 @@ static XrResult XRAPI_PTR xrGetD3D11GraphicsRequirementsKHR_runtime(
 // xrGetOpenGLGraphicsRequirementsKHR (XR_KHR_opengl_enable)
 static XrResult XRAPI_PTR xrGetOpenGLGraphicsRequirementsKHR_runtime(
     XrInstance instance, XrSystemId systemId, XrGraphicsRequirementsOpenGLKHR* req) {
+    auto result = RequireGraphicsExtension(instance, systemId, XR_KHR_OPENGL_ENABLE_EXTENSION_NAME);
+    if (XR_FAILED(result)) return result;
+    if (!req || req->type != XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR) return XR_ERROR_VALIDATION_FAILURE;
+
     Logf("[SimXR] xrGetOpenGLGraphicsRequirementsKHR called: instance=%p, systemId=%llu, req=%p",
          instance, (unsigned long long)systemId, req);
-    if (!IsValidInstance(instance)) return XR_ERROR_HANDLE_INVALID;
-    if (!IsValidSystem(systemId)) return XR_ERROR_SYSTEM_INVALID;
-    if (!req || req->type != XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR) {
+    if (!req) {
         Log("[SimXR] xrGetOpenGLGraphicsRequirementsKHR: ERROR - null req");
         return XR_ERROR_VALIDATION_FAILURE;
     }
+
+    req->type = XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR;
 
     // Minimum OpenGL version: 4.0.0 (good compatibility)
     // Maximum: 4.6.0 (latest)
@@ -3216,72 +2395,92 @@ static XrResult XRAPI_PTR xrGetOpenGLGraphicsRequirementsKHR_runtime(
          XR_VERSION_MINOR(req->maxApiVersionSupported),
          XR_VERSION_PATCH(req->maxApiVersionSupported));
 
-    rt::g_instance.openglRequirementsCalled = true;
     Log("[SimXR] xrGetOpenGLGraphicsRequirementsKHR: SUCCESS");
     return XR_SUCCESS;
 }
 
 // --- XR_KHR_vulkan_enable / XR_KHR_vulkan_enable2 -------------------------------------------
 
-// XrGraphicsRequirementsVulkan2KHR is a typedef of the v1 struct, so one implementation
-// serves both extensions.
+static XrResult GetVulkanRequirements(XrInstance instance, XrSystemId system,
+	XrGraphicsRequirementsVulkanKHR* requirements, std::string_view extension)
+{
+	auto result = RequireGraphicsExtension(instance, system, extension);
+	if (XR_FAILED(result))
+		return result;
+	if (!requirements || requirements->type != XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR)
+		return XR_ERROR_VALIDATION_FAILURE;
+	requirements->minApiVersionSupported = XR_MAKE_VERSION(1, 0, 0);
+	requirements->maxApiVersionSupported = XR_MAKE_VERSION(1, 4, 0);
+	return XR_SUCCESS;
+}
+
 static XrResult XRAPI_PTR xrGetVulkanGraphicsRequirementsKHR_runtime(
-    XrInstance instance, XrSystemId systemId, XrGraphicsRequirementsVulkanKHR* req) {
-    if (!IsValidInstance(instance)) return XR_ERROR_HANDLE_INVALID;
-    if (!IsValidSystem(systemId)) return XR_ERROR_SYSTEM_INVALID;
-    if (!req || req->type != XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR) {
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
-    req->minApiVersionSupported = XR_MAKE_VERSION(1, 0, 0);
-    req->maxApiVersionSupported = XR_MAKE_VERSION(1, 4, 0);
-    // Serves both XR_KHR_vulkan_enable and XR_KHR_vulkan_enable2.
-    rt::g_instance.vulkanRequirementsCalled = true;
-    Log("[SimXR] xrGetVulkanGraphicsRequirementsKHR: Vulkan 1.0 - 1.4");
-    return XR_SUCCESS;
+	XrInstance instance, XrSystemId system, XrGraphicsRequirementsVulkanKHR* requirements)
+{
+	return GetVulkanRequirements(instance, system, requirements, XR_KHR_VULKAN_ENABLE_EXTENSION_NAME);
+}
+
+static XrResult XRAPI_PTR xrGetVulkanGraphicsRequirements2KHR_runtime(
+	XrInstance instance, XrSystemId system, XrGraphicsRequirementsVulkan2KHR* requirements)
+{
+	return GetVulkanRequirements(instance, system, requirements, XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME);
 }
 
 static XrResult CopyExtensionString(const std::string& s, uint32_t capacity, uint32_t* countOutput, char* buffer) {
     const uint32_t needed = (uint32_t)s.size() + 1;
-    const XrResult validation =
-        api_validation::ValidateEnumeration(capacity, countOutput, buffer, needed);
-    if (XR_FAILED(validation) || capacity == 0) return validation;
+    if (!countOutput || (capacity && !buffer)) return XR_ERROR_VALIDATION_FAILURE;
+    *countOutput = needed;
+    if (capacity == 0) return XR_SUCCESS;
+    if (capacity < needed) return XR_ERROR_SIZE_INSUFFICIENT;
     memcpy(buffer, s.c_str(), needed);
     return XR_SUCCESS;
 }
 
 static XrResult XRAPI_PTR xrGetVulkanInstanceExtensionsKHR_runtime(
-    XrInstance, XrSystemId, uint32_t capacity, uint32_t* countOutput, char* buffer) {
+    XrInstance instance, XrSystemId system, uint32_t capacity, uint32_t* countOutput, char* buffer) {
+    auto result = RequireGraphicsExtension(instance, system, XR_KHR_VULKAN_ENABLE_EXTENSION_NAME);
+    if (XR_FAILED(result)) return result;
+
     const std::string s = vkrt::JoinExtensions(vkrt::kInstanceExtensions, std::size(vkrt::kInstanceExtensions));
     if (capacity) Logf("[SimXR] xrGetVulkanInstanceExtensionsKHR: %s", s.c_str());
     return CopyExtensionString(s, capacity, countOutput, buffer);
 }
 
 static XrResult XRAPI_PTR xrGetVulkanDeviceExtensionsKHR_runtime(
-    XrInstance, XrSystemId, uint32_t capacity, uint32_t* countOutput, char* buffer) {
+    XrInstance instance, XrSystemId system, uint32_t capacity, uint32_t* countOutput, char* buffer) {
+    auto result = RequireGraphicsExtension(instance, system, XR_KHR_VULKAN_ENABLE_EXTENSION_NAME);
+    if (XR_FAILED(result)) return result;
+
     const std::string s = vkrt::JoinExtensions(vkrt::kDeviceExtensions, std::size(vkrt::kDeviceExtensions));
     if (capacity) Logf("[SimXR] xrGetVulkanDeviceExtensionsKHR: %s", s.c_str());
     return CopyExtensionString(s, capacity, countOutput, buffer);
 }
 
 static XrResult XRAPI_PTR xrGetVulkanGraphicsDeviceKHR_runtime(
-    XrInstance, XrSystemId, VkInstance vkInstance, VkPhysicalDevice* out) {
-    const XrResult result = vkrt::PickPhysicalDevice(vkInstance, out);
-    if (XR_SUCCEEDED(result)) vkrt::g_reportedPhysicalDevice = *out;
-    return result;
+    XrInstance instance, XrSystemId system, VkInstance vkInstance, VkPhysicalDevice* out) {
+    auto result = RequireGraphicsExtension(instance, system, XR_KHR_VULKAN_ENABLE_EXTENSION_NAME);
+    if (XR_FAILED(result)) return result;
+    return vkrt::PickPhysicalDevice(vkInstance, out);
 }
 
 static XrResult XRAPI_PTR xrGetVulkanGraphicsDevice2KHR_runtime(
-    XrInstance, const XrVulkanGraphicsDeviceGetInfoKHR* getInfo, VkPhysicalDevice* out) {
-    if (!getInfo) return XR_ERROR_VALIDATION_FAILURE;
-    const XrResult result = vkrt::PickPhysicalDevice(getInfo->vulkanInstance, out);
-    if (XR_SUCCEEDED(result)) vkrt::g_reportedPhysicalDevice = *out;
-    return result;
+    XrInstance instance, const XrVulkanGraphicsDeviceGetInfoKHR* getInfo, VkPhysicalDevice* out) {
+    auto result = RequireExtension(instance, XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME);
+    if (XR_FAILED(result)) return result;
+    if (!getInfo || getInfo->type != XR_TYPE_VULKAN_GRAPHICS_DEVICE_GET_INFO_KHR) return XR_ERROR_VALIDATION_FAILURE;
+    if (getInfo->systemId != 1) return XR_ERROR_SYSTEM_INVALID;
+    return vkrt::PickPhysicalDevice(getInfo->vulkanInstance, out);
 }
 
 // Thin passthrough: the app's own vkCreateInstance runs, with the interop extensions the
 // runtime needs appended to whatever it asked for.
 static XrResult XRAPI_PTR xrCreateVulkanInstanceKHR_runtime(
-    XrInstance, const XrVulkanInstanceCreateInfoKHR* createInfo, VkInstance* vulkanInstance, VkResult* vulkanResult) {
+    XrInstance instance, const XrVulkanInstanceCreateInfoKHR* createInfo, VkInstance* vulkanInstance, VkResult* vulkanResult) {
+    auto result = RequireExtension(instance, XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME);
+    if (XR_FAILED(result)) return result;
+    if (!createInfo || createInfo->type != XR_TYPE_VULKAN_INSTANCE_CREATE_INFO_KHR) return XR_ERROR_VALIDATION_FAILURE;
+    if (createInfo->systemId != 1) return XR_ERROR_SYSTEM_INVALID;
+
     if (!createInfo || !createInfo->pfnGetInstanceProcAddr || !createInfo->vulkanCreateInfo ||
         !vulkanInstance || !vulkanResult) return XR_ERROR_VALIDATION_FAILURE;
 
@@ -3318,17 +2517,15 @@ static XrResult XRAPI_PTR xrCreateVulkanInstanceKHR_runtime(
 }
 
 static XrResult XRAPI_PTR xrCreateVulkanDeviceKHR_runtime(
-    XrInstance, const XrVulkanDeviceCreateInfoKHR* createInfo, VkDevice* vulkanDevice, VkResult* vulkanResult) {
+    XrInstance instance, const XrVulkanDeviceCreateInfoKHR* createInfo, VkDevice* vulkanDevice, VkResult* vulkanResult) {
+    auto result = RequireExtension(instance, XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME);
+    if (XR_FAILED(result)) return result;
+    if (!createInfo || createInfo->type != XR_TYPE_VULKAN_DEVICE_CREATE_INFO_KHR) return XR_ERROR_VALIDATION_FAILURE;
+    if (createInfo->systemId != 1) return XR_ERROR_SYSTEM_INVALID;
+
     if (!createInfo || !createInfo->pfnGetInstanceProcAddr || !createInfo->vulkanCreateInfo ||
         !createInfo->vulkanPhysicalDevice || !vulkanDevice || !vulkanResult) return XR_ERROR_VALIDATION_FAILURE;
-    // khr_vulkan_enable2.adoc: a physical device other than the one reported through
-    // xrGetVulkanGraphicsDeviceKHR is invalid. Only enforced once that function has
-    // actually been called, so apps that pick their own device still work.
-    if (vkrt::g_reportedPhysicalDevice != VK_NULL_HANDLE &&
-        createInfo->vulkanPhysicalDevice != vkrt::g_reportedPhysicalDevice) {
-        Log("[SimXR] xrCreateVulkanDeviceKHR: ERROR - vulkanPhysicalDevice does not match xrGetVulkanGraphicsDeviceKHR");
-        return XR_ERROR_HANDLE_INVALID;
-    }
+
     vkrt::g_appGipa = createInfo->pfnGetInstanceProcAddr;
     // Both are instance-level, and the only VkInstance in reach is the one the app made
     // through xrCreateVulkanInstanceKHR or named in xrGetVulkanGraphicsDevice2KHR.
@@ -3353,14 +2550,6 @@ static XrResult XRAPI_PTR xrCreateVulkanDeviceKHR_runtime(
         createInfo->vulkanCreateInfo->ppEnabledExtensionNames,
         createInfo->vulkanCreateInfo->enabledExtensionCount, available, storage);
 
-    // Optional: puts the app's GPU timestamps on the CPU clock for frame timing.
-    for (const char* optional : {"VK_KHR_calibrated_timestamps", "VK_EXT_calibrated_timestamps"}) {
-        const bool offered = std::find(available.begin(), available.end(), optional) != available.end();
-        const bool enabled = std::any_of(names.begin(), names.end(), [&](const char* n) {
-            return strcmp(n, "VK_KHR_calibrated_timestamps") == 0 || strcmp(n, "VK_EXT_calibrated_timestamps") == 0;
-        });
-        if (offered && !enabled) names.push_back(optional);
-    }
     VkDeviceCreateInfo dci = *createInfo->vulkanCreateInfo;
     dci.enabledExtensionCount = (uint32_t)names.size();
     dci.ppEnabledExtensionNames = names.data();
@@ -3373,234 +2562,45 @@ static XrResult XRAPI_PTR xrCreateVulkanDeviceKHR_runtime(
 
 // --- Minimal implementations ---
 
-struct SupportedExtension {
-    const char* name;
-    uint32_t version;
-};
-
-static const SupportedExtension kSupportedExtensions[] = {
-    {XR_KHR_D3D11_ENABLE_EXTENSION_NAME, XR_KHR_D3D11_enable_SPEC_VERSION},
-    {XR_KHR_D3D12_ENABLE_EXTENSION_NAME, XR_KHR_D3D12_enable_SPEC_VERSION},
-    {XR_KHR_OPENGL_ENABLE_EXTENSION_NAME, XR_KHR_opengl_enable_SPEC_VERSION},
-    {XR_KHR_VULKAN_ENABLE_EXTENSION_NAME, XR_KHR_vulkan_enable_SPEC_VERSION},
-    {XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME, XR_KHR_vulkan_enable2_SPEC_VERSION},
-    {XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME,
-     XR_KHR_composition_layer_depth_SPEC_VERSION},
-    {XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME,
-     XR_KHR_composition_layer_cylinder_SPEC_VERSION},
-    {XR_KHR_WIN32_CONVERT_PERFORMANCE_COUNTER_TIME_EXTENSION_NAME,
-     XR_KHR_win32_convert_performance_counter_time_SPEC_VERSION},
-};
-
 static XrResult XRAPI_PTR xrEnumerateApiLayerProperties_runtime(uint32_t propertyCapacityInput,
                                                                 uint32_t* propertyCountOutput,
                                                                 XrApiLayerProperties* properties) {
     Log("[SimXR] xrEnumerateApiLayerProperties called");
-    // Runtime doesn't provide API layers, only extensions
-    return api_validation::ValidateEnumeration(
-        propertyCapacityInput, propertyCountOutput, properties, 0);
-}
-static XrResult XRAPI_PTR xrEnumerateInstanceExtensionProperties_runtime(const char* layerName, uint32_t propertyCapacityInput,
-                                                                         uint32_t* propertyCountOutput,
-                                                                         XrExtensionProperties* properties) {
-    if (layerName) return XR_ERROR_API_LAYER_NOT_PRESENT;
-    const uint32_t count = (uint32_t)(sizeof(kSupportedExtensions)/sizeof(kSupportedExtensions[0]));
-    const XrResult validation = api_validation::ValidateEnumeration(
-        propertyCapacityInput, propertyCountOutput, properties, count);
-    if (XR_FAILED(validation) || propertyCapacityInput == 0) return validation;
-    for (uint32_t i = 0; i < count; ++i) {
-        if (properties[i].type != XR_TYPE_EXTENSION_PROPERTIES) return XR_ERROR_VALIDATION_FAILURE;
-    }
-    for (uint32_t i = 0; i < count; ++i) {
-        std::strncpy(properties[i].extensionName, kSupportedExtensions[i].name,
-                     XR_MAX_EXTENSION_NAME_SIZE - 1);
-        properties[i].extensionName[XR_MAX_EXTENSION_NAME_SIZE - 1] = '\0';
-        properties[i].extensionVersion = kSupportedExtensions[i].version;
-        Logf("[SimXR] ext[%u]=%s", i, properties[i].extensionName);
-    }
+    if (!propertyCountOutput || (propertyCapacityInput && !properties)) return XR_ERROR_VALIDATION_FAILURE;
+    *propertyCountOutput = 0;
     return XR_SUCCESS;
 }
-
-static XrResult XRAPI_PTR xrDestroySession_runtime(XrSession session);
-static void resetD3D11PreviewReadbacks(rt::Session& session);
-
-#ifndef SIMXR_BUILD_ID
-#define SIMXR_BUILD_ID "unknown"
-#endif
-
-// The app's latest color swapchain, for the session info.
-static std::mutex g_appSwapchainMutex;
-static XrSwapchainCreateInfo g_appSwapchain{XR_TYPE_SWAPCHAIN_CREATE_INFO};
-
-static std::string JsonText(const std::string& text) {
-    std::string out = "\"";
-    for (const char c : text) {
-        if (c == '"' || c == '\\') out += '\\';
-        if (static_cast<unsigned char>(c) >= 0x20) out += c;
-    }
-    return out + "\"";
-}
-
-// The adapter the simulator composites on - for D3D and OpenGL apps the app's
-// own - described once per device: enumerating adapters is not free.
-static std::string GpuJson(rt::Session& s) {
-    static const void* describedDevice = nullptr;
-    static std::string described = "null";
-    LUID luid{};
-    const void* device = nullptr;
-    if (s.d3d12Device) {
-        luid = s.d3d12Device->GetAdapterLuid();
-        device = s.d3d12Device.Get();
-    } else if (s.d3d11Device) {
-        ComPtr<IDXGIDevice> dxgiDevice;
-        ComPtr<IDXGIAdapter> adapter;
-        DXGI_ADAPTER_DESC desc{};
-        if (SUCCEEDED(s.d3d11Device.As(&dxgiDevice)) && SUCCEEDED(dxgiDevice->GetAdapter(&adapter)) &&
-            SUCCEEDED(adapter->GetDesc(&desc))) {
-            luid = desc.AdapterLuid;
-            device = s.d3d11Device.Get();
-        }
-    }
-    if (!device) return "null";
-    if (device == describedDevice) return described;
-    describedDevice = device;
-    described = "null";
-    ComPtr<IDXGIFactory4> factory;
-    ComPtr<IDXGIAdapter1> adapter;
-    DXGI_ADAPTER_DESC1 desc{};
-    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))) ||
-        FAILED(factory->EnumAdapterByLuid(luid, IID_PPV_ARGS(&adapter))) || FAILED(adapter->GetDesc1(&desc))) {
-        return described;
-    }
-    char name[256]{};
-    WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1, name, sizeof(name) - 1, nullptr, nullptr);
-    char driver[48] = "unknown";
-    LARGE_INTEGER umd{};
-    if (SUCCEEDED(adapter->CheckInterfaceSupport(__uuidof(IDXGIDevice), &umd))) {
-        snprintf(driver, sizeof(driver), "%u.%u.%u.%u", HIWORD(umd.HighPart), LOWORD(umd.HighPart),
-                 HIWORD(umd.LowPart), LOWORD(umd.LowPart));
-    }
-    char json[512];
-    snprintf(json, sizeof(json), "{\"name\": %s, \"vendor_id\": %u, \"device_id\": %u, \"driver\": \"%s\", \"vram_mb\": %llu}",
-             JsonText(name).c_str(), desc.VendorId, desc.DeviceId, driver,
-             (unsigned long long)(desc.DedicatedVideoMemory >> 20));
-    described = json;
-    return described;
-}
-
-// What a frame-timing capture should say about the run it came from.
-static void PublishSessionInfo() {
-    rt::Session& s = rt::g_session;
-    const ui::UIState state = ui::g_uiState;
-    uint32_t renderW = 0, renderH = 0;
-    ui::GetRenderResolution(renderW, renderH);
-    XrSwapchainCreateInfo swapchain;
-    {
-        std::lock_guard<std::mutex> lock(g_appSwapchainMutex);
-        swapchain = g_appSwapchain;
-    }
-    const char* api = s.usesVulkan ? "Vulkan" : s.usesOpenGL ? "OpenGL" : s.usesD3D12 ? "D3D12" : "D3D11";
-    char mirror[32];
-    if (state.previewFps >= ui::kPreviewRateEveryFrame) snprintf(mirror, sizeof(mirror), "\"every frame\"");
-    else snprintf(mirror, sizeof(mirror), "%d", state.previewFps);
-    char json[2000];
-    snprintf(json, sizeof(json),
-             "{\"simulator\": {\"build\": %s, \"refresh_hz\": %g}, \"graphics_api\": \"%s\", \"gpu\": %s, "
-             "\"render\": {\"width_per_eye\": %u, \"height_per_eye\": %u, \"headset\": %s, \"ipd_mm\": %d}, "
-             "\"app_swapchain\": {\"width\": %u, \"height\": %u, \"format\": %lld, \"samples\": %u}, "
-             "\"preview\": {\"mirror_fps\": %s, \"client_width\": %u, \"client_height\": %u}}",
-             JsonText(SIMXR_BUILD_ID).c_str(), SimulatorRefreshHz(), api, GpuJson(s).c_str(), renderW, renderH,
-             JsonText(ui::HeadsetProfileName(state.headsetProfile)).c_str(), ui::GetIpdMillimeters(),
-             swapchain.width, swapchain.height, (long long)swapchain.format, swapchain.sampleCount, mirror,
-             state.windowWidth > 0 ? unsigned(state.windowWidth) : 0u,
-             state.windowHeight > 0 ? unsigned(state.windowHeight) : 0u);
-    g_frameTimeline.SetSessionInfo(json);
-}
-
-// Tools > Frame Timing (F4). The viewer is a process of its own, so watching
-// costs the app no thread, lock or swapchain and survives the app hanging. It
-// lives beside this DLL - or beside the file a symlinked install points at -
-// unless OPENXR_SIM_FRAMETIME_VIEWER names it. A viewer already watching this
-// process comes forward instead of opening twice.
-static void OpenFrameTimingViewer() {
-    if (!g_frameTimeline.Enabled()) {
-        Log("[SimXR] frame timing: the frame timeline is off (OPENXR_SIM_FRAME_TIMELINE=0)");
-        return;
-    }
-    std::vector<std::wstring> candidates;
-    wchar_t overridePath[MAX_PATH]{};
-    const DWORD overrideLength = GetEnvironmentVariableW(L"OPENXR_SIM_FRAMETIME_VIEWER", overridePath, MAX_PATH);
-    if (overrideLength && overrideLength < MAX_PATH) candidates.push_back(overridePath);
-    HMODULE self = nullptr;
-    wchar_t modulePath[MAX_PATH]{};
-    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                           reinterpret_cast<LPCWSTR>(&OpenFrameTimingViewer), &self) &&
-        GetModuleFileNameW(self, modulePath, MAX_PATH)) {
-        auto besideFile = [&](std::wstring path) {
-            const size_t slash = path.find_last_of(L"\\/");
-            if (slash != std::wstring::npos) candidates.push_back(path.substr(0, slash + 1) + L"openxr_sim_frametime.exe");
-        };
-        besideFile(modulePath);
-        HANDLE file = CreateFileW(modulePath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
-                                  OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
-        if (file != INVALID_HANDLE_VALUE) {
-            wchar_t finalPath[MAX_PATH]{};
-            const DWORD length = GetFinalPathNameByHandleW(file, finalPath, MAX_PATH, FILE_NAME_NORMALIZED);
-            CloseHandle(file);
-            if (length && length < MAX_PATH) {
-                std::wstring resolved = finalPath;
-                if (resolved.rfind(L"\\\\?\\", 0) == 0) resolved = resolved.substr(4);
-                besideFile(resolved);
-            }
-        }
-    }
-    for (const std::wstring& exe : candidates) {
-        if (GetFileAttributesW(exe.c_str()) == INVALID_FILE_ATTRIBUTES) continue;
-        std::wstring commandLine = L"\"" + exe + L"\" --pid " + std::to_wstring(GetCurrentProcessId());
-        STARTUPINFOW startup{sizeof(startup)};
-        PROCESS_INFORMATION process{};
-        // Out of the app's job where allowed, so a game that exits (or crashes)
-        // does not take the viewer and its last records with it.
-        BOOL started = CreateProcessW(exe.c_str(), commandLine.data(), nullptr, nullptr, FALSE,
-                                      CREATE_BREAKAWAY_FROM_JOB, nullptr, nullptr, &startup, &process);
-        if (!started) {
-            started = CreateProcessW(exe.c_str(), commandLine.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr,
-                                     &startup, &process);
-        }
-        if (started) {
-            CloseHandle(process.hThread);
-            CloseHandle(process.hProcess);
-            return;
-        }
-        Logf("[SimXR] frame timing: could not start %ls (error %lu)", exe.c_str(), GetLastError());
-        return;
-    }
-    Log("[SimXR] frame timing: openxr_sim_frametime.exe not found beside the runtime DLL");
+static XrResult XRAPI_PTR xrEnumerateInstanceExtensionProperties_runtime(const char* layerName,
+	uint32_t capacity, uint32_t* count, XrExtensionProperties* properties)
+{
+	if (layerName)
+		return XR_ERROR_API_LAYER_NOT_PRESENT;
+	return Extensions().Enumerate(capacity, count, properties);
 }
 
 static XrResult XRAPI_PTR xrCreateInstance_runtime(const XrInstanceCreateInfo* createInfo, XrInstance* instance) {
-    if (!createInfo || !instance || createInfo->type != XR_TYPE_INSTANCE_CREATE_INFO ||
-        createInfo->createFlags != 0) {
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
-    if (rt::g_instance.handle != XR_NULL_HANDLE) return XR_ERROR_LIMIT_REACHED;
-    const XrResult versionValidation = api_validation::ValidateApiVersion(
-        createInfo->applicationInfo.apiVersion, g_negotiatedApiVersion);
-    if (XR_FAILED(versionValidation)) return versionValidation;
-    if ((createInfo->enabledApiLayerCount && !createInfo->enabledApiLayerNames) ||
-        (createInfo->enabledExtensionCount && !createInfo->enabledExtensionNames)) {
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
-    if (createInfo->enabledApiLayerCount != 0) return XR_ERROR_API_LAYER_NOT_PRESENT;
-
+    std::lock_guard lifecycleLock(rt::g_instanceLifecycleMutex);
+    if (!instance) return XR_ERROR_VALIDATION_FAILURE;
+    simxr::Runtime::InstanceRef core;
+    auto result = RuntimeState().CreateInstance(createInfo, core);
+    if (XR_FAILED(result)) return result;
+    struct InstanceCreation
+    {
+        simxr::Runtime::InstanceRef core;
+        bool committed = false;
+        ~InstanceCreation() { if (!committed) RuntimeState().DestroyInstance(core); }
+    } creation{core};
+    const std::span<const char* const> requested(createInfo->enabledExtensionNames, createInfo->enabledExtensionCount);
+    rt::Instance newInstance;
+    newInstance.handle = core;
+    newInstance.core = core.Shared();
+    newInstance.controllerMotion = std::make_shared<simxr::legacy::LegacyControllerMotion>();
+    // applicationName may not be null-terminated
     char appName[XR_MAX_APPLICATION_NAME_SIZE + 1] = {0};
     memcpy(appName, createInfo->applicationInfo.applicationName, XR_MAX_APPLICATION_NAME_SIZE);
-    Logf("[SimXR] xrCreateInstance: app=%s version=%u api=%u.%u.%u",
+    Logf("[SimXR] xrCreateInstance: app=%s version=%u", 
          appName,
-         createInfo->applicationInfo.applicationVersion,
-         XR_VERSION_MAJOR(createInfo->applicationInfo.apiVersion),
-         XR_VERSION_MINOR(createInfo->applicationInfo.apiVersion),
-         XR_VERSION_PATCH(createInfo->applicationInfo.apiVersion));
+         createInfo->applicationInfo.applicationVersion);
 
     // Restore the saved UI settings here rather than at window creation: apps ask
     // for view configurations, whose panel resolution and FOV both come from the
@@ -3618,88 +2618,47 @@ static XrResult XRAPI_PTR xrCreateInstance_runtime(const XrInstanceCreateInfo* c
              (int)ui::g_uiState.useAsymmetricFov, zoomDesc);
     }
 
-    // Validate that all requested extensions are supported
-    const uint32_t supportedCount = (uint32_t)(sizeof(kSupportedExtensions)/sizeof(kSupportedExtensions[0]));
-    std::vector<std::string> enabledExtensions;
-    enabledExtensions.reserve(createInfo->enabledExtensionCount);
-    for (uint32_t i = 0; i < createInfo->enabledExtensionCount; ++i) {
-        const char* requested = createInfo->enabledExtensionNames[i];
-        if (!requested || strnlen(requested, XR_MAX_EXTENSION_NAME_SIZE) == XR_MAX_EXTENSION_NAME_SIZE) {
-            return XR_ERROR_VALIDATION_FAILURE;
-        }
-        bool supported = false;
-        for (uint32_t j = 0; j < supportedCount; ++j) {
-            if (strcmp(requested, kSupportedExtensions[j].name) == 0) {
-                supported = true;
-                break;
-            }
-        }
-        if (!supported) {
-            Logf("[SimXR] xrCreateInstance: ERROR - Unsupported extension %s", requested);
-            return XR_ERROR_EXTENSION_NOT_PRESENT;
-        }
-        if (std::find(enabledExtensions.begin(), enabledExtensions.end(), requested) !=
-            enabledExtensions.end()) {
-            return XR_ERROR_VALIDATION_FAILURE;
-        }
-        enabledExtensions.emplace_back(requested);
-        Logf("[SimXR]   enabledExt[%u]=%s", i, requested);
+    if (const auto* profile = std::getenv("SIMXR_HEADSET_PROFILE")) {
+        const auto index = ui::FindHeadsetSpec(profile);
+        if (index < 0) return XR_ERROR_INITIALIZATION_FAILED;
+        ui::SetHeadsetProfile(static_cast<ui::HeadsetProfile>(index));
     }
-    rt::g_instance.enabledExtensions = std::move(enabledExtensions);
-    rt::g_instance.apiVersion = createInfo->applicationInfo.apiVersion;
-    // A new instance starts with no requirements calls on record.
-    rt::g_instance.d3d11RequirementsCalled = false;
-    rt::g_instance.d3d12RequirementsCalled = false;
-    rt::g_instance.openglRequirementsCalled = false;
-    rt::g_instance.vulkanRequirementsCalled = false;
 
-    static const bool frameTimelineWanted = []() {
-        const char* value = getenv("OPENXR_SIM_FRAME_TIMELINE");
-        return value == nullptr || atoi(value) != 0;
-    }();
-    if (frameTimelineWanted && !g_frameTimeline.Enabled()) {
-        if (g_frameTimeline.Open(SimulatorRefreshHz())) {
-            Logf("[SimXR] frame timeline: Local\\OpenXRSimulator.FrameTimeline.%lu",
-                 GetCurrentProcessId());
-        } else {
-            Logf("[SimXR] frame timeline unavailable (error %lu)", GetLastError());
-        }
+    for (auto extension : requested)
+        Logf("[SimXR] enabledExtension=%s", extension);
+    const auto directory = mcp::GetSimulatorDataDirectory();
+    newInstance.diagnostics = std::make_shared<flicker::Diagnostics>(directory);
+    newInstance.compatibilityFiles = std::make_shared<mcp::WindowsLegacyChannel>(directory);
+    newInstance.compatibilityCapture = std::make_shared<mcp::WindowsLegacyCapture>(newInstance.compatibilityFiles);
+    ControlEndpoint().Start();
+    rt::Instance previousInstance;
+    {
+        std::lock_guard lock(rt::g_coreMutex);
+        previousInstance = std::move(rt::g_instance);
+        rt::g_instance = std::move(newInstance);
     }
-    g_frameTimeline.SetApplicationName(appName);
-    g_frameTimeline.Marker(perf::timeline::MarkerKind::Instance, 0, 0, appName);
-    ui::g_openFrameTiming = OpenFrameTimingViewer;
-    g_sessionInfoDirty = true;
-
-    rt::g_instance.handle = (XrInstance)1;
-    *instance = rt::g_instance.handle;
+    { std::lock_guard lock(g_LogMutex); g_logChannel = rt::g_instance.compatibilityFiles; }
+    *instance = core;
+    creation.committed = true;
     Log("[SimXR] xrCreateInstance: SUCCESS");
     return XR_SUCCESS;
 }
 
 static XrResult XRAPI_PTR xrDestroyInstance_runtime(XrInstance instance) {
+    std::lock_guard lifecycleLock(rt::g_instanceLifecycleMutex);
     Logf("[SimXR] xrDestroyInstance called: instance=%p", instance);
 
-    if (instance == XR_NULL_HANDLE || instance != rt::g_instance.handle) {
-        return XR_ERROR_HANDLE_INVALID;
-    }
-
-    // Clear the global instance
-    {
-        Log("[SimXR] xrDestroyInstance: Clearing global instance");
+    if (!RuntimeState().FindInstance(instance)) return XR_ERROR_HANDLE_INVALID;
+    if (instance == rt::g_instance.handle && rt::g_session.usesD3D12 && !rt::WaitForPreviewIdle(rt::g_session))
+        return XR_ERROR_RUNTIME_FAILURE;
+    if (!RuntimeState().Game().Snapshot().game) ControlEndpoint().Close();
+    RuntimeState().DestroyInstance(instance);
+    if (instance == rt::g_instance.handle) {
+        if (rt::g_session.core) rt::g_session.core->Close();
         if (rt::g_session.handle != XR_NULL_HANDLE) {
-            xrDestroySession_runtime(rt::g_session.handle);
+            const auto result = DestroyNativeSession(rt::g_session.handle);
+            if (XR_FAILED(result)) return result;
         }
-        rt::g_instance = {};
-        rt::g_actionSets.clear();
-        rt::g_attachedActionSets.clear();
-        rt::g_activeActionSetSources.clear();
-        rt::g_actions.clear();
-        rt::g_sessionActionSetsAttached = false;
-        rt::g_suggestedProfiles.clear();
-        rt::g_activeProfile = XR_NULL_PATH;
-        rt::g_pathStrings.clear();
-        rt::g_stringPaths.clear();
-        rt::g_nextPath = 1;
 
         // MUST destroy the window before DLL unloads!
         // The OpenXR loader may unload our DLL after this call.
@@ -3724,6 +2683,23 @@ static XrResult XRAPI_PTR xrDestroyInstance_runtime(XrInstance instance) {
         }
         rt::g_previewUi.finished.store(false);
         rt::g_previewUi.threadId.store(0);
+        {
+            std::lock_guard<std::mutex> lock(rt::g_windowMutex);
+            rt::g_persistentWindow = nullptr;
+            rt::g_persistentSwapchain.Reset();
+            rt::g_session.previewSwapchain.Reset();
+        }
+        rt::Instance retiredInstance;
+        {
+            std::lock_guard lock(rt::g_coreMutex);
+            if (rt::g_instance.handle == instance) {
+                retiredInstance = std::move(rt::g_instance);
+                rt::g_instance = {};
+            }
+        }
+        if (retiredInstance.compatibilityCapture) retiredInstance.compatibilityCapture->Close();
+        if (retiredInstance.compatibilityFiles) retiredInstance.compatibilityFiles->Close();
+        if (retiredInstance.diagnostics) retiredInstance.diagnostics->Close();
         // Also clear session window reference
         if (rt::g_session.hwnd) {
             rt::g_session.hwnd = nullptr;
@@ -3743,21 +2719,19 @@ static XrResult XRAPI_PTR xrDestroyInstance_runtime(XrInstance instance) {
     return XR_SUCCESS;
 }
 
-static XrResult XRAPI_PTR xrGetInstanceProperties_runtime(XrInstance instance, XrInstanceProperties* props) {
-    if (!IsValidInstance(instance)) return XR_ERROR_HANDLE_INVALID;
-    if (!props || props->type != XR_TYPE_INSTANCE_PROPERTIES) return XR_ERROR_VALIDATION_FAILURE;
-    // The release in CMakeLists.txt's project(), so the version cannot drift from it.
-    props->runtimeVersion = XR_MAKE_VERSION(SIMXR_VERSION_MAJOR, SIMXR_VERSION_MINOR, SIMXR_VERSION_PATCH);
+static XrResult XRAPI_PTR xrGetInstanceProperties_runtime(XrInstance, XrInstanceProperties* props) {
+    if (!props) return XR_ERROR_VALIDATION_FAILURE;
+    props->type = XR_TYPE_INSTANCE_PROPERTIES;
+    props->next = nullptr;
+    props->runtimeVersion = SupportedApiVersion;
     strncpy(props->runtimeName, "OpenXR Simulator Runtime", XR_MAX_RUNTIME_NAME_SIZE - 1);
     props->runtimeName[XR_MAX_RUNTIME_NAME_SIZE - 1] = '\0';
-    Logf("[SimXR] xrGetInstanceProperties: returning OpenXR Simulator Runtime %d.%d.%d",
-         SIMXR_VERSION_MAJOR, SIMXR_VERSION_MINOR, SIMXR_VERSION_PATCH);
+    Log("[SimXR] xrGetInstanceProperties: returning OpenXR Simulator Runtime");
     return XR_SUCCESS;
 }
 
-static XrResult XRAPI_PTR xrGetSystem_runtime(XrInstance instance, const XrSystemGetInfo* info, XrSystemId* systemId) {
-    if (!IsValidInstance(instance)) return XR_ERROR_HANDLE_INVALID;
-    if (!info || info->type != XR_TYPE_SYSTEM_GET_INFO || !systemId) return XR_ERROR_VALIDATION_FAILURE;
+static XrResult XRAPI_PTR xrGetSystem_runtime(XrInstance, const XrSystemGetInfo* info, XrSystemId* systemId) {
+    if (!info || !systemId) return XR_ERROR_VALIDATION_FAILURE;
     Logf("[SimXR] xrGetSystem: formFactor=%d", info->formFactor);
     if (info->formFactor != XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY) {
         Log("[SimXR] xrGetSystem: ERROR - form factor not HMD");
@@ -3768,140 +2742,129 @@ static XrResult XRAPI_PTR xrGetSystem_runtime(XrInstance instance, const XrSyste
     return XR_SUCCESS;
 }
 
-// The swapchain size limit this instance's graphics binding supports, advertised in
-// the system and view properties and enforced by xrCreateSwapchain alike.
-static uint32_t MaxSwapchainDimension() {
-    bool direct3D = false, otherGraphics = false;
-    for (const auto& name : rt::g_instance.enabledExtensions) {
-        if (name == XR_KHR_D3D11_ENABLE_EXTENSION_NAME || name == XR_KHR_D3D12_ENABLE_EXTENSION_NAME) direct3D = true;
-        if (name == XR_KHR_OPENGL_ENABLE_EXTENSION_NAME || name == XR_KHR_VULKAN_ENABLE_EXTENSION_NAME || name == XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME) otherGraphics = true;
-    }
-    return api_validation::MaxSwapchainDimension(direct3D, otherGraphics);
-}
-
-static XrResult XRAPI_PTR xrGetSystemProperties_runtime(XrInstance instance, XrSystemId systemId, XrSystemProperties* props) {
-    if (!IsValidInstance(instance)) return XR_ERROR_HANDLE_INVALID;
-    if (!IsValidSystem(systemId)) return XR_ERROR_SYSTEM_INVALID;
-    if (!props || props->type != XR_TYPE_SYSTEM_PROPERTIES) return XR_ERROR_VALIDATION_FAILURE;
-    strncpy(props->systemName, "OpenXR Simulator", XR_MAX_SYSTEM_NAME_SIZE - 1);
-    props->systemName[XR_MAX_SYSTEM_NAME_SIZE - 1] = '\0';
+static XrResult XRAPI_PTR xrGetSystemProperties_runtime(XrInstance instance, XrSystemId system, XrSystemProperties* props)
+{
+    if (!RuntimeState().FindInstance(instance)) return XR_ERROR_HANDLE_INVALID;
+    if (system != 1) return XR_ERROR_SYSTEM_INVALID;
+    auto result = simxr::FillSimulationProperties(rt::g_instance.core->Extensions(), props);
+    if (XR_FAILED(result)) return result;
+    std::strcpy(props->systemName, "OpenXR Simulator");
     props->systemId = 1;
-    props->vendorId = 0;  // 0 = unknown vendor (more standard than 0xFFFF)
-    props->graphicsProperties.maxSwapchainImageWidth = MaxSwapchainDimension();
-    props->graphicsProperties.maxSwapchainImageHeight = MaxSwapchainDimension();
-    props->graphicsProperties.maxLayerCount = 16;
-    props->trackingProperties.positionTracking = XR_TRUE;
-    props->trackingProperties.orientationTracking = XR_TRUE;
-    Log("[SimXR] xrGetSystemProperties: returning OpenXR Simulator");
+    props->vendorId = 0;
+    props->graphicsProperties = {4096, 4096, 16};
+    props->trackingProperties = {XR_TRUE, XR_TRUE};
     return XR_SUCCESS;
 }
 
-static XrResult XRAPI_PTR xrEnumerateViewConfigurations_runtime(XrInstance instance, XrSystemId systemId, uint32_t capacity, uint32_t* count, XrViewConfigurationType* types) {
-    if (!IsValidInstance(instance)) return XR_ERROR_HANDLE_INVALID;
-    if (!IsValidSystem(systemId)) return XR_ERROR_SYSTEM_INVALID;
+static XrResult XRAPI_PTR xrEnumerateViewConfigurations_runtime(XrInstance, XrSystemId, uint32_t capacity, uint32_t* count, XrViewConfigurationType* types) {
     Logf("[SimXR] xrEnumerateViewConfigurations called: capacity=%u", capacity);
-    const XrResult validation = api_validation::ValidateEnumeration(capacity, count, types, 1);
-    if (XR_FAILED(validation) || capacity == 0) return validation;
-    types[0] = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
-    Log("[SimXR] xrEnumerateViewConfigurations: Returning PRIMARY_STEREO");
+    if (count) *count = 1;
+    if (capacity >= 1 && types) {
+        types[0] = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+        Log("[SimXR] xrEnumerateViewConfigurations: Returning PRIMARY_STEREO");
+    }
     return XR_SUCCESS;
 }
 
-static XrResult XRAPI_PTR xrEnumerateViewConfigurationViews_runtime(XrInstance instance, XrSystemId systemId, XrViewConfigurationType viewType, uint32_t capacity, uint32_t* count, XrViewConfigurationView* views) {
-    if (!IsValidInstance(instance)) return XR_ERROR_HANDLE_INVALID;
-    if (!IsValidSystem(systemId)) return XR_ERROR_SYSTEM_INVALID;
+static XrResult XRAPI_PTR xrEnumerateViewConfigurationViews_runtime(XrInstance, XrSystemId, XrViewConfigurationType viewType, uint32_t capacity, uint32_t* count, XrViewConfigurationView* views) {
     Logf("[SimXR] xrEnumerateViewConfigurationViews called: viewType=%d, capacity=%u", (int)viewType, capacity);
-    if (viewType != XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO) {
-        return XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;
+    if (count) *count = 2;
+    if (capacity >= 2 && views) {
+        for (uint32_t i = 0; i < 2; ++i) {
+            views[i].type = XR_TYPE_VIEW_CONFIGURATION_VIEW;
+            views[i].next = nullptr;
+            uint32_t renderW = 0, renderH = 0;
+            ui::GetRenderResolution(renderW, renderH);
+            views[i].recommendedImageRectWidth = renderW;
+            views[i].recommendedImageRectHeight = renderH;
+            views[i].recommendedSwapchainSampleCount = 1;
+            views[i].maxImageRectWidth = ui::kMaxRenderExtent;
+            views[i].maxImageRectHeight = ui::kMaxRenderExtent;
+            views[i].maxSwapchainSampleCount = 1;
+        }
+        Logf("[SimXR] xrEnumerateViewConfigurationViews: Returned 2 views (%ux%u recommended; headset geometry %s)",
+             views[0].recommendedImageRectWidth, views[0].recommendedImageRectHeight,
+             ui::HeadsetProfileName(ui::g_uiState.headsetProfile));
     }
-    const XrResult validation = api_validation::ValidateEnumeration(capacity, count, views, 2);
-    if (XR_FAILED(validation) || capacity == 0) return validation;
-    for (uint32_t i = 0; i < 2; ++i) {
-        if (views[i].type != XR_TYPE_VIEW_CONFIGURATION_VIEW) return XR_ERROR_VALIDATION_FAILURE;
-    }
-    for (uint32_t i = 0; i < 2; ++i) {
-        uint32_t renderW = 0, renderH = 0;
-        ui::GetRenderResolution(renderW, renderH);
-        views[i].recommendedImageRectWidth = renderW;
-        views[i].recommendedImageRectHeight = renderH;
-        views[i].recommendedSwapchainSampleCount = 1;
-        views[i].maxImageRectWidth = MaxSwapchainDimension();
-        views[i].maxImageRectHeight = MaxSwapchainDimension();
-        views[i].maxSwapchainSampleCount = 1;
-    }
-    Logf("[SimXR] xrEnumerateViewConfigurationViews: Returned 2 views (%ux%u recommended; headset geometry %s)",
-         views[0].recommendedImageRectWidth, views[0].recommendedImageRectHeight,
-         ui::HeadsetProfileName(ui::g_uiState.headsetProfile));
     return XR_SUCCESS;
 }
 
 static XrResult XRAPI_PTR xrEnumerateEnvironmentBlendModes_runtime(
-    XrInstance instance, XrSystemId systemId, XrViewConfigurationType viewType, uint32_t capacity,
-    uint32_t* count, XrEnvironmentBlendMode* modes) {
-    if (!IsValidInstance(instance)) return XR_ERROR_HANDLE_INVALID;
-    if (!IsValidSystem(systemId)) return XR_ERROR_SYSTEM_INVALID;
-    if (viewType != XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO) {
-        return XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;
-    }
-    const XrResult validation = api_validation::ValidateEnumeration(capacity, count, modes, 1);
-    if (XR_FAILED(validation) || capacity == 0) return validation;
-    modes[0] = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+    XrInstance, XrSystemId, XrViewConfigurationType, uint32_t capacity, uint32_t* count, XrEnvironmentBlendMode* modes) {
+    if (count) *count = 1;
+    if (capacity >= 1 && modes) modes[0] = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
     return XR_SUCCESS;
 }
 
-#include "ui_automation_runtime.h"
-
 static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrSessionCreateInfo* info, XrSession* session) {
-    std::lock_guard<std::recursive_mutex> controlLock(ui_auto::g_mutex);
     static int sessionCount = 0;
     sessionCount++;
     Log("[SimXR] ============================================");
     Logf("[SimXR] xrCreateSession called (call #%d, instance=%llu)", sessionCount, (unsigned long long)instance);
     Log("[SimXR] ============================================");
-    if (instance == XR_NULL_HANDLE || instance != rt::g_instance.handle) {
-        return XR_ERROR_HANDLE_INVALID;
-    }
-    if (!info || !session || info->type != XR_TYPE_SESSION_CREATE_INFO ||
-        info->createFlags != 0) {
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
+    if (!info || !session || info->type != XR_TYPE_SESSION_CREATE_INFO) return XR_ERROR_VALIDATION_FAILURE;
     if (info->systemId != 1) return XR_ERROR_SYSTEM_INVALID;
-    if (rt::g_session.handle != XR_NULL_HANDLE) {
-        Logf("[SimXR] xrCreateSession: session limit reached (handle=%llu)",
-             (unsigned long long)rt::g_session.handle);
-        return XR_ERROR_LIMIT_REACHED;
-    }
-
-    ResetUiAutomation();
-    const auto extensionEnabled = [](const char* name) {
-        return std::find(rt::g_instance.enabledExtensions.begin(),
-                         rt::g_instance.enabledExtensions.end(), name) !=
-               rt::g_instance.enabledExtensions.end();
-    };
-    static uintptr_t nextSessionHandle = 0x1001;
-    const XrSession newHandle = (XrSession)nextSessionHandle++;
+    
+    if (!RuntimeState().FindInstance(instance)) return XR_ERROR_HANDLE_INVALID;
+    std::shared_ptr<simxr::legacy::LegacyControllerMotion> controllerMotion;
     {
-        std::lock_guard<std::mutex> lock(rt::g_session.frameMutex);
-        rt::g_session.running = false;
-        rt::g_session.exitRequested = false;
-        rt::g_session.frameLifecycle.Reset();
+        std::lock_guard lock(rt::g_coreMutex);
+        if (rt::g_instance.handle != instance) return XR_ERROR_HANDLE_INVALID;
+        controllerMotion = rt::g_instance.controllerMotion;
     }
-    rt::g_session.frameCondition.notify_all();
+    if (!controllerMotion) return XR_ERROR_HANDLE_INVALID;
+    if (rt::g_session.handle != XR_NULL_HANDLE) return XR_ERROR_LIMIT_REACHED;
+    if (rt::g_session.usesVulkan) vkrt::ShutdownSession(rt::g_session);
+    struct SessionCreation
+    {
+        simxr::Runtime::SessionRef core;
+        bool committed = false;
+        ~SessionCreation()
+        {
+            if (committed) return;
+            if (core) RuntimeState().DestroySession(core);
+            DestroyNativeSession(rt::g_session.handle);
+        }
+    } creation;
+    auto publish = [&]() -> XrResult
+    {
+        auto result = RuntimeState().CreateSession(instance, creation.core, std::make_shared<simxr::WindowsClock>());
+        if (XR_FAILED(result)) return result;
+        {
+            std::lock_guard lock(rt::g_coreMutex);
+            if (rt::g_instance.handle != instance || rt::g_instance.controllerMotion != controllerMotion)
+                return XR_ERROR_HANDLE_INVALID;
+            rt::g_session.core = creation.core.Shared();
+            rt::g_session.controllerMotion = controllerMotion;
+            rt::g_session.compatibilityFiles = rt::g_instance.compatibilityFiles;
+            rt::g_session.compatibilityCapture = rt::g_instance.compatibilityCapture;
+            rt::g_session.diagnostics = rt::g_instance.diagnostics;
+            rt::g_session.handle = creation.core;
+        }
+        const auto time = simxr::RuntimeTime{std::chrono::duration_cast<simxr::Duration>(simxr::SteadyClock{}.Now().time_since_epoch())};
+        result = creation.core->Ready(time);
+        if (XR_FAILED(result)) return result;
+        rt::g_session.state = creation.core->Snapshot().state;
+        *session = creation.core;
+        creation.committed = true;
+        Logf("[SimXR] xrCreateSession: SUCCESS handle=%llu", (unsigned long long)*session);
+        return XR_SUCCESS;
+    };
+    const simxr::StructureChain chain(info->next);
+    const std::array bindings{XR_TYPE_GRAPHICS_BINDING_D3D11_KHR, XR_TYPE_GRAPHICS_BINDING_D3D12_KHR,
+        XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR, XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR};
+    if (XR_FAILED(chain.Validate(bindings))) return XR_ERROR_VALIDATION_FAILURE;
+    std::size_t bindingCount = 0;
+    for (auto type : bindings) if (chain.Find<XrBaseInStructure>(type)) ++bindingCount;
+    if (bindingCount != 1) return XR_ERROR_GRAPHICS_DEVICE_INVALID;
     // Accept D3D11 and D3D12
     const XrBaseInStructure* entry = reinterpret_cast<const XrBaseInStructure*>(info->next);
     while (entry) {
         if (entry->type == XR_TYPE_GRAPHICS_BINDING_D3D11_KHR) {
+            auto enabled = RequireExtension(instance, XR_KHR_D3D11_ENABLE_EXTENSION_NAME);
+            if (XR_FAILED(enabled)) return XR_ERROR_GRAPHICS_DEVICE_INVALID;
             const auto* b = reinterpret_cast<const XrGraphicsBindingD3D11KHR*>(entry);
-            if (!extensionEnabled(XR_KHR_D3D11_ENABLE_EXTENSION_NAME)) {
-                return XR_ERROR_VALIDATION_FAILURE;
-            }
             if (!b->device) return XR_ERROR_GRAPHICS_DEVICE_INVALID;
-            if (!rt::g_instance.d3d11RequirementsCalled) {
-                // Spec says to fail with XR_ERROR_GRAPHICS_REQUIREMENTS_CALL_MISSING
-                // here, but some engines skip the requirements call; warn instead so
-                // those apps keep working.
-                Log("[SimXR] xrCreateSession: WARNING - app did not call xrGetD3D11GraphicsRequirementsKHR first; continuing anyway");
-            }
             
             // Log the device details
             ComPtr<IDXGIDevice> dxgiDevice;
@@ -3913,19 +2876,10 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
                     Logf("[SimXR] xrCreateSession: App D3D11 device LUID=%llu/%llu", 
                          (unsigned long long)desc.AdapterLuid.HighPart,
                          (unsigned long long)desc.AdapterLuid.LowPart);
-                    const LUID& req = rt::g_instance.d3d11RequirementsLuid;
-                    // Only enforce when the requirements call actually happened; a
-                    // zero req LUID here would otherwise defeat the compat warning above.
-                    if (rt::g_instance.d3d11RequirementsCalled &&
-                        (desc.AdapterLuid.HighPart != req.HighPart ||
-                         desc.AdapterLuid.LowPart != req.LowPart)) {
-                        Log("[SimXR] xrCreateSession: ERROR - app device is not on the adapter named by xrGetD3D11GraphicsRequirementsKHR");
-                        return XR_ERROR_GRAPHICS_DEVICE_INVALID;
-                    }
                 }
             }
             
-            rt::g_session.handle = newHandle;
+            rt::g_session.preview11.reset();
             rt::g_session.d3d11Device = b->device;
             rt::g_session.usesD3D12 = false;
             rt::g_session.d3d12Device.Reset();
@@ -3933,60 +2887,30 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
             rt::ResetD3D12PreviewResources(rt::g_session);
             rt::g_session.state = XR_SESSION_STATE_IDLE;
             b->device->GetImmediateContext(rt::g_session.d3d11Context.GetAddressOf());
-            GpuTimingNewSession(rt::g_session);
             // Window will be created lazily on first frame
-            *session = rt::g_session.handle;
-            Logf("[SimXR] xrCreateSession: SUCCESS (D3D11, handle=%llu)", (unsigned long long)rt::g_session.handle);
-            // Spec (session.adoc): the first state-changed event for a new session
-            // must be one reporting XR_SESSION_STATE_IDLE.
-            rt::PushState(rt::g_session.handle, XR_SESSION_STATE_IDLE);
-            // Push READY event into queue
-            rt::PushState(rt::g_session.handle, XR_SESSION_STATE_READY);
-            return XR_SUCCESS;
+            return publish();
         } else if (entry->type == XR_TYPE_GRAPHICS_BINDING_D3D12_KHR) {
+            auto enabled = RequireExtension(instance, XR_KHR_D3D12_ENABLE_EXTENSION_NAME);
+            if (XR_FAILED(enabled)) return XR_ERROR_GRAPHICS_DEVICE_INVALID;
             const auto* b12 = reinterpret_cast<const XrGraphicsBindingD3D12KHR*>(entry);
-            if (!extensionEnabled(XR_KHR_D3D12_ENABLE_EXTENSION_NAME)) {
-                return XR_ERROR_VALIDATION_FAILURE;
-            }
             if (!b12->device || !b12->queue) return XR_ERROR_GRAPHICS_DEVICE_INVALID;
-            if (!rt::g_instance.d3d12RequirementsCalled) {
-                Log("[SimXR] xrCreateSession: WARNING - app did not call xrGetD3D12GraphicsRequirementsKHR first; continuing anyway");
-            }
-            {
-                const LUID deviceLuid = b12->device->GetAdapterLuid();
-                const LUID& req = rt::g_instance.d3d12RequirementsLuid;
-                if (rt::g_instance.d3d12RequirementsCalled &&
-                    (deviceLuid.HighPart != req.HighPart || deviceLuid.LowPart != req.LowPart)) {
-                    Log("[SimXR] xrCreateSession: ERROR - app device is not on the adapter named by xrGetD3D12GraphicsRequirementsKHR");
-                    return XR_ERROR_GRAPHICS_DEVICE_INVALID;
-                }
-            }
             rt::g_session.usesD3D12 = true;
             rt::g_session.d3d12Device = b12->device;
             rt::g_session.d3d12Queue = b12->queue;
-            GpuTimingNewSession(rt::g_session);
+            rt::g_session.preview11.reset();
             rt::g_session.d3d11Device.Reset();
             rt::g_session.d3d11Context.Reset();
             rt::g_session.previewSwapchain.Reset();
-            rt::g_session.handle = newHandle;
-            *session = rt::g_session.handle;
-            Logf("[SimXR] xrCreateSession: SUCCESS (D3D12, handle=%llu)", (unsigned long long)rt::g_session.handle);
-            // Spec (session.adoc): the first state-changed event for a new session
-            // must be one reporting XR_SESSION_STATE_IDLE.
-            rt::PushState(rt::g_session.handle, XR_SESSION_STATE_IDLE);
-            rt::PushState(rt::g_session.handle, XR_SESSION_STATE_READY);
-            return XR_SUCCESS;
+            return publish();
         } else if (entry->type == XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR) {
+            if (!rt::g_instance.core ||
+                (!rt::g_instance.core->Extensions().Contains(XR_KHR_VULKAN_ENABLE_EXTENSION_NAME) &&
+                 !rt::g_instance.core->Extensions().Contains(XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME)))
+                return XR_ERROR_GRAPHICS_DEVICE_INVALID;
             // XR_TYPE_GRAPHICS_BINDING_VULKAN2_KHR is an alias of this, so one branch serves
             // XR_KHR_vulkan_enable and XR_KHR_vulkan_enable2 alike.
             const auto* bVk = reinterpret_cast<const XrGraphicsBindingVulkanKHR*>(entry);
-            if (!extensionEnabled(XR_KHR_VULKAN_ENABLE_EXTENSION_NAME) &&
-                !extensionEnabled(XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME)) {
-                return XR_ERROR_VALIDATION_FAILURE;
-            }
-            if (!rt::g_instance.vulkanRequirementsCalled) {
-                Log("[SimXR] xrCreateSession: WARNING - app did not call xrGetVulkanGraphicsRequirementsKHR(2) first; continuing anyway");
-            }
+            rt::g_session.preview11.reset();
             rt::g_session.d3d11Device.Reset();
             rt::g_session.d3d11Context.Reset();
             rt::g_session.previewSwapchain.Reset();
@@ -4003,42 +2927,23 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
             // app is handed and how the two queues are ordered.
             rt::g_session.usesVulkan = true;
             rt::g_session.usesD3D12 = true;
-            GpuTimingNewSession(rt::g_session);
-            rt::g_session.handle = newHandle;
-            *session = rt::g_session.handle;
-            Logf("[SimXR] xrCreateSession: SUCCESS (Vulkan, handle=%llu)", (unsigned long long)rt::g_session.handle);
-            // Spec (session.adoc): the first state-changed event for a new session
-            // must be one reporting XR_SESSION_STATE_IDLE.
-            rt::PushState(rt::g_session.handle, XR_SESSION_STATE_IDLE);
-            rt::PushState(rt::g_session.handle, XR_SESSION_STATE_READY);
-            return XR_SUCCESS;
+            return publish();
         } else if (entry->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR) {
+            auto enabled = RequireExtension(instance, XR_KHR_OPENGL_ENABLE_EXTENSION_NAME);
+            if (XR_FAILED(enabled)) return XR_ERROR_GRAPHICS_DEVICE_INVALID;
             const auto* bGL = reinterpret_cast<const XrGraphicsBindingOpenGLWin32KHR*>(entry);
-            if (!extensionEnabled(XR_KHR_OPENGL_ENABLE_EXTENSION_NAME)) {
-                return XR_ERROR_VALIDATION_FAILURE;
-            }
             if (!bGL->hDC || !bGL->hGLRC) return XR_ERROR_GRAPHICS_DEVICE_INVALID;
-            if (!rt::g_instance.openglRequirementsCalled) {
-                Log("[SimXR] xrCreateSession: WARNING - app did not call xrGetOpenGLGraphicsRequirementsKHR first; continuing anyway");
-            }
             rt::g_session.usesOpenGL = true;
             rt::g_session.usesD3D12 = false;
             rt::g_session.glDC = bGL->hDC;
             rt::g_session.glRC = bGL->hGLRC;
+            rt::g_session.preview11.reset();
             rt::g_session.d3d11Device.Reset();
             rt::g_session.d3d11Context.Reset();
             rt::g_session.d3d12Device.Reset();
             rt::g_session.d3d12Queue.Reset();
             rt::g_session.previewSwapchain.Reset();
-            rt::g_session.handle = newHandle;
-            *session = rt::g_session.handle;
-            Logf("[SimXR] xrCreateSession: SUCCESS (OpenGL, handle=%llu, hDC=%p, hGLRC=%p)",
-                 (unsigned long long)rt::g_session.handle, bGL->hDC, bGL->hGLRC);
-            // Spec (session.adoc): the first state-changed event for a new session
-            // must be one reporting XR_SESSION_STATE_IDLE.
-            rt::PushState(rt::g_session.handle, XR_SESSION_STATE_IDLE);
-            rt::PushState(rt::g_session.handle, XR_SESSION_STATE_READY);
-            return XR_SUCCESS;
+            return publish();
         }
         entry = entry->next;
     }
@@ -4047,25 +2952,23 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
 }
 
 
-static XrResult XRAPI_PTR xrDestroySession_runtime(XrSession s) {
-    std::lock_guard<std::recursive_mutex> controlLock(ui_auto::g_mutex);
+static XrResult DestroyNativeSession(XrSession s) {
     Logf("[SimXR] xrDestroySession called (handle=%llu)", (unsigned long long)s);
     if (s != rt::g_session.handle) {
         Logf("[SimXR] xrDestroySession: ERROR - Invalid handle (expected %llu)", 
              (unsigned long long)rt::g_session.handle);
         return XR_ERROR_HANDLE_INVALID;
     }
-    ReleaseUiPointers("Session ended");
-    {
-        std::lock_guard<std::mutex> lock(rt::g_session.frameMutex);
-        rt::g_session.running = false;
-        rt::g_session.exitRequested = false;
-        rt::g_session.frameLifecycle.Reset();
+
+    if (rt::g_session.usesD3D12 && !rt::WaitForPreviewIdle(rt::g_session))
+        return XR_ERROR_RUNTIME_FAILURE;
+    if (rt::g_session.usesD3D12) ConsumeCompletedPreviewFrame(rt::g_session);
+    if (rt::g_session.core) rt::g_session.core->Close();
+
+    while (!rt::g_swapchains.empty()) {
+        const auto result = xrDestroySwapchain_runtime(rt::g_swapchains.begin()->first);
+        if (XR_FAILED(result)) return result;
     }
-    rt::g_session.frameCondition.notify_all();
-    // fundamentals.adoc: queued events containing destroyed handles must be discarded.
-    // Every queued event in this runtime references the (single) session.
-    rt::g_eventQueue.clear();
     
     // Transfer window and swapchain to global persistent storage
     // Unity likes to create/destroy sessions rapidly for compatibility checks
@@ -4086,37 +2989,37 @@ static XrResult XRAPI_PTR xrDestroySession_runtime(XrSession s) {
         }
     }
     
-    // Destroy all child swapchains while their graphics devices/contexts are still valid.
-    // Destroying the parent session implicitly destroys these handles.
-    if (rt::g_session.usesD3D12) rt::WaitForPreviewIdle(rt::g_session);
-    if (rt::g_session.usesOpenGL) {
-        HGLRC previousRC = wglGetCurrentContext();
-        HDC previousDC = wglGetCurrentDC();
-        if (rt::g_session.glDC && rt::g_session.glRC) {
-            wglMakeCurrent(rt::g_session.glDC, rt::g_session.glRC);
-        }
-        for (auto& entry : rt::g_swapchains) {
-            for (GLuint texture : entry.second.imagesGL) glDeleteTextures(1, &texture);
-        }
-        if (previousRC) wglMakeCurrent(previousDC, previousRC);
-    }
-    if (rt::g_session.usesVulkan) {
-        for (auto& entry : rt::g_swapchains) {
-            if (entry.second.isVulkan) vkrt::DestroySwapchainImages(rt::g_session, entry.second);
-        }
-        vkrt::ShutdownSession(rt::g_session);
-    }
-    rt::g_swapchains.clear();
-
-    GpuTimingStop();
     // Reset session but don't destroy the window
-    rt::g_session.handle = XR_NULL_HANDLE;
+    std::shared_ptr<simxr::Session> retiredCore;
+    std::shared_ptr<simxr::legacy::LegacyControllerMotion> retiredMotion;
+    std::shared_ptr<mcp::WindowsLegacyChannel> retiredFiles;
+    std::shared_ptr<mcp::WindowsLegacyCapture> retiredCapture;
+    std::shared_ptr<flicker::Diagnostics> retiredDiagnostics;
+    {
+        std::lock_guard lock(rt::g_coreMutex);
+        retiredCore = std::move(rt::g_session.core);
+        retiredMotion = std::move(rt::g_session.controllerMotion);
+        retiredFiles = std::move(rt::g_session.compatibilityFiles);
+        retiredCapture = std::move(rt::g_session.compatibilityCapture);
+        retiredDiagnostics = std::move(rt::g_session.diagnostics);
+        rt::g_session.handle = XR_NULL_HANDLE;
+    }
     rt::g_session.state = XR_SESSION_STATE_IDLE;
-    resetD3D11PreviewReadbacks(rt::g_session);
+	if (rt::g_session.usesOpenGL && rt::g_session.d3d11Context)
+		rt::g_session.d3d11Context->ClearState();
+	rt::g_session.preview11.reset();
     rt::g_session.d3d11Device.Reset();
     rt::g_session.d3d11Context.Reset();
     rt::g_session.usesD3D12 = false;
     rt::ResetD3D12PreviewResources(rt::g_session);
+    if (rt::g_session.usesVulkan) {
+        // The images live on the app's VkDevice, which goes away right after this call, so
+        // they cannot wait for an xrDestroySwapchain the app may never make.
+        for (auto& sc : rt::g_swapchains) {
+            if (sc.second.isVulkan) vkrt::DestroySwapchainImages(rt::g_session, sc.second);
+        }
+        vkrt::ShutdownSession(rt::g_session);
+    }
     rt::g_session.d3d12Device.Reset();
     rt::g_session.d3d12Queue.Reset();
     // Reset OpenGL state
@@ -4126,57 +3029,52 @@ static XrResult XRAPI_PTR xrDestroySession_runtime(XrSession s) {
     rt::g_session.hwnd = nullptr;  // Clear from session but window still exists
     rt::g_session.previewWidth = 1920;
     rt::g_session.previewHeight = 540;
-    rt::g_session.previewInputFocused = false;
-    rt::g_activeProfile = XR_NULL_PATH;  // re-bound by the next xrAttachSessionActionSets
-    rt::g_attachedActionSets.clear();
-    rt::g_activeActionSetSources.clear();
-    rt::g_sessionActionSetsAttached = false;
-    rt::g_referenceSpaces.clear();
-    rt::g_controllerSpaces.clear();
+    rt::g_session.isFocused = false;
     Log("[SimXR] xrDestroySession: SUCCESS");
     return XR_SUCCESS;
 }
 
+static XrResult XRAPI_PTR xrDestroySession_runtime(XrSession handle)
+{
+    if (handle == rt::g_session.handle && rt::g_session.usesD3D12 && !rt::WaitForPreviewIdle(rt::g_session))
+        return XR_ERROR_RUNTIME_FAILURE;
+    auto result = RuntimeState().DestroySession(handle);
+    if (XR_FAILED(result)) return result;
+    return DestroyNativeSession(handle);
+}
+
+
 static XrResult XRAPI_PTR xrEnumerateSwapchainFormats_runtime(XrSession session, uint32_t capacity, uint32_t* count, int64_t* formats) {
-    if (session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
-    if (!count) return XR_ERROR_VALIDATION_FAILURE;
     // Vulkan path - VkFormat values, in the order an app should prefer them
     if (rt::g_session.usesVulkan) {
         const uint32_t formatCount = (uint32_t)std::size(vkrt::kFormats);
-        *count = formatCount;
-        if (capacity == 0) return XR_SUCCESS;
-        if (!formats) return XR_ERROR_VALIDATION_FAILURE;
-        if (capacity < formatCount) return XR_ERROR_SIZE_INSUFFICIENT;
-        for (uint32_t i = 0; i < formatCount; ++i) formats[i] = vkrt::kFormats[i].vk;
+        if (count) *count = formatCount;
+        if (capacity > 0 && formats) {
+            const uint32_t copyCount = (capacity < formatCount) ? capacity : formatCount;
+            for (uint32_t i = 0; i < copyCount; ++i) formats[i] = vkrt::kFormats[i].vk;
             Logf("[SimXR] xrEnumerateSwapchainFormats(Vulkan): %u formats (first: VkFormat %lld)",
-                 formatCount, (long long)formats[0]);
-        return XR_SUCCESS;
-    }
-
-    // OpenGL path - return GL internal formats
-    if (rt::g_session.usesOpenGL) {
-        const int64_t supportedFormats[] = {
-            GL_SRGB8_ALPHA8,          // sRGB
-            GL_RGBA8,                 // Standard RGBA
-            GL_RGBA16F,               // HDR format
-            GL_RGBA32F,               // High precision
-            GL_RGB10_A2,              // HDR10 format
-            GL_DEPTH_COMPONENT32F,    // Depth buffer
-            GL_DEPTH24_STENCIL8,      // Depth + stencil
-            GL_DEPTH_COMPONENT16      // 16-bit depth
-        };
-        const uint32_t formatCount = sizeof(supportedFormats) / sizeof(supportedFormats[0]);
-
-        *count = formatCount;
-        if (capacity == 0) return XR_SUCCESS;
-        if (!formats) return XR_ERROR_VALIDATION_FAILURE;
-        if (capacity < formatCount) return XR_ERROR_SIZE_INSUFFICIENT;
-        for (uint32_t i = 0; i < formatCount; ++i) {
-            formats[i] = supportedFormats[i];
+                 copyCount, (long long)formats[0]);
         }
-        Logf("[SimXR] xrEnumerateSwapchainFormats(OpenGL): Returned %u formats (first: 0x%X)", formatCount, (int)formats[0]);
         return XR_SUCCESS;
     }
+
+	if (rt::g_session.usesOpenGL)
+	{
+		if (!session || session != rt::g_session.handle)
+			return XR_ERROR_HANDLE_INVALID;
+		if (!count)
+			return XR_ERROR_VALIDATION_FAILURE;
+		const auto supported = simxr::windows::OpenGLSwapchain::Formats();
+		*count = static_cast<std::uint32_t>(supported.size());
+		if (capacity == 0)
+			return XR_SUCCESS;
+		if (!formats)
+			return XR_ERROR_VALIDATION_FAILURE;
+		if (capacity < supported.size())
+			return XR_ERROR_SIZE_INSUFFICIENT;
+		std::copy(supported.begin(), supported.end(), formats);
+		return XR_SUCCESS;
+	}
 
     // D3D11/D3D12 path - return DXGI formats
     const int64_t supportedFormats[] = {
@@ -4194,14 +3092,14 @@ static XrResult XRAPI_PTR xrEnumerateSwapchainFormats_runtime(XrSession session,
     };
     const uint32_t formatCount = sizeof(supportedFormats) / sizeof(supportedFormats[0]);
 
-    *count = formatCount;
-    if (capacity == 0) return XR_SUCCESS;
-    if (!formats) return XR_ERROR_VALIDATION_FAILURE;
-    if (capacity < formatCount) return XR_ERROR_SIZE_INSUFFICIENT;
-    for (uint32_t i = 0; i < formatCount; ++i) {
-        formats[i] = supportedFormats[i];
+    if (count) *count = formatCount;
+    if (capacity > 0 && formats) {
+        uint32_t copyCount = (capacity < formatCount) ? capacity : formatCount;
+        for (uint32_t i = 0; i < copyCount; ++i) {
+            formats[i] = supportedFormats[i];
+        }
+        Logf("[SimXR] xrEnumerateSwapchainFormats: Returned %u formats (first: %d)", copyCount, (int)formats[0]);
     }
-    Logf("[SimXR] xrEnumerateSwapchainFormats: Returned %u formats (first: %d)", formatCount, (int)formats[0]);
     return XR_SUCCESS;
 }
 
@@ -4235,101 +3133,14 @@ static XrResult XRAPI_PTR xrCreateSwapchain_runtime(XrSession session, const XrS
     }
     
     Log("[SimXR] ============================================");
-    if (!ci || !sc || ci->type != XR_TYPE_SWAPCHAIN_CREATE_INFO) return XR_ERROR_VALIDATION_FAILURE;
-    if (session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
-    if (ci->width == 0 || ci->height == 0 || ci->arraySize == 0 || ci->mipCount == 0 ||
-        ci->sampleCount == 0) {
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
-    if (ci->faceCount != 1) {
-        if (ci->faceCount == 6) {
-            // Cubemap swapchains are only composable through cube-layer extensions this
-            // runtime does not advertise; accepting them would create an uncompositable
-            // swapchain (it would then be rejected at xrEndFrame).
-            Log("[SimXR] xrCreateSwapchain: ERROR - cubemap swapchains (faceCount=6) are not supported");
-            return XR_ERROR_FEATURE_UNSUPPORTED;
-        }
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
-    if (!api_validation::SwapchainExtentValid(ci->width, ci->height, MaxSwapchainDimension())) return XR_ERROR_VALIDATION_FAILURE;
-    constexpr XrSwapchainCreateFlags supportedCreateFlags = XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT;
-    if (ci->createFlags & ~supportedCreateFlags) return XR_ERROR_FEATURE_UNSUPPORTED;
-
-    // rendering.adoc: unsupported usage bits must fail with XR_ERROR_FEATURE_UNSUPPORTED.
-    constexpr XrSwapchainUsageFlags supportedUsageFlags =
-        XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT |
-        XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-        XR_SWAPCHAIN_USAGE_SAMPLED_BIT |
-        XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT |
-        XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT |
-        XR_SWAPCHAIN_USAGE_UNORDERED_ACCESS_BIT |
-        XR_SWAPCHAIN_USAGE_MUTABLE_FORMAT_BIT;
-    if (ci->usageFlags & ~supportedUsageFlags) {
-        Logf("[SimXR] xrCreateSwapchain: ERROR - unsupported usageFlags=0x%X", ci->usageFlags);
-        return XR_ERROR_FEATURE_UNSUPPORTED;
-    }
-
-    const auto formatSupported = [&]() {
-        if (rt::g_session.usesVulkan) return vkrt::FindFormat(ci->format) != nullptr;
-        if (rt::g_session.usesOpenGL) {
-            switch (ci->format) {
-                case GL_SRGB8_ALPHA8:
-                case GL_RGBA8:
-                case GL_RGBA16F:
-                case GL_RGBA32F:
-                case GL_RGB10_A2:
-                case GL_DEPTH_COMPONENT32F:
-                case GL_DEPTH24_STENCIL8:
-                case GL_DEPTH_COMPONENT16:
-                    return true;
-                default:
-                    return false;
-            }
-        }
-        switch (static_cast<DXGI_FORMAT>(ci->format)) {
-            case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
-            case DXGI_FORMAT_R8G8B8A8_UNORM:
-            case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
-            case DXGI_FORMAT_B8G8R8A8_UNORM:
-            case DXGI_FORMAT_R16G16B16A16_FLOAT:
-            case DXGI_FORMAT_R32G32B32A32_FLOAT:
-            case DXGI_FORMAT_R10G10B10A2_UNORM:
-            case DXGI_FORMAT_D32_FLOAT_S8X24_UINT:
-            case DXGI_FORMAT_D32_FLOAT:
-            case DXGI_FORMAT_D24_UNORM_S8_UINT:
-            case DXGI_FORMAT_D16_UNORM:
-                return true;
-            default:
-                return false;
-        }
-    };
-    if (!formatSupported()) return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
-
-    char timelineDetail[80];
-    snprintf(timelineDetail, sizeof(timelineDetail), "format=%lld samples=%u array=%u",
-             (long long)ci->format, ci->sampleCount, ci->arraySize);
-    g_frameTimeline.Marker(perf::timeline::MarkerKind::SwapchainCreate, ci->width, ci->height, timelineDetail);
-    if (ci->usageFlags & XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT) {
-        std::lock_guard<std::mutex> lock(g_appSwapchainMutex);
-        g_appSwapchain = *ci;
-        g_appSwapchain.next = nullptr;
-        g_sessionInfoDirty = true;
-    }
-
-    rt::Swapchain chain{};
-#if XR_PTR_SIZE == 8
-    chain.handle = reinterpret_cast<XrSwapchain>(rt::g_nextSwapchainHandle++);
-#else
-    chain.handle = static_cast<XrSwapchain>(rt::g_nextSwapchainHandle++);
-#endif
+    if (session == XR_NULL_HANDLE || session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
+    if (!ci || !sc) return XR_ERROR_VALIDATION_FAILURE;
+    rt::Swapchain chain{}; 
+    chain.handle = simxr::AllocateHandle<XrSwapchain>();
     chain.format = (DXGI_FORMAT)ci->format;  // Store the original requested format
     chain.width = ci->width; 
     chain.height = ci->height; 
-    chain.arraySize = ci->arraySize;
-    chain.faceCount = ci->faceCount;
-    chain.imageCount = (ci->createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) ? 1u : 3u;
-    chain.lifecycle.Reset(chain.imageCount,
-        (ci->createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) != 0);
+    chain.arraySize = ci->arraySize ? ci->arraySize : 1;
     chain.lastAcquired = UINT32_MAX;  // No image acquired yet
     chain.lastReleased = UINT32_MAX;  // No image released yet
     // Create textures on appropriate backend
@@ -4339,6 +3150,7 @@ static XrResult XRAPI_PTR xrCreateSwapchain_runtime(XrSession session, const XrS
             vkrt::DestroySwapchainImages(rt::g_session, chain);
             return r;
         }
+        chain.state = std::make_unique<simxr::Swapchain>(chain.imageCount, (ci->createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) != 0);
         rt::g_swapchains.emplace(chain.handle, std::move(chain));
         *sc = chain.handle;
         Logf("[SimXR] xrCreateSwapchain(Vulkan): sc=%p fmt=%lld %ux%u array=%u samples=%u",
@@ -4347,6 +3159,7 @@ static XrResult XRAPI_PTR xrCreateSwapchain_runtime(XrSession session, const XrS
     }
     if (rt::g_session.usesD3D12) {
         chain.backend = rt::Swapchain::Backend::D3D12;
+        chain.imageCount = (ci->createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) ? 1 : 3;
         for (uint32_t i = 0; i < chain.imageCount; ++i) {
             D3D12_RESOURCE_DESC rd = {};
             rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -4419,167 +3232,30 @@ static XrResult XRAPI_PTR xrCreateSwapchain_runtime(XrSession session, const XrS
             chain.imageStates12.push_back(init);
             chain.releaseState12 = init;
         }
+        chain.state = std::make_unique<simxr::Swapchain>(chain.imageCount, (ci->createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) != 0);
         rt::g_swapchains.emplace(chain.handle, std::move(chain));
         *sc = chain.handle;
         Logf("[SimXR] xrCreateSwapchain(D3D12): sc=%p fmt=%d %ux%u array=%u samples=%u", *sc, (int)ci->format, ci->width, ci->height, ci->arraySize, ci->sampleCount);
         return XR_SUCCESS;
     }
-    // OpenGL path
-    if (rt::g_session.usesOpenGL) {
-        chain.backend = rt::Swapchain::Backend::OpenGL;
-
-        // Check the current GL context state
-        HGLRC currentRC = wglGetCurrentContext();
-        HDC currentDC = wglGetCurrentDC();
-        Logf("[SimXR] OpenGL swapchain: currentRC=%p, currentDC=%p, sessionRC=%p, sessionDC=%p",
-             currentRC, currentDC, rt::g_session.glRC, rt::g_session.glDC);
-
-        // If the app's context is already current, use it directly
-        // Otherwise, switch to the app's context
-        HGLRC prevRC = currentRC;
-        HDC prevDC = currentDC;
-        bool contextSwitched = false;
-
-        if (currentRC != rt::g_session.glRC) {
-            Log("[SimXR] Context mismatch - switching to app's context");
-            if (!wglMakeCurrent(rt::g_session.glDC, rt::g_session.glRC)) {
-                Logf("[SimXR] xrCreateSwapchain(OpenGL): wglMakeCurrent failed (error=%lu)", GetLastError());
-                return XR_ERROR_RUNTIME_FAILURE;
-            }
-            contextSwitched = true;
-        } else {
-            Log("[SimXR] App's GL context is already current - good!");
-        }
-
-        // Log the GL version and renderer for debugging
-        const char* glVersion = (const char*)glGetString(GL_VERSION);
-        const char* glRenderer = (const char*)glGetString(GL_RENDERER);
-        Logf("[SimXR] GL context: version=%s, renderer=%s",
-             glVersion ? glVersion : "(null)", glRenderer ? glRenderer : "(null)");
-
-        // Map format to OpenGL internal format and pixel format
-        // The format from createInfo is a GL internal format (e.g. GL_RGBA8) when using OpenGL path
-        auto GLFormatToPixelFormat = [](GLenum internalFmt) -> GLenum {
-            switch (internalFmt) {
-                case GL_SRGB8_ALPHA8:
-                case GL_RGBA8:
-                    return GL_RGBA;
-                case GL_RGBA16F:
-                case GL_RGBA32F:
-                    return GL_RGBA;
-                case GL_RGB10_A2:
-                    return GL_RGBA;
-                case GL_DEPTH_COMPONENT32F:
-                case GL_DEPTH_COMPONENT16:
-                    return GL_DEPTH_COMPONENT;
-                case GL_DEPTH24_STENCIL8:
-                    return GL_DEPTH_STENCIL;
-                default:
-                    return GL_RGBA;  // Default fallback
-            }
-        };
-
-        // ci->format already contains the GL internal format
-        GLenum glInternalFormat = (GLenum)ci->format;
-        GLenum glFormat = GLFormatToPixelFormat(glInternalFormat);
-        chain.glInternalFormat = glInternalFormat;
-
-        bool isDepthFormat = (glInternalFormat == GL_DEPTH_COMPONENT32F ||
-                              glInternalFormat == GL_DEPTH24_STENCIL8 ||
-                              glInternalFormat == GL_DEPTH_COMPONENT16);
-
-        // Load glTexImage3D if needed for array textures
-        if (chain.arraySize > 1 && !EnsureGLTexImage3D()) {
-            wglMakeCurrent(prevDC, prevRC);
-            return XR_ERROR_RUNTIME_FAILURE;
-        }
-
-        // Create OpenGL textures
-        for (uint32_t i = 0; i < chain.imageCount; ++i) {
-            GLuint tex;
-            glGenTextures(1, &tex);
-
-            if (chain.arraySize > 1) {
-                // Use texture array
-                glBindTexture(GL_TEXTURE_2D_ARRAY, tex);
-                g_glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, glInternalFormat,
-                               chain.width, chain.height, chain.arraySize,
-                               0, glFormat, GL_UNSIGNED_BYTE, nullptr);
-                glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-                glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-                glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
-            } else {
-                // Use regular 2D texture
-                glBindTexture(GL_TEXTURE_2D, tex);
-                if (isDepthFormat) {
-                    GLenum type = (glInternalFormat == GL_DEPTH24_STENCIL8) ? GL_UNSIGNED_INT_24_8 : GL_FLOAT;
-                    glTexImage2D(GL_TEXTURE_2D, 0, glInternalFormat,
-                                 chain.width, chain.height, 0,
-                                 glFormat, type, nullptr);
-                } else {
-                    // DEBUG: Initialize with bright green to verify texture pipeline
-                    std::vector<uint8_t> initData(chain.width * chain.height * 4);
-                    for (size_t p = 0; p < initData.size(); p += 4) {
-                        initData[p + 0] = 0;    // R
-                        initData[p + 1] = 255;  // G - bright green
-                        initData[p + 2] = 0;    // B
-                        initData[p + 3] = 255;  // A
-                    }
-                    glTexImage2D(GL_TEXTURE_2D, 0, glInternalFormat,
-                                 chain.width, chain.height, 0,
-                                 GL_RGBA, GL_UNSIGNED_BYTE, initData.data());
-                    Logf("[SimXR] Initialized tex %u with GREEN data", tex);
-                }
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-                glBindTexture(GL_TEXTURE_2D, 0);
-            }
-
-            GLenum err = glGetError();
-            if (err != GL_NO_ERROR) {
-                Logf("[SimXR] OpenGL texture creation error[%u]: 0x%X", i, err);
-                if (contextSwitched) wglMakeCurrent(prevDC, prevRC);
-                return XR_ERROR_RUNTIME_FAILURE;
-            }
-
-            // Verify the texture is valid
-            GLboolean isValid = glIsTexture(tex);
-            chain.imagesGL.push_back(tex);
-            Logf("[SimXR] Created GL texture[%u]: %u (format=0x%X, valid=%d)", i, tex, glInternalFormat, isValid);
-
-            // DEBUG: Immediately read back the texture to verify it has the correct content
-            if (chain.arraySize <= 1 && !isDepthFormat && EnsureGLFramebufferFuncs()) {
-                GLuint verifyFBO = 0;
-                g_glGenFramebuffers(1, &verifyFBO);
-                g_glBindFramebuffer(GL_FRAMEBUFFER, verifyFBO);
-                g_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
-
-                if (g_glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
-                    uint8_t pixel[4] = {0};
-                    glReadPixels(chain.width/2, chain.height/2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
-                    Logf("[SimXR]   Immediate readback tex=%u: pixel=[%d,%d,%d,%d]",
-                         tex, pixel[0], pixel[1], pixel[2], pixel[3]);
-                } else {
-                    Logf("[SimXR]   Immediate readback tex=%u: FBO incomplete", tex);
-                }
-
-                g_glBindFramebuffer(GL_FRAMEBUFFER, 0);
-                g_glDeleteFramebuffers(1, &verifyFBO);
-            }
-        }
-
-        // Restore previous context only if we switched
-        if (contextSwitched) {
-            Log("[SimXR] Restoring previous GL context");
-            wglMakeCurrent(prevDC, prevRC);
-        }
-
-        rt::g_swapchains.emplace(chain.handle, std::move(chain));
-        *sc = chain.handle;
-        Logf("[SimXR] xrCreateSwapchain(OpenGL): sc=%p fmt=%d %ux%u array=%u imageCount=%u",
-             *sc, (int)ci->format, ci->width, ci->height, ci->arraySize, chain.imageCount);
-        return XR_SUCCESS;
-    }
+	if (rt::g_session.usesOpenGL)
+	{
+		const bool staticImage = (ci->createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) != 0;
+		chain.backend = rt::Swapchain::Backend::OpenGL;
+		chain.imageCount = staticImage ? 1 : 3;
+		chain.mipCount = ci->mipCount;
+		chain.state = std::make_unique<simxr::Swapchain>(chain.imageCount, staticImage);
+		const auto result = simxr::windows::OpenGLSwapchain::Create(
+			rt::g_session.glDC, rt::g_session.glRC, *ci, chain.glImages);
+		if (XR_FAILED(result))
+			return result;
+		const auto handle = chain.handle;
+		rt::g_swapchains.emplace(handle, std::move(chain));
+		*sc = handle;
+		Logf("[SimXR] xrCreateSwapchain(OpenGL): sc=%p fmt=%lld %ux%u array=%u",
+			 handle, static_cast<long long>(ci->format), ci->width, ci->height, ci->arraySize);
+		return XR_SUCCESS;
+	}
     // D3D11 path
     D3D11_TEXTURE2D_DESC td{};
 
@@ -4644,6 +3320,7 @@ static XrResult XRAPI_PTR xrCreateSwapchain_runtime(XrSession session, const XrS
     // Log the texture description for debugging
     Logf("[SimXR] Creating swapchain textures: Format=%d, %ux%u, Array=%u, Mips=%u, Samples=%u",
          td.Format, td.Width, td.Height, td.ArraySize, td.MipLevels, td.SampleDesc.Count);
+    chain.imageCount = (ci->createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) ? 1 : 3;
     for (uint32_t i = 0; i < chain.imageCount; ++i) {
         ComPtr<ID3D11Texture2D> tex; 
         HRESULT hr = rt::g_session.d3d11Device->CreateTexture2D(&td, nullptr, tex.GetAddressOf());
@@ -4665,7 +3342,8 @@ static XrResult XRAPI_PTR xrCreateSwapchain_runtime(XrSession session, const XrS
         Logf("[SimXR] Created swapchain texture[%u]: %p", i, tex.Get());
         chain.images.push_back(std::move(tex));
     }
-    rt::g_swapchains.emplace(chain.handle, std::move(chain));
+    chain.state = std::make_unique<simxr::Swapchain>(chain.imageCount, (ci->createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) != 0);
+        rt::g_swapchains.emplace(chain.handle, std::move(chain));
     *sc = chain.handle;
     Logf("[SimXR] xrCreateSwapchain: sc=%p fmt=%d %ux%u array=%u samples=%u", *sc, (int)ci->format, ci->width, ci->height, ci->arraySize, ci->sampleCount);
     return XR_SUCCESS;
@@ -4673,93 +3351,69 @@ static XrResult XRAPI_PTR xrCreateSwapchain_runtime(XrSession session, const XrS
 
 static XrResult XRAPI_PTR xrEnumerateSwapchainImages_runtime(XrSwapchain sc, uint32_t capacity, uint32_t* count, XrSwapchainImageBaseHeader* images) {
     auto it = rt::g_swapchains.find(sc); if (it == rt::g_swapchains.end()) return XR_ERROR_HANDLE_INVALID;
-    if (!count) return XR_ERROR_VALIDATION_FAILURE;
-    const uint32_t n = it->second.isVulkan
-        ? static_cast<uint32_t>(it->second.imagesVk.size())
-        : it->second.backend == rt::Swapchain::Backend::D3D12
-            ? static_cast<uint32_t>(it->second.images12.size())
-            : it->second.backend == rt::Swapchain::Backend::OpenGL
-                ? static_cast<uint32_t>(it->second.imagesGL.size())
-                : static_cast<uint32_t>(it->second.images.size());
-    *count = n;
-    if (capacity == 0) return XR_SUCCESS;
-    if (!images) return XR_ERROR_VALIDATION_FAILURE;
-    if (capacity < n) return XR_ERROR_SIZE_INSUFFICIENT;
-
     if (it->second.isVulkan) {
         // XrSwapchainImageVulkan2KHR is a typedef of XrSwapchainImageVulkanKHR, so this is
         // the right shape for both extensions.
-        auto* arr = reinterpret_cast<XrSwapchainImageVulkanKHR*>(images);
-        for (uint32_t i = 0; i < n; ++i) {
-            // Tolerate zero-initialized arrays the way shipping runtimes do - engines
-            // commonly pass them and expect the runtime to fill in type. A WRONG
-            // non-zero type is still a genuine error.
-            if (arr[i].type == 0) arr[i].type = XR_TYPE_SWAPCHAIN_IMAGE_VULKAN_KHR;
-            else if (arr[i].type != XR_TYPE_SWAPCHAIN_IMAGE_VULKAN_KHR) return XR_ERROR_VALIDATION_FAILURE;
-            arr[i].image = it->second.imagesVk[i];
+        const uint32_t n = (uint32_t)it->second.imagesVk.size();
+        if (count) *count = n;
+        if (capacity >= n && images) {
+            auto* arr = reinterpret_cast<XrSwapchainImageVulkanKHR*>(images);
+            for (uint32_t i = 0; i < n; ++i) { arr[i].type = XR_TYPE_SWAPCHAIN_IMAGE_VULKAN_KHR; arr[i].image = it->second.imagesVk[i]; }
         }
         Logf("[SimXR] xrEnumerateSwapchainImages(Vulkan): sc=%p count=%u", sc, n);
         return XR_SUCCESS;
     }
     if (it->second.backend == rt::Swapchain::Backend::D3D12) {
-        auto* arr = reinterpret_cast<XrSwapchainImageD3D12KHR*>(images);
-        for (uint32_t i = 0; i < n; ++i) {
-            if (arr[i].type == 0) arr[i].type = XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR;
-            else if (arr[i].type != XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR) return XR_ERROR_VALIDATION_FAILURE;
-            arr[i].texture = it->second.images12[i].Get();
+        const uint32_t n = (uint32_t)it->second.images12.size();
+        if (count) *count = n;
+        if (capacity >= n && images) {
+            auto* arr = reinterpret_cast<XrSwapchainImageD3D12KHR*>(images);
+            for (uint32_t i = 0; i < n; ++i) { arr[i].type = XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR; arr[i].texture = it->second.images12[i].Get(); }
         }
         Logf("[SimXR] xrEnumerateSwapchainImages(D3D12): sc=%p count=%u", sc, n);
         return XR_SUCCESS;
-    } else if (it->second.backend == rt::Swapchain::Backend::OpenGL) {
-        auto* arr = reinterpret_cast<XrSwapchainImageOpenGLKHR*>(images);
-        for (uint32_t i = 0; i < n; ++i) {
-            if (arr[i].type == 0) arr[i].type = XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR;
-            else if (arr[i].type != XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR) return XR_ERROR_VALIDATION_FAILURE;
-            arr[i].image = it->second.imagesGL[i];
-        }
-            // DEBUG: Log the texture IDs being returned AND verify content still matches
-            Logf("[SimXR] xrEnumerateSwapchainImages(OpenGL): sc=%p texIDs=[%u,%u,%u]",
-                  sc, n > 0 ? arr[0].image : 0, n > 1 ? arr[1].image : 0, n > 2 ? arr[2].image : 0);
-
-            // DEBUG: Read first texture to verify it still has content
-            if (n > 0 && EnsureGLFramebufferFuncs()) {
-                GLuint checkTex = arr[0].image;
-                GLuint checkFBO = 0;
-                g_glGenFramebuffers(1, &checkFBO);
-                g_glBindFramebuffer(GL_FRAMEBUFFER, checkFBO);
-                g_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, checkTex, 0);
-                if (g_glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
-                    uint8_t pixel[4] = {0};
-                    glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
-                    Logf("[SimXR]   After enumerate: tex=%u pixel=[%d,%d,%d,%d]",
-                         checkTex, pixel[0], pixel[1], pixel[2], pixel[3]);
-                }
-                g_glBindFramebuffer(GL_FRAMEBUFFER, 0);
-                g_glDeleteFramebuffers(1, &checkFBO);
-            }
-        return XR_SUCCESS;
+	}
+	else if (it->second.backend == rt::Swapchain::Backend::OpenGL)
+	{
+		if (!count)
+			return XR_ERROR_VALIDATION_FAILURE;
+		const auto textures = it->second.glImages->Images();
+		*count = static_cast<std::uint32_t>(textures.size());
+		if (capacity == 0)
+			return XR_SUCCESS;
+		if (!images)
+			return XR_ERROR_VALIDATION_FAILURE;
+		if (capacity < textures.size())
+			return XR_ERROR_SIZE_INSUFFICIENT;
+		auto* output = reinterpret_cast<XrSwapchainImageOpenGLKHR*>(images);
+		for (std::size_t image = 0; image < textures.size(); ++image)
+		{
+			if (output[image].type != XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR)
+				return XR_ERROR_VALIDATION_FAILURE;
+		}
+		for (std::size_t image = 0; image < textures.size(); ++image)
+			output[image].image = textures[image];
+		return XR_SUCCESS;
     } else {
-        auto* arr = reinterpret_cast<XrSwapchainImageD3D11KHR*>(images);
-        for (uint32_t i = 0; i < n; ++i) {
-            if (arr[i].type == 0) arr[i].type = XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR;
-            else if (arr[i].type != XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR) return XR_ERROR_VALIDATION_FAILURE;
-            arr[i].texture = it->second.images[i].Get();
+        const uint32_t n = (uint32_t)it->second.images.size();
+        if (count) *count = n;
+        if (capacity >= n && images) {
+            auto* arr = reinterpret_cast<XrSwapchainImageD3D11KHR*>(images);
+            for (uint32_t i = 0; i < n; ++i) { arr[i].type = XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR; arr[i].texture = it->second.images[i].Get(); }
         }
         Logf("[SimXR] xrEnumerateSwapchainImages(D3D11): sc=%p count=%u", sc, n);
         return XR_SUCCESS;
     }
 }
 
-static XrResult XRAPI_PTR xrAcquireSwapchainImage_runtime(XrSwapchain sc, const XrSwapchainImageAcquireInfo* info, uint32_t* index) {
-    if (!index || (info && info->type != XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO)) {
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
+static XrResult XRAPI_PTR xrAcquireSwapchainImage_runtime(XrSwapchain sc, const XrSwapchainImageAcquireInfo*, uint32_t* index) {
     auto it = rt::g_swapchains.find(sc); if (it == rt::g_swapchains.end()) return XR_ERROR_HANDLE_INVALID;
     auto& ch = it->second;
-    uint32_t i = UINT32_MAX;
-    const XrResult result = ch.lifecycle.Acquire(i);
+    if (!index) return XR_ERROR_VALIDATION_FAILURE;
+    uint32_t i;
+    auto result = ch.state->Acquire(i);
     if (XR_FAILED(result)) return result;
-    ch.lastAcquired = i;  // Track what we just gave to the app
+    ch.lastAcquired = i;
     *index = i;
     
     static int acquireCount = 0;
@@ -4773,22 +3427,17 @@ static XrResult XRAPI_PTR xrAcquireSwapchainImage_runtime(XrSwapchain sc, const 
     return XR_SUCCESS;
 }
 static XrResult XRAPI_PTR xrWaitSwapchainImage_runtime(XrSwapchain sc, const XrSwapchainImageWaitInfo* info) {
-    if (!info || info->type != XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO) return XR_ERROR_VALIDATION_FAILURE;
     auto it = rt::g_swapchains.find(sc);
     if (it == rt::g_swapchains.end()) return XR_ERROR_HANDLE_INVALID;
-    uint32_t waited = UINT32_MAX;
-    return it->second.lifecycle.Wait(waited);
+    if (!info || info->type != XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO) return XR_ERROR_VALIDATION_FAILURE;
+    return it->second.state->Wait(info->timeout, true);
 }
-static XrResult XRAPI_PTR xrReleaseSwapchainImage_runtime(XrSwapchain sc, const XrSwapchainImageReleaseInfo* info) {
-    if (info && info->type != XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO) return XR_ERROR_VALIDATION_FAILURE;
+static XrResult XRAPI_PTR xrReleaseSwapchainImage_runtime(XrSwapchain sc, const XrSwapchainImageReleaseInfo*) {
     auto it = rt::g_swapchains.find(sc);
     if (it == rt::g_swapchains.end()) return XR_ERROR_HANDLE_INVALID;
     auto& ch = it->second;
-    uint32_t released = UINT32_MAX;
-    const XrResult result = ch.lifecycle.Release(released);
+    auto result = ch.state->Release(ch.lastReleased);
     if (XR_FAILED(result)) return result;
-    ch.lastReleased = released;
-    ++ch.releaseSerial;
 
     // For D3D12: the app has finished using this image, reset our tracked state to COMMON.
     // D3D12 implicit state promotion/decay means COMMON is always safe after a GPU sync point.
@@ -4801,389 +3450,109 @@ static XrResult XRAPI_PTR xrReleaseSwapchainImage_runtime(XrSwapchain sc, const 
     if (shouldLog || (g_logVerbose && releaseCount % 60 == 1)) {
         Logf("[SimXR] xrReleaseSwapchainImage: sc=%p released=%u", sc, ch.lastReleased);
 
-        // DEBUG: Read texture content at release time to verify it has content.
-        // Verbose-only: the probe below runs glFinish plus a full-texture readback,
-        // a periodic multi-millisecond stall no ordinary session should pay for.
-        if (g_logVerbose &&
-            ch.backend == rt::Swapchain::Backend::OpenGL && ch.arraySize <= 1 && !ch.imagesGL.empty() && ch.lastReleased < ch.imagesGL.size()) {
-            GLuint glTex = ch.imagesGL[ch.lastReleased];
-
-            // Check and log current GL context
-            HGLRC currentRC = wglGetCurrentContext();
-            HDC currentDC = wglGetCurrentDC();
-            Logf("[SimXR]   At release: currentRC=%p, currentDC=%p, sessionRC=%p, sessionDC=%p",
-                 currentRC, currentDC, rt::g_session.glRC, rt::g_session.glDC);
-
-            // Ensure the session's GL context is current before reading
-            HGLRC savedRC = currentRC;
-            HDC savedDC = currentDC;
-            if (currentRC != rt::g_session.glRC && rt::g_session.glRC && rt::g_session.glDC) {
-                Logf("[SimXR]   At release: Switching to session GL context");
-                wglMakeCurrent(rt::g_session.glDC, rt::g_session.glRC);
-            }
-
-            // Read a single pixel to see what's there
-            glFinish();  // Make sure rendering is done
-
-            // Try memory barrier to ensure texture writes are visible
-            // GL_TEXTURE_UPDATE_BARRIER_BIT = 0x00000100
-            // GL_FRAMEBUFFER_BARRIER_BIT = 0x00000400
-            // GL_ALL_BARRIER_BITS = 0xFFFFFFFF
-            typedef void (APIENTRY *PFNGLMEMORYBARRIERPROC)(GLbitfield);
-            static PFNGLMEMORYBARRIERPROC glMemoryBarrier = nullptr;
-            if (!glMemoryBarrier) {
-                glMemoryBarrier = (PFNGLMEMORYBARRIERPROC)wglGetProcAddress("glMemoryBarrier");
-            }
-            if (glMemoryBarrier) {
-                glMemoryBarrier(0xFFFFFFFF);  // GL_ALL_BARRIER_BITS
-            }
-
-            // Clear any pending GL errors
-            while (glGetError() != GL_NO_ERROR) {}
-
-            // Check if texture is valid
-            GLboolean isValidTex = glIsTexture(glTex);
-
-            // First, check what FBO is currently bound (might be game's FBO)
-            GLint currentBoundFBO = 0;
-            glGetIntegerv(0x8CA6, &currentBoundFBO);  // GL_FRAMEBUFFER_BINDING = 0x8CA6
-
-            // Read from current FBO (game's)
-            uint8_t currentFboPixel[4] = {0};
-            if (currentBoundFBO != 0) {
-                glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, currentFboPixel);
-            }
-
-            GLenum glError1 = glGetError();
-
-            // Method 1: Read via new FBO attached to swapchain texture
-            if (EnsureGLFramebufferFuncs()) {
-                GLuint readFBO = 0;
-                g_glGenFramebuffers(1, &readFBO);
-                g_glBindFramebuffer(GL_FRAMEBUFFER, readFBO);
-                g_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, glTex, 0);
-
-                uint8_t fboPixel[4] = {0};
-                if (g_glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
-                    glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, fboPixel);
-                }
-
-                g_glBindFramebuffer(GL_FRAMEBUFFER, 0);
-                g_glDeleteFramebuffers(1, &readFBO);
-
-                // Check if texture exists and has expected properties
-                GLint texWidth = 0, texHeight = 0, texFormat = 0;
-                glBindTexture(GL_TEXTURE_2D, glTex);
-                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &texWidth);
-                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &texHeight);
-                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, &texFormat);
-
-                // Method 2: Read via glGetTexImage (need full buffer for entire texture)
-                uint8_t texPixel[4] = {0};
-                if (texWidth > 0 && texHeight > 0) {
-                    size_t bufSize = (size_t)texWidth * texHeight * 4;
-                    if (bufSize <= 16 * 1024 * 1024) {  // Limit to 16MB
-                        std::vector<uint8_t> texData(bufSize);
-                        glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, texData.data());
-                        // Get first pixel
-                        texPixel[0] = texData[0];
-                        texPixel[1] = texData[1];
-                        texPixel[2] = texData[2];
-                        texPixel[3] = texData[3];
-                    }
-                }
-                glBindTexture(GL_TEXTURE_2D, 0);
-
-                GLenum glError2 = glGetError();
-                Logf("[SimXR]   At release: tex=%u isValid=%d err1=0x%X err2=0x%X boundFBO=%d currPx=[%d,%d,%d,%d] newPx=[%d,%d,%d,%d] texPx=[%d,%d,%d,%d] size=%dx%d fmt=0x%X",
-                     glTex, (int)isValidTex, glError1, glError2, currentBoundFBO,
-                     currentFboPixel[0], currentFboPixel[1], currentFboPixel[2], currentFboPixel[3],
-                     fboPixel[0], fboPixel[1], fboPixel[2], fboPixel[3],
-                     texPixel[0], texPixel[1], texPixel[2], texPixel[3],
-                     texWidth, texHeight, texFormat);
-            }
-
-            // Restore original GL context if we switched
-            if (savedRC != rt::g_session.glRC && savedRC && savedDC) {
-                wglMakeCurrent(savedDC, savedRC);
-            }
-        }
     }
     return XR_SUCCESS;
 }
 
-// Helper struct to save and restore D3D11 context state using RAII
-struct D3D11StateBackup {
-    D3D11StateBackup(ID3D11DeviceContext* ctx) : ctx_(ctx) {
-        // IA
-        ctx_->IAGetInputLayout(&ia_input_layout);
-        ctx_->IAGetPrimitiveTopology(&ia_primitive_topology);
-        // RS
-        rs_num_viewports = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
-        ctx_->RSGetViewports(&rs_num_viewports, rs_viewports);
-        rs_num_scissor_rects = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
-        ctx_->RSGetScissorRects(&rs_num_scissor_rects, rs_scissor_rects);
-        ctx_->RSGetState(&rs_state);
-        // OM
-        ctx_->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, om_rtvs, &om_dsv);
-        ctx_->OMGetBlendState(&om_blend_state, om_blend_factor, &om_sample_mask);
-        ctx_->OMGetDepthStencilState(&om_depth_stencil_state, &om_stencil_ref);
-        // Shaders - MUST initialize class instance counts before calling GetShader
-        ps_num_class_instances = 256;  // Initialize to array capacity
-        ctx_->PSGetShader(&ps_shader, ps_class_instances, &ps_num_class_instances);
-        ctx_->PSGetSamplers(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT, ps_samplers);
-        ctx_->PSGetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, ps_srvs);
-        vs_num_class_instances = 256;  // Initialize to array capacity
-        ctx_->VSGetShader(&vs_shader, vs_class_instances, &vs_num_class_instances);
-        ctx_->VSGetConstantBuffers(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT, vs_cbuffers);
-    }
-
-    ~D3D11StateBackup() {
-        // Restore state
-        ctx_->IASetInputLayout(ia_input_layout);
-        ctx_->IASetPrimitiveTopology(ia_primitive_topology);
-        ctx_->RSSetViewports(rs_num_viewports, rs_viewports);
-        ctx_->RSSetScissorRects(rs_num_scissor_rects, rs_scissor_rects);
-        ctx_->RSSetState(rs_state);
-        ctx_->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, om_rtvs, om_dsv);
-        ctx_->OMSetBlendState(om_blend_state, om_blend_factor, om_sample_mask);
-        ctx_->OMSetDepthStencilState(om_depth_stencil_state, om_stencil_ref);
-        ctx_->PSSetShader(ps_shader, ps_class_instances, ps_num_class_instances);
-        ctx_->PSSetSamplers(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT, ps_samplers);
-        ctx_->PSSetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, ps_srvs);
-        ctx_->VSSetShader(vs_shader, vs_class_instances, vs_num_class_instances);
-        ctx_->VSSetConstantBuffers(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT, vs_cbuffers);
-
-        // Release COM references
-        if (ia_input_layout) ia_input_layout->Release();
-        if (rs_state) rs_state->Release();
-        for (UINT i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i) if (om_rtvs[i]) om_rtvs[i]->Release();
-        if (om_dsv) om_dsv->Release();
-        if (om_blend_state) om_blend_state->Release();
-        if (om_depth_stencil_state) om_depth_stencil_state->Release();
-        if (ps_shader) ps_shader->Release();
-        for (UINT i = 0; i < ps_num_class_instances; ++i) if (ps_class_instances[i]) ps_class_instances[i]->Release();
-        for (UINT i = 0; i < D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT; ++i) if (ps_samplers[i]) ps_samplers[i]->Release();
-        for (UINT i = 0; i < D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT; ++i) if (ps_srvs[i]) ps_srvs[i]->Release();
-        if (vs_shader) vs_shader->Release();
-        for (UINT i = 0; i < vs_num_class_instances; ++i) if (vs_class_instances[i]) vs_class_instances[i]->Release();
-        for (UINT i = 0; i < D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT; ++i) if (vs_cbuffers[i]) vs_cbuffers[i]->Release();
-    }
-
-private:
-    ID3D11DeviceContext* ctx_;
-    // IA State
-    ID3D11InputLayout* ia_input_layout = nullptr;
-    D3D11_PRIMITIVE_TOPOLOGY ia_primitive_topology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
-    // RS State  
-    UINT rs_num_viewports = 0, rs_num_scissor_rects = 0;
-    D3D11_VIEWPORT rs_viewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
-    D3D11_RECT rs_scissor_rects[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
-    ID3D11RasterizerState* rs_state = nullptr;
-    // OM State
-    ID3D11RenderTargetView* om_rtvs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = { nullptr };
-    ID3D11DepthStencilView* om_dsv = nullptr;
-    ID3D11BlendState* om_blend_state = nullptr;
-    FLOAT om_blend_factor[4] = { 0.0f };
-    UINT om_sample_mask = 0;
-    ID3D11DepthStencilState* om_depth_stencil_state = nullptr;
-    UINT om_stencil_ref = 0;
-    // PS State
-    ID3D11PixelShader* ps_shader = nullptr;
-    ID3D11ClassInstance* ps_class_instances[256] = { nullptr };
-    UINT ps_num_class_instances = 0;
-    ID3D11SamplerState* ps_samplers[D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT] = { nullptr };
-    ID3D11ShaderResourceView* ps_srvs[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = { nullptr };
-    // VS State. Constant buffers are here because the quad layer binds b0 on what is, for a
-    // D3D11 session, the app's own immediate context.
-    ID3D11VertexShader* vs_shader = nullptr;
-    ID3D11ClassInstance* vs_class_instances[256] = { nullptr };
-    UINT vs_num_class_instances = 0;
-    ID3D11Buffer* vs_cbuffers[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT] = { nullptr };
-};
 
 namespace rt {
-    static XrSessionState g_state = XR_SESSION_STATE_IDLE;
-    void PushState(XrSession s, XrSessionState ns) {
-        g_state = ns;
-        g_session.state = ns;
-        const char* stateName = "UNKNOWN";
-        switch(ns) {
-            case XR_SESSION_STATE_IDLE: stateName = "IDLE"; break;
-            case XR_SESSION_STATE_READY: stateName = "READY"; break;
-            case XR_SESSION_STATE_SYNCHRONIZED: stateName = "SYNCHRONIZED"; break;
-            case XR_SESSION_STATE_VISIBLE: stateName = "VISIBLE"; break;
-            case XR_SESSION_STATE_FOCUSED: stateName = "FOCUSED"; break;
-            case XR_SESSION_STATE_STOPPING: stateName = "STOPPING"; break;
-            case XR_SESSION_STATE_LOSS_PENDING: stateName = "LOSS_PENDING"; break;
-            case XR_SESSION_STATE_EXITING: stateName = "EXITING"; break;
-        }
-        Logf("[SimXR] PushState: Session %llu -> %s", (unsigned long long)s, stateName);
-        g_frameTimeline.Marker(perf::timeline::MarkerKind::SessionState, ns, 0, stateName);
-        g_sessionInfoDirty = true;
-        
-        XrEventDataSessionStateChanged e{XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED};
-        e.session = s; e.state = ns; e.time = CurrentXrTime();
-        
-        XrEventDataBuffer buf{};
-        buf.type = XR_TYPE_EVENT_DATA_BUFFER;  // Set the base type
-        std::memcpy(&buf, &e, sizeof(e));
-        g_eventQueue.push_back(buf);
-        Logf("[SimXR] Event queue now has %zu events", g_eventQueue.size());
+    void PushState(XrSession session, XrSessionState state) {
+        if (session == XR_NULL_HANDLE) return;
+        auto core = RetainSession(session);
+        if (!core) return;
+        const auto time = simxr::RuntimeTime{simxr::SteadyClock{}.Now().time_since_epoch()};
+        if (state == XR_SESSION_STATE_READY) core->Ready(time);
+        else if (state == XR_SESSION_STATE_EXITING) core->RequestExit(time);
+        else core->SetState(state, time);
+        g_session.state = core->Snapshot().state;
     }
 }
-static XrResult XRAPI_PTR xrPollEvent_runtime(XrInstance, XrEventDataBuffer* b) {
-    const int requestedFocus = rt::g_requestedSessionFocus.exchange(-1);
-    if (requestedFocus >= 0 && rt::g_session.running &&
-        (rt::g_session.state == XR_SESSION_STATE_FOCUSED || rt::g_session.state == XR_SESSION_STATE_VISIBLE)) {
-        const XrSessionState desired = requestedFocus ? XR_SESSION_STATE_FOCUSED : XR_SESSION_STATE_VISIBLE;
-        if (rt::g_session.state != desired) rt::PushState(rt::g_session.handle, desired);
-    }
-    static int pollCount = 0;
-    pollCount++;
-    
-    if (pollCount <= 5) {  // Log first few polls
-        Logf("[SimXR] xrPollEvent called (#%d), queue size=%zu", pollCount, rt::g_eventQueue.size());
-    }
-    
-    if (!b) return XR_ERROR_VALIDATION_FAILURE;
-    if (rt::g_eventQueue.empty()) {
-        if (pollCount <= 5) {
-            Log("[SimXR] xrPollEvent: No events available (XR_EVENT_UNAVAILABLE)");
-        }
-        return XR_EVENT_UNAVAILABLE;
-    }
-    *b = rt::g_eventQueue.front();
-    rt::g_eventQueue.erase(rt::g_eventQueue.begin());
-    
-    // Log what event we're delivering
-    const XrEventDataBaseHeader* header = reinterpret_cast<const XrEventDataBaseHeader*>(b);
-    if (header->type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
-        const XrEventDataSessionStateChanged* stateEvent = reinterpret_cast<const XrEventDataSessionStateChanged*>(b);
-        const char* stateName = "UNKNOWN";
-        switch(stateEvent->state) {
-            case XR_SESSION_STATE_IDLE: stateName = "IDLE"; break;
-            case XR_SESSION_STATE_READY: stateName = "READY"; break;
-            case XR_SESSION_STATE_SYNCHRONIZED: stateName = "SYNCHRONIZED"; break;
-            case XR_SESSION_STATE_VISIBLE: stateName = "VISIBLE"; break;
-            case XR_SESSION_STATE_FOCUSED: stateName = "FOCUSED"; break;
-            case XR_SESSION_STATE_STOPPING: stateName = "STOPPING"; break;
-            case XR_SESSION_STATE_LOSS_PENDING: stateName = "LOSS_PENDING"; break;
-            case XR_SESSION_STATE_EXITING: stateName = "EXITING"; break;
-        }
-        Logf("[SimXR] xrPollEvent: Delivering SESSION_STATE_CHANGED -> %s (session=%llu, %zu events left)", 
-            stateName, (unsigned long long)stateEvent->session, rt::g_eventQueue.size());
-    } else {
-        Logf("[SimXR] xrPollEvent: Delivering event type %d (%zu events left)", header->type, rt::g_eventQueue.size());
-    }
-    return XR_SUCCESS;
+static XrResult XRAPI_PTR xrPollEvent_runtime(XrInstance instance, XrEventDataBuffer* buffer) {
+    if (!RuntimeState().FindInstance(instance)) return XR_ERROR_HANDLE_INVALID;
+    if (!buffer) return XR_ERROR_VALIDATION_FAILURE;
+    return rt::g_instance.core->Events().Poll(*buffer);
 }
 // Defined further down, with the rest of the preview plumbing.
 static void ensurePreviewWithoutProjection(rt::Session& s);
 
-static XrResult XRAPI_PTR xrBeginSession_runtime(XrSession s, const XrSessionBeginInfo* info) {
-    Log("[SimXR] ============================================");
-    Logf("[SimXR] xrBeginSession called (session=%llu)", (unsigned long long)s);
-    Log("[SimXR] Session started - moving to SYNCHRONIZED/VISIBLE states");
-    Log("[SimXR] ============================================");
-
-    if (s != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
-    if (!info || info->type != XR_TYPE_SESSION_BEGIN_INFO) return XR_ERROR_VALIDATION_FAILURE;
-    if (info->primaryViewConfigurationType != XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO) {
-        return XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;
+static XrResult XRAPI_PTR xrBeginSession_runtime(XrSession handle, const XrSessionBeginInfo* info) {
+    auto core = rt::RetainSession(handle);
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    const auto controllerMotion = rt::RetainControllerMotion(core);
+    if (!controllerMotion) return XR_ERROR_HANDLE_INVALID;
+    if (!info) return XR_ERROR_VALIDATION_FAILURE;
+    LARGE_INTEGER counter{}, frequency{};
+    QueryPerformanceCounter(&counter);
+    QueryPerformanceFrequency(&frequency);
+    simxr::FrameSchedulerConfig config;
+    config.epoch = {simxr::Duration{(counter.QuadPart / frequency.QuadPart) * 1000000000LL +
+        (counter.QuadPart % frequency.QuadPart) * 1000000000LL / frequency.QuadPart}};
+    std::uint64_t seed = 0;
+    if (const auto* text = std::getenv("SIMXR_SEED")) {
+        const std::string_view value{text};
+        const auto parsed = std::from_chars(value.data(), value.data() + value.size(), seed);
+        if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size()) return XR_ERROR_VALIDATION_FAILURE;
     }
+    if (const auto* deterministic = std::getenv("SIMXR_DETERMINISTIC"); deterministic && std::strcmp(deterministic, "0") != 0) {
+        config.mode = simxr::ExecutionMode::Deterministic;
+        config.epoch = {simxr::Duration{1000000000LL}};
+    }
+    simxr::CommandConfiguration baseline;
     {
-        std::lock_guard<std::mutex> lock(rt::g_session.frameMutex);
-        if (rt::g_session.running) return XR_ERROR_SESSION_RUNNING;
-        if (rt::g_session.state != XR_SESSION_STATE_READY) return XR_ERROR_SESSION_NOT_READY;
-        rt::g_session.running = true;
-        rt::g_session.exitRequested = false;
-        rt::g_session.frameLifecycle.Reset();
+        float yaw, pitch, roll;
+        rt::GetEffectiveHeadAngles(yaw, pitch, roll);
+        baseline.tracking.head.pose = {rt::QuatFromYawPitchRoll(yaw, pitch, roll), rt::g_headPos};
+        const auto controllers = controllerMotion->Snapshot({rt::g_headPos, rt::g_headYaw, rt::g_headPitch});
+        for (std::size_t hand = 0; hand < controllers.hands.size(); ++hand)
+            baseline.tracking.controllers[hand].pose.pose = controllers.hands[hand].worldPose;
+        baseline.input = core->Input().Snapshot();
+        baseline.views.ipd = rt::g_useCustomIpd ? rt::g_customIpd : rt::GetUiIpdMeters();
+        baseline.views.outerFov = {rt::GetViewFov(0), rt::GetViewFov(1)};
+        ui::GetRenderResolution(baseline.views.outerWidth, baseline.views.outerHeight);
     }
-
-
-    rt::g_requestedSessionFocus.store(-1);
-    rt::PushState(s, XR_SESSION_STATE_SYNCHRONIZED); 
-    rt::PushState(s, XR_SESSION_STATE_VISIBLE);
-    // A simulator has no physical HMD focus hand-off. Keep the OpenXR application
-    // focused for the running session; activation of the runtime-owned diagnostic
-    // preview controls only its mouse/keyboard input and must not perturb the app's
-    // lifecycle or make its renderer behave as a background window.
-    rt::PushState(s, XR_SESSION_STATE_FOCUSED);
-    return XR_SUCCESS; 
+    auto configured = core->ConfigureCommands(seed, baseline, false);
+    if (XR_FAILED(configured)) return configured;
+    auto result = core->Begin(*info, config);
+    rt::g_session.state = core->Snapshot().state;
+    if (XR_SUCCEEDED(result)) rt::g_session.isFocused = true;
+    return result;
 }
-static XrResult XRAPI_PTR xrEndSession_runtime(XrSession s) {
-    Log("[SimXR] xrEndSession");
-    if (s != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
-    bool exitRequested = false;
-    bool wasStopping = false;
-    {
-        std::lock_guard<std::mutex> lock(rt::g_session.frameMutex);
-        if (!rt::g_session.running) return XR_ERROR_SESSION_NOT_RUNNING;
-        wasStopping = rt::g_session.state == XR_SESSION_STATE_STOPPING;
-        if (!wasStopping) return XR_ERROR_SESSION_NOT_STOPPING;
-        rt::g_session.running = false;
-        exitRequested = rt::g_session.exitRequested;
-        rt::g_session.exitRequested = false;
-        rt::g_session.frameLifecycle.Reset();
-    }
-    rt::g_session.frameCondition.notify_all();
-    ReleaseUiPointers("Session ended");
-    rt::PushState(s, XR_SESSION_STATE_IDLE);
-    if (exitRequested) rt::PushState(s, XR_SESSION_STATE_EXITING);
-    return XR_SUCCESS;
+static XrResult XRAPI_PTR xrEndSession_runtime(XrSession handle) {
+    auto core = rt::RetainSession(handle);
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    auto result = core->End({simxr::SteadyClock{}.Now().time_since_epoch()});
+    rt::g_session.state = core->Snapshot().state;
+    return result;
 }
-static XrResult XRAPI_PTR xrRequestExitSession_runtime(XrSession s) {
-    if (s != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
-    bool alreadyStopping = false;
-    {
-        std::lock_guard<std::mutex> lock(rt::g_session.frameMutex);
-        if (!rt::g_session.running) return XR_ERROR_SESSION_NOT_RUNNING;
-        alreadyStopping = rt::g_session.state == XR_SESSION_STATE_STOPPING;
-        rt::g_session.exitRequested = true;
-    }
-    // Re-requesting exit while already STOPPING must not re-deliver an
-    // unchanged state-changed event.
-    if (!alreadyStopping) rt::PushState(s, XR_SESSION_STATE_STOPPING);
-    return XR_SUCCESS;
+static XrResult XRAPI_PTR xrRequestExitSession_runtime(XrSession handle) {
+    auto core = rt::RetainSession(handle);
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    auto result = core->RequestExit({simxr::SteadyClock{}.Now().time_since_epoch()});
+    rt::g_session.state = core->Snapshot().state;
+    return result;
 }
 static XrResult XRAPI_PTR xrWaitFrame_runtime(XrSession session, const XrFrameWaitInfo* info, XrFrameState* s) {
-    if (session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
-    if (!s || s->type != XR_TYPE_FRAME_STATE ||
-        (info && info->type != XR_TYPE_FRAME_WAIT_INFO)) return XR_ERROR_VALIDATION_FAILURE;
-    // Distinguish an actual pacing wait from message dispatch, command polling,
-    // or lock contention when the host profiler reports a long xrWaitFrame.
-    // Stack-only and allocation-free; ordinary frames do not write a log.
-    struct WaitTiming {
-        ULONGLONG start = GetTickCount64(), last = start, phases[7]{};
-        ULONGLONG commandWatchMs = 0, commandApplyMs = 0;
-        void Mark(unsigned phase) {
-            const ULONGLONG now = GetTickCount64();
-            phases[phase] += now - last; last = now;
-        }
-        ~WaitTiming() {
-            const ULONGLONG total = GetTickCount64() - start;
-            if (total >= 40) {
-                Logf("[SimXR] xrWaitFrame slow: total=%llums lifecycle=%llu preview=%llu messages=%llu controlLock=%llu inputCommands=%llu pointer=%llu pacing=%llu commandWatch=%llu commandApply=%llu thread=%lu",
-                    total, phases[0], phases[1], phases[2], phases[3], phases[4], phases[5], phases[6], commandWatchMs, commandApplyMs, GetCurrentThreadId());
-            }
-        }
-    } timing;
+    if (simxr::windows::D3D12Preview::IsPresentationThread()) return XR_ERROR_CALL_ORDER_INVALID;
+    if (session == XR_NULL_HANDLE || session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
+    if (!s || s->type != XR_TYPE_FRAME_STATE || (info && info->type != XR_TYPE_FRAME_WAIT_INFO))
+        return XR_ERROR_VALIDATION_FAILURE;
+    simxr::FramePrediction prediction;
+    std::shared_ptr<simxr::Session> core;
+    std::shared_ptr<simxr::legacy::LegacyControllerMotion> controllerMotion;
+    std::shared_ptr<mcp::WindowsLegacyChannel> compatibilityFiles;
     {
-        std::unique_lock<std::mutex> lock(rt::g_session.frameMutex);
-        if (!rt::g_session.running) return XR_ERROR_SESSION_NOT_RUNNING;
-        rt::g_session.frameCondition.wait(lock, [] {
-            return !rt::g_session.running || rt::g_session.frameLifecycle.CanWait();
-        });
-        if (!rt::g_session.running) return XR_ERROR_SESSION_NOT_RUNNING;
-        const XrResult result = rt::g_session.frameLifecycle.MarkWaited();
-        if (XR_FAILED(result)) return result;
+        std::lock_guard lock(rt::g_coreMutex);
+        if (session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
+        core = rt::g_session.core;
+        controllerMotion = rt::g_session.controllerMotion;
+        compatibilityFiles = rt::g_session.compatibilityFiles;
     }
-    timing.Mark(0);
-    // From here on the call is the simulator's: the lifecycle wait above is the
-    // app's own frame ordering and counts as the app's time.
-    perf::timeline::WaitSample timelineWait;
-    g_frameTimeline.WaitEnter(timelineWait);
+    if (!core || !controllerMotion || !compatibilityFiles) return XR_ERROR_HANDLE_INVALID;
+    auto result = core->WaitFrame(prediction);
+    if (XR_FAILED(result)) return result;
+    { std::lock_guard lock(rt::g_coreMutex);
+      if (core != rt::g_session.core || session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID; }
+
     if (!rt::g_session.hwnd) {
         ensurePreviewWithoutProjection(rt::g_session);
         if (rt::g_session.hwnd) {
@@ -5191,21 +3560,14 @@ static XrResult XRAPI_PTR xrWaitFrame_runtime(XrSession session, const XrFrameWa
                  GetWindowThreadProcessId(rt::g_session.hwnd, nullptr), GetCurrentThreadId());
         }
     }
-    timing.Mark(1);
 
     // Not the preview window -- that has its own thread. This drains whatever host windows
     // happen to live on the render thread, which the runtime has always done from here.
     PumpMessages(nullptr);
-    timing.Mark(2);
-    static LARGE_INTEGER freq = [](){ LARGE_INTEGER f; QueryPerformanceFrequency(&f); return f; }();
-    static double periodSec = 1.0 / SimulatorRefreshHz();
-    static long long periodNs = (long long)(periodSec * 1e9);
-    static double nextTick = [](){ LARGE_INTEGER t; QueryPerformanceCounter(&t); return (double)t.QuadPart; }();
+    const double periodSec = std::chrono::duration<double>(prediction.displayPeriod).count();
     
     // Handle WASD keyboard input for movement (relative to head orientation).
     //
-    std::unique_lock<std::recursive_mutex> controlLock(ui_auto::g_mutex);
-    timing.Mark(3);
     // The PID check is what makes AppForeground the default: the runtime is in-process with
     // the host, so the game's own window counts as ours. PreviewFocused was once the only
     // behaviour and left WASD dead in any game that takes the foreground on launch.
@@ -5224,14 +3586,16 @@ static XrResult XRAPI_PTR xrWaitFrame_runtime(XrSession session, const XrFrameWa
     const HWND foregroundWindow = inputActive ? nullptr : GetForegroundWindow();
     if (foregroundWindow != nullptr) {
         if (foregroundWindow == rt::g_session.hwnd) {
-            inputActive = rt::g_session.previewInputFocused.load();
+            inputActive = rt::g_session.isFocused.load();
         } else if (inputPolling == ui::InputPolling::AppForeground) {
             DWORD fgPid = 0;
             GetWindowThreadProcessId(foregroundWindow, &fgPid);
             inputActive = (fgPid != 0 && fgPid == GetCurrentProcessId());
         }
     }
-    if (inputActive && !rt::g_automationOnly) {
+    simxr::legacy::ControllerMotionFrame controllerFrame;
+    controllerFrame.glideSeconds = rt::InputClockSeconds();
+    if (inputActive) {
         // Shift is the sprint modifier; both it and the base speed are set from
         // Tools > Movement Speed. GetAsyncKeyState rather than the WM_KEYDOWN
         // path because this reads a held state, and the host window may be the
@@ -5271,206 +3635,17 @@ static XrResult XRAPI_PTR xrWaitFrame_runtime(XrSession session, const XrFrameWa
             rt::g_headPos.y += moveSpeed * deltaTime;
         }
 
-        // ========================================
-        // Automatic Controller Animation Mode
-        // ========================================
-        // Press 'M' to toggle automatic motion - controller moves in a pattern
-        // Keep tracked controllers stationary unless the user explicitly opts in.
-        // Starting this test animation automatically makes applications with hand
-        // IK sweep their arm through the camera and creates false-positive flicker
-        // incidents in otherwise passive rendering/performance captures.
-        static bool autoMotionEnabled = false;
-        static bool mKeyWasPressed = false;
-        static float animTime = 0.0f;
-
-        bool mKeyPressed = (GetAsyncKeyState('M') & 0x8000) != 0;
-        if (mKeyPressed && !mKeyWasPressed) {
-            autoMotionEnabled = !autoMotionEnabled;
-            Logf("[SimXR] Auto motion %s", autoMotionEnabled ? "ENABLED" : "DISABLED");
-        }
-        mKeyWasPressed = mKeyPressed;
-
-        if (autoMotionEnabled) {
-            animTime += deltaTime;
-
-            // Move controller in a figure-8 pattern around the camera
-            // X: side to side (left/right)
-            // Y: up and down
-            // Z: forward and back
-            float radius = 0.4f;  // 40cm radius of motion
-            float speed = 0.5f;   // Complete cycle every ~12 seconds
-
-            // Figure-8 pattern
-            rt::g_rightController.posOffset.x = radius * sinf(animTime * speed * 2.0f);
-            rt::g_rightController.posOffset.y = -0.2f + 0.3f * sinf(animTime * speed);  // Oscillate between -0.5 and +0.1
-            rt::g_rightController.posOffset.z = -0.4f + radius * sinf(animTime * speed) * cosf(animTime * speed);
-
-            // Also rotate the controller
-            rt::g_rightController.yawOffset = 0.5f * sinf(animTime * speed * 1.5f);
-            rt::g_rightController.pitchOffset = -0.3f + 0.3f * cosf(animTime * speed);
-        }
-
-        // Right controller manipulation (numpad keys) - only when auto motion is off
-        // Numpad 8/2: Move controller forward/back (in local space)
-        // Numpad 4/6: Move controller left/right (in local space)
-        // Numpad +/-: Move controller up/down
-        // Numpad 7/9: Rotate controller yaw
-        // Numpad 1/3: Rotate controller pitch
-        const float ctrlMoveSpeed = 0.5f * deltaTime;
-        const float ctrlRotSpeed = 1.0f * deltaTime;
-
-        if (!autoMotionEnabled) {
-            if (GetAsyncKeyState(VK_NUMPAD8) & 0x8000) {
-                rt::g_rightController.posOffset.z -= ctrlMoveSpeed;  // Forward
-            }
-            if (GetAsyncKeyState(VK_NUMPAD2) & 0x8000) {
-                rt::g_rightController.posOffset.z += ctrlMoveSpeed;  // Back
-            }
-            if (GetAsyncKeyState(VK_NUMPAD4) & 0x8000) {
-                rt::g_rightController.posOffset.x -= ctrlMoveSpeed;  // Left
-            }
-            if (GetAsyncKeyState(VK_NUMPAD6) & 0x8000) {
-                rt::g_rightController.posOffset.x += ctrlMoveSpeed;  // Right
-            }
-            if (GetAsyncKeyState(VK_ADD) & 0x8000) {
-                rt::g_rightController.posOffset.y += ctrlMoveSpeed;  // Up
-            }
-            if (GetAsyncKeyState(VK_SUBTRACT) & 0x8000) {
-                rt::g_rightController.posOffset.y -= ctrlMoveSpeed;  // Down
-            }
-            if (GetAsyncKeyState(VK_NUMPAD7) & 0x8000) {
-                rt::g_rightController.yawOffset -= ctrlRotSpeed;  // Rotate left
-            }
-            if (GetAsyncKeyState(VK_NUMPAD9) & 0x8000) {
-                rt::g_rightController.yawOffset += ctrlRotSpeed;  // Rotate right
-            }
-            if (GetAsyncKeyState(VK_NUMPAD1) & 0x8000) {
-                rt::g_rightController.pitchOffset += ctrlRotSpeed;  // Pitch down
-            }
-            if (GetAsyncKeyState(VK_NUMPAD3) & 0x8000) {
-                rt::g_rightController.pitchOffset -= ctrlRotSpeed;  // Pitch up
-            }
-        }
-        // Numpad 5: Reset controller to default position
-        if (GetAsyncKeyState(VK_NUMPAD5) & 0x8000) {
-            rt::g_rightController.posOffset = {0.2f, -0.3f, -0.4f};
-            rt::g_rightController.yawOffset = 0.0f;
-            rt::g_rightController.pitchOffset = -0.3f;
-            autoMotionEnabled = false;
-        }
-
-        // ========================================
-        // Controller Button/Trigger Emulation
-        // ========================================
-        // Right controller buttons (main hand for most games)
-        // Space = Trigger (fire weapon)
-        // F = Grip (grab)
-        // Tab = Menu
-        // R = Primary button (A)
-        // T = Secondary button (B)
-        // Enter = Thumbstick click
-        rt::g_rightController.triggerPressed = (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
-        rt::g_rightController.triggerValue = rt::g_rightController.triggerPressed ? 1.0f : 0.0f;
-        rt::g_rightController.gripPressed = (GetAsyncKeyState('F') & 0x8000) != 0;
-        rt::g_rightController.gripValue = rt::g_rightController.gripPressed ? 1.0f : 0.0f;
-        rt::g_rightController.menuPressed = (GetAsyncKeyState(VK_TAB) & 0x8000) != 0;
-        rt::g_rightController.primaryPressed = (GetAsyncKeyState('R') & 0x8000) != 0;
-        rt::g_rightController.secondaryPressed = (GetAsyncKeyState('T') & 0x8000) != 0;
-        rt::g_rightController.thumbstickPressed = (GetAsyncKeyState(VK_RETURN) & 0x8000) != 0;
-
-        // Left controller buttons (off-hand)
-        // Left Ctrl = Trigger
-        // Left Alt = Grip
-        // G = Menu (left hand)
-        // V = Primary (X)
-        // B = Secondary (Y)
-        rt::g_leftController.triggerPressed = (GetAsyncKeyState(VK_LCONTROL) & 0x8000) != 0;
-        rt::g_leftController.triggerValue = rt::g_leftController.triggerPressed ? 1.0f : 0.0f;
-        rt::g_leftController.gripPressed = (GetAsyncKeyState(VK_LMENU) & 0x8000) != 0;
-        rt::g_leftController.gripValue = rt::g_leftController.gripPressed ? 1.0f : 0.0f;
-        rt::g_leftController.menuPressed = (GetAsyncKeyState('G') & 0x8000) != 0;
-        rt::g_leftController.primaryPressed = (GetAsyncKeyState('V') & 0x8000) != 0;
-        rt::g_leftController.secondaryPressed = (GetAsyncKeyState('B') & 0x8000) != 0;
-
-        // Right controller thumbstick (Arrow keys)
-        rt::g_rightController.thumbstick = {0.0f, 0.0f};
-        if (GetAsyncKeyState(VK_UP) & 0x8000) rt::g_rightController.thumbstick.y = 1.0f;
-        if (GetAsyncKeyState(VK_DOWN) & 0x8000) rt::g_rightController.thumbstick.y = -1.0f;
-        if (GetAsyncKeyState(VK_LEFT) & 0x8000) rt::g_rightController.thumbstick.x = -1.0f;
-        if (GetAsyncKeyState(VK_RIGHT) & 0x8000) rt::g_rightController.thumbstick.x = 1.0f;
-
-        // Left controller thumbstick (IJKL keys)
-        rt::g_leftController.thumbstick = {0.0f, 0.0f};
-        if (GetAsyncKeyState('I') & 0x8000) rt::g_leftController.thumbstick.y = 1.0f;
-        if (GetAsyncKeyState('K') & 0x8000) rt::g_leftController.thumbstick.y = -1.0f;
-        if (GetAsyncKeyState('J') & 0x8000) rt::g_leftController.thumbstick.x = -1.0f;
-        if (GetAsyncKeyState('L') & 0x8000) rt::g_leftController.thumbstick.x = 1.0f;
-
-        // ========================================
-        // Velocity Tracking for Motion Controls
-        // ========================================
-        // Calculate controller world positions
-        XrPosef rightPose, leftPose;
-        rt::GetControllerPose(rt::g_rightController, &rightPose);
-        rt::GetControllerPose(rt::g_leftController, &leftPose);
-
-        // Calculate linear velocity from position delta
-        if (deltaTime > 0.0f) {
-            // Right controller velocity
-            rt::g_rightController.linearVelocity.x = (rightPose.position.x - rt::g_rightController.prevPosWorld.x) / deltaTime;
-            rt::g_rightController.linearVelocity.y = (rightPose.position.y - rt::g_rightController.prevPosWorld.y) / deltaTime;
-            rt::g_rightController.linearVelocity.z = (rightPose.position.z - rt::g_rightController.prevPosWorld.z) / deltaTime;
-
-            // Left controller velocity
-            rt::g_leftController.linearVelocity.x = (leftPose.position.x - rt::g_leftController.prevPosWorld.x) / deltaTime;
-            rt::g_leftController.linearVelocity.y = (leftPose.position.y - rt::g_leftController.prevPosWorld.y) / deltaTime;
-            rt::g_leftController.linearVelocity.z = (leftPose.position.z - rt::g_leftController.prevPosWorld.z) / deltaTime;
-
-            // Angular velocity from yaw/pitch delta
-            float totalRightYaw = rt::g_headYaw + rt::g_rightController.yawOffset;
-            float totalRightPitch = rt::g_headPitch + rt::g_rightController.pitchOffset;
-            rt::g_rightController.angularVelocity.x = (totalRightPitch - rt::g_rightController.prevPitch) / deltaTime;
-            rt::g_rightController.angularVelocity.y = (totalRightYaw - rt::g_rightController.prevYaw) / deltaTime;
-            rt::g_rightController.angularVelocity.z = 0.0f;
-
-            float totalLeftYaw = rt::g_headYaw + rt::g_leftController.yawOffset;
-            float totalLeftPitch = rt::g_headPitch + rt::g_leftController.pitchOffset;
-            rt::g_leftController.angularVelocity.x = (totalLeftPitch - rt::g_leftController.prevPitch) / deltaTime;
-            rt::g_leftController.angularVelocity.y = (totalLeftYaw - rt::g_leftController.prevYaw) / deltaTime;
-            rt::g_leftController.angularVelocity.z = 0.0f;
-
-            // Update previous state for next frame
-            rt::g_rightController.prevPosWorld = rightPose.position;
-            rt::g_rightController.prevYaw = totalRightYaw;
-            rt::g_rightController.prevPitch = totalRightPitch;
-
-            rt::g_leftController.prevPosWorld = leftPose.position;
-            rt::g_leftController.prevYaw = totalLeftYaw;
-            rt::g_leftController.prevPitch = totalLeftPitch;
-        }
-
+        controllerFrame.keyboard = rt::PollControllerKeyboard(deltaTime);
     }
 
+    if (auto written = compatibilityFiles->TakeWrittenScreenshot())
+        ui::NotifyScreenshotSaved((mcp::GetSimulatorDataDirectory() / *written).wstring());
+
     // MCP commands work regardless of window focus (file-based IPC).
-    // RefreshCommandsDue only checks the worker inbox. Directory notification and
-    // command-file IO remain on that worker even when filesystem filters stall.
-    const ULONGLONG commandWatchStart = GetTickCount64();
-    mcp::RefreshCommandsDue();
-    timing.commandWatchMs = GetTickCount64() - commandWatchStart;
-    const ULONGLONG commandApplyStart = GetTickCount64();
-    static std::uint64_t controlCommandEpoch = 0;
-    const bool controlsChanged = mcp::g_commandEpoch.ChangedSince(controlCommandEpoch);
-    if (mcp::g_commandsDue || controlsChanged) {
-        const mcp::SessionFocusCommand focus = mcp::CheckSessionFocusCommand();
-        if (focus.valid) {
-            const bool eligible = rt::g_session.running &&
-                (rt::g_session.state == XR_SESSION_STATE_FOCUSED || rt::g_session.state == XR_SESSION_STATE_VISIBLE);
-            if (eligible) {
-                rt::g_requestedSessionFocus.store(focus.focused ? 1 : 0);
-            }
-            mcp::WriteCommandAck("session_focus", eligible);
-        }
-        mcp::HeadPoseCommand cmd = mcp::CheckHeadPoseCommand();
+    // The joined worker already decoded and staged copied values.
+    {
+        const auto commands = compatibilityFiles->TakeCommands();
+        mcp::HeadPoseCommand cmd = commands.head;
         if (cmd.valid) {
             rt::g_headPos.x = cmd.x;
             rt::g_headPos.y = cmd.y;
@@ -5478,11 +3653,11 @@ static XrResult XRAPI_PTR xrWaitFrame_runtime(XrSession session, const XrFrameWa
             rt::g_headYaw = cmd.yaw;
             rt::g_headPitch = cmd.pitch;
             if (cmd.hasRoll) rt::g_headRoll = cmd.roll;
-            mcp::WriteCommandAck("head_pose", true);
+            compatibilityFiles->Acknowledge("head_pose", true);
         }
 
         // Per-eye FOV override (asymmetric headset profile testing).
-        mcp::FovCommand fov = mcp::CheckFovCommand();
+        mcp::FovCommand fov = commands.fov;
         if (fov.valid) {
             if (fov.clear) {
                 rt::g_useCustomFov = false;
@@ -5495,11 +3670,11 @@ static XrResult XRAPI_PTR xrWaitFrame_runtime(XrSession session, const XrFrameWa
                     rt::g_eyeFovD[i] = fov.angleDown[i];
                 }
             }
-            mcp::WriteCommandAck("fov", true);
+            compatibilityFiles->Acknowledge("fov", true);
         }
 
         // Settable IPD (test app's response to IPD ranges; 0mm = no parallax).
-        mcp::IpdCommand ipdCmd = mcp::CheckIpdCommand();
+        mcp::IpdCommand ipdCmd = commands.ipd;
         if (ipdCmd.valid) {
             if (ipdCmd.clear) {
                 rt::g_useCustomIpd = false;
@@ -5507,11 +3682,11 @@ static XrResult XRAPI_PTR xrWaitFrame_runtime(XrSession session, const XrFrameWa
                 rt::g_useCustomIpd = true;
                 rt::g_customIpd = ipdCmd.ipdMeters;
             }
-            mcp::WriteCommandAck("ipd", true);
+            compatibilityFiles->Acknowledge("ipd", true);
         }
 
         // Headset profile preset: applies both FOV and IPD at once.
-        mcp::HeadsetProfileCommand prof = mcp::CheckHeadsetProfileCommand();
+        mcp::HeadsetProfileCommand prof = commands.profile;
         if (prof.valid) {
             const int idx = ui::FindHeadsetSpec(prof.name);
             // "generic" carries no headset geometry, so it means the same as clearing.
@@ -5538,15 +3713,15 @@ static XrResult XRAPI_PTR xrWaitFrame_runtime(XrSession session, const XrFrameWa
             } else {
                 applied = false;
             }
-            mcp::WriteCommandAck("headset_profile", applied);
+            compatibilityFiles->Acknowledge("headset_profile", applied);
         }
 
         // Anaglyph preview overlay toggle. The simulator already renders
         // a red/cyan anaglyph composite when ui::g_uiState.displayLayout
-        // == DisplayLayout::Anaglyph (using the anaglyphRedBS / anaglyphCyanBS
+        // == DisplayLayout::Anaglyph (using channel-masked preview blending
         // blend states), so we just flip the enum. Remember the previous
         // layout so we can restore it on disable.
-        mcp::AnaglyphCommand ana = mcp::CheckAnaglyphCommand();
+        mcp::AnaglyphCommand ana = commands.anaglyph;
         if (ana.valid) {
             static ui::DisplayLayout s_savedLayout = ui::DisplayLayout::SideBySide;
             static bool s_haveSaved = false;
@@ -5563,114 +3738,93 @@ static XrResult XRAPI_PTR xrWaitFrame_runtime(XrSession session, const XrFrameWa
                 }
             }
             rt::g_anaglyphPreview = ana.enabled;
-            mcp::WriteCommandAck("anaglyph", true);
+            compatibilityFiles->Acknowledge("anaglyph", true);
         }
 
         // Pose sweep: oscillate yaw/pitch/roll on a sine wave each frame.
-        mcp::PoseSweepCommand sweep = mcp::CheckPoseSweepCommand();
+        mcp::PoseSweepCommand sweep = commands.sweep;
         if (sweep.valid) {
             const float DEG2RAD = 3.14159265f / 180.0f;
-            if (sweep.enabled && !rt::g_poseSweepEnabled) {
-                rt::g_poseSweepBaseYaw = rt::g_headYaw;
-                rt::g_poseSweepBasePitch = rt::g_headPitch;
-                rt::g_poseSweepBaseRoll = rt::g_headRoll;
-            }
             rt::g_poseSweepEnabled  = sweep.enabled;
             rt::g_poseSweepYawAmp   = sweep.yawAmpDeg   * DEG2RAD;
             rt::g_poseSweepPitchAmp = sweep.pitchAmpDeg * DEG2RAD;
             rt::g_poseSweepRollAmp  = sweep.rollAmpDeg  * DEG2RAD;
             rt::g_poseSweepFreq     = sweep.freqHz;
             rt::g_poseSweepStartT   = (float)GetTickCount64() * 0.001f;
-            mcp::WriteCommandAck("pose_sweep", true);
+            compatibilityFiles->Acknowledge("pose_sweep", true);
         }
 
-        mcp::ControllerPoseCommand ctrlCmd = mcp::CheckControllerPoseCommand();
-        if (ctrlCmd.valid) {
-            rt::ControllerState& ctrl = (ctrlCmd.hand == 0) ? rt::g_leftController : rt::g_rightController;
-            ctrl.posOffset.x = ctrlCmd.posX;
-            ctrl.posOffset.y = ctrlCmd.posY;
-            ctrl.posOffset.z = ctrlCmd.posZ;
-            ctrl.yawOffset = ctrlCmd.yaw;
-            ctrl.pitchOffset = ctrlCmd.pitch;
-            if (ctrlCmd.triggerSet) {
-                ctrl.triggerValue = ctrlCmd.trigger;
-                ctrl.triggerPressed = (ctrlCmd.trigger >= 0.5f);
-            }
-            if (ctrlCmd.buttonA >= 0) {
-                ctrl.primaryPressed = (ctrlCmd.buttonA != 0);
-            }
-            mcp::WriteCommandAck("controller_pose", true);
+        const auto pose = commands.controllerPose;
+        if (pose.valid) {
+            simxr::legacy::ControllerPoseEdit edit;
+            edit.hand = pose.hand == 0 ? simxr::legacy::ControllerHand::Left : simxr::legacy::ControllerHand::Right;
+            edit.position = {pose.posX, pose.posY, pose.posZ};
+            edit.yaw = pose.yaw;
+            edit.pitch = pose.pitch;
+            edit.duration = std::chrono::duration<double, std::milli>{pose.durationMs};
+            edit.receivedSeconds = rt::InputClockSeconds();
+            if (pose.triggerSet) edit.trigger = pose.trigger;
+            if (pose.buttonA >= 0) edit.primary = pose.buttonA != 0;
+            controllerFrame.pose = edit;
+            compatibilityFiles->Acknowledge("controller_pose", true);
+        }
+
+        const auto hold = commands.controllerHold;
+        if (hold.valid) {
+            // Legacy selectors outside [0,1] target no hand; negative means both.
+            if (hold.hand < 2) controllerFrame.hold = rt::DecodeControllerHold(hold);
+            compatibilityFiles->Acknowledge("controller_hold", true);
+        }
+
+        const auto wheel = commands.wheel;
+        if (wheel.valid) {
+            constexpr float radians = 0.01745329252f;
+            simxr::legacy::ControllerWheelSweep edit;
+            edit.enabled = wheel.enabled;
+            edit.hub = {wheel.hubX, wheel.hubY, wheel.hubZ};
+            edit.radius = wheel.radius;
+            edit.tilt = wheel.tiltDeg * radians;
+            edit.amplitude = wheel.amplitudeDeg * radians;
+            edit.frequencyHz = wheel.freqHz;
+            edit.grip = wheel.grip;
+            edit.spread = wheel.spreadDeg * radians;
+            edit.receivedSeconds = static_cast<float>(GetTickCount64()) * 0.001f;
+            controllerFrame.wheel = edit;
+            compatibilityFiles->Acknowledge("wheel_sweep", true);
         }
     }
 
-    timing.commandApplyMs = GetTickCount64() - commandApplyStart;
-    timing.Mark(4);
-    PollUiPointerCommand();
-    ApplyUiPointerButtons();
-    controlLock.unlock();
-    timing.Mark(5);
+    // Evaluation is atomic for action readers: keyboard -> file pose -> wheel
+    // -> held overrides. Shared pose history owns observable space velocities.
+    controllerFrame.head = {rt::g_headPos, rt::g_headYaw, rt::g_headPitch};
+    controllerFrame.wheelSeconds = static_cast<float>(GetTickCount64()) * 0.001f;
+    const auto controllers = controllerMotion->Update(controllerFrame);
+    if (controllers.animationToggle)
+        Logf("[SimXR] Auto motion %s", *controllers.animationToggle ? "ENABLED" : "DISABLED");
+    simxr::TrackingState tracking;
+    float effectiveYaw, effectivePitch, effectiveRoll;
+    rt::GetEffectiveHeadAngles(effectiveYaw, effectivePitch, effectiveRoll);
+    tracking.head.pose = {rt::QuatFromYawPitchRoll(effectiveYaw, effectivePitch, effectiveRoll), rt::g_headPos};
+    for (std::size_t hand = 0; hand < controllers.snapshot.hands.size(); ++hand)
+        tracking.controllers[hand].pose.pose = controllers.snapshot.hands[hand].worldPose;
+    simxr::ViewSettings settings;
+    ui::GetRenderResolution(settings.outerWidth, settings.outerHeight);
+    settings.ipd = rt::g_useCustomIpd ? rt::g_customIpd : rt::GetUiIpdMeters();
+    settings.outerFov = {rt::GetViewFov(0), rt::GetViewFov(1)};
+    core->PublishTracking(prediction.displayTime, tracking, settings, prediction.id);
 
-    // Pace on a high-resolution waitable timer. Plain Sleep() rounds up to the
-    // system timer interval â€” as much as 15.6ms when the host never raised it â€”
-    // which quietly turned this 90 Hz cap into a ~60 Hz one. The timer is exact
-    // to a fraction of a millisecond regardless of the global timer resolution,
-    // and a short yield loop closes the remainder.
-#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
-#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
-#endif
-    static HANDLE pacingTimer = CreateWaitableTimerExW(nullptr, nullptr,
-        CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
-    g_frameTimeline.WaitPace(timelineWait);
-    for (;;) {
-        LARGE_INTEGER now; QueryPerformanceCounter(&now);
-        const double remainingSec = (nextTick - (double)now.QuadPart) / (double)freq.QuadPart;
-        if (remainingSec <= 0.0) break;
-        if (pacingTimer && remainingSec > 0.0008) {
-            LARGE_INTEGER due;
-            due.QuadPart = -(LONGLONG)((remainingSec - 0.0005) * 1.0e7);   // relative, 100ns units
-            if (SetWaitableTimer(pacingTimer, &due, 0, nullptr, nullptr, FALSE)) {
-                WaitForSingleObject(pacingTimer, 20);
-                continue;
-            }
-        }
-        // Final stretch, or Windows before high-resolution timers: yield rather
-        // than risk oversleeping a whole timer interval.
-        Sleep(remainingSec > 0.002 ? 1 : 0);
-    }
-    const double pacedTick = nextTick;
-    nextTick += periodSec * (double)freq.QuadPart;
-    LARGE_INTEGER now; QueryPerformanceCounter(&now);
-    // After a stall, re-base instead of letting the app run uncapped while
-    // nextTick catches up one period per call.
-    bool pacingRebased = false;
-    if ((double)now.QuadPart - nextTick > periodSec * (double)freq.QuadPart) {
-        nextTick = (double)now.QuadPart;
-        pacingRebased = true;
-    }
-    timing.Mark(6);
-    // Exact integer conversion - the same math xrConvertWin32PerformanceCounterToTimeKHR
-    // performs, so predicted display times and converted times agree for one instant.
-    const XrTime nowTime = QpcToNs(now.QuadPart, freq.QuadPart);
-    s->shouldRender = XR_TRUE; s->predictedDisplayPeriod = periodNs; s->predictedDisplayTime = nowTime + periodNs;
-    g_frameTimeline.WaitExit(timelineWait, (uint64_t)pacedTick, (uint64_t)now.QuadPart,
-                             s->predictedDisplayTime, periodNs, pacingRebased);
+    s->predictedDisplayPeriod = prediction.displayPeriod.count();
+    s->predictedDisplayTime = prediction.displayTime.value.count();
+    s->shouldRender = rt::g_session.state == XR_SESSION_STATE_VISIBLE || rt::g_session.state == XR_SESSION_STATE_FOCUSED;
     return XR_SUCCESS;
 }
 static XrResult XRAPI_PTR xrBeginFrame_runtime(XrSession session, const XrFrameBeginInfo* info) {
-    if (session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
+    if (simxr::windows::D3D12Preview::IsPresentationThread()) return XR_ERROR_CALL_ORDER_INVALID;
+    if (session == XR_NULL_HANDLE) return XR_ERROR_HANDLE_INVALID;
+    auto core = rt::RetainSession(session);
+    if (!core) return XR_ERROR_HANDLE_INVALID;
     if (info && info->type != XR_TYPE_FRAME_BEGIN_INFO) return XR_ERROR_VALIDATION_FAILURE;
-    XrResult result;
-    {
-        std::lock_guard<std::mutex> lock(rt::g_session.frameMutex);
-        if (!rt::g_session.running) return XR_ERROR_SESSION_NOT_RUNNING;
-        result = rt::g_session.frameLifecycle.Begin();
-    }
-    if (XR_SUCCEEDED(result)) {
-        g_frameTimeline.Begin();
-        GpuTimingBegin();
-        rt::g_session.frameCondition.notify_all();
-    }
-    return result;
+    return core->BeginFrame();
 }
 
 static void previewUiThreadMain(UINT initialClientW, UINT initialClientH) {
@@ -5699,7 +3853,7 @@ static void previewUiThreadMain(UINT initialClientW, UINT initialClientH) {
         return;
     }
 
-    ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
     SetForegroundWindow(hwnd);
     SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
@@ -5757,7 +3911,7 @@ static void ensurePreviewWindow(rt::Session& s, UINT initialClientW, UINT initia
                 SetWindowLongPtrW(s.hwnd, GWLP_WNDPROC, (LONG_PTR)rt::WndProc);
                 Log("[SimXR] Updated window WndProc to new DLL address");
                 ui::ApplyDarkTheme(s.hwnd);
-                ShowWindow(s.hwnd, SW_SHOWNOACTIVATE);
+                ShowWindow(s.hwnd, SW_SHOW);
                 UpdateWindow(s.hwnd);
             }
             // Seed clientWidth/Height from the actual current client area
@@ -5794,362 +3948,6 @@ static void ensurePreviewWindow(rt::Session& s, UINT initialClientW, UINT initia
     }
 }
 
-// The D3D12 preview's scaling pass. Draws one eye into a viewport, taking its
-// submitted subimage rect through uvOffset/uvScale.
-//
-// Four bilinear taps on a half-texel grid average the 4x4 source footprint that a
-// 2-4x downscale to the window covers. A single tap only reaches 2x2 of that and
-// shimmers on any high-frequency detail; anything wider costs more than the whole
-// pass is worth.
-static const char* kPreviewBlitHLSL = R"HLSL(
-cbuffer Blit : register(b0) {
-    float2 uvOffset;
-    float2 uvScale;
-    float2 uvTap;
-    float  srgbEncode;
-    float  pad;
-};
-Texture2D<float4> Src : register(t0);
-SamplerState Smp : register(s0);
-
-struct VSOut { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };
-
-VSOut VSMain(uint id : SV_VertexID) {
-    VSOut o;
-    float2 p = float2((id << 1) & 2, id & 2);
-    o.uv = uvOffset + p * uvScale;
-    o.pos = float4(p.x * 2.0 - 1.0, 1.0 - p.y * 2.0, 0.0, 1.0);
-    return o;
-}
-
-float4 PSMain(VSOut i) : SV_Target {
-    float3 c = Src.Sample(Smp, i.uv + float2(-uvTap.x, -uvTap.y)).rgb
-             + Src.Sample(Smp, i.uv + float2( uvTap.x, -uvTap.y)).rgb
-             + Src.Sample(Smp, i.uv + float2(-uvTap.x,  uvTap.y)).rgb
-             + Src.Sample(Smp, i.uv + float2( uvTap.x,  uvTap.y)).rgb;
-    c *= 0.25;
-    // Float swapchains hold linear light, so they need the transfer curve the 8-bit
-    // back buffer is displayed through. 8-bit sources are already encoded and are
-    // filtered in that encoding, which is what the GDI stretch this replaced did.
-    if (srgbEncode > 0.5) {
-        c = saturate(c);
-        c = (c <= 0.0031308) ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055;
-    }
-    return float4(c, 1.0);
-}
-)HLSL";
-
-// Root signature, PSO and descriptor heaps for the scaling pass. Size-independent,
-// so this survives the RT being rebuilt on a window resize.
-// Quad layers used to be composited on the CPU: the whole layer texture was read back and
-// every destination pixel inverse-mapped through the quad's plane by hand. That cost scaled
-// with the mirror window's area - 11ms a frame at 2340x1252 with BetterVR's full-resolution
-// HUD - and it was the last real overhead the runtime imposed on the app.
-//
-// The rasteriser does the same job for free. The corners arrive already in the eye's view
-// space, so the VS only has to apply the eye's asymmetric projection; emitting a real w
-// (rather than screen-space corners) is what makes the interpolation perspective-correct,
-// and lets the clipper handle a quad that crosses behind the eye - the case the CPU version
-// had to bail out of by scanning the whole eye rect.
-//
-// Blending happens in linear light because the RT is bound through an sRGB RTV here: the
-// hardware decodes the destination, blends, and re-encodes. That is the property the CPU
-// compositor existed to provide, and the same one the D3D11 path gets from its own sRGB RTV.
-static const char* kPreviewQuadHLSL = R"HLSL(
-cbuffer Quad : register(b0) {
-    float4 c0;        // view-space corner 0 (top-left),     w unused
-    float4 c1;        // view-space corner 1 (top-right)
-    float4 c2;        // view-space corner 2 (bottom-right)
-    float4 c3;        // view-space corner 3 (bottom-left)
-    float4 tans;      // tanLeft, tanRight, tanUp, tanDown
-    float4 uvRect;    // u0, v0, u1, v1
-    float4 opts;      // x: 1 = opaque, ignore the source alpha
-};
-Texture2D<float4> Src : register(t0);
-SamplerState Smp : register(s0);
-
-struct VSOut { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };
-
-VSOut VSMain(uint id : SV_VertexID) {
-    // Two triangles over corners 0,1,2,3 wound 0-1-2, 0-2-3.
-    const uint idx[6] = { 0, 1, 2, 0, 2, 3 };
-    uint c = idx[id];
-    float3 v = (c == 0) ? c0.xyz : (c == 1) ? c1.xyz : (c == 2) ? c2.xyz : c3.xyz;
-    float2 uv01 = (c == 0) ? float2(0, 0) : (c == 1) ? float2(1, 0)
-                : (c == 2) ? float2(1, 1) : float2(0, 1);
-
-    // Asymmetric perspective at a near plane of 1, so the tangents are the plane extents.
-    float L = tans.x, R = tans.y, U = tans.z, D = tans.w;
-    VSOut o;
-    o.pos.x = (2.0 * v.x + (R + L) * v.z) / (R - L);
-    o.pos.y = (2.0 * v.y + (U + D) * v.z) / (U - D);
-    // Depth is unused (no depth buffer); 0 sits on the near plane and always survives the
-    // clip test, while w = -z lets the clipper cut anything at or behind the eye.
-    o.pos.z = 0.0;
-    o.pos.w = -v.z;
-    o.uv = lerp(uvRect.xy, uvRect.zw, uv01);
-    return o;
-}
-
-float4 PSMain(VSOut i) : SV_Target {
-    float4 c = Src.Sample(Smp, i.uv);
-    // Premultiplied and straight alpha differ only in the blend state's SrcBlend, so the
-    // sample goes through untouched either way; opaque is the one that needs saying here.
-    return (opts.x > 0.5) ? float4(c.rgb, 1.0) : c;
-}
-)HLSL";
-
-// SRV format for composition. An sRGB declaration selects a decoding view; all other
-// color formats are sampled as linear, as required by OpenXR's composition color rules.
-static DXGI_FORMAT PreviewLinearSrvFormat(DXGI_FORMAT resourceFormat,
-                                          DXGI_FORMAT declaredFormat) {
-    switch (resourceFormat) {
-        case DXGI_FORMAT_R8G8B8A8_TYPELESS:
-            return declaredFormat == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
-                 ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM;
-        case DXGI_FORMAT_B8G8R8A8_TYPELESS:
-            return declaredFormat == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB
-                 ? DXGI_FORMAT_B8G8R8A8_UNORM_SRGB : DXGI_FORMAT_B8G8R8A8_UNORM;
-        case DXGI_FORMAT_R16G16B16A16_TYPELESS:   return DXGI_FORMAT_R16G16B16A16_FLOAT;
-        case DXGI_FORMAT_R32G32B32A32_TYPELESS:   return DXGI_FORMAT_R32G32B32A32_FLOAT;
-        case DXGI_FORMAT_R10G10B10A2_TYPELESS:    return DXGI_FORMAT_R10G10B10A2_UNORM;
-        default:                                  return resourceFormat;
-    }
-}
-
-static bool ensurePreviewQuadPipeline(rt::Session& s) {
-    if (s.previewQuadRootSig && s.previewQuadPSO[0]) return true;
-    if (!s.d3d12Device) return false;
-
-    D3D12_DESCRIPTOR_RANGE srvRange = {};
-    srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    srvRange.NumDescriptors = 1;
-    srvRange.BaseShaderRegister = 0;
-    srvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
-
-    D3D12_ROOT_PARAMETER params[2] = {};
-    params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-    params[0].DescriptorTable.NumDescriptorRanges = 1;
-    params[0].DescriptorTable.pDescriptorRanges = &srvRange;
-    params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-    params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    params[1].Constants.ShaderRegister = 0;
-    params[1].Constants.Num32BitValues = rt::kQuadConstantCount;
-    params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-
-    D3D12_STATIC_SAMPLER_DESC sampler = {};
-    sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
-    sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-    sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-    sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-    sampler.MaxLOD = D3D12_FLOAT32_MAX;
-    sampler.ShaderRegister = 0;
-    sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-
-    D3D12_ROOT_SIGNATURE_DESC rsDesc = {};
-    rsDesc.NumParameters = 2;
-    rsDesc.pParameters = params;
-    rsDesc.NumStaticSamplers = 1;
-    rsDesc.pStaticSamplers = &sampler;
-    rsDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
-
-    ComPtr<ID3DBlob> rsBlob, rsError;
-    HRESULT hr = D3D12SerializeRootSignature(&rsDesc, D3D_ROOT_SIGNATURE_VERSION_1,
-                                             rsBlob.GetAddressOf(), rsError.GetAddressOf());
-    if (FAILED(hr)) {
-        Logf("[SimXR] DX12 quad: SerializeRootSignature failed 0x%08X (%s)", (unsigned)hr,
-             rsError ? (const char*)rsError->GetBufferPointer() : "");
-        return false;
-    }
-    hr = s.d3d12Device->CreateRootSignature(0, rsBlob->GetBufferPointer(), rsBlob->GetBufferSize(),
-                                            IID_PPV_ARGS(s.previewQuadRootSig.GetAddressOf()));
-    if (FAILED(hr)) {
-        Logf("[SimXR] DX12 quad: CreateRootSignature failed 0x%08X", (unsigned)hr);
-        return false;
-    }
-
-    ComPtr<ID3DBlob> vs, ps, err;
-    const UINT flags = D3DCOMPILE_OPTIMIZATION_LEVEL3;
-    hr = D3DCompile(kPreviewQuadHLSL, strlen(kPreviewQuadHLSL), "PreviewQuad", nullptr, nullptr,
-                    "VSMain", "vs_5_0", flags, 0, vs.GetAddressOf(), err.GetAddressOf());
-    if (FAILED(hr)) {
-        Logf("[SimXR] DX12 quad: VS compile failed 0x%08X (%s)", (unsigned)hr,
-             err ? (const char*)err->GetBufferPointer() : "");
-        return false;
-    }
-    err.Reset();
-    hr = D3DCompile(kPreviewQuadHLSL, strlen(kPreviewQuadHLSL), "PreviewQuad", nullptr, nullptr,
-                    "PSMain", "ps_5_0", flags, 0, ps.GetAddressOf(), err.GetAddressOf());
-    if (FAILED(hr)) {
-        Logf("[SimXR] DX12 quad: PS compile failed 0x%08X (%s)", (unsigned)hr,
-             err ? (const char*)err->GetBufferPointer() : "");
-        return false;
-    }
-
-    // One PSO per blend mode, indexed by rt::LayerBlend.
-    for (int mode = 0; mode < 3; ++mode) {
-        D3D12_GRAPHICS_PIPELINE_STATE_DESC pso = {};
-        pso.pRootSignature = s.previewQuadRootSig.Get();
-        pso.VS = { vs->GetBufferPointer(), vs->GetBufferSize() };
-        pso.PS = { ps->GetBufferPointer(), ps->GetBufferSize() };
-        D3D12_RENDER_TARGET_BLEND_DESC& rtb = pso.BlendState.RenderTarget[0];
-        rtb.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
-        if (mode != (int)rt::LayerBlend::Opaque) {
-            rtb.BlendEnable = TRUE;
-            rtb.SrcBlend = (mode == (int)rt::LayerBlend::Premultiplied)
-                         ? D3D12_BLEND_ONE : D3D12_BLEND_SRC_ALPHA;
-            rtb.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
-            rtb.BlendOp = D3D12_BLEND_OP_ADD;
-            rtb.SrcBlendAlpha = D3D12_BLEND_ONE;
-            rtb.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
-            rtb.BlendOpAlpha = D3D12_BLEND_OP_ADD;
-        }
-        pso.SampleMask = UINT_MAX;
-        pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-        pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
-        pso.RasterizerState.DepthClipEnable = TRUE;
-        pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-        pso.NumRenderTargets = 1;
-        // All composition targets the sRGB view, so the blend runs in linear light.
-        pso.RTVFormats[0] = rt::kPreviewRTFormatSrgb;
-        pso.SampleDesc.Count = 1;
-        hr = s.d3d12Device->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(s.previewQuadPSO[mode].GetAddressOf()));
-        if (FAILED(hr)) {
-            Logf("[SimXR] DX12 quad: CreateGraphicsPipelineState(%d) failed 0x%08X", mode, (unsigned)hr);
-            return false;
-        }
-    }
-
-    Log("[SimXR] DX12 quad: GPU compositing pipeline created");
-    return true;
-}
-
-static bool ensurePreviewBlitPipeline(rt::Session& s) {
-    if (s.previewPSO[0] && s.previewPSO[1] && s.previewPSO[2] &&
-        s.previewRootSig && s.previewSrvHeap) return true;
-    if (!s.d3d12Device) return false;
-
-    D3D12_DESCRIPTOR_RANGE srvRange = {};
-    srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    srvRange.NumDescriptors = 1;
-    srvRange.BaseShaderRegister = 0;
-    srvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
-
-    D3D12_ROOT_PARAMETER params[2] = {};
-    params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-    params[0].DescriptorTable.NumDescriptorRanges = 1;
-    params[0].DescriptorTable.pDescriptorRanges = &srvRange;
-    params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-    params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    params[1].Constants.ShaderRegister = 0;
-    params[1].Constants.Num32BitValues = 8;
-    params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-
-    D3D12_STATIC_SAMPLER_DESC sampler = {};
-    sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
-    sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-    sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-    sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-    sampler.MaxLOD = D3D12_FLOAT32_MAX;
-    sampler.ShaderRegister = 0;
-    sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-
-    D3D12_ROOT_SIGNATURE_DESC rsDesc = {};
-    rsDesc.NumParameters = 2;
-    rsDesc.pParameters = params;
-    rsDesc.NumStaticSamplers = 1;
-    rsDesc.pStaticSamplers = &sampler;
-    rsDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
-
-    ComPtr<ID3DBlob> rsBlob, rsError;
-    HRESULT hr = D3D12SerializeRootSignature(&rsDesc, D3D_ROOT_SIGNATURE_VERSION_1,
-                                             rsBlob.GetAddressOf(), rsError.GetAddressOf());
-    if (FAILED(hr)) {
-        Logf("[SimXR] DX12 preview: SerializeRootSignature failed 0x%08X (%s)", (unsigned)hr,
-             rsError ? (const char*)rsError->GetBufferPointer() : "");
-        return false;
-    }
-    hr = s.d3d12Device->CreateRootSignature(0, rsBlob->GetBufferPointer(), rsBlob->GetBufferSize(),
-                                            IID_PPV_ARGS(s.previewRootSig.GetAddressOf()));
-    if (FAILED(hr)) {
-        Logf("[SimXR] DX12 preview: CreateRootSignature failed 0x%08X", (unsigned)hr);
-        return false;
-    }
-
-    ComPtr<ID3DBlob> vs, ps, err;
-    const UINT flags = D3DCOMPILE_OPTIMIZATION_LEVEL3;
-    hr = D3DCompile(kPreviewBlitHLSL, strlen(kPreviewBlitHLSL), "PreviewBlit", nullptr, nullptr,
-                    "VSMain", "vs_5_0", flags, 0, vs.GetAddressOf(), err.GetAddressOf());
-    if (FAILED(hr)) {
-        Logf("[SimXR] DX12 preview: VS compile failed 0x%08X (%s)", (unsigned)hr,
-             err ? (const char*)err->GetBufferPointer() : "");
-        return false;
-    }
-    err.Reset();
-    hr = D3DCompile(kPreviewBlitHLSL, strlen(kPreviewBlitHLSL), "PreviewBlit", nullptr, nullptr,
-                    "PSMain", "ps_5_0", flags, 0, ps.GetAddressOf(), err.GetAddressOf());
-    if (FAILED(hr)) {
-        Logf("[SimXR] DX12 preview: PS compile failed 0x%08X (%s)", (unsigned)hr,
-             err ? (const char*)err->GetBufferPointer() : "");
-        return false;
-    }
-
-    for (int mode = 0; mode < 3; ++mode) {
-        D3D12_GRAPHICS_PIPELINE_STATE_DESC pso = {};
-        pso.pRootSignature = s.previewRootSig.Get();
-        pso.VS = { vs->GetBufferPointer(), vs->GetBufferSize() };
-        pso.PS = { ps->GetBufferPointer(), ps->GetBufferSize() };
-        D3D12_RENDER_TARGET_BLEND_DESC& target = pso.BlendState.RenderTarget[0];
-        target.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
-        if (mode != (int)rt::LayerBlend::Opaque) {
-            target.BlendEnable = TRUE;
-            target.SrcBlend = (mode == (int)rt::LayerBlend::Premultiplied)
-                            ? D3D12_BLEND_ONE : D3D12_BLEND_SRC_ALPHA;
-            target.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
-            target.BlendOp = D3D12_BLEND_OP_ADD;
-            target.SrcBlendAlpha = D3D12_BLEND_ONE;
-            target.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
-            target.BlendOpAlpha = D3D12_BLEND_OP_ADD;
-        }
-        pso.SampleMask = UINT_MAX;
-        pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-        pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
-        pso.RasterizerState.DepthClipEnable = TRUE;
-        pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-        pso.NumRenderTargets = 1;
-        pso.RTVFormats[0] = rt::kPreviewRTFormatSrgb;
-        pso.SampleDesc.Count = 1;
-        hr = s.d3d12Device->CreateGraphicsPipelineState(
-            &pso, IID_PPV_ARGS(s.previewPSO[mode].GetAddressOf()));
-        if (FAILED(hr)) {
-            Logf("[SimXR] DX12 preview: CreateGraphicsPipelineState(%d) failed 0x%08X",
-                 mode, (unsigned)hr);
-            return false;
-        }
-    }
-
-    // See kPreviewSrvSlots for how the ring is sized against the frames in flight.
-    D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
-    heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-    heapDesc.NumDescriptors = rt::kPreviewSrvSlots;
-    heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-    hr = s.d3d12Device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(s.previewSrvHeap.GetAddressOf()));
-    if (FAILED(hr)) {
-        Logf("[SimXR] DX12 preview: CreateDescriptorHeap(SRV) failed 0x%08X", (unsigned)hr);
-        return false;
-    }
-    s.previewSrvStride = s.d3d12Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-    s.previewSrvSlot = 0;
-
-    Log("[SimXR] DX12 preview: scaling pipeline created");
-    return true;
-}
-
-// Make sure the preview backing store (D3D11 swapchain or D3D12 offscreen RT)
-// is sized to `width Ã— height` and uses `format`. For D3D11 this means
-// ResizeBuffers (or recreate) so the backbuffer matches the window client area;
-// for D3D12 it means resizing the offscreen RT/readback to the natural canvas
-// size chosen by the caller. The window itself is NOT touched here.
 static void ensurePreviewSized(rt::Session& s, UINT width, UINT height, DXGI_FORMAT format) {
     if (width == 0) width = 1;
     if (height == 0) height = 1;
@@ -6158,31 +3956,47 @@ static void ensurePreviewSized(rt::Session& s, UINT width, UINT height, DXGI_FOR
     ensurePreviewWindow(s, width, height);
     if (!s.hwnd) return;
 
-    // After a DLL reload the Session is fresh but a previous swapchain may
-    // still be cached against the persistent HWND â€” adopt it so we don't try
-    // to create a second swapchain for the same window (which DXGI forbids).
-    if (!s.usesD3D12 && !s.previewSwapchain) {
-        std::lock_guard<std::mutex> lock(rt::g_windowMutex);
-        if (rt::g_persistentSwapchain) {
-            s.previewSwapchain = rt::g_persistentSwapchain;
-            DXGI_SWAP_CHAIN_DESC1 d{};
-            if (SUCCEEDED(s.previewSwapchain->GetDesc1(&d))) {
-                s.previewWidth = d.Width;
-                s.previewHeight = d.Height;
-                s.previewFormat = d.Format;
-            } else {
-                s.previewWidth = rt::g_persistentWidth;
-                s.previewHeight = rt::g_persistentHeight;
-            }
-        }
-    }
+	if (!s.usesD3D12 && s.d3d11Device)
+	{
+		if (!s.previewSwapchain)
+		{
+			std::lock_guard lock(rt::g_windowMutex);
+			s.previewSwapchain = rt::g_persistentSwapchain;
+		}
+		if (s.previewSwapchain)
+		{
+			ComPtr<ID3D11Device> swapchainDevice;
+			s.previewSwapchain->GetDevice(IID_PPV_ARGS(swapchainDevice.GetAddressOf()));
+			if (swapchainDevice.Get() != s.d3d11Device.Get())
+			{
+				auto retiredSwapchain = std::move(s.previewSwapchain);
+				ComPtr<IDXGISwapChain1> retiredPersistent;
+				{
+					std::lock_guard lock(rt::g_windowMutex);
+					if (rt::g_persistentSwapchain.Get() == retiredSwapchain.Get())
+						retiredPersistent.Swap(rt::g_persistentSwapchain);
+				}
+			}
+			else
+			{
+				DXGI_SWAP_CHAIN_DESC1 description{};
+				if (SUCCEEDED(s.previewSwapchain->GetDesc1(&description)))
+				{
+					s.previewWidth = description.Width;
+					s.previewHeight = description.Height;
+					s.previewFormat = description.Format;
+				}
+			}
+		}
+	}
 
     if (!s.usesD3D12) {
         if (s.previewSwapchain && s.previewWidth == width && s.previewHeight == height && s.previewFormat == format) return;
     } else {
         // The D3D12 RT is kPreviewRTFormat whatever the app submits - the scaling pass
         // converts - so only a size change can force a rebuild.
-        if (s.previewRT12 && s.previewWidth == width && s.previewHeight == height) return;
+        if (s.preview12 && s.preview12->Target() && s.previewPipelines12 &&
+            s.previewWidth == width && s.previewHeight == height) return;
     }
 
     if (!s.usesD3D12) {
@@ -6239,169 +4053,31 @@ static void ensurePreviewSized(rt::Session& s, UINT width, UINT height, DXGI_FOR
         }
         return;
     } else {
-        // D3D12 path: rebuild the offscreen RT/readback at the requested size
-        rt::ResetD3D12PreviewSurfaces(s);
-        s.previewWidth = width;
-        s.previewHeight = height;
-        s.previewFormat = rt::kPreviewRTFormat;
-        // DX12 preview: GDI-based rendering to avoid DXGI Present hook conflicts.
-        // Steam overlay (gameoverlayrenderer64) and UEVR both hook IDXGISwapChain::Present,
-        // creating infinite recursion â†’ EXCEPTION_STACK_OVERFLOW. Instead, we scale the
-        // eyes into an offscreen RT the size of the window, read that back, and copy it
-        // into the window's DIB section.
-        if (!ensurePreviewBlitPipeline(s)) return;
-        if (!ensurePreviewQuadPipeline(s)) return;
-        if (!s.previewQueue12) {
-            D3D12_COMMAND_QUEUE_DESC qd = {};
-            qd.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
-            qd.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
-            if (FAILED(s.d3d12Device->CreateCommandQueue(&qd, IID_PPV_ARGS(s.previewQueue12.GetAddressOf())))) {
-                Log("[SimXR] DX12 preview: CreateCommandQueue failed");
-                return;
+        try {
+            if (!s.preview12) {
+                ComPtr<IDXGISwapChain1> previousSwapchain;
+                { std::lock_guard lock(rt::g_windowMutex); previousSwapchain.Swap(rt::g_persistentSwapchain); }
+                previousSwapchain.Reset();
+                s.preview12 = std::make_shared<simxr::windows::D3D12Preview>(s.d3d12Device.Get(), s.hwnd);
             }
-            s.d3d12Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(s.crossQueueFence.GetAddressOf()));
-            s.crossQueueFenceValue = 0;
-            Log("[SimXR] DX12 preview: Created command queue + cross-queue fence");
+            // Resize is deferred while an admitted slot still owns native work or
+            // an explicit CPU readback. No frame-path fence wait is introduced.
+            if (!s.preview12->Resize(width, height)) return;
+			if (!s.previewPipelines12)
+				s.previewPipelines12 =
+					std::make_shared<const simxr::windows::D3D12PreviewPipelines>(s.d3d12Device.Get());
+            s.previewWidth = width;
+            s.previewHeight = height;
+            s.previewFormat = rt::kPreviewRTFormat;
+        } catch (const std::exception& error) {
+            Logf("[SimXR] DX12 GPU preview initialization failed: %s", error.what());
         }
-
-        // Create offscreen render target
-        D3D12_RESOURCE_DESC rtDesc = {};
-        rtDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-        rtDesc.Width = width;
-        rtDesc.Height = height;
-        rtDesc.DepthOrArraySize = 1;
-        rtDesc.MipLevels = 1;
-        rtDesc.Format = rt::kPreviewRTFormatTypeless;
-        rtDesc.SampleDesc.Count = 1;
-        rtDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-        rtDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
-        D3D12_CLEAR_VALUE rtClear = {};
-        rtClear.Format = rt::kPreviewRTFormat;
-        rtClear.Color[3] = 1.0f;
-        D3D12_HEAP_PROPERTIES defaultHeap = {};
-        defaultHeap.Type = D3D12_HEAP_TYPE_DEFAULT;
-        HRESULT hr = s.d3d12Device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE,
-            &rtDesc, D3D12_RESOURCE_STATE_COMMON, &rtClear, IID_PPV_ARGS(s.previewRT12.GetAddressOf()));
-        if (FAILED(hr)) {
-            Logf("[SimXR] DX12 preview: CreateCommittedResource (RT) failed 0x%08X", (unsigned)hr);
-            return;
-        }
-
-        D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
-        rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-        rtvHeapDesc.NumDescriptors = 2;
-        hr = s.d3d12Device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(s.previewRtvHeap.GetAddressOf()));
-        if (FAILED(hr)) {
-            Logf("[SimXR] DX12 preview: CreateDescriptorHeap(RTV) failed 0x%08X", (unsigned)hr);
-            s.previewRT12.Reset();
-            return;
-        }
-        s.previewRtvStride = s.d3d12Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-        // [0] plain view for clearing/copy descriptions. [1] sRGB view for every layer,
-        // so both opaque writes and alpha composition leave consistently encoded bytes.
-        D3D12_CPU_DESCRIPTOR_HANDLE rtvBase = s.previewRtvHeap->GetCPUDescriptorHandleForHeapStart();
-        D3D12_RENDER_TARGET_VIEW_DESC rtvDesc = {};
-        rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
-        rtvDesc.Format = rt::kPreviewRTFormat;
-        s.d3d12Device->CreateRenderTargetView(s.previewRT12.Get(), &rtvDesc, rtvBase);
-        rtvDesc.Format = rt::kPreviewRTFormatSrgb;
-        D3D12_CPU_DESCRIPTOR_HANDLE rtvSrgb = rtvBase;
-        rtvSrgb.ptr += s.previewRtvStride;
-        s.d3d12Device->CreateRenderTargetView(s.previewRT12.Get(), &rtvDesc, rtvSrgb);
-
-        // One readback buffer per frame in flight (aligned row pitch), so a finished
-        // frame can be mapped while the next one is still being written by the GPU.
-        UINT rowPitch = ((width * 4 + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1)
-                        / D3D12_TEXTURE_DATA_PITCH_ALIGNMENT) * D3D12_TEXTURE_DATA_PITCH_ALIGNMENT;
-        s.previewReadbackPitch = rowPitch;
-        D3D12_RESOURCE_DESC readbackDesc = {};
-        readbackDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-        readbackDesc.Width = (UINT64)rowPitch * height;
-        readbackDesc.Height = 1;
-        readbackDesc.DepthOrArraySize = 1;
-        readbackDesc.MipLevels = 1;
-        readbackDesc.Format = DXGI_FORMAT_UNKNOWN;
-        readbackDesc.SampleDesc.Count = 1;
-        readbackDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-        D3D12_HEAP_PROPERTIES readbackHeap = {};
-        readbackHeap.Type = D3D12_HEAP_TYPE_READBACK;
-        for (UINT i = 0; i < rt::kPreviewFrames; ++i) {
-            hr = s.d3d12Device->CreateCommittedResource(&readbackHeap, D3D12_HEAP_FLAG_NONE,
-                &readbackDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-                IID_PPV_ARGS(s.previewFrames[i].readback.ReleaseAndGetAddressOf()));
-            if (FAILED(hr)) {
-                Logf("[SimXR] DX12 preview: CreateCommittedResource (readback %u) failed 0x%08X", i, (unsigned)hr);
-                s.previewRT12.Reset();
-                return;
-            }
-        }
-
-        // Command list, per-slot allocators and the fence are size-independent, so a
-        // resize keeps them and the fence counter carries on where it was.
-        for (UINT i = 0; i < rt::kPreviewFrames; ++i) {
-            if (!s.previewFrames[i].alloc) {
-                s.d3d12Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
-                    IID_PPV_ARGS(s.previewFrames[i].alloc.GetAddressOf()));
-            }
-        }
-        if (!s.previewCmdList && s.previewFrames[0].alloc) {
-            s.d3d12Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
-                s.previewFrames[0].alloc.Get(), nullptr, IID_PPV_ARGS(s.previewCmdList.GetAddressOf()));
-            s.previewCmdList->Close();
-        }
-        if (!s.previewFence) {
-            s.d3d12Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(s.previewFence.GetAddressOf()));
-            s.previewFenceValue = 0;
-            s.previewFenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-        }
-        Logf("[SimXR] DX12 preview: GPU-scaled readback initialized (%ux%u, pitch=%u, %u frames in flight)",
-             width, height, rowPitch, rt::kPreviewFrames);
-        return;
     }
-}
-
-static bool EnsureGLPreviewDevice(rt::Session& s) {
-    if (s.d3d11Device) return true;
-    // Create D3D11 device for preview window
-    D3D_FEATURE_LEVEL featureLevel;
-    UINT flags = 0;
-    #ifdef _DEBUG
-    flags |= D3D11_CREATE_DEVICE_DEBUG;
-    #endif
-    HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags,
-                                   nullptr, 0, D3D11_SDK_VERSION,
-                                   &s.d3d11Device, &featureLevel, &s.d3d11Context);
-    if (FAILED(hr)) {
-        Logf("[SimXR] Failed to create D3D11 device for GL preview: 0x%08X", hr);
-        return false;
-    }
-    Log("[SimXR] Created D3D11 device for OpenGL preview");
-
-    // Force shader recompilation by resetting blit resources
-    s.blitVS.Reset();
-    s.blitPS.Reset();
-    s.quadVS.Reset();
-    s.quadCB.Reset();
-    s.samplerState.Reset();
-    s.noCullRS.Reset();
-    s.anaglyphRedBS.Reset();
-    s.anaglyphCyanBS.Reset();
-    s.layerBlendStates.clear();
-    // Cached staging textures belong to the old device too.
-    for (auto& entry : s.blitTempCache) entry = rt::Session::TempTexEntry{};
-    for (auto& entry : s.quadTempCache) entry = rt::Session::TempTexEntry{};
-    for (int eye = 0; eye < 2; ++eye) {
-        s.glEyeTex[eye].Reset();
-        s.glEyeSrv[eye].Reset();
-    }
-    s.glEyeTexW = s.glEyeTexH = 0;
-    Log("[SimXR] Reset blit resources for fresh shader compilation");
-    return true;
 }
 
 // Bring the preview window (and its backing store) up with no projection layer
 // to take a size from. Every other route into ensurePreviewSized hangs off
-// presentProjection, so an app showing only 2D - BetterVR sits on quad-only
+// RenderProjection, so an app showing only 2D - BetterVR sits on quad-only
 // frames for its whole boot and title sequence - would never get a window at
 // all. Sizes from the last projection frame if there was one, otherwise from
 // the resolution xrEnumerateViewConfigurationViews recommends.
@@ -6428,16 +4104,17 @@ static void ensurePreviewWithoutProjection(rt::Session& s) {
     // Too small to be a size anyone chose: a file left behind by the menu-bar shrink above.
     constexpr int kMinRestoredClient = 240;
     if (windowW < kMinRestoredClient || windowH < kMinRestoredClient) {
-        uint32_t panelW = 0, panelH = 0;
-        ui::GetHeadsetPanelResolution(panelW, panelH);
-        ui::CalculateWindowSize((int)panelW, (int)panelH, windowW, windowH);
+        uint32_t eyeW = 0, eyeH = 0;
+        ui::GetDisplayEyeSize(eyeW, eyeH);
+        ui::CalculateWindowSize((int)eyeW, (int)eyeH, windowW, windowH);
     }
     rt::ClampToWorkArea(windowW, windowH);
     ensurePreviewWindow(s, (UINT)windowW, (UINT)windowH);
     if (!s.hwnd) return;
 
-    // Quad-only OpenGL menus need a compositing device before any projection exists.
-    if (s.usesOpenGL && !EnsureGLPreviewDevice(s)) return;
+    // OpenGL sessions create their D3D11 preview device lazily inside
+    // RenderProjection; until that happens there is nothing to build a
+    // swapchain on, so leave the backing store to the first 3D frame.
     if (s.usesD3D12 ? !s.d3d12Device : !s.d3d11Device) return;
 
     int targetW = srcW, targetH = srcH;
@@ -6450,941 +4127,290 @@ static void ensurePreviewWithoutProjection(rt::Session& s) {
     ensurePreviewSized(s, (UINT)targetW, (UINT)targetH, format);
 }
 
-// OpenGL imageRect offsets are bottom-left, per XR_KHR_opengl_enable. Always
-// size readback from the full texture on the glGetTexImage fallback, then crop;
-// reading a whole texture into a sub-rect-sized allocation corrupts host memory.
-// https://registry.khronos.org/OpenXR/specs/1.0/man/html/XrSwapchainImageOpenGLKHR.html
-static bool ReadGLSubImage(rt::Swapchain& chain, GLuint texture, uint32_t slice,
-                           const rt::SubImageRect& rect, std::vector<uint8_t>& out) {
-    if (slice >= (std::max)(1u,chain.arraySize)) return false;
-    const bool array=chain.arraySize>1;
-    const GLenum target=array ? GL_TEXTURE_2D_ARRAY:GL_TEXTURE_2D;
-    GLint oldTex=0,oldPack=4,oldRow=0,oldRows=0,oldPixels=0,oldPbo=0,oldImages=0,oldImageHeight=0;
-    glGetIntegerv(array ? 0x8C1D:GL_TEXTURE_BINDING_2D,&oldTex);
-    glGetIntegerv(GL_PACK_ALIGNMENT,&oldPack); glGetIntegerv(0x0D02,&oldRow);
-    glGetIntegerv(0x0D03,&oldRows); glGetIntegerv(0x0D04,&oldPixels);
-    glGetIntegerv(0x806B,&oldImages); glGetIntegerv(0x806C,&oldImageHeight);
-    using BindBuffer=void(APIENTRY*)(GLenum,GLuint);
-    const auto bindBuffer=(BindBuffer)wglGetProcAddress("glBindBuffer");
-    if (bindBuffer) { glGetIntegerv(0x88ED,&oldPbo); bindBuffer(0x88EB,0); }
-    glPixelStorei(GL_PACK_ALIGNMENT,1); glPixelStorei(0x0D02,0);
-    glPixelStorei(0x0D03,0); glPixelStorei(0x0D04,0);
-    glPixelStorei(0x806B,0); glPixelStorei(0x806C,0);
-    out.resize((size_t)rect.w*rect.h*4);
-    bool copied=false;
-    if (EnsureGLFramebufferFuncs()) {
-        GLint oldDraw=0,oldRead=0;
-        glGetIntegerv(0x8CA6,&oldDraw); glGetIntegerv(0x8CAA,&oldRead);
-        GLuint fbo=0; g_glGenFramebuffers(1,&fbo); g_glBindFramebuffer(GL_FRAMEBUFFER,fbo);
-        if (array) {
-            using AttachLayer=void(APIENTRY*)(GLenum,GLenum,GLuint,GLint,GLint);
-            const auto attach=(AttachLayer)wglGetProcAddress("glFramebufferTextureLayer");
-            if (attach) attach(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,texture,0,slice);
-        } else g_glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,texture,0);
-        if (g_glCheckFramebufferStatus(GL_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE) {
-            glReadPixels(rect.x,rect.y,rect.w,rect.h,GL_RGBA,GL_UNSIGNED_BYTE,out.data()); copied=true;
-        }
-        g_glBindFramebuffer(0x8CA9,oldDraw); g_glBindFramebuffer(0x8CA8,oldRead);
-        g_glDeleteFramebuffers(1,&fbo);
-    }
-    if (!copied) {
-        std::vector<uint8_t> full((size_t)chain.width*chain.height*(std::max)(1u,chain.arraySize)*4);
-        glBindTexture(target,texture); glGetTexImage(target,0,GL_RGBA,GL_UNSIGNED_BYTE,full.data());
-        for (uint32_t y=0;y<rect.h;++y) memcpy(out.data()+(size_t)y*rect.w*4,
-            full.data()+(((size_t)slice*chain.height+rect.y+y)*chain.width+rect.x)*4,(size_t)rect.w*4);
-    }
-    glBindTexture(target,oldTex);
-    glPixelStorei(GL_PACK_ALIGNMENT,oldPack); glPixelStorei(0x0D02,oldRow);
-    glPixelStorei(0x0D03,oldRows); glPixelStorei(0x0D04,oldPixels);
-    glPixelStorei(0x806B,oldImages); glPixelStorei(0x806C,oldImageHeight);
-    if (bindBuffer) bindBuffer(0x88EB,oldPbo);
-    // Return top-down pixels for the D3D11 compositor.
-    const size_t row=(size_t)rect.w*4;
-    for (uint32_t y=0;y<rect.h/2;++y)
-        for (size_t x=0;x<row;++x) std::swap(out[(size_t)y*row+x],out[(size_t)(rect.h-1-y)*row+x]);
-    return true;
+struct BorrowedProjectionImage
+{
+	rt::Swapchain* swapchain = nullptr;
+	std::uint32_t index = UINT32_MAX;
+};
+using ProjectionImages = std::array<BorrowedProjectionImage, 2>;
+
+static ProjectionImages ResolveProjectionImages(const simxr::PreviewProjection& projection)
+{
+	ProjectionImages images;
+	for (std::size_t eye = 0; eye < projection.eyes.size(); ++eye)
+	{
+		if (!projection.eyes[eye])
+			continue;
+		const auto found = rt::g_swapchains.find(projection.eyes[eye]->image.source);
+		if (found == rt::g_swapchains.end())
+			continue;
+		auto& swapchain = found->second;
+		if (swapchain.lastReleased == UINT32_MAX || swapchain.lastReleased >= swapchain.imageCount)
+			continue;
+		images[eye] = {&swapchain, swapchain.lastReleased};
+	}
+	return images;
 }
 
-// A cached SRV-only staging texture for the D3D11 mirror. Two entries rotate so the
-// left and right eye each keep theirs; a size or format change just recreates one.
-static ID3D11Texture2D* acquireTempTexture(rt::Session& s, rt::Session::TempTexEntry* cache,
-                                           UINT& next, UINT width, UINT height,
-                                           DXGI_FORMAT format, ID3D11ShaderResourceView** outSrv) {
-    rt::Session::TempTexEntry& entry = cache[next];
-    next = (next + 1) % 2;
-    if (entry.texture && entry.width == width && entry.height == height && entry.format == format) {
-        *outSrv = entry.srv.Get();
-        return entry.texture.Get();
-    }
-    D3D11_TEXTURE2D_DESC desc = {};
-    desc.Width = width;
-    desc.Height = height;
-    desc.MipLevels = 1;
-    desc.ArraySize = 1;
-    desc.Format = format;
-    desc.SampleDesc.Count = 1;
-    desc.Usage = D3D11_USAGE_DEFAULT;
-    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-    entry = rt::Session::TempTexEntry{};
-    if (FAILED(s.d3d11Device->CreateTexture2D(&desc, nullptr, entry.texture.GetAddressOf()))) {
-        entry = rt::Session::TempTexEntry{};
-        return nullptr;
-    }
-    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-    srvDesc.Format = format;
-    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-    srvDesc.Texture2D.MipLevels = 1;
-    if (FAILED(s.d3d11Device->CreateShaderResourceView(entry.texture.Get(), &srvDesc,
-                                                       entry.srv.GetAddressOf()))) {
-        entry = rt::Session::TempTexEntry{};
-        return nullptr;
-    }
-    entry.width = width;
-    entry.height = height;
-    entry.format = format;
-    *outSrv = entry.srv.Get();
-    return entry.texture.Get();
+static bool IsPreviewDepthFormat(DXGI_FORMAT format)
+{
+	switch (format)
+	{
+	case DXGI_FORMAT_D32_FLOAT:
+	case DXGI_FORMAT_D32_FLOAT_S8X24_UINT:
+	case DXGI_FORMAT_D24_UNORM_S8_UINT:
+	case DXGI_FORMAT_D16_UNORM:
+	case DXGI_FORMAT_R32_TYPELESS:
+	case DXGI_FORMAT_R32G8X24_TYPELESS:
+	case DXGI_FORMAT_R24G8_TYPELESS:
+	case DXGI_FORMAT_R16_TYPELESS:
+		return true;
+	default:
+		return false;
+	}
 }
 
-// glGetTexImage always returns the complete mip level (and every layer of a texture array).
-// Read into a correctly-sized reusable scratch buffer first, then extract only the OpenXR
-// subimage. Writing it directly into a crop-sized destination corrupts memory whenever an
-// application submits less than the full swapchain image.
-static bool readGLSubImage(GLuint texture, const rt::Swapchain& chain, uint32_t arrayIndex,
-                           const rt::SubImageRect& rect, std::vector<uint8_t>& scratch,
-                           std::vector<uint8_t>& output, uint32_t outputWidth,
-                           uint32_t outputHeight, bool reuseReadback = false) {
-    const uint32_t layers = chain.arraySize ? chain.arraySize : 1;
-    const uint64_t layerBytes64 = (uint64_t)chain.width * chain.height * 4;
-    if (!texture || layerBytes64 == 0 || layerBytes64 > SIZE_MAX) return false;
-    const size_t layerBytes = (size_t)layerBytes64;
-    if (layers > SIZE_MAX / layerBytes) return false;
-    const size_t readbackBytes = layerBytes * layers;
-    if (!reuseReadback || scratch.size() != readbackBytes) {
-        scratch.resize(readbackBytes);
-        const GLenum target = layers > 1 ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
-        glBindTexture(target, texture);
-        glPixelStorei(GL_PACK_ALIGNMENT, 1);
-        glGetTexImage(target, 0, GL_RGBA, GL_UNSIGNED_BYTE, scratch.data());
-    }
-
-    return composition_render::CopyRgbaSubImage(
-        scratch.data(), scratch.size(), chain.width, chain.height, layers, arrayIndex,
-        rect, outputWidth, outputHeight, output);
+static simxr::windows::PreviewChannels NativePreviewChannels(simxr::PreviewColorChannels channels)
+{
+	switch (channels)
+	{
+	case simxr::PreviewColorChannels::Red:
+		return simxr::windows::PreviewChannels::Red;
+	case simxr::PreviewColorChannels::Cyan:
+		return simxr::windows::PreviewChannels::Cyan;
+	default:
+		return simxr::windows::PreviewChannels::All;
+	}
 }
 
-static void blitViewToHalf(rt::Session& s, rt::Swapchain& chain, uint32_t srcIndex, uint32_t arraySlice,
-                           const XrRect2Di& rect, ID3D11RenderTargetView* rtv,
-                           const D3D11_VIEWPORT& vp, ID3D11BlendState* blendState) {
-    // OpenXR permits empty image rectangles. They contribute no pixels; treating one as
-    // an invalid crop and copying the whole texture would expose content the app did not
-    // submit.
-    if (rect.extent.width == 0 || rect.extent.height == 0) return;
-    if (!rtv) {
-        Log("[SimXR] blitViewToHalf: rtv is null!");
-        return;
-    }
+static void DrawProjectionD3D11(rt::Session& session, simxr::windows::D3D11PreviewContext& context,
+								const BorrowedProjectionImage& image, const simxr::PreviewProjectionSource& source,
+								const simxr::PreviewProjectionDraw& draw, ID3D11RenderTargetView* target)
+{
+	if (!target || !image.swapchain || image.index >= image.swapchain->images.size())
+		throw std::invalid_argument("D3D11 projection source or target is unavailable");
+	const auto& texture = image.swapchain->images[image.index];
+	if (!texture)
+		throw std::invalid_argument("D3D11 projection source texture is unavailable");
+	D3D11_TEXTURE2D_DESC description{};
+	texture->GetDesc(&description);
+	if (IsPreviewDepthFormat(description.Format))
+		throw std::invalid_argument("D3D11 projection preview cannot sample a depth source");
+	auto* preview = rt::EnsureD3D11Preview(session);
+	if (!preview)
+		throw std::runtime_error("D3D11 projection preview pipeline is unavailable");
+	const auto& rectangle = source.image.rectangle;
+	const auto& viewport = draw.target.rectangle;
+	const D3D11_VIEWPORT nativeViewport{viewport.x, viewport.y, viewport.width, viewport.height, 0, 1};
 
-    if (!rt::InitBlitResources(s)) {
-        Log("[SimXR] Cannot blit, blit resources failed to initialize.");
-        return;
-    }
-
-    // Check if we have a valid image
-    if (srcIndex >= chain.images.size()) {
-        Logf("[SimXR] blitViewToHalf: srcIndex %u >= images.size() %zu", srcIndex, chain.images.size());
-        return;
-    }
-    if (!chain.images[srcIndex]) {
-        Logf("[SimXR] blitViewToHalf: images[%u] is null", srcIndex);
-        return;
-    }
-
-    // Prepare source texture
-    ComPtr<ID3D11Texture2D> sourceTexture = chain.images[srcIndex];
-    D3D11_TEXTURE2D_DESC srcDesc;
-    sourceTexture->GetDesc(&srcDesc);
-    
-    // Skip depth formats - they can't be rendered to the preview window
-    bool isDepthFormat = (srcDesc.Format == DXGI_FORMAT_D32_FLOAT ||
-                          srcDesc.Format == DXGI_FORMAT_D32_FLOAT_S8X24_UINT ||
-                          srcDesc.Format == DXGI_FORMAT_D24_UNORM_S8_UINT ||
-                          srcDesc.Format == DXGI_FORMAT_D16_UNORM ||
-                          srcDesc.Format == DXGI_FORMAT_R32_TYPELESS ||
-                          srcDesc.Format == DXGI_FORMAT_R32G8X24_TYPELESS ||
-                          srcDesc.Format == DXGI_FORMAT_R24G8_TYPELESS ||
-                          srcDesc.Format == DXGI_FORMAT_R16_TYPELESS);
-    if (isDepthFormat) {
-        // Depth swapchains are for depth testing, not preview rendering
-        static int depthSkipCount = 0;
-        if (++depthSkipCount % 60 == 1) {
-            Logf("[SimXR] blitViewToHalf: Skipping depth format %d", srcDesc.Format);
-        }
-        return;
-    }
-    
-    // Choose a typed format for SRV and temp texture  
-    // Preserve sRGB if original was sRGB to enable auto-conversion
-    DXGI_FORMAT typedFormat = srcDesc.Format;
-    switch (srcDesc.Format) {
-        case DXGI_FORMAT_R8G8B8A8_TYPELESS:
-            typedFormat = (chain.format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM;
-            break;
-        case DXGI_FORMAT_B8G8R8A8_TYPELESS:
-            typedFormat = (chain.format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB) ? DXGI_FORMAT_B8G8R8A8_UNORM_SRGB : DXGI_FORMAT_B8G8R8A8_UNORM;
-            break;
-        case DXGI_FORMAT_R16G16B16A16_TYPELESS: 
-            typedFormat = DXGI_FORMAT_R16G16B16A16_FLOAT; 
-            break;
-        case DXGI_FORMAT_R32G32B32A32_TYPELESS: 
-            typedFormat = DXGI_FORMAT_R32G32B32A32_FLOAT; 
-            break;
-        case DXGI_FORMAT_R10G10B10A2_TYPELESS:
-            typedFormat = DXGI_FORMAT_R10G10B10A2_UNORM;
-            break;
-        // Typed UNORM source submitted into an sRGB swapchain: the bytes are
-        // sRGB-ENCODED, so the SRV must be the matching _SRGB view to decode
-        // sRGB->linear on sample. The preview RTV re-encodes linear->sRGB, so
-        // without this decode we double-encode (blues boosted -> magenta reads
-        // as purple in the preview window).
-        case DXGI_FORMAT_R8G8B8A8_UNORM:
-            if (chain.format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB)
-                typedFormat = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-            break;
-        case DXGI_FORMAT_B8G8R8A8_UNORM:
-            if (chain.format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB)
-                typedFormat = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
-            break;
-        default:
-            break; // Already typed or unknown
-    }
-    // Copy the correct subresource (handles array slice)
-    UINT srcSubresource = D3D11CalcSubresource(0, arraySlice, chain.mipCount);
-
-    // Handle imageRect cropping for better visual accuracy
-    // Apps can submit sub-rects, and sampling the full texture can show mostly black areas
-    // Skip cropping when showFullRender is enabled to show the entire swapchain
-    int32_t rectX = rect.offset.x;
-    int32_t rectY = rect.offset.y;
-    int32_t rectW = rect.extent.width;
-    int32_t rectH = rect.extent.height;
-    const int32_t srcW = (int32_t)srcDesc.Width;
-    const int32_t srcH = (int32_t)srcDesc.Height;
-    bool rectValid = rectW > 0 && rectH > 0;
-    bool rectClamped = false;
-    if (rectValid) {
-        if (rectX < 0) { rectW += rectX; rectX = 0; rectClamped = true; }
-        if (rectY < 0) { rectH += rectY; rectY = 0; rectClamped = true; }
-        if (rectX >= srcW || rectY >= srcH) { rectValid = false; }
-        if (rectValid && rectX + rectW > srcW) { rectW = srcW - rectX; rectClamped = true; }
-        if (rectValid && rectY + rectH > srcH) { rectH = srcH - rectY; rectClamped = true; }
-        if (rectW <= 0 || rectH <= 0) { rectValid = false; }
-    }
-    if (!rectValid && (rect.extent.width != 0 || rect.extent.height != 0)) {
-        static int invalidRectCount = 0;
-        if (++invalidRectCount % 60 == 1) {
-            Logf("[SimXR] Invalid imageRect; using full texture (offset=%d,%d extent=%d,%d size=%dx%d)",
-                 rect.offset.x, rect.offset.y, rect.extent.width, rect.extent.height, srcW, srcH);
-        }
-    }
-    bool shouldCrop = !ui::g_uiState.showFullRender &&
-                      srcDesc.SampleDesc.Count == 1 &&
-                      rectValid &&
-                      (rectW < srcW || rectH < srcH || rectX != 0 || rectY != 0);
-    // The mirror always samples its own SRV-only copy: the app may still have the
-    // source bound as an RTV, and D3D11 nulls the SRV if it were sampled directly.
-    // The copy lands in a cached texture rather than a freshly created one.
-    const UINT tempW = shouldCrop ? (UINT)rectW : srcDesc.Width;
-    const UINT tempH = shouldCrop ? (UINT)rectH : srcDesc.Height;
-    ID3D11ShaderResourceView* srv = nullptr;
-    ID3D11Texture2D* viewTexture = acquireTempTexture(s, s.blitTempCache, s.blitTempNext,
-                                                      tempW, tempH, typedFormat, &srv);
-    if (!viewTexture) {
-        Log("[SimXR] Failed to create temp texture for blit");
-        return;
-    }
-
-    if (shouldCrop) {
-        // Copy only the specified rect
-        D3D11_BOX box{};
-        box.left = rectX;
-        box.top = rectY;
-        box.right = rectX + rectW;
-        box.bottom = rectY + rectH;
-        box.front = 0;
-        box.back = 1;
-        s.d3d11Context->CopySubresourceRegion(viewTexture, 0, 0, 0, 0, sourceTexture.Get(), srcSubresource, &box);
-        LogVf("[SimXR] Applied %s imageRect: %dx%d from (%d,%d)",
-              rectClamped ? "clamped" : "cropped", rectW, rectH, rectX, rectY);
-    } else if (srcDesc.SampleDesc.Count > 1) {
-        // If app used MSAA, resolve it first using the typed format
-        s.d3d11Context->ResolveSubresource(viewTexture, 0, sourceTexture.Get(), srcSubresource, typedFormat);
-    } else {
-        // Otherwise just copy the full texture
-        s.d3d11Context->CopySubresourceRegion(viewTexture, 0, 0, 0, 0, sourceTexture.Get(), srcSubresource, nullptr);
-    }
-
-    s.d3d11Context->RSSetViewports(1, &vp);
-
-    // Set shaders and resources
-    s.d3d11Context->VSSetShader(s.blitVS.Get(), nullptr, 0);
-    s.d3d11Context->PSSetShader(s.blitPS.Get(), nullptr, 0);
-
-    ID3D11ShaderResourceView* srvs[] = { srv };
-    s.d3d11Context->PSSetShaderResources(0, 1, srvs);
-    ID3D11SamplerState* samplers[] = { s.samplerState.Get() };
-    s.d3d11Context->PSSetSamplers(0, 1, samplers);
-
-    // Set pipeline state
-    s.d3d11Context->IASetInputLayout(nullptr);
-    s.d3d11Context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-    s.d3d11Context->OMSetBlendState(blendState, nullptr, 0xFFFFFFFF);
-    s.d3d11Context->OMSetDepthStencilState(nullptr, 0);
-    s.d3d11Context->RSSetState(s.noCullRS.Get());  // Use no-cull rasterizer state to prevent triangle culling
-
-    // Bind render target
-    ID3D11RenderTargetView* rtvs[1] = { rtv };
-    s.d3d11Context->OMSetRenderTargets(1, rtvs, nullptr);
-
-    // Draw fullscreen quad
-    s.d3d11Context->Draw(4, 0);
-    
-    // Unbind SRV to avoid conflicts with future RTV usage
-    ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
-    s.d3d11Context->PSSetShaderResources(0, 1, nullSRV);
-    
-    static int debugCount = 0;
-    if (g_logVerbose && ++debugCount % 120 == 1) {
-        Logf("[SimXR] blitViewToHalf: srcIdx=%u slice=%u typedFmt=%d srcFmt=%d",
-             srcIndex, arraySlice, typedFormat, srcDesc.Format);
-        Logf("[SimXR]   viewport: x=%.0f y=%.0f w=%.0f h=%.0f", vp.TopLeftX, vp.TopLeftY, vp.Width, vp.Height);
-        Logf("[SimXR]   srcSize: %ux%u, tempSize: %ux%u", srcDesc.Width, srcDesc.Height, tempW, tempH);
-    }
+	const auto copied =
+		preview->Copy(context, simxr::windows::PreviewSurface::Projection, texture.Get(), source.image.arraySlice,
+					  static_cast<DXGI_FORMAT>(image.swapchain->format),
+					  simxr::windows::PreviewRegion{static_cast<std::uint32_t>(rectangle.offset.x),
+													static_cast<std::uint32_t>(rectangle.offset.y),
+													static_cast<std::uint32_t>(rectangle.extent.width),
+													static_cast<std::uint32_t>(rectangle.extent.height)});
+	if (!copied ||
+		!preview->DrawProjection(context, copied, target, nativeViewport, NativePreviewChannels(draw.channels)))
+		throw std::runtime_error("D3D11 projection preview source or draw failed");
 }
 
-// The D3D12 preview never goes through a swapchain, so the composited frame only exists in
-// the readback buffer paintPreviewComposite has mapped. Called from there, with the pixels
-// of the frame that was just shown, so a shot can never be of a frame the window never had.
-static void saveD3D12Screenshot(const uint8_t* pixels, UINT width, UINT height, UINT pitch,
-                                uint64_t capturedFrame, const ui_auto::Frame& geometry) {
-    if (!mcp::g_screenshotRequested) return;
-    if (capturedFrame < mcp::g_screenshotRequestFrame || geometry.sync < mcp::g_screenshotAfterSync) return;
-
-    const std::string path = mcp::GetScreenshotPath();
-    if (mcp::SavePixelsToBMP(pixels, width, height, path.c_str(), (int)pitch, true)) {
-        mcp::WriteScreenshotStatus(mcp::g_screenshotLayer.c_str(), width, height, capturedFrame, &geometry);
-        std::wstring wp(path.begin(), path.end());
-        ui::NotifyScreenshotSaved(wp);
-    }
-    mcp::g_screenshotRequested = false;
-}
-
-// Whether the mirror updates this frame, latched once per xrEndFrame from the Mirror Rate
-// setting: a frame's eyes and its quad layers have to be composited together or not at all,
-// so the cap cannot be re-evaluated per layer. Every backend honours it - what it saves is
-// the readback on D3D12 and OpenGL, and the composite and Present on all three.
+// Latched once per xrEndFrame so projection and overlays share one update.
 static bool g_previewDueThisFrame = true;
 
-// --- On-demand D3D11 preview readback ---------------------------------------------------------
-
-static void resetD3D11PreviewReadbacks(rt::Session& s) {
-    for (auto& frame : s.previewFrames11) frame = rt::PreviewFrame11{};
-    s.previewReadback11Slot = 0;
-    s.previewReadback11Generation = 0;
+// Admit one complete composition. The owner never waits for a free slot.
+static rt::PreviewFrameMetadata12* BeginPreviewSlot(rt::Session& session)
+{
+	if (!g_previewDueThisFrame || !session.preview12)
+		return nullptr;
+	const bool alreadyRecording = session.preview12->Recording();
+	const bool pixelsRequested =
+		session.compatibilityCapture && ((session.compatibilityCapture->ScreenshotRequested() &&
+										  session.compatibilityCapture->ScreenshotLayer() != "quad") ||
+										 session.compatibilityCapture->BurstActive());
+	const bool diagnosticsRequested = session.diagnostics && session.diagnostics->NeedsPixels();
+	const auto slot = session.preview12->Begin(pixelsRequested || diagnosticsRequested);
+	if (!slot)
+		return nullptr;
+	auto& metadata = session.previewMetadata12[*slot];
+	if (!alreadyRecording)
+		metadata = rt::PreviewFrameMetadata12{};
+	return &metadata;
 }
 
-static bool ensureD3D11PreviewReadbackSlot(rt::Session& s, rt::PreviewFrame11& frame,
-                                           ID3D11Texture2D* source) {
-    if (!s.d3d11Device || !source || frame.pending) return false;
-    D3D11_TEXTURE2D_DESC sourceDesc{};
-    source->GetDesc(&sourceDesc);
-    if (sourceDesc.Width == 0 || sourceDesc.Height == 0 || sourceDesc.SampleDesc.Count != 1) {
-        return false;
-    }
-    if (frame.staging && frame.ready && frame.width == sourceDesc.Width &&
-        frame.height == sourceDesc.Height && frame.format == sourceDesc.Format) {
-        return true;
-    }
-
-    frame.staging.Reset();
-    frame.ready.Reset();
-    D3D11_TEXTURE2D_DESC stagingDesc = sourceDesc;
-    stagingDesc.Usage = D3D11_USAGE_STAGING;
-    stagingDesc.BindFlags = 0;
-    stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-    stagingDesc.MiscFlags = 0;
-    if (FAILED(s.d3d11Device->CreateTexture2D(
-            &stagingDesc, nullptr, frame.staging.GetAddressOf()))) {
-        Log("[SimXR] D3D11 detector: failed to create staging texture");
-        return false;
-    }
-    D3D11_QUERY_DESC queryDesc{};
-    queryDesc.Query = D3D11_QUERY_EVENT;
-    if (FAILED(s.d3d11Device->CreateQuery(&queryDesc, frame.ready.GetAddressOf()))) {
-        frame.staging.Reset();
-        Log("[SimXR] D3D11 detector: failed to create completion query");
-        return false;
-    }
-    frame.width = sourceDesc.Width;
-    frame.height = sourceDesc.Height;
-    frame.format = sourceDesc.Format;
-    return true;
+static void ClosePreviewSlot(rt::Session& session, uint32_t frameCount, bool hasProjection)
+{
+	if (!session.preview12 || !session.preview12->Recording())
+		return;
+	auto& metadata = session.previewMetadata12[session.preview12->CurrentSlot()];
+	metadata.frame = frameCount;
+	metadata.hasProjection = hasProjection;
+	metadata.headYaw = rt::g_headYaw;
+	metadata.headPitch = rt::g_headPitch;
+	metadata.headRoll = rt::g_headRoll;
+	metadata.headX = rt::g_headPos.x;
+	metadata.headY = rt::g_headPos.y;
+	metadata.headZ = rt::g_headPos.z;
+	if (session.compatibilityCapture)
+		metadata.proj = session.compatibilityCapture->LastProjection();
+	simxr::windows::PreviewFencePoint ready;
+	simxr::windows::PreviewFencePoint released;
+	if (session.usesVulkan && session.vk.timeline && session.vk.fence)
+	{
+		ready = {session.vk.fence.Get(), session.vk.appSignalled};
+		released = {session.vk.fence.Get(), ++session.vk.counter};
+	}
+	if (session.preview12->Submit(session.usesVulkan ? nullptr : session.d3d12Queue.Get(), ready, released))
+	{
+		if (released.fence)
+			session.vk.previewSignalled = released.value;
+	}
+	else
+	{
+		Logf("[SimXR] DX12 GPU preview submission rejected: 0x%08X",
+			 static_cast<unsigned>(session.preview12->Failure()));
+		if (session.compatibilityCapture)
+			session.compatibilityCapture->FailScreenshot("D3D12 preview submission failed", frameCount);
+	}
 }
 
-static flicker::PreviewFrameInfo previewInfoFromProjection(const mcp::ProjLogEntry& projection) {
-    flicker::PreviewFrameInfo info;
-    for (int eye = 0; eye < 2; ++eye) {
-        info.imageIndex[eye] = projection.imageIndex[eye];
-        info.releaseSerial[eye] = projection.releaseSerial[eye];
-        info.fresh[eye] = projection.fresh[eye];
-    }
-    return info;
+static void ConsumePreviewFrame(rt::Session& session, const rt::PreviewFrameMetadata12& metadata,
+								const simxr::windows::PreviewCompletion& completion,
+								const simxr::windows::PreviewReadback& readback)
+{
+	const auto capture = session.compatibilityCapture;
+	if (readback.kind == simxr::windows::PreviewReadbackKind::Quad)
+	{
+		if (readback.pixels && capture && readback.layout)
+		{
+			const auto rgba = readback.layout->Rgba(
+				{readback.pixels, static_cast<std::size_t>(readback.layout->Extent().readbackBytes)}, readback.bgra);
+			capture->StoreQuad(rgba.data(), readback.width, readback.height, metadata.frame);
+			if (capture->ScreenshotRequested() && capture->ScreenshotLayer() == "quad")
+				capture->SubmitQuad(true, metadata.frame);
+		}
+		else if (capture)
+		{
+			capture->FailScreenshot("D3D12 isolated quad readback did not complete successfully", metadata.frame);
+		}
+		return;
+	}
+	if (readback.kind == simxr::windows::PreviewReadbackKind::Composite && !readback.pixels && capture)
+		capture->FailScreenshot("D3D12 composite readback did not complete successfully", metadata.frame);
+	if (readback.pixels && capture)
+	{
+		if (capture->ScreenshotRequested() && capture->ScreenshotLayer() != "quad")
+			capture->SubmitPixels(readback.pixels, readback.width, readback.height, readback.rowPitch, true,
+								  metadata.frame);
+		if (capture->BurstActive() && metadata.hasProjection)
+		{
+			mcp::BurstFrameMeta burst;
+			burst.frame = metadata.frame;
+			burst.headYaw = metadata.headYaw;
+			burst.headPitch = metadata.headPitch;
+			burst.headRoll = metadata.headRoll;
+			burst.headX = metadata.headX;
+			burst.headY = metadata.headY;
+			burst.headZ = metadata.headZ;
+			burst.proj = metadata.proj;
+			burst.tMs = static_cast<double>(GetTickCount64());
+			capture->BurstOnFrame(readback.pixels, readback.width, readback.height, readback.rowPitch, burst);
+		}
+	}
+	const auto diagnostics = session.diagnostics;
+	if (!diagnostics)
+		return;
+	if (readback.pixels && metadata.hasProjection)
+		diagnostics->ObservePreview(readback.pixels, readback.width, readback.height, readback.rowPitch,
+									completion.sequence, metadata.frame);
+	flicker::UiFrameInfo uiInfo;
+	uiInfo.quadLayers = metadata.quadLayers;
+	uiInfo.projectionRefreshed = metadata.hasProjection && completion.copied;
+	uiInfo.freshReadback = readback.pixels != nullptr;
+	uiInfo.cacheValid = metadata.quadComposed && completion.copied;
+	uiInfo.composed = metadata.quadComposed && completion.copied;
+	memcpy(uiInfo.rects, metadata.quadRects, sizeof(uiInfo.rects));
+	uiInfo.sourceAlphaCoverage = metadata.quadSourceAlphaCoverage;
+	diagnostics->ObserveUi(readback.pixels, readback.width, readback.height, readback.rowPitch, completion.sequence,
+						   metadata.frame, uiInfo);
+	diagnostics->ObservePaint(completion.sequence, completion.presentAccepted);
 }
-
-static void consumeD3D11PreviewReadbacks(rt::Session& s) {
-    if (!s.d3d11Context) return;
-    for (UINT consumed = 0; consumed < rt::kD3D11ReadbackFrames; ++consumed) {
-        rt::PreviewFrame11* oldest = nullptr;
-        for (auto& candidate : s.previewFrames11) {
-            if (!candidate.pending || !candidate.staging || !candidate.ready) continue;
-            if (!oldest || candidate.generation < oldest->generation) oldest = &candidate;
-        }
-        if (!oldest) return;
-        rt::PreviewFrame11& frame = *oldest;
-        const HRESULT ready = s.d3d11Context->GetData(
-            frame.ready.Get(), nullptr, 0, D3D11_ASYNC_GETDATA_DONOTFLUSH);
-        // Commands on one immediate context complete in order. If the oldest copy is not
-        // ready, no later frame is safe to map either; preserve strict frame ordering.
-        if (ready == S_FALSE) return;
-        if (FAILED(ready)) {
-            frame.pending = false;
-            continue;
-        }
-
-        D3D11_MAPPED_SUBRESOURCE mapped{};
-        const HRESULT mappedResult = s.d3d11Context->Map(
-            frame.staging.Get(), 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
-        if (mappedResult == DXGI_ERROR_WAS_STILL_DRAWING) return;
-        if (FAILED(mappedResult) || !mapped.pData) {
-            frame.pending = false;
-            continue;
-        }
-
-        const uint8_t* pixels = static_cast<const uint8_t*>(mapped.pData);
-        uint32_t pitch = mapped.RowPitch;
-        std::vector<uint8_t> normalized;
-        const bool rgba = frame.format == DXGI_FORMAT_R8G8B8A8_UNORM ||
-                          frame.format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-        const bool bgra = frame.format == DXGI_FORMAT_B8G8R8A8_UNORM ||
-                          frame.format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
-        if (rgba) {
-            // The detector and burst files use BGRA. Normalize only on the diagnostic
-            // path; no extra full-frame copy exists during normal D3D11 rendering.
-            normalized.resize((size_t)frame.width * frame.height * 4);
-            for (UINT y = 0; y < frame.height; ++y) {
-                const uint8_t* src = pixels + (size_t)y * mapped.RowPitch;
-                uint8_t* dst = normalized.data() + (size_t)y * frame.width * 4;
-                for (UINT x = 0; x < frame.width; ++x) {
-                    dst[x * 4 + 0] = src[x * 4 + 2];
-                    dst[x * 4 + 1] = src[x * 4 + 1];
-                    dst[x * 4 + 2] = src[x * 4 + 0];
-                    dst[x * 4 + 3] = src[x * 4 + 3];
-                }
-            }
-            pixels = normalized.data();
-            pitch = frame.width * 4;
-        } else if (!bgra) {
-            static bool loggedUnsupported = false;
-            if (!loggedUnsupported) {
-                loggedUnsupported = true;
-                Logf("[SimXR] D3D11 detector: unsupported backbuffer format %d", (int)frame.format);
-            }
-            s.d3d11Context->Unmap(frame.staging.Get(), 0);
-            frame.pending = false;
-            continue;
-        }
-
-        if (frame.hasProjection) {
-            const flicker::PreviewFrameInfo previewInfo = previewInfoFromProjection(frame.proj);
-            flicker::ObservePreview(pixels, frame.width, frame.height, pitch,
-                                    frame.generation, frame.frame, &previewInfo);
-            if (mcp::g_burstActive) {
-                mcp::BurstOnFrame(pixels, (int)frame.width, (int)frame.height, (int)pitch,
-                                  frame.frame, frame.headYaw, frame.headPitch, frame.headRoll,
-                                  frame.headX, frame.headY, frame.headZ, frame.proj);
-            }
-        }
-        s.d3d11Context->Unmap(frame.staging.Get(), 0);
-        frame.pending = false;
-    }
-}
-
-static void queueD3D11PreviewReadback(rt::Session& s, ID3D11Texture2D* backbuffer,
-                                      uint32_t frameCount) {
-    if (!s.d3d11Context || !backbuffer) return;
-    if (!flicker::WantsPreviewReadback() && !mcp::g_burstActive) return;
-
-    UINT selected = rt::kD3D11ReadbackFrames;
-    for (UINT offset = 0; offset < rt::kD3D11ReadbackFrames; ++offset) {
-        const UINT index = (s.previewReadback11Slot + offset) % rt::kD3D11ReadbackFrames;
-        if (!s.previewFrames11[index].pending) {
-            selected = index;
-            break;
-        }
-    }
-    if (selected == rt::kD3D11ReadbackFrames) {
-        // Diagnostic readback must never make xrEndFrame wait. A full ring means the GPU
-        // is more than eight previews behind; drop this sample and try again next frame.
-        return;
-    }
-
-    rt::PreviewFrame11& frame = s.previewFrames11[selected];
-    if (!ensureD3D11PreviewReadbackSlot(s, frame, backbuffer)) return;
-    s.d3d11Context->CopyResource(frame.staging.Get(), backbuffer);
-    s.d3d11Context->End(frame.ready.Get());
-    frame.pending = true;
-    frame.generation = ++s.previewReadback11Generation;
-    frame.frame = frameCount;
-    frame.hasProjection = true;
-    frame.headYaw = rt::g_headYaw; frame.headPitch = rt::g_headPitch; frame.headRoll = rt::g_headRoll;
-    frame.headX = rt::g_headPos.x; frame.headY = rt::g_headPos.y; frame.headZ = rt::g_headPos.z;
-    frame.proj = mcp::g_lastProjEntry;
-    s.previewReadback11Slot = (selected + 1) % rt::kD3D11ReadbackFrames;
-}
-
-// --- Preview frame slots (D3D12) --------------------------------------------------------------
-
-// Open this frame's slot, or nullptr if all of them are still on the GPU. The eye composite
-// and every quad layer of a frame share one slot and one allocator: whichever pass runs first
-// resets the allocator, later passes only reset the command list, and xrEndFrame closes the
-// slot. Returning nullptr drops the frame from the preview, which is the whole point â€” the
-// caller is the app's render thread and must never wait for the GPU here.
-static rt::PreviewFrame12* beginPreviewSlot(rt::Session& s) {
-    if (!s.previewFence || !s.previewCmdList || !s.previewQueue12) return nullptr;
-    if (!g_previewDueThisFrame) return nullptr;
-    rt::PreviewFrame12& f = s.previewFrames[s.previewSlot];
-    if (s.previewSlotOpen) return &f;
-    // Still executing, or still holding a composite the painter has not picked up.
-    if (f.pending || f.fenceValue > s.previewFence->GetCompletedValue()) return nullptr;
-    if (!f.alloc || FAILED(f.alloc->Reset())) return nullptr;
-    f.recording = false;
-    f.hasProjection = false;
-    f.quadLayers = 0;
-    f.quadComposed = false;
-    memset(f.quadRects, 0, sizeof(f.quadRects));
-    f.quadSourceAlphaCoverage = 0.0f;
-    s.previewSlotOpen = true;
-    return &f;
-}
-
-// Open the render target for this frame's layers. Idempotent: whichever layer pass runs
-// first pays for the command-list reset, the transition and the clear, and the rest just
-// draw. Every layer of a frame therefore lands in one RT and comes back in one readback,
-// which is also why the mirror can no longer show the eyes for a moment without the HUD
-// over them - the two are never in the back buffer separately.
-static bool beginPreviewRT(rt::Session& s, rt::PreviewFrame12& f) {
-    if (f.recording) return true;
-    if (!s.previewRT12 || !s.previewRtvHeap) return false;
-    if (FAILED(s.previewCmdList->Reset(f.alloc.Get(), nullptr))) return false;
-
-    D3D12_RESOURCE_BARRIER barrier = {};
-    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    barrier.Transition.pResource = s.previewRT12.Get();
-    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
-    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    s.previewCmdList->ResourceBarrier(1, &barrier);
-
-    ID3D12DescriptorHeap* heaps[] = { s.previewSrvHeap.Get() };
-    s.previewCmdList->SetDescriptorHeaps(1, heaps);
-    s.previewCmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-    const D3D12_CPU_DESCRIPTOR_HANDLE rtv = s.previewRtvHeap->GetCPUDescriptorHandleForHeapStart();
-    const float clearBlack[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
-    s.previewCmdList->ClearRenderTargetView(rtv, clearBlack, 0, nullptr);
-
-    f.recording = true;
-    return true;
-}
-
-// Read the composited RT back and hand the slot to the painter.
-static void closePreviewSlot(rt::Session& s, uint32_t frameCount, bool hasProjection) {
-    if (!s.previewSlotOpen) return;
-    s.previewSlotOpen = false;
-    rt::PreviewFrame12& f = s.previewFrames[s.previewSlot];
-    if (!f.recording) return;                       // nothing was recorded this frame
-    f.recording = false;
-    if (!f.readback || !s.previewRT12) return;
-
-    // Label the slot now, while the pose that produced it is still the live one.
-    f.frame = frameCount;
-    f.hasProjection = hasProjection;
-    f.headYaw = rt::g_headYaw; f.headPitch = rt::g_headPitch; f.headRoll = rt::g_headRoll;
-    f.headX = rt::g_headPos.x; f.headY = rt::g_headPos.y; f.headZ = rt::g_headPos.z;
-    f.proj = mcp::g_lastProjEntry;
-    f.geometry = ui_auto::g_frame;
-
-    const D3D12_RESOURCE_DESC rtDesc = s.previewRT12->GetDesc();
-    const UINT rtWidth = (UINT)rtDesc.Width, rtHeight = rtDesc.Height;
-
-    D3D12_RESOURCE_BARRIER barrier = {};
-    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    barrier.Transition.pResource = s.previewRT12.Get();
-    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
-    s.previewCmdList->ResourceBarrier(1, &barrier);
-
-    D3D12_TEXTURE_COPY_LOCATION dst = {};
-    dst.pResource = f.readback.Get();
-    dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-    dst.PlacedFootprint.Offset = 0;
-    dst.PlacedFootprint.Footprint.Format = rt::kPreviewRTFormat;
-    dst.PlacedFootprint.Footprint.Width = rtWidth;
-    dst.PlacedFootprint.Footprint.Height = rtHeight;
-    dst.PlacedFootprint.Footprint.Depth = 1;
-    dst.PlacedFootprint.Footprint.RowPitch = s.previewReadbackPitch;
-    D3D12_TEXTURE_COPY_LOCATION src = {};
-    src.pResource = s.previewRT12.Get();
-    src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-    src.SubresourceIndex = 0;
-    s.previewCmdList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
-
-    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
-    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COMMON;
-    s.previewCmdList->ResourceBarrier(1, &barrier);
-    s.previewCmdList->Close();
-
-    // Order the read of the app's swapchain images after the app's own frame work.
-    if (s.crossQueueFence && s.d3d12Queue) {
-        s.crossQueueFenceValue++;
-        s.d3d12Queue->Signal(s.crossQueueFence.Get(), s.crossQueueFenceValue);
-        s.previewQueue12->Wait(s.crossQueueFence.Get(), s.crossQueueFenceValue);
-    }
-    // On a Vulkan session the frame's work is on the app's VkQueue instead, and the shared
-    // fence FrameSyncBegin signalled from there is what this queue has to wait on.
-    if (s.usesVulkan && s.vk.timeline && s.vk.fence && s.vk.appSignalled) {
-        s.previewQueue12->Wait(s.vk.fence.Get(), s.vk.appSignalled);
-    }
-
-    ID3D12CommandList* lists[] = { s.previewCmdList.Get() };
-    s.previewQueue12->ExecuteCommandLists(1, lists);
-    const UINT64 value = ++s.previewFenceValue;
-    s.previewQueue12->Signal(s.previewFence.Get(), value);
-    if (s.usesVulkan && s.vk.timeline && s.vk.fence) {
-        s.vk.previewSignalled = ++s.vk.counter;
-        s.previewQueue12->Signal(s.vk.fence.Get(), s.vk.previewSignalled);
-        LogVf("[SimXR][VK] sync: preview waits for %llu, signals %llu",
-              (unsigned long long)s.vk.appSignalled, (unsigned long long)s.vk.previewSignalled);
-    }
-
-    // The preview reads the app's swapchain images on its own queue. The CPU wait this path
-    // used to do was also what kept the app from rendering the next frame into those images
-    // while the read was still in flight, so with the wait gone the app's queue has to be
-    // told to wait for the read instead. It is a GPU-side wait on work already ahead of it
-    // in the pipeline, so unlike the CPU wait it costs nothing.
-    if (s.d3d12Queue) s.d3d12Queue->Wait(s.previewFence.Get(), value);
-
-    f.fenceValue = value;
-    f.rtWidth = rtWidth;
-    f.rtHeight = rtHeight;
-    f.pending = true;
-    s.previewSlot = (s.previewSlot + 1) % rt::kPreviewFrames;
-}
-
-// Show a finished composite. The readback already holds the window's own pixel count in
-// GDI's byte order, so this is one StretchDIBits from the mapped rows straight to the
-// window - no intermediate back buffer, and none of the per-frame memcpy that copying into
-// one costs (~15MB a frame at a 2560x1440 window, on the app's render thread).
-//
-// The screenshot and burst paths read the same mapping, which is also what makes them
-// structurally unable to capture a frame the window never showed.
-static void paintPreviewComposite(rt::Session& s, rt::PreviewFrame12& f) {
-    if (!f.readback || !s.hwnd || f.rtWidth == 0 || f.rtHeight == 0) return;
-    if (s.previewReadbackPitch == 0) return;
-
-    void* mapped = nullptr;
-    D3D12_RANGE readRange = { 0, (SIZE_T)s.previewReadbackPitch * f.rtHeight };
-    if (FAILED(f.readback->Map(0, &readRange, &mapped)) || !mapped) return;
-
-    const bool nativeProjectionCapture =
-        mcp::g_screenshotRequested &&
-        mcp::g_screenshotLayer == "projection_native";
-    bool paintedPreview = false;
-    HDC windowDC = nativeProjectionCapture ? nullptr : GetDC(s.hwnd);
-    if (windowDC) {
-        RECT cr{};
-        GetClientRect(s.hwnd, &cr);
-        const int clientW = cr.right - cr.left;
-        const int clientH = cr.bottom - cr.top;
-
-        // The rows are 256-byte aligned, which GDI has no field for - but a DIB whose
-        // width is the whole pitch has exactly that stride, and the source rect then
-        // takes the real pixels out of the left of each row.
-        BITMAPINFO bmi = {};
-        bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-        bmi.bmiHeader.biWidth = (LONG)(s.previewReadbackPitch / 4);
-        bmi.bmiHeader.biHeight = -(LONG)f.rtHeight;   // top-down
-        bmi.bmiHeader.biPlanes = 1;
-        bmi.bmiHeader.biBitCount = 32;
-        bmi.bmiHeader.biCompression = BI_RGB;
-
-        // The internal surface may be capped below the client size. Its aspect
-        // matches the client, so this is a pure final scale and the projection/
-        // quad composition remains pixel-coherent before GDI sees it.
-        paintedPreview = StretchDIBits(windowDC, 0, 0, clientW, clientH,
-                                       0, 0, (int)f.rtWidth, (int)f.rtHeight,
-                                       mapped, &bmi, DIB_RGB_COLORS, SRCCOPY) != GDI_ERROR;
-        ReleaseDC(s.hwnd, windowDC);
-    }
-
-    saveD3D12Screenshot((const uint8_t*)mapped, f.rtWidth, f.rtHeight,
-                        s.previewReadbackPitch, f.frame, f.geometry);
-
-    // A native diagnostic frame intentionally uses the eye-pair aspect rather
-    // than the desktop window aspect.  It is evidence, not a mirror frame: do
-    // not flash that differently-sized surface in the window or feed it to the
-    // visible/UI detectors as though the user had seen it.
-    if (nativeProjectionCapture) {
-        D3D12_RANGE writeRange = { 0, 0 };
-        f.readback->Unmap(0, &writeRange);
-        return;
-    }
-
-    // The burst records the frame that was just shown, described by the metadata that
-    // frame was recorded with rather than by whatever the head is doing now.
-    if (mcp::g_burstActive && f.hasProjection) {
-        mcp::BurstOnFrame((const uint8_t*)mapped, (int)f.rtWidth, (int)f.rtHeight,
-                          (int)s.previewReadbackPitch, f.frame,
-                          f.headYaw, f.headPitch, f.headRoll, f.headX, f.headY, f.headZ,
-                          f.proj);
-    }
-
-    // The detector samples the aligned readback rows in place; no repack. Before it
-    // took a row pitch, matching the 256-byte alignment on a window whose width was
-    // not a 64-pixel multiple cost a full-frame memcpy here on every painted frame.
-    const uint8_t* detectorPixels = (const uint8_t*)mapped;
-    if (f.hasProjection) {
-        const flicker::PreviewFrameInfo previewInfo = previewInfoFromProjection(f.proj);
-        flicker::ObservePreview(detectorPixels, f.rtWidth, f.rtHeight,
-                                s.previewReadbackPitch, f.fenceValue, f.frame, &previewInfo);
-    }
-    flicker::UiFrameInfo uiInfo;
-    uiInfo.quadLayers = f.quadLayers;
-    uiInfo.projectionRefreshed = f.hasProjection;
-    uiInfo.freshReadback = true;
-    uiInfo.cacheValid = f.quadComposed;
-    uiInfo.composed = f.quadComposed;
-    memcpy(uiInfo.rects, f.quadRects, sizeof(uiInfo.rects));
-    uiInfo.sourceAlphaCoverage = f.quadSourceAlphaCoverage;
-    flicker::ObserveUi(detectorPixels, f.rtWidth, f.rtHeight, s.previewReadbackPitch,
-                       f.fenceValue, f.frame, uiInfo);
-    flicker::ObservePaint(f.fenceValue, paintedPreview);
-
-    D3D12_RANGE writeRange = { 0, 0 };
-    f.readback->Unmap(0, &writeRange);
-}
-
-// Draws the eye swapchains, scaled, into the offscreen RT, reads that back and copies it
-// into the preview back buffer. Never touches DXGI Present, which the Steam overlay and
-// UEVR both hook - calling it from inside the app's own Present recurses until the stack
-// gives out. Scaling on the GPU keeps the readback at the window's size: the alternative,
-// reading back the full stereo render and resampling it with StretchDIBits, cost 25ms a
-// frame on a 5120x1440 submission.
-static void blitD3D12ToPreview(rt::Session& s,
-                                rt::Swapchain& chainL, uint32_t leftIdx, uint32_t leftSlice, const rt::SubImageRect& rectL,
-                                rt::Swapchain* chainR, uint32_t rightIdx, uint32_t rightSlice, const rt::SubImageRect& rectR,
-                                ui::DisplayLayout layout, ui::ViewMode viewMode,
-                                rt::LayerBlend blendMode) {
-    if (!s.previewRT12 || !s.previewCmdList ||
-        !s.previewRtvHeap || !s.previewSrvHeap || !s.previewRootSig ||
-        !s.previewPSO[(int)blendMode]) {
-        Log("[SimXR] blitD3D12ToPreview: Missing D3D12 preview resources");
-        return;
-    }
-
-    // Skip depth-only swapchains
-    bool isDepthFormat = (chainL.format == DXGI_FORMAT_D32_FLOAT ||
-                          chainL.format == DXGI_FORMAT_D32_FLOAT_S8X24_UINT ||
-                          chainL.format == DXGI_FORMAT_D24_UNORM_S8_UINT ||
-                          chainL.format == DXGI_FORMAT_D16_UNORM);
-    if (isDepthFormat) {
-        return;
-    }
-
-    // All three frames still on the GPU: skip this one instead of waiting for it.
-    rt::PreviewFrame12* slot = beginPreviewSlot(s);
-    if (!slot || !slot->readback) return;
-    // The RT is the size the window shows, so this pass is also the downscale: each eye
-    // is drawn into its half of it, filtered, instead of copied at full resolution and
-    // resampled on the CPU afterwards.
-    if (!beginPreviewRT(s, *slot)) return;
-
-    ID3D12Resource* renderTarget = s.previewRT12.Get();
-
-    auto transition = [&](ID3D12Resource* res, D3D12_RESOURCE_STATES& state, D3D12_RESOURCE_STATES newState) {
-        if (!res || state == newState) return;
-        D3D12_RESOURCE_BARRIER b = {};
-        b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        b.Transition.pResource = res;
-        b.Transition.StateBefore = state;
-        b.Transition.StateAfter = newState;
-        b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-        s.previewCmdList->ResourceBarrier(1, &b);
-        state = newState;
-    };
-
-    D3D12_RESOURCE_DESC rtDesc = renderTarget->GetDesc();
-    UINT rtWidth = (UINT)rtDesc.Width;
-    UINT rtHeight = rtDesc.Height;
-
-    D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = s.previewRtvHeap->GetCPUDescriptorHandleForHeapStart();
-    rtvHandle.ptr += s.previewRtvStride;
-    s.previewCmdList->SetGraphicsRootSignature(s.previewRootSig.Get());
-    s.previewCmdList->SetPipelineState(s.previewPSO[(int)blendMode].Get());
-    s.previewCmdList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
-
-    auto drawEye = [&](rt::Swapchain& chain, uint32_t idx, uint32_t slice, const rt::SubImageRect& rect,
-                       int dstX, int dstY, int dstW, int dstH, const char* label) -> bool {
-        if (idx >= chain.images12.size() || !chain.images12[idx]) return false;
-        if (chain.imageStates12.size() <= idx) {
-            Logf("[SimXR] blitD3D12ToPreview: %s missing state tracking", label);
-            return false;
-        }
-        const uint32_t arraySize = chain.arraySize ? chain.arraySize : 1;
-        if (slice >= arraySize) {
-            Logf("[SimXR] blitD3D12ToPreview: %s slice %u out of range (arraySize=%u)", label, slice, arraySize);
-            return false;
-        }
-        if (dstW <= 0 || dstH <= 0 || rect.w == 0 || rect.h == 0) return false;
-        // Panned entirely out of the RT: nothing to draw, and bailing here keeps the
-        // swapchain image out of a transition it would never be moved back from.
-        if (dstX + dstW <= 0 || dstY + dstH <= 0 ||
-            dstX >= (int)rtWidth || dstY >= (int)rtHeight) return false;
-
-        ID3D12Resource* srcTex = chain.images12[idx].Get();
-        const D3D12_RESOURCE_DESC sd = srcTex->GetDesc();
-        if (sd.SampleDesc.Count > 1) {
-            static int msaaLog = 0;
-            if (++msaaLog % 120 == 1) {
-                Logf("[SimXR] blitD3D12ToPreview: %s is %ux MSAA; preview needs a resolve first, skipping",
-                     label, sd.SampleDesc.Count);
-            }
-            return false;
-        }
-
-        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-        srvDesc.Format = PreviewLinearSrvFormat(sd.Format, (DXGI_FORMAT)chain.format);
-        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        if (sd.DepthOrArraySize > 1) {
-            srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
-            srvDesc.Texture2DArray.FirstArraySlice = slice;
-            srvDesc.Texture2DArray.ArraySize = 1;
-            srvDesc.Texture2DArray.MipLevels = 1;
-        } else {
-            srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-            srvDesc.Texture2D.MipLevels = 1;
-        }
-
-        const UINT slot = s.previewSrvSlot;
-        s.previewSrvSlot = (s.previewSrvSlot + 1) % rt::kPreviewSrvSlots;
-        D3D12_CPU_DESCRIPTOR_HANDLE cpu = s.previewSrvHeap->GetCPUDescriptorHandleForHeapStart();
-        D3D12_GPU_DESCRIPTOR_HANDLE gpu = s.previewSrvHeap->GetGPUDescriptorHandleForHeapStart();
-        cpu.ptr += (SIZE_T)slot * s.previewSrvStride;
-        gpu.ptr += (UINT64)slot * s.previewSrvStride;
-        s.d3d12Device->CreateShaderResourceView(srcTex, &srvDesc, cpu);
-
-        transition(srcTex, chain.imageStates12[idx], D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-
-        const float texW = (float)sd.Width, texH = (float)sd.Height;
-        const float uvScaleX = (float)rect.w / texW, uvScaleY = (float)rect.h / texH;
-        const float constants[8] = {
-            (float)rect.x / texW, (float)rect.y / texH,
-            uvScaleX, uvScaleY,
-            0.25f * uvScaleX / (float)dstW, 0.25f * uvScaleY / (float)dstH,
-            (srvDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
-             srvDesc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT) ? 1.0f : 0.0f,
-            0.0f,
-        };
-        s.previewCmdList->SetGraphicsRoot32BitConstants(1, 8, constants, 0);
-        s.previewCmdList->SetGraphicsRootDescriptorTable(0, gpu);
-
-        // A zoomed-in eye is larger than the RT and starts off the left/top of it, so the
-        // viewport runs outside while the scissor stays inside: the rasterizer drops the
-        // overflow and the cleared black shows through anywhere the image doesn't reach.
-        D3D12_VIEWPORT vp = { (float)dstX, (float)dstY, (float)dstW, (float)dstH, 0.0f, 1.0f };
-        D3D12_RECT scissor = { (std::max)(0, dstX), (std::max)(0, dstY),
-                               (std::min)((int)rtWidth, dstX + dstW),
-                               (std::min)((int)rtHeight, dstY + dstH) };
-        s.previewCmdList->RSSetViewports(1, &vp);
-        s.previewCmdList->RSSetScissorRects(1, &scissor);
-        s.previewCmdList->DrawInstanced(3, 1, 0, 0);
-
-        // Back to the state the app released it in, so its own barriers still line up.
-        transition(srcTex, chain.imageStates12[idx], chain.releaseState12);
-        return true;
-    };
-
-    const bool singleEye = (viewMode != ui::ViewMode::BothEyes);
-    bool forceSingleEye = false;
-    static bool loggedAnaglyph = false;
-    ui::DisplayLayout effectiveLayout = layout;
-    if (!singleEye && layout == ui::DisplayLayout::Anaglyph) {
-        if (!loggedAnaglyph) {
-            Log("[SimXR] blitD3D12ToPreview: Anaglyph not supported on D3D12 path; showing left eye only");
-            loggedAnaglyph = true;
-        }
-        forceSingleEye = true;
-    }
-    if (effectiveLayout == ui::DisplayLayout::Anaglyph) {
-        effectiveLayout = ui::DisplayLayout::SideBySide;
-    }
-
-    const bool hasLeft = leftIdx < chainL.images12.size() && chainL.images12[leftIdx];
-    const bool hasRight = chainR && rightIdx < chainR->images12.size() && chainR->images12[rightIdx];
-
-    // The RT is the client area, so zoom and pan decide where inside it the eyes go.
-    const rt::FitRect present = rt::ComputePresentRect((int)rtWidth, (int)rtHeight);
-    const int presentX = (int)lroundf(present.x);
-    const int presentY = (int)lroundf(present.y);
-    const int presentW = (std::max)(1, (int)lroundf(present.w));
-    const int presentH = (std::max)(1, (int)lroundf(present.h));
-
-    if (singleEye || forceSingleEye) {
-        if (viewMode == ui::ViewMode::RightEyeOnly && hasRight) {
-            drawEye(*chainR, rightIdx, rightSlice, rectR, presentX, presentY, presentW, presentH, "R");
-        } else if (hasLeft) {
-            drawEye(chainL, leftIdx, leftSlice, rectL, presentX, presentY, presentW, presentH, "L");
-        } else if (hasRight) {
-            drawEye(*chainR, rightIdx, rightSlice, rectR, presentX, presentY, presentW, presentH, "R");
-        }
-    } else {
-        const bool overUnder = (effectiveLayout == ui::DisplayLayout::OverUnder);
-        const int halfW = overUnder ? presentW : presentW / 2;
-        const int halfH = overUnder ? presentH / 2 : presentH;
-        const int rightX = overUnder ? presentX : presentX + halfW;
-        const int rightY = overUnder ? presentY + halfH : presentY;
-
-        if (hasLeft) {
-            drawEye(chainL, leftIdx, leftSlice, rectL, presentX, presentY, halfW, halfH, "L");
-        }
-        if (hasRight) {
-            drawEye(*chainR, rightIdx, rightSlice, rectR, rightX, rightY, halfW, halfH, "R");
-        } else if (hasLeft) {
-            drawEye(chainL, leftIdx, leftSlice, rectL, rightX, rightY, halfW, halfH, "L");
-        }
-    }
-
-    // The RT stays open: quad layers of this frame draw into it next, and closePreviewSlot
-    // does the single readback once every layer is in.
-
-    // Process window messages
-
-    static int blitCount = 0;
-    if (g_logVerbose && ++blitCount % 60 == 1) {
-        Logf("[SimXR] blitD3D12ToPreview: L[%u] R[%u] (%ux%u) recorded into slot %u",
-             leftIdx, rightIdx, rtWidth, rtHeight, s.previewSlot);
-    }
+// Record projection into the private GPU target. The presentation owner submits
+// all layers together, copies to a DXGI buffer and presents on its own worker.
+static void RenderProjectionD3D12(rt::Session& session, const simxr::PreviewProjection& projection,
+								  const ProjectionImages& images, const simxr::PreviewProjectionDraws& draws)
+{
+	if (!session.preview12 || !session.preview12->Target() || !session.previewPipelines12)
+		return;
+	if (!BeginPreviewSlot(session))
+		return;
+	const auto targetDescription = session.preview12->Target()->GetDesc();
+	const auto targetWidth = static_cast<int>(targetDescription.Width);
+	const auto targetHeight = static_cast<int>(targetDescription.Height);
+	const auto target = session.preview12->RenderTarget();
+	auto& commands = *session.preview12->Commands();
+	commands.OMSetRenderTargets(1, &target, FALSE, nullptr);
+	for (std::size_t index = 0; index < draws.count; ++index)
+	{
+		const auto& draw = draws.draws[index];
+		const auto& image = images[draw.sourceEye];
+		if (!image.swapchain || !projection.eyes[draw.sourceEye])
+			continue;
+		auto& swapchain = *image.swapchain;
+		const auto& source = *projection.eyes[draw.sourceEye];
+		if (image.index >= swapchain.images12.size() || !swapchain.images12[image.index] ||
+			image.index >= swapchain.imageStates12.size())
+			continue;
+		const auto& viewport = draw.target.rectangle;
+		if (viewport.x + viewport.width <= 0 || viewport.y + viewport.height <= 0 || viewport.x >= targetWidth ||
+			viewport.y >= targetHeight)
+			continue;
+		auto& texture = *swapchain.images12[image.index].Get();
+		const auto description = texture.GetDesc();
+		if (description.SampleDesc.Count > 1 || IsPreviewDepthFormat(description.Format))
+			continue;
+		const auto binding = session.previewPipelines12->Blit(NativePreviewChannels(draw.channels));
+		const auto sourceView = binding.SourceView(description, source.image.arraySlice);
+		if (!sourceView)
+			continue;
+		const bool encodeSrgb = sourceView->Format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
+								sourceView->Format == DXGI_FORMAT_R32G32B32A32_FLOAT;
+		const auto constants = simxr::PreviewProjectionConstants(source, viewport, encodeSrgb);
+		if (!constants)
+			continue;
+		const auto sampled = session.preview12->Sample(&texture, *sourceView);
+		if (!sampled || !binding.Retain(*session.preview12))
+			continue;
+		auto& state = swapchain.imageStates12[image.index];
+		const auto transition = [&](D3D12_RESOURCE_STATES next)
+		{
+			if (state == next)
+				return;
+			D3D12_RESOURCE_BARRIER barrier{};
+			barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			barrier.Transition.pResource = &texture;
+			barrier.Transition.StateBefore = state;
+			barrier.Transition.StateAfter = next;
+			barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+			commands.ResourceBarrier(1, &barrier);
+			state = next;
+		};
+		binding.Bind(commands);
+		transition(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+		commands.SetGraphicsRoot32BitConstants(1, simxr::windows::D3D12PreviewPipelines::BlitConstantCount,
+											   constants->data(), 0);
+		commands.SetGraphicsRootDescriptorTable(0, *sampled);
+		const D3D12_VIEWPORT nativeViewport{viewport.x, viewport.y, viewport.width, viewport.height, 0, 1};
+		const D3D12_RECT scissor{
+			(std::max)(0L, static_cast<LONG>(std::floor(viewport.x))),
+			(std::max)(0L, static_cast<LONG>(std::floor(viewport.y))),
+			(std::min)(static_cast<LONG>(targetWidth), static_cast<LONG>(std::ceil(viewport.x + viewport.width))),
+			(std::min)(static_cast<LONG>(targetHeight), static_cast<LONG>(std::ceil(viewport.y + viewport.height)))};
+		commands.RSSetViewports(1, &nativeViewport);
+		commands.RSSetScissorRects(1, &scissor);
+		commands.DrawInstanced(3, 1, 0, 0);
+		transition(swapchain.releaseState12);
+	}
 }
 
 // Flag to track if Present should be called (deferred until all layers rendered)
@@ -7404,7 +4430,7 @@ static void clearPreviewToBlack(rt::Session& s) {
     if (FAILED(s.d3d11Device->CreateRenderTargetView(backbuffer.Get(), nullptr, rtv.GetAddressOf()))) return;
     const float black[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
     s.d3d11Context->ClearRenderTargetView(rtv.Get(), black);
-    // presentProjection normally owns the Present; with no projection layer
+    // RenderProjection normally owns the Present; with no projection layer
     // nothing else would flip this frame.
     g_presentPending = true;
 }
@@ -7428,1448 +4454,680 @@ static void updatePreviewTitle(rt::Session& s) {
         return;
     }
     ui::StatsInfo si = rt::BuildStatsInfo(s);
-    LARGE_INTEGER titleStart{}, titleEnd{}, titleFrequency{};
-    QueryPerformanceCounter(&titleStart);
     ui::UpdateWindowTitle(s.hwnd, &si);
-    QueryPerformanceCounter(&titleEnd);
-    QueryPerformanceFrequency(&titleFrequency);
-    const double titleMs=1000.0*(titleEnd.QuadPart-titleStart.QuadPart)/titleFrequency.QuadPart;
-    if (titleMs>=40.0) Logf("[SimXR] preview title slow: %.3fms thread=%lu",titleMs,GetCurrentThreadId());
 }
 
-static void presentProjection(rt::Session& s, const XrCompositionLayerProjection& proj,
-                              bool skipPresent = false, bool clearTarget = true) {
-    LogV("[SimXR] ============================================");
-    const rt::LayerBlend blendMode = rt::BlendForLayerFlags(proj.layerFlags);
-    LogVf("[SimXR] presentProjection called: viewCount=%u, skipPresent=%d", proj.viewCount, (int)skipPresent);
-    LogV("[SimXR] RENDERING FRAME TO PREVIEW WINDOW");
-    LogV("[SimXR] ============================================");
-    if (proj.viewCount < 1) {
-        Log("[SimXR] presentProjection: No views, returning");
-        return;
-    }
-    const auto& vL = proj.views[0];
-    auto itL = rt::g_swapchains.find(vL.subImage.swapchain); 
-    if (itL == rt::g_swapchains.end()) {
-        Log("[SimXR] presentProjection: Left swapchain not found");
-        return;
-    }
-    auto& chL = itL->second;
-    // Size from the declared rect, not the texture: an app rendering 1920x1080 into a
-    // square swapchain wants a 16:9 eye, not the square.
-    const rt::SubImageRect rectL = rt::ResolveSubImageRect(vL.subImage.imageRect, chL.width, chL.height, "left eye");
-    rt::SubImageRect rectR = rectL;
-    uint32_t width = rectL.w, height = rectL.h;
-    const rt::Swapchain* chRPtr = &chL;
-    if (proj.viewCount > 1) {
-        const auto& vR = proj.views[1];
-        auto itR = rt::g_swapchains.find(vR.subImage.swapchain);
-        if (itR != rt::g_swapchains.end()) {
-            chRPtr = &itR->second;
-            rectR = rt::ResolveSubImageRect(vR.subImage.imageRect, itR->second.width, itR->second.height, "right eye");
-            if (rectR.w > width) width = rectR.w;
-            if (rectR.h > height) height = rectR.h;
-        }
-    }
-    if ((rectL.w == 0 || rectL.h == 0) && (rectR.w == 0 || rectR.h == 0)) {
-        return;
-    }
-    // Publish the source per-eye size so menu/keyboard zoom callbacks can
-    // compute a window target without having to walk the swapchain map.
-    const UINT prevSourceW = rt::g_sourceWidth.exchange(width);
-    const UINT prevSourceH = rt::g_sourceHeight.exchange(height);
-
-    // The window is opened at xrBeginSession, before any projection layer exists,
-    // so it starts out sized from the recommended resolution rather than this one.
-    // Re-fit it the first time a real size arrives, and on any later change.
-    if (s.hwnd && (prevSourceW != width || prevSourceH != height)) {
-        rt::FitWindowToContentAspect(s.hwnd);
-    }
-    updatePreviewTitle(s);
-
-    {
-        std::lock_guard<std::mutex> lock(s.previewMutex);
-
-        // OpenGL preview path - read pixels from GL textures and display via D3D11
-        if (s.usesOpenGL) {
-            // Nothing below this point is cheap: the path reads both eyes back off the GPU
-            // before it can show them, which is exactly what Mirror Rate exists to skip.
-            if (!g_previewDueThisFrame) return;
-
-            static int glFrameCount = 0;
-            glFrameCount++;
-
-            if (glFrameCount % 60 == 1) {
-                Logf("[SimXR] GL PREVIEW: frame=%d, width=%u, height=%u", glFrameCount, width, height);
-            }
-
-            // Make the app's GL context current
-            HGLRC savedRC = wglGetCurrentContext();
-            HDC savedDC = wglGetCurrentDC();
-
-            if (glFrameCount % 60 == 1) {
-                Logf("[SimXR] GL PREVIEW: savedRC=%p, savedDC=%p, s.glRC=%p, s.glDC=%p",
-                     savedRC, savedDC, s.glRC, s.glDC);
-            }
-
-            if (s.glRC && s.glDC) {
-                BOOL result = wglMakeCurrent(s.glDC, s.glRC);
-                if (glFrameCount % 60 == 1) {
-                    Logf("[SimXR] GL PREVIEW: wglMakeCurrent result=%d", result);
-                }
-            } else {
-                if (glFrameCount % 60 == 1) {
-                    Log("[SimXR] GL PREVIEW: WARNING - s.glRC or s.glDC is null!");
-                }
-            }
-
-            // Read pixel data from GL textures into CPU buffers
-            std::vector<uint8_t>& leftPixels = s.glEyePixels[0];    // reused across frames
-            std::vector<uint8_t>& rightPixels = s.glEyePixels[1];
-            leftPixels.assign((size_t)width * height * 4, 0);
-            rightPixels.assign((size_t)width * height * 4, 0);
-
-            // Get left eye texture
-            GLuint leftTex = 0;
-            if (rectL.w > 0 && rectL.h > 0 && chL.imagesGL.size() > 0) {
-                uint32_t idx = chL.lastReleased;
-                if (idx == UINT32_MAX || idx >= chL.imageCount) idx = chL.lastAcquired;
-                if (idx != UINT32_MAX && idx < chL.imagesGL.size()) {
-                    leftTex = chL.imagesGL[idx];
-                }
-            }
-
-            // Get right eye texture
-            GLuint rightTex = 0;
-            if (proj.viewCount > 1 && rectR.w > 0 && rectR.h > 0 &&
-                chRPtr && chRPtr->imagesGL.size() > 0) {
-                uint32_t idx = chRPtr->lastReleased;
-                if (idx == UINT32_MAX || idx >= chRPtr->imageCount) idx = chRPtr->lastAcquired;
-                if (idx != UINT32_MAX && idx < chRPtr->imagesGL.size()) {
-                    rightTex = chRPtr->imagesGL[idx];
-                }
-            }
-
-            auto readEye = [&](rt::Swapchain& chain, GLuint tex, uint32_t slice,
-                               const rt::SubImageRect& rect, std::vector<uint8_t>& pixels) {
-                if (!tex) { pixels.assign((size_t)width*height*4,0); return; }
-                ReadGLSubImage(chain,tex,slice,rect,pixels);
-                if (rect.w!=width || rect.h!=height) {
-                    std::vector<uint8_t> scaled((size_t)width*height*4);
-                    for (uint32_t y=0;y<height;++y) for (uint32_t x=0;x<width;++x)
-                        memcpy(scaled.data()+((size_t)y*width+x)*4,
-                               pixels.data()+((size_t)(y*rect.h/height)*rect.w+x*rect.w/width)*4,4);
-                    pixels=std::move(scaled);
-                }
-            };
-            readEye(chL,leftTex,vL.subImage.imageArrayIndex,rectL,leftPixels);
-            readEye(const_cast<rt::Swapchain&>(*chRPtr),rightTex,proj.views[proj.viewCount>1 ? 1:0].subImage.imageArrayIndex,rectR,rightPixels);
-
-            // Final composited screenshot is captured in xrEndFrame.
-
-            // Restore original GL context
-            if (savedRC) {
-                wglMakeCurrent(savedDC, savedRC);
-            }
-
-            // Log progress and check if pixel data is valid
-            if (glFrameCount % 60 == 1) {
-                Logf("[SimXR] OpenGL frame #%d - leftTex=%u, rightTex=%u, size=%ux%u",
-                     glFrameCount, leftTex, rightTex, width, height);
-
-                // Check if pixels are all zero (black) or have content
-                uint32_t leftSum = 0, rightSum = 0;
-                for (size_t i = 0; i < std::min((size_t)1000, leftPixels.size()); i++) {
-                    leftSum += leftPixels[i];
-                }
-                for (size_t i = 0; i < std::min((size_t)1000, rightPixels.size()); i++) {
-                    rightSum += rightPixels[i];
-                }
-                Logf("[SimXR] GL PREVIEW: leftPixelSum=%u, rightPixelSum=%u (first 1000 bytes)", leftSum, rightSum);
-
-                // Print first few pixel values (RGBA)
-                if (leftPixels.size() >= 16) {
-                    Logf("[SimXR] GL PREVIEW: First 4 pixels (RGBA): [%d,%d,%d,%d] [%d,%d,%d,%d] [%d,%d,%d,%d] [%d,%d,%d,%d]",
-                         leftPixels[0], leftPixels[1], leftPixels[2], leftPixels[3],
-                         leftPixels[4], leftPixels[5], leftPixels[6], leftPixels[7],
-                         leftPixels[8], leftPixels[9], leftPixels[10], leftPixels[11],
-                         leftPixels[12], leftPixels[13], leftPixels[14], leftPixels[15]);
-                }
-
-                // Check a pixel in the middle of the image
-                size_t midOffset = (height / 2) * width * 4 + (width / 2) * 4;
-                if (midOffset + 4 <= leftPixels.size()) {
-                    Logf("[SimXR] GL PREVIEW: Middle pixel (RGBA): [%d,%d,%d,%d]",
-                         leftPixels[midOffset], leftPixels[midOffset+1], leftPixels[midOffset+2], leftPixels[midOffset+3]);
-                }
-            }
-
-            if (!EnsureGLPreviewDevice(s)) return;
-
-            // Use the standard preview path now that we have a D3D11 device
-            DXGI_FORMAT displayFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
-            const auto viewMode = ui::g_uiState.viewMode;
-            const auto layout = ui::g_uiState.displayLayout;
-
-            // Swapchain backbuffer = current window client area so DXGI doesn't
-            // have to scale; we letterbox the stereo content into it ourselves.
-            int targetWidth = (int)width;
-            int targetHeight = (int)height;
-            rt::GetPreviewClientSize(s, (int)width, (int)height, targetWidth, targetHeight);
-
-            if (glFrameCount % 60 == 1) {
-                Logf("[SimXR] GL PREVIEW: clientSize=%dx%d, calling ensurePreviewSized", targetWidth, targetHeight);
-            }
-
-            ensurePreviewSized(s, (UINT)targetWidth, (UINT)targetHeight, displayFormat);
-
-            if (!s.previewSwapchain) {
-                Log("[SimXR] GL PREVIEW: ERROR - previewSwapchain is NULL after ensurePreviewSized!");
-                return;
-            }
-
-            // Get the backbuffer
-            ComPtr<ID3D11Texture2D> bb;
-            if (FAILED(s.previewSwapchain->GetBuffer(0, IID_PPV_ARGS(bb.GetAddressOf())))) {
-                Log("[SimXR] Failed to get preview swapchain buffer for GL preview");
-                return;
-            }
-
-            // glGetTexImage returns the encoded bytes of GL_SRGB8_ALPHA8. Give those
-            // bytes an sRGB SRV so sampling decodes them before either an opaque copy or
-            // an alpha blend writes through the sRGB preview RTV. Other color formats
-            // are read back as linear RGBA8 and keep a UNORM SRV.
-            const DXGI_FORMAT eyeFormats[2] = {
-                chL.glInternalFormat == GL_SRGB8_ALPHA8
-                    ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM,
-                chRPtr && chRPtr->glInternalFormat == GL_SRGB8_ALPHA8
-                    ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM,
-            };
-            const bool eyeSizeChanged = s.glEyeTexW != width || s.glEyeTexH != height;
-            for (int eye = 0; eye < 2; ++eye) {
-                if (!eyeSizeChanged && s.glEyeTex[eye] &&
-                    s.glEyeSrvFormat[eye] == eyeFormats[eye]) {
-                    continue;
-                }
-                D3D11_TEXTURE2D_DESC texDesc = {};
-                texDesc.Width = width;
-                texDesc.Height = height;
-                texDesc.MipLevels = 1;
-                texDesc.ArraySize = 1;
-                texDesc.Format = eyeFormats[eye];
-                texDesc.SampleDesc.Count = 1;
-                texDesc.Usage = D3D11_USAGE_DEFAULT;
-                texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-                s.glEyeTex[eye].Reset();
-                s.glEyeSrv[eye].Reset();
-                s.glEyeSrvFormat[eye] = DXGI_FORMAT_UNKNOWN;
-                if (SUCCEEDED(s.d3d11Device->CreateTexture2D(
-                        &texDesc, nullptr, s.glEyeTex[eye].GetAddressOf())) &&
-                    SUCCEEDED(s.d3d11Device->CreateShaderResourceView(
-                        s.glEyeTex[eye].Get(), nullptr, s.glEyeSrv[eye].GetAddressOf()))) {
-                    s.glEyeSrvFormat[eye] = eyeFormats[eye];
-                }
-            }
-            s.glEyeTexW = width;
-            s.glEyeTexH = height;
-            if (leftTex != 0 && s.glEyeTex[0]) {
-                s.d3d11Context->UpdateSubresource(s.glEyeTex[0].Get(), 0, nullptr,
-                                                  leftPixels.data(), width * 4, 0);
-            }
-            if (rightTex != 0 && s.glEyeTex[1]) {
-                s.d3d11Context->UpdateSubresource(s.glEyeTex[1].Get(), 0, nullptr,
-                                                  rightPixels.data(), width * 4, 0);
-            }
-
-            // Use shader-based rendering for proper side-by-side display
-            const bool singleEye = (viewMode != ui::ViewMode::BothEyes);
-            const bool showLeft = (viewMode != ui::ViewMode::RightEyeOnly);
-            const bool showRight = (viewMode != ui::ViewMode::LeftEyeOnly);
-
-            // Initialize blit resources if not already done
-            if (!rt::InitBlitResources(s)) {
-                Log("[SimXR] OpenGL preview: Failed to init blit resources");
-                return;
-            }
-
-            // Create render target view for the backbuffer
-            ComPtr<ID3D11RenderTargetView> rtv;
-            if (!rt::CreatePreviewRtv(s, bb.Get(), rtv)) {
-                Log("[SimXR] OpenGL preview: Failed to create RTV");
-                return;
-            }
-
-            // SRVs are cached alongside the upload textures.
-            ID3D11ShaderResourceView* leftSRV = s.glEyeSrv[0].Get();
-            ID3D11ShaderResourceView* rightSRV = s.glEyeSrv[1].Get();
-
-            if (glFrameCount % 60 == 1) {
-                Logf("[SimXR] GL PREVIEW: leftTex2D=%p rightTex2D=%p leftSRV=%p rightSRV=%p",
-                     s.glEyeTex[0].Get(), s.glEyeTex[1].Get(), leftSRV, rightSRV);
-            }
-
-            // Clear the render target (full backbuffer â†’ black borders for letterbox)
-            ID3D11RenderTargetView* rtvs[1] = { rtv.Get() };
-            s.d3d11Context->OMSetRenderTargets(1, rtvs, nullptr);
-            const float clearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-            if (clearTarget) s.d3d11Context->ClearRenderTargetView(rtv.Get(), clearColor);
-
-            // Where the eyes land in the backbuffer (= client area). "Fit to Window"
-            // scales the whole stereo image into it rather than cropping; any other
-            // zoom scales the panel and lets the rasterizer clip what overhangs.
-            rt::FitRect fit = rt::ComputePresentRect((int)s.previewWidth, (int)s.previewHeight);
-
-            D3D11_VIEWPORT fullVp = { fit.x, fit.y, fit.w, fit.h, 0.0f, 1.0f };
-            D3D11_VIEWPORT leftVp = fullVp;
-            D3D11_VIEWPORT rightVp = fullVp;
-            if (!singleEye) {
-                if (layout == ui::DisplayLayout::SideBySide) {
-                    leftVp.Width  = fit.w * 0.5f;
-                    rightVp.Width = fit.w * 0.5f;
-                    rightVp.TopLeftX = fit.x + fit.w * 0.5f;
-                } else if (layout == ui::DisplayLayout::OverUnder) {
-                    leftVp.Height  = fit.h * 0.5f;
-                    rightVp.Height = fit.h * 0.5f;
-                    rightVp.TopLeftY = fit.y + fit.h * 0.5f;
-                }
-            }
-
-            // Helper lambda to blit a texture to a viewport
-            auto blitTexture = [&](ID3D11ShaderResourceView* srv, const D3D11_VIEWPORT& vp,
-                                   ID3D11BlendState* blend) {
-                if (!srv) {
-                    if (glFrameCount % 60 == 1) Log("[SimXR] GL PREVIEW: blitTexture - SRV is null!");
-                    return;
-                }
-
-                if (glFrameCount % 60 == 1) {
-                    Logf("[SimXR] GL PREVIEW: blitTexture - vp=(%.0f,%.0f,%.0f,%.0f) srv=%p",
-                         vp.TopLeftX, vp.TopLeftY, vp.Width, vp.Height, srv);
-                }
-
-                // Ensure render target is bound
-                ID3D11RenderTargetView* currentRTVs[1] = { rtv.Get() };
-                s.d3d11Context->OMSetRenderTargets(1, currentRTVs, nullptr);
-
-                s.d3d11Context->RSSetViewports(1, &vp);
-                s.d3d11Context->VSSetShader(s.blitVS.Get(), nullptr, 0);
-                s.d3d11Context->PSSetShader(s.blitPS.Get(), nullptr, 0);
-
-                ID3D11ShaderResourceView* srvs[] = { srv };
-                s.d3d11Context->PSSetShaderResources(0, 1, srvs);
-                ID3D11SamplerState* samplers[] = { s.samplerState.Get() };
-                s.d3d11Context->PSSetSamplers(0, 1, samplers);
-
-                s.d3d11Context->IASetInputLayout(nullptr);
-                s.d3d11Context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-                s.d3d11Context->OMSetBlendState(blend, nullptr, 0xFFFFFFFF);
-                s.d3d11Context->OMSetDepthStencilState(nullptr, 0);
-                s.d3d11Context->RSSetState(s.noCullRS.Get());
-
-                s.d3d11Context->Draw(4, 0);
-
-                // Unbind SRV
-                ID3D11ShaderResourceView* nullSRV[] = { nullptr };
-                s.d3d11Context->PSSetShaderResources(0, 1, nullSRV);
-            };
-
-            const UINT8 rgbMask = D3D11_COLOR_WRITE_ENABLE_RED |
-                                  D3D11_COLOR_WRITE_ENABLE_GREEN |
-                                  D3D11_COLOR_WRITE_ENABLE_BLUE;
-            ID3D11BlendState* leftBlend = rt::GetLayerBlendState(s, blendMode, rgbMask);
-            ID3D11BlendState* rightBlend = leftBlend;
-            if (!singleEye && layout == ui::DisplayLayout::Anaglyph) {
-                leftBlend = rt::GetLayerBlendState(s, blendMode, D3D11_COLOR_WRITE_ENABLE_RED);
-                rightBlend = rt::GetLayerBlendState(
-                    s, blendMode, D3D11_COLOR_WRITE_ENABLE_GREEN | D3D11_COLOR_WRITE_ENABLE_BLUE);
-            }
-
-            // Render the eyes
-            if (singleEye) {
-                if (showLeft && leftSRV) {
-                    blitTexture(leftSRV, fullVp, leftBlend);
-                } else if (showRight && rightSRV) {
-                    blitTexture(rightSRV, fullVp, rightBlend);
-                }
-            } else {
-                // Side by side (or over/under)
-                if (showLeft && leftSRV) {
-                    blitTexture(leftSRV, leftVp, leftBlend);
-                }
-                if (showRight && rightSRV) {
-                    blitTexture(rightSRV, rightVp, rightBlend);
-                } else if (showRight && leftSRV) {
-                    // Mirror left eye if no right eye available
-                    blitTexture(leftSRV, rightVp, rightBlend);
-                }
-            }
-
-            // Present (may be deferred if overlays are pending)
-            if (!skipPresent) {
-
-                if (glFrameCount % 60 == 1) {
-                    Logf("[SimXR] GL PREVIEW: About to Present - hwnd=%p, swapchain=%p", s.hwnd, s.previewSwapchain.Get());
-                }
-
-                HRESULT presentHr = s.previewSwapchain->Present(0, 0);
-                if (FAILED(presentHr) && glFrameCount % 60 == 1) {
-                    Logf("[SimXR] GL PREVIEW: Present FAILED with hr=0x%08X", presentHr);
-                }
-            } else {
-                g_presentPending = true;
-            }
-
-            return;
-        }
-
-        // Use UNORM format for swapchain (SRGB not valid for FLIP_DISCARD)
-        // We create SRGB RTVs for proper gamma when rendering. Ignored on D3D12,
-        // where the preview RT is always kPreviewRTFormat and the scaling pass
-        // converts whatever the app submitted into it.
-        const DXGI_FORMAT displayFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
-
-        auto viewMode = ui::g_uiState.viewMode;
-        auto layout = ui::g_uiState.displayLayout;
-        int targetWidth = (int)width;
-        int targetHeight = (int)height;
-        if (!s.usesD3D12) {
-            // D3D11: backbuffer size = current window client area. The eyes
-            // get letterboxed into it (no DXGI scaling = no aspect squish).
-            rt::GetPreviewClientSize(s, (int)width, (int)height, targetWidth, targetHeight);
-        } else if (
-            mcp::g_screenshotRequested &&
-            mcp::g_screenshotLayer == "projection_native"
-        ) {
-            // The desktop mirror follows the window's aspect and is deliberately
-            // capped for performance.  That is ideal for live viewing, but it
-            // squashes an SBS submission when the window is wider than the eye
-            // pair and makes stereo/oracle measurements ambiguous.  On explicit
-            // request, render one diagnostic frame at the source eye resolution.
-            // The next ordinary frame restores the inexpensive capped surface.
-            targetWidth = (int)width * 2;
-            targetHeight = (int)height;
-            viewMode = ui::ViewMode::BothEyes;
-            layout = ui::DisplayLayout::SideBySide;
-        } else {
-            // D3D12 (GDI path): the offscreen RT is the client area and the eyes are
-            // drawn into their zoomed rect inside it, so the scaling pass does the
-            // resample on the GPU and the readback after it is the window's pixel
-            // count. Taking the shape from the panel and not from the render target
-            // is what turns the app's non-square pixels back into square ones.
-            rt::ComputePreviewRTSize(s, targetWidth, targetHeight);
-        }
-        ensurePreviewSized(s, (UINT)targetWidth, (UINT)targetHeight, displayFormat);
-        const bool singleEye = (viewMode != ui::ViewMode::BothEyes);
-        const bool showLeft = (viewMode != ui::ViewMode::RightEyeOnly);
-        const bool showRight = (viewMode != ui::ViewMode::LeftEyeOnly);
-
-        // Get left image index
-        uint32_t leftIdx = 0;
-        if (chL.lastReleased != UINT32_MAX && chL.lastReleased < chL.imageCount) {
-            leftIdx = chL.lastReleased;
-        } else if (chL.lastAcquired != UINT32_MAX && chL.lastAcquired < chL.imageCount) {
-            leftIdx = chL.lastAcquired;
-        }
-
-        static int blitCount = 0;
-        if (g_logVerbose && ++blitCount % 60 == 1) {
-            Logf("[SimXR] Blitting left eye: idx=%u (lastReleased=%u, lastAcquired=%u, imageCount=%u)",
-                 leftIdx, chL.lastReleased, chL.lastAcquired, chL.imageCount);
-        }
-
-        if (!s.usesD3D12) {
-            // ===== D3D11 PATH =====
-            if (!s.previewSwapchain) return;
-
-            // Mirror Rate: the composite and the Present it feeds are what this skips.
-            // The frame counter below stays outside it, so the rate shown in the title is
-            // still the application's and not the mirror's.
-            if (g_previewDueThisFrame) {
-                // Save D3D11 context state - will auto-restore when stateBackup goes out of scope
-                D3D11StateBackup stateBackup(s.d3d11Context.Get());
-
-                // Get the backbuffer and create RTV
-                ComPtr<ID3D11Texture2D> bb;
-                if (FAILED(s.previewSwapchain->GetBuffer(0, IID_PPV_ARGS(bb.GetAddressOf())))) {
-                    Log("[SimXR] Failed to get preview swapchain buffer.");
-                    return;
-                }
-
-                // Explicit sRGB RTV for proper gamma encoding
-                ComPtr<ID3D11RenderTargetView> rtv;
-                if (!rt::CreatePreviewRtv(s, bb.Get(), rtv)) {
-                    Log("[SimXR] Failed to create RTV for preview.");
-                    return;
-                }
-
-                // Bind RTV and clear the full backbuffer (= client area) to black
-                // so any letterbox border ends up black instead of stale content.
-                ID3D11RenderTargetView* rtvs[1] = { rtv.Get() };
-                s.d3d11Context->OMSetRenderTargets(1, rtvs, nullptr);
-                const float clearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-                if (clearTarget) s.d3d11Context->ClearRenderTargetView(rtv.Get(), clearColor);
-
-                // Where the eyes land in the backbuffer (= client area), after zoom and pan.
-                // Single eye uses the rect whole; SBS / OverUnder split it; Anaglyph
-                // overlays both eyes into it.
-                rt::FitRect fit = rt::ComputePresentRect((int)s.previewWidth, (int)s.previewHeight);
-
-                D3D11_VIEWPORT fullVp = { fit.x, fit.y, fit.w, fit.h, 0.0f, 1.0f };
-                D3D11_VIEWPORT leftVp = fullVp;
-                D3D11_VIEWPORT rightVp = fullVp;
-                if (!singleEye) {
-                    if (layout == ui::DisplayLayout::SideBySide) {
-                        leftVp.Width  = fit.w * 0.5f;
-                        rightVp.Width = fit.w * 0.5f;
-                        rightVp.TopLeftX = fit.x + fit.w * 0.5f;
-                    } else if (layout == ui::DisplayLayout::OverUnder) {
-                        leftVp.Height  = fit.h * 0.5f;
-                        rightVp.Height = fit.h * 0.5f;
-                        rightVp.TopLeftY = fit.y + fit.h * 0.5f;
-                    }
-                }
-
-                const UINT8 rgbMask = D3D11_COLOR_WRITE_ENABLE_RED |
-                                      D3D11_COLOR_WRITE_ENABLE_GREEN |
-                                      D3D11_COLOR_WRITE_ENABLE_BLUE;
-                ID3D11BlendState* leftBlend = rt::GetLayerBlendState(s, blendMode, rgbMask);
-                ID3D11BlendState* rightBlend = leftBlend;
-                if (!singleEye && layout == ui::DisplayLayout::Anaglyph) {
-                    leftBlend = rt::GetLayerBlendState(
-                        s, blendMode, D3D11_COLOR_WRITE_ENABLE_RED);
-                    rightBlend = rt::GetLayerBlendState(
-                        s, blendMode,
-                        D3D11_COLOR_WRITE_ENABLE_GREEN | D3D11_COLOR_WRITE_ENABLE_BLUE);
-                }
-
-                if (showLeft) {
-                    blitViewToHalf(s, chL, leftIdx, vL.subImage.imageArrayIndex, vL.subImage.imageRect,
-                                   rtv.Get(), leftVp, leftBlend);
-                }
-
-                // Blit right eye
-                if (showRight && proj.viewCount > 1) {
-                    const auto& vR = proj.views[1];
-                    auto& chR = const_cast<rt::Swapchain&>(*chRPtr);
-                    uint32_t rightIdx = 0;
-                    if (chR.lastReleased != UINT32_MAX && chR.lastReleased < chR.imageCount) {
-                        rightIdx = chR.lastReleased;
-                    } else if (chR.lastAcquired != UINT32_MAX && chR.lastAcquired < chR.imageCount) {
-                        rightIdx = chR.lastAcquired;
-                    }
-                    blitViewToHalf(s, chR, rightIdx, vR.subImage.imageArrayIndex, vR.subImage.imageRect,
-                                   rtv.Get(), rightVp, rightBlend);
-                } else if (showRight && !showLeft) {
-                    // Mirror left eye if right-only mode but only one view
-                    blitViewToHalf(s, chL, leftIdx, vL.subImage.imageArrayIndex, vL.subImage.imageRect,
-                                   rtv.Get(), rightVp, rightBlend);
-                }
-
-                // Present D3D11 (may be deferred if overlays are pending). Sync interval 0:
-                // this is a mirror, and it runs on the app's render thread, so waiting for
-                // vblank here would pace the application to the monitor rather than to the
-                // headset it thinks it is driving.
-                if (!skipPresent) {
-                    s.previewSwapchain->Present(0, 0);
-                } else {
-                    g_presentPending = true;
-                }
-            }
-
-            // Capture after all layers in xrEndFrame, before deferred Present.
-
-        } else {
-            // ===== D3D12 PATH (GDI-based presentation) =====
-            if (!s.previewRT12) return;
-
-            // The cross-queue sync that orders this read after the app's own frame work
-            // is raised once for the whole frame, in closePreviewSlot.
-
-            // Blit using D3D12 copy commands â†’ readback â†’ GDI (no DXGI Present, no hook conflicts)
-            if (proj.viewCount > 1) {
-                const auto& vR = proj.views[1];
-                auto& chR = const_cast<rt::Swapchain&>(*chRPtr);
-                uint32_t rightIdx = 0;
-                if (chR.lastReleased != UINT32_MAX && chR.lastReleased < chR.imageCount) {
-                    rightIdx = chR.lastReleased;
-                } else if (chR.lastAcquired != UINT32_MAX && chR.lastAcquired < chR.imageCount) {
-                    rightIdx = chR.lastAcquired;
-                }
-                blitD3D12ToPreview(s, chL, leftIdx, vL.subImage.imageArrayIndex, rectL,
-                                   &chR, rightIdx, vR.subImage.imageArrayIndex, rectR,
-                                   layout, viewMode, blendMode);
-            } else {
-                blitD3D12ToPreview(s, chL, leftIdx, vL.subImage.imageArrayIndex, rectL,
-                                   nullptr, 0, 0, rectL, layout, viewMode, blendMode);
-            }
-
-            // No Present call needed: the composite is shown by paintPreviewComposite once
-            // the GPU has finished it, which is also where a screenshot is served from - not
-            // here, where the quad layers of this frame have yet to go into the target.
-        }
-    }
+static void ReportPreviewFailure(rt::Session& session, const char* operation, const std::exception& error) noexcept
+{
+	try
+	{
+		Logf("[SimXR] %s failed: %s", operation, error.what());
+		if (session.compatibilityCapture->ScreenshotRequested())
+			session.compatibilityCapture->FailScreenshot(error.what());
+	}
+	catch (...)
+	{
+		OutputDebugStringA("[SimXR] Preview capture failure could not be published");
+	}
 }
 
-static void renderQuadLayer(rt::Session& s, const XrCompositionLayerQuad* quad,
-                            bool reuseGLReadback = false, bool countAsLayer = true) {
-    if (!quad) return;
-    // D3D12 sessions use previewRT12, not previewSwapchain
-    if (!s.previewSwapchain && !s.previewRT12) return;
-    // A layer of a frame the mirror is skipping. presentProjection skipped the eyes under
-    // it and will not present, so drawing this would be work nothing ever shows.
-    if (!g_previewDueThisFrame) return;
-
-    auto it = rt::g_swapchains.find(quad->subImage.swapchain);
-    if (it == rt::g_swapchains.end()) return;
-
-    auto& chain = it->second;
-
-    // A legal empty rectangle is a no-op. Resolve once so every graphics backend samples
-    // the same region rather than interpreting zero as a request for the full texture.
-    const rt::SubImageRect qrect = rt::ResolveSubImageRect(
-        quad->subImage.imageRect, chain.width, chain.height, "quad");
-    if (qrect.w == 0 || qrect.h == 0) return;
-    const uint32_t texWidth = qrect.w;
-    const uint32_t texHeight = qrect.h;
-
-    // Get texture index
-    uint32_t texIdx = (chain.lastReleased != UINT32_MAX) ? chain.lastReleased :
-                      (chain.lastAcquired != UINT32_MAX) ? chain.lastAcquired : 0;
-
-    // --- D3D12 quad compositing -----------------------------------------------------------------------
-    // Rasterised into the same render target the eyes were just drawn into, once per eye
-    // half, and read back with them as one image. The corners are projected into each eye's
-    // view space here; the vertex shader applies that eye's asymmetric projection so the
-    // interpolation is perspective-correct and a quad crossing behind the eye is clipped
-    // rather than mis-drawn.
-    if (s.usesD3D12) {
-        if (texIdx >= chain.images12.size() || !chain.images12[texIdx]) return;
-        if (chain.imageStates12.size() <= texIdx) return;
-        if (!s.previewCmdList || !s.previewQueue12 || !s.previewFence || !s.hwnd) return;
-        if (!s.previewQuadRootSig || !s.previewQuadPSO[0]) return;
-
-        const uint32_t qArraySize = chain.arraySize ? chain.arraySize : 1;
-        if (quad->subImage.imageArrayIndex >= qArraySize) {
-            static int badSlice = 0;
-            if (++badSlice % 120 == 1) {
-                Logf("[SimXR] quad: imageArrayIndex %u out of range (arraySize=%u)",
-                     quad->subImage.imageArrayIndex, qArraySize);
-            }
-            return;
-        }
-
-        ID3D12Resource* quadTex = chain.images12[texIdx].Get();
-        const D3D12_RESOURCE_DESC qd = quadTex->GetDesc();
-        if (qd.SampleDesc.Count > 1) return;      // needs a resolve first; not worth it for a mirror
-
-        // Share this frame's slot and its open render target with the eye pass. On a
-        // quad-only frame nothing has opened the RT yet, so this is what clears it - which
-        // is also what replaces the old "wipe the back buffer to black" step.
-        rt::PreviewFrame12* slot = beginPreviewSlot(s);
-        if (!slot) return;
-        if (!beginPreviewRT(s, *slot)) return;
-        if (countAsLayer) ++slot->quadLayers;
-
-        const D3D12_RESOURCE_DESC rtDesc = s.previewRT12->GetDesc();
-        const int rtWidth = (int)rtDesc.Width, rtHeight = (int)rtDesc.Height;
-
-        // Only the region the app declared valid is sampled.
-        const float texW = (float)qd.Width, texH = (float)qd.Height;
-        if (texW <= 0.0f || texH <= 0.0f) return;
-        const float uvRect[4] = { (float)qrect.x / texW, (float)qrect.y / texH,
-                                  (float)(qrect.x + qrect.w) / texW, (float)(qrect.y + qrect.h) / texH };
-
-        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-        srvDesc.Format = PreviewLinearSrvFormat(qd.Format, (DXGI_FORMAT)chain.format);
-        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        if (qd.DepthOrArraySize > 1) {
-            srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
-            srvDesc.Texture2DArray.FirstArraySlice = quad->subImage.imageArrayIndex;
-            srvDesc.Texture2DArray.ArraySize = 1;
-            srvDesc.Texture2DArray.MipLevels = 1;
-        } else {
-            srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-            srvDesc.Texture2D.MipLevels = 1;
-        }
-        const UINT slot2 = s.previewSrvSlot;
-        s.previewSrvSlot = (s.previewSrvSlot + 1) % rt::kPreviewSrvSlots;
-        D3D12_CPU_DESCRIPTOR_HANDLE cpu = s.previewSrvHeap->GetCPUDescriptorHandleForHeapStart();
-        D3D12_GPU_DESCRIPTOR_HANDLE gpu = s.previewSrvHeap->GetGPUDescriptorHandleForHeapStart();
-        cpu.ptr += (SIZE_T)slot2 * s.previewSrvStride;
-        gpu.ptr += (UINT64)slot2 * s.previewSrvStride;
-        s.d3d12Device->CreateShaderResourceView(quadTex, &srvDesc, cpu);
-
-        auto& quadState = chain.imageStates12[texIdx];
-        auto barrier12 = [&](D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
-            if (before == after) return;
-            D3D12_RESOURCE_BARRIER b = {}; b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-            b.Transition.pResource = quadTex; b.Transition.StateBefore = before; b.Transition.StateAfter = after;
-            b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-            s.previewCmdList->ResourceBarrier(1, &b);
-        };
-        const D3D12_RESOURCE_STATES qstate = quadState;
-        barrier12(qstate, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-
-        float yaw, pitch, roll;
-        rt::GetEffectiveHeadAngles(yaw, pitch, roll);
-        bool headLocked = false;
-        XrVector3f worldCorners[4];
-        rt::QuadWorldCorners(*quad, yaw, pitch, roll, worldCorners, &headLocked);
-
-        // The sRGB view: blending decodes the destination to linear and re-encodes it.
-        D3D12_CPU_DESCRIPTOR_HANDLE rtvSrgb = s.previewRtvHeap->GetCPUDescriptorHandleForHeapStart();
-        rtvSrgb.ptr += s.previewRtvStride;
-        const rt::LayerBlend blendMode = rt::BlendForLayerFlags(quad->layerFlags);
-        slot->quadSourceAlphaCoverage =
-            blendMode == rt::LayerBlend::Opaque ? 1.0f : slot->quadSourceAlphaCoverage;
-        s.previewCmdList->SetGraphicsRootSignature(s.previewQuadRootSig.Get());
-        s.previewCmdList->SetPipelineState(s.previewQuadPSO[(int)blendMode].Get());
-        s.previewCmdList->OMSetRenderTargets(1, &rtvSrgb, FALSE, nullptr);
-        s.previewCmdList->SetGraphicsRootDescriptorTable(0, gpu);
-
-        // Same split of the RT the eye pass used, so the quad lands over the right eye.
-        const rt::FitRect present = rt::ComputePresentRect(rtWidth, rtHeight);
-        const int presentX = (int)lroundf(present.x), presentY = (int)lroundf(present.y);
-        const int presentW = (std::max)(1, (int)lroundf(present.w));
-        const int presentH = (std::max)(1, (int)lroundf(present.h));
-        const ui::ViewMode viewMode = ui::g_uiState.viewMode;
-        const ui::DisplayLayout layout = ui::g_uiState.displayLayout;
-
-        struct EyeRect { uint32_t eye; int x, y, w, h; };
-        EyeRect eyes[2];
-        int eyeCount = 0;
-        if (viewMode != ui::ViewMode::BothEyes || layout == ui::DisplayLayout::Anaglyph) {
-            const uint32_t eye = (viewMode == ui::ViewMode::RightEyeOnly) ? 1u : 0u;
-            eyes[eyeCount++] = { eye, presentX, presentY, presentW, presentH };
-        } else if (layout == ui::DisplayLayout::OverUnder) {
-            const int h = presentH / 2;
-            eyes[eyeCount++] = { 0u, presentX, presentY,     presentW, h };
-            eyes[eyeCount++] = { 1u, presentX, presentY + h, presentW, h };
-        } else {
-            const int w = presentW / 2;
-            eyes[eyeCount++] = { 0u, presentX,     presentY, w, presentH };
-            eyes[eyeCount++] = { 1u, presentX + w, presentY, w, presentH };
-        }
-
-        for (int e = 0; e < eyeCount; ++e) {
-            const EyeRect& er = eyes[e];
-            if (er.w < 1 || er.h < 1) continue;
-            if (!rt::QuadVisibleInEye(quad->eyeVisibility, er.eye)) continue;
-
-            const XrPosef view = rt::ViewPoseFromAngles(er.eye, yaw, pitch, roll);
-            const XrFovf fov = rt::GetViewFov(er.eye);
-
-            float consts[rt::kQuadConstantCount] = {};
-            float minPx = FLT_MAX, minPy = FLT_MAX;
-            float maxPx = -FLT_MAX, maxPy = -FLT_MAX;
-            for (int i = 0; i < 4; ++i) {
-                const XrVector3f v = rt::WorldToView(worldCorners[i], view);
-                consts[i * 4 + 0] = v.x;
-                consts[i * 4 + 1] = v.y;
-                consts[i * 4 + 2] = v.z;
-                consts[i * 4 + 3] = 0.0f;
-            }
-            consts[16] = tanf(fov.angleLeft);
-            consts[17] = tanf(fov.angleRight);
-            consts[18] = tanf(fov.angleUp);
-            consts[19] = tanf(fov.angleDown);
-            if (consts[17] - consts[16] < 1e-6f || consts[18] - consts[19] < 1e-6f) continue;
-            consts[20] = uvRect[0]; consts[21] = uvRect[1];
-            consts[22] = uvRect[2]; consts[23] = uvRect[3];
-            consts[24] = (blendMode == rt::LayerBlend::Opaque) ? 1.0f : 0.0f;
-            s.previewCmdList->SetGraphicsRoot32BitConstants(1, rt::kQuadConstantCount, consts, 0);
-
-            // Preserve the projected UI region for the branch's temporal UI-only
-            // detector. These are the same clip equations the vertex shader uses.
-            for (int i = 0; i < 4; ++i) {
-                const float vx = consts[i * 4 + 0];
-                const float vy = consts[i * 4 + 1];
-                const float vz = consts[i * 4 + 2];
-                if (vz >= -1e-4f) continue;
-                const float clipX = (2.0f * vx + (consts[17] + consts[16]) * vz) /
-                                    (consts[17] - consts[16]);
-                const float clipY = (2.0f * vy + (consts[18] + consts[19]) * vz) /
-                                    (consts[18] - consts[19]);
-                const float ndcX = clipX / -vz;
-                const float ndcY = clipY / -vz;
-                const float px = er.x + (ndcX + 1.0f) * 0.5f * er.w;
-                const float py = er.y + (1.0f - ndcY) * 0.5f * er.h;
-                minPx = (std::min)(minPx, px); minPy = (std::min)(minPy, py);
-                maxPx = (std::max)(maxPx, px); maxPy = (std::max)(maxPy, py);
-            }
-            if (minPx <= maxPx && minPy <= maxPy) {
-                const int x0 = (std::max)(0, (std::min)(rtWidth, (int)floorf(minPx)));
-                const int y0 = (std::max)(0, (std::min)(rtHeight, (int)floorf(minPy)));
-                const int x1 = (std::max)(0, (std::min)(rtWidth, (int)ceilf(maxPx)));
-                const int y1 = (std::max)(0, (std::min)(rtHeight, (int)ceilf(maxPy)));
-                slot->quadRects[er.eye][0] = x0;
-                slot->quadRects[er.eye][1] = y0;
-                slot->quadRects[er.eye][2] = (std::max)(0, x1 - x0);
-                slot->quadRects[er.eye][3] = (std::max)(0, y1 - y0);
-            }
-
-            const D3D12_VIEWPORT vp = { (float)er.x, (float)er.y, (float)er.w, (float)er.h, 0.0f, 1.0f };
-            const D3D12_RECT scissor = { (std::max)(0, er.x), (std::max)(0, er.y),
-                                         (std::min)(rtWidth, er.x + er.w),
-                                         (std::min)(rtHeight, er.y + er.h) };
-            s.previewCmdList->RSSetViewports(1, &vp);
-            s.previewCmdList->RSSetScissorRects(1, &scissor);
-            s.previewCmdList->DrawInstanced(6, 1, 0, 0);
-            slot->quadComposed = true;
-        }
-
-        // Back to the state the app released it in, so its own barriers still line up.
-        barrier12(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, qstate);
-
-        static int s_qlog = 0;
-        if (g_logVerbose && ++s_qlog % 120 == 1) {
-            Logf("[SimXR] D3D12 quad drawn: tex=%ux%u blend=%d space=%s eyeVis=%d size=(%.2f,%.2f)",
-                 qrect.w, qrect.h, (int)blendMode, headLocked ? "VIEW" : "WORLD",
-                 (int)quad->eyeVisibility, quad->size.width, quad->size.height);
-        }
-        return;
-    }
-
-    static int quadLogCount = 0;
-    bool shouldLog = g_logVerbose && (++quadLogCount % 60 == 1);
-
-    if (shouldLog) {
-        Logf("[SimXR] Quad swapchain: handle=%llu, lastReleased=%u, lastAcquired=%u, texIdx=%u, imageCount=%u",
-             (unsigned long long)quad->subImage.swapchain, chain.lastReleased, chain.lastAcquired,
-             texIdx, chain.imageCount);
-    }
-
-    // Filled by whichever backend branch runs; lifetime is owned by the session's
-    // temp-texture cache, so nothing here is created per frame in the steady state.
-    ID3D11ShaderResourceView* quadSrv = nullptr;
-
-    // Check if using OpenGL
-    if (chain.backend == rt::Swapchain::Backend::OpenGL && !chain.imagesGL.empty()) {
-        if (texIdx >= chain.imagesGL.size()) return;
-        GLuint glTex = chain.imagesGL[texIdx];
-        if (glTex == 0) return;
-
-        // Save and switch to app's GL context
-        HGLRC savedRC = wglGetCurrentContext();
-        HDC savedDC = wglGetCurrentDC();
-
-        // DEBUG: Log current context BEFORE switch
-        if (shouldLog) {
-            Logf("[SimXR] Quad GL context: current={RC=%p,DC=%p}, stored={RC=%p,DC=%p}",
-                 savedRC, savedDC, s.glRC, s.glDC);
-        }
-
-        if (s.glRC && s.glDC) {
-            BOOL switchResult = wglMakeCurrent(s.glDC, s.glRC);
-            if (shouldLog) {
-                HGLRC afterRC = wglGetCurrentContext();
-                Logf("[SimXR] Quad GL context switch: result=%d, afterRC=%p (expected %p)",
-                     switchResult, afterRC, s.glRC);
-            }
-        }
-
-        // Ensure all GL commands are finished before reading
-        glFinish();
-
-        // DEBUG: Verify texture exists and is valid
-        if (shouldLog) {
-            GLboolean isValid = glIsTexture(glTex);
-            Logf("[SimXR] Quad texture check: glTex=%u, glIsTexture=%d", glTex, isValid);
-        }
-
-        std::vector<uint8_t>& pixels=s.glQuadPixels;
-        const auto rect=rt::ResolveSubImageRect(quad->subImage.imageRect,chain.width,chain.height,"GL quad");
-        if (!ReadGLSubImage(chain,glTex,quad->subImage.imageArrayIndex,rect,pixels)) return;
-
-        // Store quad layer pixels only when a screenshot actually asked for them;
-        // continuously copying the whole quad every frame served nothing else.
-        if (mcp::g_screenshotRequested) {
-            mcp::StoreQuadLayerPixels(pixels.data(), texWidth, texHeight);
-        }
-
-        // Restore GL context
-        if (savedRC) wglMakeCurrent(savedDC, savedRC);
-
-        // Upload into a cached D3D11 texture. A GL_SRGB8_ALPHA8 quad holds sRGB-encoded
-        // bytes, so it needs the _SRGB view to decode to linear before the blend - otherwise
-        // it is blended as if it were linear and comes out wrong against the eyes.
-        const DXGI_FORMAT glQuadFormat =
-            (chain.glInternalFormat == GL_SRGB8_ALPHA8) ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
-                                                        : DXGI_FORMAT_R8G8B8A8_UNORM;
-        ID3D11Texture2D* uploadTex = acquireTempTexture(s, s.quadTempCache, s.quadTempNext,
-                                                        texWidth, texHeight, glQuadFormat, &quadSrv);
-        if (!uploadTex) {
-            if (shouldLog) Log("[SimXR] renderQuadLayer: Failed to create D3D11 texture from GL pixels");
-            return;
-        }
-        s.d3d11Context->UpdateSubresource(uploadTex, 0, nullptr, pixels.data(), texWidth * 4, 0);
-
-        if (shouldLog) {
-            Logf("[SimXR] Rendering quad layer (OpenGL): size=%.2fx%.2f, texSize=%ux%u, glTex=%u",
-                 quad->size.width, quad->size.height, texWidth, texHeight, glTex);
-        }
-    } else if (!chain.images.empty()) {
-        // D3D11 path
-        if (texIdx >= chain.images.size() || !chain.images[texIdx]) return;
-
-        // Skip depth formats
-        D3D11_TEXTURE2D_DESC srcDesc;
-        chain.images[texIdx]->GetDesc(&srcDesc);
-        if (srcDesc.Format == DXGI_FORMAT_D32_FLOAT || srcDesc.Format == DXGI_FORMAT_D24_UNORM_S8_UINT ||
-            srcDesc.Format == DXGI_FORMAT_D16_UNORM || srcDesc.Format == DXGI_FORMAT_D32_FLOAT_S8X24_UINT) {
-            return;
-        }
-
-        // Convert typeless formats to typed formats for SRV creation
-        DXGI_FORMAT typedFormat = srcDesc.Format;
-        switch (srcDesc.Format) {
-            case DXGI_FORMAT_R8G8B8A8_TYPELESS:
-                typedFormat = (chain.format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM;
-                break;
-            case DXGI_FORMAT_B8G8R8A8_TYPELESS:
-                typedFormat = (chain.format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB) ? DXGI_FORMAT_B8G8R8A8_UNORM_SRGB : DXGI_FORMAT_B8G8R8A8_UNORM;
-                break;
-            case DXGI_FORMAT_R16G16B16A16_TYPELESS:
-                typedFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
-                break;
-            case DXGI_FORMAT_R32G32B32A32_TYPELESS:
-                typedFormat = DXGI_FORMAT_R32G32B32A32_FLOAT;
-                break;
-            case DXGI_FORMAT_R10G10B10A2_TYPELESS:
-                typedFormat = DXGI_FORMAT_R10G10B10A2_UNORM;
-                break;
-            // Typed UNORM source in an sRGB swapchain: sample through the
-            // matching _SRGB view so the GPU decodes sRGB->linear (the preview
-            // RTV re-encodes); otherwise we double-encode and colors shift
-            // (magenta -> purple).
-            case DXGI_FORMAT_R8G8B8A8_UNORM:
-                if (chain.format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB)
-                    typedFormat = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-                break;
-            case DXGI_FORMAT_B8G8R8A8_UNORM:
-                if (chain.format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB)
-                    typedFormat = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
-                break;
-            default:
-                break; // Already typed or unknown
-        }
-
-        const uint32_t arraySize = chain.arraySize ? chain.arraySize : 1;
-        const uint32_t arraySlice = quad->subImage.imageArrayIndex;
-        if (arraySlice >= arraySize) {
-            if (shouldLog) {
-                Logf("[SimXR] quad: imageArrayIndex %u out of range (arraySize=%u)", arraySlice, arraySize);
-            }
-            return;
-        }
-
-        // Clamp the app's rect the way the eye path does, and size the temp texture to the
-        // rect rather than the whole image - the copy lands at (0,0), so a full-size temp
-        // would leave the sub-rect shrunk into the corner of the sampled UV range.
-        const rt::SubImageRect rect = qrect;
-
-        // One slice at the rect's size, from the cache: a full-size temp would leave
-        // the sub-rect shrunk into the corner of the sampled UV range.
-        ID3D11Texture2D* quadTex = acquireTempTexture(s, s.quadTempCache, s.quadTempNext,
-                                                      rect.w, rect.h, typedFormat, &quadSrv);
-        if (!quadTex) return;
-
-        const uint32_t srcSubresource = D3D11CalcSubresource(0, arraySlice, chain.mipCount ? chain.mipCount : 1);
-        ID3D11Texture2D* copySrc = chain.images[texIdx].Get();
-        uint32_t copySubresource = srcSubresource;
-
-        // CopySubresourceRegion cannot resolve MSAA, and ResolveSubresource cannot crop, so a
-        // multisampled quad needs a full-size resolve target in between.
-        ComPtr<ID3D11Texture2D> resolved;
-        if (srcDesc.SampleDesc.Count > 1) {
-            D3D11_TEXTURE2D_DESC resolveDesc = {};
-            resolveDesc.Width = srcDesc.Width;
-            resolveDesc.Height = srcDesc.Height;
-            resolveDesc.MipLevels = 1;
-            resolveDesc.ArraySize = 1;
-            resolveDesc.Format = typedFormat;
-            resolveDesc.SampleDesc.Count = 1;
-            resolveDesc.Usage = D3D11_USAGE_DEFAULT;
-            resolveDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-            if (FAILED(s.d3d11Device->CreateTexture2D(&resolveDesc, nullptr, resolved.GetAddressOf()))) return;
-            s.d3d11Context->ResolveSubresource(resolved.Get(), 0, copySrc, srcSubresource, typedFormat);
-            copySrc = resolved.Get();
-            copySubresource = 0;
-        }
-
-        D3D11_BOX box = { rect.x, rect.y, 0, rect.x + rect.w, rect.y + rect.h, 1 };
-        s.d3d11Context->CopySubresourceRegion(quadTex, 0, 0, 0, 0, copySrc, copySubresource, &box);
-
-        if (shouldLog) {
-            Logf("[SimXR] Rendering quad layer (D3D11): size=%.2fx%.2f, rect=%u,%u %ux%u, typedFmt=%d, srcFmt=%d, arraySlice=%u",
-                 quad->size.width, quad->size.height, rect.x, rect.y, rect.w, rect.h,
-                 typedFormat, srcDesc.Format, arraySlice);
-        }
-    } else {
-        if (shouldLog) Log("[SimXR] renderQuadLayer: No valid images in swapchain");
-        return;
-    }
-
-    // A quad-only frame never runs the projection path, so this is the only chance to compile.
-    if (!rt::InitBlitResources(s)) return;
-
-    // For a D3D11 session this is the app's own immediate context; leave it as we found it.
-    D3D11StateBackup stateBackup(s.d3d11Context.Get());
-
-    // The guard at the top of the function only proves one of the two preview targets exists,
-    // and the D3D12 one has already returned by here.
-    if (!s.previewSwapchain) return;
-    ComPtr<ID3D11Texture2D> bb;
-    if (FAILED(s.previewSwapchain->GetBuffer(0, IID_PPV_ARGS(bb.GetAddressOf())))) return;
-
-    ComPtr<ID3D11RenderTargetView> rtv;
-    if (!rt::CreatePreviewRtv(s, bb.Get(), rtv)) return;
-
-    // The SRV came out of the temp-texture cache with the staging copy above.
-    if (!quadSrv) return;
-
-    // Calculate viewports matching the projection layer layout (letterboxed)
-    const auto layout = ui::g_uiState.displayLayout;
-    const auto viewMode = ui::g_uiState.viewMode;
-    const bool singleEye = (viewMode != ui::ViewMode::BothEyes);
-
-    // Mirror the rect the projection layer lands in, zoom and pan included.
-    rt::FitRect qFit = rt::ComputePresentRect((int)s.previewWidth, (int)s.previewHeight);
-
-    D3D11_VIEWPORT leftVp  = { qFit.x, qFit.y, qFit.w, qFit.h, 0.0f, 1.0f };
-    D3D11_VIEWPORT rightVp = leftVp;
-    if (!singleEye) {
-        if (layout == ui::DisplayLayout::SideBySide) {
-            leftVp.Width  = qFit.w * 0.5f;
-            rightVp.Width = qFit.w * 0.5f;
-            rightVp.TopLeftX = qFit.x + qFit.w * 0.5f;
-        } else if (layout == ui::DisplayLayout::OverUnder) {
-            leftVp.Height  = qFit.h * 0.5f;
-            rightVp.Height = qFit.h * 0.5f;
-            rightVp.TopLeftY = qFit.y + qFit.h * 0.5f;
-        }
-    }
-
-    // The quad is placed by its projected corners, not by the viewport, so each eye gets the
-    // whole eye rect and clip-space positioning does the rest. D3D11 clips to the frustum,
-    // which the viewport transform maps onto exactly this rect, so a quad that overhangs the
-    // eye cannot bleed into the other half.
-    struct EyeDraw { uint32_t eye; const D3D11_VIEWPORT* vp; };
-    EyeDraw eyes[2];
-    int eyeCount = 0;
-    if (viewMode == ui::ViewMode::RightEyeOnly) {
-        eyes[eyeCount++] = { 1u, &rightVp };
-    } else if (viewMode == ui::ViewMode::LeftEyeOnly) {
-        eyes[eyeCount++] = { 0u, &leftVp };
-    } else {
-        eyes[eyeCount++] = { 0u, &leftVp };
-        eyes[eyeCount++] = { 1u, &rightVp };
-    }
-
-    float yaw, pitch, roll;
-    rt::GetEffectiveHeadAngles(yaw, pitch, roll);
-
-    bool headLocked = false;
-    XrVector3f worldCorners[4];
-    rt::QuadWorldCorners(*quad, yaw, pitch, roll, worldCorners, &headLocked);
-
-    const rt::LayerBlend blendMode = rt::BlendForLayerFlags(quad->layerFlags);
-
-    // Set up shared render state
-    s.d3d11Context->VSSetShader(s.quadVS.Get(), nullptr, 0);
-    s.d3d11Context->PSSetShader(s.blitPS.Get(), nullptr, 0);
-
-    ID3D11Buffer* cbs[] = { s.quadCB.Get() };
-    s.d3d11Context->VSSetConstantBuffers(0, 1, cbs);
-
-    ID3D11ShaderResourceView* srvs[] = { quadSrv };
-    s.d3d11Context->PSSetShaderResources(0, 1, srvs);
-    ID3D11SamplerState* samplers[] = { s.samplerState.Get() };
-    s.d3d11Context->PSSetSamplers(0, 1, samplers);
-
-    s.d3d11Context->IASetInputLayout(nullptr);
-    s.d3d11Context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-
-    s.d3d11Context->OMSetDepthStencilState(nullptr, 0);
-    s.d3d11Context->RSSetState(s.noCullRS.Get());
-
-    ID3D11RenderTargetView* rtvs[1] = { rtv.Get() };
-    s.d3d11Context->OMSetRenderTargets(1, rtvs, nullptr);
-
-    const bool anaglyph = (!singleEye && layout == ui::DisplayLayout::Anaglyph);
-
-    for (int e = 0; e < eyeCount; ++e) {
-        const uint32_t eye = eyes[e].eye;
-        if (!rt::QuadVisibleInEye(quad->eyeVisibility, eye)) continue;
-
-        const XrPosef view = rt::ViewPoseFromAngles(eye, yaw, pitch, roll);
-        const XrFovf fov = rt::GetViewFov(eye);
-        const float tanL = tanf(fov.angleLeft), tanR = tanf(fov.angleRight);
-        const float tanU = tanf(fov.angleUp),   tanD = tanf(fov.angleDown);
-        if (tanR - tanL < 1e-6f || tanU - tanD < 1e-6f) continue;
-
-        // Projection, written without dividing by view depth so that it stays finite for a
-        // corner at or behind the eye. Multiplying an NDC value back up by w would be NaN
-        // exactly there, and the near plane is the case the GPU clipper is here to handle.
-        const float ax = 2.0f / (tanR - tanL), bx = (tanR + tanL) / (tanR - tanL);
-        const float ay = 2.0f / (tanU - tanD), by = (tanU + tanD) / (tanU - tanD);
-
-        float clip[4][4];
-        static const int kStripOrder[4] = { 0, 1, 3, 2 };   // fan order -> TL, TR, BL, BR
-        for (int i = 0; i < 4; ++i) {
-            const XrVector3f v = rt::WorldToView(worldCorners[kStripOrder[i]], view);
-            const float w = -v.z;
-            clip[i][0] = ax * v.x + bx * v.z;
-            clip[i][1] = ay * v.y + by * v.z;
-            clip[i][2] = 0.5f * w;   // mid-range: 0 <= z <= w reduces to w >= 0, the near clip
-            clip[i][3] = w;
-        }
-
-        D3D11_MAPPED_SUBRESOURCE mapped{};
-        if (FAILED(s.d3d11Context->Map(s.quadCB.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) continue;
-        memcpy(mapped.pData, clip, sizeof(clip));
-        s.d3d11Context->Unmap(s.quadCB.Get(), 0);
-
-        // Anaglyph fuses the eyes by channel; the two eyes' quads land at genuinely different
-        // places, so without the mask they would ghost instead.
-        UINT8 mask = D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN | D3D11_COLOR_WRITE_ENABLE_BLUE;
-        if (anaglyph) {
-            mask = (eye == 0) ? (UINT8)D3D11_COLOR_WRITE_ENABLE_RED
-                              : (UINT8)(D3D11_COLOR_WRITE_ENABLE_GREEN | D3D11_COLOR_WRITE_ENABLE_BLUE);
-        }
-        ID3D11BlendState* blend = rt::GetLayerBlendState(s, blendMode, mask);
-        if (!blend) continue;
-        s.d3d11Context->OMSetBlendState(blend, nullptr, 0xFFFFFFFF);
-
-        s.d3d11Context->RSSetViewports(1, eyes[e].vp);
-        s.d3d11Context->Draw(4, 0);
-    }
-
-    if (shouldLog) {
-        Logf("[SimXR] Quad layer: blend=%s space=%s eyeVis=%d pose=(%.2f,%.2f,%.2f) size=(%.2f,%.2f)",
-             blendMode == rt::LayerBlend::Opaque ? "opaque" :
-             blendMode == rt::LayerBlend::Premultiplied ? "premultiplied" : "unpremultiplied",
-             headLocked ? "VIEW" : "WORLD", (int)quad->eyeVisibility,
-             quad->pose.position.x, quad->pose.position.y, quad->pose.position.z,
-             quad->size.width, quad->size.height);
-    }
-
-    // Cleanup
-    ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
-    s.d3d11Context->PSSetShaderResources(0, 1, nullSRV);
+static bool EnsureOpenGLPreviewDevice(rt::Session& session)
+{
+	if (session.d3d11Device)
+		return true;
+	ComPtr<ID3D11Device> device;
+	ComPtr<ID3D11DeviceContext> context;
+	D3D_FEATURE_LEVEL featureLevel;
+	UINT flags = 0;
+#ifdef _DEBUG
+	flags |= D3D11_CREATE_DEVICE_DEBUG;
+#endif
+	const auto result =
+		D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, nullptr, 0, D3D11_SDK_VERSION,
+						  device.GetAddressOf(), &featureLevel, context.GetAddressOf());
+	if (FAILED(result))
+	{
+		Logf("[SimXR] OpenGL preview device creation failed: 0x%08X", result);
+		return false;
+	}
+	session.preview11.reset();
+	session.d3d11Device = std::move(device);
+	session.d3d11Context = std::move(context);
+	return true;
 }
 
-static bool renderCylinderLayer(rt::Session& session,
-                                const XrCompositionLayerCylinderKHR* cylinder) {
-    if (!cylinder) return false;
-    const std::vector<composition_render::CylinderSegment> segments =
-        composition_render::BuildCylinderSegments(*cylinder);
-    if (segments.empty()) return false;
-
-    // Approximate the curved surface with chord quads. Adjacent chords share exact
-    // endpoints, their source rectangles partition the submitted image without overlap,
-    // and each local +Z normal points inward toward the cylinder origin.
-    float yaw, pitch, roll;
-    rt::GetEffectiveHeadAngles(yaw, pitch, roll);
-    bool texturePrepared = false;
-    bool layerCounted = false;
-    for (size_t index = 0; index < segments.size(); ++index) {
-        const composition_render::CylinderSegment& segment = segments[index];
-        const float halfYaw = -segment.centerAngle * 0.5f;
-        XrPosef local{};
-        local.orientation = {0.0f, std::sin(halfYaw), 0.0f, std::cos(halfYaw)};
-        local.position = segment.position;
-
-        XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
-        quad.layerFlags = cylinder->layerFlags;
-        quad.space = cylinder->space;
-        quad.eyeVisibility = cylinder->eyeVisibility;
-        quad.subImage = cylinder->subImage;
-        quad.subImage.imageRect = segment.imageRect;
-        quad.pose = pose_math::Compose(cylinder->pose, local);
-        quad.size = {segment.width, segment.height};
-
-        // The extension explicitly exposes only the inside surface. Cull each eye against
-        // the inward-facing chord normal before handing the segment to the two-sided quad
-        // renderer.
-        const XrPosef world = rt::QuadWorldPose(quad, yaw, pitch, roll);
-        const XrVector3f normal = pose_math::Rotate(world.orientation, {0.0f, 0.0f, 1.0f});
-        bool visible[2] = {};
-        for (uint32_t eye = 0; eye < 2; ++eye) {
-            if (!rt::QuadVisibleInEye(cylinder->eyeVisibility, eye)) continue;
-            const XrPosef view = rt::ViewPoseFromAngles(eye, yaw, pitch, roll);
-            const XrVector3f toEye{view.position.x - world.position.x,
-                                   view.position.y - world.position.y,
-                                   view.position.z - world.position.z};
-            visible[eye] = normal.x * toEye.x + normal.y * toEye.y +
-                           normal.z * toEye.z > 0.0f;
-        }
-        if (!visible[0] && !visible[1]) continue;
-        quad.eyeVisibility = visible[0] && visible[1] ? XR_EYE_VISIBILITY_BOTH
-                           : visible[0] ? XR_EYE_VISIBILITY_LEFT
-                                        : XR_EYE_VISIBILITY_RIGHT;
-        renderQuadLayer(session, &quad, texturePrepared, !layerCounted);
-        texturePrepared = true;
-        layerCounted = true;
-    }
-
-    static uint64_t cylinderLogCount = 0;
-    if (g_logVerbose && (++cylinderLogCount <= 5 || cylinderLogCount % 120 == 1)) {
-        Logf("[SimXR] Cylinder layer: radius=%.3f angle=%.3f aspect=%.3f segments=%zu",
-             cylinder->radius, cylinder->centralAngle, cylinder->aspectRatio, segments.size());
-    }
-    return layerCounted;
+static void ReadProjectionOpenGL(rt::Session& session, const simxr::PreviewProjection& projection,
+								 const ProjectionImages& images)
+{
+	simxr::windows::OpenGLPreviewReadback readback(session.glDC, session.glRC);
+	if (!readback.Valid())
+		throw std::runtime_error("OpenGL projection preview could not acquire its context");
+	for (std::size_t eye = 0; eye < images.size(); ++eye)
+	{
+		auto& pixels = session.glEyePixels[eye];
+		pixels.clear();
+		const auto& image = images[eye];
+		if (!projection.eyes[eye] || !image.swapchain || image.index >= image.swapchain->glImages->Images().size())
+			continue;
+		pixels = readback.Read(image.swapchain->glImages->Images()[image.index], image.swapchain->arraySize,
+							   projection.eyes[eye]->image, projection.eyes[eye]->textureExtent);
+	}
 }
 
-// Draw the newest preview frame the GPU has actually finished into the GDI back buffer.
-// Nothing here waits: a frame that is not ready yet stays pending and is picked up on a
-// later call, and if two are ready only the newest is painted - painting the older one
-// first would just be overdrawn in the same call.
-static void consumeCompletedPreviewFrame(rt::Session& s) {
-    if (!s.previewFence || !s.hwnd) return;
-    const UINT64 done = s.previewFence->GetCompletedValue();
-
-    int newest = -1;
-    for (UINT i = 0; i < rt::kPreviewFrames; ++i) {
-        const rt::PreviewFrame12& f = s.previewFrames[i];
-        if (!f.pending || f.fenceValue > done) continue;
-        if (newest < 0 || f.fenceValue > s.previewFrames[newest].fenceValue) newest = (int)i;
-    }
-    if (newest < 0) return;
-
-    for (UINT i = 0; i < rt::kPreviewFrames; ++i) {
-        rt::PreviewFrame12& f = s.previewFrames[i];
-        if (f.pending && f.fenceValue <= done && (int)i != newest) f.pending = false;
-    }
-
-    rt::PreviewFrame12& f = s.previewFrames[newest];
-    f.pending = false;
-
-    // Every layer of the frame - eyes and quads alike - was composited into the render
-    // target on the GPU, so this shows one finished image, and captures it if asked.
-    paintPreviewComposite(s, f);
+static void CaptureProjectionOpenGL(rt::Session& session, const simxr::PreviewProjection& projection)
+{
+	if (!session.compatibilityCapture->ScreenshotRequested())
+		return;
+	if (session.compatibilityCapture->ScreenshotLayer() == "quad")
+	{
+		session.compatibilityCapture->SubmitQuad();
+		return;
+	}
+	const auto width = static_cast<std::uint32_t>(projection.displayExtent.width);
+	const auto height = static_cast<std::uint32_t>(projection.displayExtent.height);
+	std::array<std::vector<std::uint8_t>, 2> padded;
+	for (std::size_t eye = 0; eye < padded.size(); ++eye)
+	{
+		if (!projection.eyes[eye] || session.glEyePixels[eye].empty())
+			continue;
+		const auto& rectangle = projection.eyes[eye]->image.rectangle;
+		padded[eye] =
+			simxr::windows::PadPreviewRgba(session.glEyePixels[eye], static_cast<std::uint32_t>(rectangle.extent.width),
+										   static_cast<std::uint32_t>(rectangle.extent.height), width, height);
+	}
+	session.compatibilityCapture->SubmitStereo(padded[0].empty() ? nullptr : padded[0].data(),
+											   padded[1].empty() ? nullptr : padded[1].data(), width, height);
 }
 
-// Rasterize a projection image per eye through the same linear-alpha compositor
-// as quads. The image already contains stereo depth: never reuse one eye's image
-// for the other. Its view pose and asymmetric FOV define the image-plane corners.
-static void renderProjectionOverlay(rt::Session& s, const XrCompositionLayerProjection& projection) {
-    if (!projection.views) return;
-    for (uint32_t eye = 0; eye < (std::min)(projection.viewCount, 2u); ++eye) {
-        const auto& view = projection.views[eye];
-        const float left = tanf(view.fov.angleLeft), right = tanf(view.fov.angleRight);
-        const float down = tanf(view.fov.angleDown), up = tanf(view.fov.angleUp);
-        XrCompositionLayerQuad image{XR_TYPE_COMPOSITION_LAYER_QUAD};
-        image.layerFlags = projection.layerFlags;
-        image.space = projection.space;
-        image.eyeVisibility = eye == 0 ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT;
-        image.subImage = view.subImage;
-        image.pose = view.pose;
-        const XrVector3f offset = rt::RotateVectorByQuaternion(view.pose.orientation,
-            XrVector3f{(left + right) * .5f, (up + down) * .5f, -1.f});
-        image.pose.position.x += offset.x; image.pose.position.y += offset.y; image.pose.position.z += offset.z;
-        image.size = {right - left, up - down};
-        renderQuadLayer(s, &image);
-    }
+static void RenderProjection(rt::Session& session, const simxr::ProjectionLayerDescription& accepted, bool deferPresent)
+{
+	const auto crop =
+		ui::g_uiState.showFullRender ? simxr::PreviewCropSelection::WholeImage : simxr::PreviewCropSelection::Submitted;
+	const auto projection = simxr::PreparePreviewProjection(
+		accepted,
+		[](XrSwapchain handle) -> std::optional<XrExtent2Di>
+		{
+			const auto found = rt::g_swapchains.find(handle);
+			if (found == rt::g_swapchains.end())
+				return {};
+			return XrExtent2Di{static_cast<std::int32_t>(found->second.width),
+							   static_cast<std::int32_t>(found->second.height)};
+		},
+		crop);
+	if (!projection)
+		return;
+	if (!projection->displayExtent.width || !projection->displayExtent.height)
+	{
+		if (session.usesD3D12)
+			BeginPreviewSlot(session);
+		else if (g_previewDueThisFrame)
+			clearPreviewToBlack(session);
+		return;
+	}
+	const auto width = static_cast<UINT>(projection->displayExtent.width);
+	const auto height = static_cast<UINT>(projection->displayExtent.height);
+	const auto previousWidth = rt::g_sourceWidth.exchange(width);
+	const auto previousHeight = rt::g_sourceHeight.exchange(height);
+	if (session.hwnd && (previousWidth != width || previousHeight != height))
+		rt::FitWindowToContentAspect(session.hwnd);
+	updatePreviewTitle(session);
+	if (!g_previewDueThisFrame)
+		return;
+	const auto images = ResolveProjectionImages(*projection);
+	const auto viewMode = ui::g_uiState.viewMode;
+	const auto packing = ui::g_uiState.displayLayout;
+	std::lock_guard previewLock(session.previewMutex);
+	try
+	{
+		if (session.usesOpenGL)
+		{
+			ReadProjectionOpenGL(session, *projection, images);
+			CaptureProjectionOpenGL(session, *projection);
+			if (!EnsureOpenGLPreviewDevice(session))
+				return;
+		}
+		int targetWidth = static_cast<int>(width);
+		int targetHeight = static_cast<int>(height);
+		if (session.usesD3D12)
+			rt::ComputePreviewRTSize(session, targetWidth, targetHeight);
+		else
+			rt::GetPreviewClientSize(session, targetWidth, targetHeight, targetWidth, targetHeight);
+		ensurePreviewSized(session, static_cast<UINT>(targetWidth), static_cast<UINT>(targetHeight),
+						   DXGI_FORMAT_R8G8B8A8_UNORM);
+		auto present =
+			rt::ComputePresentRect(static_cast<int>(session.previewWidth), static_cast<int>(session.previewHeight));
+		auto alignment = simxr::PreviewPixelAlignment::Fractional;
+		if (session.usesD3D12)
+		{
+			if (!session.preview12 || !session.preview12->Target())
+				return;
+			const auto description = session.preview12->Target()->GetDesc();
+			present = rt::ComputePresentRect(static_cast<int>(description.Width), static_cast<int>(description.Height));
+			present = {static_cast<float>(std::lround(present.x)), static_cast<float>(std::lround(present.y)),
+					   static_cast<float>((std::max)(1L, std::lround(present.w))),
+					   static_cast<float>((std::max)(1L, std::lround(present.h)))};
+			alignment = simxr::PreviewPixelAlignment::WholePixels;
+		}
+		const auto eyeLayout = rt::PrepareNativeEyeLayout(present, viewMode, packing, alignment);
+		const auto draws = simxr::PreparePreviewProjectionDraws(*projection, eyeLayout, rt::PreviewPacking(packing));
+		if (session.usesD3D12)
+		{
+			RenderProjectionD3D12(session, *projection, images, draws);
+			return;
+		}
+		if (!session.previewSwapchain)
+			return;
+		simxr::windows::D3D11PreviewContext context(session.d3d11Context.Get());
+		ComPtr<ID3D11Texture2D> backbuffer;
+		if (FAILED(session.previewSwapchain->GetBuffer(0, IID_PPV_ARGS(backbuffer.GetAddressOf()))))
+			return;
+		ComPtr<ID3D11RenderTargetView> target;
+		if (session.usesOpenGL)
+		{
+			if (FAILED(session.d3d11Device->CreateRenderTargetView(backbuffer.Get(), nullptr, target.GetAddressOf())))
+				return;
+		}
+		else if (!rt::CreatePreviewRtv(session, backbuffer.Get(), target))
+			return;
+		const float black[]{0, 0, 0, 1};
+		session.d3d11Context->ClearRenderTargetView(target.Get(), black);
+		if (session.usesOpenGL)
+		{
+			auto* preview = rt::EnsureD3D11Preview(session);
+			if (!preview)
+				return;
+			for (std::size_t index = 0; index < draws.count; ++index)
+			{
+				const auto& draw = draws.draws[index];
+				const auto eye = draw.sourceEye;
+				if (session.glEyePixels[eye].empty())
+					continue;
+				const auto& rectangle = projection->eyes[eye]->image.rectangle;
+				const auto copied =
+					preview->Upload(context, simxr::windows::PreviewSurface::Projection,
+									static_cast<std::uint32_t>(rectangle.extent.width),
+									static_cast<std::uint32_t>(rectangle.extent.height), DXGI_FORMAT_R8G8B8A8_UNORM,
+									session.glEyePixels[eye], static_cast<std::uint32_t>(rectangle.extent.width) * 4);
+				const auto& viewport = draw.target.rectangle;
+				const D3D11_VIEWPORT nativeViewport{viewport.x, viewport.y, viewport.width, viewport.height, 0, 1};
+				if (!copied || !preview->DrawProjection(context, copied, target.Get(), nativeViewport,
+														NativePreviewChannels(draw.channels)))
+					throw std::runtime_error("OpenGL projection preview upload or draw failed");
+			}
+		}
+		else
+		{
+			for (std::size_t index = 0; index < draws.count; ++index)
+			{
+				const auto& draw = draws.draws[index];
+				DrawProjectionD3D11(session, context, images[draw.sourceEye], *projection->eyes[draw.sourceEye], draw,
+									target.Get());
+			}
+		}
+		if (deferPresent)
+			g_presentPending = true;
+		else
+			session.previewSwapchain->Present(0, 0);
+		if (!session.usesOpenGL && session.compatibilityCapture->ScreenshotRequested())
+			mcp::CaptureScreenshot(*session.compatibilityCapture, session.d3d11Device.Get(), session.d3d11Context.Get(),
+								   session.previewSwapchain.Get());
+	}
+	catch (const std::exception& error)
+	{
+		ReportPreviewFailure(session, "Projection preview", error);
+	}
 }
 
-static bool IsExtensionEnabled(const char* name) {
-    return std::find(rt::g_instance.enabledExtensions.begin(), rt::g_instance.enabledExtensions.end(), name) !=
-        rt::g_instance.enabledExtensions.end();
+static void RenderQuadLayer(rt::Session& session, const simxr::QuadLayerDescription& quad,
+							const simxr::LocatedViews& views)
+{
+	// D3D12 sessions use previewRT12, not previewSwapchain
+	if (!session.previewSwapchain && !(session.preview12 && session.preview12->Target()))
+		return;
+	// A layer of a frame the mirror is skipping. RenderProjection skipped the eyes under
+	// it and will not present, so drawing this would be work nothing ever shows.
+	if (!g_previewDueThisFrame)
+		return;
+
+	auto swapchainEntry = rt::g_swapchains.find(quad.color.source);
+	if (swapchainEntry == rt::g_swapchains.end())
+		return;
+
+	auto& swapchain = swapchainEntry->second;
+	const auto geometry = simxr::PreparePreviewQuad(
+		quad, views, {static_cast<std::int32_t>(swapchain.width), static_cast<std::int32_t>(swapchain.height)});
+
+	// Get texture dimensions from the quad subImage
+	uint32_t sourceWidth = quad.color.rectangle.extent.width;
+	uint32_t sourceHeight = quad.color.rectangle.extent.height;
+
+	const auto imageIndex = swapchain.lastReleased;
+	if (imageIndex == UINT32_MAX)
+		return;
+
+	const auto blendMode = rt::BlendForLayerFlags(quad.space.flags);
+	auto alpha = simxr::windows::PreviewAlpha::Opaque;
+	const char* blendName = "opaque";
+	switch (blendMode)
+	{
+	case rt::LayerBlend::Opaque:
+		break;
+	case rt::LayerBlend::Premultiplied:
+		alpha = simxr::windows::PreviewAlpha::Premultiplied;
+		blendName = "premultiplied";
+		break;
+	case rt::LayerBlend::Unpremultiplied:
+		alpha = simxr::windows::PreviewAlpha::Straight;
+		blendName = "unpremultiplied";
+		break;
+	}
+
+	// --- D3D12 quad compositing -----------------------------------------------------------------------
+	// Rasterised into the shared private target and presented on the GPU. Explicit capture
+	// requests may additionally copy the completed target. The corners are projected into each eye's
+	// view space here; the vertex shader applies that eye's asymmetric projection so the
+	// interpolation is perspective-correct and a quad crossing behind the eye is clipped
+	// rather than mis-drawn.
+	if (session.usesD3D12)
+	{
+		if (imageIndex >= swapchain.images12.size() || !swapchain.images12[imageIndex])
+			return;
+		if (swapchain.imageStates12.size() <= imageIndex)
+			return;
+		if (!session.preview12 || !session.hwnd)
+			return;
+		if (!session.previewPipelines12)
+			return;
+
+		const uint32_t qArraySize = swapchain.arraySize ? swapchain.arraySize : 1;
+		if (quad.color.arraySlice >= qArraySize)
+		{
+			static int badSlice = 0;
+			if (++badSlice % 120 == 1)
+			{
+				Logf("[SimXR] quad: imageArrayIndex %u out of range (arraySize=%u)", quad.color.arraySlice, qArraySize);
+			}
+			return;
+		}
+
+		ID3D12Resource* sourceTexture = swapchain.images12[imageIndex].Get();
+		const D3D12_RESOURCE_DESC sourceDescription = sourceTexture->GetDesc();
+		if (sourceDescription.SampleDesc.Count > 1)
+			return; // needs a resolve first; not worth it for a mirror
+
+		// Share this frame's slot and its open render target with the eye pass. On a
+		// quad-only frame nothing has opened the RT yet, so this is what clears it - which
+		// is also what replaces the old "wipe the back buffer to black" step.
+		rt::PreviewFrameMetadata12* slot = BeginPreviewSlot(session);
+		if (!slot)
+			return;
+		++slot->quadLayers;
+
+		const D3D12_RESOURCE_DESC targetDescription = session.preview12->Target()->GetDesc();
+		const auto targetWidth = static_cast<int>(targetDescription.Width);
+		const auto targetHeight = static_cast<int>(targetDescription.Height);
+
+		// Only the region the app declared valid is sampled.
+		const auto& sourceRectangle = quad.color.rectangle;
+		const auto fullBinding = session.previewPipelines12->Quad(alpha);
+		const auto redBinding = session.previewPipelines12->Quad(alpha, simxr::windows::PreviewChannels::Red);
+		const auto cyanBinding = session.previewPipelines12->Quad(alpha, simxr::windows::PreviewChannels::Cyan);
+		const auto sourceView = fullBinding.SourceView(sourceDescription, quad.color.arraySlice);
+		if (!sourceView)
+			return;
+		const auto descriptor = session.preview12->Sample(sourceTexture, *sourceView);
+		if (!descriptor || !fullBinding.Retain(*session.preview12) || !redBinding.Retain(*session.preview12) ||
+			!cyanBinding.Retain(*session.preview12))
+			return;
+		const auto sourceDescriptor = *descriptor;
+		if (session.compatibilityCapture && session.compatibilityCapture->ScreenshotRequested())
+		{
+			const auto requestedLayer = session.compatibilityCapture->ScreenshotLayer();
+			if (requestedLayer == "quad" || requestedLayer == "all")
+			{
+				const auto& sourceRect = quad.color.rectangle;
+				const simxr::windows::PreviewCrop sourceCrop{
+					static_cast<uint32_t>(sourceRect.offset.x), static_cast<uint32_t>(sourceRect.offset.y),
+					static_cast<uint32_t>(sourceRect.extent.width), static_cast<uint32_t>(sourceRect.extent.height)};
+				const auto result = session.preview12->CaptureQuad(sourceTexture, quad.color.arraySlice, sourceCrop,
+																   swapchain.imageStates12[imageIndex]);
+				if (result == simxr::windows::PreviewQuadResult::Unsupported)
+					session.compatibilityCapture->FailScreenshot(
+						"D3D12 isolated quad capture requires single-sample RGBA8 or BGRA8");
+				else if (result == simxr::windows::PreviewQuadResult::Invalid)
+					session.compatibilityCapture->FailScreenshot(
+						"D3D12 isolated quad capture crop/slice is outside the bounded source image");
+				else if (result == simxr::windows::PreviewQuadResult::Capacity)
+					session.compatibilityCapture->FailScreenshot(
+						"D3D12 isolated quad capture admission capacity unavailable");
+			}
+		}
+		auto& quadState = swapchain.imageStates12[imageIndex];
+		auto barrier12 = [&](D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after)
+		{
+			if (before == after)
+				return;
+			D3D12_RESOURCE_BARRIER b = {};
+			b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			b.Transition.pResource = sourceTexture;
+			b.Transition.StateBefore = before;
+			b.Transition.StateAfter = after;
+			b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+			session.preview12->Commands()->ResourceBarrier(1, &b);
+		};
+		const D3D12_RESOURCE_STATES sourceState = quadState;
+		barrier12(sourceState, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+		// The sRGB view: blending decodes the destination to linear and re-encodes swapchainEntry.
+		const D3D12_CPU_DESCRIPTOR_HANDLE targetView = session.preview12->RenderTarget(true);
+		slot->quadSourceAlphaCoverage = blendMode == rt::LayerBlend::Opaque ? 1.0f : slot->quadSourceAlphaCoverage;
+		fullBinding.Bind(*session.preview12->Commands());
+		session.preview12->Commands()->OMSetRenderTargets(1, &targetView, FALSE, nullptr);
+		session.preview12->Commands()->SetGraphicsRootDescriptorTable(0, sourceDescriptor);
+
+		// Same split of the RT the eye pass used, so the quad lands over the right eye.
+		const rt::FitRect present = rt::ComputePresentRect(targetWidth, targetHeight);
+		const auto presentX = static_cast<int>(std::lround(present.x));
+		const auto presentY = static_cast<int>(std::lround(present.y));
+		const int presentW = (std::max)(1, static_cast<int>(std::lround(present.w)));
+		const int presentH = (std::max)(1, static_cast<int>(std::lround(present.h)));
+		const ui::ViewMode viewMode = ui::g_uiState.viewMode;
+		const ui::DisplayLayout layout = ui::g_uiState.displayLayout;
+
+		const rt::FitRect roundedPresent{static_cast<float>(presentX), static_cast<float>(presentY),
+										 static_cast<float>(presentW), static_cast<float>(presentH)};
+		const auto eyeLayout =
+			rt::PrepareNativeEyeLayout(roundedPresent, viewMode, layout, simxr::PreviewPixelAlignment::WholePixels);
+		for (std::size_t eyeIndex = 0; eyeIndex < eyeLayout.count; ++eyeIndex)
+		{
+			const auto& eyeViewport = eyeLayout.eyes[eyeIndex];
+			const auto eye = eyeViewport.eye;
+			const auto& viewport = eyeViewport.rectangle;
+			if (!geometry || !geometry->eyes[eye])
+				continue;
+
+			if (layout == ui::DisplayLayout::Anaglyph && viewMode == ui::ViewMode::BothEyes)
+			{
+				if (eye == 0)
+					redBinding.Bind(*session.preview12->Commands());
+				else
+					cyanBinding.Bind(*session.preview12->Commands());
+			}
+			else
+			{
+				fullBinding.Bind(*session.preview12->Commands());
+			}
+			const auto constants = simxr::PreviewQuadConstants(*geometry, eye, blendMode == rt::LayerBlend::Opaque);
+			session.preview12->Commands()->SetGraphicsRoot32BitConstants(1, rt::kQuadConstantCount, constants.data(),
+																		 0);
+			const auto bounds = simxr::PreviewQuadBounds(*geometry->eyes[eye], viewport, {targetWidth, targetHeight});
+			if (bounds)
+			{
+				slot->quadRects[eye][0] = bounds->offset.x;
+				slot->quadRects[eye][1] = bounds->offset.y;
+				slot->quadRects[eye][2] = bounds->extent.width;
+				slot->quadRects[eye][3] = bounds->extent.height;
+			}
+			const D3D12_VIEWPORT nativeViewport{viewport.x, viewport.y, viewport.width, viewport.height, 0, 1};
+			const D3D12_RECT scissor{
+				(std::max)(0L, static_cast<LONG>(std::floor(viewport.x))),
+				(std::max)(0L, static_cast<LONG>(std::floor(viewport.y))),
+				(std::min)(static_cast<LONG>(targetWidth), static_cast<LONG>(std::ceil(viewport.x + viewport.width))),
+				(std::min)(static_cast<LONG>(targetHeight),
+						   static_cast<LONG>(std::ceil(viewport.y + viewport.height)))};
+			session.preview12->Commands()->RSSetViewports(1, &nativeViewport);
+			session.preview12->Commands()->RSSetScissorRects(1, &scissor);
+			session.preview12->Commands()->DrawInstanced(6, 1, 0, 0);
+			slot->quadComposed = true;
+		}
+
+		// Back to the state the app released it in, so its own barriers still line up.
+		barrier12(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, sourceState);
+
+		static int s_qlog = 0;
+		if (g_logVerbose && ++s_qlog % 120 == 1)
+		{
+			Logf("[SimXR] D3D12 quad drawn: tex=%ux%u blend=%d space=%s eyeVis=%d size=(%.2f,%.2f)",
+				 sourceRectangle.extent.width, sourceRectangle.extent.height, static_cast<int>(blendMode), "RESOLVED",
+				 static_cast<int>(quad.eyes), quad.size.width, quad.size.height);
+		}
+		return;
+	}
+
+	static int quadLogCount = 0;
+	bool shouldLog = g_logVerbose && (++quadLogCount % 60 == 1);
+
+	if (shouldLog)
+	{
+		Logf("[SimXR] Quad swapchain: handle=%llu, lastReleased=%u, lastAcquired=%u, imageIndex=%u, imageCount=%u",
+			 reinterpret_cast<unsigned long long>(quad.color.source), swapchain.lastReleased, swapchain.lastAcquired,
+			 imageIndex, swapchain.imageCount);
+	}
+
+	auto* preview = rt::EnsureD3D11Preview(session);
+	if (!preview)
+		return;
+	simxr::windows::D3D11PreviewContext previewContext(session.d3d11Context.Get());
+	simxr::windows::D3D11PreviewImage quadImage;
+
+	// Check if using OpenGL
+	if (swapchain.backend == rt::Swapchain::Backend::OpenGL && !swapchain.glImages->Images().empty())
+	{
+		if (imageIndex >= swapchain.glImages->Images().size())
+			return;
+		const auto texture = swapchain.glImages->Images()[imageIndex];
+		try
+		{
+			{
+				simxr::windows::OpenGLPreviewReadback readback(session.glDC, session.glRC);
+				session.glQuadPixels = readback.Read(
+					texture, swapchain.arraySize, quad.color,
+					{static_cast<std::int32_t>(swapchain.width), static_cast<std::int32_t>(swapchain.height)});
+			}
+			if (session.compatibilityCapture->ScreenshotRequested())
+			{
+				session.compatibilityCapture->StoreQuad(session.glQuadPixels.data(), sourceWidth, sourceHeight);
+				if (session.compatibilityCapture->ScreenshotLayer() == "quad")
+					session.compatibilityCapture->SubmitQuad();
+			}
+			const auto format = swapchain.glImages->Format() == GL_SRGB8_ALPHA8 ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
+																			  : DXGI_FORMAT_R8G8B8A8_UNORM;
+			quadImage = preview->Upload(previewContext, simxr::windows::PreviewSurface::Quad, sourceWidth, sourceHeight,
+										format, session.glQuadPixels, sourceWidth * 4);
+		}
+		catch (const std::exception& error)
+		{
+			ReportPreviewFailure(session, "OpenGL quad preview", error);
+			return;
+		}
+	}
+	else if (!swapchain.images.empty())
+	{
+		// D3D11 path
+		if (imageIndex >= swapchain.images.size() || !swapchain.images[imageIndex])
+			return;
+
+		// Skip depth formats
+		D3D11_TEXTURE2D_DESC sourceDescription;
+		swapchain.images[imageIndex]->GetDesc(&sourceDescription);
+		if (sourceDescription.Format == DXGI_FORMAT_D32_FLOAT ||
+			sourceDescription.Format == DXGI_FORMAT_D24_UNORM_S8_UINT ||
+			sourceDescription.Format == DXGI_FORMAT_D16_UNORM ||
+			sourceDescription.Format == DXGI_FORMAT_D32_FLOAT_S8X24_UINT)
+		{
+			return;
+		}
+
+		const uint32_t arraySize = swapchain.arraySize ? swapchain.arraySize : 1;
+		const uint32_t arraySlice = quad.color.arraySlice;
+		if (arraySlice >= arraySize)
+		{
+			if (shouldLog)
+			{
+				Logf("[SimXR] quad: imageArrayIndex %u out of range (arraySize=%u)", arraySlice, arraySize);
+			}
+			return;
+		}
+
+		const auto& rectangle = quad.color.rectangle;
+
+		try
+		{
+			quadImage =
+				preview->Copy(previewContext, simxr::windows::PreviewSurface::Quad, swapchain.images[imageIndex].Get(),
+							  arraySlice, static_cast<DXGI_FORMAT>(swapchain.format),
+							  simxr::windows::PreviewRegion{static_cast<std::uint32_t>(rectangle.offset.x),
+															static_cast<std::uint32_t>(rectangle.offset.y),
+															static_cast<std::uint32_t>(rectangle.extent.width),
+															static_cast<std::uint32_t>(rectangle.extent.height)});
+		}
+		catch (const std::exception& error)
+		{
+			Logf("[SimXR] D3D11 quad source copy failed: %s", error.what());
+			return;
+		}
+	}
+	else
+	{
+		if (shouldLog)
+			Log("[SimXR] renderQuadLayer: No valid images in swapchain");
+		return;
+	}
+
+	// The guard at the top of the function only proves one of the two preview targets exists,
+	// and the D3D12 one has already returned by here.
+	if (!session.previewSwapchain)
+		return;
+	ComPtr<ID3D11Texture2D> backbuffer;
+	if (FAILED(session.previewSwapchain->GetBuffer(0, IID_PPV_ARGS(backbuffer.GetAddressOf()))))
+		return;
+
+	ComPtr<ID3D11RenderTargetView> targetView;
+	if (!rt::CreatePreviewRtv(session, backbuffer.Get(), targetView))
+		return;
+
+	if (!quadImage)
+		return;
+
+	// Calculate viewports matching the projection layer layout (letterboxed)
+	const auto layout = ui::g_uiState.displayLayout;
+	const auto viewMode = ui::g_uiState.viewMode;
+	const bool singleEye = (viewMode != ui::ViewMode::BothEyes);
+
+	// Mirror the rect the projection layer lands in, zoom and pan included.
+	rt::FitRect presentRectangle =
+		rt::ComputePresentRect(static_cast<int>(session.previewWidth), static_cast<int>(session.previewHeight));
+
+	const auto eyeLayout = rt::PrepareNativeEyeLayout(presentRectangle, viewMode, layout);
+
+	const bool anaglyph = (!singleEye && layout == ui::DisplayLayout::Anaglyph);
+
+	for (std::size_t eyeIndex = 0; eyeIndex < eyeLayout.count; ++eyeIndex)
+	{
+		const auto& eyeViewport = eyeLayout.eyes[eyeIndex];
+		const auto eye = eyeViewport.eye;
+		if (!geometry || !geometry->eyes[eye])
+			continue;
+		const auto& rectangle = eyeViewport.rectangle;
+		const D3D11_VIEWPORT viewport{rectangle.x, rectangle.y, rectangle.width, rectangle.height, 0, 1};
+		const auto& clip = geometry->eyes[eye]->stripClipCorners;
+
+		auto channels = simxr::windows::PreviewChannels::All;
+		if (anaglyph)
+		{
+			channels = simxr::windows::PreviewChannels::Red;
+			if (eye != 0)
+				channels = simxr::windows::PreviewChannels::Cyan;
+		}
+		if (!preview->DrawQuad(previewContext, quadImage, targetView.Get(), viewport, clip, alpha, channels))
+		{
+			const std::runtime_error error("D3D11 quad preview draw failed");
+			ReportPreviewFailure(session, "D3D11 quad preview", error);
+			return;
+		}
+	}
+
+	if (shouldLog)
+	{
+		Logf("[SimXR] Quad layer: blend=%s space=%s eyeVis=%d pose=(%.2f,%.2f,%.2f) size=(%.2f,%.2f)", blendName,
+			 "RESOLVED", static_cast<int>(quad.eyes), quad.poseInSpace.position.x, quad.poseInSpace.position.y,
+			 quad.poseInSpace.position.z, quad.size.width, quad.size.height);
+	}
 }
 
-static bool IsCompositionSpace(XrSpace space) {
-    return rt::g_referenceSpaces.find(space) != rt::g_referenceSpaces.end() ||
-        rt::g_controllerSpaces.find(space) != rt::g_controllerSpaces.end();
+// Normal completion observes the real fence and retires source readers without
+// mapping anything. Only explicitly requested readbacks supply CPU pixels.
+
+static void ConsumeCompletedPreviewFrame(rt::Session& session)
+{
+	if (!session.preview12)
+		return;
+	session.preview12->Consume(
+		[&](const auto& completion, const auto& readback)
+		{
+			const auto& metadata = session.previewMetadata12[completion.slot];
+			try
+			{
+				ConsumePreviewFrame(session, metadata, completion, readback);
+			}
+			catch (const std::exception& error)
+			{
+				// Optional CPU capture preparation must not unwind an accepted XR
+				// frame. The output worker owns only admitted copied CPU bytes.
+				if (session.compatibilityCapture)
+				{
+					try
+					{
+						session.compatibilityCapture->FailScreenshot(error.what(), metadata.frame);
+					}
+					catch (...)
+					{
+						Log("[SimXR] DX12 capture failure status could not be admitted");
+					}
+				}
+				Logf("[SimXR] DX12 explicit capture processing failed: %s", error.what());
+			}
+		});
 }
-
-static XrResult ValidateCompositionSubImage(const XrSwapchainSubImage& subImage) {
-    auto it = rt::g_swapchains.find(subImage.swapchain);
-    if (it == rt::g_swapchains.end()) return XR_ERROR_HANDLE_INVALID;
-    const rt::Swapchain& chain = it->second;
-    const bool released = chain.lastReleased != UINT32_MAX &&
-        chain.lastReleased < chain.imageCount && !chain.lifecycle.IsAppOwned(chain.lastReleased);
-    return composition_validation::ValidateSubImage(subImage, {
-        chain.width, chain.height, chain.arraySize, chain.faceCount, released,
-    });
-}
-
-static XrResult ValidateProjectionView(const XrCompositionLayerProjectionView& view) {
-    if (view.type != XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW) return XR_ERROR_VALIDATION_FAILURE;
-    if (!pose_math::IsNormalized(view.pose.orientation)) return XR_ERROR_POSE_INVALID;
-    if (!composition_validation::IsValidFov(view.fov)) return XR_ERROR_VALIDATION_FAILURE;
-    XrResult result = ValidateCompositionSubImage(view.subImage);
-    if (XR_FAILED(result)) return result;
-
-    for (const XrBaseInStructure* next = reinterpret_cast<const XrBaseInStructure*>(view.next);
-         next; next = next->next) {
-        if (next->type != XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR) continue;
-        if (!IsExtensionEnabled(XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME)) {
-            return XR_ERROR_VALIDATION_FAILURE;
-        }
-        const auto* depth = reinterpret_cast<const XrCompositionLayerDepthInfoKHR*>(next);
-        result = ValidateCompositionSubImage(depth->subImage);
-        if (XR_FAILED(result)) return result;
-        if (!std::isfinite(depth->minDepth) || !std::isfinite(depth->maxDepth) ||
-            depth->minDepth < 0.0f || depth->maxDepth > 1.0f ||
-            depth->minDepth >= depth->maxDepth ||
-            !(depth->nearZ > 0.0f) || !(depth->farZ > 0.0f) ||
-            depth->nearZ == depth->farZ) {
-            return XR_ERROR_VALIDATION_FAILURE;
-        }
-    }
-    return XR_SUCCESS;
-}
-
-static XrResult ValidateFrameSubmission(const XrFrameEndInfo& info) {
-    if (info.displayTime <= 0) return XR_ERROR_TIME_INVALID;
-    if (info.environmentBlendMode != XR_ENVIRONMENT_BLEND_MODE_OPAQUE) {
-        return XR_ERROR_ENVIRONMENT_BLEND_MODE_UNSUPPORTED;
-    }
-    if (info.layerCount > 16) return XR_ERROR_LAYER_LIMIT_EXCEEDED;
-    if (info.layerCount > 0 && !info.layers) return XR_ERROR_VALIDATION_FAILURE;
-
-    constexpr XrCompositionLayerFlags validLayerFlags =
-        XR_COMPOSITION_LAYER_CORRECT_CHROMATIC_ABERRATION_BIT |
-        XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
-        XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
-    for (uint32_t i = 0; i < info.layerCount; ++i) {
-        const XrCompositionLayerBaseHeader* base = info.layers[i];
-        if (!base) return XR_ERROR_LAYER_INVALID;
-        if (base->layerFlags & ~validLayerFlags) return XR_ERROR_VALIDATION_FAILURE;
-        if (!IsCompositionSpace(base->space)) return XR_ERROR_HANDLE_INVALID;
-
-        XrResult result = XR_SUCCESS;
-        switch (base->type) {
-            case XR_TYPE_COMPOSITION_LAYER_PROJECTION: {
-                const auto* projection = reinterpret_cast<const XrCompositionLayerProjection*>(base);
-                if (projection->viewCount != 2 || !projection->views) {
-                    return XR_ERROR_VALIDATION_FAILURE;
-                }
-                for (uint32_t view = 0; view < projection->viewCount; ++view) {
-                    result = ValidateProjectionView(projection->views[view]);
-                    if (XR_FAILED(result)) return result;
-                }
-                break;
-            }
-            case XR_TYPE_COMPOSITION_LAYER_QUAD: {
-                const auto* quad = reinterpret_cast<const XrCompositionLayerQuad*>(base);
-                if (!pose_math::IsNormalized(quad->pose.orientation)) {
-                    return XR_ERROR_POSE_INVALID;
-                }
-                if (quad->eyeVisibility != XR_EYE_VISIBILITY_BOTH &&
-                    quad->eyeVisibility != XR_EYE_VISIBILITY_LEFT &&
-                    quad->eyeVisibility != XR_EYE_VISIBILITY_RIGHT) {
-                    return XR_ERROR_VALIDATION_FAILURE;
-                }
-                if (!std::isfinite(quad->size.width) || !std::isfinite(quad->size.height) ||
-                    quad->size.width < 0.0f || quad->size.height < 0.0f) {
-                    return XR_ERROR_VALIDATION_FAILURE;
-                }
-                result = ValidateCompositionSubImage(quad->subImage);
-                if (XR_FAILED(result)) return result;
-                break;
-            }
-            case XR_TYPE_COMPOSITION_LAYER_CYLINDER_KHR: {
-                if (!IsExtensionEnabled(XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME)) {
-                    return XR_ERROR_LAYER_INVALID;
-                }
-                const auto* cylinder = reinterpret_cast<const XrCompositionLayerCylinderKHR*>(base);
-                if (!pose_math::IsNormalized(cylinder->pose.orientation)) {
-                    return XR_ERROR_POSE_INVALID;
-                }
-                if (cylinder->eyeVisibility != XR_EYE_VISIBILITY_BOTH &&
-                    cylinder->eyeVisibility != XR_EYE_VISIBILITY_LEFT &&
-                    cylinder->eyeVisibility != XR_EYE_VISIBILITY_RIGHT) {
-                    return XR_ERROR_VALIDATION_FAILURE;
-                }
-                constexpr float twoPi = 6.28318530717958647692f;
-                if (std::isnan(cylinder->radius) || cylinder->radius < 0.0f ||
-                    !std::isfinite(cylinder->centralAngle) || cylinder->centralAngle < 0.0f ||
-                    cylinder->centralAngle >= twoPi || !std::isfinite(cylinder->aspectRatio) ||
-                    cylinder->aspectRatio <= 0.0f) {
-                    return XR_ERROR_VALIDATION_FAILURE;
-                }
-                result = ValidateCompositionSubImage(cylinder->subImage);
-                if (XR_FAILED(result)) return result;
-                break;
-            }
-            default:
-                return XR_ERROR_LAYER_INVALID;
-        }
-    }
-    return XR_SUCCESS;
-}
-
-static void RecordProjectionSubmission(const XrCompositionLayerProjection& projection,
-                                       uint64_t frame) {
-    if (projection.viewCount < 1 || !projection.views) return;
-
-    mcp::ProjLogEntry entry{};
-    entry.frame = frame;
-    entry.poseQx = projection.views[0].pose.orientation.x;
-    entry.poseQy = projection.views[0].pose.orientation.y;
-    entry.poseQz = projection.views[0].pose.orientation.z;
-    entry.poseQw = projection.views[0].pose.orientation.w;
-    entry.posX = projection.views[0].pose.position.x;
-    entry.posY = projection.views[0].pose.position.y;
-    entry.posZ = projection.views[0].pose.position.z;
-    const uint32_t count = (std::min)(projection.viewCount, 2u);
-    XrSwapchain seenSwapchains[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE};
-    for (uint32_t view = 0; view < count; ++view) {
-        entry.aL[view] = projection.views[view].fov.angleLeft;
-        entry.aR[view] = projection.views[view].fov.angleRight;
-        entry.aU[view] = projection.views[view].fov.angleUp;
-        entry.aD[view] = projection.views[view].fov.angleDown;
-        entry.rectX[view] = projection.views[view].subImage.imageRect.offset.x;
-        entry.rectY[view] = projection.views[view].subImage.imageRect.offset.y;
-        entry.rectW[view] = projection.views[view].subImage.imageRect.extent.width;
-        entry.rectH[view] = projection.views[view].subImage.imageRect.extent.height;
-
-        const XrSwapchain handle = projection.views[view].subImage.swapchain;
-        auto chainIt = rt::g_swapchains.find(handle);
-        if (chainIt != rt::g_swapchains.end()) {
-            rt::Swapchain& chain = chainIt->second;
-            entry.imageIndex[view] = chain.lastReleased;
-            entry.releaseSerial[view] = chain.releaseSerial;
-            bool alreadySeen = false;
-            for (uint32_t previous = 0; previous < view; ++previous) {
-                if (seenSwapchains[previous] == handle) {
-                    entry.fresh[view] = entry.fresh[previous];
-                    alreadySeen = true;
-                    break;
-                }
-            }
-            if (!alreadySeen) {
-                entry.fresh[view] = chain.lastReleased != UINT32_MAX &&
-                    chain.releaseSerial != 0 &&
-                    chain.releaseSerial != chain.lastProjectionReleaseSerial;
-                chain.lastProjectionReleaseSerial = chain.releaseSerial;
-            }
-        }
-        seenSwapchains[view] = handle;
-    }
-    mcp::g_projLog[mcp::g_projLogHead] = entry;
-    mcp::g_projLogHead = (mcp::g_projLogHead + 1) % mcp::PROJ_LOG_CAPACITY;
-    if (mcp::g_projLogCount < mcp::PROJ_LOG_CAPACITY) ++mcp::g_projLogCount;
-    mcp::g_lastProjEntry = entry;
-}
-
 static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEndInfo* info) {
-    if (session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
-    if (!info || info->type != XR_TYPE_FRAME_END_INFO) return XR_ERROR_VALIDATION_FAILURE;
+    if (simxr::windows::D3D12Preview::IsPresentationThread()) return XR_ERROR_CALL_ORDER_INVALID;
+    std::shared_ptr<simxr::Session> core;
+    std::shared_ptr<mcp::WindowsLegacyChannel> compatibilityFiles;
+    std::shared_ptr<mcp::WindowsLegacyCapture> compatibilityCapture;
+    std::shared_ptr<flicker::Diagnostics> diagnostics;
     {
-        std::lock_guard<std::mutex> lock(rt::g_session.frameMutex);
-        if (!rt::g_session.running) return XR_ERROR_SESSION_NOT_RUNNING;
-        if (!rt::g_session.frameLifecycle.CanEnd()) return XR_ERROR_CALL_ORDER_INVALID;
+        std::lock_guard lock(rt::g_coreMutex);
+        if (session == XR_NULL_HANDLE || session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
+        core = rt::g_session.core;
+        compatibilityFiles = rt::g_session.compatibilityFiles;
+        compatibilityCapture = rt::g_session.compatibilityCapture;
+        diagnostics = rt::g_session.diagnostics;
     }
-    const XrResult validation = ValidateFrameSubmission(*info);
+    if (!core || !compatibilityFiles || !compatibilityCapture || !diagnostics) return XR_ERROR_HANDLE_INVALID;
+    if (!info || info->type != XR_TYPE_FRAME_END_INFO || (info->layerCount && !info->layers))
+        return XR_ERROR_VALIDATION_FAILURE;
+    if (info->displayTime <= 0) return XR_ERROR_TIME_INVALID;
+    if (info->environmentBlendMode != XR_ENVIRONMENT_BLEND_MODE_OPAQUE)
+        return XR_ERROR_ENVIRONMENT_BLEND_MODE_UNSUPPORTED;
+    simxr::LayerValidationContext context;
+    context.depthEnabled = core->Extensions().Contains(XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME);
+    context.validSpace = [core](XrSpace space) { return core->Spaces().Owns(space); };
+    context.swapchain = [](XrSwapchain handle) -> std::optional<simxr::SwapchainDescription> {
+        auto found = rt::g_swapchains.find(handle);
+        if (found == rt::g_swapchains.end()) return {};
+        const auto& chain = found->second;
+        return simxr::SwapchainDescription{chain.width, chain.height, chain.arraySize, chain.lastReleased != UINT32_MAX};
+    };
+    std::shared_ptr<const simxr::FrameLayers> prepared;
+    auto validation = simxr::BuildLayers(*info, context,
+        [core](XrSpace space, simxr::RuntimeTime time, simxr::PoseSample& pose) {
+            return core->Spaces().WorldPose(space, time, pose);
+        }, prepared);
     if (XR_FAILED(validation)) return validation;
-
     // Reentrance guard: when our preview swapchain calls Present(), Steam's overlay
     // (gameoverlayrenderer64) hooks it, which can trigger UEVR to re-submit frames
     // through the OpenXR API layer chain, re-entering this function and causing
-    // infinite recursion â†’ EXCEPTION_STACK_OVERFLOW.
+    // infinite recursion → EXCEPTION_STACK_OVERFLOW.
     static std::atomic_flag inEndFrame = ATOMIC_FLAG_INIT;
     if (inEndFrame.test_and_set(std::memory_order_acquire)) {
         static std::atomic<int> reentrantCount{0};
@@ -8877,25 +5135,27 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
         if (count <= 5) {
             Logf("[SimXR] xrEndFrame: BLOCKED concurrent/reentrant call #%d", count);
         }
-        // Thinned so a reentry storm cannot push every other marker out of the ring.
-        if (count <= 64 || count % 1024 == 0) {
-            g_frameTimeline.Marker(perf::timeline::MarkerKind::EndFrameReentry, count);
-        }
-        return XR_SUCCESS;
+        return XR_ERROR_CALL_ORDER_INVALID;
     }
 
-    // The app's submission moment, ahead of any wait for the control lock.
-    perf::timeline::FrameRecord timelineFrame{};
-    g_frameTimeline.EndEnter(timelineFrame, perf::timeline::Qpc());
+    struct EndFrameCall
+    {
+        std::atomic_flag& active;
+        ~EndFrameCall() { active.clear(std::memory_order_release); }
+    } endFrameCall{inEndFrame};
+
+    simxr::FramePrediction submitted;
+    const auto previewViews = core->ViewsAt(prepared->displayTime);
+    auto frameResult = core->EndFrame(submitted, info, prepared);
+    if (XR_FAILED(frameResult)) {
+        return frameResult;
+    }
     LARGE_INTEGER endFrameStart{};
-    std::lock_guard<std::recursive_mutex> controlLock(ui_auto::g_mutex);
     QueryPerformanceCounter(&endFrameStart);
 
     static int frameCount = 0;
     frameCount++;
-    mcp::g_runtimeFrameCount.store((uint64_t)frameCount, std::memory_order_release);
-    // Behind the app's frame on its queue, ahead of the simulator's own GPU work.
-    if (g_frameTimeline.Enabled()) GpuTimingEnd((uint64_t)frameCount);
+    compatibilityCapture->SetFrame(static_cast<uint64_t>(frameCount));
 
     // Log every frame for first 10 frames, then every 60 frames
     bool shouldLog = g_logVerbose && ((frameCount <= 10) || (frameCount % 60 == 1));
@@ -8912,22 +5172,31 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
         }
     }
 
+    if (!info) {
+        Log("[SimXR] xrEndFrame: ERROR - info is null");
+        return XR_ERROR_VALIDATION_FAILURE;
+    }
+
     // Drain the requests that decide whether this frame has to reach the mirror, before
     // deciding it. Every backend's screenshot path then just tests g_screenshotRequested.
-    if (mcp::g_commandsDue) mcp::CheckScreenshotRequest();
+    const auto requests = compatibilityFiles->TakeRequests();
+    if (requests.screenshot) compatibilityCapture->RequestScreenshot(requests.capture);
 
     // Frame-burst capture: the optional pose step lands at this frame boundary,
     // so the frame submitted right now (rendered with the OLD pose) is the
     // burst's baseline and every later frame shows the app catching up.
-    if (mcp::g_commandsDue) {
-        mcp::BurstCommand bc = mcp::CheckBurstCommand();
-        if (bc.valid && rt::g_session.usesOpenGL) {
-            // D3D12/Vulkan already expose a CPU DIB; direct D3D11 now uses an asynchronous
-            // staging ring. OpenGL is the only backend still without this burst path.
-            Log("[SimXR] burst: OpenGL sessions cannot be recorded");
-            mcp::WriteCommandAck("burst", false);
+    {
+        const auto bc = requests.burst;
+        if (bc.valid && !rt::g_session.usesD3D12) {
+            // A burst is recorded out of the D3D12 preview's DIB back buffer, the only place
+            // a composited frame sits in CPU memory. The D3D11 and OpenGL previews go
+            // straight to a swapchain, so say so rather than leaving a poller waiting on a
+            // burst_done.json that is never coming.
+            Log("[SimXR] burst: only D3D12 and Vulkan sessions can be recorded");
+            compatibilityFiles->Acknowledge("burst", false);
         } else if (bc.valid) {
-            if (bc.pose.valid) {
+            const bool burstAccepted = (!rt::g_session.usesVulkan || rt::g_session.vk.timeline) && compatibilityCapture->BeginBurst(bc.frames);
+            if (burstAccepted && bc.pose.valid) {
                 rt::g_headPos.x = bc.pose.x;
                 rt::g_headPos.y = bc.pose.y;
                 rt::g_headPos.z = bc.pose.z;
@@ -8935,9 +5204,7 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
                 rt::g_headPitch = bc.pose.pitch;
                 if (bc.pose.hasRoll) rt::g_headRoll = bc.pose.roll;
             }
-            mcp::BurstStart(bc.frames);
-            g_frameTimeline.Marker(perf::timeline::MarkerKind::BurstStart, bc.frames);
-            mcp::WriteCommandAck("burst", true);
+            if (!burstAccepted) compatibilityFiles->Acknowledge("burst", false);
         }
     }
 
@@ -8945,14 +5212,14 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
     // hangs off it (see g_previewDueThisFrame). A pending screenshot or a running burst
     // overrides the cap - both asked for a particular frame, not for the next one the rate
     // happens to allow, and with the mirror off there would be no next one.
-    // Forced detector windows and bursts require consecutive composed xrEndFrame samples;
-    // neither is allowed to inherit the user's Mirror Rate cap.
-    g_previewDueThisFrame = ui::PreviewFrameDue() || mcp::g_screenshotRequested ||
-                            mcp::g_burstActive || flicker::WantsPreviewReadback();
-    // Serving a screenshot clears its request and a burst can end within this frame,
-    // so latch both for the timeline now.
-    const bool screenshotThisFrame = mcp::g_screenshotRequested;
-    const bool burstThisFrame = mcp::g_burstActive;
+    g_previewDueThisFrame = ui::PreviewFrameDue() || compatibilityCapture->ScreenshotRequested() || compatibilityCapture->BurstActive();
+    if (rt::g_session.usesVulkan && !rt::g_session.vk.timeline) {
+        g_previewDueThisFrame = false;
+        if (compatibilityCapture->ScreenshotRequested())
+            compatibilityCapture->FailScreenshot("Windows Vulkan preview requires external timeline synchronization", frameCount);
+        if (frameCount <= 1 || frameCount % 300 == 0)
+            Log("[SimXR] Windows Vulkan preview unavailable: external timeline synchronization is required");
+    }
 
     // Order the app's Vulkan queue against the compositor's D3D12 queue. Skipped when the
     // mirror is not due this frame: nothing reads the app's images then.
@@ -8962,7 +5229,7 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
         Logf("[SimXR] xrEndFrame: layers=%u", info->layerCount);
     }
 
-    // Count layer types for diagnostics and timing; rendering itself stays in submission order.
+    // First pass: count layer types to know if we need to defer Present
     int projectionCount = 0, quadCount = 0, cylinderCount = 0, otherCount = 0;
     bool hasStereoProjection = false;
     for (uint32_t i = 0; i < info->layerCount; ++i) {
@@ -8987,173 +5254,140 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
             default: otherCount++; break;
         }
     }
+    if (rt::g_session.usesD3D12 && compatibilityCapture->ScreenshotRequested() &&
+        compatibilityCapture->ScreenshotLayer() == "quad" && quadCount == 0)
+        compatibilityCapture->FailScreenshot("No quad layer was submitted for the requested D3D12 capture", frameCount);
     const auto projectionTimingNow = perf::ProjectionTimingTracker::Clock::now();
     rt::g_projectionTiming.Observe(hasStereoProjection, projectionTimingNow);
-    flicker::ObserveSubmission((uint64_t)frameCount, (uint32_t)projectionCount,
+    diagnostics->ObserveSubmission((uint64_t)frameCount, (uint32_t)projectionCount,
                                info->layerCount);
 
+    // Determine if we need to defer Present for overlay layers
+    bool hasOverlays = (quadCount > 0 || cylinderCount > 0);
     g_presentPending = false;
 
-    bool compositionStarted = false;
-    bool projectionComposed = false;
-    bool primaryProjectionRecorded = false;
-    LONGLONG projectionTicks = 0;
-    LONGLONG overlayTicks = 0;
-
-    // A quad can be the first pixel-producing layer even when an earlier projection has
-    // empty view rectangles. Give it a clean canvas without changing the submitted order.
-    const auto prepareOverlayCanvas = [&](bool anotherLayerWillDraw) {
-        ensurePreviewWithoutProjection(rt::g_session);
-        if (!g_previewDueThisFrame) return;
-        if (!rt::g_session.usesD3D12) {
-            clearPreviewToBlack(rt::g_session);
-        } else if (!anotherLayerWillDraw) {
-            // A D3D12 layer opens and clears the target itself. An entirely empty frame
-            // has no layer pass, so open it here to replace the previous frame with black.
-            if (rt::PreviewFrame12* slot = beginPreviewSlot(rt::g_session)) {
-                beginPreviewRT(rt::g_session, *slot);
-            }
-        }
-    };
-
-    // OpenXR uses a painter's algorithm: each layer is composited over all earlier array
-    // entries. Keep one traversal so a projection submitted after a quad actually remains
-    // above that quad, and defer the desktop Present until the traversal is complete.
+    // Second pass: render projection layers (background)
+    // If there are overlays, skip Present until after they're rendered
     for (uint32_t i = 0; i < info->layerCount; ++i) {
         const XrCompositionLayerBaseHeader* base = info->layers[i];
-        LARGE_INTEGER layerStart{}, layerFinish{};
-        QueryPerformanceCounter(&layerStart);
+        if (!base) continue;
+
+        if (base->type == XR_TYPE_COMPOSITION_LAYER_PROJECTION) {
+			const auto* projection = std::get_if<simxr::ProjectionLayerDescription>(&prepared->layers[i]);
+			if (!projection)
+				continue;
+			if (!projection->views.empty())
+			{
+				const auto& pose = projection->views.front().poseInSpace;
+				mcp::ProjLogEntry entry{};
+				entry.frame = frameCount;
+				entry.poseQx = pose.orientation.x;
+				entry.poseQy = pose.orientation.y;
+				entry.poseQz = pose.orientation.z;
+				entry.poseQw = pose.orientation.w;
+				entry.posX = pose.position.x;
+				entry.posY = pose.position.y;
+				entry.posZ = pose.position.z;
+				const auto count = (std::min)(projection->views.size(), std::size_t{2});
+				for (std::size_t view = 0; view < count; ++view)
+				{
+					const auto& source = projection->views[view];
+					entry.aL[view] = source.fov.angleLeft;
+					entry.aR[view] = source.fov.angleRight;
+					entry.aU[view] = source.fov.angleUp;
+					entry.aD[view] = source.fov.angleDown;
+					entry.rectX[view] = source.color.rectangle.offset.x;
+					entry.rectY[view] = source.color.rectangle.offset.y;
+					entry.rectW[view] = source.color.rectangle.extent.width;
+					entry.rectH[view] = source.color.rectangle.extent.height;
+				}
+				compatibilityCapture->RecordProjection(entry);
+			}
+			RenderProjection(rt::g_session, *projection, hasOverlays);
+        }
+    }
+    LARGE_INTEGER afterProjection{};
+    QueryPerformanceCounter(&afterProjection);
+
+    // No projection layer this frame - the app is on a 2D-only screen. Bring the
+    // preview up ourselves (nothing else will) and clear it, so the overlay pass
+    // below has somewhere to composite instead of bailing out at its
+    // !previewSwapchain && !previewRT12 guard.
+    if (projectionCount == 0) {
+        ensurePreviewWithoutProjection(rt::g_session);
+        if (!g_previewDueThisFrame) {
+            // Nothing paints this frame, so there is nothing to wipe either.
+        } else if (!rt::g_session.usesD3D12) {
+            clearPreviewToBlack(rt::g_session);
+        } else if (!hasOverlays) {
+            // D3D12 normally clears as part of opening the render target, which whichever
+            // layer pass runs first does - so the black and the layers over it reach the
+            // window in one repaint. A frame carrying no layers at all has no such pass,
+            // so open and close the target here to wipe the last 3D frame off the mirror.
+            BeginPreviewSlot(rt::g_session);
+        }
+    }
+
+    // Third pass: render overlay layers (quad, cylinder) on top of the projection
+    for (uint32_t i = 0; i < info->layerCount; ++i) {
+        const XrCompositionLayerBaseHeader* base = info->layers[i];
+        if (!base) continue;
 
         switch (base->type) {
-            case XR_TYPE_COMPOSITION_LAYER_PROJECTION: {
-                const auto* projection =
-                    reinterpret_cast<const XrCompositionLayerProjection*>(base);
-                if (!primaryProjectionRecorded) {
-                    RecordProjectionSubmission(*projection, (uint64_t)frameCount);
-                    primaryProjectionRecorded = true;
-                }
-                if (composition_render::HasPixels(*projection)) {
-                    if (!compositionStarted && rt::BlendForLayerFlags(projection->layerFlags)==rt::LayerBlend::Opaque)
-                        presentProjection(rt::g_session, *projection, true, true);
-                    else {
-                        if (!compositionStarted) prepareOverlayCanvas(true);
-                        renderProjectionOverlay(rt::g_session, *projection);
-                    }
-                    compositionStarted = true;
-                    projectionComposed = true;
-                }
-                QueryPerformanceCounter(&layerFinish);
-                projectionTicks += layerFinish.QuadPart - layerStart.QuadPart;
-                break;
-            }
             case XR_TYPE_COMPOSITION_LAYER_QUAD: {
-                const auto* quad = reinterpret_cast<const XrCompositionLayerQuad*>(base);
-                if (composition_render::HasPixels(*quad)) {
-                    if (!compositionStarted) prepareOverlayCanvas(true);
-                    renderQuadLayer(rt::g_session, quad);
-                    compositionStarted = true;
-                }
-                QueryPerformanceCounter(&layerFinish);
-                overlayTicks += layerFinish.QuadPart - layerStart.QuadPart;
-                break;
-            }
-            case XR_TYPE_COMPOSITION_LAYER_CYLINDER_KHR: {
-                const auto* cylinder =
-                    reinterpret_cast<const XrCompositionLayerCylinderKHR*>(base);
-                if (composition_render::HasPixels(*cylinder)) {
-                    if (!compositionStarted) prepareOverlayCanvas(true);
-                    compositionStarted = renderCylinderLayer(rt::g_session, cylinder) ||
-                                         compositionStarted;
-                }
-                QueryPerformanceCounter(&layerFinish);
-                overlayTicks += layerFinish.QuadPart - layerStart.QuadPart;
+                const auto* quad = std::get_if<simxr::QuadLayerDescription>(&prepared->layers[i]);
+                if (quad)
+                    RenderQuadLayer(rt::g_session, *quad, previewViews);
                 break;
             }
             default:
                 break;
         }
     }
-    if (!compositionStarted) prepareOverlayCanvas(false);
-    LARGE_INTEGER afterLayers{};
-    QueryPerformanceCounter(&afterLayers);
-    if (g_previewDueThisFrame || !ui_auto::g_captures.empty()) ui_auto::g_frame = BuildUiFrame(info, (uint64_t)frameCount);
+    LARGE_INTEGER afterOverlays{};
+    QueryPerformanceCounter(&afterOverlays);
 
-    // Every layer of this frame has now been recorded, so hand the slot to the painter and
-    // paint whichever earlier frame the GPU has finished in the meantime.
+    // Publish the complete GPU frame, then retire actual completed submissions.
+    // Only explicitly requested captures/diagnostics map a fenced readback.
     if (rt::g_session.usesD3D12) {
-        closePreviewSlot(rt::g_session, (uint32_t)frameCount, projectionComposed);
+        ClosePreviewSlot(rt::g_session, (uint32_t)frameCount, projectionCount > 0);
         vkrt::FrameSyncEnd(rt::g_session);
         // Shows a finished composite if the GPU has produced one, and serves the
         // screenshot and burst requests off the very pixels it showed.
-        consumeCompletedPreviewFrame(rt::g_session);
+        ConsumeCompletedPreviewFrame(rt::g_session);
     }
     LARGE_INTEGER afterDetectionAndPaint{};
     QueryPerformanceCounter(&afterDetectionAndPaint);
 
     // MCP Integration - write frame status BEFORE Present (Present may block on D3D12)
-    mcp::WriteFrameStatus(frameCount, rt::g_session.previewWidth, rt::g_session.previewHeight,
+    compatibilityCapture->PublishStatus({static_cast<std::uint32_t>(frameCount), rt::g_session.previewWidth, rt::g_session.previewHeight,
                           "RGBA8", mcp::GetSessionStateName((int)rt::g_session.state),
                           rt::g_headYaw, rt::g_headPitch, rt::g_headRoll,
-                          rt::g_headPos.x, rt::g_headPos.y, rt::g_headPos.z);
+                          rt::g_headPos.x, rt::g_headPos.y, rt::g_headPos.z});
 
     // Drain MCP projection-log dump request if pending.
-    if (mcp::g_commandsDue && mcp::CheckProjLogDumpRequest()) {
-        mcp::DumpProjectionLog();
-    }
-    if (mcp::g_commandsDue) {
-        std::string markerText;
-        if (mcp::CheckPerfMarkerCommand(markerText)) {
-            g_frameTimeline.Marker(perf::timeline::MarkerKind::User, 0, 0, markerText.c_str());
-            mcp::WriteCommandAck("perf_marker", g_frameTimeline.Enabled());
-        }
-    }
-    // Every command file has been looked at for this change notification. Any of
-    // them may have changed what the timeline's session info describes.
-    if (mcp::g_commandsDue) g_sessionInfoDirty = true;
-    mcp::g_commandsDue = false;
-    LARGE_INTEGER afterStatus{};
-    QueryPerformanceCounter(&afterStatus);
+    if (requests.projectionLog) compatibilityCapture->DumpProjection();
 
-    // Consume older D3D11 staging slots without flushing or waiting, then queue this
-    // xrEndFrame's fully composed two-eye backbuffer before flip-model Present makes its
-    // contents undefined. A forced capture/burst already overrode Mirror Rate above.
-    if (!rt::g_session.usesD3D12 && !rt::g_session.usesOpenGL) {
-        consumeD3D11PreviewReadbacks(rt::g_session);
-        if (g_presentPending && g_previewDueThisFrame && projectionComposed &&
-            rt::g_session.previewSwapchain) {
-            ComPtr<ID3D11Texture2D> composedBackbuffer;
-            if (SUCCEEDED(rt::g_session.previewSwapchain->GetBuffer(
-                    0, IID_PPV_ARGS(composedBackbuffer.GetAddressOf())))) {
-                queueD3D11PreviewReadback(rt::g_session, composedBackbuffer.Get(),
-                                          (uint32_t)frameCount);
-            }
-        }
-    }
-    LARGE_INTEGER afterReadbacks{};
-    QueryPerformanceCounter(&afterReadbacks);
-
-    // D3D11 and OpenGL capture from the preview swapchain inside presentProjection, which a
+    // D3D11 and OpenGL capture from the preview swapchain inside RenderProjection, which a
     // frame carrying no projection layer never reaches - so on a 2D-only frame the request
     // was drained but never served, and g_previewDueThisFrame stayed latched on it, quietly
     // disabling Mirror Rate. Take the shot off the back buffer here instead, before the
     // deferred Present below makes its contents undefined.
-    if (!rt::g_session.usesD3D12 && mcp::g_screenshotRequested && g_previewDueThisFrame &&
-        ui_auto::g_frame.sync >= mcp::g_screenshotAfterSync &&
+    if (!rt::g_session.usesD3D12 && compatibilityCapture->ScreenshotRequested() && g_previewDueThisFrame &&
         rt::g_session.previewSwapchain && rt::g_session.d3d11Device) {
-        mcp::CaptureScreenshot(rt::g_session.d3d11Device.Get(), rt::g_session.d3d11Context.Get(),
+		simxr::windows::D3D11PreviewContext captureContext(rt::g_session.d3d11Context.Get());
+        mcp::CaptureScreenshot(*compatibilityCapture, rt::g_session.d3d11Device.Get(), rt::g_session.d3d11Context.Get(),
                                rt::g_session.previewSwapchain.Get());
-        const std::string shotPath = mcp::GetSimulatorDataPath() + "\\screenshot.bmp";
-        ui::NotifyScreenshotSaved(std::wstring(shotPath.begin(), shotPath.end()));
+
     }
-    LARGE_INTEGER afterScreenshot{};
-    QueryPerformanceCounter(&afterScreenshot);
+
 
     // Now Present after all layers are rendered (D3D11/GL only; D3D12 uses GDI in blit function)
     if (g_presentPending) {
         auto& s = rt::g_session;
 
         if (s.usesD3D12) {
-            // D3D12 GDI-based path: blitD3D12ToPreview already painted via GDI, nothing to do
+            // The private D3D12 presentation owner already queued the complete frame.
             static uint64_t deferredD3D12Count = 0;
             if (++deferredD3D12Count <= 5 || deferredD3D12Count % 120 == 1) {
                 Log("[SimXR] Deferred D3D12: composed GDI preview already staged");
@@ -9163,8 +5397,6 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
         }
         g_presentPending = false;
     }
-    LARGE_INTEGER afterPresent{};
-    QueryPerformanceCounter(&afterPresent);
 
     // Keep the measurement visible without drawing into the eye images (and
     // therefore without contaminating screenshots or flicker/color analysis).
@@ -9202,25 +5434,9 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
         const auto elapsedMs = [&](const LARGE_INTEGER& begin, const LARGE_INTEGER& end) {
             return 1000.0 * (double)(end.QuadPart - begin.QuadPart) / (double)frequency.QuadPart;
         };
-        // The historical "status" bucket also includes readback, screenshots and
-        // DXGI Present. Preserve it for comparisons, but identify individual stalls
-        // before attributing compositor/driver waits to the application's UI.
-        const double frameMs = elapsedMs(endFrameStart, endFrameFinish);
-        if (frameMs >= 40.0) {
-            Logf("[SimXR] xrEndFrame slow: frame=%u total=%.3fms projection=%.3f overlay=%.3f detectPaint=%.3f status=%.3f readback=%.3f screenshot=%.3f present=%.3f titleLog=%.3f thread=%lu",
-                 frameCount, frameMs,
-                 1000.0 * (double)projectionTicks / (double)frequency.QuadPart,
-                 1000.0 * (double)overlayTicks / (double)frequency.QuadPart,
-                 elapsedMs(afterLayers, afterDetectionAndPaint),
-                 elapsedMs(afterDetectionAndPaint, afterStatus),
-                 elapsedMs(afterStatus, afterReadbacks),
-                 elapsedMs(afterReadbacks, afterScreenshot),
-                 elapsedMs(afterScreenshot, afterPresent),
-                 elapsedMs(afterPresent, endFrameFinish), GetCurrentThreadId());
-        }
-        projectionMs += 1000.0 * (double)projectionTicks / (double)frequency.QuadPart;
-        overlayMs += 1000.0 * (double)overlayTicks / (double)frequency.QuadPart;
-        detectPaintMs += elapsedMs(afterLayers, afterDetectionAndPaint);
+        projectionMs += elapsedMs(endFrameStart, afterProjection);
+        overlayMs += elapsedMs(afterProjection, afterOverlays);
+        detectPaintMs += elapsedMs(afterOverlays, afterDetectionAndPaint);
         remainderMs += elapsedMs(afterDetectionAndPaint, endFrameFinish);
         totalMs += elapsedMs(endFrameStart, endFrameFinish);
         if (++timingFrames == 300) {
@@ -9233,1444 +5449,423 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
         }
     }
 
-    if (g_frameTimeline.Enabled()) {
-        namespace tl = perf::timeline;
-        if (g_sessionInfoDirty.exchange(false)) PublishSessionInfo();
-        timelineFrame.frameId = (uint64_t)frameCount;
-        // Layers composite in submission order, so projection and overlay work
-        // interleave; the record keeps the overlays' share as the stretch before
-        // the last layer finished.
-        timelineFrame.endProjectionQpc = (uint64_t)(afterLayers.QuadPart - overlayTicks);
-        timelineFrame.endOverlaysQpc = (uint64_t)afterLayers.QuadPart;
-        timelineFrame.endPaintQpc = (uint64_t)afterDetectionAndPaint.QuadPart;
-        timelineFrame.layerCount = info->layerCount;
-        timelineFrame.projectionLayers = (uint16_t)projectionCount;
-        timelineFrame.quadLayers = (uint16_t)quadCount;
-        timelineFrame.cylinderLayers = (uint16_t)cylinderCount;
-        timelineFrame.otherLayers = (uint16_t)otherCount;
-        uint32_t flags = 0;
-        if (hasStereoProjection) flags |= tl::kFrameStereoProjection;
-        if (projectionCount == 0) flags |= tl::kFrameNoProjection;
-        if (g_previewDueThisFrame) flags |= tl::kFrameMirrorDue;
-        if (screenshotThisFrame) flags |= tl::kFrameScreenshot;
-        if (burstThisFrame) flags |= tl::kFrameBurst;
-        if (rt::g_session.state == XR_SESSION_STATE_FOCUSED) flags |= tl::kFrameSessionFocused;
-        timelineFrame.flags = flags;
-        GpuTimingCollect();
-        // A fresh stamp rather than endFrameFinish, so the avg300 log line's cost is counted too.
-        g_frameTimeline.EndExit(timelineFrame, info->displayTime, tl::Qpc());
-    }
-
-    XrResult result;
-    {
-        std::lock_guard<std::mutex> lock(rt::g_session.frameMutex);
-        result = rt::g_session.running
-            ? rt::g_session.frameLifecycle.End()
-            : XR_ERROR_SESSION_NOT_RUNNING;
-    }
-    inEndFrame.clear(std::memory_order_release);
-    return result;
-}
-
-struct SpaceWorldState {
-    XrPosef pose{pose_math::Identity()};
-    bool tracked{false};
-    bool velocityValid{false};
-    XrVector3f linearVelocity{};
-    XrVector3f angularVelocity{};
-};
-
-static bool GetSpaceWorldState(XrSpace space, SpaceWorldState& state) {
-    auto actionIt = rt::g_controllerSpaces.find(space);
-    if (actionIt != rt::g_controllerSpaces.end()) {
-        const rt::ActionSpace& actionSpace = actionIt->second;
-        auto actionRecordIt = rt::g_actions.find(actionSpace.action);
-        if (actionRecordIt == rt::g_actions.end()) return false;
-        const rt::ActionRecord& action = actionRecordIt->second;
-        auto activeSetIt = rt::g_activeActionSetSources.find(action.actionSet);
-        if (activeSetIt == rt::g_activeActionSetSources.end()) return true;
-
-        int sourceMask = actionSpace.sourceMask;
-        if (sourceMask == 0) {
-            for (const rt::ActionBinding& binding : action.bindings) {
-                if (binding.profile == rt::g_activeProfile &&
-                    binding.input == rt::ActionInput::Pose &&
-                    (binding.sourceMask & activeSetIt->second & action.declaredSourceMask)) {
-                    const int candidate = binding.sourceMask &
-                        (interaction_query::kLeftHandSource |
-                         interaction_query::kRightHandSource);
-                    const size_t candidateSlot =
-                        interaction_query::ActionSlotForSourceMask(candidate);
-                    if (candidateSlot != 0 && action.slots[candidateSlot].poseActive) {
-                        sourceMask = candidate;
-                        break;
-                    }
-                }
-            }
-        }
-        if (!interaction_query::IsSimulatedHandSource(sourceMask)) {
-            return true;
-        }
-        const size_t slot = interaction_query::ActionSlotForSourceMask(sourceMask);
-        if (!(activeSetIt->second & sourceMask) ||
-            !action.slots[slot].poseActive) {
-            return true;
-        }
-        const rt::ControllerState& controller =
-            sourceMask == interaction_query::kLeftHandSource
-            ? rt::g_leftController : rt::g_rightController;
-        if (!controller.isTracking) return true;
-        // The simulated hand drives the aim pose. A grip binding sits at the active
-        // profile's vendor offset from it, as on hardware.
-        bool gripPose = false;
-        for (const rt::ActionBinding& binding : action.bindings) {
-            if (binding.profile == rt::g_activeProfile &&
-                binding.input == rt::ActionInput::Pose &&
-                (binding.sourceMask & sourceMask)) {
-                gripPose = binding.gripPose;
-                break;
-            }
-        }
-        XrPosef controllerWorld{};
-        rt::GetControllerPose(controller, &controllerWorld);
-        XrPosef sourceWorld = controllerWorld;
-        auto profileIt = rt::g_pathStrings.find(rt::g_activeProfile);
-        if (gripPose && profileIt != rt::g_pathStrings.end()) {
-            sourceWorld = pose_math::Compose(controllerWorld, controller_poses::AimFromGrip(
-                profileIt->second, sourceMask == interaction_query::kLeftHandSource));
-        }
-        state.pose = pose_math::Compose(sourceWorld, actionSpace.poseInActionSpace);
-        const XrVector3f offsetWorld = {
-            state.pose.position.x - controllerWorld.position.x,
-            state.pose.position.y - controllerWorld.position.y,
-            state.pose.position.z - controllerWorld.position.z,
-        };
-        const XrVector3f offsetVelocity =
-            pose_math::Cross(controller.angularVelocity, offsetWorld);
-        state.tracked = true;
-        state.velocityValid = true;
-        state.linearVelocity = {
-            controller.linearVelocity.x + offsetVelocity.x,
-            controller.linearVelocity.y + offsetVelocity.y,
-            controller.linearVelocity.z + offsetVelocity.z,
-        };
-        state.angularVelocity = controller.angularVelocity;
-        return true;
-    }
-
-    auto referenceIt = rt::g_referenceSpaces.find(space);
-    if (referenceIt == rt::g_referenceSpaces.end()) return false;
-    XrPosef naturalOrigin = pose_math::Identity();
-    if (referenceIt->second.type == XR_REFERENCE_SPACE_TYPE_VIEW) {
-        float yaw, pitch, roll;
-        rt::GetEffectiveHeadAngles(yaw, pitch, roll);
-        naturalOrigin.orientation = rt::QuatFromYawPitchRoll(yaw, pitch, roll);
-        naturalOrigin.position = rt::g_headPos;
-    }
-    state.pose = pose_math::Compose(naturalOrigin, referenceIt->second.poseInRef);
-    state.tracked = true;
-    // LOCAL, LOCAL_FLOOR and STAGE are static in the simulator's world frame, and
-    // coincide: LOCAL's origin is already on the floor, with the head starting
-    // g_headPos.y above it. VIEW motion is not sampled with enough history to
-    // advertise a trustworthy velocity.
-    state.velocityValid = referenceIt->second.type != XR_REFERENCE_SPACE_TYPE_VIEW;
-    return true;
-}
-
-static bool GetCommonEntityRelativePose(XrSpace space, XrSpace baseSpace, XrPosef& pose) {
-    if (space == baseSpace) {
-        pose = pose_math::Identity();
-        return true;
-    }
-
-    auto spaceAction = rt::g_controllerSpaces.find(space);
-    auto baseAction = rt::g_controllerSpaces.find(baseSpace);
-    if (spaceAction != rt::g_controllerSpaces.end() &&
-        baseAction != rt::g_controllerSpaces.end() &&
-        spaceAction->second.action == baseAction->second.action &&
-        spaceAction->second.subactionPath == baseAction->second.subactionPath) {
-        pose = pose_math::Relative(spaceAction->second.poseInActionSpace,
-                                   baseAction->second.poseInActionSpace);
-        return true;
-    }
-
-    auto spaceReference = rt::g_referenceSpaces.find(space);
-    auto baseReference = rt::g_referenceSpaces.find(baseSpace);
-    if (spaceReference != rt::g_referenceSpaces.end() &&
-        baseReference != rt::g_referenceSpaces.end() &&
-        spaceReference->second.type == baseReference->second.type) {
-        pose = pose_math::Relative(spaceReference->second.poseInRef,
-                                   baseReference->second.poseInRef);
-        return true;
-    }
-    return false;
-}
-
-static XrResult XRAPI_PTR xrLocateViews_runtime(XrSession session, const XrViewLocateInfo* li, XrViewState* vs, uint32_t cap, uint32_t* outCount, XrView* views) {
-    if (li && li->type == XR_TYPE_VIEW_LOCATE_INFO) g_frameTimeline.Locate(li->displayTime);
-    std::lock_guard<std::recursive_mutex> controlLock(ui_auto::g_mutex);
-    if (!li || !vs || !outCount || li->type != XR_TYPE_VIEW_LOCATE_INFO ||
-        vs->type != XR_TYPE_VIEW_STATE) return XR_ERROR_VALIDATION_FAILURE;
-    if (session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
-    if (li->viewConfigurationType != XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO) {
-        return XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;
-    }
-    if (li->displayTime <= 0) return XR_ERROR_TIME_INVALID;
-    *outCount = 2;
-
-    SpaceWorldState baseState;
-    if (!GetSpaceWorldState(li->space, baseState)) return XR_ERROR_HANDLE_INVALID;
-    vs->viewStateFlags = baseState.tracked
-        ? XR_VIEW_STATE_ORIENTATION_VALID_BIT | XR_VIEW_STATE_POSITION_VALID_BIT |
-          XR_VIEW_STATE_ORIENTATION_TRACKED_BIT | XR_VIEW_STATE_POSITION_TRACKED_BIT
-        : 0;
-    if (cap == 0) return XR_SUCCESS;
-    if (!views) return XR_ERROR_VALIDATION_FAILURE;
-    if (cap < 2) return XR_ERROR_SIZE_INSUFFICIENT;
-
-    float effYaw, effPitch, effRoll;
-    rt::GetEffectiveHeadAngles(effYaw, effPitch, effRoll);
-    for (uint32_t i = 0; i < 2; ++i) {
-        if (views[i].type != XR_TYPE_VIEW) return XR_ERROR_VALIDATION_FAILURE;
-    }
-    for (uint32_t i = 0; i < 2; ++i) {
-        const XrPosef eyeWorld = rt::ViewPoseFromAngles(i, effYaw, effPitch, effRoll);
-        views[i].pose = pose_math::Relative(eyeWorld, baseState.pose);
-        views[i].fov = rt::GetViewFov(i);
-    }
-    static int locateCount = 0;
-    if (++locateCount % 90 == 1) {  // Log every 90 frames (~1 second)
-        Logf("[SimXR] xrLocateViews: pos=(%.2f,%.2f,%.2f) yaw=%.2f pitch=%.2f", 
-             rt::g_headPos.x, rt::g_headPos.y, rt::g_headPos.z, 
-             rt::g_headYaw, rt::g_headPitch);
-    }
     return XR_SUCCESS;
 }
 
-// VIEW, LOCAL and STAGE always; LOCAL_FLOOR, which OpenXR 1.1 makes mandatory, on a
-// 1.1 instance.
-static bool IsSupportedReferenceSpace(XrReferenceSpaceType type) {
-    return type == XR_REFERENCE_SPACE_TYPE_VIEW || type == XR_REFERENCE_SPACE_TYPE_LOCAL ||
-           type == XR_REFERENCE_SPACE_TYPE_STAGE ||
-           (type == XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR && InstanceUsesApi1_1());
+static XrResult XRAPI_PTR xrLocateViews_runtime(XrSession handle, const XrViewLocateInfo* info, XrViewState* state,
+    uint32_t capacity, uint32_t* count, XrView* views) {
+    auto core = rt::RetainSession(handle);
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    if (!info) return XR_ERROR_VALIDATION_FAILURE;
+    return core->LocateViews(*info, state, capacity, count, views);
 }
 
 // Add missing space/action functions for compatibility
-static XrResult XRAPI_PTR xrCreateReferenceSpace_runtime(
-    XrSession session, const XrReferenceSpaceCreateInfo* info, XrSpace* space) {
-    std::lock_guard<std::recursive_mutex> controlLock(ui_auto::g_mutex);
-    if (session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
-    if (!info || info->type != XR_TYPE_REFERENCE_SPACE_CREATE_INFO || !space) {
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
-    if (!IsSupportedReferenceSpace(info->referenceSpaceType)) {
-        return XR_ERROR_REFERENCE_SPACE_UNSUPPORTED;
-    }
-    if (!pose_math::IsNormalized(info->poseInReferenceSpace.orientation)) {
-        return XR_ERROR_POSE_INVALID;
-    }
-    XrPosef pose = info->poseInReferenceSpace;
-    pose.orientation = pose_math::Normalize(pose.orientation);
-    *space = (XrSpace)(rt::g_nextSpaceHandle++);
-    rt::g_referenceSpaces[*space] = rt::RefSpace{info->referenceSpaceType, pose};
-    Logf("[SimXR] xrCreateReferenceSpace: type=%d space=%p", info->referenceSpaceType, *space);
-    return XR_SUCCESS;
+static XrResult XRAPI_PTR xrCreateReferenceSpace_runtime(XrSession handle, const XrReferenceSpaceCreateInfo* info, XrSpace* out) {
+    auto core = rt::RetainSession(handle);
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    if (!info || !out || info->type != XR_TYPE_REFERENCE_SPACE_CREATE_INFO) return XR_ERROR_VALIDATION_FAILURE;
+    return core->Spaces().CreateReferenceSpace(info->referenceSpaceType, info->poseInReferenceSpace, *out);
 }
 
 static XrResult XRAPI_PTR xrDestroySpace_runtime(XrSpace space) {
-    std::lock_guard<std::recursive_mutex> controlLock(ui_auto::g_mutex);
-    const size_t erased = rt::g_referenceSpaces.erase(space) + rt::g_controllerSpaces.erase(space);
-    if (!erased) return XR_ERROR_HANDLE_INVALID;
-    Logf("[SimXR] xrDestroySpace: space=%p", space);
-    return XR_SUCCESS;
+    auto core = rt::RetainSession();
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    return core->Spaces().Destroy(space);
 }
 
-static XrResult XRAPI_PTR xrLocateSpace_runtime(XrSpace space, XrSpace baseSpace, XrTime time, XrSpaceLocation* location) {
-    std::lock_guard<std::recursive_mutex> controlLock(ui_auto::g_mutex);
-    if (!location) return XR_ERROR_VALIDATION_FAILURE;
-    if (location->type != XR_TYPE_SPACE_LOCATION) return XR_ERROR_VALIDATION_FAILURE;
-    if (time <= 0) return XR_ERROR_TIME_INVALID;
-
-    XrSpaceVelocity* velocity = reinterpret_cast<XrSpaceVelocity*>(location->next);
-    if (velocity && velocity->type == XR_TYPE_SPACE_VELOCITY) velocity->velocityFlags = 0;
-
-    SpaceWorldState spaceState, baseState;
-    if (!GetSpaceWorldState(space, spaceState) ||
-        !GetSpaceWorldState(baseSpace, baseState)) {
-        return XR_ERROR_HANDLE_INVALID;
-    }
-    if (GetCommonEntityRelativePose(space, baseSpace, location->pose)) {
-        location->locationFlags = XR_SPACE_LOCATION_POSITION_VALID_BIT |
-                                  XR_SPACE_LOCATION_ORIENTATION_VALID_BIT |
-                                  XR_SPACE_LOCATION_POSITION_TRACKED_BIT |
-                                  XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT;
-        if (velocity && velocity->type == XR_TYPE_SPACE_VELOCITY) {
-            velocity->velocityFlags = XR_SPACE_VELOCITY_LINEAR_VALID_BIT |
-                                      XR_SPACE_VELOCITY_ANGULAR_VALID_BIT;
-            velocity->linearVelocity = {};
-            velocity->angularVelocity = {};
-        }
-        return XR_SUCCESS;
-    }
-    if (!spaceState.tracked || !baseState.tracked) {
-        location->locationFlags = 0;
-        location->pose = pose_math::Identity();
-        return XR_SUCCESS;
-    }
-
-    location->locationFlags = XR_SPACE_LOCATION_POSITION_VALID_BIT |
-                              XR_SPACE_LOCATION_ORIENTATION_VALID_BIT |
-                              XR_SPACE_LOCATION_POSITION_TRACKED_BIT |
-                              XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT;
-    location->pose = pose_math::Relative(spaceState.pose, baseState.pose);
-
-    if (velocity && velocity->type == XR_TYPE_SPACE_VELOCITY &&
-        spaceState.velocityValid && baseState.velocityValid) {
-        const XrQuaternionf worldToBase = pose_math::Inverse(baseState.pose.orientation);
-        const XrVector3f worldSeparation{
-            spaceState.pose.position.x - baseState.pose.position.x,
-            spaceState.pose.position.y - baseState.pose.position.y,
-            spaceState.pose.position.z - baseState.pose.position.z,
-        };
-        const XrVector3f rotatingBaseVelocity =
-            pose_math::Cross(baseState.angularVelocity, worldSeparation);
-        const XrVector3f relativeLinearWorld{
-            spaceState.linearVelocity.x - baseState.linearVelocity.x - rotatingBaseVelocity.x,
-            spaceState.linearVelocity.y - baseState.linearVelocity.y - rotatingBaseVelocity.y,
-            spaceState.linearVelocity.z - baseState.linearVelocity.z - rotatingBaseVelocity.z,
-        };
-        const XrVector3f relativeAngularWorld{
-            spaceState.angularVelocity.x - baseState.angularVelocity.x,
-            spaceState.angularVelocity.y - baseState.angularVelocity.y,
-            spaceState.angularVelocity.z - baseState.angularVelocity.z,
-        };
-        velocity->velocityFlags = XR_SPACE_VELOCITY_LINEAR_VALID_BIT |
-                                  XR_SPACE_VELOCITY_ANGULAR_VALID_BIT;
-        velocity->linearVelocity = pose_math::Rotate(worldToBase, relativeLinearWorld);
-        velocity->angularVelocity = pose_math::Rotate(worldToBase, relativeAngularWorld);
-    }
-    return XR_SUCCESS;
+static XrResult XRAPI_PTR xrLocateSpace_runtime(XrSpace space, XrSpace base, XrTime time, XrSpaceLocation* location) {
+    auto core = rt::RetainSession();
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    return simxr::LocateSpace(core->Spaces(), space, base, time, location, &core->Extensions());
 }
 
-// OpenXR 1.1 (promoted from XR_KHR_locate_spaces): xrLocateSpace for each space against
-// one base space at one time, with optional XrSpaceVelocities chained on the output.
-static XrResult XRAPI_PTR xrLocateSpaces_runtime(XrSession session, const XrSpacesLocateInfo* info,
-                                                 XrSpaceLocations* spaceLocations) {
-    std::lock_guard<std::recursive_mutex> controlLock(ui_auto::g_mutex);
-    if (session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
-    if (!info || info->type != XR_TYPE_SPACES_LOCATE_INFO || info->spaceCount == 0 || !info->spaces ||
-        !spaceLocations || spaceLocations->type != XR_TYPE_SPACE_LOCATIONS ||
-        spaceLocations->locationCount != info->spaceCount || !spaceLocations->locations) {
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
-    XrSpaceVelocities* velocities = nullptr;
-    for (auto* next = static_cast<XrBaseOutStructure*>(spaceLocations->next); next; next = next->next) {
-        if (next->type == XR_TYPE_SPACE_VELOCITIES) velocities = reinterpret_cast<XrSpaceVelocities*>(next);
-    }
-    if (velocities && (velocities->velocityCount != info->spaceCount || !velocities->velocities)) {
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
-    for (uint32_t i = 0; i < info->spaceCount; ++i) {
-        XrSpaceVelocity velocity{XR_TYPE_SPACE_VELOCITY};
-        XrSpaceLocation location{XR_TYPE_SPACE_LOCATION, velocities ? &velocity : nullptr};
-        const XrResult result = xrLocateSpace_runtime(info->spaces[i], info->baseSpace, info->time, &location);
-        if (XR_FAILED(result)) return result;
-        spaceLocations->locations[i] = {location.locationFlags, location.pose};
-        if (velocities) {
-            velocities->velocities[i] = {velocity.velocityFlags, velocity.linearVelocity, velocity.angularVelocity};
-        }
-    }
-    return XR_SUCCESS;
-}
-
-static XrResult XRAPI_PTR xrEnumerateReferenceSpaces_runtime(XrSession session, uint32_t capacity, uint32_t* count, XrReferenceSpaceType* spaces) {
-    if (session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
-    const uint32_t spaceCount = InstanceUsesApi1_1() ? 4 : 3;
-    const XrResult validation = api_validation::ValidateEnumeration(capacity, count, spaces, spaceCount);
-    if (XR_FAILED(validation) || capacity == 0) return validation;
+static XrResult XRAPI_PTR xrEnumerateReferenceSpaces_runtime(XrSession handle, uint32_t capacity, uint32_t* count, XrReferenceSpaceType* spaces) {
+    if (handle == XR_NULL_HANDLE || handle != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
+    if (!count || (capacity && !spaces)) return XR_ERROR_VALIDATION_FAILURE;
+    *count = 3;
+    if (!capacity) return XR_SUCCESS;
+    if (capacity < *count) return XR_ERROR_SIZE_INSUFFICIENT;
     spaces[0] = XR_REFERENCE_SPACE_TYPE_VIEW;
     spaces[1] = XR_REFERENCE_SPACE_TYPE_LOCAL;
     spaces[2] = XR_REFERENCE_SPACE_TYPE_STAGE;
-    if (spaceCount == 4) spaces[3] = XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR;
     return XR_SUCCESS;
 }
 
-static XrResult XRAPI_PTR xrCreateActionSpace_runtime(
-    XrSession session, const XrActionSpaceCreateInfo* info, XrSpace* space) {
-    std::lock_guard<std::recursive_mutex> controlLock(ui_auto::g_mutex);
-    if (session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
-    if (!info || info->type != XR_TYPE_ACTION_SPACE_CREATE_INFO || !space) {
+static XrResult XRAPI_PTR xrCreateActionSpace_runtime(XrSession handle, const XrActionSpaceCreateInfo* info, XrSpace* out) {
+    auto core = rt::RetainSession(handle);
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    if (!info || !out || info->type != XR_TYPE_ACTION_SPACE_CREATE_INFO) return XR_ERROR_VALIDATION_FAILURE;
+    return core->Spaces().CreateActionSpace(info->action, info->subactionPath, info->poseInActionSpace, *out);
+}
+
+static XrResult XRAPI_PTR xrCreateActionSet_runtime(XrInstance handle, const XrActionSetCreateInfo *info, XrActionSet *set)
+{
+    if (handle == XR_NULL_HANDLE || handle != rt::g_instance.handle)
+        return XR_ERROR_HANDLE_INVALID;
+    if (!info || !set)
         return XR_ERROR_VALIDATION_FAILURE;
-    }
-    auto actionIt = rt::g_actions.find(info->action);
-    if (actionIt == rt::g_actions.end()) return XR_ERROR_HANDLE_INVALID;
-    if (actionIt->second.type != XR_ACTION_TYPE_POSE_INPUT) {
-        return XR_ERROR_ACTION_TYPE_MISMATCH;
-    }
-    if (!pose_math::IsNormalized(info->poseInActionSpace.orientation)) {
-        return XR_ERROR_POSE_INVALID;
-    }
-
-    // Detect controller subaction paths and register the space.
-    int sourceMask = 0; // XR_NULL_PATH selects a combined action space.
-
-    if (info->subactionPath != XR_NULL_PATH) {
-        auto it = rt::g_pathStrings.find(info->subactionPath);
-        if (it == rt::g_pathStrings.end()) return XR_ERROR_PATH_INVALID;
-        if (!actionIt->second.declaredSubactionPaths.count(info->subactionPath)) {
-            return XR_ERROR_PATH_UNSUPPORTED;
-        }
-        sourceMask = interaction_query::ActionSourceMask(it->second);
-    }
-
-    *space = (XrSpace)(rt::g_nextSpaceHandle++);
-    XrPosef pose = info->poseInActionSpace;
-    pose.orientation = pose_math::Normalize(pose.orientation);
-    rt::g_controllerSpaces[*space] = rt::ActionSpace{
-        info->action, info->subactionPath, sourceMask, pose};
-
-    Log("[SimXR] xrCreateActionSpace");
-    return XR_SUCCESS;
+    return rt::g_instance.core->Actions().CreateSet(*info, *set);
 }
 
-static int SourceMaskForTopLevelPath(XrPath path) {
-    auto it = rt::g_pathStrings.find(path);
-    if (it == rt::g_pathStrings.end()) return 0;
-    return interaction_query::ActionSourceMask(it->second);
-}
-
-static int SourceMaskForBindingPath(const std::string& path) {
-    static const char* const topLevels[] = {
-        "/user/hand/left", "/user/hand/right", "/user/head", "/user/gamepad",
-    };
-    for (const char* topLevel : topLevels) {
-        const size_t length = std::strlen(topLevel);
-        if (path.compare(0, length, topLevel) == 0 && path.size() > length &&
-            path[length] == '/') {
-            return interaction_query::ActionSourceMask(topLevel);
-        }
-    }
-    return 0;
-}
-
-static rt::ActionInput InputForBindingPath(XrActionType type, const std::string& path) {
-    const auto componentFor = [&](const char* identifier, std::string& component) {
-        const std::string needle = std::string("/input/") + identifier;
-        const size_t pos = path.find(needle);
-        if (pos == std::string::npos) return false;
-        const size_t end = pos + needle.size();
-        if (end == path.size()) {
-            component.clear();
-            return true;
-        }
-        if (path[end] != '/' || path.find('/', end + 1) != std::string::npos) return false;
-        component = path.substr(end + 1);
-        return true;
-    };
-
-    const auto hasConvertibleComponent = [&](const char* identifier, const char* components) {
-        std::string component;
-        if (!componentFor(identifier, component)) return false;
-        if (component.empty()) return true;
-        const std::string allowed = std::string("|") + components + "|";
-        return allowed.find(std::string("|") + component + "|") != std::string::npos;
-    };
-
-    std::string component;
-    if (type == XR_ACTION_TYPE_POSE_INPUT) {
-        if ((componentFor("grip", component) || componentFor("grip_surface", component) ||
-             componentFor("aim", component)) && component == "pose") {
-            return rt::ActionInput::Pose;
-        }
-        return rt::ActionInput::Unknown;
-    }
-    if (type == XR_ACTION_TYPE_BOOLEAN_INPUT) {
-        if (hasConvertibleComponent("trigger", "click|value") ||
-            hasConvertibleComponent("select", "click|value")) return rt::ActionInput::Trigger;
-        if (hasConvertibleComponent("squeeze", "click|value|force") ||
-            hasConvertibleComponent("grip", "click|value|force")) return rt::ActionInput::Grip;
-        if (hasConvertibleComponent("menu", "click")) return rt::ActionInput::Menu;
-        if (hasConvertibleComponent("a", "click") || hasConvertibleComponent("x", "click")) {
-            return rt::ActionInput::Primary;
-        }
-        if (hasConvertibleComponent("b", "click") || hasConvertibleComponent("y", "click")) {
-            return rt::ActionInput::Secondary;
-        }
-        if (hasConvertibleComponent("thumbstick", "click")) return rt::ActionInput::Thumbstick;
-        return rt::ActionInput::Unknown;
-    }
-    if (type == XR_ACTION_TYPE_FLOAT_INPUT) {
-        if (hasConvertibleComponent("trigger", "click|value") ||
-            hasConvertibleComponent("select", "click|value")) return rt::ActionInput::Trigger;
-        if (hasConvertibleComponent("squeeze", "click|value|force") ||
-            hasConvertibleComponent("grip", "click|value|force")) return rt::ActionInput::Grip;
-        return rt::ActionInput::Unknown;
-    }
-    if (type == XR_ACTION_TYPE_VECTOR2F_INPUT) {
-        if (componentFor("thumbstick", component) && component.empty()) return rt::ActionInput::Thumbstick;
-        return rt::ActionInput::Unknown;
-    }
-    if (type == XR_ACTION_TYPE_VIBRATION_OUTPUT) {
-        if (path.find("/output/haptic") != std::string::npos) {
-            return rt::ActionInput::Haptic;
-        }
-        return rt::ActionInput::Unknown;
-    }
-    return rt::ActionInput::Unknown;
-}
-
-static bool HasPathPrefix(const std::string& path, const char* prefix) {
-    return path.compare(0, std::strlen(prefix), prefix) == 0;
-}
-
-template <size_t N>
-static bool StringIn(const std::string& value, const char* const (&values)[N]) {
-    return std::find_if(std::begin(values), std::end(values), [&](const char* item) {
-        return value == item;
-    }) != std::end(values);
-}
-
-static bool IsSupportedInteractionProfilePath(const std::string& path) {
-    static const char* const profiles[] = {
-        "/interaction_profiles/khr/simple_controller",
-        "/interaction_profiles/google/daydream_controller",
-        "/interaction_profiles/htc/vive_controller",
-        "/interaction_profiles/htc/vive_pro",
-        "/interaction_profiles/microsoft/motion_controller",
-        "/interaction_profiles/microsoft/xbox_controller",
-        "/interaction_profiles/oculus/go_controller",
-        "/interaction_profiles/oculus/touch_controller",
-        "/interaction_profiles/valve/index_controller",
-    };
-    return StringIn(path, profiles) ||
-           (InstanceUsesApi1_1() && interaction_query::IsOpenXR1_1TouchProfile(path));
-}
-
-static bool SplitBindingPath(const std::string& path, std::string& topLevel, std::string& suffix) {
-    static const char* const topLevels[] = {
-        "/user/hand/left", "/user/hand/right", "/user/head", "/user/gamepad",
-    };
-    for (const char* top : topLevels) {
-        const std::string prefix = std::string(top) + "/";
-        if (HasPathPrefix(path, prefix.c_str())) {
-            topLevel = top;
-            suffix = path.substr(prefix.size());
-            return true;
-        }
-    }
-    return false;
-}
-
-static bool IsAllowedBindingPath(const std::string& profile, const std::string& path) {
-    std::string topLevel, suffix;
-    if (!SplitBindingPath(path, topLevel, suffix)) return false;
-
-    static const char* const simple[] = {
-        "input/select/click", "input/menu/click", "input/grip/pose", "input/aim/pose", "output/haptic",
-    };
-    static const char* const daydream[] = {
-        "input/select/click", "input/trackpad/x", "input/trackpad/y", "input/trackpad/click",
-        "input/trackpad/touch", "input/grip/pose", "input/aim/pose",
-    };
-    static const char* const vive[] = {
-        "input/system/click", "input/squeeze/click", "input/menu/click", "input/trigger/click",
-        "input/trigger/value", "input/trackpad/x", "input/trackpad/y", "input/trackpad/click",
-        "input/trackpad/touch", "input/grip/pose", "input/aim/pose", "output/haptic",
-    };
-    static const char* const vivePro[] = {
-        "input/system/click", "input/volume_up/click", "input/volume_down/click", "input/mute_mic/click",
-    };
-    static const char* const motion[] = {
-        "input/menu/click", "input/squeeze/click", "input/trigger/value", "input/thumbstick/x",
-        "input/thumbstick/y", "input/thumbstick/click", "input/trackpad/x", "input/trackpad/y",
-        "input/trackpad/click", "input/trackpad/touch", "input/grip/pose", "input/aim/pose", "output/haptic",
-    };
-    static const char* const xbox[] = {
-        "input/menu/click", "input/view/click", "input/a/click", "input/b/click", "input/x/click",
-        "input/y/click", "input/dpad_down/click", "input/dpad_right/click", "input/dpad_up/click",
-        "input/dpad_left/click", "input/shoulder_left/click", "input/shoulder_right/click",
-        "input/thumbstick_left/click", "input/thumbstick_right/click", "input/trigger_left/value",
-        "input/trigger_right/value", "input/thumbstick_left/x", "input/thumbstick_left/y",
-        "input/thumbstick_right/x", "input/thumbstick_right/y", "output/haptic_left", "output/haptic_right",
-        "output/haptic_left_trigger", "output/haptic_right_trigger",
-    };
-    static const char* const go[] = {
-        "input/system/click", "input/trigger/click", "input/back/click", "input/trackpad/x",
-        "input/trackpad/y", "input/trackpad/click", "input/trackpad/touch", "input/grip/pose", "input/aim/pose",
-    };
-    static const char* const touchCommon[] = {
-        "input/squeeze/value", "input/trigger/value", "input/trigger/touch", "input/thumbstick/x",
-        "input/thumbstick/y", "input/thumbstick/click", "input/thumbstick/touch", "input/thumbrest/touch",
-        "input/grip/pose", "input/aim/pose", "output/haptic",
-    };
-    static const char* const touchLeft[] = {
-        "input/x/click", "input/x/touch", "input/y/click", "input/y/touch", "input/menu/click",
-    };
-    static const char* const touchRight[] = {
-        "input/a/click", "input/a/touch", "input/b/click", "input/b/touch", "input/system/click",
-    };
-    static const char* const index[] = {
-        "input/system/click", "input/system/touch", "input/a/click", "input/a/touch", "input/b/click",
-        "input/b/touch", "input/squeeze/value", "input/squeeze/force", "input/trigger/click",
-        "input/trigger/value", "input/trigger/touch", "input/thumbstick/x", "input/thumbstick/y",
-        "input/thumbstick/click", "input/thumbstick/touch", "input/trackpad/x", "input/trackpad/y",
-        "input/trackpad/force", "input/trackpad/touch", "input/grip/pose", "input/aim/pose", "output/haptic",
-    };
-    // OpenXR 1.1 additions: every Touch-family profile, Touch itself included, senses
-    // the finger near the trigger and the thumb near its resting surfaces.
-    static const char* const touchProximity[] = {
-        "input/trigger/proximity", "input/thumb_resting_surfaces/proximity",
-    };
-    static const char* const touchPlus[] = {
-        "input/trigger/force", "input/trigger_curl/value", "input/trigger_slide/value",
-    };
-    static const char* const touchPro[] = {
-        "input/trigger_curl/value", "input/trigger_slide/value", "input/thumbrest/force",
-        "input/stylus/force", "output/haptic_trigger", "output/haptic_thumb",
-    };
-
-    const bool hand = topLevel == "/user/hand/left" || topLevel == "/user/hand/right";
-    const bool api1_1 = InstanceUsesApi1_1();
-    // OpenXR 1.1 gives every hand profile the palm pose.
-    if (api1_1 && suffix == "input/grip_surface/pose") {
-        return interaction_query::ProfileSupportsTopLevel(profile, topLevel);
-    }
-    const bool touchBase = hand && (input::BindingPathAllowed(suffix, touchCommon) ||
-        (topLevel == "/user/hand/left" && input::BindingPathAllowed(suffix, touchLeft)) ||
-        (topLevel == "/user/hand/right" && input::BindingPathAllowed(suffix, touchRight)));
-    const bool touchSensing = hand && api1_1 && input::BindingPathAllowed(suffix, touchProximity);
-    if (profile == "/interaction_profiles/khr/simple_controller") return hand && input::BindingPathAllowed(suffix, simple);
-    if (profile == "/interaction_profiles/google/daydream_controller") return hand && input::BindingPathAllowed(suffix, daydream);
-    if (profile == "/interaction_profiles/htc/vive_controller") return hand && input::BindingPathAllowed(suffix, vive);
-    if (profile == "/interaction_profiles/htc/vive_pro") return topLevel == "/user/head" && input::BindingPathAllowed(suffix, vivePro);
-    if (profile == "/interaction_profiles/microsoft/motion_controller") return hand && input::BindingPathAllowed(suffix, motion);
-    if (profile == "/interaction_profiles/microsoft/xbox_controller") {
-        return topLevel == "/user/gamepad" && input::BindingPathAllowed(suffix, xbox);
-    }
-    if (profile == "/interaction_profiles/oculus/go_controller") return hand && input::BindingPathAllowed(suffix, go);
-    if (profile == "/interaction_profiles/oculus/touch_controller" ||
-        profile == "/interaction_profiles/meta/touch_controller_rift_cv1" ||
-        profile == "/interaction_profiles/meta/touch_controller_quest_2") {
-        return touchBase || touchSensing;
-    }
-    if (profile == "/interaction_profiles/meta/touch_controller_quest_1_rift_s") {
-        // The one Touch controller without a thumbrest.
-        return suffix != "input/thumbrest/touch" && (touchBase || touchSensing);
-    }
-    if (profile == "/interaction_profiles/meta/touch_plus_controller") {
-        return touchBase || touchSensing || (hand && input::BindingPathAllowed(suffix, touchPlus));
-    }
-    if (profile == "/interaction_profiles/meta/touch_pro_controller") {
-        return touchBase || touchSensing || (hand && input::BindingPathAllowed(suffix, touchPro));
-    }
-    if (profile == "/interaction_profiles/valve/index_controller") return hand && input::BindingPathAllowed(suffix, index);
-    return false;
-}
-
-static XrTime QpcToNs(long long counter, long long freq) {
-    const long long seconds = counter / freq;
-    const long long remainder = counter % freq;
-    return seconds * 1000000000LL + (remainder * 1000000000LL) / freq;
-}
-
-static XrTime CurrentXrTime() {
-    LARGE_INTEGER counter{}, frequency{};
-    QueryPerformanceCounter(&counter);
-    QueryPerformanceFrequency(&frequency);
-    return QpcToNs(counter.QuadPart, frequency.QuadPart);
-}
-
-static XrResult XRAPI_PTR xrCreateActionSet_runtime(
-    XrInstance instance, const XrActionSetCreateInfo* info, XrActionSet* set) {
-    std::lock_guard<std::recursive_mutex> controlLock(ui_auto::g_mutex);
-    if (!IsValidInstance(instance)) return XR_ERROR_HANDLE_INVALID;
-    if (!info || info->type != XR_TYPE_ACTION_SET_CREATE_INFO || !set) {
+static XrResult XRAPI_PTR xrCreateAction_runtime(XrActionSet set, const XrActionCreateInfo *info, XrAction *action)
+{
+    if (!rt::g_instance.core)
+        return XR_ERROR_HANDLE_INVALID;
+    if (!info || !action)
         return XR_ERROR_VALIDATION_FAILURE;
-    }
-    const size_t nameLength = strnlen(info->actionSetName, XR_MAX_ACTION_SET_NAME_SIZE);
-    const size_t localizedLength =
-        strnlen(info->localizedActionSetName, XR_MAX_LOCALIZED_ACTION_SET_NAME_SIZE);
-    if (nameLength == XR_MAX_ACTION_SET_NAME_SIZE ||
-        localizedLength == XR_MAX_LOCALIZED_ACTION_SET_NAME_SIZE) {
+    return rt::g_instance.core->Actions().CreateAction(set, *info, *action);
+}
+
+static XrResult XRAPI_PTR xrSuggestInteractionProfileBindings_runtime(XrInstance handle, const XrInteractionProfileSuggestedBinding *info)
+{
+    if (handle == XR_NULL_HANDLE || handle != rt::g_instance.handle)
+        return XR_ERROR_HANDLE_INVALID;
+    if (!info)
         return XR_ERROR_VALIDATION_FAILURE;
-    }
-    if (nameLength == 0) return XR_ERROR_NAME_INVALID;
-    if (localizedLength == 0) return XR_ERROR_LOCALIZED_NAME_INVALID;
-    if (!api_validation::IsWellFormedPathLevel(
-            info->actionSetName, XR_MAX_ACTION_SET_NAME_SIZE)) {
+    return rt::g_instance.core->Actions().SuggestBindings(*info);
+}
+
+static XrResult XRAPI_PTR xrAttachSessionActionSets_runtime(XrSession handle, const XrSessionActionSetsAttachInfo *info)
+{
+    auto core = rt::RetainSession(handle);
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    if (handle == XR_NULL_HANDLE || handle != rt::g_session.handle)
+        return XR_ERROR_HANDLE_INVALID;
+    if (!info)
+        return XR_ERROR_VALIDATION_FAILURE;
+    return core->Attach(*info);
+}
+
+static XrResult XRAPI_PTR xrGetActionStateBoolean_runtime(XrSession handle, const XrActionStateGetInfo *info, XrActionStateBoolean *state)
+{
+    auto core = rt::RetainSession(handle);
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    if (handle == XR_NULL_HANDLE || handle != rt::g_session.handle)
+        return XR_ERROR_HANDLE_INVALID;
+    if (!info || !state)
+        return XR_ERROR_VALIDATION_FAILURE;
+    return core->Actions().GetBoolean(*info, *state);
+}
+
+static XrResult XRAPI_PTR xrGetActionStateFloat_runtime(XrSession handle, const XrActionStateGetInfo *info, XrActionStateFloat *state)
+{
+    auto core = rt::RetainSession(handle);
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    if (handle == XR_NULL_HANDLE || handle != rt::g_session.handle)
+        return XR_ERROR_HANDLE_INVALID;
+    if (!info || !state)
+        return XR_ERROR_VALIDATION_FAILURE;
+    return core->Actions().GetFloat(*info, *state);
+}
+
+static XrResult XRAPI_PTR xrGetActionStateVector2f_runtime(XrSession handle, const XrActionStateGetInfo *info, XrActionStateVector2f *state)
+{
+    auto core = rt::RetainSession(handle);
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    if (handle == XR_NULL_HANDLE || handle != rt::g_session.handle)
+        return XR_ERROR_HANDLE_INVALID;
+    if (!info || !state)
+        return XR_ERROR_VALIDATION_FAILURE;
+    return core->Actions().GetVector(*info, *state);
+}
+
+static XrResult XRAPI_PTR xrGetActionStatePose_runtime(XrSession handle, const XrActionStateGetInfo *info, XrActionStatePose *state)
+{
+    auto core = rt::RetainSession(handle);
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    if (handle == XR_NULL_HANDLE || handle != rt::g_session.handle)
+        return XR_ERROR_HANDLE_INVALID;
+    if (!info || !state)
+        return XR_ERROR_VALIDATION_FAILURE;
+    return core->Actions().GetPose(*info, *state);
+}
+
+static XrResult XRAPI_PTR xrStringToPath_runtime(XrInstance handle, const char *name, XrPath *path)
+{
+    if (handle == XR_NULL_HANDLE || handle != rt::g_instance.handle)
+        return XR_ERROR_HANDLE_INVALID;
+    if (!name || !path)
+        return XR_ERROR_VALIDATION_FAILURE;
+    auto end = std::find(name, name + XR_MAX_PATH_LENGTH, '\0');
+    if (end == name + XR_MAX_PATH_LENGTH)
         return XR_ERROR_PATH_FORMAT_INVALID;
-    }
-    for (const auto& entry : rt::g_actionSets) {
-        if (entry.second.name == info->actionSetName) return XR_ERROR_NAME_DUPLICATED;
-        if (entry.second.localizedName == info->localizedActionSetName) {
-            return XR_ERROR_LOCALIZED_NAME_DUPLICATED;
-        }
-    }
+    return rt::g_instance.core->Actions().StringToPath(std::string_view(name, end - name), *path);
+}
 
-    static uintptr_t nextSet = 300;
-    *set = (XrActionSet)(nextSet++);
-    Logf("[SimXR] xrCreateActionSet: name=%s", info->actionSetName);
-    rt::ActionSetRecord record;
-    record.priority = info->priority;
-    record.name = info->actionSetName;
-    record.localizedName = info->localizedActionSetName;
-    rt::g_actionSets.emplace(*set, std::move(record));
+static XrResult XRAPI_PTR xrPathToString_runtime(XrInstance handle, XrPath path, uint32_t capacity, uint32_t *count, char *buffer)
+{
+    if (handle == XR_NULL_HANDLE || handle != rt::g_instance.handle)
+        return XR_ERROR_HANDLE_INVALID;
+    return rt::g_instance.core->Actions().PathToString(path, capacity, count, buffer);
+}
+
+static XrResult XRAPI_PTR xrGetCurrentInteractionProfile_runtime(XrSession handle, XrPath user, XrInteractionProfileState *state)
+{
+    auto core = rt::RetainSession(handle);
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    if (handle == XR_NULL_HANDLE || handle != rt::g_session.handle)
+        return XR_ERROR_HANDLE_INVALID;
+    if (!state || state->type != XR_TYPE_INTERACTION_PROFILE_STATE)
+        return XR_ERROR_VALIDATION_FAILURE;
+    return core->Actions().CurrentProfile(user, state->interactionProfile);
+}
+
+static XrResult XRAPI_PTR xrEnumerateBoundSourcesForAction_runtime(XrSession handle, const XrBoundSourcesForActionEnumerateInfo *info,
+                                     uint32_t capacity, uint32_t *count, XrPath *out)
+{
+    auto core = rt::RetainSession(handle);
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    if (handle == XR_NULL_HANDLE || handle != rt::g_session.handle)
+        return XR_ERROR_HANDLE_INVALID;
+    if (!info || info->type != XR_TYPE_BOUND_SOURCES_FOR_ACTION_ENUMERATE_INFO)
+        return XR_ERROR_VALIDATION_FAILURE;
+    std::vector<XrPath> paths;
+    auto result = core->Actions().BoundSources(info->action, paths);
+    if (XR_FAILED(result))
+        return result;
+    if (!count || (capacity && !out)) return XR_ERROR_VALIDATION_FAILURE;
+    *count = static_cast<uint32_t>(paths.size());
+    if (!capacity) return XR_SUCCESS;
+    if (capacity < *count) return XR_ERROR_SIZE_INSUFFICIENT;
+    std::copy(paths.begin(), paths.end(), out);
     return XR_SUCCESS;
 }
 
-static XrResult XRAPI_PTR xrDestroyActionSet_runtime(XrActionSet set) {
-    std::lock_guard<std::recursive_mutex> controlLock(ui_auto::g_mutex);
-    Log("[SimXR] xrDestroyActionSet");
-    if (!rt::g_actionSets.erase(set)) return XR_ERROR_HANDLE_INVALID;
-    rt::g_attachedActionSets.erase(set);
-    rt::g_activeActionSetSources.erase(set);
-    for (auto it = rt::g_actions.begin(); it != rt::g_actions.end();) {
-        if (it->second.actionSet != set) {
-            ++it;
-            continue;
-        }
-        const XrAction action = it->first;
-        for (auto spaceIt = rt::g_controllerSpaces.begin();
-             spaceIt != rt::g_controllerSpaces.end();) {
-            if (spaceIt->second.action == action) spaceIt = rt::g_controllerSpaces.erase(spaceIt);
-            else ++spaceIt;
-        }
-        it = rt::g_actions.erase(it);
-    }
-    return XR_SUCCESS;
-}
-
-static XrResult XRAPI_PTR xrCreateAction_runtime(XrActionSet actionSet, const XrActionCreateInfo* info, XrAction* action) {
-    std::lock_guard<std::recursive_mutex> controlLock(ui_auto::g_mutex);
-    if (!info || info->type != XR_TYPE_ACTION_CREATE_INFO || !action) {
+static XrResult XRAPI_PTR xrGetInputSourceLocalizedName_runtime(XrSession handle, const XrInputSourceLocalizedNameGetInfo *info,
+                                  uint32_t capacity, uint32_t *count, char *out)
+{
+    auto core = rt::RetainSession(handle);
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    if (handle == XR_NULL_HANDLE || handle != rt::g_session.handle)
+        return XR_ERROR_HANDLE_INVALID;
+    if (!info || !count || (capacity && !out) || info->type != XR_TYPE_INPUT_SOURCE_LOCALIZED_NAME_GET_INFO)
         return XR_ERROR_VALIDATION_FAILURE;
-    }
-    auto setIt = rt::g_actionSets.find(actionSet);
-    if (setIt == rt::g_actionSets.end()) return XR_ERROR_HANDLE_INVALID;
-    if (setIt->second.everAttached) return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED;
-    if (info->countSubactionPaths && !info->subactionPaths) return XR_ERROR_VALIDATION_FAILURE;
-    if (info->actionType != XR_ACTION_TYPE_BOOLEAN_INPUT &&
-        info->actionType != XR_ACTION_TYPE_FLOAT_INPUT &&
-        info->actionType != XR_ACTION_TYPE_VECTOR2F_INPUT &&
-        info->actionType != XR_ACTION_TYPE_POSE_INPUT &&
-        info->actionType != XR_ACTION_TYPE_VIBRATION_OUTPUT) {
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
-    const size_t nameLength = strnlen(info->actionName, XR_MAX_ACTION_NAME_SIZE);
-    const size_t localizedLength =
-        strnlen(info->localizedActionName, XR_MAX_LOCALIZED_ACTION_NAME_SIZE);
-    if (nameLength == XR_MAX_ACTION_NAME_SIZE ||
-        localizedLength == XR_MAX_LOCALIZED_ACTION_NAME_SIZE) {
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
-    if (nameLength == 0) return XR_ERROR_NAME_INVALID;
-    if (localizedLength == 0) return XR_ERROR_LOCALIZED_NAME_INVALID;
-    if (!api_validation::IsWellFormedPathLevel(info->actionName, XR_MAX_ACTION_NAME_SIZE)) {
-        return XR_ERROR_PATH_FORMAT_INVALID;
-    }
-    for (const auto& entry : rt::g_actions) {
-        if (entry.second.actionSet != actionSet) continue;
-        if (entry.second.name == info->actionName) return XR_ERROR_NAME_DUPLICATED;
-        if (entry.second.localizedName == info->localizedActionName) {
-            return XR_ERROR_LOCALIZED_NAME_DUPLICATED;
-        }
-    }
-    Logf("[SimXR] xrCreateAction: name=%s, type=%d", info->actionName, info->actionType);
-
-    int sourceMask = info->countSubactionPaths == 0
-        ? interaction_query::kAllActionSources : 0;
-    std::unordered_set<XrPath> declaredPaths;
-    if (info->countSubactionPaths > 0) {
-        for (uint32_t i = 0; i < info->countSubactionPaths; i++) {
-            const XrPath path = info->subactionPaths[i];
-            if (!rt::g_pathStrings.count(path)) return XR_ERROR_PATH_INVALID;
-            const int pathSource = SourceMaskForTopLevelPath(path);
-            if (!pathSource || !declaredPaths.insert(path).second) return XR_ERROR_PATH_UNSUPPORTED;
-            sourceMask |= pathSource;
-        }
-    }
-    static uintptr_t nextAction = 400;
-    *action = (XrAction)(nextAction++);
-    rt::ActionRecord record;
-    record.actionSet = actionSet;
-    record.type = info->actionType;
-    record.name = info->actionName;
-    record.localizedName = info->localizedActionName;
-    record.declaredSourceMask = sourceMask;
-    record.declaredSubactionPaths = declaredPaths;
-    rt::g_actions.emplace(*action, std::move(record));
-    setIt->second.declaredSubactionPaths.insert(declaredPaths.begin(), declaredPaths.end());
-
+    auto& registry = rt::g_instance.core->Actions();
+    auto source = registry.PathString(info->sourcePath);
+    if (!source)
+        return XR_ERROR_PATH_INVALID;
+    XrPath user;
+    auto result = registry.StringToPath(source->starts_with("/user/hand/left/") ? "/user/hand/left" : "/user/hand/right", user);
+    if (XR_FAILED(result))
+        return result;
+    XrPath profile;
+    result = core->Actions().CurrentProfile(user, profile);
+    if (XR_FAILED(result))
+        return result;
+    std::string name;
+    result = registry.LocalizedName(info->sourcePath, profile, info->whichComponents, name);
+    if (XR_FAILED(result))
+        return result;
+    *count = static_cast<uint32_t>(name.size() + 1);
+    if (!capacity)
+        return XR_SUCCESS;
+    if (capacity < *count)
+        return XR_ERROR_SIZE_INSUFFICIENT;
+    std::memcpy(out, name.c_str(), *count);
     return XR_SUCCESS;
 }
 
 static XrResult XRAPI_PTR xrDestroyAction_runtime(XrAction action) {
-    std::lock_guard<std::recursive_mutex> controlLock(ui_auto::g_mutex);
-    Log("[SimXR] xrDestroyAction");
-    auto actionIt = rt::g_actions.find(action);
-    if (actionIt == rt::g_actions.end()) return XR_ERROR_HANDLE_INVALID;
-    const XrActionSet actionSet = actionIt->second.actionSet;
-    for (auto spaceIt = rt::g_controllerSpaces.begin();
-         spaceIt != rt::g_controllerSpaces.end();) {
-        if (spaceIt->second.action == action) spaceIt = rt::g_controllerSpaces.erase(spaceIt);
-        else ++spaceIt;
+    if (!rt::g_instance.core) return XR_ERROR_HANDLE_INVALID;
+    auto core = rt::RetainSession();
+    if (core) {
+        core->Haptics().RemoveAction(action, core->Snapshot().time);
     }
-    rt::g_actions.erase(actionIt);
-    auto setIt = rt::g_actionSets.find(actionSet);
-    if (setIt != rt::g_actionSets.end()) {
-        setIt->second.declaredSubactionPaths.clear();
-        for (const auto& entry : rt::g_actions) {
-            if (entry.second.actionSet == actionSet) {
-                setIt->second.declaredSubactionPaths.insert(entry.second.declaredSubactionPaths.begin(),
-                                                            entry.second.declaredSubactionPaths.end());
-            }
-        }
-    }
-    return XR_SUCCESS;
+    return rt::g_instance.core->Actions().DestroyAction(action);
 }
 
-static XrResult XRAPI_PTR xrSuggestInteractionProfileBindings_runtime(XrInstance instance, const XrInteractionProfileSuggestedBinding* bindings) {
-    std::lock_guard<std::recursive_mutex> controlLock(ui_auto::g_mutex);
-    if (!bindings) return XR_ERROR_VALIDATION_FAILURE;
-    if (instance != rt::g_instance.handle) return XR_ERROR_HANDLE_INVALID;
-    if (bindings->countSuggestedBindings && !bindings->suggestedBindings) return XR_ERROR_VALIDATION_FAILURE;
-    // interactionProfile is an XrPath (integer), not a C-string
-    Logf("[SimXR] xrSuggestInteractionProfileBindings: profile=0x%llx",
-         (unsigned long long)bindings->interactionProfile);
-    auto profileIt = rt::g_pathStrings.find(bindings->interactionProfile);
-    if (profileIt == rt::g_pathStrings.end()) return XR_ERROR_PATH_INVALID;
-    if (!IsSupportedInteractionProfilePath(profileIt->second)) return XR_ERROR_PATH_UNSUPPORTED;
-
-    struct PendingBinding { XrAction action; rt::ActionBinding binding; };
-    std::vector<PendingBinding> pending;
-    for (uint32_t i = 0; i < bindings->countSuggestedBindings; ++i) {
-        const XrActionSuggestedBinding& suggested = bindings->suggestedBindings[i];
-        auto actionIt = rt::g_actions.find(suggested.action);
-        if (actionIt == rt::g_actions.end()) return XR_ERROR_HANDLE_INVALID;
-        auto setIt = rt::g_actionSets.find(actionIt->second.actionSet);
-        if (setIt != rt::g_actionSets.end() && setIt->second.everAttached) {
-            return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED;
-        }
-        auto pathIt = rt::g_pathStrings.find(suggested.binding);
-        if (pathIt == rt::g_pathStrings.end()) return XR_ERROR_PATH_INVALID;
-        if (!IsAllowedBindingPath(profileIt->second, pathIt->second)) return XR_ERROR_PATH_UNSUPPORTED;
-        const int sourceMask = SourceMaskForBindingPath(pathIt->second);
-        const rt::ActionInput inputKind = InputForBindingPath(actionIt->second.type, pathIt->second);
-        if (sourceMask && inputKind != rt::ActionInput::Unknown) {
-            // The simulator has no palm offset of its own, so grip_surface (OpenXR 1.1's
-            // palm pose) reports the grip pose; only aim stays at the tracked pose.
-            const bool gripPose = inputKind == rt::ActionInput::Pose &&
-                (pathIt->second.find("/input/grip/pose") != std::string::npos ||
-                 pathIt->second.find("/input/grip_surface/pose") != std::string::npos);
-            pending.push_back({suggested.action,
-                               {bindings->interactionProfile, suggested.binding,
-                                input::BindingCollisionKey(pathIt->second), sourceMask, inputKind,
-                                gripPose}});
-        }
-    }
-
-    // A second successful suggestion for the same profile atomically replaces
-    // the first one. Validation above deliberately performs no mutation.
-    for (auto& action : rt::g_actions) {
-        auto& actionBindings = action.second.bindings;
-        actionBindings.erase(std::remove_if(actionBindings.begin(), actionBindings.end(), [&](const rt::ActionBinding& b) {
-            return b.profile == bindings->interactionProfile;
-        }), actionBindings.end());
-    }
-    for (const PendingBinding& item : pending) {
-        rt::g_actions.at(item.action).bindings.push_back(item.binding);
-    }
-    auto& list = rt::g_suggestedProfiles;
-    if (std::find(list.begin(), list.end(), bindings->interactionProfile) == list.end()) {
-        list.push_back(bindings->interactionProfile);
-    }
-    return XR_SUCCESS;
+static XrResult XRAPI_PTR xrDestroyActionSet_runtime(XrActionSet set) {
+    if (!rt::g_instance.core) return XR_ERROR_HANDLE_INVALID;
+    for (const auto& action : rt::g_instance.core->Actions().Actions())
+        if (action.set == set) xrDestroyAction_runtime(action.handle);
+    return rt::g_instance.core->Actions().DestroySet(set);
 }
 
-static XrResult XRAPI_PTR xrAttachSessionActionSets_runtime(XrSession session, const XrSessionActionSetsAttachInfo* info) {
-    std::lock_guard<std::recursive_mutex> controlLock(ui_auto::g_mutex);
-    if (!info || info->type != XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO || info->countActionSets == 0) {
-        return XR_ERROR_VALIDATION_FAILURE;
+static XrResult XRAPI_PTR xrSyncActions_runtime(XrSession handle, const XrActionsSyncInfo* info) {
+    auto core = rt::RetainSession(handle);
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    const auto controllerMotion = rt::RetainControllerMotion(core);
+    if (!controllerMotion) return XR_ERROR_HANDLE_INVALID;
+    if (!info) return XR_ERROR_VALIDATION_FAILURE;
+    std::array<simxr::ControllerControls, 2> nativeControls;
+    const auto raw = controllerMotion->Snapshot();
+    for (std::size_t hand = 0; hand < raw.hands.size(); ++hand) {
+        auto& controls = nativeControls[hand];
+        controls.connected = true; // scheduled overrides merge after this native baseline
+        const auto& controller = raw.hands[hand].controls;
+        controls.trigger = controller.trigger;
+        controls.grip = controls.gripForce = controller.grip;
+        controls.stick = controls.trackpad = controller.stick;
+        controls.primary = controls.primaryTouch = controller.primary;
+        controls.secondary = controls.secondaryTouch = controller.secondary;
+        controls.menu = controller.menu;
+        controls.thumbClick = controls.trackpadClick = controller.thumbClick;
+        controls.triggerTouch = controller.triggerTouch;
+        controls.thumbTouch = controls.trackpadTouch = controller.thumbClick;
     }
-    if (session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
-    if (rt::g_sessionActionSetsAttached) return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED;
-    if (info->countActionSets && !info->actionSets) return XR_ERROR_VALIDATION_FAILURE;
-    for (uint32_t i = 0; i < info->countActionSets; ++i) {
-        if (!rt::g_actionSets.count(info->actionSets[i])) return XR_ERROR_HANDLE_INVALID;
-    }
-    Logf("[SimXR] xrAttachSessionActionSets: count=%u", info->countActionSets);
-
-    rt::g_attachedActionSets.clear();
-    for (uint32_t i = 0; i < info->countActionSets; ++i) {
-        rt::g_attachedActionSets.insert(info->actionSets[i]);
-        rt::g_actionSets.at(info->actionSets[i]).everAttached = true;
-    }
-    rt::g_sessionActionSetsAttached = true;
-
-    return XR_SUCCESS;
+    return core->SyncActions(*info, nativeControls);
 }
 
-static XrPath SelectSyntheticInteractionProfile() {
-    // The synthetic devices are two hand controllers. Prefer Touch when the app supplied
-    // it, otherwise emulate the first suggested hand-controller profile. Headset and
-    // gamepad profiles must not become active when this runtime has no such input device.
-    for (XrPath p : rt::g_suggestedProfiles) {
-        auto it = rt::g_pathStrings.find(p);
-        if (it != rt::g_pathStrings.end() && it->second.find("oculus/touch") != std::string::npos) {
-            return p;
-        }
-    }
-    for (XrPath p : rt::g_suggestedProfiles) {
-        auto it = rt::g_pathStrings.find(p);
-        if (it != rt::g_pathStrings.end() && interaction_query::ProfileSupportsTopLevel(
-                it->second, "/user/hand/left")) {
-            return p;
-        }
-    }
-    return XR_NULL_PATH;
-}
+static XrResult XRAPI_PTR xrDestroySwapchain_runtime(XrSwapchain sc)
+{
+	auto it = rt::g_swapchains.find(sc);
+	if (it == rt::g_swapchains.end())
+		return XR_ERROR_HANDLE_INVALID;
 
-static void UpdateInteractionProfileAtSync() {
-    const XrPath selected = SelectSyntheticInteractionProfile();
-    if (selected == rt::g_activeProfile) return;
-    rt::g_activeProfile = selected;
-    auto it = rt::g_pathStrings.find(selected);
-    Logf("[SimXR] xrSyncActions: active interaction profile = %s",
-         it != rt::g_pathStrings.end() ? it->second.c_str() : "<none>");
-    if (rt::g_session.running) {
-        XrEventDataInteractionProfileChanged e{ XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED };
-        e.session = rt::g_session.handle;
-        XrEventDataBuffer buf{};
-        buf.type = XR_TYPE_EVENT_DATA_BUFFER;
-        std::memcpy(&buf, &e, sizeof(e));
-        rt::g_eventQueue.push_back(buf);
-    }
-}
+	// A D3D12 command list does not keep the resources it references alive, and the
+	// preview no longer waits for its own submissions inside xrEndFrame - so a composite
+	// reading these images can still be queued. Dropping the last reference here would
+	// pull them out from under it. Not on any frame path, so the wait costs nothing.
+	if (rt::g_session.usesD3D12 && !rt::WaitForPreviewIdle(rt::g_session))
+		return XR_ERROR_RUNTIME_FAILURE;
 
-static const rt::ControllerState* ControllerForSource(int sourceMask) {
-    if (sourceMask == interaction_query::kLeftHandSource) return &rt::g_leftController;
-    if (sourceMask == interaction_query::kRightHandSource) return &rt::g_rightController;
-    return nullptr;
-}
+	if (it->second.glImages && !it->second.glImages->Close())
+		return XR_ERROR_RUNTIME_FAILURE;
 
-static bool ReadBooleanInput(rt::ActionInput input, const rt::ControllerState& controller) {
-    switch (input) {
-        case rt::ActionInput::Trigger: return controller.triggerPressed;
-        case rt::ActionInput::Grip: return controller.gripPressed;
-        case rt::ActionInput::Menu: return controller.menuPressed;
-        case rt::ActionInput::Primary: return controller.primaryPressed;
-        case rt::ActionInput::Secondary: return controller.secondaryPressed;
-        case rt::ActionInput::Thumbstick: return controller.thumbstickPressed;
-        default: return false;
-    }
-}
+	if (it->second.isVulkan)
+		vkrt::DestroySwapchainImages(rt::g_session, it->second);
 
-static float ReadFloatInput(rt::ActionInput input, const rt::ControllerState& controller) {
-    if (input == rt::ActionInput::Trigger) return controller.triggerValue;
-    if (input == rt::ActionInput::Grip) return controller.gripValue;
-    return 0.0f;
-}
-
-static void SyncActionSlot(rt::ActionRecord& action, size_t slot, int requestedSources,
-                           int activeSources,
-                           uint32_t actionSetPriority,
-                           const input::BindingPriorities& sourcePriorities,
-                           XrTime syncTime) {
-    const int eligibleSources =
-        requestedSources & activeSources & action.declaredSourceMask;
-    bool active = false;
-    bool booleanValue = false;
-    float scalarValue = 0.0f;
-    XrVector2f vectorValue{0.0f, 0.0f};
-    float vectorMagnitude = -1.0f;
-
-    for (const rt::ActionBinding& binding : action.bindings) {
-        if (binding.profile != rt::g_activeProfile ||
-            !(binding.sourceMask & eligibleSources)) continue;
-        if (!sourcePriorities.Allows(binding.collisionKey, actionSetPriority)) continue;
-        const rt::ControllerState* controller = ControllerForSource(binding.sourceMask);
-        if (!controller || !controller->isTracking) continue;
-        switch (action.type) {
-            case XR_ACTION_TYPE_BOOLEAN_INPUT:
-                active = true;
-                booleanValue = booleanValue || ReadBooleanInput(binding.input, *controller);
-                break;
-            case XR_ACTION_TYPE_FLOAT_INPUT: {
-                active = true;
-                const float value = ReadFloatInput(binding.input, *controller);
-                if (std::fabs(value) > std::fabs(scalarValue)) scalarValue = value;
-                break;
-            }
-            case XR_ACTION_TYPE_VECTOR2F_INPUT: {
-                if (binding.input != rt::ActionInput::Thumbstick) break;
-                active = true;
-                const float magnitude = controller->thumbstick.x * controller->thumbstick.x +
-                                        controller->thumbstick.y * controller->thumbstick.y;
-                if (magnitude > vectorMagnitude) {
-                    vectorMagnitude = magnitude;
-                    vectorValue = controller->thumbstick;
-                }
-                break;
-            }
-            case XR_ACTION_TYPE_POSE_INPUT:
-                if (binding.input == rt::ActionInput::Pose) active = true;
-                break;
-            default: break;
-        }
-    }
-
-    input::ActionSlot& state = action.slots[slot];
-    switch (action.type) {
-        case XR_ACTION_TYPE_BOOLEAN_INPUT:
-            state.boolean.Sync(booleanValue ? XR_TRUE : XR_FALSE, active, syncTime);
-            break;
-        case XR_ACTION_TYPE_FLOAT_INPUT:
-            state.scalar.Sync(scalarValue, active, syncTime);
-            break;
-        case XR_ACTION_TYPE_VECTOR2F_INPUT:
-            state.vector.Sync(vectorValue, active, syncTime);
-            break;
-        case XR_ACTION_TYPE_POSE_INPUT:
-            state.poseActive = active ? XR_TRUE : XR_FALSE;
-            break;
-        default:
-            state.SetInactive(syncTime);
-            break;
-    }
-}
-
-static void LatchActions(XrTime syncTime) {
-    input::BindingPriorities sourcePriorities;
-    for (const auto& entry : rt::g_actions) {
-        const rt::ActionRecord& action = entry.second;
-        auto activeIt = rt::g_activeActionSetSources.find(action.actionSet);
-        if (activeIt == rt::g_activeActionSetSources.end()) continue;
-        auto setIt = rt::g_actionSets.find(action.actionSet);
-        if (setIt == rt::g_actionSets.end()) continue;
-        const int eligibleSources = activeIt->second & action.declaredSourceMask;
-        for (const rt::ActionBinding& binding : action.bindings) {
-            if (binding.profile != rt::g_activeProfile ||
-                !(binding.sourceMask & eligibleSources)) continue;
-            sourcePriorities.Observe(binding.collisionKey, setIt->second.priority);
-        }
-    }
-
-    for (auto& entry : rt::g_actions) {
-        rt::ActionRecord& action = entry.second;
-        auto activeIt = rt::g_activeActionSetSources.find(action.actionSet);
-        const int activeSources =
-            activeIt == rt::g_activeActionSetSources.end() ? 0 : activeIt->second;
-        auto setIt = rt::g_actionSets.find(action.actionSet);
-        const uint32_t priority = setIt == rt::g_actionSets.end() ? 0 : setIt->second.priority;
-        SyncActionSlot(action, 0, interaction_query::kAllActionSources,
-                       activeSources, priority, sourcePriorities, syncTime);
-        static const int sources[] = {
-            interaction_query::kLeftHandSource, interaction_query::kRightHandSource,
-            interaction_query::kHeadSource, interaction_query::kGamepadSource,
-        };
-        for (int source : sources) {
-            SyncActionSlot(action, interaction_query::ActionSlotForSourceMask(source),
-                           source, activeSources, priority, sourcePriorities, syncTime);
-        }
-    }
-}
-
-static XrResult FindActionSlot(const XrActionStateGetInfo* info, XrActionType expectedType,
-                               const input::ActionSlot** slot) {
-    if (!info || !slot || info->type != XR_TYPE_ACTION_STATE_GET_INFO) return XR_ERROR_VALIDATION_FAILURE;
-    auto actionIt = rt::g_actions.find(info->action);
-    if (actionIt == rt::g_actions.end()) return XR_ERROR_HANDLE_INVALID;
-    if (actionIt->second.type != expectedType) return XR_ERROR_ACTION_TYPE_MISMATCH;
-    if (!rt::g_attachedActionSets.count(actionIt->second.actionSet)) return XR_ERROR_ACTIONSET_NOT_ATTACHED;
-
-    int slotIndex = 0;
-    if (info->subactionPath != XR_NULL_PATH) {
-        if (!rt::g_pathStrings.count(info->subactionPath)) return XR_ERROR_PATH_INVALID;
-        const int sourceMask = SourceMaskForTopLevelPath(info->subactionPath);
-        if (!sourceMask || !actionIt->second.declaredSubactionPaths.count(info->subactionPath)) {
-            return XR_ERROR_PATH_UNSUPPORTED;
-        }
-        slotIndex = static_cast<int>(
-            interaction_query::ActionSlotForSourceMask(sourceMask));
-    }
-    *slot = &actionIt->second.slots[slotIndex];
-    return XR_SUCCESS;
-}
-
-static XrResult XRAPI_PTR xrGetActionStateBoolean_runtime(XrSession session, const XrActionStateGetInfo* info, XrActionStateBoolean* state) {
-    std::lock_guard<std::recursive_mutex> controlLock(ui_auto::g_mutex);
-    if (!state || state->type != XR_TYPE_ACTION_STATE_BOOLEAN) return XR_ERROR_VALIDATION_FAILURE;
-    if (session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
-    const input::ActionSlot* slot = nullptr;
-    const XrResult result = FindActionSlot(info, XR_ACTION_TYPE_BOOLEAN_INPUT, &slot);
-    if (XR_FAILED(result)) return result;
-    if (rt::g_session.state != XR_SESSION_STATE_FOCUSED) {
-        state->currentState = state->changedSinceLastSync = state->isActive = XR_FALSE;
-        state->lastChangeTime = 0;
-    } else {
-        state->currentState = slot->boolean.current;
-        state->changedSinceLastSync = slot->boolean.changed;
-        state->lastChangeTime = slot->boolean.lastChangeTime;
-        state->isActive = slot->boolean.active;
-    }
-    return XR_SUCCESS;
-}
-
-static XrResult XRAPI_PTR xrGetActionStateFloat_runtime(XrSession session, const XrActionStateGetInfo* info, XrActionStateFloat* state) {
-    std::lock_guard<std::recursive_mutex> controlLock(ui_auto::g_mutex);
-    if (!state || state->type != XR_TYPE_ACTION_STATE_FLOAT) return XR_ERROR_VALIDATION_FAILURE;
-    if (session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
-    const input::ActionSlot* slot = nullptr;
-    const XrResult result = FindActionSlot(info, XR_ACTION_TYPE_FLOAT_INPUT, &slot);
-    if (XR_FAILED(result)) return result;
-    if (rt::g_session.state != XR_SESSION_STATE_FOCUSED) {
-        state->currentState = 0.0f;
-        state->changedSinceLastSync = state->isActive = XR_FALSE;
-        state->lastChangeTime = 0;
-    } else {
-        state->currentState = slot->scalar.current;
-        state->changedSinceLastSync = slot->scalar.changed;
-        state->lastChangeTime = slot->scalar.lastChangeTime;
-        state->isActive = slot->scalar.active;
-    }
-    return XR_SUCCESS;
-}
-
-static XrResult XRAPI_PTR xrGetActionStatePose_runtime(XrSession session, const XrActionStateGetInfo* info, XrActionStatePose* state) {
-    std::lock_guard<std::recursive_mutex> controlLock(ui_auto::g_mutex);
-    if (!state || state->type != XR_TYPE_ACTION_STATE_POSE) return XR_ERROR_VALIDATION_FAILURE;
-    if (session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
-    const input::ActionSlot* slot = nullptr;
-    const XrResult result = FindActionSlot(info, XR_ACTION_TYPE_POSE_INPUT, &slot);
-    if (XR_FAILED(result)) return result;
-    state->isActive = rt::g_session.state == XR_SESSION_STATE_FOCUSED ? slot->poseActive : XR_FALSE;
-    return XR_SUCCESS;
-}
-
-static XrResult XRAPI_PTR xrGetActionStateVector2f_runtime(XrSession session, const XrActionStateGetInfo* info, XrActionStateVector2f* state) {
-    std::lock_guard<std::recursive_mutex> controlLock(ui_auto::g_mutex);
-    if (!state || state->type != XR_TYPE_ACTION_STATE_VECTOR2F) return XR_ERROR_VALIDATION_FAILURE;
-    if (session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
-    const input::ActionSlot* slot = nullptr;
-    const XrResult result = FindActionSlot(info, XR_ACTION_TYPE_VECTOR2F_INPUT, &slot);
-    if (XR_FAILED(result)) return result;
-    if (rt::g_session.state != XR_SESSION_STATE_FOCUSED) {
-        state->currentState = {0.0f, 0.0f};
-        state->changedSinceLastSync = state->isActive = XR_FALSE;
-        state->lastChangeTime = 0;
-    } else {
-        state->currentState = slot->vector.current;
-        state->changedSinceLastSync = slot->vector.changed;
-        state->lastChangeTime = slot->vector.lastChangeTime;
-        state->isActive = slot->vector.active;
-    }
-    return XR_SUCCESS;
-}
-
-#include "action_sync.h"
-
-static XrResult XRAPI_PTR xrSyncActions_runtime(XrSession session, const XrActionsSyncInfo* info) {
-    std::lock_guard<std::recursive_mutex> controlLock(ui_auto::g_mutex);
-    if (!info || info->type != XR_TYPE_ACTIONS_SYNC_INFO) return XR_ERROR_VALIDATION_FAILURE;
-    if (session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
-    if (info->countActiveActionSets && !info->activeActionSets) return XR_ERROR_VALIDATION_FAILURE;
-
-    std::unordered_map<XrActionSet, int> requestedActionSets;
-    for (uint32_t i = 0; i < info->countActiveActionSets; ++i) {
-        const XrActiveActionSet& active = info->activeActionSets[i];
-        if (!rt::g_attachedActionSets.count(active.actionSet)) return XR_ERROR_ACTIONSET_NOT_ATTACHED;
-        auto setIt = rt::g_actionSets.find(active.actionSet);
-        if (setIt == rt::g_actionSets.end()) return XR_ERROR_HANDLE_INVALID;
-        int sourceMask = interaction_query::kAllActionSources;
-        if (active.subactionPath != XR_NULL_PATH) {
-            if (!rt::g_pathStrings.count(active.subactionPath)) return XR_ERROR_PATH_INVALID;
-            sourceMask = SourceMaskForTopLevelPath(active.subactionPath);
-            if (!sourceMask ||
-                !setIt->second.declaredSubactionPaths.count(active.subactionPath)) {
-                return XR_ERROR_PATH_UNSUPPORTED;
-            }
-        }
-        requestedActionSets[active.actionSet] |= sourceMask;
-    }
-
-    ++ui_auto::g_sync;
-    mcp::RefreshCommandsDue(); PollUiPointerCommand(); ApplyUiPointerButtons();
-
-    // OpenXR permits interaction-profile selection to change only at this call. Delaying
-    // the initial selection until the running session's first sync also ensures the
-    // corresponding change event is never emitted for a non-running session.
-    if (rt::g_session.running) UpdateInteractionProfileAtSync();
-
-    const XrTime syncTime = CurrentXrTime();
-    if (rt::g_session.state != XR_SESSION_STATE_FOCUSED) {
-        rt::g_activeActionSetSources.clear();
-        LatchActions(syncTime);
-        return XR_SESSION_NOT_FOCUSED;
-    }
-
-    rt::g_activeActionSetSources = std::move(requestedActionSets);
-    LatchActions(syncTime);
-    ObserveUiPointerSync();
-    return XR_SUCCESS;
-}
-
-static XrResult XRAPI_PTR xrStringToPath_runtime(XrInstance instance, const char* pathString, XrPath* path) {
-    if (!IsValidInstance(instance)) return XR_ERROR_HANDLE_INVALID;
-    if (!pathString || !path) return XR_ERROR_VALIDATION_FAILURE;
-    if (!api_validation::IsWellFormedPath(pathString)) return XR_ERROR_PATH_FORMAT_INVALID;
-    auto existing = rt::g_stringPaths.find(pathString);
-    if (existing != rt::g_stringPaths.end()) {
-        *path = existing->second;
-        return XR_SUCCESS;
-    }
-    if (rt::g_nextPath == XR_NULL_PATH) return XR_ERROR_PATH_COUNT_EXCEEDED;
-    *path = rt::g_nextPath++;
-    rt::g_pathStrings.emplace(*path, pathString);
-    rt::g_stringPaths.emplace(pathString, *path);
-    Logf("[SimXR] xrStringToPath: %s -> %llu", pathString, (unsigned long long)*path);
-    return XR_SUCCESS;
-}
-
-static XrResult XRAPI_PTR xrPathToString_runtime(XrInstance instance, XrPath path, uint32_t bufferCapacityInput, uint32_t* bufferCountOutput, char* buffer) {
-    if (!IsValidInstance(instance)) return XR_ERROR_HANDLE_INVALID;
-    auto it = rt::g_pathStrings.find(path);
-    if (it == rt::g_pathStrings.end()) return XR_ERROR_PATH_INVALID;
-    const std::string& str = it->second;
-    const uint32_t len = (uint32_t)str.size() + 1;
-    const XrResult validation = api_validation::ValidateEnumeration(
-        bufferCapacityInput, bufferCountOutput, buffer, len);
-    if (XR_FAILED(validation) || bufferCapacityInput == 0) return validation;
-    std::memcpy(buffer, str.c_str(), len);
-    return XR_SUCCESS;
-}
-
-static XrResult XRAPI_PTR xrGetCurrentInteractionProfile_runtime(
-    XrSession session, XrPath topLevelUserPath, XrInteractionProfileState* interactionProfile) {
-    if (session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
-    if (!interactionProfile || interactionProfile->type != XR_TYPE_INTERACTION_PROFILE_STATE) {
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
-    if (!rt::g_sessionActionSetsAttached) return XR_ERROR_ACTIONSET_NOT_ATTACHED;
-    auto pathIt = rt::g_pathStrings.find(topLevelUserPath);
-    if (pathIt == rt::g_pathStrings.end()) return XR_ERROR_PATH_INVALID;
-    if (!interaction_query::IsCoreTopLevelUserPath(pathIt->second)) {
-        return XR_ERROR_PATH_UNSUPPORTED;
-    }
-
-    interactionProfile->interactionProfile = XR_NULL_PATH;
-    auto profileIt = rt::g_pathStrings.find(rt::g_activeProfile);
-    if (profileIt != rt::g_pathStrings.end() &&
-        interaction_query::ProfileSupportsTopLevel(profileIt->second, pathIt->second)) {
-        interactionProfile->interactionProfile = rt::g_activeProfile;
-    }
-    return XR_SUCCESS;
-}
-
-static XrResult XRAPI_PTR xrEnumerateBoundSourcesForAction_runtime(
-    XrSession session, const XrBoundSourcesForActionEnumerateInfo* info,
-    uint32_t sourceCapacityInput, uint32_t* sourceCountOutput, XrPath* sources) {
-    if (session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
-    if (!info || info->type != XR_TYPE_BOUND_SOURCES_FOR_ACTION_ENUMERATE_INFO) {
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
-    auto actionIt = rt::g_actions.find(info->action);
-    if (actionIt == rt::g_actions.end()) return XR_ERROR_HANDLE_INVALID;
-    if (!rt::g_attachedActionSets.count(actionIt->second.actionSet)) {
-        return XR_ERROR_ACTIONSET_NOT_ATTACHED;
-    }
-
-    std::vector<XrPath> boundSources;
-    for (const rt::ActionBinding& binding : actionIt->second.bindings) {
-        if (binding.profile != rt::g_activeProfile ||
-            !(binding.sourceMask & actionIt->second.declaredSourceMask) ||
-            std::find(boundSources.begin(), boundSources.end(), binding.sourcePath) !=
-                boundSources.end()) {
-            continue;
-        }
-        boundSources.push_back(binding.sourcePath);
-    }
-    const XrResult validation = api_validation::ValidateEnumeration(
-        sourceCapacityInput, sourceCountOutput, sources,
-        static_cast<uint32_t>(boundSources.size()));
-    if (XR_FAILED(validation) || sourceCapacityInput == 0) return validation;
-    std::copy(boundSources.begin(), boundSources.end(), sources);
-    return XR_SUCCESS;
-}
-
-static XrResult XRAPI_PTR xrGetInputSourceLocalizedName_runtime(
-    XrSession session, const XrInputSourceLocalizedNameGetInfo* info,
-    uint32_t bufferCapacityInput, uint32_t* bufferCountOutput, char* buffer) {
-    if (session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
-    if (!info || info->type != XR_TYPE_INPUT_SOURCE_LOCALIZED_NAME_GET_INFO) {
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
-    if (!rt::g_sessionActionSetsAttached) return XR_ERROR_ACTIONSET_NOT_ATTACHED;
-    constexpr XrInputSourceLocalizedNameFlags validFlags =
-        XR_INPUT_SOURCE_LOCALIZED_NAME_USER_PATH_BIT |
-        XR_INPUT_SOURCE_LOCALIZED_NAME_INTERACTION_PROFILE_BIT |
-        XR_INPUT_SOURCE_LOCALIZED_NAME_COMPONENT_BIT;
-    if (info->whichComponents == 0 || (info->whichComponents & ~validFlags) != 0) {
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
-    auto sourceIt = rt::g_pathStrings.find(info->sourcePath);
-    if (sourceIt == rt::g_pathStrings.end()) return XR_ERROR_PATH_INVALID;
-    const auto profileIt = rt::g_pathStrings.find(rt::g_activeProfile);
-    const std::string profile = profileIt == rt::g_pathStrings.end() ? "" : profileIt->second;
-    const std::string name = interaction_query::LocalizedSourceName(
-        sourceIt->second, profile, info->whichComponents);
-    const uint32_t required = static_cast<uint32_t>(name.size() + 1);
-    const XrResult validation = api_validation::ValidateEnumeration(
-        bufferCapacityInput, bufferCountOutput, buffer, required);
-    if (XR_FAILED(validation) || bufferCapacityInput == 0) return validation;
-    std::memcpy(buffer, name.c_str(), required);
-    return XR_SUCCESS;
-}
-
-static XrResult XRAPI_PTR xrDestroySwapchain_runtime(XrSwapchain sc) {
-    auto it = rt::g_swapchains.find(sc);
-    if (it == rt::g_swapchains.end()) return XR_ERROR_HANDLE_INVALID;
-    g_frameTimeline.Marker(perf::timeline::MarkerKind::SwapchainDestroy);
-
-    // A D3D12 command list does not keep the resources it references alive, and the
-    // preview no longer waits for its own submissions inside xrEndFrame - so a composite
-    // reading these images can still be queued. Dropping the last reference here would
-    // pull them out from under it. Not on any frame path, so the wait costs nothing.
-    if (rt::g_session.usesD3D12) rt::WaitForPreviewIdle(rt::g_session);
-
-    // For OpenGL swapchains, delete the textures
-    if (it->second.backend == rt::Swapchain::Backend::OpenGL && !it->second.imagesGL.empty()) {
-        // Make app's GL context current if available
-        HGLRC prevRC = wglGetCurrentContext();
-        HDC prevDC = wglGetCurrentDC();
-        if (rt::g_session.glDC && rt::g_session.glRC) {
-            wglMakeCurrent(rt::g_session.glDC, rt::g_session.glRC);
-        }
-        for (GLuint tex : it->second.imagesGL) {
-            glDeleteTextures(1, &tex);
-        }
-        if (prevRC) wglMakeCurrent(prevDC, prevRC);
-    }
-
-    if (it->second.isVulkan) vkrt::DestroySwapchainImages(rt::g_session, it->second);
-
-    rt::g_swapchains.erase(it);
-    Logf("[SimXR] xrDestroySwapchain: sc=%p", sc);
-    return XR_SUCCESS;
+	rt::g_swapchains.erase(it);
+	Logf("[SimXR] xrDestroySwapchain: sc=%p", sc);
+	return XR_SUCCESS;
 }
 
 // Missing functions Unity needs
-static XrResult XRAPI_PTR xrResultToString_runtime(
-    XrInstance instance, XrResult value, char buffer[XR_MAX_RESULT_STRING_SIZE]) {
-    if (!IsValidInstance(instance)) return XR_ERROR_HANDLE_INVALID;
-    if (!buffer) return XR_ERROR_VALIDATION_FAILURE;
-    const std::string name = enum_strings::Result(value);
-    std::snprintf(buffer, XR_MAX_RESULT_STRING_SIZE, "%s", name.c_str());
+static XrResult XRAPI_PTR xrResultToString_runtime(XrInstance, XrResult value, char buffer[XR_MAX_RESULT_STRING_SIZE]) {
+    const char* str = "XR_SUCCESS";
+    if (value != XR_SUCCESS) str = "XR_ERROR";
+    strncpy(buffer, str, XR_MAX_RESULT_STRING_SIZE - 1);
+    buffer[XR_MAX_RESULT_STRING_SIZE - 1] = '\0';
     return XR_SUCCESS;
 }
 
-static XrResult XRAPI_PTR xrStructureTypeToString_runtime(
-    XrInstance instance, XrStructureType value,
-    char buffer[XR_MAX_STRUCTURE_NAME_SIZE]) {
-    if (!IsValidInstance(instance)) return XR_ERROR_HANDLE_INVALID;
-    if (!buffer) return XR_ERROR_VALIDATION_FAILURE;
-    const std::string name = enum_strings::StructureType(value);
-    std::snprintf(buffer, XR_MAX_STRUCTURE_NAME_SIZE, "%s", name.c_str());
+static XrResult XRAPI_PTR xrStructureTypeToString_runtime(XrInstance, XrStructureType value, char buffer[XR_MAX_STRUCTURE_NAME_SIZE]) {
+    snprintf(buffer, XR_MAX_STRUCTURE_NAME_SIZE, "XrStructureType_%d", (int)value);
     return XR_SUCCESS;
 }
 
-static XrResult XRAPI_PTR xrGetReferenceSpaceBoundsRect_runtime(
-    XrSession session, XrReferenceSpaceType type, XrExtent2Df* bounds) {
-    if (session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
+static XrResult XRAPI_PTR xrGetReferenceSpaceBoundsRect_runtime(XrSession handle, XrReferenceSpaceType type, XrExtent2Df* bounds) {
+    auto core = rt::RetainSession(handle);
+    if (!core) return XR_ERROR_HANDLE_INVALID;
     if (!bounds) return XR_ERROR_VALIDATION_FAILURE;
-    if (!IsSupportedReferenceSpace(type)) return XR_ERROR_REFERENCE_SPACE_UNSUPPORTED;
-    if (type != XR_REFERENCE_SPACE_TYPE_STAGE) {
-        *bounds = {0.0f, 0.0f};
-        return XR_SPACE_BOUNDS_UNAVAILABLE;
-    }
-    *bounds = {3.0f, 3.0f};
-    Log("[SimXR] xrGetReferenceSpaceBoundsRect: STAGE is 3x3 meters");
-    return XR_SUCCESS;
+    return core->Spaces().Bounds(type, *bounds);
 }
 
-static XrResult XRAPI_PTR xrGetViewConfigurationProperties_runtime(XrInstance instance, XrSystemId systemId, XrViewConfigurationType type,
+static XrResult XRAPI_PTR xrGetViewConfigurationProperties_runtime(XrInstance, XrSystemId, XrViewConfigurationType type, 
                                                                    XrViewConfigurationProperties* props) {
-    if (!IsValidInstance(instance)) return XR_ERROR_HANDLE_INVALID;
-    if (!IsValidSystem(systemId)) return XR_ERROR_SYSTEM_INVALID;
-    if (type != XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO) {
-        return XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;
-    }
-    if (!props || props->type != XR_TYPE_VIEW_CONFIGURATION_PROPERTIES) {
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
+    if (!props) return XR_ERROR_VALIDATION_FAILURE;
+    props->type = XR_TYPE_VIEW_CONFIGURATION_PROPERTIES;
     props->viewConfigurationType = type;
     props->fovMutable = XR_FALSE;
     Log("[SimXR] xrGetViewConfigurationProperties");
     return XR_SUCCESS;
 }
 
-static XrResult ValidateHapticActionInfo(
-    XrSession session, const XrHapticActionInfo* info) {
-    if (session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
-    if (!info || info->type != XR_TYPE_HAPTIC_ACTION_INFO) {
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
-    auto actionIt = rt::g_actions.find(info->action);
-    if (actionIt == rt::g_actions.end()) return XR_ERROR_HANDLE_INVALID;
-    if (actionIt->second.type != XR_ACTION_TYPE_VIBRATION_OUTPUT) {
-        return XR_ERROR_ACTION_TYPE_MISMATCH;
-    }
-    if (!rt::g_attachedActionSets.count(actionIt->second.actionSet)) {
-        return XR_ERROR_ACTIONSET_NOT_ATTACHED;
-    }
-    if (info->subactionPath != XR_NULL_PATH) {
-        if (!rt::g_pathStrings.count(info->subactionPath)) return XR_ERROR_PATH_INVALID;
-        if (!SourceMaskForTopLevelPath(info->subactionPath) ||
-            !actionIt->second.declaredSubactionPaths.count(info->subactionPath)) {
-            return XR_ERROR_PATH_UNSUPPORTED;
-        }
-    }
-    return XR_SUCCESS;
+static XrResult XRAPI_PTR xrApplyHapticFeedback_runtime(XrSession handle, const XrHapticActionInfo* info, const XrHapticBaseHeader* feedback)
+{
+    auto core = rt::RetainSession(handle);
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    return core->ApplyHaptic(info, feedback);
+}
+static XrResult XRAPI_PTR xrStopHapticFeedback_runtime(XrSession handle, const XrHapticActionInfo* info)
+{
+    auto core = rt::RetainSession(handle);
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    return core->StopHaptic(info);
 }
 
-static XrResult XRAPI_PTR xrApplyHapticFeedback_runtime(
-    XrSession session, const XrHapticActionInfo* info, const XrHapticBaseHeader* haptic) {
-    XrResult result = ValidateHapticActionInfo(session, info);
-    if (XR_FAILED(result)) return result;
-    if (!haptic || haptic->type != XR_TYPE_HAPTIC_VIBRATION) {
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
-    result = input::ValidateHapticVibration(
-        *reinterpret_cast<const XrHapticVibration*>(haptic));
-    if (XR_FAILED(result)) return result;
-    if (rt::g_session.state != XR_SESSION_STATE_FOCUSED) return XR_SESSION_NOT_FOCUSED;
-
-    // The simulator has no physical vibration device. OpenXR permits a runtime to
-    // ignore a valid request when no appropriate device is available.
-    return XR_SUCCESS;
+static XrResult XRAPI_PTR xrEnumerateViveTrackerPathsHTCX_runtime(XrInstance handle, uint32_t capacity, uint32_t* count, XrViveTrackerPathsHTCX* paths)
+{
+    auto instance = RuntimeState().FindInstance(handle);
+    if (!instance) return XR_ERROR_HANDLE_INVALID;
+    return instance->Trackers().Enumerate(capacity, count, paths);
 }
 
-static XrResult XRAPI_PTR xrStopHapticFeedback_runtime(
-    XrSession session, const XrHapticActionInfo* info) {
-    const XrResult result = ValidateHapticActionInfo(session, info);
-    if (XR_FAILED(result)) return result;
-    if (rt::g_session.state != XR_SESSION_STATE_FOCUSED) return XR_SESSION_NOT_FOCUSED;
-    return XR_SUCCESS;
+static XrResult XRAPI_PTR xrCreateBodyTrackerFB_runtime(XrSession handle, const XrBodyTrackerCreateInfoFB* info, XrBodyTrackerFB* output)
+{
+    auto core = rt::RetainSession(handle);
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    return core->Body().CreateFB(info, output);
+}
+
+static XrResult XRAPI_PTR xrCreateBodyTrackerBD_runtime(XrSession handle, const XrBodyTrackerCreateInfoBD* info, XrBodyTrackerBD* output)
+{
+    auto core = rt::RetainSession(handle);
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    return core->Body().CreateBD(info, output);
+}
+
+static XrResult XRAPI_PTR xrDestroyBodyTrackerFB_runtime(XrBodyTrackerFB tracker)
+{
+    auto core = rt::RetainSession();
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    return core->Body().DestroyFB(tracker);
+}
+
+static XrResult XRAPI_PTR xrDestroyBodyTrackerBD_runtime(XrBodyTrackerBD tracker)
+{
+    auto core = rt::RetainSession();
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    return core->Body().DestroyBD(tracker);
+}
+
+static XrResult XRAPI_PTR xrLocateBodyJointsFB_runtime(XrBodyTrackerFB tracker, const XrBodyJointsLocateInfoFB* info, XrBodyJointLocationsFB* output)
+{
+    auto core = rt::RetainSession();
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    return core->Body().LocateFB(tracker, info, output);
+}
+
+static XrResult XRAPI_PTR xrLocateBodyJointsBD_runtime(XrBodyTrackerBD tracker, const XrBodyJointsLocateInfoBD* info, XrBodyJointLocationsBD* output)
+{
+    auto core = rt::RetainSession();
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    return core->Body().LocateBD(tracker, info, output);
+}
+
+static XrResult XRAPI_PTR xrGetBodySkeletonFB_runtime(XrBodyTrackerFB tracker, XrBodySkeletonFB* output)
+{
+    auto core = rt::RetainSession();
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    return core->Body().SkeletonFB(tracker, output);
+}
+
+static XrResult XRAPI_PTR xrSuggestBodyTrackingCalibrationOverrideMETA_runtime(XrBodyTrackerFB tracker, const XrBodyTrackingCalibrationInfoMETA* info)
+{
+    auto core = rt::RetainSession();
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    return core->Body().SuggestCalibrationFB(tracker, info);
+}
+
+static XrResult XRAPI_PTR xrResetBodyTrackingCalibrationMETA_runtime(XrBodyTrackerFB tracker)
+{
+    auto core = rt::RetainSession();
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    return core->Body().ResetCalibrationFB(tracker);
+}
+
+static XrResult XRAPI_PTR xrRequestBodyTrackingFidelityMETA_runtime(XrBodyTrackerFB tracker, XrBodyTrackingFidelityMETA fidelity)
+{
+    auto core = rt::RetainSession();
+    if (!core) return XR_ERROR_HANDLE_INVALID;
+    return core->Body().RequestFidelityFB(tracker, fidelity);
 }
 
 // Time conversion functions for XR_KHR_win32_convert_performance_counter_time
 static XrResult XRAPI_PTR xrConvertWin32PerformanceCounterToTimeKHR_runtime(XrInstance instance,
                                                                             const LARGE_INTEGER* performanceCounter,
                                                                             XrTime* time) {
-    if (!IsValidInstance(instance)) return XR_ERROR_HANDLE_INVALID;
+    auto result = RequireExtension(instance, XR_KHR_WIN32_CONVERT_PERFORMANCE_COUNTER_TIME_EXTENSION_NAME);
+    if (XR_FAILED(result)) return result;
+
     if (!performanceCounter || !time) return XR_ERROR_VALIDATION_FAILURE;
     
     LARGE_INTEGER freq;
     QueryPerformanceFrequency(&freq);
     
-    // Convert to nanoseconds, guarding against overflow (khr_win32_convert_performance_
-    // counter_time.adoc: XR_ERROR_TIME_INVALID when the output cannot represent the input).
+    // Convert to nanoseconds
     const long long secs = performanceCounter->QuadPart / freq.QuadPart;
-    if (secs > INT64_MAX / 1000000000LL) return XR_ERROR_TIME_INVALID;
     const long long rem = performanceCounter->QuadPart % freq.QuadPart;
     *time = secs * 1000000000LL + (rem * 1000000000LL) / freq.QuadPart;
     return XR_SUCCESS;
@@ -10679,15 +5874,16 @@ static XrResult XRAPI_PTR xrConvertWin32PerformanceCounterToTimeKHR_runtime(XrIn
 static XrResult XRAPI_PTR xrConvertTimeToWin32PerformanceCounterKHR_runtime(XrInstance instance,
                                                                              XrTime time,
                                                                              LARGE_INTEGER* performanceCounter) {
-    if (!IsValidInstance(instance)) return XR_ERROR_HANDLE_INVALID;
+    auto result = RequireExtension(instance, XR_KHR_WIN32_CONVERT_PERFORMANCE_COUNTER_TIME_EXTENSION_NAME);
+    if (XR_FAILED(result)) return result;
+
     if (!performanceCounter) return XR_ERROR_VALIDATION_FAILURE;
     
     LARGE_INTEGER freq;
     QueryPerformanceFrequency(&freq);
     
-    // Convert from nanoseconds, guarding against overflow
+    // Convert from nanoseconds  
     const long long secs = time / 1000000000LL;
-    if (secs > INT64_MAX / freq.QuadPart) return XR_ERROR_TIME_INVALID;
     const long long rem = time % 1000000000LL;
     performanceCounter->QuadPart = secs * freq.QuadPart + (rem * freq.QuadPart) / 1000000000LL;
     return XR_SUCCESS;
@@ -10695,160 +5891,108 @@ static XrResult XRAPI_PTR xrConvertTimeToWin32PerformanceCounterKHR_runtime(XrIn
 
 // ----------------------------------------------
 
-struct NameFn { const char* name; PFN_xrVoidFunction fn; };
-
-static const NameFn kFnTable[] = {
-    {"xrGetInstanceProcAddr", (PFN_xrVoidFunction)xrGetInstanceProcAddr_runtime},
-    {"xrEnumerateApiLayerProperties", (PFN_xrVoidFunction)xrEnumerateApiLayerProperties_runtime},
-    {"xrEnumerateInstanceExtensionProperties", (PFN_xrVoidFunction)xrEnumerateInstanceExtensionProperties_runtime},
-    {"xrCreateInstance", (PFN_xrVoidFunction)xrCreateInstance_runtime},
-    {"xrDestroyInstance", (PFN_xrVoidFunction)xrDestroyInstance_runtime},
-    {"xrGetInstanceProperties", (PFN_xrVoidFunction)xrGetInstanceProperties_runtime},
-    {"xrGetSystem", (PFN_xrVoidFunction)xrGetSystem_runtime},
-    {"xrGetSystemProperties", (PFN_xrVoidFunction)xrGetSystemProperties_runtime},
-    {"xrEnumerateViewConfigurations", (PFN_xrVoidFunction)xrEnumerateViewConfigurations_runtime},
-    {"xrEnumerateViewConfigurationViews", (PFN_xrVoidFunction)xrEnumerateViewConfigurationViews_runtime},
-    {"xrEnumerateEnvironmentBlendModes", (PFN_xrVoidFunction)xrEnumerateEnvironmentBlendModes_runtime},
-    {"xrCreateSession", (PFN_xrVoidFunction)xrCreateSession_runtime},
-    {"xrDestroySession", (PFN_xrVoidFunction)xrDestroySession_runtime},
-    {"xrEnumerateSwapchainFormats", (PFN_xrVoidFunction)xrEnumerateSwapchainFormats_runtime},
-    {"xrCreateSwapchain", (PFN_xrVoidFunction)xrCreateSwapchain_runtime},
-    {"xrDestroySwapchain", (PFN_xrVoidFunction)xrDestroySwapchain_runtime},
-    {"xrEnumerateSwapchainImages", (PFN_xrVoidFunction)xrEnumerateSwapchainImages_runtime},
-    {"xrAcquireSwapchainImage", (PFN_xrVoidFunction)xrAcquireSwapchainImage_runtime},
-    {"xrWaitSwapchainImage", (PFN_xrVoidFunction)xrWaitSwapchainImage_runtime},
-    {"xrReleaseSwapchainImage", (PFN_xrVoidFunction)xrReleaseSwapchainImage_runtime},
-    {"xrBeginSession", (PFN_xrVoidFunction)xrBeginSession_runtime},
-    {"xrEndSession", (PFN_xrVoidFunction)xrEndSession_runtime},
-    {"xrWaitFrame", (PFN_xrVoidFunction)xrWaitFrame_runtime},
-    {"xrBeginFrame", (PFN_xrVoidFunction)xrBeginFrame_runtime},
-    {"xrEndFrame", (PFN_xrVoidFunction)xrEndFrame_runtime},
-    {"xrPollEvent", (PFN_xrVoidFunction)xrPollEvent_runtime},
-    {"xrLocateViews", (PFN_xrVoidFunction)xrLocateViews_runtime},
-    {"xrGetD3D11GraphicsRequirementsKHR", (PFN_xrVoidFunction)xrGetD3D11GraphicsRequirementsKHR_runtime},
-    {"xrGetD3D12GraphicsRequirementsKHR", (PFN_xrVoidFunction)xrGetD3D12GraphicsRequirementsKHR_runtime},
-    {"xrGetOpenGLGraphicsRequirementsKHR", (PFN_xrVoidFunction)xrGetOpenGLGraphicsRequirementsKHR_runtime},
+static const simxr::DispatchEntry kFnTable[] = {
+    {"xrGetInstanceProcAddr", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetInstanceProcAddr_runtime>::Invoke, true},
+    {"xrEnumerateApiLayerProperties", (PFN_xrVoidFunction)simxr::AbiBoundary<xrEnumerateApiLayerProperties_runtime>::Invoke, true},
+    {"xrEnumerateInstanceExtensionProperties", (PFN_xrVoidFunction)simxr::AbiBoundary<xrEnumerateInstanceExtensionProperties_runtime>::Invoke, true},
+    {"xrCreateInstance", (PFN_xrVoidFunction)simxr::AbiBoundary<xrCreateInstance_runtime>::Invoke, true},
+    {"xrDestroyInstance", (PFN_xrVoidFunction)simxr::AbiBoundary<xrDestroyInstance_runtime>::Invoke},
+    {"xrGetInstanceProperties", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetInstanceProperties_runtime>::Invoke},
+    {"xrGetSystem", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetSystem_runtime>::Invoke},
+    {"xrGetSystemProperties", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetSystemProperties_runtime>::Invoke},
+    {"xrEnumerateViewConfigurations", (PFN_xrVoidFunction)simxr::AbiBoundary<xrEnumerateViewConfigurations_runtime>::Invoke},
+    {"xrEnumerateViewConfigurationViews", (PFN_xrVoidFunction)simxr::AbiBoundary<xrEnumerateViewConfigurationViews_runtime>::Invoke},
+    {"xrEnumerateEnvironmentBlendModes", (PFN_xrVoidFunction)simxr::AbiBoundary<xrEnumerateEnvironmentBlendModes_runtime>::Invoke},
+    {"xrEnumerateViveTrackerPathsHTCX", (PFN_xrVoidFunction)simxr::AbiBoundary<xrEnumerateViveTrackerPathsHTCX_runtime>::Invoke},
+    {"xrCreateBodyTrackerFB", (PFN_xrVoidFunction)simxr::AbiBoundary<xrCreateBodyTrackerFB_runtime>::Invoke},
+    {"xrCreateBodyTrackerBD", (PFN_xrVoidFunction)simxr::AbiBoundary<xrCreateBodyTrackerBD_runtime>::Invoke},
+    {"xrDestroyBodyTrackerFB", (PFN_xrVoidFunction)simxr::AbiBoundary<xrDestroyBodyTrackerFB_runtime>::Invoke},
+    {"xrDestroyBodyTrackerBD", (PFN_xrVoidFunction)simxr::AbiBoundary<xrDestroyBodyTrackerBD_runtime>::Invoke},
+    {"xrLocateBodyJointsFB", (PFN_xrVoidFunction)simxr::AbiBoundary<xrLocateBodyJointsFB_runtime>::Invoke},
+    {"xrLocateBodyJointsBD", (PFN_xrVoidFunction)simxr::AbiBoundary<xrLocateBodyJointsBD_runtime>::Invoke},
+    {"xrGetBodySkeletonFB", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetBodySkeletonFB_runtime>::Invoke},
+    {"xrSuggestBodyTrackingCalibrationOverrideMETA", (PFN_xrVoidFunction)simxr::AbiBoundary<xrSuggestBodyTrackingCalibrationOverrideMETA_runtime>::Invoke},
+    {"xrResetBodyTrackingCalibrationMETA", (PFN_xrVoidFunction)simxr::AbiBoundary<xrResetBodyTrackingCalibrationMETA_runtime>::Invoke},
+    {"xrRequestBodyTrackingFidelityMETA", (PFN_xrVoidFunction)simxr::AbiBoundary<xrRequestBodyTrackingFidelityMETA_runtime>::Invoke},
+    {"xrCreateSession", (PFN_xrVoidFunction)simxr::AbiBoundary<xrCreateSession_runtime>::Invoke},
+    {"xrDestroySession", (PFN_xrVoidFunction)simxr::AbiBoundary<xrDestroySession_runtime>::Invoke},
+    {"xrEnumerateSwapchainFormats", (PFN_xrVoidFunction)simxr::AbiBoundary<xrEnumerateSwapchainFormats_runtime>::Invoke},
+    {"xrCreateSwapchain", (PFN_xrVoidFunction)simxr::AbiBoundary<xrCreateSwapchain_runtime>::Invoke},
+    {"xrDestroySwapchain", (PFN_xrVoidFunction)simxr::AbiBoundary<xrDestroySwapchain_runtime>::Invoke},
+    {"xrEnumerateSwapchainImages", (PFN_xrVoidFunction)simxr::AbiBoundary<xrEnumerateSwapchainImages_runtime>::Invoke},
+    {"xrAcquireSwapchainImage", (PFN_xrVoidFunction)simxr::AbiBoundary<xrAcquireSwapchainImage_runtime>::Invoke},
+    {"xrWaitSwapchainImage", (PFN_xrVoidFunction)simxr::AbiBoundary<xrWaitSwapchainImage_runtime>::Invoke},
+    {"xrReleaseSwapchainImage", (PFN_xrVoidFunction)simxr::AbiBoundary<xrReleaseSwapchainImage_runtime>::Invoke},
+    {"xrBeginSession", (PFN_xrVoidFunction)simxr::AbiBoundary<xrBeginSession_runtime>::Invoke},
+    {"xrEndSession", (PFN_xrVoidFunction)simxr::AbiBoundary<xrEndSession_runtime>::Invoke},
+    {"xrWaitFrame", (PFN_xrVoidFunction)simxr::AbiBoundary<xrWaitFrame_runtime>::Invoke},
+    {"xrBeginFrame", (PFN_xrVoidFunction)simxr::AbiBoundary<xrBeginFrame_runtime>::Invoke},
+    {"xrEndFrame", (PFN_xrVoidFunction)simxr::AbiBoundary<xrEndFrame_runtime>::Invoke},
+    {"xrPollEvent", (PFN_xrVoidFunction)simxr::AbiBoundary<xrPollEvent_runtime>::Invoke},
+    {"xrLocateViews", (PFN_xrVoidFunction)simxr::AbiBoundary<xrLocateViews_runtime>::Invoke},
+    {"xrGetD3D11GraphicsRequirementsKHR", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetD3D11GraphicsRequirementsKHR_runtime>::Invoke},
+    {"xrGetD3D12GraphicsRequirementsKHR", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetD3D12GraphicsRequirementsKHR_runtime>::Invoke},
+    {"xrGetOpenGLGraphicsRequirementsKHR", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetOpenGLGraphicsRequirementsKHR_runtime>::Invoke},
     // XR_KHR_vulkan_enable
-    {"xrGetVulkanGraphicsRequirementsKHR", (PFN_xrVoidFunction)xrGetVulkanGraphicsRequirementsKHR_runtime},
-    {"xrGetVulkanInstanceExtensionsKHR", (PFN_xrVoidFunction)xrGetVulkanInstanceExtensionsKHR_runtime},
-    {"xrGetVulkanDeviceExtensionsKHR", (PFN_xrVoidFunction)xrGetVulkanDeviceExtensionsKHR_runtime},
-    {"xrGetVulkanGraphicsDeviceKHR", (PFN_xrVoidFunction)xrGetVulkanGraphicsDeviceKHR_runtime},
+    {"xrGetVulkanGraphicsRequirementsKHR", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetVulkanGraphicsRequirementsKHR_runtime>::Invoke},
+    {"xrGetVulkanInstanceExtensionsKHR", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetVulkanInstanceExtensionsKHR_runtime>::Invoke},
+    {"xrGetVulkanDeviceExtensionsKHR", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetVulkanDeviceExtensionsKHR_runtime>::Invoke},
+    {"xrGetVulkanGraphicsDeviceKHR", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetVulkanGraphicsDeviceKHR_runtime>::Invoke},
     // XR_KHR_vulkan_enable2
-    {"xrGetVulkanGraphicsRequirements2KHR", (PFN_xrVoidFunction)xrGetVulkanGraphicsRequirementsKHR_runtime},
-    {"xrCreateVulkanInstanceKHR", (PFN_xrVoidFunction)xrCreateVulkanInstanceKHR_runtime},
-    {"xrCreateVulkanDeviceKHR", (PFN_xrVoidFunction)xrCreateVulkanDeviceKHR_runtime},
-    {"xrGetVulkanGraphicsDevice2KHR", (PFN_xrVoidFunction)xrGetVulkanGraphicsDevice2KHR_runtime},
-    {"xrRequestExitSession", (PFN_xrVoidFunction)xrRequestExitSession_runtime},
+    {"xrGetVulkanGraphicsRequirements2KHR", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetVulkanGraphicsRequirements2KHR_runtime>::Invoke},
+    {"xrCreateVulkanInstanceKHR", (PFN_xrVoidFunction)simxr::AbiBoundary<xrCreateVulkanInstanceKHR_runtime>::Invoke},
+    {"xrCreateVulkanDeviceKHR", (PFN_xrVoidFunction)simxr::AbiBoundary<xrCreateVulkanDeviceKHR_runtime>::Invoke},
+    {"xrGetVulkanGraphicsDevice2KHR", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetVulkanGraphicsDevice2KHR_runtime>::Invoke},
+    {"xrRequestExitSession", (PFN_xrVoidFunction)simxr::AbiBoundary<xrRequestExitSession_runtime>::Invoke},
     // Space functions
-    {"xrCreateReferenceSpace", (PFN_xrVoidFunction)xrCreateReferenceSpace_runtime},
-    {"xrDestroySpace", (PFN_xrVoidFunction)xrDestroySpace_runtime},
-    {"xrLocateSpace", (PFN_xrVoidFunction)xrLocateSpace_runtime},
-    {"xrLocateSpaces", (PFN_xrVoidFunction)xrLocateSpaces_runtime},
-    {"xrEnumerateReferenceSpaces", (PFN_xrVoidFunction)xrEnumerateReferenceSpaces_runtime},
-    {"xrCreateActionSpace", (PFN_xrVoidFunction)xrCreateActionSpace_runtime},
+    {"xrCreateReferenceSpace", (PFN_xrVoidFunction)simxr::AbiBoundary<xrCreateReferenceSpace_runtime>::Invoke},
+    {"xrDestroySpace", (PFN_xrVoidFunction)simxr::AbiBoundary<xrDestroySpace_runtime>::Invoke},
+    {"xrLocateSpace", (PFN_xrVoidFunction)simxr::AbiBoundary<xrLocateSpace_runtime>::Invoke},
+    {"xrEnumerateReferenceSpaces", (PFN_xrVoidFunction)simxr::AbiBoundary<xrEnumerateReferenceSpaces_runtime>::Invoke},
+    {"xrCreateActionSpace", (PFN_xrVoidFunction)simxr::AbiBoundary<xrCreateActionSpace_runtime>::Invoke},
     // Action functions
-    {"xrCreateActionSet", (PFN_xrVoidFunction)xrCreateActionSet_runtime},
-    {"xrDestroyActionSet", (PFN_xrVoidFunction)xrDestroyActionSet_runtime},
-    {"xrCreateAction", (PFN_xrVoidFunction)xrCreateAction_runtime},
-    {"xrDestroyAction", (PFN_xrVoidFunction)xrDestroyAction_runtime},
-    {"xrSuggestInteractionProfileBindings", (PFN_xrVoidFunction)xrSuggestInteractionProfileBindings_runtime},
-    {"xrAttachSessionActionSets", (PFN_xrVoidFunction)xrAttachSessionActionSets_runtime},
-    {"xrGetActionStateBoolean", (PFN_xrVoidFunction)xrGetActionStateBoolean_runtime},
-    {"xrGetActionStateFloat", (PFN_xrVoidFunction)xrGetActionStateFloat_runtime},
-    {"xrGetActionStatePose", (PFN_xrVoidFunction)xrGetActionStatePose_runtime},
-    {"xrGetActionStateVector2f", (PFN_xrVoidFunction)xrGetActionStateVector2f_runtime},
-    {"xrSyncActions", (PFN_xrVoidFunction)xrSyncActions_runtime},
+    {"xrCreateActionSet", (PFN_xrVoidFunction)simxr::AbiBoundary<xrCreateActionSet_runtime>::Invoke},
+    {"xrDestroyActionSet", (PFN_xrVoidFunction)simxr::AbiBoundary<xrDestroyActionSet_runtime>::Invoke},
+    {"xrCreateAction", (PFN_xrVoidFunction)simxr::AbiBoundary<xrCreateAction_runtime>::Invoke},
+    {"xrDestroyAction", (PFN_xrVoidFunction)simxr::AbiBoundary<xrDestroyAction_runtime>::Invoke},
+    {"xrSuggestInteractionProfileBindings", (PFN_xrVoidFunction)simxr::AbiBoundary<xrSuggestInteractionProfileBindings_runtime>::Invoke},
+    {"xrAttachSessionActionSets", (PFN_xrVoidFunction)simxr::AbiBoundary<xrAttachSessionActionSets_runtime>::Invoke},
+    {"xrGetActionStateBoolean", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetActionStateBoolean_runtime>::Invoke},
+    {"xrGetActionStateFloat", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetActionStateFloat_runtime>::Invoke},
+    {"xrGetActionStatePose", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetActionStatePose_runtime>::Invoke},
+    {"xrGetActionStateVector2f", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetActionStateVector2f_runtime>::Invoke},
+    {"xrSyncActions", (PFN_xrVoidFunction)simxr::AbiBoundary<xrSyncActions_runtime>::Invoke},
     // Path functions
-    {"xrStringToPath", (PFN_xrVoidFunction)xrStringToPath_runtime},
-    {"xrPathToString", (PFN_xrVoidFunction)xrPathToString_runtime},
+    {"xrStringToPath", (PFN_xrVoidFunction)simxr::AbiBoundary<xrStringToPath_runtime>::Invoke},
+    {"xrPathToString", (PFN_xrVoidFunction)simxr::AbiBoundary<xrPathToString_runtime>::Invoke},
     // Interaction functions
-    {"xrGetCurrentInteractionProfile", (PFN_xrVoidFunction)xrGetCurrentInteractionProfile_runtime},
-    {"xrEnumerateBoundSourcesForAction", (PFN_xrVoidFunction)xrEnumerateBoundSourcesForAction_runtime},
-    {"xrGetInputSourceLocalizedName", (PFN_xrVoidFunction)xrGetInputSourceLocalizedName_runtime},
+    {"xrGetCurrentInteractionProfile", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetCurrentInteractionProfile_runtime>::Invoke},
+    {"xrEnumerateBoundSourcesForAction", (PFN_xrVoidFunction)simxr::AbiBoundary<xrEnumerateBoundSourcesForAction_runtime>::Invoke},
+    {"xrGetInputSourceLocalizedName", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetInputSourceLocalizedName_runtime>::Invoke},
     // Utility functions
-    {"xrResultToString", (PFN_xrVoidFunction)xrResultToString_runtime},
-    {"xrStructureTypeToString", (PFN_xrVoidFunction)xrStructureTypeToString_runtime},
-    {"xrGetReferenceSpaceBoundsRect", (PFN_xrVoidFunction)xrGetReferenceSpaceBoundsRect_runtime},
-    {"xrGetViewConfigurationProperties", (PFN_xrVoidFunction)xrGetViewConfigurationProperties_runtime},
+    {"xrResultToString", (PFN_xrVoidFunction)simxr::AbiBoundary<xrResultToString_runtime>::Invoke},
+    {"xrStructureTypeToString", (PFN_xrVoidFunction)simxr::AbiBoundary<xrStructureTypeToString_runtime>::Invoke},
+    {"xrGetReferenceSpaceBoundsRect", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetReferenceSpaceBoundsRect_runtime>::Invoke},
+    {"xrGetViewConfigurationProperties", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetViewConfigurationProperties_runtime>::Invoke},
     // Haptic functions
-    {"xrApplyHapticFeedback", (PFN_xrVoidFunction)xrApplyHapticFeedback_runtime},
-    {"xrStopHapticFeedback", (PFN_xrVoidFunction)xrStopHapticFeedback_runtime},
+    {"xrApplyHapticFeedback", (PFN_xrVoidFunction)simxr::AbiBoundary<xrApplyHapticFeedback_runtime>::Invoke},
+    {"xrStopHapticFeedback", (PFN_xrVoidFunction)simxr::AbiBoundary<xrStopHapticFeedback_runtime>::Invoke},
     // Time conversion functions
-    {"xrConvertWin32PerformanceCounterToTimeKHR", (PFN_xrVoidFunction)xrConvertWin32PerformanceCounterToTimeKHR_runtime},
-    {"xrConvertTimeToWin32PerformanceCounterKHR", (PFN_xrVoidFunction)xrConvertTimeToWin32PerformanceCounterKHR_runtime},
+    {"xrConvertWin32PerformanceCounterToTimeKHR", (PFN_xrVoidFunction)simxr::AbiBoundary<xrConvertWin32PerformanceCounterToTimeKHR_runtime>::Invoke},
+    {"xrConvertTimeToWin32PerformanceCounterKHR", (PFN_xrVoidFunction)simxr::AbiBoundary<xrConvertTimeToWin32PerformanceCounterKHR_runtime>::Invoke},
 };
 
-static bool IsGlobalCommand(const char* name) {
-    return strcmp(name, "xrEnumerateApiLayerProperties") == 0 ||
-           strcmp(name, "xrEnumerateInstanceExtensionProperties") == 0 ||
-           strcmp(name, "xrCreateInstance") == 0;
-}
-
-// Core commands OpenXR 1.1 added, which a 1.0 instance must not expose.
-static bool IsOpenXR1_1Command(const char* name) {
-    return strcmp(name, "xrLocateSpaces") == 0;
-}
-
-static const char* RequiredExtensionForCommand(const char* name) {
-    if (strcmp(name, "xrGetD3D11GraphicsRequirementsKHR") == 0)
-        return XR_KHR_D3D11_ENABLE_EXTENSION_NAME;
-    if (strcmp(name, "xrGetD3D12GraphicsRequirementsKHR") == 0)
-        return XR_KHR_D3D12_ENABLE_EXTENSION_NAME;
-    if (strcmp(name, "xrGetOpenGLGraphicsRequirementsKHR") == 0)
-        return XR_KHR_OPENGL_ENABLE_EXTENSION_NAME;
-    if (strcmp(name, "xrGetVulkanGraphicsRequirementsKHR") == 0 ||
-        strcmp(name, "xrGetVulkanInstanceExtensionsKHR") == 0 ||
-        strcmp(name, "xrGetVulkanDeviceExtensionsKHR") == 0 ||
-        strcmp(name, "xrGetVulkanGraphicsDeviceKHR") == 0)
-        return XR_KHR_VULKAN_ENABLE_EXTENSION_NAME;
-    if (strcmp(name, "xrGetVulkanGraphicsRequirements2KHR") == 0 ||
-        strcmp(name, "xrCreateVulkanInstanceKHR") == 0 ||
-        strcmp(name, "xrCreateVulkanDeviceKHR") == 0 ||
-        strcmp(name, "xrGetVulkanGraphicsDevice2KHR") == 0)
-        return XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME;
-    if (strcmp(name, "xrConvertWin32PerformanceCounterToTimeKHR") == 0 ||
-        strcmp(name, "xrConvertTimeToWin32PerformanceCounterKHR") == 0)
-        return XR_KHR_WIN32_CONVERT_PERFORMANCE_COUNTER_TIME_EXTENSION_NAME;
-    return nullptr;
-}
-
-static XrResult XRAPI_PTR xrGetInstanceProcAddr_runtime(XrInstance instance, const char* name, PFN_xrVoidFunction* fn) {
-    if (!name || !fn) {
-        Logf("[SimXR] xrGetInstanceProcAddr: ERROR - name=%p, fn=%p", name, fn);
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
-    *fn = nullptr;
-    if (instance == XR_NULL_HANDLE) {
-        if (!IsGlobalCommand(name)) return XR_ERROR_HANDLE_INVALID;
-    } else if (!IsValidInstance(instance)) {
-        return XR_ERROR_HANDLE_INVALID;
-    }
-    if (const char* extension = RequiredExtensionForCommand(name)) {
-        if (instance == XR_NULL_HANDLE || !IsExtensionEnabled(extension)) {
-            return XR_ERROR_FUNCTION_UNSUPPORTED;
-        }
-    }
-    if (IsOpenXR1_1Command(name) && (instance == XR_NULL_HANDLE || !InstanceUsesApi1_1())) {
-        return XR_ERROR_FUNCTION_UNSUPPORTED;
-    }
-    
-    // Reduce logging verbosity for xrGetInstanceProcAddr
-    static bool reduceLogging = false;
-    static int callCount = 0;
-    callCount++;
-    
-    for (auto& e : kFnTable) {
-        if (strcmp(name, e.name) == 0) { 
-            *fn = e.fn;
-            if (callCount < 100 || strstr(name, "D3D11") || strstr(name, "Create") || strstr(name, "Destroy")) {
-                Logf("[SimXR] xrGetInstanceProcAddr: %s -> FOUND", name);
-            }
-            return XR_SUCCESS; 
-        }
-    }
-    
-    if (callCount < 100 || strstr(name, "D3D11")) {
-        Logf("[SimXR] xrGetInstanceProcAddr: %s -> NOT FOUND", name);
-    }
-    return XR_ERROR_FUNCTION_UNSUPPORTED;
+static XrResult XRAPI_PTR xrGetInstanceProcAddr_runtime(XrInstance instance, const char* name, PFN_xrVoidFunction* function)
+{
+	if (!function)
+		return XR_ERROR_VALIDATION_FAILURE;
+	*function = nullptr;
+	if (!name)
+		return XR_ERROR_VALIDATION_FAILURE;
+	if (instance != XR_NULL_HANDLE && !RuntimeState().FindInstance(instance))
+		return XR_ERROR_HANDLE_INVALID;
+	static const simxr::DispatchTable table(kFnTable, Extensions());
+	if (!table.CoversAdvertisedCommands())
+		return XR_ERROR_RUNTIME_FAILURE;
+	return table.Resolve(name, instance != XR_NULL_HANDLE ? &rt::g_instance.core->Extensions() : nullptr, *function);
 }

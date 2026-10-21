@@ -1,0 +1,363 @@
+#include "../TestSupport.h"
+#include "presentation/FrameScheduler.h"
+
+#include <atomic>
+#include <future>
+#include <iostream>
+#include <limits>
+#include <new>
+#include <type_traits>
+
+using namespace simxr;
+using namespace std::chrono_literals;
+
+class FakeClock final : public Clock
+{
+  public:
+	HostTime Now() const override
+	{
+		return HostTime{Duration{m_time.load()}};
+	}
+
+	void WaitUntil(std::condition_variable& changed, std::unique_lock<std::mutex>& lock, HostTime) override
+	{
+		changed.wait_for(lock, 1ms);
+	}
+
+	void Advance(Duration duration)
+	{
+		m_time.fetch_add(duration.count());
+	}
+
+  private:
+	std::atomic<std::int64_t> m_time{0};
+};
+
+void ManualAdmission()
+{
+	auto clock = std::make_shared<FakeClock>();
+	FrameScheduler scheduler(clock);
+	FrameSchedulerConfig config;
+	config.mode = ExecutionMode::Deterministic;
+	config.epoch = {Duration{100}};
+	config.period = 10ns;
+	config.manualPermitLimit = 2;
+	scheduler.Start(config);
+	const auto boundary = scheduler.Pause();
+	Require(boundary.running && boundary.paused && !boundary.waited && !boundary.begun &&
+				boundary.nextAdmission == DisplayTick{},
+			"Initial manual boundary");
+	FramePrediction first;
+	auto waiting = std::async(std::launch::async, [&] { return scheduler.WaitFrame(first); });
+	Eventually([&] { return scheduler.Snapshot().waitPending; }, "Manual wait did not enter");
+	Require(waiting.wait_for(10ms) == std::future_status::timeout, "Paused scheduler admitted unpermitted frame");
+	FramePrediction duplicate;
+	Require(scheduler.WaitFrame(duplicate) == XR_ERROR_CALL_ORDER_INVALID, "Concurrent manual wait accepted");
+	Require(scheduler.GrantPermits(0) == XR_ERROR_VALIDATION_FAILURE &&
+				scheduler.GrantPermits(3) == XR_ERROR_LIMIT_REACHED,
+			"Manual grant limit invalid");
+	Require(scheduler.GrantPermits() == XR_SUCCESS, "Strict grant failed");
+	Require(waiting.wait_for(1s) == std::future_status::ready && waiting.get() == XR_SUCCESS &&
+				first.id == FrameId{1} && first.displayTick == DisplayTick{1} && scheduler.Snapshot().permits == 0,
+			"Strict permit did not admit exactly one frame");
+	Require(scheduler.GrantPermits(2) == XR_SUCCESS && scheduler.Pause().permits == 2,
+			"Repeated pause revoked valid unused permits");
+	Require(scheduler.CancelPermits() == 2 && scheduler.CancelPermits() == 0 &&
+				scheduler.Snapshot().waited->id == first.id,
+			"Cancellation changed already admitted frame");
+	FramePrediction submitted;
+	Require(scheduler.BeginFrame() == XR_SUCCESS && scheduler.EndFrame(submitted) == XR_SUCCESS &&
+				submitted.id == first.id,
+			"Pause blocked previously admitted work");
+	Require(scheduler.GrantPermits() == XR_SUCCESS, "Retry reservation grant");
+	FramePrediction untouched{{777}, {777}, {Duration{777}}, Duration{777}};
+	Require(scheduler.WaitFrame(untouched, [](const auto&) { throw std::bad_alloc{}; }) == XR_ERROR_OUT_OF_MEMORY &&
+				scheduler.Snapshot().permits == 1 && scheduler.Snapshot().nextAdmission == DisplayTick{1} &&
+				untouched.id == FrameId{777},
+			"Failed reservation consumed strict permit or virtual identity");
+	FramePrediction second, third, fourth{{99}};
+	Require(scheduler.WaitFrame(second) == XR_SUCCESS && second.id == FrameId{2} &&
+				scheduler.BeginFrame() == XR_SUCCESS,
+			"Manual reservation retry changed identity");
+	Require(scheduler.GrantPermits(2) == XR_SUCCESS && scheduler.WaitFrame(third) == XR_SUCCESS,
+			"Overlapping manual admission");
+	const auto overlap = scheduler.Pause();
+	Require(overlap.begun->id == second.id && overlap.waited->id == third.id && overlap.permits == 1,
+			"Manual pause omitted overlapping pipeline boundary");
+	waiting = std::async(std::launch::async, [&] { return scheduler.WaitFrame(fourth); });
+	Eventually([&] { return scheduler.Snapshot().waitPending; }, "Manual overlap wait did not enter");
+	Require(scheduler.CancelPermits() == 1 && scheduler.BeginFrame() == XR_FRAME_DISCARDED &&
+				scheduler.EndFrame(submitted) == XR_SUCCESS && submitted.id == third.id,
+			"Manual gate changed discard/order rules");
+	Require(waiting.wait_for(10ms) == std::future_status::timeout, "Cancelled unused permit admitted work");
+	scheduler.Stop();
+	Require(waiting.wait_for(1s) == std::future_status::ready && waiting.get() == XR_ERROR_SESSION_NOT_RUNNING &&
+				fourth.id == FrameId{99},
+			"Stop did not cancel manual wait without fabricated frame");
+	scheduler.Start(config);
+	Require(!scheduler.Snapshot().paused && !scheduler.Snapshot().permits &&
+				scheduler.GrantPermits() == XR_ERROR_CALL_ORDER_INVALID && scheduler.WaitFrame(first) == XR_SUCCESS &&
+				first.id == FrameId{1},
+			"Restart retained old manual policy/permits");
+}
+
+void PauseDuringPacingAndRebase()
+{
+	auto clock = std::make_shared<FakeClock>();
+	FrameScheduler scheduler(clock);
+	FrameSchedulerConfig config;
+	config.epoch = {Duration{100}};
+	config.period = 10ms;
+	scheduler.Start(config);
+	FramePrediction first, second, third, fourth, submitted;
+	Require(scheduler.WaitFrame(first) == XR_SUCCESS && scheduler.BeginFrame() == XR_SUCCESS &&
+				scheduler.EndFrame(submitted) == XR_SUCCESS,
+			"Rebase first frame");
+	auto waiting = std::async(std::launch::async, [&] { return scheduler.WaitFrame(second); });
+	Eventually([&] { return scheduler.Snapshot().waitPending; }, "Paced pause wait did not enter");
+	const auto paused = scheduler.Pause();
+	clock->Advance(1h);
+	Require(paused.waitPending && waiting.wait_for(10ms) == std::future_status::timeout,
+			"Pause failed to recheck admission inside paced wait");
+	Require(scheduler.GrantPermits() == XR_SUCCESS && waiting.wait_for(1s) == std::future_status::ready &&
+				waiting.get() == XR_SUCCESS && second.id == FrameId{2} && second.displayTick == DisplayTick{2},
+			"Manual permit used elapsed inspection host time");
+	Require(scheduler.BeginFrame() == XR_SUCCESS && scheduler.EndFrame(submitted) == XR_SUCCESS,
+			"Manual paced frame completion");
+	Require(scheduler.GrantPermits(2) == XR_SUCCESS, "Unused resume permits");
+	const auto anchor = clock->Now();
+	Require(scheduler.Resume(anchor, {10}) == XR_SUCCESS && !scheduler.Snapshot().paused &&
+				!scheduler.Snapshot().permits && scheduler.Snapshot().nextAdmission == DisplayTick{10},
+			"Resume did not rebase/preserve virtual boundary");
+	Require(scheduler.Resume(anchor + 1h, {1000}) == XR_SUCCESS &&
+				scheduler.Snapshot().nextAdmission == DisplayTick{10},
+			"Repeated resume rebased again");
+	Require(scheduler.WaitFrame(third) == XR_SUCCESS && third.id == FrameId{3} &&
+				third.displayTick == DisplayTick{11} && third.displayTime > second.displayTime &&
+				scheduler.BeginFrame() == XR_SUCCESS && scheduler.EndFrame(submitted) == XR_SUCCESS,
+			"Resume decreased prediction or reset frame identity");
+	waiting = std::async(std::launch::async, [&] { return scheduler.WaitFrame(fourth); });
+	Eventually([&] { return scheduler.Snapshot().waitPending; }, "Resumed paced wait did not enter");
+	Require(waiting.wait_for(10ms) == std::future_status::timeout, "Resume emitted catch-up burst");
+	clock->Advance(9ms);
+	Require(waiting.wait_for(10ms) == std::future_status::timeout, "Resume lost shared host/tick anchor");
+	clock->Advance(1ms);
+	Require(waiting.wait_for(1s) == std::future_status::ready && waiting.get() == XR_SUCCESS &&
+				fourth.displayTick == DisplayTick{12},
+			"Resumed real-time deadline wrong");
+}
+
+void AlignPausedDisplayBoundary()
+{
+	auto clock = std::make_shared<FakeClock>();
+	FrameScheduler scheduler(clock);
+	FrameSchedulerConfig config;
+	config.period = 10ms;
+	scheduler.Start(config);
+	FramePrediction first, second, strict, submitted;
+	Require(scheduler.WaitFrame(first) == XR_SUCCESS && scheduler.BeginFrame() == XR_SUCCESS &&
+				scheduler.EndFrame(submitted) == XR_SUCCESS,
+			"Display alignment first frame");
+	clock->Advance(10ms);
+	Require(scheduler.WaitFrame(second) == XR_SUCCESS, "Display alignment early issued frame");
+	// Display clock advances independently while the host keeps an issued frame.
+	clock->Advance(1190ms);
+	const DisplayTick frozenDisplayNext{121};
+	const auto boundary = scheduler.Pause();
+	Require(boundary.nextAdmission == DisplayTick{2} && boundary.waited->displayTick == DisplayTick{2},
+			"Delayed host boundary was not preserved");
+	Require(scheduler.RebasePaused(frozenDisplayNext) == XR_SUCCESS && scheduler.Snapshot().paused &&
+				scheduler.Snapshot().nextAdmission == frozenDisplayNext &&
+				scheduler.Snapshot().waited->displayTime == second.displayTime,
+			"Paused rebase reopened admission or changed an issued prediction");
+	Require(scheduler.RebasePaused({3}) == XR_SUCCESS && scheduler.Snapshot().nextAdmission == frozenDisplayNext,
+			"Paused rebase regressed display boundary");
+	Require(scheduler.GrantPermits() == XR_SUCCESS && scheduler.RebasePaused({130}) == XR_ERROR_CALL_ORDER_INVALID &&
+				scheduler.Snapshot().nextAdmission == frozenDisplayNext,
+			"Rebase invalidated an unused reserved permit");
+	Require(scheduler.CancelPermits() == 1 && scheduler.RebasePaused({130}) == XR_SUCCESS &&
+				scheduler.GrantPermits() == XR_SUCCESS,
+			"Cancelled reservation did not permit boundary alignment");
+	Require(scheduler.BeginFrame() == XR_SUCCESS && scheduler.WaitFrame(strict) == XR_SUCCESS &&
+				strict.id == FrameId{3} && strict.displayTick == DisplayTick{131} &&
+				strict.displayTime > second.displayTime && scheduler.Snapshot().paused,
+			"Strict frame predicted behind independently frozen display");
+	Require(scheduler.EndFrame(submitted) == XR_SUCCESS && submitted.displayTime == second.displayTime,
+			"Alignment rewrote already begun frame target");
+}
+
+void PauseReservationBoundaryAndLimits()
+{
+	auto clock = std::make_shared<FakeClock>();
+	FrameScheduler scheduler(clock);
+	FrameSchedulerConfig config;
+	config.mode = ExecutionMode::Unpaced;
+	config.period = 10ns;
+	scheduler.Start(config);
+	scheduler.Pause();
+	Require(scheduler.GrantPermits() == XR_SUCCESS, "Boundary grant");
+	std::promise<void> entered, release;
+	auto released = release.get_future().share();
+	FramePrediction frame;
+	auto waiting = std::async(std::launch::async,
+							  [&]
+							  {
+								  return scheduler.WaitFrame(frame,
+															 [&](const auto&)
+															 {
+																 entered.set_value();
+																 released.wait();
+															 });
+							  });
+	Require(entered.get_future().wait_for(1s) == std::future_status::ready, "Reservation boundary not entered");
+	auto pausing = std::async(std::launch::async, [&] { return scheduler.Pause(); });
+	Require(pausing.wait_for(5ms) == std::future_status::timeout, "Pause raced partially committed issue");
+	release.set_value();
+	Require(waiting.wait_for(1s) == std::future_status::ready && waiting.get() == XR_SUCCESS &&
+				pausing.wait_for(1s) == std::future_status::ready && pausing.get().waited->id == frame.id,
+			"Pause boundary omitted committed reservation");
+	Require(scheduler.GrantPermits() == XR_SUCCESS &&
+				scheduler.Resume(clock->Now(), {std::numeric_limits<std::uint64_t>::max()}) ==
+					XR_ERROR_RUNTIME_FAILURE &&
+				scheduler.Snapshot().paused && scheduler.Snapshot().permits == 1,
+			"Unrepresentable resume partially changed policy");
+	FramePrediction submitted;
+	Require(scheduler.BeginFrame() == XR_SUCCESS && scheduler.EndFrame(submitted) == XR_SUCCESS &&
+				scheduler.Resume(clock->Now(), {33}) == XR_SUCCESS && scheduler.WaitFrame(frame) == XR_SUCCESS &&
+				frame.displayTick == DisplayTick{34},
+			"Unpaced resume unexpectedly depended on host time");
+	scheduler.Stop();
+
+	auto nearMinimum = std::make_shared<FakeClock>();
+	const auto anchor = HostTime::min() + 100ns;
+	nearMinimum->Advance(std::chrono::duration_cast<Duration>(anchor.time_since_epoch()));
+	FrameScheduler lower(nearMinimum);
+	config.mode = ExecutionMode::RealTime;
+	config.hostEpoch = anchor;
+	lower.Start(config);
+	Require(lower.WaitFrame(frame) == XR_SUCCESS && lower.BeginFrame() == XR_SUCCESS &&
+				lower.EndFrame(submitted) == XR_SUCCESS,
+			"Lower host limit initial frame");
+	lower.Pause();
+	Require(lower.Resume(anchor, {100}) == XR_SUCCESS && lower.WaitFrame(frame) == XR_SUCCESS &&
+				frame.displayTick == DisplayTick{101},
+			"Rebase subtracted large virtual tick from host anchor and underflowed");
+}
+
+int main()
+{
+	ManualAdmission();
+	PauseDuringPacingAndRebase();
+	AlignPausedDisplayBoundary();
+	PauseReservationBoundaryAndLimits();
+	static_assert(!std::is_convertible_v<FrameId, DisplayTick>);
+	static_assert(!std::is_convertible_v<RuntimeTime, SimulationTime>);
+	DisplayTimeline timeline({Duration{7000000000000000000LL}}, 10ns);
+	Require(timeline.TimeAt({123}).value.count() == 7000000000000001230LL, "Large timestamp precision");
+	Require(timeline.TickAtOrAfter(timeline.TimeAt({123})) == DisplayTick{123}, "Exact tick");
+	Require(timeline.TickAtOrAfter({timeline.TimeAt({123}).value + 1ns}) == DisplayTick{124}, "Ceiling tick");
+	bool overflow = false;
+	try
+	{
+		timeline.TimeAt({std::numeric_limits<std::uint64_t>::max()});
+	}
+	catch (const std::overflow_error&)
+	{
+		overflow = true;
+	}
+	Require(overflow, "Overflow must be explicit");
+
+	auto clock = std::make_shared<FakeClock>();
+	FrameScheduler scheduler(clock);
+	FrameSchedulerConfig config;
+	config.mode = ExecutionMode::Deterministic;
+	config.period = 10ns;
+	FramePrediction first, second, submitted;
+	Require(scheduler.WaitFrame(first) == XR_ERROR_SESSION_NOT_RUNNING, "Wait before session");
+	scheduler.Start(config);
+	Require(scheduler.BeginFrame() == XR_ERROR_CALL_ORDER_INVALID, "Begin without wait");
+	Require(scheduler.EndFrame(submitted) == XR_ERROR_CALL_ORDER_INVALID, "End without begin");
+	Require(scheduler.WaitFrame(first) == XR_SUCCESS, "Initial wait");
+	Require(first.id == FrameId{1} && first.displayTime.value == config.epoch.value + 10ns, "Deterministic epoch");
+	auto waiting = std::async(std::launch::async, [&] { return scheduler.WaitFrame(second); });
+	Eventually([&] { return scheduler.Snapshot().waitPending; }, "Second wait not entered");
+	Require(waiting.wait_for(20ms) == std::future_status::timeout, "Second wait passed prior begin");
+	Require(scheduler.BeginFrame() == XR_SUCCESS, "Begin first frame");
+	Require(waiting.wait_for(1s) == std::future_status::ready, "Wait requires previous end");
+	Require(waiting.get() == XR_SUCCESS, "Overlapping wait failed");
+	Require(second.id == FrameId{2}, "Frame identity");
+	Require(scheduler.EndFrame(submitted) == XR_SUCCESS && submitted.id == first.id, "End consumed wrong prediction");
+	Require(scheduler.BeginFrame() == XR_SUCCESS, "Begin second");
+	Require(scheduler.WaitFrame(first) == XR_SUCCESS, "Third wait");
+	Require(scheduler.BeginFrame() == XR_FRAME_DISCARDED, "Missing discarded result");
+	Require(scheduler.EndFrame(submitted) == XR_SUCCESS && submitted.id == FrameId{3},
+			"Discarded frame replaced incorrectly");
+	Require(scheduler.EndFrame(submitted) == XR_ERROR_CALL_ORDER_INVALID, "Double end accepted");
+
+	Require(scheduler.WaitFrame(first) == XR_SUCCESS, "Pending-stop first wait");
+	waiting = std::async(std::launch::async, [&] { return scheduler.WaitFrame(second); });
+	Eventually([&] { return scheduler.Snapshot().waitPending; }, "Stop wait not entered");
+	scheduler.Stop();
+	Require(waiting.wait_for(1s) == std::future_status::ready, "Stop did not wake blocked wait");
+	Require(waiting.get() == XR_ERROR_SESSION_NOT_RUNNING, "Stop fabricated success");
+	scheduler.Start(config);
+	Require(scheduler.WaitFrame(first) == XR_SUCCESS && first.id == FrameId{1}, "Restart did not reset state");
+	Require(scheduler.BeginFrame() == XR_SUCCESS, "Restart begin");
+	scheduler.Stop();
+
+	config.mode = ExecutionMode::RealTime;
+	config.period = 10ms;
+	scheduler.Start(config);
+	Require(scheduler.WaitFrame(first) == XR_SUCCESS, "Real time initial wait");
+	Require(scheduler.BeginFrame() == XR_SUCCESS, "Real time begin");
+	waiting = std::async(std::launch::async, [&] { return scheduler.WaitFrame(second); });
+	Eventually([&] { return scheduler.Snapshot().waitPending; }, "Pacing not entered");
+	Require(scheduler.EndFrame(submitted) == XR_SUCCESS, "End blocked by pacing");
+	Require(waiting.wait_for(20ms) == std::future_status::timeout, "Real time ignores clock");
+	clock->Advance(10ms);
+	Require(waiting.wait_for(1s) == std::future_status::ready && waiting.get() == XR_SUCCESS,
+			"Clock did not advance wait");
+	Require(second.displayTime.value == config.epoch.value + 20ms, "Wrong prediction after pacing");
+	Require(scheduler.BeginFrame() == XR_SUCCESS, "Paced begin");
+	clock->Advance(107ms);
+	waiting = std::async(std::launch::async, [&] { return scheduler.WaitFrame(first); });
+	Eventually([&] { return scheduler.Snapshot().waitPending; }, "Stalled wait not entered");
+	Require(waiting.wait_for(20ms) == std::future_status::timeout, "Stall causes catch-up burst");
+	clock->Advance(3ms);
+	Require(waiting.wait_for(1s) == std::future_status::ready && waiting.get() == XR_SUCCESS,
+			"Stall did not preserve display phase");
+	Require(first.displayTime.value == config.epoch.value + 130ms, "Stall prediction lost phase");
+	Require(first.displayTime > second.displayTime, "Prediction regressed");
+	scheduler.Stop();
+
+	config.mode = ExecutionMode::Deterministic;
+	config.cadence = 2;
+	scheduler.Start(config);
+	Require(scheduler.WaitFrame(first) == XR_SUCCESS, "Half-rate wait");
+	Require(first.displayPeriod == 20ms && first.displayTime.value == config.epoch.value + 20ms, "Half-rate cadence");
+	scheduler.Stop();
+	scheduler.Start(config);
+	FramePrediction untouched{{777}, {777}, {Duration{777}}, Duration{777}};
+	Require(scheduler.WaitFrame(untouched, [](const auto&) { throw std::bad_alloc{}; }) == XR_ERROR_OUT_OF_MEMORY,
+			"Failed reservation did not report allocation failure");
+	Require(!scheduler.Snapshot().waited && !scheduler.Snapshot().waitPending && untouched.id == FrameId{777},
+			"Failed reservation consumed frame admission");
+	Require(scheduler.WaitFrame(first) == XR_SUCCESS && first.id == FrameId{1} && first.displayTick == DisplayTick{2},
+			"Reservation retry advanced identity or virtual time");
+	scheduler.Stop();
+	config.mode = ExecutionMode::RealTime;
+	config.cadence = 1;
+	config.period = 10ns;
+	config.hostEpoch = HostTime::max() - 5ns;
+	auto nearLimit = std::make_shared<FakeClock>();
+	nearLimit->Advance(std::chrono::duration_cast<Duration>(config.hostEpoch->time_since_epoch()));
+	FrameScheduler bounded(nearLimit);
+	bounded.Start(config);
+	Require(bounded.WaitFrame(first) == XR_SUCCESS && bounded.BeginFrame() == XR_SUCCESS,
+			"Host time limit first admission failed");
+	Require(bounded.WaitFrame(second) == XR_ERROR_RUNTIME_FAILURE && !bounded.Snapshot().waited &&
+				!bounded.Snapshot().waitPending,
+			"Host deadline overflow fabricated a frame or poisoned admission");
+	bounded.Stop();
+	std::cout << "Frame scheduler tests passed\n";
+}

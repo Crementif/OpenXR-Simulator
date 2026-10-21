@@ -1,0 +1,70 @@
+#pragma once
+
+#include "automation/RigRunner.h"
+#include "control/ControlSchema.h"
+#include "simulation/CommandTypes.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <vector>
+
+namespace simxr::automation
+{
+struct ScriptStep
+{
+	std::optional<std::uint64_t> capture;
+	std::string progress;
+	std::optional<FrameId> frame;
+};
+struct ScriptGameOperation
+{
+	std::uint64_t operation = 0;
+	std::uint64_t game = 0;
+};
+
+class RigProgress;
+
+class RigRuntime
+{
+  public:
+	RigRuntime(RigExchange exchange, RigProgress& progress);
+	RigRuntime(const RigRuntime&) = delete;
+	RigRuntime& operator=(const RigRuntime&) = delete;
+	void Configure(control::ControlSessionId session, std::uint64_t generation);
+	std::string Cleanup();
+	std::uint64_t Schedule(CommandTarget target, CommandLatePolicy policy, std::vector<SimulationCommand> commands);
+	std::vector<std::byte> AwaitTransaction(std::uint64_t transaction);
+	void PauseApplication();
+	void ResumeApplication();
+	ScriptStep StepApplication(std::optional<std::uint32_t> layer, std::uint32_t view);
+	ScriptStep StepDisplay();
+	std::vector<std::byte> Inspect(std::uint64_t capture);
+	std::vector<std::byte> State();
+	void ReleaseInputs();
+	void Export(std::uint64_t capture, const std::string& path);
+	void ReleaseCapture(std::uint64_t capture);
+	ScriptGameOperation GameCommand(std::uint32_t kind, std::string payload);
+	std::vector<std::byte> AwaitGame(std::uint64_t game, std::uint64_t operation);
+	std::vector<std::byte> GameState();
+
+  private:
+	using Fields = std::vector<control::Field>;
+	RigExchange m_exchange;
+	RigProgress& m_progress;
+	control::ControlSessionId m_session;
+	std::uint64_t m_generation = 0;
+	std::uint64_t m_nextTransaction = 1;
+	std::uint64_t m_nextCommand = 1;
+	std::uint64_t m_lease = 0;
+	std::vector<std::uint64_t> m_captures;
+	Fields Session() const;
+	Fields Source() const;
+	control::Message Call(control::OpCode opcode, Fields fields);
+	control::Message Debug(control::CommandKind kind, Fields fields = {});
+	ScriptStep CaptureStep(control::CommandKind kind, Fields fields = {});
+	void ReleaseUnchecked(control::OpCode opcode, std::uint16_t tag, std::uint64_t id) noexcept;
+	class RemoteResource;
+};
+} // namespace simxr::automation

@@ -1,77 +1,169 @@
 #pragma once
 
+#include <condition_variable>
+#include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 
-// Continuous diagnostics over the exact fully-composed simulator preview. D3D12/Vulkan
-// hand the detector their existing CPU DIB readback; D3D11 supplies frames through an
-// on-demand asynchronous staging ring. This is intentionally independent from
-// application/game telemetry: a runtime presentation bug can flicker while the
-// application's swapchain images remain perfectly stable.
-//
-// Threading: every Observe* call runs its sampling and classification inline on
-// the caller (the app's xrEndFrame thread), but all disk output â€” status JSON,
-// incident BMP packets, manual capture-request polling â€” happens on a private
-// worker thread. Nothing here blocks the frame loop on storage.
-namespace flicker {
-
-// Latest-only runtime telemetry. The frame thread hands off a memory snapshot;
-// the existing diagnostics worker owns all file creation and publication.
-void PublishRuntimeStatus(std::string snapshot);
-// Bounded FIFO diagnostics; debugger/file output belongs to the I/O worker,
-// never the application's pose, input or render thread.
-void PublishRuntimeLog(std::string message);
-// Atomic pointer receipts are durable on the worker, without write-through
-// disk flushes while the app synchronizes input actions.
-void PublishRuntimeResult(std::string filename,std::string contents);
-// The worker owns directory notifications, re-arming and command-file scans.
-// Frame-side calls only request a scan or consume its bounded in-memory inbox.
-void RequestRuntimeCommands();
-bool TakeRuntimeCommand(const std::string& name, std::string& contents);
-bool RuntimeCommandsReady();
-
-struct PreviewFrameInfo {
-    uint32_t imageIndex[2] = {UINT32_MAX, UINT32_MAX};
-    uint64_t releaseSerial[2] = {};
-    bool fresh[2] = {};
+namespace flicker
+{
+struct UiFrameInfo
+{
+	uint32_t quadLayers = 0;
+	bool projectionRefreshed = false;
+	bool freshReadback = false;
+	bool cachedPixelsUsed = false;
+	bool cacheValid = false;
+	bool composed = false;
+	int32_t rects[2][4] = {};
+	float sourceAlphaCoverage = 0.0f;
 };
 
-struct UiFrameInfo {
-    uint32_t quadLayers = 0;
-    bool projectionRefreshed = false;
-    bool freshReadback = false;
-    bool cachedPixelsUsed = false;
-    bool cacheValid = false;
-    bool composed = false;
-    int32_t rects[2][4] = {};
-    float sourceAlphaCoverage = 0.0f;
+struct SampleMetrics
+{
+	float mean = 0.0f;
+	float meanLeft = 0.0f;
+	float meanRight = 0.0f;
+	float temporal = 0.0f;
+	float temporalLeft = 0.0f;
+	float temporalRight = 0.0f;
+	float brightFractionLeft = 0.0f;
+	float brightFractionRight = 0.0f;
 };
 
-void ObserveSubmission(uint64_t frame, uint32_t projectionLayers, uint32_t totalLayers);
+struct IncidentStatistics
+{
+	uint64_t anomalyCount = 0;
+	uint64_t incidentCount = 0;
+	std::string lastReason = "NONE";
+	std::filesystem::path lastDirectory;
+};
 
-// True for a bounded window after a manual composed-preview request. Backends that do
-// not already produce CPU pixels use this to enable diagnostic readback only on demand.
-bool WantsPreviewReadback();
+struct PreviewStatistics
+{
+	uint64_t lastFrame = 0;
+	uint64_t totalSubmissions = 0;
+	uint64_t projectionSubmissions = 0;
+	uint64_t missingProjectionSubmissions = 0;
+	uint64_t projectionPresenceTransitions = 0;
+	uint64_t previewSamples = 0;
+	uint64_t visiblePreviewSamples = 0;
+	uint64_t paintAttempts = 0;
+	uint64_t successfulPaints = 0;
+	uint64_t failedPaints = 0;
+	uint64_t duplicateGenerationPaints = 0;
+	uint64_t asymmetricBrightSamples = 0;
+	uint32_t consecutiveMissingProjection = 0;
+	uint32_t maxConsecutiveMissingProjection = 0;
+	uint32_t consecutiveAsymmetricBright = 0;
+	uint32_t maxConsecutiveAsymmetricBright = 0;
+	uint32_t lastLayerCount = 0;
+	bool hasMetrics = false;
+	SampleMetrics metrics;
+	IncidentStatistics incidents;
+};
 
-// `bgra` is a top-down preview image whose rows are `pitchBytes` apart (0 means
-// tightly packed). D3D12 readback rows are 256-byte aligned, and taking the
-// pitch here is what lets the caller hand the mapped readback over directly
-// instead of repacking the whole frame first. `generation` changes only when
-// the simulator has completed a new GPU readback, so the 90 Hz xrEndFrame loop
-// does not mistake the intentional preview rate cap for frozen frames.
-void ObservePreview(const uint8_t* bgra, uint32_t width, uint32_t height,
-                    uint32_t pitchBytes, uint64_t generation, uint64_t frame,
-                    const PreviewFrameInfo* info = nullptr);
+struct UiStatistics
+{
+	uint64_t lastFrame = 0;
+	uint64_t observedFrames = 0;
+	uint64_t quadSubmittedFrames = 0;
+	uint64_t projectionRefreshFrames = 0;
+	uint64_t freshReadbacks = 0;
+	uint64_t freshCompositions = 0;
+	uint64_t cachedCompositions = 0;
+	uint64_t missingAfterProjection = 0;
+	uint64_t compositionFailures = 0;
+	uint64_t uiSamples = 0;
+	uint32_t consecutiveMissingAfterProjection = 0;
+	uint32_t maxConsecutiveMissingAfterProjection = 0;
+	uint32_t lastQuadLayers = 0;
+	bool lastCacheValid = false;
+	bool lastComposed = false;
+	bool hasMetrics = false;
+	float lastSourceAlphaCoverage = 0.0f;
+	SampleMetrics metrics;
+	IncidentStatistics incidents;
+};
 
-// Records the actual WM_PAINT result. A stable off-screen DIB is not sufficient
-// evidence when the window itself intermittently takes the fallback-black path.
-void ObservePaint(uint64_t generation, bool paintedPreview);
+struct DiagnosticsStatus
+{
+	bool closed = false;
+	uint64_t fileErrors = 0;
+	uint64_t observationErrors = 0;
+	uint64_t droppedArtifacts = 0;
+	uint64_t renderDocTriggerAttempts = 0;
+	uint64_t renderDocTriggerSuccesses = 0;
+	uint64_t lastRenderDocTriggerFrame = 0;
+	size_t outstandingArtifacts = 0;
+	size_t outstandingBytes = 0;
+	std::string lastError;
+	PreviewStatistics preview;
+	UiStatistics ui;
+};
 
-// UI-only diagnostics. The supplied rectangles identify the projected quad in
-// each eye, allowing temporal analysis to ignore the independently moving world.
-// `pitchBytes` as in ObservePreview.
-void ObserveUi(const uint8_t* bgra, uint32_t width, uint32_t height,
-               uint32_t pitchBytes, uint64_t generation, uint64_t frame,
-               const UiFrameInfo& info);
+namespace detail
+{
+class PreviewMonitor;
+class UiMonitor;
+class ArtifactQueue;
+class RenderDocCapture;
+} // namespace detail
 
+// Observations borrow CPU pixels only for the duration of the call. The worker owns
+// sampled pixels, writes diagnostic artifacts and drains accepted work on Close.
+class Diagnostics
+{
+  public:
+	explicit Diagnostics(std::filesystem::path directory);
+	~Diagnostics();
+	Diagnostics(const Diagnostics&) = delete;
+	Diagnostics& operator=(const Diagnostics&) = delete;
+
+	void ObserveSubmission(uint64_t frame, uint32_t projectionLayers, uint32_t totalLayers) noexcept;
+	void ObservePreview(const uint8_t* bgra, uint32_t width, uint32_t height, uint32_t pitchBytes, uint64_t generation,
+						uint64_t frame) noexcept;
+	void ObservePaint(uint64_t generation, bool paintedPreview) noexcept;
+	void ObserveUi(const uint8_t* bgra, uint32_t width, uint32_t height, uint32_t pitchBytes, uint64_t generation,
+				   uint64_t frame, const UiFrameInfo& info) noexcept;
+	DiagnosticsStatus Status() const;
+	bool NeedsPixels() const noexcept;
+	void Close();
+
+  private:
+	enum class ErrorKind
+	{
+		File,
+		Observation
+	};
+	template <typename Observation> void ApplyObservation(Observation&& observation) noexcept;
+	DiagnosticsStatus Snapshot() const;
+	void Run() noexcept;
+	void PollRequests();
+	void TriggerCapture(uint64_t frame);
+	void FlushStatus(const DiagnosticsStatus& status);
+	void RecordError(const char* message, ErrorKind kind = ErrorKind::File) noexcept;
+
+	const std::filesystem::path m_directory;
+	const std::string m_runName;
+	mutable std::mutex m_mutex;
+	std::mutex m_closeMutex;
+	std::condition_variable m_wake;
+	std::unique_ptr<detail::PreviewMonitor> m_preview;
+	std::unique_ptr<detail::UiMonitor> m_ui;
+	std::unique_ptr<detail::ArtifactQueue> m_artifacts;
+	std::unique_ptr<detail::RenderDocCapture> m_renderDoc;
+	bool m_closed = false;
+	uint64_t m_fileErrors = 0;
+	uint64_t m_observationErrors = 0;
+	uint64_t m_renderDocTriggerAttempts = 0;
+	uint64_t m_renderDocTriggerSuccesses = 0;
+	uint64_t m_lastRenderDocTriggerFrame = 0;
+	std::string m_lastError;
+	std::thread m_worker;
+};
 } // namespace flicker

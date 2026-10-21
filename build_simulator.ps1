@@ -1,19 +1,18 @@
 <#
 .SYNOPSIS
-    Build the OpenXR Simulator runtime and install it into a BetterVR checkout.
+    Build and install the OpenXR Simulator runtime.
 
 .DESCRIPTION
     Installs openxr_simulator.dll, a relocatable openxr_simulator.json and the
     activate/deactivate scripts into the target folder, laid out the same way
-    MetaXRSimulator\ is. Only build output lands there, never source -- BetterVR
-    gitignores the whole folder.
+    MetaXRSimulator\ is. Only build output lands there, never source.
 
     The dll and scripts are symlinked, so a rebuild is live in BetterVR without
     reinstalling. Creating symlinks needs Developer Mode (or an elevated shell);
     without it the script copies instead and says so.
 
 .PARAMETER InstallTo
-    Where to install. Defaults to the sibling BetterVR checkout.
+    Where to install. Defaults to out\install\OpenXRSimulator in this checkout.
 
 .PARAMETER Copy
     Install real copies instead of symlinks, for a folder that has to stand on
@@ -21,17 +20,12 @@
 
 .PARAMETER Clean
     Delete the CMake build tree first.
-
-.PARAMETER VulkanIncludeDir
-    Optional path containing vulkan\vulkan.h. When omitted, the script checks
-    VULKAN_SDK and the adjacent repo\Vulkan-Headers checkout.
 #>
 [CmdletBinding()]
 param(
-    [string]$InstallTo = (Join-Path $PSScriptRoot '..\BotW-BetterVR\OpenXRSimulator'),
+    [string]$InstallTo = (Join-Path $PSScriptRoot 'out\install\OpenXRSimulator'),
     [switch]$Copy,
-    [switch]$Clean,
-    [string]$VulkanIncludeDir = ''
+    [switch]$Clean
 )
 
 $ErrorActionPreference = 'Stop'
@@ -51,33 +45,13 @@ Enter-VsDevShell -VsInstallPath $vsRoot -SkipAutomaticLocation -DevCmdArguments 
 
 if ($Clean -and (Test-Path $build)) { Remove-Item -Recurse -Force $build }
 
-if ([string]::IsNullOrWhiteSpace($VulkanIncludeDir)) {
-    $vulkanCandidates = @()
-    if ($env:VULKAN_SDK) {
-        $vulkanCandidates += (Join-Path $env:VULKAN_SDK 'Include')
-        $vulkanCandidates += (Join-Path $env:VULKAN_SDK 'include')
-    }
-    $vulkanCandidates += (Join-Path $root '..\Vulkan-Headers\include')
-    $VulkanIncludeDir = $vulkanCandidates |
-        Where-Object { Test-Path (Join-Path $_ 'vulkan\vulkan.h') } |
-        Select-Object -First 1
-}
-
-$configureArgs = @('-S', $root, '-B', $build, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release')
-if ($VulkanIncludeDir) {
-    $VulkanIncludeDir = (Resolve-Path $VulkanIncludeDir).Path
-    $configureArgs += "-DSIMXR_VULKAN_INCLUDE_DIR=$VulkanIncludeDir"
-}
-
 Write-Host '==> Configuring' -ForegroundColor Cyan
-& cmake @configureArgs
+cmake -S $root -B $build -G Ninja -DCMAKE_BUILD_TYPE=Release
 if ($LASTEXITCODE -ne 0) { throw "cmake configure failed ($LASTEXITCODE)" }
 
 Write-Host '==> Building' -ForegroundColor Cyan
 cmake --build $build
 if ($LASTEXITCODE -ne 0) { throw "cmake build failed ($LASTEXITCODE)" }
-
-Write-Host '==> Testing' -ForegroundColor Cyan
 ctest --test-dir $build --output-on-failure
 if ($LASTEXITCODE -ne 0) { throw "ctest failed ($LASTEXITCODE)" }
 
@@ -111,15 +85,10 @@ function Install-Artifact {
 }
 
 Install-Artifact (Join-Path $root 'bin\openxr_simulator.dll') $InstallTo
-# Tools > Frame Timing (F4) starts the viewer from beside the DLL.
-$viewer = Join-Path $root 'bin\openxr_sim_frametime.exe'
-if (Test-Path $viewer) { Install-Artifact $viewer $InstallTo }
 Install-Artifact (Join-Path $root 'activate_simulator.ps1') $InstallTo
 Install-Artifact (Join-Path $root 'deactivate_simulator.ps1') $InstallTo
 
-# CMakeLists writes a manifest with an absolute library_path into bin\; install a
-# relocatable one that resolves next to whatever openxr_simulator.dll ends up being,
-# link or copy. Written rather than linked: its contents never change with a build.
+# Keep the installed manifest independent of the build directory.
 $manifest = @{
     file_format_version = '1.0.0'
     runtime             = @{ library_path = '.\openxr_simulator.dll'; name = 'OpenXR Simulator' }

@@ -1,0 +1,591 @@
+#include "simulation/CommandScheduler.h"
+
+#include <algorithm>
+#include <bit>
+#include <limits>
+#include <stdexcept>
+#include <type_traits>
+#include <utility>
+
+namespace simxr
+{
+namespace
+{
+// Canonical words compare retry payloads exactly, including float bits. They are
+// an internal identity representation, not a wire format or an object-memory dump.
+class CommandIdentityBuilder
+{
+  public:
+	template <class T> void Add(T value)
+	{
+		m_words.push_back(static_cast<std::uint64_t>(value));
+	}
+	void Add(float value)
+	{
+		Add(std::bit_cast<std::uint32_t>(value));
+	}
+	void Add(const XrVector3f& value)
+	{
+		Add(value.x);
+		Add(value.y);
+		Add(value.z);
+	}
+	void Add(const XrPosef& value)
+	{
+		Add(value.orientation.x);
+		Add(value.orientation.y);
+		Add(value.orientation.z);
+		Add(value.orientation.w);
+		Add(value.position);
+	}
+	void Add(const PoseSample& value)
+	{
+		Add(value.pose);
+		Add(value.flags);
+		Add(value.sampleTime.value.count());
+		Add(value.eyeGazeSampleTime.has_value());
+		if (value.eyeGazeSampleTime)
+			Add(value.eyeGazeSampleTime->value.count());
+	}
+	void Add(const ControllerPose& value)
+	{
+		Add(value.pose);
+		Add(value.connected);
+	}
+	void Add(const ControllerControls& value)
+	{
+		for (float component : {value.trigger, value.grip, value.gripForce, value.stick.x, value.stick.y,
+								value.trackpad.x, value.trackpad.y, value.trackpadForce})
+			Add(component);
+		for (bool flag : {value.primary, value.secondary, value.menu, value.back, value.thumbClick, value.trackpadClick,
+						  value.primaryTouch, value.secondaryTouch, value.triggerTouch, value.thumbTouch,
+						  value.trackpadTouch, value.thumbrestTouch, value.connected})
+			Add(flag);
+	}
+	void Add(const BodyControls& value)
+	{
+		Add(value.active);
+		Add(value.confidence);
+		Add(value.preset);
+		for (const auto& control : value.controls)
+		{
+			Add(control.tracked);
+			Add(control.offset.has_value());
+			if (control.offset)
+				Add(*control.offset);
+		}
+		for (const auto& joint : value.joints)
+		{
+			Add(joint.has_value());
+			if (joint)
+			{
+				Add(joint->tracked);
+				Add(joint->pose.has_value());
+				if (joint->pose)
+					Add(*joint->pose);
+			}
+		}
+	}
+	void Add(const GazeInput& value)
+	{
+		Add(value.yaw);
+		Add(value.pitch);
+		Add(value.available);
+		Add(value.tracked);
+	}
+	void Add(const TrackerDevice& value)
+	{
+		Add(value.identity.value);
+		Add(value.role);
+		Add(value.connected);
+		Add(value.tracked);
+		Add(value.anchor.has_value());
+		if (value.anchor)
+			Add(*value.anchor);
+		Add(value.poseOverride.has_value());
+		if (value.poseOverride)
+			Add(*value.poseOverride);
+	}
+	void Add(const ViewSettings& value)
+	{
+		Add(value.ipd);
+		Add(value.outerWidth);
+		Add(value.outerHeight);
+		Add(value.insetWidth);
+		Add(value.insetHeight);
+		Add(value.insetHalfAngle);
+		for (const auto& component : value.outerFov)
+		{
+			Add(component.angleLeft);
+			Add(component.angleRight);
+			Add(component.angleUp);
+			Add(component.angleDown);
+		}
+	}
+	void Add(const BodyProportions& value)
+	{
+		Add(value.height);
+		Add(value.shoulderWidth);
+		Add(value.hipWidth);
+	}
+	void Add(const ReferenceSpaceState& value)
+	{
+		Add(value.local);
+		Add(value.stage);
+		Add(value.stageBounds.has_value());
+		if (value.stageBounds)
+		{
+			Add(value.stageBounds->width);
+			Add(value.stageBounds->height);
+		}
+	}
+	std::vector<std::uint64_t> Finish() &&
+	{
+		return std::move(m_words);
+	}
+
+  private:
+	std::vector<std::uint64_t> m_words;
+};
+std::vector<std::uint64_t> RequestWords(const CommandTransaction& transaction)
+{
+	CommandIdentityBuilder identity;
+	identity.Add(transaction.source.kind);
+	identity.Add(transaction.source.id);
+	identity.Add(transaction.id);
+	identity.Add(transaction.latePolicy);
+	identity.Add(transaction.target.frame.has_value());
+	if (transaction.target.frame)
+		identity.Add(transaction.target.frame->value);
+	identity.Add(transaction.target.time.has_value());
+	if (transaction.target.time)
+		identity.Add(transaction.target.time->value.count());
+	identity.Add(transaction.commands.size());
+	for (const auto& command : transaction.commands)
+	{
+		identity.Add(command.index());
+		std::visit(
+			[&](const auto& value)
+			{
+				using T = std::decay_t<decltype(value)>;
+				if constexpr (std::is_same_v<T, TakeControl>)
+				{
+					identity.Add(value.channel);
+					identity.Add(value.replace);
+				}
+				else if constexpr (std::is_same_v<T, ReleaseControl>)
+					identity.Add(value.channel);
+				else if constexpr (std::is_same_v<T, SetScenario>)
+				{
+					identity.Add(value.scenario);
+					identity.Add(value.enabled);
+				}
+				else if constexpr (std::is_same_v<T, SetControllerProfile>)
+				{
+					identity.Add(value.hand);
+					identity.Add(value.path.size());
+					for (unsigned char c : value.path)
+						identity.Add(c);
+				}
+				else
+				{
+					if constexpr (std::is_same_v<T, SetControllerPose> || std::is_same_v<T, SetControllerControls>)
+						identity.Add(value.hand);
+					if constexpr (std::is_same_v<T, SetTracker>)
+						identity.Add(value.index);
+					identity.Add(value.value);
+				}
+			},
+			command);
+	}
+	return std::move(identity).Finish();
+}
+bool ValidSource(CommandSource source)
+{
+	return source.id && (source.kind == CommandSourceKind::Manual || source.kind == CommandSourceKind::Mcp ||
+						 source.kind == CommandSourceKind::Rig);
+}
+} // namespace
+class CommandScheduler::PreparedCommandBoundary
+{
+  public:
+	PreparedCommandBoundary(const CommandScheduler& scheduler, FrameId frame, SimulationTime time,
+							RuntimeTime runtimeTime, const CommandConfiguration& baseline)
+		: m_state(scheduler.m_state), m_pending(scheduler.m_pending), m_outcomes(scheduler.m_outcomes),
+		  m_snapshots(scheduler.m_applied), m_snapshot(std::make_shared<AppliedCommandSnapshot>()),
+		  m_historyCapacity(scheduler.m_historyCapacity)
+	{
+		if (scheduler.m_revision == std::numeric_limits<std::uint64_t>::max())
+			throw std::overflow_error("Command revisions exhausted");
+		m_snapshot->seed = scheduler.m_seed;
+		m_snapshot->revision = scheduler.m_revision + 1;
+		m_snapshot->frame = frame;
+		m_snapshot->time = time;
+		m_snapshot->runtimeTime = runtimeTime;
+		m_state.BeginBoundary(baseline.referenceSpaces);
+		for (auto command = m_pending.begin(); command != m_pending.end();)
+		{
+			if (command->result == CommandResult::Cancelled)
+			{
+				AppendHistory(*command);
+				command = m_pending.erase(command);
+				continue;
+			}
+			const auto target = command->effectiveTarget.value_or(command->transaction.target);
+			if ((target.frame && *target.frame > frame) || (target.time && *target.time > time))
+			{
+				++command;
+				continue;
+			}
+			auto outcome = *command;
+			outcome.appliedFrame = frame;
+			outcome.appliedTime = time;
+			outcome.result = CommandResult::Applied;
+			if (target.frame && *target.frame < frame)
+			{
+				if (outcome.transaction.latePolicy == CommandLatePolicy::Reject)
+					outcome.result = CommandResult::Late;
+				else
+					outcome.effectiveTarget = CommandTarget{frame, {}};
+			}
+			if (outcome.result == CommandResult::Applied)
+				outcome.result = m_state.Apply(outcome.transaction, baseline, runtimeTime);
+			m_snapshot->outcomes.push_back(outcome);
+			AppendHistory(std::move(outcome));
+			command = m_pending.erase(command);
+		}
+		m_state.Capture(*m_snapshot, baseline, runtimeTime);
+		m_snapshots.push_back(m_snapshot);
+		if (m_snapshots.size() > 128)
+			m_snapshots.pop_front();
+	}
+
+	std::shared_ptr<const AppliedCommandSnapshot> Snapshot() const noexcept
+	{
+		return m_snapshot;
+	}
+
+	const std::vector<CommandOutcome>& Outcomes() const noexcept
+	{
+		return m_snapshot->outcomes;
+	}
+
+	void Commit(CommandScheduler& scheduler) noexcept
+	{
+		m_state.Swap(scheduler.m_state);
+		m_pending.swap(scheduler.m_pending);
+		m_outcomes.swap(scheduler.m_outcomes);
+		m_snapshots.swap(scheduler.m_applied);
+		scheduler.m_revision = m_snapshot->revision;
+	}
+
+	void MarkRecordingOverrun(bool overrun) noexcept
+	{
+		for (auto& outcome : m_snapshot->outcomes)
+			outcome.recordingOverrun = overrun;
+		for (auto& outcome : m_outcomes)
+		{
+			if (outcome.appliedFrame == m_snapshot->frame)
+				outcome.recordingOverrun = overrun;
+		}
+	}
+
+  private:
+	void AppendHistory(CommandOutcome outcome)
+	{
+		m_outcomes.push_back(std::move(outcome));
+		if (m_outcomes.size() > m_historyCapacity)
+			m_outcomes.pop_front();
+	}
+	CommandState m_state;
+	std::deque<CommandOutcome> m_pending;
+	std::deque<CommandOutcome> m_outcomes;
+	std::deque<std::shared_ptr<const AppliedCommandSnapshot>> m_snapshots;
+	std::shared_ptr<AppliedCommandSnapshot> m_snapshot;
+	std::size_t m_historyCapacity;
+};
+
+CommandScheduler::CommandScheduler(std::size_t pendingCapacity, std::size_t historyCapacity)
+	: m_pendingCapacity(pendingCapacity), m_historyCapacity(historyCapacity)
+{
+	if (!pendingCapacity || pendingCapacity > 256 || !historyCapacity || historyCapacity > 1024)
+		throw std::invalid_argument("Invalid command scheduler capacity");
+	m_sources.reserve(64);
+}
+void CommandScheduler::Start(std::uint64_t seed, std::optional<CommandConfiguration> initial)
+{
+	CommandState prepared(std::move(initial));
+	std::lock_guard lock(m_mutex);
+	m_state.Swap(prepared);
+	m_seed = seed;
+	m_revision = 0;
+	m_closed = false;
+	m_pending.clear();
+	m_outcomes.clear();
+	m_sources.clear();
+	m_applied.clear();
+	m_recorder.Stop();
+}
+void CommandScheduler::Close()
+{
+	std::lock_guard lock(m_mutex);
+	// Teardown does not allocate or claim that previously applied work was undone.
+	for (auto& pending : m_pending)
+		pending.result = CommandResult::Cancelled;
+	m_state.ClearOwnership();
+	m_closed = true;
+	m_recorder.Stop();
+}
+CommandOutcome CommandScheduler::Submit(CommandTransaction transaction)
+{
+	CommandOutcome outcome{std::move(transaction), CommandResult::Queued};
+	std::lock_guard lock(m_mutex);
+	if (m_closed)
+	{
+		outcome.result = CommandResult::Closed;
+		return outcome;
+	}
+	auto& request = outcome.transaction;
+	if (!request.id || !ValidSource(request.source) || request.commands.empty() || request.commands.size() > 64 ||
+		request.target.frame.has_value() == request.target.time.has_value() ||
+		(request.target.frame && !request.target.frame->value) ||
+		(request.target.time && request.target.time->value.count() < 0) ||
+		(request.latePolicy != CommandLatePolicy::Reject && request.latePolicy != CommandLatePolicy::RescheduleNext))
+	{
+		outcome.result = CommandResult::Invalid;
+		return outcome;
+	}
+	// Variable-sized command data is bounded before retaining or fingerprinting it.
+	for (const auto& command : request.commands)
+		if (const auto* profile = std::get_if<SetControllerProfile>(&command); profile && profile->path.size() > 255)
+		{
+			outcome.result = CommandResult::Invalid;
+			return outcome;
+		}
+	const auto same = [&](const auto& value)
+	{
+		return value.transaction.source.id == request.source.id && value.transaction.id == request.id;
+	};
+	for (const auto* records : {&m_pending, &m_outcomes})
+		if (const auto found = std::find_if(records->begin(), records->end(), same); found != records->end())
+		{
+			// IDs identify immutable requests; changed payload retry is rejected.
+			// Compare explicit scalar fields, never padding or native pointers.
+			if (found->transaction.source != request.source ||
+				RequestWords(found->requested ? *found->requested : found->transaction) != RequestWords(request))
+				outcome.result = CommandResult::Conflict;
+			else
+				return *found;
+			return outcome;
+		}
+	auto cursor = std::find_if(m_sources.begin(), m_sources.end(),
+							   [&](const auto& source)
+							   {
+								   return source.source.id == request.source.id;
+							   });
+	if (cursor != m_sources.end() && (cursor->source != request.source || cursor->last >= request.id))
+	{
+		outcome.result = CommandResult::Conflict;
+		return outcome;
+	}
+	if ((cursor == m_sources.end() && m_sources.size() == 64) || m_pending.size() == m_pendingCapacity)
+	{
+		outcome.result = CommandResult::Capacity;
+		return outcome;
+	}
+	if (!m_applied.empty())
+	{
+		const auto& last = *m_applied.back();
+		if ((request.target.frame && *request.target.frame <= last.frame) ||
+			(request.target.time && *request.target.time <= last.time))
+		{
+			if (request.latePolicy == CommandLatePolicy::Reject ||
+				last.frame.value == std::numeric_limits<std::uint64_t>::max())
+				outcome.result = CommandResult::Late;
+			else
+			{
+				outcome.effectiveTarget = CommandTarget{FrameId{last.frame.value + 1}, {}};
+				outcome.result = CommandResult::Rescheduled;
+			}
+		}
+	}
+	// Prepare all copies before publishing admission or consuming an ID.
+	outcome.requested = std::make_shared<const CommandTransaction>(request);
+	auto returned = outcome;
+	if (outcome.result == CommandResult::Late)
+	{
+		m_outcomes.push_back(outcome);
+		if (m_outcomes.size() > m_historyCapacity)
+			m_outcomes.pop_front();
+		m_outcomes.back().recordingOverrun = !m_recorder.Observe(m_outcomes.back());
+	}
+	else
+		m_pending.push_back(std::move(outcome));
+	if (cursor == m_sources.end())
+		m_sources.push_back({request.source, request.id});
+	else
+		cursor->last = request.id;
+	return returned;
+}
+std::optional<CommandOutcome> CommandScheduler::Read(CommandSource source, std::uint64_t id) const
+{
+	std::lock_guard lock(m_mutex);
+	for (const auto* records : {&m_pending, &m_outcomes})
+		for (const auto& value : *records)
+			if (value.transaction.source == source && value.transaction.id == id)
+				return value;
+	return {};
+}
+CommandSchedulerSnapshot CommandScheduler::Snapshot() const
+{
+	std::lock_guard lock(m_mutex);
+	return {m_closed,
+			m_closed ? 0
+					 : static_cast<std::size_t>(std::count_if(m_pending.begin(), m_pending.end(),
+															  [](const auto& value)
+															  {
+																  return value.result != CommandResult::Cancelled;
+															  })),
+			{m_outcomes.begin(), m_outcomes.end()},
+			m_applied.empty() ? nullptr : m_applied.back(),
+			m_seed};
+}
+CommandResult CommandScheduler::Cancel(CommandSource source, std::uint64_t id)
+{
+	std::lock_guard lock(m_mutex);
+	const auto found = std::find_if(m_pending.begin(), m_pending.end(),
+									[&](const auto& value)
+									{
+										return value.transaction.source == source && value.transaction.id == id;
+									});
+	if (found == m_pending.end())
+		return CommandResult::NotFound;
+	auto cancelled = *found;
+	cancelled.result = CommandResult::Cancelled;
+	if (!m_applied.empty())
+	{
+		cancelled.appliedFrame = m_applied.back()->frame;
+		cancelled.appliedTime = m_applied.back()->time;
+	}
+	auto outcomes = m_outcomes;
+	outcomes.push_back(cancelled);
+	if (outcomes.size() > m_historyCapacity)
+		outcomes.pop_front();
+	outcomes.back().recordingOverrun = !m_recorder.Observe(cancelled);
+	m_outcomes.swap(outcomes);
+	m_pending.erase(found);
+	return CommandResult::Cancelled;
+}
+std::array<bool, ControlChannelCount> CommandScheduler::ReleaseSource(CommandSource source, bool retire)
+{
+	std::lock_guard lock(m_mutex);
+	try
+	{
+		auto pending = m_pending;
+		auto outcomes = m_outcomes;
+		std::vector<CommandOutcome> cancelled;
+		for (auto it = pending.begin(); it != pending.end();)
+			if (it->transaction.source == source)
+			{
+				it->result = CommandResult::Cancelled;
+				if (!m_applied.empty())
+				{
+					it->appliedFrame = m_applied.back()->frame;
+					it->appliedTime = m_applied.back()->time;
+				}
+				cancelled.push_back(*it);
+				outcomes.push_back(*it);
+				if (outcomes.size() > m_historyCapacity)
+					outcomes.pop_front();
+				it = pending.erase(it);
+			}
+			else
+				++it;
+		m_recorder.Observe(cancelled);
+		m_pending.swap(pending);
+		m_outcomes.swap(outcomes);
+	}
+	catch (const std::bad_alloc&)
+	{
+		for (auto& command : m_pending)
+			if (command.transaction.source == source)
+			{
+				command.result = CommandResult::Cancelled;
+				command.recordingOverrun = true;
+			}
+		m_recorder.Fail();
+	}
+	const auto released = m_state.ReleaseSource(source);
+	if (retire)
+		std::erase_if(m_sources,
+					  [&](const auto& value)
+					  {
+						  return value.source == source;
+					  });
+	return released;
+}
+void CommandScheduler::StartRecording(const CommandConfiguration& baseline, const ReferenceSpaceState& spaces)
+{
+	std::lock_guard lock(m_mutex);
+	if (m_closed)
+		throw std::logic_error("Cannot record a closed command scheduler");
+	const auto latest = m_applied.empty() ? nullptr : m_applied.back();
+	auto origin = m_state.RecordingOrigin(baseline, latest ? latest->runtimeTime : RuntimeTime{Duration{1}});
+	origin.seed = m_seed;
+	origin.configuration.referenceSpaces = spaces;
+	if (latest)
+	{
+		origin.frame = latest->frame;
+		origin.time = latest->time;
+	}
+	m_recorder.Start(origin);
+}
+
+CommandConfiguration CommandScheduler::Merge(const CommandConfiguration& baseline) const
+{
+	std::lock_guard lock(m_mutex);
+	return m_state.Merge(baseline);
+}
+std::shared_ptr<const AppliedCommandSnapshot> CommandScheduler::At(FrameId frame) const
+{
+	std::lock_guard lock(m_mutex);
+	for (const auto& value : m_applied)
+		if (value->frame == frame)
+			return value;
+	return {};
+}
+CommandRecorder& CommandScheduler::Recorder()
+{
+	return m_recorder;
+}
+std::shared_ptr<const AppliedCommandSnapshot>
+CommandScheduler::Apply(FrameId frame, SimulationTime time, RuntimeTime runtimeTime,
+						const CommandConfiguration& baseline,
+						const std::function<void(const std::shared_ptr<const AppliedCommandSnapshot>&)>& reserve)
+{
+	std::lock_guard lock(m_mutex);
+	if (m_closed || !frame.value || runtimeTime.value.count() <= 0 || time.value.count() < 0)
+		throw std::invalid_argument("Invalid command boundary");
+	if (!m_applied.empty() && frame <= m_applied.back()->frame)
+	{
+		for (const auto& snapshot : m_applied)
+			if (snapshot->frame == frame)
+				return snapshot;
+		throw std::invalid_argument("Command boundary moved backward");
+	}
+	if (!m_applied.empty() && time < m_applied.back()->time)
+		throw std::invalid_argument("Simulation time moved backward");
+	PreparedCommandBoundary prepared(*this, frame, time, runtimeTime, baseline);
+	const auto reserveAndCommit = [&](bool recorded)
+	{
+		// The external reservation is the last throwing operation. Both the
+		// recorder and scheduler retain their previous state if it fails.
+		prepared.MarkRecordingOverrun(!recorded);
+		if (reserve)
+			reserve(prepared.Snapshot());
+		prepared.Commit(*this);
+	};
+	m_recorder.ObservePrepared(prepared.Outcomes(), reserveAndCommit);
+	return prepared.Snapshot();
+}
+} // namespace simxr

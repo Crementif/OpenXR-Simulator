@@ -1,0 +1,843 @@
+#include "../TestSupport.h"
+#include "runtime/Session.h"
+#include "simulation/CommandScheduler.h"
+#include "simulation/CommandState.h"
+
+#include <cmath>
+#include <cstdlib>
+#include <future>
+#include <iostream>
+#include <limits>
+#include <new>
+#include <utility>
+
+namespace
+{
+thread_local bool failCommandAllocation = false;
+}
+void* operator new(std::size_t size)
+{
+	if (std::exchange(failCommandAllocation, false))
+		throw std::bad_alloc{};
+	if (void* memory = std::malloc(size ? size : 1))
+		return memory;
+	throw std::bad_alloc{};
+}
+[[gnu::noinline]] void operator delete(void* memory) noexcept
+{
+	std::free(memory);
+}
+[[gnu::noinline]] void operator delete(void* memory, std::size_t) noexcept
+{
+	std::free(memory);
+}
+
+using namespace simxr;
+namespace
+{
+const CommandSource Manual{CommandSourceKind::Manual, 101};
+const CommandSource Mcp{CommandSourceKind::Mcp, 202};
+CommandTransaction Request(std::uint64_t id, std::uint64_t frame, std::vector<SimulationCommand> commands,
+						   CommandSource source = Manual)
+{
+	return {id, source, {FrameId{frame}, {}}, CommandLatePolicy::Reject, std::move(commands)};
+}
+std::shared_ptr<const AppliedCommandSnapshot> Tick(CommandScheduler& scheduler, std::uint64_t frame,
+												   const CommandConfiguration& baseline = {})
+{
+	return scheduler.Apply({frame}, {Duration{static_cast<std::int64_t>(frame * 10)}},
+						   {Duration{static_cast<std::int64_t>(frame * 10 + 100)}}, baseline);
+}
+PoseSample Pose(float x)
+{
+	return {{{0, 0, 0, 1.005f}, {x, 1.8f, -0.5f}}, TrackedPoseFlags};
+}
+void AllocationFreeSpaceCommit()
+{
+	TrackingSystem tracking;
+	EventQueue events(2);
+	SpaceSystem spaces(reinterpret_cast<XrSession>(701), tracking, {}, {}, &events);
+	ReferenceSpaceState state;
+	bool accepted = true;
+	failCommandAllocation = true;
+	for (std::int64_t boundary = 1; boundary <= 140; ++boundary)
+	{
+		state.local.position.x = static_cast<float>(boundary);
+		accepted = accepted && spaces.Restore({Duration{boundary}}, state) == XR_SUCCESS;
+	}
+	const bool noAllocation = failCommandAllocation;
+	failCommandAllocation = false;
+	Require(accepted && noAllocation && spaces.RecordingState({Duration{140}}).local.position.x == 140 &&
+				events.Observe().size() == 2,
+			"Accepted origin/history/event publication must remain allocation free at full retention");
+}
+
+void AtomicCommandState()
+{
+	CommandState state;
+	CommandConfiguration baseline;
+	baseline.tracking.head.pose.position.x = -9;
+	baseline.tracking.gaze.yaw = 0.03f;
+	const RuntimeTime time{Duration{101}};
+	auto initial = Request(1, 1, {TakeControl{ControlChannel::Head}, SetHeadPose{Pose(2)}});
+	Require(state.Apply(initial, baseline, time) == CommandResult::Applied &&
+				std::abs(std::get<SetHeadPose>(initial.commands[1]).value.pose.orientation.w - 1) < 0.00001f,
+			"Command state acknowledges normalized values");
+	auto conflict = Request(1, 1,
+							{TakeControl{ControlChannel::Gaze}, SetGaze{{0.8f, 0, true, true}},
+							 TakeControl{ControlChannel::Head}, SetHeadPose{Pose(8)}},
+							Mcp);
+	Require(state.Apply(conflict, baseline, time) == CommandResult::Conflict,
+			"A transaction cannot steal an owned channel");
+	AppliedCommandSnapshot snapshot;
+	state.Capture(snapshot, baseline, time);
+	Require(snapshot.configuration.tracking.head.pose.position.x == 2 &&
+				snapshot.configuration.tracking.gaze.yaw == baseline.tracking.gaze.yaw &&
+				!snapshot.owners[static_cast<std::size_t>(ControlChannel::Gaze)],
+			"A later conflict leaked earlier channel ownership or values");
+	auto invalid = Request(2, 1,
+						   {SetHeadPose{Pose(7)}, TakeControl{ControlChannel::Gaze},
+							SetGaze{{std::numeric_limits<float>::quiet_NaN(), 0, true, true}}});
+	Require(state.Apply(invalid, baseline, time) == CommandResult::Invalid &&
+				state.Merge(baseline).tracking.head.pose.position.x == 2,
+			"Invalid state transaction partially applied an earlier pose");
+
+	ControllerControls controls;
+	controls.trigger = 0.7f;
+	auto replace = Request(2, 1,
+						   {TakeControl{ControlChannel::Head, true}, SetHeadPose{Pose(8)},
+							TakeControl{ControlChannel::LeftControls}, SetControllerControls{0, controls}},
+						   Mcp);
+	Require(state.Apply(replace, baseline, time) == CommandResult::Applied, "Explicit channel replacement");
+	failCommandAllocation = true;
+	const auto released = state.ReleaseSource(Mcp);
+	const bool didNotAllocate = failCommandAllocation;
+	failCommandAllocation = false;
+	Require(didNotAllocate && released[static_cast<std::size_t>(ControlChannel::Head)] &&
+				released[static_cast<std::size_t>(ControlChannel::LeftControls)],
+			"Releasing ownership must remain allocation free");
+	baseline.input.controllers[0].trigger = 0.9f;
+	baseline.input.controllers[0].connected = false;
+	baseline.tracking.controllers[0].connected = false;
+	const auto releasedState = state.Merge(baseline);
+	Require(releasedState.tracking.head.pose.position.x == -9 && releasedState.input.controllers[0].trigger == 0 &&
+				!releasedState.input.controllers[0].connected,
+			"Release must restore baseline pose, neutralize held controls and preserve disconnection");
+	state.ClearOwnership();
+	Require(state.Merge(baseline).input.controllers[0].trigger == 0.9f,
+			"Closed command state retained a neutral override");
+}
+
+void PreparedBoundaryAllocationRollback()
+{
+	CommandScheduler scheduler;
+	scheduler.Start(41);
+	scheduler.Submit(Request(1, 1, {TakeControl{ControlChannel::Head}, SetHeadPose{Pose(2)}}));
+	const auto original = Tick(scheduler, 1);
+	scheduler.Recorder().Start({41, original->configuration});
+	scheduler.Submit(Request(2, 2, {SetHeadPose{Pose(8)}}));
+	bool failed = false;
+	bool reserved = false;
+	failCommandAllocation = true;
+	try
+	{
+		scheduler.Apply({2}, {Duration{20}}, {Duration{120}}, {},
+						[&](const auto&)
+						{
+							reserved = true;
+						});
+	}
+	catch (const std::bad_alloc&)
+	{
+		failed = true;
+	}
+	failCommandAllocation = false;
+	Require(failed && !reserved && scheduler.At({1}) == original && !scheduler.At({2}) &&
+				scheduler.Snapshot().pending == 1 && scheduler.Recorder().Snapshot().total == 0 &&
+				scheduler.Merge({}).tracking.head.pose.position.x == 2,
+			"Failed boundary preparation changed a published state, queue, recorder or external reservation");
+	const auto retried = Tick(scheduler, 2);
+	Require(retried->revision == original->revision + 1 && retried->configuration.tracking.head.pose.position.x == 8 &&
+				scheduler.Recorder().Snapshot().total == 1 &&
+				original->configuration.tracking.head.pose.position.x == 2,
+			"Boundary retry must publish once and preserve the earlier immutable reader");
+}
+
+void ImmutableRecordingPublication()
+{
+	CommandScheduler scheduler;
+	scheduler.Start(17);
+	scheduler.Recorder().Start({17});
+	// Isolate the full-recorder boundary without requiring 1,024 XR admissions.
+	std::vector<CommandOutcome> priorOutcomes(1024);
+	Require(scheduler.Recorder().Observe(priorOutcomes), "Fill the bounded recorder exactly");
+	scheduler.Submit(Request(1, 1, {TakeControl{ControlChannel::Head}, SetHeadPose{Pose(8)}}));
+	std::shared_ptr<const AppliedCommandSnapshot> rejected;
+	bool failed = false;
+	try
+	{
+		scheduler.Apply({1}, {Duration{10}}, {Duration{110}}, {},
+						[&](const auto& snapshot)
+						{
+							rejected = snapshot;
+							const auto recording = scheduler.Recorder().Snapshot(0, 0);
+							Require(
+								recording.active && !recording.overflow && recording.total == 1024 &&
+									snapshot->outcomes.front().recordingOverrun &&
+									std::abs(std::get<SetHeadPose>(snapshot->outcomes.front().transaction.commands[1])
+												 .value.pose.orientation.w -
+											 1) < 0.00001f,
+								"Reservation must see finalized snapshot flags and may inspect the prior recorder");
+							throw std::bad_alloc{};
+						});
+	}
+	catch (const std::bad_alloc&)
+	{
+		failed = true;
+	}
+	const auto recording = scheduler.Recorder().Snapshot(0, 0);
+	Require(failed && rejected && recording.active && !recording.overflow && recording.total == 1024 &&
+				!scheduler.At({1}) && scheduler.Snapshot().pending == 1,
+			"Rejected external reservation published command or recorder overflow state");
+	const auto rejectedOutcomes = rejected->outcomes;
+	std::shared_ptr<const AppliedCommandSnapshot> accepted;
+	const auto applied = scheduler.Apply(
+		{1}, {Duration{10}}, {Duration{110}}, {},
+		[&](const auto& snapshot)
+		{
+			accepted = snapshot;
+			Require(snapshot->outcomes.front().recordingOverrun && scheduler.Recorder().Snapshot(0, 0).active,
+					"Retry exposed an unfinished recording flag or locked out read-only recorder inspection");
+		});
+	const auto committedRecording = scheduler.Recorder().Snapshot(0, 0);
+	Require(applied == accepted && applied != rejected && applied->revision == 1 &&
+				scheduler.Read(Manual, 1)->recordingOverrun && applied->outcomes.front().recordingOverrun &&
+				rejected->outcomes.front().recordingOverrun &&
+				rejected->outcomes.front().transaction.id == rejectedOutcomes.front().transaction.id &&
+				!committedRecording.active && committedRecording.overflow && committedRecording.total == 1024,
+			"Retained prepared snapshots changed after reservation or recorder overflow was hidden");
+}
+
+void Transactions()
+{
+	CommandScheduler scheduler;
+	scheduler.Start(173);
+	auto request = Request(1, 2,
+						   {TakeControl{ControlChannel::Head}, SetHeadPose{Pose(3)}, TakeControl{ControlChannel::Gaze},
+							SetGaze{{0.3f, 0.1f, true, true}}});
+	Require(scheduler.Submit(request).result == CommandResult::Queued, "Queue exact transaction");
+	Require(Tick(scheduler, 1)->configuration.tracking.head.pose.position.x == 0, "No early application");
+	const auto applied = Tick(scheduler, 2);
+	Require(applied->seed == 173 && applied->outcomes.size() == 1 &&
+				applied->outcomes[0].result == CommandResult::Applied,
+			"Acknowledged boundary");
+	Require(applied->configuration.tracking.head.pose.position.x == 3 &&
+				std::abs(applied->configuration.tracking.head.pose.orientation.w - 1) < 0.00001f,
+			"Normalized pose applied");
+	Require(scheduler.Submit(request).result == CommandResult::Applied, "Original retry after normalization");
+	std::get<SetHeadPose>(request.commands[1]).value.pose.position.x = 7;
+	Require(scheduler.Submit(request).result == CommandResult::Conflict, "Changed payload cannot retry ID");
+	CommandConfiguration native;
+	native.tracking.head.pose.position.x = -9;
+	Require(scheduler.Merge(native).tracking.head.pose.position.x == 3, "Native baseline cannot overwrite control");
+	auto invalid =
+		Request(2, 3, {SetHeadPose{Pose(8)}, SetGaze{{std::numeric_limits<float>::quiet_NaN(), 0, true, true}}});
+	scheduler.Submit(invalid);
+	const auto failed = Tick(scheduler, 3);
+	Require(failed->outcomes[0].result == CommandResult::Invalid &&
+				failed->configuration.tracking.head.pose.position.x == 3,
+			"Invalid transaction rolls back all fields");
+	Require(applied->configuration.tracking.head.pose.position.x == 3 && applied->frame.value == 2,
+			"Prior immutable reader survives");
+	scheduler.Submit(Request(1, 4, {TakeControl{ControlChannel::Head}, SetHeadPose{Pose(8)}}, Mcp));
+	Require(Tick(scheduler, 4)->outcomes[0].result == CommandResult::Conflict, "Manual ownership blocks MCP");
+	scheduler.Submit(Request(2, 5, {TakeControl{ControlChannel::Head, true}, SetHeadPose{Pose(8)}}, Mcp));
+	Require(Tick(scheduler, 5)->configuration.tracking.head.pose.position.x == 8,
+			"Explicit ownership replacement works");
+	const auto last = scheduler.At({5});
+	scheduler.ReleaseSource(Mcp);
+	Require(scheduler.Merge(native).tracking.head.pose.position.x == -9 && last->owners[0] == Mcp,
+			"Release source leaves historical ownership intact");
+}
+void TimeLateCancelBounds()
+{
+	CommandScheduler scheduler(2, 2);
+	scheduler.Start();
+	Tick(scheduler, 1);
+	Require(scheduler.Submit(Request(1, 1, {TakeControl{ControlChannel::Gaze}})).result == CommandResult::Late,
+			"Issued frame is late");
+	auto late = Request(2, 1, {TakeControl{ControlChannel::Gaze}, SetGaze{{0.8f, 0, true, true}}});
+	late.latePolicy = CommandLatePolicy::RescheduleNext;
+	Require(scheduler.Submit(late).result == CommandResult::Rescheduled, "Explicit reschedule acknowledgement");
+	Require(scheduler.Submit(late).result == CommandResult::Rescheduled, "Rescheduled original retry");
+	auto timed = Request(3, 1, {SetGaze{{0.2f, 0, true, true}}});
+	timed.target = {{}, SimulationTime{Duration{25}}};
+	scheduler.Submit(timed);
+	Require(scheduler.Submit(Request(4, 5, {SetGaze{{}}})).result == CommandResult::Capacity, "Bound pending queue");
+	Require(Tick(scheduler, 2)->configuration.tracking.gaze.yaw == 0.8f, "Rescheduled applies at explicit next frame");
+	Require(Tick(scheduler, 3)->configuration.tracking.gaze.yaw == 0.2f, "Time target first eligible boundary");
+	Require(scheduler.Submit(Request(1, 1, {TakeControl{ControlChannel::Gaze}})).result == CommandResult::Conflict,
+			"Evicted request cannot run again");
+	Require(scheduler.Submit(Request(4, 8, {SetGaze{{}}})).result == CommandResult::Queued, "Capacity recovers");
+	Require(scheduler.Cancel(Manual, 4) == CommandResult::Cancelled &&
+				scheduler.Read(Manual, 4)->result == CommandResult::Cancelled,
+			"Cancel future work");
+	Require(scheduler.Submit(Request(5, 8, {SetGaze{{}}})).result == CommandResult::Queued, "Queue before close");
+	scheduler.Close();
+	Require(scheduler.Read(Manual, 5)->result == CommandResult::Cancelled && scheduler.Snapshot().pending == 0,
+			"Close cancels unused work");
+	Require(scheduler.Submit(Request(6, 9, {SetGaze{{}}})).result == CommandResult::Closed, "Closed rejects work");
+}
+void BodyViewsScenariosRecording()
+{
+	CommandConfiguration initial;
+	initial.tracking.head.pose.position.x = 6;
+	CommandScheduler scheduler;
+	scheduler.Start(77, initial);
+	scheduler.Recorder().Start({77, initial});
+	bool rejected = false;
+	try
+	{
+		scheduler.Recorder().Start({4});
+	}
+	catch (const std::logic_error&)
+	{
+		rejected = true;
+	}
+	Require(rejected, "Active recording cannot be overwritten");
+	ViewSettings views;
+	views.ipd = 0.08f;
+	BodyControls body;
+	body.preset = BodyPreset::Seated;
+	TrackerDevice tracker{{2}, TrackerRole::Camera, true, false, {}, XrPosef{{0, 0, 0, 1}, {1, 2, 3}}};
+	ControllerControls controls;
+	controls.trigger = 0.9f;
+	auto first =
+		Request(1, 1,
+				{TakeControl{ControlChannel::Body}, SetBodyControls{body}, TakeControl{ControlChannel::Views},
+				 SetViewSettings{views}, TakeControl{ControlChannel::Proportions},
+				 SetBodyProportions{{1.9f, 0.4f, 0.3f}}, TakeControl{ControlChannel::Trackers}, SetTracker{1, tracker},
+				 TakeControl{ControlChannel::LeftControls}, SetControllerControls{0, controls},
+				 TakeControl{ControlChannel::Head}, SetScenario{FailureScenario::HeadUntracked, true},
+				 TakeControl{ControlChannel::LeftPose}, SetScenario{FailureScenario::LeftDisconnected, true}});
+	scheduler.Submit(first);
+	const auto applied = Tick(scheduler, 1);
+	Require(applied->outcomes[0].result == CommandResult::Applied &&
+				applied->configuration.tracking.head.pose.position.x == 6,
+			"Seeded initial state preserved by ownership claim");
+	Require(applied->configuration.views.ipd == 0.08f && applied->configuration.proportions.height == 1.9f &&
+				applied->configuration.tracking.body.preset == BodyPreset::Seated,
+			"Body/view configuration transaction");
+	Require(applied->configuration.tracking.trackers[1].role == TrackerRole::Camera &&
+				!applied->configuration.tracking.trackers[1].tracked,
+			"Stable tracker identity and untracked activity");
+	Require(applied->configuration.tracking.head.flags == ValidPoseFlags &&
+				!applied->configuration.input.controllers[0].connected &&
+				!applied->configuration.tracking.controllers[0].connected,
+			"Scenarios update sensor and device activity");
+	scheduler.Submit(Request(
+		2, 2,
+		{SetScenario{FailureScenario::HeadUntracked, false}, SetScenario{FailureScenario::LeftDisconnected, false}}));
+	const auto restored = Tick(scheduler, 2);
+	Require(restored->configuration.tracking.head.flags == TrackedPoseFlags &&
+				restored->configuration.input.controllers[0].connected,
+			"Scenario recovery restores underlying state");
+	scheduler.ReleaseSource(Manual);
+	Require(scheduler.Merge({}).input.controllers[0].trigger == 0, "Stopping source releases held controls");
+	scheduler.Recorder().Stop();
+	const auto recording = scheduler.Recorder().Snapshot();
+	Require(!recording.active && recording.origin.seed == 77 &&
+				recording.origin.configuration.tracking.head.pose.position.x == 6 && recording.transactions.size() == 2,
+			"Recording initial state and normalized acknowledged transactions");
+	CommandRecorder tiny(1);
+	tiny.Start({2});
+	Require(tiny.Observe(recording.transactions[0]) && !tiny.Observe(recording.transactions[1]),
+			"Recording overflow explicit");
+	Require(!tiny.Snapshot().active && tiny.Snapshot().overflow && tiny.Snapshot().transactions.size() == 1,
+			"Overflow never silently overwrites");
+}
+void AdmissionRollback()
+{
+	CommandScheduler commands;
+	commands.Start();
+	commands.Recorder().Start({});
+	commands.Submit(Request(1, 1, {TakeControl{ControlChannel::Head}, SetHeadPose{Pose(2)}}));
+	FrameScheduler scheduler;
+	FrameSchedulerConfig config;
+	config.mode = ExecutionMode::Deterministic;
+	scheduler.Start(config);
+	scheduler.Pause();
+	Require(scheduler.GrantPermits() == XR_SUCCESS, "Reserve one command admission");
+	FrameHistory history;
+	history.StartGeneration();
+	FramePrediction prediction;
+	auto reserve = [&](const FramePrediction& candidate, bool fail)
+	{
+		commands.Apply(candidate.id, {Duration{1}}, candidate.displayTime, {},
+					   [&](const auto&)
+					   {
+						   history.Issue(candidate,
+										 [&](auto, auto)
+										 {
+											 if (fail)
+												 throw std::bad_alloc{};
+										 });
+					   });
+	};
+	Require(scheduler.WaitFrame(prediction,
+								[&](const auto& candidate)
+								{
+									reserve(candidate, true);
+								}) == XR_ERROR_OUT_OF_MEMORY,
+			"Reservation allocation failure is explicit");
+	Require(!scheduler.Snapshot().waited && scheduler.Snapshot().permits == 1 && commands.Snapshot().pending == 1 &&
+				!commands.Snapshot().applied && history.Snapshot().frames.empty() &&
+				commands.Recorder().Snapshot().total == 0,
+			"Failed command/history reservation preserves every gate and recorder");
+	Require(scheduler.WaitFrame(prediction,
+								[&](const auto& candidate)
+								{
+									reserve(candidate, false);
+								}) == XR_SUCCESS &&
+				prediction.id.value == 1,
+			"Retry receives same reserved frame identity");
+	Require(commands.At(prediction.id)->configuration.tracking.head.pose.position.x == 2 &&
+				commands.Recorder().Snapshot().total == 1 && scheduler.Snapshot().permits == 0,
+			"Successful retry commits command and recorder exactly once");
+}
+
+void RefinedBoundary()
+{
+	TrackingSystem tracking;
+	TrackingState initial;
+	const auto original = tracking.Publish({Duration{10}}, initial);
+	initial.head.pose.position.x = 5;
+	const auto refined = tracking.Publish({Duration{10}}, initial, true);
+	Require(original.head.pose.position.x == 0 && refined.head.pose.position.x == 5 &&
+				tracking.Sample({Duration{10}})->head.pose.position.x == 5,
+			"Explicit same-boundary refinement immutable readers");
+	bool duplicate = false;
+	try
+	{
+		tracking.Publish({Duration{10}}, initial);
+	}
+	catch (const std::invalid_argument&)
+	{
+		duplicate = true;
+	}
+	Require(duplicate, "Ordinary duplicate timestamp remains invalid");
+	bool previous = false;
+	try
+	{
+		tracking.Publish({Duration{9}}, initial, true);
+	}
+	catch (const std::invalid_argument&)
+	{
+		previous = true;
+	}
+	Require(previous, "Refinement cannot rewrite earlier history");
+}
+void ScenarioRecoveryInSession()
+{
+	Instance instance(reinterpret_cast<XrInstance>(830), {}, XR_MAKE_VERSION(1, 0, 27));
+	Session session(reinterpret_cast<XrSession>(831), instance);
+	XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
+	FrameSchedulerConfig timing;
+	timing.mode = ExecutionMode::Deterministic;
+	Require(session.Ready({Duration{1}}) == XR_SUCCESS && session.Begin(begin, timing) == XR_SUCCESS,
+			"Begin recovery session");
+	session.Commands().Submit(
+		Request(1, 1, {TakeControl{ControlChannel::LeftPose}, SetScenario{FailureScenario::LeftDisconnected, true}}));
+	FramePrediction frame, ended;
+	Require(session.WaitFrame(frame) == XR_SUCCESS && session.BeginFrame() == XR_SUCCESS &&
+				session.EndFrame(ended) == XR_SUCCESS,
+			"Apply disconnection scenario");
+	Require(!session.Input().Snapshot().controllers[0].connected &&
+				!session.Tracking().Sample(frame.displayTime)->controllers[0].connected,
+			"Disconnection affects input and tracking");
+	session.Commands().Submit(Request(2, 2, {SetScenario{FailureScenario::LeftDisconnected, false}}));
+	Require(session.WaitFrame(frame) == XR_SUCCESS && session.BeginFrame() == XR_SUCCESS &&
+				session.EndFrame(ended) == XR_SUCCESS,
+			"Apply recovery scenario");
+	Require(session.Input().Snapshot().controllers[0].connected &&
+				session.Tracking().Sample(frame.displayTime)->controllers[0].connected,
+			"Effective disconnection never contaminates the raw native baseline");
+	session.Commands().Submit(
+		Request(3, 3, {TakeControl{ControlChannel::Session}, SetScenario{FailureScenario::Unfocused, true}}));
+	Require(session.WaitFrame(frame) == XR_SUCCESS && session.BeginFrame() == XR_SUCCESS &&
+				session.EndFrame(ended) == XR_SUCCESS,
+			"Apply focus scenario");
+	session.Scheduler().Pause();
+	Require(session.Snapshot().state == XR_SESSION_STATE_VISIBLE, "Focus loss sends actual session transition");
+	session.ReleaseCommandSource(Manual);
+	Require(session.Snapshot().state == XR_SESSION_STATE_FOCUSED && session.Scheduler().Snapshot().paused,
+			"Source release recovers focus while admission stays frozen");
+	session.Close();
+	CommandScheduler bounded(2, 1);
+	bounded.Start();
+	bounded.Submit(Request(1, 1, {TakeControl{ControlChannel::Gaze}}));
+	Tick(bounded, 1);
+	bounded.ReleaseSource(Manual);
+	bounded.Submit(Request(2, 2, {TakeControl{ControlChannel::Gaze}}));
+	Tick(bounded, 2);
+	Require(bounded.Submit(Request(1, 1, {TakeControl{ControlChannel::Gaze}})).result == CommandResult::Conflict,
+			"Release control preserves retired transaction floor beyond history eviction");
+}
+
+void ReferenceSpacePublicationAdmission()
+{
+	using namespace std::chrono_literals;
+	Instance instance(reinterpret_cast<XrInstance>(815), {}, XR_MAKE_VERSION(1, 0, 27));
+	Session session(reinterpret_cast<XrSession>(816), instance);
+	FrameSchedulerConfig timing;
+	timing.mode = ExecutionMode::Deterministic;
+	const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
+	Require(session.Ready(timing.epoch) == XR_SUCCESS, "Ready reference-space admission session");
+	auto invalid = timing;
+	invalid.epoch = {};
+	Require(session.Begin(begin, invalid) == XR_ERROR_TIME_INVALID && !session.Snapshot().running &&
+				!session.Snapshot().generation.value,
+			"An invalid reference-space epoch admitted a partial session generation");
+	Require(session.Begin(begin, timing) == XR_SUCCESS, "Begin reference-space admission session");
+	session.Scheduler().Pause();
+	auto wait = std::async(std::launch::async,
+						   [&]
+						   {
+							   FramePrediction frame;
+							   return session.WaitFrame(frame);
+						   });
+	Eventually(
+		[&]
+		{
+			return session.Scheduler().Snapshot().waitPending;
+		},
+		"Frame did not wait for a permit");
+	auto recording = std::async(std::launch::async,
+								[&]
+								{
+									session.StartCommandRecording();
+								});
+	const bool capturedWhilePaused = recording.wait_for(1s) == std::future_status::ready;
+	Require(session.Scheduler().GrantPermits() == XR_SUCCESS, "Grant reference-space admission permit");
+	Require(wait.get() == XR_SUCCESS, "Admit paused reference-space frame");
+	recording.get();
+	Require(capturedWhilePaused && session.Commands().Recorder().Snapshot().origin.frame.value == 0,
+			"Recording admission was blocked by frame pacing or captured an uncommitted origin");
+	FramePrediction submitted;
+	Require(session.BeginFrame() == XR_SUCCESS && session.EndFrame(submitted) == XR_SUCCESS,
+			"Finish reference-space admission frame");
+
+	ReferenceSpaceState future;
+	future.local.position.x = 12;
+	Require(session.Spaces().Restore({timing.epoch.value + timing.period * 4}, future) == XR_SUCCESS,
+			"Install explicit future origin");
+	Require(
+		session.Commands().Submit(Request(1, 2, {TakeControl{ControlChannel::Head}, SetHeadPose{Pose(3)}})).result ==
+				CommandResult::Queued &&
+			session.Scheduler().GrantPermits() == XR_SUCCESS,
+		"Queue guarded origin boundary");
+	FramePrediction rejected;
+	Require(session.WaitFrame(rejected) == XR_ERROR_RUNTIME_FAILURE && session.Commands().Snapshot().pending == 1 &&
+				!session.Commands().At({2}) && session.Commands().Recorder().Snapshot().total == 0,
+			"An invalid origin boundary consumed commands or published a recording before failure");
+}
+
+void GenerationAndNativeBaseline()
+{
+	using namespace std::chrono_literals;
+	Instance instance(reinterpret_cast<XrInstance>(820), {}, XR_MAKE_VERSION(1, 0, 27));
+	Session session(reinterpret_cast<XrSession>(821), instance);
+	CommandConfiguration launch;
+	launch.tracking.head.pose.position.x = 2;
+	launch.views.ipd = 0.07f;
+	launch.referenceSpaces.local.position.x = 6;
+	launch.referenceSpaces.stageBounds.reset();
+	Require(session.ConfigureCommands(44, launch, false) == XR_SUCCESS,
+			"Configure non-overriding native launch baseline");
+	XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
+	FrameSchedulerConfig config;
+	config.mode = ExecutionMode::Deterministic;
+	Require(session.Ready({Duration{1}}) == XR_SUCCESS && session.Begin(begin, config) == XR_SUCCESS,
+			"Begin baseline session");
+	const auto generation = session.Snapshot().generation;
+	Require(session.Commands().Snapshot().seed == 44 &&
+				session.CommandConfigurationSnapshot().tracking.head.pose.position.x == 2,
+			"Seed and launch settings observable before first wait");
+	Require(session.Spaces().RecordingState(config.epoch).local.position.x == 6 &&
+				!session.Spaces().RecordingState(config.epoch).stageBounds,
+			"Launch configuration did not initialize reference-space origins and bounds");
+	session.StartCommandRecording();
+	FramePrediction prediction, ended;
+	Require(session.WaitFrame(prediction) == XR_SUCCESS && session.BeginFrame() == XR_SUCCESS, "Wait launch state");
+	auto native = launch.tracking;
+	native.head.pose.position.x = 5;
+	auto optics = launch.views;
+	optics.ipd = 0.08f;
+	session.PublishTracking(prediction.displayTime, native, optics, prediction.id);
+	Require(session.EndFrame(ended) == XR_SUCCESS, "Submit native refinement");
+	const auto frame = session.History().Find({generation, prediction.id});
+	Require(frame->submission->commands->configuration.tracking.head.pose.position.x == 5 &&
+				frame->submission->commands->configuration.views.ipd == 0.08f,
+			"Native baseline remains live without a command override");
+	const auto recorded = session.Commands().Recorder().Snapshot();
+	Require(recorded.origin.seed == 44 && recorded.origin.configuration.tracking.head.pose.position.x == 2 &&
+				recorded.origin.configuration.views.ipd == 0.07f,
+			"Recording retains actual pre-wait launch configuration");
+	std::promise<void> entered, release;
+	auto released = release.get_future();
+	auto mutation =
+		std::async(std::launch::async,
+				   [&]
+				   {
+					   return session.WithCommandGeneration(generation,
+															[&]
+															{
+																entered.set_value();
+																released.wait();
+																session.Commands().Submit(
+																	Request(1, 2, {TakeControl{ControlChannel::Gaze}}));
+															});
+				   });
+	entered.get_future().wait();
+	Require(session.RequestExit(prediction.displayTime) == XR_SUCCESS, "Request exit during generation mutation");
+	auto end = std::async(std::launch::async,
+						  [&]
+						  {
+							  return session.End(prediction.displayTime);
+						  });
+	const auto waiting = end.wait_for(20ms);
+	release.set_value();
+	Require(waiting == std::future_status::timeout && mutation.get() && end.get() == XR_SUCCESS,
+			"Lifecycle cannot restart across a bound command mutation");
+	Require(session.Ready({Duration{1}}) == XR_SUCCESS && session.Begin(begin, config) == XR_SUCCESS,
+			"Restart generation");
+	FramePrediction restarted;
+	Require(session.WaitFrame(restarted) == XR_SUCCESS &&
+				session.Spaces().RecordingState(restarted.displayTime).local.position.x == 6,
+			"Restarted session could not publish against a reset reference-space generation");
+	bool invoked = false;
+	Require(!session.WithCommandGeneration(generation,
+										   [&]
+										   {
+											   invoked = true;
+										   }) &&
+				!invoked,
+			"Stale generation callback has no side effects");
+	session.Close();
+}
+
+void PublicationBoundaryRollbackAndHistory()
+{
+	Instance instance(reinterpret_cast<XrInstance>(840), {}, XR_MAKE_VERSION(1, 0, 27));
+	ActionSyncState actions(instance.Actions());
+	SessionPublication publication(instance, actions);
+	CommandConfiguration initial;
+	initial.tracking.head.pose.position.x = 1;
+	initial.views.ipd = 0.065f;
+	publication.Configure(44, initial, false);
+	SessionPublication::PreparedStart start(publication, {Duration{100}}, ViewLayout::StereoWithInset);
+	start.Commit();
+	publication.Commands().Recorder().Start({44, initial});
+	Require(publication.Commands()
+					.Submit(Request(1, 1,
+									{TakeControl{ControlChannel::Head}, SetHeadPose{Pose(4)},
+									 TakeControl{ControlChannel::LeftControls},
+									 SetControllerControls{0, {.trigger = 0.8f}}}))
+					.result == CommandResult::Queued,
+			"Queue publication ownership changes");
+	const FramePrediction first{{1}, {1}, {Duration{110}}, Duration{10}};
+	SessionPublication::FrameBoundary boundary(publication, true, initial.referenceSpaces);
+	bool rejected = false;
+	try
+	{
+		boundary.Reserve(first,
+						 [&]
+						 {
+							 Require(publication.Commands().Recorder().Snapshot().total == 0,
+									 "Reservation callback could not observe uncommitted recorder state");
+							 throw std::bad_alloc{};
+						 });
+	}
+	catch (const std::bad_alloc&)
+	{
+		rejected = true;
+	}
+	Require(rejected && publication.Commands().Snapshot().pending == 1 && !publication.Commands().At(first.id) &&
+				!publication.Tracking().Sample(first.displayTime) &&
+				publication.Input().Snapshot().controllers[0].trigger == 0 &&
+				publication.Commands().Recorder().Snapshot().total == 0,
+			"Rejected history reservation published commanded state or consumed the pending transaction");
+	unsigned reservations = 0;
+	boundary.Reserve(first,
+					 [&]
+					 {
+						 ++reservations;
+					 });
+	boundary.StateTransition(XR_SESSION_STATE_FOCUSED);
+	boundary.Publish();
+	const auto admitted = publication.Commands().At(first.id);
+	Require(reservations == 1 && admitted && admitted->time.value == Duration{10} &&
+				publication.Tracking().Sample(first.displayTime)->head.pose.position.x == 4 &&
+				publication.Commands().Recorder().Snapshot().total == 1,
+			"Retry did not publish exactly one matching command boundary");
+
+	TrackingState native;
+	native.head.pose.position.x = -20;
+	native.controllers[1].pose.pose.position.x = 7;
+	ViewSettings optics;
+	optics.ipd = 0.071f;
+	optics.outerWidth = 900;
+	publication.PublishTracking(first.displayTime, native, optics, true);
+	InputSnapshot input;
+	input.time = first.displayTime;
+	input.controllers[1].grip = 0.6f;
+	Require(publication.PublishInput(input) == XR_SUCCESS &&
+				publication.Input().Snapshot().controllers[0].trigger == 0.8f,
+			"Native publication overrode a commanded channel");
+	const auto originalViews = publication.ConfigurationAt(first.displayTime);
+	Require(originalViews.Describe().size() == 4 && originalViews.Settings().outerWidth == 900,
+			"Active inset optics were not published with native tracking");
+
+	publication.Commands().Submit(Request(2, 2, {SetHeadPose{Pose(9)}}));
+	const FramePrediction second{{2}, {2}, {Duration{120}}, Duration{10}};
+	SessionPublication::FrameBoundary next(publication, true, initial.referenceSpaces);
+	next.Reserve(second,
+				 []
+				 {
+				 });
+	next.Publish();
+	optics.ipd = 0.079f;
+	optics.outerWidth = 1200;
+	publication.PublishTracking(second.displayTime, native, optics, true);
+	FrameSubmissionState historical;
+	historical.displayTime = first.displayTime;
+	publication.CaptureFrame(first.id, historical);
+	Require(historical.viewLayout == ViewLayout::StereoWithInset && historical.commands->frame == first.id &&
+				historical.commands->configuration.tracking.head.pose.position.x == 4 &&
+				historical.commands->configuration.tracking.controllers[1].pose.pose.position.x == 7 &&
+				historical.commands->configuration.views.ipd == 0.071f && historical.viewSettings.outerWidth == 900 &&
+				historical.commands->configuration.input.controllers[1].grip == 0.6f &&
+				admitted->configuration.tracking.controllers[1].pose.pose.position.x != 7,
+			"Older-frame metadata used newer optics/commands or mutated its earlier immutable reader");
+	publication.ReleaseSource(Manual, true);
+	Require(publication.Input().Snapshot().controllers[0].trigger == 0 &&
+				publication.Input().Snapshot().controllers[0].connected &&
+				publication.Input().Snapshot().controllers[1].grip == 0.6f,
+			"Source retirement did not immediately neutralize only its owned controls");
+	publication.Stop();
+	Require(publication.Input().Snapshot().controllers[1].grip == 0 &&
+				publication.Tracking().Sample(first.displayTime)->head.pose.position.x == 4,
+			"Stop lost historical tracking or retained held controls");
+	SessionPublication::PreparedStart restart(publication, {Duration{1000}}, ViewLayout::Stereo);
+	restart.Commit();
+	Require(!publication.Tracking().Sample(first.displayTime) &&
+				publication.ConfigurationAt(first.displayTime).Describe().size() == 2 &&
+				historical.commands->configuration.tracking.head.pose.position.x == 4 &&
+				originalViews.Settings().outerWidth == 900,
+			"Restart leaked prior publication history or changed retained readers");
+}
+
+void SessionBoundary()
+{
+	Instance instance(reinterpret_cast<XrInstance>(810), {}, XR_MAKE_VERSION(1, 0, 27));
+	Session session(reinterpret_cast<XrSession>(811), instance);
+	Require(session.Ready({Duration{1}}) == XR_SUCCESS, "Ready commands session");
+	Require(session.ConfigureCommands(999) == XR_SUCCESS, "Configure seed");
+	XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO};
+	begin.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+	FrameSchedulerConfig timing;
+	timing.mode = ExecutionMode::Deterministic;
+	timing.epoch = {Duration{1000}};
+	timing.period = Duration{10};
+	Require(session.Begin(begin, timing) == XR_SUCCESS, "Begin commands session");
+	session.Commands().Submit(
+		Request(1, 1,
+				{TakeControl{ControlChannel::Head}, SetHeadPose{Pose(4)}, TakeControl{ControlChannel::LeftControls},
+				 SetControllerControls{0, {.trigger = 0.7f}}}));
+	FramePrediction first, second, ended;
+	Require(session.WaitFrame(first) == XR_SUCCESS && session.BeginFrame() == XR_SUCCESS,
+			"Core-only wait applies commands");
+	Require(session.Tracking().Sample(first.displayTime)->head.pose.position.x == 4, "Tracking without native publish");
+	TrackingState native;
+	native.head.pose.position.x = -20;
+	native.controllers[1].pose.pose.position.x = 7;
+	ViewSettings nativeViews;
+	nativeViews.ipd = 0.071f;
+	const auto admissionReader = session.Commands().At(first.id);
+	session.PublishTracking(first.displayTime, native, nativeViews, first.id);
+	InputSnapshot input;
+	input.time = first.displayTime;
+	input.controllers[1].grip = 0.6f;
+	Require(session.PublishInput(input) == XR_SUCCESS && session.Input().Snapshot().controllers[0].trigger == 0.7f,
+			"Native input cannot overwrite scheduled controls");
+	Require(session.Tracking().Sample(first.displayTime)->head.pose.position.x == 4,
+			"Native pose cannot overwrite scheduled head");
+	session.Commands().Submit(Request(2, 2, {SetHeadPose{Pose(9)}}));
+	Require(session.WaitFrame(second) == XR_SUCCESS, "Pipeline next issued frame");
+	Require(session.EndFrame(ended) == XR_SUCCESS, "Submit earlier begun frame");
+	const auto record = session.History().Find({session.Snapshot().generation, first.id});
+	Require(record && record->submission && record->submission->commands &&
+				record->submission->commands->frame == first.id &&
+				record->submission->commands->configuration.tracking.head.pose.position.x == 4,
+			"Submission retains matching earlier command snapshot");
+	Require(record->submission->tracking->head.pose.position.x == 4, "Earlier historical tracking preserved");
+	Require(record->submission->commands->configuration.tracking.controllers[1].pose.pose.position.x == 7 &&
+				record->submission->commands->configuration.views.ipd == 0.071f &&
+				record->submission->commands->configuration.input.controllers[1].grip == 0.6f &&
+				admissionReader->configuration.tracking.controllers[1].pose.pose.position.x != 7,
+			"Submission refines native-unowned values without mutating earlier readers");
+	Require(record->submission->commands->time.value == first.displayTime.value - timing.epoch.value,
+			"Commands record relative simulation time from the fixed epoch");
+	session.Scheduler().Pause();
+	session.Commands().Submit(Request(3, 3, {SetHeadPose{Pose(11)}}));
+	session.StartCommandRecording();
+	failCommandAllocation = true;
+	session.ReleaseCommandSource(Manual);
+	Require(!failCommandAllocation, "Injected cancellation history allocation was exercised");
+	Require(session.Input().Snapshot().controllers[0].trigger == 0 &&
+				session.Input().Snapshot().controllers[0].connected &&
+				session.Input().Snapshot().controllers[1].grip == 0.6f,
+			"Source disconnect releases held controls while frame admission stays paused");
+	Require(session.Commands().Read(Manual, 3)->result == CommandResult::Cancelled &&
+				session.Commands().Recorder().Snapshot().overflow && session.Commands().Snapshot().pending == 0,
+			"Allocation failure still cancels abandoned work and reports incomplete recording");
+	Require(session.BeginFrame() == XR_SUCCESS && session.EndFrame(ended) == XR_SUCCESS &&
+				session.Scheduler().GrantPermits() == XR_SUCCESS,
+			"Finish already admitted frame after cleanup");
+	FramePrediction afterCleanup;
+	Require(session.WaitFrame(afterCleanup) == XR_SUCCESS &&
+				session.Tracking().Sample(afterCleanup.displayTime)->head.pose.position.x != 11,
+			"Cancelled fallback command cannot execute on a later admitted frame");
+	session.Close();
+	Require(session.Commands().Snapshot().closed && session.Commands().Merge({}).input.controllers[0].trigger == 0,
+			"Close releases command ownership");
+	Require(record->submission->commands->seed == 999, "Retained applied state survives session close");
+}
+} // namespace
+int main()
+{
+	try
+	{
+		AllocationFreeSpaceCommit();
+		AtomicCommandState();
+		PreparedBoundaryAllocationRollback();
+		ImmutableRecordingPublication();
+		Transactions();
+		TimeLateCancelBounds();
+		BodyViewsScenariosRecording();
+		AdmissionRollback();
+		RefinedBoundary();
+		ScenarioRecoveryInSession();
+		GenerationAndNativeBaseline();
+		ReferenceSpacePublicationAdmission();
+		SessionBoundary();
+		PublicationBoundaryRollbackAndHistory();
+		std::cout << "Command scheduler tests passed\n";
+		return 0;
+	}
+	catch (const std::exception& error)
+	{
+		std::cerr << error.what() << '\n';
+		return 1;
+	}
+}

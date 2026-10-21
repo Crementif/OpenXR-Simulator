@@ -1,0 +1,15 @@
+{
+  "entryPoints": [
+    {
+      "mode": "vert",
+      "name": "VSMain"
+    }
+  ],
+  "outputs": [
+    {
+      "location": 0,
+      "name": "out.var.TEXCOORD0",
+      "type": "vec2"
+    }
+  ]
+}

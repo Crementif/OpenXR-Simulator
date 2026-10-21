@@ -17,6 +17,14 @@ bool Near(float a, float b) {
     return std::fabs(a - b) < 0.001f;
 }
 
+// The property the whole snap exists for: what we recommend has the shape of what we
+// report. One pixel of rounding either way is all the slack there is.
+bool MatchesFovAspect(uint32_t width, uint32_t height) {
+    if (width == 0 || height == 0) return false;
+    const float want = (float)width / ui::ActiveFovAspect();
+    return std::fabs((float)height - want) <= 1.0f;
+}
+
 } // namespace
 
 int main() {
@@ -24,59 +32,97 @@ int main() {
 
     uint32_t width = 0, height = 0;
     ui::GetRenderResolution(width, height);
-    Check(width == 1280 && height == 1400,
-          "performance resolution is the default");
+    Check(width == 1280 && MatchesFovAspect(width, height),
+          "performance preset keeps its width and takes its height from the FOV");
 
     ui::SetHeadsetProfile(ui::HeadsetProfile::Quest3);
     ui::SetRenderResolution(0, 0);
     ui::GetRenderResolution(width, height);
-    Check(width == 2064 && height == 2208,
-          "native mode follows the active headset panel");
+    Check(width == 2064 && MatchesFovAspect(width, height),
+          "native mode follows the active headset panel width");
 
     ui::SetHeadsetProfile(ui::HeadsetProfile::ValveIndex);
     ui::GetRenderResolution(width, height);
-    Check(width == 1440 && height == 1600,
+    Check(width == 1440 && MatchesFovAspect(width, height),
           "native mode updates when the headset profile changes");
 
+    // A profile switch moves the frustum, so it has to move the recommendation with it --
+    // this is the case that used to advertise Quest 3 pixels in an Index shape.
     ui::SetRenderResolution(1280, 1400);
     ui::SetHeadsetProfile(ui::HeadsetProfile::Quest3);
     ui::GetRenderResolution(width, height);
-    Check(width == 1280 && height == 1400,
-          "explicit render resolution remains independent of headset geometry");
+    const uint32_t quest3Height = height;
+    Check(width == 1280 && MatchesFovAspect(width, height),
+          "an explicit resolution keeps its width across profiles");
+    ui::SetHeadsetProfile(ui::HeadsetProfile::ValveIndex);
+    ui::GetRenderResolution(width, height);
+    Check(width == 1280 && MatchesFovAspect(width, height) && height != quest3Height,
+          "an explicit resolution still re-shapes for the new profile");
 
+    // Symmetric geometry cuts a square out of the plane, so a square is what to recommend.
+    ui::SetHeadsetProfile(ui::HeadsetProfile::GenericSymmetric);
+    ui::GetRenderResolution(width, height);
+    Check(width == 1280 && height == 1280,
+          "the symmetric profile recommends a square target");
+
+    ui::SetHeadsetProfile(ui::HeadsetProfile::Quest3);
     ui::SetRenderResolution(1, 9000);
     ui::GetRenderResolution(width, height);
-    Check(width == 320 && height == 4096,
+    Check(width == (uint32_t)ui::kMinRenderWidth && MatchesFovAspect(width, height),
           "custom render resolution is clamped to runtime limits");
 
+    // The Index frustum is tall enough that a full-width target overflows maxImageRect.
+    ui::SetHeadsetProfile(ui::HeadsetProfile::ValveIndex);
+    ui::SetRenderResolution(ui::kMaxRenderExtent, ui::kMaxRenderExtent);
+    ui::GetRenderResolution(width, height);
+    Check(height == (uint32_t)ui::kMaxRenderExtent && width < (uint32_t)ui::kMaxRenderExtent &&
+          MatchesFovAspect(width, height),
+          "a derived height past maxImageRect gives up width instead of shape");
+
+    // Fit mode: the image is scaled uniformly and centred, never stretched to the client
+    // aspect. 4128x2208 is wider than 16:9, so it meets the sides and leaves bars above
+    // and below.
     ui::g_previewGeom = { 1920, 1080, 4128, 2208 };
     ui::SetFitToWindow();
-    const ui::PreviewRect filled = ui::ComputePreviewRect();
-    Check(Near(filled.x, 0.0f) && Near(filled.y, 0.0f) &&
-          Near(filled.w, 1920.0f) && Near(filled.h, 1080.0f),
-          "fill mode covers the entire client area at a different aspect");
+    const ui::PreviewRect wide = ui::ComputePreviewRect();
+    const float wideScale = 1920.0f / 4128.0f;
+    Check(Near(wide.x, 0.0f) && Near(wide.w, 1920.0f) &&
+          Near(wide.h, 2208.0f * wideScale) &&
+          Near(wide.y, (1080.0f - 2208.0f * wideScale) * 0.5f),
+          "fit mode letterboxes content wider than the client area");
+
+    // ... and the other way round: a tall image meets the top and bottom with bars at
+    // the sides.
+    ui::g_previewGeom = { 1920, 1080, 1000, 1200 };
+    const ui::PreviewRect tall = ui::ComputePreviewRect();
+    const float tallScale = 1080.0f / 1200.0f;
+    Check(Near(tall.y, 0.0f) && Near(tall.h, 1080.0f) &&
+          Near(tall.w, 1000.0f * tallScale) &&
+          Near(tall.x, (1920.0f - 1000.0f * tallScale) * 0.5f),
+          "fit mode pillarboxes content taller than the client area");
 
     ui::g_previewGeom = { 640, 360, 1920, 1080 };
     const ui::PreviewRect downscaled = ui::ComputePreviewRect();
     Check(Near(downscaled.w, 640.0f) && Near(downscaled.h, 360.0f),
-          "fill mode downscales a larger render to the client area");
+          "fit mode downscales a larger render to the client area");
 
     ui::g_previewGeom = { 3840, 2160, 960, 540 };
     const ui::PreviewRect upscaled = ui::ComputePreviewRect();
     Check(Near(upscaled.w, 3840.0f) && Near(upscaled.h, 2160.0f),
-          "fill mode upscales a smaller render to the client area");
+          "fit mode upscales a smaller render to the client area");
 
+    ui::g_uiState = ui::UIState{};
     ui::ApplySettingsJson(
-        "{\"render_width\": 1500, \"render_height\": 1600, \"zoom_mode\": \"fill\"}");
+        "{\"render_width\": 1500, \"render_height\": 1600, \"zoom_mode\": \"fit\"}");
     ui::GetRenderResolution(width, height);
-    Check(width == 1500 && height == 1600 && ui::g_uiState.fitToWindow,
-          "custom settings restore resolution and fill mode");
+    Check(width == 1500 && MatchesFovAspect(width, height) && ui::g_uiState.fitToWindow,
+          "custom settings restore resolution and fit mode");
 
     ui::g_uiState = ui::UIState{};
     ui::ApplySettingsJson("{\"zoom_mode\": \"scale\", \"zoom_scale\": 1.0}");
     ui::GetRenderResolution(width, height);
-    Check(width == 1280 && height == 1400 && ui::g_uiState.fitToWindow,
-          "older settings migrate to the performance resolution and full-window fill");
+    Check(width == 1280 && MatchesFovAspect(width, height) && ui::g_uiState.fitToWindow,
+          "older settings migrate to the performance resolution and fit mode");
 
     if (failures != 0) return 1;
     std::puts("ui_resolution_tests: PASS");

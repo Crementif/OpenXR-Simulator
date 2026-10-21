@@ -1,0 +1,87 @@
+{
+  "entryPoints": [
+    {
+      "mode": "frag",
+      "name": "PSMain"
+    }
+  ],
+  "inputs": [
+    {
+      "location": 0,
+      "name": "in.var.TEXCOORD0",
+      "type": "vec2"
+    }
+  ],
+  "outputs": [
+    {
+      "location": 0,
+      "name": "out.var.SV_Target",
+      "type": "vec4"
+    }
+  ],
+  "push_constants": [
+    {
+      "name": "layer",
+      "push_constant": true,
+      "type": "_5"
+    }
+  ],
+  "separate_images": [
+    {
+      "binding": 0,
+      "name": "sourceTexture",
+      "set": 0,
+      "type": "texture2D"
+    }
+  ],
+  "separate_samplers": [
+    {
+      "binding": 1,
+      "name": "sourceSampler",
+      "set": 0,
+      "type": "sampler"
+    }
+  ],
+  "types": {
+    "_5": {
+      "members": [
+        {
+          "name": "eyeTangents",
+          "offset": 0,
+          "type": "vec4"
+        },
+        {
+          "name": "sourceTangents",
+          "offset": 16,
+          "type": "vec4"
+        },
+        {
+          "name": "sourceFromEyeRotation",
+          "offset": 32,
+          "type": "vec4"
+        },
+        {
+          "name": "sourceFromEyePosition",
+          "offset": 48,
+          "type": "vec4"
+        },
+        {
+          "name": "imageRectangle",
+          "offset": 64,
+          "type": "vec4"
+        },
+        {
+          "name": "quadParameters",
+          "offset": 80,
+          "type": "vec4"
+        },
+        {
+          "name": "control",
+          "offset": 96,
+          "type": "uvec4"
+        }
+      ],
+      "name": "type.ConstantBuffer.LayerConstants"
+    }
+  }
+}

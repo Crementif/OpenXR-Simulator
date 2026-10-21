@@ -1,0 +1,290 @@
+"""Typed synchronous local control API; unfinished exchanges require retry()."""
+from dataclasses import dataclass
+import threading
+import time
+
+from .connection import PacketConnection, ReceivedHandles
+from .discovery import discover
+from .errors import ControlError, ControlTimeout
+from .protocol import (Capability, CommandKind, ErrorCode, Field, OpCode,
+                       ProtocolError, Tag, TargetKind, MAX_PAYLOAD)
+
+
+@dataclass(frozen=True)
+class Session:
+    id: int
+    generation: int
+
+
+@dataclass(frozen=True)
+class Lease:
+    session: Session
+    id: int
+
+
+class Client:
+    def __init__(self, path=None, timeout=2.0, required=Capability.DEBUG_COMMANDS, name='Python SDK'):
+        if path is None:
+            candidates = discover()
+            if len(candidates) != 1:
+                raise ValueError('Select an explicit socket path when discovery finds zero or multiple runtimes')
+            path = candidates[0]
+        self.path = str(path)
+        self._lock = threading.Lock()
+        self._next_command = 1
+        self._connection = PacketConnection(path, timeout)
+        try:
+            self.hello = self.request(OpCode.HELLO, [Field.text(Tag.CLIENT_NAME, name),
+                                                   Field.u64(Tag.REQUIRED_CAPABILITIES, required)])
+        except BaseException:
+            self._connection.close()
+            raise
+
+    @property
+    def timeout(self):
+        return self._connection.timeout
+
+    @timeout.setter
+    def timeout(self, value):
+        if not value > 0:
+            raise ValueError('A positive control timeout is required')
+        self._connection.timeout = value
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()
+
+    def close(self):
+        self._connection.close()
+
+    def request(self, opcode, fields=(), *, handles=()):
+        return self._connection.request(opcode, fields, handles=handles)
+
+    def retry(self):
+        """Finish exactly the unfinished packet, without granting another admission."""
+        return self._connection.retry()
+
+    @staticmethod
+    def _session(session):
+        return [Field.u64(Tag.SESSION, session.id, True), Field.u64(Tag.GENERATION, session.generation, True)]
+
+    @classmethod
+    def _lease(cls, lease):
+        return cls._session(lease.session) + [Field.u64(Tag.LEASE, lease.id, True)]
+
+    def sessions(self):
+        return [Session(item['session'], item['generation']) for item in self.request(OpCode.SESSIONS)['sessions']]
+
+    def status(self, session):
+        return self.request(OpCode.STATUS, self._session(session))
+
+    def acquire(self, session):
+        return Lease(session, self.request(OpCode.ACQUIRE, self._session(session))['lease'])
+
+    def renew(self, lease):
+        return self.request(OpCode.RENEW, self._lease(lease))
+
+    def relinquish(self, lease):
+        return self.request(OpCode.RELINQUISH, self._lease(lease))
+
+    def submit(self, lease, command, *, command_id=None, lookahead=1, target=TargetKind.COMPOSED_EYES,
+               layer=0, view=0, operation=None, capture=None):
+        if command_id is None:
+            with self._lock:
+                command_id = self._next_command
+                self._next_command += 1
+        else:
+            with self._lock:
+                self._next_command = max(self._next_command, command_id + 1)
+        fields = self._lease(lease) + [Field.u64(Tag.COMMAND_ID, command_id, True),
+            Field.u32(Tag.COMMAND_KIND, command, True), Field.u32(Tag.LOOKAHEAD, lookahead),
+            Field.nested(Tag.TARGET, [Field.u32(Tag.CAPTURE_KIND, target, True),
+                                      Field.u32(Tag.LAYER, layer), Field.u32(Tag.VIEW, view)])]
+        if operation is not None:
+            fields.append(Field.u64(Tag.OPERATION_ID, operation))
+        if capture is not None:
+            fields.append(Field.u64(Tag.CAPTURE_ID, capture))
+        return self.request(OpCode.SUBMIT, fields)
+
+    def operation(self, session, operation):
+        return self.request(OpCode.OPERATION, self._session(session) + [Field.u64(Tag.OPERATION_ID, operation, True)])
+
+    def capture(self, session, capture):
+        return self.request(OpCode.CAPTURE, self._session(session) + [Field.u64(Tag.CAPTURE_ID, capture, True)])
+
+    def inspect(self, session, capture):
+        """Retain historical CPU state and its immutable feature revisions.
+
+        Repeated inspection of the same frame reuses its connection-owned record.
+        Call release_inspection() to relinquish this independent metadata reader.
+        """
+        return self.request(OpCode.INSPECT_FRAME, self._session(session) + [Field.u64(Tag.CAPTURE_ID, capture, True)])
+
+    def revision(self, revision):
+        return self.request(OpCode.FEATURE_REVISION, [Field.u64(Tag.REVISION_ID, revision, True)])
+
+    def release_inspection(self, inspection):
+        return self.request(OpCode.RELEASE_INSPECTION, [Field.u64(Tag.INSPECTION_ID, inspection, True)])
+
+    def retain_image(self, session, capture):
+        return self.request(OpCode.RETAIN_IMAGE, self._session(session) + [Field.u64(Tag.CAPTURE_ID, capture, True)])
+
+    def image_info(self, image_reader):
+        return self.request(OpCode.IMAGE_INFO, [Field.u64(Tag.IMAGE_READER_ID, image_reader, True)])
+
+    def retain_preview(self, session):
+        """Retain the current completed display image, or observe its actual clear."""
+        return self.request(OpCode.RETAIN_PREVIEW, self._session(session))
+
+    def share_image(self, image_reader, device_uuid, driver_uuid, consumer_fence_fd):
+        device_uuid, driver_uuid = bytes(device_uuid), bytes(driver_uuid)
+        if len(device_uuid) != 16 or len(driver_uuid) != 16:
+            raise ProtocolError('External device and driver UUIDs require exactly 16 bytes')
+        return self.request(OpCode.SHARE_IMAGE, [Field.u64(Tag.IMAGE_READER_ID, image_reader, True),
+                            Field.binary(Tag.DEVICE_UUID, device_uuid, True), Field.binary(Tag.DRIVER_UUID, driver_uuid, True)],
+                            handles=(consumer_fence_fd,))
+
+    def delivery_info(self, delivery):
+        return self.request(OpCode.DELIVERY_INFO, [Field.u64(Tag.DELIVERY_ID, delivery, True)])
+
+    def release_delivery(self, delivery):
+        return self.request(OpCode.RELEASE_DELIVERY, [Field.u64(Tag.DELIVERY_ID, delivery, True)])
+
+    def release_image(self, image_reader):
+        return self.request(OpCode.RELEASE_IMAGE, [Field.u64(Tag.IMAGE_READER_ID, image_reader, True)])
+
+    def start_export(self, image_reader, layer=None):
+        fields = [Field.u64(Tag.IMAGE_READER_ID, image_reader, True)]
+        if layer is not None:
+            fields.append(Field.u32(Tag.LAYER, layer, True))
+        return self.request(OpCode.START_EXPORT, fields)
+
+    def export_info(self, export):
+        return self.request(OpCode.EXPORT_INFO, [Field.u64(Tag.EXPORT_ID, export, True)])
+
+    def read_export(self, export, offset=0, length=MAX_PAYLOAD - 4096):
+        if type(offset) is not int or not 0 <= offset < 2**64 or type(length) is not int or not 1 <= length <= MAX_PAYLOAD - 4096:
+            raise ProtocolError('Export offset/length is outside the bounded read range')
+        return self.request(OpCode.READ_EXPORT, [Field.u64(Tag.EXPORT_ID, export, True),
+                            Field.u64(Tag.OFFSET, offset, True), Field.u64(Tag.LENGTH, length, True)])
+
+    def release_export(self, export):
+        return self.request(OpCode.RELEASE_EXPORT, [Field.u64(Tag.EXPORT_ID, export, True)])
+
+    def acknowledge(self, lease, through):
+        return self.request(OpCode.ACKNOWLEDGE, self._lease(lease) + [Field.u64(Tag.COMMAND_ID, through, True)])
+
+    def wait(self, session, operation, timeout=5.0, interval=0.01):
+        """Polls metadata only. Deadline never means GPU completion or cancellation."""
+        deadline = time.monotonic() + timeout
+        while True:
+            record = self.operation(session, operation)
+            if record['phase'] in ('complete', 'failed', 'cancelled', 'interrupted'):
+                return record
+            if record['phase'] not in ('queued', 'pending'):
+                raise ProtocolError(f'Unsupported operation phase: {record["phase"]}')
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f'Operation {operation} remains unfinished')
+            time.sleep(interval)
+
+    def schedule(self, session, commands, *, frame=None, time_ns=None, transaction_id=None,
+                 source=1, late_policy=0):
+        """Schedule one atomic input transaction at an exact future boundary.
+
+        Source is fixed for a connection (manual=0, MCP=1, rig=2). Include an
+        explicit take_control command before writing each channel. A queued
+        response is admission, not application; poll simulation_status().
+        """
+        from .commands import encode_command, SourceKind, LatePolicy
+        if (frame is None) == (time_ns is None):
+            raise ProtocolError('Select exactly one frame or simulation time target')
+        commands = tuple(commands)
+        if not 1 <= len(commands) <= 64:
+            raise ProtocolError('A transaction requires 1 through 64 commands')
+        if transaction_id is None:
+            with self._lock:
+                transaction_id = getattr(self, '_next_transaction', 1)
+                self._next_transaction = transaction_id + 1
+        elif type(transaction_id) is not int or not 0 < transaction_id < 2**64:
+            raise ProtocolError('A nonzero uint64 transaction_id is required')
+        else:
+            with self._lock:
+                self._next_transaction = max(getattr(self, '_next_transaction', 1), transaction_id + 1)
+        fields = self._session(session) + [Field.u64(Tag.TRANSACTION_ID, transaction_id, True),
+            Field.u32(Tag.SOURCE_KIND, SourceKind(source), True), Field.u32(Tag.LATE_POLICY, LatePolicy(late_policy), True),
+            Field.nested(Tag.COMMANDS, [encode_command(command, i + 1) for i, command in enumerate(commands)], True)]
+        if frame is not None:
+            if type(frame) is not int or not 0 < frame < 2**64:
+                raise ProtocolError('A positive uint64 frame is required')
+            fields.append(Field.u64(Tag.APPLY_FRAME, frame, True))
+        else:
+            if type(time_ns) is not int or not 0 <= time_ns < 2**63:
+                raise ProtocolError('A nonnegative int64 simulation time is required')
+            fields.append(Field.i64(Tag.APPLY_TIME, time_ns, True))
+        return self.request(OpCode.SUBMIT_SIMULATION, fields)
+
+    def simulation_status(self, session, transaction=None, *, source=1):
+        fields = self._session(session) + [Field.u32(Tag.SOURCE_KIND, source)]
+        if transaction is not None:
+            fields.append(Field.u64(Tag.TRANSACTION_ID, transaction, True))
+        return self.request(OpCode.SIMULATION_STATUS, fields)
+
+    def cancel_simulation(self, session, transaction, *, source=1):
+        return self.request(OpCode.CANCEL_SIMULATION, self._session(session) + [
+            Field.u64(Tag.TRANSACTION_ID, transaction, True), Field.u32(Tag.SOURCE_KIND, source)])
+
+    def release_control(self, session, *, source=1):
+        """Cancel pending source work and release held inputs/ownership."""
+        return self.request(OpCode.RELEASE_CONTROL, self._session(session) + [Field.u32(Tag.SOURCE_KIND, source)])
+
+    def start_recording(self, session, *, source=1):
+        return self.request(OpCode.START_RECORDING, self._session(session) + [Field.u32(Tag.SOURCE_KIND, source)])
+
+    def stop_recording(self, session, *, source=1):
+        return self.request(OpCode.STOP_RECORDING, self._session(session) + [Field.u32(Tag.SOURCE_KIND, source)])
+
+    def read_recording(self, session, *, offset=0, count=16):
+        if type(offset) is not int or not 0 <= offset <= 1024 or type(count) is not int or not 0 <= count <= 16:
+            raise ProtocolError('Recording pages require offset in [0,1024], count in [0,16]')
+        return self.request(OpCode.READ_RECORDING, self._session(session) + [
+            Field.u64(Tag.OFFSET, offset), Field.u64(Tag.LENGTH, count)])
+
+    def wait_simulation(self, session, transaction, *, source=1, timeout=5.0, interval=0.01):
+        deadline = time.monotonic() + timeout
+        while True:
+            result = self.simulation_status(session, transaction, source=source)
+            phase = result.get('phase')
+            if phase in ('applied', 'late', 'conflict', 'cancelled', 'invalid', 'capacity', 'closed', 'not_found'):
+                return result
+            if phase not in ('queued', 'rescheduled'):
+                raise ProtocolError(f'Unknown simulation transaction phase: {phase!r}')
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f'Simulation transaction {transaction} remains unfinished')
+            time.sleep(interval)
+
+
+    def diagnostics(self, session, *, after=0, count=128, frame=None):
+        if type(after) is not int or not 0 <= after < 2**64 or type(count) is not int or not 0 <= count <= 256:
+            raise ProtocolError('Diagnostic pages require a uint64 cursor and count in [0,256]')
+        fields = self._session(session) + [Field.u64(Tag.OFFSET, after), Field.u64(Tag.LENGTH, count)]
+        if frame is not None:
+            fields.append(Field.u64(Tag.FRAME_ID, frame))
+        return self.request(OpCode.READ_DIAGNOSTICS, fields)
+
+
+    def game_status(self, session=None):
+        return self.request(OpCode.GAME_STATUS, self._session(session) if session is not None else [])
+
+    def game_command(self, session, game, kind, payload='', *, command_id=None):
+        if command_id is None:
+            with self._lock:
+                command_id = getattr(self, '_next_game_command', 1)
+                self._next_game_command = command_id + 1
+        return self.request(OpCode.SUBMIT_GAME, (self._session(session) if session is not None else []) + [Field.u64(Tag.GAME_ID, game, True),
+            Field.u64(Tag.COMMAND_ID, command_id, True), Field.u32(Tag.GAME_KIND, kind, True), Field.text(Tag.DETAIL, payload, True)])
+
+    def game_operation(self, session, game, operation):
+        return self.request(OpCode.GAME_OPERATION, (self._session(session) if session is not None else []) + [Field.u64(Tag.GAME_ID, game, True),
+            Field.u64(Tag.OPERATION_ID, operation, True)])

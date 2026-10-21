@@ -1,3 +1,0 @@
-LIBRARY openxr_simulator
-EXPORTS
-    xrNegotiateLoaderRuntimeInterface=_xrNegotiateLoaderRuntimeInterface@8

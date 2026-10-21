@@ -1,0 +1,660 @@
+#include "control/ControlService.h"
+#include "control/ConnectionImages.h"
+#include "control/ConnectionLeases.h"
+#include "control/ConnectionRequests.h"
+#include "control/ControlRequestError.h"
+#include "control/ControlSchema.h"
+#include "control/ControlSessions.h"
+#include "control/DebugProtocol.h"
+#include "control/FrameInspection.h"
+#include "control/ImageInspection.h"
+#include "control/RecordingControl.h"
+#include "control/SimulationConnection.h"
+#include "runtime/Runtime.h"
+
+#include <algorithm>
+#include <array>
+#include <limits>
+#include <mutex>
+#include <stdexcept>
+#include <type_traits>
+#include <utility>
+#include <vector>
+
+namespace simxr::control
+{
+namespace
+{
+constexpr std::uint64_t CommonCapabilities = static_cast<std::uint64_t>(Capability::DebugCommands) |
+											 static_cast<std::uint64_t>(Capability::SnapshotMetadata) |
+											 static_cast<std::uint64_t>(Capability::PipelineInspection) |
+											 static_cast<std::uint64_t>(Capability::HistoricalCpuState) |
+											 static_cast<std::uint64_t>(Capability::ImmutableRevisions);
+
+Message Response(const Message& request, ErrorCode error = ErrorCode::Ok, const char* detail = nullptr)
+{
+	Message response;
+	response.opcode = request.opcode;
+	response.flags = 1;
+	response.minor = std::min(request.minor, ProtocolMinor);
+	response.requestId = request.requestId;
+	response.fields.push_back(Field::U32(tag::Error, static_cast<std::uint32_t>(error), true));
+	if (detail)
+		response.fields.push_back(Field::Text(tag::Detail, detail));
+	return response;
+}
+Field Nested(std::uint16_t name, std::vector<Field> fields)
+{
+	return Field::Bytes(name, EncodeFields(fields));
+}
+std::uint64_t ImageCapabilitiesMask(ImageCapabilities capabilities, bool handles)
+{
+	return (capabilities.imageExport ? static_cast<std::uint64_t>(Capability::ImageExport) : 0) |
+		   (capabilities.gpuPreview && handles ? static_cast<std::uint64_t>(Capability::GpuPreview) : 0);
+}
+} // namespace
+
+class ControlService::State
+{
+  public:
+	State(Runtime& runtime, std::size_t capacity, std::shared_ptr<ImageInspectionProvider> images);
+	~State();
+	std::optional<ConnectionId> Connect(bool nativeHandles);
+	void Disconnect(ConnectionId connection) noexcept;
+	ControlPacket HandlePacket(ConnectionId connection, const ControlPacket& packet);
+	void Close() noexcept;
+
+  private:
+	struct Client
+	{
+		ConnectionId identity;
+		std::unique_ptr<SimulationConnection> simulation;
+		const bool nativeHandles;
+		ConnectionLeases leases;
+		InspectionStore inspections;
+		ConnectionImages images;
+		// Destroy admission first so its close observer can still retire the
+		// connection's leases and simulation source using live member owners.
+		ConnectionRequests requests;
+		Client(Runtime& runtime, bool nativeHandles)
+			: nativeHandles(nativeHandles), requests(
+												[this, &runtime]
+												{
+													Retire(runtime);
+												})
+		{
+		}
+		void Retire(Runtime& runtime) noexcept
+		{
+			auto retiredSimulation = std::move(simulation);
+			leases.Close();
+			if (identity.value)
+				runtime.Game().Disconnect(identity.value, true);
+		}
+	};
+	struct Publication
+	{
+		InspectionStore& store;
+		ConnectionImages::Publication images;
+		std::optional<std::uint64_t> inspection;
+		bool committed = false;
+		Publication(Client& client, ConnectionImages::RetiredResource& retired)
+			: store(client.inspections), images(client.images, retired)
+		{
+		}
+		~Publication()
+		{
+			if (inspection && !committed)
+				store.Release(*inspection);
+		}
+		void Commit() noexcept
+		{
+			committed = true;
+			images.Commit();
+		}
+	};
+	struct HeldReaders
+	{
+		ControlSessions::Snapshot sessions;
+		std::shared_ptr<DebugController> controller;
+		std::optional<SnapshotRecord> capture;
+		std::optional<DebugOperation> operation;
+		std::optional<PresentationSnapshot> display;
+		ConnectionImages::RetiredResource images;
+		ConnectionLeases::Retired leases;
+		static_assert(std::is_nothrow_move_assignable_v<decltype(capture)>);
+		static_assert(std::is_nothrow_move_assignable_v<decltype(operation)>);
+		static_assert(std::is_nothrow_move_assignable_v<decltype(display)>);
+	};
+	Runtime& m_runtime;
+	const std::shared_ptr<ImageInspectionProvider> m_images;
+	const std::size_t m_capacity;
+	std::mutex m_mutex;
+	bool m_closed = false;
+	std::uint64_t m_nextConnection = 1;
+	ControlSessions m_sessions;
+	RecordingControl m_recordings;
+	std::vector<std::pair<ConnectionId, std::shared_ptr<Client>>> m_clients;
+
+	std::uint64_t ServiceCapabilities(std::uint16_t minor) const
+	{
+		auto capabilities = CommonCapabilities;
+		if (minor >= 4)
+		{
+			capabilities |= static_cast<std::uint64_t>(Capability::SimulationCommands) |
+							static_cast<std::uint64_t>(Capability::CommandRecording) |
+							static_cast<std::uint64_t>(Capability::FrameDiagnostics);
+			if (m_runtime.Game().Snapshot().capabilities)
+				capabilities |= static_cast<std::uint64_t>(Capability::GameBridge);
+		}
+		return capabilities;
+	}
+	std::uint64_t AdvertisedCapabilities(const Client& client, std::uint16_t minor) const
+	{
+		auto capabilities = ServiceCapabilities(minor);
+		if (m_images && minor >= 2)
+			capabilities |= ImageCapabilitiesMask({true, true}, client.nativeHandles);
+		if (m_images && minor >= 3)
+			capabilities |= static_cast<std::uint64_t>(Capability::LivePreview);
+		return capabilities;
+	}
+
+	std::shared_ptr<Client> Find(ConnectionId id)
+	{
+		std::lock_guard lock(m_mutex);
+		const auto entry = std::find_if(m_clients.begin(), m_clients.end(),
+										[&](const auto& value)
+										{
+											return value.first == id;
+										});
+		return entry == m_clients.end() ? nullptr : entry->second;
+	}
+	const ControlSession& Resolve(Client& client, const Message& request, HeldReaders& held)
+	{
+		m_sessions.Discover(held.sessions);
+		client.leases.Prune(held.sessions.Ids(), held.leases);
+		return held.sessions.Resolve({RequireRequestU64(request, tag::Session)},
+									 {RequireRequestU64(request, tag::Generation)});
+	}
+
+	Message DispatchGame(Client& client, const Message& request)
+	{
+		auto response = Response(request);
+		response.minor = client.requests.Minor();
+		InspectionValue document;
+		switch (static_cast<OpCode>(request.opcode))
+		{
+		case OpCode::GameStatus:
+		{
+			const auto game = m_runtime.Game().Snapshot();
+			response.fields.push_back(Field::U64(tag::GameId, game.game));
+			document = InspectionValue::Object({{"game_id", InspectionValue::Unsigned(game.game)},
+												{"capabilities", InspectionValue::Unsigned(game.capabilities)},
+												{"revision", InspectionValue::Unsigned(game.revision)},
+												{"telemetry", InspectionValue::Text(game.telemetry)},
+												{"queued", InspectionValue::Unsigned(game.queued)},
+												{"delivered", InspectionValue::Unsigned(game.delivered)}});
+			break;
+		}
+		case OpCode::SubmitGame:
+		case OpCode::GameOperation:
+		{
+			std::optional<GameCommandRecord> operation;
+			const auto game = RequireRequestU64(request, tag::GameId);
+			if (request.opcode == static_cast<std::uint16_t>(OpCode::SubmitGame))
+			{
+				const auto* payload = request.Find(tag::Detail);
+				if (!payload || !payload->AsText())
+					throw ControlRequestError{ErrorCode::Invalid, "Game command requires a text payload"};
+				operation =
+					m_runtime.Game().Submit(game, client.identity.value, RequireRequestU64(request, tag::CommandId),
+											RequireRequestU32(request, tag::GameKind), std::string{*payload->AsText()});
+			}
+			else
+				operation =
+					m_runtime.Game().Read(game, client.identity.value, RequireRequestU64(request, tag::OperationId));
+			if (!operation)
+				throw ControlRequestError{ErrorCode::Conflict,
+										  "Game command unavailable, identity changed or bounded capacity exhausted"};
+			static constexpr std::array phases{"queued", "delivered", "complete", "failed", "cancelled", "interrupted"};
+			response.fields.push_back(Field::U64(tag::GameId, game));
+			response.fields.push_back(Field::U64(tag::OperationId, operation->id));
+			response.fields.push_back(Field::Text(tag::Phase, phases.at(static_cast<std::size_t>(operation->phase))));
+			document = InspectionValue::Object(
+				{{"command_id", InspectionValue::Unsigned(operation->clientId)},
+				 {"kind", InspectionValue::Unsigned(operation->kind)},
+				 {"payload", InspectionValue::Text(operation->payload)},
+				 {"result", InspectionValue::Text(operation->result)},
+				 {"source_disconnected", InspectionValue::Boolean(operation->sourceDisconnected)}});
+			break;
+		}
+		default:
+			throw ControlRequestError{ErrorCode::UnsupportedCommand, "Unsupported game operation"};
+		}
+		response.fields.push_back(Field::Bytes(tag::Document, document.Encode(), true));
+		return response;
+	}
+	Message DispatchFrame(Client& client, const Message& request, const ControlSession& binding, HeldReaders& held,
+						  Publication& publication, Message response)
+	{
+		const auto& session = binding.session;
+		switch (static_cast<OpCode>(request.opcode))
+		{
+		case OpCode::InspectFrame:
+		{
+			auto capture = session->Captures().Read({RequireRequestU64(request, tag::CaptureId)});
+			if (!capture)
+				throw ControlRequestError{ErrorCode::NotFound, "Snapshot is absent or released"};
+			held.capture = std::move(capture);
+			const auto& value = *held.capture;
+			if (!value.metadata || !value.metadata->submission)
+				throw ControlRequestError{ErrorCode::Busy, "Submitted CPU metadata is not available yet"};
+			const bool existing = client.inspections.Find(binding.id, value.metadata->key) != nullptr;
+			const auto inspection = InspectFrame(client.inspections, binding.id, *value.metadata);
+			if (!existing)
+				publication.inspection = inspection->id;
+			response.fields.push_back(Field::U64(tag::CaptureId, value.id.value));
+			response.fields.push_back(Field::U64(tag::InspectionId, inspection->id));
+			response.fields.push_back(EncodeFrameKey(tag::Frame, inspection->frame));
+			response.fields.push_back(Field::Bytes(tag::Document, inspection->document, true));
+			return response;
+		}
+		case OpCode::RetainPreview:
+		{
+			held.display = session->Display().Snapshot();
+			const auto& display = *held.display;
+			if (display.generation.value != RequireRequestU64(request, tag::Generation))
+				throw ControlRequestError{ErrorCode::StaleGeneration,
+										  "Display generation differs from the requested run"};
+			if (!display.latest)
+				throw ControlRequestError{ErrorCode::Busy, "Virtual display has not selected an image or clear yet"};
+			const auto& selected = *display.latest;
+			response = Response(request);
+			response.minor = client.requests.Minor();
+			response.fields.push_back(Field::U64(tag::Session, binding.id.value));
+			response.fields.push_back(Field::U64(tag::Generation, display.generation.value));
+			response.fields.push_back(EncodeDisplayTick(tag::Display, selected));
+			response.fields.push_back(Field::Bool(tag::ImageAvailable, selected.output != nullptr));
+			if (!selected.output)
+				return response;
+			if (!selected.source || selected.source->generation != display.generation ||
+				selected.output->PollCompletion() != CompletionStatus::Complete)
+				throw ControlRequestError{ErrorCode::Busy, "Selected display image is not complete"};
+			const ImageSource source{binding.id, *selected.source, {}, {CaptureKind::VirtualDisplay}};
+			client.images.Retain(response, source, selected.output, *m_images, client.nativeHandles, publication.images,
+								 false);
+			return response;
+		}
+		case OpCode::RetainImage:
+		{
+			auto capture = session->Captures().Read({RequireRequestU64(request, tag::CaptureId)});
+			if (!capture)
+				throw ControlRequestError{ErrorCode::NotFound, "Snapshot is absent or released"};
+			held.capture = std::move(capture);
+			const auto& value = *held.capture;
+			if (!value.frame || value.generation.value != RequireRequestU64(request, tag::Generation))
+				throw ControlRequestError{ErrorCode::StaleGeneration,
+										  "Capture generation differs from the requested session run"};
+			if (value.phase != SnapshotPhase::Ready || !value.output)
+				throw ControlRequestError{value.phase == SnapshotPhase::GpuPending ? ErrorCode::Busy
+																				   : ErrorCode::UnsupportedCommand,
+										  "Capture has no ready GPU image"};
+			const ImageSource source{binding.id, *value.frame, value.id, value.target};
+			response = Response(request);
+			response.minor = client.requests.Minor();
+			client.images.Retain(response, source, value.output, *m_images, client.nativeHandles, publication.images);
+			return response;
+		}
+		case OpCode::Capture:
+		{
+			auto capture = session->Captures().Read({RequireRequestU64(request, tag::CaptureId)});
+			if (!capture)
+				throw ControlRequestError{ErrorCode::NotFound, "Snapshot is absent or released"};
+			held.capture = std::move(capture);
+			const auto& value = *held.capture;
+			EncodeCaptureMetadata(response, value);
+			return response;
+		}
+		default:
+			throw ControlRequestError{ErrorCode::UnsupportedCommand, "Unsupported frame inspection operation"};
+		}
+	}
+	Message DispatchDebugger(Client& client, const Message& request, const ControlSession& binding, HeldReaders& held,
+							 Message response)
+	{
+		const auto& session = binding.session;
+		auto controller = m_runtime.Debugger(binding.handle);
+		if (!controller)
+			throw ControlRequestError{ErrorCode::Closed, "Session debugger closed"};
+		held.controller = controller;
+		switch (static_cast<OpCode>(request.opcode))
+		{
+		case OpCode::Status:
+		{
+			const auto status = controller->Snapshot();
+			const auto state = session->Snapshot();
+			held.display = session->Display().Snapshot();
+			const auto& display = *held.display;
+			auto capabilities = ServiceCapabilities(client.requests.Minor());
+			if (m_images && client.requests.Minor() >= 2)
+			{
+				const auto native = m_images->Capabilities(binding.handle);
+				capabilities |= ImageCapabilitiesMask(native, client.nativeHandles);
+				if (client.requests.Minor() >= 3 && (native.gpuPreview || native.imageExport))
+					capabilities |= static_cast<std::uint64_t>(Capability::LivePreview);
+			}
+			if (status.composedEyes)
+				capabilities |= static_cast<std::uint64_t>(Capability::ComposedCapture);
+			if (status.layerViews)
+				capabilities |= static_cast<std::uint64_t>(Capability::LayerViewCapture);
+			EncodeDebuggerStatus(response, status, state, display, capabilities);
+			return response;
+		}
+		case OpCode::Acquire:
+		{
+			const auto lease = client.leases.Acquire(binding.id, controller, *session,
+													 {RequireRequestU64(request, tag::Generation)}, held.leases);
+			response.fields.push_back(Field::U64(tag::Lease, lease.id.value));
+			response.fields.push_back(
+				Field::I64(tag::LeaseRemaining, (lease.expires - session->ClockSource()->Now()).count()));
+			return response;
+		}
+		case OpCode::Renew:
+			client.leases.Renew(binding.id, {RequireRequestU64(request, tag::Lease)}, *session,
+								{RequireRequestU64(request, tag::Generation)});
+			return response;
+		case OpCode::Relinquish:
+			client.leases.Relinquish(binding.id, {RequireRequestU64(request, tag::Lease)}, *session,
+									 {RequireRequestU64(request, tag::Generation)}, held.leases);
+			return response;
+		case OpCode::Submit:
+		{
+			const auto command = DecodeDebugRequest(request);
+			EncodeDebugAdmission(response,
+								 client.leases.Submit(binding.id, {RequireRequestU64(request, tag::Lease)}, command));
+			return response;
+		}
+		case OpCode::Operation:
+		{
+			auto operation = controller->Read({RequireRequestU64(request, tag::OperationId)});
+			if (!operation)
+				throw ControlRequestError{ErrorCode::NotFound, "Operation is absent or acknowledged"};
+			held.operation = std::move(operation);
+			const auto& value = *held.operation;
+			EncodeDebugOperation(response, value);
+			return response;
+		}
+		case OpCode::Acknowledge:
+			client.leases.Acknowledge(binding.id, {RequireRequestU64(request, tag::Lease)},
+									  {RequireRequestU64(request, tag::CommandId)}, *session,
+									  {RequireRequestU64(request, tag::Generation)}, held.leases);
+			return response;
+
+		default:
+			throw ControlRequestError{ErrorCode::UnsupportedCommand, "Unsupported operation"};
+		}
+	}
+	Message Dispatch(Client& client, const Message& request, HeldReaders& held, Publication& publication,
+					 const ControlPacket& incoming, ControlPacket& outgoing)
+	{
+		const auto& schema = ValidateControlRequest(incoming, client.nativeHandles);
+		const auto opcode = schema.opcode;
+		auto response = Response(request);
+		response.fields.reserve(32);
+		if (opcode == OpCode::Hello)
+		{
+			if (client.requests.Negotiated())
+				throw ControlRequestError{ErrorCode::Conflict, "Connection already negotiated"};
+			if (const auto* name = request.Find(tag::ClientName); name && (!name->AsText() || name->value.size() > 256))
+				throw ControlRequestError{ErrorCode::Invalid, "Invalid client name"};
+			const auto* required = request.Find(tag::RequiredCapabilities);
+			const auto* optional = request.Find(tag::OptionalCapabilities);
+			if ((required && !required->AsU64()) || (optional && !optional->AsU64()))
+				throw ControlRequestError{ErrorCode::Invalid, "Invalid capability mask"};
+			const auto negotiatedMinor = std::min(request.minor, ProtocolMinor);
+			const auto capabilities = AdvertisedCapabilities(client, negotiatedMinor);
+			if (required && (*required->AsU64() & ~capabilities))
+				throw ControlRequestError{ErrorCode::UnsupportedCommand, "Required control capability unavailable"};
+			response.minor = negotiatedMinor;
+			response.fields.push_back(Field::U32(tag::Minor, negotiatedMinor));
+			response.fields.push_back(Field::U64(tag::Capabilities, capabilities));
+			response.fields.push_back(Field::U32(tag::PayloadLimit, MaxPayload));
+			if (!client.requests.Negotiate(negotiatedMinor))
+				throw ControlRequestError{ErrorCode::Conflict, "Connection already negotiated"};
+			return response;
+		}
+		if (!client.requests.Negotiated())
+			throw ControlRequestError{ErrorCode::NotNegotiated, "Hello is required"};
+		response.minor = client.requests.Minor();
+		if (client.requests.Minor() < schema.minimumMinor)
+			throw ControlRequestError{ErrorCode::UnsupportedCommand,
+									  "Operation unavailable in negotiated protocol minor"};
+		if (schema.domain == RequestDomain::Images)
+		{
+			if (!m_images)
+				throw ControlRequestError{ErrorCode::UnsupportedCommand, "Image inspection service unavailable"};
+			if (opcode != OpCode::RetainImage && opcode != OpCode::RetainPreview)
+				return client.images.Dispatch(incoming, outgoing, client.requests.Minor(), client.nativeHandles,
+											  publication.images, held.images);
+		}
+		if (opcode == OpCode::Sessions)
+		{
+			std::vector<Field> entries;
+			m_sessions.Discover(held.sessions);
+			client.leases.Prune(held.sessions.Ids(), held.leases);
+			for (const auto& binding : held.sessions.Sessions())
+			{
+				const auto state = binding.session->Snapshot();
+				entries.push_back(Nested(
+					static_cast<std::uint16_t>(entries.size() + 1),
+					{Field::U64(tag::Session, binding.id.value), Field::U64(tag::Generation, state.generation.value),
+					 Field::Bool(tag::Running, state.running), Field::Bool(tag::Closed, state.closed)}));
+			}
+			response.fields.push_back(Nested(tag::Sessions, std::move(entries)));
+			return response;
+		}
+		// Connection-owned immutable metadata remains readable after its session
+		// ends. No native or GPU resource ownership is retained by this catalog.
+		if (opcode == OpCode::FeatureRevision)
+		{
+			auto revision = client.inspections.ReadRevision(RequireRequestU64(request, tag::RevisionId));
+			if (!revision)
+				throw ControlRequestError{ErrorCode::NotFound, "Revision is absent or no longer retained"};
+			response.fields.push_back(Field::U64(tag::RevisionId, revision->id));
+			response.fields.push_back(Field::Text(tag::RevisionKind, revision->document.kind));
+			response.fields.push_back(Field::Bytes(tag::Document, revision->document.bytes, true));
+			return response;
+		}
+		if (opcode == OpCode::ReleaseInspection)
+		{
+			const auto id = RequireRequestU64(request, tag::InspectionId);
+			response.fields.push_back(Field::U64(tag::InspectionId, id));
+			response.fields.push_back(Field::Bool(tag::Released, client.inspections.Release(id)));
+			return response;
+		}
+		if (schema.domain == RequestDomain::Game)
+		{
+			if (request.Find(tag::Session) || request.Find(tag::Generation))
+				Resolve(client, request, held);
+			return DispatchGame(client, request);
+		}
+		const auto& binding = Resolve(client, request, held);
+		const auto& session = binding.session;
+		if (schema.domain == RequestDomain::Simulation)
+			return client.simulation->Dispatch(request, binding, std::move(response));
+		response.fields.push_back(Field::U64(tag::Session, binding.id.value));
+		response.fields.push_back(Field::U64(tag::Generation, session->Snapshot().generation.value));
+		if (schema.domain == RequestDomain::Images || schema.domain == RequestDomain::Inspection)
+			return DispatchFrame(client, request, binding, held, publication, std::move(response));
+		return DispatchDebugger(client, request, binding, held, std::move(response));
+	}
+};
+
+ControlService::State::State(Runtime& runtime, std::size_t capacity, std::shared_ptr<ImageInspectionProvider> images)
+	: m_runtime(runtime), m_images(std::move(images)), m_capacity(capacity), m_sessions(runtime)
+{
+	if (!capacity || capacity > 64)
+		throw std::invalid_argument("Invalid control connection capacity");
+	// Registration cannot allocate after transferring the client owner while
+	// the registry mutex is held: its destructor may retire runtime sources.
+	m_clients.reserve(capacity);
+}
+ControlService::State::~State()
+{
+	Close();
+}
+std::optional<ConnectionId> ControlService::State::Connect(bool nativeHandles)
+{
+	auto client = std::make_shared<Client>(m_runtime, nativeHandles);
+	std::lock_guard lock(m_mutex);
+	if (m_closed || m_clients.size() >= m_capacity || m_nextConnection == std::numeric_limits<std::uint64_t>::max())
+		return {};
+	const ConnectionId id{m_nextConnection++};
+	client->identity = id;
+	client->simulation = std::make_unique<SimulationConnection>(id, m_recordings, m_runtime.Game());
+	m_clients.push_back({id, std::move(client)});
+	return id;
+}
+void ControlService::State::Disconnect(ConnectionId connection) noexcept
+{
+	std::shared_ptr<Client> client;
+	{
+		std::lock_guard lock(m_mutex);
+		const auto found = std::find_if(m_clients.begin(), m_clients.end(),
+										[&](const auto& entry)
+										{
+											return entry.first == connection;
+										});
+		if (found == m_clients.end())
+			return;
+		client = std::move(found->second);
+		m_clients.erase(found);
+	}
+	client->requests.Close();
+	// Cancel game work immediately, then again at settlement if an already
+	// admitted request submitted another command while disconnect was pending.
+	m_runtime.Game().Disconnect(client->identity.value, true);
+}
+ControlPacket ControlService::State::HandlePacket(ConnectionId connection, const ControlPacket& packet)
+{
+	const auto& request = packet.message;
+	std::uint16_t minor = std::min(request.minor, ProtocolMinor);
+	const auto failureResponse = [&](ErrorCode error, const char* detail)
+	{
+		ControlPacket response;
+		response.message = Response(request, error, detail);
+		response.message.minor = minor;
+		response.encoded = std::make_shared<const std::vector<std::byte>>(Encode(response.message));
+		return response;
+	};
+	try
+	{
+		auto client = Find(connection);
+		if (!client)
+			return failureResponse(ErrorCode::Closed, "Connection closed");
+		HeldReaders held;
+		ConnectionRequests::RetiredReplay retiredReplay;
+		auto exchange = client->requests.Begin(packet);
+		minor = exchange.ResponseMinor();
+		switch (exchange.Result())
+		{
+		case ConnectionRequests::Exchange::Admission::Reject:
+			return failureResponse(exchange.Error(), exchange.Detail());
+		case ConnectionRequests::Exchange::Admission::Replay:
+			return exchange.Replay();
+		case ConnectionRequests::Exchange::Admission::Execute:
+			break;
+		}
+		// Failed response/cache construction removes unannounced resources before
+		// reopening admission. Actual GPU ownership remains backend-managed.
+		Publication publication{*client, held.images};
+		ControlPacket response;
+		try
+		{
+			response.message = Dispatch(*client, request, held, publication, packet, response);
+		}
+		catch (const ControlRequestError& failure)
+		{
+			response = failureResponse(failure.error, failure.detail);
+		}
+		catch (const ConnectionImages::RequestFailure& failure)
+		{
+			response = failureResponse(failure.error, failure.detail);
+		}
+		minor = client->requests.ResponseMinor(request.minor);
+		response.message.minor = minor;
+		response.encoded = std::make_shared<const std::vector<std::byte>>(Encode(response.message));
+		exchange.Publish(response, retiredReplay);
+		if (response.message.fields.front().AsU32() == static_cast<std::uint32_t>(ErrorCode::Ok))
+			publication.Commit();
+		return response;
+	}
+	catch (const ImageInspectionError& error)
+	{
+		return failureResponse(error.code, error.what());
+	}
+	catch (const std::bad_alloc&)
+	{
+		return failureResponse(ErrorCode::Capacity, "Control allocation capacity exhausted");
+	}
+	catch (const std::length_error&)
+	{
+		return failureResponse(ErrorCode::Capacity, "Control message capacity exceeded");
+	}
+	catch (const std::invalid_argument&)
+	{
+		return failureResponse(ErrorCode::Invalid, "Malformed control request");
+	}
+	catch (...)
+	{
+		return failureResponse(ErrorCode::Internal, "Control request failed");
+	}
+}
+void ControlService::State::Close() noexcept
+{
+	for (;;)
+	{
+		ConnectionId id;
+		{
+			std::lock_guard lock(m_mutex);
+			m_closed = true;
+			if (m_clients.empty())
+				return;
+			id = m_clients.back().first;
+		}
+		Disconnect(id);
+	}
+}
+
+ControlService::ControlService(Runtime& runtime, std::size_t maxConnections,
+							   std::shared_ptr<ImageInspectionProvider> images)
+	: m_state(std::make_unique<State>(runtime, maxConnections, std::move(images)))
+{
+}
+ControlService::~ControlService() = default;
+
+Message ControlService::Handle(ConnectionId connection, const Message& request)
+{
+	ControlPacket packet;
+	packet.message = request;
+	auto response = HandlePacket(connection, packet);
+	return std::move(response.message);
+}
+
+std::optional<ConnectionId> ControlService::Connect(bool nativeHandles)
+{
+	return m_state->Connect(nativeHandles);
+}
+void ControlService::Disconnect(ConnectionId connection) noexcept
+{
+	m_state->Disconnect(connection);
+}
+ControlPacket ControlService::HandlePacket(ConnectionId connection, const ControlPacket& packet)
+{
+	return m_state->HandlePacket(connection, packet);
+}
+void ControlService::Close() noexcept
+{
+	m_state->Close();
+}
+} // namespace simxr::control

@@ -105,8 +105,8 @@ docs/_build/
 docs/.doctrees/
 
 # Python
-.venv/
 __pycache__/
+*.egg-info/
 *.py[cod]
 *$py.class
 
@@ -150,5 +150,4 @@ openxr_simulator.log
 .tmp.driveupload/14217
 .tmp.driveupload/14169
 
-# Packaged releases
-dist/
+!cmake/*.cmake

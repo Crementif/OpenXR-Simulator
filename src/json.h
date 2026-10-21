@@ -21,8 +21,13 @@ namespace detail {
 // parse against the C locale rather than the global one -- otherwise a
 // comma-decimal host reads 1.7 as 1.
 inline double Strtod(const char* s, char** end) {
+#ifdef _WIN32
     static const _locale_t c = _create_locale(LC_NUMERIC, "C");
     return _strtod_l(s, end, c);
+#else
+    static const locale_t c = newlocale(LC_NUMERIC_MASK, "C", nullptr);
+    return strtod_l(s, end, c);
+#endif
 }
 
 inline const char* SkipWs(const char* p) {

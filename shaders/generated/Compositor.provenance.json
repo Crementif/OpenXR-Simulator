@@ -1,0 +1,67 @@
+{
+  "dxc": {
+    "libraries": {
+      "libdxcompiler.so": "d40e4a7b3b46490313f4bfd08101946483a673831b3ea65c93d746de1c2f9216",
+      "libdxil.so": "730b31420ea0c38f711c1eb581613bfd0797c53371a55f721838b29d10881c8c"
+    },
+    "sha256": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+    "version": "libdxcompiler.so: 1.9(5512-01b62ad4)(1.9.2609.5)"
+  },
+  "generator_sha256": "6e44c55e14ccbf1e3775f6973ead1c589f05c0e1fe0431d32569c2405bfc83a2",
+  "source": "shaders/Compositor.hlsl",
+  "source_sha256": "749c6e93abfab529d1af12afd61b6e60ce320c14fc2e180589fc5cb276671651",
+  "spirv_cross": {
+    "sha256": "dabfca5e5cd778a73c964426d5b2d0d15705b7ac480cc9e0702f15e707cc12e6"
+  },
+  "targets": {
+    "pixel": {
+      "entry": "PSMain",
+      "flags": [
+        "-spirv",
+        "-fspv-target-env=vulkan1.1",
+        "-T",
+        "ps_6_0",
+        "-E",
+        "PSMain",
+        "-D",
+        "SIMXR_VULKAN",
+        "-O3",
+        "-Ges",
+        "-WX"
+      ],
+      "glsl_flags": [
+        "--version",
+        "450",
+        "--no-es",
+        "--combined-samplers-inherit-bindings"
+      ],
+      "sha256": "4f3a4b2f26e8aeb01e98f835ac2bc56c66d9c4c23889a10f3172d11a215a5216"
+    },
+    "vertex": {
+      "entry": "VSMain",
+      "flags": [
+        "-spirv",
+        "-fspv-target-env=vulkan1.1",
+        "-T",
+        "vs_6_0",
+        "-E",
+        "VSMain",
+        "-D",
+        "SIMXR_VULKAN",
+        "-O3",
+        "-Ges",
+        "-WX",
+        "-fvk-invert-y"
+      ],
+      "glsl_flags": [
+        "--version",
+        "450",
+        "--no-es",
+        "--combined-samplers-inherit-bindings",
+        "--flip-vert-y",
+        "--fixup-clipspace"
+      ],
+      "sha256": "4d3bc886164ba6278bf219be3b4ce218c9fe9f67b8be66536d2e24e99f3d300c"
+    }
+  }
+}
