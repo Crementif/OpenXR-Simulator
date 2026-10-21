@@ -79,6 +79,8 @@ class RigRuntime
 	std::vector<std::byte> ReadInputRecording(std::uint64_t offset, std::uint64_t count);
 	ScriptInspection Inspect(std::uint64_t capture);
 	std::vector<std::byte> ProjectionHistory(std::uint32_t count);
+	std::vector<std::byte> ImageHistory(std::uint32_t count);
+	void ExportHistory(std::uint64_t frame, const std::string& path, std::optional<std::uint32_t> arraySlice);
 	std::vector<std::byte> Revision(std::uint64_t revision);
 	void ReleaseInspection(std::uint64_t inspection);
 	std::vector<std::byte> State();
@@ -111,6 +113,7 @@ class RigRuntime
 	control::Message Debug(control::CommandKind kind, Fields fields = {});
 	ScriptStep CaptureStep(control::CommandKind kind, Fields fields = {});
 	void ReleaseUnchecked(control::OpCode opcode, std::uint16_t tag, std::uint64_t id) noexcept;
+	void ExportImage(std::uint64_t reader, const std::string& path, std::optional<std::uint32_t> arraySlice);
 	class RemoteResource;
 };
 } // namespace simxr::automation

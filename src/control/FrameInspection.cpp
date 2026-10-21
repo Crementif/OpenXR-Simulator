@@ -1,5 +1,6 @@
 #include "control/FrameInspection.h"
 #include "control/SimulationControl.h"
+#include "graphics/FrameOutput.h"
 #include "simulation/BodyModel.h"
 
 #include <algorithm>
@@ -914,6 +915,26 @@ InspectionValue InspectDiagnostics(const FrameDiagnostics& diagnostics)
 					   {"related", InspectionValue::Unsigned(event.related)}});
 			  })}});
 }
+InspectionValue InspectImageHistory(const ImageHistorySnapshot& history)
+{
+	return InspectionValue::Object(
+		{{"generation", InspectionValue::Unsigned(history.generation.value)},
+		 {"capacity", InspectionValue::Unsigned(FrameImageHistory::Capacity)},
+		 {"evicted", InspectionValue::Unsigned(history.evicted)},
+		 {"unavailable", InspectionValue::Unsigned(history.unavailable)},
+		 {"entries", InspectArray(history.entries, [](const HistoricalImage& image)
+			{
+				const auto& frame = *image.metadata;
+				const auto completion = image.output ? image.output->PollCompletion() : CompletionStatus::Failed;
+				const auto phase = image.output ? (completion == CompletionStatus::Complete ? "ready"
+					: completion == CompletionStatus::Pending ? "pending" : "failed")
+					: frame.submission && !frame.submission->layerCount ? "clear" : "unavailable";
+				return InspectionValue::Object(
+					{{"frame_id", InspectionValue::Unsigned(frame.key.frame.value)},
+					 {"phase", InspectionValue::Text(phase)}});
+			})}});
+}
+
 InspectionValue InspectProjectionHistory(const FrameHistorySnapshot& history, std::size_t count)
 {
 	if (!count || count > 64)

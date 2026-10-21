@@ -141,6 +141,15 @@ class Client:
     def image_info(self, image_reader):
         return self.request(OpCode.IMAGE_INFO, [Field.u64(Tag.IMAGE_READER_ID, image_reader, True)])
 
+    def image_history(self, session, *, count=10):
+        if type(count) is not int or not 1 <= count <= 10:
+            raise ProtocolError('Image history count must be in [1,10]')
+        return self.request(OpCode.READ_IMAGE_HISTORY, self._session(session) + [Field.u64(Tag.LENGTH, count)])
+
+    def retain_historical_image(self, session, frame):
+        return self.request(OpCode.RETAIN_HISTORICAL_IMAGE,
+                            self._session(session) + [Field.u64(Tag.FRAME_ID, frame, True)])
+
     def retain_preview(self, session):
         """Retain the current completed display image, or observe its actual clear."""
         return self.request(OpCode.RETAIN_PREVIEW, self._session(session))

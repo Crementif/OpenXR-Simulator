@@ -116,6 +116,8 @@ class ControlService::State
 	struct HeldReaders
 	{
 		ControlSessions::Snapshot sessions;
+		ImageHistorySnapshot history;
+		HistoricalImage historicalImage;
 		std::shared_ptr<DebugController> controller;
 		std::optional<SnapshotRecord> capture;
 		std::optional<SnapshotRecord> selectedCapture;
@@ -242,12 +244,55 @@ class ControlService::State
 		const auto& session = binding.session;
 		switch (static_cast<OpCode>(request.opcode))
 		{
+		case OpCode::ReadImageHistory:
+		{
+			if (!session->SupportsImageHistory())
+				throw ControlRequestError{ErrorCode::UnsupportedCommand, "GPU image history is unavailable"};
+			const auto count = request.Find(tag::Length) ? RequireRequestU64(request, tag::Length) : FrameImageHistory::Capacity;
+			if (!count || count > FrameImageHistory::Capacity)
+				throw ControlRequestError{ErrorCode::Invalid, "Image history count must be in [1,10]"};
+			held.history = session->ImageHistory().Snapshot(static_cast<std::size_t>(count));
+			if (held.history.generation.value != RequireRequestU64(request, tag::Generation))
+				throw ControlRequestError{ErrorCode::StaleGeneration, "Image history belongs to another run"};
+			response.fields.push_back(Field::Bytes(tag::Document, InspectImageHistory(held.history).Encode(), true));
+			return response;
+		}
+		case OpCode::RetainHistoricalImage:
+		{
+			if (!m_images || !session->SupportsImageHistory())
+				throw ControlRequestError{ErrorCode::UnsupportedCommand, "GPU image history is unavailable"};
+			const FrameKey frame{{RequireRequestU64(request, tag::Generation)}, {RequireRequestU64(request, tag::FrameId)}};
+			held.historicalImage = session->ImageHistory().Find(frame);
+			const auto& image = held.historicalImage;
+			if (!image.metadata)
+				throw ControlRequestError{ErrorCode::NotFound, "Historical image is absent or evicted"};
+			response.fields.push_back(Field::Bool(tag::ImageAvailable, image.output != nullptr));
+			if (!image.output)
+			{
+				if (image.metadata->submission && !image.metadata->submission->layerCount)
+				{
+					response.fields.push_back(EncodeFrameKey(tag::Frame, frame));
+					return response;
+				}
+				throw ControlRequestError{ErrorCode::UnsupportedCommand, "This frame has no retained historical image"};
+			}
+			const auto completion = image.output->PollCompletion();
+			if (completion != CompletionStatus::Complete)
+				throw ControlRequestError{completion == CompletionStatus::Pending ? ErrorCode::Busy : ErrorCode::Internal,
+					"Historical image is not GPU-ready"};
+			client.images.Retain(response, {binding.id, frame, {}, {}}, image.output, *m_images,
+				client.nativeHandles, publication.images, false);
+			return response;
+		}
 		case OpCode::ReadProjectionHistory:
 		{
 			const auto count = request.Find(tag::Length) ? RequireRequestU64(request, tag::Length) : 64;
 			if (!count || count > 64)
 				throw ControlRequestError{ErrorCode::Invalid, "Projection history count must be in [1,64]"};
-			const auto document = InspectProjectionHistory(session->History().Snapshot(), static_cast<std::size_t>(count));
+			const auto history = session->History().Snapshot();
+			if (history.generation.value != RequireRequestU64(request, tag::Generation))
+				throw ControlRequestError{ErrorCode::StaleGeneration, "Projection history belongs to another run"};
+			const auto document = InspectProjectionHistory(history, static_cast<std::size_t>(count));
 			response.fields.push_back(Field::Bytes(tag::Document, document.Encode(), true));
 			return response;
 		}
@@ -370,6 +415,8 @@ class ControlService::State
 			if (status.composedEyes)
 				capabilities |= static_cast<std::uint64_t>(Capability::ComposedCapture) |
 					static_cast<std::uint64_t>(Capability::ImageRecording);
+			if (session->SupportsImageHistory())
+				capabilities |= static_cast<std::uint64_t>(Capability::ImageHistory);
 			if (status.filteredComposition)
 				capabilities |= static_cast<std::uint64_t>(Capability::FilteredComposition);
 			if (status.depthViews)

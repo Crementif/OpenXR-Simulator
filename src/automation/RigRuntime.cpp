@@ -339,6 +339,23 @@ std::vector<std::byte> RigRuntime::ProjectionHistory(std::uint32_t count)
 	fields.push_back(control::Field::U64(tag::Length, count));
 	return Document(Call(control::OpCode::ReadProjectionHistory, std::move(fields)));
 }
+std::vector<std::byte> RigRuntime::ImageHistory(std::uint32_t count)
+{
+	if (!count || count > 10)
+		throw std::invalid_argument("Image history count must be in [1,10]");
+	auto fields = Session();
+	fields.push_back(control::Field::U64(tag::Length, count));
+	return Document(Call(control::OpCode::ReadImageHistory, std::move(fields)));
+}
+void RigRuntime::ExportHistory(std::uint64_t frame, const std::string& path, std::optional<std::uint32_t> arraySlice)
+{
+	auto fields = Session();
+	fields.push_back(control::Field::U64(tag::FrameId, frame, true));
+	const auto response = Call(control::OpCode::RetainHistoricalImage, std::move(fields));
+	if (!response.Find(tag::ImageReaderId))
+		throw std::runtime_error("Historical frame has no ready GPU image");
+	ExportImage(Number(response, tag::ImageReaderId), path, arraySlice);
+}
 ScriptInspection RigRuntime::Inspect(std::uint64_t capture)
 {
 	// Reserve ownership bookkeeping before acquiring a remote reader.
@@ -377,6 +394,10 @@ void RigRuntime::Export(std::uint64_t capture, const std::string& path,
 	if (target)
 		fields.push_back(EncodeTarget(*target));
 	const auto image = Number(Call(control::OpCode::RetainImage, std::move(fields)), tag::ImageReaderId);
+	ExportImage(image, path, arraySlice);
+}
+void RigRuntime::ExportImage(std::uint64_t image, const std::string& path, std::optional<std::uint32_t> arraySlice)
+{
 	RemoteResource reader{*this, control::OpCode::ReleaseImage, tag::ImageReaderId, image};
 	Fields exportFields{control::Field::U64(tag::ImageReaderId, image, true)};
 	if (arraySlice)

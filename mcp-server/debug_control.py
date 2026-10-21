@@ -97,6 +97,10 @@ TOOL_DEFINITIONS = [
           {**_SESSION, 'capture': _ID,
            'target': {key: value for key, value in _TARGET['target'].items() if key != 'default'},
            'layer': _TARGET['layer'], 'view': _TARGET['view']}, [*_SESSION, 'capture']),
+    _tool('debug_image_history', 'Read bounded GPU history with exact frame identities and explicit missing/evicted images.',
+          {**_SESSION, 'count': {'type': 'integer', 'minimum': 1, 'maximum': 10, 'default': 10}}, list(_SESSION)),
+    _tool('debug_retain_history', 'Retain an exact existing composed historical image without admission or pixel readback.',
+          {**_SESSION, 'frame': _ID}),
     _tool('debug_retain_preview', 'Retain the currently selected completed virtual-display image, or report its actual clear; no admission or pixel readback.',
           _SESSION),
     _tool('debug_image_info', 'Inspect retained image metadata and capabilities without reading pixels.',
@@ -412,6 +416,10 @@ class DebugTools:
                         selection = dict(target=sdk.TargetKind[args['target'].upper()],
                                          layer=args.get('layer', 0), view=args.get('view', 0))
                     record = client.retain_image(session, args['capture'], **selection)
+                elif name == 'debug_image_history':
+                    record = client.image_history(session, count=args.get('count', 10))
+                elif name == 'debug_retain_history':
+                    record = client.retain_historical_image(session, args['frame'])
                 elif name == 'debug_retain_preview':
                     record = client.retain_preview(session)
                 else:

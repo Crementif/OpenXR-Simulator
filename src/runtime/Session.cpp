@@ -76,6 +76,7 @@ XrResult Session::Begin(const XrSessionBeginInfo& info, const FrameSchedulerConf
 		(info.primaryViewConfigurationType != XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO ||
 		 !m_instance.Extensions().Contains(XR_VARJO_QUAD_VIEWS_EXTENSION_NAME)))
 		return XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;
+	FrameImageHistory::Retired retiredHistory;
 	std::lock_guard lifecycle(m_lifecycleMutex);
 	std::lock_guard lock(m_mutex);
 	if (m_state.closed)
@@ -96,7 +97,7 @@ XrResult Session::Begin(const XrSessionBeginInfo& info, const FrameSchedulerConf
 	m_state.generation = m_history.StartGeneration();
 	try
 	{
-		m_captures.Start(m_state.generation);
+		retiredHistory = m_captures.Start(m_state.generation);
 		m_scheduler.Start(timing);
 		m_display.Start(m_state.generation, {timing.epoch, timing.period}, timing.mode, timing.hostEpoch);
 		if (XR_FAILED(m_spaces.StartGeneration(timing.epoch, publication.ReferenceSpaces())))
@@ -133,6 +134,7 @@ XrResult Session::RequestExit(RuntimeTime time)
 
 XrResult Session::End(RuntimeTime time)
 {
+	FrameImageHistory::Retired retiredHistory;
 	std::lock_guard lifecycle(m_lifecycleMutex);
 	std::unique_lock lock(m_mutex);
 	if (!m_state.running)
@@ -149,6 +151,7 @@ XrResult Session::End(RuntimeTime time)
 	Transition(XR_SESSION_STATE_EXITING, time);
 	lock.unlock();
 	m_display.Stop();
+	retiredHistory = m_captures.Images().Clear();
 	return XR_SUCCESS;
 }
 
@@ -170,6 +173,7 @@ XrResult Session::SetState(XrSessionState state, RuntimeTime time)
 
 void Session::Close()
 {
+	FrameImageHistory::Retired retiredHistory;
 	std::lock_guard lifecycle(m_lifecycleMutex);
 	std::unique_lock lock(m_mutex);
 	if (m_state.closed)
@@ -187,6 +191,7 @@ void Session::Close()
 	m_instance.Events().RemoveSession(m_handle);
 	lock.unlock();
 	m_display.Stop();
+	retiredHistory = m_captures.Images().Clear();
 	m_captures.Retire();
 }
 
@@ -488,6 +493,19 @@ SnapshotStore& Session::Captures()
 	return m_captures.Snapshots();
 }
 
+XrResult Session::EnableImageHistory()
+{
+	std::lock_guard lock(m_mutex);
+	return m_captures.EnableImageHistory();
+}
+bool Session::SupportsImageHistory() const
+{
+	return m_captures.SupportsImageHistory();
+}
+FrameImageHistory& Session::ImageHistory()
+{
+	return m_captures.Images();
+}
 XrResult Session::ConfigureCapturePool(FramePool pool, bool layerViews, CapturePromoter promoter, bool depthViews,
 	bool filteredComposition)
 {

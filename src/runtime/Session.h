@@ -69,6 +69,9 @@ class Session
 	std::shared_ptr<Clock> ClockSource() const;
 	FrameScheduler& Scheduler();
 	FrameHistory& History();
+	XrResult EnableImageHistory();
+	bool SupportsImageHistory() const;
+	FrameImageHistory& ImageHistory();
 	VirtualDisplay& Display();
 	SnapshotStore& Captures();
 	XrResult ConfigureCapturePool(FramePool pool, bool layerViews = false, CapturePromoter promoter = {}, bool depthViews = false, bool filteredComposition = false);

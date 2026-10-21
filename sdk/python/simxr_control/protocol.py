@@ -49,6 +49,8 @@ class OpCode(IntEnum):
     SUBMIT_GAME = 34
     GAME_OPERATION = 35
     READ_PROJECTION_HISTORY = 36
+    READ_IMAGE_HISTORY = 37
+    RETAIN_HISTORICAL_IMAGE = 38
 
 
 class ErrorCode(IntEnum):
@@ -88,6 +90,7 @@ class Capability(IntFlag):
     IMAGE_RECORDING = 1 << 16
     FILTERED_COMPOSITION = 1 << 17
     PROJECTION_HISTORY = 1 << 18
+    IMAGE_HISTORY = 1 << 19
 
 
 class CommandKind(IntEnum):

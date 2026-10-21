@@ -2,10 +2,12 @@
 
 #include "control/InspectionDocument.h"
 #include "presentation/FrameHistory.h"
+#include "presentation/FrameImageHistory.h"
 
 namespace simxr::control
 {
 InspectionValue InspectDiagnostics(const FrameDiagnostics& diagnostics);
+InspectionValue InspectImageHistory(const ImageHistorySnapshot& history);
 InspectionValue InspectProjectionHistory(const FrameHistorySnapshot& history, std::size_t count);
 
 // Copies historical CPU state only. Never queries a live registry, copies a GPU

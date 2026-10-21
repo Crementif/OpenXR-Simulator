@@ -1,6 +1,7 @@
 #pragma once
 
 #include "presentation/SnapshotStore.h"
+#include "presentation/FrameImageHistory.h"
 
 #include <functional>
 #include <memory>
@@ -38,7 +39,10 @@ class SessionCaptureCoordinator
 	explicit SessionCaptureCoordinator(FrameHistory& history);
 	~SessionCaptureCoordinator();
 	XrResult Configure(FramePool&& pool, bool layerViews, CapturePromoter&& promoter, bool depthViews, bool filteredComposition);
-	void Start(SessionGeneration generation);
+	FrameImageHistory::Retired Start(SessionGeneration generation);
+	XrResult EnableImageHistory();
+	bool SupportsImageHistory() const;
+	FrameImageHistory& Images() { return m_images; }
 	void Stop() noexcept;
 	void Retire() noexcept;
 	SnapshotStore& Snapshots();
@@ -72,6 +76,8 @@ class SessionCaptureCoordinator
 	bool m_layerViews = false;
 	bool m_depthViews = false;
 	bool m_filteredComposition = false;
+	bool m_imageHistory = false;
+	FrameImageHistory m_images;
 	CapturePromoter m_promoter;
 	bool m_running = false;
 	SessionGeneration m_generation;
@@ -108,6 +114,7 @@ class SessionCaptureCoordinator::Submission
 	FrameKey m_frame;
 	XrResult m_validation = XR_SUCCESS;
 	bool m_committed = false;
+	HistoricalImage m_retiredImage;
 };
 
 // Retains all selected native readers until after the caller's lock is gone.
@@ -131,6 +138,7 @@ class SessionCaptureCoordinator::Boundary
 	};
 	void Rollback() noexcept;
 	SessionCaptureCoordinator& m_owner;
+	FrameImageHistory::Retired m_retiredImages;
 	std::vector<PresentationSubmission> m_retained;
 	std::vector<Source> m_sources;
 	std::vector<CaptureId> m_created;

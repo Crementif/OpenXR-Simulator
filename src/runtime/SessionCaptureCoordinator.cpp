@@ -43,7 +43,22 @@ XrResult SessionCaptureCoordinator::Configure(FramePool&& pool, bool layerViews,
 	return XR_SUCCESS;
 }
 
-void SessionCaptureCoordinator::Start(SessionGeneration generation)
+XrResult SessionCaptureCoordinator::EnableImageHistory()
+{
+	std::lock_guard lock(m_mutex);
+	if (m_running)
+		return XR_ERROR_CALL_ORDER_INVALID;
+	if (!m_pool || !m_promoter)
+		return XR_ERROR_FEATURE_UNSUPPORTED;
+	m_imageHistory = true;
+	return XR_SUCCESS;
+}
+bool SessionCaptureCoordinator::SupportsImageHistory() const
+{
+	std::lock_guard lock(m_mutex);
+	return m_imageHistory;
+}
+FrameImageHistory::Retired SessionCaptureCoordinator::Start(SessionGeneration generation)
 {
 	std::lock_guard lock(m_mutex);
 	m_store.Start(generation);
@@ -57,6 +72,7 @@ void SessionCaptureCoordinator::Start(SessionGeneration generation)
 	m_imageRecording.captures.clear();
 	m_recordingQueued.clear();
 	m_running = true;
+	return m_images.Start(generation);
 }
 
 void SessionCaptureCoordinator::Stop() noexcept
@@ -425,11 +441,32 @@ void SessionCaptureCoordinator::Submission::Commit(std::shared_ptr<const FrameRe
 												   bool includeOutputs) noexcept
 {
 	m_committed = true;
+	if (m_owner.m_imageHistory)
+	{
+		HistoricalImage image{metadata, {}};
+		if (includeOutputs && m_output && m_requested.empty() && metadata && metadata->submission)
+		{
+			const auto& views = metadata->submission->viewSettings;
+			const auto bytes = static_cast<std::uint64_t>(views.outerWidth) * views.outerHeight * 8;
+			try
+			{
+				if (bytes && bytes <= FrameImageHistory::MaxImageBytes &&
+					m_owner.m_promoter(m_output, m_owner.m_images.Budget(), {}) == SnapshotAdmission::Accepted)
+					image.output = m_output;
+			}
+			catch (...)
+			{
+				// Optional history cannot fail accepted application work; the missing output is recorded below.
+			}
+		}
+		m_retiredImage = m_owner.m_images.Append(std::move(image));
+	}
 	m_owner.m_store.Update(std::move(metadata), includeOutputs ? std::span<const CaptureOutput>{m_outputs}
 															   : std::span<const CaptureOutput>{});
 }
 
-SessionCaptureCoordinator::Boundary::Boundary(SessionCaptureCoordinator& owner) : m_owner(owner)
+SessionCaptureCoordinator::Boundary::Boundary(SessionCaptureCoordinator& owner)
+	: m_owner(owner), m_retiredImages(owner.m_images.Clear())
 {
 	m_existing.reserve(m_owner.m_store.Capacity());
 	m_result.captures.reserve(m_owner.m_store.Capacity());

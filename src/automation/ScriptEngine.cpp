@@ -705,6 +705,27 @@ class ScriptEngine::Impl
 			PushIntegerField(state, "frame_id", *capture.frame);
 		return 1;
 	}
+	int ImageHistory(lua_State* state)
+	{
+		const auto count = lua_isnoneornil(state, 1) ? 10 : Integer(state, 1);
+		if (!count || count > 10)
+			throw std::invalid_argument("Image history count must be in [1,10]");
+		PushInspection(state, m_runtime.ImageHistory(static_cast<std::uint32_t>(count)));
+		return 1;
+	}
+	int ExportHistory(lua_State* state)
+	{
+		std::optional<std::uint32_t> arraySlice;
+		if (!lua_isnoneornil(state, 3))
+		{
+			const auto slice = Integer(state, 3);
+			if (slice > 1)
+				throw std::invalid_argument("Historical eye slice must be 0 or 1");
+			arraySlice = static_cast<std::uint32_t>(slice);
+		}
+		m_runtime.ExportHistory(Integer(state, 1), String(state, 2), arraySlice);
+		return 0;
+	}
 	int ProjectionHistory(lua_State* state)
 	{
 		const auto count = lua_isnoneornil(state, 1) ? 64 : Integer(state, 1);
@@ -868,6 +889,8 @@ class ScriptEngine::Impl
 		bind("capture", Binding<&Impl::Capture>);
 		bind("inspect", Binding<&Impl::Inspect>);
 		bind("projection_history", Binding<&Impl::ProjectionHistory>);
+		bind("image_history", Binding<&Impl::ImageHistory>);
+		bind("export_history", Binding<&Impl::ExportHistory>);
 		bind("revision", Binding<&Impl::Revision>);
 		bind("release_inspection", Binding<&Impl::ReleaseInspection>);
 		bind("checkpoint", Binding<&Impl::Checkpoint>);

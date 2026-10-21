@@ -15,6 +15,7 @@ constexpr std::array simulationStatus{tag::Session, tag::Generation, tag::Transa
 constexpr std::array game{tag::Session,	  tag::Generation,	tag::GameId, tag::GameKind,
 						  tag::CommandId, tag::OperationId, tag::Detail};
 constexpr std::array diagnostics{tag::Session, tag::Generation, tag::Offset, tag::Length, tag::FrameId};
+constexpr std::array historicalImage{tag::Session, tag::Generation, tag::FrameId};
 constexpr std::array projectionHistory{tag::Session, tag::Generation, tag::Length};
 constexpr std::array recording{tag::Session, tag::Generation, tag::SourceKind, tag::Offset, tag::Length};
 constexpr std::array common{tag::Session, tag::Generation};
@@ -46,6 +47,8 @@ constexpr std::array Schemas{RequestSchema{OpCode::Hello, RequestDomain::Connect
 							 RequestSchema{OpCode::Capture, RequestDomain::Inspection, 0, capture},
 							 RequestSchema{OpCode::InspectFrame, RequestDomain::Inspection, 0, capture},
 							 RequestSchema{OpCode::ReadProjectionHistory, RequestDomain::Inspection, 4, projectionHistory},
+							 RequestSchema{OpCode::ReadImageHistory, RequestDomain::Inspection, 4, projectionHistory},
+							 RequestSchema{OpCode::RetainHistoricalImage, RequestDomain::Inspection, 4, historicalImage},
 							 RequestSchema{OpCode::FeatureRevision, RequestDomain::Inspection, 0, revision},
 							 RequestSchema{OpCode::ReleaseInspection, RequestDomain::Inspection, 0, releaseInspection},
 							 RequestSchema{OpCode::RetainImage, RequestDomain::Images, 2, retainImage},
