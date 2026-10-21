@@ -16,6 +16,7 @@ class DeviceControlPanel
 
   private:
 	void Apply(std::vector<SimulationCommand> commands);
+	void ApplyOwned(ControlChannel channel, SimulationCommand command);
 	void DrawOwnership();
 	void DrawHead();
 	void DrawController();
@@ -37,7 +38,9 @@ class DeviceControlPanel
 	int m_selectedTracker = 0;
 	int m_trackerRole = 0;
 	TrackingState m_authoredTracking;
-	ControllerControls m_authoredControls;
+	std::array<ControllerControls, 2> m_authoredControls;
+	std::array<float, 3> m_headAngles{};
+	std::array<std::array<float, 3>, 2> m_controllerAngles{};
 	BodyProportions m_authoredProportions;
 	ViewSettings m_authoredViews;
 	std::array<char, 256> m_controllerProfile{};

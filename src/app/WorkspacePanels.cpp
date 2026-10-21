@@ -55,6 +55,8 @@ template <std::size_t N> void Copy(std::array<char, N>& buffer, const std::strin
 struct WorkspacePanels::Impl
 {
 	bool enabled = false, showLaunch = false, showSettings = false, reset = false, dirty = false;
+	bool showConnection = false;
+	WorkspaceMode mode = WorkspaceMode::Simulator;
 	std::filesystem::path path;
 	CompanionSettings settings;
 	ProcessLauncher launcher;
@@ -94,6 +96,8 @@ struct WorkspacePanels::Impl
 		for (const auto& layout : settings.layouts)
 			if (layout.name == settings.activeLayout)
 				pendingLayout = layout.ini;
+		if (!pendingLayout.empty())
+			mode = WorkspaceMode::Custom;
 		Copy(layoutName, settings.activeLayout.empty() ? "My layout" : settings.activeLayout);
 	}
 	void Save()
@@ -208,11 +212,156 @@ struct WorkspacePanels::Impl
 			pendingLayout.clear();
 		}
 		DrawMainMenu(runtime);
+		DrawToolbar(runtime);
+	}
+	void SelectMode(WorkspaceMode selected)
+	{
+		if (mode == selected)
+			return;
+		mode = selected;
+		reset = true;
+	}
+	void LaunchSelected()
+	{
+		try
+		{
+			const auto profile = Profile();
+#ifdef SIMXR_COMPANION_AUTOMATION
+			rigs.PrepareLaunch(profile);
+#else
+			if (!profile.rig.empty())
+				throw std::runtime_error("This build does not support launch rigs");
+#endif
+			launcher.Launch(profile);
+		}
+		catch (const std::exception& failure)
+		{
+			error = failure.what();
+#ifdef SIMXR_COMPANION_AUTOMATION
+			rigs.PrepareLaunch({});
+#endif
+		}
+	}
+	void DrawToolbar(RuntimePanels& runtime)
+	{
+		const auto snapshot = runtime.Snapshot();
+		auto* viewport = ImGui::GetMainViewport();
+		const float row = ImGui::GetFrameHeightWithSpacing();
+		if (!ImGui::BeginViewportSideBar("##Workspace toolbar", viewport, ImGuiDir_Up,
+										 row * 2 + ImGui::GetStyle().WindowPadding.y * 2,
+										 ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings))
+		{
+			ImGui::End();
+			return;
+		}
+		for (const auto view : {WorkspaceMode::Simulator, WorkspaceMode::Debug, WorkspaceMode::Automation})
+		{
+			const auto label = view == WorkspaceMode::Simulator ? "Simulator"
+							   : view == WorkspaceMode::Debug	? "Debug"
+																: "Automation";
+			const bool active = view == mode;
+			if (active)
+				ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+			if (ImGui::Button(label))
+				SelectMode(view);
+			if (active)
+				ImGui::PopStyleColor();
+			ImGui::SameLine();
+		}
+		ImGui::TextDisabled("  %s",
+							snapshot.sessionAvailable
+								? (snapshot.operationPending ? "Updating..."
+								   : snapshot.manual		 ? "Paused"
+															 : "Running")
+								: (snapshot.connected ? "Waiting for application" : snapshot.connectionState.c_str()));
+		ImGui::SetNextItemWidth(std::max(100.0f, std::min(220.0f * settings.scale, viewport->WorkSize.x * 0.30f)));
+		if (ImGui::BeginCombo("##Launch profile",
+							  selectedProfile >= 0
+								  ? settings.profiles[static_cast<std::size_t>(selectedProfile)].name.c_str()
+								  : "Choose application"))
+		{
+			for (std::size_t index = 0; index < settings.profiles.size(); ++index)
+				if (ImGui::Selectable(settings.profiles[index].name.c_str(),
+									  selectedProfile == static_cast<int>(index)))
+					EditProfile(static_cast<int>(index));
+			if (ImGui::Selectable("Add or edit applications..."))
+				showLaunch = true;
+			ImGui::EndCombo();
+		}
+		ImGui::SameLine();
+		const auto process = launcher.Snapshot();
+		ImGui::BeginDisabled(process.state == LaunchState::Starting || process.state == LaunchState::Running);
+		if (ImGui::Button(selectedProfile >= 0 ? "Launch" : "Set up"))
+		{
+			if (selectedProfile >= 0)
+				LaunchSelected();
+			else
+				showLaunch = true;
+		}
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		if (ImGui::Button(snapshot.connected ? "Connection" : "Connect"))
+			showConnection = !showConnection;
+		ImGui::SameLine();
+		ImGui::BeginDisabled(!snapshot.sessionAvailable || snapshot.operationPending);
+		if (ImGui::Button(snapshot.manual ? "Resume" : "Pause"))
+			runtime.Command(snapshot.manual ? control::CommandKind::Resume : control::CommandKind::Pause);
+		ImGui::EndDisabled();
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+			ImGui::SetTooltip("%s", !snapshot.sessionAvailable ? "Connect to a running XR application first"
+									: snapshot.operationPending
+										? "Waiting for the runtime to finish the previous operation"
+										: "F6 Pause / F8 Resume");
+		ImGui::SameLine();
+		ImGui::BeginDisabled(!snapshot.sessionAvailable || !snapshot.manual || snapshot.operationPending);
+		if (ImGui::Button("Step"))
+			runtime.Command(control::CommandKind::Step);
+		ImGui::EndDisabled();
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+			ImGui::SetTooltip("Pause the application, then advance one XR frame (F7)");
+		ImGui::End();
+	}
+	void DrawDockspace()
+	{
+		const auto dock = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+		const auto* node = ImGui::DockBuilderGetNode(dock);
+		if (!reset && node && node->IsSplitNode())
+			return;
+		reset = false;
+		ImGui::DockBuilderRemoveNode(dock);
+		ImGui::DockBuilderAddNode(dock, ImGuiDockNodeFlags_DockSpace);
+		const auto size = ImGui::GetMainViewport()->WorkSize;
+		ImGui::DockBuilderSetNodeSize(dock, size);
+		ImGuiID preview, controls;
+		const float controlWidth = std::clamp(360.0f * settings.scale / std::max(size.x, 1.0f), 0.28f, 0.48f);
+		ImGui::DockBuilderSplitNode(dock, ImGuiDir_Right, controlWidth, &controls, &preview);
+		ImGui::DockBuilderDockWindow("GPU preview", preview);
+		if (mode == WorkspaceMode::Simulator)
+			ImGui::DockBuilderDockWindow("Device controls", controls);
+		else if (mode == WorkspaceMode::Automation)
+		{
+			ImGui::DockBuilderDockWindow("Rigs", controls);
+			ImGui::DockBuilderDockWindow("Recording", controls);
+		}
+		else
+		{
+			ImGuiID upper, lower;
+			ImGui::DockBuilderSplitNode(controls, ImGuiDir_Up, 0.45f, &upper, &lower);
+			ImGui::DockBuilderDockWindow("Frame controls", upper);
+			ImGui::DockBuilderDockWindow("Captures", lower);
+			ImGui::DockBuilderDockWindow("Historical state", lower);
+			ImGui::DockBuilderDockWindow("Action and binding inspector", lower);
+			if (mode == WorkspaceMode::Custom)
+			{
+				ImGui::DockBuilderDockWindow("Device controls", upper);
+				ImGui::DockBuilderDockWindow("Rigs", lower);
+				ImGui::DockBuilderDockWindow("Recording", lower);
+			}
+		}
+		ImGui::DockBuilderFinish(dock);
 	}
 	void DrawMainMenu(RuntimePanels& runtime)
 	{
-		if (!enabled)
-			return;
 		if (ImGui::BeginMainMenuBar())
 		{
 			if (ImGui::BeginMenu("Simulator"))
@@ -237,6 +386,7 @@ struct WorkspacePanels::Impl
 					{
 						pendingLayout = layout.ini;
 						settings.activeLayout = layout.name;
+						mode = WorkspaceMode::Custom;
 						dirty = true;
 						Save();
 					}
@@ -246,6 +396,7 @@ struct WorkspacePanels::Impl
 				if (ImGui::MenuItem("Reset to default"))
 				{
 					reset = true;
+					mode = WorkspaceMode::Simulator;
 					settings.activeLayout.clear();
 					dirty = true;
 					Save();
@@ -276,10 +427,10 @@ struct WorkspacePanels::Impl
 			rigs.ReplayRecording(runtime, recording->path, recording->seed);
 		if (enabled)
 			rigs.ObserveLaunch(launcher.Snapshot());
-		rigs.Draw(runtime);
+		rigs.Draw(runtime, mode == WorkspaceMode::Automation || mode == WorkspaceMode::Custom);
 #endif
-		if (!enabled)
-			return;
+		if (showConnection)
+			runtime.DrawConnection();
 		if (!error.empty())
 		{
 			ImGui::Begin("Workspace error");
@@ -319,6 +470,7 @@ struct WorkspacePanels::Impl
 				{
 					pendingLayout = settings.layouts[index].ini;
 					settings.activeLayout = settings.layouts[index].name;
+					mode = WorkspaceMode::Custom;
 					dirty = true;
 					Save();
 				}
@@ -403,25 +555,7 @@ struct WorkspacePanels::Impl
 			const auto process = launcher.Snapshot();
 			ImGui::BeginDisabled(process.state == LaunchState::Starting || process.state == LaunchState::Running);
 			if (ImGui::Button("Launch"))
-				try
-				{
-					const auto profile = Profile();
-#ifdef SIMXR_COMPANION_AUTOMATION
-					rigs.PrepareLaunch(profile);
-#else
-					if (!profile.rig.empty())
-						throw std::runtime_error(
-							"Launch profile requires a companion built with Luau automation support");
-#endif
-					launcher.Launch(profile);
-				}
-				catch (const std::exception& failure)
-				{
-					error = failure.what();
-#ifdef SIMXR_COMPANION_AUTOMATION
-					rigs.PrepareLaunch({});
-#endif
-				}
+				LaunchSelected();
 			ImGui::EndDisabled();
 			if (process.process)
 				ImGui::Text("Process: %llu", static_cast<unsigned long long>(process.process));
@@ -450,11 +584,25 @@ void WorkspacePanels::Draw(RuntimePanels& runtime)
 {
 	m_impl->Draw(runtime);
 }
-bool WorkspacePanels::TakeLayoutReset()
+void WorkspacePanels::DrawDockspace()
 {
-	const bool reset = m_impl->reset;
-	m_impl->reset = false;
-	return reset;
+	m_impl->DrawDockspace();
+}
+WorkspaceMode WorkspacePanels::Mode() const
+{
+	return m_impl->mode;
+}
+void WorkspacePanels::SetMode(WorkspaceMode mode)
+{
+	m_impl->SelectMode(mode);
+}
+void WorkspacePanels::SetScale(float scale)
+{
+	if (!(scale >= 0.75f && scale <= 2.5f))
+		throw std::invalid_argument("UI scale must be between 0.75 and 2.5");
+	m_impl->settings.scale = scale;
+	m_impl->dirty = true;
+	m_impl->reset = true;
 }
 void WorkspacePanels::Finish()
 {

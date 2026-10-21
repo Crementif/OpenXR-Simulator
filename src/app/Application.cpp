@@ -57,6 +57,8 @@ int Application::Run()
 		while (running)
 		{
 			running = window.PollEvents();
+			if (window.TakeFocusLost() && panels)
+				panels->ReleaseInputs();
 			if (!running)
 				break;
 			if ((m_options.smokeFrames || m_options.proofDescriptor >= 0 || m_options.runtimeSmoke) &&
@@ -84,29 +86,9 @@ int Application::Run()
 			{
 				panels->Poll();
 				workspace.BeginFrame(*panels);
-				const auto dock = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
-				if (workspace.TakeLayoutReset() || !ImGui::DockBuilderGetNode(dock)->IsSplitNode())
-				{
-					ImGui::DockBuilderRemoveNode(dock);
-					ImGui::DockBuilderAddNode(dock, ImGuiDockNodeFlags_DockSpace);
-					ImGui::DockBuilderSetNodeSize(dock, ImGui::GetMainViewport()->WorkSize);
-					ImGuiID left, right;
-					ImGui::DockBuilderSplitNode(dock, ImGuiDir_Left, 0.37f, &left, &right);
-					ImGuiID leftTop, leftBottom;
-					ImGui::DockBuilderSplitNode(left, ImGuiDir_Up, 0.47f, &leftTop, &leftBottom);
-					ImGui::DockBuilderDockWindow("Runtime connection", leftTop);
-					ImGui::DockBuilderDockWindow("Frame controls", leftBottom);
-					ImGui::DockBuilderDockWindow("Captures", leftBottom);
-					ImGui::DockBuilderDockWindow("Device controls", leftBottom);
-					ImGui::DockBuilderDockWindow("Recording", leftBottom);
-					ImGui::DockBuilderDockWindow("Rigs", leftBottom);
-					ImGui::DockBuilderDockWindow("GPU preview", right);
-					ImGui::DockBuilderDockWindow("Historical state", right);
-					ImGui::DockBuilderDockWindow("Action and binding inspector", right);
-					ImGui::DockBuilderFinish(dock);
-				}
+				workspace.DrawDockspace();
 				workspace.Draw(*panels);
-				panels->Draw();
+				panels->Draw(workspace.Mode());
 				if (m_options.runtimeSmoke)
 				{
 					const auto state = panels->Snapshot();

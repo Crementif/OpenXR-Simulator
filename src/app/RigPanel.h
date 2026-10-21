@@ -15,7 +15,7 @@ class RigPanel
   public:
 	RigPanel();
 	~RigPanel();
-	void Draw(RuntimePanels& runtime);
+	void Draw(RuntimePanels& runtime, bool visible = true);
 	void ReplayRecording(RuntimePanels& runtime, const std::string& path, std::uint64_t seed);
 	// Called only for an explicit launch action. A rig is never attached to a
 	// previously connected application or an ambiguous/stale socket.

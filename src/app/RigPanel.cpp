@@ -202,7 +202,7 @@ struct RigPanel::Impl
 		(void)process;
 #endif
 	}
-	void Draw(RuntimePanels& runtime)
+	void Draw(RuntimePanels& runtime, bool visible)
 	{
 #ifdef SIMXR_COMPANION_AUTOMATION
 		try
@@ -215,6 +215,8 @@ struct RigPanel::Impl
 			launch.reset();
 		}
 #endif
+		if (!visible)
+			return;
 		if (!ImGui::Begin("Rigs"))
 		{
 			ImGui::End();
@@ -313,9 +315,9 @@ struct RigPanel::Impl
 };
 RigPanel::RigPanel() : m_impl(std::make_unique<Impl>()) {}
 RigPanel::~RigPanel() = default;
-void RigPanel::Draw(RuntimePanels& runtime)
+void RigPanel::Draw(RuntimePanels& runtime, bool visible)
 {
-	m_impl->Draw(runtime);
+	m_impl->Draw(runtime, visible);
 }
 void RigPanel::ReplayRecording(RuntimePanels& runtime, const std::string& path, std::uint64_t seed)
 {

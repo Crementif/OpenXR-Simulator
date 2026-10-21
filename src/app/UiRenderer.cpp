@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <filesystem>
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
@@ -312,9 +313,18 @@ struct UiRenderer::Impl
 		ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_DockingEnable;
 		ImGui::GetIO().IniFilename = nullptr;
 		ImGui::StyleColorsDark();
+		if (const auto base = SDL_GetBasePath())
+		{
+			const auto font = std::filesystem::path(base) / "fonts/LiberationSans-Regular.ttf";
+			if (std::filesystem::exists(font))
+				ImGui::GetIO().Fonts->AddFontFromFileTTF(font.string().c_str(), 17);
+		}
 		auto& style = ImGui::GetStyle();
-		style.WindowPadding = {24, 20};
-		style.ItemSpacing = {12, 10};
+		style.WindowPadding = {14, 12};
+		style.FramePadding = {8, 5};
+		style.FrameRounding = 3;
+		style.GrabRounding = 3;
+		style.ItemSpacing = {8, 7};
 		style.FontSizeBase = 17;
 		style.ScaleAllSizes(SDL_GetWindowDisplayScale(window->Native()));
 		if (!ImGui_ImplSDL3_InitForVulkan(window->Native()))

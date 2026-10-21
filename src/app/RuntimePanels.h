@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/WorkspaceMode.h"
 #include "automation/Recording.h"
 #include "control/ControlSchema.h"
 
@@ -17,6 +18,7 @@ class UiRenderer;
 struct RuntimePanelSnapshot
 {
 	bool connected = false, sessionAvailable = false, manual = false;
+	std::string connectionState;
 	std::uint64_t session = 0, generation = 0;
 	std::uint64_t selectedFrame = 0, selectedCapture = 0, selectedReader = 0;
 	std::size_t images = 0, captures = 0;
@@ -33,7 +35,8 @@ class RuntimePanels
 	RuntimePanels(UiRenderer& renderer, std::string endpoint = {});
 	~RuntimePanels();
 	void Poll();
-	void Draw();
+	void Draw(WorkspaceMode mode = WorkspaceMode::Simulator);
+	void DrawConnection();
 	std::vector<VkSemaphore> ReadyWaits() const;
 	void Submitted(std::uint64_t serial);
 	RuntimePanelSnapshot Snapshot() const;
@@ -42,6 +45,7 @@ class RuntimePanels
 	void SelectCapture(std::uint64_t capture);
 	void ReleaseSelected();
 	void CancelPending();
+	void ReleaseInputs();
 	std::string Endpoint() const;
 	void ConnectEndpoint(std::string endpoint);
 	void SetLive(bool enabled);
