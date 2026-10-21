@@ -370,9 +370,10 @@ void CaptureLayouts(const std::filesystem::path& directory)
 				auto* tabs = ImGui::GetCurrentContext()->TabBars.GetByKey(devices->GetID("Devices"));
 				Require(tabs && tabs->Tabs.Size >= 3, "Device tabs are missing");
 				if (frame == 0)
-					ImGui::TabBarQueueFocus(tabs, "Head");
+					ImGui::TabBarQueueFocus(tabs, &tabs->Tabs[0]);
 				if (frame == 11)
 				{
+					Require(tabs->SelectedTabId == tabs->Tabs[0].ID, "Head layout capture did not select the head tab");
 					handTab = {tabs->BarRect.Min.x + tabs->Tabs[1].Offset + tabs->Tabs[1].Width / 2,
 							   tabs->BarRect.GetCenter().y};
 					test.renderer.RequestScreenshot(path.string());
