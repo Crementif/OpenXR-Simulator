@@ -79,8 +79,14 @@ class RigRuntime
 	std::vector<std::byte> ReadInputRecording(std::uint64_t offset, std::uint64_t count);
 	ScriptInspection Inspect(std::uint64_t capture);
 	std::vector<std::byte> ProjectionHistory(std::uint32_t count);
-	std::vector<std::byte> ImageHistory(std::uint32_t count);
-	void ExportHistory(std::uint64_t frame, const std::string& path, std::optional<std::uint32_t> arraySlice);
+	std::vector<std::byte> ImageHistory(std::uint32_t count, control::TargetKind target);
+	void ExportHistory(std::uint64_t frame, const std::string& path, std::optional<std::uint32_t> arraySlice,
+		control::TargetKind target);
+	ScriptInspection BeginImageWindow(control::TargetKind target);
+	std::vector<std::byte> ImageWindow(std::uint64_t window);
+	void ExportWindowImage(std::uint64_t window, std::uint64_t frame, const std::string& path,
+		std::optional<std::uint32_t> arraySlice);
+	void ReleaseImageWindow(std::uint64_t window);
 	std::vector<std::byte> Revision(std::uint64_t revision);
 	void ReleaseInspection(std::uint64_t inspection);
 	std::vector<std::byte> State();
@@ -101,6 +107,7 @@ class RigRuntime
 	std::uint64_t m_nextTransaction = 1;
 	std::uint64_t m_nextCommand = 1;
 	std::uint64_t m_lease = 0;
+	std::uint64_t m_imageWindow = 0;
 	bool m_inputRecording = false;
 	std::chrono::steady_clock::time_point m_nextRenew;
 	std::vector<std::uint64_t> m_captures;

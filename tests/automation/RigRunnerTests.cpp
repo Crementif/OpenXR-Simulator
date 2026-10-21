@@ -3,6 +3,7 @@
 #include "automation/RigRunner.h"
 #include "control/ControlSchema.h"
 #include "control/ControlService.h"
+#include "control/InspectionDocument.h"
 #include "control/SimulationControl.h"
 #include "runtime/Runtime.h"
 
@@ -10,6 +11,7 @@
 #include <cstring>
 #include <iostream>
 #include <limits>
+#include <thread>
 
 using namespace simxr;
 namespace wire = control;
@@ -236,6 +238,76 @@ void CheckTemporaryResourceCleanup()
 	}
 }
 
+void CheckImageWindowCleanup()
+{
+	for (int mode = 0; mode < 4; ++mode)
+	{
+		std::size_t releasedWindows = 0, releasedImages = 0, releasedExports = 0;
+		std::atomic<bool> begun = false;
+		constexpr std::uint64_t window = 9007199254740993ULL;
+		automation::RigRunner runner([&](auto opcode, auto fields)
+		{
+			wire::Message response;
+			response.fields.push_back(wire::Field::U32(wire::tag::Error, 0));
+			if (opcode == wire::OpCode::BeginImageWindow)
+			{
+				begun = true;
+				response.fields.push_back(wire::Field::U64(wire::tag::ImageWindowId, window));
+				const auto document = wire::InspectionValue::Object({{"phase", wire::InspectionValue::Text("complete")}}).Encode();
+				response.fields.push_back(wire::Field::Bytes(wire::tag::Document,
+					mode == 0 ? std::span<const std::byte>{} : std::span<const std::byte>{document}));
+			}
+			else if (opcode == wire::OpCode::RetainWindowImage || opcode == wire::OpCode::ReleaseImageWindow)
+			{
+				wire::Message request;
+				request.fields = std::move(fields);
+				Require(!request.Find(wire::tag::Session) &&
+					request.Find(wire::tag::ImageWindowId)->AsU64() == window,
+					"Window operation lost its exact connection-owned identity");
+				if (opcode == wire::OpCode::ReleaseImageWindow)
+					++releasedWindows;
+				else
+					response.fields.push_back(wire::Field::U64(wire::tag::ImageReaderId, 41));
+			}
+			else if (opcode == wire::OpCode::StartExport)
+			{
+				response.fields.push_back(wire::Field::U64(wire::tag::ExportId, 42));
+				response.fields.push_back(wire::Field::U64(wire::tag::TotalBytes, 4));
+			}
+			else if (opcode == wire::OpCode::ExportInfo)
+				response.fields.push_back(wire::Field::Text(wire::tag::Phase, "complete"));
+			else if (opcode == wire::OpCode::ReleaseImage)
+				++releasedImages;
+			else if (opcode == wire::OpCode::ReleaseExport)
+				++releasedExports;
+			else
+				Require(opcode == wire::OpCode::ReleaseControl, "Unexpected window cleanup operation");
+			return response;
+		});
+		automation::RigOptions options;
+		options.session = wire::ControlSessionId{1};
+		options.generation = 1;
+		options.source = "local document, window = simxr.begin_image_window({target='quad_layers'})\n"
+			"assert(window == '9007199254740993' and document.phase == 'complete')\n";
+		options.source += mode == 2 ? "simxr.release_image_window(window)"
+			: mode == 3 ? "while true do end" : "simxr.export_window_image(window, '7', '')";
+		runner.Start(std::move(options));
+		if (mode == 3)
+		{
+			for (int attempt = 0; attempt < 1000 && !begun; ++attempt)
+				std::this_thread::sleep_for(std::chrono::milliseconds{1});
+			Require(begun, "Rig did not acquire its window before cancellation");
+			runner.Cancel();
+		}
+		runner.Join();
+		Require(releasedWindows == 1 && releasedImages == (mode == 1 ? 1 : 0) &&
+			releasedExports == (mode == 1 ? 1 : 0), "Window/export ownership leaked or was released twice");
+		Require(runner.Snapshot().phase == (mode == 2 ? automation::RigPhase::Complete :
+			mode == 3 ? automation::RigPhase::Cancelled : automation::RigPhase::Failed),
+			"Window cleanup test did not exercise its expected result");
+	}
+}
+
 void CheckExactFrameArithmetic()
 {
 	Fixture fixture;
@@ -417,6 +489,7 @@ simxr.checkpoint("fresh VM, persistent IDs", applied.applied_frame == "3")
 				"Restart reused transaction IDs or retained failed VM state");
 		CheckBindingPauseAndStep();
 		CheckTemporaryResourceCleanup();
+		CheckImageWindowCleanup();
 		CheckLeaseRenewal();
 		CheckInputRecording();
 		CheckExactFrameArithmetic();

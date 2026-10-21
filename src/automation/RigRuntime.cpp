@@ -339,22 +339,53 @@ std::vector<std::byte> RigRuntime::ProjectionHistory(std::uint32_t count)
 	fields.push_back(control::Field::U64(tag::Length, count));
 	return Document(Call(control::OpCode::ReadProjectionHistory, std::move(fields)));
 }
-std::vector<std::byte> RigRuntime::ImageHistory(std::uint32_t count)
+std::vector<std::byte> RigRuntime::ImageHistory(std::uint32_t count, control::TargetKind target)
 {
 	if (!count || count > 10)
 		throw std::invalid_argument("Image history count must be in [1,10]");
 	auto fields = Session();
 	fields.push_back(control::Field::U64(tag::Length, count));
+	fields.push_back(EncodeTarget({target}));
 	return Document(Call(control::OpCode::ReadImageHistory, std::move(fields)));
 }
-void RigRuntime::ExportHistory(std::uint64_t frame, const std::string& path, std::optional<std::uint32_t> arraySlice)
+void RigRuntime::ExportHistory(std::uint64_t frame, const std::string& path, std::optional<std::uint32_t> arraySlice,
+	control::TargetKind target)
 {
 	auto fields = Session();
 	fields.push_back(control::Field::U64(tag::FrameId, frame, true));
+	fields.push_back(EncodeTarget({target}));
 	const auto response = Call(control::OpCode::RetainHistoricalImage, std::move(fields));
 	if (!response.Find(tag::ImageReaderId))
 		throw std::runtime_error("Historical frame has no ready GPU image");
 	ExportImage(Number(response, tag::ImageReaderId), path, arraySlice);
+}
+ScriptInspection RigRuntime::BeginImageWindow(control::TargetKind target)
+{
+	if (m_imageWindow)
+		throw std::runtime_error("Release the rig's previous image window before beginning another");
+	auto fields = Session();
+	fields.push_back(EncodeTarget({target}));
+	const auto response = Call(control::OpCode::BeginImageWindow, std::move(fields));
+	// Record ownership before copying or decoding the returned document can fail.
+	m_imageWindow = Number(response, tag::ImageWindowId);
+	return {Document(response), m_imageWindow};
+}
+std::vector<std::byte> RigRuntime::ImageWindow(std::uint64_t window)
+{
+	return Document(Call(control::OpCode::ReadImageWindow, {control::Field::U64(tag::ImageWindowId, window, true)}));
+}
+void RigRuntime::ExportWindowImage(std::uint64_t window, std::uint64_t frame, const std::string& path,
+	std::optional<std::uint32_t> arraySlice)
+{
+	const auto response = Call(control::OpCode::RetainWindowImage,
+		{control::Field::U64(tag::ImageWindowId, window, true), control::Field::U64(tag::FrameId, frame, true)});
+	ExportImage(Number(response, tag::ImageReaderId), path, arraySlice);
+}
+void RigRuntime::ReleaseImageWindow(std::uint64_t window)
+{
+	Call(control::OpCode::ReleaseImageWindow, {control::Field::U64(tag::ImageWindowId, window, true)});
+	if (m_imageWindow == window)
+		m_imageWindow = 0;
 }
 ScriptInspection RigRuntime::Inspect(std::uint64_t capture)
 {
@@ -504,6 +535,11 @@ void RigRuntime::CleanupCall(control::OpCode opcode, Fields fields)
 std::string RigRuntime::Cleanup()
 {
 	std::string error;
+	if (m_imageWindow)
+	{
+		ReleaseUnchecked(control::OpCode::ReleaseImageWindow, tag::ImageWindowId, m_imageWindow);
+		m_imageWindow = 0;
+	}
 	for (const auto inspection : m_inspections)
 		ReleaseUnchecked(control::OpCode::ReleaseInspection, tag::InspectionId, inspection);
 	m_inspections.clear();

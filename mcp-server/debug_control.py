@@ -43,6 +43,7 @@ _SESSION = {'connection': _CONNECTION, 'session': _ID, 'generation': _GENERATION
 _GAME = {'connection': _CONNECTION, 'session': _ID, 'generation': _GENERATION}
 _LEASE = {**_SESSION, 'lease': _ID}
 _COMMAND = {**_LEASE, 'command_id': _ID}
+_HISTORY_TARGET = {'type': 'string', 'enum': ['composed_eyes', 'quad_layers'], 'default': 'composed_eyes'}
 _TARGET = {'target': {'type': 'string', 'enum': ['composed_eyes', 'layer_view', 'layer_depth', 'layer_depth_linear', 'projection_layers', 'quad_layers'], 'default': 'composed_eyes'},
            'layer': {'type': 'integer', 'minimum': 0, 'maximum': 2**32 - 1, 'default': 0},
            'view': {'type': 'integer', 'minimum': 0, 'maximum': 2**32 - 1, 'default': 0},
@@ -98,9 +99,18 @@ TOOL_DEFINITIONS = [
            'target': {key: value for key, value in _TARGET['target'].items() if key != 'default'},
            'layer': _TARGET['layer'], 'view': _TARGET['view']}, [*_SESSION, 'capture']),
     _tool('debug_image_history', 'Read bounded GPU history with exact frame identities and explicit missing/evicted images.',
-          {**_SESSION, 'count': {'type': 'integer', 'minimum': 1, 'maximum': 10, 'default': 10}}, list(_SESSION)),
-    _tool('debug_retain_history', 'Retain an exact existing composed historical image without admission or pixel readback.',
-          {**_SESSION, 'frame': _ID}),
+          {**_SESSION, 'count': {'type': 'integer', 'minimum': 1, 'maximum': 10, 'default': 10},
+           'target': _HISTORY_TARGET}, list(_SESSION)),
+    _tool('debug_retain_history', 'Retain an exact existing historical image without admission or pixel readback.',
+          {**_SESSION, 'frame': _ID, 'target': _HISTORY_TARGET}, [*_SESSION, 'frame']),
+    _tool('debug_begin_image_window', 'Retain available prehistory and twelve following submissions without changing application admission.',
+          {**_SESSION, 'target': _HISTORY_TARGET}, list(_SESSION)),
+    _tool('debug_image_window', 'Read a connection-owned image window, including exact frames, collection state and missing pixels.',
+          {'connection': _CONNECTION, 'window': _ID}),
+    _tool('debug_retain_window_image', 'Retain an exact image from a window independently of the window lifetime.',
+          {'connection': _CONNECTION, 'window': _ID, 'frame': _ID}),
+    _tool('debug_release_image_window', 'Release a window and interrupt unfinished collection; independent image readers survive.',
+          {'connection': _CONNECTION, 'window': _ID}),
     _tool('debug_retain_preview', 'Retain the currently selected completed virtual-display image, or report its actual clear; no admission or pixel readback.',
           _SESSION),
     _tool('debug_image_info', 'Inspect retained image metadata and capabilities without reading pixels.',
@@ -367,6 +377,10 @@ class DebugTools:
                 record = getattr(client, name.removeprefix('debug_'))(args['image'])
             elif name in ('debug_delivery_info', 'debug_release_delivery'):
                 record = getattr(client, name.removeprefix('debug_'))(args['delivery'])
+            elif name in ('debug_image_window', 'debug_release_image_window'):
+                record = getattr(client, name.removeprefix('debug_'))(args['window'])
+            elif name == 'debug_retain_window_image':
+                record = client.retain_window_image(args['window'], args['frame'])
             elif name == 'debug_start_export':
                 record = client.start_export(args['image'], layer=args.get('layer'))
             elif name in ('debug_export_info', 'debug_release_export'):
@@ -417,9 +431,13 @@ class DebugTools:
                                          layer=args.get('layer', 0), view=args.get('view', 0))
                     record = client.retain_image(session, args['capture'], **selection)
                 elif name == 'debug_image_history':
-                    record = client.image_history(session, count=args.get('count', 10))
+                    record = client.image_history(session, count=args.get('count', 10),
+                                                  target=sdk.TargetKind[args.get('target', 'composed_eyes').upper()])
                 elif name == 'debug_retain_history':
-                    record = client.retain_historical_image(session, args['frame'])
+                    record = client.retain_historical_image(session, args['frame'],
+                                                            target=sdk.TargetKind[args.get('target', 'composed_eyes').upper()])
+                elif name == 'debug_begin_image_window':
+                    record = client.begin_image_window(session, target=sdk.TargetKind[args.get('target', 'composed_eyes').upper()])
                 elif name == 'debug_retain_preview':
                     record = client.retain_preview(session)
                 else:

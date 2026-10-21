@@ -86,6 +86,24 @@ class FakeClient:
     def retain_image(self, session, capture, **selection):
         return {**self._call('retain_image', session, capture, **selection), 'image_reader_id': 2**63 + 3}
 
+    def image_history(self, session, **selection):
+        return self._call('image_history', session, **selection)
+
+    def retain_historical_image(self, session, frame, **selection):
+        return self._call('retain_historical_image', session, frame, **selection)
+
+    def begin_image_window(self, session, **selection):
+        return {**self._call('begin_image_window', session, **selection), 'image_window_id': 2**63 + 5}
+
+    def image_window(self, window):
+        return self._call('image_window', window)
+
+    def retain_window_image(self, window, frame):
+        return self._call('retain_window_image', window, frame)
+
+    def release_image_window(self, window):
+        return self._call('release_image_window', window)
+
     def image_info(self, image):
         return {**self._call('image_info', image), 'image_reader_id': image,
                 'image_descriptor': {'device_uuid': bytes(range(16)), 'driver_uuid': b'\xff' * 16}}
@@ -145,6 +163,25 @@ class AdapterTests(unittest.TestCase):
 
     def tearDown(self):
         self.tools.close()
+
+    def test_window_routing_and_exact_identity(self):
+        started = self.tools.call('debug_begin_image_window', dict(self.common, target='quad_layers'))
+        self.assertTrue(started['ok'], started)
+        self.assertEqual(started['image_window_id'], str(2**63 + 5))
+        self.assertEqual(self.client.calls[-1][2]['target'], TargetKind.QUAD_LAYERS)
+        scope = {'connection': self.connection, 'window': started['image_window_id']}
+        for name in ('debug_image_window', 'debug_release_image_window'):
+            self.assertTrue(self.tools.call(name, scope)['ok'])
+            self.assertEqual(self.client.calls[-1][1], (2**63 + 5,))
+        self.assertTrue(self.tools.call('debug_retain_window_image', dict(scope, frame=str(2**63 + 6)))['ok'])
+        self.assertEqual(self.client.calls[-1][1], (2**63 + 5, 2**63 + 6))
+        for target in ('composed_eyes', 'quad_layers'):
+            self.assertTrue(self.tools.call('debug_image_history', dict(self.common, target=target))['ok'])
+            self.assertEqual(self.client.calls[-1][2]['target'], TargetKind[target.upper()])
+            self.assertTrue(self.tools.call('debug_retain_history', dict(self.common, target=target, frame='7'))['ok'])
+        self.assertEqual(self.tools.call('debug_begin_image_window', dict(self.common, target='layer_view'))['error'],
+                         'invalid_arguments')
+        self.assertEqual(self.tools.call('debug_image_window', dict(scope, window=2**63))['error'], 'invalid_arguments')
 
     def test_schemas_require_explicit_mutation_identity(self):
         definitions = {definition['name']: definition for definition in adapter.TOOL_DEFINITIONS}

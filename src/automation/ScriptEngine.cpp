@@ -124,6 +124,22 @@ ScriptCaptureTarget CaptureTarget(lua_State* state, int index)
 		throw std::invalid_argument("Composed capture cannot select a source layer/view");
 	return target;
 }
+wire::TargetKind HistoryTarget(lua_State* state, int index)
+{
+	const auto target = lua_isnoneornil(state, index) ? ScriptCaptureTarget{} : CaptureTarget(state, index);
+	if (target.kind != wire::TargetKind::ComposedEyes && target.kind != wire::TargetKind::QuadLayers)
+		throw std::invalid_argument("History target must be composed or quad_layers");
+	return target.kind;
+}
+std::optional<std::uint32_t> HistorySlice(lua_State* state, int index)
+{
+	if (lua_isnoneornil(state, index))
+		return {};
+	const auto slice = Integer(state, index);
+	if (slice > 1)
+		throw std::invalid_argument("Historical eye slice must be 0 or 1");
+	return static_cast<std::uint32_t>(slice);
+}
 std::vector<float> Vector(lua_State* state, int table, const char* key, std::initializer_list<float> fallback)
 {
 	lua_getfield(state, table, key);
@@ -710,20 +726,34 @@ class ScriptEngine::Impl
 		const auto count = lua_isnoneornil(state, 1) ? 10 : Integer(state, 1);
 		if (!count || count > 10)
 			throw std::invalid_argument("Image history count must be in [1,10]");
-		PushInspection(state, m_runtime.ImageHistory(static_cast<std::uint32_t>(count)));
+		PushInspection(state, m_runtime.ImageHistory(static_cast<std::uint32_t>(count), HistoryTarget(state, 2)));
 		return 1;
 	}
 	int ExportHistory(lua_State* state)
 	{
-		std::optional<std::uint32_t> arraySlice;
-		if (!lua_isnoneornil(state, 3))
-		{
-			const auto slice = Integer(state, 3);
-			if (slice > 1)
-				throw std::invalid_argument("Historical eye slice must be 0 or 1");
-			arraySlice = static_cast<std::uint32_t>(slice);
-		}
-		m_runtime.ExportHistory(Integer(state, 1), String(state, 2), arraySlice);
+		m_runtime.ExportHistory(Integer(state, 1), String(state, 2), HistorySlice(state, 3), HistoryTarget(state, 4));
+		return 0;
+	}
+	int BeginImageWindow(lua_State* state)
+	{
+		const auto window = m_runtime.BeginImageWindow(HistoryTarget(state, 1));
+		PushInspection(state, window.document);
+		PushInteger(state, window.identity);
+		return 2;
+	}
+	int ImageWindow(lua_State* state)
+	{
+		PushInspection(state, m_runtime.ImageWindow(Integer(state, 1)));
+		return 1;
+	}
+	int ExportWindowImage(lua_State* state)
+	{
+		m_runtime.ExportWindowImage(Integer(state, 1), Integer(state, 2), String(state, 3), HistorySlice(state, 4));
+		return 0;
+	}
+	int ReleaseImageWindow(lua_State* state)
+	{
+		m_runtime.ReleaseImageWindow(Integer(state, 1));
 		return 0;
 	}
 	int ProjectionHistory(lua_State* state)
@@ -891,6 +921,10 @@ class ScriptEngine::Impl
 		bind("projection_history", Binding<&Impl::ProjectionHistory>);
 		bind("image_history", Binding<&Impl::ImageHistory>);
 		bind("export_history", Binding<&Impl::ExportHistory>);
+		bind("begin_image_window", Binding<&Impl::BeginImageWindow>);
+		bind("image_window", Binding<&Impl::ImageWindow>);
+		bind("export_window_image", Binding<&Impl::ExportWindowImage>);
+		bind("release_image_window", Binding<&Impl::ReleaseImageWindow>);
 		bind("revision", Binding<&Impl::Revision>);
 		bind("release_inspection", Binding<&Impl::ReleaseInspection>);
 		bind("checkpoint", Binding<&Impl::Checkpoint>);

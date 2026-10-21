@@ -1,0 +1,131 @@
+"""MCP and Luau window lifecycles preserve exact composed/quad history."""
+import base64
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import time
+
+from test_native_quad import require, wait_file
+from simxr_control import Client
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'mcp-server'))
+from debug_control import DebugTools
+
+
+def main():
+    ui = '--ui' in sys.argv
+    target = 'quad_layers' if ui else 'composed_eyes'
+    luau_target = 'quad_layers' if ui else 'composed'
+    with tempfile.TemporaryDirectory(prefix='sx-bindings-') as temporary:
+        data = Path(temporary)
+        environment = dict(os.environ, SIMXR_DATA_DIR=temporary, SIMXR_PROBE_CONTROL='1',
+                           SIMXR_PROBE_RETAIN_CONTROL='1', SIMXR_PROBE_GPU_INSPECTION='1',
+                           SIMXR_PROBE_RECORDING='1', SIMXR_PROBE_DYNAMIC_COLOR='1',
+                           SIMXR_PROBE_MOVING_QUAD='1', SIMXR_PROBE_FRAMES='28',
+                           SIMXR_WIDTH='64', SIMXR_HEIGHT='48')
+        environment.pop('SIMXR_CONTROL_SOCKET', None)
+        host = subprocess.Popen([sys.argv[1]], env=environment, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True)
+        tools, runner = DebugTools(), None
+        def call(name, **arguments):
+            result = tools.call(name, arguments)
+            require(result['ok'], result)
+            return result
+        try:
+            wait_file(data / 'control.ready', host)
+            socket = data / f'control.{host.pid}.sock'
+            connected = call('debug_connect', path=str(socket))
+            connection = connected['connection']
+            scope = dict(connection=connection, **connected['sessions'][0])
+            (data / 'control.continue').touch()
+            for frame in range(3, 31):
+                wait_file(data / f'recording.{frame}.ready', host)
+                if frame == 3:
+                    started = call('debug_begin_image_window', **scope, target=target)
+                    window = started['image_window_id']
+                    require(started['document']['trigger_frame'] == '3', started)
+                if frame == 15:
+                    document = call('debug_image_window', connection=connection, window=window)['document']
+                    require(document['phase'] == 'complete' and document['post_count'] == 12 and document['target'] == target, document)
+                    retained = call('debug_retain_window_image', connection=connection, window=window, frame='3')
+                    image = retained['image_reader_id']
+                    call('debug_release_image_window', connection=connection, window=window)
+                    exported = call('debug_start_export', connection=connection, image=image, layer=1 if ui else 0)
+                    ticket = exported['export_id']
+                    for _ in range(500):
+                        status = call('debug_export_info', connection=connection, export=ticket)
+                        if status['phase'] == 'complete':
+                            break
+                        time.sleep(.002)
+                    require(status['phase'] == 'complete', status)
+                    chunk = call('debug_read_export', connection=connection, export=ticket)
+                    pixels = base64.b64decode(chunk['bytes']['data'])
+                    check_pixels(pixels, ui)
+                    call('debug_release_export', connection=connection, export=ticket)
+                    call('debug_release_image', connection=connection, image=image)
+                    history = call('debug_image_history', **scope, target=target, count=1)
+                    require(history['document']['target'] == target, history)
+                    retained = call('debug_retain_history', **scope, target=target, frame='15')
+                    call('debug_release_image', connection=connection, image=retained['image_reader_id'])
+                if frame == 16:
+                    rig = data / 'window.luau'
+                    rig.write_text('''local options = {target="TARGET"}
+local history
+repeat
+    history = simxr.image_history(1, options)
+until history.entries[1].phase == "ready"
+local document, window = simxr.begin_image_window(options)
+assert(document.trigger_frame == "16")
+simxr.export_history("16", "admitted.rgba", SLICE, options)
+repeat
+    document = simxr.image_window(window)
+    assert(document.phase ~= "interrupted")
+    local ready = document.phase == "complete"
+    for _, entry in document.entries do ready = ready and entry.phase == "ready" end
+until ready
+assert(document.entries[1].frame_id == "7" and document.entries[22].frame_id == "28")
+simxr.export_window_image(window, "7", "window.rgba", SLICE)
+simxr.release_image_window(window)
+simxr.checkpoint("Exact historical window exported", true)
+'''.replace('TARGET', luau_target).replace('SLICE', '1' if ui else '0'))
+                    runner = subprocess.Popen([sys.argv[2], '--socket', str(socket), '--rig', str(rig),
+                                               '--json', str(data / 'report.json')], cwd=data, env=environment,
+                                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                    wait_file(data / 'admitted.rgba', runner)
+                if frame == 28:
+                    output = runner.communicate(timeout=10)[0]
+                    require(runner.returncode == 0, output)
+                    require(json.loads((data / 'report.json').read_text())['phase'] == 'complete', output)
+                    check_pixels((data / 'window.rgba').read_bytes(), ui)
+                    check_pixels((data / 'admitted.rgba').read_bytes(), ui, b'\0\xff\0')
+                    # Explicit rig release leaves session observer admission free.
+                    with Client(socket) as client:
+                        session, = client.sessions()
+                        fresh = client.begin_image_window(session)['image_window_id']
+                        client.release_image_window(fresh)
+                (data / f'recording.{frame}.continue').touch()
+            wait_file(data / 'control.destroyed', host)
+            (data / 'control.retained.continue').touch()
+            output = host.communicate(timeout=15)[0]
+            require(host.returncode == 0 and 'VUID-' not in output and 'Vulkan validation error' not in output, output)
+            print('PASS MCP/Luau historical target selection, window ownership and exact native pixels')
+        finally:
+            tools.close()
+            for process in (runner, host):
+                if process is not None and process.poll() is None:
+                    process.kill()
+                    print(process.communicate()[0])
+
+
+def check_pixels(pixels, ui, expected=b'\xff\0\0'):
+    require(len(pixels) == 64 * 48 * 4, 'Wrong exported extent')
+    colors = {pixels[index:index+3] for index in range(0, len(pixels), 4)}
+    require(colors == ({expected, b'\0\0\0'} if ui else {expected}), 'Historical source pixels were substituted')
+
+
+if __name__ == '__main__':
+    main()
