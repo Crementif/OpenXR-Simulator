@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <span>
 #include <vector>
@@ -53,12 +54,13 @@ class PoseSequencePlayback
 {
   public:
 	void Start(PoseSequence sequence, FrameId origin);
+	void Start(std::shared_ptr<const PoseSequence> sequence, FrameId origin);
 	std::span<const PoseSequenceStep> Advance(FrameId submitted) noexcept;
 	std::optional<FrameId> NextFrame() const noexcept;
 	bool Complete() const noexcept;
 
   private:
-	PoseSequence m_sequence;
+	std::shared_ptr<const PoseSequence> m_sequence;
 	FrameId m_origin;
 	std::size_t m_next = 0;
 };

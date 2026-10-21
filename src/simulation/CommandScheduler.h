@@ -2,6 +2,7 @@
 
 #include "simulation/CommandRecorder.h"
 #include "simulation/CommandState.h"
+#include "simulation/PoseSequenceExecution.h"
 #include <deque>
 #include <mutex>
 
@@ -14,6 +15,9 @@ class CommandScheduler
 	void Start(std::uint64_t seed = 0, std::optional<CommandConfiguration> initial = {});
 	void Close();
 	CommandOutcome Submit(CommandTransaction transaction);
+	std::optional<PoseSequenceStatus> StartPoseSequence(CommandSource owner, std::shared_ptr<const PoseSequence> program);
+	std::optional<PoseSequenceStatus> PoseSequenceStatusFor(CommandSource owner) const;
+	std::array<bool, ControlChannelCount> StopPoseSequence(CommandSource owner);
 	std::optional<CommandOutcome> Read(CommandSource source, std::uint64_t id) const;
 	CommandSchedulerSnapshot Snapshot() const;
 	CommandResult Cancel(CommandSource source, std::uint64_t id);
@@ -47,5 +51,9 @@ class CommandScheduler
 	std::vector<SourceCursor> m_sources;
 	std::deque<std::shared_ptr<const AppliedCommandSnapshot>> m_applied;
 	CommandRecorder m_recorder;
+	std::optional<PoseSequenceExecution> m_sequence;
+	std::optional<CommandSource> m_replacedSequence;
+	std::uint64_t m_nextSequence = 1;
+	std::array<bool, ControlChannelCount> StopPoseSequenceLocked(CommandSource owner) noexcept;
 };
 } // namespace simxr

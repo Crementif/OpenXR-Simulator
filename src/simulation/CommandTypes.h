@@ -18,7 +18,8 @@ enum class CommandSourceKind
 {
 	Manual,
 	Mcp,
-	Rig
+	Rig,
+	Sequence
 };
 struct CommandSource
 {
@@ -174,6 +175,11 @@ struct CommandConfiguration
 	BodyProportions proportions;
 	ReferenceSpaceState referenceSpaces;
 };
+struct SequenceCaptureIntent
+{
+	std::uint64_t sequence = 0;
+	FrameId frame;
+};
 struct AppliedCommandSnapshot
 {
 	std::uint64_t seed = 0, revision = 0;
@@ -185,6 +191,7 @@ struct AppliedCommandSnapshot
 	std::array<std::optional<CommandSource>, ControlChannelCount> owners;
 	ScenarioState scenarios{};
 	std::vector<CommandOutcome> outcomes;
+	std::optional<SequenceCaptureIntent> sequenceCapture;
 };
 struct CommandSchedulerSnapshot
 {

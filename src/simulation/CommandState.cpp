@@ -426,6 +426,14 @@ void CommandState::Capture(AppliedCommandSnapshot& snapshot, const CommandConfig
 	snapshot.scenarios = m_scenarios;
 }
 
+CommandState::ChannelMask CommandState::OwnedChannels(CommandSource source) const noexcept
+{
+	ChannelMask owned{};
+	for (std::size_t index = 0; index < m_owners.size(); ++index)
+		owned[index] = m_owners[index] == source;
+	return owned;
+}
+
 CommandState::ChannelMask CommandState::ReleaseSource(CommandSource source) noexcept
 {
 	ChannelMask released{};

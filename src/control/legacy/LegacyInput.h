@@ -1,6 +1,6 @@
 #pragma once
 
-#include "control/legacy/PoseSequence.h"
+#include "simulation/PoseSequence.h"
 #include "simulation/InputState.h"
 #include "simulation/TrackingTypes.h"
 #include "simulation/ViewConfiguration.h"

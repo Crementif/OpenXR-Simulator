@@ -1,4 +1,4 @@
-#include "control/legacy/PoseSequence.h"
+#include "simulation/PoseSequence.h"
 
 #include <algorithm>
 #include <limits>
@@ -29,7 +29,11 @@ bool PoseSequence::Loops() const noexcept
 }
 void PoseSequencePlayback::Start(PoseSequence sequence, FrameId origin)
 {
-	if (sequence.Size() && sequence.Steps().back().frame.value >
+	Start(std::make_shared<const PoseSequence>(std::move(sequence)), origin);
+}
+void PoseSequencePlayback::Start(std::shared_ptr<const PoseSequence> sequence, FrameId origin)
+{
+	if (sequence && sequence->Size() && sequence->Steps().back().frame.value >
 		std::numeric_limits<std::uint64_t>::max() - origin.value)
 		throw std::overflow_error("Pose sequence extends beyond the frame counter");
 	m_sequence = std::move(sequence);
@@ -38,11 +42,11 @@ void PoseSequencePlayback::Start(PoseSequence sequence, FrameId origin)
 }
 std::span<const PoseSequenceStep> PoseSequencePlayback::Advance(FrameId submitted) noexcept
 {
-	const auto steps = m_sequence.Steps();
+	const auto steps = m_sequence ? m_sequence->Steps() : std::span<const PoseSequenceStep>{};
 	if (steps.empty() || submitted < m_origin)
 		return {};
 	auto elapsed = submitted.value - m_origin.value;
-	if (m_sequence.Loops() && elapsed > steps.back().frame.value)
+	if (m_sequence->Loops() && elapsed > steps.back().frame.value)
 	{
 		// The strict comparison proves last+1 fits even at the uint64 boundary.
 		elapsed %= steps.back().frame.value + 1;
@@ -56,7 +60,7 @@ std::span<const PoseSequenceStep> PoseSequencePlayback::Advance(FrameId submitte
 }
 std::optional<FrameId> PoseSequencePlayback::NextFrame() const noexcept
 {
-	const auto steps = m_sequence.Steps();
+	const auto steps = m_sequence ? m_sequence->Steps() : std::span<const PoseSequenceStep>{};
 	if (steps.empty())
 		return {};
 	std::uint64_t offset = 0;
@@ -64,7 +68,7 @@ std::optional<FrameId> PoseSequencePlayback::NextFrame() const noexcept
 		offset = steps[m_next].frame.value;
 	else
 	{
-		if (!m_sequence.Loops() || steps.back().frame.value == std::numeric_limits<std::uint64_t>::max())
+		if (!m_sequence->Loops() || steps.back().frame.value == std::numeric_limits<std::uint64_t>::max())
 			return {};
 		const auto cycle = steps.back().frame.value + 1;
 		if (steps.front().frame.value > std::numeric_limits<std::uint64_t>::max() - cycle)
@@ -77,6 +81,6 @@ std::optional<FrameId> PoseSequencePlayback::NextFrame() const noexcept
 }
 bool PoseSequencePlayback::Complete() const noexcept
 {
-	return !m_sequence.Size() || (!m_sequence.Loops() && m_next == m_sequence.Size());
+	return !m_sequence || !m_sequence->Size() || (!m_sequence->Loops() && m_next == m_sequence->Size());
 }
 } // namespace simxr

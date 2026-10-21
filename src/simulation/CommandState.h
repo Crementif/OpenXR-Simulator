@@ -23,6 +23,7 @@ class CommandState
 	CommandConfiguration Merge(const CommandConfiguration& baseline) const;
 	CommandRecordingOrigin RecordingOrigin(const CommandConfiguration& baseline, RuntimeTime time) const;
 	void Capture(AppliedCommandSnapshot& snapshot, const CommandConfiguration& baseline, RuntimeTime time) const;
+	ChannelMask OwnedChannels(CommandSource source) const noexcept;
 	ChannelMask ReleaseSource(CommandSource source) noexcept;
 	void ClearOwnership() noexcept;
 	void Swap(CommandState& other) noexcept;

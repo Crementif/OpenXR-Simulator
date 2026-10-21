@@ -157,7 +157,7 @@ void TestSequenceProgram()
 		rejected = true;
 	}
 	Require(rejected, "Oversized pose program silently truncated its final steps");
-	playback.Start({}, {});
+	playback.Start(PoseSequence{}, {});
 	Require(playback.Complete() && !playback.NextFrame(), "Empty replacement did not stop playback");
 }
 

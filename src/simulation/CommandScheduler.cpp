@@ -213,7 +213,8 @@ class CommandScheduler::PreparedCommandBoundary
 							RuntimeTime runtimeTime, const CommandConfiguration& baseline)
 		: m_state(scheduler.m_state), m_pending(scheduler.m_pending), m_outcomes(scheduler.m_outcomes),
 		  m_snapshots(scheduler.m_applied), m_snapshot(std::make_shared<AppliedCommandSnapshot>()),
-		  m_historyCapacity(scheduler.m_historyCapacity)
+		  m_historyCapacity(scheduler.m_historyCapacity), m_sequence(scheduler.m_sequence),
+		  m_replacedSequence(scheduler.m_replacedSequence)
 	{
 		if (scheduler.m_revision == std::numeric_limits<std::uint64_t>::max())
 			throw std::overflow_error("Command revisions exhausted");
@@ -254,6 +255,7 @@ class CommandScheduler::PreparedCommandBoundary
 			AppendHistory(std::move(outcome));
 			command = m_pending.erase(command);
 		}
+		ApplySequence(frame, time, runtimeTime, baseline);
 		m_state.Capture(*m_snapshot, baseline, runtimeTime);
 		m_snapshots.push_back(m_snapshot);
 		if (m_snapshots.size() > 128)
@@ -272,11 +274,14 @@ class CommandScheduler::PreparedCommandBoundary
 
 	void Commit(CommandScheduler& scheduler) noexcept
 	{
+		static_assert(std::is_nothrow_swappable_v<std::optional<PoseSequenceExecution>>);
 		m_state.Swap(scheduler.m_state);
 		m_pending.swap(scheduler.m_pending);
 		m_outcomes.swap(scheduler.m_outcomes);
 		m_snapshots.swap(scheduler.m_applied);
 		scheduler.m_revision = m_snapshot->revision;
+		scheduler.m_sequence.swap(m_sequence);
+		scheduler.m_replacedSequence.swap(m_replacedSequence);
 	}
 
 	void MarkRecordingOverrun(bool overrun) noexcept
@@ -297,12 +302,68 @@ class CommandScheduler::PreparedCommandBoundary
 		if (m_outcomes.size() > m_historyCapacity)
 			m_outcomes.pop_front();
 	}
+	void ApplySequence(FrameId frame, SimulationTime time, RuntimeTime runtimeTime, const CommandConfiguration& baseline)
+	{
+		if (!m_sequence || !m_sequence->CanPrepare())
+			return;
+		if (m_sequence->Status().origin.value && !m_sequence->HasControl(m_state.OwnedChannels(m_sequence->Source())))
+		{
+			m_sequence->Accept(frame, CommandResult::Conflict);
+			m_state.ReleaseSource(m_sequence->Source());
+			return;
+		}
+		const auto initial = m_state.Merge(baseline);
+		if (m_replacedSequence)
+		{
+			m_state.ReleaseSource(*m_replacedSequence);
+			m_replacedSequence.reset();
+		}
+		PoseSequenceFrame prepared;
+		try
+		{
+			prepared = m_sequence->Prepare(frame, initial);
+		}
+		catch (const std::invalid_argument&)
+		{
+			m_sequence->Accept(frame, CommandResult::Invalid);
+		}
+		catch (const std::overflow_error&)
+		{
+			m_sequence->Accept(frame, CommandResult::Invalid);
+		}
+		if (!m_sequence->CanPrepare())
+		{
+			m_state.ReleaseSource(m_sequence->Source());
+			return;
+		}
+		if (!prepared.advanced)
+			return;
+		CommandResult result = CommandResult::Applied;
+		if (!prepared.commands.empty())
+		{
+			CommandOutcome outcome;
+			outcome.transaction = {m_sequence->Status().groups + 1, m_sequence->Source(), {frame, {}},
+				CommandLatePolicy::Reject, std::move(prepared.commands)};
+			outcome.appliedFrame = frame;
+			outcome.appliedTime = time;
+			result = outcome.result = m_state.Apply(outcome.transaction, baseline, runtimeTime);
+			m_snapshot->outcomes.push_back(outcome);
+			AppendHistory(std::move(outcome));
+		}
+		m_sequence->Accept(frame, result);
+		if (result != CommandResult::Applied)
+			m_state.ReleaseSource(m_sequence->Source());
+		else if (prepared.capture)
+			m_snapshot->sequenceCapture = SequenceCaptureIntent{m_sequence->Status().id, frame};
+	}
 	CommandState m_state;
 	std::deque<CommandOutcome> m_pending;
 	std::deque<CommandOutcome> m_outcomes;
 	std::deque<std::shared_ptr<const AppliedCommandSnapshot>> m_snapshots;
 	std::shared_ptr<AppliedCommandSnapshot> m_snapshot;
 	std::size_t m_historyCapacity;
+	std::optional<PoseSequenceExecution> m_sequence;
+	std::optional<CommandSource> m_replacedSequence;
 };
 
 CommandScheduler::CommandScheduler(std::size_t pendingCapacity, std::size_t historyCapacity)
@@ -324,6 +385,8 @@ void CommandScheduler::Start(std::uint64_t seed, std::optional<CommandConfigurat
 	m_outcomes.clear();
 	m_sources.clear();
 	m_applied.clear();
+	m_sequence.reset();
+	m_replacedSequence.reset();
 	m_recorder.Stop();
 }
 void CommandScheduler::Close()
@@ -333,6 +396,9 @@ void CommandScheduler::Close()
 	for (auto& pending : m_pending)
 		pending.result = CommandResult::Cancelled;
 	m_state.ClearOwnership();
+	if (m_sequence)
+		m_sequence->Cancel();
+	m_replacedSequence.reset();
 	m_closed = true;
 	m_recorder.Stop();
 }
@@ -364,7 +430,8 @@ CommandOutcome CommandScheduler::Submit(CommandTransaction transaction)
 		}
 	const auto same = [&](const auto& value)
 	{
-		return value.transaction.source.id == request.source.id && value.transaction.id == request.id;
+		return value.transaction.source.kind != CommandSourceKind::Sequence &&
+			value.transaction.source.id == request.source.id && value.transaction.id == request.id;
 	};
 	for (const auto* records : {&m_pending, &m_outcomes})
 		if (const auto found = std::find_if(records->begin(), records->end(), same); found != records->end())
@@ -515,7 +582,10 @@ std::array<bool, ControlChannelCount> CommandScheduler::ReleaseSource(CommandSou
 			}
 		m_recorder.Fail();
 	}
-	const auto released = m_state.ReleaseSource(source);
+	auto released = m_state.ReleaseSource(source);
+	const auto sequenceReleased = StopPoseSequenceLocked(source);
+	for (std::size_t index = 0; index < released.size(); ++index)
+		released[index] = released[index] || sequenceReleased[index];
 	if (retire)
 		std::erase_if(m_sources,
 					  [&](const auto& value)
@@ -523,6 +593,56 @@ std::array<bool, ControlChannelCount> CommandScheduler::ReleaseSource(CommandSou
 						  return value.source == source;
 					  });
 	return released;
+}
+std::optional<PoseSequenceStatus> CommandScheduler::StartPoseSequence(CommandSource owner,
+	std::shared_ptr<const PoseSequence> program)
+{
+	if (!ValidSource(owner) || !program)
+		throw std::invalid_argument("Invalid sequence source or program");
+	std::lock_guard lock(m_mutex);
+	if (m_closed)
+		return {};
+	if (m_sequence && m_sequence->CanPrepare() && m_sequence->Status().owner != owner)
+		return {};
+	if (m_nextSequence == std::numeric_limits<std::uint64_t>::max())
+		throw std::overflow_error("Sequence identities exhausted");
+	const auto previous = m_applied.empty() ? 0 : m_applied.back()->frame.value;
+	if (previous == std::numeric_limits<std::uint64_t>::max() ||
+		(program->Size() && program->Steps().back().frame.value > std::numeric_limits<std::uint64_t>::max() - previous - 1))
+		throw std::overflow_error("Pose sequence extends beyond the frame counter");
+	const auto previousSource = m_replacedSequence.value_or(m_sequence ? m_sequence->Source() : CommandSource{});
+	PoseSequenceExecution prepared(m_nextSequence, owner, std::move(program), m_state.OwnedChannels(previousSource));
+	if (m_sequence && m_sequence->Status().origin.value)
+		m_replacedSequence = m_sequence->Source();
+	m_sequence = std::move(prepared);
+	++m_nextSequence;
+	return m_sequence->Status();
+}
+std::optional<PoseSequenceStatus> CommandScheduler::PoseSequenceStatusFor(CommandSource owner) const
+{
+	std::lock_guard lock(m_mutex);
+	return m_sequence && m_sequence->Status().owner == owner ? std::optional{m_sequence->Status()} : std::nullopt;
+}
+std::array<bool, ControlChannelCount> CommandScheduler::StopPoseSequenceLocked(CommandSource owner) noexcept
+{
+	std::array<bool, ControlChannelCount> released{};
+	if (!m_sequence || m_sequence->Status().owner != owner)
+		return released;
+	released = m_state.ReleaseSource(m_sequence->Source());
+	if (m_replacedSequence)
+	{
+		const auto previous = m_state.ReleaseSource(*m_replacedSequence);
+		for (std::size_t index = 0; index < released.size(); ++index)
+			released[index] = released[index] || previous[index];
+		m_replacedSequence.reset();
+	}
+	m_sequence->Cancel();
+	return released;
+}
+std::array<bool, ControlChannelCount> CommandScheduler::StopPoseSequence(CommandSource owner)
+{
+	std::lock_guard lock(m_mutex);
+	return StopPoseSequenceLocked(owner);
 }
 void CommandScheduler::StartRecording(const CommandConfiguration& baseline, const ReferenceSpaceState& spaces)
 {

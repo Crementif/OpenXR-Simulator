@@ -8,6 +8,7 @@ class SourceKind(IntEnum):
     MANUAL = 0
     MCP = 1
     RIG = 2
+    SEQUENCE = 3  # Runtime-owned playback; clients cannot claim this source kind.
 
 
 class LatePolicy(IntEnum):

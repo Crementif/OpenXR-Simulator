@@ -46,6 +46,8 @@ add_library(simxr_core STATIC
     src/simulation/HapticState.cpp
     src/runtime/extensions/BodyTracking.cpp
     src/simulation/BodyModel.cpp
+    src/simulation/PoseSequence.cpp
+    src/simulation/PoseSequenceExecution.cpp
     src/simulation/PoseHistory.cpp
     src/simulation/TrackingSystem.cpp
     src/simulation/SpaceSystem.cpp
@@ -68,7 +70,6 @@ target_compile_features(simxr_core PUBLIC cxx_std_20)
 add_library(simxr_control STATIC
     src/control/legacy/LegacyCaptureImage.cpp
     src/control/legacy/LegacyInput.cpp
-    src/control/legacy/PoseSequence.cpp
     src/control/legacy/WindowsLegacyChannel.cpp
     src/control/legacy/WindowsLegacyCapture.cpp
     src/control/WireProtocol.cpp
