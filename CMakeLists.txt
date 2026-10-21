@@ -68,6 +68,7 @@ target_compile_features(simxr_core PUBLIC cxx_std_20)
 add_library(simxr_control STATIC
     src/control/legacy/LegacyCaptureImage.cpp
     src/control/legacy/LegacyInput.cpp
+    src/control/legacy/PoseSequence.cpp
     src/control/legacy/WindowsLegacyChannel.cpp
     src/control/legacy/WindowsLegacyCapture.cpp
     src/control/WireProtocol.cpp

@@ -105,6 +105,62 @@ void TestSequencePlayback()
 	Require(count == 0 && !input.AdvanceSequence({107}),
 			"Replacing a sequence with an empty stream must stop old playback");
 }
+void TestSequenceProgram()
+{
+	using namespace simxr;
+	std::istringstream input(R"({"frame":9007199254740993,"head":{"x":1}})" "\n"
+		R"({"frame":"9007199254740993","capture":true})" "\n"
+		R"({"frame":18446744073709551615,"right":{"trigger":0.5}})" "\n"
+		R"({"frame":18446744073709551616,"head":{"x":99}})" "\n"
+		R"({"frame":"","head":{"x":99}})" "\n");
+	auto program = LegacyInput::ReadSequence(input, false);
+	Require(program.Size() == 3 && program.Steps()[0].frame.value == 9007199254740993ULL &&
+		program.Steps()[1].capture && program.Steps()[2].frame.value == UINT64_MAX,
+		"Pose program lost exact frame identity, stable ordering or overflow validation");
+	PoseSequencePlayback playback;
+	playback.Start(std::move(program), {0});
+	Require(playback.NextFrame() == FrameId{9007199254740993ULL} &&
+		playback.Advance({9007199254740992ULL}).empty(), "Pose step ran before its exact frame");
+	const auto grouped = playback.Advance({9007199254740993ULL});
+	Require(grouped.size() == 2 && grouped[0].head && grouped[1].capture &&
+		playback.NextFrame() == FrameId{UINT64_MAX}, "Equal-frame steps were split or reordered");
+	Require(playback.Advance({UINT64_MAX}).size() == 1 && playback.Complete() && !playback.NextFrame(),
+		"Last representable frame did not finish exactly once");
+
+	std::istringstream loop(R"({"frame":1,"capture":true})" "\n" R"({"frame":3,"head":{"x":4}})" "\n");
+	playback.Start(LegacyInput::ReadSequence(loop, true), {10});
+	Require(playback.NextFrame() == FrameId{11} && playback.Advance({13}).size() == 2 &&
+		playback.NextFrame() == FrameId{15}, "Loop cursor did not preserve its inclusive final frame");
+	Require(playback.Advance({25}).size() == 2 && playback.Advance({25}).empty() &&
+		playback.NextFrame() == FrameId{27} && !playback.Complete(), "Loop jump repeated a consumed step");
+	bool rejected = false;
+	try
+	{
+		playback.Start(PoseSequence({PoseSequenceStep{FrameId{2}}}, false), {UINT64_MAX});
+	}
+	catch (const std::overflow_error&)
+	{
+		rejected = true;
+	}
+	Require(rejected && playback.NextFrame() == FrameId{27}, "Invalid replacement changed active playback");
+	std::string oversized;
+	for (std::size_t index = 0; index <= PoseSequence::MaxSteps; ++index)
+		oversized += "{\"frame\":0}\n";
+	std::istringstream excess(oversized);
+	rejected = false;
+	try
+	{
+		(void)LegacyInput::ReadSequence(excess, false);
+	}
+	catch (const std::length_error&)
+	{
+		rejected = true;
+	}
+	Require(rejected, "Oversized pose program silently truncated its final steps");
+	playback.Start({}, {});
+	Require(playback.Complete() && !playback.NextFrame(), "Empty replacement did not stop playback");
+}
+
 } // namespace
 
 int main()
@@ -114,6 +170,7 @@ int main()
 		TestInputOwnership();
 		TestOpticsAndInvalidValues();
 		TestSequencePlayback();
+		TestSequenceProgram();
 		return 0;
 	}
 	catch (const std::exception& error)

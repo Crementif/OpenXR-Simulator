@@ -1,6 +1,6 @@
 #pragma once
 
-#include "presentation/FrameTypes.h"
+#include "control/legacy/PoseSequence.h"
 #include "simulation/InputState.h"
 #include "simulation/TrackingTypes.h"
 #include "simulation/ViewConfiguration.h"
@@ -8,9 +8,7 @@
 #include <array>
 #include <cstddef>
 #include <iosfwd>
-#include <optional>
 #include <string>
-#include <vector>
 
 namespace json
 {
@@ -38,7 +36,7 @@ struct LegacyHeadAngles
 class LegacyInput
 {
   public:
-	class Sequence;
+	using Sequence = PoseSequence;
 	LegacyInput();
 	void Apply(LegacyInputCommand command, const std::string& document);
 	static Sequence ReadSequence(std::istream& input, bool loop);
@@ -52,45 +50,8 @@ class LegacyInput
 	void SetViews(ViewSettings settings);
 
   private:
-	struct HeadUpdate
-	{
-		std::array<std::optional<float>, 3> position;
-		std::array<std::optional<float>, 3> angles;
-	};
-	struct ControllerUpdate
-	{
-		std::array<std::optional<float>, 3> position;
-		std::optional<XrQuaternionf> orientation;
-		std::optional<float> trigger;
-		std::optional<float> grip;
-		std::array<std::optional<float>, 2> stick;
-		std::optional<bool> primary;
-		std::optional<bool> secondary;
-	};
-	struct SequenceStep
-	{
-		FrameId frame;
-		std::optional<HeadUpdate> head;
-		std::array<std::optional<ControllerUpdate>, 2> controllers;
-		bool capture = false;
-	};
-
-  public:
-	class Sequence
-	{
-	  public:
-		std::size_t Size() const
-		{
-			return m_steps.size();
-		}
-
-	  private:
-		friend class LegacyInput;
-		std::vector<SequenceStep> m_steps;
-		bool m_loop = false;
-	};
-
-  private:
+	using HeadUpdate = HeadPosePatch;
+	using ControllerUpdate = ControllerPosePatch;
 	struct Controller
 	{
 		XrPosef offset;
@@ -106,9 +67,6 @@ class LegacyInput
 	LegacyHeadAngles m_headAngles;
 	std::array<Controller, 2> m_controllers;
 	ViewSettings m_views;
-	std::vector<SequenceStep> m_sequence;
-	FrameId m_sequenceOrigin;
-	std::size_t m_sequenceIndex = 0;
-	bool m_sequenceLoop = false;
+	PoseSequencePlayback m_sequence;
 };
 } // namespace simxr

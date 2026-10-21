@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <string_view>
 
 namespace json {
 
@@ -155,6 +156,14 @@ public:
 
     // Distinguishes an omitted key from one explicitly set to 0 or false.
     bool has(const char* key) const { return Find(key) != nullptr; }
+
+    // The token borrows the backing document text.
+    std::string_view raw(const char* key) const
+    {
+        const char* value = Find(key);
+        const char* end = value ? detail::SkipValue(value) : nullptr;
+        return end ? std::string_view(value, static_cast<size_t>(end - value)) : std::string_view{};
+    }
 
     double number(const char* key, double def) const {
         const char* v = Find(key);
