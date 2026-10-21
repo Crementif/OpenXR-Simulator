@@ -14,6 +14,12 @@ namespace simxr
 {
 using VulkanImageResolver = std::function<std::shared_ptr<VulkanImage>(XrSwapchain)>;
 
+struct VulkanRetainedSource
+{
+	std::shared_ptr<VulkanImage> image;
+	std::shared_ptr<FrameReservation> budget;
+};
+
 class VulkanBackend
 {
   public:
@@ -21,6 +27,9 @@ class VulkanBackend
 	explicit VulkanBackend(const VulkanBinding& binding, std::size_t frameCapacity = 8,
 						   std::span<const char* const> enabledExtensions = {},
 						   std::uint32_t instanceApiVersion = VK_API_VERSION_1_0, std::size_t liveCapacity = 3);
+	// The supplied device must retain its native owner. Queue serialization is
+	// still the caller's responsibility, including other operations on that queue.
+	explicit VulkanBackend(std::shared_ptr<VulkanDevice> device, std::size_t frameCapacity = 3);
 	~VulkanBackend();
 	VulkanBackend(const VulkanBackend&) = delete;
 	VulkanBackend& operator=(const VulkanBackend&) = delete;
@@ -34,6 +43,9 @@ class VulkanBackend
 	XrResult Prepare(const CompositionPlan& plan, const VulkanImageResolver& resolve,
 					 std::shared_ptr<VulkanFrame>& output, std::shared_ptr<FrameReservation> reservation = {},
 					 std::uint32_t outputLayers = 2);
+	// One completed GENERAL-layout source per draw, with its retained budget.
+	XrResult PrepareRetained(const CompositionPlan& plan, std::span<const VulkanRetainedSource> sources,
+		std::shared_ptr<VulkanFrame>& output);
 	XrResult PrepareCapture(const LayerImageDescription& source, const VulkanImageResolver& resolve,
 							std::shared_ptr<VulkanFrame>& output, std::shared_ptr<FrameReservation> reservation = {});
 	XrResult PrepareDepthCapture(const LayerDepthDescription& source, bool linear,
@@ -52,6 +64,9 @@ class VulkanBackend
 	bool Sharing() const;
 
   private:
+	XrResult PrepareComposition(const CompositionPlan& plan, const VulkanImageResolver& resolve,
+		std::span<const VulkanRetainedSource> retained, std::shared_ptr<VulkanFrame>& output,
+		std::shared_ptr<FrameReservation> reservation, std::uint32_t outputLayers);
 	struct State;
 	std::unique_ptr<State> m_state;
 };

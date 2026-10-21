@@ -1,5 +1,6 @@
 #include "Math.h"
 #include "VulkanImageDeliveryProbe.h"
+#include "VulkanReprojectionProbe.h"
 #include "VulkanProbeInstance.h"
 #include "graphics/backends/vulkan/VulkanBackend.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
@@ -1056,6 +1057,16 @@ bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validat
 		}
 		VulkanBackend backend(binding, 3, SharingExtensions, VK_API_VERSION_1_1);
 		Require(backend.Sharing(), "Explicit logical external-sharing configuration unavailable");
+		bool rejectedBorrow = false;
+		try
+		{
+			VulkanBackend invalid(backend.Device());
+		}
+		catch (const std::invalid_argument&)
+		{
+			rejectedBorrow = true;
+		}
+		Require(rejectedBorrow, "Borrowed device accepted as an independently owned compositor");
 		VulkanExternalDevice external(backend.Device(), SharingExtensions, VK_API_VERSION_1_1);
 		VerifyOwnedDeviceAcquisition(external.Identity(), validation);
 		VulkanInspection inspection(external.Identity(), 3, validation);
@@ -1084,6 +1095,8 @@ bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validat
 					"Prepare captured external producer output");
 			auto transfer = inspection.Prepare(producer);
 			retained = transfer->Output();
+			const std::array<std::shared_ptr<const VulkanInspectionFrame>, 2> pending{retained, retained};
+			Require(!VulkanInspectionFrame::Compose(plan, pending), "Pending imports were sampled by composition");
 			Require(retained && retained->PollCompletion() == CompletionStatus::Pending,
 					"Uncommitted owned transfer reported GPU completion");
 			XrFrameEndInfo info{XR_TYPE_FRAME_END_INFO,			  nullptr, capture.prediction.displayTime.value.count(),
@@ -1176,6 +1189,9 @@ bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validat
 			Verify(*image, 32, 24, Original);
 		}
 	}
+	rawRetention.readers.clear();
+	srgbRawRetention.readers.clear();
+	simxr::probe::VerifyRetainedComposition(std::move(rawRetention.frames), std::move(srgbRawRetention.frames), verify);
 	std::printf("case=owned-retention-after-borrowed-instance-and-device-destruction normalReadback=%s PASS\n",
 				verify ? "explicit-verification-only" : "none");
 	return true;

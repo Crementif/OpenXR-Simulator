@@ -263,6 +263,15 @@ VulkanBackend::VulkanBackend(const VulkanBinding& binding, std::size_t frameCapa
 	m_state->pipeline = CreatePipeline(m_state->device);
 }
 
+VulkanBackend::VulkanBackend(std::shared_ptr<VulkanDevice> device, std::size_t frameCapacity)
+	: m_state(std::make_unique<State>(frameCapacity, 1))
+{
+	if (!device || !device->HasNativeOwner() || !frameCapacity)
+		throw std::invalid_argument("Independent composition requires an owned native device and capacity");
+	m_state->device = std::move(device);
+	m_state->pipeline = CreatePipeline(m_state->device);
+}
+
 VulkanBackend::~VulkanBackend()
 {
 	if (m_state && XR_FAILED(Close()))
@@ -368,10 +377,27 @@ XrResult VulkanBackend::Prepare(const CompositionPlan& plan, const VulkanImageRe
 								std::shared_ptr<VulkanFrame>& output, std::shared_ptr<FrameReservation> reservation,
 	std::uint32_t outputLayers)
 {
+	if (!resolve)
+		return XR_ERROR_VALIDATION_FAILURE;
+	return PrepareComposition(plan, resolve, {}, output, std::move(reservation), outputLayers);
+}
+
+XrResult VulkanBackend::PrepareRetained(const CompositionPlan& plan,
+	std::span<const VulkanRetainedSource> sources, std::shared_ptr<VulkanFrame>& output)
+{
+	if (!m_state->device->HasNativeOwner() || sources.size() != plan.draws.size())
+		return XR_ERROR_VALIDATION_FAILURE;
+	return PrepareComposition(plan, {}, sources, output, {}, 2);
+}
+
+XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const VulkanImageResolver& resolve,
+	std::span<const VulkanRetainedSource> retained, std::shared_ptr<VulkanFrame>& output,
+	std::shared_ptr<FrameReservation> reservation, std::uint32_t outputLayers)
+{
 	RetireCompleted();
 	if (m_state->closed || m_state->failed || m_state->device->lost.load())
 		return XR_ERROR_SESSION_LOST;
-	if (!plan.width || !plan.height || plan.draws.size() > 64 || !resolve || !outputLayers || outputLayers > 2)
+	if (!plan.width || !plan.height || plan.draws.size() > 64 || !outputLayers || outputLayers > 2)
 		return XR_ERROR_VALIDATION_FAILURE;
 	if (reservation && !m_state->reservations.Owns(reservation) && !m_state->liveReservations.Owns(reservation) &&
 		!m_state->historyReservations.Owns(reservation))
@@ -438,11 +464,18 @@ XrResult VulkanBackend::Prepare(const CompositionPlan& plan, const VulkanImageRe
 	}
 	resources.sourceViews.reserve(plan.draws.size());
 	resources.sources.reserve(plan.draws.size());
+	resources.sourceBudgets.reserve(retained.size());
 	for (std::size_t index = 0; index < plan.draws.size(); ++index)
 	{
 		const auto& draw = plan.draws[index];
 		const bool depth = draw.constants.control[0] == 2;
-		auto image = resolve(draw.source.source);
+		auto image = resolve ? resolve(draw.source.source) : retained[index].image;
+		if (!resolve)
+		{
+			if (!retained[index].budget || !retained[index].budget->Consumed())
+				return XR_ERROR_VALIDATION_FAILURE;
+			resources.sourceBudgets.push_back(retained[index].budget);
+		}
 		if (!image || image->device != m_state->device || draw.source.arraySlice >= image->layers || draw.eye >= outputLayers ||
 			!(image->usage & VK_IMAGE_USAGE_SAMPLED_BIT) ||
 			(depth ? !(image->Aspect() & VK_IMAGE_ASPECT_DEPTH_BIT) : image->Aspect() != VK_IMAGE_ASPECT_COLOR_BIT))
@@ -466,7 +499,7 @@ XrResult VulkanBackend::Prepare(const CompositionPlan& plan, const VulkanImageRe
 		vkUpdateDescriptorSets(native, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
 	}
 	for (const auto& image : resources.sources)
-		VulkanImageBarrier(resources.command, *image, image->ApplicationLayout(),
+		VulkanImageBarrier(resources.command, *image, resolve ? image->ApplicationLayout() : VK_IMAGE_LAYOUT_GENERAL,
 						   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 						   VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_SHADER_READ_BIT);
 	for (std::uint32_t eye = 0; eye < outputLayers; ++eye)
@@ -497,7 +530,7 @@ XrResult VulkanBackend::Prepare(const CompositionPlan& plan, const VulkanImageRe
 	}
 	for (const auto& image : resources.sources)
 		VulkanImageBarrier(resources.command, *image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-						   image->ApplicationLayout(), VK_ACCESS_SHADER_READ_BIT,
+						   resolve ? image->ApplicationLayout() : VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_READ_BIT,
 						   VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
 	if (resources.external)
 	{

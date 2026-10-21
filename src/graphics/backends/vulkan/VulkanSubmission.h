@@ -42,6 +42,8 @@ class VulkanSubmission final : public GpuCompletion
 		VkDescriptorPool descriptors = VK_NULL_HANDLE;
 		std::vector<VkImageView> sourceViews;
 		std::vector<std::shared_ptr<VulkanImage>> sources;
+		// Source CPU readers may disappear before this submission reaches its fence.
+		std::vector<std::shared_ptr<FrameReservation>> sourceBudgets;
 		std::shared_ptr<VulkanImage> output;
 		std::shared_ptr<VulkanExternalImage> external;
 		std::shared_ptr<VulkanExternalSemaphore> ready;
@@ -62,6 +64,8 @@ class VulkanFrame final : public FrameOutput
   public:
 	CompletionStatus PollCompletion() const noexcept override;
 	const VulkanImage& Image() const;
+	// Aliases the submission owner, retaining its budget and native dependencies.
+	std::shared_ptr<VulkanImage> RetainImage() const;
 	VkImageView View(std::uint32_t eye) const;
 	std::shared_ptr<const GpuCompletion> Completion() const;
 	std::shared_ptr<VulkanExternalImage> ExternalImage() const;

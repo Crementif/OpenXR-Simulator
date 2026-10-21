@@ -143,6 +143,12 @@ void VulkanSubmission::ReleaseSources()
 		vkDestroyImageView(native, view, nullptr);
 	m_resources->sourceViews.clear();
 	m_resources->sources.clear();
+	m_resources->sourceBudgets.clear();
+}
+
+std::shared_ptr<VulkanImage> VulkanFrame::RetainImage() const
+{
+	return {m_submission, m_submission->m_resources->output.get()};
 }
 
 VulkanFrame::VulkanFrame(std::shared_ptr<VulkanSubmission> submission) : m_submission(std::move(submission)) {}

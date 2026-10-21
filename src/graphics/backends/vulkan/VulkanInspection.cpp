@@ -1,4 +1,5 @@
 #include "graphics/backends/vulkan/VulkanInspection.h"
+#include "graphics/backends/vulkan/VulkanBackend.h"
 #include "graphics/backends/vulkan/VulkanInspectionDevice.h"
 #include "graphics/backends/vulkan/VulkanInspectionWork.h"
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
@@ -286,6 +287,8 @@ class VulkanInspectionQueue
 		std::size_t count = 0;
 		{
 			std::lock_guard lock(m_mutex);
+			if (m_compositor)
+				m_compositor->RetireCompleted();
 			for (auto& work : m_active)
 				if (work->NativeIdle())
 					retired.at(count++) = std::move(work);
@@ -293,6 +296,27 @@ class VulkanInspectionQueue
 		}
 		for (std::size_t index = 0; index < count; ++index)
 			retired[index]->ReleaseSources();
+	}
+	std::shared_ptr<VulkanFrame> PrepareComposition(const CompositionPlan& plan,
+		std::span<const VulkanRetainedSource> sources)
+	{
+		std::lock_guard lock(m_mutex);
+		if (!m_compositor)
+			m_compositor = std::make_unique<VulkanBackend>(m_device);
+		std::shared_ptr<VulkanFrame> frame;
+		const auto result = m_compositor->PrepareRetained(plan, sources, frame);
+		if (result == XR_ERROR_LIMIT_REACHED)
+			throw VulkanError(VK_ERROR_OUT_OF_POOL_MEMORY, "Owned composition capacity exhausted");
+		if (XR_FAILED(result))
+			throw VulkanError(VK_ERROR_INITIALIZATION_FAILED, "Invalid retained composition");
+		return frame;
+	}
+	void SubmitComposition(const std::shared_ptr<VulkanFrame>& frame)
+	{
+		std::lock_guard lock(m_mutex);
+		if (XR_FAILED(m_compositor->Submit(frame)))
+			throw VulkanError(m_device->lost.load() ? VK_ERROR_DEVICE_LOST : VK_ERROR_INITIALIZATION_FAILED,
+				"Submit retained composition");
 	}
 	std::shared_ptr<VulkanInspectionWork> ImportCopy(std::shared_ptr<VulkanFrame> source)
 	{
@@ -363,6 +387,7 @@ class VulkanInspectionQueue
 	std::atomic<std::uint64_t> m_nextImage{1};
 	std::mutex m_mutex;
 	std::vector<std::shared_ptr<VulkanInspectionWork>> m_active;
+	std::unique_ptr<VulkanBackend> m_compositor;
 };
 
 std::shared_ptr<VulkanDeliveryNative> VulkanDeliveryNative::Prepare(VulkanInspectionQueue& queue,
@@ -418,12 +443,14 @@ class VulkanInspectionFrame::Resources
 	static std::shared_ptr<Resources> Create(std::shared_ptr<VulkanInspectionQueue> queue,
 											 std::shared_ptr<VulkanImage> image,
 											 std::shared_ptr<FrameReservation> budget,
-											 std::function<void(CompletionStatus)> completed)
+											 std::function<void(CompletionStatus)> completed,
+		std::shared_ptr<const GpuCompletion> completion = {})
 	{
 		// Construct the owner before any view acquisition. A later view failure
 		// destroys all earlier views while the owned device/image remain alive.
 		auto resources =
-			std::shared_ptr<Resources>(new Resources(std::move(queue), std::move(image), std::move(budget)));
+			std::shared_ptr<Resources>(new Resources(
+				std::move(queue), std::move(image), std::move(budget), std::move(completion)));
 		resources->m_completed = std::move(completed);
 		if (resources->m_image->layers > resources->m_views.size())
 			throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Inspection supports at most two image slices");
@@ -462,7 +489,7 @@ class VulkanInspectionFrame::Resources
 	}
 	CompletionStatus Poll() const noexcept
 	{
-		return m_status.load();
+		return m_completion ? m_completion->PollCompletion() : m_status.load();
 	}
 	void PublishTerminal(CompletionStatus completion, bool observed) noexcept
 	{
@@ -500,8 +527,9 @@ class VulkanInspectionFrame::Resources
 
   private:
 	Resources(std::shared_ptr<VulkanInspectionQueue> queue, std::shared_ptr<VulkanImage> image,
-			  std::shared_ptr<FrameReservation> budget)
-		: m_queue(std::move(queue)), m_image(std::move(image)), m_budget(std::move(budget))
+			  std::shared_ptr<FrameReservation> budget, std::shared_ptr<const GpuCompletion> completion)
+		: m_queue(std::move(queue)), m_image(std::move(image)), m_budget(std::move(budget)),
+		  m_completion(std::move(completion))
 	{
 	}
 	std::shared_ptr<VulkanInspectionQueue> m_queue;
@@ -511,6 +539,7 @@ class VulkanInspectionFrame::Resources
 	mutable std::mutex m_retentionMutex;
 	std::atomic<CompletionStatus> m_status{CompletionStatus::Pending};
 	std::function<void(CompletionStatus)> m_completed;
+	const std::shared_ptr<const GpuCompletion> m_completion;
 };
 
 class VulkanInspectionTransfer::State
@@ -774,6 +803,34 @@ class VulkanInspection::State
 VulkanInspectionFrame::VulkanInspectionFrame(std::shared_ptr<Resources> resources) : m_resources(std::move(resources))
 {
 }
+std::shared_ptr<VulkanInspectionFrame> VulkanInspectionFrame::Compose(const CompositionPlan& plan,
+	std::span<const std::shared_ptr<const VulkanInspectionFrame>> sources)
+{
+	if (sources.empty() || sources.size() != plan.draws.size() || !sources.front())
+		throw std::invalid_argument("Retained composition requires one source per draw");
+	const auto queue = sources.front()->m_resources->Queue();
+	std::vector<VulkanRetainedSource> retained;
+	retained.reserve(sources.size());
+	bool pending = false;
+	for (const auto& source : sources)
+	{
+		if (!source || source->m_resources->Queue() != queue)
+			throw std::invalid_argument("Retained composition sources must share one owned queue");
+		const auto status = source->PollCompletion();
+		if (status == CompletionStatus::Failed)
+			throw VulkanError(VK_ERROR_INITIALIZATION_FAILED, "Retained composition source failed");
+		pending |= status == CompletionStatus::Pending;
+		retained.push_back({source->m_resources->Image(), source->m_resources->Budget()});
+	}
+	if (pending)
+		return {};
+	auto frame = queue->PrepareComposition(plan, retained);
+	auto resources = Resources::Create(queue, frame->RetainImage(), frame->Reservation(), {}, frame);
+	auto output = std::shared_ptr<VulkanInspectionFrame>(new VulkanInspectionFrame(std::move(resources)));
+	queue->SubmitComposition(frame);
+	return output;
+}
+
 VulkanInspectionFrame::~VulkanInspectionFrame() = default;
 CompletionStatus VulkanInspectionFrame::PollCompletion() const noexcept
 {

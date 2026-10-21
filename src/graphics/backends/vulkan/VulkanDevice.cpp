@@ -38,6 +38,11 @@ VulkanDevice::VulkanDevice(const VulkanBinding& value, std::shared_ptr<const voi
 		throw std::invalid_argument("Vulkan binding queue was not enabled by the application");
 }
 
+bool VulkanDevice::HasNativeOwner() const noexcept
+{
+	return static_cast<bool>(m_owner);
+}
+
 std::uint32_t VulkanDevice::MemoryType(std::uint32_t bits, VkMemoryPropertyFlags required) const
 {
 	VkPhysicalDeviceMemoryProperties properties;
