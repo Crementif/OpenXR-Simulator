@@ -30,7 +30,7 @@ const wire::Field& NodeData(const wire::Message& node, wire::InspectionType type
 		throw std::runtime_error("Runtime returned an invalid simulation state field");
 	return *data;
 }
-wire::Message Member(const wire::Message& node, std::string_view name)
+std::optional<wire::Message> FindMember(const wire::Message& node, std::string_view name)
 {
 	for (const auto& field : DecodeNode(NodeData(node, wire::InspectionType::Object).value).fields)
 	{
@@ -38,6 +38,12 @@ wire::Message Member(const wire::Message& node, std::string_view name)
 		if (const auto key = child.Find(1); key && key->AsText() == name)
 			return child;
 	}
+	return {};
+}
+wire::Message Member(const wire::Message& node, std::string_view name)
+{
+	if (auto child = FindMember(node, name))
+		return *child;
 	throw std::runtime_error("Observed device state is not available yet");
 }
 std::vector<wire::Message> Elements(const wire::Message& node)
@@ -54,6 +60,40 @@ float Number(const wire::Message& node)
 	if (!number || !std::isfinite(*number))
 		throw std::runtime_error("Observed device pose contains an invalid number");
 	return *number;
+}
+std::uint64_t Unsigned(const wire::Message& node)
+{
+	const auto value = NodeData(node, wire::InspectionType::Unsigned).AsU64();
+	if (!value)
+		throw std::runtime_error("Invalid unsigned configuration value");
+	return *value;
+}
+bool Boolean(const wire::Message& node)
+{
+	const auto value = NodeData(node, wire::InspectionType::Boolean).AsBool();
+	if (!value)
+		throw std::runtime_error("Invalid boolean configuration value");
+	return *value;
+}
+bool Null(const wire::Message& node)
+{
+	const auto type = node.Find(2);
+	return type && type->AsU32() == static_cast<std::uint32_t>(wire::InspectionType::Null);
+}
+XrPosef ReadPose(const wire::Message& node)
+{
+	const auto p = Elements(Member(node, "position")), q = Elements(Member(node, "orientation"));
+	if (p.size() != 3 || q.size() != 4)
+		throw std::runtime_error("Invalid configuration pose dimensions");
+	const auto pose = NormalizedPose(
+		{{Number(q[0]), Number(q[1]), Number(q[2]), Number(q[3])}, {Number(p[0]), Number(p[1]), Number(p[2])}});
+	if (!pose)
+		throw std::runtime_error("Invalid configuration orientation");
+	return *pose;
+}
+PoseSample ReadSample(const wire::Message& node)
+{
+	return {ReadPose(node), Unsigned(Member(node, "flags"))};
 }
 FrameId NextObservedFrame(const wire::Message& state)
 {
@@ -97,6 +137,192 @@ FrameId NextObservedFrame(const wire::Message& state)
 }
 } // namespace
 
+ObservedSetup ReadObservedSetup(const control::Message& state)
+{
+	NextObservedFrame(state);
+	const auto root = DecodeNode(state.Find(wire::tag::Document)->value);
+	if (!Boolean(Member(root, "configuration_available")))
+		throw std::runtime_error("The runtime has not published device configuration yet");
+	const auto config = Member(root, "configuration");
+	ObservedSetup result;
+	auto& values = result.values;
+	result.frame = Unsigned(Member(root, "frame_id"));
+	values.tracking.head = ReadSample(Member(config, "head"));
+	values.tracking.focused = Boolean(Member(config, "focused"));
+	const auto hands = Elements(Member(config, "controllers"));
+	if (hands.size() != 2)
+		throw std::runtime_error("Unsupported controller configuration");
+	for (std::size_t index = 0; index < hands.size(); ++index)
+	{
+		values.tracking.controllers[index] = {ReadSample(Member(hands[index], "pose")),
+											  Boolean(Member(hands[index], "connected"))};
+		values.input.preferredProfiles[index] =
+			std::string(NodeData(Member(hands[index], "profile"), wire::InspectionType::Text).AsText().value_or(""));
+		const auto controls = Member(hands[index], "controls");
+		auto& out = values.input.controllers[index];
+		for (const auto& [name, field] : {std::pair{"trigger", &ControllerControls::trigger},
+										  {"grip", &ControllerControls::grip},
+										  {"grip_force", &ControllerControls::gripForce},
+										  {"trackpad_force", &ControllerControls::trackpadForce}})
+			out.*field = Number(Member(controls, name));
+		for (const auto& [name, field] : {std::pair{"primary", &ControllerControls::primary},
+										  {"secondary", &ControllerControls::secondary},
+										  {"menu", &ControllerControls::menu},
+										  {"back", &ControllerControls::back},
+										  {"thumb_click", &ControllerControls::thumbClick},
+										  {"trackpad_click", &ControllerControls::trackpadClick},
+										  {"primary_touch", &ControllerControls::primaryTouch},
+										  {"secondary_touch", &ControllerControls::secondaryTouch},
+										  {"trigger_touch", &ControllerControls::triggerTouch},
+										  {"thumb_touch", &ControllerControls::thumbTouch},
+										  {"trackpad_touch", &ControllerControls::trackpadTouch},
+										  {"thumbrest_touch", &ControllerControls::thumbrestTouch},
+										  {"connected", &ControllerControls::connected}})
+			out.*field = Boolean(Member(controls, name));
+		for (const auto& [name, field] :
+			 {std::pair{"stick", &ControllerControls::stick}, {"trackpad", &ControllerControls::trackpad}})
+		{
+			const auto xy = Elements(Member(controls, name));
+			if (xy.size() != 2)
+				throw std::runtime_error("Invalid controller axis dimensions");
+			out.*field = {Number(xy[0]), Number(xy[1])};
+		}
+	}
+	const auto body = Member(config, "body"), gaze = Member(config, "gaze"),
+			   proportions = Member(config, "proportions");
+	values.tracking.body.active = Boolean(Member(body, "active"));
+	values.tracking.body.confidence = Number(Member(body, "confidence"));
+	values.tracking.body.preset = static_cast<BodyPreset>(Unsigned(Member(body, "preset")));
+	const auto bodyControls = FindMember(body, "controls"), bodyJoints = FindMember(body, "joints");
+	result.bodyOverridesAvailable = bodyControls && bodyJoints;
+	if (result.bodyOverridesAvailable)
+	{
+		const auto controls = Elements(*bodyControls);
+		if (controls.size() != values.tracking.body.controls.size())
+			throw std::runtime_error("Unsupported body controls");
+		for (std::size_t index = 0; index < controls.size(); ++index)
+		{
+			auto& out = values.tracking.body.controls[index];
+			out.tracked = Boolean(Member(controls[index], "tracked"));
+			const auto offset = Member(controls[index], "offset");
+			if (!Null(offset))
+			{
+				const auto xyz = Elements(offset);
+				if (xyz.size() != 3)
+					throw std::runtime_error("Invalid body offset dimensions");
+				out.offset = XrVector3f{Number(xyz[0]), Number(xyz[1]), Number(xyz[2])};
+			}
+		}
+		for (const auto& joint : Elements(*bodyJoints))
+		{
+			const auto index = Unsigned(Member(joint, "joint"));
+			if (index >= values.tracking.body.joints.size())
+				throw std::runtime_error("Unknown body joint");
+			BodyJointOverride out;
+			out.tracked = Boolean(Member(joint, "tracked"));
+			const auto pose = Member(joint, "pose");
+			if (!Null(pose))
+				out.pose = ReadPose(pose);
+			values.tracking.body.joints[index] = out;
+		}
+	}
+	values.tracking.gaze = {Number(Member(gaze, "yaw")), Number(Member(gaze, "pitch")),
+							Boolean(Member(gaze, "available")), Boolean(Member(gaze, "tracked"))};
+	values.proportions = {Number(Member(proportions, "height")), Number(Member(proportions, "shoulder_width")),
+						  Number(Member(proportions, "hip_width"))};
+	const auto views = Member(config, "views");
+	values.views.ipd = Number(Member(views, "ipd"));
+	values.views.insetHalfAngle = Number(Member(views, "inset_half_angle"));
+	for (const auto& [name, field] : {std::pair{"outer_width", &ViewSettings::outerWidth},
+									  {"outer_height", &ViewSettings::outerHeight},
+									  {"inset_width", &ViewSettings::insetWidth},
+									  {"inset_height", &ViewSettings::insetHeight}})
+	{
+		const auto size = Unsigned(Member(views, name));
+		if (size > std::numeric_limits<std::uint32_t>::max())
+			throw std::runtime_error("Invalid view dimension");
+		values.views.*field = static_cast<std::uint32_t>(size);
+	}
+	const auto fov = Elements(Member(views, "outer_fov"));
+	if (fov.size() != 8)
+		throw std::runtime_error("Unsupported view configuration");
+	for (std::size_t eye = 0; eye < 2; ++eye)
+		values.views.outerFov[eye] = {Number(fov[eye * 4]), Number(fov[eye * 4 + 1]), Number(fov[eye * 4 + 2]),
+									  Number(fov[eye * 4 + 3])};
+	const auto trackers = Elements(Member(config, "trackers"));
+	if (trackers.size() != values.tracking.trackers.size())
+		throw std::runtime_error("Unsupported tracker configuration");
+	for (std::size_t index = 0; index < trackers.size(); ++index)
+	{
+		const auto& node = trackers[index];
+		auto& out = values.tracking.trackers[index];
+		out.identity.value = Unsigned(Member(node, "id"));
+		out.role = static_cast<TrackerRole>(Unsigned(Member(node, "role")));
+		out.connected = Boolean(Member(node, "connected"));
+		out.tracked = Boolean(Member(node, "tracked"));
+		const auto anchor = FindMember(node, "anchor"), pose = FindMember(node, "pose_override");
+		if (!anchor || !pose)
+			result.trackerAttachmentsAvailable = false;
+		out.anchor.reset();
+		out.poseOverride.reset();
+		if (anchor && !Null(*anchor))
+			out.anchor = static_cast<BodyJoint>(Unsigned(*anchor));
+		if (pose && !Null(*pose))
+			out.poseOverride = ReadPose(*pose);
+	}
+	const auto spaces = Member(config, "reference_spaces");
+	values.referenceSpaces.local = ReadPose(Member(spaces, "local"));
+	values.referenceSpaces.stage = ReadPose(Member(spaces, "stage"));
+	const auto bounds = Member(spaces, "stage_bounds");
+	values.referenceSpaces.stageBounds.reset();
+	if (!Null(bounds))
+	{
+		const auto dimensions = Elements(bounds);
+		if (dimensions.size() != 2)
+			throw std::runtime_error("Invalid stage bounds");
+		values.referenceSpaces.stageBounds = XrExtent2Df{Number(dimensions[0]), Number(dimensions[1])};
+	}
+	const auto owners = Elements(Member(root, "owners"));
+	if (owners.size() != result.owners.size())
+		throw std::runtime_error("Unsupported ownership configuration");
+	for (std::size_t index = 0; index < owners.size(); ++index)
+		if (!Null(owners[index]))
+			result.owners[index] =
+				CommandSource{static_cast<CommandSourceKind>(Unsigned(Member(owners[index], "kind"))),
+							  Unsigned(Member(owners[index], "id"))};
+	for (const auto& scenario : Elements(Member(root, "scenarios")))
+	{
+		const auto index = Unsigned(scenario);
+		if (index >= result.scenarios.size())
+			throw std::runtime_error("Unsupported simulation scenario");
+		result.scenarios[index] = true;
+	}
+	return result;
+}
+ControlChannel ScenarioInputChannel(FailureScenario scenario)
+{
+	switch (scenario)
+	{
+	case FailureScenario::HeadUntracked:
+	case FailureScenario::HeadUnavailable:
+		return ControlChannel::Head;
+	case FailureScenario::BodyUntracked:
+	case FailureScenario::BodyUnavailable:
+		return ControlChannel::Body;
+	case FailureScenario::GazeUntracked:
+	case FailureScenario::GazeUnavailable:
+		return ControlChannel::Gaze;
+	case FailureScenario::LeftDisconnected:
+		return ControlChannel::LeftPose;
+	case FailureScenario::RightDisconnected:
+		return ControlChannel::RightPose;
+	case FailureScenario::TrackersDisconnected:
+		return ControlChannel::Trackers;
+	default:
+		return ControlChannel::Session;
+	}
+}
+
 std::string SimulationEditPhase(const control::Message& result)
 {
 	const auto document = result.Find(wire::tag::Document);
@@ -128,7 +354,12 @@ std::optional<control::Message> ObservedEditResult(const control::Message& state
 PoseSample ObservedDevicePose(const control::Message& state, ControlChannel channel)
 {
 	NextObservedFrame(state);
-	auto configuration = Member(DecodeNode(state.Find(wire::tag::Document)->value), "configuration");
+	const auto root = DecodeNode(state.Find(wire::tag::Document)->value);
+	if (const auto scenarios = FindMember(root, "scenarios"))
+		for (const auto& scenario : Elements(*scenarios))
+			if (ScenarioInputChannel(static_cast<FailureScenario>(Unsigned(scenario))) == channel)
+				throw std::runtime_error("Restore the active failure scenario before piloting this device");
+	auto configuration = Member(root, "configuration");
 	wire::Message sample;
 	if (channel == ControlChannel::Head)
 		sample = Member(configuration, "head");

@@ -249,7 +249,7 @@ class RuntimePanels::Impl
 			if (m_observation != input.observation)
 			{
 				m_observation = input.observation;
-				m_devices.ObservePoses(input.state);
+				m_devices.ObserveState(input.state);
 			}
 			if (!input.error.empty())
 			{

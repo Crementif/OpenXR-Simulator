@@ -17,6 +17,18 @@ struct ReleaseManualInputs
 };
 using SimulationEdit = std::variant<ManualTransaction, ReleaseManualInputs>;
 
+struct ObservedSetup
+{
+	CommandConfiguration values;
+	std::array<std::optional<CommandSource>, ControlChannelCount> owners;
+	ScenarioState scenarios{};
+	std::uint64_t frame = 0;
+	bool trackerAttachmentsAvailable = true;
+	bool bodyOverridesAvailable = true;
+};
+ObservedSetup ReadObservedSetup(const control::Message& state);
+ControlChannel ScenarioInputChannel(FailureScenario scenario);
+
 std::string SimulationEditPhase(const control::Message& result);
 std::optional<control::Message> ObservedEditResult(const control::Message& state, const control::Message& receipt);
 

@@ -24,6 +24,11 @@ InspectionValue PoseValue(const PoseSample& sample)
 									{"orientation", Orientation(sample.pose.orientation)},
 									{"flags", InspectionValue::Unsigned(sample.flags)}});
 }
+InspectionValue PoseValue(const XrPosef& pose)
+{
+	return InspectionValue::Object(
+		{{"position", Vector(pose.position)}, {"orientation", Orientation(pose.orientation)}});
+}
 InspectionValue ReferenceSpaces(const ReferenceSpaceState& spaces)
 {
 	const auto origin = [](const XrPosef& pose)
@@ -68,6 +73,25 @@ InspectionValue SourceValue(CommandSource source)
 	return InspectionValue::Object({{"kind", InspectionValue::Unsigned(static_cast<std::uint32_t>(source.kind))},
 									{"id", InspectionValue::Unsigned(source.id)}});
 }
+InspectionValue BodyValue(const BodyControls& body)
+{
+	std::vector<InspectionValue> controls, joints;
+	for (const auto& control : body.controls)
+		controls.push_back(
+			InspectionValue::Object({{"tracked", InspectionValue::Boolean(control.tracked)},
+									 {"offset", control.offset ? Vector(*control.offset) : InspectionValue::Null()}}));
+	for (std::size_t index = 0; index < body.joints.size(); ++index)
+		if (const auto& joint = body.joints[index])
+			joints.push_back(
+				InspectionValue::Object({{"joint", InspectionValue::Unsigned(index)},
+										 {"tracked", InspectionValue::Boolean(joint->tracked)},
+										 {"pose", joint->pose ? PoseValue(*joint->pose) : InspectionValue::Null()}}));
+	return InspectionValue::Object({{"active", InspectionValue::Boolean(body.active)},
+									{"confidence", InspectionValue::Float(body.confidence)},
+									{"preset", InspectionValue::Unsigned(static_cast<std::uint32_t>(body.preset))},
+									{"controls", InspectionValue::Array(std::move(controls))},
+									{"joints", InspectionValue::Array(std::move(joints))}});
+}
 InspectionValue Configuration(const CommandConfiguration& configuration)
 {
 	std::vector<InspectionValue> controllers, trackers, outerFov;
@@ -81,11 +105,14 @@ InspectionValue Configuration(const CommandConfiguration& configuration)
 			 {"controls", ControlValue(configuration.input.controllers[index])},
 			 {"profile", InspectionValue::Text(configuration.input.preferredProfiles[index])}}));
 	for (const auto& tracker : configuration.tracking.trackers)
-		trackers.push_back(
-			InspectionValue::Object({{"id", InspectionValue::Unsigned(tracker.identity.value)},
-									 {"role", InspectionValue::Unsigned(static_cast<std::uint32_t>(tracker.role))},
-									 {"connected", InspectionValue::Boolean(tracker.connected)},
-									 {"tracked", InspectionValue::Boolean(tracker.tracked)}}));
+		trackers.push_back(InspectionValue::Object(
+			{{"id", InspectionValue::Unsigned(tracker.identity.value)},
+			 {"role", InspectionValue::Unsigned(static_cast<std::uint32_t>(tracker.role))},
+			 {"connected", InspectionValue::Boolean(tracker.connected)},
+			 {"tracked", InspectionValue::Boolean(tracker.tracked)},
+			 {"anchor", tracker.anchor ? InspectionValue::Unsigned(static_cast<std::uint32_t>(*tracker.anchor))
+									   : InspectionValue::Null()},
+			 {"pose_override", tracker.poseOverride ? PoseValue(*tracker.poseOverride) : InspectionValue::Null()}}));
 	return InspectionValue::Object(
 		{{"head", PoseValue(configuration.tracking.head)},
 		 {"controllers", InspectionValue::Array(std::move(controllers))},
@@ -94,11 +121,7 @@ InspectionValue Configuration(const CommandConfiguration& configuration)
 								   {"pitch", InspectionValue::Float(configuration.tracking.gaze.pitch)},
 								   {"available", InspectionValue::Boolean(configuration.tracking.gaze.available)},
 								   {"tracked", InspectionValue::Boolean(configuration.tracking.gaze.tracked)}})},
-		 {"body",
-		  InspectionValue::Object(
-			  {{"active", InspectionValue::Boolean(configuration.tracking.body.active)},
-			   {"confidence", InspectionValue::Float(configuration.tracking.body.confidence)},
-			   {"preset", InspectionValue::Unsigned(static_cast<std::uint32_t>(configuration.tracking.body.preset))}})},
+		 {"body", BodyValue(configuration.tracking.body)},
 		 {"trackers", InspectionValue::Array(std::move(trackers))},
 		 {"focused", InspectionValue::Boolean(configuration.tracking.focused)},
 		 {"reference_spaces", ReferenceSpaces(configuration.referenceSpaces)},

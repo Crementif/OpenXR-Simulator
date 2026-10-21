@@ -1,4 +1,5 @@
 #include "../TestSupport.h"
+#include "app/DeviceControlPanel.h"
 #include "app/ManualInputController.h"
 #include "app/ProcessSupervisor.h"
 #include "app/RuntimeConnection.h"
@@ -8,6 +9,8 @@
 #include "app/Window.h"
 #include "app/WorkspacePanels.h"
 #include "control/ControlSchema.h"
+#include "control/SimulationControl.h"
+#include "simulation/CommandScheduler.h"
 #include <cmath>
 #include <thread>
 
@@ -435,6 +438,166 @@ void PilotLiveRuntime(const char* endpoint)
 		},
 		"Manual release did not complete with the UI idle");
 }
+void ConfigureObservedDevices()
+{
+	Interaction test;
+	DeviceControlPanel panel;
+	simxr::CommandConfiguration initial;
+	initial.views.ipd = 0.073f;
+	initial.views.outerWidth = 1760;
+	initial.tracking.body.preset = simxr::BodyPreset::Seated;
+	initial.tracking.gaze.yaw = 0.25f;
+	simxr::CommandScheduler scheduler;
+	scheduler.Start(0, initial);
+	const auto observe = [&](std::uint64_t frame)
+	{
+		scheduler.Apply(simxr::FrameId{frame}, simxr::SimulationTime{simxr::Duration{100}},
+						simxr::RuntimeTime{simxr::Duration{200}}, {});
+		simxr::control::Message state;
+		state.fields.push_back(simxr::control::Field::Bytes(
+			simxr::control::tag::Document, simxr::control::SimulationState(scheduler.Snapshot()).Encode()));
+		panel.ObserveState(state);
+	};
+	observe(1);
+	std::optional<SimulationEdit> edit;
+	const auto frame = [&]
+	{
+		Eventually(
+			[&]
+			{
+				return test.window.PollEvents() && test.renderer.BeginFrame();
+			},
+			"Configuration UI stalled");
+		ImGui::SetNextWindowPos({20, 20}, ImGuiCond_Always);
+		ImGui::SetNextWindowSize({400, 650}, ImGuiCond_Always);
+		ImGui::Begin("Configuration workflow");
+		edit = panel.Draw(true);
+		ImGui::End();
+		Require(test.renderer.Render(), "Configuration frame did not render");
+	};
+	for (int i = 0; i < 3; ++i)
+		frame();
+	auto* window = ImGui::FindWindowByName("Configuration workflow");
+	auto* tabs = ImGui::GetCurrentContext()->TabBars.GetByKey(window->GetID("Devices"));
+	Require(tabs && tabs->Tabs.Size == 4, "Configuration tab missing");
+	ImGui::TabBarQueueFocus(tabs, &tabs->Tabs[3]);
+	frame();
+	frame();
+	const auto details = [&]() -> ImGuiWindow*
+	{
+		for (auto* child : window->DC.ChildWindows)
+			if (std::strstr(child->Name, "Configuration details"))
+				return child;
+		throw std::runtime_error("Setup detail panel is missing");
+	};
+	const auto activate = [&](const char* label)
+	{
+		ImGui::ActivateItemByID(details()->GetID(label));
+		frame();
+		Require(edit && std::holds_alternative<ManualTransaction>(*edit),
+				(std::string("Configuration action did not issue an edit: ") + label).c_str());
+		return std::get<ManualTransaction>(*edit);
+	};
+	auto transaction = activate("Apply view settings");
+	const auto views = std::get<simxr::SetViewSettings>(transaction.commands.back()).value;
+	Require(views.ipd == 0.073f && views.outerWidth == 1760,
+			"Applying the view panel overwrote observed configuration with defaults");
+	const auto selectSection = [&](int index)
+	{
+		ImGui::ActivateItemByID(ImHashStr("##Setup section", 0, tabs->Tabs[3].ID));
+		frame();
+		frame();
+		auto* popup = ImGui::FindWindowByName("##Combo_00");
+		Require(popup && popup->Active, "Setup categories are not browsable");
+		const ImVec2 point{popup->WorkRect.Min.x + 30, popup->WorkRect.Min.y + ImGui::GetTextLineHeight() / 2 +
+														   index * ImGui::GetTextLineHeightWithSpacing()};
+		SDL_Event event{};
+		event.type = SDL_EVENT_MOUSE_MOTION;
+		event.motion.windowID = SDL_GetWindowID(test.window.Native());
+		event.motion.x = point.x;
+		event.motion.y = point.y;
+		SDL_PushEvent(&event);
+		frame();
+		event = {};
+		event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+		event.button.windowID = SDL_GetWindowID(test.window.Native());
+		event.button.button = SDL_BUTTON_LEFT;
+		event.button.down = true;
+		SDL_PushEvent(&event);
+		frame();
+		event.type = SDL_EVENT_MOUSE_BUTTON_UP;
+		event.button.down = false;
+		SDL_PushEvent(&event);
+		frame();
+		frame();
+		if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
+		{
+			std::filesystem::create_directories(directory);
+			test.renderer.RequestScreenshot(
+				(std::filesystem::path(directory) / ("configuration-section-" + std::to_string(index) + ".bmp"))
+					.string());
+			frame();
+			frame();
+		}
+	};
+	selectSection(1);
+	transaction = activate("Apply body pose");
+	Require(std::get<simxr::SetBodyControls>(transaction.commands.back()).value.preset == simxr::BodyPreset::Seated,
+			"Body UI lost the observed preset");
+	selectSection(2);
+	transaction = activate("Apply gaze");
+	Require(std::get<simxr::SetGaze>(transaction.commands.back()).value.yaw == 0.25f,
+			"Gaze UI started from a default instead of observed values");
+	selectSection(3);
+	transaction = activate("Apply tracker");
+	Require(std::get<simxr::SetTracker>(transaction.commands.back()).value.identity.value ==
+				initial.tracking.trackers[0].identity.value,
+			"Tracker UI changed device identity");
+	selectSection(4);
+	transaction = activate("Activate scenario");
+	Require(std::get<simxr::TakeControl>(transaction.commands.front()).channel == simxr::ControlChannel::Head,
+			"Scenario action did not claim its affected channel");
+	simxr::CommandTransaction command;
+	command.id = 1;
+	command.source = {simxr::CommandSourceKind::Manual, 77};
+	command.target.frame = simxr::FrameId{2};
+	command.commands = transaction.commands;
+	scheduler.Submit(command);
+	observe(2);
+	frame();
+	transaction = activate("Restore normal behavior");
+	Require(!std::get<simxr::SetScenario>(transaction.commands.back()).enabled,
+			"Scenario recovery did not clear the failure");
+	command.id = 2;
+	command.target.frame = simxr::FrameId{3};
+	command.commands = transaction.commands;
+	scheduler.Submit(command);
+	observe(3);
+	frame();
+	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
+	{
+		std::filesystem::create_directories(directory);
+		test.renderer.RequestScreenshot((std::filesystem::path(directory) / "configuration-recovery.bmp").string());
+		frame();
+		frame();
+	}
+	panel.ResetObservations();
+	frame();
+	ImGui::ActivateItemByID(details()->GetID("Activate scenario"));
+	frame();
+	Require(!edit, "A disconnected panel applied values from its previous session");
+	initial.views.ipd = 0.061f;
+	scheduler.Start(0, initial);
+	observe(1);
+	frame();
+	selectSection(0);
+	transaction = activate("Apply view settings");
+	Require(std::get<simxr::SetViewSettings>(transaction.commands.back()).value.ipd == 0.061f,
+			"Reconnection retained stale configuration");
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Configuration UI produced Vulkan validation errors");
+	std::cout << "PASS production settings panels: observed values, categories, scenario recovery and reconnect\n";
+}
 void CaptureLayouts(const std::filesystem::path& directory)
 {
 	std::filesystem::create_directories(directory);
@@ -448,7 +611,7 @@ void CaptureLayouts(const std::filesystem::path& directory)
 			const auto path = directory / (std::to_string(static_cast<int>(size.x)) + "-" +
 										   std::to_string(static_cast<int>(scale * 100)) + ".bmp");
 			ImVec2 handTab{};
-			for (unsigned frame = 0; frame < 24; ++frame)
+			for (unsigned frame = 0; frame < 36; ++frame)
 			{
 				if (frame >= 12 && frame <= 14)
 				{
@@ -498,6 +661,14 @@ void CaptureLayouts(const std::filesystem::path& directory)
 					Require(tabs->SelectedTabId == tabs->Tabs[1].ID, "Disconnected device tabs must remain browsable");
 					test.renderer.RequestScreenshot(
 						(path.parent_path() / (path.stem().string() + "-hand.bmp")).string());
+					Require(tabs->Tabs.Size == 4, "Setup tab is missing");
+					ImGui::TabBarQueueFocus(tabs, &tabs->Tabs[3]);
+				}
+				if (frame == 35)
+				{
+					Require(tabs->SelectedTabId == tabs->Tabs[3].ID, "Setup is not reachable while disconnected");
+					test.renderer.RequestScreenshot(
+						(path.parent_path() / (path.stem().string() + "-setup.bmp")).string());
 				}
 				Require(test.renderer.Render(), "Layout frame was not rendered");
 			}
@@ -541,6 +712,7 @@ int main()
 		}
 		Require(validation->errors.load() == 0, "Vulkan validation errors during interaction or teardown");
 		CheckDocking();
+		ConfigureObservedDevices();
 		if (const auto endpoint = std::getenv("SIMXR_UI_PILOT_ENDPOINT"))
 			PilotLiveRuntime(endpoint);
 		if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
