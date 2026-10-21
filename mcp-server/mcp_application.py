@@ -170,7 +170,10 @@ class McpApplication:
                 try:
                     self._capture.disconnect()
                 finally:
-                    self._legacy.close()
+                    try:
+                        self._projection.disconnect()
+                    finally:
+                        self._legacy.close()
             finally:
                 try:
                     self._debug.close()

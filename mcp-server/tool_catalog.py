@@ -405,7 +405,7 @@ def tool_definitions(platform=None):
             ),
             inputSchema={
                 "type": "object",
-                "properties": {"max_entries": {"type": "integer", "default": 20}},
+                "properties": {"max_entries": {"type": "integer", "minimum": 1, "maximum": 64, "default": 20}},
             },
         ),
         dict(

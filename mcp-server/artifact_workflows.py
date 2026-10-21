@@ -1,4 +1,4 @@
-"""Exclusive legacy request lifetimes, interruptible waits, and CPU analysis."""
+"""Owned capture/metadata workflows, interruptible waits, and CPU analysis."""
 
 from contextlib import contextmanager
 from io import BytesIO
@@ -15,6 +15,7 @@ from image_analysis import (
 )
 from runtime_artifacts import Artifact
 from retained_screenshot import RetainedScreenshot
+from projection_history import ProjectionHistory
 from tool_results import ImageResult, TextResult
 
 
@@ -27,7 +28,7 @@ class WorkflowClosed(RuntimeError):
 
 
 class RequestLane:
-    """One shared runtime filename admits one workflow, never a waiting backlog."""
+    """One workflow owns its client and fallback artifact channel without a waiting backlog."""
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -65,12 +66,19 @@ class ProjectionWorkflow:
     def __init__(self, artifacts):
         self._artifacts = artifacts
         self._lane = RequestLane()
+        self._history = ProjectionHistory(artifacts.directory)
 
     def close(self):
         self._lane.close()
 
-    def read(self, timeout=2.5):
+    def disconnect(self):
+        self._history.close()
+
+    def read(self, timeout=2.5, count=64):
         with self._lane.admit():
+            document = self._history.read(count)
+            if document is not None:
+                return document
             self._artifacts.remove(Artifact.PROJECTION.value)
             self._artifacts.publish_bytes("projection_log_dump_request", b"")
             deadline = time.monotonic() + _timeout(timeout)
@@ -82,7 +90,10 @@ class ProjectionWorkflow:
             return None
 
     def tool(self, arguments):
-        document = self.read()
+        limit = int(arguments.get("max_entries", 20))
+        if not 1 <= limit <= 64:
+            raise ValueError("Projection log max_entries must be in [1,64]")
+        document = self.read(count=limit)
         if document is None:
             return [
                 TextResult(
@@ -91,21 +102,19 @@ class ProjectionWorkflow:
             ]
         try:
             entries = document.get("entries", [])
-            limit = int(arguments.get("max_entries", 20))
             tail = entries[-limit:] if len(entries) > limit else entries
             return [
-                TextResult(json.dumps({"count": len(tail), "entries": tail}, indent=2))
+                TextResult(json.dumps(dict(document, count=len(tail), entries=tail), indent=2))
             ]
         except Exception as error:
             return [TextResult(f"Failed to parse projection log: {error}")]
 
 
 class CaptureWorkflow:
-    """Own screenshot cleanup through analysis, across every tool using that file.
+    """Own screenshot capture and analysis for the complete admitted request.
 
-    Multi-frame stereo analysis keeps the same lane throughout the series. A
-    second tool cannot erase its marker, steal its image, or silently enqueue
-    another screenshot. Close interrupts waits without resubmitting a request.
+    Multi-frame analysis keeps the client and fallback files in the same lane.
+    Close interrupts waits without resubmitting a request.
     """
 
     def __init__(self, artifacts, projections):
@@ -249,7 +258,7 @@ class CaptureWorkflow:
             document = self._projections.read(timeout=2)
             entry = document["entries"][-1]
             settings = self._artifacts.read_json(Artifact.SETTINGS, {})
-            ipd = float(settings.get("ipd_mm", 64)) / 1000
+            ipd = float(entry["ipd"]) if "ipd" in entry else float(settings.get("ipd_mm", 64)) / 1000
             return analysis.frusta_from_fov(entry["left_fov"], entry["right_fov"], ipd)
         except (WorkflowBusy, OSError, ValueError, KeyError, IndexError, TypeError):
             return None

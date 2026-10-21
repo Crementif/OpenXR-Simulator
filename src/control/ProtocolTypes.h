@@ -65,7 +65,8 @@ enum class OpCode : std::uint16_t
 	ReadDiagnostics = 32,
 	GameStatus = 33,
 	SubmitGame = 34,
-	GameOperation = 35
+	GameOperation = 35,
+	ReadProjectionHistory = 36
 };
 
 enum class ErrorCode : std::uint32_t

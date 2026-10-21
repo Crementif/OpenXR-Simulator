@@ -705,6 +705,14 @@ class ScriptEngine::Impl
 			PushIntegerField(state, "frame_id", *capture.frame);
 		return 1;
 	}
+	int ProjectionHistory(lua_State* state)
+	{
+		const auto count = lua_isnoneornil(state, 1) ? 64 : Integer(state, 1);
+		if (!count || count > 64)
+			throw std::invalid_argument("Projection history count must be in [1,64]");
+		PushInspection(state, m_runtime.ProjectionHistory(static_cast<std::uint32_t>(count)));
+		return 1;
+	}
 	int Inspect(lua_State* state)
 	{
 		const auto inspection = m_runtime.Inspect(Integer(state, 1));
@@ -859,6 +867,7 @@ class ScriptEngine::Impl
 		bind("image_recording", Binding<&Impl::ImageRecording>);
 		bind("capture", Binding<&Impl::Capture>);
 		bind("inspect", Binding<&Impl::Inspect>);
+		bind("projection_history", Binding<&Impl::ProjectionHistory>);
 		bind("revision", Binding<&Impl::Revision>);
 		bind("release_inspection", Binding<&Impl::ReleaseInspection>);
 		bind("checkpoint", Binding<&Impl::Checkpoint>);

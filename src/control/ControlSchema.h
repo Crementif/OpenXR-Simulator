@@ -78,7 +78,8 @@ enum class Capability : std::uint64_t
 	GameBridge = 1ULL << 14,
 	DepthCapture = 1ULL << 15,
 	ImageRecording = 1ULL << 16,
-	FilteredComposition = 1ULL << 17
+	FilteredComposition = 1ULL << 17,
+	ProjectionHistory = 1ULL << 18
 };
 
 // Wire values are explicit and independent of the core's enum representation.

@@ -78,6 +78,7 @@ class RigRuntime
 	std::vector<std::byte> StopInputRecording();
 	std::vector<std::byte> ReadInputRecording(std::uint64_t offset, std::uint64_t count);
 	ScriptInspection Inspect(std::uint64_t capture);
+	std::vector<std::byte> ProjectionHistory(std::uint32_t count);
 	std::vector<std::byte> Revision(std::uint64_t revision);
 	void ReleaseInspection(std::uint64_t inspection);
 	std::vector<std::byte> State();

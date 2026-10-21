@@ -331,6 +331,14 @@ ScriptStep RigRuntime::CaptureStep(control::CommandKind kind, Fields fields)
 	}
 	return step;
 }
+std::vector<std::byte> RigRuntime::ProjectionHistory(std::uint32_t count)
+{
+	if (!count || count > 64)
+		throw std::invalid_argument("Projection history count must be in [1,64]");
+	auto fields = Session();
+	fields.push_back(control::Field::U64(tag::Length, count));
+	return Document(Call(control::OpCode::ReadProjectionHistory, std::move(fields)));
+}
 ScriptInspection RigRuntime::Inspect(std::uint64_t capture)
 {
 	// Reserve ownership bookkeeping before acquiring a remote reader.

@@ -272,6 +272,13 @@ class Client:
             time.sleep(interval)
 
 
+    def projection_history(self, session, *, count=64):
+        """Read bounded submitted projection metadata without a lease or GPU capture."""
+        if type(count) is not int or not 1 <= count <= 64:
+            raise ProtocolError('Projection history count must be in [1,64]')
+        return self.request(OpCode.READ_PROJECTION_HISTORY,
+                            self._session(session) + [Field.u64(Tag.LENGTH, count)])
+
     def diagnostics(self, session, *, after=0, count=128, frame=None):
         if type(after) is not int or not 0 <= after < 2**64 or type(count) is not int or not 0 <= count <= 256:
             raise ProtocolError('Diagnostic pages require a uint64 cursor and count in [0,256]')

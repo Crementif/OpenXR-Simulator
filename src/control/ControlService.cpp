@@ -144,7 +144,8 @@ class ControlService::State
 		{
 			capabilities |= static_cast<std::uint64_t>(Capability::SimulationCommands) |
 							static_cast<std::uint64_t>(Capability::CommandRecording) |
-							static_cast<std::uint64_t>(Capability::FrameDiagnostics);
+							static_cast<std::uint64_t>(Capability::FrameDiagnostics) |
+							static_cast<std::uint64_t>(Capability::ProjectionHistory);
 			if (m_runtime.Game().Snapshot().capabilities)
 				capabilities |= static_cast<std::uint64_t>(Capability::GameBridge);
 		}
@@ -241,6 +242,15 @@ class ControlService::State
 		const auto& session = binding.session;
 		switch (static_cast<OpCode>(request.opcode))
 		{
+		case OpCode::ReadProjectionHistory:
+		{
+			const auto count = request.Find(tag::Length) ? RequireRequestU64(request, tag::Length) : 64;
+			if (!count || count > 64)
+				throw ControlRequestError{ErrorCode::Invalid, "Projection history count must be in [1,64]"};
+			const auto document = InspectProjectionHistory(session->History().Snapshot(), static_cast<std::size_t>(count));
+			response.fields.push_back(Field::Bytes(tag::Document, document.Encode(), true));
+			return response;
+		}
 		case OpCode::InspectFrame:
 		{
 			auto capture = session->Captures().Read({RequireRequestU64(request, tag::CaptureId)});

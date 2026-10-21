@@ -233,6 +233,53 @@ void FrameStateAndRevisions()
 	Require(std::search(encoded.begin(), encoded.end(), raw.begin(), raw.end()) == encoded.end(),
 			"Native source handle escaped in CPU document");
 }
+void ProjectionHistoryBoundaries()
+{
+	FrameHistorySnapshot history;
+	history.generation = Fixture().key.generation;
+	history.capacity = 128;
+	history.evicted = 7;
+	const auto first = Fixture().key.frame.value;
+	for (std::uint64_t index = 0; index < 64; ++index)
+	{
+		auto frame = Fixture();
+		frame.key.frame.value += index;
+		auto projection = std::get<ProjectionLayerDescription>(frame.submission->layers->layers.front());
+		projection.views.resize(4, projection.views.front());
+		frame.submission->layers = std::make_shared<const FrameLayers>(frame.submission->displayTime,
+			frame.submission->blendMode, std::vector<LayerDescription>{projection, QuadLayerDescription{}, projection});
+		history.frames.push_back(std::make_shared<const FrameRecord>(std::move(frame)));
+	}
+	const auto document = InspectProjectionHistory(history, 3).Encode();
+	Require(Unsigned(Member(document, "generation")) == history.generation.value &&
+		Unsigned(Member(document, "evicted_frames")) == 7 && Unsigned(Member(document, "omitted_entries")) == 125,
+		"Projection history omitted its full-width identity or bounded retention evidence");
+	const auto pages = Fields(Find(Fields(Member(document, "entries")), 3).value);
+	const auto entries = Fields(pages.front().value);
+	Require(entries.size() == 3 && Unsigned(Member(entries[0].value, "frame_id")) == first + 62 &&
+		Unsigned(Member(entries[0].value, "layer")) == 2 &&
+		Unsigned(Member(entries[1].value, "frame_id")) == first + 63 &&
+		Unsigned(Member(entries[1].value, "layer")) == 0 && Unsigned(Member(entries[2].value, "layer")) == 2,
+		"Projection history changed submitted frame/layer order or included a quad");
+	const auto bounded = InspectProjectionHistory(history, 64).Encode();
+	Require(bounded.size() < MaxPayload - 1024, "Maximum projection history exceeds the wire response budget");
+	const auto raw = Field::U64(1, 0xf0e1d2c3b4a59687ULL).value;
+	Require(std::search(bounded.begin(), bounded.end(), raw.begin(), raw.end()) == bounded.end(),
+		"Projection history exposed a native source handle");
+	for (const auto count : {0U, 65U})
+	{
+		bool rejected = false;
+		try
+		{
+			InspectProjectionHistory(history, count);
+		}
+		catch (const std::invalid_argument&)
+		{
+			rejected = true;
+		}
+		Require(rejected, "Projection history accepted an unbounded request");
+	}
+}
 void ArrayBoundaries()
 {
 	std::vector<V> values;
@@ -267,6 +314,7 @@ int main(int argc, char** argv)
 		CatalogTransactionsAndReaders();
 		FrameStateAndRevisions();
 		ArrayBoundaries();
+		ProjectionHistoryBoundaries();
 		std::cout << "Immutable inspection transactions, revision deduplication, reader capacity and historical state "
 					 "passed\n";
 		return 0;

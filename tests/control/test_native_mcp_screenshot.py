@@ -56,6 +56,13 @@ def main():
                     raise AssertionError('Explicit fixture display did not select frame 3')
                 before = observer.status(session)
                 application = McpApplication(data)
+                history = observer.projection_history(session, count=1)['document']
+                require(len(history['entries']) == 1 and history['entries'][0]['frame_id'] == 3, history)
+                log = json.loads(application.call('get_projection_log', {'max_entries': 1})[0].text)
+                require(log['transport'] == 'frame_history' and log['entries'][0]['frame'] == '3', log)
+                require(log['entries'][0]['left_rect'] == [0, 0, 64, 48] and
+                        log['entries'][0]['right_fov']['aR'] > 0, log)
+                require(not (data / 'projection_log_dump_request').exists(), 'Projection history used a file request')
                 timed_out = application.call('capture_screenshot', {'layer': 'all', 'timeout': 0})
                 require(not any(isinstance(value, ImageResult) for value in timed_out), timed_out)
                 require('timed out' in str(timed_out), timed_out)
@@ -113,6 +120,10 @@ def main():
                                 require(right_center[0] > 200 and right_center[2] < 40, right_center)
                                 require(max(right_corner) < 40 and max(picture.getpixel((32, 24))) < 40,
                                         'Quad screenshot lost its right-eye visibility')
+                        log = json.loads(application.call('get_projection_log', {'max_entries': 2})[0].text)
+                        require([entry['frame'] for entry in log['entries']] == [str(frame - 1), str(frame)], log)
+                        require(log['omitted_entries'] == frame - 4 and history['entries'][0]['frame_id'] == 3,
+                                'Projection history lost its bound or changed an earlier reply')
                         after = observer.status(session)
                         require(after['manual'] == before['manual'] == False and
                                 after['pipeline']['permits'] == before['pipeline']['permits'],

@@ -309,7 +309,8 @@ void NegotiationAndReplay()
 					 static_cast<std::uint64_t>(wire::Capability::ImmutableRevisions) |
 					 static_cast<std::uint64_t>(wire::Capability::SimulationCommands) |
 					 static_cast<std::uint64_t>(wire::Capability::CommandRecording) |
-					 static_cast<std::uint64_t>(wire::Capability::FrameDiagnostics)) &&
+					 static_cast<std::uint64_t>(wire::Capability::FrameDiagnostics) |
+					 static_cast<std::uint64_t>(wire::Capability::ProjectionHistory)) &&
 				response.Find(wire::tag::PayloadLimit)->AsU32() == wire::MaxPayload,
 			"Hello negotiation/capability limits changed");
 	Require(wire::Encode(f.service.Handle(client.connection, hello)) == wire::Encode(response),

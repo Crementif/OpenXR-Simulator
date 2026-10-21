@@ -698,6 +698,7 @@ InspectionValue InspectHaptics(const std::vector<HapticOutput>& value, const Act
 class LayerEncoder
 {
   public:
+	InspectionValue Projection(const ProjectionLayerDescription& layer) { return Layer(layer); }
 	InspectionValue InspectLayers(const FrameLayers& value)
 	{
 		return InspectionValue::Object({{"identity_scope", InspectionValue::Text("frame")},
@@ -913,6 +914,45 @@ InspectionValue InspectDiagnostics(const FrameDiagnostics& diagnostics)
 					   {"related", InspectionValue::Unsigned(event.related)}});
 			  })}});
 }
+InspectionValue InspectProjectionHistory(const FrameHistorySnapshot& history, std::size_t count)
+{
+	if (!count || count > 64)
+		throw std::invalid_argument("Projection history count must be in [1,64]");
+	std::vector<InspectionValue> entries;
+	entries.reserve(count);
+	std::size_t available = 0;
+	for (auto frame = history.frames.rbegin(); frame != history.frames.rend(); ++frame)
+	{
+		if (!(*frame)->submission || !(*frame)->submission->layers)
+			continue;
+		const auto& submission = *(*frame)->submission;
+		const auto& layers = submission.layers->layers;
+		LayerEncoder encoder;
+		for (std::size_t index = layers.size(); index > 0; --index)
+		{
+			const auto* projection = std::get_if<ProjectionLayerDescription>(&layers[index - 1]);
+			if (!projection)
+				continue;
+			++available;
+			if (entries.size() == count)
+				continue;
+			entries.push_back(InspectionValue::Object(
+				{{"frame_id", InspectionValue::Unsigned((*frame)->key.frame.value)},
+				 {"display_time", InspectionValue::Signed(submission.displayTime.value.count())},
+				 {"layer", InspectionValue::Unsigned(index - 1)},
+				 {"ipd", InspectionValue::Float(submission.viewSettings.ipd)},
+				 {"projection", encoder.Projection(*projection)}}));
+		}
+	}
+	std::reverse(entries.begin(), entries.end());
+	return InspectionValue::Object(
+		{{"generation", InspectionValue::Unsigned(history.generation.value)},
+		 {"capacity", InspectionValue::Unsigned(history.capacity)},
+		 {"evicted_frames", InspectionValue::Unsigned(history.evicted)},
+		 {"omitted_entries", InspectionValue::Unsigned(available - entries.size())},
+		 {"entries", InspectionValue::Array(std::move(entries))}});
+}
+
 std::shared_ptr<const InspectionRecord> InspectFrame(InspectionStore& store, ControlSessionId session,
 													 const FrameRecord& frame)
 {
