@@ -94,11 +94,58 @@ void ReplacedCompletionCannotAuthorizeReuse()
 							   return previous;
 						   }) == XR_SUCCESS,
 			"Acquire replacement fixture");
-	Require(access.Wait(0) == XR_TIMEOUT_EXPIRED && replacement->polls != 0,
-			"A changed dependency is observed before granting access");
+	Require(access.Wait(0) == XR_TIMEOUT_EXPIRED, "An obsolete completion cannot authorize access after the deadline");
 	replacement->status = CompletionStatus::Complete;
 	Require(access.Wait(0) == XR_SUCCESS && access.Release() == XR_SUCCESS,
 			"Only the current completion authorizes reuse");
+}
+
+void ReplacedCompletionRespectsTimeout()
+{
+	bool bounded = true;
+	for (const XrDuration timeout : {XrDuration{0}, XrDuration{1000000}})
+	{
+		SwapchainAccess access(1);
+		auto first = std::make_shared<Completion>();
+		auto second = std::make_shared<Completion>();
+		first->status = CompletionStatus::Complete;
+		second->status = CompletionStatus::Complete;
+		first->observe = [&]
+		{
+			access.MarkUsed(0, second);
+		};
+		second->observe = [&]
+		{
+			access.MarkUsed(0, first);
+		};
+		std::uint32_t index;
+		Require(access.Acquire(index,
+							   [&](auto)
+							   {
+								   return first;
+							   }) == XR_SUCCESS,
+				"Acquire repeatedly replaced completion fixture");
+		auto waiting = std::async(std::launch::async,
+								  [&]
+								  {
+									  return access.Wait(timeout);
+								  });
+		const bool finished = waiting.wait_for(std::chrono::seconds{1}) == std::future_status::ready;
+		if (!finished)
+			access.Close();
+		const auto result = waiting.get();
+		bounded &= finished && result == XR_TIMEOUT_EXPIRED;
+		std::cout << "Replacement timeout " << timeout << ": bounded=" << finished << ", result=" << result << '\n';
+		if (finished)
+		{
+			Require(access.Release() == XR_ERROR_CALL_ORDER_INVALID,
+					"Timeout authorized release of an image with an unobserved dependency");
+			first->observe = second->observe = {};
+			Require(access.Wait(0) == XR_SUCCESS && access.Release() == XR_SUCCESS,
+					"Timed-out wait could not retry after the dependency settled");
+		}
+	}
+	Require(bounded, "Completion replacement bypassed the swapchain wait timeout");
 }
 
 void CancellationDrainsBlockingReaders()
@@ -212,6 +259,7 @@ int main()
 	{
 		FifoInitializationAndReuse();
 		ReplacedCompletionCannotAuthorizeReuse();
+		ReplacedCompletionRespectsTimeout();
 		CancellationDrainsBlockingReaders();
 		CompletionCallbacksDoNotHoldOwnerLock();
 		FailureAndStaticImages();

@@ -16,14 +16,14 @@ XrResult PrepareRotationalComposition(const FrameLayers& layers, const Compositi
 	const auto newHead = NormalizedPose({displayHead.pose.orientation, submittedHead.pose.position});
 	if (!oldHead || !newHead)
 		return XR_ERROR_POSE_INVALID;
-	const auto delta = Compose(*newHead, RelativePose(IdentityPose(), *oldHead));
 	auto target = submittedTarget;
 	for (auto& eye : target.eyes)
 	{
 		const auto pose = NormalizedPose(eye.worldPose.pose);
 		if (!pose || !(eye.worldPose.flags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
 			return XR_ERROR_POSE_INVALID;
-		eye.worldPose.pose = Compose(delta, *pose);
+		// Preserve the eye offset without constructing an inverse world-space translation.
+		eye.worldPose.pose = Compose(*newHead, RelativePose(*pose, *oldHead));
 	}
 	auto descriptions = layers.layers;
 	for (auto& layer : descriptions)

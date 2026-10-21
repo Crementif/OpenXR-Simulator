@@ -204,6 +204,21 @@ void VisibilityAndClipping()
 	Require(!PreparePreviewQuad(quad, views, {64, 32}), "Empty quad generated geometry");
 }
 
+void LargeFiniteClipDistances()
+{
+	for (const float scale : {1.0f, std::numeric_limits<float>::max() * 0.4f})
+	{
+		PreviewQuadEye geometry;
+		geometry.tangents = {-0.5f, 0.5f, 0.5f, -0.5f};
+		geometry.viewCorners = {
+			{{-scale, scale, -scale}, {scale, scale, -scale}, {scale, -scale, -scale}, {-scale, -scale, -scale}}};
+		const auto bounds = PreviewQuadBounds(geometry, {0, 0, 100, 100}, {100, 100});
+		Require(bounds && bounds->offset.x == 0 && bounds->offset.y == 0 && bounds->extent.width == 100 &&
+					bounds->extent.height == 100,
+				"Finite clip distances lost the visible viewport under uniform scaling");
+	}
+}
+
 void ProjectionPreparation()
 {
 	ProjectionLayerDescription submitted;
@@ -306,6 +321,7 @@ int main()
 		GeometryAndShaderAbi();
 		HistoricalSubmission();
 		VisibilityAndClipping();
+		LargeFiniteClipDistances();
 		EyeLayout();
 		ProjectionPreparation();
 		std::cout << "Preview geometry tests passed\n";

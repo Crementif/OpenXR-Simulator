@@ -47,20 +47,21 @@ struct ClippedPolygon
 	std::size_t count = 0;
 };
 
-float PlaneDistance(const ClipPoint& point, std::size_t plane)
+double PlaneDistance(const ClipPoint& point, std::size_t plane)
 {
+	const double w = point[3];
 	switch (plane)
 	{
 	case 0:
-		return point[3];
+		return w;
 	case 1:
-		return point[3] + point[0];
+		return w + point[0];
 	case 2:
-		return point[3] - point[0];
+		return w - point[0];
 	case 3:
-		return point[3] + point[1];
+		return w + point[1];
 	default:
-		return point[3] - point[1];
+		return w - point[1];
 	}
 }
 
@@ -70,17 +71,18 @@ ClippedPolygon ClipPolygon(const ClippedPolygon& input, std::size_t plane)
 	if (!input.count)
 		return output;
 	auto previous = input.points[input.count - 1];
-	float previousDistance = PlaneDistance(previous, plane);
+	double previousDistance = PlaneDistance(previous, plane);
 	for (std::size_t index = 0; index < input.count; ++index)
 	{
 		const auto& current = input.points[index];
-		const float currentDistance = PlaneDistance(current, plane);
+		const double currentDistance = PlaneDistance(current, plane);
 		if ((previousDistance >= 0) != (currentDistance >= 0))
 		{
-			const float fraction = previousDistance / (previousDistance - currentDistance);
+			const double fraction = previousDistance / (previousDistance - currentDistance);
 			ClipPoint intersection;
 			for (std::size_t component = 0; component < intersection.size(); ++component)
-				intersection[component] = previous[component] + fraction * (current[component] - previous[component]);
+				intersection[component] = static_cast<float>(std::lerp(
+					static_cast<double>(previous[component]), static_cast<double>(current[component]), fraction));
 			output.points.at(output.count++) = intersection;
 		}
 		if (currentDistance >= 0)
