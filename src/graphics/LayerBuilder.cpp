@@ -21,6 +21,7 @@ PoseSample Offset(PoseSample world, const XrPosef& offset)
 	if (translated && !(world.flags & XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT))
 		world.flags &= ~XR_SPACE_LOCATION_POSITION_TRACKED_BIT;
 	world.pose = Compose(world.pose, offset);
+	world.flags = FinitePoseFlags(world.pose, world.flags);
 	return world;
 }
 } // namespace

@@ -62,6 +62,7 @@ LocatedViews ViewConfiguration::Locate(const TrackingSnapshot& snapshot, bool fo
 		if (m_settings.ipd != 0 && !(eye.flags & XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT))
 			eye.flags &= ~XR_SPACE_LOCATION_POSITION_TRACKED_BIT;
 		eye.pose = Compose(snapshot.head.pose, {{0, 0, 0, 1}, {(description.eye == 0 ? -0.5f : 0.5f) * m_settings.ipd, 0, 0}});
+		eye.flags = FinitePoseFlags(eye.pose, eye.flags);
 		auto fov = m_settings.outerFov[description.eye];
 		if (description.role == ViewRole::Inset)
 		{

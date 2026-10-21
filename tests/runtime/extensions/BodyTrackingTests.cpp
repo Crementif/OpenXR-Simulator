@@ -17,8 +17,58 @@ bool Near(float a, float b)
 }
 }
 
+namespace
+{
+void FiniteBodyQueries()
+{
+	using namespace simxr;
+	const std::array extensions{XR_FB_BODY_TRACKING_EXTENSION_NAME, XR_BD_BODY_TRACKING_EXTENSION_NAME};
+	TrackingSystem tracking;
+	TrackingState input;
+	input.head.pose.position.x = 2e38f;
+	tracking.Publish({Duration{1000000}}, input);
+	SpaceSystem spaces(reinterpret_cast<XrSession>(802), tracking);
+	XrSpace base{};
+	Require(spaces.CreateReferenceSpace(XR_REFERENCE_SPACE_TYPE_STAGE, {{0, 0, 0, 1}, {-2e38f, 0, 0}}, base) ==
+				XR_SUCCESS,
+			"Create distant body base");
+	BodyTracking bodies(reinterpret_cast<XrSession>(802), tracking, spaces, EnabledExtensions(extensions));
+	XrBodyTrackerCreateInfoFB create{XR_TYPE_BODY_TRACKER_CREATE_INFO_FB, nullptr, XR_BODY_JOINT_SET_DEFAULT_FB};
+	XrBodyTrackerFB tracker{};
+	Require(bodies.CreateFB(&create, &tracker) == XR_SUCCESS, "Create finite-limit body tracker");
+	std::array<XrBodyJointLocationFB, XR_BODY_JOINT_COUNT_FB> joints{};
+	XrBodyJointLocationsFB locations{XR_TYPE_BODY_JOINT_LOCATIONS_FB, nullptr,		XR_FALSE, 0,
+									 XR_BODY_JOINT_COUNT_FB,		  joints.data()};
+	XrBodyJointsLocateInfoFB locate{XR_TYPE_BODY_JOINTS_LOCATE_INFO_FB, nullptr, base, 1000000};
+	Require(bodies.LocateFB(tracker, &locate, &locations) == XR_SUCCESS, "Locate distant body joints");
+	for (const auto& joint : joints)
+		Require(
+			!(joint.locationFlags & (XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_POSITION_TRACKED_BIT)) &&
+				(joint.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT),
+			"Invalid body relative position marked valid");
+	XrBodyTrackerCreateInfoBD createBD{XR_TYPE_BODY_TRACKER_CREATE_INFO_BD, nullptr,
+									   XR_BODY_JOINT_SET_FULL_BODY_JOINTS_BD};
+	XrBodyTrackerBD trackerBD{};
+	Require(bodies.CreateBD(&createBD, &trackerBD) == XR_SUCCESS, "Create BD finite-limit tracker");
+	std::array<XrBodyJointLocationBD, XR_BODY_JOINT_COUNT_BD> jointsBD{};
+	XrBodyJointLocationsBD locationsBD{XR_TYPE_BODY_JOINT_LOCATIONS_BD, nullptr, XR_FALSE, XR_BODY_JOINT_COUNT_BD,
+									   jointsBD.data()};
+	XrBodyJointsLocateInfoBD locateBD{XR_TYPE_BODY_JOINTS_LOCATE_INFO_BD, nullptr, base, 1000000};
+	Require(bodies.LocateBD(trackerBD, &locateBD, &locationsBD) == XR_SUCCESS && !locationsBD.allJointPosesTracked,
+			"BD unrepresentable joints reported fully tracked");
+	for (const auto& joint : jointsBD)
+		Require(!(joint.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT), "BD relative overflow marked valid");
+	std::array<XrBodySkeletonJointFB, XR_BODY_JOINT_COUNT_FB> skeletonJoints{};
+	skeletonJoints.front().joint = 99;
+	XrBodySkeletonFB skeleton{XR_TYPE_BODY_SKELETON_FB, nullptr, XR_BODY_JOINT_COUNT_FB, skeletonJoints.data()};
+	Require(bodies.SkeletonFB(tracker, &skeleton) == XR_ERROR_RUNTIME_FAILURE && skeletonJoints.front().joint == 99,
+			"Unrepresentable skeleton published or partially changed output");
+}
+} // namespace
+
 int main()
 {
+	FiniteBodyQueries();
 	using namespace simxr;
 	const std::array extensions{XR_FB_BODY_TRACKING_EXTENSION_NAME, XR_META_BODY_TRACKING_FULL_BODY_EXTENSION_NAME,
 		XR_BD_BODY_TRACKING_EXTENSION_NAME, XR_META_BODY_TRACKING_CALIBRATION_EXTENSION_NAME, XR_META_BODY_TRACKING_FIDELITY_EXTENSION_NAME};

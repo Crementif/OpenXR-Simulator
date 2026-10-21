@@ -212,11 +212,6 @@ const std::array<BodyJoint, XR_BODY_JOINT_COUNT_BD> s_jointsBD = []
 	return result;
 }();
 
-bool Finite(XrVector3f value)
-{
-	return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
-}
-
 XrVector3f Difference(XrVector3f a, XrVector3f b)
 {
 	return {a.x - b.x, a.y - b.y, a.z - b.z};
@@ -224,7 +219,7 @@ XrVector3f Difference(XrVector3f a, XrVector3f b)
 
 XrVector3f Blend(XrVector3f a, XrVector3f b, float weight)
 {
-	return {a.x + (b.x - a.x) * weight, a.y + (b.y - a.y) * weight, a.z + (b.z - a.z) * weight};
+	return {std::lerp(a.x, b.x, weight), std::lerp(a.y, b.y, weight), std::lerp(a.z, b.z, weight)};
 }
 }
 
@@ -440,7 +435,8 @@ BodySample BodyModel::Evaluate(const PoseSample& inputHead, const BodyControls& 
 	auto head = inputHead;
 	auto& headOrientation = head.pose.orientation;
 	float headLength = std::sqrt(headOrientation.x * headOrientation.x + headOrientation.y * headOrientation.y + headOrientation.z * headOrientation.z + headOrientation.w * headOrientation.w);
-	if (time.value.count() <= 0 || !Finite(head.pose.position) || !std::isfinite(headLength) || std::abs(headLength - 1) > 0.01f)
+	if (time.value.count() <= 0 || !IsFinite(head.pose.position) || !std::isfinite(headLength) ||
+		std::abs(headLength - 1) > 0.01f)
 		throw std::invalid_argument("Invalid body head pose or time");
 	headOrientation = {headOrientation.x / headLength, headOrientation.y / headLength, headOrientation.z / headLength, headOrientation.w / headLength};
 	for (const auto& override : controls.joints)
@@ -450,7 +446,7 @@ BodySample BodyModel::Evaluate(const PoseSample& inputHead, const BodyControls& 
 		const auto& pose = *override->pose;
 		const auto& q = pose.orientation;
 		float norm = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
-		if (!Finite(pose.position) || !std::isfinite(norm) || std::abs(norm - 1) > 0.01f)
+		if (!IsFinite(pose.position) || !std::isfinite(norm) || std::abs(norm - 1) > 0.01f)
 			throw std::invalid_argument("Invalid joint override");
 	}
 	BodySample sample;
@@ -470,7 +466,7 @@ BodySample BodyModel::Evaluate(const PoseSample& inputHead, const BodyControls& 
 	for (std::size_t index = 0; index < shifts.size(); ++index)
 	{
 		auto offset = controls.controls[index].offset.value_or(defaults[index]);
-		if (!Finite(offset))
+		if (!IsFinite(offset))
 			throw std::invalid_argument("Invalid body control offset");
 		shifts[index] = Difference(offset, defaults[index]);
 	}
@@ -547,6 +543,8 @@ BodySample BodyModel::Evaluate(const PoseSample& inputHead, const BodyControls& 
 			if (!override->tracked)
 				location.flags &= ValidPoseFlags;
 		}
+		if (!IsFinite(location.pose.position))
+			throw std::invalid_argument("Body joint position is not representable");
 	}
 	return sample;
 }

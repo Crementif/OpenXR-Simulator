@@ -29,6 +29,7 @@ PoseSample ApplyPoseOffset(PoseSample source, XrPosef offset)
 	if (translated && !HasFlags(source.flags, XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT))
 		source.flags &= ~XR_SPACE_LOCATION_POSITION_TRACKED_BIT;
 	source.pose = Compose(source.pose, offset);
+	source.flags = FinitePoseFlags(source.pose, source.flags);
 	return source;
 }
 } // namespace
@@ -141,6 +142,7 @@ PoseSample SpaceSystem::Relative(const SpaceRecord& target, const SpaceRecord& b
 	{
 		auto result = PoseSample{RelativePose(target.poseOffset, base.poseOffset), TrackedPoseFlags, time};
 		result.eyeGazeSampleTime = Resolve(target, time, OriginAt(time)).eyeGazeSampleTime;
+		result.flags = FinitePoseFlags(result.pose, result.flags);
 		return result;
 	}
 	auto origin = OriginAt(time);
@@ -158,6 +160,7 @@ PoseSample SpaceSystem::Relative(const SpaceRecord& target, const SpaceRecord& b
 	if (HasFlags(targetPose.flags, XR_SPACE_LOCATION_POSITION_TRACKED_BIT) &&
 		HasFlags(basePose.flags, XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT))
 		result.flags |= XR_SPACE_LOCATION_POSITION_TRACKED_BIT;
+	result.flags = FinitePoseFlags(result.pose, result.flags);
 	constexpr auto tracked = XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT;
 	if (result.eyeGazeSampleTime && !HasFlags(result.flags, tracked))
 		result.flags &= ~tracked;
@@ -221,7 +224,10 @@ XrResult SpaceSystem::Locate(XrSpace space, XrSpace base, RuntimeTime time, Spac
 		output.linearVelocity = {(currentPosition.x - previousPosition.x) / seconds,
 								 (currentPosition.y - previousPosition.y) / seconds,
 								 (currentPosition.z - previousPosition.z) / seconds};
-		output.velocityFlags |= XR_SPACE_VELOCITY_LINEAR_VALID_BIT;
+		if (IsFinite(output.linearVelocity))
+			output.velocityFlags |= XR_SPACE_VELOCITY_LINEAR_VALID_BIT;
+		else
+			output.linearVelocity = {};
 	}
 	if (HasFlags(previous.flags, XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) &&
 		HasFlags(output.pose.flags, XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
@@ -332,10 +338,12 @@ XrResult SpaceSystem::ApplyOrigin(RuntimeTime time, const ReferenceSpaceState& s
 		m_stageBounds = state.stageBounds;
 	if (m_eventQueue)
 	{
-		m_eventQueue->Push(ReferenceSpaceEvent{m_ownerSession, XR_REFERENCE_SPACE_TYPE_LOCAL, time, true,
-											   RelativePose(next.local, previous.local)});
-		m_eventQueue->Push(ReferenceSpaceEvent{m_ownerSession, XR_REFERENCE_SPACE_TYPE_STAGE, time, true,
-											   RelativePose(next.stage, previous.stage)});
+		const auto localDelta = RelativePose(next.local, previous.local);
+		const auto stageDelta = RelativePose(next.stage, previous.stage);
+		m_eventQueue->Push(ReferenceSpaceEvent{m_ownerSession, XR_REFERENCE_SPACE_TYPE_LOCAL, time,
+											   IsFinite(localDelta.position), localDelta});
+		m_eventQueue->Push(ReferenceSpaceEvent{m_ownerSession, XR_REFERENCE_SPACE_TYPE_STAGE, time,
+											   IsFinite(stageDelta.position), stageDelta});
 	}
 	return XR_SUCCESS;
 }

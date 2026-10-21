@@ -69,7 +69,7 @@ XrResult LocateViews(SpaceSystem& spaces, const ViewConfiguration& configuration
 			return XR_ERROR_VALIDATION_FAILURE;
 	auto flags = base.flags;
 	for (const auto& sample : samples.views)
-		flags &= sample.pose.flags;
+		flags &= FinitePoseFlags(RelativePose(sample.pose.pose, base.pose), sample.pose.flags);
 	if (!(base.flags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
 		flags &= ~XR_SPACE_LOCATION_POSITION_VALID_BIT;
 	if (!(base.flags & XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT))

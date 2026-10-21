@@ -14,8 +14,36 @@ bool Near(float a, float b)
 }
 }
 
+namespace
+{
+void FiniteViewQueries()
+{
+	using namespace simxr;
+	TrackingSystem tracking;
+	TrackingState input;
+	input.head.pose.position.x = 2e38f;
+	const auto snapshot = tracking.Publish({Duration{1000000}}, input);
+	SpaceSystem spaces(reinterpret_cast<XrSession>(803), tracking);
+	XrSpace base{};
+	Require(spaces.CreateReferenceSpace(XR_REFERENCE_SPACE_TYPE_STAGE, {{0, 0, 0, 1}, {-2e38f, 0, 0}}, base) ==
+				XR_SUCCESS,
+			"Create distant view base");
+	XrViewLocateInfo info{XR_TYPE_VIEW_LOCATE_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 1000000, base};
+	XrViewState state{XR_TYPE_VIEW_STATE};
+	std::uint32_t count = 0;
+	std::array<XrView, 2> views{{{XR_TYPE_VIEW}, {XR_TYPE_VIEW}}};
+	for (auto capacity : {0u, 2u})
+		Require(LocateViews(spaces, ViewConfiguration{}, snapshot, info, &state, capacity, &count, views.data()) ==
+						XR_SUCCESS &&
+					!(state.viewStateFlags & (XR_VIEW_STATE_POSITION_VALID_BIT | XR_VIEW_STATE_POSITION_TRACKED_BIT)) &&
+					(state.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT),
+				"View relative overflow marked valid");
+}
+} // namespace
+
 int main()
 {
+	FiniteViewQueries();
 	using namespace simxr;
 	TrackingSystem tracking;
 	TrackingState input;

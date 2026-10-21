@@ -124,8 +124,71 @@ void GenerationHistoryAndBounds()
 
 } // namespace
 
+namespace
+{
+void FiniteLocations()
+{
+	using namespace simxr;
+	TrackingSystem tracking;
+	TrackingState state;
+	tracking.Publish({Duration{1000000}}, state);
+	state.head.pose.position.x = 2e38f;
+	tracking.Publish({Duration{2000000}}, state);
+	EventQueue events;
+	SpaceSystem spaces(reinterpret_cast<XrSession>(801), tracking, {}, {}, &events);
+	XrSpace view{}, stage{}, distant{}, nearLimit{};
+	Require(spaces.CreateReferenceSpace(XR_REFERENCE_SPACE_TYPE_VIEW, IdentityPose(), view) == XR_SUCCESS &&
+				spaces.CreateReferenceSpace(XR_REFERENCE_SPACE_TYPE_STAGE, IdentityPose(), stage) == XR_SUCCESS &&
+				spaces.CreateReferenceSpace(XR_REFERENCE_SPACE_TYPE_STAGE, {{0, 0, 0, 1}, {-2e38f, 0, 0}}, distant) ==
+					XR_SUCCESS &&
+				spaces.CreateReferenceSpace(XR_REFERENCE_SPACE_TYPE_VIEW, {{0, 0, 0, 1}, {2e38f, 0, 0}}, nearLimit) ==
+					XR_SUCCESS,
+			"Create finite-limit reference spaces");
+	SpaceLocation result;
+	Require(spaces.Locate(view, stage, {Duration{2000000}}, result) == XR_SUCCESS &&
+				!(result.velocityFlags & XR_SPACE_VELOCITY_LINEAR_VALID_BIT) &&
+				(result.velocityFlags & XR_SPACE_VELOCITY_ANGULAR_VALID_BIT),
+			"Unrepresentable velocity marked valid");
+	constexpr auto positionBits = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_POSITION_TRACKED_BIT;
+	Require(spaces.Locate(view, distant, {Duration{2000000}}, result) == XR_SUCCESS &&
+				!(result.pose.flags & positionBits) && (result.pose.flags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT),
+			"Unrepresentable relative position marked valid or lost valid orientation");
+	PoseSample world;
+	Require(spaces.WorldPose(nearLimit, {Duration{2000000}}, world) == XR_SUCCESS && !(world.flags & positionBits),
+			"Unrepresentable world offset marked valid");
+	XrSpace positive{};
+	Require(spaces.CreateReferenceSpace(XR_REFERENCE_SPACE_TYPE_STAGE, {{0, 0, 0, 1}, {2e38f, 0, 0}}, positive) ==
+					XR_SUCCESS &&
+				spaces.Locate(positive, distant, {Duration{2000000}}, result) == XR_SUCCESS &&
+				!(result.pose.flags & positionBits),
+			"Same-entity relative overflow marked valid");
+	ReferenceSpaceState origin;
+	origin.local.position.x = -2e38f;
+	Require(spaces.Restore({Duration{3000000}}, origin) == XR_SUCCESS, "Set distant origin");
+	origin.local.position.x = 2e38f;
+	Require(spaces.Restore({Duration{4000000}}, origin) == XR_SUCCESS, "Move distant origin");
+	const auto history = events.Observe();
+	Require(!std::get<ReferenceSpaceEvent>(history[history.size() - 2].event).poseValid,
+			"Unrepresentable reference change marked valid");
+	state.body.joints[static_cast<std::size_t>(BodyJoint::Head)] =
+		BodyJointOverride{XrPosef{{0, 0, 0, 1}, {2e38f, 1.7f, 0}}, true};
+	bool rejected = false;
+	try
+	{
+		tracking.Publish({Duration{3000000}}, state);
+	}
+	catch (const std::invalid_argument&)
+	{
+		rejected = true;
+	}
+	Require(rejected && tracking.Sample({Duration{3000000}})->time == RuntimeTime{Duration{2000000}},
+			"Rejected generated body partially published tracking history");
+}
+} // namespace
+
 int main()
 {
+	FiniteLocations();
 	GenerationHistoryAndBounds();
 	using namespace simxr;
 	auto owner = reinterpret_cast<XrSession>(100);
