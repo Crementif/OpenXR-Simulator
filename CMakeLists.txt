@@ -642,4 +642,7 @@ if(TARGET openxr_simulator AND NOT WIN32 AND BUILD_TESTING AND Python3_Interpret
         "${PROJECT_SOURCE_DIR}/tests/control/test_game_bridge_native.py" "$<TARGET_FILE:game_bridge_probe>"
         "$<TARGET_FILE:openxr_simulator>")
     set_tests_properties(native_game_bridge PROPERTIES TIMEOUT 20)
+    add_test(NAME native_game_example COMMAND "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tests/control/test_game_example.py" "$<TARGET_FILE:openxr_simulator>")
+    set_tests_properties(native_game_example PROPERTIES TIMEOUT 20)
 endif()
