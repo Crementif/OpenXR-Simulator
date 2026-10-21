@@ -4,6 +4,7 @@
 #include "control/ImageInspection.h"
 
 #include <memory>
+#include <optional>
 #include <span>
 
 namespace simxr::app
@@ -26,7 +27,7 @@ class PreviewTexture
 	const control::ImageDescription& Description() const;
 	std::size_t SliceCount() const;
 	void BeginFrame();
-	void Draw(float width);
+	void Draw(float width, std::optional<std::size_t> slice = {});
 	VkSemaphore ReadyWait() const;
 	void Submitted(std::uint64_t serial);
 	void ObserveCompletion(std::uint64_t serial);

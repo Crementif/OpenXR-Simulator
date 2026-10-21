@@ -1,8 +1,11 @@
 #include "../TestSupport.h"
+#include "Math.h"
 #include "app/SimulationEdits.h"
 #include "control/ControlSchema.h"
 #include "control/SimulationControl.h"
 #include "simulation/CommandScheduler.h"
+#include <cmath>
+#include <numbers>
 
 #include <iostream>
 #include <limits>
@@ -67,6 +70,45 @@ void ObservedFrameScheduling()
 	transaction = wire::DecodeSimulationTransaction(packet.message, 55);
 	Require(transaction.target.frame == FrameId{12} && transaction.latePolicy == CommandLatePolicy::Reject,
 			"Explicit edit target and late policy were overwritten by observation");
+}
+void DirectPiloting()
+{
+	CommandScheduler scheduler;
+	scheduler.Start();
+	Apply(scheduler, 1);
+	PoseSample origin;
+	origin.flags = TrackedPoseFlags;
+	origin.pose.position = {2, 1.7f, -4};
+	origin.pose.orientation = EulerAngles(-std::numbers::pi_v<float> / 2, 0, 0);
+	app::ManualTransaction edit;
+	edit.commands = {TakeControl{ControlChannel::Head},		 SetHeadPose{origin},
+					 TakeControl{ControlChannel::LeftPose},	 SetControllerPose{0, {origin, true}},
+					 TakeControl{ControlChannel::RightPose}, SetControllerPose{1, {origin, false}}};
+	auto transaction =
+		wire::DecodeSimulationTransaction(app::EncodeSimulationEdit(edit, 1, 1, 1, Observation(scheduler)).message, 55);
+	Require(scheduler.Submit(std::move(transaction)).result == CommandResult::Queued,
+			"Initial pilot pose was rejected");
+	Apply(scheduler, 2);
+	const auto state = Observation(scheduler);
+	const auto observed = app::ObservedDevicePose(state, ControlChannel::Head);
+	Require(observed.pose.position.x == 2 && observed.pose.position.z == -4, "Piloting jumped to a default pose");
+	Require(app::ObservedDevicePose(state, ControlChannel::LeftPose).pose.position.x == 2,
+			"Hand piloting read the wrong pose");
+	Rejected(
+		[&]
+		{
+			app::ObservedDevicePose(state, ControlChannel::RightPose);
+		});
+	const auto moved = app::PilotPose(observed, {0, 0, -1}, 0, 0, 0.02f);
+	Require(std::abs(moved.pose.position.x - 2.02f) < 0.0001f && std::abs(moved.pose.position.z + 4) < 0.0001f,
+			"Forward piloting ignored the device orientation");
+	const auto fast = app::PilotPose(observed, {0, 0, -1}, 0, 0, 0.02f, 3);
+	Require(std::abs(fast.pose.position.x - 2.06f) < 0.0001f, "Speed modifier depends on frame rate");
+	const auto stalled = app::PilotPose(observed, {0, 0, -1}, 0, 0, 10);
+	Require(stalled.pose.position.x <= 2.051f, "A UI stall teleported the device");
+	const auto rotated = app::PilotPose(observed, {}, 0, 100, 0.02f);
+	Require(NormalizedPose(rotated.pose).has_value() && Rotate(rotated.pose.orientation, {0, 0, -1}).y < 1,
+			"Pointer motion flipped or invalidated the device pose");
 }
 void FirstPublicationAndStateFailures()
 {
@@ -133,6 +175,7 @@ int main()
 	try
 	{
 		ObservedFrameScheduling();
+		DirectPiloting();
 		FirstPublicationAndStateFailures();
 		std::cout << "PASS simulation edits\n";
 		return 0;

@@ -50,9 +50,19 @@ bool Window::PollEvents()
 	bool running = true;
 	while (SDL_PollEvent(&event))
 	{
-		ImGui_ImplSDL3_ProcessEvent(&event);
+		if (event.type == SDL_EVENT_MOUSE_MOTION && event.motion.windowID == SDL_GetWindowID(m_window) &&
+			m_pointerCaptured)
+		{
+			m_pointerMotion.first += event.motion.xrel;
+			m_pointerMotion.second += event.motion.yrel;
+		}
+		else
+			ImGui_ImplSDL3_ProcessEvent(&event);
 		if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST && event.window.windowID == SDL_GetWindowID(m_window))
+		{
 			m_focusLost = true;
+			CapturePointer(false);
+		}
 		if (event.type == SDL_EVENT_QUIT ||
 			(event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && event.window.windowID == SDL_GetWindowID(m_window)))
 			running = false;
@@ -63,6 +73,21 @@ bool Window::PollEvents()
 bool Window::TakeFocusLost()
 {
 	return std::exchange(m_focusLost, false);
+}
+
+bool Window::CapturePointer(bool enabled)
+{
+	if (m_pointerCaptured == enabled)
+		return true;
+	if (!SDL_SetWindowRelativeMouseMode(m_window, enabled))
+		return false;
+	m_pointerCaptured = enabled;
+	m_pointerMotion = {};
+	return true;
+}
+std::pair<float, float> Window::TakePointerMotion()
+{
+	return std::exchange(m_pointerMotion, {});
 }
 
 void Window::Resize(int width, int height)

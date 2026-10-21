@@ -40,7 +40,7 @@ class PreviewImages
 	std::vector<PreviewImageSummary> Images() const;
 	std::size_t ReadyCount() const;
 	void BeginFrame();
-	void DrawSelected(float width);
+	void DrawSelected(float width, std::optional<std::size_t> slice = {});
 	std::vector<VkSemaphore> ReadyWaits() const;
 	void Submitted(std::uint64_t serial);
 	std::string TakeError();

@@ -1,7 +1,9 @@
 #include "app/SimulationEdits.h"
+#include "Math.h"
 #include "control/ControlSchema.h"
 #include "control/SimulationControl.h"
-
+#include <algorithm>
+#include <cmath>
 #include <limits>
 #include <stdexcept>
 
@@ -27,6 +29,31 @@ const wire::Field& NodeData(const wire::Message& node, wire::InspectionType type
 	if (!kind || kind->AsU32() != static_cast<std::uint32_t>(type) || !data)
 		throw std::runtime_error("Runtime returned an invalid simulation state field");
 	return *data;
+}
+wire::Message Member(const wire::Message& node, std::string_view name)
+{
+	for (const auto& field : DecodeNode(NodeData(node, wire::InspectionType::Object).value).fields)
+	{
+		auto child = DecodeNode(field.value);
+		if (const auto key = child.Find(1); key && key->AsText() == name)
+			return child;
+	}
+	throw std::runtime_error("Observed device state is not available yet");
+}
+std::vector<wire::Message> Elements(const wire::Message& node)
+{
+	std::vector<wire::Message> elements;
+	for (const auto& page : DecodeNode(NodeData(node, wire::InspectionType::Array).value).fields)
+		for (const auto& field : DecodeNode(page.value).fields)
+			elements.push_back(DecodeNode(field.value));
+	return elements;
+}
+float Number(const wire::Message& node)
+{
+	const auto number = NodeData(node, wire::InspectionType::Float).AsF32();
+	if (!number || !std::isfinite(*number))
+		throw std::runtime_error("Observed device pose contains an invalid number");
+	return *number;
 }
 FrameId NextObservedFrame(const wire::Message& state)
 {
@@ -69,6 +96,58 @@ FrameId NextObservedFrame(const wire::Message& state)
 	return FrameId{previous + 1};
 }
 } // namespace
+
+PoseSample ObservedDevicePose(const control::Message& state, ControlChannel channel)
+{
+	NextObservedFrame(state);
+	auto configuration = Member(DecodeNode(state.Find(wire::tag::Document)->value), "configuration");
+	wire::Message sample;
+	if (channel == ControlChannel::Head)
+		sample = Member(configuration, "head");
+	else if (channel == ControlChannel::LeftPose || channel == ControlChannel::RightPose)
+	{
+		const auto hands = Elements(Member(configuration, "controllers"));
+		const auto hand = channel == ControlChannel::LeftPose ? 0u : 1u;
+		if (hands.size() <= hand ||
+			NodeData(Member(hands[hand], "connected"), wire::InspectionType::Boolean).AsBool() != true)
+			throw std::runtime_error("Connect the selected controller before piloting it");
+		sample = Member(hands[hand], "pose");
+	}
+	else
+		throw std::invalid_argument("This input channel does not have a pilotable pose");
+	const auto position = Elements(Member(sample, "position"));
+	const auto rotation = Elements(Member(sample, "orientation"));
+	if (position.size() != 3 || rotation.size() != 4)
+		throw std::runtime_error("Observed device pose has invalid dimensions");
+	PoseSample pose;
+	pose.pose = {{Number(rotation[0]), Number(rotation[1]), Number(rotation[2]), Number(rotation[3])},
+				 {Number(position[0]), Number(position[1]), Number(position[2])}};
+	const auto normalized = NormalizedPose(pose.pose);
+	if (!normalized)
+		throw std::runtime_error("Observed device orientation is invalid");
+	pose.pose = *normalized;
+	pose.flags = NodeData(Member(sample, "flags"), wire::InspectionType::Unsigned).AsU64().value_or(0);
+	if ((pose.flags & ValidPoseFlags) != ValidPoseFlags)
+		throw std::runtime_error("Restore valid tracking before piloting this device");
+	return pose;
+}
+PoseSample PilotPose(PoseSample pose, XrVector3f movement, float yaw, float pitch, float seconds, float speed)
+{
+	const auto forward = Rotate(pose.pose.orientation, {0, 0, -1});
+	const float currentPitch = std::asin(std::clamp(forward.y, -1.0f, 1.0f));
+	pitch = std::clamp(currentPitch + pitch, -1.55334f, 1.55334f) - currentPitch;
+	pose.pose.orientation = Multiply(Multiply(EulerAngles(yaw, 0, 0), pose.pose.orientation), EulerAngles(0, pitch, 0));
+	const float length = std::sqrt(movement.x * movement.x + movement.y * movement.y + movement.z * movement.z);
+	const float elapsed = std::clamp(seconds, 0.0f, 0.05f);
+	const float distance = elapsed * speed / std::max(1.0f, length);
+	const auto offset = Rotate(pose.pose.orientation, {movement.x * distance, 0, movement.z * distance});
+	pose.pose.position.x += offset.x;
+	pose.pose.position.y += offset.y + movement.y * distance;
+	pose.pose.position.z += offset.z;
+	if (const auto normalized = NormalizedPose(pose.pose))
+		pose.pose = *normalized;
+	return pose;
+}
 
 control::ControlPacket EncodeSimulationEdit(const SimulationEdit& edit, std::uint64_t session, std::uint64_t generation,
 											std::uint64_t transaction, const control::Message& observedState)

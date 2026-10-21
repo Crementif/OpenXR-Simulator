@@ -233,15 +233,17 @@ void PreviewTexture::BeginFrame()
 {
 	m_state->drawn = false;
 }
-void PreviewTexture::Draw(float width)
+void PreviewTexture::Draw(float width, std::optional<std::size_t> slice)
 {
-	if (!m_state->ready)
+	if (!m_state->ready || (slice && *slice >= m_state->descriptors.size()))
 		return;
 	const auto height = width * m_state->description.height / m_state->description.width;
-	for (std::size_t index = 0; index < m_state->descriptors.size(); ++index)
+	const auto first = slice.value_or(0);
+	const auto end = slice ? first + 1 : m_state->descriptors.size();
+	for (std::size_t index = first; index < end; ++index)
 	{
 		ImGui::Image(std::bit_cast<ImTextureID>(m_state->descriptors[index]), {width, height});
-		if (index + 1 < m_state->descriptors.size())
+		if (index + 1 < end)
 			ImGui::SameLine(0, 12);
 	}
 	m_state->drawn = true;

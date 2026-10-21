@@ -44,7 +44,7 @@ int Application::Run()
 								  m_options.controlSocket);
 		std::unique_ptr<RuntimePanels> panels;
 		if (m_options.proofDescriptor < 0)
-			panels = std::make_unique<RuntimePanels>(renderer, workspace.InitialEndpoint());
+			panels = std::make_unique<RuntimePanels>(renderer, workspace.InitialEndpoint(), &window);
 		unsigned runtimeStage = 0;
 		std::uint64_t rawCapture = 0, holdUntil = 0;
 		bool runtimeFinished = !m_options.runtimeSmoke;

@@ -13,11 +13,23 @@ class DeviceControlPanel
   public:
 	DeviceControlPanel();
 	std::optional<SimulationEdit> Draw(bool supported);
+	void ClearHeldInputs();
+	ControlChannel PilotChannel() const
+	{
+		return m_pilotChannel;
+	}
+	void SetPose(ControlChannel channel, PoseSample pose);
+	void ObservePoses(const control::Message& state);
+	void ResetObservations()
+	{
+		m_poseObserved = {};
+	}
 
   private:
 	void Apply(std::vector<SimulationCommand> commands);
 	void ApplyOwned(ControlChannel channel, SimulationCommand command);
 	void DrawOwnership();
+	void DrawDetailFooter();
 	void DrawHead();
 	void DrawController();
 	void DrawBody();
@@ -27,12 +39,15 @@ class DeviceControlPanel
 	void DrawScenarios();
 
 	std::optional<SimulationEdit> m_edit;
+	std::array<bool, 3> m_poseObserved{};
 	std::uint64_t m_applyFrame = 0;
 	bool m_reschedule = true;
+	bool m_autoApply = true;
 	bool m_replaceOwner = false;
 	bool m_scenarioEnabled = true;
 	int m_selectedChannel = 0;
 	int m_controlHand = 0;
+	ControlChannel m_pilotChannel = ControlChannel::Head;
 	int m_selectedScenario = 0;
 	int m_bodyPreset = 0;
 	int m_selectedTracker = 0;

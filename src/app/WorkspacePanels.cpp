@@ -257,8 +257,8 @@ struct WorkspacePanels::Impl
 		for (const auto view : {WorkspaceMode::Simulator, WorkspaceMode::Debug, WorkspaceMode::Automation})
 		{
 			const auto label = view == WorkspaceMode::Simulator ? "Simulator"
-							   : view == WorkspaceMode::Debug	? "Debug"
-																: "Automation";
+							   : view == WorkspaceMode::Debug	? "Inspect frames"
+																: "Record & replay";
 			const bool active = view == mode;
 			if (active)
 				ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
@@ -268,6 +268,9 @@ struct WorkspacePanels::Impl
 				ImGui::PopStyleColor();
 			ImGui::SameLine();
 		}
+		if (ImGui::Button("Release inputs"))
+			runtime.ReleaseInputs();
+		ImGui::SameLine();
 		ImGui::TextDisabled("  %s",
 							snapshot.sessionAvailable
 								? (snapshot.operationPending ? "Updating..."

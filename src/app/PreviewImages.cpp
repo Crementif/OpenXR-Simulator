@@ -156,10 +156,10 @@ void PreviewImages::BeginFrame()
 			m_selectedImage = image->id;
 	}
 }
-void PreviewImages::DrawSelected(float width)
+void PreviewImages::DrawSelected(float width, std::optional<std::size_t> slice)
 {
 	if (auto image = Find(m_selectedImage))
-		image->texture->Draw(width);
+		image->texture->Draw(width, slice);
 }
 std::vector<VkSemaphore> PreviewImages::ReadyWaits() const
 {

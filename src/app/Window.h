@@ -18,9 +18,13 @@ class Window
 	bool PollEvents();
 	bool TakeFocusLost();
 	void Resize(int width, int height);
+	bool CapturePointer(bool enabled);
+	std::pair<float, float> TakePointerMotion();
 
   private:
 	SDL_Window* m_window = nullptr;
 	bool m_focusLost = false;
+	bool m_pointerCaptured = false;
+	std::pair<float, float> m_pointerMotion{};
 };
 } // namespace simxr::app

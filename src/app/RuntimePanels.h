@@ -15,6 +15,7 @@
 namespace simxr::app
 {
 class UiRenderer;
+class Window;
 struct RuntimePanelSnapshot
 {
 	bool connected = false, sessionAvailable = false, manual = false;
@@ -32,7 +33,7 @@ struct RuntimePanelSnapshot
 class RuntimePanels
 {
   public:
-	RuntimePanels(UiRenderer& renderer, std::string endpoint = {});
+	RuntimePanels(UiRenderer& renderer, std::string endpoint = {}, Window* window = nullptr);
 	~RuntimePanels();
 	void Poll();
 	void Draw(WorkspaceMode mode = WorkspaceMode::Simulator);

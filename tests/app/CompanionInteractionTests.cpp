@@ -1,12 +1,17 @@
 #include "../TestSupport.h"
 #include "app/ProcessSupervisor.h"
+#include "app/RuntimeConnection.h"
 #include "app/RuntimePanels.h"
+#include "app/SimulationEdits.h"
 #include "app/UiRenderer.h"
 #include "app/Window.h"
 #include "app/WorkspacePanels.h"
+#include "control/ControlSchema.h"
+#include <cmath>
 
 #include <SDL3/SDL.h>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -24,7 +29,7 @@ class Interaction
 	UiRenderer renderer{window, true, validation, true};
 	ProcessSupervisor processes;
 	WorkspacePanels workspace{processes, false, ""};
-	RuntimePanels runtime{renderer, ""};
+	RuntimePanels runtime{renderer, "", &window};
 	ImVec2 buttonCenter;
 	ImVec2 inputCenter;
 	char input[32]{};
@@ -84,7 +89,7 @@ class Interaction
 		const auto* toolbar = ImGui::FindWindowByName("##Workspace toolbar");
 		Require(toolbar != nullptr, "Workspace toolbar is missing");
 		float x = toolbar->Pos.x + ImGui::GetStyle().WindowPadding.x;
-		const char* labels[] = {"Simulator", "Debug", "Automation"};
+		const char* labels[] = {"Simulator", "Inspect frames", "Record & replay"};
 		for (int index = 0; index < static_cast<int>(mode); ++index)
 			x += ImGui::CalcTextSize(labels[index]).x + ImGui::GetStyle().FramePadding.x * 2 +
 				 ImGui::GetStyle().ItemSpacing.x;
@@ -129,6 +134,192 @@ class Interaction
 		Require(std::char_traits<char>::length(input) == length + 1, "Text input stopped responding");
 	}
 };
+// Opt-in walkthrough against a separately launched application, never the user's session.
+void PilotLiveRuntime(const char* endpoint)
+{
+	Interaction test;
+	test.runtime.ConnectEndpoint(endpoint);
+	test.workspace.SetMode(WorkspaceMode::Simulator);
+	const auto frame = [&]
+	{
+		Eventually(
+			[&]
+			{
+				return test.window.PollEvents() && test.renderer.BeginFrame();
+			},
+			"Pilot UI stalled");
+		if (test.window.TakeFocusLost())
+			test.runtime.ReleaseInputs();
+		test.runtime.Poll();
+		test.workspace.BeginFrame(test.runtime);
+		test.workspace.DrawDockspace();
+		test.workspace.Draw(test.runtime);
+		test.runtime.Draw(test.workspace.Mode());
+		Require(test.renderer.Render(test.runtime.ReadyWaits()), "Pilot UI frame was not rendered");
+		test.runtime.Submitted(test.renderer.SubmittedFrames());
+	};
+	Eventually(
+		[&]
+		{
+			frame();
+			return test.runtime.Snapshot().selectedReady;
+		},
+		"Application did not supply a live preview");
+	namespace wire = simxr::control;
+	RuntimeConnection observer;
+	observer.Connect(endpoint);
+	Eventually(
+		[&]
+		{
+			frame();
+			return observer.Snapshot().state == RuntimeConnectionState::Connected;
+		},
+		"Observer connection failed");
+	const auto observe = [&](simxr::ControlChannel channel = simxr::ControlChannel::Head)
+	{
+		const auto target = test.runtime.Snapshot();
+		wire::ControlPacket request;
+		request.message.opcode = static_cast<std::uint16_t>(wire::OpCode::SimulationStatus);
+		request.message.fields = {wire::Field::U64(wire::tag::Session, target.session),
+								  wire::Field::U64(wire::tag::Generation, target.generation)};
+		const auto ticket = observer.Submit(std::move(request));
+		Require(ticket != 0, "Cannot observe pilot input");
+		std::optional<simxr::PoseSample> pose;
+		Eventually(
+			[&]
+			{
+				frame();
+				for (const auto& reply : observer.Poll())
+					if (reply.ticket == ticket)
+						pose = ObservedDevicePose(reply.packet.message, channel);
+				return pose.has_value();
+			},
+			"Pilot observation stalled");
+		return *pose;
+	};
+	const auto before = observe();
+	auto* preview = ImGui::FindWindowByName("GPU preview");
+	ImVec2 center = preview->InnerRect.GetCenter();
+	for (auto* child : preview->DC.ChildWindows)
+		if (std::strstr(child->Name, "Image area"))
+			center = child->InnerRect.GetCenter();
+	SDL_Event event{};
+	event.type = SDL_EVENT_MOUSE_MOTION;
+	event.motion.windowID = SDL_GetWindowID(test.window.Native());
+	event.motion.x = center.x;
+	event.motion.y = center.y;
+	SDL_PushEvent(&event);
+	frame();
+	event = {};
+	event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+	event.button.windowID = SDL_GetWindowID(test.window.Native());
+	event.button.button = SDL_BUTTON_RIGHT;
+	event.button.down = true;
+	SDL_PushEvent(&event);
+	Eventually(
+		[&]
+		{
+			frame();
+			return SDL_GetWindowRelativeMouseMode(test.window.Native());
+		},
+		"Right mouse did not capture the live preview");
+	event = {};
+	event.type = SDL_EVENT_KEY_DOWN;
+	event.key.windowID = SDL_GetWindowID(test.window.Native());
+	event.key.scancode = SDL_SCANCODE_W;
+	event.key.key = SDLK_W;
+	event.key.down = true;
+	SDL_PushEvent(&event);
+	for (unsigned index = 0; index < 30; ++index)
+		frame();
+	event.type = SDL_EVENT_KEY_UP;
+	event.key.down = false;
+	SDL_PushEvent(&event);
+	event = {};
+	event.type = SDL_EVENT_MOUSE_BUTTON_UP;
+	event.button.windowID = SDL_GetWindowID(test.window.Native());
+	event.button.button = SDL_BUTTON_RIGHT;
+	SDL_PushEvent(&event);
+	for (unsigned index = 0; index < 20; ++index)
+		frame();
+	Require(!SDL_GetWindowRelativeMouseMode(test.window.Native()), "Mouse-up retained the pointer");
+	const auto after = observe();
+	const auto distance = [](simxr::PoseSample a, simxr::PoseSample b)
+	{
+		const auto x = a.pose.position.x - b.pose.position.x, y = a.pose.position.y - b.pose.position.y,
+				   z = a.pose.position.z - b.pose.position.z;
+		return std::sqrt(x * x + y * y + z * z);
+	};
+	Require(distance(before, after) > 0.02f, "WASD did not move the application's observed head pose");
+	for (unsigned index = 0; index < 30; ++index)
+		frame();
+	Require(distance(after, observe()) < 0.001f, "Movement continued after releasing the controls");
+	std::cout << "PASS live application SDL piloting: moved " << distance(before, after)
+			  << " metres; mouse-up stops movement\n";
+	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
+	{
+		std::filesystem::create_directories(directory);
+		test.renderer.RequestScreenshot((std::filesystem::path(directory) / "cemu-pilot.bmp").string());
+		frame();
+		frame();
+	}
+	auto* devices = ImGui::FindWindowByName("Device controls");
+	auto* tabs = ImGui::GetCurrentContext()->TabBars.GetByKey(devices->GetID("Devices"));
+	const auto click = [&](ImVec2 point, Uint8 button, bool down)
+	{
+		SDL_Event pointer{};
+		pointer.type = SDL_EVENT_MOUSE_MOTION;
+		pointer.motion.windowID = SDL_GetWindowID(test.window.Native());
+		pointer.motion.x = point.x;
+		pointer.motion.y = point.y;
+		SDL_PushEvent(&pointer);
+		frame();
+		pointer = {};
+		pointer.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+		pointer.button.windowID = SDL_GetWindowID(test.window.Native());
+		pointer.button.button = button;
+		pointer.button.down = down;
+		SDL_PushEvent(&pointer);
+		frame();
+	};
+	const ImVec2 handTab{tabs->BarRect.Min.x + tabs->Tabs[1].Offset + tabs->Tabs[1].Width / 2,
+						 tabs->BarRect.GetCenter().y};
+	click(handTab, SDL_BUTTON_LEFT, true);
+	click(handTab, SDL_BUTTON_LEFT, false);
+	const auto handBefore = observe(simxr::ControlChannel::LeftPose);
+	click(center, SDL_BUTTON_RIGHT, true);
+	Eventually(
+		[&]
+		{
+			frame();
+			return SDL_GetWindowRelativeMouseMode(test.window.Native());
+		},
+		"Hand pilot did not capture pointer");
+	event = {};
+	event.type = SDL_EVENT_MOUSE_MOTION;
+	event.motion.windowID = SDL_GetWindowID(test.window.Native());
+	event.motion.xrel = 40;
+	event.motion.yrel = 20;
+	SDL_PushEvent(&event);
+	for (unsigned index = 0; index < 15; ++index)
+		frame();
+	const auto handAfter = observe(simxr::ControlChannel::LeftPose);
+	Require(std::abs(handAfter.pose.orientation.y - handBefore.pose.orientation.y) > 0.02f,
+			"Relative pointer input did not rotate the selected controller");
+	Require(distance(after, observe()) < 0.001f, "Hand piloting also moved the head");
+	event = {};
+	event.type = SDL_EVENT_WINDOW_FOCUS_LOST;
+	event.window.windowID = SDL_GetWindowID(test.window.Native());
+	SDL_PushEvent(&event);
+	frame();
+	Require(!SDL_GetWindowRelativeMouseMode(test.window.Native()), "Focus loss retained the pilot pointer");
+	std::cout << "PASS live application selected-hand rotation; head unchanged; focus loss releases pointer\n";
+	test.runtime.ReleaseInputs();
+	for (unsigned index = 0; index < 5; ++index)
+		frame();
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Validation errors during actual application piloting");
+}
 void CaptureLayouts(const std::filesystem::path& directory)
 {
 	std::filesystem::create_directories(directory);
@@ -141,8 +332,28 @@ void CaptureLayouts(const std::filesystem::path& directory)
 			test.workspace.SetScale(scale);
 			const auto path = directory / (std::to_string(static_cast<int>(size.x)) + "-" +
 										   std::to_string(static_cast<int>(scale * 100)) + ".bmp");
-			for (unsigned frame = 0; frame < 12; ++frame)
+			ImVec2 handTab{};
+			for (unsigned frame = 0; frame < 24; ++frame)
 			{
+				if (frame >= 12 && frame <= 14)
+				{
+					SDL_Event event{};
+					if (frame == 12)
+					{
+						event.type = SDL_EVENT_MOUSE_MOTION;
+						event.motion.windowID = SDL_GetWindowID(test.window.Native());
+						event.motion.x = handTab.x;
+						event.motion.y = handTab.y;
+					}
+					else
+					{
+						event.type = frame == 13 ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+						event.button.windowID = SDL_GetWindowID(test.window.Native());
+						event.button.button = SDL_BUTTON_LEFT;
+						event.button.down = frame == 13;
+					}
+					Require(SDL_PushEvent(&event), "Cannot select hand tab");
+				}
 				Eventually(
 					[&]
 					{
@@ -154,8 +365,24 @@ void CaptureLayouts(const std::filesystem::path& directory)
 				test.workspace.DrawDockspace();
 				test.workspace.Draw(test.runtime);
 				test.runtime.Draw(test.workspace.Mode());
+				auto* devices = ImGui::FindWindowByName("Device controls");
+				Require(devices != nullptr, "Device controls are missing");
+				auto* tabs = ImGui::GetCurrentContext()->TabBars.GetByKey(devices->GetID("Devices"));
+				Require(tabs && tabs->Tabs.Size >= 3, "Device tabs are missing");
+				if (frame == 0)
+					ImGui::TabBarQueueFocus(tabs, "Head");
 				if (frame == 11)
+				{
+					handTab = {tabs->BarRect.Min.x + tabs->Tabs[1].Offset + tabs->Tabs[1].Width / 2,
+							   tabs->BarRect.GetCenter().y};
 					test.renderer.RequestScreenshot(path.string());
+				}
+				if (frame == 23)
+				{
+					Require(tabs->SelectedTabId == tabs->Tabs[1].ID, "Disconnected device tabs must remain browsable");
+					test.renderer.RequestScreenshot(
+						(path.parent_path() / (path.stem().string() + "-hand.bmp")).string());
+				}
 				Require(test.renderer.Render(), "Layout frame was not rendered");
 			}
 			test.CheckFocusLoss();
@@ -197,6 +424,8 @@ int main()
 			test.renderer.WaitIdle();
 		}
 		Require(validation->errors.load() == 0, "Vulkan validation errors during interaction or teardown");
+		if (const auto endpoint = std::getenv("SIMXR_UI_PILOT_ENDPOINT"))
+			PilotLiveRuntime(endpoint);
 		if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
 			CaptureLayouts(directory);
 		std::cout << "PASS workspace switching and SDL clicks collapse/reopen production Rigs across three resizes\n";

@@ -8,6 +8,7 @@
 #include "app/RuntimeConnection.h"
 #include "app/RuntimeEndpoints.h"
 #include "app/UiRenderer.h"
+#include "app/Window.h"
 #include "control/ImageInspection.h"
 #include "control/InspectionDocument.h"
 #include "control/SimulationControl.h"
@@ -51,6 +52,20 @@ std::vector<std::byte> InspectionMember(std::span<const std::byte> bytes, std::s
 	}
 	return {};
 }
+wire::Message InspectionNode(std::span<const std::byte> bytes)
+{
+	wire::Message node;
+	node.fields = wire::DecodeFields(bytes).fields;
+	return node;
+}
+std::uint64_t InspectionNumber(std::span<const std::byte> bytes, std::string_view name)
+{
+	return U64(InspectionNode(InspectionMember(bytes, name)), 3);
+}
+std::string InspectionText(std::span<const std::byte> bytes, std::string_view name)
+{
+	return Text(InspectionNode(InspectionMember(bytes, name)), 3);
+}
 const char* ConnectionName(RuntimeConnectionState state)
 {
 	switch (state)
@@ -70,9 +85,9 @@ const char* ConnectionName(RuntimeConnectionState state)
 class RuntimePanels::Impl
 {
   public:
-	Impl(UiRenderer& renderer, const std::string& path)
+	Impl(UiRenderer& renderer, const std::string& path, Window* window)
 		: m_debugger(m_requests), m_workspace(m_requests), m_preview(renderer, m_requests), m_exports(m_requests),
-		  m_endpoints(DiscoverRuntimeEndpoints())
+		  m_endpoints(DiscoverRuntimeEndpoints()), m_window(window)
 	{
 		std::snprintf(m_endpoint.data(), m_endpoint.size(), "%s", path.c_str());
 		std::snprintf(m_exportFile.data(), m_exportFile.size(), "%s", "snapshot.rgba");
@@ -81,6 +96,7 @@ class RuntimePanels::Impl
 	}
 	~Impl()
 	{
+		StopPilot(true);
 		m_requests.Close();
 	}
 	void ChooseSession(PanelSession session)
@@ -111,6 +127,8 @@ class RuntimePanels::Impl
 	}
 	void ReleaseInputs()
 	{
+		StopPilot(true);
+		m_devices.ClearHeldInputs();
 		if (m_debugger.Selected().id && m_debugger.Selected().running)
 			SubmitEdit(ReleaseManualInputs{});
 	}
@@ -234,7 +252,7 @@ class RuntimePanels::Impl
 				 static_cast<std::uint64_t>(wire::Capability::SimulationCommands)))
 			{
 				m_requests.Send(wire::OpCode::SimulationStatus, Work::SimulationStatus, SimulationFields());
-				m_nextSimulation = now + std::chrono::milliseconds(500);
+				m_nextSimulation = now + std::chrono::milliseconds(m_piloting || m_pilotInFlight ? 16 : 500);
 			}
 			if (m_preview.Following() && selected.id && now >= m_nextPreview && !m_requests.Has(Work::Preview) &&
 				!m_preview.HasPendingLive() &&
@@ -242,7 +260,7 @@ class RuntimePanels::Impl
 				 static_cast<std::uint64_t>(wire::Capability::LivePreview)))
 			{
 				m_requests.Send(wire::OpCode::RetainPreview, Work::Preview, m_debugger.SessionFields());
-				m_nextPreview = now + std::chrono::milliseconds(100);
+				m_nextPreview = now + std::chrono::milliseconds(m_piloting ? 16 : 33);
 			}
 		}
 		m_exports.Poll();
@@ -257,6 +275,8 @@ class RuntimePanels::Impl
 		if (mode == WorkspaceMode::Simulator || mode == WorkspaceMode::Custom)
 			DeviceControls();
 		const auto selected = m_debugger.Selected();
+		if (mode != WorkspaceMode::Simulator && mode != WorkspaceMode::Custom)
+			StopPilot(true);
 		const auto& status = m_debugger.Status();
 		const auto captures = m_workspace.Captures();
 		const bool manual = m_debugger.Manual(), lease = m_debugger.HasLease();
@@ -387,6 +407,7 @@ class RuntimePanels::Impl
 			ImGui::SetNextWindowFocus();
 			m_focusPreview = false;
 		}
+		bool pilotArea = false;
 		if (ImGui::Begin("GPU preview"))
 		{
 			const auto image = m_preview.Selected();
@@ -419,6 +440,25 @@ class RuntimePanels::Impl
 			{
 				ImGui::SameLine();
 				ImGui::TextDisabled("Frame %llu", static_cast<unsigned long long>(image->frame));
+				if (m_previewView >= static_cast<int>(image->slices))
+					m_previewView = -1;
+				const auto viewLabel = [&](int view)
+				{
+					if (view < 0)
+						return std::string("All views");
+					if (image->slices == 2)
+						return std::string(view ? "Right eye" : "Left eye");
+					return "View " + std::to_string(view + 1);
+				};
+				ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8);
+				if (ImGui::BeginCombo("##Preview view", viewLabel(m_previewView).c_str()))
+				{
+					for (int view = -1; view < static_cast<int>(image->slices); ++view)
+						if (ImGui::Selectable(viewLabel(view).c_str(), m_previewView == view))
+							m_previewView = view;
+					ImGui::EndCombo();
+				}
+				ImGui::SameLine();
 				ImGui::Checkbox("Fit", &m_fitPreview);
 				ImGui::SameLine();
 				ImGui::SetNextItemWidth(120);
@@ -438,18 +478,32 @@ class RuntimePanels::Impl
 						ImGui::EndDisabled();
 					}
 				}
+				if ((mode == WorkspaceMode::Simulator || mode == WorkspaceMode::Custom) && m_window)
+					ImGui::TextWrapped("Pilot %s: hold right mouse in the image. WASD move, Q/E down/up, Shift faster. "
+									   "Escape releases the pointer.",
+									   m_devices.PilotChannel() == ControlChannel::Head		  ? "head"
+									   : m_devices.PilotChannel() == ControlChannel::LeftPose ? "left hand"
+																							  : "right hand");
+				ImGui::BeginChild("Image area", {0, 0}, 0, ImGuiWindowFlags_HorizontalScrollbar);
 				const auto available = ImGui::GetContentRegionAvail();
 				const auto& description = image->description;
+				const float slices = m_previewView < 0 ? static_cast<float>(image->slices) : 1;
 				float width = description.width * m_zoom;
 				if (m_fitPreview)
 				{
-					const float slices = static_cast<float>(image->slices);
 					width = std::max(16.0f,
 									 std::min((available.x - 12 * (slices - 1)) / slices,
 											  std::max(16.0f, available.y) * description.width / description.height));
 				}
-				ImGui::BeginChild("Image area", {0, 0}, 0, ImGuiWindowFlags_HorizontalScrollbar);
-				m_preview.DrawSelected(width);
+				const float totalWidth = width * slices + 12 * (slices - 1);
+				const float height = width * description.height / description.width;
+				ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (available.x - totalWidth) / 2));
+				ImGui::SetCursorPosY(ImGui::GetCursorPosY() + std::max(0.0f, (available.y - height) / 2));
+				m_preview.DrawSelected(width,
+									   m_previewView < 0 ? std::nullopt : std::optional<std::size_t>(m_previewView));
+				pilotArea = live && connected && selected.running && !manual &&
+							(mode == WorkspaceMode::Simulator || mode == WorkspaceMode::Custom);
+				Pilot(pilotArea, ImGui::IsWindowHovered());
 				ImGui::EndChild();
 			}
 			else
@@ -467,6 +521,8 @@ class RuntimePanels::Impl
 			}
 		}
 		ImGui::End();
+		if (!pilotArea)
+			StopPilot(true);
 		if (mode != WorkspaceMode::Debug && mode != WorkspaceMode::Custom)
 			return;
 		ImGui::Begin("Historical state");
@@ -576,6 +632,10 @@ class RuntimePanels::Impl
 	using Work = PanelWork;
 	void SelectionChanged()
 	{
+		StopPilot(true);
+		m_devices.ClearHeldInputs();
+		m_pilotInFlight = m_pilotSource = 0;
+		m_devices.ResetObservations();
 		m_simulationState = {};
 		m_simulationResult = {};
 		m_nextSimulation = {};
@@ -616,6 +676,8 @@ class RuntimePanels::Impl
 				  (error == static_cast<std::uint32_t>(wire::ErrorCode::Busy) ||
 				   error == static_cast<std::uint32_t>(wire::ErrorCode::UnsupportedCommand))))
 				m_detail = failure;
+			if (task.kind == Work::Simulate || task.kind == Work::SimulationStatus)
+				StopPilot(true);
 			m_debugger.Failed(task, static_cast<wire::ErrorCode>(error), failure);
 			m_workspace.SetScope(m_debugger.Scope(), false);
 			m_preview.SetScope(m_debugger.Scope());
@@ -666,10 +728,36 @@ class RuntimePanels::Impl
 			break;
 		case Work::Simulate:
 			m_simulationResult = message;
+			if (const auto document = message.Find(tag::Document))
+			{
+				m_pilotSource = InspectionNumber(InspectionMember(document->value, "source"), "id");
+				PilotOutcome(document->value);
+			}
 			m_nextSimulation = {};
 			break;
 		case Work::SimulationStatus:
 			m_simulationState = message;
+			m_devices.ObservePoses(message);
+			++m_observation;
+			if (const auto document = message.Find(tag::Document))
+			{
+				const auto transactions = InspectionNode(InspectionMember(document->value, "transactions"));
+				if (const auto data = transactions.Find(3))
+					for (const auto& page : wire::DecodeFields(data->value).fields)
+						for (const auto& entry : wire::DecodeFields(page.value).fields)
+						{
+							PilotOutcome(entry.value);
+							if (const auto latest = m_simulationResult.Find(tag::Document);
+								latest &&
+								InspectionNumber(entry.value, "transaction_id") ==
+									InspectionNumber(latest->value, "transaction_id") &&
+								InspectionMember(entry.value, "source") == InspectionMember(latest->value, "source"))
+							{
+								m_simulationResult.fields = {wire::Field::Bytes(tag::Document, entry.value)};
+								break;
+							}
+						}
+			}
 			break;
 		default:
 			break;
@@ -739,6 +827,105 @@ class RuntimePanels::Impl
 			ImGui::Text("%s: unavailable", label);
 		ImGui::PopID();
 	}
+	void PilotOutcome(std::span<const std::byte> outcome)
+	{
+		if (!m_pilotInFlight || InspectionNumber(outcome, "transaction_id") != m_pilotInFlight ||
+			InspectionNumber(InspectionMember(outcome, "source"), "id") != m_pilotSource)
+			return;
+		const auto phase = InspectionText(outcome, "phase");
+		if (phase == "queued" || phase == "rescheduled")
+			return;
+		m_pilotInFlight = 0;
+		if (phase != "applied")
+		{
+			m_detail =
+				"Piloting stopped: input " + phase + ". Check Applied state and input owners in Device controls.";
+			StopPilot(true);
+		}
+	}
+	void StopPilot(bool discard)
+	{
+		if (m_window)
+			m_window->CapturePointer(false);
+		m_piloting = m_startPilot = false;
+		if (discard)
+			m_pilotDirty = false;
+	}
+	void Pilot(bool available, bool hovered)
+	{
+		if (!m_window)
+			return;
+		const auto& io = ImGui::GetIO();
+		if (!available || io.WantTextInput || ImGui::IsKeyPressed(ImGuiKey_Escape))
+		{
+			StopPilot(true);
+			return;
+		}
+		if (!ImGui::IsMouseDown(ImGuiMouseButton_Right))
+			StopPilot(false);
+		if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !ImGui::IsAnyItemActive() && !m_pilotInFlight &&
+			!m_pilotDirty)
+		{
+			m_startPilot = true;
+			m_startObservation = m_observation;
+			m_pilotChannel = m_devices.PilotChannel();
+			m_nextSimulation = {};
+		}
+		if (m_startPilot && m_observation != m_startObservation)
+		{
+			try
+			{
+				m_pilotPose = ObservedDevicePose(m_simulationState, m_pilotChannel);
+				if (!m_window->CapturePointer(true))
+					throw std::runtime_error("Pointer capture is unavailable; use the precise pose controls.");
+				m_startPilot = false;
+				m_piloting = true;
+				m_devices.SetPose(m_pilotChannel, m_pilotPose);
+			}
+			catch (const std::exception& error)
+			{
+				m_detail = error.what();
+				StopPilot(true);
+			}
+		}
+		if (m_piloting)
+		{
+			const auto [dx, dy] = m_window->TakePointerMotion();
+			const auto axis = [](ImGuiKey positive, ImGuiKey negative)
+			{
+				return float(ImGui::IsKeyDown(positive)) - float(ImGui::IsKeyDown(negative));
+			};
+			const XrVector3f move{axis(ImGuiKey_D, ImGuiKey_A), axis(ImGuiKey_E, ImGuiKey_Q),
+								  axis(ImGuiKey_S, ImGuiKey_W)};
+			if (dx || dy || move.x || move.y || move.z)
+			{
+				const float speed = io.KeyShift ? 3.0f : 1.0f;
+				m_pilotPose = PilotPose(m_pilotPose, move, -dx * 0.003f, -dy * 0.003f, io.DeltaTime, speed);
+				m_devices.SetPose(m_pilotChannel, m_pilotPose);
+				m_pilotDirty = true;
+			}
+		}
+		// Keep only the newest desired pose, including the final mouse-up update.
+		if (m_pilotDirty && !m_pilotInFlight && !m_requests.Has(Work::Simulate))
+		{
+			ManualTransaction edit;
+			edit.commands.push_back(TakeControl{m_pilotChannel, false});
+			if (m_pilotChannel == ControlChannel::Head)
+				edit.commands.push_back(SetHeadPose{m_pilotPose});
+			else
+				edit.commands.push_back(
+					SetControllerPose{m_pilotChannel == ControlChannel::LeftPose ? 0u : 1u, {m_pilotPose, true}});
+			const auto before = m_transaction;
+			m_pilotInFlight = before;
+			SubmitEdit(edit);
+			m_pilotDirty = false;
+			if (m_transaction == before)
+			{
+				m_pilotInFlight = 0;
+				StopPilot(true);
+			}
+		}
+	}
 	void SubmitEdit(const SimulationEdit& edit)
 	{
 		const auto selected = m_debugger.Selected();
@@ -752,9 +939,10 @@ class RuntimePanels::Impl
 			auto packet =
 				EncodeSimulationEdit(edit, selected.id, selected.generation, m_transaction, m_simulationState);
 			const auto kind = std::holds_alternative<ManualTransaction>(edit) ? Work::Simulate : Work::SimulationStatus;
-			if (m_requests.Send(static_cast<wire::OpCode>(packet.message.opcode), kind,
-								std::move(packet.message.fields)) &&
-				kind == Work::Simulate)
+			if (!m_requests.Send(static_cast<wire::OpCode>(packet.message.opcode), kind,
+								 std::move(packet.message.fields)))
+				m_detail = "Input could not be queued. Check the connection, then apply or release again.";
+			else if (kind == Work::Simulate)
 				++m_transaction;
 		}
 		catch (const std::exception& error)
@@ -773,8 +961,6 @@ class RuntimePanels::Impl
 		}
 		const bool supported = selected.id && (U64(status, tag::Capabilities) &
 											   static_cast<std::uint64_t>(wire::Capability::SimulationCommands));
-		if (auto edit = m_devices.Draw(supported))
-			SubmitEdit(*edit);
 		m_nodesDrawn = 0;
 		if (const auto value = m_simulationResult.Find(tag::Document))
 		{
@@ -797,6 +983,11 @@ class RuntimePanels::Impl
 			ImGui::SeparatorText("Observed owners and applied state");
 			Document(value->value);
 		}
+		if (auto edit = m_devices.Draw(supported))
+		{
+			StopPilot(true);
+			SubmitEdit(*edit);
+		}
 		ImGui::End();
 	}
 	RuntimePanelRequests m_requests;
@@ -806,6 +997,11 @@ class RuntimePanels::Impl
 	ImageExportTask m_exports;
 	std::array<char, 256> m_endpoint{};
 	std::vector<std::string> m_endpoints;
+	Window* m_window = nullptr;
+	bool m_piloting = false, m_startPilot = false, m_pilotDirty = false;
+	std::uint64_t m_observation = 0, m_startObservation = 0, m_pilotInFlight = 0, m_pilotSource = 0;
+	ControlChannel m_pilotChannel = ControlChannel::Head;
+	PoseSample m_pilotPose;
 	wire::Message m_simulationState, m_simulationResult;
 	std::uint64_t m_transaction = 1;
 	RecordingPanel m_recording;
@@ -821,12 +1017,13 @@ class RuntimePanels::Impl
 	std::array<char, 512> m_exportFile{};
 	bool m_autoSelect = true, m_focusPreview = true, m_fitPreview = true;
 	float m_zoom = 4;
+	int m_previewView = -1;
 	int m_rawLayer = 0, m_rawView = 0;
 	std::uint32_t m_nodesDrawn = 0;
 	std::uint64_t m_documentEpoch = 0;
 };
-RuntimePanels::RuntimePanels(UiRenderer& renderer, std::string endpoint)
-	: m_impl(std::make_unique<Impl>(renderer, endpoint))
+RuntimePanels::RuntimePanels(UiRenderer& renderer, std::string endpoint, Window* window)
+	: m_impl(std::make_unique<Impl>(renderer, endpoint, window))
 {
 }
 RuntimePanels::~RuntimePanels() = default;
