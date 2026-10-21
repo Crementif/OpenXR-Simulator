@@ -1202,6 +1202,17 @@ static int runProbe()
         }
         XR(ended);
         CHECK(xrEndFrame(session, &end) == XR_ERROR_CALL_ORDER_INVALID);
+        if (std::getenv("SIMXR_PROBE_RECORDING"))
+        {
+            const auto gate = "recording." + std::to_string(frame + 3);
+            std::ofstream(data / (gate + ".ready")).put('1');
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+            while (!std::filesystem::exists(data / (gate + ".continue")))
+            {
+                CHECK(std::chrono::steady_clock::now() < deadline);
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
     }
     // Let the runtime's deferred readback retire on later frame calls.
     VK(vkQueueWaitIdle(queue));

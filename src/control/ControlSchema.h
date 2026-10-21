@@ -56,7 +56,7 @@ inline constexpr std::uint16_t Error = 1, Detail = 2, Session = 3, Generation = 
 							   Pose = 150, Position = 151, Orientation = 152, Controls = 153, Proportions = 154,
 							   Scenario = 155, Seed = 156, Overflow = 158, Recording = 159, Ownership = 160,
 							   Transactions = 161, Revision = 162, AppliedFrame = 163, AppliedTime = 164,
-							   Rescheduled = 165, GameId = 166, GameKind = 167;
+							   Rescheduled = 165, GameId = 166, GameKind = 167, ImageRecording = 168, TotalFrames = 169;
 }
 
 enum class Capability : std::uint64_t
@@ -76,7 +76,8 @@ enum class Capability : std::uint64_t
 	CommandRecording = 1ULL << 12,
 	FrameDiagnostics = 1ULL << 13,
 	GameBridge = 1ULL << 14,
-	DepthCapture = 1ULL << 15
+	DepthCapture = 1ULL << 15,
+	ImageRecording = 1ULL << 16
 };
 
 // Wire values are explicit and independent of the core's enum representation.
@@ -88,7 +89,9 @@ enum class CommandKind : std::uint32_t
 	DisplayStep = 4,
 	Resume = 5,
 	Cancel = 6,
-	Release = 7
+	Release = 7,
+	StartImageRecording = 8,
+	StopImageRecording = 9
 };
 enum class TargetKind : std::uint32_t
 {

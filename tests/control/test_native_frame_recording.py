@@ -13,12 +13,14 @@ from simxr_control import Client, record_frames
 import simxr_control.frame_recording as recording
 
 
-def run(probe, cancelled, failed=False):
+def run(probe, cancelled, failed=False, mode='controlled', overrun=False):
     with tempfile.TemporaryDirectory(prefix='sx-record-') as temporary:
         data = Path(temporary)
         environment = dict(os.environ, SIMXR_DATA_DIR=temporary, SIMXR_PROBE_CONTROL='1',
                            SIMXR_PROBE_RETAIN_CONTROL='1', SIMXR_PROBE_GPU_INSPECTION='1',
                            SIMXR_PROBE_FRAMES='8')
+        if mode == 'realtime':
+            environment['SIMXR_PROBE_RECORDING'] = '1'
         environment.pop('SIMXR_CONTROL_SOCKET', None)
         host = subprocess.Popen([probe], env=environment, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True)
@@ -46,15 +48,16 @@ def run(probe, cancelled, failed=False):
                 def record():
                     try:
                         with Client(path) as client:
-                            results.append(record_frames(client, session, data / 'frames', 4,
-                                                         mode='controlled', buffers=1, cancel=cancel))
+                            results.append(record_frames(client, session, data / 'frames', 8 if overrun else 4,
+                                                         mode=mode, buffers=1, cancel=cancel))
                     except BaseException as error:
                         errors.append(error)
 
                 thread = threading.Thread(target=record)
                 thread.start()
                 deadline = time.monotonic() + 10
-                while not observer.status(session)['manual']:
+                while not (observer.status(session)['manual'] if mode == 'controlled' else
+                           observer.status(session)['image_recording']['phase'] == 'recording'):
                     require(time.monotonic() < deadline and not errors, errors)
                     time.sleep(.01)
                 (data / 'control.continue').touch()
@@ -63,13 +66,34 @@ def run(probe, cancelled, failed=False):
                 before = observer.status(session)['pipeline']
                 time.sleep(.15)
                 after = observer.status(session)['pipeline']
-                require(before == after and after['permits'] == 0, (before, after))
+                require(after['permits'] == 0 and after['paused'] == (mode == 'controlled'), after)
+                if mode == 'controlled':
+                    require(before == after, (before, after))
                 if cancelled:
                     cancel.set()
+                if overrun:
+                    for frame in (3, 4):
+                        (data / f'recording.{frame}.continue').touch()
+                        wait_file(data / f'recording.{frame + 1}.ready', host)
+                    require(observer.status(session)['image_recording']['phase'] == 'overrun',
+                            'Slow persistence did not produce explicit runtime overrun')
                 allow_write.set()
+                if mode == 'realtime' and not overrun:
+                    for frame in range(3, 7):
+                        deadline = time.monotonic() + 10
+                        index = data / 'frames/frames.jsonl'
+                        while not index.exists() or len(index.read_text().splitlines()) < frame - 2:
+                            require(time.monotonic() < deadline and not errors, errors)
+                            time.sleep(.01)
+                        (data / f'recording.{frame}.continue').touch()
+                    for frame in range(7, 11):
+                        (data / f'recording.{frame}.continue').touch()
+                if overrun:
+                    for frame in range(3, 11):
+                        (data / f'recording.{frame}.continue').touch()
                 thread.join(15)
                 require(not thread.is_alive(), 'Recorder worker did not stop')
-                if failed:
+                if failed or overrun:
                     require(len(errors) == 1 and isinstance(errors[0], RuntimeError), errors)
                 elif cancelled:
                     require(len(errors) == 1 and isinstance(errors[0], InterruptedError), errors)
@@ -78,8 +102,12 @@ def run(probe, cancelled, failed=False):
                 summary = json.loads((data / 'frames/recording.json').read_text())
                 index = data / 'frames/frames.jsonl'
                 entries = [json.loads(line) for line in index.read_text().splitlines()] if index.exists() else []
-                expected_count = 0 if failed else 1 if cancelled else 4
-                require(summary['phase'] == ('failed' if failed else 'cancelled' if cancelled else 'complete'), summary)
+                expected_count = 0 if failed else 1 if cancelled or overrun else 4
+                require(summary['phase'] == ('failed' if failed or overrun else 'cancelled' if cancelled else 'complete'), summary)
+                if overrun:
+                    require(summary['overrun']['frame']['frame_id'] == 5, summary)
+                if failed or cancelled or overrun:
+                    require(summary.get('error'), 'Partial recording omitted its failure/cancellation reason')
                 require(len(entries) == expected_count == summary['persisted'], summary)
                 require([entry['frame_id'] for entry in entries] == list(range(3, 3 + expected_count)), entries)
                 for entry in entries:
@@ -96,7 +124,7 @@ def run(probe, cancelled, failed=False):
                 (data / 'control.retained.continue').touch()
                 output = host.communicate(timeout=15)[0]
                 require(host.returncode == 0 and 'VUID-' not in output and 'Vulkan validation error' not in output, output)
-                print(f'PASS: controlled recording {summary}, actual storage backpressure, resumed host and GPU-safe teardown')
+                print(f'PASS: {mode} recording {summary}, explicit pacing/overrun semantics, running host and GPU-safe teardown')
         finally:
             allow_write.set()
             cancel.set()
@@ -116,3 +144,5 @@ if __name__ == '__main__':
     run(sys.argv[1], False)
     run(sys.argv[1], True)
     run(sys.argv[1], False, True)
+    run(sys.argv[1], False, mode='realtime')
+    run(sys.argv[1], False, mode='realtime', overrun=True)

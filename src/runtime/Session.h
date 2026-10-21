@@ -72,6 +72,11 @@ class Session
 	VirtualDisplay& Display();
 	SnapshotStore& Captures();
 	XrResult ConfigureCapturePool(FramePool pool, bool layerViews = false, CapturePromoter promoter = {}, bool depthViews = false);
+	SnapshotAdmission StartImageRecording(CaptureTarget target, std::uint32_t capacity, std::uint64_t frames = 0,
+		std::span<CaptureId> captures = {});
+	void StopImageRecording() noexcept;
+	ImageRecordingSnapshot ImageRecording() const;
+	CaptureId RefillImageRecording(CaptureId released);
 	CaptureReservation ReserveCapture(CaptureTarget target = {});
 	XrResult PrepareCaptureProducer(FrameKey frame, std::shared_ptr<FrameReservation>& producer,
 									CaptureTarget target = {});

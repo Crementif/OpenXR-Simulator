@@ -13,7 +13,7 @@ def main():
     parser.add_argument('socket')
     parser.add_argument('directory')
     parser.add_argument('--frames', type=int, required=True)
-    parser.add_argument('--mode', choices=['controlled'], required=True)
+    parser.add_argument('--mode', choices=['controlled', 'realtime'], required=True)
     parser.add_argument('--buffers', type=int, default=2)
     parser.add_argument('--target', choices=['composed_eyes', 'layer_view', 'layer_depth', 'layer_depth_linear'],
                         default='composed_eyes')

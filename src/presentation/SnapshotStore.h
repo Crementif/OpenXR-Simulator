@@ -40,6 +40,24 @@ struct CaptureTarget
 	auto operator<=>(const CaptureTarget&) const = default;
 };
 
+enum class ImageRecordingPhase
+{
+	Idle,
+	Recording,
+	Stopped,
+	Overrun
+};
+struct ImageRecordingSnapshot
+{
+	ImageRecordingPhase phase = ImageRecordingPhase::Idle;
+	CaptureTarget target;
+	std::uint32_t capacity = 0;
+	std::uint64_t captured = 0;
+	std::uint64_t requested = 0;
+	std::optional<FrameKey> missed;
+	std::vector<CaptureId> captures;
+};
+
 enum class SnapshotPhase
 {
 	Reserved,

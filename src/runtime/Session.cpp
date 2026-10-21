@@ -498,6 +498,34 @@ XrResult Session::ConfigureCapturePool(FramePool pool, bool layerViews, CaptureP
 	return m_captures.Configure(std::move(pool), layerViews, std::move(promoter), depthViews);
 }
 
+SnapshotAdmission Session::StartImageRecording(CaptureTarget target, std::uint32_t capacity, std::uint64_t frames,
+	std::span<CaptureId> captures)
+{
+	m_captures.Collect();
+	std::lock_guard lock(m_mutex);
+	if (!m_state.running || m_state.closed)
+		return SnapshotAdmission::Closed;
+	if (m_scheduler.Snapshot().paused)
+		return SnapshotAdmission::Invalid;
+	return m_captures.StartImageRecording(target, capacity, frames, captures);
+}
+
+void Session::StopImageRecording() noexcept
+{
+	m_captures.StopImageRecording();
+}
+
+ImageRecordingSnapshot Session::ImageRecording() const
+{
+	return m_captures.ImageRecording();
+}
+
+CaptureId Session::RefillImageRecording(CaptureId released)
+{
+	m_captures.Collect();
+	return m_captures.RefillImageRecording(released);
+}
+
 CaptureReservation Session::ReserveCapture(CaptureTarget target)
 {
 	{

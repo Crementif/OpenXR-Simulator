@@ -163,6 +163,17 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(self.tools.call('debug_capture', {**self.common, 'capture': 1, 'filename': 'legacy.png'})['error'],
                          'invalid_arguments')
 
+    def test_realtime_recording_identity_and_budget(self):
+        result = self.tools.call('debug_start_image_recording', {**self.leased, 'command_id': '42',
+                                'target': 'layer_depth', 'view': 1, 'capacity': 2, 'frames': '0'})
+        self.assertTrue(result['ok'], result)
+        method, arguments, keywords = self.client.calls[-1]
+        self.assertEqual(arguments[1], CommandKind.START_IMAGE_RECORDING)
+        self.assertEqual(keywords, {'command_id': 42, 'target': TargetKind.LAYER_DEPTH, 'layer': 0, 'view': 1,
+                                   'recording_capacity': 2, 'recording_frames': 0})
+        self.assertEqual(self.tools.call('debug_start_image_recording', {**self.leased, 'command_id': 43,
+                                                                      'capacity': 5})['error'], 'invalid_arguments')
+
     def test_exact_depth_selection(self):
         for name in ('layer_depth', 'layer_depth_linear'):
             result = self.tools.call('debug_retain_image', {**self.common, 'capture': '42',

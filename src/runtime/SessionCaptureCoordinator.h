@@ -47,6 +47,11 @@ class SessionCaptureCoordinator
 	void Collect() const;
 	CaptureReservation Reserve(CaptureTarget target);
 	std::pair<XrResult, std::shared_ptr<FrameReservation>> PrepareProducer(FrameKey frame, CaptureTarget target);
+	SnapshotAdmission StartImageRecording(CaptureTarget target, std::uint32_t capacity, std::uint64_t frames = 0,
+		std::span<CaptureId> captures = {});
+	void StopImageRecording() noexcept;
+	ImageRecordingSnapshot ImageRecording() const;
+	CaptureId RefillImageRecording(CaptureId released);
 	void BindIssued(std::shared_ptr<const FrameRecord> issued, std::shared_ptr<const FrameRecord> cancelled);
 	void ObserveFrame(FrameKey frame);
 	std::size_t CancelQueued() noexcept;
@@ -55,6 +60,8 @@ class SessionCaptureCoordinator
 
   private:
 	bool SupportsLocked(CaptureTarget target) const;
+	CaptureReservation ReserveLocked(CaptureTarget target);
+	void StopImageRecordingLocked() noexcept;
 	bool HasRequest(FrameKey frame, CaptureTarget target) const;
 	std::size_t CancelQueuedLocked() noexcept;
 	SnapshotAdmission Promote(const std::shared_ptr<const FrameOutput>& output,
@@ -68,6 +75,8 @@ class SessionCaptureCoordinator
 	bool m_running = false;
 	SessionGeneration m_generation;
 	std::vector<CaptureId> m_queued;
+	ImageRecordingSnapshot m_imageRecording;
+	std::vector<CaptureId> m_recordingQueued;
 	// Destroy the store before configuration/mutex so reentrant last readers can
 	// still inspect this coordinator while SnapshotStore detaches its entries.
 	SnapshotStore m_store;

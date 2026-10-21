@@ -1,4 +1,4 @@
-"""Bounded controlled image recording through existing exact-frame operations."""
+"""Bounded image recording through exact-frame admission and reserved streams."""
 import json
 from pathlib import Path
 import queue
@@ -64,16 +64,16 @@ def record_frames(client, session, directory, count, *, mode, target=TargetKind.
                   timeout=15, cancel=None):
     """Save consecutive newly admitted frames and all output slices.
 
-    mode must explicitly be 'controlled': this pauses the app and allows one
-    admission only after bounded persistence capacity is available. The directory
+    mode is explicit: 'controlled' admits only with persistence capacity;
+    'realtime' leaves pacing unchanged and fails on reserved-stream overrun. The directory
     must be new. Frames contain RGBA bytes, exact CPU/image metadata and immutable
     feature revisions; frames.jsonl indexes fully written frames. Explicit image
     export is the only readback. Cancellation raises InterruptedError after cleanup.
-    Real-time recording is not implemented by polling live-preview snapshots.
+    Real-time recording uses reserved runtime captures, never live-preview polling.
     """
-    if mode != 'controlled':
-        raise ValueError("This recorder requires mode='controlled'; real-time capture is a separate runtime contract")
-    if type(count) is not int or count < 1 or type(buffers) is not int or not 1 <= buffers <= 4:
+    if mode not in ('controlled', 'realtime'):
+        raise ValueError("Select mode='controlled' or mode='realtime' explicitly")
+    if type(count) is not int or not 1 <= count < 2**64 or type(buffers) is not int or not 1 <= buffers <= 4:
         raise ValueError('Positive frame count and one through four persistence buffers are required')
     if type(max_frame_bytes) is not int or max_frame_bytes < 4 or not 0 < timeout <= 120:
         raise ValueError('Invalid byte budget or operation timeout')
@@ -82,6 +82,8 @@ def record_frames(client, session, directory, count, *, mode, target=TargetKind.
         raise RuntimeError('Release the existing manual debugger before starting controlled recording')
     if not status['capabilities'] & Capability.IMAGE_EXPORT:
         raise RuntimeError('Image export is unavailable')
+    if mode == 'realtime' and not status['capabilities'] & Capability.IMAGE_RECORDING:
+        raise RuntimeError('Real-time reserved image recording is unavailable')
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=False)
     writer = _Persistence(directory, buffers)
@@ -120,28 +122,57 @@ def record_frames(client, session, directory, count, *, mode, target=TargetKind.
         released = command(CommandKind.RELEASE, capture=capture)
         client.acknowledge(lease, released['command_id'])
 
+    def stream():
+        value = client.status(session)['image_recording']
+        if value['phase'] == 'overrun':
+            summary['overrun'] = value
+            raise RuntimeError(f'Real-time recording overrun: {value}')
+        return value
+
     try:
         lease = client.acquire(session)
-        paused = command(CommandKind.PAUSE)
-        for capture in paused.get('captures', []):
-            release(capture)
-        client.acknowledge(lease, paused['command_id'])
+        if mode == 'controlled':
+            paused = command(CommandKind.PAUSE)
+            for capture in paused.get('captures', []):
+                release(capture)
+            client.acknowledge(lease, paused['command_id'])
+        else:
+            started = command(CommandKind.START_IMAGE_RECORDING, target=target, layer=layer, view=view,
+                              recording_capacity=buffers, recording_frames=count)
+            client.acknowledge(lease, started['command_id'])
         for _ in range(count):
             while not writer.slots.acquire(timeout=.05):
                 pulse()
+                if mode == 'realtime':
+                    stream()
             handed_off = False
             capture_id = reader = inspection_id = None
             try:
                 pulse()
-                admitted = command(CommandKind.STRICT_ADMISSION, target=target, layer=layer, view=view)
-                capture_id = admitted['capture_id']
+                if mode == 'controlled':
+                    admitted = command(CommandKind.STRICT_ADMISSION, target=target, layer=layer, view=view)
+                    capture_id = admitted['capture_id']
+                else:
+                    deadline = time.monotonic() + timeout
+                    while capture_id is None:
+                        pulse()
+                        state = stream()
+                        candidates = [client.capture(session, identity) for identity in state['captures']]
+                        candidates = [entry for entry in candidates if entry.get('frame') and
+                                      (last is None or entry['frame']['frame_id'] > last)]
+                        if candidates:
+                            capture_id = min(candidates, key=lambda entry: entry['frame']['frame_id'])['capture_id']
+                            break
+                        if state['phase'] != 'recording' or time.monotonic() >= deadline:
+                            raise RuntimeError(f'Real-time stream ended before the requested frame: {state}')
+                        time.sleep(.01)
                 deadline = time.monotonic() + timeout
                 while True:
                     pulse()
                     capture = client.capture(session, capture_id)
                     if capture['phase'] in ('ready', 'clear'):
                         break
-                    if capture['phase'] in ('unavailable', 'cancelled', 'failed', 'released'):
+                    if capture['phase'] in ('unavailable', 'cancelled', 'failed', 'released', 'discarded', 'empty'):
                         raise RuntimeError(capture)
                     if time.monotonic() >= deadline:
                         raise TimeoutError('Captured image did not become ready')
@@ -217,25 +248,33 @@ def record_frames(client, session, directory, count, *, mode, target=TargetKind.
                     release(capture_id)
             # Retire old display readers while remaining paused. Their terminal
             # operation holds an image until acknowledged independently of capture.
-            for _ in range(16):
-                displayed = command(CommandKind.DISPLAY_STEP)
-                selected = client.capture(session, displayed['capture_id'])
-                release(displayed['capture_id'])
-                client.acknowledge(lease, displayed['command_id'])
-                if (selected.get('frame') or {}).get('frame_id') == frame:
-                    break
-            else:
-                raise RuntimeError('Paused display failed to reach the recorded frame')
+            if mode == 'controlled':
+                for _ in range(16):
+                    displayed = command(CommandKind.DISPLAY_STEP)
+                    selected = client.capture(session, displayed['capture_id'])
+                    release(displayed['capture_id'])
+                    client.acknowledge(lease, displayed['command_id'])
+                    if (selected.get('frame') or {}).get('frame_id') == frame:
+                        break
+                else:
+                    raise RuntimeError('Paused display failed to reach the recorded frame')
         while writer.written < count:
             pulse()
             time.sleep(.01)
+        if mode == 'realtime':
+            stream()
         summary['phase'] = 'complete'
-    except InterruptedError:
-        summary['phase'] = 'cancelled'
+    except BaseException as error:
+        summary['phase'] = 'cancelled' if isinstance(error, InterruptedError) else 'failed'
+        summary['error'] = f'{type(error).__name__}: {error}'
+        if error.__cause__ is not None:
+            summary['cause'] = str(error.__cause__)
         raise
     finally:
         try:
             if lease is not None:
+                if mode == 'realtime':
+                    client.submit(lease, CommandKind.STOP_IMAGE_RECORDING)
                 if outstanding is not None:
                     client.submit(lease, CommandKind.CANCEL, operation=outstanding)
                 # Relinquishment invokes existing asynchronous resume and capture

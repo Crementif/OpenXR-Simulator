@@ -128,6 +128,10 @@ DebugCommand DecodeCommandKind(std::uint32_t kind)
 		return DebugCommand::Cancel;
 	case CommandKind::Release:
 		return DebugCommand::Release;
+	case CommandKind::StartImageRecording:
+		return DebugCommand::StartImageRecording;
+	case CommandKind::StopImageRecording:
+		return DebugCommand::StopImageRecording;
 	}
 	throw ControlRequestError{ErrorCode::UnsupportedCommand, "Unsupported debug command"};
 }
@@ -196,6 +200,10 @@ const char* Name(DebugProgress value)
 		return "session_ended";
 	case DebugProgress::LeaseExpired:
 		return "lease_expired";
+	case DebugProgress::RecordingStarted:
+		return "recording_started";
+	case DebugProgress::RecordingStopped:
+		return "recording_stopped";
 	}
 	throw ControlRequestError{ErrorCode::Internal, "Unknown operation progress"};
 }
@@ -365,6 +373,9 @@ DebugRequest DecodeDebugRequest(const Message& request)
 	command.command = DecodeCommandKind(ReadU32(request, tag::CommandKind));
 	command.lookahead = ReadU32(request, tag::Lookahead, 1);
 	command.target = DecodeCaptureTarget(request);
+	command.recordingCapacity = ReadU32(request, tag::Capacity, 2);
+	if (request.Find(tag::Length))
+		command.recordingFrames = RequireU64(request, tag::Length);
 	command.generation = {RequireU64(request, tag::Generation)};
 	if (!command.generation.value)
 		throw ControlRequestError{ErrorCode::Closed, "Session has not started"};
@@ -384,6 +395,17 @@ void EncodeDebuggerStatus(Message& response, const DebugControllerSnapshot& stat
 	response.fields.push_back(Field::Bool(tag::Manual, status.manual));
 	response.fields.push_back(Field::U32(tag::Lookahead, status.maxLookahead));
 	response.fields.push_back(Field::U64(tag::LedgerCount, status.commands));
+	const std::array recordingPhases{"idle", "recording", "stopped", "overrun"};
+	std::vector<Field> recording{
+		Field::Text(tag::Phase, recordingPhases.at(static_cast<std::size_t>(status.imageRecording.phase))),
+		Field::U64(tag::Capacity, status.imageRecording.capacity),
+		Field::U64(tag::Length, status.imageRecording.captured),
+		Field::U64(tag::TotalFrames, status.imageRecording.requested),
+		EncodeCaptureTarget(status.imageRecording.target),
+		EncodeCaptureIds(tag::Captures, status.imageRecording.captures)};
+	if (status.imageRecording.missed)
+		recording.push_back(EncodeFrameKey(tag::Frame, *status.imageRecording.missed));
+	response.fields.push_back(Nested(tag::ImageRecording, std::move(recording)));
 	std::vector<Field> pipeline{
 		Field::Bool(tag::Running, status.pipeline.running), Field::Bool(tag::WaitPending, status.pipeline.waitPending),
 		Field::Bool(tag::Paused, status.pipeline.paused), Field::U32(tag::Permits, status.pipeline.permits),

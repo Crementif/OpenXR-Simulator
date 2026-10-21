@@ -10,6 +10,8 @@ namespace simxr
 SessionCaptureCoordinator::SessionCaptureCoordinator(FrameHistory& history) : m_history(history), m_store(32, &history)
 {
 	m_queued.reserve(m_store.Capacity());
+	m_imageRecording.captures.reserve(4);
+	m_recordingQueued.reserve(4);
 }
 
 SessionCaptureCoordinator::~SessionCaptureCoordinator()
@@ -44,6 +46,14 @@ void SessionCaptureCoordinator::Start(SessionGeneration generation)
 	std::lock_guard lock(m_mutex);
 	m_store.Start(generation);
 	m_generation = generation;
+	m_imageRecording.phase = ImageRecordingPhase::Idle;
+	m_imageRecording.target = {};
+	m_imageRecording.capacity = 0;
+	m_imageRecording.captured = 0;
+	m_imageRecording.requested = 0;
+	m_imageRecording.missed.reset();
+	m_imageRecording.captures.clear();
+	m_recordingQueued.clear();
 	m_running = true;
 }
 
@@ -51,6 +61,7 @@ void SessionCaptureCoordinator::Stop() noexcept
 {
 	std::lock_guard lock(m_mutex);
 	m_running = false;
+	StopImageRecordingLocked();
 	CancelQueuedLocked();
 	m_store.Stop();
 }
@@ -91,6 +102,14 @@ void SessionCaptureCoordinator::Collect() const
 CaptureReservation SessionCaptureCoordinator::Reserve(CaptureTarget target)
 {
 	std::lock_guard lock(m_mutex);
+	const auto reservation = ReserveLocked(target);
+	if (reservation.result == SnapshotAdmission::Accepted)
+		m_queued.push_back(reservation.id);
+	return reservation;
+}
+
+CaptureReservation SessionCaptureCoordinator::ReserveLocked(CaptureTarget target)
+{
 	if (!m_running)
 		return {SnapshotAdmission::Closed, {}};
 	if (!SupportsLocked(target))
@@ -107,10 +126,7 @@ CaptureReservation SessionCaptureCoordinator::Reserve(CaptureTarget target)
 		if (!composedProducer)
 			return {SnapshotAdmission::Capacity, {}};
 	}
-	const auto reservation = m_store.Reserve(target, std::move(producer), std::move(composedProducer));
-	if (reservation.result == SnapshotAdmission::Accepted)
-		m_queued.push_back(reservation.id); // Queue storage was reserved at construction.
-	return reservation;
+	return m_store.Reserve(target, std::move(producer), std::move(composedProducer));
 }
 
 bool SessionCaptureCoordinator::HasRequest(FrameKey frame, CaptureTarget target) const
@@ -151,15 +167,127 @@ std::pair<XrResult, std::shared_ptr<FrameReservation>> SessionCaptureCoordinator
 	return {XR_SUCCESS, std::move(replacement)};
 }
 
+SnapshotAdmission SessionCaptureCoordinator::StartImageRecording(CaptureTarget target, std::uint32_t capacity, std::uint64_t frames,
+	std::span<CaptureId> captures)
+{
+	std::lock_guard lock(m_mutex);
+	if (!m_running)
+		return SnapshotAdmission::Closed;
+	if (!SupportsLocked(target))
+		return SnapshotAdmission::Unsupported;
+	if (!capacity || capacity > 4 || (!captures.empty() && captures.size() != capacity) || !m_queued.empty() || !m_imageRecording.captures.empty())
+		return SnapshotAdmission::Invalid;
+	m_imageRecording.target = target;
+	m_imageRecording.capacity = capacity;
+	m_imageRecording.captured = 0;
+	m_imageRecording.requested = frames;
+	m_imageRecording.missed.reset();
+	try
+	{
+		for (std::uint32_t index = 0; index < capacity; ++index)
+		{
+			const auto reserved = ReserveLocked(target);
+			if (reserved.result != SnapshotAdmission::Accepted)
+			{
+				StopImageRecordingLocked();
+				return reserved.result;
+			}
+			m_recordingQueued.push_back(reserved.id);
+			m_imageRecording.captures.push_back(reserved.id);
+		}
+	}
+	catch (...)
+	{
+		StopImageRecordingLocked();
+		throw;
+	}
+	if (!captures.empty())
+		std::copy(m_imageRecording.captures.begin(), m_imageRecording.captures.end(), captures.begin());
+	m_imageRecording.phase = ImageRecordingPhase::Recording;
+	return SnapshotAdmission::Accepted;
+}
+
+void SessionCaptureCoordinator::StopImageRecordingLocked() noexcept
+{
+	if (m_imageRecording.phase != ImageRecordingPhase::Overrun)
+		m_imageRecording.phase = ImageRecordingPhase::Stopped;
+	for (const auto capture : m_recordingQueued)
+	{
+		m_store.Release(capture); // Unissued reservations have no native image reader.
+		std::erase(m_imageRecording.captures, capture);
+	}
+	m_recordingQueued.clear();
+}
+
+void SessionCaptureCoordinator::StopImageRecording() noexcept
+{
+	std::lock_guard lock(m_mutex);
+	StopImageRecordingLocked();
+}
+
+ImageRecordingSnapshot SessionCaptureCoordinator::ImageRecording() const
+{
+	std::lock_guard lock(m_mutex);
+	return m_imageRecording;
+}
+
+CaptureId SessionCaptureCoordinator::RefillImageRecording(CaptureId released)
+{
+	std::lock_guard lock(m_mutex);
+	const auto found = std::find(m_imageRecording.captures.begin(), m_imageRecording.captures.end(), released);
+	if (found == m_imageRecording.captures.end())
+		return {};
+	m_imageRecording.captures.erase(found);
+	if (m_imageRecording.phase != ImageRecordingPhase::Recording)
+		return {};
+	CaptureReservation reserved;
+	try
+	{
+		reserved = ReserveLocked(m_imageRecording.target);
+	}
+	catch (...)
+	{
+		m_imageRecording.phase = ImageRecordingPhase::Overrun;
+		StopImageRecordingLocked();
+		throw;
+	}
+	if (reserved.result != SnapshotAdmission::Accepted)
+	{
+		m_imageRecording.phase = ImageRecordingPhase::Overrun;
+		StopImageRecordingLocked();
+		return {};
+	}
+	m_recordingQueued.push_back(reserved.id);
+	m_imageRecording.captures.push_back(reserved.id);
+	return reserved.id;
+}
+
 void SessionCaptureCoordinator::BindIssued(std::shared_ptr<const FrameRecord> issued,
 										   std::shared_ptr<const FrameRecord> cancelled)
 {
 	std::lock_guard lock(m_mutex);
-	if (m_queued.empty())
+	if (!m_queued.empty())
+	{
+		if (!m_store.Bind(m_queued.front(), issued, cancelled))
+			throw std::logic_error("Capture reservation was cancelled before admission");
+		m_queued.erase(m_queued.begin());
+	}
+	if (m_imageRecording.phase != ImageRecordingPhase::Recording)
 		return;
-	if (!m_store.Bind(m_queued.front(), std::move(issued), std::move(cancelled)))
-		throw std::logic_error("Capture reservation was cancelled before admission");
-	m_queued.erase(m_queued.begin());
+	if (m_recordingQueued.empty())
+	{
+		m_imageRecording.phase = ImageRecordingPhase::Overrun;
+		m_imageRecording.missed = issued->key;
+		m_history.Trace(FrameTraceKind::CaptureFailed, issued->key, issued->prediction.displayTime,
+			XR_ERROR_LIMIT_REACHED, FrameDiagnosticCategory::Performance, 0, "image_recording_overrun");
+		return;
+	}
+	if (!m_store.Bind(m_recordingQueued.front(), issued, cancelled))
+		throw std::logic_error("Recording reservation was cancelled before admission");
+	m_recordingQueued.erase(m_recordingQueued.begin());
+	++m_imageRecording.captured;
+	if (m_imageRecording.requested && m_imageRecording.captured == m_imageRecording.requested)
+		StopImageRecordingLocked();
 }
 
 void SessionCaptureCoordinator::ObserveFrame(FrameKey frame)

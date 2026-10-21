@@ -72,6 +72,11 @@ TOOL_DEFINITIONS = [
           {**_COMMAND, **_TARGET}, list(_COMMAND)),
     _tool('debug_strict_admission', 'Reserve one exact future capture and grant one application-frame admission.',
           {**_COMMAND, **_TARGET}, list(_COMMAND)),
+    _tool('debug_start_image_recording', 'Reserve a bounded real-time image stream without changing pacing. Status reports capture IDs and explicit overrun; releasing a consumed capture replenishes its slot.',
+          {**_COMMAND, **{key: value for key, value in _TARGET.items() if key != 'lookahead'},
+           'capacity': {'type': 'integer', 'minimum': 1, 'maximum': 4, 'default': 2},
+           'frames': {**_GENERATION, 'description': 'Frame count as uint64; zero records until explicitly stopped.'}}, list(_COMMAND)),
+    _tool('debug_stop_image_recording', 'Stop reserving new stream frames. Bound captures remain readable until released; overrun evidence is preserved.', _COMMAND),
     _tool('debug_display_step', 'Advance one virtual display tick while paused; this does not issue an XR frame.', _COMMAND),
     _tool('debug_resume', 'Resume the original execution mode while retaining explicitly captured snapshots.', _COMMAND),
     _tool('debug_cancel', 'Cancel unused permits for an operation; issued XR work is not cancelled.',
@@ -145,7 +150,8 @@ TOOL_DEFINITIONS = [
 _SCHEMAS = {tool['name']: tool['inputSchema'] for tool in TOOL_DEFINITIONS}
 _COMMAND_NAMES = {'debug_pause': 'PAUSE', 'debug_step': 'STEP', 'debug_strict_admission': 'STRICT_ADMISSION',
                   'debug_display_step': 'DISPLAY_STEP', 'debug_resume': 'RESUME', 'debug_cancel': 'CANCEL',
-                  'debug_release': 'RELEASE'}
+                  'debug_release': 'RELEASE', 'debug_start_image_recording': 'START_IMAGE_RECORDING',
+                  'debug_stop_image_recording': 'STOP_IMAGE_RECORDING'}
 
 
 def _validate(name, args):
@@ -163,7 +169,7 @@ def _validate(name, args):
     for key, value in args.items():
         rule = schema['properties'][key]
         if 'anyOf' in rule:
-            minimum = 0 if key in ('generation', 'offset', 'after') else 1
+            minimum = 0 if key in ('generation', 'offset', 'after', 'frames') else 1
             if isinstance(value, str):
                 if len(value) > 20 or re.fullmatch(r'0|[1-9][0-9]*', value) is None:
                     raise ValueError(f'{key} must be a canonical decimal uint64 string')
@@ -194,7 +200,7 @@ def _validate(name, args):
             raise ValueError(f'{key} must be a nonempty string')
         if 'enum' in rule and value not in rule['enum']:
             raise ValueError(f'Unsupported {key}')
-    if name in ('debug_step', 'debug_strict_admission') and args.get('target', 'composed_eyes') == 'composed_eyes' and (args.get('layer', 0) or args.get('view', 0)):
+    if name in ('debug_step', 'debug_strict_admission', 'debug_start_image_recording') and args.get('target', 'composed_eyes') == 'composed_eyes' and (args.get('layer', 0) or args.get('view', 0)):
         raise ValueError('Composed-eye capture has no layer/view index')
     if name.startswith('game_bridge_') and (('session' in args) != ('generation' in args)):
         raise ValueError('Supply both session and generation, or omit both for the independent game bridge')
@@ -422,6 +428,9 @@ class DebugTools:
                         if name in ('debug_step', 'debug_strict_admission'):
                             extra.update(target=target, layer=args.get('layer', 0), view=args.get('view', 0),
                                          lookahead=args.get('lookahead', 1))
+                        if name == 'debug_start_image_recording':
+                            extra.update(target=target, layer=args.get('layer', 0), view=args.get('view', 0),
+                                         recording_capacity=args.get('capacity', 2), recording_frames=args.get('frames', 0))
                         if name == 'debug_cancel':
                             extra['operation'] = args['operation']
                         if name == 'debug_release':

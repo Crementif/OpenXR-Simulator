@@ -90,7 +90,7 @@ class Client:
         return self.request(OpCode.RELINQUISH, self._lease(lease))
 
     def submit(self, lease, command, *, command_id=None, lookahead=1, target=TargetKind.COMPOSED_EYES,
-               layer=0, view=0, operation=None, capture=None):
+               layer=0, view=0, operation=None, capture=None, recording_capacity=2, recording_frames=0):
         if command_id is None:
             with self._lock:
                 command_id = self._next_command
@@ -102,6 +102,9 @@ class Client:
             Field.u32(Tag.COMMAND_KIND, command, True), Field.u32(Tag.LOOKAHEAD, lookahead),
             Field.nested(Tag.TARGET, [Field.u32(Tag.CAPTURE_KIND, target, True),
                                       Field.u32(Tag.LAYER, layer), Field.u32(Tag.VIEW, view)])]
+        if command == CommandKind.START_IMAGE_RECORDING:
+            fields.append(Field.u32(Tag.CAPACITY, recording_capacity, True))
+            fields.append(Field.u64(Tag.LENGTH, recording_frames, True))
         if operation is not None:
             fields.append(Field.u64(Tag.OPERATION_ID, operation))
         if capture is not None:
