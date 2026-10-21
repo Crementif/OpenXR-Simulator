@@ -243,6 +243,122 @@ class CaptureOutput final : public simxr::FrameOutput
 	std::atomic<simxr::CompletionStatus> status{simxr::CompletionStatus::Pending};
 };
 
+void TestSequenceCaptureAdmission()
+{
+	using namespace simxr;
+	Instance instance(reinterpret_cast<XrInstance>(982), {}, XR_MAKE_VERSION(1, 0, 27));
+	Session session(reinterpret_cast<XrSession>(983), instance);
+	FramePool pool(1);
+	FrameSchedulerConfig config;
+	config.period = Duration{1000000};
+	const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
+	Require(session.ConfigureCapturePool(pool) == XR_SUCCESS && session.Ready(config.epoch) == XR_SUCCESS &&
+		session.Begin(begin, config) == XR_SUCCESS, "Begin real-time sequence capture session");
+	const CommandSource owner{CommandSourceKind::Mcp, 47};
+	PoseSequenceStep step;
+	step.capture = true;
+	step.head = HeadPosePatch{};
+	step.head->position[0] = 4;
+	const auto sequence = session.Commands().StartPoseSequence(owner,
+		std::make_shared<const PoseSequence>(std::vector{step}, true));
+	FramePrediction frame;
+	Require(session.WaitFrame(frame) == XR_SUCCESS, "Sequence capture required a manual frame permit");
+	const auto generation = session.Snapshot().generation;
+	const FrameKey first{generation, frame.id};
+	const auto issued = session.History().Find(first);
+	const auto receipt = issued->sequenceCapture;
+	Require(receipt && receipt->request.sequence == sequence->id && receipt->request.owner == owner &&
+		receipt->reservation.result == SnapshotAdmission::Accepted && receipt->request.frame == frame.id &&
+		!session.Scheduler().Snapshot().paused && !session.Scheduler().Snapshot().permits &&
+		session.Commands().At(frame.id)->configuration.tracking.head.pose.position.x == 4,
+		"Sequence capture changed pacing or lost its exact pose/frame identity");
+	Require(session.BeginFrame() == XR_SUCCESS, "Begin sequence capture");
+	auto token = session.Captures().ProducerReservation(first);
+	Require(token && pool.Consume(token), "Sequence capture has no admitted native producer");
+	auto output = std::make_shared<CaptureOutput>(std::move(token));
+	const auto layers = std::make_shared<const FrameLayers>(frame.displayTime, XR_ENVIRONMENT_BLEND_MODE_OPAQUE,
+		std::vector<LayerDescription>{QuadLayerDescription{}});
+	const XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO, nullptr, frame.displayTime.value.count(),
+		XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1, nullptr};
+	Require(session.EndFrame(frame, &end, layers, output) == XR_SUCCESS &&
+		session.Captures().Read(receipt->reservation.id)->phase == SnapshotPhase::GpuPending,
+		"Sequence capture bypassed producer completion");
+	Require(session.WaitFrame(frame) == XR_SUCCESS, "Capture pressure stopped real-time frame admission");
+	const auto pressure = session.History().Find({generation, frame.id})->sequenceCapture;
+	Require(pressure && pressure->reservation.result == SnapshotAdmission::Capacity &&
+		!pressure->reservation.id.value && pressure->request.frame == frame.id && frame.id != first.frame &&
+		session.BeginFrame() == XR_SUCCESS && session.EndFrame(frame) == XR_SUCCESS,
+		"Capture pressure hid failure or substituted a later frame");
+	auto reader = session.Captures().Read(receipt->reservation.id);
+	Require(reader && reader->phase == SnapshotPhase::GpuPending && reader->metadata->key == first &&
+		reader->metadata->sequenceCapture->request.sequence == sequence->id,
+		"Pending sequence image lost its original receipt");
+	Require(session.WithCommandGeneration(generation,
+		[&]
+		{
+			session.ReleaseCommandSource(owner, true);
+		}) &&
+		!session.Captures().Read(receipt->reservation.id) && !session.Commands().PoseSequenceStatusFor(owner)->active,
+		"Disconnect retained sequence admission or an owned capture ticket");
+	session.Captures().Poll();
+	Require(session.Captures().Snapshot().retiring == 1 && pool.InUse() == 1,
+		"Disconnect destroyed a pending GPU capture before its producer completed");
+	output->status.store(CompletionStatus::Complete);
+	session.Captures().Poll();
+	Require(session.Captures().Snapshot().retiring == 0 && reader->output->PollCompletion() == CompletionStatus::Complete,
+		"Completed retired capture failed to relinquish store ownership");
+	session.Close();
+	session.Display().PollRetired();
+	output.reset();
+	Require(reader->output && reader->metadata->key == first && pool.InUse() == 1,
+		"Sequence retirement invalidated an independent image reader");
+	reader.reset();
+	Require(pool.InUse() == 0, "Sequence capture producer survived its final reader");
+}
+void TestSequenceCaptureUnsupportedAndOwnership()
+{
+	using namespace simxr;
+	FrameHistory history;
+	const auto generation = history.StartGeneration();
+	SessionCaptureCoordinator captures(history);
+	FramePool pool(2);
+	Require(captures.Configure(FramePool(pool), false, {}, false, false) == XR_SUCCESS,
+		"Configure shared frame captures");
+	captures.Start(generation);
+	const CommandSource owner{CommandSourceKind::Mcp, 73};
+	const auto manual = captures.Reserve({});
+	const SequenceCaptureIntent request{9, {1}, owner};
+	CaptureId sequenceId;
+	const FramePrediction prediction{{1}, {1}, {Duration{100}}, Duration{10}};
+	{
+		auto sequence = captures.PrepareSequenceCapture(request);
+		sequenceId = sequence.Record()->reservation.id;
+		history.Issue(prediction,
+			[&](auto issued, auto cancelled)
+			{
+				captures.BindIssued(issued, cancelled);
+				sequence.Bind(issued, cancelled);
+			}, sequence.Record());
+	}
+	captures.Snapshots().RetireSequenceCaptures(owner);
+	Require(!captures.Snapshots().Read(sequenceId) && captures.Snapshots().Read(manual.id) && pool.InUse() == 1,
+		"Sequence cleanup retired another owner's capture of the same frame");
+	FrameHistory unsupportedHistory;
+	SessionCaptureCoordinator unsupported(unsupportedHistory);
+	const auto unsupportedGeneration = unsupportedHistory.StartGeneration();
+	unsupported.Start(unsupportedGeneration);
+	auto rejected = unsupported.PrepareSequenceCapture(request);
+	Require(rejected.Record()->reservation.result == SnapshotAdmission::Unsupported &&
+		!rejected.Record()->reservation.id.value, "Unsupported capture was reported as accepted");
+	unsupportedHistory.Issue(prediction,
+		[&](auto issued, auto cancelled)
+		{
+			rejected.Bind(issued, cancelled);
+		}, rejected.Record());
+	Require(unsupportedHistory.Find({unsupportedGeneration, {1}})->sequenceCapture->reservation.result == SnapshotAdmission::Unsupported,
+		"Unsupported sequence capture lost its exact-frame result");
+}
+
 void TestRejectedOutputDestruction()
 {
 	using namespace simxr;
@@ -1548,6 +1664,8 @@ int main()
 	TestRejectedOutputDestruction();
 	TestReentrantCaptureCollection();
 	TestCaptureProducerRetry();
+	TestSequenceCaptureAdmission();
+	TestSequenceCaptureUnsupportedAndOwnership();
 	TestLayerViewCapture();
 	TestLayerCaptureRejectionReentry();
 	TestLiveSubmissionPolicy();

@@ -179,6 +179,7 @@ struct SequenceCaptureIntent
 {
 	std::uint64_t sequence = 0;
 	FrameId frame;
+	CommandSource owner;
 };
 struct AppliedCommandSnapshot
 {

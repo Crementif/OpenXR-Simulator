@@ -36,6 +36,7 @@ class SessionCaptureCoordinator
   public:
 	class Submission;
 	class Boundary;
+	class SequenceCapture;
 	explicit SessionCaptureCoordinator(FrameHistory& history);
 	~SessionCaptureCoordinator();
 	XrResult Configure(FramePool&& pool, bool layerViews, CapturePromoter&& promoter, bool depthViews, bool filteredComposition);
@@ -50,6 +51,7 @@ class SessionCaptureCoordinator
 	// May release completed native owners. Call outside Session/caller locks.
 	void Collect() const;
 	CaptureReservation Reserve(CaptureTarget target);
+	SequenceCapture PrepareSequenceCapture(const std::optional<SequenceCaptureIntent>& request);
 	std::pair<XrResult, std::shared_ptr<FrameReservation>> PrepareProducer(FrameKey frame, CaptureTarget target);
 	SnapshotAdmission StartImageRecording(CaptureTarget target, std::uint32_t capacity, std::uint64_t frames = 0,
 		std::span<CaptureId> captures = {});
@@ -87,6 +89,24 @@ class SessionCaptureCoordinator
 	// Destroy the store before configuration/mutex so reentrant last readers can
 	// still inspect this coordinator while SnapshotStore detaches its entries.
 	SnapshotStore m_store;
+};
+
+// Reserves before history publication. Failed issue releases the unused producer;
+// Bind runs last in the issue callback, after every throwing admission step.
+class SessionCaptureCoordinator::SequenceCapture
+{
+  public:
+	SequenceCapture(SessionCaptureCoordinator& owner, const std::optional<SequenceCaptureIntent>& request);
+	~SequenceCapture();
+	SequenceCapture(const SequenceCapture&) = delete;
+	SequenceCapture& operator=(const SequenceCapture&) = delete;
+	const std::optional<SequenceCaptureRecord>& Record() const noexcept;
+	void Bind(std::shared_ptr<const FrameRecord> issued, std::shared_ptr<const FrameRecord> cancelled);
+
+  private:
+	SessionCaptureCoordinator& m_owner;
+	std::optional<SequenceCaptureRecord> m_record;
+	bool m_committed = false;
 };
 
 // Construct before taking the Session lock. The retained outputs and rollback

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "graphics/FramePool.h"
+#include "presentation/CaptureTypes.h"
 #include "presentation/FrameHistory.h"
 #include "presentation/PresentationController.h"
 
@@ -16,12 +17,6 @@
 
 namespace simxr
 {
-struct CaptureId
-{
-	std::uint64_t value = 0;
-	auto operator<=>(const CaptureId&) const = default;
-};
-
 enum class CaptureKind
 {
 	ComposedEyes,
@@ -98,21 +93,6 @@ struct SnapshotRecord
 	std::shared_ptr<FrameReservation> m_retention;
 };
 
-enum class SnapshotAdmission
-{
-	Accepted,
-	Capacity,
-	Closed,
-	Unsupported,
-	Invalid
-};
-
-struct CaptureReservation
-{
-	SnapshotAdmission result;
-	CaptureId id;
-};
-
 struct CaptureOutput
 {
 	CaptureTarget target;
@@ -164,6 +144,8 @@ class SnapshotStore
 	std::size_t Capacity() const;
 	bool Release(CaptureId id) noexcept;
 	void RetireAll() noexcept;
+	// Marks only sequence-owned tickets; Poll releases native readers outside caller locks.
+	void RetireSequenceCaptures(CommandSource owner) noexcept;
 	// Observes producers outside the store mutex. It submits no graphics work.
 	void Poll() noexcept;
 

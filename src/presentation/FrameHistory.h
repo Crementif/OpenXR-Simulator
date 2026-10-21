@@ -1,6 +1,7 @@
 #pragma once
 
 #include "graphics/LayerBuilder.h"
+#include "presentation/CaptureTypes.h"
 #include "presentation/FrameDiagnosticsJournal.h"
 #include "presentation/FrameTypes.h"
 #include "simulation/ActionRegistry.h"
@@ -63,12 +64,18 @@ struct FrameSubmissionState
 	ViewLayout viewLayout = ViewLayout::Stereo;
 };
 
+struct SequenceCaptureRecord
+{
+	SequenceCaptureIntent request;
+	CaptureReservation reservation;
+};
 struct FrameRecord
 {
 	FrameKey key;
 	FramePrediction prediction;
 	FrameStage stage = FrameStage::Issued;
 	std::optional<FrameSubmissionState> submission;
+	std::optional<SequenceCaptureRecord> sequenceCapture;
 };
 
 struct FrameHistorySnapshot
@@ -97,7 +104,7 @@ class FrameHistory
 	// must not reenter history. Failure rolls back insertion and eviction.
 	void Issue(const FramePrediction& prediction,
 			   const std::function<void(std::shared_ptr<const FrameRecord>, std::shared_ptr<const FrameRecord>)>&
-				   reserve = {});
+				   reserve = {}, std::optional<SequenceCaptureRecord> sequenceCapture = {});
 	void Begin(FrameId frame, std::optional<FrameId> discarded = {});
 	// Allocates the immutable record before admission. The callback may submit
 	// native work at the permitted API boundary, but must not reenter this history.

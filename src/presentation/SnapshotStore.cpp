@@ -519,6 +519,23 @@ bool SnapshotStore::Release(CaptureId id) noexcept
 	return true;
 }
 
+void SnapshotStore::RetireSequenceCaptures(CommandSource owner) noexcept
+{
+	std::lock_guard lock(m_mutex);
+	for (auto& entry : m_entries)
+	{
+		const auto& metadata = entry.record.metadata;
+		if (!metadata || !metadata->sequenceCapture)
+			continue;
+		const auto& capture = *metadata->sequenceCapture;
+		if (capture.request.owner != owner || capture.reservation.id != entry.record.id)
+			continue;
+		entry.released = true;
+		entry.producer.reset();
+		entry.composedProducer.reset();
+	}
+}
+
 void SnapshotStore::RetireAll() noexcept
 {
 	{

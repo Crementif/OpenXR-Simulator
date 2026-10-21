@@ -68,15 +68,15 @@ SessionPublication::FrameBoundary::FrameBoundary(SessionPublication& owner, bool
 }
 
 void SessionPublication::FrameBoundary::Reserve(const FramePrediction& prediction,
-												const std::function<void()>& reserveHistory)
+												const std::function<void(const AppliedCommandSnapshot&)>& reserveHistory)
 {
 	if (m_applied)
 		throw std::logic_error("Frame publication was already reserved");
 	const SimulationTime time{prediction.displayTime.value - m_epoch.value};
 	m_applied = m_owner.m_commands.Apply(prediction.id, time, prediction.displayTime, m_baseline,
-										 [&](const auto&)
+										 [&](const auto& applied)
 										 {
-											 reserveHistory();
+											 reserveHistory(*applied);
 										 });
 }
 

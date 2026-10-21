@@ -761,6 +761,89 @@ SnapshotRecord CaptureOwned(VulkanBackend& backend, VulkanInspection& inspection
 	return std::move(*reader);
 }
 
+SnapshotRecord CaptureSequence(Device& device, const VulkanBinding& binding,
+	const std::shared_ptr<VulkanInspectionValidation>& validation)
+{
+	VulkanBackend backend(binding, 1, SharingExtensions, VK_API_VERSION_1_1, 1);
+	VulkanExternalDevice external(backend.Device(), SharingExtensions, VK_API_VERSION_1_1);
+	VulkanInspection inspection(external.Identity(), 2, validation);
+	auto source = backend.CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {16, 16}, 2, SourceUsage);
+	Check(backend.InitializeImage(source)->Wait(Timeout), "Initialize sequence capture source");
+	Paint(device, *source, Original);
+	const auto sourceId = reinterpret_cast<XrSwapchain>(402);
+	Instance instance(reinterpret_cast<XrInstance>(400), {}, XR_MAKE_VERSION(1, 0, 27));
+	Session session(reinterpret_cast<XrSession>(401), instance);
+	Require(session.ConfigureCapturePool(backend.Reservations(), true) == XR_SUCCESS,
+		"Configure sequence native capture budget");
+	FrameSchedulerConfig timing;
+	timing.period = Duration{5000000};
+	const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
+	Require(session.Ready(timing.epoch) == XR_SUCCESS && session.Begin(begin, timing) == XR_SUCCESS,
+		"Begin real-time native sequence capture");
+	PoseSequenceStep step;
+	step.capture = true;
+	step.head = HeadPosePatch{};
+	step.head->position[0] = 4;
+	const CommandSource owner{CommandSourceKind::Mcp, 91};
+	const auto sequence = session.Commands().StartPoseSequence(owner,
+		std::make_shared<const PoseSequence>(std::vector{step}, true));
+	FramePrediction prediction;
+	Require(session.WaitFrame(prediction) == XR_SUCCESS && session.BeginFrame() == XR_SUCCESS,
+		"Issue native sequence frame without a manual permit");
+	const FrameKey key{session.Snapshot().generation, prediction.id};
+	const auto receipt = session.History().Find(key)->sequenceCapture;
+	Require(receipt && receipt->request.sequence == sequence->id && receipt->request.frame == key.frame &&
+		receipt->reservation.result == SnapshotAdmission::Accepted && !session.Scheduler().Snapshot().paused,
+		"Native sequence capture changed pacing or lost frame identity");
+	auto layers = Layers(sourceId, prediction.displayTime);
+	auto plan = Plan(*layers, 32, 24);
+	std::shared_ptr<VulkanFrame> producer;
+	Require(backend.Prepare(plan,
+		[&](XrSwapchain)
+		{
+			return source;
+		}, producer, session.Captures().ProducerReservation(key)) == XR_SUCCESS,
+		"Prepare sequence's reserved native producer");
+	auto transfer = inspection.Prepare(producer);
+	auto output = transfer->Output();
+	const XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO, nullptr, prediction.displayTime.value.count(),
+		XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1, nullptr};
+	Require(session.EndFrame(prediction, &end, layers, output,
+		[&]
+		{
+			const auto result = backend.Submit(producer);
+			if (result == XR_SUCCESS)
+				transfer->Commit();
+			return result;
+		}) == XR_SUCCESS, "Submit native sequence capture");
+	AwaitComplete(*output);
+	session.Captures().Poll();
+	auto reader = session.Captures().Read(receipt->reservation.id);
+	Require(reader && reader->phase == SnapshotPhase::Ready && reader->metadata->key == key &&
+		reader->metadata->submission->commands->configuration.tracking.head.pose.position.x == 4,
+		"Sequence pixels do not retain their exact commanded frame");
+	Paint(device, *source, Reused);
+	Require(session.WaitFrame(prediction) == XR_SUCCESS, "Sequence capacity pressure stopped real-time frames");
+	const auto pressure = session.History().Find({key.generation, prediction.id})->sequenceCapture;
+	Require(pressure && pressure->reservation.result == SnapshotAdmission::Capacity &&
+		!pressure->reservation.id.value && session.BeginFrame() == XR_SUCCESS && session.EndFrame(prediction) == XR_SUCCESS,
+		"Native capture pressure lost its explicit result or substituted a frame");
+	session.ReleaseCommandSource(owner, true);
+	session.Captures().Poll();
+	Require(!session.Captures().Read(receipt->reservation.id), "Disconnected sequence retained its capture ticket");
+	session.Close();
+	session.Display().PollRetired();
+	transfer.reset();
+	producer.reset();
+	output.reset();
+	Check(backend.Drain(Timeout), "Drain sequence capture producer");
+	Check(inspection.Close(Timeout), "Close sequence inspection service");
+	source.reset();
+	Require(backend.Close() == XR_SUCCESS, "Retained sequence image held borrowed application resources");
+	std::puts("case=sequence-capture realtime=yes exactPoseFrame=yes capacity=explicit sourceReused=yes ownerReleased=yes PASS");
+	return std::move(*reader);
+}
+
 struct LiveResult
 {
 	FrameKey key;
@@ -949,7 +1032,7 @@ std::vector<SnapshotRecord> LiveCapacity(Device& device, const VulkanBinding& bi
 bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validation)
 {
 	std::shared_ptr<VulkanInspectionFrame> retained, resized, closedOutput;
-	std::optional<SnapshotRecord> retainedCpuReader;
+	std::optional<SnapshotRecord> retainedCpuReader, sequenceRetention;
 	RawRetention rawRetention, srgbRawRetention;
 	std::vector<SnapshotRecord> liveRetention;
 	{
@@ -962,6 +1045,7 @@ bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validat
 			return false;
 		}
 		const VulkanBinding binding{instance.handle, device.physical, device.native, device.family, device.index};
+		sequenceRetention = CaptureSequence(device, binding, validation);
 		liveRetention = LiveCapacity(device, binding, validation);
 		rawRetention = CaptureRaw(device, binding, validation, VK_FORMAT_R8G8B8A8_UNORM);
 		srgbRawRetention = CaptureRaw(device, binding, validation, VK_FORMAT_R8G8B8A8_SRGB);
@@ -1076,6 +1160,9 @@ bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validat
 	simxr::probe::VerifyImageDelivery(retained, resized, verify);
 	if (verify)
 	{
+		const auto sequenceImage = std::dynamic_pointer_cast<const VulkanInspectionFrame>(sequenceRetention->output);
+		Require(sequenceImage != nullptr, "Sequence capture lost its independent native image");
+		Verify(*sequenceImage, 32, 24, Original);
 		Verify(*retained, 32, 24, Original);
 		Verify(*retained, 32, 24, Original, 1);
 		Verify(*resized, 40, 30, Reused);

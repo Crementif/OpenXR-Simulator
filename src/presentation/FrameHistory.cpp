@@ -71,7 +71,8 @@ FrameHistory::Records::iterator FrameHistory::Current(FrameId frame)
 
 void FrameHistory::Issue(
 	const FramePrediction& prediction,
-	const std::function<void(std::shared_ptr<const FrameRecord>, std::shared_ptr<const FrameRecord>)>& reserve)
+	const std::function<void(std::shared_ptr<const FrameRecord>, std::shared_ptr<const FrameRecord>)>& reserve,
+	std::optional<SequenceCaptureRecord> sequenceCapture)
 {
 	if (!prediction.id.value)
 		throw std::invalid_argument("Invalid frame identity");
@@ -85,7 +86,13 @@ void FrameHistory::Issue(
 						return value.record->key == key;
 					}))
 		throw std::logic_error("Frame identity already issued");
-	auto record = std::make_shared<const FrameRecord>(FrameRecord{key, prediction});
+	if (sequenceCapture && (!sequenceCapture->request.sequence || !sequenceCapture->request.owner.id ||
+		sequenceCapture->request.frame != prediction.id ||
+		((sequenceCapture->reservation.result == SnapshotAdmission::Accepted) !=
+			(sequenceCapture->reservation.id.value != 0))))
+		throw std::invalid_argument("Invalid sequence capture receipt");
+	auto record = std::make_shared<const FrameRecord>(
+		FrameRecord{key, prediction, FrameStage::Issued, {}, std::move(sequenceCapture)});
 	auto cancelled = std::make_shared<FrameRecord>(*record);
 	cancelled->stage = FrameStage::Cancelled;
 	if (m_records.size() == m_capacity)

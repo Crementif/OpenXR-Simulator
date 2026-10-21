@@ -127,6 +127,60 @@ CaptureReservation SessionCaptureCoordinator::Reserve(CaptureTarget target)
 	return reservation;
 }
 
+SessionCaptureCoordinator::SequenceCapture SessionCaptureCoordinator::PrepareSequenceCapture(
+	const std::optional<SequenceCaptureIntent>& request)
+{
+	return SequenceCapture(*this, request);
+}
+SessionCaptureCoordinator::SequenceCapture::SequenceCapture(SessionCaptureCoordinator& owner,
+	const std::optional<SequenceCaptureIntent>& request) : m_owner(owner)
+{
+	if (!request)
+		return;
+	std::lock_guard lock(owner.m_mutex);
+	m_record = SequenceCaptureRecord{*request, owner.ReserveLocked({})};
+}
+SessionCaptureCoordinator::SequenceCapture::~SequenceCapture()
+{
+	if (!m_committed && m_record && m_record->reservation.result == SnapshotAdmission::Accepted)
+		m_owner.m_store.Release(m_record->reservation.id);
+}
+const std::optional<SequenceCaptureRecord>& SessionCaptureCoordinator::SequenceCapture::Record() const noexcept
+{
+	return m_record;
+}
+void SessionCaptureCoordinator::SequenceCapture::Bind(std::shared_ptr<const FrameRecord> issued,
+	std::shared_ptr<const FrameRecord> cancelled)
+{
+	if (!m_record)
+		return;
+	if (m_record->reservation.result == SnapshotAdmission::Accepted &&
+		!m_owner.m_store.Bind(m_record->reservation.id, issued, std::move(cancelled)))
+		throw std::logic_error("Sequence capture reservation was cancelled before admission");
+	m_committed = true;
+	XrResult result = XR_SUCCESS;
+	switch (m_record->reservation.result)
+	{
+	case SnapshotAdmission::Accepted:
+		return;
+	case SnapshotAdmission::Capacity:
+		result = XR_ERROR_LIMIT_REACHED;
+		break;
+	case SnapshotAdmission::Closed:
+		result = XR_ERROR_SESSION_NOT_RUNNING;
+		break;
+	case SnapshotAdmission::Unsupported:
+		result = XR_ERROR_FEATURE_UNSUPPORTED;
+		break;
+	case SnapshotAdmission::Invalid:
+		result = XR_ERROR_VALIDATION_FAILURE;
+		break;
+	}
+	m_owner.m_history.Trace(FrameTraceKind::CaptureFailed, issued->key, issued->prediction.displayTime, result,
+		result == XR_ERROR_LIMIT_REACHED ? FrameDiagnosticCategory::Performance : FrameDiagnosticCategory::ApiError,
+		0, "sequence_capture_admission");
+}
+
 CaptureReservation SessionCaptureCoordinator::ReserveLocked(CaptureTarget target)
 {
 	if (!m_running)

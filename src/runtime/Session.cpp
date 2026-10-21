@@ -218,14 +218,16 @@ XrResult Session::WaitFrame(FramePrediction& prediction)
 		publication.lock();
 		if (!m_spaces.CanPublish(candidate.displayTime))
 			throw std::invalid_argument("Reference-space history exceeds the next frame boundary");
-		const auto reserveHistory = [this, &candidate]
+		const auto reserveHistory = [this, &candidate](const AppliedCommandSnapshot& applied)
 		{
+			auto sequenceCapture = m_captures.PrepareSequenceCapture(applied.sequenceCapture);
 			const auto reserveCaptures =
-				[this](std::shared_ptr<const FrameRecord> issued, std::shared_ptr<const FrameRecord> cancelled)
+				[this, &sequenceCapture](std::shared_ptr<const FrameRecord> issued, std::shared_ptr<const FrameRecord> cancelled)
 			{
-				m_captures.BindIssued(std::move(issued), std::move(cancelled));
+				m_captures.BindIssued(issued, cancelled);
+				sequenceCapture.Bind(std::move(issued), std::move(cancelled));
 			};
-			m_history.Issue(candidate, reserveCaptures);
+			m_history.Issue(candidate, reserveCaptures, sequenceCapture.Record());
 		};
 		boundary->Reserve(candidate, reserveHistory);
 	};
@@ -664,6 +666,7 @@ void Session::ReleaseCommandSource(CommandSource source, bool retire)
 	if (m_publication.ReleaseSource(source, retire) && m_state.running &&
 		(m_state.state == XR_SESSION_STATE_VISIBLE || m_state.state == XR_SESSION_STATE_SYNCHRONIZED))
 		Transition(XR_SESSION_STATE_FOCUSED, m_state.time);
+	m_captures.Snapshots().RetireSequenceCaptures(source);
 }
 
 XrResult Session::ConfigureCommands(std::uint64_t seed, std::optional<CommandConfiguration> initial,

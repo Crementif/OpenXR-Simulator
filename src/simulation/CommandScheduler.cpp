@@ -341,6 +341,10 @@ class CommandScheduler::PreparedCommandBoundary
 		CommandResult result = CommandResult::Applied;
 		if (!prepared.commands.empty())
 		{
+			const auto owned = m_state.OwnedChannels(m_sequence->Status().owner);
+			for (auto& command : prepared.commands)
+				if (auto* take = std::get_if<TakeControl>(&command))
+					take->replace = owned[static_cast<std::size_t>(take->channel)];
 			CommandOutcome outcome;
 			outcome.transaction = {m_sequence->Status().groups + 1, m_sequence->Source(), {frame, {}},
 				CommandLatePolicy::Reject, std::move(prepared.commands)};
@@ -354,7 +358,7 @@ class CommandScheduler::PreparedCommandBoundary
 		if (result != CommandResult::Applied)
 			m_state.ReleaseSource(m_sequence->Source());
 		else if (prepared.capture)
-			m_snapshot->sequenceCapture = SequenceCaptureIntent{m_sequence->Status().id, frame};
+			m_snapshot->sequenceCapture = SequenceCaptureIntent{m_sequence->Status().id, frame, m_sequence->Status().owner};
 	}
 	CommandState m_state;
 	std::deque<CommandOutcome> m_pending;

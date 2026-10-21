@@ -241,6 +241,70 @@ void SequenceLocalControllerFollowing()
 		"Explicit takeover left the sequence's other channels held");
 }
 
+void SequenceTransfersCallerChannels()
+{
+	CommandScheduler commands;
+	commands.Start();
+	commands.Submit(Request(1, 1, {TakeControl{ControlChannel::Head}, SetHeadPose{Pose(9)}}, Mcp));
+	Tick(commands, 1, SequenceBaseline());
+	const auto sequence = commands.StartPoseSequence(Mcp, SequenceProgram());
+	const auto applied = Tick(commands, 2, SequenceBaseline());
+	Require(applied->configuration.tracking.head.pose.position.x == 4 &&
+		applied->owners[0] == CommandSource{CommandSourceKind::Sequence, sequence->id} &&
+		applied->outcomes[0].result == CommandResult::Applied &&
+		std::get<TakeControl>(applied->outcomes[0].transaction.commands[0]).replace,
+		"Sequence conflicted with its caller's earlier one-shot control instead of recording ownership transfer");
+}
+
+void SequenceCaptureIssueRollback()
+{
+	FrameHistory history;
+	const auto generation = history.StartGeneration();
+	FramePool pool(1);
+	SessionCaptureCoordinator captures(history);
+	Require(captures.Configure(FramePool(pool), false, {}, false, false) == XR_SUCCESS,
+		"Configure sequence capture rollback");
+	captures.Start(generation);
+	CommandScheduler commands;
+	commands.Start();
+	commands.StartPoseSequence(Mcp, SequenceProgram());
+	const FramePrediction prediction{{1}, {1}, {Duration{110}}, Duration{10}};
+	bool rejected = false;
+	try
+	{
+		commands.Apply(prediction.id, {Duration{10}}, prediction.displayTime, SequenceBaseline(),
+			[&](const auto& applied)
+			{
+				auto capture = captures.PrepareSequenceCapture(applied->sequenceCapture);
+				Require(capture.Record()->reservation.result == SnapshotAdmission::Accepted && pool.InUse() == 1,
+					"Sequence did not reserve before history admission");
+				failCommandAllocation = true;
+				history.Issue(prediction, {}, capture.Record());
+			});
+	}
+	catch (const std::bad_alloc&)
+	{
+		rejected = true;
+	}
+	Require(rejected && pool.InUse() == 0 && captures.Snapshots().Snapshot().captures.empty() &&
+		!commands.At(prediction.id) && !commands.PoseSequenceStatusFor(Mcp)->origin.value &&
+		!history.Find({generation, prediction.id}), "Failed issue leaked a ticket or advanced sequence/history");
+	commands.Apply(prediction.id, {Duration{10}}, prediction.displayTime, SequenceBaseline(),
+		[&](const auto& applied)
+		{
+			auto capture = captures.PrepareSequenceCapture(applied->sequenceCapture);
+			history.Issue(prediction,
+				[&](auto issued, auto cancelled)
+				{
+					capture.Bind(std::move(issued), std::move(cancelled));
+				}, capture.Record());
+		});
+	const auto issued = history.Find({generation, prediction.id});
+	Require(issued->sequenceCapture && issued->sequenceCapture->request.owner == Mcp &&
+		captures.Snapshots().Read(issued->sequenceCapture->reservation.id)->frame == issued->key && pool.InUse() == 1,
+		"Retry failed to bind the exact sequence frame");
+}
+
 void AllocationFreeSpaceCommit()
 {
 	TrackingSystem tracking;
@@ -840,7 +904,7 @@ void PublicationBoundaryRollbackAndHistory()
 	try
 	{
 		boundary.Reserve(first,
-						 [&]
+						 [&](const AppliedCommandSnapshot&)
 						 {
 							 Require(publication.Commands().Recorder().Snapshot().total == 0,
 									 "Reservation callback could not observe uncommitted recorder state");
@@ -858,7 +922,7 @@ void PublicationBoundaryRollbackAndHistory()
 			"Rejected history reservation published commanded state or consumed the pending transaction");
 	unsigned reservations = 0;
 	boundary.Reserve(first,
-					 [&]
+					 [&](const AppliedCommandSnapshot&)
 					 {
 						 ++reservations;
 					 });
@@ -891,7 +955,7 @@ void PublicationBoundaryRollbackAndHistory()
 	const FramePrediction second{{2}, {2}, {Duration{120}}, Duration{10}};
 	SessionPublication::FrameBoundary next(publication, true, initial.referenceSpaces);
 	next.Reserve(second,
-				 []
+				 [](const AppliedCommandSnapshot&)
 				 {
 				 });
 	next.Publish();
@@ -1011,6 +1075,8 @@ int main()
 		AtomicCommandState();
 		ScheduledPoseSequence();
 		SequenceLocalControllerFollowing();
+		SequenceCaptureIssueRollback();
+		SequenceTransfersCallerChannels();
 		PoseSequenceReservationRollback();
 		PoseSequenceFailureAndCaptureOnly();
 		PreparedBoundaryAllocationRollback();
