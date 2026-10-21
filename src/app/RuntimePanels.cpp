@@ -55,6 +55,17 @@ std::vector<std::byte> InspectionMember(std::span<const std::byte> bytes, std::s
 	return {};
 }
 
+std::string ImageLabel(const PreviewImageSummary& image)
+{
+	if (image.target == wire::TargetKind::ComposedEyes)
+		return "Composited output";
+	if (image.target == wire::TargetKind::VirtualDisplay)
+		return "Display output";
+	if (image.target == wire::TargetKind::LayerView)
+		return "Submitted layer " + std::to_string(image.layer + 1) + " / view " + std::to_string(image.view + 1);
+	return "Captured image";
+}
+
 const char* ConnectionName(RuntimeConnectionState state)
 {
 	switch (state)
@@ -97,6 +108,12 @@ class RuntimePanels::Impl
 	{
 		m_focusPreview = true;
 		const bool canFetch = m_workspace.Select(capture);
+		if (canFetch)
+		{
+			const auto selected = m_workspace.Selected();
+			if (selected && !selected->document.Find(tag::Document) && !m_requests.Has(Work::Inspect, capture))
+				m_workspace.InspectSelected();
+		}
 		// Releasing the remote capture does not invalidate an already-owned GPU
 		// copy. Select that private image before considering another source read.
 		if (m_preview.SelectCapture(m_debugger.Scope(), capture) || !canFetch)
@@ -108,8 +125,17 @@ class RuntimePanels::Impl
 	void Command(wire::CommandKind kind, std::uint64_t capture = 0, bool raw = false, std::uint32_t layer = 0,
 				 std::uint32_t view = 0)
 	{
+		if (kind == wire::CommandKind::Pause || kind == wire::CommandKind::Step)
+			m_followOnResume = false;
 		m_debugger.Command(kind, capture, raw, layer, view);
 	}
+	void ResumeLive()
+	{
+		m_resumeAfter = m_debugger.Operations().empty() ? 0 : m_debugger.Operations().back().local;
+		m_followOnResume = true;
+		m_debugger.Command(wire::CommandKind::Resume);
+	}
+
 	void CancelPending()
 	{
 		m_debugger.CancelPending();
@@ -175,6 +201,7 @@ class RuntimePanels::Impl
 		snapshot.session = selected.id;
 		snapshot.generation = selected.generation;
 		snapshot.manual = m_debugger.Manual();
+		snapshot.following = m_preview.Following();
 		snapshot.selectedCapture = m_workspace.SelectedId();
 		snapshot.captures = m_workspace.Captures().size();
 		snapshot.images = m_preview.ReadyCount();
@@ -267,6 +294,19 @@ class RuntimePanels::Impl
 		}
 		if (m_requests.Snapshot().state != RuntimeConnectionState::Connected)
 			m_manualInput.SetTarget({});
+		if (m_followOnResume)
+			for (const auto& operation : m_debugger.Operations())
+				if (operation.local > m_resumeAfter && operation.kind == wire::CommandKind::Resume &&
+					panel::Terminal(operation.phase))
+				{
+					if (operation.phase != "complete")
+						m_followOnResume = false;
+					else if (!m_debugger.Manual() && m_requests.Snapshot().state == RuntimeConnectionState::Connected)
+					{
+						m_preview.Follow(true);
+						m_followOnResume = false;
+					}
+				}
 		m_exports.Poll();
 		m_preview.Poll();
 		for (auto error :
@@ -307,30 +347,34 @@ class RuntimePanels::Impl
 		if (!m_previewExpanded && (mode == WorkspaceMode::Debug || mode == WorkspaceMode::Custom))
 		{
 			ImGui::Begin("Frame controls");
+			ImGui::TextWrapped("Pause, advance one frame, or continue using the controls above the image. Each "
+							   "completed step creates an inspectable frame.");
 			ImGui::BeginDisabled(!selected.id || state.state != RuntimeConnectionState::Connected);
-			if (ImGui::Button("Pause"))
-				Command(wire::CommandKind::Pause);
-			ImGui::SameLine();
-			if (ImGui::Button("Step"))
-				Command(wire::CommandKind::Step);
-			ImGui::SameLine();
-			if (ImGui::Button("Resume"))
-				Command(wire::CommandKind::Resume);
 			if (ImGui::Button("Cancel pending operation"))
 				CancelPending();
-			if (ImGui::Button("Display step"))
-				Command(wire::CommandKind::DisplayStep);
-			ImGui::SameLine();
-			if (ImGui::Button("Strict admission"))
-				Command(wire::CommandKind::StrictAdmission);
-			ImGui::SetNextItemWidth(140);
-			ImGui::InputInt("Layer", &m_rawLayer);
-			ImGui::SetNextItemWidth(140);
-			ImGui::InputInt("View", &m_rawView);
-			if (ImGui::Button("Step source view"))
-				Command(wire::CommandKind::Step, 0, true, static_cast<std::uint32_t>(std::max(0, m_rawLayer)),
-						static_cast<std::uint32_t>(std::max(0, m_rawView)));
+			if (ImGui::CollapsingHeader("Advanced stepping"))
+			{
+				if (ImGui::Button("Advance display only"))
+					Command(wire::CommandKind::DisplayStep);
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("Advances presentation without admitting another application frame.");
+				if (ImGui::Button("Strict frame admission"))
+					Command(wire::CommandKind::StrictAdmission);
+				ImGui::SeparatorText("Capture a submitted source");
+				ImGui::TextWrapped("Captures a color source from the NEXT application frame. This advances the "
+								   "application; it does not switch images within the displayed frame.");
+				ImGui::TextUnformatted("Submitted layer index");
+				ImGui::SetNextItemWidth(-1);
+				ImGui::InputInt("##Source layer", &m_rawLayer);
+				ImGui::TextUnformatted("Projection view index");
+				ImGui::SetNextItemWidth(-1);
+				ImGui::InputInt("##Source view", &m_rawView);
+				if (ImGui::Button("Advance and capture source"))
+					Command(wire::CommandKind::Step, 0, true, static_cast<std::uint32_t>(std::max(0, m_rawLayer)),
+							static_cast<std::uint32_t>(std::max(0, m_rawView)));
+			}
 			ImGui::EndDisabled();
+			ImGui::SeparatorText("Runtime progress");
 			if (!selected.id)
 				ImGui::TextWrapped("Session unavailable; retained GPU snapshots remain usable.");
 			else
@@ -401,7 +445,7 @@ class RuntimePanels::Impl
 			ImGui::BeginDisabled(!capture || capture->released || capture->scope.epoch != epoch ||
 								 capture->scope.session != selected.id ||
 								 capture->scope.generation != selected.generation);
-			if (ImGui::Button("Inspect frame state"))
+			if (ImGui::Button("Refresh frame details"))
 				m_workspace.InspectSelected();
 			ImGui::EndDisabled();
 			ImGui::End();
@@ -432,18 +476,27 @@ class RuntimePanels::Impl
 		{
 			const auto image = m_preview.Selected();
 			const bool live = m_preview.Following();
-			ImGui::TextColored(!connected ? ImVec4{0.65f, 0.68f, 0.72f, 1}
-										  : (live ? ImVec4{0.35f, 0.85f, 0.65f, 1} : ImVec4{1, 0.75f, 0.35f, 1}),
-							   "%s",
-							   live ? (!connected ? (image ? "LAST LIVE FRAME / DISCONNECTED" : "NOT CONNECTED")
-									   : manual	  ? "LIVE VIEW / PAUSED"
-												  : "LIVE VIEW")
-									: "RETAINED FRAME");
-			if (!live)
+			const auto accent = !connected ? ImVec4{0.62f, 0.66f, 0.72f, 1}
+								: manual   ? ImVec4{0.96f, 0.69f, 0.32f, 1}
+								: !live	   ? ImVec4{0.48f, 0.72f, 0.95f, 1}
+										   : ImVec4{0.35f, 0.80f, 0.65f, 1};
+			ImGui::TextColored(accent, "%s",
+							   !connected ? "DISCONNECTED"
+							   : manual	  ? "PAUSED"
+							   : !live	  ? "INSPECTING"
+										  : "LIVE");
+			if (image)
 			{
 				ImGui::SameLine();
-				if (ImGui::Button("Return to live"))
+				ImGui::TextDisabled("Frame %llu  /  %s", static_cast<unsigned long long>(image->frame),
+									ImageLabel(*image).c_str());
+			}
+			if (!live && !manual && connected)
+			{
+				if (ImGui::SmallButton("Show live output"))
 					m_preview.Follow(true);
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("Follows new images. The application is already running.");
 			}
 			if (!m_exports.Detail().empty())
 				ImGui::TextWrapped("%s", m_exports.Detail().c_str());
@@ -458,32 +511,40 @@ class RuntimePanels::Impl
 				ImGui::TextWrapped("%s", state.detail.c_str());
 			if (image && image->ready && !image->released)
 			{
-				ImGui::SameLine();
-				ImGui::TextDisabled("Frame %llu", static_cast<unsigned long long>(image->frame));
 				if (m_previewView >= static_cast<int>(image->slices))
-					m_previewView = -1;
-				const auto viewLabel = [&](int view)
+					m_previewView = 0;
+				const bool eyes = image->target == wire::TargetKind::ComposedEyes && image->slices == 2;
+				if (eyes)
 				{
-					if (view < 0)
-						return std::string("All views");
-					if (image->slices == 2)
-						return std::string(view ? "Right eye" : "Left eye");
-					return "View " + std::to_string(view + 1);
-				};
-				ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8);
-				if (ImGui::BeginCombo("##Preview view", viewLabel(m_previewView).c_str()))
-				{
-					for (int view = -1; view < static_cast<int>(image->slices); ++view)
-						if (ImGui::Selectable(viewLabel(view).c_str(), m_previewView == view))
+					for (const auto [label, view] : {std::pair{"Left eye", 0}, {"Right eye", 1}, {"Both", -1}})
+					{
+						if (m_previewView == view)
+							ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+						const bool chosen = ImGui::Button(label);
+						if (m_previewView == view)
+							ImGui::PopStyleColor();
+						if (chosen)
 							m_previewView = view;
-					ImGui::EndCombo();
+						ImGui::SameLine();
+					}
 				}
-				ImGui::SameLine();
-				ImGui::Checkbox("Fit", &m_fitPreview);
-				ImGui::SameLine();
-				ImGui::SetNextItemWidth(120);
-				if (ImGui::SliderFloat("Zoom", &m_zoom, 0.05f, 16.0f, "%.2fx", ImGuiSliderFlags_Logarithmic))
-					m_fitPreview = false;
+				else if (image->slices > 1)
+				{
+					ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7);
+					const auto label = m_previewView < 0 ? "All slices" : "Slice " + std::to_string(m_previewView + 1);
+					if (ImGui::BeginCombo("##Image slice", label.c_str()))
+					{
+						for (int view = -1; view < static_cast<int>(image->slices); ++view)
+							if (ImGui::Selectable(view < 0 ? "All slices"
+														   : ("Slice " + std::to_string(view + 1)).c_str(),
+												  m_previewView == view))
+								m_previewView = view;
+						ImGui::EndCombo();
+					}
+					ImGui::SameLine();
+				}
+				if (ImGui::Button("Fit"))
+					m_fitPreview = true;
 				ImGui::SameLine();
 				if (ImGui::Button("1:1"))
 				{
@@ -491,12 +552,32 @@ class RuntimePanels::Impl
 					m_zoom = 1;
 				}
 				ImGui::SameLine();
-				ImGui::TextDisabled("(?)");
-				if (ImGui::IsItemHovered())
-					ImGui::SetTooltip("Pilot the selected device: hold right mouse over the live image.\n"
-									  "WASD move; Q/E down/up; Shift faster; Escape releases the pointer.\n"
-									  "Inspect: Fit shows the whole image; 1:1 shows native pixels.\n"
-									  "Drag with the middle mouse button to pan a zoomed image.");
+				if (ImGui::Button("Zoom..."))
+					ImGui::OpenPopup("Image zoom");
+				if (ImGui::BeginPopup("Image zoom"))
+				{
+					ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12);
+					if (ImGui::SliderFloat("##Zoom", &m_zoom, 0.05f, 16.0f, "%.2fx", ImGuiSliderFlags_Logarithmic))
+						m_fitPreview = false;
+					ImGui::TextUnformatted("Middle-drag pans the image.\n1:1 shows native pixels.");
+					ImGui::EndPopup();
+				}
+				if (live && !manual && connected)
+				{
+					ImGui::SameLine();
+					if (ImGui::Button("Pilot help"))
+						ImGui::OpenPopup("Piloting");
+					if (ImGui::BeginPopup("Piloting"))
+					{
+						ImGui::TextUnformatted(
+							"Hold the right mouse button over the image to look around.\nW/A/S/D move; Q/E move "
+							"down/up; Shift moves faster.\nRelease the mouse button or press Escape to stop.");
+						ImGui::TextUnformatted(
+							"Choose Head, Left or Right in Device controls to choose what you pilot.");
+						ImGui::EndPopup();
+					}
+				}
+
 				if (!m_previewExpanded && (mode == WorkspaceMode::Debug || mode == WorkspaceMode::Custom))
 				{
 					if (ImGui::CollapsingHeader("Image details and export"))
@@ -556,13 +637,13 @@ class RuntimePanels::Impl
 				ImGui::Spacing();
 				ImGui::SeparatorText(connected ? "Waiting for an image" : "Your application appears here");
 				ImGui::TextWrapped(
-					"%s",
-					!connected	   ? "Choose an application above to launch it, or use Connect to select an already "
-									 "running OpenXR application."
-					: !selected.id ? "The runtime is connected. Start an XR session in the application to see its view."
-					: m_preview.SelectedId()
-						? "Receiving the selected frame..."
-						: "The application has not supplied a visible frame. If it is paused, use Step or Resume.");
+					"%s", !connected ? "Choose an application above to launch it, or use Connect to select an already "
+									   "running OpenXR application."
+						  : !selected.id
+							  ? "The runtime is connected. Start an XR session in the application to see its view."
+						  : m_preview.SelectedId() ? "Receiving the selected frame..."
+												   : "The application has not supplied a visible frame. If it is "
+													 "paused, use Next frame or Continue.");
 			}
 		}
 		ImGui::End();
@@ -577,11 +658,56 @@ class RuntimePanels::Impl
 			m_documentEpoch = capture->scope.epoch;
 			ImGui::Text("Capture %llu / frame %llu", static_cast<unsigned long long>(capture->id),
 						static_cast<unsigned long long>(capture->frame));
-			Document(capture->document.Find(tag::Document)->value);
+			ImGui::TextWrapped("What the application submitted for this frame. These details stay attached to this "
+							   "capture while the application runs.");
+			ImGui::SeparatorText("Frame images");
+			bool hasImage = false;
+			for (const auto& image : m_preview.Images())
+				if (image.scope == capture->scope && image.frame == capture->frame && image.capture == capture->id &&
+					image.ready && !image.released)
+				{
+					hasImage = true;
+					ImGui::PushID(static_cast<int>(image.id));
+					ImGui::TextWrapped("%s", ImageLabel(image).c_str());
+					const float maximum = ImGui::GetFontSize() * 7.5f;
+					const auto& size = image.description;
+					const float width = std::min(ImGui::GetContentRegionAvail().x,
+												 std::min(maximum, maximum * size.width / size.height));
+					m_preview.DrawImage(image.id, width, 0);
+					bool open = ImGui::IsItemClicked();
+					if (ImGui::IsItemHovered())
+						ImGui::SetTooltip("Show this image in the main view");
+					ImGui::SameLine();
+					ImGui::BeginGroup();
+					ImGui::TextDisabled("%u x %u", size.width, size.height);
+					if (image.slices > 1)
+						ImGui::TextWrapped("%s", image.target == wire::TargetKind::ComposedEyes ? "Left eye shown"
+																								: "First slice shown");
+					open |= ImGui::Button("View image");
+					ImGui::EndGroup();
+					if (open)
+					{
+						m_preview.SelectImage(image.id);
+						m_previewView = 0;
+						m_focusPreview = true;
+					}
+
+					ImGui::PopID();
+				}
+			if (!hasImage)
+				ImGui::TextWrapped("No image is retained locally for this frame.");
+			ImGui::TextWrapped("A composited output is the simulator's result. Submitted color/depth sources are "
+							   "described under Submitted layers; not every source has retained pixels.");
+			const auto bytes = capture->document.Find(tag::Document)->value;
+			if (ImGui::CollapsingHeader("Submitted layers"))
+				Document(InspectionMember(bytes, "layers"));
+			if (ImGui::CollapsingHeader("All frame metadata"))
+				Document(bytes);
 		}
 		else
-			ImGui::TextWrapped("Select an exact capture and request its submitted CPU state. Actions, tracking and "
-							   "layers reflect that historical frame.");
+			ImGui::TextWrapped(
+				"Select a frame in Captures to inspect its images and submitted state. Actions, tracking and "
+				"layers reflect that historical frame.");
 		ImGui::End();
 		ImGui::Begin("Action and binding inspector");
 		m_nodesDrawn = 0;
@@ -606,7 +732,7 @@ class RuntimePanels::Impl
 		}
 		else
 		{
-			ImGui::TextWrapped("Select a retained frame and use Inspect submitted CPU state in Captures. This "
+			ImGui::TextWrapped("Select a retained frame in Captures. This "
 							   "inspector preserves the selected historical action-sync serial.");
 		}
 		ImGui::End();
@@ -682,6 +808,7 @@ class RuntimePanels::Impl
 		m_manualInput.SetTarget({});
 		m_observation = 0;
 		m_devices.ResetObservations();
+		m_followOnResume = false;
 		m_simulationState = {};
 		m_simulationResult = {};
 		m_manualInput.Refresh();
@@ -1002,6 +1129,8 @@ class RuntimePanels::Impl
 	std::string m_detail;
 	std::array<char, 512> m_exportFile{};
 	bool m_autoSelect = true, m_focusPreview = true, m_fitPreview = true;
+	bool m_followOnResume = false;
+	std::uint64_t m_resumeAfter = 0;
 	float m_zoom = 1;
 	ImVec2 m_previousImageSize{};
 	int m_previewView = 0;
@@ -1066,6 +1195,10 @@ std::string RuntimePanels::Endpoint() const
 void RuntimePanels::ConnectEndpoint(std::string endpoint)
 {
 	m_impl->ConnectEndpoint(std::move(endpoint));
+}
+void RuntimePanels::ResumeLive()
+{
+	m_impl->ResumeLive();
 }
 void RuntimePanels::SetLive(bool enabled)
 {

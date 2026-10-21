@@ -15,6 +15,8 @@ struct PreviewImages::Image
 {
 	std::uint64_t id = 0, reader = 0, delivery = 0, frame = 0, capture = 0, epoch = 0, session = 0, generation = 0;
 	bool live = false, release = false;
+	std::optional<wire::TargetKind> target;
+	std::uint32_t layer = 0, view = 0;
 	std::unique_ptr<PreviewTexture> texture;
 };
 PreviewImages::PreviewImages(UiRenderer& renderer, RuntimePanelRequests& requests)
@@ -114,7 +116,10 @@ PreviewImageSummary PreviewImages::Summary(const Image& image) const
 			image.release,
 			image.texture->Ready(),
 			image.texture->Description(),
-			image.texture->SliceCount()};
+			image.texture->SliceCount(),
+			image.target,
+			image.layer,
+			image.view};
 }
 std::optional<PreviewImageSummary> PreviewImages::Selected() const
 {
@@ -158,7 +163,11 @@ void PreviewImages::BeginFrame()
 }
 void PreviewImages::DrawSelected(float width, std::optional<std::size_t> slice)
 {
-	if (auto image = Find(m_selectedImage))
+	DrawImage(m_selectedImage, width, slice);
+}
+void PreviewImages::DrawImage(std::uint64_t id, float width, std::optional<std::size_t> slice)
+{
+	if (auto image = Find(id); image && !image->release && image->texture->Ready())
 		image->texture->Draw(width, slice);
 }
 std::vector<VkSemaphore> PreviewImages::ReadyWaits() const
@@ -217,6 +226,13 @@ void PreviewImages::Retained(const wire::Message& message, bool preview)
 			throw std::runtime_error("Runtime omitted the retained image description");
 		prepared->texture =
 			std::make_unique<PreviewTexture>(m_renderer.DeviceAccess(), wire::DecodeImageDescription(*description));
+		if (const auto target = message.Find(tag::Target))
+		{
+			const auto fields = Nested(target);
+			prepared->target = static_cast<wire::TargetKind>(U32(fields, tag::CaptureKind));
+			prepared->layer = U32(fields, tag::Layer);
+			prepared->view = U32(fields, tag::View);
+		}
 		prepared->frame = frame;
 		prepared->capture = capture;
 		prepared->epoch = m_scope.epoch;

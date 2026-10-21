@@ -94,7 +94,7 @@ class Interaction
 		const auto* toolbar = ImGui::FindWindowByName("##Workspace toolbar");
 		Require(toolbar != nullptr, "Workspace toolbar is missing");
 		float x = toolbar->Pos.x + ImGui::GetStyle().WindowPadding.x;
-		const char* labels[] = {"Simulator", "Inspect frames", "Record & replay"};
+		const char* labels[] = {"Simulate", "Inspect", "Record & replay"};
 		for (int index = 0; index < static_cast<int>(mode); ++index)
 			x += ImGui::CalcTextSize(labels[index]).x + ImGui::GetStyle().FramePadding.x * 2 +
 				 ImGui::GetStyle().ItemSpacing.x;
@@ -437,6 +437,64 @@ void PilotLiveRuntime(const char* endpoint)
 			return input.Snapshot().result.fields.empty();
 		},
 		"Manual release did not complete with the UI idle");
+	// Exercise the inspection context on the same isolated real application.
+	test.workspace.SetMode(WorkspaceMode::Debug);
+	test.runtime.Command(simxr::control::CommandKind::Pause);
+	Eventually(
+		[&]
+		{
+			frame();
+			return test.runtime.Snapshot().manual && !test.runtime.Snapshot().operationPending;
+		},
+		"Application did not pause");
+	test.runtime.Command(simxr::control::CommandKind::Step);
+	Eventually(
+		[&]
+		{
+			frame();
+			const auto state = test.runtime.Snapshot();
+			return !state.operationPending && state.selectedCapture && state.selectedReady && !state.following;
+		},
+		"Step did not select its captured frame");
+	const auto retained = test.runtime.Snapshot().selectedCapture;
+	const auto captureContext = [&](const char* name)
+	{
+		if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
+		{
+			test.renderer.RequestScreenshot((std::filesystem::path(directory) / name).string());
+			frame();
+			frame();
+		}
+	};
+	for (int i = 0; i < 6; ++i)
+		frame();
+	ImGui::SetWindowFocus("Historical state");
+	for (int i = 0; i < 3; ++i)
+		frame();
+	captureContext("cemu-inspection-paused.bmp");
+	test.runtime.ResumeLive();
+	Eventually(
+		[&]
+		{
+			frame();
+			const auto state = test.runtime.Snapshot();
+			return !state.operationPending && !state.manual && state.following;
+		},
+		"Continue did not resume and follow live output");
+	test.runtime.SelectCapture(retained);
+	for (int i = 0; i < 6; ++i)
+		frame();
+	Require(!test.runtime.Snapshot().manual && !test.runtime.Snapshot().following,
+			"Inspecting a retained frame falsely paused the application");
+	captureContext("cemu-inspection-running.bmp");
+	test.runtime.SetLive(true);
+	frame();
+	Require(test.runtime.Snapshot().following && !test.runtime.Snapshot().manual,
+			"Showing live output changed the application pause state");
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Validation errors in frame inspection and thumbnail rendering");
+	std::cout << "PASS real application inspection: pause, next frame, captured image, continue and historical view "
+				 "while running\n";
 }
 void ConfigureObservedDevices()
 {

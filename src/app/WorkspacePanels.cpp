@@ -255,14 +255,20 @@ struct WorkspacePanels::Impl
 		}
 		for (const auto view : {WorkspaceMode::Simulator, WorkspaceMode::Debug, WorkspaceMode::Automation})
 		{
-			const auto label = view == WorkspaceMode::Simulator ? "Simulator"
-							   : view == WorkspaceMode::Debug	? "Inspect frames"
+			const auto label = view == WorkspaceMode::Simulator ? "Simulate"
+							   : view == WorkspaceMode::Debug	? "Inspect"
 																: "Record & replay";
 			const bool active = view == mode;
 			if (active)
 				ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
 			if (ImGui::Button(label))
 				SelectMode(view);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip(
+					"%s", view == WorkspaceMode::Simulator ? "Pilot the head and hands; configure simulated devices."
+						  : view == WorkspaceMode::Debug ? "Inspect captured frames, submitted images and application "
+														   "state. Switching tools does not pause the app."
+														 : "Record simulated input, save sequences and replay them.");
 			if (active)
 				ImGui::PopStyleColor();
 			ImGui::SameLine();
@@ -273,12 +279,28 @@ struct WorkspacePanels::Impl
 		if (ImGui::Button("Release inputs"))
 			runtime.ReleaseInputs();
 		ImGui::SameLine();
-		ImGui::TextDisabled("  %s",
-							snapshot.sessionAvailable
-								? (snapshot.operationPending ? "Updating..."
-								   : snapshot.manual		 ? "Paused"
-															 : "Running")
-								: (snapshot.connected ? "Waiting for application" : snapshot.connectionState.c_str()));
+		const bool paused = snapshot.connected && snapshot.sessionAvailable && snapshot.manual;
+		const bool inspecting = !snapshot.following && snapshot.selectedFrame;
+		const bool disconnectedImage = !snapshot.connected && snapshot.selectedFrame;
+		const ImVec4 accent = !snapshot.connected ? ImVec4{0.62f, 0.66f, 0.72f, 1}
+							  : paused			  ? ImVec4{0.96f, 0.69f, 0.32f, 1}
+							  : inspecting		  ? ImVec4{0.48f, 0.72f, 0.95f, 1}
+												  : ImVec4{0.35f, 0.80f, 0.65f, 1};
+		ImGui::TextColored(accent, "%s",
+						   !snapshot.connected ? (disconnectedImage ? "Disconnected / image retained" : "Disconnected")
+						   : !snapshot.sessionAvailable ? "Waiting for application"
+						   : snapshot.operationPending	? "Updating..."
+						   : paused						? "Application paused"
+						   : inspecting					? "Inspecting / app running"
+														: "Application running");
+		if (paused || inspecting || disconnectedImage)
+		{
+			const auto position = viewport->Pos, size = viewport->Size;
+			const float inset = 2 * settings.scale;
+			ImGui::GetForegroundDrawList(viewport)->AddRect(
+				{position.x + inset, position.y + inset}, {position.x + size.x - inset, position.y + size.y - inset},
+				ImGui::ColorConvertFloat4ToU32(accent), 0, 0, 3 * settings.scale);
+		}
 		ImGui::SetNextItemWidth(std::max(100.0f, std::min(220.0f * settings.scale, viewport->WorkSize.x * 0.30f)));
 		if (ImGui::BeginCombo("##Launch profile",
 							  selectedProfile >= 0
@@ -316,17 +338,22 @@ struct WorkspacePanels::Impl
 		}
 		ImGui::SameLine();
 		ImGui::BeginDisabled(!snapshot.sessionAvailable || snapshot.operationPending);
-		if (ImGui::Button(snapshot.manual ? "Resume" : "Pause"))
-			runtime.Command(snapshot.manual ? control::CommandKind::Resume : control::CommandKind::Pause);
+		if (ImGui::Button(snapshot.manual ? "Continue" : "Pause"))
+		{
+			if (snapshot.manual)
+				runtime.ResumeLive();
+			else
+				runtime.Command(control::CommandKind::Pause);
+		}
 		ImGui::EndDisabled();
 		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
 			ImGui::SetTooltip("%s", !snapshot.sessionAvailable ? "Connect to a running XR application first"
 									: snapshot.operationPending
 										? "Waiting for the runtime to finish the previous operation"
-										: "F6 Pause / F8 Resume");
+										: "F6 pauses. F8 continues the application and follows live output.");
 		ImGui::SameLine();
 		ImGui::BeginDisabled(!snapshot.sessionAvailable || !snapshot.manual || snapshot.operationPending);
-		if (ImGui::Button("Step"))
+		if (ImGui::Button("Next frame"))
 			runtime.Command(control::CommandKind::Step);
 		ImGui::EndDisabled();
 		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
@@ -375,8 +402,8 @@ struct WorkspacePanels::Impl
 					runtime.Command(control::CommandKind::Pause);
 				if (ImGui::MenuItem("Step", "F7"))
 					runtime.Command(control::CommandKind::Step);
-				if (ImGui::MenuItem("Resume", "F8"))
-					runtime.Command(control::CommandKind::Resume);
+				if (ImGui::MenuItem("Continue", "F8"))
+					runtime.ResumeLive();
 				if (ImGui::MenuItem("Cancel pending operation", "Shift+F7"))
 					runtime.CancelPending();
 				ImGui::EndMenu();
@@ -419,7 +446,7 @@ struct WorkspacePanels::Impl
 					runtime.Command(control::CommandKind::Step);
 			}
 			if (ImGui::IsKeyPressed(ImGuiKey_F8, false))
-				runtime.Command(control::CommandKind::Resume);
+				runtime.ResumeLive();
 		}
 	}
 	void Draw(RuntimePanels& runtime)
@@ -493,8 +520,8 @@ struct WorkspacePanels::Impl
 				}
 				ImGui::PopID();
 			}
-			ImGui::TextWrapped(
-				"F6 Pause · F7 Step · Shift+F7 Cancel · F8 Resume. Shortcuts are disabled while editing fields.");
+			ImGui::TextWrapped("F6 Pause · F7 Next frame · Shift+F7 Cancel · F8 Continue. Shortcuts are disabled while "
+							   "editing fields.");
 			ImGui::End();
 		}
 		if (showLaunch)

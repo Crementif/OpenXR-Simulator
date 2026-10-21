@@ -19,6 +19,7 @@ class Window;
 struct RuntimePanelSnapshot
 {
 	bool connected = false, sessionAvailable = false, manual = false;
+	bool following = true;
 	std::string connectionState;
 	std::uint64_t session = 0, generation = 0, appliedPilotUpdates = 0;
 	std::uint64_t selectedFrame = 0, selectedCapture = 0, selectedReader = 0;
@@ -51,6 +52,7 @@ class RuntimePanels
 	std::string Endpoint() const;
 	void ConnectEndpoint(std::string endpoint);
 	void SetLive(bool enabled);
+	void ResumeLive();
 	std::vector<std::uint64_t> CaptureIds() const;
 	void RequestExport(std::string path);
 	std::optional<automation::SavedRecording> TakeRecordingReplay();

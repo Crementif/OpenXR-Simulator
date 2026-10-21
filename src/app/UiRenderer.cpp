@@ -8,8 +8,8 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
-#include <fstream>
 #include <filesystem>
+#include <fstream>
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
@@ -320,6 +320,25 @@ struct UiRenderer::Impl
 				ImGui::GetIO().Fonts->AddFontFromFileTTF(font.string().c_str(), 17);
 		}
 		auto& style = ImGui::GetStyle();
+		// Keep controls quiet; reserve accent colors for selection and runtime state.
+		style.Colors[ImGuiCol_WindowBg] = {0.075f, 0.085f, 0.105f, 1};
+		style.Colors[ImGuiCol_PopupBg] = {0.105f, 0.12f, 0.145f, 1};
+		style.Colors[ImGuiCol_Border] = {0.22f, 0.25f, 0.29f, 1};
+		style.Colors[ImGuiCol_FrameBg] = {0.13f, 0.15f, 0.18f, 1};
+		style.Colors[ImGuiCol_FrameBgHovered] = {0.19f, 0.23f, 0.28f, 1};
+		style.Colors[ImGuiCol_FrameBgActive] = {0.22f, 0.29f, 0.35f, 1};
+		style.Colors[ImGuiCol_Button] = {0.16f, 0.19f, 0.23f, 1};
+		style.Colors[ImGuiCol_ButtonHovered] = {0.23f, 0.29f, 0.35f, 1};
+		style.Colors[ImGuiCol_ButtonActive] = {0.18f, 0.40f, 0.48f, 1};
+		style.Colors[ImGuiCol_Header] = {0.14f, 0.18f, 0.22f, 1};
+		style.Colors[ImGuiCol_HeaderHovered] = {0.20f, 0.29f, 0.35f, 1};
+		style.Colors[ImGuiCol_HeaderActive] = {0.18f, 0.40f, 0.48f, 1};
+		style.Colors[ImGuiCol_Tab] = {0.11f, 0.14f, 0.17f, 1};
+		style.Colors[ImGuiCol_TabSelected] = {0.18f, 0.28f, 0.34f, 1};
+		style.Colors[ImGuiCol_TabHovered] = {0.22f, 0.35f, 0.42f, 1};
+		style.Colors[ImGuiCol_TitleBgActive] = {0.12f, 0.17f, 0.21f, 1};
+		style.Colors[ImGuiCol_SliderGrab] = {0.35f, 0.67f, 0.75f, 1};
+		style.Colors[ImGuiCol_CheckMark] = {0.45f, 0.78f, 0.83f, 1};
 		style.WindowPadding = {14, 12};
 		style.FramePadding = {8, 5};
 		style.FrameRounding = 3;

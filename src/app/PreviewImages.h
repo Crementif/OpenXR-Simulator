@@ -15,6 +15,8 @@ struct PreviewImageSummary
 	bool live = false, released = false, ready = false;
 	control::ImageDescription description;
 	std::size_t slices = 0;
+	std::optional<control::TargetKind> target;
+	std::uint32_t layer = 0, view = 0;
 };
 // Owns native preview acquisition, source selection and actual GPU/UI retirement.
 // A const summary never exposes its texture or permits arbitrary native teardown.
@@ -41,6 +43,7 @@ class PreviewImages
 	std::size_t ReadyCount() const;
 	void BeginFrame();
 	void DrawSelected(float width, std::optional<std::size_t> slice = {});
+	void DrawImage(std::uint64_t id, float width, std::optional<std::size_t> slice = {});
 	std::vector<VkSemaphore> ReadyWaits() const;
 	void Submitted(std::uint64_t serial);
 	std::string TakeError();
