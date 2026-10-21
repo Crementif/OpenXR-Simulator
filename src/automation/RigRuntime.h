@@ -24,6 +24,18 @@ struct ScriptGameOperation
 	std::uint64_t game = 0;
 };
 
+struct ScriptCaptureTarget
+{
+	control::TargetKind kind = control::TargetKind::ComposedEyes;
+	std::uint32_t layer = 0;
+	std::uint32_t view = 0;
+};
+struct ScriptInspection
+{
+	std::vector<std::byte> document;
+	std::uint64_t identity = 0;
+};
+
 class RigProgress;
 
 class RigRuntime
@@ -38,12 +50,15 @@ class RigRuntime
 	std::vector<std::byte> AwaitTransaction(std::uint64_t transaction);
 	void PauseApplication();
 	void ResumeApplication();
-	ScriptStep StepApplication(std::optional<std::uint32_t> layer, std::uint32_t view);
+	ScriptStep StepApplication(ScriptCaptureTarget target);
 	ScriptStep StepDisplay();
-	std::vector<std::byte> Inspect(std::uint64_t capture);
+	ScriptInspection Inspect(std::uint64_t capture);
+	std::vector<std::byte> Revision(std::uint64_t revision);
+	void ReleaseInspection(std::uint64_t inspection);
 	std::vector<std::byte> State();
 	void ReleaseInputs();
-	void Export(std::uint64_t capture, const std::string& path);
+	void Export(std::uint64_t capture, const std::string& path,
+				std::optional<ScriptCaptureTarget> target, std::optional<std::uint32_t> arraySlice);
 	void ReleaseCapture(std::uint64_t capture);
 	ScriptGameOperation GameCommand(std::uint32_t kind, std::string payload);
 	std::vector<std::byte> AwaitGame(std::uint64_t game, std::uint64_t operation);
@@ -59,6 +74,7 @@ class RigRuntime
 	std::uint64_t m_nextCommand = 1;
 	std::uint64_t m_lease = 0;
 	std::vector<std::uint64_t> m_captures;
+	std::vector<std::uint64_t> m_inspections;
 	Fields Session() const;
 	Fields Source() const;
 	control::Message Call(control::OpCode opcode, Fields fields);

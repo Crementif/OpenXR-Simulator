@@ -97,6 +97,28 @@ std::string StringField(lua_State* state, int table, const char* key, std::strin
 	lua_pop(state, 1);
 	return value;
 }
+ScriptCaptureTarget CaptureTarget(lua_State* state, int index)
+{
+	if (!lua_istable(state, index))
+		throw std::invalid_argument("Capture options require a table");
+	const auto name = StringField(state, index, "target", "composed");
+	ScriptCaptureTarget target;
+	if (name == "composed")
+		target.kind = wire::TargetKind::ComposedEyes;
+	else if (name == "layer_view")
+		target.kind = wire::TargetKind::LayerView;
+	else if (name == "layer_depth")
+		target.kind = wire::TargetKind::LayerDepth;
+	else if (name == "layer_depth_linear")
+		target.kind = wire::TargetKind::LayerDepthLinear;
+	else
+		throw std::invalid_argument("Unknown capture target");
+	target.layer = IndexField(state, index, "layer", 0);
+	target.view = IndexField(state, index, "view", 0);
+	if (target.kind == wire::TargetKind::ComposedEyes && (target.layer || target.view))
+		throw std::invalid_argument("Composed capture cannot select a source layer/view");
+	return target;
+}
 std::vector<float> Vector(lua_State* state, int table, const char* key, std::initializer_list<float> fallback)
 {
 	lua_getfield(state, table, key);
@@ -377,7 +399,7 @@ void PushInspection(lua_State* state, std::span<const std::byte> bytes, unsigned
 		if (!data->AsI64())
 			throw std::runtime_error("Invalid inspection integer");
 		const auto value = std::to_string(*data->AsI64());
-		lua_pushlstring(state, value.data(), value.size());
+		lua_pushlstring(state, value.empty() ? "" : value.data(), value.size());
 		break;
 	}
 	case wire::InspectionType::Float:
@@ -390,7 +412,7 @@ void PushInspection(lua_State* state, std::span<const std::byte> bytes, unsigned
 		if (!data->AsText())
 			throw std::runtime_error("Invalid inspection text");
 		const auto value = *data->AsText();
-		lua_pushlstring(state, value.data(), value.size());
+		lua_pushlstring(state, value.empty() ? "" : value.data(), value.size());
 		break;
 	}
 	case wire::InspectionType::Object:
@@ -581,18 +603,19 @@ class ScriptEngine::Impl
 	}
 	int Step(lua_State* state)
 	{
-		std::optional<std::uint32_t> layer;
-		std::uint32_t view = 0;
-		if (!lua_isnoneornil(state, 1))
+		ScriptCaptureTarget target;
+		if (lua_istable(state, 1))
+			target = CaptureTarget(state, 1);
+		else if (!lua_isnoneornil(state, 1))
 		{
 			const auto layerIndex = Integer(state, 1);
 			const auto viewIndex = lua_isnoneornil(state, 2) ? 0 : Integer(state, 2);
 			if (layerIndex > UINT32_MAX || viewIndex > UINT32_MAX)
 				throw std::invalid_argument("Capture index exceeds uint32");
-			layer = static_cast<std::uint32_t>(layerIndex);
-			view = static_cast<std::uint32_t>(viewIndex);
+			target = {wire::TargetKind::LayerView, static_cast<std::uint32_t>(layerIndex),
+				static_cast<std::uint32_t>(viewIndex)};
 		}
-		const auto step = m_runtime.StepApplication(layer, view);
+		const auto step = m_runtime.StepApplication(target);
 		if (step.capture)
 			PushInteger(state, *step.capture);
 		else
@@ -602,8 +625,20 @@ class ScriptEngine::Impl
 	}
 	int Inspect(lua_State* state)
 	{
-		PushInspection(state, m_runtime.Inspect(Integer(state, 1)));
+		const auto inspection = m_runtime.Inspect(Integer(state, 1));
+		PushInspection(state, inspection.document);
+		PushInteger(state, inspection.identity);
+		return 2;
+	}
+	int Revision(lua_State* state)
+	{
+		PushInspection(state, m_runtime.Revision(Integer(state, 1)));
 		return 1;
+	}
+	int ReleaseInspection(lua_State* state)
+	{
+		m_runtime.ReleaseInspection(Integer(state, 1));
+		return 0;
 	}
 	int StepDisplay(lua_State* state)
 	{
@@ -631,7 +666,24 @@ class ScriptEngine::Impl
 	}
 	int Export(lua_State* state)
 	{
-		m_runtime.Export(Integer(state, 1), String(state, 2));
+		std::optional<ScriptCaptureTarget> target;
+		std::optional<std::uint32_t> arraySlice;
+		if (!lua_isnoneornil(state, 3))
+		{
+			if (!lua_istable(state, 3))
+				throw std::invalid_argument("Export options require a table");
+			lua_getfield(state, 3, "target");
+			const bool selectTarget = !lua_isnil(state, -1);
+			lua_pop(state, 1);
+			if (selectTarget)
+				target = CaptureTarget(state, 3);
+			lua_getfield(state, 3, "array_slice");
+			const bool selectSlice = !lua_isnil(state, -1);
+			lua_pop(state, 1);
+			if (selectSlice)
+				arraySlice = IndexField(state, 3, "array_slice", 0);
+		}
+		m_runtime.Export(Integer(state, 1), String(state, 2), target, arraySlice);
 		return 0;
 	}
 	int ReleaseCapture(lua_State* state)
@@ -718,6 +770,8 @@ class ScriptEngine::Impl
 		bind("resume", Binding<&Impl::Resume>);
 		bind("step", Binding<&Impl::Step>);
 		bind("inspect", Binding<&Impl::Inspect>);
+		bind("revision", Binding<&Impl::Revision>);
+		bind("release_inspection", Binding<&Impl::ReleaseInspection>);
 		bind("checkpoint", Binding<&Impl::Checkpoint>);
 		bind("state", Binding<&Impl::State>);
 		bind("release_inputs", Binding<&Impl::ReleaseInputs>);

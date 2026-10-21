@@ -42,6 +42,13 @@ std::uint64_t Next(std::uint64_t& counter)
 		throw std::length_error("Rig command identifiers exhausted");
 	return counter++;
 }
+control::Field EncodeTarget(ScriptCaptureTarget target)
+{
+	const std::vector fields{
+		control::Field::U32(tag::CaptureKind, static_cast<std::uint32_t>(target.kind), true),
+		control::Field::U32(tag::Layer, target.layer), control::Field::U32(tag::View, target.view)};
+	return control::Field::Bytes(tag::Target, control::EncodeFields(fields));
+}
 void PollAgain()
 {
 	std::this_thread::sleep_for(std::chrono::milliseconds{2});
@@ -83,7 +90,7 @@ RigRuntime::RigRuntime(RigExchange exchange, RigProgress& progress)
 }
 void RigRuntime::Configure(control::ControlSessionId session, std::uint64_t generation)
 {
-	if (m_lease || !m_captures.empty())
+	if (m_lease || !m_captures.empty() || !m_inspections.empty())
 		throw std::logic_error("Release rig runtime resources before configuring another run");
 	m_session = session;
 	m_generation = generation;
@@ -186,16 +193,10 @@ void RigRuntime::ResumeApplication()
 {
 	Debug(control::CommandKind::Resume);
 }
-ScriptStep RigRuntime::StepApplication(std::optional<std::uint32_t> layer, std::uint32_t view)
+ScriptStep RigRuntime::StepApplication(ScriptCaptureTarget target)
 {
-	Fields target{control::Field::U32(tag::CaptureKind, layer ? 2 : 1, true)};
-	if (layer)
-	{
-		target.push_back(control::Field::U32(tag::Layer, *layer));
-		target.push_back(control::Field::U32(tag::View, view));
-	}
-	return CaptureStep(control::CommandKind::Step, {control::Field::Bytes(tag::Target, control::EncodeFields(target)),
-													control::Field::U32(tag::Lookahead, 1)});
+	return CaptureStep(control::CommandKind::Step,
+		{EncodeTarget(target), control::Field::U32(tag::Lookahead, 1)});
 }
 ScriptStep RigRuntime::StepDisplay()
 {
@@ -234,16 +235,27 @@ ScriptStep RigRuntime::CaptureStep(control::CommandKind kind, Fields fields)
 	}
 	return step;
 }
-std::vector<std::byte> RigRuntime::Inspect(std::uint64_t capture)
+ScriptInspection RigRuntime::Inspect(std::uint64_t capture)
 {
+	// Reserve ownership bookkeeping before acquiring a remote reader.
+	if (m_inspections.size() == m_inspections.capacity())
+		m_inspections.reserve(m_inspections.size() + 1);
 	auto fields = Session();
 	fields.push_back(control::Field::U64(tag::CaptureId, capture, true));
 	const auto response = Call(control::OpCode::InspectFrame, std::move(fields));
-	RemoteResource inspection{*this, control::OpCode::ReleaseInspection, tag::InspectionId,
-							  Number(response, tag::InspectionId)};
-	auto document = Document(response);
-	inspection.Release();
-	return document;
+	const auto identity = Number(response, tag::InspectionId);
+	if (std::find(m_inspections.begin(), m_inspections.end(), identity) == m_inspections.end())
+		m_inspections.push_back(identity);
+	return {Document(response), identity};
+}
+std::vector<std::byte> RigRuntime::Revision(std::uint64_t revision)
+{
+	return Document(Call(control::OpCode::FeatureRevision, {control::Field::U64(tag::RevisionId, revision, true)}));
+}
+void RigRuntime::ReleaseInspection(std::uint64_t inspection)
+{
+	Call(control::OpCode::ReleaseInspection, {control::Field::U64(tag::InspectionId, inspection, true)});
+	std::erase(m_inspections, inspection);
 }
 std::vector<std::byte> RigRuntime::State()
 {
@@ -253,13 +265,19 @@ void RigRuntime::ReleaseInputs()
 {
 	Call(control::OpCode::ReleaseControl, Source());
 }
-void RigRuntime::Export(std::uint64_t capture, const std::string& path)
+void RigRuntime::Export(std::uint64_t capture, const std::string& path,
+						std::optional<ScriptCaptureTarget> target, std::optional<std::uint32_t> arraySlice)
 {
 	auto fields = Session();
 	fields.push_back(control::Field::U64(tag::CaptureId, capture, true));
+	if (target)
+		fields.push_back(EncodeTarget(*target));
 	const auto image = Number(Call(control::OpCode::RetainImage, std::move(fields)), tag::ImageReaderId);
 	RemoteResource reader{*this, control::OpCode::ReleaseImage, tag::ImageReaderId, image};
-	const auto start = Call(control::OpCode::StartExport, {control::Field::U64(tag::ImageReaderId, image, true)});
+	Fields exportFields{control::Field::U64(tag::ImageReaderId, image, true)};
+	if (arraySlice)
+		exportFields.push_back(control::Field::U32(tag::Layer, *arraySlice));
+	const auto start = Call(control::OpCode::StartExport, std::move(exportFields));
 	const auto exported = Number(start, tag::ExportId);
 	RemoteResource ticket{*this, control::OpCode::ReleaseExport, tag::ExportId, exported};
 	const auto total = Number(start, tag::TotalBytes);
@@ -350,6 +368,9 @@ void RigRuntime::ReleaseUnchecked(control::OpCode opcode, std::uint16_t field, s
 std::string RigRuntime::Cleanup()
 {
 	std::string error;
+	for (const auto inspection : m_inspections)
+		ReleaseUnchecked(control::OpCode::ReleaseInspection, tag::InspectionId, inspection);
+	m_inspections.clear();
 	// Cancellation must not prevent releasing source-owned controls or the lease.
 	try
 	{

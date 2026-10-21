@@ -566,6 +566,14 @@ if(SIMXR_BUILD_PROBES)
                     set_tests_properties(linux_vulkan_frame_recording PROPERTIES
                         ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
                         TIMEOUT 90 SKIP_RETURN_CODE 77)
+                    if(SIMXR_BUILD_AUTOMATION)
+                        add_test(NAME linux_vulkan_luau_depth COMMAND "${Python3_EXECUTABLE}"
+                            "${PROJECT_SOURCE_DIR}/tests/control/test_native_luau_depth.py"
+                            "$<TARGET_FILE:xr_probe_linux>" "$<TARGET_FILE:simxr_runner>")
+                        set_tests_properties(linux_vulkan_luau_depth PROPERTIES
+                            ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
+                            TIMEOUT 60 SKIP_RETURN_CODE 77)
+                    endif()
                     add_test(NAME linux_vulkan_control_depth COMMAND "${Python3_EXECUTABLE}"
                         "${PROJECT_SOURCE_DIR}/tests/control/test_native_depth.py" "$<TARGET_FILE:xr_probe_linux>")
                     set_tests_properties(linux_vulkan_control_depth PROPERTIES
