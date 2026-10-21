@@ -57,7 +57,7 @@ inline constexpr std::uint16_t Error = 1, Detail = 2, Session = 3, Generation = 
 							   Scenario = 155, Seed = 156, Overflow = 158, Recording = 159, Ownership = 160,
 							   Transactions = 161, Revision = 162, AppliedFrame = 163, AppliedTime = 164,
 							   Rescheduled = 165, GameId = 166, GameKind = 167, ImageRecording = 168, TotalFrames = 169,
-							   ImageWindowId = 180;
+							   ImageWindowId = 180, ProgramId = 181, SequenceId = 182, Loop = 183;
 }
 
 enum class Capability : std::uint64_t
@@ -83,7 +83,8 @@ enum class Capability : std::uint64_t
 	ProjectionHistory = 1ULL << 18,
 	ImageHistory = 1ULL << 19,
 	ImageWindow = 1ULL << 20,
-	QuadImageHistory = 1ULL << 21
+	QuadImageHistory = 1ULL << 21,
+	PoseSequences = 1ULL << 22
 };
 
 // Wire values are explicit and independent of the core's enum representation.

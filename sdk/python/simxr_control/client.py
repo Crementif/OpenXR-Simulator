@@ -32,6 +32,7 @@ class Client:
         self.path = str(path)
         self._lock = threading.Lock()
         self._next_command = 1
+        self._next_program = 1
         self._connection = PacketConnection(path, timeout)
         try:
             self.hello = self.request(OpCode.HELLO, [Field.text(Tag.CLIENT_NAME, name),
@@ -274,6 +275,57 @@ class Client:
     def release_control(self, session, *, source=1):
         """Cancel pending source work and release held inputs/ownership."""
         return self.request(OpCode.RELEASE_CONTROL, self._session(session) + [Field.u32(Tag.SOURCE_KIND, source)])
+
+    def upload_sequence(self, session, program, *, program_id=None, source=1):
+        """Upload JSON lines without executing them; one staged program per connection."""
+        if isinstance(program, str):
+            program = program.encode('utf-8')
+        if not isinstance(program, bytes) or len(program) > 16 * 1024 * 1024:
+            raise ProtocolError('Sequence programs must be JSON-lines bytes or text, at most 16 MiB')
+        if not self.hello['capabilities'] & Capability.POSE_SEQUENCES:
+            raise ProtocolError('Pose sequences are unavailable on this connection')
+        with self._lock:
+            if program_id is None:
+                program_id = self._next_program
+            if type(program_id) is not int or not 0 < program_id < 2**64:
+                raise ProtocolError('A positive uint64 program ID is required')
+            self._next_program = max(self._next_program, program_id + 1)
+        chunk_size = 256 * 1024
+        for offset in range(0, max(1, len(program)), chunk_size):
+            chunk = program[offset:offset + chunk_size]
+            response = self.request(OpCode.UPLOAD_SEQUENCE, self._session(session) + [
+                Field.u32(Tag.SOURCE_KIND, source), Field.u64(Tag.PROGRAM_ID, program_id, True),
+                Field.u64(Tag.OFFSET, offset, True), Field.u64(Tag.TOTAL_BYTES, len(program), True),
+                Field(Tag.BYTES, chunk, True)])
+            document = response['document']
+            if (document['program_id'] != program_id or document['total'] != len(program) or
+                    not offset + len(chunk) <= document['received'] <= len(program)):
+                raise ProtocolError('Sequence upload acknowledgement changed identity or offset')
+        return program_id
+
+    def start_sequence(self, session, program_id, *, loop=False, source=1):
+        """Start at the next ordinary frame boundary. Retrying a program does not restart it."""
+        if type(loop) is not bool:
+            raise ProtocolError('Sequence loop must be boolean')
+        return self.request(OpCode.START_SEQUENCE, self._session(session) + [
+            Field.u32(Tag.SOURCE_KIND, source), Field.u64(Tag.PROGRAM_ID, program_id, True), Field.boolean(Tag.LOOP, loop)])
+
+    def sequence_status(self, session, sequence=None, *, after=0, count=32, source=1):
+        if type(after) is not int or not 0 <= after < 2**64 or type(count) is not int or not 1 <= count <= 64:
+            raise ProtocolError('Sequence pages require a uint64 cursor and count in [1,64]')
+        fields = self._session(session) + [Field.u32(Tag.SOURCE_KIND, source),
+                                         Field.u64(Tag.OFFSET, after), Field.u64(Tag.LENGTH, count)]
+        if sequence is not None:
+            fields.append(Field.u64(Tag.SEQUENCE_ID, sequence, True))
+        return self.request(OpCode.READ_SEQUENCE, fields)
+
+    def stop_sequence(self, session, sequence, *, source=1):
+        return self.request(OpCode.STOP_SEQUENCE, self._session(session) + [
+            Field.u32(Tag.SOURCE_KIND, source), Field.u64(Tag.SEQUENCE_ID, sequence, True)])
+
+    def release_sequence_capture(self, session, capture):
+        return self.request(OpCode.RELEASE_SEQUENCE_CAPTURE,
+                            self._session(session) + [Field.u64(Tag.CAPTURE_ID, capture, True)])
 
     def start_recording(self, session, *, source=1):
         return self.request(OpCode.START_RECORDING, self._session(session) + [Field.u32(Tag.SOURCE_KIND, source)])

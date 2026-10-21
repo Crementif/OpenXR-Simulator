@@ -136,7 +136,14 @@ void SessionPublication::Stop()
 
 bool SessionPublication::ReleaseSource(CommandSource source, bool retire)
 {
-	const auto channels = m_commands.ReleaseSource(source, retire);
+	return ReleaseChannels(m_commands.ReleaseSource(source, retire));
+}
+void SessionPublication::StopPoseSequence(CommandSource source)
+{
+	ReleaseChannels(m_commands.StopPoseSequence(source));
+}
+bool SessionPublication::ReleaseChannels(const std::array<bool, ControlChannelCount>& channels)
+{
 	const std::array<bool, 2> released{channels[static_cast<std::size_t>(ControlChannel::LeftControls)],
 									   channels[static_cast<std::size_t>(ControlChannel::RightControls)]};
 	m_input.ReleaseControls(released);

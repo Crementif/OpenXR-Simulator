@@ -775,11 +775,14 @@ static int runProbe()
     CHECK(!std::filesystem::exists(data / "screenshot.bmp"));
     command(data, "head_pose_command.json", R"({"x":0.3,"y":1.8,"z":-0.4,"yaw":0.2,"pitch":-0.1,"roll":0.15})");
     command(data, "controller_hold_command.json", R"({"hand":1,"trigger":0.75,"stickX":-1})");
-    command(data, "sequence.jsonl",
-            "{\"frame\":1,\"head\":{\"x\":0.4}}\n{\"frame\":2,\"head\":{\"x\":0.5}}\n{\"frame\":3,\"head\":{"
-            "\"x\":0.6}}\n");
-    std::string sequenceCommand = "{\"path\":\"" + (data / "sequence.jsonl").string() + "\"}";
-    command(data, "sequence_command.json", sequenceCommand.c_str());
+    if (!std::getenv("SIMXR_PROBE_CANONICAL_SEQUENCE"))
+    {
+        command(data, "sequence.jsonl",
+                "{\"frame\":1,\"head\":{\"x\":0.4}}\n{\"frame\":2,\"head\":{\"x\":0.5}}\n{\"frame\":3,\"head\":{"
+                "\"x\":0.6}}\n");
+        std::string sequenceCommand = "{\"path\":\"" + (data / "sequence.jsonl").string() + "\"}";
+        command(data, "sequence_command.json", sequenceCommand.c_str());
+    }
     XrTime firstTime = 0;
     XrTime prior = 0;
     int frames = 4;

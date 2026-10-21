@@ -6,6 +6,7 @@
 #include "simulation/CommandScheduler.h"
 #include "simulation/SpaceSystem.h"
 
+#include <array>
 #include <deque>
 
 namespace simxr
@@ -59,6 +60,7 @@ class SessionPublication
 	void Configure(std::uint64_t seed, std::optional<CommandConfiguration> initial, bool overrideInitial);
 	void Stop();
 	bool ReleaseSource(CommandSource source, bool retire);
+	void StopPoseSequence(CommandSource source);
 	void PublishTracking(RuntimeTime time, TrackingState state, const ViewSettings& settings, bool focused);
 	XrResult PublishInput(InputSnapshot input);
 	CommandConfiguration ConfigurationSnapshot(const FramePrediction& lastIssued) const;
@@ -76,6 +78,7 @@ class SessionPublication
 	XrResult ValidatePoseAction(XrAction action, XrPath subaction) const;
 
   private:
+	bool ReleaseChannels(const std::array<bool, ControlChannelCount>& channels);
 	struct ViewRevision
 	{
 		RuntimeTime time;

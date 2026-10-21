@@ -655,9 +655,15 @@ CommandScheduler& Session::Commands()
 	return m_publication.Commands();
 }
 
-bool Session::WithCommandGeneration(SessionGeneration generation, const std::function<void()>& work)
+bool Session::WithCommandGeneration(SessionGeneration generation, const std::function<void()>& work, bool requireRunning)
 {
-	return WithDebugGeneration(generation, work);
+	return WithDebugGeneration(generation, work, requireRunning);
+}
+
+void Session::StopPoseSequence(CommandSource source)
+{
+	std::lock_guard lock(m_mutex);
+	m_publication.StopPoseSequence(source);
 }
 
 void Session::ReleaseCommandSource(CommandSource source, bool retire)

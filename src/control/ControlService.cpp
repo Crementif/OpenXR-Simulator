@@ -143,6 +143,7 @@ class ControlService::State
 		HistoricalImage historicalImage;
 		std::shared_ptr<DebugController> controller;
 		std::optional<SnapshotRecord> capture;
+		std::vector<SnapshotRecord> sequenceCaptures;
 		std::optional<SnapshotRecord> selectedCapture;
 		std::optional<DebugOperation> operation;
 		std::optional<PresentationSnapshot> display;
@@ -174,6 +175,8 @@ class ControlService::State
 			if (m_runtime.Game().Snapshot().capabilities)
 				capabilities |= static_cast<std::uint64_t>(Capability::GameBridge);
 		}
+		if (minor >= 5)
+			capabilities |= static_cast<std::uint64_t>(Capability::PoseSequences);
 		return capabilities;
 	}
 	std::uint64_t AdvertisedCapabilities(const Client& client, std::uint16_t minor) const
@@ -421,6 +424,27 @@ class ControlService::State
 								 false);
 			return response;
 		}
+		case OpCode::ReleaseSequenceCapture:
+		{
+			const CaptureId id{RequireRequestU64(request, tag::CaptureId)};
+			const SessionGeneration generation{RequireRequestU64(request, tag::Generation)};
+			bool released = false;
+			const auto release = [&]
+			{
+				held.capture = session->Captures().Read(id);
+				if (!held.capture)
+					return;
+				if (held.capture->generation != generation)
+					throw ControlRequestError{ErrorCode::StaleGeneration, "Sequence capture belongs to another run"};
+				if (!client.simulation->OwnsSequenceCapture(*held.capture))
+					throw ControlRequestError{ErrorCode::Conflict, "Sequence capture belongs to another source"};
+				released = session->Captures().Release(id);
+			};
+			if (!session->WithCommandGeneration(generation, release, false))
+				throw ControlRequestError{ErrorCode::StaleGeneration, "Sequence generation changed before release"};
+			response.fields.push_back(Field::Bool(tag::Released, released));
+			return response;
+		}
 		case OpCode::RetainImage:
 		{
 			auto capture = session->Captures().Read({RequireRequestU64(request, tag::CaptureId)});
@@ -444,7 +468,9 @@ class ControlService::State
 			if (!value.frame || value.generation.value != RequireRequestU64(request, tag::Generation))
 				throw ControlRequestError{ErrorCode::StaleGeneration,
 										  "Capture generation differs from the requested session run"};
-			if (value.phase != SnapshotPhase::Ready || !value.output)
+			const bool ready = value.output && (value.phase == SnapshotPhase::Ready ||
+				(value.phase == SnapshotPhase::GpuPending && value.output->PollCompletion() == CompletionStatus::Complete));
+			if (!ready)
 				throw ControlRequestError{value.phase == SnapshotPhase::GpuPending ? ErrorCode::Busy
 																				   : ErrorCode::UnsupportedCommand,
 										  "Capture has no ready GPU image"};
@@ -644,7 +670,7 @@ class ControlService::State
 		const auto& binding = Resolve(client, request, held);
 		const auto& session = binding.session;
 		if (schema.domain == RequestDomain::Simulation)
-			return client.simulation->Dispatch(request, binding, std::move(response));
+			return client.simulation->Dispatch(request, binding, std::move(response), held.sequenceCaptures);
 		response.fields.push_back(Field::U64(tag::Session, binding.id.value));
 		response.fields.push_back(Field::U64(tag::Generation, session->Snapshot().generation.value));
 		if (schema.domain == RequestDomain::Images || schema.domain == RequestDomain::Inspection)

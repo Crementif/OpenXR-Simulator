@@ -99,8 +99,9 @@ class Session
 	// Serializes CPU-only control mutation against Begin/End/Close. The callback
 	// may access Commands/ReleaseCommandSource, but must not change lifecycle,
 	// perform I/O, wait for GPU work or reenter a generation gate.
-	bool WithCommandGeneration(SessionGeneration generation, const std::function<void()>& work);
+	bool WithCommandGeneration(SessionGeneration generation, const std::function<void()>& work, bool requireRunning = true);
 	void ReleaseCommandSource(CommandSource source, bool retire = false);
+	void StopPoseSequence(CommandSource source);
 	XrResult ConfigureCommands(std::uint64_t seed, std::optional<CommandConfiguration> initial = {},
 							   bool overrideInitial = true);
 	CommandConfiguration CommandConfigurationSnapshot() const;

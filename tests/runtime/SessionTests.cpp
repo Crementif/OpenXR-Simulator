@@ -315,6 +315,30 @@ void TestSequenceCaptureAdmission()
 	reader.reset();
 	Require(pool.InUse() == 0, "Sequence capture producer survived its final reader");
 }
+void TestSequenceStopReleasesHeldInput()
+{
+	using namespace simxr;
+	Instance instance(reinterpret_cast<XrInstance>(984), {}, XR_MAKE_VERSION(1, 0, 27));
+	Session session(reinterpret_cast<XrSession>(985), instance);
+	FrameSchedulerConfig timing;
+	timing.mode = ExecutionMode::Deterministic;
+	const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
+	Require(session.Ready(timing.epoch) == XR_SUCCESS && session.Begin(begin, timing) == XR_SUCCESS,
+		"Begin sequence input stop test");
+	PoseSequenceStep step;
+	step.controllers[0] = ControllerPosePatch{};
+	step.controllers[0]->trigger = .8f;
+	const CommandSource source{CommandSourceKind::Mcp, 89};
+	session.Commands().StartPoseSequence(source, std::make_shared<const PoseSequence>(std::vector{step}, true));
+	FramePrediction frame;
+	Require(session.WaitFrame(frame) == XR_SUCCESS && session.Input().Snapshot().controllers[0].trigger == .8f,
+		"Sequence did not publish held input");
+	session.Scheduler().Pause();
+	session.StopPoseSequence(source);
+	Require(session.Input().Snapshot().controllers[0].trigger == 0 && session.Snapshot().lastIssued.id == frame.id,
+		"Sequence stop required another admitted frame to release held input");
+}
+
 void TestSequenceCaptureUnsupportedAndOwnership()
 {
 	using namespace simxr;
@@ -1666,6 +1690,7 @@ int main()
 	TestCaptureProducerRetry();
 	TestSequenceCaptureAdmission();
 	TestSequenceCaptureUnsupportedAndOwnership();
+	TestSequenceStopReleasesHeldInput();
 	TestLayerViewCapture();
 	TestLayerCaptureRejectionReentry();
 	TestLiveSubmissionPolicy();

@@ -9,6 +9,11 @@ namespace simxr::control
 {
 namespace
 {
+constexpr std::array uploadSequence{tag::Session, tag::Generation, tag::SourceKind, tag::ProgramId,
+	tag::Offset, tag::TotalBytes, tag::Bytes};
+constexpr std::array startSequence{tag::Session, tag::Generation, tag::SourceKind, tag::ProgramId, tag::Loop};
+constexpr std::array sequence{tag::Session, tag::Generation, tag::SourceKind, tag::SequenceId, tag::Offset, tag::Length};
+constexpr std::array sequenceCapture{tag::Session, tag::Generation, tag::CaptureId};
 constexpr std::array simulation{tag::Session,	tag::Generation, tag::TransactionId, tag::ApplyFrame,
 								tag::ApplyTime, tag::LatePolicy, tag::SourceKind,	 tag::Commands};
 constexpr std::array simulationStatus{tag::Session, tag::Generation, tag::TransactionId, tag::SourceKind};
@@ -70,6 +75,11 @@ constexpr std::array Schemas{RequestSchema{OpCode::Hello, RequestDomain::Connect
 							 RequestSchema{OpCode::ReleaseExport, RequestDomain::Images, 2, exportId},
 							 RequestSchema{OpCode::ReadExport, RequestDomain::Images, 2, readExport},
 							 RequestSchema{OpCode::RetainPreview, RequestDomain::Images, 3, common},
+							 RequestSchema{OpCode::UploadSequence, RequestDomain::Simulation, 5, uploadSequence},
+							 RequestSchema{OpCode::StartSequence, RequestDomain::Simulation, 5, startSequence},
+							 RequestSchema{OpCode::ReadSequence, RequestDomain::Simulation, 5, sequence},
+							 RequestSchema{OpCode::StopSequence, RequestDomain::Simulation, 5, sequence},
+							 RequestSchema{OpCode::ReleaseSequenceCapture, RequestDomain::Inspection, 5, sequenceCapture},
 							 RequestSchema{OpCode::SubmitSimulation, RequestDomain::Simulation, 4, simulation},
 							 RequestSchema{OpCode::SimulationStatus, RequestDomain::Simulation, 4, simulationStatus},
 							 RequestSchema{OpCode::CancelSimulation, RequestDomain::Simulation, 4, simulationStatus},

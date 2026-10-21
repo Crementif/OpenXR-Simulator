@@ -310,7 +310,8 @@ void NegotiationAndReplay()
 					 static_cast<std::uint64_t>(wire::Capability::SimulationCommands) |
 					 static_cast<std::uint64_t>(wire::Capability::CommandRecording) |
 					 static_cast<std::uint64_t>(wire::Capability::FrameDiagnostics) |
-					 static_cast<std::uint64_t>(wire::Capability::ProjectionHistory)) &&
+					 static_cast<std::uint64_t>(wire::Capability::ProjectionHistory) |
+					 static_cast<std::uint64_t>(wire::Capability::PoseSequences)) &&
 				response.Find(wire::tag::PayloadLimit)->AsU32() == wire::MaxPayload,
 			"Hello negotiation/capability limits changed");
 	Require(wire::Encode(f.service.Handle(client.connection, hello)) == wire::Encode(response),
@@ -370,6 +371,14 @@ void LegacyMinorNegotiation()
 	const auto rejected = f.service.Handle(client.connection, unknown);
 	Require(Error(rejected) == wire::ErrorCode::UnsupportedCommand && rejected.minor == 0,
 			"Command error silently upgraded negotiated minor");
+	Client previous(f.service);
+	auto versionFour = previous.Request(wire::OpCode::Hello);
+	versionFour.minor = 4;
+	const auto negotiated = f.service.Handle(previous.connection, versionFour);
+	Require(Error(negotiated) == wire::ErrorCode::Ok && negotiated.minor == 4 &&
+		!(U64(negotiated, wire::tag::Capabilities) & static_cast<std::uint64_t>(wire::Capability::PoseSequences)) &&
+		Error(previous.Call(wire::OpCode::UploadSequence)) == wire::ErrorCode::UnsupportedCommand,
+		"Minor four advertised or admitted sequence control");
 }
 
 void LeaseOwnerRetirementAndRollback()

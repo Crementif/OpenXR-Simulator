@@ -85,6 +85,7 @@ add_library(simxr_control STATIC
     src/control/ConnectionRequests.cpp
     src/control/DebugProtocol.cpp
     src/control/RecordingControl.cpp
+    src/control/SequenceControl.cpp
     src/control/SimulationConnection.cpp
     src/control/SimulationControl.cpp
     src/control/SimulationCommandCodec.cpp)
@@ -562,6 +563,11 @@ if(SIMXR_BUILD_PROBES)
                     set_tests_properties(linux_vulkan_control PROPERTIES
                         ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
                         TIMEOUT 60 SKIP_RETURN_CODE 77)
+                    add_test(NAME linux_vulkan_sequence COMMAND "${Python3_EXECUTABLE}"
+                        "${PROJECT_SOURCE_DIR}/tests/control/test_native_sequence.py" "$<TARGET_FILE:xr_probe_linux>")
+                    set_tests_properties(linux_vulkan_sequence PROPERTIES
+                        ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
+                        TIMEOUT 90 SKIP_RETURN_CODE 77)
                     add_test(NAME linux_vulkan_realtime_recording COMMAND "${Python3_EXECUTABLE}"
                         "${PROJECT_SOURCE_DIR}/tests/control/test_native_realtime_recording.py" "$<TARGET_FILE:xr_probe_linux>")
                     set_tests_properties(linux_vulkan_realtime_recording PROPERTIES
