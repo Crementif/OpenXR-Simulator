@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -20,6 +21,7 @@ struct Pipeline
 	VkPipelineLayout layout = VK_NULL_HANDLE;
 	VkPipeline pipeline = VK_NULL_HANDLE;
 	VkSampler sampler = VK_NULL_HANDLE;
+	VkSampler nearestSampler = VK_NULL_HANDLE;
 	VkShaderModule vertex = VK_NULL_HANDLE;
 	VkShaderModule pixel = VK_NULL_HANDLE;
 	~Pipeline()
@@ -31,6 +33,8 @@ struct Pipeline
 			vkDestroyPipelineLayout(native, layout, nullptr);
 		if (descriptors)
 			vkDestroyDescriptorSetLayout(native, descriptors, nullptr);
+		if (nearestSampler)
+			vkDestroySampler(native, nearestSampler, nullptr);
 		if (sampler)
 			vkDestroySampler(native, sampler, nullptr);
 		if (pass)
@@ -42,13 +46,13 @@ struct Pipeline
 	}
 };
 
-VkImageView View(const VulkanImage& image, std::uint32_t slice)
+VkImageView View(const VulkanImage& image, std::uint32_t slice, VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT)
 {
 	VkImageViewCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
 	info.image = image.image;
 	info.viewType = VK_IMAGE_VIEW_TYPE_2D;
 	info.format = image.format;
-	info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, slice, 1};
+	info.subresourceRange = {aspect, 0, 1, slice, 1};
 	VkImageView result;
 	CheckVulkan(vkCreateImageView(image.device->binding.device, &info, nullptr, &result),
 				"Create compositor image view");
@@ -166,6 +170,8 @@ std::shared_ptr<Pipeline> CreatePipeline(std::shared_ptr<VulkanDevice> device)
 	sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
 	sampler.addressModeU = sampler.addressModeV = sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
 	CheckVulkan(vkCreateSampler(native, &sampler, nullptr, &result->sampler), "Create compositor sampler");
+	sampler.minFilter = sampler.magFilter = VK_FILTER_NEAREST;
+	CheckVulkan(vkCreateSampler(native, &sampler, nullptr, &result->nearestSampler), "Create depth preview sampler");
 	return result;
 }
 } // namespace
@@ -348,12 +354,13 @@ std::shared_ptr<VulkanSubmission> VulkanBackend::InitializeImage(std::shared_ptr
 }
 
 XrResult VulkanBackend::Prepare(const CompositionPlan& plan, const VulkanImageResolver& resolve,
-								std::shared_ptr<VulkanFrame>& output, std::shared_ptr<FrameReservation> reservation)
+								std::shared_ptr<VulkanFrame>& output, std::shared_ptr<FrameReservation> reservation,
+	std::uint32_t outputLayers)
 {
 	RetireCompleted();
 	if (m_state->closed || m_state->failed || m_state->device->lost.load())
 		return XR_ERROR_SESSION_LOST;
-	if (!plan.width || !plan.height || plan.draws.size() > 64 || !resolve)
+	if (!plan.width || !plan.height || plan.draws.size() > 64 || !resolve || !outputLayers || outputLayers > 2)
 		return XR_ERROR_VALIDATION_FAILURE;
 	if (reservation && !m_state->reservations.Owns(reservation) && !m_state->liveReservations.Owns(reservation))
 		return XR_ERROR_VALIDATION_FAILURE;
@@ -374,17 +381,18 @@ XrResult VulkanBackend::Prepare(const CompositionPlan& plan, const VulkanImageRe
 	{
 		VulkanExternalImageSpec spec;
 		spec.extent = {plan.width, plan.height, 1};
+		spec.arrayLayers = outputLayers;
 		resources.external = m_state->external->CreateExportable(spec);
 		resources.output = resources.external->Image();
 		m_state->images.push_back(resources.output);
 		resources.ready = m_state->external->CreateExportableSemaphore();
 	}
 	else
-		resources.output = CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {plan.width, plan.height}, 2,
+		resources.output = CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {plan.width, plan.height}, outputLayers,
 									   VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
 										   VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
 	const auto native = m_state->device->binding.device;
-	for (std::uint32_t eye = 0; eye < 2; ++eye)
+	for (std::uint32_t eye = 0; eye < outputLayers; ++eye)
 	{
 		resources.outputViews[eye] = View(*resources.output, eye);
 		VkFramebufferCreateInfo framebuffer{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
@@ -421,20 +429,24 @@ XrResult VulkanBackend::Prepare(const CompositionPlan& plan, const VulkanImageRe
 	for (std::size_t index = 0; index < plan.draws.size(); ++index)
 	{
 		const auto& draw = plan.draws[index];
+		const bool depth = draw.constants.control[0] == 2;
 		auto image = resolve(draw.source.source);
-		if (!image || image->device != m_state->device || draw.source.arraySlice >= image->layers || draw.eye >= 2 ||
-			!(image->usage & VK_IMAGE_USAGE_SAMPLED_BIT) || image->Aspect() != VK_IMAGE_ASPECT_COLOR_BIT)
+		if (!image || image->device != m_state->device || draw.source.arraySlice >= image->layers || draw.eye >= outputLayers ||
+			!(image->usage & VK_IMAGE_USAGE_SAMPLED_BIT) ||
+			(depth ? !(image->Aspect() & VK_IMAGE_ASPECT_DEPTH_BIT) : image->Aspect() != VK_IMAGE_ASPECT_COLOR_BIT))
 			return XR_ERROR_LAYER_INVALID;
 		VkFormatProperties properties;
 		vkGetPhysicalDeviceFormatProperties(m_state->device->binding.physicalDevice, image->format, &properties);
-		if (!(properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
+		if (!(properties.optimalTilingFeatures & (depth ? VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT
+			: VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)))
 			return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
-		const auto view = View(*image, draw.source.arraySlice);
+		const auto view = View(*image, draw.source.arraySlice, depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT);
 		resources.sourceViews.push_back(view);
 		if (std::find(resources.sources.begin(), resources.sources.end(), image) == resources.sources.end())
 			resources.sources.push_back(image);
 		const VkDescriptorImageInfo sampled{VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-		const VkDescriptorImageInfo sampler{m_state->pipeline->sampler, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED};
+		const VkDescriptorImageInfo sampler{depth ? m_state->pipeline->nearestSampler : m_state->pipeline->sampler,
+			VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED};
 		const std::array writes{VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, sets[index], 0, 0,
 													 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &sampled, nullptr, nullptr},
 								VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, sets[index], 1, 0,
@@ -445,7 +457,7 @@ XrResult VulkanBackend::Prepare(const CompositionPlan& plan, const VulkanImageRe
 		VulkanImageBarrier(resources.command, *image, image->ApplicationLayout(),
 						   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 						   VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_SHADER_READ_BIT);
-	for (std::uint32_t eye = 0; eye < 2; ++eye)
+	for (std::uint32_t eye = 0; eye < outputLayers; ++eye)
 	{
 		const VkClearValue clear{{{0, 0, 0, 1}}};
 		VkRenderPassBeginInfo pass{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
@@ -483,7 +495,7 @@ XrResult VulkanBackend::Prepare(const CompositionPlan& plan, const VulkanImageRe
 		release.srcQueueFamilyIndex = m_state->device->binding.queueFamily;
 		release.dstQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;
 		release.image = resources.output->image;
-		release.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 2};
+		release.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, outputLayers};
 		vkCmdPipelineBarrier(resources.command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
 							 0, 0, nullptr, 0, nullptr, 1, &release);
 	}
@@ -494,6 +506,47 @@ XrResult VulkanBackend::Prepare(const CompositionPlan& plan, const VulkanImageRe
 	resources.reservation = std::move(reservation);
 	output = std::move(frame);
 	return XR_SUCCESS;
+}
+
+XrResult VulkanBackend::PrepareDepthCapture(const LayerDepthDescription& depth, bool linear,
+	const VulkanImageResolver& resolve, std::shared_ptr<VulkanFrame>& output,
+	std::shared_ptr<FrameReservation> reservation)
+{
+	if (!resolve)
+		return XR_ERROR_VALIDATION_FAILURE;
+	const auto image = resolve(depth.image.source);
+	if (!image || !(image->Aspect() & VK_IMAGE_ASPECT_DEPTH_BIT))
+		return XR_ERROR_LAYER_INVALID;
+	if (image->format != VK_FORMAT_D32_SFLOAT)
+		return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
+	if (!(image->usage & VK_IMAGE_USAGE_SAMPLED_BIT) ||
+		(linear && (!std::isfinite(depth.nearZ) || !std::isfinite(depth.farZ))))
+		return XR_ERROR_FEATURE_UNSUPPORTED;
+	const auto& rectangle = depth.image.rectangle;
+	if (rectangle.offset.x < 0 || rectangle.offset.y < 0 || rectangle.extent.width <= 0 || rectangle.extent.height <= 0 ||
+		static_cast<std::uint64_t>(rectangle.offset.x) + rectangle.extent.width > image->extent.width ||
+		static_cast<std::uint64_t>(rectangle.offset.y) + rectangle.extent.height > image->extent.height)
+		return XR_ERROR_SWAPCHAIN_RECT_INVALID;
+	if (!std::isfinite(depth.minDepth) || !std::isfinite(depth.maxDepth) || depth.minDepth < 0 || depth.maxDepth > 1 ||
+		depth.minDepth >= depth.maxDepth || depth.nearZ <= 0 || depth.farZ <= 0 || depth.nearZ == depth.farZ ||
+		std::isnan(depth.nearZ) || std::isnan(depth.farZ))
+		return XR_ERROR_VALIDATION_FAILURE;
+	CompositionPlan plan;
+	plan.width = static_cast<std::uint32_t>(rectangle.extent.width);
+	plan.height = static_cast<std::uint32_t>(rectangle.extent.height);
+	CompositionDraw draw{depth.image, 0, {}};
+	draw.constants.imageRectangle = {static_cast<float>(rectangle.offset.x), static_cast<float>(rectangle.offset.y),
+		static_cast<float>(rectangle.extent.width), static_cast<float>(rectangle.extent.height)};
+	draw.constants.quadParameters = {depth.minDepth, depth.maxDepth, 0, 0};
+	if (linear)
+	{
+		const auto scale = std::max(depth.nearZ, depth.farZ);
+		draw.constants.quadParameters[2] = depth.nearZ / scale;
+		draw.constants.quadParameters[3] = depth.farZ / scale;
+	}
+	draw.constants.control = {2, linear ? 1U : 0U, 0, 0};
+	plan.draws.push_back(draw);
+	return Prepare(plan, resolve, output, std::move(reservation), 1);
 }
 
 XrResult VulkanBackend::PrepareCapture(const LayerImageDescription& description, const VulkanImageResolver& resolve,

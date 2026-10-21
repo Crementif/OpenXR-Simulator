@@ -245,6 +245,7 @@ DebugControllerSnapshot DebugController::Snapshot() const
 	snapshot.maxLookahead = m_config.maxLookahead;
 	snapshot.composedEyes = m_session->SupportsCapture();
 	snapshot.layerViews = m_session->SupportsCapture({CaptureKind::LayerView});
+	snapshot.depthViews = m_session->SupportsCapture({CaptureKind::LayerDepth});
 	snapshot.pipeline = m_session->Scheduler().Snapshot();
 	snapshot.retention = m_session->Captures().Snapshot();
 	return snapshot;
@@ -513,7 +514,7 @@ void DebugController::Inspect(DebugOperation& operation, const SnapshotRecord& r
 	std::erase_if(m_cursors,
 				  [&](const auto& cursor)
 				  {
-					  return cursor.target.kind == CaptureKind::LayerView &&
+					  return cursor.target.IsLayerImage() &&
 							 std::none_of(retained.begin(), retained.end(),
 										  [&](auto id)
 										  {

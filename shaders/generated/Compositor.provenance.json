@@ -7,9 +7,9 @@
     "sha256": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
     "version": "libdxcompiler.so: 1.9(5512-01b62ad4)(1.9.2609.5)"
   },
-  "generator_sha256": "6e44c55e14ccbf1e3775f6973ead1c589f05c0e1fe0431d32569c2405bfc83a2",
+  "generator_sha256": "eae134f6dbb37b6d660574f68d03d67212c7517625f73e8f8fba9baca998ce94",
   "source": "shaders/Compositor.hlsl",
-  "source_sha256": "749c6e93abfab529d1af12afd61b6e60ce320c14fc2e180589fc5cb276671651",
+  "source_sha256": "fbe37622fb9620bd33e3b837648bdc6f761d16e58aa754ce0fc666e00998d39e",
   "spirv_cross": {
     "sha256": "dabfca5e5cd778a73c964426d5b2d0d15705b7ac480cc9e0702f15e707cc12e6"
   },
@@ -35,7 +35,7 @@
         "--no-es",
         "--combined-samplers-inherit-bindings"
       ],
-      "sha256": "4f3a4b2f26e8aeb01e98f835ac2bc56c66d9c4c23889a10f3172d11a215a5216"
+      "sha256": "d3f50b11893292f18158be3b32b1e1c8734a57b940674a1cbfcddd49c79c3043"
     },
     "vertex": {
       "entry": "VSMain",

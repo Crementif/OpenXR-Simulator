@@ -32,9 +32,13 @@ class VulkanBackend
 	XrResult Submit(std::span<const std::shared_ptr<VulkanFrame>> frames);
 	// Preparation records commands and reserves private storage, without submitting.
 	XrResult Prepare(const CompositionPlan& plan, const VulkanImageResolver& resolve,
-					 std::shared_ptr<VulkanFrame>& output, std::shared_ptr<FrameReservation> reservation = {});
+					 std::shared_ptr<VulkanFrame>& output, std::shared_ptr<FrameReservation> reservation = {},
+					 std::uint32_t outputLayers = 2);
 	XrResult PrepareCapture(const LayerImageDescription& source, const VulkanImageResolver& resolve,
 							std::shared_ptr<VulkanFrame>& output, std::shared_ptr<FrameReservation> reservation = {});
+	XrResult PrepareDepthCapture(const LayerDepthDescription& source, bool linear,
+		const VulkanImageResolver& resolve, std::shared_ptr<VulkanFrame>& output,
+		std::shared_ptr<FrameReservation> reservation = {});
 	FramePool Reservations() const;
 	FramePool LiveReservations() const;
 	void RetireCompleted();

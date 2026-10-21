@@ -244,6 +244,34 @@ void TargetsAndGenerations()
 			"Invalid composed target accepted");
 }
 
+void DepthRequiresSubmittedSource()
+{
+	SnapshotStore store(4);
+	store.Start({3});
+	const CaptureTarget depth{CaptureKind::LayerDepth, 0, 0};
+	const CaptureTarget missing{CaptureKind::LayerDepthLinear, 0, 1};
+	const auto retained = store.Reserve(depth), absent = store.Reserve(missing);
+	auto records = Frame({3}, 1);
+	auto described = *records.submitted;
+	ProjectionLayerDescription projection;
+	projection.views.resize(2);
+	projection.views[0].depth = LayerDepthDescription{};
+	described.submission->layers = std::make_shared<const FrameLayers>(
+		described.prediction.displayTime, XR_ENVIRONMENT_BLEND_MODE_OPAQUE,
+		std::vector<LayerDescription>{projection});
+	records.submitted = std::make_shared<const FrameRecord>(std::move(described));
+	Require(store.Bind(retained.id, records.issued, records.cancelled) &&
+		store.Bind(absent.id, records.issued, records.cancelled), "Bind exact depth targets");
+	auto output = std::make_shared<Output>();
+	output->status.store(CompletionStatus::Complete);
+	const std::array outputs{CaptureOutput{depth, output}, CaptureOutput{missing, output}};
+	store.Update(records.submitted, outputs);
+	store.Poll();
+	Require(store.Read(retained.id)->phase == SnapshotPhase::Ready && store.Read(retained.id)->output == output &&
+		store.Read(absent.id)->phase == SnapshotPhase::Unavailable && !store.Read(absent.id)->output,
+		"Depth target accepted pixels without the corresponding submitted depth source");
+}
+
 void DisplayAndProducerReservation()
 {
 	SnapshotStore store(4);
@@ -393,6 +421,7 @@ int main()
 	PendingRetirementAndReentry();
 	TargetsAndGenerations();
 	TargetProducerOwnership();
+	DepthRequiresSubmittedSource();
 	DisplayAndProducerReservation();
 	ConcurrentObservation();
 	DestructorReentry();

@@ -83,8 +83,8 @@ class FakeClient:
     def release_inspection(self, inspection):
         return {**self._call('release_inspection', inspection), 'inspection_id': inspection, 'released': True}
 
-    def retain_image(self, session, capture):
-        return {**self._call('retain_image', session, capture), 'image_reader_id': 2**63 + 3}
+    def retain_image(self, session, capture, **selection):
+        return {**self._call('retain_image', session, capture, **selection), 'image_reader_id': 2**63 + 3}
 
     def image_info(self, image):
         return {**self._call('image_info', image), 'image_reader_id': image,
@@ -162,6 +162,19 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(self.tools.call('debug_export_image', self.common)['error'], 'unsupported_tool')
         self.assertEqual(self.tools.call('debug_capture', {**self.common, 'capture': 1, 'filename': 'legacy.png'})['error'],
                          'invalid_arguments')
+
+    def test_exact_depth_selection(self):
+        for name in ('layer_depth', 'layer_depth_linear'):
+            result = self.tools.call('debug_retain_image', {**self.common, 'capture': '42',
+                                    'target': name, 'layer': 2, 'view': 1})
+            self.assertTrue(result['ok'], result)
+            method, arguments, keywords = self.client.calls[-1]
+            self.assertEqual(method, 'retain_image')
+            self.assertEqual(arguments[-1], 42)
+            self.assertEqual(keywords, {'target': TargetKind[name.upper()], 'layer': 2, 'view': 1})
+        definition = next(item for item in adapter.TOOL_DEFINITIONS if item['name'] == 'debug_retain_image')
+        self.assertNotIn('default', definition['inputSchema']['properties']['target'])
+        self.assertNotIn('target', definition['inputSchema']['required'])
 
     def test_forwarding_and_metadata_only(self):
         commands = [('debug_pause', CommandKind.PAUSE), ('debug_step', CommandKind.STEP),

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -749,8 +750,8 @@ class LayerEncoder
 		return InspectionValue::Object({{"image", Image(depth.image)},
 										{"min_depth", InspectionValue::Float(depth.minDepth)},
 										{"max_depth", InspectionValue::Float(depth.maxDepth)},
-										{"near_z", InspectionValue::Float(depth.nearZ)},
-										{"far_z", InspectionValue::Float(depth.farZ)}});
+										{"near_z", std::isfinite(depth.nearZ) ? InspectionValue::Float(depth.nearZ) : InspectionValue::Text("+infinity")},
+										{"far_z", std::isfinite(depth.farZ) ? InspectionValue::Float(depth.farZ) : InspectionValue::Text("+infinity")}});
 	}
 	InspectionValue InspectProjectionView(const ProjectionViewDescription& view)
 	{

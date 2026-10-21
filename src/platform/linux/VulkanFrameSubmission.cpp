@@ -123,11 +123,15 @@ XrResult VulkanFrameSubmission::PrepareOutputs()
 	return XR_SUCCESS;
 }
 
-XrResult VulkanFrameSubmission::PrepareCapture(const LayerImageDescription& image, Capture& capture,
+XrResult VulkanFrameSubmission::PrepareCapture(const LayerImageDescription& image, const LayerDepthDescription* depth, Capture& capture,
 											   std::shared_ptr<FrameReservation> reservation)
 {
 	try
 	{
+		if (depth)
+			return m_backend.PrepareDepthCapture(*depth, capture.target.kind == CaptureKind::LayerDepthLinear,
+				[this](XrSwapchain swapchain) { return m_bindings.ReleasedImage(swapchain); },
+				capture.producer, std::move(reservation));
 		return m_backend.PrepareCapture(
 			image,
 			[this](XrSwapchain swapchain)
@@ -157,9 +161,11 @@ XrResult VulkanFrameSubmission::PrepareCaptures()
 	m_captureOutputs.reserve(targets.size());
 	for (const auto target : targets)
 	{
-		if (target.kind != CaptureKind::LayerView)
+		if (!target.IsLayerImage())
 			continue;
-		const auto image = FindLayerImage(*m_layers, target.layer, target.view);
+		const auto* depth = target.IsDepth() ? FindLayerDepth(*m_layers, target.layer, target.view) : nullptr;
+		const auto image = target.IsDepth() ? (depth ? std::optional{depth->image} : std::nullopt)
+			: FindLayerImage(*m_layers, target.layer, target.view);
 		if (!image || !image->rectangle.extent.width || !image->rectangle.extent.height)
 			continue;
 		m_captures.push_back({target, image->source, {}, {}});
@@ -173,7 +179,7 @@ XrResult VulkanFrameSubmission::PrepareCaptures()
 			m_captures.pop_back();
 			continue;
 		}
-		result = PrepareCapture(*image, capture, std::move(reservation));
+		result = PrepareCapture(*image, depth, capture, std::move(reservation));
 		if (result == XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED || result == XR_ERROR_FEATURE_UNSUPPORTED)
 		{
 			AbandonUnsubmitted(capture.producer, target);
@@ -202,8 +208,10 @@ VulkanFrameSubmission::PrepareInspection(std::shared_ptr<VulkanFrame> source, Ca
 	const auto journal = m_session.History().DiagnosticsJournal();
 	const auto key = m_key;
 	const auto time = m_layers->displayTime;
+	const auto label = target.kind == CaptureKind::LayerDepth ? "owned_depth_view:"
+		: target.kind == CaptureKind::LayerDepthLinear ? "owned_linear_depth_view:" : "owned_layer_view:";
 	const auto detail = target.kind == CaptureKind::ComposedEyes ? std::string{"owned_composed"}
-		: "owned_layer_view:" + std::to_string(target.layer) + ":" + std::to_string(target.view);
+		: label + std::to_string(target.layer) + ":" + std::to_string(target.view);
 	return m_inspection->Prepare(std::move(source),
 		[journal, key, time, detail](CompletionStatus status)
 		{

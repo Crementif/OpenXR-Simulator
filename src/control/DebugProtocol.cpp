@@ -46,6 +46,8 @@ Field EncodeCaptureIds(std::uint16_t name, const std::vector<CaptureId>& ids)
 		fields.push_back(Field::U64(static_cast<std::uint16_t>(fields.size() + 1), id.value));
 	return Nested(name, std::move(fields));
 }
+} // namespace
+
 Field EncodeCaptureTarget(CaptureTarget target)
 {
 	TargetKind kind;
@@ -56,6 +58,12 @@ Field EncodeCaptureTarget(CaptureTarget target)
 		break;
 	case CaptureKind::LayerView:
 		kind = TargetKind::LayerView;
+		break;
+	case CaptureKind::LayerDepth:
+		kind = TargetKind::LayerDepth;
+		break;
+	case CaptureKind::LayerDepthLinear:
+		kind = TargetKind::LayerDepthLinear;
 		break;
 	case CaptureKind::VirtualDisplay:
 		kind = TargetKind::VirtualDisplay;
@@ -89,6 +97,10 @@ CaptureTarget DecodeCaptureTarget(const Message& request)
 		return {};
 	case TargetKind::LayerView:
 		return {CaptureKind::LayerView, layer, view};
+	case TargetKind::LayerDepth:
+		return {CaptureKind::LayerDepth, layer, view};
+	case TargetKind::LayerDepthLinear:
+		return {CaptureKind::LayerDepthLinear, layer, view};
 	case TargetKind::VirtualDisplay:
 		if (layer || view)
 			break;
@@ -96,6 +108,8 @@ CaptureTarget DecodeCaptureTarget(const Message& request)
 	}
 	throw ControlRequestError{ErrorCode::UnsupportedCommand, "Unsupported capture target"};
 }
+namespace
+{
 DebugCommand DecodeCommandKind(std::uint32_t kind)
 {
 	switch (static_cast<CommandKind>(kind))

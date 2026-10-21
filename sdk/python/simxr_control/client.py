@@ -128,8 +128,12 @@ class Client:
     def release_inspection(self, inspection):
         return self.request(OpCode.RELEASE_INSPECTION, [Field.u64(Tag.INSPECTION_ID, inspection, True)])
 
-    def retain_image(self, session, capture):
-        return self.request(OpCode.RETAIN_IMAGE, self._session(session) + [Field.u64(Tag.CAPTURE_ID, capture, True)])
+    def retain_image(self, session, capture, *, target=None, layer=0, view=0):
+        fields = self._session(session) + [Field.u64(Tag.CAPTURE_ID, capture, True)]
+        if target is not None:
+            fields.append(Field.nested(Tag.TARGET, [Field.u32(Tag.CAPTURE_KIND, target, True),
+                                                  Field.u32(Tag.LAYER, layer), Field.u32(Tag.VIEW, view)], True))
+        return self.request(OpCode.RETAIN_IMAGE, fields)
 
     def image_info(self, image_reader):
         return self.request(OpCode.IMAGE_INFO, [Field.u64(Tag.IMAGE_READER_ID, image_reader, True)])

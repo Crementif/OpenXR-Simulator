@@ -142,6 +142,7 @@ struct DebugControllerSnapshot
 	std::size_t commands = 0;
 	bool composedEyes = false;
 	bool layerViews = false;
+	bool depthViews = false;
 	FramePipelineState pipeline;
 	SnapshotStoreState retention;
 };

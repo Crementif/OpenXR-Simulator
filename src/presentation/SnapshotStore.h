@@ -25,7 +25,9 @@ enum class CaptureKind
 {
 	ComposedEyes,
 	LayerView,
-	VirtualDisplay
+	VirtualDisplay,
+	LayerDepth,
+	LayerDepthLinear
 };
 
 struct CaptureTarget
@@ -33,6 +35,8 @@ struct CaptureTarget
 	CaptureKind kind = CaptureKind::ComposedEyes;
 	std::uint32_t layer = 0;
 	std::uint32_t view = 0;
+	bool IsDepth() const { return kind == CaptureKind::LayerDepth || kind == CaptureKind::LayerDepthLinear; }
+	bool IsLayerImage() const { return kind == CaptureKind::LayerView || IsDepth(); }
 	auto operator<=>(const CaptureTarget&) const = default;
 };
 

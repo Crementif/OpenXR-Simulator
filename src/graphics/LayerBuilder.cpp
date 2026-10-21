@@ -89,4 +89,12 @@ std::optional<LayerImageDescription> FindLayerImage(const FrameLayers& frame, st
 		return quad->color;
 	return {};
 }
+const LayerDepthDescription* FindLayerDepth(const FrameLayers& frame, std::uint32_t layer, std::uint32_t view)
+{
+	if (layer < frame.layers.size())
+		if (const auto* projection = std::get_if<ProjectionLayerDescription>(&frame.layers[layer]);
+			projection && view < projection->views.size() && projection->views[view].depth)
+			return &*projection->views[view].depth;
+	return nullptr;
+}
 } // namespace simxr

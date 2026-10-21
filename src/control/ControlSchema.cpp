@@ -24,6 +24,7 @@ constexpr std::array leased{tag::Session, tag::Generation, tag::Lease};
 constexpr std::array operation{tag::Session, tag::Generation, tag::OperationId};
 constexpr std::array acknowledge{tag::Session, tag::Generation, tag::Lease, tag::CommandId};
 constexpr std::array capture{tag::Session, tag::Generation, tag::CaptureId};
+constexpr std::array retainImage{tag::Session, tag::Generation, tag::CaptureId, tag::Target};
 constexpr std::array revision{tag::RevisionId};
 constexpr std::array releaseInspection{tag::InspectionId};
 constexpr std::array image{tag::ImageReaderId};
@@ -45,7 +46,7 @@ constexpr std::array Schemas{RequestSchema{OpCode::Hello, RequestDomain::Connect
 							 RequestSchema{OpCode::InspectFrame, RequestDomain::Inspection, 0, capture},
 							 RequestSchema{OpCode::FeatureRevision, RequestDomain::Inspection, 0, revision},
 							 RequestSchema{OpCode::ReleaseInspection, RequestDomain::Inspection, 0, releaseInspection},
-							 RequestSchema{OpCode::RetainImage, RequestDomain::Images, 2, capture},
+							 RequestSchema{OpCode::RetainImage, RequestDomain::Images, 2, retainImage},
 							 RequestSchema{OpCode::ImageInfo, RequestDomain::Images, 2, image},
 							 RequestSchema{OpCode::ReleaseImage, RequestDomain::Images, 2, image},
 							 RequestSchema{OpCode::ShareImage, RequestDomain::Images, 2, share},

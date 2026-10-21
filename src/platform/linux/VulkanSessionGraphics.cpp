@@ -129,7 +129,7 @@ XrResult VulkanSessionGraphics::ConfigureCapture()
 {
 	if (!m_inspection)
 		return XR_SUCCESS;
-	return m_session->ConfigureCapturePool(m_backend->Reservations(), true, PromoteInspectionCapture);
+	return m_session->ConfigureCapturePool(m_backend->Reservations(), true, PromoteInspectionCapture, true);
 }
 
 control::ImageCapabilities VulkanSessionGraphics::Capabilities() const noexcept

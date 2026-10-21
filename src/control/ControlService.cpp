@@ -118,6 +118,7 @@ class ControlService::State
 		ControlSessions::Snapshot sessions;
 		std::shared_ptr<DebugController> controller;
 		std::optional<SnapshotRecord> capture;
+		std::optional<SnapshotRecord> selectedCapture;
 		std::optional<DebugOperation> operation;
 		std::optional<PresentationSnapshot> display;
 		ConnectionImages::RetiredResource images;
@@ -291,7 +292,20 @@ class ControlService::State
 			if (!capture)
 				throw ControlRequestError{ErrorCode::NotFound, "Snapshot is absent or released"};
 			held.capture = std::move(capture);
-			const auto& value = *held.capture;
+			if (request.Find(tag::Target))
+			{
+				const auto target = DecodeCaptureTarget(request);
+				if (!session->SupportsCapture(target))
+					throw ControlRequestError{ErrorCode::UnsupportedCommand, "Image target unsupported on this session"};
+				if (!held.capture->frame)
+					throw ControlRequestError{ErrorCode::Busy, "Capture has no submitted frame yet"};
+				const auto selected = session->Captures().Find(*held.capture->frame, target);
+				if (selected)
+					held.selectedCapture = session->Captures().Read(*selected);
+				if (!held.selectedCapture)
+					throw ControlRequestError{ErrorCode::NotFound, "Image target was not retained for this frame"};
+			}
+			const auto& value = held.selectedCapture ? *held.selectedCapture : *held.capture;
 			if (!value.frame || value.generation.value != RequireRequestU64(request, tag::Generation))
 				throw ControlRequestError{ErrorCode::StaleGeneration,
 										  "Capture generation differs from the requested session run"};
@@ -345,6 +359,8 @@ class ControlService::State
 			}
 			if (status.composedEyes)
 				capabilities |= static_cast<std::uint64_t>(Capability::ComposedCapture);
+			if (status.depthViews)
+				capabilities |= static_cast<std::uint64_t>(Capability::DepthCapture);
 			if (status.layerViews)
 				capabilities |= static_cast<std::uint64_t>(Capability::LayerViewCapture);
 			EncodeDebuggerStatus(response, status, state, display, capabilities);

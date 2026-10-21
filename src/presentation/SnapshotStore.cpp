@@ -31,20 +31,20 @@ bool Pending(SnapshotPhase phase)
 
 bool HasLayerView(const FrameRecord& metadata, CaptureTarget target)
 {
-	if (target.kind != CaptureKind::LayerView)
+	if (!target.IsLayerImage())
 		return true;
 	if (!metadata.submission || !metadata.submission->layers ||
 		target.layer >= metadata.submission->layers->layers.size())
 		return false;
 	const auto& layer = metadata.submission->layers->layers[target.layer];
 	if (const auto* projection = std::get_if<ProjectionLayerDescription>(&layer))
-		return target.view < projection->views.size();
-	return target.view == 0;
+		return target.view < projection->views.size() && (!target.IsDepth() || projection->views[target.view].depth.has_value());
+	return !target.IsDepth() && target.view == 0;
 }
 
 bool Valid(CaptureTarget target)
 {
-	return target.kind == CaptureKind::LayerView ||
+	return target.IsLayerImage() ||
 		   ((target.kind == CaptureKind::ComposedEyes || target.kind == CaptureKind::VirtualDisplay) && !target.layer &&
 			!target.view);
 }
@@ -138,7 +138,9 @@ void SnapshotStore::TraceTerminal(Entry& entry) noexcept
 		time = record.metadata->submission ? record.metadata->submission->displayTime
 										   : record.metadata->prediction.displayTime;
 	const auto target = record.target.kind == CaptureKind::ComposedEyes ? "composed"
-		: record.target.kind == CaptureKind::LayerView ? "layer_view" : "display";
+		: record.target.kind == CaptureKind::LayerView ? "layer_view"
+		: record.target.kind == CaptureKind::LayerDepth ? "layer_depth"
+		: record.target.kind == CaptureKind::LayerDepthLinear ? "layer_depth_linear" : "display";
 	char detail[128];
 	std::snprintf(detail, sizeof(detail), "phase=%s; target=%s; layer=%u; view=%u",
 		phase, target, record.target.layer, record.target.view);
@@ -384,7 +386,7 @@ bool SnapshotStore::SetProducer(FrameKey frame, std::shared_ptr<FrameReservation
 		return !entry.released && entry.record.frame == frame &&
 			   (entry.record.phase == SnapshotPhase::Issued || entry.record.phase == SnapshotPhase::Begun) &&
 			   (entry.record.target == target ||
-				(target == CaptureTarget{} && entry.record.target.kind == CaptureKind::LayerView));
+				(target == CaptureTarget{} && entry.record.target.IsLayerImage()));
 	};
 	for (const auto& entry : m_entries)
 		if (matches(entry) && (entry.record.target == target ? entry.producer : entry.composedProducer))

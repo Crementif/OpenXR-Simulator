@@ -71,7 +71,7 @@ class Session
 	FrameHistory& History();
 	VirtualDisplay& Display();
 	SnapshotStore& Captures();
-	XrResult ConfigureCapturePool(FramePool pool, bool layerViews = false, CapturePromoter promoter = {});
+	XrResult ConfigureCapturePool(FramePool pool, bool layerViews = false, CapturePromoter promoter = {}, bool depthViews = false);
 	CaptureReservation ReserveCapture(CaptureTarget target = {});
 	XrResult PrepareCaptureProducer(FrameKey frame, std::shared_ptr<FrameReservation>& producer,
 									CaptureTarget target = {});

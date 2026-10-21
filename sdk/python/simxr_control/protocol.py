@@ -83,6 +83,7 @@ class Capability(IntFlag):
     COMMAND_RECORDING = 1 << 12
     FRAME_DIAGNOSTICS = 1 << 13
     GAME_BRIDGE = 1 << 14
+    DEPTH_CAPTURE = 1 << 15
 
 
 class CommandKind(IntEnum):
@@ -99,6 +100,8 @@ class TargetKind(IntEnum):
     COMPOSED_EYES = 1
     LAYER_VIEW = 2
     VIRTUAL_DISPLAY = 3
+    LAYER_DEPTH = 4
+    LAYER_DEPTH_LINEAR = 5
 
 
 class Tag(IntEnum):

@@ -100,6 +100,7 @@ static int runProbe()
     if (creationRollback) CHECK(setenv("SIMXR_DATA_DIR", unselectedDirectory.c_str(), 1) == 0);
     bool v1 = std::getenv("SIMXR_PROBE_V1") != nullptr;
     const bool bodyTracking = std::getenv("SIMXR_PROBE_BODY") != nullptr;
+    const bool depthMode = std::getenv("SIMXR_PROBE_DEPTH") != nullptr;
     const bool quadMode = std::getenv("SIMXR_PROBE_QUAD") != nullptr;
     const bool foveatedMode = std::getenv("SIMXR_PROBE_FOVEATED") != nullptr;
     CHECK(!foveatedMode || quadMode);
@@ -685,7 +686,40 @@ static int runProbe()
     chain.usageFlags = XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
     XrSwapchain depth;
     XR(xrCreateSwapchain(session, &chain, &depth));
-    XR(xrDestroySwapchain(depth));
+    std::vector<XrSwapchainImageVulkanKHR> depthImages;
+    VkBuffer depthUpload = VK_NULL_HANDLE;
+    VkDeviceMemory depthMemory = VK_NULL_HANDLE;
+    float* depthPixels = nullptr;
+    if (depthMode)
+    {
+        XR(xrEnumerateSwapchainImages(depth, 0, &count, nullptr));
+        depthImages.resize(count, {XR_TYPE_SWAPCHAIN_IMAGE_VULKAN_KHR});
+        XR(xrEnumerateSwapchainImages(depth, count, &count,
+            reinterpret_cast<XrSwapchainImageBaseHeader*>(depthImages.data())));
+        VkBufferCreateInfo buffer{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        buffer.size = 64 * 48 * activeViewCount * sizeof(float);
+        buffer.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        VK(vkCreateBuffer(device, &buffer, nullptr, &depthUpload));
+        VkMemoryRequirements requirements;
+        vkGetBufferMemoryRequirements(device, depthUpload, &requirements);
+        VkPhysicalDeviceMemoryProperties memory;
+        vkGetPhysicalDeviceMemoryProperties(physical, &memory);
+        uint32_t type = 0;
+        constexpr auto properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        while (type < memory.memoryTypeCount && (!(requirements.memoryTypeBits & (1U << type)) ||
+            (memory.memoryTypes[type].propertyFlags & properties) != properties)) ++type;
+        CHECK(type < memory.memoryTypeCount);
+        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        allocation.allocationSize = requirements.size;
+        allocation.memoryTypeIndex = type;
+        VK(vkAllocateMemory(device, &allocation, nullptr, &depthMemory));
+        VK(vkBindBufferMemory(device, depthUpload, depthMemory, 0));
+        void* mapped = nullptr;
+        VK(vkMapMemory(device, depthMemory, 0, VK_WHOLE_SIZE, 0, &mapped));
+        depthPixels = static_cast<float*>(mapped);
+    }
+    else
+        XR(xrDestroySwapchain(depth));
     XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
     CHECK(xrReleaseSwapchainImage(swapchain, &release) == XR_ERROR_CALL_ORDER_INVALID);
     VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
@@ -1003,6 +1037,16 @@ static int runProbe()
         XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
         wi.timeout = XR_INFINITE_DURATION;
         XR(xrWaitSwapchainImage(swapchain, &wi));
+        uint32_t depthIndex = 0;
+        if (depthMode)
+        {
+            XR(xrAcquireSwapchainImage(depth, &acquire, &depthIndex));
+            XR(xrWaitSwapchainImage(depth, &wi));
+            for (uint32_t eye = 0; eye < activeViewCount; ++eye)
+                for (uint32_t y = 0; y < 48; ++y)
+                    for (uint32_t x = 0; x < 64; ++x)
+                        depthPixels[(eye * 48 + y) * 64 + x] = .1f * (frame % 4 + 1) + .15f * eye + .05f * (x / 16) + .025f * (y / 12);
+        }
         VK(vkResetCommandPool(device, pool, 0));
         VkCommandBufferBeginInfo cb{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         VK(vkBeginCommandBuffer(cmd, &cb));
@@ -1029,6 +1073,34 @@ static int runProbe()
         barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
         vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0,
                              nullptr, 0, nullptr, 1, &barrier);
+        if (depthMode)
+        {
+            VkMemoryBarrier upload{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            upload.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
+            upload.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                1, &upload, 0, nullptr, 0, nullptr);
+            auto depthBarrier = barrier;
+            depthBarrier.image = depthImages[depthIndex].image;
+            depthBarrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            depthBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            depthBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+            depthBarrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+            depthBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                0, nullptr, 0, nullptr, 1, &depthBarrier);
+            VkBufferImageCopy copy{};
+            copy.imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, activeViewCount};
+            copy.imageExtent = {64, 48, 1};
+            vkCmdCopyBufferToImage(cmd, depthUpload, depthImages[depthIndex].image,
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+            depthBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            depthBarrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            depthBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            depthBarrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
+                0, nullptr, 0, nullptr, 1, &depthBarrier);
+        }
         VK(vkEndCommandBuffer(cmd));
         VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
         submit.commandBufferCount = 1;
@@ -1050,12 +1122,23 @@ static int runProbe()
         if (frame != 2)
             VK(vkQueueWaitIdle(queue));
         XR(xrReleaseSwapchainImage(swapchain, &release));
+        if (depthMode) XR(xrReleaseSwapchainImage(depth, &release));
+        std::vector<XrCompositionLayerDepthInfoKHR> depths(activeViewCount, {XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR});
         std::vector<XrCompositionLayerProjectionView> pv(activeViewCount, {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW});
         for (uint32_t e = 0; e < activeViewCount; ++e)
         {
             pv[e].pose = views[e].pose;
             pv[e].fov = views[e].fov;
             pv[e].subImage = {swapchain, {{0, 0}, {64, 48}}, e};
+            if (depthMode)
+            {
+                depths[e].subImage = {depth, {{1, 1}, {62, 46}}, e};
+                depths[e].minDepth = 0;
+                depths[e].maxDepth = 1;
+                depths[e].nearZ = frame == 2 ? 10.f : .1f;
+                depths[e].farZ = frame >= 3 ? std::numeric_limits<float>::infinity() : (frame == 2 ? .1f : 10.f);
+                pv[e].next = &depths[e];
+            }
         }
         XrCompositionLayerProjection projection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
         projection.space = head;
@@ -1225,6 +1308,13 @@ static int runProbe()
     XrHapticActionInfo inactiveHaptic{XR_TYPE_HAPTIC_ACTION_INFO, nullptr, haptic, right};
     CHECK(xrStopHapticFeedback(session, &inactiveHaptic) == XR_SESSION_NOT_FOCUSED);
     XR(xrDestroySwapchain(swapchain));
+    if (depthMode)
+    {
+        XR(xrDestroySwapchain(depth));
+        vkUnmapMemory(device, depthMemory);
+        vkDestroyBuffer(device, depthUpload, nullptr);
+        vkFreeMemory(device, depthMemory, nullptr);
+    }
     if (devicesMode)
     {
         XR(xrDestroySpace(gazeSpace));

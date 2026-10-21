@@ -95,6 +95,14 @@ def main():
                     require(capture['target']['capture_kind'] == target, 'Exact target substituted')
                     captures.append(record['capture_id'])
                     exact[frame, target] = record['capture_id']
+                selected = client.retain_image(session, exact[5, TargetKind.COMPOSED_EYES],
+                                               target=TargetKind.LAYER_VIEW, layer=0, view=0)['image_reader_id']
+                selected_info = client.image_info(selected)
+                require(selected_info['capture_id'] == exact[5, TargetKind.LAYER_VIEW] and
+                        selected_info['frame']['frame_id'] == 5 and
+                        selected_info['target']['capture_kind'] == TargetKind.LAYER_VIEW,
+                        'Same-frame source selector changed capture/frame/target identity')
+                client.release_image(selected)
                 for index, (frame, target, pixels) in enumerate([
                         (3, TargetKind.COMPOSED_EYES, False), (5, TargetKind.LAYER_VIEW, True)]):
                     gate = data / f'consumer-{index}.continue'

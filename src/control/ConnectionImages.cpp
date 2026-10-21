@@ -1,4 +1,5 @@
 #include "control/ConnectionImages.h"
+#include "control/DebugProtocol.h"
 #include "control/ControlSchema.h"
 
 #include <algorithm>
@@ -105,14 +106,6 @@ Field Key(std::uint16_t name, FrameKey key)
 {
 	return Nested(name, {Field::U64(tag::Generation, key.generation.value), Field::U64(tag::FrameId, key.frame.value)});
 }
-Field Target(CaptureTarget target)
-{
-	const auto kind = target.kind == CaptureKind::ComposedEyes ? TargetKind::ComposedEyes
-					  : target.kind == CaptureKind::LayerView  ? TargetKind::LayerView
-															   : TargetKind::VirtualDisplay;
-	return Nested(tag::Target, {Field::U32(tag::CaptureKind, static_cast<std::uint32_t>(kind)),
-								Field::U32(tag::Layer, target.layer), Field::U32(tag::View, target.view)});
-}
 const char* CompletionName(CompletionStatus status)
 {
 	switch (status)
@@ -140,7 +133,7 @@ void Source(Message& response, const ImageSource& source, bool session = true)
 	}
 	response.fields.push_back(Key(tag::Frame, source.frame));
 	response.fields.push_back(Field::U64(tag::CaptureId, source.capture.value));
-	response.fields.push_back(Target(source.target));
+	response.fields.push_back(EncodeCaptureTarget(source.target));
 }
 ImageDeviceIdentity DeviceIdentity(const Message& message)
 {

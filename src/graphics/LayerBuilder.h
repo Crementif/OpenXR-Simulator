@@ -79,4 +79,5 @@ using LayerSpaceResolver = std::function<XrResult(XrSpace, RuntimeTime, PoseSamp
 XrResult BuildLayers(const XrFrameEndInfo& info, const LayerValidationContext& validation,
 					 const LayerSpaceResolver& resolve, std::shared_ptr<const FrameLayers>& output);
 std::optional<LayerImageDescription> FindLayerImage(const FrameLayers& frame, std::uint32_t layer, std::uint32_t view);
+const LayerDepthDescription* FindLayerDepth(const FrameLayers& frame, std::uint32_t layer, std::uint32_t view);
 } // namespace simxr

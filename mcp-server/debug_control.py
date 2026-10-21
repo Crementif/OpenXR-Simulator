@@ -43,7 +43,7 @@ _SESSION = {'connection': _CONNECTION, 'session': _ID, 'generation': _GENERATION
 _GAME = {'connection': _CONNECTION, 'session': _ID, 'generation': _GENERATION}
 _LEASE = {**_SESSION, 'lease': _ID}
 _COMMAND = {**_LEASE, 'command_id': _ID}
-_TARGET = {'target': {'type': 'string', 'enum': ['composed_eyes', 'layer_view'], 'default': 'composed_eyes'},
+_TARGET = {'target': {'type': 'string', 'enum': ['composed_eyes', 'layer_view', 'layer_depth', 'layer_depth_linear'], 'default': 'composed_eyes'},
            'layer': {'type': 'integer', 'minimum': 0, 'maximum': 2**32 - 1, 'default': 0},
            'view': {'type': 'integer', 'minimum': 0, 'maximum': 2**32 - 1, 'default': 0},
            'lookahead': {'type': 'integer', 'minimum': 1, 'maximum': 4, 'default': 1}}
@@ -88,8 +88,10 @@ TOOL_DEFINITIONS = [
           {'connection': _CONNECTION, 'revision': _ID}),
     _tool('debug_release_inspection', 'Release an independent CPU inspection reader and its unused revision references.',
           {'connection': _CONNECTION, 'inspection': _ID}),
-    _tool('debug_retain_image', 'Retain an independent exact ready capture image reader; this does not read pixels.',
-          {**_SESSION, 'capture': _ID}),
+    _tool('debug_retain_image', 'Retain an exact captured image, optionally selecting another already retained target from the same frame; never admits work or reads pixels.',
+          {**_SESSION, 'capture': _ID,
+           'target': {key: value for key, value in _TARGET['target'].items() if key != 'default'},
+           'layer': _TARGET['layer'], 'view': _TARGET['view']}, [*_SESSION, 'capture']),
     _tool('debug_retain_preview', 'Retain the currently selected completed virtual-display image, or report its actual clear; no admission or pixel readback.',
           _SESSION),
     _tool('debug_image_info', 'Inspect retained image metadata and capabilities without reading pixels.',
@@ -399,7 +401,11 @@ class DebugTools:
                 elif name == 'debug_inspect':
                     record = client.inspect(session, args['capture'])
                 elif name == 'debug_retain_image':
-                    record = client.retain_image(session, args['capture'])
+                    selection = {}
+                    if 'target' in args:
+                        selection = dict(target=sdk.TargetKind[args['target'].upper()],
+                                         layer=args.get('layer', 0), view=args.get('view', 0))
+                    record = client.retain_image(session, args['capture'], **selection)
                 elif name == 'debug_retain_preview':
                     record = client.retain_preview(session)
                 else:
@@ -411,7 +417,7 @@ class DebugTools:
                     elif name == 'debug_acknowledge':
                         record = client.acknowledge(lease, args['through'])
                     else:
-                        target = sdk.TargetKind.LAYER_VIEW if args.get('target') == 'layer_view' else sdk.TargetKind.COMPOSED_EYES
+                        target = sdk.TargetKind[args.get('target', 'composed_eyes').upper()]
                         extra = {'command_id': args['command_id']}
                         if name in ('debug_step', 'debug_strict_admission'):
                             extra.update(target=target, layer=args.get('layer', 0), view=args.get('view', 0),
