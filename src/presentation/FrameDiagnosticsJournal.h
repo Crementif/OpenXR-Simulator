@@ -35,7 +35,8 @@ enum class FrameTraceKind
 	CommandsApplied,
 	CommandRejected,
 	ApiError,
-	Validation
+	Validation,
+	DisplayEmpty
 };
 enum class FrameDiagnosticCategory
 {

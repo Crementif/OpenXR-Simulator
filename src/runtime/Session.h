@@ -117,8 +117,8 @@ class Session
 	SessionSnapshot m_state;
 	std::shared_ptr<Clock> m_clock;
 	FrameScheduler m_scheduler;
-	VirtualDisplay m_display;
 	FrameHistory m_history;
+	VirtualDisplay m_display;
 	SessionCaptureCoordinator m_captures;
 	SessionInteraction m_interaction;
 	SessionPublication m_publication;

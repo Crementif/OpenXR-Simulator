@@ -111,6 +111,13 @@ def main():
                 for capture in captures:
                     operation = client.submit(lease, CommandKind.RELEASE, capture=capture)['operation_id']
                     require(client.wait(session, operation)['progress'] == 'released', 'Capture release failed')
+                diagnostics = client.diagnostics(session, count=256)['document']
+                for (frame, target), capture_id in exact.items():
+                    events = [event for event in diagnostics['events']
+                              if event['kind'] == 'capture_ready' and event['related'] == capture_id]
+                    require(len(events) == 1 and events[0]['frame_id'] == frame and
+                            events[0]['generation'] == session.generation,
+                            f'Released capture lost exact terminal history: {capture_id}')
                 client.submit(lease, CommandKind.RESUME)
                 wait_file(data / 'control.destroyed', host)
                 require(not client.sessions(), 'Public XR session survived destruction')

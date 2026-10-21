@@ -14,6 +14,7 @@
 namespace simxr
 {
 struct FrameRecord;
+class FrameHistory;
 struct PresentationSubmission
 {
 	FrameKey key;
@@ -67,7 +68,8 @@ struct PresentationSnapshot
 class PresentationController
 {
   public:
-	explicit PresentationController(std::size_t capacity = 8);
+	// The optional history must outlive this controller; tracing never takes its frame-record lock.
+	explicit PresentationController(std::size_t capacity = 8, FrameHistory* history = nullptr);
 	void Start(SessionGeneration generation, const DisplayTimeline& timeline);
 	// Reserve queue storage before committing frame state. The callback may throw
 	// but must not reenter this controller. It runs before publication to readers.
@@ -95,6 +97,7 @@ class PresentationController
 		CompletionStatus status = CompletionStatus::Pending;
 	};
 	const std::size_t m_capacity;
+	FrameHistory* const m_history;
 	mutable std::mutex m_mutex;
 	bool m_running = false;
 	std::uint64_t m_revision = 0;

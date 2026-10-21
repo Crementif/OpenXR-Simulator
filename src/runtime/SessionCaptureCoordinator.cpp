@@ -7,7 +7,7 @@
 
 namespace simxr
 {
-SessionCaptureCoordinator::SessionCaptureCoordinator(FrameHistory& history) : m_history(history)
+SessionCaptureCoordinator::SessionCaptureCoordinator(FrameHistory& history) : m_history(history), m_store(32, &history)
 {
 	m_queued.reserve(m_store.Capacity());
 }

@@ -18,8 +18,8 @@ Instance& RetainedInstance(const std::shared_ptr<Instance>& instance)
 } // namespace
 
 Session::Session(XrSession handle, Instance& instance, std::shared_ptr<Clock> clock)
-	: m_handle(handle), m_instance(instance), m_clock(std::move(clock)), m_scheduler(m_clock), m_display(m_clock),
-	  m_captures(m_history), m_interaction(handle, instance), m_publication(instance, m_interaction.Actions()),
+	: m_handle(handle), m_instance(instance), m_clock(std::move(clock)), m_scheduler(m_clock),
+	  m_display(m_clock, 8, &m_history), m_captures(m_history), m_interaction(handle, instance), m_publication(instance, m_interaction.Actions()),
 	  m_spaces(
 		  handle, m_publication.Tracking(),
 		  [this](XrAction action, XrPath path, RuntimeTime time)

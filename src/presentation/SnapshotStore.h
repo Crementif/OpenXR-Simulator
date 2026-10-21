@@ -102,7 +102,8 @@ struct SnapshotStoreState
 class SnapshotStore
 {
   public:
-	explicit SnapshotStore(std::size_t capacity = 32);
+	// History outlives the store and retains no image or reservation readers.
+	explicit SnapshotStore(std::size_t capacity = 32, FrameHistory* history = nullptr);
 	~SnapshotStore();
 	void Start(SessionGeneration generation);
 	void Stop() noexcept;
@@ -143,9 +144,12 @@ class SnapshotStore
 		std::shared_ptr<FrameReservation> producer;
 		std::shared_ptr<FrameReservation> composedProducer;
 		bool released = false;
+		bool terminalTraced = false;
 		std::uint64_t revision = 0;
 	};
 	void CancelPendingLocked() noexcept;
+	void TraceTerminal(Entry& entry) noexcept;
+	FrameHistory* const m_history;
 	FramePool m_slots;
 	mutable std::mutex m_mutex;
 	bool m_running = false;
