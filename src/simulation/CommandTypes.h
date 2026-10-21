@@ -6,9 +6,11 @@
 #include "simulation/ViewConfiguration.h"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <variant>
 #include <vector>
 

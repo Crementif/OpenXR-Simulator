@@ -3,8 +3,14 @@
 #include "simulation/CommandRecorder.h"
 #include "simulation/CommandState.h"
 #include "simulation/PoseSequenceExecution.h"
+#include <array>
+#include <cstdint>
 #include <deque>
+#include <functional>
+#include <memory>
 #include <mutex>
+#include <optional>
+#include <vector>
 
 namespace simxr
 {

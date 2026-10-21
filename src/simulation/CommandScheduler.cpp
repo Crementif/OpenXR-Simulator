@@ -485,17 +485,20 @@ CommandOutcome CommandScheduler::Submit(CommandTransaction transaction)
 	auto returned = outcome;
 	if (outcome.result == CommandResult::Late)
 	{
-		m_outcomes.push_back(outcome);
-		if (m_outcomes.size() > m_historyCapacity)
-			m_outcomes.pop_front();
-		m_outcomes.back().recordingOverrun = !m_recorder.Observe(m_outcomes.back());
+		auto outcomes = m_outcomes;
+		outcomes.push_back(outcome);
+		if (outcomes.size() > m_historyCapacity)
+			outcomes.pop_front();
+		returned.recordingOverrun = !m_recorder.Observe(outcome);
+		outcomes.back().recordingOverrun = returned.recordingOverrun;
+		m_outcomes.swap(outcomes);
 	}
 	else
 		m_pending.push_back(std::move(outcome));
 	if (cursor == m_sources.end())
-		m_sources.push_back({request.source, request.id});
+		m_sources.push_back({returned.transaction.source, returned.transaction.id});
 	else
-		cursor->last = request.id;
+		cursor->last = returned.transaction.id;
 	return returned;
 }
 std::optional<CommandOutcome> CommandScheduler::Read(CommandSource source, std::uint64_t id) const
@@ -572,7 +575,10 @@ std::array<bool, ControlChannelCount> CommandScheduler::ReleaseSource(CommandSou
 			}
 			else
 				++it;
-		m_recorder.Observe(cancelled);
+		const bool recorded = m_recorder.Observe(cancelled);
+		const auto retained = std::min(cancelled.size(), m_historyCapacity);
+		for (auto index = outcomes.size() - retained; index < outcomes.size(); ++index)
+			outcomes[index].recordingOverrun = !recorded;
 		m_pending.swap(pending);
 		m_outcomes.swap(outcomes);
 	}
