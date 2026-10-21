@@ -4,6 +4,7 @@
 #include "graphics/backends/vulkan/VulkanBackend.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
 #include "runtime/Session.h"
+#include "graphics/PreviewGeometry.h"
 #include "runtime/validation/LayerValidation.h"
 
 #include <algorithm>
@@ -111,9 +112,12 @@ XrResult VulkanFrameSubmission::PrepareOutputs()
 	m_output = m_composed;
 	if (m_inspection)
 	{
-		m_composedTransfer = PrepareInspection(m_composed);
+		m_composedTransfer = PrepareInspection(m_composed, {}, VulkanInspectionKind::Required);
 		m_output = m_composedTransfer->Output();
 		result = PrepareCaptures();
+		if (XR_FAILED(result))
+			return result;
+		result = PrepareQuadHistory();
 		if (XR_FAILED(result))
 			return result;
 	}
@@ -181,8 +185,66 @@ XrResult VulkanFrameSubmission::PrepareFilteredCapture(CaptureTarget target)
 		capture.producer, std::move(reservation));
 	if (XR_FAILED(result))
 		return result;
-	capture.transfer = PrepareInspection(capture.producer, target);
-	m_captureOutputs.push_back({target, capture.transfer->Output()});
+	capture.transfer = PrepareInspection(capture.producer, target, VulkanInspectionKind::Required);
+	m_captureOutputs.push_back({target, capture.transfer->Output(),
+		target.kind == CaptureKind::QuadLayers ? std::optional{CompositionQuadBounds(plan)} : std::nullopt});
+	return XR_SUCCESS;
+}
+
+XrResult VulkanFrameSubmission::PrepareQuadHistory()
+{
+	const CaptureTarget target{CaptureKind::QuadLayers};
+	const auto requested = m_session.Captures().RequestedTargets(m_key);
+	if (std::find(requested.begin(), requested.end(), target) != requested.end())
+		return XR_SUCCESS;
+	try
+	{
+		m_captures.reserve(m_captures.size() + 1);
+		m_captureOutputs.reserve(m_captureOutputs.size() + 1);
+		auto plan = m_composition;
+		std::erase_if(plan.draws, [](const auto& draw) { return draw.constants.control[0] != 1; });
+		const auto bounds = CompositionQuadBounds(plan);
+		m_captureOutputs.push_back({target, {}, bounds});
+		if (plan.draws.empty() || std::none_of(bounds.begin(), bounds.end(),
+			[](const auto& rectangle) { return rectangle.extent.width > 0 && rectangle.extent.height > 0; }))
+			return XR_SUCCESS;
+		const auto bytes = static_cast<std::uint64_t>(plan.width) * plan.height * 8;
+		if (!bytes || bytes > FrameImageHistory::MaxImageBytes)
+			return XR_SUCCESS;
+		const auto& budget = m_session.ImageHistory().Budget(ImageHistoryView::Quads);
+		auto retained = budget.Reserve();
+		if (!retained)
+			return XR_SUCCESS;
+		auto reservation = m_backend.HistoryReservations().Reserve();
+		if (!reservation)
+			return XR_SUCCESS;
+		Capture capture{target, XR_NULL_HANDLE, {}, {}};
+		const auto prepared = m_backend.Prepare(plan,
+			[this](XrSwapchain swapchain) { return m_bindings.ReleasedImage(swapchain); },
+			capture.producer, std::move(reservation));
+		if (XR_FAILED(prepared))
+			return prepared == XR_ERROR_LIMIT_REACHED || prepared == XR_ERROR_OUT_OF_MEMORY ? XR_SUCCESS : prepared;
+		capture.transfer = PrepareInspection(capture.producer, target, VulkanInspectionKind::History);
+		if (!capture.transfer->Output()->PromoteCaptureBudget(budget, std::move(retained)))
+			return XR_SUCCESS;
+		m_captureOutputs.back().output = capture.transfer->Output();
+		m_captures.push_back(std::move(capture));
+	}
+	catch (const VulkanError& error)
+	{
+		if (error.Result() == VK_ERROR_DEVICE_LOST)
+		{
+			m_backend.Device()->lost.store(true);
+			return VulkanGraphicsFailure(error.Result());
+		}
+		if (error.Result() != VK_ERROR_OUT_OF_POOL_MEMORY && error.Result() != VK_ERROR_TOO_MANY_OBJECTS &&
+			error.Result() != VK_ERROR_OUT_OF_HOST_MEMORY && error.Result() != VK_ERROR_OUT_OF_DEVICE_MEMORY)
+			return VulkanGraphicsFailure(error.Result());
+	}
+	catch (const std::bad_alloc&)
+	{
+		// Optional history records a gap; accepted live output keeps its existing resources.
+	}
 	return XR_SUCCESS;
 }
 
@@ -227,7 +289,7 @@ XrResult VulkanFrameSubmission::PrepareCaptures()
 		}
 		if (XR_FAILED(result))
 			return result;
-		capture.transfer = PrepareInspection(capture.producer, target);
+		capture.transfer = PrepareInspection(capture.producer, target, VulkanInspectionKind::Required);
 		m_captureOutputs.push_back({target, capture.transfer->Output()});
 	}
 	return XR_SUCCESS;
@@ -242,7 +304,8 @@ void VulkanFrameSubmission::DropLiveOutput()
 }
 
 std::unique_ptr<VulkanInspectionTransfer>
-VulkanFrameSubmission::PrepareInspection(std::shared_ptr<VulkanFrame> source, CaptureTarget target)
+VulkanFrameSubmission::PrepareInspection(std::shared_ptr<VulkanFrame> source, CaptureTarget target,
+	VulkanInspectionKind kind)
 {
 	const auto journal = m_session.History().DiagnosticsJournal();
 	const auto key = m_key;
@@ -264,7 +327,7 @@ VulkanFrameSubmission::PrepareInspection(std::shared_ptr<VulkanFrame> source, Ca
 		{
 			journal->Trace(FrameTraceKind::ImageRetired, key, time, XR_SUCCESS,
 				FrameDiagnosticCategory::Timing, 0, detail);
-		});
+		}, kind);
 }
 
 XrResult VulkanFrameSubmission::Submit()

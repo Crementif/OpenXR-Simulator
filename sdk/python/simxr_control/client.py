@@ -141,8 +141,15 @@ class Client:
     def image_info(self, image_reader):
         return self.request(OpCode.IMAGE_INFO, [Field.u64(Tag.IMAGE_READER_ID, image_reader, True)])
 
-    def begin_image_window(self, session):
-        return self.request(OpCode.BEGIN_IMAGE_WINDOW, self._session(session))
+    def _history_fields(self, session, target):
+        fields = self._session(session)
+        if target is not None:
+            fields.append(Field.nested(Tag.TARGET, [Field.u32(Tag.CAPTURE_KIND, target, True),
+                                                  Field.u32(Tag.LAYER, 0), Field.u32(Tag.VIEW, 0)], True))
+        return fields
+
+    def begin_image_window(self, session, *, target=None):
+        return self.request(OpCode.BEGIN_IMAGE_WINDOW, self._history_fields(session, target))
 
     def image_window(self, window):
         return self.request(OpCode.READ_IMAGE_WINDOW, [Field.u64(Tag.IMAGE_WINDOW_ID, window, True)])
@@ -154,14 +161,14 @@ class Client:
     def release_image_window(self, window):
         return self.request(OpCode.RELEASE_IMAGE_WINDOW, [Field.u64(Tag.IMAGE_WINDOW_ID, window, True)])
 
-    def image_history(self, session, *, count=10):
+    def image_history(self, session, *, count=10, target=None):
         if type(count) is not int or not 1 <= count <= 10:
             raise ProtocolError('Image history count must be in [1,10]')
-        return self.request(OpCode.READ_IMAGE_HISTORY, self._session(session) + [Field.u64(Tag.LENGTH, count)])
+        return self.request(OpCode.READ_IMAGE_HISTORY, self._history_fields(session, target) + [Field.u64(Tag.LENGTH, count)])
 
-    def retain_historical_image(self, session, frame):
+    def retain_historical_image(self, session, frame, *, target=None):
         return self.request(OpCode.RETAIN_HISTORICAL_IMAGE,
-                            self._session(session) + [Field.u64(Tag.FRAME_ID, frame, True)])
+                            self._history_fields(session, target) + [Field.u64(Tag.FRAME_ID, frame, True)])
 
     def retain_preview(self, session):
         """Retain the current completed display image, or observe its actual clear."""

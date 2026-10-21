@@ -41,6 +41,7 @@ class VulkanBackend
 		std::shared_ptr<FrameReservation> reservation = {});
 	FramePool Reservations() const;
 	FramePool LiveReservations() const;
+	FramePool HistoryReservations() const;
 	void RetireCompleted();
 	VkResult Drain(std::uint64_t timeout);
 	// Closes new reservation admission, even when readers delay native closure.

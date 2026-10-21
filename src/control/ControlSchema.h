@@ -82,7 +82,8 @@ enum class Capability : std::uint64_t
 	FilteredComposition = 1ULL << 17,
 	ProjectionHistory = 1ULL << 18,
 	ImageHistory = 1ULL << 19,
-	ImageWindow = 1ULL << 20
+	ImageWindow = 1ULL << 20,
+	QuadImageHistory = 1ULL << 21
 };
 
 // Wire values are explicit and independent of the core's enum representation.

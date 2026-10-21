@@ -619,7 +619,7 @@ class VulkanInspection::State
 {
   public:
 	State(VulkanInspectionDevice device, std::size_t capacity)
-		: m_queue(std::make_shared<VulkanInspectionQueue>(std::move(device))), m_capacity(capacity),
+		: m_queue(std::make_shared<VulkanInspectionQueue>(std::move(device))), m_capacity(capacity + 3),
 		  m_admissions(capacity)
 	{
 		m_jobs.reserve(m_capacity);
@@ -633,11 +633,11 @@ class VulkanInspection::State
 	{
 		return m_queue;
 	}
-	std::shared_ptr<FrameReservation> Reserve()
+	std::shared_ptr<FrameReservation> Reserve(VulkanInspectionKind kind)
 	{
 		std::lock_guard lock(m_mutex);
 		CheckAdmission();
-		auto admission = m_admissions.Reserve();
+		auto admission = (kind == VulkanInspectionKind::History ? m_historyAdmissions : m_admissions).Reserve();
 		if (!admission)
 			throw VulkanError(VK_ERROR_OUT_OF_POOL_MEMORY, "Inspection preparation capacity exhausted");
 		return admission;
@@ -709,7 +709,7 @@ class VulkanInspection::State
 	void Poll()
 	{
 		std::lock_guard polling(m_polling);
-		std::array<std::shared_ptr<VulkanInspectionTransfer::State>, 32> pending;
+		std::array<std::shared_ptr<VulkanInspectionTransfer::State>, 35> pending;
 		std::size_t count = 0;
 		{
 			std::lock_guard lock(m_mutex);
@@ -718,7 +718,7 @@ class VulkanInspection::State
 		}
 		for (std::size_t index = 0; index < count; ++index)
 			pending[index]->Advance(*m_queue);
-		std::array<std::shared_ptr<VulkanInspectionTransfer::State>, 32> retired;
+		std::array<std::shared_ptr<VulkanInspectionTransfer::State>, 35> retired;
 		count = 0;
 		{
 			std::lock_guard lock(m_mutex);
@@ -758,6 +758,8 @@ class VulkanInspection::State
 	std::shared_ptr<VulkanInspectionQueue> m_queue;
 	const std::size_t m_capacity;
 	FramePool m_admissions;
+	// Optional history copies cannot consume live/explicit inspection admission.
+	FramePool m_historyAdmissions{3};
 	std::mutex m_lifecycle;
 	std::mutex m_polling;
 	std::mutex m_mutex;
@@ -936,11 +938,11 @@ VulkanInspection::~VulkanInspection()
 }
 
 std::unique_ptr<VulkanInspectionTransfer> VulkanInspection::Prepare(std::shared_ptr<VulkanFrame> source,
-	std::function<void(CompletionStatus)> completed, std::function<void()> retired)
+	std::function<void(CompletionStatus)> completed, std::function<void()> retired, VulkanInspectionKind kind)
 {
 	if (!source || !source->ExternalImage())
 		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Frame is not externally shareable");
-	auto admission = m_state->Reserve();
+	auto admission = m_state->Reserve(kind);
 	if (!source->ClaimInspection())
 		throw VulkanError(VK_ERROR_TOO_MANY_OBJECTS, "Frame already has an inspection consumer");
 	struct Claim

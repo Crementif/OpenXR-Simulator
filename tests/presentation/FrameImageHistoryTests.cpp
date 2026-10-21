@@ -91,6 +91,35 @@ void WindowOwnership()
 	Require(window->Find({1}).output && !window->Snapshot().interrupted,
 		"Restart invalidated a completed independent window");
 }
+void IndependentWindowTargets()
+{
+	for (const auto view : {ImageHistoryView::Composed, ImageHistoryView::Quads})
+	{
+		FrameImageHistory history;
+		history.Start({1});
+		bool composedDestroyed = false, quadDestroyed = false;
+		auto composed = std::make_shared<Output>();
+		auto quad = std::make_shared<Output>();
+		composed->destroyed = [&] { composedDestroyed = true; };
+		quad->destroyed = [&] { quadDestroyed = true; };
+		auto image = Image(1, composed);
+		image.quadOutput = quad;
+		image.quadVisible = true;
+		image.quadBounds[1] = {{10, 12}, {20, 16}};
+		history.Append(std::move(image));
+		composed.reset();
+		quad.reset();
+		auto started = history.BeginWindow(view);
+		history.Clear();
+		const bool ui = view == ImageHistoryView::Quads;
+		Require(composedDestroyed == ui && quadDestroyed != ui,
+			"Window retained an image from the unselected history target");
+		Require(started.window->Find({1}).view == view && started.window->Find({1}).quadBounds[1].offset.x == 10,
+			"Window lost its target or accepted quad geometry");
+		started.window.reset();
+		Require(composedDestroyed && quadDestroyed, "Target-specific window leaked an image");
+	}
+}
 void WindowDestructionReentry()
 {
 	FrameImageHistory history;
@@ -138,6 +167,7 @@ int main()
 	{
 		BoundedOwnership();
 		WindowOwnership();
+		IndependentWindowTargets();
 		WindowDestructionReentry();
 		MissingImagesAndDestruction();
 		std::cout << "Bounded image history, restart, independent readers and retirement reentry passed\n";

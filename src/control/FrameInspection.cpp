@@ -923,15 +923,23 @@ InspectionValue InspectHistoricalImage(const HistoricalImage& image)
 	const auto completion = image.output ? image.output->PollCompletion() : CompletionStatus::Failed;
 	const auto phase = image.output ? (completion == CompletionStatus::Complete ? "ready"
 		: completion == CompletionStatus::Pending ? "pending" : "failed")
-		: frame.submission && !frame.submission->layerCount ? "clear" : "unavailable";
+		: ((image.view == ImageHistoryView::Quads && !image.quadVisible) ||
+			(frame.submission && !frame.submission->layerCount)) ? "clear" : "unavailable";
 	return InspectionValue::Object(
-		{{"frame_id", InspectionValue::Unsigned(frame.key.frame.value)}, {"phase", InspectionValue::Text(phase)}});
+		{{"frame_id", InspectionValue::Unsigned(frame.key.frame.value)}, {"phase", InspectionValue::Text(phase)},
+		 {"quad_rectangles", image.view == ImageHistoryView::Quads ? InspectArray(image.quadBounds, [](const auto& rectangle)
+			{
+				return InspectionValue::Object({{"x", InspectionValue::Signed(rectangle.offset.x)},
+					{"y", InspectionValue::Signed(rectangle.offset.y)}, {"width", InspectionValue::Signed(rectangle.extent.width)},
+					{"height", InspectionValue::Signed(rectangle.extent.height)}});
+			}) : InspectionValue::Null()}});
 }
 } // namespace
 InspectionValue InspectImageHistory(const ImageHistorySnapshot& history)
 {
 	return InspectionValue::Object(
 		{{"generation", InspectionValue::Unsigned(history.generation.value)},
+		 {"target", InspectionValue::Text(history.view == ImageHistoryView::Quads ? "quad_layers" : "composed_eyes")},
 		 {"capacity", InspectionValue::Unsigned(FrameImageHistory::Capacity)},
 		 {"evicted", InspectionValue::Unsigned(history.evicted)},
 		 {"unavailable", InspectionValue::Unsigned(history.unavailable)},
@@ -943,6 +951,7 @@ InspectionValue InspectImageWindow(const ImageWindowSnapshot& window)
 		window.postCount == FrameImageWindow::PostCount ? "complete" : "collecting";
 	return InspectionValue::Object(
 		{{"generation", InspectionValue::Unsigned(window.generation.value)},
+		 {"target", InspectionValue::Text(window.view == ImageHistoryView::Quads ? "quad_layers" : "composed_eyes")},
 		 {"trigger_frame", InspectionValue::Unsigned(window.trigger.value)},
 		 {"capacity", InspectionValue::Unsigned(FrameImageWindow::Capacity)},
 		 {"pre_count", InspectionValue::Unsigned(window.preCount)},

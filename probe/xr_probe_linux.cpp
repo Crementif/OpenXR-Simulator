@@ -1151,6 +1151,8 @@ static int runProbe()
         quad.eyeVisibility = XR_EYE_VISIBILITY_RIGHT;
         quad.pose.orientation.w = 1;
         quad.pose.position.z = -2;
+        if (std::getenv("SIMXR_PROBE_MOVING_QUAD"))
+            quad.pose.position.x = frame % 2 ? 0.25f : -0.25f;
         quad.size = {1, 1};
         quad.subImage = {swapchain, {{16, 12}, {32, 24}}, 0};
         const XrCompositionLayerBaseHeader *submitted[] = {(const XrCompositionLayerBaseHeader *)&projection,

@@ -224,11 +224,17 @@ struct VulkanBackend::State
 						   {
 							   if (const auto retained = weak.lock())
 								   retained->Poll();
-						   })
+						   }),
+		  historyReservations(3, [weak = std::weak_ptr<Retirement>(retirement)]
+			{
+				if (const auto retained = weak.lock())
+					retained->Poll();
+			})
 	{
 	}
 	FramePool reservations;
 	FramePool liveReservations;
+	FramePool historyReservations;
 	bool closed = false;
 	bool failed = false;
 	std::vector<std::weak_ptr<VulkanSubmission>> submissions;
@@ -290,6 +296,11 @@ std::shared_ptr<VulkanImage> VulkanBackend::CreateImage(VkFormat format, VkExten
 FramePool VulkanBackend::Reservations() const
 {
 	return m_state->reservations;
+}
+
+FramePool VulkanBackend::HistoryReservations() const
+{
+	return m_state->historyReservations;
 }
 
 FramePool VulkanBackend::LiveReservations() const
@@ -362,7 +373,8 @@ XrResult VulkanBackend::Prepare(const CompositionPlan& plan, const VulkanImageRe
 		return XR_ERROR_SESSION_LOST;
 	if (!plan.width || !plan.height || plan.draws.size() > 64 || !resolve || !outputLayers || outputLayers > 2)
 		return XR_ERROR_VALIDATION_FAILURE;
-	if (reservation && !m_state->reservations.Owns(reservation) && !m_state->liveReservations.Owns(reservation))
+	if (reservation && !m_state->reservations.Owns(reservation) && !m_state->liveReservations.Owns(reservation) &&
+		!m_state->historyReservations.Owns(reservation))
 		return XR_ERROR_VALIDATION_FAILURE;
 	if (reservation && reservation->Consumed())
 		return XR_ERROR_CALL_ORDER_INVALID;
@@ -500,7 +512,8 @@ XrResult VulkanBackend::Prepare(const CompositionPlan& plan, const VulkanImageRe
 							 0, 0, nullptr, 0, nullptr, 1, &release);
 	}
 	CheckVulkan(vkEndCommandBuffer(resources.command), "End shared compositor commands");
-	const auto& pool = m_state->reservations.Owns(reservation) ? m_state->reservations : m_state->liveReservations;
+	const auto& pool = m_state->reservations.Owns(reservation) ? m_state->reservations :
+		m_state->historyReservations.Owns(reservation) ? m_state->historyReservations : m_state->liveReservations;
 	if (!pool.Consume(reservation))
 		return XR_ERROR_CALL_ORDER_INVALID;
 	resources.reservation = std::move(reservation);
@@ -738,6 +751,7 @@ XrResult VulkanBackend::Close()
 		return XR_SUCCESS;
 	m_state->reservations.CloseAdmission();
 	m_state->liveReservations.CloseAdmission();
+	m_state->historyReservations.CloseAdmission();
 	const auto result = Drain(5000000000ULL);
 	if (result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST)
 		return XR_ERROR_RUNTIME_FAILURE;

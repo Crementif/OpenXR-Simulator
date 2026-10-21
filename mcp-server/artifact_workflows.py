@@ -273,7 +273,7 @@ class IncidentWorkflow:
     def __init__(self, artifacts, *, ui=False):
         self._artifacts = artifacts
         self._ui = ui
-        self._retained = None if ui else RetainedIncident(artifacts.directory)
+        self._retained = RetainedIncident(artifacts.directory, ui=ui)
         self._status = Artifact.UI_FLICKER if ui else Artifact.FLICKER
         self._request = (
             "ui_flicker_capture_request.json" if ui else "flicker_capture_request.json"

@@ -4,6 +4,7 @@
 #include "presentation/FrameHistory.h"
 #include "presentation/PresentationController.h"
 
+#include <array>
 #include <compare>
 #include <cstddef>
 #include <cstdint>
@@ -116,6 +117,7 @@ struct CaptureOutput
 {
 	CaptureTarget target;
 	std::shared_ptr<const FrameOutput> output;
+	std::optional<std::array<XrRect2Di, 2>> quadBounds;
 };
 
 struct SnapshotStoreState

@@ -6,6 +6,14 @@
 
 namespace simxr
 {
+namespace
+{
+HistoricalImage SelectImage(const HistoricalImage& image, ImageHistoryView view)
+{
+	return {image.metadata, view == ImageHistoryView::Quads ? image.quadOutput : image.output,
+		{}, image.quadBounds, image.quadVisible, view};
+}
+} // namespace
 FrameImageWindow::~FrameImageWindow()
 {
 	std::array<HistoricalImage, Capacity> retired;
@@ -23,6 +31,7 @@ ImageWindowSnapshot FrameImageWindow::Snapshot() const
 	result.preCount = m_preCount;
 	result.postCount = m_postCount;
 	result.interrupted = m_interrupted;
+	result.view = m_view;
 	result.entries.insert(result.entries.end(), m_entries.begin(), m_entries.begin() + m_preCount + m_postCount);
 	return result;
 }
@@ -45,9 +54,9 @@ void FrameImageWindow::Append(const HistoricalImage& image) noexcept
 	std::lock_guard lock(m_mutex);
 	if (m_interrupted || m_postCount == PostCount)
 		return;
-	m_entries[m_preCount + m_postCount++] = image;
+	m_entries[m_preCount + m_postCount++] = SelectImage(image, m_view);
 }
-FrameImageHistory::StartedWindow FrameImageHistory::BeginWindow()
+FrameImageHistory::StartedWindow FrameImageHistory::BeginWindow(ImageHistoryView view)
 {
 	StartedWindow started{std::make_shared<FrameImageWindow>(), {}};
 	std::lock_guard lock(m_mutex);
@@ -68,9 +77,10 @@ FrameImageHistory::StartedWindow FrameImageHistory::BeginWindow()
 	}
 	auto& window = *started.window;
 	window.m_generation = m_generation;
+	window.m_view = view;
 	window.m_preCount = m_count;
 	for (std::size_t i = 0; i < m_count; ++i)
-		window.m_entries[i] = m_entries[(m_next + Capacity - m_count + i) % Capacity];
+		window.m_entries[i] = SelectImage(m_entries[(m_next + Capacity - m_count + i) % Capacity], view);
 	window.m_trigger = window.m_entries[m_count - 1].metadata->key.frame;
 	m_window = started.window;
 	return started;
@@ -90,7 +100,7 @@ FrameImageHistory::Retired FrameImageHistory::Start(SessionGeneration generation
 		retired.window->Cancel();
 	m_generation = generation;
 	m_next = m_count = 0;
-	m_evicted = m_unavailable = 0;
+	m_evicted = m_unavailable = m_quadUnavailable = 0;
 	return retired;
 }
 FrameImageHistory::Retired FrameImageHistory::Clear() noexcept
@@ -120,6 +130,8 @@ FrameImageHistory::Retired FrameImageHistory::Append(HistoricalImage image) noex
 		retired.window->Append(image);
 	if (!image.output && image.metadata->submission && image.metadata->submission->layerCount)
 		++m_unavailable;
+	if (image.quadVisible && !image.quadOutput)
+		++m_quadUnavailable;
 	retired.images[0] = std::exchange(m_entries[m_next], std::move(image));
 	m_next = (m_next + 1) % Capacity;
 	if (m_count == Capacity)
@@ -128,7 +140,7 @@ FrameImageHistory::Retired FrameImageHistory::Append(HistoricalImage image) noex
 		++m_count;
 	return retired;
 }
-ImageHistorySnapshot FrameImageHistory::Snapshot(std::size_t count) const
+ImageHistorySnapshot FrameImageHistory::Snapshot(std::size_t count, ImageHistoryView view) const
 {
 	if (!count || count > Capacity)
 		throw std::invalid_argument("Image history count must be in [1,10]");
@@ -137,19 +149,20 @@ ImageHistorySnapshot FrameImageHistory::Snapshot(std::size_t count) const
 	std::lock_guard lock(m_mutex);
 	snapshot.generation = m_generation;
 	snapshot.evicted = m_evicted;
-	snapshot.unavailable = m_unavailable;
+	snapshot.unavailable = view == ImageHistoryView::Quads ? m_quadUnavailable : m_unavailable;
+	snapshot.view = view;
 	count = std::min(count, m_count);
 	for (std::size_t offset = 0; offset < count; ++offset)
-		snapshot.entries.push_back(m_entries[(m_next + Capacity - count + offset) % Capacity]);
+		snapshot.entries.push_back(SelectImage(m_entries[(m_next + Capacity - count + offset) % Capacity], view));
 	return snapshot;
 }
-HistoricalImage FrameImageHistory::Find(FrameKey frame) const
+HistoricalImage FrameImageHistory::Find(FrameKey frame, ImageHistoryView view) const
 {
 	std::lock_guard lock(m_mutex);
 	if (frame.generation == m_generation)
 		for (const auto& entry : m_entries)
 			if (entry.metadata && entry.metadata->key == frame)
-				return entry;
+				return SelectImage(entry, view);
 	return {};
 }
 } // namespace simxr

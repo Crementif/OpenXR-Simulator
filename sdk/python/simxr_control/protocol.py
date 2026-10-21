@@ -96,6 +96,7 @@ class Capability(IntFlag):
     PROJECTION_HISTORY = 1 << 18
     IMAGE_HISTORY = 1 << 19
     IMAGE_WINDOW = 1 << 20
+    QUAD_IMAGE_HISTORY = 1 << 21
 
 
 class CommandKind(IntEnum):

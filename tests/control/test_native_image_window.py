@@ -7,7 +7,7 @@ import sys
 import tempfile
 
 from test_native_quad import export, require, wait_file
-from simxr_control import Capability, Client
+from simxr_control import Capability, Client, TargetKind
 from simxr_control.errors import ControlError
 from simxr_control.protocol import ErrorCode
 
@@ -22,12 +22,16 @@ def rejected(action, code):
 
 
 def main():
+    ui = "--ui" in sys.argv
+    target = TargetKind.QUAD_LAYERS if ui else None
     with tempfile.TemporaryDirectory(prefix='sx-window-') as temporary:
         data = Path(temporary)
         environment = dict(os.environ, SIMXR_DATA_DIR=temporary, SIMXR_PROBE_CONTROL='1',
                            SIMXR_PROBE_RETAIN_CONTROL='1', SIMXR_PROBE_GPU_INSPECTION='1',
                            SIMXR_PROBE_RECORDING='1', SIMXR_PROBE_DYNAMIC_COLOR='1',
                            SIMXR_PROBE_FRAMES='36', SIMXR_WIDTH='64', SIMXR_HEIGHT='48')
+        if ui:
+            environment['SIMXR_PROBE_MOVING_QUAD'] = '1'
         environment.pop('SIMXR_CONTROL_SOCKET', None)
         host = subprocess.Popen([sys.argv[1]], env=environment, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True)
@@ -43,7 +47,7 @@ def main():
                 for frame in range(3, 39):
                     wait_file(data / f'recording.{frame}.ready', host)
                     if frame == 12:
-                        started = client.begin_image_window(session)
+                        started = client.begin_image_window(session, target=target)
                         window = started['image_window_id']
                         doc = started['document']
                         require(doc['trigger_frame'] == 12 and doc['pre_count'] == 10 and doc['post_count'] == 0, doc)
@@ -55,6 +59,11 @@ def main():
                         require([row['frame_id'] for row in doc['entries']] == list(range(3, 25)), doc)
                     if frame == 34:
                         # Release of a second connection's collecting window frees admission immediately.
+                        if ui:
+                            pressured = client.image_history(session, target=TargetKind.QUAD_LAYERS)['document']
+                            composed = client.image_history(session)['document']
+                            require(pressured['unavailable'] > 0 and composed['unavailable'] == 0,
+                                    'UI history budget pressure affected composed history')
                         cancelled = other.begin_image_window(session)['image_window_id']
                         require(other.release_image_window(cancelled)['released'], 'Window release failed')
                         require(not other.release_image_window(cancelled)['released'], 'Window release not idempotent')
@@ -74,7 +83,23 @@ def main():
                     reader = client.retain_window_image(window, frame)['image_reader_id']
                     _, pixels = export(client, reader, 0)
                     expected = bytes((255, 0, 0, 255)) if frame % 2 else bytes((0, 255, 0, 255))
-                    require(pixels == expected * (64 * 48), f'Window substituted pixels for frame {frame}')
+                    if ui:
+                        require(client.image_info(reader)['target']['capture_kind'] == TargetKind.QUAD_LAYERS,
+                                'UI window substituted a composed image')
+                        require(all(pixels[index:index+3] == bytes(3) for index in range(0, len(pixels), 4)),
+                                'Projection appeared in quad-invisible eye')
+                        _, pixels = export(client, reader, 1)
+                        rectangle = next(row for row in doc['entries'] if row['frame_id'] == frame)['quad_rectangles'][1]
+                        x, y, width, height = (rectangle[key] for key in ('x', 'y', 'width', 'height'))
+                        center = ((y + height // 2) * 64 + x + width // 2) * 4
+                        require(pixels[center:center+3] == expected[:3], 'UI history substituted source pixels')
+                        for py in range(48):
+                            for px in range(64):
+                                if not (x <= px < x + width and y <= py < y + height):
+                                    offset = (py * 64 + px) * 4
+                                    require(pixels[offset:offset+3] == bytes(3), 'Quad pixels escaped historical bounds')
+                    else:
+                        require(pixels == expected * (64 * 48), f'Window substituted pixels for frame {frame}')
                     if frame == 24:
                         require(client.release_image_window(window)['released'], 'Window release failed')
                         require(client.image_info(reader)['frame']['frame_id'] == frame, 'Independent reader invalidated')

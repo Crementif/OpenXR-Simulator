@@ -9,10 +9,15 @@
 namespace simxr
 {
 class FrameOutput;
+enum class ImageHistoryView { Composed, Quads };
 struct HistoricalImage
 {
 	std::shared_ptr<const FrameRecord> metadata;
 	std::shared_ptr<const FrameOutput> output;
+	std::shared_ptr<const FrameOutput> quadOutput;
+	std::array<XrRect2Di, 2> quadBounds{};
+	bool quadVisible = false;
+	ImageHistoryView view = ImageHistoryView::Composed;
 };
 struct ImageHistorySnapshot
 {
@@ -20,6 +25,7 @@ struct ImageHistorySnapshot
 	std::uint64_t evicted = 0;
 	std::uint64_t unavailable = 0;
 	std::vector<HistoricalImage> entries;
+	ImageHistoryView view = ImageHistoryView::Composed;
 };
 
 struct ImageWindowSnapshot
@@ -30,6 +36,7 @@ struct ImageWindowSnapshot
 	std::size_t postCount = 0;
 	bool interrupted = false;
 	std::vector<HistoricalImage> entries;
+	ImageHistoryView view = ImageHistoryView::Composed;
 };
 class FrameImageWindow
 {
@@ -50,6 +57,7 @@ class FrameImageWindow
 	FrameId m_trigger;
 	std::size_t m_preCount = 0, m_postCount = 0;
 	bool m_interrupted = false;
+	ImageHistoryView m_view = ImageHistoryView::Composed;
 };
 
 // The caller promotes supported GPU outputs into Budget before publishing them.
@@ -70,21 +78,25 @@ class FrameImageHistory
 		std::shared_ptr<FrameImageWindow> previous;
 	};
 	~FrameImageHistory();
-	const FramePool& Budget() const noexcept { return m_budget; }
+	const FramePool& Budget(ImageHistoryView view = ImageHistoryView::Composed) const noexcept
+	{
+		return view == ImageHistoryView::Quads ? m_quadBudget : m_budget;
+	}
 	Retired Start(SessionGeneration generation) noexcept;
 	Retired Clear() noexcept;
 	Retired Append(HistoricalImage image) noexcept;
-	StartedWindow BeginWindow();
-	ImageHistorySnapshot Snapshot(std::size_t count = Capacity) const;
-	HistoricalImage Find(FrameKey frame) const;
+	StartedWindow BeginWindow(ImageHistoryView view = ImageHistoryView::Composed);
+	ImageHistorySnapshot Snapshot(std::size_t count = Capacity, ImageHistoryView view = ImageHistoryView::Composed) const;
+	HistoricalImage Find(FrameKey frame, ImageHistoryView view = ImageHistoryView::Composed) const;
 
   private:
 	mutable std::mutex m_mutex;
 	FramePool m_budget{24};
+	FramePool m_quadBudget{24};
 	std::array<HistoricalImage, Capacity> m_entries;
 	std::weak_ptr<FrameImageWindow> m_window;
 	SessionGeneration m_generation;
 	std::size_t m_next = 0, m_count = 0;
-	std::uint64_t m_evicted = 0, m_unavailable = 0;
+	std::uint64_t m_evicted = 0, m_unavailable = 0, m_quadUnavailable = 0;
 };
 } // namespace simxr

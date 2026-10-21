@@ -459,6 +459,23 @@ void SessionCaptureCoordinator::Submission::Commit(std::shared_ptr<const FrameRe
 				// Optional history cannot fail accepted application work; the missing output is recorded below.
 			}
 		}
+		if (metadata && metadata->submission && metadata->submission->layers)
+			image.quadVisible = std::any_of(metadata->submission->layers->layers.begin(),
+				metadata->submission->layers->layers.end(), [](const auto& layer)
+				{ return std::holds_alternative<QuadLayerDescription>(layer); });
+		for (const auto& captured : m_outputs)
+		{
+			if (captured.target.kind != CaptureKind::QuadLayers)
+				continue;
+			if (captured.quadBounds)
+			{
+				image.quadBounds = *captured.quadBounds;
+				image.quadVisible = std::any_of(image.quadBounds.begin(), image.quadBounds.end(),
+					[](const auto& rectangle) { return rectangle.extent.width > 0 && rectangle.extent.height > 0; });
+			}
+			if (includeOutputs && std::find(m_requested.begin(), m_requested.end(), captured.target) == m_requested.end())
+				image.quadOutput = captured.output;
+		}
 		m_retiredImage = m_owner.m_images.Append(std::move(image));
 	}
 	m_owner.m_store.Update(std::move(metadata), includeOutputs ? std::span<const CaptureOutput>{m_outputs}

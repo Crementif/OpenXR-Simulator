@@ -599,6 +599,13 @@ if(SIMXR_BUILD_PROBES)
                     set_tests_properties(linux_vulkan_mcp_incident PROPERTIES
                         ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
                         TIMEOUT 90 SKIP_RETURN_CODE 77)
+                    add_test(NAME linux_vulkan_ui_window COMMAND "${Python3_EXECUTABLE}"
+                        "${PROJECT_SOURCE_DIR}/tests/control/test_native_image_window.py" "$<TARGET_FILE:xr_probe_linux>" --ui)
+                    add_test(NAME linux_vulkan_mcp_ui_incident COMMAND "${Python3_EXECUTABLE}"
+                        "${PROJECT_SOURCE_DIR}/tests/control/test_native_mcp_incident.py" "$<TARGET_FILE:xr_probe_linux>" --ui)
+                    set_tests_properties(linux_vulkan_ui_window linux_vulkan_mcp_ui_incident PROPERTIES
+                        ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
+                        TIMEOUT 90 SKIP_RETURN_CODE 77)
                     add_test(NAME linux_vulkan_filtered_capture COMMAND "${Python3_EXECUTABLE}"
                         "${PROJECT_SOURCE_DIR}/tests/control/test_native_filtered_capture.py" "$<TARGET_FILE:xr_probe_linux>")
                     set_tests_properties(linux_vulkan_filtered_capture PROPERTIES

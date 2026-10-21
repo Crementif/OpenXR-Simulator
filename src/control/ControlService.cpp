@@ -32,6 +32,19 @@ constexpr std::uint64_t CommonCapabilities = static_cast<std::uint64_t>(Capabili
 											 static_cast<std::uint64_t>(Capability::HistoricalCpuState) |
 											 static_cast<std::uint64_t>(Capability::ImmutableRevisions);
 
+ImageHistoryView HistoryView(const Message& request, const Session& session)
+{
+	const auto target = request.Find(tag::Target) ? DecodeCaptureTarget(request) : CaptureTarget{};
+	if (target == CaptureTarget{})
+		return ImageHistoryView::Composed;
+	if (target == CaptureTarget{CaptureKind::QuadLayers} && session.SupportsCapture(target))
+		return ImageHistoryView::Quads;
+	throw ControlRequestError{ErrorCode::UnsupportedCommand, "Unsupported image-history target"};
+}
+CaptureTarget HistoryTarget(ImageHistoryView view)
+{
+	return {view == ImageHistoryView::Quads ? CaptureKind::QuadLayers : CaptureKind::ComposedEyes};
+}
 Message Response(const Message& request, ErrorCode error = ErrorCode::Ok, const char* detail = nullptr)
 {
 	Message response;
@@ -275,7 +288,7 @@ class ControlService::State
 		if (completion != CompletionStatus::Complete)
 			throw ControlRequestError{completion == CompletionStatus::Pending ? ErrorCode::Busy : ErrorCode::Internal,
 				"Window image is not GPU-ready"};
-		client.images.Retain(response, {held.window.session, image.metadata->key, {}, {}}, image.output,
+		client.images.Retain(response, {held.window.session, image.metadata->key, {}, HistoryTarget(image.view)}, image.output,
 			*m_images, client.nativeHandles, publication.images);
 		return response;
 	}
@@ -289,7 +302,7 @@ class ControlService::State
 		{
 			if (!session->SupportsImageHistory())
 				throw ControlRequestError{ErrorCode::UnsupportedCommand, "GPU image windows are unavailable"};
-			held.startedWindow = session->ImageHistory().BeginWindow();
+			held.startedWindow = session->ImageHistory().BeginWindow(HistoryView(request, *session));
 			held.window = {binding.id, held.startedWindow.window};
 			if (!held.window.window)
 				throw ControlRequestError{ErrorCode::Busy, "History is empty or another window is collecting"};
@@ -317,7 +330,7 @@ class ControlService::State
 			const auto count = request.Find(tag::Length) ? RequireRequestU64(request, tag::Length) : FrameImageHistory::Capacity;
 			if (!count || count > FrameImageHistory::Capacity)
 				throw ControlRequestError{ErrorCode::Invalid, "Image history count must be in [1,10]"};
-			held.history = session->ImageHistory().Snapshot(static_cast<std::size_t>(count));
+			held.history = session->ImageHistory().Snapshot(static_cast<std::size_t>(count), HistoryView(request, *session));
 			if (held.history.generation.value != RequireRequestU64(request, tag::Generation))
 				throw ControlRequestError{ErrorCode::StaleGeneration, "Image history belongs to another run"};
 			response.fields.push_back(Field::Bytes(tag::Document, InspectImageHistory(held.history).Encode(), true));
@@ -328,14 +341,15 @@ class ControlService::State
 			if (!m_images || !session->SupportsImageHistory())
 				throw ControlRequestError{ErrorCode::UnsupportedCommand, "GPU image history is unavailable"};
 			const FrameKey frame{{RequireRequestU64(request, tag::Generation)}, {RequireRequestU64(request, tag::FrameId)}};
-			held.historicalImage = session->ImageHistory().Find(frame);
+			held.historicalImage = session->ImageHistory().Find(frame, HistoryView(request, *session));
 			const auto& image = held.historicalImage;
 			if (!image.metadata)
 				throw ControlRequestError{ErrorCode::NotFound, "Historical image is absent or evicted"};
 			response.fields.push_back(Field::Bool(tag::ImageAvailable, image.output != nullptr));
 			if (!image.output)
 			{
-				if (image.metadata->submission && !image.metadata->submission->layerCount)
+				if ((image.view == ImageHistoryView::Quads && !image.quadVisible) ||
+					(image.metadata->submission && !image.metadata->submission->layerCount))
 				{
 					response.fields.push_back(EncodeFrameKey(tag::Frame, frame));
 					return response;
@@ -346,7 +360,7 @@ class ControlService::State
 			if (completion != CompletionStatus::Complete)
 				throw ControlRequestError{completion == CompletionStatus::Pending ? ErrorCode::Busy : ErrorCode::Internal,
 					"Historical image is not GPU-ready"};
-			client.images.Retain(response, {binding.id, frame, {}, {}}, image.output, *m_images,
+			client.images.Retain(response, {binding.id, frame, {}, HistoryTarget(image.view)}, image.output, *m_images,
 				client.nativeHandles, publication.images, false);
 			return response;
 		}
@@ -484,6 +498,8 @@ class ControlService::State
 			if (session->SupportsImageHistory())
 				capabilities |= static_cast<std::uint64_t>(Capability::ImageHistory) |
 					static_cast<std::uint64_t>(Capability::ImageWindow);
+			if (session->SupportsImageHistory() && status.filteredComposition)
+				capabilities |= static_cast<std::uint64_t>(Capability::QuadImageHistory);
 			if (status.filteredComposition)
 				capabilities |= static_cast<std::uint64_t>(Capability::FilteredComposition);
 			if (status.depthViews)

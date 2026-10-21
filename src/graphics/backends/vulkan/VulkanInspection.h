@@ -16,6 +16,11 @@
 
 namespace simxr
 {
+enum class VulkanInspectionKind
+{
+	Required,
+	History
+};
 class VulkanFrame;
 class VulkanInspection;
 class VulkanInspectionTransfer;
@@ -143,7 +148,8 @@ class VulkanInspection
 	VulkanInspection& operator=(const VulkanInspection&) = delete;
 	// Observers are installed before worker publication and never retain source images.
 	std::unique_ptr<VulkanInspectionTransfer> Prepare(std::shared_ptr<VulkanFrame> source,
-		std::function<void(CompletionStatus)> completed = {}, std::function<void()> retired = {});
+		std::function<void(CompletionStatus)> completed = {}, std::function<void()> retired = {},
+		VulkanInspectionKind kind = VulkanInspectionKind::Required);
 	VkResult Drain(std::uint64_t timeout = 5000000000ULL);
 	VkResult Close(std::uint64_t timeout = 5000000000ULL);
 	bool CanShare() const noexcept;
