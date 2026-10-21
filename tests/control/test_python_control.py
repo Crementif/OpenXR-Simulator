@@ -33,7 +33,7 @@ class ProtocolTests(unittest.TestCase):
     def test_exact_width_and_nested_records(self):
         message = Message(OpCode.STATUS, 2**64 - 1,
                           (Field.u64(Tag.SESSION, 2**64 - 1), Field.i64(Tag.TIME, -2**63),
-                           Field.text(Tag.DETAIL, '偏移 €'), Field.nested(Tag.FRAME, [Field.u64(Tag.FRAME_ID, 7)])))
+                           Field.text(Tag.DETAIL, '偏移 €'), Field.u64(Tag.IMAGE_TICK, 2**64 - 2), Field.nested(Tag.FRAME, [Field.u64(Tag.FRAME_ID, 7)])))
         encoded = message.encode()
         self.assertEqual(encoded[:4], b'SXR2')
         self.assertEqual(encoded[16:24], b'\xff' * 8)
@@ -42,6 +42,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(decoded['time'], -2**63)
         self.assertEqual(decoded['detail'], '偏移 €')
         self.assertEqual(decoded['frame']['frame_id'], 7)
+        self.assertEqual(decoded['image_tick'], 2**64 - 2)
 
     def test_malformed_and_evolution(self):
         for packet in (b'', b'\1' * 31, Message(1, 1).encode() + b'\0'):

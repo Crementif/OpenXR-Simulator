@@ -170,11 +170,13 @@ RecordingPage DecodeRecordingPage(const control::Message& response)
 		transaction.phase = entry.Member("phase").Text();
 		transaction.frame = FrameId{entry.Member("applied_frame").Unsigned()};
 		transaction.commands = Commands(entry.Member("commands"));
+		if (recording.version == 2)
+			transaction.afterFrame = entry.Member("after_frame").Boolean();
 		recording.transactions.push_back(std::move(transaction));
 	}
 	result.offset = Number(response, control::tag::Offset, 0);
-	if (recording.version != 1 || recording.total > 1024 || result.offset > recording.total ||
-		recording.transactions.size() > recording.total - result.offset ||
+	if ((recording.version != 1 && recording.version != 2) || recording.total > 1024 ||
+		result.offset > recording.total || recording.transactions.size() > recording.total - result.offset ||
 		Number(response, control::tag::Length, recording.transactions.size()) != recording.transactions.size())
 		throw std::runtime_error("Unsupported or invalid recording page");
 	result.end = result.offset + recording.transactions.size() == recording.total;
@@ -184,8 +186,9 @@ RecordingPage DecodeRecordingPage(const control::Message& response)
 }
 void RecordingCollection::Append(RecordingPage page)
 {
-	if (page.recording.version != 1 || page.recording.total > 1024 || m_complete || page.recording.active ||
-		page.recording.overflow || page.offset != Offset() || (!page.end && page.recording.transactions.empty()))
+	if ((page.recording.version != 1 && page.recording.version != 2) || page.recording.total > 1024 || m_complete ||
+		page.recording.active || page.recording.overflow || page.offset != Offset() ||
+		(!page.end && page.recording.transactions.empty()))
 		throw std::runtime_error("Recording must be stopped, complete and collected in order");
 	auto identity = CommandIdentity(page.recording.initial);
 	if (m_recording)

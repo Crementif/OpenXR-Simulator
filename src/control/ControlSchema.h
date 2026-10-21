@@ -57,7 +57,11 @@ inline constexpr std::uint16_t Error = 1, Detail = 2, Session = 3, Generation = 
 							   Scenario = 155, Seed = 156, Overflow = 158, Recording = 159, Ownership = 160,
 							   Transactions = 161, Revision = 162, AppliedFrame = 163, AppliedTime = 164,
 							   Rescheduled = 165, GameId = 166, GameKind = 167, ImageRecording = 168, TotalFrames = 169,
-							   ImageWindowId = 180, ProgramId = 181, SequenceId = 182, Loop = 183, ImageViews = 184, Pinned = 185, AdvanceDisplay = 186, SnapshotBudgetMiB = 187, SnapshotImageBytes = 188, Frames = 189;
+							   ImageWindowId = 180, ProgramId = 181, SequenceId = 182, Loop = 183, ImageTick = 184,
+							   PresentationPolicy = 185, Reprojected = 186, ReprojectionResult = 187,
+							   ReprojectionSubmissionTime = 188, ReprojectionCompletionLatency = 189, DisplayHead = 190,
+							   ImageViews = 191, Pinned = 192, AdvanceDisplay = 193, SnapshotBudgetMiB = 194,
+							   SnapshotImageBytes = 195, Frames = 196;
 }
 
 enum class Capability : std::uint64_t

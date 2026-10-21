@@ -1,6 +1,7 @@
 #pragma once
 
 #include "graphics/Compositor.h"
+#include "graphics/RotationalSource.h"
 #include "presentation/SnapshotStore.h"
 
 #include <memory>
@@ -17,6 +18,7 @@ class VulkanImage;
 class VulkanInspection;
 enum class VulkanInspectionKind;
 class VulkanInspectionTransfer;
+class VulkanReprojectionPreparation;
 
 class VulkanFrameBindings
 {
@@ -35,7 +37,7 @@ class VulkanFrameSubmission final
 {
   public:
 	VulkanFrameSubmission(Session& session, VulkanBackend& backend, VulkanInspection* inspection,
-						  const VulkanFrameBindings& bindings, FrameKey key);
+						  const VulkanFrameBindings& bindings, FrameKey key, bool retainLayers = false);
 	~VulkanFrameSubmission();
 	VulkanFrameSubmission(const VulkanFrameSubmission&) = delete;
 	VulkanFrameSubmission& operator=(const VulkanFrameSubmission&) = delete;
@@ -53,6 +55,7 @@ class VulkanFrameSubmission final
 
 	XrResult PrepareLayers(const XrFrameEndInfo& info);
 	XrResult PrepareOutputs();
+	XrResult PrepareReprojection();
 	XrResult PrepareCaptures();
 	XrResult PrepareQuadHistory();
 	XrResult PrepareFilteredCapture(CaptureTarget target);
@@ -69,6 +72,11 @@ class VulkanFrameSubmission final
 	VulkanInspection* const m_inspection;
 	const VulkanFrameBindings& m_bindings;
 	const FrameKey m_key;
+	const bool m_retainLayers;
+	CompositionTarget m_target{};
+	PoseSample m_head;
+	ReprojectionInput m_reprojection;
+	std::unique_ptr<VulkanReprojectionPreparation> m_retention;
 	std::shared_ptr<const FrameLayers> m_layers;
 	CompositionPlan m_composition;
 	std::shared_ptr<VulkanFrame> m_composed;

@@ -14,7 +14,6 @@ struct XrVulkanDeviceCreateInfoKHR;
 
 namespace simxr
 {
-XrResult VulkanGraphicsFailure(VkResult result);
 std::vector<const char*> VulkanSharingExtensions(VkPhysicalDevice physicalDevice);
 
 // Externally serialized by the native instance gate. Application Vulkan handles

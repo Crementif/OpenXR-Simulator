@@ -332,9 +332,11 @@ void DeviceControlPanel::DrawOwner(ControlChannel channel)
 	case CommandSourceKind::Mcp:
 		name = "MCP client";
 		break;
-	case CommandSourceKind::Sequence:
 	case CommandSourceKind::Rig:
 		name = "Replay / script";
+		break;
+	case CommandSourceKind::Sequence:
+		name = "Pose sequence";
 		break;
 	}
 	ImGui::Text("Owner: %s #%llu", name, static_cast<unsigned long long>(owner->id));

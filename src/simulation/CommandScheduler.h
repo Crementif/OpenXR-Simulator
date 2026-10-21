@@ -3,8 +3,14 @@
 #include "simulation/CommandRecorder.h"
 #include "simulation/CommandState.h"
 #include "simulation/PoseSequenceExecution.h"
+#include <array>
+#include <cstdint>
 #include <deque>
+#include <functional>
+#include <memory>
 #include <mutex>
+#include <optional>
+#include <vector>
 
 namespace simxr
 {
@@ -54,6 +60,7 @@ class CommandScheduler
 	std::optional<PoseSequenceExecution> m_sequence;
 	std::optional<CommandSource> m_replacedSequence;
 	std::uint64_t m_nextSequence = 1;
+	std::array<bool, ControlChannelCount> ReleaseSourceLocked(CommandSource source) noexcept;
 	std::array<bool, ControlChannelCount> StopPoseSequenceLocked(CommandSource owner) noexcept;
 };
 } // namespace simxr

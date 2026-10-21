@@ -32,6 +32,23 @@ class Output final : public FrameOutput
 	bool* destroyed = nullptr;
 };
 
+class RetainedSource final : public RotationalSource
+{
+  public:
+	CompletionStatus PollCompletion() const noexcept override
+	{
+		return CompletionStatus::Complete;
+	}
+	PoseSample SubmittedHead() const noexcept override
+	{
+		return {};
+	}
+	XrResult Reproject(const PoseSample&, std::shared_ptr<const FrameOutput>&) const override
+	{
+		return XR_ERROR_FEATURE_UNSUPPORTED;
+	}
+};
+
 struct Records
 {
 	std::shared_ptr<const FrameRecord> issued;
@@ -294,8 +311,13 @@ void DisplayAndProducerReservation()
 	const auto frame = Frame({5}, 1);
 	auto output = std::make_shared<Output>();
 	output->status.store(CompletionStatus::Complete);
-	const PresentationTick tick{{2}, {Duration{120}}, PresentationKind::Repeat, frame.issued->key, output};
+	PresentationTick tick{{2}, {Duration{120}}, PresentationKind::Repeat, frame.issued->key, output};
+	tick.reprojection.source = std::make_shared<RetainedSource>();
+	std::weak_ptr<const RotationalSource> retained = tick.reprojection.source;
 	Require(store.PublishDisplay(selected.id, tick, frame.submitted), "Display snapshot publication failed");
+	tick.reprojection.source.reset();
+	Require(retained.expired() && !store.Read(selected.id)->display->reprojection.source,
+			"Display screenshot retained per-layer inputs");
 	store.Poll();
 	Require(store.Read(selected.id)->phase == SnapshotPhase::Ready &&
 				store.Read(selected.id)->display->tick == DisplayTick{2} &&

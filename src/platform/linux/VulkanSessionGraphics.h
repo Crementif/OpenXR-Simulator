@@ -45,6 +45,7 @@ class VulkanSessionGraphics final
 	VulkanSessionGraphics(const VulkanSessionGraphics&) = delete;
 	VulkanSessionGraphics& operator=(const VulkanSessionGraphics&) = delete;
 	control::ImageCapabilities Capabilities() const noexcept;
+	bool SupportsReprojection() const noexcept;
 	XrResult CreateSwapchain(const XrSwapchainCreateInfo& description, XrSwapchain& output);
 	SwapchainRef FindSwapchain(XrSwapchain handle) const;
 	void DestroySwapchain(SwapchainRef swapchain);

@@ -1,4 +1,5 @@
 #include "simulation/CommandState.h"
+#include "runtime/validation/Path.h"
 #include "simulation/TrackingSystem.h"
 
 #include <stdexcept>
@@ -188,14 +189,8 @@ void CommandState::Normalize(CommandConfiguration& value, RuntimeTime time)
 				throw std::invalid_argument("Command device path exceeds bounds");
 	}
 	for (const auto& profile : value.input.preferredProfiles)
-	{
-		if (!profile.starts_with("/interaction_profiles/") || profile.size() > 255 || profile.back() == '/' ||
-			profile.find('\0') != std::string::npos)
+		if (!profile.starts_with("/interaction_profiles/") || !IsValidXrPath(profile))
 			throw std::invalid_argument("Invalid command profile path");
-		for (const char c : profile)
-			if (!(c == '/' || c == '_' || c == '-' || c == '.' || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')))
-				throw std::invalid_argument("Invalid command profile path");
-	}
 }
 void CommandState::ClearChannel(ControlChannel channel) noexcept
 {

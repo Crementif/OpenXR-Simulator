@@ -12,6 +12,7 @@
 
 namespace simxr
 {
+XrResult VulkanGraphicsFailure(VkResult result);
 using VulkanImageResolver = std::function<std::shared_ptr<VulkanImage>(XrSwapchain)>;
 
 struct VulkanRetainedSource
@@ -51,6 +52,9 @@ class VulkanBackend
 	XrResult PrepareDepthCapture(const LayerDepthDescription& source, bool linear,
 		const VulkanImageResolver& resolve, std::shared_ptr<VulkanFrame>& output,
 		std::shared_ptr<FrameReservation> reservation = {});
+	XrResult PrepareRetainedLayer(const LayerImageDescription& source, const VulkanImageResolver& resolve,
+								  std::shared_ptr<VulkanFrame>& output);
+	FramePool ReprojectionReservations() const;
 	FramePool Reservations() const;
 	FramePool LiveReservations() const;
 	FramePool HistoryReservations() const;
@@ -67,6 +71,9 @@ class VulkanBackend
 	XrResult PrepareComposition(const CompositionPlan& plan, const VulkanImageResolver& resolve,
 		std::span<const VulkanRetainedSource> retained, std::shared_ptr<VulkanFrame>& output,
 		std::shared_ptr<FrameReservation> reservation, std::uint32_t outputLayers);
+	XrResult PrepareImageCopy(const LayerImageDescription& source, const VulkanImageResolver& resolve,
+							  std::shared_ptr<VulkanFrame>& output, std::shared_ptr<FrameReservation> reservation,
+							  bool retained);
 	struct State;
 	std::unique_ptr<State> m_state;
 };

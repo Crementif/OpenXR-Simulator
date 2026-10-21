@@ -1,9 +1,14 @@
 #include "graphics/SnapshotBudget.h"
 #include "../TestSupport.h"
+#include "../control/FakeImageInspection.h"
+#include "app/PreviewImages.h"
+#include "control/LocalControlServer.h"
+
 #include "app/PreviewTexture.h"
 #include "app/UiRenderer.h"
 #include "app/Window.h"
 #include "graphics/backends/vulkan/VulkanExternal.h"
+#include <filesystem>
 
 #include <algorithm>
 #include <array>
@@ -36,6 +41,86 @@ wire::ImageDescription Description(const app::VulkanDeviceAccess& access)
 					   return static_cast<std::byte>(byte);
 				   });
 	return description;
+}
+void DisplayImageIdentity(app::UiRenderer& renderer)
+{
+	struct Directory
+	{
+		char path[40] = "/tmp/simxr-image-key-XXXXXX";
+		Directory()
+		{
+			Require(::mkdtemp(path) != nullptr, "Create private image-identity endpoint directory");
+		}
+		~Directory()
+		{
+			std::error_code error;
+			std::filesystem::remove_all(path, error);
+		}
+	} directory;
+	wire::test::Fixture fixture;
+	wire::LocalControlServer server(fixture.service, std::string(directory.path) + "/control.sock");
+	app::RuntimePanelRequests requests;
+	requests.Connect(server.Path());
+	Eventually(
+		[&]
+		{
+			return requests.Snapshot().state == app::RuntimeConnectionState::Connected;
+		},
+		"Connect isolated image-identity endpoint");
+	requests.RefreshEpoch();
+	app::PreviewImages images(renderer, requests);
+	images.SetScope({requests.Epoch(), 1, 1});
+	const auto description = Description(renderer.DeviceAccess());
+	auto retained = [&](std::uint64_t reader, std::optional<std::uint64_t> imageTick)
+	{
+		wire::Message message;
+		message.fields = {wire::Field::Bool(wire::tag::ImageAvailable, true),
+						  wire::Field::U64(wire::tag::Session, 1),
+						  wire::Field::U64(wire::tag::Generation, 1),
+						  wire::Field::U64(wire::tag::CaptureId, 0),
+						  wire::Field::U64(wire::tag::ImageReaderId, reader),
+						  wire::EncodeImageDescription(description),
+						  wire::Field::Bytes(wire::tag::Frame,
+											 wire::EncodeFields(std::array{wire::Field::U64(wire::tag::Generation, 1),
+																		   wire::Field::U64(wire::tag::FrameId, 7)}))};
+		if (imageTick)
+			message.fields.push_back(wire::Field::U64(wire::tag::ImageTick, *imageTick));
+		images.Retained(message, true);
+	};
+	// Readers are deliberately absent from the fixture: exercise acquisition
+	// identity and native fence retirement, without pretending to import pixels.
+	retained(101, 5);
+	retained(102, 5);
+	Require(images.Images().size() == 1 && images.Images().front().imageTick == 5,
+			"Recycled reader ID duplicated an unchanged display image");
+	retained(103, 6);
+	retained(104, 6);
+	const auto versions = images.Images();
+	Require(versions.size() == 2 && versions[0].frame == 7 && versions[1].frame == 7 && versions[0].imageTick == 5 &&
+				versions[1].imageTick == 6,
+			"Changed display image was discarded because its application frame did not change");
+	retained(105, {});
+	retained(106, {});
+	Require(images.Images().size() == 3 && !images.Images().back().imageTick && images.ReadyCount() == 0,
+			"Legacy preview identity was duplicated or pending images were marked ready");
+	unsigned rejected = 0;
+	Eventually(
+		[&]
+		{
+			for (auto& reply : requests.Poll())
+				if (reply.task.kind == app::PanelWork::Share)
+				{
+					Require(reply.response.packet.message.Find(wire::tag::Error)->AsU32() ==
+								static_cast<std::uint32_t>(wire::ErrorCode::NotFound),
+							"Fixture unexpectedly supplied native pixels");
+					images.ShareFailed(reply.task.id);
+					++rejected;
+				}
+			images.Poll();
+			return rejected == 3 && images.Images().empty();
+		},
+		"Rejected image offers failed to retire their native fences");
+	requests.Close();
 }
 void BoundAndRollback(const app::VulkanDeviceAccess& access)
 {
@@ -94,10 +179,11 @@ int main()
 				std::cout << "SKIP preview texture: external sharing unavailable\n";
 				return 77;
 			}
+			DisplayImageIdentity(renderer);
 			BoundAndRollback(access);
 		}
 		Require(validation->errors.load() == 0, "Preview texture lifetime produced Vulkan validation errors");
-		std::cout << "PASS preview texture bounds, native rollback and unsent retirement\n";
+		std::cout << "PASS display-image identity, preview texture bounds, native rollback and unsent retirement\n";
 		return 0;
 	}
 	catch (const std::exception& error)

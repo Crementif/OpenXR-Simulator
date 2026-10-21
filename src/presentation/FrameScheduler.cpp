@@ -170,7 +170,8 @@ XrResult FrameScheduler::WaitFrame(FramePrediction& prediction,
 			const auto policy = m_policyRevision;
 			if (!m_state.paused && m_config.mode == ExecutionMode::RealTime)
 			{
-				const auto elapsed = std::chrono::duration_cast<Duration>(m_clock->Now() - m_hostEpoch);
+				const auto elapsed =
+					std::chrono::duration_cast<Duration>(HostTimeDifference(m_clock->Now(), m_hostEpoch));
 				const auto relative = m_timeline.TimeAt(admission).value - m_timeline.TimeAt(m_hostTick).value;
 				if (elapsed > relative)
 				{

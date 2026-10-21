@@ -3,11 +3,35 @@
 #include "presentation/PresentationController.h"
 
 #include <atomic>
+#include <cstdlib>
 #include <future>
 #include <iostream>
 #include <limits>
+#include <new>
 #include <stdexcept>
 #include <thread>
+#include <utility>
+
+namespace
+{
+thread_local bool refusePresentationAllocation = false;
+}
+[[gnu::noinline]] void* operator new(std::size_t size)
+{
+	if (std::exchange(refusePresentationAllocation, false))
+		throw std::bad_alloc{};
+	if (void* memory = std::malloc(size ? size : 1))
+		return memory;
+	throw std::bad_alloc{};
+}
+[[gnu::noinline]] void operator delete(void* memory) noexcept
+{
+	std::free(memory);
+}
+[[gnu::noinline]] void operator delete(void* memory, std::size_t) noexcept
+{
+	std::free(memory);
+}
 
 namespace
 {
@@ -39,6 +63,60 @@ PresentationSubmission Submission(std::uint64_t frame, std::int64_t target,
 								  std::shared_ptr<const FrameOutput> output = {}, std::uint64_t generation = 1)
 {
 	return {{{generation}, {frame}}, {Duration{target}}, std::move(output)};
+}
+
+class RetainedSource final : public RotationalSource
+{
+  public:
+	CompletionStatus PollCompletion() const noexcept override
+	{
+		return CompletionStatus::Complete;
+	}
+	PoseSample SubmittedHead() const noexcept override
+	{
+		return {};
+	}
+	XrResult Reproject(const PoseSample&, std::shared_ptr<const FrameOutput>&) const override
+	{
+		return XR_ERROR_FEATURE_UNSUPPORTED;
+	}
+};
+
+void ReprojectionOwnership()
+{
+	PresentationController controller(2);
+	controller.Start({1}, {{Duration{100}}, Duration{10}});
+	auto screenshot = std::make_shared<Output>(CompletionStatus::Complete);
+	auto source = std::make_shared<RetainedSource>();
+	std::weak_ptr<RotationalSource> lifetime = source;
+	auto submission = Submission(1, 100, screenshot);
+	submission.reprojection.source = std::move(source);
+	Require(controller.Submit(std::move(submission)) == PresentationAdmission::Accepted, "Queue retained layers");
+	auto tick = controller.Advance({Duration{100}});
+	Require(tick && tick->reprojection.source && controller.Snapshot().latest->reprojection.source,
+			"Selected presentation lost its retained inputs");
+	auto repeat = controller.Advance({Duration{110}});
+	Require(repeat && repeat->reprojection.source == tick->reprojection.source, "Repeat lost retained inputs");
+	repeat.reset();
+	controller.Stop();
+	Require(!lifetime.expired() && !controller.Snapshot().latest->reprojection.source,
+			"Stop discarded an independent reader or retained inputs in metadata history");
+	tick.reset();
+	Require(lifetime.expired() && screenshot->PollCompletion() == CompletionStatus::Complete,
+			"A screenshot reader unnecessarily retained per-layer inputs");
+	controller.Start({2}, {{Duration{200}}, Duration{10}});
+	auto unavailable = Submission(1, 200, screenshot, 2);
+	unavailable.reprojection.status = XR_ERROR_LIMIT_REACHED;
+	Require(controller.Submit(unavailable) == PresentationAdmission::Accepted, "Queue baseline without retention");
+	const auto baseline = controller.Advance({Duration{200}});
+	Require(baseline && baseline->output == screenshot && !baseline->reprojection.source &&
+				baseline->reprojection.status == XR_ERROR_LIMIT_REACHED,
+			"Optional retention failure discarded baseline/reason");
+	auto invalid = Submission(2, 210, {}, 2);
+	invalid.reprojection.source = std::make_shared<RetainedSource>();
+	Require(controller.Submit(invalid) == PresentationAdmission::Invalid &&
+				controller.SubmitLiveClearWithMetadata(invalid, {}) == PresentationAdmission::Invalid,
+			"Clear admitted unrelated retained images");
 }
 
 void DisplayHistory()
@@ -98,16 +176,16 @@ void Selection()
 	pending->state.store(CompletionStatus::Complete);
 	tick = controller.Advance({Duration{110}});
 	Require(tick && tick->kind == PresentationKind::NewFrame && tick->source == FrameKey{{1}, {1}} &&
-				tick->output == pending,
+				tick->output == pending && tick->imageTick == DisplayTick{1},
 			"Completed eligible frame not selected");
 	const auto retained = *tick;
 	tick = controller.Advance({Duration{120}});
 	Require(tick && tick->kind == PresentationKind::Repeat && tick->source == retained.source &&
-				tick->output == pending,
+				tick->output == pending && tick->imageTick == DisplayTick{1},
 			"Missed deadline did not repeat retained output");
 	tick = controller.Advance({Duration{130}});
 	Require(tick && tick->kind == PresentationKind::NewFrame && tick->source == FrameKey{{1}, {2}} &&
-				tick->output == future,
+				tick->output == future && tick->imageTick == DisplayTick{3},
 			"Future target selected at wrong tick");
 	auto late = std::make_shared<Output>();
 	auto newest = std::make_shared<Output>(CompletionStatus::Complete);
@@ -128,7 +206,8 @@ void Selection()
 				tick->source == FrameKey{{1}, {4}},
 			"Clear applied before target or missed ticks caught up");
 	tick = controller.Advance({Duration{180}});
-	Require(tick && tick->kind == PresentationKind::Clear && tick->source == FrameKey{{1}, {5}} && !tick->output,
+	Require(tick && tick->kind == PresentationKind::Clear && tick->source == FrameKey{{1}, {5}} && !tick->output &&
+				!tick->imageTick,
 			"Eligible zero-layer frame did not clear");
 	tick = controller.Advance({Duration{190}});
 	Require(tick && tick->kind == PresentationKind::Repeat && tick->source == FrameKey{{1}, {5}} && !tick->output,
@@ -253,6 +332,55 @@ void PhaseAndConcurrency()
 			"Latest-due tick overflowed at time limit");
 }
 
+void FailedQueueAllocationReleasesOutsideLock()
+{
+	PresentationController controller(64);
+	controller.Start({1}, {{Duration{100}}, Duration{10}});
+	std::atomic<bool> inspect = false;
+	auto observer = std::async(std::launch::async,
+							   [&]
+							   {
+								   Eventually(
+									   [&]
+									   {
+										   return inspect.load();
+									   },
+									   "Destructor observation was not requested");
+								   return controller.Snapshot();
+							   });
+	bool failed = false, outsideLock = false;
+	std::uint64_t identity = 1;
+	for (; identity <= 64; ++identity)
+	{
+		auto output = std::make_shared<Output>();
+		const auto raw = output.get();
+		output->destroy = [&]
+		{
+			inspect = true;
+			outsideLock = observer.wait_for(std::chrono::seconds{1}) == std::future_status::ready;
+		};
+		auto submission = Submission(identity, 100, std::move(output));
+		refusePresentationAllocation = true;
+		try
+		{
+			controller.SubmitWithMetadata(std::move(submission), {});
+		}
+		catch (const std::bad_alloc&)
+		{
+			failed = true;
+		}
+		refusePresentationAllocation = false;
+		if (failed)
+			break;
+		raw->destroy = {};
+	}
+	inspect = true;
+	const auto state = observer.get();
+	Require(failed && outsideLock, "Failed queue allocation destroyed its image under the presentation lock");
+	Require(state.lastSubmitted == FrameId{identity - 1} && state.queued.size() == identity - 1 &&
+				controller.Submit(Submission(identity, 100)) == PresentationAdmission::Accepted,
+			"Failed queue allocation changed history or prevented retry");
+}
 void Reservation()
 {
 	PresentationController controller(1);
@@ -351,10 +479,12 @@ void LiveClearMailbox()
 
 int main()
 {
+	ReprojectionOwnership();
 	DisplayHistory();
 	Selection();
 	FailureAndShutdown();
 	PhaseAndConcurrency();
+	FailedQueueAllocationReleasesOutsideLock();
 	Reservation();
 	LiveClearMailbox();
 	std::cout << "Portable presentation selection tests passed; no hardware display exercised\n";

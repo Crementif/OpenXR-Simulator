@@ -1,6 +1,7 @@
 #pragma once
 
 #include "simulation/CommandTypes.h"
+#include <cstddef>
 #include <functional>
 #include <mutex>
 #include <span>

@@ -15,10 +15,12 @@
 namespace
 {
 thread_local bool failCommandAllocation = false;
+thread_local int commandAllocationCountdown = -1;
 }
 void* operator new(std::size_t size)
 {
-	if (std::exchange(failCommandAllocation, false))
+	if (std::exchange(failCommandAllocation, false) ||
+		(commandAllocationCountdown >= 0 && commandAllocationCountdown-- == 0))
 		throw std::bad_alloc{};
 	if (void* memory = std::malloc(size ? size : 1))
 		return memory;
@@ -471,6 +473,219 @@ void ImmutableRecordingPublication()
 			"Retained prepared snapshots changed after reservation or recorder overflow was hidden");
 }
 
+void LateAdmissionRollback()
+{
+	for (int failure = 0; failure < 256; ++failure)
+	{
+		CommandScheduler scheduler;
+		scheduler.Start(73);
+		Tick(scheduler, 1);
+		scheduler.Recorder().Start({73});
+		Require(scheduler.Submit(Request(1, 1, {TakeControl{ControlChannel::Head}}, Mcp)).result == CommandResult::Late,
+				"Prepare existing late-command history");
+		auto request = Request(5, 1, {TakeControl{ControlChannel::Gaze}});
+		bool failed = false;
+		commandAllocationCountdown = failure;
+		try
+		{
+			(void)scheduler.Submit(std::move(request));
+		}
+		catch (const std::bad_alloc&)
+		{
+			failed = true;
+		}
+		commandAllocationCountdown = -1;
+		if (failed)
+		{
+			const auto history = scheduler.Snapshot();
+			const auto recording = scheduler.Recorder().Snapshot();
+			Require(!scheduler.Read(Manual, 5) && history.pending == 0 && history.outcomes.size() == 1 &&
+						history.outcomes.front().transaction.source == Mcp && recording.active && !recording.overflow &&
+						recording.total == 1,
+					"Failed late admission published history or changed recording");
+			Require(scheduler.Submit(Request(5, 1, {TakeControl{ControlChannel::Gaze}})).result == CommandResult::Late,
+					"Retry late admission");
+		}
+		Require(scheduler.Read(Manual, 5)->result == CommandResult::Late && scheduler.Snapshot().outcomes.size() == 2 &&
+					scheduler.Recorder().Snapshot().total == 2 &&
+					scheduler.Submit(Request(4, 2, {TakeControl{ControlChannel::Gaze}})).result ==
+						CommandResult::Conflict,
+				"Late admission retry duplicated recording or failed to commit its source cursor");
+		if (!failed)
+		{
+			std::cout << "Late admission allocation sweep: " << failure << " failures\n";
+			return;
+		}
+	}
+	throw std::runtime_error("Late admission allocation sweep exceeded its bound");
+}
+
+void SourceReleaseRecording()
+{
+	CommandScheduler scheduler;
+	scheduler.Start();
+	scheduler.StartRecording({}, {});
+	ControllerControls held;
+	held.trigger = .75f;
+	scheduler.Submit(Request(1, 1, {TakeControl{ControlChannel::LeftControls}, SetControllerControls{0, held}}));
+	Tick(scheduler, 1);
+	scheduler.ReleaseSource(Manual);
+	scheduler.Submit(Request(1, 3, {TakeControl{ControlChannel::Gaze}, SetGaze{{.2f}}}, Mcp));
+	Require(Tick(scheduler, 2)->configuration.input.controllers[0].trigger == 0, "Live cleanup did not release input");
+	Tick(scheduler, 3);
+	scheduler.Recorder().Stop();
+	const auto recording = scheduler.Recorder().Snapshot();
+	Require(recording.total == 3 && !recording.overflow, "Recording omitted intermediate source release");
+	const auto& release = recording.transactions[1];
+	Require(release.result == CommandResult::Released && release.transaction.id == 0 &&
+				release.transaction.source == Manual && release.afterFrame && release.appliedFrame == FrameId{1} &&
+				release.appliedTime == SimulationTime{Duration{10}} && release.transaction.commands.size() == 1 &&
+				std::get<ReleaseControl>(release.transaction.commands[0]).channel == ControlChannel::LeftControls,
+			"Release lost its source, channel or position after the committed boundary");
+	CommandScheduler replay;
+	replay.Start(recording.origin.seed, recording.origin.configuration);
+	std::uint64_t id = 0;
+	for (const auto& outcome : recording.transactions)
+		Require(
+			replay.Submit(Request(++id, outcome.appliedFrame.value + outcome.afterFrame, outcome.transaction.commands))
+					.result == CommandResult::Queued,
+			"Replay admission failed");
+	Require(Tick(replay, 1)->configuration.input.controllers[0].trigger == .75f &&
+				Tick(replay, 2)->configuration.input.controllers[0].trigger == 0 &&
+				Tick(replay, 3)->configuration.tracking.gaze.yaw == .2f,
+			"Replay moved cleanup to the held frame or after the later command");
+	Require(scheduler.Read(Manual, 1)->result == CommandResult::Applied &&
+				scheduler.Submit(Request(2, 4, {TakeControl{ControlChannel::LeftControls}})).result ==
+					CommandResult::Queued,
+			"Internal release event changed client retry history or cursor");
+}
+void SourceReleaseRecordingFailure()
+{
+	int failures = 0;
+	for (int allocation = 0; allocation < 256; ++allocation)
+	{
+		CommandScheduler scheduler;
+		scheduler.StartRecording({}, {});
+		ControllerControls controls;
+		controls.trigger = .75f;
+		scheduler.Submit(
+			Request(1, 1, {TakeControl{ControlChannel::LeftControls}, SetControllerControls{0, controls}}));
+		Tick(scheduler, 1);
+		commandAllocationCountdown = allocation;
+		scheduler.ReleaseSource(Manual);
+		commandAllocationCountdown = -1;
+		const auto recording = scheduler.Recorder().Snapshot();
+		Require(scheduler.Merge({}).input.controllers[0].trigger == 0, "Recording failure prevented live release");
+		if (!recording.overflow)
+		{
+			Require(recording.total == 2 && recording.transactions.back().result == CommandResult::Released,
+					"Complete recording omitted release");
+			scheduler.ReleaseSource(Manual);
+			Require(scheduler.Recorder().Snapshot().total == 2, "No-op release duplicated an event");
+			Require(failures > 0, "Release allocation sweep missed fallible recording work");
+			std::cout << "Source release allocation sweep: " << failures << " failures\n";
+			return;
+		}
+		++failures;
+		Require(!recording.active, "Failed cleanup recording still claims completeness");
+	}
+	throw std::runtime_error("Source release allocation sweep did not complete");
+}
+void SequenceReleaseRecording()
+{
+	for (bool stop : {false, true})
+	{
+		CommandScheduler scheduler;
+		const auto baseline = SequenceBaseline();
+		scheduler.StartRecording(baseline, {});
+		scheduler.StartPoseSequence(Mcp, SequenceProgram(true));
+		Tick(scheduler, 1, baseline);
+		if (stop)
+			scheduler.StopPoseSequence(Mcp);
+		else
+		{
+			scheduler.Submit(Request(1, 2, {TakeControl{ControlChannel::Head, true}, SetHeadPose{Pose(7)}}));
+			bool rejected = false;
+			try
+			{
+				scheduler.Apply({2}, {Duration{20}}, {Duration{120}}, baseline,
+								[](const auto&)
+								{
+									throw std::bad_alloc{};
+								});
+			}
+			catch (const std::bad_alloc&)
+			{
+				rejected = true;
+			}
+			Require(rejected && scheduler.Recorder().Snapshot().total == 1,
+					"Failed boundary published sequence release");
+			Tick(scheduler, 2, baseline);
+		}
+		const auto recording = scheduler.Recorder().Snapshot();
+		const auto& release = recording.transactions.back();
+		Require(release.result == CommandResult::Released && release.afterFrame == stop &&
+					release.appliedFrame == FrameId{stop ? 1u : 2u},
+				"Sequence release lost boundary timing");
+		Require(stop || std::none_of(release.transaction.commands.begin(), release.transaction.commands.end(),
+									 [](const auto& command)
+									 {
+										 return std::get<ReleaseControl>(command).channel == ControlChannel::Head;
+									 }),
+				"Conflict cleanup released the new owner's channel");
+	}
+}
+void RecordingOutcomeConsistency()
+{
+	CommandScheduler late;
+	late.Start();
+	Tick(late, 1);
+	late.Recorder().Start({});
+	const std::vector<CommandOutcome> full(1024);
+	Require(late.Recorder().Observe(full), "Fill recorder before late admission");
+	const auto outcome = late.Submit(Request(1, 1, {TakeControl{ControlChannel::Head}}));
+	Require(outcome.result == CommandResult::Late && outcome.recordingOverrun &&
+				late.Read(Manual, 1)->recordingOverrun && late.Recorder().Snapshot(0, 0).overflow,
+			"Late reply hid committed recording overflow");
+	for (auto capacity : {1u, 8u})
+	{
+		CommandScheduler scheduler(8, capacity);
+		scheduler.Start();
+		scheduler.Submit(Request(1, 1, {TakeControl{ControlChannel::Head}}));
+		Require(scheduler.Cancel(Manual, 1) == CommandResult::Cancelled, "Prepare earlier cancellation");
+		scheduler.Recorder().Start({});
+		Require(scheduler.Recorder().Observe(full), "Fill recorder before source release");
+		scheduler.Submit(Request(2, 1, {TakeControl{ControlChannel::Head}}));
+		scheduler.Submit(Request(3, 1, {TakeControl{ControlChannel::Gaze}}));
+		scheduler.ReleaseSource(Manual);
+		Require(scheduler.Snapshot().pending == 0 && scheduler.Read(Manual, 3)->recordingOverrun &&
+					scheduler.Recorder().Snapshot(0, 0).overflow,
+				"Source-release cancellation hid recording overflow");
+		if (capacity == 8)
+			Require(!scheduler.Read(Manual, 1)->recordingOverrun && scheduler.Read(Manual, 2)->recordingOverrun,
+					"Source release changed historical recording flags or missed a new cancellation");
+	}
+}
+
+void ControllerProfilePathValidation()
+{
+	for (const std::string path : {"/interaction_profiles/vendor//controller", "/interaction_profiles/vendor/.",
+								   "/interaction_profiles/vendor/..", "/interaction_profiles/.../controller"})
+	{
+		CommandState state;
+		CommandConfiguration baseline;
+		auto request = Request(1, 1,
+							   {TakeControl{ControlChannel::Head}, SetHeadPose{Pose(7)},
+								TakeControl{ControlChannel::Profiles}, SetControllerProfile{0, path}});
+		Require(state.Apply(request, baseline, {Duration{1}}) == CommandResult::Invalid &&
+					state.Merge(baseline).input.preferredProfiles == baseline.input.preferredProfiles &&
+					state.Merge(baseline).tracking.head.pose.position.x == baseline.tracking.head.pose.position.x &&
+					!state.OwnedChannels(Manual)[static_cast<std::size_t>(ControlChannel::Profiles)] &&
+					std::get<SetHeadPose>(request.commands[1]).value.pose.orientation.w == 1.005f,
+				"Malformed controller profile committed command state or acknowledgements");
+	}
+}
+
 void Transactions()
 {
 	CommandScheduler scheduler;
@@ -600,7 +815,7 @@ void BodyViewsScenariosRecording()
 	scheduler.Recorder().Stop();
 	const auto recording = scheduler.Recorder().Snapshot();
 	Require(!recording.active && recording.origin.seed == 77 &&
-				recording.origin.configuration.tracking.head.pose.position.x == 6 && recording.transactions.size() == 2,
+				recording.origin.configuration.tracking.head.pose.position.x == 6 && recording.transactions.size() == 3,
 			"Recording initial state and normalized acknowledged transactions");
 	CommandRecorder tiny(1);
 	tiny.Start({2});
@@ -1081,6 +1296,12 @@ int main()
 		PoseSequenceFailureAndCaptureOnly();
 		PreparedBoundaryAllocationRollback();
 		ImmutableRecordingPublication();
+		SourceReleaseRecording();
+		SourceReleaseRecordingFailure();
+		SequenceReleaseRecording();
+		RecordingOutcomeConsistency();
+		ControllerProfilePathValidation();
+		LateAdmissionRollback();
 		Transactions();
 		TimeLateCancelBounds();
 		BodyViewsScenariosRecording();

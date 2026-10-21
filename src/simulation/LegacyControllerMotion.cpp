@@ -2,6 +2,7 @@
 #include "Math.h"
 
 #include <cmath>
+#include <limits>
 #include <numbers>
 #include <stdexcept>
 
@@ -23,9 +24,11 @@ template <typename T> void Merge(std::optional<T>& current, const ControllerOver
 		break;
 	}
 }
-float Interpolate(float from, float to, float progress)
+float Coordinate(double value)
 {
-	return from + (to - from) * progress;
+	if (std::abs(value) > std::numeric_limits<float>::max())
+		return std::copysign(std::numeric_limits<float>::infinity(), value);
+	return static_cast<float>(value);
 }
 } // namespace
 LegacyControllerMotion::LegacyControllerMotion()
@@ -46,10 +49,15 @@ std::size_t LegacyControllerMotion::HandIndex(ControllerHand hand)
 }
 XrPosef LegacyControllerMotion::WorldPose(ControllerLocalPose local, ControllerHeadPose head)
 {
-	const auto cosine = std::cos(head.yaw), sine = std::sin(head.yaw);
-	return {EulerAngles(head.yaw + local.yaw, head.pitch + local.pitch, local.roll),
-			{head.position.x + local.position.x * cosine + local.position.z * sine, head.position.y + local.position.y,
-			 head.position.z - local.position.x * sine + local.position.z * cosine}};
+	const auto cosine = std::cos(static_cast<double>(head.yaw)), sine = std::sin(static_cast<double>(head.yaw));
+	const auto yaw = (static_cast<double>(head.yaw) + local.yaw) / 2;
+	const auto pitch = (static_cast<double>(head.pitch) + local.pitch) / 2;
+	const XrQuaternionf yawRotation{0, static_cast<float>(std::sin(yaw)), 0, static_cast<float>(std::cos(yaw))};
+	const XrQuaternionf pitchRotation{static_cast<float>(std::sin(pitch)), 0, 0, static_cast<float>(std::cos(pitch))};
+	return {Multiply(Multiply(yawRotation, pitchRotation), EulerAngles(0, 0, local.roll)),
+			{Coordinate(head.position.x + local.position.x * cosine + local.position.z * sine),
+			 Coordinate(static_cast<double>(head.position.y) + local.position.y),
+			 Coordinate(head.position.z - local.position.x * sine + local.position.z * cosine)}};
 }
 void LegacyControllerMotion::Trigger(Controller& controller, float value)
 {
@@ -83,11 +91,11 @@ void LegacyControllerMotion::AdvanceGlides(double seconds)
 			glide.active = false;
 		}
 		auto& pose = m_controllers[hand].local;
-		pose.position = {Interpolate(glide.from.position.x, glide.to.position.x, progress),
-						 Interpolate(glide.from.position.y, glide.to.position.y, progress),
-						 Interpolate(glide.from.position.z, glide.to.position.z, progress)};
-		pose.yaw = Interpolate(glide.from.yaw, glide.to.yaw, progress);
-		pose.pitch = Interpolate(glide.from.pitch, glide.to.pitch, progress);
+		pose.position = {std::lerp(glide.from.position.x, glide.to.position.x, progress),
+						 std::lerp(glide.from.position.y, glide.to.position.y, progress),
+						 std::lerp(glide.from.position.z, glide.to.position.z, progress)};
+		pose.yaw = std::lerp(glide.from.yaw, glide.to.yaw, progress);
+		pose.pitch = std::lerp(glide.from.pitch, glide.to.pitch, progress);
 	}
 }
 std::optional<bool> LegacyControllerMotion::ApplyKeyboard(const ControllerKeyboardSample& keyboard)
@@ -196,17 +204,18 @@ void LegacyControllerMotion::ApplyWheel(float seconds)
 {
 	if (!m_wheel.enabled)
 		return;
-	const auto elapsed = seconds - m_wheel.receivedSeconds;
-	m_wheelAngle = m_wheel.amplitude * std::sin(2 * std::numbers::pi_v<float> * m_wheel.frequencyHz * elapsed);
-	const auto cosine = std::cos(m_wheel.tilt), sine = std::sin(m_wheel.tilt);
+	const auto elapsed = static_cast<double>(seconds) - m_wheel.receivedSeconds;
+	m_wheelAngle =
+		static_cast<float>(m_wheel.amplitude * std::sin(2 * std::numbers::pi * m_wheel.frequencyHz * elapsed));
+	const auto cosine = std::cos(static_cast<double>(m_wheel.tilt)), sine = std::sin(static_cast<double>(m_wheel.tilt));
 	for (std::size_t hand = 0; hand < m_controllers.size(); ++hand)
 	{
 		auto& controller = m_controllers[hand];
-		const auto bearing = (hand == 0 ? -m_wheel.spread : m_wheel.spread) + m_wheelAngle;
+		const auto bearing = static_cast<double>(hand == 0 ? -m_wheel.spread : m_wheel.spread) + m_wheelAngle;
 		const auto along = std::sin(bearing), up = std::cos(bearing);
-		controller.local.position = {m_wheel.hub.x + m_wheel.radius * along,
-									 m_wheel.hub.y + m_wheel.radius * up * cosine,
-									 m_wheel.hub.z - m_wheel.radius * up * sine};
+		controller.local.position = {Coordinate(m_wheel.hub.x + m_wheel.radius * along),
+									 Coordinate(m_wheel.hub.y + m_wheel.radius * up * cosine),
+									 Coordinate(m_wheel.hub.z - m_wheel.radius * up * sine)};
 		controller.local.yaw = 0;
 		controller.local.pitch = -m_wheel.tilt;
 		controller.local.roll = m_wheelAngle;

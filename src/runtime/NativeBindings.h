@@ -23,7 +23,7 @@ public:
 		decltype(m_bindings) retired;
 		{
 			std::lock_guard lock(m_mutex);
-			retired.swap(m_bindings);
+			retired = std::move(m_bindings);
 		}
 	}
 
@@ -34,7 +34,9 @@ public:
 		const Handle handle = core;
 		auto retained = std::make_shared<Binding>(Binding{std::move(core), std::move(native)});
 		std::lock_guard lock(m_mutex);
-		if (!m_bindings.emplace(handle, retained).second)
+		if (!m_bindings)
+			m_bindings = std::make_unique<Bindings>();
+		if (!m_bindings->emplace(handle, retained).second)
 			throw std::logic_error("Duplicate native binding");
 		return {handle, std::shared_ptr<Native>(retained, retained->native.get())};
 	}
@@ -45,8 +47,10 @@ public:
 			return {};
 		const Handle handle = core;
 		std::lock_guard lock(m_mutex);
-		auto found = m_bindings.find(handle);
-		if (found == m_bindings.end() || found->second->core.Shared() != core.Shared())
+		if (!m_bindings)
+			return {};
+		const auto found = m_bindings->find(handle);
+		if (found == m_bindings->end() || found->second->core.Shared() != core.Shared())
 			return {};
 		const auto& retained = found->second;
 		return {handle, std::shared_ptr<Native>(retained, retained->native.get())};
@@ -57,11 +61,13 @@ public:
 		std::shared_ptr<Binding> retired;
 		{
 			std::lock_guard lock(m_mutex);
-			auto found = m_bindings.find(handle);
-			if (found == m_bindings.end())
+			if (!m_bindings)
+				return false;
+			const auto found = m_bindings->find(handle);
+			if (found == m_bindings->end())
 				return false;
 			retired = std::move(found->second);
-			m_bindings.erase(found);
+			m_bindings->erase(found);
 		}
 		return true;
 	}
@@ -73,6 +79,7 @@ private:
 		std::unique_ptr<Native> native;
 	};
 	mutable std::mutex m_mutex;
-	std::unordered_map<Handle, std::shared_ptr<Binding>> m_bindings;
+	using Bindings = std::unordered_map<Handle, std::shared_ptr<Binding>>;
+	std::unique_ptr<Bindings> m_bindings;
 };
 }

@@ -177,7 +177,9 @@ class ActionSyncState
   public:
 	explicit ActionSyncState(ActionRegistry& registry);
 	XrResult Attach(const XrSessionActionSetsAttachInfo& info, const InputSnapshot& input = {});
-	XrResult Sync(const XrActionsSyncInfo& info, const InputSnapshot& input, bool focused);
+	// Reports profile changes with the committed snapshot, without a fallible reader copy.
+	XrResult Sync(const XrActionsSyncInfo& info, const InputSnapshot& input, bool focused,
+				  bool* profilesChanged = nullptr);
 	XrResult GetBoolean(const XrActionStateGetInfo& info, XrActionStateBoolean& state) const;
 	XrResult GetFloat(const XrActionStateGetInfo& info, XrActionStateFloat& state) const;
 	XrResult GetVector(const XrActionStateGetInfo& info, XrActionStateVector2f& state) const;

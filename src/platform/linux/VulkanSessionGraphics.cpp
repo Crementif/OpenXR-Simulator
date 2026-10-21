@@ -138,6 +138,11 @@ control::ImageCapabilities VulkanSessionGraphics::Capabilities() const noexcept
 	return m_capabilities;
 }
 
+bool VulkanSessionGraphics::SupportsReprojection() const noexcept
+{
+	return m_inspection != nullptr;
+}
+
 XrResult VulkanSessionGraphics::GraphicsFailure(VkResult result)
 {
 	if (result == VK_ERROR_DEVICE_LOST)
@@ -205,7 +210,8 @@ XrResult VulkanSessionGraphics::EndFrame(const XrFrameEndInfo& info)
 		return XR_ERROR_CALL_ORDER_INVALID;
 	const FrameBindings bindings(*this);
 	VulkanFrameSubmission submission(*m_session, *m_backend, m_inspection.get(), bindings,
-									 {m_session->Snapshot().generation, begun->id});
+									 {m_session->Snapshot().generation, begun->id},
+									 m_session->Display().Policy() == PresentationPolicy::Rotational);
 	const auto result = submission.Execute(info);
 	if (XR_SUCCEEDED(result))
 		ObserveFrame(info, submission.Composition(), bindings);

@@ -3548,275 +3548,326 @@ static XrResult XRAPI_PTR xrWaitFrame_runtime(XrSession session, const XrFrameWa
         compatibilityFiles = rt::g_session.compatibilityFiles;
     }
     if (!core || !controllerMotion || !compatibilityFiles) return XR_ERROR_HANDLE_INVALID;
-    auto result = core->WaitFrame(prediction);
-    if (XR_FAILED(result)) return result;
-    { std::lock_guard lock(rt::g_coreMutex);
-      if (core != rt::g_session.core || session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID; }
+	const auto publishNative = [&](const simxr::FramePrediction& admitted) -> XrResult
+	{
+		{
+			std::lock_guard lock(rt::g_coreMutex);
+			if (core != rt::g_session.core || session != rt::g_session.handle)
+				return XR_ERROR_HANDLE_INVALID;
+		}
 
-    if (!rt::g_session.hwnd) {
-        ensurePreviewWithoutProjection(rt::g_session);
-        if (rt::g_session.hwnd) {
-            Logf("[SimXR] Preview window on UI thread %lu, frame loop on %lu",
-                 GetWindowThreadProcessId(rt::g_session.hwnd, nullptr), GetCurrentThreadId());
-        }
-    }
+		if (!rt::g_session.hwnd)
+		{
+			ensurePreviewWithoutProjection(rt::g_session);
+			if (rt::g_session.hwnd)
+			{
+				Logf("[SimXR] Preview window on UI thread %lu, frame loop on %lu",
+					 GetWindowThreadProcessId(rt::g_session.hwnd, nullptr), GetCurrentThreadId());
+			}
+		}
 
-    // Not the preview window -- that has its own thread. This drains whatever host windows
-    // happen to live on the render thread, which the runtime has always done from here.
-    PumpMessages(nullptr);
-    const double periodSec = std::chrono::duration<double>(prediction.displayPeriod).count();
-    
-    // Handle WASD keyboard input for movement (relative to head orientation).
-    //
-    // The PID check is what makes AppForeground the default: the runtime is in-process with
-    // the host, so the game's own window counts as ours. PreviewFocused was once the only
-    // behaviour and left WASD dead in any game that takes the foreground on launch.
-    // Note: a game binding W/S/A/D itself will also act on them while it is focused.
-    if (rt::g_resetPoseRequested.exchange(false)) {
-        rt::g_headPos = {0, 1.7f, 0};
-        rt::g_headYaw = rt::g_headPitch = rt::g_headRoll = 0.0f;
-    }
-    if (const int dx = rt::g_lookDeltaX.exchange(0)) rt::g_headYaw -= dx * 0.002f;
-    if (const int dy = rt::g_lookDeltaY.exchange(0)) rt::g_headPitch -= dy * 0.002f;
-    const float maxPitch = 1.5f;  // ~85 degrees, short of gimbal lock
-    rt::g_headPitch = (std::max)(-maxPitch, (std::min)(maxPitch, rt::g_headPitch));
+		// Not the preview window -- that has its own thread. This drains whatever host windows
+		// happen to live on the render thread, which the runtime has always done from here.
+		PumpMessages(nullptr);
+		const double periodSec = std::chrono::duration<double>(admitted.displayPeriod).count();
 
-    const ui::InputPolling inputPolling = ui::g_uiState.inputPolling;
-    bool inputActive = (inputPolling == ui::InputPolling::Background);
-    const HWND foregroundWindow = inputActive ? nullptr : GetForegroundWindow();
-    if (foregroundWindow != nullptr) {
-        if (foregroundWindow == rt::g_session.hwnd) {
-            inputActive = rt::g_session.isFocused.load();
-        } else if (inputPolling == ui::InputPolling::AppForeground) {
-            DWORD fgPid = 0;
-            GetWindowThreadProcessId(foregroundWindow, &fgPid);
-            inputActive = (fgPid != 0 && fgPid == GetCurrentProcessId());
-        }
-    }
-    simxr::legacy::ControllerMotionFrame controllerFrame;
-    controllerFrame.glideSeconds = rt::InputClockSeconds();
-    if (inputActive) {
-        // Shift is the sprint modifier; both it and the base speed are set from
-        // Tools > Movement Speed. GetAsyncKeyState rather than the WM_KEYDOWN
-        // path because this reads a held state, and the host window may be the
-        // one with focus (see above).
-        const bool shiftHeld = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
-        const float moveSpeed = ui::GetMoveSpeed(shiftHeld);  // meters per second
-        float deltaTime = (float)periodSec;
+		// Handle WASD keyboard input for movement (relative to head orientation).
+		//
+		// The PID check is what makes AppForeground the default: the runtime is in-process with
+		// the host, so the game's own window counts as ours. PreviewFocused was once the only
+		// behaviour and left WASD dead in any game that takes the foreground on launch.
+		// Note: a game binding W/S/A/D itself will also act on them while it is focused.
+		if (rt::g_resetPoseRequested.exchange(false))
+		{
+			rt::g_headPos = {0, 1.7f, 0};
+			rt::g_headYaw = rt::g_headPitch = rt::g_headRoll = 0.0f;
+		}
+		if (const int dx = rt::g_lookDeltaX.exchange(0))
+			rt::g_headYaw -= dx * 0.002f;
+		if (const int dy = rt::g_lookDeltaY.exchange(0))
+			rt::g_headPitch -= dy * 0.002f;
+		const float maxPitch = 1.5f; // ~85 degrees, short of gimbal lock
+		rt::g_headPitch = (std::max)(-maxPitch, (std::min)(maxPitch, rt::g_headPitch));
 
-        XrQuaternionf headQ = rt::QuatFromYawPitch(rt::g_headYaw, rt::g_headPitch);
-        XrVector3f fwd = rt::RotateVectorByQuaternion(headQ, XrVector3f{0.0f, 0.0f, -1.0f});
-        XrVector3f right = rt::RotateVectorByQuaternion(headQ, XrVector3f{1.0f, 0.0f, 0.0f});
+		const ui::InputPolling inputPolling = ui::g_uiState.inputPolling;
+		bool inputActive = (inputPolling == ui::InputPolling::Background);
+		const HWND foregroundWindow = inputActive ? nullptr : GetForegroundWindow();
+		if (foregroundWindow != nullptr)
+		{
+			if (foregroundWindow == rt::g_session.hwnd)
+			{
+				inputActive = rt::g_session.isFocused.load();
+			}
+			else if (inputPolling == ui::InputPolling::AppForeground)
+			{
+				DWORD fgPid = 0;
+				GetWindowThreadProcessId(foregroundWindow, &fgPid);
+				inputActive = (fgPid != 0 && fgPid == GetCurrentProcessId());
+			}
+		}
+		simxr::legacy::ControllerMotionFrame controllerFrame;
+		controllerFrame.glideSeconds = rt::InputClockSeconds();
+		if (inputActive)
+		{
+			// Shift is the sprint modifier; both it and the base speed are set from
+			// Tools > Movement Speed. GetAsyncKeyState rather than the WM_KEYDOWN
+			// path because this reads a held state, and the host window may be the
+			// one with focus (see above).
+			const bool shiftHeld = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+			const float moveSpeed = ui::GetMoveSpeed(shiftHeld); // meters per second
+			float deltaTime = (float)periodSec;
 
-        if (GetAsyncKeyState('W') & 0x8000) {
-            rt::g_headPos.x += fwd.x * moveSpeed * deltaTime;
-            rt::g_headPos.y += fwd.y * moveSpeed * deltaTime;
-            rt::g_headPos.z += fwd.z * moveSpeed * deltaTime;
-        }
-        if (GetAsyncKeyState('S') & 0x8000) {
-            rt::g_headPos.x -= fwd.x * moveSpeed * deltaTime;
-            rt::g_headPos.y -= fwd.y * moveSpeed * deltaTime;
-            rt::g_headPos.z -= fwd.z * moveSpeed * deltaTime;
-        }
-        if (GetAsyncKeyState('A') & 0x8000) {
-            rt::g_headPos.x -= right.x * moveSpeed * deltaTime;
-            rt::g_headPos.y -= right.y * moveSpeed * deltaTime;
-            rt::g_headPos.z -= right.z * moveSpeed * deltaTime;
-        }
-        if (GetAsyncKeyState('D') & 0x8000) {
-            rt::g_headPos.x += right.x * moveSpeed * deltaTime;
-            rt::g_headPos.y += right.y * moveSpeed * deltaTime;
-            rt::g_headPos.z += right.z * moveSpeed * deltaTime;
-        }
-        if (GetAsyncKeyState('Q') & 0x8000) {
-            rt::g_headPos.y -= moveSpeed * deltaTime;
-        }
-        if (GetAsyncKeyState('E') & 0x8000) {
-            rt::g_headPos.y += moveSpeed * deltaTime;
-        }
+			XrQuaternionf headQ = rt::QuatFromYawPitch(rt::g_headYaw, rt::g_headPitch);
+			XrVector3f fwd = rt::RotateVectorByQuaternion(headQ, XrVector3f{0.0f, 0.0f, -1.0f});
+			XrVector3f right = rt::RotateVectorByQuaternion(headQ, XrVector3f{1.0f, 0.0f, 0.0f});
 
-        controllerFrame.keyboard = rt::PollControllerKeyboard(deltaTime);
-    }
+			if (GetAsyncKeyState('W') & 0x8000)
+			{
+				rt::g_headPos.x += fwd.x * moveSpeed * deltaTime;
+				rt::g_headPos.y += fwd.y * moveSpeed * deltaTime;
+				rt::g_headPos.z += fwd.z * moveSpeed * deltaTime;
+			}
+			if (GetAsyncKeyState('S') & 0x8000)
+			{
+				rt::g_headPos.x -= fwd.x * moveSpeed * deltaTime;
+				rt::g_headPos.y -= fwd.y * moveSpeed * deltaTime;
+				rt::g_headPos.z -= fwd.z * moveSpeed * deltaTime;
+			}
+			if (GetAsyncKeyState('A') & 0x8000)
+			{
+				rt::g_headPos.x -= right.x * moveSpeed * deltaTime;
+				rt::g_headPos.y -= right.y * moveSpeed * deltaTime;
+				rt::g_headPos.z -= right.z * moveSpeed * deltaTime;
+			}
+			if (GetAsyncKeyState('D') & 0x8000)
+			{
+				rt::g_headPos.x += right.x * moveSpeed * deltaTime;
+				rt::g_headPos.y += right.y * moveSpeed * deltaTime;
+				rt::g_headPos.z += right.z * moveSpeed * deltaTime;
+			}
+			if (GetAsyncKeyState('Q') & 0x8000)
+			{
+				rt::g_headPos.y -= moveSpeed * deltaTime;
+			}
+			if (GetAsyncKeyState('E') & 0x8000)
+			{
+				rt::g_headPos.y += moveSpeed * deltaTime;
+			}
 
-    if (auto written = compatibilityFiles->TakeWrittenScreenshot())
-        ui::NotifyScreenshotSaved((mcp::GetSimulatorDataDirectory() / *written).wstring());
+			controllerFrame.keyboard = rt::PollControllerKeyboard(deltaTime);
+		}
 
-    // MCP commands work regardless of window focus (file-based IPC).
-    // The joined worker already decoded and staged copied values.
-    {
-        const auto commands = compatibilityFiles->TakeCommands();
-        mcp::HeadPoseCommand cmd = commands.head;
-        if (cmd.valid) {
-            rt::g_headPos.x = cmd.x;
-            rt::g_headPos.y = cmd.y;
-            rt::g_headPos.z = cmd.z;
-            rt::g_headYaw = cmd.yaw;
-            rt::g_headPitch = cmd.pitch;
-            if (cmd.hasRoll) rt::g_headRoll = cmd.roll;
-            compatibilityFiles->Acknowledge("head_pose", true);
-        }
+		if (auto written = compatibilityFiles->TakeWrittenScreenshot())
+			ui::NotifyScreenshotSaved((mcp::GetSimulatorDataDirectory() / *written).wstring());
 
-        // Per-eye FOV override (asymmetric headset profile testing).
-        mcp::FovCommand fov = commands.fov;
-        if (fov.valid) {
-            if (fov.clear) {
-                rt::g_useCustomFov = false;
-            } else {
-                rt::g_useCustomFov = true;
-                for (int i = 0; i < 2; ++i) {
-                    rt::g_eyeFovL[i] = fov.angleLeft[i];
-                    rt::g_eyeFovR[i] = fov.angleRight[i];
-                    rt::g_eyeFovU[i] = fov.angleUp[i];
-                    rt::g_eyeFovD[i] = fov.angleDown[i];
-                }
-            }
-            compatibilityFiles->Acknowledge("fov", true);
-        }
+		// MCP commands work regardless of window focus (file-based IPC).
+		// The joined worker already decoded and staged copied values.
+		{
+			const auto commands = compatibilityFiles->TakeCommands();
+			mcp::HeadPoseCommand cmd = commands.head;
+			if (cmd.valid)
+			{
+				rt::g_headPos.x = cmd.x;
+				rt::g_headPos.y = cmd.y;
+				rt::g_headPos.z = cmd.z;
+				rt::g_headYaw = cmd.yaw;
+				rt::g_headPitch = cmd.pitch;
+				if (cmd.hasRoll)
+					rt::g_headRoll = cmd.roll;
+				compatibilityFiles->Acknowledge("head_pose", true);
+			}
 
-        // Settable IPD (test app's response to IPD ranges; 0mm = no parallax).
-        mcp::IpdCommand ipdCmd = commands.ipd;
-        if (ipdCmd.valid) {
-            if (ipdCmd.clear) {
-                rt::g_useCustomIpd = false;
-            } else {
-                rt::g_useCustomIpd = true;
-                rt::g_customIpd = ipdCmd.ipdMeters;
-            }
-            compatibilityFiles->Acknowledge("ipd", true);
-        }
+			// Per-eye FOV override (asymmetric headset profile testing).
+			mcp::FovCommand fov = commands.fov;
+			if (fov.valid)
+			{
+				if (fov.clear)
+				{
+					rt::g_useCustomFov = false;
+				}
+				else
+				{
+					rt::g_useCustomFov = true;
+					for (int i = 0; i < 2; ++i)
+					{
+						rt::g_eyeFovL[i] = fov.angleLeft[i];
+						rt::g_eyeFovR[i] = fov.angleRight[i];
+						rt::g_eyeFovU[i] = fov.angleUp[i];
+						rt::g_eyeFovD[i] = fov.angleDown[i];
+					}
+				}
+				compatibilityFiles->Acknowledge("fov", true);
+			}
 
-        // Headset profile preset: applies both FOV and IPD at once.
-        mcp::HeadsetProfileCommand prof = commands.profile;
-        if (prof.valid) {
-            const int idx = ui::FindHeadsetSpec(prof.name);
-            // "generic" carries no headset geometry, so it means the same as clearing.
-            const bool clear = idx == 0 ||
-                               strcmp(prof.name, "default") == 0 ||
-                               strcmp(prof.name, "clear") == 0;
-            bool applied = true;
-            if (clear) {
-                rt::g_useCustomFov = false;
-                rt::g_useCustomIpd = false;
-            } else if (idx > 0) {
-                const float DEG2RAD = 3.14159265f / 180.0f;
-                const ui::HeadsetSpec& spec = ui::kHeadsetSpecs[idx];
-                rt::g_useCustomFov = true;
-                for (int i = 0; i < 2; ++i) {
-                    const ui::EyeFov& e = spec.eye[i];
-                    rt::g_eyeFovL[i] = e.angleLeft  * DEG2RAD;
-                    rt::g_eyeFovR[i] = e.angleRight * DEG2RAD;
-                    rt::g_eyeFovU[i] = e.angleUp    * DEG2RAD;
-                    rt::g_eyeFovD[i] = e.angleDown  * DEG2RAD;
-                }
-                rt::g_useCustomIpd = true;
-                rt::g_customIpd = spec.ipdMm * 0.001f;
-            } else {
-                applied = false;
-            }
-            compatibilityFiles->Acknowledge("headset_profile", applied);
-        }
+			// Settable IPD (test app's response to IPD ranges; 0mm = no parallax).
+			mcp::IpdCommand ipdCmd = commands.ipd;
+			if (ipdCmd.valid)
+			{
+				if (ipdCmd.clear)
+				{
+					rt::g_useCustomIpd = false;
+				}
+				else
+				{
+					rt::g_useCustomIpd = true;
+					rt::g_customIpd = ipdCmd.ipdMeters;
+				}
+				compatibilityFiles->Acknowledge("ipd", true);
+			}
 
-        // Anaglyph preview overlay toggle. The simulator already renders
-        // a red/cyan anaglyph composite when ui::g_uiState.displayLayout
-        // == DisplayLayout::Anaglyph (using channel-masked preview blending
-        // blend states), so we just flip the enum. Remember the previous
-        // layout so we can restore it on disable.
-        mcp::AnaglyphCommand ana = commands.anaglyph;
-        if (ana.valid) {
-            static ui::DisplayLayout s_savedLayout = ui::DisplayLayout::SideBySide;
-            static bool s_haveSaved = false;
-            if (ana.enabled) {
-                if (!s_haveSaved) {
-                    s_savedLayout = ui::g_uiState.displayLayout;
-                    s_haveSaved = true;
-                }
-                ui::g_uiState.displayLayout = ui::DisplayLayout::Anaglyph;
-            } else {
-                if (s_haveSaved) {
-                    ui::g_uiState.displayLayout = s_savedLayout;
-                    s_haveSaved = false;
-                }
-            }
-            rt::g_anaglyphPreview = ana.enabled;
-            compatibilityFiles->Acknowledge("anaglyph", true);
-        }
+			// Headset profile preset: applies both FOV and IPD at once.
+			mcp::HeadsetProfileCommand prof = commands.profile;
+			if (prof.valid)
+			{
+				const int idx = ui::FindHeadsetSpec(prof.name);
+				// "generic" carries no headset geometry, so it means the same as clearing.
+				const bool clear = idx == 0 || strcmp(prof.name, "default") == 0 || strcmp(prof.name, "clear") == 0;
+				bool applied = true;
+				if (clear)
+				{
+					rt::g_useCustomFov = false;
+					rt::g_useCustomIpd = false;
+				}
+				else if (idx > 0)
+				{
+					const float DEG2RAD = 3.14159265f / 180.0f;
+					const ui::HeadsetSpec& spec = ui::kHeadsetSpecs[idx];
+					rt::g_useCustomFov = true;
+					for (int i = 0; i < 2; ++i)
+					{
+						const ui::EyeFov& e = spec.eye[i];
+						rt::g_eyeFovL[i] = e.angleLeft * DEG2RAD;
+						rt::g_eyeFovR[i] = e.angleRight * DEG2RAD;
+						rt::g_eyeFovU[i] = e.angleUp * DEG2RAD;
+						rt::g_eyeFovD[i] = e.angleDown * DEG2RAD;
+					}
+					rt::g_useCustomIpd = true;
+					rt::g_customIpd = spec.ipdMm * 0.001f;
+				}
+				else
+				{
+					applied = false;
+				}
+				compatibilityFiles->Acknowledge("headset_profile", applied);
+			}
 
-        // Pose sweep: oscillate yaw/pitch/roll on a sine wave each frame.
-        mcp::PoseSweepCommand sweep = commands.sweep;
-        if (sweep.valid) {
-            const float DEG2RAD = 3.14159265f / 180.0f;
-            rt::g_poseSweepEnabled  = sweep.enabled;
-            rt::g_poseSweepYawAmp   = sweep.yawAmpDeg   * DEG2RAD;
-            rt::g_poseSweepPitchAmp = sweep.pitchAmpDeg * DEG2RAD;
-            rt::g_poseSweepRollAmp  = sweep.rollAmpDeg  * DEG2RAD;
-            rt::g_poseSweepFreq     = sweep.freqHz;
-            rt::g_poseSweepStartT   = (float)GetTickCount64() * 0.001f;
-            compatibilityFiles->Acknowledge("pose_sweep", true);
-        }
+			// Anaglyph preview overlay toggle. The simulator already renders
+			// a red/cyan anaglyph composite when ui::g_uiState.displayLayout
+			// == DisplayLayout::Anaglyph (using channel-masked preview blending
+			// blend states), so we just flip the enum. Remember the previous
+			// layout so we can restore it on disable.
+			mcp::AnaglyphCommand ana = commands.anaglyph;
+			if (ana.valid)
+			{
+				static ui::DisplayLayout s_savedLayout = ui::DisplayLayout::SideBySide;
+				static bool s_haveSaved = false;
+				if (ana.enabled)
+				{
+					if (!s_haveSaved)
+					{
+						s_savedLayout = ui::g_uiState.displayLayout;
+						s_haveSaved = true;
+					}
+					ui::g_uiState.displayLayout = ui::DisplayLayout::Anaglyph;
+				}
+				else
+				{
+					if (s_haveSaved)
+					{
+						ui::g_uiState.displayLayout = s_savedLayout;
+						s_haveSaved = false;
+					}
+				}
+				rt::g_anaglyphPreview = ana.enabled;
+				compatibilityFiles->Acknowledge("anaglyph", true);
+			}
 
-        const auto pose = commands.controllerPose;
-        if (pose.valid) {
-            simxr::legacy::ControllerPoseEdit edit;
-            edit.hand = pose.hand == 0 ? simxr::legacy::ControllerHand::Left : simxr::legacy::ControllerHand::Right;
-            edit.position = {pose.posX, pose.posY, pose.posZ};
-            edit.yaw = pose.yaw;
-            edit.pitch = pose.pitch;
-            edit.duration = std::chrono::duration<double, std::milli>{pose.durationMs};
-            edit.receivedSeconds = rt::InputClockSeconds();
-            if (pose.triggerSet) edit.trigger = pose.trigger;
-            if (pose.buttonA >= 0) edit.primary = pose.buttonA != 0;
-            controllerFrame.pose = edit;
-            compatibilityFiles->Acknowledge("controller_pose", true);
-        }
+			// Pose sweep: oscillate yaw/pitch/roll on a sine wave each frame.
+			mcp::PoseSweepCommand sweep = commands.sweep;
+			if (sweep.valid)
+			{
+				const float DEG2RAD = 3.14159265f / 180.0f;
+				rt::g_poseSweepEnabled = sweep.enabled;
+				rt::g_poseSweepYawAmp = sweep.yawAmpDeg * DEG2RAD;
+				rt::g_poseSweepPitchAmp = sweep.pitchAmpDeg * DEG2RAD;
+				rt::g_poseSweepRollAmp = sweep.rollAmpDeg * DEG2RAD;
+				rt::g_poseSweepFreq = sweep.freqHz;
+				rt::g_poseSweepStartT = (float)GetTickCount64() * 0.001f;
+				compatibilityFiles->Acknowledge("pose_sweep", true);
+			}
 
-        const auto hold = commands.controllerHold;
-        if (hold.valid) {
-            // Legacy selectors outside [0,1] target no hand; negative means both.
-            if (hold.hand < 2) controllerFrame.hold = rt::DecodeControllerHold(hold);
-            compatibilityFiles->Acknowledge("controller_hold", true);
-        }
+			const auto pose = commands.controllerPose;
+			if (pose.valid)
+			{
+				simxr::legacy::ControllerPoseEdit edit;
+				edit.hand = pose.hand == 0 ? simxr::legacy::ControllerHand::Left : simxr::legacy::ControllerHand::Right;
+				edit.position = {pose.posX, pose.posY, pose.posZ};
+				edit.yaw = pose.yaw;
+				edit.pitch = pose.pitch;
+				edit.duration = std::chrono::duration<double, std::milli>{pose.durationMs};
+				edit.receivedSeconds = rt::InputClockSeconds();
+				if (pose.triggerSet)
+					edit.trigger = pose.trigger;
+				if (pose.buttonA >= 0)
+					edit.primary = pose.buttonA != 0;
+				controllerFrame.pose = edit;
+				compatibilityFiles->Acknowledge("controller_pose", true);
+			}
 
-        const auto wheel = commands.wheel;
-        if (wheel.valid) {
-            constexpr float radians = 0.01745329252f;
-            simxr::legacy::ControllerWheelSweep edit;
-            edit.enabled = wheel.enabled;
-            edit.hub = {wheel.hubX, wheel.hubY, wheel.hubZ};
-            edit.radius = wheel.radius;
-            edit.tilt = wheel.tiltDeg * radians;
-            edit.amplitude = wheel.amplitudeDeg * radians;
-            edit.frequencyHz = wheel.freqHz;
-            edit.grip = wheel.grip;
-            edit.spread = wheel.spreadDeg * radians;
-            edit.receivedSeconds = static_cast<float>(GetTickCount64()) * 0.001f;
-            controllerFrame.wheel = edit;
-            compatibilityFiles->Acknowledge("wheel_sweep", true);
-        }
-    }
+			const auto hold = commands.controllerHold;
+			if (hold.valid)
+			{
+				// Legacy selectors outside [0,1] target no hand; negative means both.
+				if (hold.hand < 2)
+					controllerFrame.hold = rt::DecodeControllerHold(hold);
+				compatibilityFiles->Acknowledge("controller_hold", true);
+			}
 
-    // Evaluation is atomic for action readers: keyboard -> file pose -> wheel
-    // -> held overrides. Shared pose history owns observable space velocities.
-    controllerFrame.head = {rt::g_headPos, rt::g_headYaw, rt::g_headPitch};
-    controllerFrame.wheelSeconds = static_cast<float>(GetTickCount64()) * 0.001f;
-    const auto controllers = controllerMotion->Update(controllerFrame);
-    if (controllers.animationToggle)
-        Logf("[SimXR] Auto motion %s", *controllers.animationToggle ? "ENABLED" : "DISABLED");
-    simxr::TrackingState tracking;
-    float effectiveYaw, effectivePitch, effectiveRoll;
-    rt::GetEffectiveHeadAngles(effectiveYaw, effectivePitch, effectiveRoll);
-    tracking.head.pose = {rt::QuatFromYawPitchRoll(effectiveYaw, effectivePitch, effectiveRoll), rt::g_headPos};
-    for (std::size_t hand = 0; hand < controllers.snapshot.hands.size(); ++hand)
-        tracking.controllers[hand].pose.pose = controllers.snapshot.hands[hand].worldPose;
-    simxr::ViewSettings settings;
-    ui::GetRenderResolution(settings.outerWidth, settings.outerHeight);
-    settings.ipd = rt::g_useCustomIpd ? rt::g_customIpd : rt::GetUiIpdMeters();
-    settings.outerFov = {rt::GetViewFov(0), rt::GetViewFov(1)};
-    core->PublishTracking(prediction.displayTime, tracking, settings, prediction.id);
+			const auto wheel = commands.wheel;
+			if (wheel.valid)
+			{
+				constexpr float radians = 0.01745329252f;
+				simxr::legacy::ControllerWheelSweep edit;
+				edit.enabled = wheel.enabled;
+				edit.hub = {wheel.hubX, wheel.hubY, wheel.hubZ};
+				edit.radius = wheel.radius;
+				edit.tilt = wheel.tiltDeg * radians;
+				edit.amplitude = wheel.amplitudeDeg * radians;
+				edit.frequencyHz = wheel.freqHz;
+				edit.grip = wheel.grip;
+				edit.spread = wheel.spreadDeg * radians;
+				edit.receivedSeconds = static_cast<float>(GetTickCount64()) * 0.001f;
+				controllerFrame.wheel = edit;
+				compatibilityFiles->Acknowledge("wheel_sweep", true);
+			}
+		}
 
-    s->predictedDisplayPeriod = prediction.displayPeriod.count();
-    s->predictedDisplayTime = prediction.displayTime.value.count();
-    s->shouldRender = rt::g_session.state == XR_SESSION_STATE_VISIBLE || rt::g_session.state == XR_SESSION_STATE_FOCUSED;
-    return XR_SUCCESS;
+		// Evaluation is atomic for action readers: keyboard -> file pose -> wheel
+		// -> held overrides. Shared pose history owns observable space velocities.
+		controllerFrame.head = {rt::g_headPos, rt::g_headYaw, rt::g_headPitch};
+		controllerFrame.wheelSeconds = static_cast<float>(GetTickCount64()) * 0.001f;
+		const auto controllers = controllerMotion->Update(controllerFrame);
+		if (controllers.animationToggle)
+			Logf("[SimXR] Auto motion %s", *controllers.animationToggle ? "ENABLED" : "DISABLED");
+		simxr::TrackingState tracking;
+		float effectiveYaw, effectivePitch, effectiveRoll;
+		rt::GetEffectiveHeadAngles(effectiveYaw, effectivePitch, effectiveRoll);
+		tracking.head.pose = {rt::QuatFromYawPitchRoll(effectiveYaw, effectivePitch, effectiveRoll), rt::g_headPos};
+		for (std::size_t hand = 0; hand < controllers.snapshot.hands.size(); ++hand)
+			tracking.controllers[hand].pose.pose = controllers.snapshot.hands[hand].worldPose;
+		simxr::ViewSettings settings;
+		ui::GetRenderResolution(settings.outerWidth, settings.outerHeight);
+		settings.ipd = rt::g_useCustomIpd ? rt::g_customIpd : rt::GetUiIpdMeters();
+		settings.outerFov = {rt::GetViewFov(0), rt::GetViewFov(1)};
+		core->PublishTracking(admitted.displayTime, tracking, settings, admitted.id);
+
+		s->predictedDisplayPeriod = admitted.displayPeriod.count();
+		s->predictedDisplayTime = admitted.displayTime.value.count();
+		s->shouldRender =
+			rt::g_session.state == XR_SESSION_STATE_VISIBLE || rt::g_session.state == XR_SESSION_STATE_FOCUSED;
+		return XR_SUCCESS;
+	};
+	return core->WaitFrame(prediction, publishNative);
 }
 static XrResult XRAPI_PTR xrBeginFrame_runtime(XrSession session, const XrFrameBeginInfo* info) {
     if (simxr::windows::D3D12Preview::IsPresentationThread()) return XR_ERROR_CALL_ORDER_INVALID;

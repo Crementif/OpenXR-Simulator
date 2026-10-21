@@ -21,6 +21,7 @@ class SessionPublication
 	{
 	  public:
 		PreparedStart(SessionPublication& owner, RuntimeTime epoch, ViewLayout layout);
+		~PreparedStart();
 		PreparedStart(const PreparedStart&) = delete;
 		PreparedStart& operator=(const PreparedStart&) = delete;
 		const ReferenceSpaceState& ReferenceSpaces() const;

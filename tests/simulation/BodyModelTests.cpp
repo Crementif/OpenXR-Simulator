@@ -6,8 +6,42 @@
 #include <iostream>
 #include <set>
 
+namespace
+{
+void FiniteBodyOutput()
+{
+	using namespace simxr;
+	BodyModel model;
+	PoseSample head{IdentityPose(), TrackedPoseFlags};
+	head.pose.position.y = 1.7f;
+	BodyControls controls;
+	controls.controls[static_cast<std::size_t>(BodyControl::Hips)].offset = XrVector3f{-2e38f, 1, 0};
+	controls.controls[static_cast<std::size_t>(BodyControl::Chest)].offset = XrVector3f{2e38f, 1, 0};
+	const auto sample = model.Evaluate(head, controls, {Duration{1}});
+	for (const auto& joint : sample.joints)
+		Require(std::isfinite(joint.pose.position.x) && std::isfinite(joint.pose.position.y) &&
+					std::isfinite(joint.pose.position.z),
+				"Finite body controls overflowed interpolation");
+	controls = {};
+	head.pose.position.x = 2e38f;
+	controls.joints[static_cast<std::size_t>(BodyJoint::Head)] =
+		BodyJointOverride{XrPosef{{0, 0, 0, 1}, {2e38f, 1.7f, 0}}, true};
+	bool rejected = false;
+	try
+	{
+		(void)model.Evaluate(head, controls, {Duration{2}});
+	}
+	catch (const std::invalid_argument&)
+	{
+		rejected = true;
+	}
+	Require(rejected, "Unrepresentable generated body position was accepted");
+}
+} // namespace
+
 int main()
 {
+	FiniteBodyOutput();
 	using namespace simxr;
 	BodyModel body;
 	Require(BodyModel::JointMap(BodyJointSet::UpperBodyFB).size() == XR_BODY_JOINT_COUNT_FB, "FB schema count");

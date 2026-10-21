@@ -42,7 +42,10 @@ Runtime::Runtime(const ExtensionRegistry& extensions, const RuntimeConfiguration
 		throw std::invalid_argument("Invalid runtime configuration");
 }
 
-GameBridge& Runtime::Game() { return m_game; }
+GameBridge& Runtime::Game()
+{
+	return m_game;
+}
 
 Runtime::~Runtime()
 {
@@ -164,7 +167,6 @@ XrResult Runtime::DestroyInstance(XrInstance handle)
 		}
 		m_instances.Erase(handle);
 	}
-	m_game.Close();
 	for (auto& session : sessions)
 		session->Close();
 	for (auto& debugger : debuggers)
@@ -241,30 +243,24 @@ void Runtime::CloseDebugger(XrSession handle)
 
 void Runtime::Close()
 {
-	std::vector<InstanceRef> instances;
-	std::vector<SessionRef> sessions;
+	decltype(m_instances)::Retired instances;
+	decltype(m_sessions)::Retired sessions;
 	std::unordered_map<XrSession, std::shared_ptr<DebugService>> debuggers;
 	{
 		std::lock_guard lock(m_mutex);
 		if (m_closed)
 			return;
-		const auto handles = m_instances.Children(0);
-		instances.reserve(handles.size());
-		for (auto handle : handles)
-		{
-			instances.push_back(m_instances.Find(handle));
-			for (auto child : m_sessions.Children(handle))
-				sessions.push_back(m_sessions.Find(child));
-		}
-		m_closed = true;
+		instances = m_instances.RetireAll();
+		sessions = m_sessions.RetireAll();
 		debuggers.swap(m_debuggers);
-		for (const auto& session : sessions)
-			m_sessions.Erase(session);
-		for (auto handle : handles)
-			m_instances.Erase(handle);
+		m_closed = true;
 	}
-	for (auto& session : sessions)
-		session->Close();
+	m_game.Close();
+	sessions.ForEach(
+		[](const SessionRef& session)
+		{
+			session->Close();
+		});
 	for (auto& [handle, debugger] : debuggers)
 		debugger->Close();
 }

@@ -15,6 +15,7 @@ struct DispatchEntry
 	bool global = false;
 };
 
+// Entries and the extension registry are borrowed for the table lifetime.
 class DispatchTable
 {
 public:

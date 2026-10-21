@@ -17,6 +17,32 @@
 
 namespace
 {
+void TestPresentationPolicyLifecycle()
+{
+	using namespace simxr;
+	Instance instance(reinterpret_cast<XrInstance>(902), {}, XR_MAKE_VERSION(1, 0, 27));
+	Session session(reinterpret_cast<XrSession>(903), instance);
+	FrameSchedulerConfig timing;
+	timing.mode = ExecutionMode::Deterministic;
+	const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
+	Require(session.Ready(timing.epoch) == XR_SUCCESS, "Ready presentation policy session");
+	Require(session.Begin(begin, timing, static_cast<PresentationPolicy>(99)) == XR_ERROR_VALIDATION_FAILURE &&
+				!session.Snapshot().running,
+			"Invalid presentation policy started the session");
+	Require(session.Begin(begin, timing, PresentationPolicy::Rotational) == XR_SUCCESS &&
+				session.Display().Policy() == PresentationPolicy::Rotational,
+			"Session did not select rotational display");
+	Require(session.Begin(begin, timing) == XR_ERROR_SESSION_RUNNING &&
+				session.Display().Policy() == PresentationPolicy::Rotational,
+			"Repeated begin changed active display policy");
+	Require(session.RequestExit(timing.epoch) == XR_SUCCESS && session.End(timing.epoch) == XR_SUCCESS,
+			"End rotational display session");
+	Require(session.Ready(timing.epoch) == XR_SUCCESS && session.Begin(begin, timing) == XR_SUCCESS &&
+				session.Display().Policy() == PresentationPolicy::Repeat,
+			"Restart did not restore default repeat policy");
+	session.Close();
+}
+
 void TestConcurrentNativeControlSynchronization()
 {
 	using namespace simxr;
@@ -1679,6 +1705,7 @@ int main()
 	Require(instance.Events().Poll(event) == XR_EVENT_UNAVAILABLE, "Closed session left queued handles");
 	Require(!instance.Events().Observe().empty(), "Teardown consumed observation history");
 	Require(session.Ready({Duration{40}}) == XR_ERROR_SESSION_LOST, "Closed session reactivated");
+	TestPresentationPolicyLifecycle();
 	TestConcurrentNativeControlSynchronization();
 	TestRetainedInstanceAndCpuOwnership();
 	TestInteractionDevices();

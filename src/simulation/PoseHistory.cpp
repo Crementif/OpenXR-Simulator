@@ -14,7 +14,7 @@ namespace
 {
 XrVector3f Interpolate(XrVector3f a, XrVector3f b, float fraction)
 {
-	return {a.x + (b.x - a.x) * fraction, a.y + (b.y - a.y) * fraction, a.z + (b.z - a.z) * fraction};
+	return {std::lerp(a.x, b.x, fraction), std::lerp(a.y, b.y, fraction), std::lerp(a.z, b.z, fraction)};
 }
 
 XrQuaternionf Interpolate(XrQuaternionf a, XrQuaternionf b, float fraction)

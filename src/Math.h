@@ -5,6 +5,8 @@
 
 namespace simxr
 {
+bool IsFinite(XrVector3f vector) noexcept;
+XrSpaceLocationFlags FinitePoseFlags(XrPosef pose, XrSpaceLocationFlags flags) noexcept;
 XrPosef IdentityPose();
 std::optional<XrPosef> NormalizedPose(XrPosef pose) noexcept;
 XrQuaternionf Multiply(XrQuaternionf left, XrQuaternionf right);

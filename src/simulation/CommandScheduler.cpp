@@ -200,6 +200,25 @@ std::vector<std::uint64_t> RequestWords(const CommandTransaction& transaction)
 	}
 	return std::move(identity).Finish();
 }
+std::optional<CommandOutcome> ReleaseOutcome(CommandSource source,
+											 const std::array<bool, ControlChannelCount>& channels, FrameId frame,
+											 SimulationTime time, bool afterFrame)
+{
+	const auto count = std::count(channels.begin(), channels.end(), true);
+	if (!count)
+		return {};
+	CommandOutcome outcome;
+	outcome.result = CommandResult::Released;
+	outcome.transaction.source = source;
+	outcome.appliedFrame = frame;
+	outcome.appliedTime = time;
+	outcome.afterFrame = afterFrame;
+	outcome.transaction.commands.reserve(count);
+	for (std::size_t index = 0; index < channels.size(); ++index)
+		if (channels[index])
+			outcome.transaction.commands.push_back(ReleaseControl{static_cast<ControlChannel>(index)});
+	return outcome;
+}
 bool ValidSource(CommandSource source)
 {
 	return source.id && (source.kind == CommandSourceKind::Manual || source.kind == CommandSourceKind::Mcp ||
@@ -302,6 +321,12 @@ class CommandScheduler::PreparedCommandBoundary
 		if (m_outcomes.size() > m_historyCapacity)
 			m_outcomes.pop_front();
 	}
+	void ReleaseSource(CommandSource source)
+	{
+		const auto channels = m_state.ReleaseSource(source);
+		if (auto outcome = ReleaseOutcome(source, channels, m_snapshot->frame, m_snapshot->time, false))
+			m_snapshot->outcomes.push_back(std::move(*outcome));
+	}
 	void ApplySequence(FrameId frame, SimulationTime time, RuntimeTime runtimeTime, const CommandConfiguration& baseline)
 	{
 		if (!m_sequence || !m_sequence->CanPrepare())
@@ -309,13 +334,13 @@ class CommandScheduler::PreparedCommandBoundary
 		if (m_sequence->Status().origin.value && !m_sequence->HasControl(m_state.OwnedChannels(m_sequence->Source())))
 		{
 			m_sequence->Accept(frame, CommandResult::Conflict);
-			m_state.ReleaseSource(m_sequence->Source());
+			ReleaseSource(m_sequence->Source());
 			return;
 		}
 		const auto initial = m_state.Merge(baseline);
 		if (m_replacedSequence)
 		{
-			m_state.ReleaseSource(*m_replacedSequence);
+			ReleaseSource(*m_replacedSequence);
 			m_replacedSequence.reset();
 		}
 		PoseSequenceFrame prepared;
@@ -333,7 +358,7 @@ class CommandScheduler::PreparedCommandBoundary
 		}
 		if (!m_sequence->CanPrepare())
 		{
-			m_state.ReleaseSource(m_sequence->Source());
+			ReleaseSource(m_sequence->Source());
 			return;
 		}
 		if (!prepared.advanced)
@@ -356,7 +381,7 @@ class CommandScheduler::PreparedCommandBoundary
 		}
 		m_sequence->Accept(frame, result);
 		if (result != CommandResult::Applied)
-			m_state.ReleaseSource(m_sequence->Source());
+			ReleaseSource(m_sequence->Source());
 		else if (prepared.capture)
 			m_snapshot->sequenceCapture = SequenceCaptureIntent{m_sequence->Status().id, frame, m_sequence->Status().owner};
 	}
@@ -485,17 +510,20 @@ CommandOutcome CommandScheduler::Submit(CommandTransaction transaction)
 	auto returned = outcome;
 	if (outcome.result == CommandResult::Late)
 	{
-		m_outcomes.push_back(outcome);
-		if (m_outcomes.size() > m_historyCapacity)
-			m_outcomes.pop_front();
-		m_outcomes.back().recordingOverrun = !m_recorder.Observe(m_outcomes.back());
+		auto outcomes = m_outcomes;
+		outcomes.push_back(outcome);
+		if (outcomes.size() > m_historyCapacity)
+			outcomes.pop_front();
+		returned.recordingOverrun = !m_recorder.Observe(outcome);
+		outcomes.back().recordingOverrun = returned.recordingOverrun;
+		m_outcomes.swap(outcomes);
 	}
 	else
 		m_pending.push_back(std::move(outcome));
 	if (cursor == m_sources.end())
-		m_sources.push_back({request.source, request.id});
+		m_sources.push_back({returned.transaction.source, returned.transaction.id});
 	else
-		cursor->last = request.id;
+		cursor->last = returned.transaction.id;
 	return returned;
 }
 std::optional<CommandOutcome> CommandScheduler::Read(CommandSource source, std::uint64_t id) const
@@ -572,7 +600,10 @@ std::array<bool, ControlChannelCount> CommandScheduler::ReleaseSource(CommandSou
 			}
 			else
 				++it;
-		m_recorder.Observe(cancelled);
+		const bool recorded = m_recorder.Observe(cancelled);
+		const auto retained = std::min(cancelled.size(), m_historyCapacity);
+		for (auto index = outcomes.size() - retained; index < outcomes.size(); ++index)
+			outcomes[index].recordingOverrun = !recorded;
 		m_pending.swap(pending);
 		m_outcomes.swap(outcomes);
 	}
@@ -586,7 +617,7 @@ std::array<bool, ControlChannelCount> CommandScheduler::ReleaseSource(CommandSou
 			}
 		m_recorder.Fail();
 	}
-	auto released = m_state.ReleaseSource(source);
+	auto released = ReleaseSourceLocked(source);
 	const auto sequenceReleased = StopPoseSequenceLocked(source);
 	for (std::size_t index = 0; index < released.size(); ++index)
 		released[index] = released[index] || sequenceReleased[index];
@@ -627,15 +658,31 @@ std::optional<PoseSequenceStatus> CommandScheduler::PoseSequenceStatusFor(Comman
 	std::lock_guard lock(m_mutex);
 	return m_sequence && m_sequence->Status().owner == owner ? std::optional{m_sequence->Status()} : std::nullopt;
 }
+std::array<bool, ControlChannelCount> CommandScheduler::ReleaseSourceLocked(CommandSource source) noexcept
+{
+	const auto channels = m_state.ReleaseSource(source);
+	try
+	{
+		const auto latest = m_applied.empty() ? nullptr : m_applied.back();
+		if (auto outcome = ReleaseOutcome(source, channels, latest ? latest->frame : FrameId{},
+										  latest ? latest->time : SimulationTime{}, true))
+			m_recorder.Observe(*outcome);
+	}
+	catch (const std::bad_alloc&)
+	{
+		m_recorder.Fail();
+	}
+	return channels;
+}
 std::array<bool, ControlChannelCount> CommandScheduler::StopPoseSequenceLocked(CommandSource owner) noexcept
 {
 	std::array<bool, ControlChannelCount> released{};
 	if (!m_sequence || m_sequence->Status().owner != owner)
 		return released;
-	released = m_state.ReleaseSource(m_sequence->Source());
+	released = ReleaseSourceLocked(m_sequence->Source());
 	if (m_replacedSequence)
 	{
-		const auto previous = m_state.ReleaseSource(*m_replacedSequence);
+		const auto previous = ReleaseSourceLocked(*m_replacedSequence);
 		for (std::size_t index = 0; index < released.size(); ++index)
 			released[index] = released[index] || previous[index];
 		m_replacedSequence.reset();

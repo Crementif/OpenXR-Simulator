@@ -5,9 +5,54 @@
 
 #include <cmath>
 #include <iostream>
+#include <limits>
+
+namespace
+{
+void InsetBoundaries()
+{
+	using namespace simxr;
+	ViewSettings settings;
+	settings.outerFov = {{{-0.9f, 0.8f, 0.8f, -0.9f}, {-0.9f, 0.8f, 0.8f, -0.9f}}};
+	settings.insetHalfAngle = 0.85f;
+	bool rejected = false;
+	try
+	{
+		(void)ViewConfiguration(ViewLayout::StereoWithInset, settings);
+	}
+	catch (const std::invalid_argument&)
+	{
+		rejected = true;
+	}
+	Require(rejected, "Rounded inset width admitted reversed clamp bounds");
+	for (auto halfAngle : {std::nextafter(0.85f, 0.0f), std::numeric_limits<float>::denorm_min()})
+	{
+		settings.insetHalfAngle = halfAngle;
+		ViewConfiguration views(ViewLayout::StereoWithInset, settings);
+		for (auto gaze : {-1.4f, 0.0f, 0.5f, 1.4f})
+		{
+			TrackingState input;
+			input.gaze.yaw = gaze;
+			input.gaze.pitch = gaze;
+			const auto snapshot = TrackingSystem::Evaluate({Duration{1}}, input, BodyModel{});
+			const auto located = views.Locate(snapshot, true);
+			for (std::size_t index = 2; index < 4; ++index)
+			{
+				const auto& inset = located.views[index].fov;
+				const auto& outer = settings.outerFov[index - 2];
+				Require(inset.angleLeft >= outer.angleLeft && inset.angleRight <= outer.angleRight &&
+							inset.angleDown >= outer.angleDown && inset.angleUp <= outer.angleUp &&
+							inset.angleLeft < inset.angleRight && inset.angleDown < inset.angleUp,
+						"Inset rounding escaped the outer FOV or collapsed its extent");
+			}
+		}
+	}
+}
+} // namespace
 
 int main()
 {
+	InsetBoundaries();
 	using namespace simxr;
 	TrackingSystem tracking;
 	TrackingState state;
@@ -16,6 +61,9 @@ int main()
 	ViewConfiguration stereo;
 	Require(stereo.EyeCount() == 2 && stereo.Describe().size() == 2, "Stereo views");
 	auto views = stereo.Locate(snapshot);
+	Require(views.head.sampleTime == snapshot.head.sampleTime && views.head.flags == snapshot.head.flags &&
+				views.head.pose.orientation.y == snapshot.head.pose.orientation.y,
+			"Located eyes lost the head from their exact tracking sample");
 	Require(std::abs(views.views[0].pose.pose.position.z - 0.032f) < 0.00001f, "Rotated eye separation");
 	Require(std::abs(views.views[1].pose.pose.position.z + 0.032f) < 0.00001f, "Rotated right eye");
 	ViewSettings narrow;

@@ -24,7 +24,8 @@ constexpr VkImageUsageFlags ImageUsages = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | 
 
 bool SupportedShape(const VulkanExternalImageSpec& image)
 {
-	return (image.format == VK_FORMAT_R8G8B8A8_SRGB || image.format == VK_FORMAT_R8G8B8A8_UNORM) &&
+	return (image.format == VK_FORMAT_R8G8B8A8_SRGB || image.format == VK_FORMAT_R8G8B8A8_UNORM ||
+			image.format == VK_FORMAT_B8G8R8A8_SRGB || image.format == VK_FORMAT_B8G8R8A8_UNORM) &&
 		   image.extent.width && image.extent.height && image.extent.depth == 1 && image.arrayLayers >= 1 &&
 		   image.arrayLayers <= 2 && image.mipLevels == 1 && image.samples == VK_SAMPLE_COUNT_1_BIT &&
 		   image.tiling == VK_IMAGE_TILING_OPTIMAL && image.imageType == VK_IMAGE_TYPE_2D && !image.flags &&

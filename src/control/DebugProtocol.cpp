@@ -2,6 +2,7 @@
 #include "control/DebugProtocol.h"
 #include "control/ControlRequestError.h"
 #include "control/ControlSchema.h"
+#include "control/InspectionDocument.h"
 #include "runtime/Session.h"
 
 #include <array>
@@ -382,6 +383,30 @@ Field EncodeDisplayTick(std::uint16_t name, const PresentationTick& tick)
 	std::vector<Field> fields{Field::U64(tag::Tick, tick.tick.value), Field::I64(tag::Time, tick.time.value.count()),
 							  Field::Text(tag::Kind, Name(tick.kind)),
 							  Field::U64(tag::SkippedTicks, tick.skippedTicks)};
+	fields.push_back(
+		Field::Text(tag::PresentationPolicy, tick.policy == PresentationPolicy::Rotational ? "rotational" : "repeat"));
+	fields.push_back(Field::Bool(tag::Reprojected, tick.reprojected));
+	fields.push_back(Field::I64(tag::ReprojectionResult, tick.reprojectionResult));
+	fields.push_back(Field::I64(tag::ReprojectionSubmissionTime, tick.reprojectionSubmissionTime.count()));
+	fields.push_back(Field::I64(tag::ReprojectionCompletionLatency, tick.reprojectionCompletionLatency.count()));
+	if (tick.displayHead)
+	{
+		const auto& head = *tick.displayHead;
+		const auto& p = head.pose.position;
+		const auto& q = head.pose.orientation;
+		fields.push_back(Field::Bytes(
+			tag::DisplayHead,
+			InspectionValue::Object(
+				{{"position", InspectionValue::Array({InspectionValue::Float(p.x), InspectionValue::Float(p.y),
+													  InspectionValue::Float(p.z)})},
+				 {"orientation", InspectionValue::Array({InspectionValue::Float(q.x), InspectionValue::Float(q.y),
+														 InspectionValue::Float(q.z), InspectionValue::Float(q.w)})},
+				 {"flags", InspectionValue::Unsigned(head.flags)},
+				 {"sample_time", InspectionValue::Signed(head.sampleTime.value.count())}})
+				.Encode()));
+	}
+	if (tick.imageTick)
+		fields.push_back(Field::U64(tag::ImageTick, tick.imageTick->value));
 	if (tick.source)
 		fields.push_back(EncodeFrameKey(tag::Source, *tick.source));
 	return Nested(name, std::move(fields));

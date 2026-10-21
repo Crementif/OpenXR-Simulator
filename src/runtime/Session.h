@@ -49,17 +49,21 @@ class Session
 			std::shared_ptr<Clock> clock = std::make_shared<SteadyClock>());
 	~Session();
 	XrResult Ready(RuntimeTime time);
-	XrResult Begin(const XrSessionBeginInfo& info, const FrameSchedulerConfig& config);
+	XrResult Begin(const XrSessionBeginInfo& info, const FrameSchedulerConfig& config,
+				   PresentationPolicy policy = PresentationPolicy::Repeat);
 	XrResult RequestExit(RuntimeTime time);
 	XrResult End(RuntimeTime time);
 	XrResult SetState(XrSessionState state, RuntimeTime time);
 	void Close();
-	XrResult WaitFrame(FramePrediction& prediction);
+	// Native publication runs after admission with session/publication locks released.
+	// Failure retires only the admitted generation, including partially published state.
+	XrResult WaitFrame(FramePrediction& prediction,
+					   const std::function<XrResult(const FramePrediction&)>& publishNative = {});
 	XrResult BeginFrame();
 	XrResult EndFrame(FramePrediction& prediction, const XrFrameEndInfo* info = nullptr,
 					  std::shared_ptr<const FrameLayers> prepared = {}, std::shared_ptr<const FrameOutput> output = {},
 					  const std::function<XrResult()>& submit = {}, std::span<const CaptureOutput> captures = {},
-					  FrameSubmissionPolicy policy = FrameSubmissionPolicy::Exact);
+					  FrameSubmissionPolicy policy = FrameSubmissionPolicy::Exact, ReprojectionInput reprojection = {});
 	XrResult Attach(const XrSessionActionSetsAttachInfo& info);
 	XrResult SyncActions(const XrActionsSyncInfo& info,
 						 std::optional<std::array<ControllerControls, 2>> nativeControls = std::nullopt);
@@ -113,6 +117,7 @@ class Session
 	LocatedViews ViewsAt(RuntimeTime time, bool foveated = false) const;
 
   private:
+	void Close(std::optional<SessionGeneration> expectedGeneration);
 	friend class DebugController;
 	bool WithDebugGeneration(SessionGeneration generation, const std::function<void()>& work,
 							 bool requireRunning = true);

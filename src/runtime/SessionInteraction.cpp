@@ -36,11 +36,11 @@ XrResult SessionInteraction::Attach(const XrSessionActionSetsAttachInfo& info, c
 XrResult SessionInteraction::Sync(const XrActionsSyncInfo& info, const InputSnapshot& input, RuntimeTime time,
 								  bool focused)
 {
-	const auto previousProfiles = m_actions.Snapshot().profiles;
-	const auto result = m_actions.Sync(info, input, focused);
+	bool profilesChanged = false;
+	const auto result = m_actions.Sync(info, input, focused, &profilesChanged);
 	if (XR_FAILED(result))
 		return result;
-	m_profileChangePending |= previousProfiles != m_actions.Snapshot().profiles;
+	m_profileChangePending |= profilesChanged;
 	RetireInactiveHaptics(std::max(time, input.time));
 	return result;
 }

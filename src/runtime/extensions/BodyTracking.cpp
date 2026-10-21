@@ -139,6 +139,7 @@ PoseSample BodyTracking::InBase(const PoseSample& joint, const PoseSample& base)
 	if (Has(joint.flags, XR_SPACE_LOCATION_POSITION_TRACKED_BIT) && Has(base.flags,
 		XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT))
 		result.flags |= XR_SPACE_LOCATION_POSITION_TRACKED_BIT;
+	result.flags = FinitePoseFlags(result.pose, result.flags);
 	return result;
 }
 
@@ -255,6 +256,7 @@ XrResult BodyTracking::SkeletonFB(XrBodyTrackerFB handle, XrBodySkeletonFB* skel
 	BodyControls controls;
 	controls.preset = BodyPreset::TPose;
 	auto body = BodyModel(query->snapshot.proportions).Evaluate(head, controls, query->snapshot.time);
+	std::array<XrBodySkeletonJointFB, BodyJointCount> joints{};
 	for (std::size_t index = 0; index < mapping.size(); ++index)
 	{
 		auto joint = mapping[index];
@@ -263,8 +265,12 @@ XrResult BodyTracking::SkeletonFB(XrBodyTrackerFB handle, XrBodySkeletonFB* skel
 			parent = body.skeleton[Index(*parent)].parent;
 		auto parentIndex = parent ? static_cast<std::int32_t>(std::find(mapping.begin(), mapping.end(), *parent) - mapping.begin()) :
 			(tracker->jointSet == BodyJointSet::FullBodyMETA ? static_cast<std::int32_t>(XR_FULL_BODY_JOINT_NONE_META) : static_cast<std::int32_t>(XR_BODY_JOINT_NONE_FB));
-		skeleton->joints[index] = {static_cast<std::int32_t>(index), parentIndex, RelativePose(body.joints[Index(joint)].pose, query->base.pose)};
+		const auto pose = RelativePose(body.joints[Index(joint)].pose, query->base.pose);
+		if (!NormalizedPose(pose))
+			return XR_ERROR_RUNTIME_FAILURE;
+		joints[index] = {static_cast<std::int32_t>(index), parentIndex, pose};
 	}
+	std::copy_n(joints.begin(), mapping.size(), skeleton->joints);
 	return XR_SUCCESS;
 }
 
@@ -345,9 +351,7 @@ BodyTrackingCapabilities BodyTracking::Capabilities() const
 
 void BodyTracking::Clear()
 {
-	for (auto tracker : m_fb.Children(m_owner))
-		m_fb.Erase(tracker);
-	for (auto tracker : m_bd.Children(m_owner))
-		m_bd.Erase(tracker);
+	auto retiredFB = m_fb.RetireAll();
+	auto retiredBD = m_bd.RetireAll();
 }
 }

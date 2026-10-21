@@ -1,6 +1,7 @@
 #include "presentation/VirtualDisplay.h"
 
 #include <limits>
+#include <new>
 #include <stdexcept>
 #include <utility>
 
@@ -19,6 +20,54 @@ VirtualDisplay::VirtualDisplay(std::shared_ptr<Clock> clock, std::size_t capacit
 VirtualDisplay::~VirtualDisplay()
 {
 	Stop();
+}
+
+void VirtualDisplay::ConfigurePolicy(PresentationPolicy policy, HeadSampler sampleHead)
+{
+	if (policy != PresentationPolicy::Repeat && policy != PresentationPolicy::Rotational)
+		throw std::invalid_argument("Unknown presentation policy");
+	if (policy == PresentationPolicy::Rotational && !sampleHead)
+		throw std::invalid_argument("Rotational display requires a head sampler");
+	std::lock_guard control(m_control);
+	{
+		std::lock_guard lock(m_mutex);
+		if (m_active)
+			throw std::logic_error("Configure presentation policy while stopped");
+	}
+	// A faulted worker can be inactive but still returning through its catch path.
+	StopLocked();
+	m_sampleHead = std::move(sampleHead);
+	std::lock_guard lock(m_mutex);
+	m_policy = policy;
+}
+PresentationPolicy VirtualDisplay::Policy() const
+{
+	std::lock_guard lock(m_mutex);
+	return m_policy;
+}
+std::optional<PresentationTick> VirtualDisplay::AdvanceTick(RuntimeTime time,
+															std::optional<SessionGeneration> generation)
+{
+	if (m_policy == PresentationPolicy::Repeat)
+		return m_controller.Advance(time, generation);
+	return m_controller.Advance(
+		time, generation,
+		[this](const PresentationTick& baseline)
+		{
+			PoseSample head;
+			try
+			{
+				if (baseline.output && baseline.reprojection.source)
+					head = m_sampleHead(baseline.time);
+			}
+			catch (const std::bad_alloc&)
+			{
+				auto fallback = m_reprojection.Process(baseline, {});
+				fallback.result = XR_ERROR_OUT_OF_MEMORY;
+				return fallback;
+			}
+			return m_reprojection.Process(baseline, head);
+		});
 }
 
 void VirtualDisplay::Start(SessionGeneration generation, const DisplayTimeline& timeline, ExecutionMode mode,
@@ -68,6 +117,7 @@ void VirtualDisplay::StopLocked() noexcept
 	m_controller.Stop();
 	if (m_worker.joinable())
 		m_worker.join();
+	m_reprojection.Reset();
 }
 
 void VirtualDisplay::Stop() noexcept
@@ -161,7 +211,7 @@ std::optional<PresentationTick> VirtualDisplay::Step()
 			return {};
 		timeline = m_timeline;
 	}
-	return m_controller.Advance(timeline->TimeAt(NextTick()));
+	return AdvanceTick(timeline->TimeAt(NextTick()));
 }
 
 PresentationAdmission VirtualDisplay::Submit(PresentationSubmission submission, const std::function<void()>& commit)
@@ -196,7 +246,7 @@ std::optional<PresentationTick> VirtualDisplay::Advance(RuntimeTime time)
 		if (!m_active || (m_mode == ExecutionMode::RealTime && !m_paused))
 			return {};
 	}
-	return m_controller.Advance(time);
+	return AdvanceTick(time);
 }
 
 void VirtualDisplay::AdvanceFromFrame(SessionGeneration generation, RuntimeTime time) noexcept
@@ -209,7 +259,7 @@ void VirtualDisplay::AdvanceFromFrame(SessionGeneration generation, RuntimeTime 
 	}
 	try
 	{
-		m_controller.Advance(time, generation);
+		AdvanceTick(time, generation);
 	}
 	catch (...)
 	{
@@ -219,6 +269,7 @@ void VirtualDisplay::AdvanceFromFrame(SessionGeneration generation, RuntimeTime 
 			m_active = false;
 		}
 		m_controller.Stop();
+		m_reprojection.Reset();
 	}
 }
 
@@ -238,13 +289,13 @@ void VirtualDisplay::Run() noexcept
 				m_waiter->WaitUntil(m_changed, lock, anchor);
 				continue;
 			}
-			const auto elapsed = std::chrono::duration_cast<Duration>(hostNow - anchor);
+			const auto elapsed = std::chrono::duration_cast<Duration>(HostTimeDifference(hostNow, anchor));
 			const auto anchorTime = timeline.TimeAt(anchorTick);
 			if (elapsed.count() > std::numeric_limits<std::int64_t>::max() - anchorTime.value.count())
 				throw std::overflow_error("Virtual display time exhausted");
 			const RuntimeTime now{anchorTime.value + elapsed};
 			lock.unlock();
-			m_controller.Advance(now);
+			AdvanceTick(now);
 			lock.lock();
 			if (!m_active || m_paused)
 				break;
@@ -268,6 +319,7 @@ void VirtualDisplay::Run() noexcept
 			m_active = false;
 		}
 		m_controller.Stop();
+		m_reprojection.Reset();
 	}
 }
 

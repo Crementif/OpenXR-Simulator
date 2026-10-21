@@ -51,6 +51,7 @@ struct LocatedViews
 	RuntimeTime time;
 	bool gazeActive = false;
 	std::vector<ViewSample> views;
+	PoseSample head;
 };
 
 struct ViewQuerySnapshot

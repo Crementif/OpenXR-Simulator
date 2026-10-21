@@ -1,5 +1,5 @@
 #include "platform/linux/VulkanFrameSubmission.h"
-#include "platform/linux/VulkanInstanceGraphics.h"
+#include "graphics/backends/vulkan/VulkanReprojection.h"
 
 #include "graphics/backends/vulkan/VulkanBackend.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
@@ -13,8 +13,9 @@
 namespace simxr
 {
 VulkanFrameSubmission::VulkanFrameSubmission(Session& session, VulkanBackend& backend, VulkanInspection* inspection,
-											 const VulkanFrameBindings& bindings, FrameKey key)
-	: m_session(session), m_backend(backend), m_inspection(inspection), m_bindings(bindings), m_key(key)
+											 const VulkanFrameBindings& bindings, FrameKey key, bool retainLayers)
+	: m_session(session), m_backend(backend), m_inspection(inspection), m_bindings(bindings), m_key(key),
+	  m_retainLayers(retainLayers)
 {
 }
 
@@ -62,12 +63,13 @@ XrResult VulkanFrameSubmission::PrepareLayers(const XrFrameEndInfo& info)
 	const auto views = m_session.ViewsAt({Duration{info.displayTime}});
 	if (views.views.size() < 2)
 		return XR_ERROR_RUNTIME_FAILURE;
-	const CompositionTarget target{
-		views.views[0].description.width,
-		views.views[0].description.height,
-		{{{views.views[0].pose, views.views[0].fov}, {views.views[1].pose, views.views[1].fov}}}};
+	m_head = views.head;
+	m_target =
+		CompositionTarget{views.views[0].description.width,
+						  views.views[0].description.height,
+						  {{{views.views[0].pose, views.views[0].fov}, {views.views[1].pose, views.views[1].fov}}}};
 	return PrepareComposition(
-		*m_layers, target,
+		*m_layers, m_target,
 		[this](XrSwapchain swapchain) -> std::optional<XrExtent2Di>
 		{
 			const auto description = m_bindings.Describe(swapchain);
@@ -125,7 +127,51 @@ XrResult VulkanFrameSubmission::PrepareOutputs()
 	m_batch.push_back(m_composed);
 	for (const auto& capture : m_captures)
 		m_batch.push_back(capture.producer);
-	return XR_SUCCESS;
+	return m_retainLayers ? PrepareReprojection() : XR_SUCCESS;
+}
+
+XrResult VulkanFrameSubmission::PrepareReprojection()
+{
+	if (!m_inspection)
+	{
+		m_reprojection.status = XR_ERROR_FEATURE_UNSUPPORTED;
+		return XR_SUCCESS;
+	}
+	try
+	{
+		const auto capacity = m_batch.size() < 64 ? 64 - m_batch.size() : 0;
+		m_reprojection.status = VulkanReprojectionPreparation::Prepare(
+			m_backend, *m_inspection, *m_layers, m_target, m_head,
+			[this](XrSwapchain swapchain)
+			{
+				return m_bindings.ReleasedImage(swapchain);
+			},
+			capacity, m_retention);
+		if (m_reprojection.status == XR_SUCCESS)
+		{
+			const auto frames = m_retention->Frames();
+			m_batch.insert(m_batch.end(), frames.begin(), frames.end());
+			m_reprojection.source = m_retention->Source();
+		}
+	}
+	catch (const std::bad_alloc&)
+	{
+		m_retention.reset();
+		m_reprojection = {{}, XR_ERROR_OUT_OF_MEMORY};
+	}
+	switch (m_reprojection.status)
+	{
+	case XR_SUCCESS:
+	case XR_ERROR_LIMIT_REACHED:
+	case XR_ERROR_OUT_OF_MEMORY:
+	case XR_ERROR_FEATURE_UNSUPPORTED:
+	case XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED:
+	case XR_ERROR_POSE_INVALID:
+		// Optional preparation failure preserves the baseline and its captures.
+		return XR_SUCCESS;
+	default:
+		return m_reprojection.status;
+	}
 }
 
 XrResult VulkanFrameSubmission::PrepareCapture(const LayerImageDescription& image, const LayerDepthDescription* depth, Capture& capture,
@@ -297,6 +343,8 @@ XrResult VulkanFrameSubmission::PrepareCaptures()
 
 void VulkanFrameSubmission::DropLiveOutput()
 {
+	m_retention.reset();
+	m_reprojection = {};
 	m_composedTransfer.reset();
 	m_output.reset();
 	m_captureOutputs.clear();
@@ -336,6 +384,9 @@ XrResult VulkanFrameSubmission::Submit()
 	if (m_composed->Submitted())
 	{
 		const auto completion = m_composed->Completion();
+		if (m_retention)
+			for (const auto swapchain : m_retention->Swapchains())
+				m_bindings.MarkReleasedUsed(swapchain, completion);
 		for (const auto& draw : m_composition.draws)
 			m_bindings.MarkReleasedUsed(draw.source.source, completion);
 		// Filtered draws are a subset of the composed draws and share this batch completion.
@@ -347,6 +398,8 @@ XrResult VulkanFrameSubmission::Submit()
 	{
 		m_session.History().Trace(FrameTraceKind::NativeSubmitted, m_key, m_layers->displayTime,
 			XR_SUCCESS, FrameDiagnosticCategory::Timing, 0, "application_queue");
+		if (m_retention)
+			m_retention->Commit();
 		if (m_composedTransfer)
 			m_composedTransfer->Commit();
 		for (const auto& capture : m_captures)
@@ -400,6 +453,6 @@ XrResult VulkanFrameSubmission::Execute(const XrFrameEndInfo& info)
 			return Submit();
 		};
 	return m_session.EndFrame(submitted, &info, m_layers, m_output, submit, m_captureOutputs,
-							  m_live ? FrameSubmissionPolicy::Live : FrameSubmissionPolicy::Exact);
+							  m_live ? FrameSubmissionPolicy::Live : FrameSubmissionPolicy::Exact, m_reprojection);
 }
 } // namespace simxr

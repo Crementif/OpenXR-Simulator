@@ -2,6 +2,10 @@
 
 #include "simulation/CommandTypes.h"
 #include "simulation/PoseSequence.h"
+#include <array>
+#include <cstdint>
+#include <memory>
+#include <vector>
 
 namespace simxr
 {

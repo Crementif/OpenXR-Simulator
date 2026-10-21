@@ -181,6 +181,35 @@ void ViewProjection()
 	for (std::size_t index = 0; index < 6; ++index)
 		SameSamples(rotated.draws[index], baseline.draws[index]);
 }
+void LargeOriginKeepsRelativeEyes()
+{
+	const float maximum = std::numeric_limits<float>::max();
+	const PoseSample submitted{
+		{EulerAngles(0, 0, 0.785398163f), {maximum, maximum, 0}}, TrackedPoseFlags, {Duration{100}}};
+	auto display = submitted;
+	display.pose.orientation = EulerAngles(0.2f, 0, 0);
+	CompositionTarget target{128, 64, {{{submitted, Fov()}, {submitted, Fov()}}}};
+	ProjectionLayerDescription projection;
+	projection.space.referenceType = XR_REFERENCE_SPACE_TYPE_STAGE;
+	for (unsigned eye = 0; eye < 2; ++eye)
+		projection.views.push_back(
+			{submitted.pose, submitted, Fov(), {reinterpret_cast<XrSwapchain>(2), {{0, 0}, {128, 64}}, eye}, {}});
+	const FrameLayers layers{{Duration{100}}, XR_ENVIRONMENT_BLEND_MODE_OPAQUE, {projection}};
+	const CompositionExtentResolver extent = [](XrSwapchain)
+	{
+		return XrExtent2Di{128, 64};
+	};
+	CompositionPlan rotated, expected;
+	Require(PrepareRotationalComposition(layers, target, submitted, display, extent, rotated) == XR_SUCCESS,
+			"Representable eye poses overflowed through the inverse world origin");
+	for (auto& eye : target.eyes)
+		eye.worldPose = display;
+	Require(PrepareComposition(layers, target, extent, expected) == XR_SUCCESS && rotated.draws.size() == 2,
+			"Large-origin reference composition failed");
+	for (unsigned eye = 0; eye < 2; ++eye)
+		SameSamples(rotated.draws[eye], expected.draws[eye]);
+}
+
 void Rejection()
 {
 	Fixture fixture;
@@ -207,6 +236,7 @@ int main()
 	KnownRotation();
 	SpaceLifetimeAndGeneralRotation();
 	ViewProjection();
+	LargeOriginKeepsRelativeEyes();
 	Rejection();
 	std::cout << "Rotational geometry, reference-space lifetime and repeat baseline passed; "
 		"GPU policy remains separate\n";

@@ -15,8 +15,7 @@ namespace simxr
 {
 inline std::atomic<std::uintptr_t> s_nextHandle{1};
 
-template<typename Handle>
-Handle AllocateHandle()
+template <typename Handle> Handle AllocateHandle()
 {
 	auto identity = s_nextHandle.load(std::memory_order_relaxed);
 	for (;;)
@@ -32,14 +31,11 @@ Handle AllocateHandle()
 		return static_cast<Handle>(identity);
 }
 
-template<typename Handle, typename Object>
-class HandleRef
+template <typename Handle, typename Object> class HandleRef
 {
-public:
+  public:
 	HandleRef() = default;
-	HandleRef(Handle handle, std::shared_ptr<Object> object) : m_handle(handle), m_object(std::move(object))
-	{
-	}
+	HandleRef(Handle handle, std::shared_ptr<Object> object) : m_handle(handle), m_object(std::move(object)) {}
 
 	Object* operator->() const
 	{
@@ -66,48 +62,101 @@ public:
 		return m_object;
 	}
 
-private:
+  private:
 	Handle m_handle{};
 	std::shared_ptr<Object> m_object;
 };
 
-template<typename Handle, typename Object, typename Parent>
-class HandleRegistry
+template <typename Handle, typename Object, typename Parent> class HandleRegistry
 {
-public:
+	struct Record
+	{
+		Parent parent;
+		std::shared_ptr<Object> object;
+	};
+	using Records = std::unordered_map<Handle, Record>;
+
+  public:
+	class Retired
+	{
+	  public:
+		Retired() = default;
+		Retired(Retired&&) = default;
+		Retired& operator=(Retired&&) = default;
+
+		template <typename Visitor> void ForEach(Visitor visitor) const
+		{
+			if (!m_objects)
+				return;
+			for (const auto& [handle, record] : *m_objects)
+				visitor(HandleRef<Handle, Object>{handle, record.object});
+		}
+
+	  private:
+		friend class HandleRegistry;
+		std::unique_ptr<Records> m_objects;
+	};
+
+	~HandleRegistry()
+	{
+		// Publish an empty table before owned destructors can reenter it.
+		auto retired = RetireAll();
+	}
+
+	Retired RetireAll()
+	{
+		Retired retired;
+		{
+			std::lock_guard lock(m_mutex);
+			retired.m_objects = std::move(m_objects);
+		}
+		return retired;
+	}
+
 	HandleRef<Handle, Object> Insert(Parent parent, std::unique_ptr<Object> object)
 	{
 		if (!object)
 			throw std::invalid_argument("Missing handle object");
-		return Create(parent, [&](Handle) { return std::move(object); });
+		return Create(parent,
+					  [&](Handle)
+					  {
+						  return std::move(object);
+					  });
 	}
 
-	template<typename Factory>
-	HandleRef<Handle, Object> Create(Parent parent, Factory factory)
+	template <typename Factory> HandleRef<Handle, Object> Create(Parent parent, Factory factory)
 	{
-		auto handle = AllocateHandle<Handle>();
+		const auto handle = AllocateHandle<Handle>();
 		std::shared_ptr<Object> retained(factory(handle));
 		if (!retained)
 			throw std::invalid_argument("Missing handle object");
 		std::lock_guard lock(m_mutex);
-		m_objects.emplace(handle, Record{parent, retained});
+		if (!m_objects)
+			m_objects = std::make_unique<Records>();
+		m_objects->emplace(handle, Record{parent, retained});
 		return {handle, std::move(retained)};
 	}
 
 	HandleRef<Handle, Object> Find(Handle handle) const
 	{
 		std::lock_guard lock(m_mutex);
-		auto it = m_objects.find(handle);
-		return it == m_objects.end() ? HandleRef<Handle, Object>{} : HandleRef<Handle, Object>{handle, it->second.object};
+		if (!m_objects)
+			return {};
+		const auto found = m_objects->find(handle);
+		if (found == m_objects->end())
+			return {};
+		return {handle, found->second.object};
 	}
 
 	HandleRef<Handle, Object> Find(Handle handle, Parent parent) const
 	{
 		std::lock_guard lock(m_mutex);
-		auto it = m_objects.find(handle);
-		if (it == m_objects.end() || it->second.parent != parent)
+		if (!m_objects)
 			return {};
-		return {handle, it->second.object};
+		const auto found = m_objects->find(handle);
+		if (found == m_objects->end() || found->second.parent != parent)
+			return {};
+		return {handle, found->second.object};
 	}
 
 	bool Erase(Handle handle)
@@ -115,11 +164,13 @@ public:
 		std::shared_ptr<Object> retired;
 		{
 			std::lock_guard lock(m_mutex);
-			auto it = m_objects.find(handle);
-			if (it == m_objects.end())
+			if (!m_objects)
 				return false;
-			retired = std::move(it->second.object);
-			m_objects.erase(it);
+			const auto found = m_objects->find(handle);
+			if (found == m_objects->end())
+				return false;
+			retired = std::move(found->second.object);
+			m_objects->erase(found);
 		}
 		return true;
 	}
@@ -128,19 +179,15 @@ public:
 	{
 		std::lock_guard lock(m_mutex);
 		std::vector<Handle> children;
-		for (const auto& [handle, record] : m_objects)
-			if (record.parent == parent)
-				children.push_back(handle);
+		if (m_objects)
+			for (const auto& [handle, record] : *m_objects)
+				if (record.parent == parent)
+					children.push_back(handle);
 		return children;
 	}
 
-private:
-	struct Record
-	{
-		Parent parent;
-		std::shared_ptr<Object> object;
-	};
+  private:
 	mutable std::mutex m_mutex;
-	std::unordered_map<Handle, Record> m_objects;
+	std::unique_ptr<Records> m_objects;
 };
-}
+} // namespace simxr

@@ -175,6 +175,8 @@ const char* SimulationResultName(CommandResult result)
 		return "capacity";
 	case CommandResult::Closed:
 		return "closed";
+	case CommandResult::Released:
+		return "released";
 	case CommandResult::NotFound:
 		return "not_found";
 	}
@@ -191,6 +193,7 @@ InspectionValue SimulationOutcome(const CommandOutcome& outcome, bool includeCom
 		 {"source", SourceValue(outcome.transaction.source)},
 		 {"phase", InspectionValue::Text(SimulationResultName(outcome.result))},
 		 {"applied_frame", InspectionValue::Unsigned(outcome.appliedFrame.value)},
+		 {"after_frame", InspectionValue::Boolean(outcome.afterFrame)},
 		 {"applied_time", InspectionValue::Signed(outcome.appliedTime.value.count())},
 		 {"recording_overrun", InspectionValue::Boolean(outcome.recordingOverrun)},
 		 {"target_frame", outcome.transaction.target.frame

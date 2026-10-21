@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <numbers>
 #include <thread>
 
@@ -27,6 +28,60 @@ ControllerMotionFrame Frame(double seconds)
 	frame.glideSeconds = seconds;
 	frame.wheelSeconds = static_cast<float>(seconds);
 	return frame;
+}
+void FiniteGlideEndpoints()
+{
+	LegacyControllerMotion motion;
+	const auto largest = std::numeric_limits<float>::max();
+	auto frame = Frame(0);
+	frame.pose = ControllerPoseEdit{};
+	frame.pose->position = {largest, 0, 0};
+	motion.Update(frame);
+	frame.pose->position.x = -largest;
+	frame.pose->duration = std::chrono::milliseconds{1000};
+	motion.Update(frame);
+	const auto midpoint = motion.Update(Frame(.5)).snapshot;
+	Require(std::isfinite(midpoint.hands[1].local.position.x) && midpoint.hands[1].local.position.x == 0,
+			"Finite glide endpoints overflowed at their midpoint");
+	Require(motion.Update(Frame(1)).snapshot.hands[1].local.position.x == -largest,
+			"Finite glide endpoint was not preserved");
+}
+void FiniteMotionIntermediates()
+{
+	LegacyControllerMotion motion;
+	const auto largest = std::numeric_limits<float>::max();
+	auto frame = Frame(0);
+	frame.pose = ControllerPoseEdit{};
+	frame.pose->position = {largest, 0, -largest};
+	frame.head = {{largest, 0, largest}, std::numbers::pi_v<float> / 4, 0};
+	const auto position = motion.Update(frame).snapshot.hands[1].worldPose.position;
+	const bool finitePosition = std::isfinite(position.x) && std::isfinite(position.z) &&
+								std::abs(position.x / largest - 1) < .00001f &&
+								std::abs(position.z / largest - (1 - std::sqrt(2.0f))) < .00001f;
+	frame.pose->position = {};
+	frame.pose->yaw = largest;
+	frame.head = {{}, largest, 0};
+	const auto orientation = motion.Update(frame).snapshot.hands[1].worldPose.orientation;
+	const bool finiteOrientation = std::isfinite(orientation.x) && std::isfinite(orientation.y) &&
+								   std::isfinite(orientation.z) && std::isfinite(orientation.w);
+	const auto expectedOrientation = simxr::Multiply({0, static_cast<float>(std::sin(static_cast<double>(largest))), 0,
+													  static_cast<float>(std::cos(static_cast<double>(largest)))},
+													 simxr::EulerAngles(0, frame.pose->pitch, 0));
+	Near(orientation.x, expectedOrientation.x, "Wide yaw changed orientation");
+	Near(orientation.y, expectedOrientation.y, "Wide yaw changed orientation");
+	Near(orientation.z, expectedOrientation.z, "Wide yaw changed orientation");
+	Near(orientation.w, expectedOrientation.w, "Wide yaw changed orientation");
+	frame = Frame(0);
+	frame.wheel = ControllerWheelSweep{};
+	frame.wheel->enabled = true;
+	frame.wheel->frequencyHz = largest;
+	frame.wheelSeconds = largest;
+	const auto wheel = motion.Update(frame).snapshot;
+	const bool finiteWheel = std::isfinite(wheel.wheelAngle) && std::isfinite(wheel.hands[0].local.position.x);
+	std::cout << "Finite legacy intermediates: position=" << finitePosition << " orientation=" << finiteOrientation
+			  << " wheel=" << finiteWheel << std::endl;
+	Require(finitePosition && finiteOrientation && finiteWheel,
+			"Finite motion input overflowed a representable result");
 }
 void HeadSpaceAndTimedMoves()
 {
@@ -247,6 +302,8 @@ int main()
 {
 	try
 	{
+		FiniteMotionIntermediates();
+		FiniteGlideEndpoints();
 		HeadSpaceAndTimedMoves();
 		KeyboardFileWheelAndHoldPrecedence();
 		AnimationEdgesAndReset();

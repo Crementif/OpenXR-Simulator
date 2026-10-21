@@ -4,6 +4,7 @@
 #include "control/ImageInspection.h"
 #include "control/LocalControlClient.h"
 #include "control/backends/vulkan/VulkanImageConsumer.h"
+#include "graphics/SnapshotBudget.h"
 #include "graphics/backends/vulkan/VulkanBackend.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
@@ -837,7 +838,7 @@ void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
 		Require(rejected, "Consumer without enabled logical extensions did not reject acquisition");
 	}
 	{
-		std::array<std::unique_ptr<control::VulkanImageConsumer>, 8> consumers;
+		std::vector<std::unique_ptr<control::VulkanImageConsumer>> consumers(SnapshotBudget::Capacity());
 		for (auto& consumer : consumers)
 			consumer = std::make_unique<control::VulkanImageConsumer>(first, Extensions, VK_API_VERSION_1_1);
 		Rejected<VulkanError>(
@@ -845,9 +846,9 @@ void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
 			{
 				control::VulkanImageConsumer excess(first, Extensions, VK_API_VERSION_1_1);
 			},
-			"Native consumer admission exceeded eight pre-reserved owners");
+			"Native consumer admission exceeded the shared snapshot budget");
 	}
-	std::puts("case=consumer-acquisition-rollback rejected=12 usableCapacity=8 PASS");
+	std::printf("case=consumer-acquisition-rollback rejected=12 usableCapacity=%zu PASS\n", SnapshotBudget::Capacity());
 	VerifyBackendKnownSubmissionFailure(first);
 	VerifySubmissionPublicationBoundary(ConsumerDevice(instance, deliveries[0]->Descriptor().identity));
 	Require(first->binding.device != second->binding.device &&
@@ -1092,18 +1093,18 @@ void VerifyControlImage(const std::string& socket, std::uint64_t session, std::u
 		auto device = ConsumerDevice(instance, identity);
 		{
 			std::vector<std::unique_ptr<wire::VulkanImageConsumer>> bounded;
-			for (unsigned index = 0; index != 8; ++index)
+			for (std::size_t index = 0; index < SnapshotBudget::Capacity(); ++index)
 				bounded.push_back(std::make_unique<wire::VulkanImageConsumer>(device, Extensions, VK_API_VERSION_1_1));
 			bool rejected = false;
 			try
 			{
-				wire::VulkanImageConsumer ninth(device, Extensions, VK_API_VERSION_1_1);
+				wire::VulkanImageConsumer excess(device, Extensions, VK_API_VERSION_1_1);
 			}
 			catch (const VulkanError& error)
 			{
 				rejected = error.Result() == VK_ERROR_OUT_OF_POOL_MEMORY;
 			}
-			Require(rejected, "Private native consumer budget exceeded eight retained images");
+			Require(rejected, "Private native consumer exceeded the shared snapshot budget");
 			auto unsent = bounded.front()->ConsumerFence();
 			bounded.front()->AbandonUnsent();
 			Require(bounded.front()->NativeIdle(), "Unsent consumer fence required a GPU acknowledgement");

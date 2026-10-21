@@ -6,7 +6,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <deque>
 #include <mutex>
 #include <optional>
 #include <openxr/openxr.h>
@@ -75,7 +74,7 @@ private:
 	mutable std::mutex m_mutex;
 	std::size_t m_historyCapacity;
 	std::vector<HapticOutput> m_active;
-	std::deque<HapticOutput> m_history;
+	std::vector<HapticOutput> m_history;
 	std::uint64_t m_sequence = 0;
 };
 }

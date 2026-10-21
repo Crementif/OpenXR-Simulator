@@ -267,7 +267,9 @@ automation::SavedRecording OpenSavedRecording(const std::string& path)
 	if (!seedLine.empty() && seedLine.back() == '\r')
 		seedLine.pop_back();
 	constexpr std::string_view prefix = "-- Launch simxr_runner with --seed ";
-	if (!signature.starts_with("-- OpenXR Simulator recorded inputs, schema 1.") || !seedLine.starts_with(prefix))
+	if ((!signature.starts_with("-- OpenXR Simulator recorded inputs, schema 1.") &&
+		 !signature.starts_with("-- OpenXR Simulator recorded inputs, schema 2.")) ||
+		!seedLine.starts_with(prefix))
 		throw std::runtime_error("This is not a saved simulator recording. Open other Luau scripts in Rigs.");
 	const auto text = std::string_view(seedLine).substr(prefix.size());
 	std::uint64_t seed = 0;

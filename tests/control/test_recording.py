@@ -57,6 +57,34 @@ class Pages:
 
 
 class RecordingTests(unittest.TestCase):
+    def test_source_release_timing_and_validation(self):
+        release = outcome(identity=0, frame=11, phase='released',
+                          commands=[{'kind': 'release_control', 'channel': 'left_controls'}])
+        release['after_frame'] = True
+        first = dict(outcome(frame=11), after_frame=False)
+        last = dict(outcome(2, frame=13), after_frame=False)
+        document = recording([first, release, last], version=2)
+        script = to_luau(document)
+        self.assertLess(script.index('recorded frame +1'), script.index('recorded frame +2'))
+        self.assertLess(script.index('recorded frame +2'), script.index('release_control'))
+        self.assertLess(script.index('release_control'), script.index('recorded frame +3'))
+        # A release at the origin still belongs before the first following frame.
+        release['applied_frame'] = 10
+        self.assertIn('recorded frame +1', to_luau(recording([release], version=2)))
+        for changes in ({'transaction_id': 1}, {'after_frame': 1}, {'after_frame': None},
+                        {'commands': first['commands']}, {'after_frame': False}, {'commands': []}):
+            with self.subTest(changes=changes), self.assertRaises(ProtocolError):
+                to_luau(recording([dict(release, **changes)], version=2))
+        with self.assertRaises(ProtocolError):
+            to_luau(recording([release], version=1))
+        with self.assertRaises(ProtocolError):
+            to_luau(recording([dict(release, applied_frame=U64_MAX)], version=2, origin_frame=0))
+        # In-boundary cleanup follows the other commands on the same frame.
+        release.update(applied_frame=11, after_frame=False)
+        script = to_luau(recording([first, release], version=2))
+        self.assertEqual(script.count('do -- recorded frame +1'), 1)
+        self.assertLess(script.index('gaze', script.index('do --')), script.index('release_control'))
+
     def test_reference_space_origin_is_exact_and_required(self):
         origin = {'kind': 'reference_spaces', 'local_position': [3, 1.75, -2],
                   'local_orientation': [0, 0, 0, 1], 'stage_position': [3, 0, -2],

@@ -135,6 +135,8 @@ void Source(Message& response, const ImageSource& source, bool session = true)
 	response.fields.push_back(Key(tag::Frame, source.frame));
 	response.fields.push_back(Field::U64(tag::CaptureId, source.capture.value));
 	response.fields.push_back(EncodeCaptureTarget(source.target));
+	if (source.imageTick)
+		response.fields.push_back(Field::U64(tag::ImageTick, source.imageTick->value));
 }
 ImageDeviceIdentity DeviceIdentity(const Message& message)
 {

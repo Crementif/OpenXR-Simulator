@@ -1,9 +1,55 @@
 #include "Math.h"
 
 #include <cmath>
+#include <limits>
 
 namespace simxr
 {
+namespace
+{
+struct Vector3d
+{
+	double x, y, z;
+};
+
+// Preserve intermediate range until the complete transform is narrowed to OpenXR floats.
+Vector3d RotateWide(XrQuaternionf orientation, Vector3d vector)
+{
+	const double x = orientation.x, y = orientation.y, z = orientation.z, w = orientation.w;
+	return {
+		(w * w + x * x - y * y - z * z) * vector.x + 2 * (x * y - w * z) * vector.y + 2 * (x * z + w * y) * vector.z,
+		2 * (x * y + w * z) * vector.x + (w * w - x * x + y * y - z * z) * vector.y + 2 * (y * z - w * x) * vector.z,
+		2 * (x * z - w * y) * vector.x + 2 * (y * z + w * x) * vector.y + (w * w - x * x - y * y + z * z) * vector.z};
+}
+
+XrVector3f Narrow(Vector3d vector)
+{
+	const auto component = [](double value)
+	{
+		if (std::abs(value) > std::numeric_limits<float>::max())
+			return value < 0 ? -std::numeric_limits<float>::infinity() : std::numeric_limits<float>::infinity();
+		return static_cast<float>(value);
+	};
+	return {component(vector.x), component(vector.y), component(vector.z)};
+}
+} // namespace
+
+bool IsFinite(XrVector3f vector) noexcept
+{
+	return std::isfinite(vector.x) && std::isfinite(vector.y) && std::isfinite(vector.z);
+}
+
+XrSpaceLocationFlags FinitePoseFlags(XrPosef pose, XrSpaceLocationFlags flags) noexcept
+{
+	if (!IsFinite(pose.position))
+		flags &= ~(XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_POSITION_TRACKED_BIT);
+	const auto& rotation = pose.orientation;
+	if (!std::isfinite(rotation.x) || !std::isfinite(rotation.y) || !std::isfinite(rotation.z) ||
+		!std::isfinite(rotation.w))
+		flags &= ~(XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT);
+	return flags;
+}
+
 XrPosef IdentityPose()
 {
 	return {{0, 0, 0, 1}, {0, 0, 0}};
@@ -31,9 +77,7 @@ XrQuaternionf Multiply(XrQuaternionf left, XrQuaternionf right)
 
 XrVector3f Rotate(XrQuaternionf orientation, XrVector3f vector)
 {
-	auto rotated = Multiply(Multiply(orientation, {vector.x, vector.y, vector.z, 0}),
-							{-orientation.x, -orientation.y, -orientation.z, orientation.w});
-	return {rotated.x, rotated.y, rotated.z};
+	return Narrow(RotateWide(orientation, {vector.x, vector.y, vector.z}));
 }
 
 XrQuaternionf EulerAngles(float yaw, float pitch, float roll)
@@ -45,16 +89,17 @@ XrQuaternionf EulerAngles(float yaw, float pitch, float roll)
 
 XrPosef Compose(XrPosef parent, XrPosef child)
 {
-	auto position = Rotate(parent.orientation, child.position);
+	auto position = RotateWide(parent.orientation, {child.position.x, child.position.y, child.position.z});
 	return {Multiply(parent.orientation, child.orientation),
-			{parent.position.x + position.x, parent.position.y + position.y, parent.position.z + position.z}};
+			Narrow({parent.position.x + position.x, parent.position.y + position.y, parent.position.z + position.z})};
 }
 
 XrPosef RelativePose(XrPosef target, XrPosef base)
 {
 	XrQuaternionf inverse{-base.orientation.x, -base.orientation.y, -base.orientation.z, base.orientation.w};
 	return {Multiply(inverse, target.orientation),
-			Rotate(inverse, {target.position.x - base.position.x, target.position.y - base.position.y,
-							 target.position.z - base.position.z})};
+			Narrow(RotateWide(inverse, {static_cast<double>(target.position.x) - base.position.x,
+										static_cast<double>(target.position.y) - base.position.y,
+										static_cast<double>(target.position.z) - base.position.z}))};
 }
 } // namespace simxr

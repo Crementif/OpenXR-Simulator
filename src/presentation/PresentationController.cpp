@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <limits>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 
 namespace simxr
@@ -19,6 +20,7 @@ PresentationController::PresentationController(std::size_t capacity, FrameHistor
 void PresentationController::Start(SessionGeneration generation, const DisplayTimeline& timeline)
 {
 	std::optional<PresentationSubmission> released;
+	std::shared_ptr<const FrameOutput> releasedImage;
 	std::optional<PresentationSubmission> releasedClear;
 	{
 		std::lock_guard lock(m_mutex);
@@ -28,6 +30,7 @@ void PresentationController::Start(SessionGeneration generation, const DisplayTi
 			entry.retiring = true;
 		released = std::move(m_current);
 		m_current.reset();
+		releasedImage = std::move(m_displayOutput);
 		releasedClear = std::move(m_liveClear);
 		m_liveClear.reset();
 		m_coalescedLiveClears = 0;
@@ -64,13 +67,16 @@ PresentationController::SubmitWithMetadata(PresentationSubmission submission,
 		return PresentationAdmission::Closed;
 	if (submission.key.generation != m_generation)
 		return PresentationAdmission::StaleGeneration;
-	if (!submission.key.frame.value || submission.key.frame <= m_lastSubmitted ||
-		submission.targetTime.value.count() <= 0)
+	if ((submission.reprojection.source && !submission.output) || !submission.key.frame.value ||
+		submission.key.frame <= m_lastSubmitted || submission.targetTime.value.count() <= 0)
 		return PresentationAdmission::Invalid;
 	if (m_entries.size() >= m_capacity)
 		return PresentationAdmission::QueueFull;
 	const auto frame = submission.key.frame;
-	m_entries.push_back({std::move(submission), false});
+	// Allocate before transferring readers: allocation failure must release them after unlock.
+	static_assert(std::is_nothrow_move_assignable_v<PresentationSubmission>);
+	m_entries.emplace_back();
+	m_entries.back().submission = std::move(submission);
 	try
 	{
 		if (commit)
@@ -96,8 +102,8 @@ PresentationController::SubmitLiveClearWithMetadata(PresentationSubmission submi
 		return PresentationAdmission::Closed;
 	if (submission.key.generation != m_generation)
 		return PresentationAdmission::StaleGeneration;
-	if (submission.output || !submission.key.frame.value || submission.key.frame <= m_lastSubmitted ||
-		submission.targetTime.value.count() <= 0)
+	if (submission.output || submission.reprojection.source || !submission.key.frame.value ||
+		submission.key.frame <= m_lastSubmitted || submission.targetTime.value.count() <= 0)
 		return PresentationAdmission::Invalid;
 	if (commit)
 		submission.metadata = commit();
@@ -113,7 +119,8 @@ PresentationController::SubmitLiveClearWithMetadata(PresentationSubmission submi
 }
 
 std::optional<PresentationTick> PresentationController::Advance(RuntimeTime now,
-																std::optional<SessionGeneration> generation)
+																std::optional<SessionGeneration> generation,
+																const ImageTransform& transform)
 {
 	std::vector<Observation> observed;
 	DisplayTick tick;
@@ -140,7 +147,10 @@ std::optional<PresentationTick> PresentationController::Advance(RuntimeTime now,
 
 	std::optional<PresentationSubmission> released;
 	std::optional<PresentationSubmission> releasedClear;
-	std::optional<PresentationTick> result;
+	std::optional<PresentationSubmission> chosen;
+	std::shared_ptr<const FrameOutput> releasedImage;
+	PresentationTick next{tick, time};
+	bool newSource = false;
 	{
 		std::lock_guard lock(m_mutex);
 		if (!m_running || revision != m_revision || (m_latest && tick <= m_latest->tick))
@@ -158,22 +168,48 @@ std::optional<PresentationTick> PresentationController::Advance(RuntimeTime now,
 			if (!selected || value.submission.key.frame > selected->submission.key.frame)
 				selected = &value;
 		}
-		PresentationTick next{tick, time};
+		newSource = selected != nullptr;
+		chosen = selected ? std::optional{selected->submission} : m_current;
 		next.skippedTicks = m_latest ? tick.value - m_latest->tick.value - 1 : tick.value;
-		if (selected)
+		next.kind = selected ? (selected->submission.output ? PresentationKind::NewFrame : PresentationKind::Clear)
+					: chosen ? PresentationKind::Repeat
+							 : PresentationKind::Empty;
+		if (chosen)
+		{
+			next.source = chosen->key;
+			next.metadata = chosen->metadata;
+			next.output = chosen->output;
+			next.reprojection = chosen->reprojection;
+		}
+	}
+	if (transform)
+	{
+		const auto image = transform(next);
+		if (static_cast<bool>(image.output) != static_cast<bool>(next.output) ||
+			(image.output && image.output->PollCompletion() != CompletionStatus::Complete))
+			throw std::logic_error("Display transform must preserve clear state and return completed images");
+		next.policy = PresentationPolicy::Rotational;
+		next.output = image.output;
+		next.displayHead = image.head;
+		next.reprojected = image.reprojected;
+		next.reprojectionResult = image.result;
+		next.reprojectionSubmissionTime = image.submissionTime;
+		next.reprojectionCompletionLatency = image.completionLatency;
+	}
+	{
+		std::lock_guard lock(m_mutex);
+		if (!m_running || revision != m_revision || (m_latest && tick <= m_latest->tick))
+			return {};
+		if (newSource)
 		{
 			released = std::move(m_current);
-			m_current = selected->submission;
-			m_lastSelected = selected->submission.key.frame;
-			next.kind = selected->submission.output ? PresentationKind::NewFrame : PresentationKind::Clear;
+			m_current = chosen;
+			m_lastSelected = chosen->key.frame;
 		}
-		else
-			next.kind = m_current ? PresentationKind::Repeat : PresentationKind::Empty;
-		if (m_current)
-		{
-			next.source = m_current->key;
-			next.metadata = m_current->metadata;
-		}
+		if (next.output)
+			next.imageTick = newSource || next.output != m_displayOutput ? std::optional{tick} : m_latest->imageTick;
+		releasedImage = std::move(m_displayOutput);
+		m_displayOutput = next.output;
 		for (auto entry = m_entries.begin(); entry != m_entries.end();)
 		{
 			auto value = std::find_if(observed.begin(), observed.end(), [&](const auto& candidate)
@@ -197,6 +233,9 @@ std::optional<PresentationTick> PresentationController::Advance(RuntimeTime now,
 			m_liveClear.reset();
 		}
 		m_latest = next;
+		m_latest->output.reset();
+		m_latest->reprojection.source.reset();
+		++m_revision;
 		if (m_history)
 		{
 			const auto kind = next.kind == PresentationKind::NewFrame ? FrameTraceKind::DisplaySelected
@@ -210,16 +249,14 @@ std::optional<PresentationTick> PresentationController::Advance(RuntimeTime now,
 			m_history->Trace(kind, next.source.value_or(FrameKey{m_generation, {}}), next.time, XR_SUCCESS,
 				FrameDiagnosticCategory::Timing, next.tick.value, detail);
 		}
-		if (m_current)
-			next.output = m_current->output;
-		result = std::move(next);
 	}
-	return result;
+	return next;
 }
 
 void PresentationController::Stop() noexcept
 {
 	std::optional<PresentationSubmission> released;
+	std::shared_ptr<const FrameOutput> releasedImage;
 	std::optional<PresentationSubmission> releasedClear;
 	{
 		std::lock_guard lock(m_mutex);
@@ -229,6 +266,7 @@ void PresentationController::Stop() noexcept
 			entry.retiring = true;
 		released = std::move(m_current);
 		m_current.reset();
+		releasedImage = std::move(m_displayOutput);
 		releasedClear = std::move(m_liveClear);
 		m_liveClear.reset();
 	}
@@ -267,7 +305,10 @@ PresentationSnapshot PresentationController::Snapshot() const
 	result.liveClear = m_liveClear ? std::optional{m_liveClear->key} : std::nullopt;
 	result.coalescedLiveClears = m_coalescedLiveClears;
 	if (result.latest && m_current)
-		result.latest->output = m_current->output;
+	{
+		result.latest->output = m_displayOutput;
+		result.latest->reprojection = m_current->reprojection;
+	}
 	for (const auto& entry : m_entries)
 		(entry.retiring ? result.retiring : result.queued).push_back(entry.submission.key);
 	return result;

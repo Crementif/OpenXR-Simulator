@@ -28,6 +28,7 @@ HapticState::HapticState(std::size_t historyCapacity) : m_historyCapacity(histor
 {
 	if (historyCapacity == 0)
 		throw std::invalid_argument("Haptic history needs capacity");
+	m_history.reserve(historyCapacity);
 }
 
 XrResult HapticState::Apply(std::span<const HapticDevice> devices, XrAction action, XrPath subactionPath,
@@ -70,6 +71,9 @@ XrResult HapticState::Apply(std::span<const InputDeviceId> devices, XrAction act
 	std::lock_guard lock(m_mutex);
 	if (unique.size() > std::numeric_limits<std::uint64_t>::max() - m_sequence)
 		return XR_ERROR_RUNTIME_FAILURE;
+	if (unique.size() > m_active.max_size() - m_active.size())
+		return XR_ERROR_OUT_OF_MEMORY;
+	m_active.reserve(m_active.size() + unique.size());
 	Expire(time);
 	for (auto device : unique)
 	{
@@ -102,9 +106,9 @@ void HapticState::Retire(std::size_t index, HapticStatus status, RuntimeTime tim
 	output.status = status;
 	if (status != HapticStatus::Expired)
 		output.end = std::max(time, output.start);
+	if (m_history.size() == m_historyCapacity)
+		m_history.erase(m_history.begin());
 	m_history.push_back(output);
-	if (m_history.size() > m_historyCapacity)
-		m_history.pop_front();
 	m_active.erase(m_active.begin() + static_cast<std::ptrdiff_t>(index));
 }
 

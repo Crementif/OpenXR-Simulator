@@ -38,6 +38,7 @@ private:
 	std::vector<std::string> m_names;
 };
 
+// Immutable view: definition names, commands and dependencies must outlive this registry and its copies.
 class ExtensionRegistry
 {
 public:

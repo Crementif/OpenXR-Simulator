@@ -23,8 +23,27 @@ void RequireSamePose(const XrPosef& left, const XrPosef& right)
 
 } // namespace
 
+namespace
+{
+void WideTransforms()
+{
+	using namespace simxr;
+	const auto rotation = EulerAngles(0, 0, std::numbers::pi_v<float> / 4);
+	const auto relative = RelativePose({{0, 0, 0, 1}, {2e38f, 0, 0}}, {rotation, {-2e38f, 0, 0}});
+	Require(std::isfinite(relative.position.x) && std::isfinite(relative.position.y) &&
+				std::abs(relative.position.x / 2.8284271e38f - 1) < 0.00001f &&
+				std::abs(relative.position.y / -2.8284271e38f - 1) < 0.00001f,
+			"Representable relative transform overflowed before rotation");
+	const auto composed = Compose({rotation, {0, -2e38f, 0}}, {{0, 0, 0, 1}, {3e38f, 3e38f, 0}});
+	Require(std::isfinite(composed.position.x) && std::isfinite(composed.position.y) &&
+				std::abs(composed.position.y / 2.2426407e38f - 1) < 0.00001f,
+			"Representable composition overflowed before translation");
+}
+} // namespace
+
 int main()
 {
+	WideTransforms();
 	using namespace simxr;
 	XrPosef base{EulerAngles(std::numbers::pi_v<float> / 2, 0.2f, -0.1f), {3, -2, 1}};
 	XrPosef child{EulerAngles(-0.4f, 0.6f, 0.3f), {0.5f, 1, -0.8f}};

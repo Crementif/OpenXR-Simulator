@@ -649,7 +649,8 @@ class VulkanInspection::State
 {
   public:
 	State(VulkanInspectionDevice device, std::size_t capacity)
-		: m_queue(std::make_shared<VulkanInspectionQueue>(std::move(device))), m_capacity((capacity ? capacity : SnapshotBudget::MaxCapacity) + 3),
+		: m_queue(std::make_shared<VulkanInspectionQueue>(std::move(device))),
+		  m_capacity((capacity ? capacity : SnapshotBudget::MaxCapacity) + 3 + 32),
 		  m_admissions([capacity] { return capacity ? capacity : SnapshotBudget::Capacity(); })
 	{
 		m_jobs.reserve(m_capacity);
@@ -667,7 +668,10 @@ class VulkanInspection::State
 	{
 		std::lock_guard lock(m_mutex);
 		CheckAdmission();
-		auto admission = (kind == VulkanInspectionKind::History ? m_historyAdmissions : m_admissions).Reserve();
+		const auto& pool = kind == VulkanInspectionKind::History		? m_historyAdmissions
+						   : kind == VulkanInspectionKind::Reprojection ? m_reprojectionAdmissions
+																		: m_admissions;
+		auto admission = pool.Reserve();
 		if (!admission)
 			throw VulkanError(VK_ERROR_OUT_OF_POOL_MEMORY, "Inspection preparation capacity exhausted");
 		return admission;
@@ -790,6 +794,7 @@ class VulkanInspection::State
 	FramePool m_admissions;
 	// Optional history copies cannot consume live/explicit inspection admission.
 	FramePool m_historyAdmissions{3};
+	FramePool m_reprojectionAdmissions{32};
 	std::mutex m_lifecycle;
 	std::mutex m_polling;
 	std::mutex m_mutex;

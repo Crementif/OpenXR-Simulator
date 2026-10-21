@@ -2,6 +2,8 @@
 
 #include "simulation/ViewConfiguration.h"
 
+#include <cstdint>
+#include <numbers>
 #include <span>
 #include <string_view>
 
@@ -19,8 +21,8 @@ struct HeadsetSpec
 	const char* id;			  // settings key and MCP set_headset_profile name
 	const wchar_t* shortName; // title bar
 	const wchar_t* menuLabel;
-	uint32_t panelWidth;
-	uint32_t panelHeight;
+	std::uint32_t panelWidth;
+	std::uint32_t panelHeight;
 	int ipdMm;			  // nominal default, not the database's per-session value
 	HeadsetEyeFov eye[2]; // [0] = left, [1] = right
 };
@@ -116,7 +118,7 @@ inline ViewSettings ProfileViews(const HeadsetSpec& profile)
 	settings.outerWidth = profile.panelWidth;
 	settings.outerHeight = profile.panelHeight;
 	settings.ipd = static_cast<float>(profile.ipdMm) / 1000;
-	constexpr float radians = 3.14159265358979323846f / 180;
+	constexpr float radians = std::numbers::pi_v<float> / 180;
 	for (std::size_t eye = 0; eye < 2; ++eye)
 	{
 		const auto& fov = profile.eye[eye];

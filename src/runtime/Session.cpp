@@ -2,6 +2,7 @@
 #include "runtime/SpaceQueries.h"
 
 #include <algorithm>
+#include <new>
 #include <stdexcept>
 #include <utility>
 
@@ -68,9 +69,10 @@ XrResult Session::Ready(RuntimeTime time)
 	return XR_SUCCESS;
 }
 
-XrResult Session::Begin(const XrSessionBeginInfo& info, const FrameSchedulerConfig& config)
+XrResult Session::Begin(const XrSessionBeginInfo& info, const FrameSchedulerConfig& config, PresentationPolicy policy)
 {
-	if (info.type != XR_TYPE_SESSION_BEGIN_INFO)
+	if (info.type != XR_TYPE_SESSION_BEGIN_INFO ||
+		(policy != PresentationPolicy::Repeat && policy != PresentationPolicy::Rotational))
 		return XR_ERROR_VALIDATION_FAILURE;
 	if (info.primaryViewConfigurationType != XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO &&
 		(info.primaryViewConfigurationType != XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO ||
@@ -99,12 +101,19 @@ XrResult Session::Begin(const XrSessionBeginInfo& info, const FrameSchedulerConf
 	{
 		retiredHistory = m_captures.Start(m_state.generation);
 		m_scheduler.Start(timing);
+		m_display.ConfigurePolicy(policy,
+								  [this](RuntimeTime time)
+								  {
+									  const auto sample = m_publication.Tracking().Sample(time);
+									  return sample ? sample->head : PoseSample{};
+								  });
 		m_display.Start(m_state.generation, {timing.epoch, timing.period}, timing.mode, timing.hostEpoch);
 		if (XR_FAILED(m_spaces.StartGeneration(timing.epoch, publication.ReferenceSpaces())))
 			throw std::invalid_argument("Invalid session reference-space origin");
 	}
 	catch (...)
 	{
+		m_display.Stop();
 		m_scheduler.Stop();
 		m_history.CancelPending();
 		m_captures.Stop();
@@ -173,10 +182,15 @@ XrResult Session::SetState(XrSessionState state, RuntimeTime time)
 
 void Session::Close()
 {
+	Close(std::nullopt);
+}
+
+void Session::Close(std::optional<SessionGeneration> expectedGeneration)
+{
 	FrameImageHistory::Retired retiredHistory;
 	std::lock_guard lifecycle(m_lifecycleMutex);
 	std::unique_lock lock(m_mutex);
-	if (m_state.closed)
+	if (m_state.closed || (expectedGeneration && *expectedGeneration != m_state.generation))
 		return;
 	++m_revision;
 	m_state.closed = true;
@@ -195,7 +209,8 @@ void Session::Close()
 	m_captures.Retire();
 }
 
-XrResult Session::WaitFrame(FramePrediction& prediction)
+XrResult Session::WaitFrame(FramePrediction& prediction,
+							const std::function<XrResult(const FramePrediction&)>& publishNative)
 {
 	std::uint64_t revision;
 	FrameKey traceFrame;
@@ -232,47 +247,81 @@ XrResult Session::WaitFrame(FramePrediction& prediction)
 		boundary->Reserve(candidate, reserveHistory);
 	};
 	auto result = m_scheduler.WaitFrame(prediction, prepareBoundary);
-	m_history.Trace(FrameTraceKind::WaitReturned,
-					{traceFrame.generation, XR_SUCCEEDED(result) ? prediction.id : FrameId{}},
-					XR_SUCCEEDED(result) ? prediction.displayTime : traceTime, result);
 	if (XR_FAILED(result))
 	{
+		m_history.Trace(FrameTraceKind::WaitReturned, traceFrame, traceTime, result);
 		m_history.Trace(FrameTraceKind::ApiError, traceFrame, traceTime, result, FrameDiagnosticCategory::ApiError);
 		return result;
 	}
-	SessionGeneration generation;
+	auto loseSession = [&](XrResult cause, XrResult returned = XR_ERROR_SESSION_LOST)
 	{
-		std::lock_guard lock(m_mutex);
-		if (m_state.closed || revision != m_revision)
-			return XR_ERROR_SESSION_NOT_RUNNING;
-		m_state.lastIssued = prediction;
-		m_state.time = prediction.displayTime;
-		generation = m_state.generation;
-		if (const auto transition = boundary->StateTransition(m_state.state))
-			Transition(*transition, prediction.displayTime);
-		boundary->Publish();
-		const auto& applied = boundary->Applied();
-		for (const auto& outcome : applied.outcomes)
-			m_history.Trace(outcome.result == CommandResult::Applied ? FrameTraceKind::CommandsApplied
-																	 : FrameTraceKind::CommandRejected,
-							{generation, prediction.id}, prediction.displayTime, XR_SUCCESS,
-							FrameDiagnosticCategory::Command, outcome.transaction.id);
-		bool spaceChangeRequested = false;
-		for (const auto& outcome : applied.outcomes)
-			if (outcome.result == CommandResult::Applied)
-				for (const auto& command : outcome.transaction.commands)
-				{
-					const auto* scenario = std::get_if<SetScenario>(&command);
-					spaceChangeRequested |=
-						std::holds_alternative<SetReferenceSpaces>(command) ||
-						(scenario && scenario->scenario == FailureScenario::Recenter && scenario->enabled);
-				}
-		const auto restored =
-			m_spaces.Restore(prediction.displayTime, applied.configuration.referenceSpaces, spaceChangeRequested);
-		if (XR_FAILED(restored))
-			throw std::logic_error("Accepted reference-space state exceeds its publication boundary");
+		m_history.Trace(FrameTraceKind::ApiError, {traceFrame.generation, prediction.id}, prediction.displayTime, cause,
+						FrameDiagnosticCategory::ApiError, 0, "Frame publication failed; session lost");
+		if (publication.owns_lock())
+			publication.unlock();
+		Close(traceFrame.generation);
+		m_history.Trace(FrameTraceKind::WaitReturned, {traceFrame.generation, prediction.id}, prediction.displayTime,
+						returned);
+		return returned;
+	};
+	try
+	{
+		SessionGeneration generation;
+		{
+			std::lock_guard lock(m_mutex);
+			if (m_state.closed || revision != m_revision)
+			{
+				m_history.Trace(FrameTraceKind::WaitReturned, {traceFrame.generation, prediction.id},
+								prediction.displayTime, XR_ERROR_SESSION_NOT_RUNNING);
+				return XR_ERROR_SESSION_NOT_RUNNING;
+			}
+			m_state.lastIssued = prediction;
+			m_state.time = prediction.displayTime;
+			generation = m_state.generation;
+			if (const auto transition = boundary->StateTransition(m_state.state))
+				Transition(*transition, prediction.displayTime);
+			boundary->Publish();
+			const auto& applied = boundary->Applied();
+			for (const auto& outcome : applied.outcomes)
+				m_history.Trace(outcome.result == CommandResult::Applied || outcome.result == CommandResult::Released
+									? FrameTraceKind::CommandsApplied
+									: FrameTraceKind::CommandRejected,
+								{generation, prediction.id}, prediction.displayTime, XR_SUCCESS,
+								FrameDiagnosticCategory::Command, outcome.transaction.id);
+			bool spaceChangeRequested = false;
+			for (const auto& outcome : applied.outcomes)
+				if (outcome.result == CommandResult::Applied)
+					for (const auto& command : outcome.transaction.commands)
+					{
+						const auto* scenario = std::get_if<SetScenario>(&command);
+						spaceChangeRequested |=
+							std::holds_alternative<SetReferenceSpaces>(command) ||
+							(scenario && scenario->scenario == FailureScenario::Recenter && scenario->enabled);
+					}
+			const auto restored =
+				m_spaces.Restore(prediction.displayTime, applied.configuration.referenceSpaces, spaceChangeRequested);
+			if (XR_FAILED(restored))
+				throw std::logic_error("Accepted reference-space state exceeds its publication boundary");
+		}
+		m_display.AdvanceFromFrame(generation, {prediction.displayTime.value - prediction.displayPeriod});
+		publication.unlock();
+		if (publishNative)
+		{
+			result = publishNative(prediction);
+			if (XR_FAILED(result))
+				return loseSession(result, result);
+		}
 	}
-	m_display.AdvanceFromFrame(generation, {prediction.displayTime.value - prediction.displayPeriod});
+	catch (const std::bad_alloc&)
+	{
+		return loseSession(XR_ERROR_OUT_OF_MEMORY);
+	}
+	catch (...)
+	{
+		return loseSession(XR_ERROR_RUNTIME_FAILURE);
+	}
+	m_history.Trace(FrameTraceKind::WaitReturned, {traceFrame.generation, prediction.id}, prediction.displayTime,
+					result);
 	return result;
 }
 
@@ -310,7 +359,7 @@ XrResult Session::BeginFrame()
 XrResult Session::EndFrame(FramePrediction& prediction, const XrFrameEndInfo* info,
 						   std::shared_ptr<const FrameLayers> prepared, std::shared_ptr<const FrameOutput> output,
 						   const std::function<XrResult()>& submit, std::span<const CaptureOutput> captures,
-						   FrameSubmissionPolicy policy)
+						   FrameSubmissionPolicy policy, ReprojectionInput reprojection)
 {
 	auto captureSubmission = m_captures.PrepareSubmission(output, captures);
 	if (XR_FAILED(captureSubmission.Validation()))
@@ -338,7 +387,8 @@ XrResult Session::EndFrame(FramePrediction& prediction, const XrFrameEndInfo* in
 	const bool live = policy == FrameSubmissionPolicy::Live && !captureSubmission.Requested();
 	if (captureSubmission.Requested() && info && info->layerCount && !output)
 		return XR_ERROR_LIMIT_REACHED;
-	if ((output && (!info || !info->layerCount)) || (submit && !output && (!live || !info || !info->layerCount)))
+	if ((reprojection.source && !output) || (output && (!info || !info->layerCount)) ||
+		(submit && !output && (!live || !info || !info->layerCount)))
 		return XR_ERROR_VALIDATION_FAILURE;
 	const auto promoted = captureSubmission.Promote();
 	if (XR_FAILED(promoted))
@@ -390,7 +440,8 @@ XrResult Session::EndFrame(FramePrediction& prediction, const XrFrameEndInfo* in
 		try
 		{
 			const bool liveClear = live && submission.layerCount == 0;
-			const PresentationSubmission presented{{m_state.generation, pending->id}, submission.displayTime, output};
+			const PresentationSubmission presented{
+				{m_state.generation, pending->id}, submission.displayTime, output, {}, reprojection};
 			const auto admission = liveClear ? m_display.SubmitLiveClearWithMetadata(presented, commit)
 											 : m_display.SubmitWithMetadata(presented, commit);
 			if (admission == PresentationAdmission::QueueFull)

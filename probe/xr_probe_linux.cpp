@@ -832,6 +832,17 @@ static int runProbe()
             firstTime = prior;
         XrFrameBeginInfo bi{XR_TYPE_FRAME_BEGIN_INFO};
         XR(xrBeginFrame(session, &bi));
+        if (std::getenv("SIMXR_PROBE_RENDER_GATE"))
+        {
+            const auto gate = "rendering." + std::to_string(frame + 3);
+            std::ofstream(data / (gate + ".ready")).put('1');
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+            while (!std::filesystem::exists(data / (gate + ".continue")))
+            {
+                CHECK(std::chrono::steady_clock::now() < deadline);
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
         XrActiveActionSet active{set, XR_NULL_PATH};
         XrActionsSyncInfo sync{XR_TYPE_ACTIONS_SYNC_INFO};
         sync.countActiveActionSets = 1;
@@ -1131,6 +1142,11 @@ static int runProbe()
             VK(vkQueueWaitIdle(queue));
         XR(xrReleaseSwapchainImage(swapchain, &release));
         if (depthMode) XR(xrReleaseSwapchainImage(depth, &release));
+        if (std::getenv("SIMXR_PROBE_WORLD_PROJECTION"))
+        {
+            locate.space = stage;
+            XR(xrLocateViews(session, &locate, &vs, activeViewCount, &count, views.data()));
+        }
         std::vector<XrCompositionLayerDepthInfoKHR> depths(activeViewCount, {XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR});
         std::vector<XrCompositionLayerProjectionView> pv(activeViewCount, {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW});
         for (uint32_t e = 0; e < activeViewCount; ++e)
@@ -1149,7 +1165,7 @@ static int runProbe()
             }
         }
         XrCompositionLayerProjection projection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
-        projection.space = head;
+        projection.space = std::getenv("SIMXR_PROBE_WORLD_PROJECTION") ? stage : head;
         projection.viewCount = activeViewCount;
         projection.views = pv.data();
         XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};

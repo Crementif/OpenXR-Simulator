@@ -17,6 +17,7 @@ struct PreviewImageSummary
 	std::size_t slices = 0;
 	std::optional<control::TargetKind> target;
 	std::uint32_t layer = 0, view = 0;
+	std::optional<std::uint64_t> imageTick;
 };
 // Owns native preview acquisition, source selection and actual GPU/UI retirement.
 // A const summary never exposes its texture or permits arbitrary native teardown.

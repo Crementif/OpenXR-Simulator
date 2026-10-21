@@ -1,4 +1,5 @@
 #include "FakeImageInspection.h"
+#include "control/ConnectionImages.h"
 
 #include <iostream>
 
@@ -128,6 +129,109 @@ void CheckIdentity(const wire::ControlPacket& packet, const Client& client, Fram
 				target.Find(tag::Layer)->AsU32() == 0 && target.Find(tag::View)->AsU32() == 0,
 			"Live reader lost virtual-display target identity");
 }
+void DistinctDisplayImagesFromOneFrame()
+{
+	wire::ConnectionImages images;
+	auto state = std::make_shared<wire::test::State>();
+	wire::test::Provider provider(state);
+	const wire::ImageSource source{{7}, {{3}, {21}}, {}, {CaptureKind::VirtualDisplay}};
+	auto retain = [&](const std::shared_ptr<const FrameOutput>& output, std::uint64_t imageTick)
+	{
+		wire::ConnectionImages::RetiredResource retired;
+		wire::ConnectionImages::Publication publication(images, retired);
+		wire::Message response;
+		auto version = source;
+		version.imageTick = DisplayTick{imageTick};
+		images.Retain(response, version, output, provider, false, publication);
+		publication.Commit();
+		Require(Id(response, tag::ImageTick) == imageTick && Id(response, tag::Session) == source.session.value &&
+					Id(response, tag::CaptureId) == 0 &&
+					Id(Nested(response, tag::Frame), tag::FrameId) == source.frame.frame.value &&
+					Id(Nested(response, tag::Frame), tag::Generation) == source.frame.generation.value,
+				"Changed display image lost its original submitted-frame identity");
+		return Id(response, tag::ImageReaderId);
+	};
+	auto release = [&](std::uint64_t reader)
+	{
+		wire::ConnectionImages::RetiredResource retired;
+		wire::ConnectionImages::Publication publication(images, retired);
+		wire::ControlPacket request, outgoing;
+		request.message.opcode = static_cast<std::uint16_t>(wire::OpCode::ReleaseImage);
+		request.message.fields.push_back(wire::Field::U64(tag::ImageReaderId, reader));
+		const auto response = images.Dispatch(request, outgoing, wire::ProtocolMinor, false, publication, retired);
+		publication.Commit();
+		Require(response.Find(tag::Released)->AsBool() == true, "Release independently retained display image");
+	};
+	auto original = std::make_shared<wire::test::Output>(nullptr);
+	auto rotated = std::make_shared<wire::test::Output>(nullptr);
+	std::weak_ptr<const FrameOutput> originalLifetime = original, rotatedLifetime = rotated;
+	const auto originalReader = retain(original, 5), rotatedReader = retain(rotated, 6);
+	Require(originalReader != rotatedReader && state->retains == 2,
+			"New display image reused the original frame's stale reader");
+	Require(retain(rotated, 6) == rotatedReader && retain(original, 5) == originalReader && state->retains == 2,
+			"Repeating an unchanged display image allocated another native reader");
+
+	state->failReaderDescription = true;
+	try
+	{
+		retain(std::make_shared<wire::test::Output>(nullptr), 20);
+		throw std::runtime_error("Failed display-image publication was accepted");
+	}
+	catch (const std::bad_alloc&)
+	{
+	}
+	Require(state->readersDestroyed == 1 && retain(rotated, 6) == rotatedReader,
+			"Publication rollback replaced an existing image or retained its failed reader");
+	for (unsigned index = 0; index < 6; ++index)
+		retain(std::make_shared<wire::test::Output>(nullptr), 10 + index);
+	Require(retain(rotated, 6) == rotatedReader, "Full table rejected an existing display image");
+	const auto retained = state->retains.load();
+	try
+	{
+		retain(std::make_shared<wire::test::Output>(nullptr), 20);
+		throw std::runtime_error("Display images from one frame bypassed the reader budget");
+	}
+	catch (const wire::ConnectionImages::RequestFailure& failure)
+	{
+		Require(failure.error == wire::ErrorCode::Capacity && state->retains == retained,
+				"Display-image capacity was checked after native retention");
+	}
+	original.reset();
+	rotated.reset();
+	Require(!originalLifetime.expired() && !rotatedLifetime.expired(), "Readers lost their independent image owners");
+	release(originalReader);
+	Require(originalLifetime.expired() && !rotatedLifetime.expired(), "Image cache extended or confused GPU ownership");
+	retain(std::make_shared<wire::test::Output>(nullptr), 20);
+	release(rotatedReader);
+	Require(rotatedLifetime.expired(), "Releasing the second image retained its output");
+}
+void ReaderReleasePreservesImageTick()
+{
+	wire::test::Fixture fixture;
+	Client client(fixture.service);
+	Through(fixture, fixture.session->Captures().Read(fixture.capture)->metadata->prediction.displayTick);
+	const auto first = client.Preview();
+	const auto firstReader = Id(first.message, tag::ImageReaderId), imageTick = Id(first.message, tag::ImageTick);
+	client.Call(wire::OpCode::ReleaseImage, {wire::Field::U64(tag::ImageReaderId, firstReader)});
+	Require(fixture.session->Display().Step().has_value(), "Repeat before reacquiring the selected image");
+	const auto reacquired = client.Preview();
+	const auto reader = Id(reacquired.message, tag::ImageReaderId);
+	Require(reader != firstReader && Id(reacquired.message, tag::ImageTick) == imageTick &&
+				Id(Nested(reacquired.message, tag::Display), tag::Tick) > imageTick,
+			"Releasing a reader changed the selected image identity");
+	const auto next = Submit(fixture, NewOutput(fixture, CompletionStatus::Complete));
+	Through(fixture, next.displayTick);
+	const auto changed = client.Preview();
+	Require(Id(changed.message, tag::ImageTick) > imageTick, "Selecting a new image kept the old image tick");
+	const auto previous = client.Call(wire::OpCode::ImageInfo, {wire::Field::U64(tag::ImageReaderId, reader)});
+	Require(Error(previous) == wire::ErrorCode::Ok && Id(previous.message, tag::ImageTick) == imageTick,
+			"A new display selection changed a retained reader's image identity");
+	const auto clear = Submit(fixture, {});
+	Through(fixture, clear.displayTick);
+	const auto cleared = client.Preview();
+	Require(!cleared.message.Find(tag::ImageTick) && !Nested(cleared.message, tag::Display).Find(tag::ImageTick),
+			"A selected clear retained an image identity");
+}
 void SelectionLifetimeAndNoAdmission()
 {
 	wire::test::Fixture fixture;
@@ -158,6 +262,9 @@ void SelectionLifetimeAndNoAdmission()
 	const auto repeated = client.Preview();
 	Require(Id(repeated.message, tag::ImageReaderId) == reader &&
 				Nested(repeated.message, tag::Display).Find(tag::Kind)->AsText() == "repeat" &&
+				Id(repeated.message, tag::ImageTick) == Id(selected.message, tag::ImageTick) &&
+				Id(Nested(repeated.message, tag::Display), tag::ImageTick) == Id(selected.message, tag::ImageTick) &&
+				Id(Nested(repeated.message, tag::Display), tag::Tick) > Id(selected.message, tag::ImageTick) &&
 				fixture.state->retains == 1,
 			"Repeated display tick did not reuse selected source reader");
 	const auto after = fixture.session->Scheduler().Snapshot();
@@ -270,6 +377,8 @@ int main()
 {
 	try
 	{
+		DistinctDisplayImagesFromOneFrame();
+		ReaderReleasePreservesImageTick();
 		SelectionLifetimeAndNoAdmission();
 		CompleteSelectionAndClear();
 		ValidationAndRollback();

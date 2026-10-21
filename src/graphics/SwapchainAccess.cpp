@@ -73,7 +73,12 @@ XrResult SwapchainAccess::WaitForImage(std::uint32_t index, XrDuration timeout)
 			return XR_ERROR_SESSION_LOST;
 		current = m_lastUse[index].lock();
 		if (current != completion)
+		{
+			if (timeout != XR_INFINITE_DURATION &&
+				std::chrono::steady_clock::now() - started >= std::chrono::nanoseconds{timeout})
+				return XR_TIMEOUT_EXPIRED;
 			continue;
+		}
 		if (status == CompletionStatus::Failed)
 			return XR_ERROR_RUNTIME_FAILURE;
 		if (status == CompletionStatus::Complete)

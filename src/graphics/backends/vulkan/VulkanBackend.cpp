@@ -12,6 +12,28 @@
 
 namespace simxr
 {
+XrResult VulkanGraphicsFailure(VkResult result)
+{
+	switch (result)
+	{
+	case VK_ERROR_OUT_OF_HOST_MEMORY:
+	case VK_ERROR_OUT_OF_DEVICE_MEMORY:
+		return XR_ERROR_OUT_OF_MEMORY;
+	case VK_ERROR_FORMAT_NOT_SUPPORTED:
+		return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
+	case VK_ERROR_OUT_OF_POOL_MEMORY:
+	case VK_ERROR_TOO_MANY_OBJECTS:
+		return XR_ERROR_LIMIT_REACHED;
+	case VK_ERROR_EXTENSION_NOT_PRESENT:
+	case VK_ERROR_FEATURE_NOT_PRESENT:
+		return XR_ERROR_FEATURE_UNSUPPORTED;
+	case VK_ERROR_DEVICE_LOST:
+		return XR_ERROR_SESSION_LOST;
+	default:
+		return XR_ERROR_RUNTIME_FAILURE;
+	}
+}
+
 namespace
 {
 struct Pipeline
@@ -236,6 +258,7 @@ struct VulkanBackend::State
 	FramePool reservations;
 	FramePool liveReservations;
 	FramePool historyReservations;
+	FramePool reprojectionReservations{32};
 	bool closed = false;
 	bool failed = false;
 	std::vector<std::weak_ptr<VulkanSubmission>> submissions;
@@ -600,6 +623,28 @@ XrResult VulkanBackend::PrepareCapture(const LayerImageDescription& description,
 									   std::shared_ptr<VulkanFrame>& output,
 									   std::shared_ptr<FrameReservation> reservation)
 {
+	return PrepareImageCopy(description, resolve, output, std::move(reservation), false);
+}
+
+XrResult VulkanBackend::PrepareRetainedLayer(const LayerImageDescription& description,
+											 const VulkanImageResolver& resolve, std::shared_ptr<VulkanFrame>& output)
+{
+	RetireCompleted();
+	auto reservation = m_state->reprojectionReservations.Reserve();
+	if (!reservation)
+		return XR_ERROR_LIMIT_REACHED;
+	return PrepareImageCopy(description, resolve, output, std::move(reservation), true);
+}
+
+FramePool VulkanBackend::ReprojectionReservations() const
+{
+	return m_state->reprojectionReservations;
+}
+
+XrResult VulkanBackend::PrepareImageCopy(const LayerImageDescription& description, const VulkanImageResolver& resolve,
+										 std::shared_ptr<VulkanFrame>& output,
+										 std::shared_ptr<FrameReservation> reservation, bool retained)
+{
 	RetireCompleted();
 	if (m_state->closed || m_state->failed || m_state->device->lost.load())
 		return XR_ERROR_SESSION_LOST;
@@ -611,7 +656,7 @@ XrResult VulkanBackend::PrepareCapture(const LayerImageDescription& description,
 	if (!image || image->device != m_state->device || description.arraySlice >= image->layers ||
 		image->Aspect() != VK_IMAGE_ASPECT_COLOR_BIT || !(image->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
 		return XR_ERROR_LAYER_INVALID;
-	if (image->format != VK_FORMAT_R8G8B8A8_SRGB && image->format != VK_FORMAT_R8G8B8A8_UNORM)
+	if (!retained && image->format != VK_FORMAT_R8G8B8A8_SRGB && image->format != VK_FORMAT_R8G8B8A8_UNORM)
 		return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
 	const auto& rectangle = description.rectangle;
 	if (rectangle.offset.x < 0 || rectangle.offset.y < 0 || rectangle.extent.width <= 0 ||
@@ -619,14 +664,15 @@ XrResult VulkanBackend::PrepareCapture(const LayerImageDescription& description,
 		static_cast<std::uint64_t>(rectangle.offset.x) + rectangle.extent.width > image->extent.width ||
 		static_cast<std::uint64_t>(rectangle.offset.y) + rectangle.extent.height > image->extent.height)
 		return XR_ERROR_SWAPCHAIN_RECT_INVALID;
-	if (reservation && !m_state->reservations.Owns(reservation))
+	const auto& budget = retained ? m_state->reprojectionReservations : m_state->reservations;
+	if (reservation && !budget.Owns(reservation))
 		return XR_ERROR_VALIDATION_FAILURE;
 	if (reservation && reservation->Consumed())
 		return XR_ERROR_CALL_ORDER_INVALID;
 	if (m_state->submissions.size() >= 64)
 		return XR_ERROR_LIMIT_REACHED;
 	if (!reservation)
-		reservation = m_state->reservations.Reserve();
+		reservation = budget.Reserve();
 	if (!reservation)
 		return XR_ERROR_LIMIT_REACHED;
 	auto job = std::shared_ptr<VulkanSubmission>(new VulkanSubmission(m_state->device));
@@ -668,7 +714,7 @@ XrResult VulkanBackend::PrepareCapture(const LayerImageDescription& description,
 	vkCmdPipelineBarrier(resources.command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
 						 0, nullptr, 0, nullptr, 1, &release);
 	CheckVulkan(vkEndCommandBuffer(resources.command), "End exact layer/view copy commands");
-	if (!m_state->reservations.Consume(reservation))
+	if (!budget.Consume(reservation))
 		return XR_ERROR_CALL_ORDER_INVALID;
 	resources.reservation = std::move(reservation);
 	output = std::move(frame);
@@ -787,6 +833,7 @@ XrResult VulkanBackend::Close()
 	m_state->reservations.CloseAdmission();
 	m_state->liveReservations.CloseAdmission();
 	m_state->historyReservations.CloseAdmission();
+	m_state->reprojectionReservations.CloseAdmission();
 	const auto result = Drain(5000000000ULL);
 	if (result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST)
 		return XR_ERROR_RUNTIME_FAILURE;

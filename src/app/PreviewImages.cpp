@@ -16,6 +16,7 @@ struct PreviewImages::Image
 {
 	std::uint64_t id = 0, reader = 0, delivery = 0, frame = 0, capture = 0, epoch = 0, session = 0, generation = 0;
 	bool live = false, release = false;
+	std::optional<std::uint64_t> imageTick;
 	std::optional<wire::TargetKind> target;
 	std::uint32_t layer = 0, view = 0;
 	std::unique_ptr<PreviewTexture> texture;
@@ -130,7 +131,8 @@ PreviewImageSummary PreviewImages::Summary(const Image& image) const
 			image.texture->SliceCount(),
 			image.target,
 			image.layer,
-			image.view};
+			image.view,
+			image.imageTick};
 }
 std::optional<PreviewImageSummary> PreviewImages::Selected() const
 {
@@ -207,10 +209,12 @@ void PreviewImages::Retained(const wire::Message& message, bool preview)
 	}
 	const auto reader = U64(message, tag::ImageReaderId), frame = Frame(message);
 	const auto capture = U64(message, tag::CaptureId);
+	const auto tickField = message.Find(tag::ImageTick);
+	const auto imageTick = tickField ? tickField->AsU64() : std::nullopt;
 	for (const auto& image : m_images)
 		if (!image->release && image->epoch == m_scope.epoch && image->frame == frame && image->capture == capture &&
 			image->live == preview && image->session == U64(message, tag::Session) &&
-			image->generation == U64(message, tag::Generation))
+			image->generation == U64(message, tag::Generation) && (!preview || image->imageTick == imageTick))
 		{
 			if (!image->reader)
 				image->reader = reader;
@@ -249,6 +253,7 @@ void PreviewImages::Retained(const wire::Message& message, bool preview)
 			prepared->view = U32(fields, tag::View);
 		}
 		prepared->frame = frame;
+		prepared->imageTick = imageTick;
 		prepared->capture = capture;
 		prepared->epoch = m_scope.epoch;
 		prepared->live = preview;
