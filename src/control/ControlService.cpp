@@ -419,7 +419,8 @@ class ControlService::State
 			if (!selected.source || selected.source->generation != display.generation ||
 				selected.output->PollCompletion() != CompletionStatus::Complete)
 				throw ControlRequestError{ErrorCode::Busy, "Selected display image is not complete"};
-			const ImageSource source{binding.id, *selected.source, {}, {CaptureKind::VirtualDisplay}};
+			const ImageSource source{
+				binding.id, *selected.source, {}, {CaptureKind::VirtualDisplay}, selected.imageTick};
 			client.images.Retain(response, source, selected.output, *m_images, client.nativeHandles, publication.images,
 								 false);
 			return response;

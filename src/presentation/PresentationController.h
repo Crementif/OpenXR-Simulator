@@ -52,6 +52,8 @@ struct PresentationTick
 	std::uint64_t skippedTicks = 0;
 	std::shared_ptr<const FrameRecord> metadata;
 	ReprojectionInput reprojection;
+	// First display tick selecting this image; unchanged when repeating it.
+	std::optional<DisplayTick> imageTick;
 };
 
 struct PresentationSnapshot

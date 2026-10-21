@@ -174,6 +174,8 @@ std::optional<PresentationTick> PresentationController::Advance(RuntimeTime now,
 			next.source = m_current->key;
 			next.metadata = m_current->metadata;
 			next.reprojection.status = m_current->reprojection.status;
+			if (m_current->output)
+				next.imageTick = selected ? std::optional{tick} : m_latest->imageTick;
 		}
 		for (auto entry = m_entries.begin(); entry != m_entries.end();)
 		{

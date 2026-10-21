@@ -375,6 +375,8 @@ Field EncodeDisplayTick(std::uint16_t name, const PresentationTick& tick)
 	std::vector<Field> fields{Field::U64(tag::Tick, tick.tick.value), Field::I64(tag::Time, tick.time.value.count()),
 							  Field::Text(tag::Kind, Name(tick.kind)),
 							  Field::U64(tag::SkippedTicks, tick.skippedTicks)};
+	if (tick.imageTick)
+		fields.push_back(Field::U64(tag::ImageTick, tick.imageTick->value));
 	if (tick.source)
 		fields.push_back(EncodeFrameKey(tag::Source, *tick.source));
 	return Nested(name, std::move(fields));

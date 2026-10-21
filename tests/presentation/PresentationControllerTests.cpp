@@ -148,16 +148,16 @@ void Selection()
 	pending->state.store(CompletionStatus::Complete);
 	tick = controller.Advance({Duration{110}});
 	Require(tick && tick->kind == PresentationKind::NewFrame && tick->source == FrameKey{{1}, {1}} &&
-				tick->output == pending,
+				tick->output == pending && tick->imageTick == DisplayTick{1},
 			"Completed eligible frame not selected");
 	const auto retained = *tick;
 	tick = controller.Advance({Duration{120}});
 	Require(tick && tick->kind == PresentationKind::Repeat && tick->source == retained.source &&
-				tick->output == pending,
+				tick->output == pending && tick->imageTick == DisplayTick{1},
 			"Missed deadline did not repeat retained output");
 	tick = controller.Advance({Duration{130}});
 	Require(tick && tick->kind == PresentationKind::NewFrame && tick->source == FrameKey{{1}, {2}} &&
-				tick->output == future,
+				tick->output == future && tick->imageTick == DisplayTick{3},
 			"Future target selected at wrong tick");
 	auto late = std::make_shared<Output>();
 	auto newest = std::make_shared<Output>(CompletionStatus::Complete);
@@ -178,7 +178,8 @@ void Selection()
 				tick->source == FrameKey{{1}, {4}},
 			"Clear applied before target or missed ticks caught up");
 	tick = controller.Advance({Duration{180}});
-	Require(tick && tick->kind == PresentationKind::Clear && tick->source == FrameKey{{1}, {5}} && !tick->output,
+	Require(tick && tick->kind == PresentationKind::Clear && tick->source == FrameKey{{1}, {5}} && !tick->output &&
+				!tick->imageTick,
 			"Eligible zero-layer frame did not clear");
 	tick = controller.Advance({Duration{190}});
 	Require(tick && tick->kind == PresentationKind::Repeat && tick->source == FrameKey{{1}, {5}} && !tick->output,

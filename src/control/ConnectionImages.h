@@ -14,6 +14,7 @@ struct ImageSource
 	FrameKey frame;
 	CaptureId capture;
 	CaptureTarget target;
+	std::optional<DisplayTick> imageTick;
 	auto operator<=>(const ImageSource&) const = default;
 };
 
@@ -71,7 +72,8 @@ class ConnectionImages
 	~ConnectionImages();
 	ConnectionImages(const ConnectionImages&) = delete;
 	ConnectionImages& operator=(const ConnectionImages&) = delete;
-	// Deduplicates the exact immutable source before invoking the provider.
+	// Reuse requires source identity and the selected image tick. Display images
+	// can change without a new submitted application frame.
 	void Retain(Message& response, ImageSource source, std::shared_ptr<const FrameOutput> output,
 				const ImageInspectionProvider& provider, bool nativeHandles, Publication& publication,
 				bool includeSession = true);
