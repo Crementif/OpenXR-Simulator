@@ -26,6 +26,7 @@ class VulkanInstanceGraphics final
 	VulkanInstanceGraphics(const VulkanInstanceGraphics&) = delete;
 	VulkanInstanceGraphics& operator=(const VulkanInstanceGraphics&) = delete;
 	XrResult Requirements(XrSystemId system, XrGraphicsRequirementsVulkanKHR* output);
+	XrResult MaxSampleCount(std::uint32_t& output);
 	XrResult InstanceExtensions(XrSystemId system, std::uint32_t capacity, std::uint32_t* count, char* output) const;
 	XrResult DeviceExtensions(XrSystemId system, std::uint32_t capacity, std::uint32_t* count, char* output);
 	XrResult PhysicalDevice(XrSystemId system, VkInstance instance, VkPhysicalDevice* output);
@@ -42,6 +43,7 @@ class VulkanInstanceGraphics final
 
 	std::optional<Selection> FindSelection(VkPhysicalDevice device) const;
 	std::optional<std::string> m_deviceExtensions;
+	std::optional<std::uint32_t> m_maxSampleCount;
 	std::vector<Selection> m_selections;
 	bool m_requirementsRead = false;
 };

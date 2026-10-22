@@ -179,6 +179,9 @@ FN(xrEnumerateViewConfigurationViews)(XrInstance handle, XrSystemId system, XrVi
                 request && request->foveatedRenderingActive > XR_TRUE)
                 return XR_ERROR_VALIDATION_FAILURE;
     }
+    uint32_t maxSamples = 1;
+    const auto samplesResult = instance->graphics.MaxSampleCount(maxSamples);
+    if (XR_FAILED(samplesResult)) return samplesResult;
     // Fixed and gaze-steered insets use the same qualified texture dimensions.
     const auto& settings = instance->Input().Views();
     for (uint32_t index = 0; index < count; ++index)
@@ -186,7 +189,8 @@ FN(xrEnumerateViewConfigurationViews)(XrInstance handle, XrSystemId system, XrVi
         p[index].recommendedImageRectWidth = index < 2 ? settings.outerWidth : settings.insetWidth;
         p[index].recommendedImageRectHeight = index < 2 ? settings.outerHeight : settings.insetHeight;
         p[index].maxImageRectWidth = p[index].maxImageRectHeight = 8192;
-        p[index].recommendedSwapchainSampleCount = p[index].maxSwapchainSampleCount = 1;
+        p[index].recommendedSwapchainSampleCount = 1;
+        p[index].maxSwapchainSampleCount = maxSamples;
     }
     return XR_SUCCESS;
 }

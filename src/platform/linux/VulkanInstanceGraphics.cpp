@@ -128,6 +128,40 @@ XrResult VulkanInstanceGraphics::Requirements(XrSystemId system, XrGraphicsRequi
 	return XR_SUCCESS;
 }
 
+XrResult VulkanInstanceGraphics::MaxSampleCount(std::uint32_t& output)
+{
+	if (!m_maxSampleCount)
+	{
+		try
+		{
+			const ProbeInstance probe;
+			VkSampleCountFlags common = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT |
+				VK_SAMPLE_COUNT_8_BIT | VK_SAMPLE_COUNT_16_BIT | VK_SAMPLE_COUNT_32_BIT | VK_SAMPLE_COUNT_64_BIT;
+			for (const auto format : {VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_UNORM,
+				VK_FORMAT_B8G8R8A8_SRGB, VK_FORMAT_B8G8R8A8_UNORM})
+			{
+				VkImageFormatProperties supported{};
+				CheckVulkan(vkGetPhysicalDeviceImageFormatProperties(probe.PhysicalDevice(), format,
+					VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+					VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+					0, &supported), "Query swapchain sample counts");
+				common &= supported.sampleCounts;
+			}
+			std::uint32_t maximum = 1;
+			for (std::uint32_t samples = 2; samples <= 64; samples *= 2)
+				if (common & samples)
+					maximum = samples;
+			m_maxSampleCount = maximum;
+		}
+		catch (const VulkanError&)
+		{
+			return XR_ERROR_RUNTIME_FAILURE;
+		}
+	}
+	output = *m_maxSampleCount;
+	return XR_SUCCESS;
+}
+
 XrResult VulkanInstanceGraphics::InstanceExtensions(XrSystemId system, std::uint32_t capacity, std::uint32_t* count,
 													char* output) const
 {

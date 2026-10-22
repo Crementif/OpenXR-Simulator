@@ -652,6 +652,20 @@ static int runProbe()
     chain.width = 64;
     chain.height = 48;
     chain.arraySize = activeViewCount;
+    VkSampleCountFlags commonSamples = 127;
+    for (const auto format : {VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_UNORM,
+                             VK_FORMAT_B8G8R8A8_SRGB, VK_FORMAT_B8G8R8A8_UNORM})
+    {
+        VkImageFormatProperties supported{};
+        VK(vkGetPhysicalDeviceImageFormatProperties(physical, format, VK_IMAGE_TYPE_2D,
+            VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+            VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, 0, &supported));
+        commonSamples &= supported.sampleCounts;
+    }
+    uint32_t maximumSamples = 1;
+    while (commonSamples >>= 1) maximumSamples <<= 1;
+    for (const auto& view : recommended)
+        CHECK(view.recommendedSwapchainSampleCount == 1 && view.maxSwapchainSampleCount == maximumSamples);
     XrSwapchain rejectedSwapchain = XR_NULL_HANDLE;
     auto unsupported = chain;
     unsupported.createFlags = XR_SWAPCHAIN_CREATE_PROTECTED_CONTENT_BIT;
@@ -669,6 +683,10 @@ static int runProbe()
           rejectedSwapchain == XR_NULL_HANDLE);
     unsupported = chain;
     unsupported.arraySize = imageLimits.limits.maxImageArrayLayers + 1;
+    CHECK(xrCreateSwapchain(session, &unsupported, &rejectedSwapchain) == XR_ERROR_VALIDATION_FAILURE &&
+          rejectedSwapchain == XR_NULL_HANDLE);
+    unsupported = chain;
+    unsupported.sampleCount = 3;
     CHECK(xrCreateSwapchain(session, &unsupported, &rejectedSwapchain) == XR_ERROR_VALIDATION_FAILURE &&
           rejectedSwapchain == XR_NULL_HANDLE);
     unsupported = chain;
