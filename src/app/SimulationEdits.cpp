@@ -374,6 +374,12 @@ ObservedSetup ReadObservedSetup(const control::Message& state)
 					result.boundTrackers[slot] = true;
 	return result;
 }
+
+void UndoStack::Observe(const ObservedSetup& observed)
+{
+	if (!m_open)
+		m_authored = Entry{observed.values.tracking, observed.values.proportions};
+}
 void UndoStack::Record(const ObservedSetup& before, const ManualTransaction& edit)
 {
 	const bool pose = std::any_of(edit.commands.begin(), edit.commands.end(),
@@ -388,19 +394,39 @@ void UndoStack::Record(const ObservedSetup& before, const ManualTransaction& edi
 								  });
 	if (!pose)
 		return;
+	if (!m_authored)
+		m_authored = Entry{before.values.tracking, before.values.proportions};
 	// The first edit of a drag opens the group; its continuous updates and final edit join it.
 	if (!m_open)
 	{
 		constexpr std::size_t capacity = 64;
 		if (m_entries.size() == capacity)
 			m_entries.erase(m_entries.begin());
-		m_entries.push_back({before.values.tracking, before.values.proportions});
+		m_entries.push_back(*m_authored);
 	}
+	for (const auto& command : edit.commands)
+		std::visit([&](const auto& value)
+		{
+			using T = std::decay_t<decltype(value)>;
+			if constexpr (std::is_same_v<T, SetHeadPose>)
+				m_authored->tracking.head = value.value;
+			else if constexpr (std::is_same_v<T, SetControllerPose>)
+				m_authored->tracking.controllers.at(value.hand) = value.value;
+			else if constexpr (std::is_same_v<T, SetBodyControls>)
+				m_authored->tracking.body = value.value;
+			else if constexpr (std::is_same_v<T, SetGaze>)
+				m_authored->tracking.gaze = value.value;
+			else if constexpr (std::is_same_v<T, SetTracker>)
+				m_authored->tracking.trackers.at(value.index) = value.value;
+			else if constexpr (std::is_same_v<T, SetBodyProportions>)
+				m_authored->proportions = value.value;
+		}, command);
 	m_open = edit.continuous;
 }
 void UndoStack::Clear()
 {
 	m_entries.clear();
+	m_authored.reset();
 	m_open = false;
 }
 std::optional<ManualTransaction> UndoStack::Undo(const ObservedSetup& current, std::optional<CommandSource> source)
@@ -410,6 +436,7 @@ std::optional<ManualTransaction> UndoStack::Undo(const ObservedSetup& current, s
 		return {};
 	const auto entry = std::move(m_entries.back());
 	m_entries.pop_back();
+	m_authored = entry;
 	ManualTransaction result;
 	const auto allowed = [&](ControlChannel channel)
 	{

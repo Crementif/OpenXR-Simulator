@@ -38,6 +38,8 @@ class UndoStack
   public:
 	// Call for each submitted edit with the state observed before it. Input-only edits are not recorded.
 	void Record(const ObservedSetup& before, const ManualTransaction& edit);
+	// Refresh only from an observation with no pending local edit.
+	void Observe(const ObservedSetup& observed);
 	bool Empty() const
 	{
 		return m_entries.empty();
@@ -53,6 +55,7 @@ class UndoStack
 		BodyProportions proportions;
 	};
 	std::vector<Entry> m_entries;
+	std::optional<Entry> m_authored;
 	bool m_open = false;
 };
 std::optional<TrackingSnapshot> ReadInspectionTracking(const control::Message& state);

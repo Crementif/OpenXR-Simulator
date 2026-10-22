@@ -192,6 +192,29 @@ void JointOffsetsFollowBody()
 		SamePose(rig.Tracker(0), frame.trackers[0].pose.pose);
 	}
 }
+void RapidUndo()
+{
+	ObservedSetup original;
+	UndoStack undo;
+	const auto edit = [](float x)
+	{
+		ManualTransaction result;
+		PoseSample pose;
+		pose.pose.position.x = x;
+		result.commands.emplace_back(SetHeadPose{pose});
+		return result;
+	};
+	undo.Record(original, edit(1));
+	undo.Record(original, edit(2));
+	const auto first = undo.Undo(original, std::nullopt);
+	Require(first.has_value(), "First rapid edit undo missing");
+	Require(Applied(*first).head.pose.position.x == 1, "Rapid edits lost their authored intermediate state");
+	const auto second = undo.Undo(original, std::nullopt);
+	Require(second && Applied(*second).head.pose.position.x == 0, "Second undo did not restore origin");
+	undo.Record(original, edit(3));
+	Require(Applied(*undo.Undo(original, std::nullopt)).head.pose.position.x == 0,
+			"Edit after undo reused a stale authored state");
+}
 void Undo()
 {
 	ObservedSetup before;
@@ -234,6 +257,7 @@ int main()
 		BodyPoses();
 		JointOffsetsFollowBody();
 		Undo();
+		RapidUndo();
 		std::cout << "PASS Player rig composition, inverse, anchors, body poses, undo and atomic ownership\n";
 	}
 	catch (const std::exception& error)

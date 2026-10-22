@@ -59,7 +59,11 @@ class RuntimePanels::Impl
 			m_devices.SetManualSource(input.source);
 			m_devices.SetRigPiloting(m_pilot.Active() || m_spatial.Active());
 			if (m_session.TakeObservation())
+			{
 				m_devices.ObserveState(input.state);
+				if (!input.editPending && !input.posePending && m_session.Setup())
+					m_undo.Observe(*m_session.Setup());
+			}
 			if (!input.error.empty())
 				StopPilot();
 		}
