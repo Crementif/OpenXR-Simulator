@@ -11,7 +11,8 @@ namespace simxr::control
 inline constexpr std::size_t MaxTransferHandles = 4;
 enum class TransferHandleKind : std::uint32_t
 {
-	OpaqueFd = 1
+	OpaqueFd = 1,
+	OpaqueWin32 = 2
 };
 
 // Platform code owns/closes native handles. The portable service never
@@ -29,8 +30,8 @@ class PacketExposure
 {
   public:
 	virtual ~PacketExposure() = default;
-	// The transport invokes this immediately after the first successful
-	// native-handle send. Known failure before that point exposes no image.
+	// The transport invokes this when native handles become visible, or before
+	// an asynchronous send whose failed wait cannot rule out peer exposure.
 	virtual void MarkTransferred() noexcept = 0;
 };
 

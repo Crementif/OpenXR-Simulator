@@ -23,6 +23,11 @@ struct LocalControlClient::State
 		Message outgoing;
 		std::vector<std::byte> encoded, received;
 		std::size_t sent = 0, offset = 0;
+		std::vector<std::byte> offered, incoming;
+		std::array<std::byte, 8> acknowledged{};
+		std::size_t offeredSent = 0, acknowledgedRead = 0, incomingRead = 0, acknowledgedSent = 0;
+		bool imported = false;
+		std::vector<std::shared_ptr<TransferHandle>> handles;
 	};
 	mutable std::mutex mutex;
 	native::Handle stopping = native::Event();
@@ -54,8 +59,8 @@ struct LocalControlClient::State
 			else
 				Sleep(5);
 		}
-		native::VerifyPeer(connected.value, false, native::TokenSid(GetCurrentProcess()));
 		pipe = std::make_unique<native::Channel>(std::move(connected));
+		pipe->Authenticate(false, native::TokenSid(GetCurrentProcess()));
 	}
 	std::unique_ptr<Exchange> Close() noexcept
 	{
@@ -73,6 +78,22 @@ struct LocalControlClient::State
 			while (pending->sent < pending->encoded.size())
 				pending->sent += pipe->Transfer(true, std::span<std::byte>{pending->encoded}.subspan(pending->sent),
 												deadline, stopping.value);
+			if (!pending->offered.empty())
+			{
+				if (pending->offeredSent < pending->offered.size())
+					pipe->PublishOffer();
+				while (pending->offeredSent < pending->offered.size())
+					pending->offeredSent +=
+						pipe->Transfer(true, std::span<std::byte>{pending->offered}.subspan(pending->offeredSent),
+									   deadline, stopping.value);
+				while (pending->acknowledgedRead < pending->acknowledged.size())
+					pending->acknowledgedRead += pipe->Transfer(
+						false, std::span<std::byte>{pending->acknowledged}.subspan(pending->acknowledgedRead), deadline,
+						stopping.value);
+				if (pending->acknowledged != native::TransferAcknowledgement(pending->outgoing.requestId))
+					throw std::runtime_error("Windows request handle acknowledgement mismatch");
+				pipe->AcknowledgeOffer();
+			}
 			for (;;)
 			{
 				while (pending->offset < pending->received.size())
@@ -88,14 +109,34 @@ struct LocalControlClient::State
 				if (!decoded.message)
 					throw std::runtime_error("Invalid control pipe response framing");
 				auto response = std::move(*decoded.message);
-				const auto count = response.Find(tag::HandleCount), error = response.Find(tag::Error);
+				const auto error = response.Find(tag::Error);
 				if (response.flags != 1 || response.opcode != pending->outgoing.opcode ||
-					response.requestId != pending->outgoing.requestId || !error || !error->AsU32() ||
-					(count && count->AsU32() != 0))
+					response.requestId != pending->outgoing.requestId || !error || !error->AsU32())
 					throw std::runtime_error("Control pipe response identity/status/handle count mismatch");
-				if (!*error->AsU32() && response.opcode == static_cast<std::uint16_t>(OpCode::ShareImage))
-					throw std::runtime_error("Windows native image-handle transport is not implemented");
-				return {std::move(response), {}, {}, {}};
+				const auto size = native::TransferBytes(response);
+				const auto expected =
+					!*error->AsU32() && response.opcode == static_cast<std::uint16_t>(OpCode::ShareImage) ? 16U : 0U;
+				if (size != expected)
+					throw std::runtime_error("Unexpected Windows response handles");
+				if (size)
+				{
+					pending->incoming.resize(size);
+					while (pending->incomingRead < size)
+						pending->incomingRead += pipe->Transfer(
+							false, std::span<std::byte>{pending->incoming}.subspan(pending->incomingRead), deadline,
+							stopping.value);
+					if (!pending->imported)
+					{
+						pending->handles = pipe->Import(pending->incoming);
+						pending->imported = true;
+					}
+					auto acknowledgement = native::TransferAcknowledgement(response.requestId);
+					while (pending->acknowledgedSent < acknowledgement.size())
+						pending->acknowledgedSent += pipe->Transfer(
+							true, std::span<std::byte>{acknowledgement}.subspan(pending->acknowledgedSent), deadline,
+							stopping.value);
+				}
+				return {std::move(response), std::move(pending->handles), {}, {}};
 			}
 		}
 		catch (const native::Timeout&)
@@ -124,11 +165,13 @@ ControlPacket LocalControlClient::Request(ControlPacket request)
 		throw std::runtime_error("Control connection is closed");
 	if (m_state->pending)
 		throw std::logic_error("Control exchange unfinished; Retry or Close explicitly");
-	if (request.message.flags || !request.handles.empty())
-		throw std::invalid_argument("Windows control requests do not transfer native handles");
-	if (const auto count = request.message.Find(tag::HandleCount); count && count->AsU32() != 0)
-		throw std::invalid_argument("Windows control request handle count must be zero");
+	if (request.message.flags)
+		throw std::invalid_argument("Windows request contains response flags");
+	if (!request.handles.empty() &&
+		(request.handles.size() != 1 || request.message.opcode != static_cast<std::uint16_t>(OpCode::ShareImage)))
+		throw std::invalid_argument("Only ShareImage transfers a consumer handle");
 	auto exchange = std::make_unique<State::Exchange>();
+	exchange->offered = m_state->pipe->Offer(request);
 	if (!request.message.requestId.value)
 	{
 		if (!m_state->next)

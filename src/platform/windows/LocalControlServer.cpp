@@ -26,8 +26,7 @@ bool Read(native::Channel& pipe, std::vector<std::byte>& bytes, std::size_t tota
 }
 void Write(native::Channel& pipe, const ControlPacket& packet, HANDLE stop)
 {
-	if (!packet.handles.empty())
-		throw std::runtime_error("Windows native image handle transport is not implemented");
+	auto handles = pipe.Offer(packet);
 	const auto fallback = packet.encoded ? std::vector<std::byte>{} : Encode(packet.message);
 	const auto bytes =
 		packet.encoded ? std::span<const std::byte>{*packet.encoded} : std::span<const std::byte>{fallback};
@@ -36,6 +35,20 @@ void Write(native::Channel& pipe, const ControlPacket& packet, HANDLE stop)
 	while (offset < bytes.size())
 		offset +=
 			pipe.Transfer(true, {const_cast<std::byte*>(bytes.data() + offset), bytes.size() - offset}, deadline, stop);
+	if (!handles.empty())
+	{
+		pipe.PublishOffer(packet.exposure);
+		offset = 0;
+		while (offset < handles.size())
+			offset += pipe.Transfer(true, std::span<std::byte>{handles}.subspan(offset), deadline, stop);
+		std::vector<std::byte> acknowledgement;
+		auto readDeadline = deadline;
+		Read(pipe, acknowledgement, 8, stop, readDeadline);
+		const auto expected = native::TransferAcknowledgement(packet.message.requestId);
+		if (!std::equal(acknowledgement.begin(), acknowledgement.end(), expected.begin()))
+			throw std::runtime_error("Windows handle acknowledgement identity mismatch");
+		pipe.AcknowledgeOffer();
+	}
 }
 std::uint64_t Number(std::span<const std::byte> bytes, std::size_t offset, std::size_t count)
 {
@@ -124,11 +137,19 @@ struct LocalControlServer::State
 				}
 				if (!decoded.message || decoded.message->flags)
 					break;
-				const auto* count = decoded.message->Find(tag::HandleCount);
-				if (count && count->AsU32() != 0)
-					break;
 				ControlPacket request;
 				request.message = std::move(*decoded.message);
+				if (const auto size = native::TransferBytes(request.message))
+				{
+					std::vector<std::byte> handles;
+					Read(*worker.pipe, handles, size, stopping.value, deadline);
+					request.handles = worker.pipe->Import(handles);
+					auto acknowledgement = native::TransferAcknowledgement(request.message.requestId);
+					std::size_t offset = 0;
+					while (offset < acknowledgement.size())
+						offset += worker.pipe->Transfer(true, std::span<std::byte>{acknowledgement}.subspan(offset),
+														deadline, stopping.value);
+				}
 				Write(*worker.pipe, service.HandlePacket(connection, std::move(request)), stopping.value);
 			}
 		}
@@ -188,8 +209,8 @@ struct LocalControlServer::State
 					listener = std::move(accepted);
 					throw;
 				}
-				native::VerifyPeer(accepted->Value(), true, security.sid);
-				auto connection = service.Connect(false);
+				accepted->Authenticate(true, security.sid);
+				auto connection = service.Connect(accepted->NativeHandles());
 				if (!connection)
 					continue;
 				try

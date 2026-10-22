@@ -61,7 +61,7 @@ class ImageDelivery : public PacketExposure
 	virtual CompletionStatus ProducerCompletion() const noexcept = 0;
 	virtual CompletionStatus ConsumerCompletion() const noexcept = 0;
 	// Preparing descriptors does not expose the allocation. The transport marks
-	// actual exposure only after it successfully transfers native handles.
+	// exposure once transfer can reach the peer (including an unfinished native send).
 	virtual std::vector<std::shared_ptr<TransferHandle>> PrepareHandles() = 0;
 };
 

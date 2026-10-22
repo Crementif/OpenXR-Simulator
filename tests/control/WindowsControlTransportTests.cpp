@@ -95,6 +95,12 @@ void ServiceLifecycle()
 	Require(rejected, "Unsupported native handles reject before request admission");
 	Require(Finish(client, Request(wire::OpCode::Sessions)).message.Find(wire::tag::Error)->AsU32() == 0,
 			"Rejected native handles preserve the connection");
+	auto nativeRequest = Request(wire::OpCode::ShareImage);
+	nativeRequest.message.fields.push_back(wire::Field::U32(wire::tag::HandleCount, 1));
+	auto consumer = native::Event();
+	nativeRequest.handles.push_back(native::DuplicateTransfer(GetCurrentProcess(), consumer.value));
+	Require(Finish(client, std::move(nativeRequest)).message.Find(wire::tag::Error)->AsU32() != 0,
+			"Production server acknowledges native transfer before rejecting incomplete image request");
 	const auto start = native::Clock::now();
 	server.Close();
 	Require(native::Clock::now() - start < 1500ms, "Server shutdown interrupts idle reads and joins its workers");
@@ -152,6 +158,138 @@ struct Mock
 		}
 	}
 };
+void Transfer(native::Channel& channel, bool write, std::span<std::byte> bytes)
+{
+	std::size_t offset = 0;
+	const auto deadline = native::Clock::now() + 5s;
+	while (offset < bytes.size())
+		offset += channel.Transfer(write, bytes.subspan(offset), deadline, nullptr);
+}
+int HandleChild(const std::string& path, bool abandon)
+{
+	native::Security security;
+	native::Handle pipe(CreateNamedPipeW(
+		native::PipePath(path).c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
+		PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_REJECT_REMOTE_CLIENTS, 1, 65536, 65536, 5000, &security.attributes));
+	Require(pipe.value != INVALID_HANDLE_VALUE, "Create child handle pipe");
+	native::Channel channel(std::move(pipe));
+	channel.Connect(native::Clock::now() + 5s, nullptr);
+	channel.Authenticate(true, security.sid);
+	std::vector<std::byte> bytes(wire::HeaderSize);
+	Transfer(channel, false, bytes);
+	auto decoded = wire::Decode(bytes);
+	Require(decoded.error == wire::DecodeError::Incomplete, "Decode native request header");
+	const auto header = bytes.size();
+	bytes.resize(decoded.requiredBytes);
+	Transfer(channel, false, std::span<std::byte>{bytes}.subspan(header));
+	decoded = wire::Decode(bytes);
+	Require(decoded.message.has_value(), "Decode native handle request");
+	const auto& request = *decoded.message;
+	std::vector<std::byte> incoming(native::TransferBytes(request));
+	Transfer(channel, false, incoming);
+	if (abandon)
+		Sleep(100);
+	auto handles = channel.Import(incoming);
+	Require(handles.size() == 1, "Import consumer event from another process");
+	Require(SetEvent(reinterpret_cast<HANDLE>(handles[0]->Value())), "Signal imported consumer event");
+	if (abandon)
+		return 0;
+	Sleep(75); // Force Retry while the sender still owns the advertised handle number.
+	auto acknowledgement = native::TransferAcknowledgement(request.requestId);
+	Transfer(channel, true, acknowledgement);
+	native::Handle memory(CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, 4096, nullptr));
+	Require(memory.value != nullptr, "Create private mapped payload");
+	auto view = static_cast<unsigned*>(MapViewOfFile(memory.value, FILE_MAP_WRITE, 0, 0, 4096));
+	Require(view != nullptr, "Map payload");
+	*view = 0x1234abcd;
+	UnmapViewOfFile(view);
+	wire::ControlPacket response;
+	response.message.flags = 1;
+	response.message.opcode = request.opcode;
+	response.message.requestId = request.requestId;
+	response.message.fields = {wire::Field::U32(wire::tag::Error, 0), wire::Field::U32(wire::tag::HandleCount, 2)};
+	response.handles = {handles[0], native::DuplicateTransfer(GetCurrentProcess(), memory.value)};
+	auto offered = channel.Offer(response);
+	auto encoded = wire::Encode(response.message);
+	Transfer(channel, true, encoded);
+	channel.PublishOffer();
+	Transfer(channel, true, std::span<std::byte>{offered}.first(3));
+	Sleep(30);
+	Transfer(channel, true, std::span<std::byte>{offered}.subspan(3));
+	std::array<std::byte, 8> received{};
+	Transfer(channel, false, received);
+	Require(received == acknowledgement, "Acknowledge imported response handles");
+	channel.AcknowledgeOffer();
+	return 0;
+}
+void NativeHandlesAcrossProcesses(bool abandon = false)
+{
+	wchar_t executable[32768]{};
+	Require(GetModuleFileNameW(nullptr, executable, 32768) != 0, "Locate native fixture executable");
+	const auto path = Path();
+	std::wstring command = L"\"" + std::wstring(executable) +
+						   (abandon ? L"\" --abandoned-child " : L"\" --handle-child ") +
+						   std::wstring(path.begin(), path.end());
+	STARTUPINFOW startup{sizeof(startup)};
+	PROCESS_INFORMATION process{};
+	Require(
+		CreateProcessW(executable, command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process),
+		"Start distinct native handle peer without inherited handles");
+	native::Handle child(process.hProcess), thread(process.hThread);
+	try
+	{
+		const auto readyDeadline = native::Clock::now() + 5s;
+		while (!WaitNamedPipeW(native::PipePath(path).c_str(), 10))
+		{
+			Require(native::Clock::now() < readyDeadline, "Child pipe became available");
+			Sleep(5);
+		}
+		wire::LocalControlClient client(path, 20ms);
+		auto event = native::Event();
+		auto packet = Request(wire::OpCode::ShareImage);
+		packet.message.fields.push_back(wire::Field::U32(wire::tag::HandleCount, 1));
+		packet.handles.push_back(native::DuplicateTransfer(GetCurrentProcess(), event.value));
+		if (abandon)
+		{
+			try
+			{
+				client.Request(std::move(packet));
+			}
+			catch (const wire::ControlExchangeTimeout&)
+			{
+			}
+			Require(client.Pending().has_value(), "Unacknowledged request stays pending");
+			client.Close();
+			Require(WaitForSingleObject(event.value, 5000) == WAIT_OBJECT_0,
+					"Closed sender preserves advertised handles until the delayed peer duplicates them");
+			Require(WaitForSingleObject(child.value, 5000) == WAIT_OBJECT_0, "Delayed peer exited");
+			DWORD result = 1;
+			Require(GetExitCodeProcess(child.value, &result) && result == 0, "Delayed peer imported safely");
+			return;
+		}
+		auto response = Finish(client, std::move(packet));
+		Require(WaitForSingleObject(event.value, 0) == WAIT_OBJECT_0 && response.handles.size() == 2,
+				"Other process used the incoming consumer handle and returned two owned handles");
+		Require(WaitForSingleObject(child.value, 5000) == WAIT_OBJECT_0, "Handle peer completed acknowledgement");
+		DWORD result = 1;
+		Require(GetExitCodeProcess(child.value, &result) && result == 0, "Native handle peer passed");
+		event.Close();
+		Require(WaitForSingleObject(reinterpret_cast<HANDLE>(response.handles[0]->Value()), 0) == WAIT_OBJECT_0,
+				"Imported event survives source handles and peer process");
+		auto view = static_cast<const unsigned*>(
+			MapViewOfFile(reinterpret_cast<HANDLE>(response.handles[1]->Value()), FILE_MAP_READ, 0, 0, 4096));
+		Require(view && *view == 0x1234abcd, "Imported memory survives peer exit with unchanged bytes");
+		UnmapViewOfFile(view);
+		std::cout << "PASS cross-process Win32 event/memory transfer, partial bytes, retry and peer exit\n";
+	}
+	catch (...)
+	{
+		TerminateProcess(child.value, 1);
+		WaitForSingleObject(child.value, 5000);
+		throw;
+	}
+}
+
 void RetryAndPartialBytes()
 {
 	Mock mock;
@@ -265,11 +403,15 @@ void InterruptClientClose()
 			"Close interrupts a long pending operation without freeing an active OVERLAPPED");
 }
 } // namespace
-int main()
+int main(int argc, char** argv)
 {
 	try
 	{
+		if (argc == 3)
+			return HandleChild(argv[2], std::string_view(argv[1]) == "--abandoned-child");
 		ServiceLifecycle();
+		NativeHandlesAcrossProcesses();
+		NativeHandlesAcrossProcesses(true);
 		RetryAndPartialBytes();
 		InterruptClientClose();
 		std::cout << "PASS Windows same-user named-pipe control transport\n";
