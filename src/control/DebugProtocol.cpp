@@ -458,6 +458,22 @@ DebugRequest DecodeDebugRequest(const Message& request)
 	command.snapshotBudgetMiB = ReadU32(request, tag::SnapshotBudgetMiB, SnapshotBudget::DefaultMiB);
 	command.lookahead = ReadU32(request, tag::Lookahead, 1);
 	command.target = DecodeCaptureTarget(request);
+	if (const auto* targets = request.Find(tag::AdditionalTargets))
+	{
+		const auto decoded = DecodeFields(targets->value);
+		if (decoded.error != DecodeError::None || decoded.fields.empty() || decoded.fields.size() > 7)
+			throw ControlRequestError{ErrorCode::Invalid, "Expected one to seven additional capture targets"};
+		for (std::size_t index = 0; index < decoded.fields.size(); ++index)
+		{
+			auto field = decoded.fields[index];
+			if (field.tag != index + 1)
+				throw ControlRequestError{ErrorCode::Invalid, "Invalid additional target index"};
+			field.tag = tag::Target;
+			Message target;
+			target.fields.push_back(std::move(field));
+			command.additionalTargets.push_back(DecodeCaptureTarget(target));
+		}
+	}
 	command.recordingCapacity = ReadU32(request, tag::Capacity, 2);
 	if (request.Find(tag::Length))
 		command.recordingFrames = RequireU64(request, tag::Length);

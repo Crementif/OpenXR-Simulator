@@ -986,6 +986,20 @@ void WorkerAndLifetime()
 	}
 	Require(pool.InUse() == 0, "Controller/session teardown retained unused or completed reservations");
 }
+void BundleReservationRollback()
+{
+	Fixture fixture(3, true, true);
+	fixture.session->Scheduler().Pause();
+	const std::array targets{CaptureTarget{CaptureKind::LayerView, 0, 0},
+		CaptureTarget{CaptureKind::LayerView, 0, 1}};
+	const auto rejected = fixture.session->ReserveCaptureBundle(targets);
+	Require(rejected.result == SnapshotAdmission::Capacity && rejected.captures.empty(), "Bundle must fail atomically");
+	Require(fixture.pool.InUse() == 0 && fixture.session->Captures().Snapshot().heldSlots == 0,
+		"Failed bundle leaked reservations");
+	Require(fixture.session->Scheduler().Snapshot().permits == 0, "Failed bundle admitted work");
+	const auto accepted = fixture.session->ReserveCapture();
+	Require(accepted.result == SnapshotAdmission::Accepted, "Rollback did not restore capacity");
+}
 } // namespace
 
 int main()
@@ -1004,6 +1018,7 @@ int main()
 			++failures;
 		}
 	};
+	run("Bundle reservation rollback", BundleReservationRollback);
 	run("Display step allocation recovery", DisplayStepAllocationRecovery);
 	run("Realtime recording budget and lease recovery", RealtimeRecordingBudget);
 	run("Idempotence and reclamation", IdempotenceAndReclamation);

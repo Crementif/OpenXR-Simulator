@@ -43,12 +43,23 @@ def main():
                             (7, TargetKind.LAYER_DEPTH_LINEAR, 0)]
                 for frame, target, view in commands:
                     client.renew(lease)
-                    operation = client.submit(lease, CommandKind.STEP, target=target, layer=0, view=view)['operation_id']
+                    extra = [(TargetKind.LAYER_DEPTH, 0, 0), (TargetKind.LAYER_VIEW, 0, 1)] if frame == 3 and os.getenv('SIMXR_PROBE_BUNDLE') else []
+                    operation = client.submit(lease, CommandKind.STEP, target=target, layer=0, view=view,
+                                              additional_targets=extra)['operation_id']
                     if frame == 3:
                         (data / 'control.continue').touch()
                     record = client.wait(session, operation)
                     require(record['phase'] == ('failed' if frame == 7 else 'complete'), record)
                     require(record['frame']['frame_id'] == frame, record)
+                    if extra:
+                        require(len(record['captures']) == 3, record)
+                        for capture_id, (kind, layer, selected_view) in zip(record['captures'][1:], extra):
+                            member = client.capture(session, capture_id)
+                            require(all(member['frame'][key] == record['frame'][key] for key in ('generation', 'frame_id')) and member['image_available'], member)
+                            reader = client.retain_image(session, capture_id, target=kind,
+                                                         layer=layer, view=selected_view)['image_reader_id']
+                            readers.append((reader, frame, kind, selected_view))
+                            release(client, lease, capture_id)
                     capture = client.capture(session, record['capture_id'])
                     require(capture['target']['capture_kind'] == target, capture)
                     inspected = client.inspect(session, record['capture_id'])
@@ -104,9 +115,15 @@ def main():
                     info = client.image_info(reader)
                     require(info['frame']['frame_id'] == frame, info)
                     descriptor = info['image_descriptor']
-                    require(descriptor['width'] == 62 and descriptor['height'] == 46, descriptor)
+                    width, height = (64, 48) if target == TargetKind.LAYER_VIEW else (62, 46)
+                    require(descriptor['width'] == width and descriptor['height'] == height, descriptor)
                     _, pixels = export(client, reader, 0)
-                    require(len(pixels) == 62 * 46 * 4, 'Wrong depth export dimensions')
+                    require(len(pixels) == width * height * 4, 'Wrong export dimensions')
+                    if target == TargetKind.LAYER_VIEW:
+                        require(all(pixels[index:index + 4] == bytes((0, 0, 255, 255))
+                                    for index in range(0, len(pixels), 4)), 'Bundled color changed after destruction')
+                        client.release_image(reader)
+                        continue
                     for y in range(46):
                         for x in range(62):
                             value = .1 * ((frame - 3) % 4 + 1) + .15 * view + .05 * ((x + 1) // 16) + .025 * ((y + 1) // 12)

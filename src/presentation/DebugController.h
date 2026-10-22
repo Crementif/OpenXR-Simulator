@@ -61,6 +61,7 @@ struct DebugRequest
 	std::uint64_t recordingFrames = 0;
 	bool advanceDisplay = false;
 	std::uint32_t snapshotBudgetMiB = 1024;
+	std::vector<CaptureTarget> additionalTargets;
 	auto operator<=>(const DebugRequest&) const = default;
 };
 enum class DebugAdmission

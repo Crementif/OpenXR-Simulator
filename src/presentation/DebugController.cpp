@@ -165,6 +165,20 @@ DebugSubmission DebugController::Submit(DebugLeaseId lease, const DebugRequest& 
 		((request.command == DebugCommand::Release || request.command == DebugCommand::PinSnapshot ||
 		  request.command == DebugCommand::UnpinSnapshot) && !request.capture.value))
 		return {DebugAdmission::Invalid, {}};
+	if (!request.additionalTargets.empty())
+	{
+		if (request.command != DebugCommand::Step || request.additionalTargets.size() > 7 ||
+			request.target.kind == CaptureKind::VirtualDisplay)
+			return {DebugAdmission::Invalid, {}};
+		for (std::size_t index = 0; index < request.additionalTargets.size(); ++index)
+		{
+			const auto target = request.additionalTargets[index];
+			if (target == request.target || target.kind == CaptureKind::VirtualDisplay ||
+				std::find(request.additionalTargets.begin(), request.additionalTargets.begin() + index, target) !=
+					request.additionalTargets.begin() + index)
+				return {DebugAdmission::Invalid, {}};
+		}
+	}
 	if (m_operations.size() >= m_config.ledgerCapacity || m_nextOperation == std::numeric_limits<std::uint64_t>::max())
 		return {DebugAdmission::Capacity, {}};
 	DebugOperation operation;
@@ -450,6 +464,15 @@ std::vector<SnapshotRecord> DebugController::OrderedCaptures(CaptureTarget targe
 std::vector<SnapshotRecord> DebugController::Candidates(DebugOperation& operation) const
 {
 	auto records = OrderedCaptures(operation.request.target);
+	if (!operation.request.additionalTargets.empty())
+		std::erase_if(records, [&](const auto& record)
+		{
+			return !record.frame || std::any_of(operation.request.additionalTargets.begin(),
+				operation.request.additionalTargets.end(), [&](const auto target)
+				{
+					return !m_session->Captures().Find(*record.frame, target);
+				});
+		});
 	std::erase_if(records,
 				  [&](const auto& record)
 				  {
@@ -511,7 +534,23 @@ void DebugController::Inspect(DebugOperation& operation, const SnapshotRecord& r
 						   : record.result;
 	if (!Settled(record.phase))
 		return;
-	operation.phase = record.phase == SnapshotPhase::Failed || record.phase == SnapshotPhase::Unavailable
+	if (!operation.request.additionalTargets.empty())
+	{
+		std::vector<CaptureId> bundle{record.id};
+		for (const auto target : operation.request.additionalTargets)
+		{
+			const auto id = m_session->Captures().Find(*record.frame, target);
+			const auto member = id ? m_session->Captures().Read(*id) : std::nullopt;
+			if (!member || !Settled(member->phase))
+				return;
+			bundle.push_back(*id);
+			if (member->phase == SnapshotPhase::Failed || member->phase == SnapshotPhase::Unavailable)
+				operation.result = XR_FAILED(member->result) ? member->result : XR_ERROR_FEATURE_UNSUPPORTED;
+		}
+		operation.captures = std::move(bundle);
+	}
+	operation.phase = XR_FAILED(operation.result) || record.phase == SnapshotPhase::Failed ||
+						  record.phase == SnapshotPhase::Unavailable
 						  ? DebugPhase::Failed
 						  : DebugPhase::Complete;
 	operation.progress = record.phase == SnapshotPhase::Ready		? DebugProgress::SnapshotReady
@@ -520,6 +559,8 @@ void DebugController::Inspect(DebugOperation& operation, const SnapshotRecord& r
 						 : record.phase == SnapshotPhase::Discarded ? DebugProgress::Discarded
 						 : record.phase == SnapshotPhase::Cancelled ? DebugProgress::Cancelled
 																	: DebugProgress::RetentionFailure;
+	if (operation.phase == DebugPhase::Failed)
+		operation.progress = DebugProgress::RetentionFailure;
 	if (operation.request.advanceDisplay && operation.request.command == DebugCommand::Step && record.metadata)
 		m_session->Display().Advance(record.metadata->prediction.displayTime);
 	m_cursor = record.frame;
@@ -883,7 +924,8 @@ void DebugController::Process(DebugOperation& operation)
 			return;
 		}
 		auto records = Candidates(operation);
-		if (command == DebugCommand::Step && operation.request.target == CaptureTarget{} && records.empty())
+		if (command == DebugCommand::Step && operation.request.additionalTargets.empty() &&
+			operation.request.target == CaptureTarget{} && records.empty())
 		{
 			const auto previous = m_session->Captures().Snapshot().captures;
 			std::optional<FrameKey> after;
@@ -909,6 +951,7 @@ void DebugController::Process(DebugOperation& operation)
 		if (command == DebugCommand::Step && !records.empty() && records.front().frame &&
 			Settled(records.front().phase))
 		{
+			operation.phase = DebugPhase::Pending;
 			Inspect(operation, records.front());
 			return;
 		}
@@ -923,10 +966,12 @@ void DebugController::Process(DebugOperation& operation)
 								: static_cast<std::uint32_t>(operation.request.lookahead > records.size()
 																 ? operation.request.lookahead - records.size()
 																 : 0);
-		operation.captures.reserve(needed);
+		operation.captures.reserve(needed * (operation.request.additionalTargets.size() + 1));
 		for (std::uint32_t index = 0; index < needed; ++index)
 		{
-			const auto capture = m_session->ReserveCapture(operation.request.target);
+			auto targets = operation.request.additionalTargets;
+			targets.insert(targets.begin(), operation.request.target);
+			const auto capture = m_session->ReserveCaptureBundle(targets);
 			operation.retention = capture.result;
 			if (capture.result != SnapshotAdmission::Accepted)
 			{
@@ -937,8 +982,11 @@ void DebugController::Process(DebugOperation& operation)
 					 XR_ERROR_LIMIT_REACHED);
 				return;
 			}
-			Own(operation.lease, capture.id);
-			operation.captures.push_back(capture.id);
+			for (const auto id : capture.captures)
+			{
+				Own(operation.lease, id);
+				operation.captures.push_back(id);
+			}
 		}
 		if (needed)
 		{

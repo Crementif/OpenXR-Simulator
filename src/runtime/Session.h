@@ -85,6 +85,7 @@ class Session
 	ImageRecordingSnapshot ImageRecording() const;
 	CaptureId RefillImageRecording(CaptureId released);
 	CaptureReservation ReserveCapture(CaptureTarget target = {});
+	CaptureBoundaryResult ReserveCaptureBundle(std::span<const CaptureTarget> targets);
 	XrResult PrepareCaptureProducer(FrameKey frame, std::shared_ptr<FrameReservation>& producer,
 									CaptureTarget target = {});
 	std::size_t CancelCaptureReservations();

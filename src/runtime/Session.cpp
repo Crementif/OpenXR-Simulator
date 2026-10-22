@@ -604,20 +604,32 @@ CaptureId Session::RefillImageRecording(CaptureId released)
 
 CaptureReservation Session::ReserveCapture(CaptureTarget target)
 {
+	const auto bundle = ReserveCaptureBundle(std::span{&target, 1});
+	return {bundle.result, bundle.captures.empty() ? CaptureId{} : bundle.captures.front()};
+}
+
+CaptureBoundaryResult Session::ReserveCaptureBundle(std::span<const CaptureTarget> targets)
+{
 	{
 		std::lock_guard lock(m_mutex);
 		if (!m_state.running || m_state.closed)
 			return {SnapshotAdmission::Closed, {}};
-		if (!m_captures.Supports(target))
-			return {SnapshotAdmission::Unsupported, {}};
+		for (const auto target : targets)
+			if (!m_captures.Supports(target))
+				return {SnapshotAdmission::Unsupported, {}};
 	}
-	m_captures.ReclaimSnapshots(target.IsAdditionalImage() ? 2 : 1);
+	if (targets.empty() || targets.size() > 8)
+		return {SnapshotAdmission::Invalid, {}};
+	std::size_t producers = 0;
+	for (const auto target : targets)
+		producers += target.IsAdditionalImage() ? 2 : 1;
+	m_captures.ReclaimSnapshots(producers);
 	std::lock_guard lock(m_mutex);
 	if (!m_state.running || m_state.closed)
 		return {SnapshotAdmission::Closed, {}};
 	if (!m_scheduler.Snapshot().paused)
 		return {SnapshotAdmission::Invalid, {}};
-	return m_captures.Reserve(target);
+	return m_captures.ReserveBundle(targets);
 }
 
 XrResult Session::PrepareCaptureProducer(FrameKey frame, std::shared_ptr<FrameReservation>& producer,

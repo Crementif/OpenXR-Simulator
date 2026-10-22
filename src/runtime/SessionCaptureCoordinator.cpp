@@ -137,13 +137,43 @@ void SessionCaptureCoordinator::ReclaimSnapshots(std::size_t producers)
 	}
 }
 
-CaptureReservation SessionCaptureCoordinator::Reserve(CaptureTarget target)
+CaptureBoundaryResult SessionCaptureCoordinator::ReserveBundle(std::span<const CaptureTarget> targets)
 {
+	if (targets.empty() || targets.size() > 8)
+		return {SnapshotAdmission::Invalid, {}};
 	std::lock_guard lock(m_mutex);
-	const auto reservation = ReserveLocked(target);
-	if (reservation.result == SnapshotAdmission::Accepted)
-		m_queued.push_back(reservation.id);
-	return reservation;
+	for (std::size_t index = 0; index < targets.size(); ++index)
+	{
+		if (!SupportsLocked(targets[index]))
+			return {SnapshotAdmission::Unsupported, {}};
+		if (std::find(targets.begin(), targets.begin() + index, targets[index]) != targets.begin() + index)
+			return {SnapshotAdmission::Invalid, {}};
+	}
+	CaptureBoundaryResult result{SnapshotAdmission::Accepted, {}};
+	result.captures.reserve(targets.size());
+	m_queued.reserve(m_queued.size() + 1);
+	try
+	{
+		for (const auto target : targets)
+		{
+			const auto reserved = ReserveLocked(target);
+			if (reserved.result != SnapshotAdmission::Accepted)
+			{
+				for (const auto id : result.captures)
+					m_store.Release(id);
+				return {reserved.result, {}};
+			}
+			result.captures.push_back(reserved.id);
+		}
+		m_queued.push_back(result.captures);
+	}
+	catch (...)
+	{
+		for (const auto id : result.captures)
+			m_store.Release(id);
+		throw;
+	}
+	return result;
 }
 
 SessionCaptureCoordinator::SequenceCapture SessionCaptureCoordinator::PrepareSequenceCapture(
@@ -360,8 +390,9 @@ void SessionCaptureCoordinator::BindIssued(std::shared_ptr<const FrameRecord> is
 	std::lock_guard lock(m_mutex);
 	if (!m_queued.empty())
 	{
-		if (!m_store.Bind(m_queued.front(), issued, cancelled))
-			throw std::logic_error("Capture reservation was cancelled before admission");
+		for (const auto id : m_queued.front())
+			if (!m_store.Bind(id, issued, cancelled))
+				throw std::logic_error("Capture reservation was cancelled before admission");
 		m_queued.erase(m_queued.begin());
 	}
 	if (m_imageRecording.phase != ImageRecordingPhase::Recording)
@@ -391,8 +422,9 @@ void SessionCaptureCoordinator::ObserveFrame(FrameKey frame)
 std::size_t SessionCaptureCoordinator::CancelQueuedLocked() noexcept
 {
 	const auto count = m_queued.size();
-	for (const auto id : m_queued)
-		m_store.Release(id); // Queued records have no output/native reader.
+	for (const auto& bundle : m_queued)
+		for (const auto id : bundle)
+			m_store.Release(id); // Queued records have no output/native reader.
 	m_queued.clear();
 	return count;
 }

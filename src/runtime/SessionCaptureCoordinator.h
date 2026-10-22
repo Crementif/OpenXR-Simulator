@@ -51,7 +51,7 @@ class SessionCaptureCoordinator
 	// May release completed native owners. Call outside Session/caller locks.
 	void Collect() const;
 	void ReclaimSnapshots(std::size_t producers = 1);
-	CaptureReservation Reserve(CaptureTarget target);
+	CaptureBoundaryResult ReserveBundle(std::span<const CaptureTarget> targets);
 	SequenceCapture PrepareSequenceCapture(const std::optional<SequenceCaptureIntent>& request);
 	std::pair<XrResult, std::shared_ptr<FrameReservation>> PrepareProducer(FrameKey frame, CaptureTarget target);
 	SnapshotAdmission StartImageRecording(CaptureTarget target, std::uint32_t capacity, std::uint64_t frames = 0,
@@ -84,7 +84,7 @@ class SessionCaptureCoordinator
 	CapturePromoter m_promoter;
 	bool m_running = false;
 	SessionGeneration m_generation;
-	std::vector<CaptureId> m_queued;
+	std::vector<std::vector<CaptureId>> m_queued;
 	ImageRecordingSnapshot m_imageRecording;
 	std::vector<CaptureId> m_recordingQueued;
 	// Destroy the store before configuration/mutex so reentrant last readers can

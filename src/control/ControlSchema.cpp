@@ -29,7 +29,7 @@ constexpr std::array recording{tag::Session, tag::Generation, tag::SourceKind, t
 constexpr std::array common{tag::Session, tag::Generation};
 constexpr std::array hello{tag::ClientName, tag::RequiredCapabilities, tag::OptionalCapabilities};
 constexpr std::array submit{tag::Session,	tag::Generation, tag::Lease,	   tag::CommandId, tag::CommandKind,
-							tag::Lookahead, tag::Target,	 tag::OperationId, tag::CaptureId, tag::Capacity, tag::Length, tag::AdvanceDisplay, tag::SnapshotBudgetMiB};
+							tag::Lookahead, tag::Target,	 tag::OperationId, tag::CaptureId, tag::Capacity, tag::Length, tag::AdvanceDisplay, tag::SnapshotBudgetMiB, tag::AdditionalTargets};
 constexpr std::array leased{tag::Session, tag::Generation, tag::Lease};
 constexpr std::array operation{tag::Session, tag::Generation, tag::OperationId};
 constexpr std::array acknowledge{tag::Session, tag::Generation, tag::Lease, tag::CommandId};
