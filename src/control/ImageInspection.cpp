@@ -33,6 +33,8 @@ Field EncodeImageDescription(const ImageDescription& value, bool external)
 							  Field::U32(tag::ProducerQueueFamily, value.producerQueueFamily, true),
 							  Field::U32(tag::Layout, value.layout, true),
 							  Field::U32(tag::HandleKind, external ? value.handleKind : 0, true)};
+	if (value.completionKind != ImageCompletionKind::Fence)
+		fields.push_back(Field::U32(tag::CompletionKind, static_cast<std::uint32_t>(value.completionKind), true));
 	if (!value.views.empty())
 	{
 		std::vector<Field> views;
@@ -60,10 +62,11 @@ ImageDescription DecodeImageDescription(const Field& field)
 	Message message;
 	message.fields = std::move(fields.fields);
 	constexpr std::array known{
-		tag::DeviceUuid, tag::DriverUuid,		   tag::Format,		tag::Width,			 tag::Height,
-		tag::Depth,		 tag::ArrayLayers,		   tag::MipLevels,	tag::Samples,		 tag::Usage,
-		tag::Tiling,	 tag::ImageType,		   tag::ImageFlags, tag::AllocationSize, tag::MemoryTypeIndex,
-		tag::Dedicated,	 tag::ProducerQueueFamily, tag::Layout,		tag::HandleKind,	 tag::ImageViews};
+		tag::DeviceUuid,	tag::DriverUuid,		  tag::Format,	   tag::Width,			tag::Height,
+		tag::Depth,			tag::ArrayLayers,		  tag::MipLevels,  tag::Samples,		tag::Usage,
+		tag::Tiling,		tag::ImageType,			  tag::ImageFlags, tag::AllocationSize, tag::MemoryTypeIndex,
+		tag::Dedicated,		tag::ProducerQueueFamily, tag::Layout,	   tag::HandleKind,		tag::ImageViews,
+		tag::CompletionKind};
 	if (message.ValidateFields(known))
 		throw std::invalid_argument("Unknown required image description field");
 	const auto device = message.Find(tag::DeviceUuid);
@@ -91,6 +94,13 @@ ImageDescription DecodeImageDescription(const Field& field)
 	result.producerQueueFamily = RequireRequestU32(message, tag::ProducerQueueFamily);
 	result.layout = RequireRequestU32(message, tag::Layout);
 	result.handleKind = RequireRequestU32(message, tag::HandleKind);
+	if (const auto completion = message.Find(tag::CompletionKind))
+	{
+		const auto value = completion->AsU32();
+		if (!value || *value > static_cast<std::uint32_t>(ImageCompletionKind::Timeline))
+			throw std::invalid_argument("Invalid image completion kind");
+		result.completionKind = static_cast<ImageCompletionKind>(*value);
+	}
 	result.allocationSize = *allocation->AsU64();
 	result.dedicated = *dedicated->AsBool();
 	if (result.handleKind > static_cast<std::uint32_t>(TransferHandleKind::OpaqueWin32) ||

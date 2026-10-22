@@ -117,13 +117,20 @@ PreviewTexture::PreviewTexture(const VulkanDeviceAccess& device, control::ImageD
 	m_state->deviceOwner = device.owner;
 	m_state->description = std::move(description);
 #if defined(__linux__) || defined(_WIN32)
-	if (!device.externalImages || !device.externalFence || !device.ioQueue || !device.owner)
+	const auto kind = m_state->description.completionKind;
+	if (!device.externalImages || !device.ioQueue || !device.owner ||
+		(kind == ImageCompletionKind::Fence && !device.externalFence) ||
+		(kind == ImageCompletionKind::Timeline && !device.externalTimeline))
 		throw std::runtime_error("Companion device lacks external image sharing or an independent IO queue");
-	const std::array extensions{VulkanExternalMemoryExtension, VulkanExternalSemaphoreExtension,
-								VulkanExternalFenceExtension};
+	std::vector<const char*> extensions{VulkanExternalMemoryExtension, VulkanExternalSemaphoreExtension};
+	if (device.externalFence)
+		extensions.push_back(VulkanExternalFenceExtension);
+	if (device.externalTimeline)
+		extensions.push_back(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
 	auto consumerDevice = std::make_shared<VulkanDevice>(
 		VulkanBinding{device.instance, device.physical, device.device, device.queueFamily, 1}, device.owner);
-	m_state->native = std::make_unique<control::VulkanImageConsumer>(consumerDevice, extensions, VK_API_VERSION_1_1);
+	m_state->native = std::make_unique<control::VulkanImageConsumer>(consumerDevice, extensions, VK_API_VERSION_1_1,
+																	 kind, device.externalTimeline);
 	if (m_state->description.identity != m_state->native->Identity())
 		throw std::runtime_error("Runtime and companion device/driver UUIDs differ; select the runtime's adapter");
 #else

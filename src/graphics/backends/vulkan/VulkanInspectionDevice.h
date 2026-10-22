@@ -19,10 +19,12 @@ class VulkanInspectionDevice
 	const std::shared_ptr<VulkanDevice>& Device() const noexcept;
 	std::span<const char* const> EnabledExtensions() const noexcept;
 	bool ConsumerFencesEnabled() const noexcept;
+	bool ConsumerTimelineEnabled() const noexcept;
 
   private:
 	struct Native;
 	std::shared_ptr<VulkanDevice> m_device;
 	bool m_consumerFences = false;
+	bool m_consumerTimeline = false;
 };
 } // namespace simxr

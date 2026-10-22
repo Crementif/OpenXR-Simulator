@@ -16,6 +16,9 @@ constexpr std::array<const char*, 2> ExternalExtensions{VulkanExternalMemoryExte
 constexpr std::array<const char*, 3> DeliveryExtensions{VulkanExternalMemoryExtension, VulkanExternalSemaphoreExtension,
 														VulkanExternalFenceExtension};
 
+constexpr std::array<const char*, 3> TimelineExtensions{VulkanExternalMemoryExtension, VulkanExternalSemaphoreExtension,
+														VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME};
+
 VKAPI_ATTR VkBool32 VKAPI_CALL Validation(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
 										  VkDebugUtilsMessageTypeFlagsEXT,
 										  const VkDebugUtilsMessengerCallbackDataEXT* message, void* context)
@@ -123,6 +126,8 @@ VulkanInspectionDevice::VulkanInspectionDevice(const VulkanExternalIdentity& ide
 						{
 							return std::strcmp(extension.extensionName, VulkanExternalFenceExtension) == 0;
 						});
+		const auto timelineCaps = VulkanExternalDevice::QueryTimeline(physical, VK_API_VERSION_1_1);
+		const bool timeline = !fences && timelineCaps.CanImportSemaphore() && timelineCaps.CanExportSemaphore();
 		vkGetPhysicalDeviceQueueFamilyProperties(physical, &count, nullptr);
 		std::vector<VkQueueFamilyProperties> families(count);
 		vkGetPhysicalDeviceQueueFamilyProperties(physical, &count, families.data());
@@ -138,12 +143,19 @@ VulkanInspectionDevice::VulkanInspectionDevice(const VulkanExternalIdentity& ide
 			VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
 			device.queueCreateInfoCount = 1;
 			device.pQueueCreateInfos = &queue;
-			device.enabledExtensionCount = fences ? DeliveryExtensions.size() : ExternalExtensions.size();
-			device.ppEnabledExtensionNames = fences ? DeliveryExtensions.data() : ExternalExtensions.data();
+			device.enabledExtensionCount = fences || timeline ? 3 : 2;
+			device.ppEnabledExtensionNames = fences		? DeliveryExtensions.data()
+											 : timeline ? TimelineExtensions.data()
+														: ExternalExtensions.data();
+			VkPhysicalDeviceTimelineSemaphoreFeatures timelineFeature{
+				VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
+			timelineFeature.timelineSemaphore = timeline;
+			device.pNext = timeline ? &timelineFeature : nullptr;
 			CheckVulkan(vkCreateDevice(physical, &device, nullptr, &owner->device), "Create owned inspection device");
 			m_device = std::make_shared<VulkanDevice>(
 				VulkanBinding{owner->instance, physical, owner->device, family, 0}, owner);
 			m_consumerFences = fences;
+			m_consumerTimeline = timeline;
 			return;
 		}
 	}
@@ -158,10 +170,16 @@ std::span<const char* const> VulkanInspectionDevice::EnabledExtensions() const n
 {
 	if (m_consumerFences)
 		return DeliveryExtensions;
+	if (m_consumerTimeline)
+		return TimelineExtensions;
 	return ExternalExtensions;
 }
 bool VulkanInspectionDevice::ConsumerFencesEnabled() const noexcept
 {
 	return m_consumerFences;
+}
+bool VulkanInspectionDevice::ConsumerTimelineEnabled() const noexcept
+{
+	return m_consumerTimeline;
 }
 } // namespace simxr

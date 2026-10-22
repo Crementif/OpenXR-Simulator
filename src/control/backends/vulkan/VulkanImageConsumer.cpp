@@ -5,6 +5,7 @@
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <thread>
@@ -63,6 +64,7 @@ struct VulkanImageConsumer::State
 	std::shared_ptr<VulkanDevice> device;
 	VulkanExternalDevice external;
 	std::shared_ptr<VulkanExternalFence> completion;
+	std::shared_ptr<VulkanExternalTimeline> timelineCompletion;
 	std::shared_ptr<TransferHandle> offered;
 	std::shared_ptr<VulkanExternalImage> imported;
 	std::shared_ptr<VulkanExternalSemaphore> ready;
@@ -76,12 +78,18 @@ struct VulkanImageConsumer::State
 	VkFence retirement = VK_NULL_HANDLE;
 	bool submitted = false, markerSubmitted = false, markerUnknown = false, idle = false, cancelled = false,
 		 failed = false;
-	State(std::shared_ptr<VulkanDevice> owner, std::span<const char* const> extensions, std::uint32_t api)
-		: slot(ConsumerBudget().Reserve()), device(std::move(owner)), external(device, extensions, api)
+	State(std::shared_ptr<VulkanDevice> owner, std::span<const char* const> extensions, std::uint32_t api,
+		  ImageCompletionKind kind, bool timelineEnabled)
+		: slot(ConsumerBudget().Reserve()), device(std::move(owner)), external(device, extensions, api, timelineEnabled)
 	{
 		if (!slot || !ConsumerBudget().Consume(slot))
 			throw VulkanError(VK_ERROR_OUT_OF_POOL_MEMORY, "Native consumer snapshot budget exhausted");
-		completion = external.CreateExportableFence();
+		if (kind == ImageCompletionKind::Timeline)
+			timelineCompletion = external.CreateExportableTimeline();
+		else if (kind == ImageCompletionKind::Fence)
+			completion = external.CreateExportableFence();
+		else
+			throw std::invalid_argument("Unknown consumer completion kind");
 		VkFenceCreateInfo create{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
 		CheckVulkan(vkCreateFence(device->binding.device, &create, nullptr, &retirement), "create consumer retirement");
 	}
@@ -98,6 +106,24 @@ struct VulkanImageConsumer::State
 		if (retirement)
 			vkDestroyFence(device->binding.device, retirement, nullptr);
 	}
+	VkResult Submit(VkSubmitInfo submit)
+	{
+		if (completion)
+			return vkQueueSubmit(device->queue, 1, &submit, completion->Get());
+		const std::array signals{sampleReady, timelineCompletion->Get()};
+		const std::array<std::uint64_t, 2> values{0, 1};
+		const bool hasSample = submit.signalSemaphoreCount != 0;
+		VkTimelineSemaphoreSubmitInfo timeline{VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO};
+		timeline.waitSemaphoreValueCount = submit.waitSemaphoreCount;
+		timeline.pWaitSemaphoreValues = values.data();
+		timeline.signalSemaphoreValueCount = hasSample ? 2 : 1;
+		timeline.pSignalSemaphoreValues = values.data() + (hasSample ? 0 : 1);
+		submit.signalSemaphoreCount = timeline.signalSemaphoreValueCount;
+		submit.pSignalSemaphores = signals.data() + (hasSample ? 0 : 1);
+		submit.pNext = &timeline;
+		return vkQueueSubmit(device->queue, 1, &submit, VK_NULL_HANDLE);
+	}
+
 	void Marker()
 	{
 		if (markerSubmitted || markerUnknown || !submitted || idle)
@@ -146,8 +172,8 @@ struct VulkanImageConsumer::State
 };
 
 VulkanImageConsumer::VulkanImageConsumer(std::shared_ptr<VulkanDevice> device, std::span<const char* const> extensions,
-										 std::uint32_t api)
-	: m_state(std::make_unique<State>(std::move(device), extensions, api))
+										 std::uint32_t api, ImageCompletionKind completion, bool timelineEnabled)
+	: m_state(std::make_unique<State>(std::move(device), extensions, api, completion, timelineEnabled))
 {
 }
 VulkanImageConsumer::~VulkanImageConsumer()
@@ -193,7 +219,7 @@ std::shared_ptr<TransferHandle> VulkanImageConsumer::ConsumerFence()
 {
 	if (!m_state->offered)
 	{
-		auto fd = m_state->completion->ExportOnce();
+		auto fd = m_state->completion ? m_state->completion->ExportOnce() : m_state->timelineCompletion->ExportOnce();
 		m_state->offered = OwnVulkanControlHandle(std::move(fd));
 	}
 	return m_state->offered;
@@ -203,6 +229,8 @@ void VulkanImageConsumer::Import(const ImageDescription& description,
 {
 	if (m_state->image || m_state->submitted || handles.size() != 2 || description.identity != Identity())
 		throw std::invalid_argument("Image import requires one compatible delivery and two native handles");
+	if ((description.completionKind == ImageCompletionKind::Timeline) != bool(m_state->timelineCompletion))
+		throw std::invalid_argument("Delivered image changed its consumer completion kind");
 	const auto native = NativeDescription(description);
 	SnapshotBudget::ObserveImageBytes(description.allocationSize);
 	if (ConsumerBudget().InUse() > ConsumerBudget().Capacity())
@@ -294,7 +322,7 @@ void VulkanImageConsumer::Submit()
 	submit.pCommandBuffers = &m_state->command;
 	submit.signalSemaphoreCount = 1;
 	submit.pSignalSemaphores = &m_state->sampleReady;
-	const auto result = vkQueueSubmit(m_state->device->queue, 1, &submit, m_state->completion->Get());
+	const auto result = m_state->Submit(submit);
 	m_state->submitted = result == VK_SUCCESS || !Rejected(result);
 	m_state->failed = result != VK_SUCCESS;
 	if (result == VK_ERROR_DEVICE_LOST)
@@ -321,7 +349,7 @@ void VulkanImageConsumer::CancelUnused()
 	if (m_state->submitted)
 		return;
 	VkSubmitInfo empty{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-	const auto result = vkQueueSubmit(m_state->device->queue, 1, &empty, m_state->completion->Get());
+	const auto result = m_state->Submit(empty);
 	m_state->submitted = result == VK_SUCCESS || !Rejected(result);
 	m_state->cancelled = true;
 	if (result == VK_ERROR_DEVICE_LOST)

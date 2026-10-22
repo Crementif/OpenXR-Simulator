@@ -254,8 +254,8 @@ void PreviewImages::Retained(const wire::Message& message, bool preview)
 		const auto description = message.Find(tag::ImageDescriptor);
 		if (!description)
 			throw std::runtime_error("Runtime omitted the retained image description");
-		prepared->texture =
-			std::make_unique<PreviewTexture>(m_renderer.DeviceAccess(), wire::DecodeImageDescription(*description));
+		const auto imageDescription = wire::DecodeImageDescription(*description);
+		prepared->texture = std::make_unique<PreviewTexture>(m_renderer.DeviceAccess(), imageDescription);
 		if (const auto target = message.Find(tag::Target))
 		{
 			const auto fields = Nested(target);
@@ -273,12 +273,15 @@ void PreviewImages::Retained(const wire::Message& message, bool preview)
 		const auto identity = prepared->texture->Identity();
 		auto fence = prepared->texture->ConsumerFence();
 		m_images.push_back(std::move(prepared));
-		if (!m_requests.Send(wire::OpCode::ShareImage, Work::Share,
-							 {wire::Field::U64(tag::ImageReaderId, reader, true),
-							  wire::Field::Bytes(tag::DeviceUuid, identity.device, true),
-							  wire::Field::Bytes(tag::DriverUuid, identity.driver, true),
-							  wire::Field::U32(tag::HandleCount, 1)},
-							 localId, {std::move(fence)}))
+		std::vector<wire::Field> shareFields{wire::Field::U64(tag::ImageReaderId, reader, true),
+											 wire::Field::Bytes(tag::DeviceUuid, identity.device, true),
+											 wire::Field::Bytes(tag::DriverUuid, identity.driver, true),
+											 wire::Field::U32(tag::HandleCount, 1)};
+		if (imageDescription.completionKind != ImageCompletionKind::Fence)
+			shareFields.push_back(wire::Field::U32(tag::CompletionKind,
+												   static_cast<std::uint32_t>(imageDescription.completionKind), true));
+		if (!m_requests.Send(wire::OpCode::ShareImage, Work::Share, std::move(shareFields), localId,
+							 {std::move(fence)}))
 		{
 			Find(localId)->texture->AbandonUnsent();
 			Find(localId)->release = true;

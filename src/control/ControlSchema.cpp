@@ -40,7 +40,7 @@ constexpr std::array releaseInspection{tag::InspectionId};
 constexpr std::array imageWindow{tag::ImageWindowId};
 constexpr std::array windowImage{tag::ImageWindowId, tag::FrameId};
 constexpr std::array image{tag::ImageReaderId};
-constexpr std::array share{tag::ImageReaderId, tag::DeviceUuid, tag::DriverUuid};
+constexpr std::array share{tag::ImageReaderId, tag::DeviceUuid, tag::DriverUuid, tag::CompletionKind};
 constexpr std::array delivery{tag::DeliveryId};
 constexpr std::array startExport{tag::ImageReaderId, tag::Layer};
 constexpr std::array exportId{tag::ExportId};

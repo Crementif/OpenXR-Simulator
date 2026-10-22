@@ -18,5 +18,6 @@ struct VulkanDeviceAccess
 	bool externalFence = false;
 	// Native consumers retain the actual renderer device on unknown completion.
 	std::shared_ptr<const void> owner;
+	bool externalTimeline = false;
 };
 } // namespace simxr::app

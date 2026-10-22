@@ -90,6 +90,21 @@ void MetadataAndHistory()
 		Require(control::DecodeImageDescription(control::EncodeImageDescription(image)).handleKind == 0,
 				"Readback metadata advertised external handles");
 	}
+	image.completionKind = ImageCompletionKind::Timeline;
+	Require(control::DecodeImageDescription(control::EncodeImageDescription(image)).completionKind ==
+				ImageCompletionKind::Timeline,
+			"Image metadata lost its required completion kind");
+	image.completionKind = static_cast<ImageCompletionKind>(99);
+	rejected = false;
+	try
+	{
+		control::DecodeImageDescription(control::EncodeImageDescription(image));
+	}
+	catch (const std::invalid_argument&)
+	{
+		rejected = true;
+	}
+	Require(rejected, "Unknown image completion kind accepted");
 	FrameRecord frame;
 	frame.key = {{1}, {55}};
 	frame.stage = FrameStage::Submitted;

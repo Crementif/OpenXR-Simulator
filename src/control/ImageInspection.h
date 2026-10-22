@@ -41,6 +41,7 @@ struct ImageDescription
 	bool dedicated = false;
 	std::uint32_t producerQueueFamily = 0, layout = 0;
 	std::uint32_t handleKind = 0;
+	ImageCompletionKind completionKind = ImageCompletionKind::Fence;
 	std::vector<FrameView> views;
 };
 Field EncodeImageDescription(const ImageDescription& description, bool external = false);

@@ -5,6 +5,12 @@
 
 namespace simxr
 {
+enum class ImageCompletionKind : std::uint32_t
+{
+	Fence = 0,
+	Timeline = 1
+};
+
 // Pool generations and immutable allocations are separate identities. A newer
 // pool does not invalidate readers retaining an older allocation.
 struct ImagePoolGeneration

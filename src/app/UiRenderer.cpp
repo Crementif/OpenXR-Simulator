@@ -70,7 +70,7 @@ struct UiRenderer::Impl
 	VkDevice device = VK_NULL_HANDLE;
 	VkQueue queue = VK_NULL_HANDLE;
 	VkQueue ioQueue = VK_NULL_HANDLE;
-	bool externalImages = false, externalFence = false;
+	bool externalImages = false, externalFence = false, externalTimeline = false;
 	std::uint32_t family = 0;
 	VkDescriptorPool descriptors = VK_NULL_HANDLE;
 	VkSwapchainKHR swapchain = VK_NULL_HANDLE;
@@ -283,6 +283,13 @@ struct UiRenderer::Impl
 			if (externalFence)
 				deviceExtensions.push_back(VulkanExternalFenceExtension);
 		}
+		if (externalImages)
+		{
+			const auto caps = VulkanExternalDevice::QueryTimeline(physical, VK_API_VERSION_1_1);
+			externalTimeline = caps.CanImportSemaphore() && caps.CanExportSemaphore();
+			if (externalTimeline)
+				deviceExtensions.push_back(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
+		}
 #endif
 		for (const auto name : deviceExtensions)
 			if (std::none_of(supportedExtensions.begin(), supportedExtensions.end(),
@@ -291,7 +298,11 @@ struct UiRenderer::Impl
 								 return std::strcmp(value.extensionName, name) == 0;
 							 }))
 				throw std::runtime_error(std::string("Companion device lacks required extension: ") + name);
+		VkPhysicalDeviceTimelineSemaphoreFeatures timelineFeature{
+			VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
+		timelineFeature.timelineSemaphore = externalTimeline;
 		VkDeviceCreateInfo createDevice{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+		createDevice.pNext = externalTimeline ? &timelineFeature : nullptr;
 		createDevice.queueCreateInfoCount = 1;
 		createDevice.pQueueCreateInfos = &queueInfo;
 		createDevice.enabledExtensionCount = static_cast<std::uint32_t>(deviceExtensions.size());
@@ -786,8 +797,8 @@ bool UiRenderer::Render(std::span<const VkSemaphore> readyWaits,
 }
 VulkanDeviceAccess UiRenderer::DeviceAccess() const
 {
-	return {m_impl->instance, m_impl->physical,		  m_impl->device,		 m_impl->family,
-			m_impl->ioQueue,  m_impl->externalImages, m_impl->externalFence, m_impl};
+	return {m_impl->instance,		m_impl->physical,	   m_impl->device, m_impl->family,			m_impl->ioQueue,
+			m_impl->externalImages, m_impl->externalFence, m_impl,		   m_impl->externalTimeline};
 }
 std::uint64_t UiRenderer::CompletedFrames()
 {

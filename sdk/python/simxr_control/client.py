@@ -180,13 +180,17 @@ class Client:
         """Retain the current completed display image, or observe its actual clear."""
         return self.request(OpCode.RETAIN_PREVIEW, self._session(session))
 
-    def share_image(self, image_reader, device_uuid, driver_uuid, consumer_fence_fd):
+    def share_image(self, image_reader, device_uuid, driver_uuid, consumer_fence_fd, *, completion_kind=0):
         device_uuid, driver_uuid = bytes(device_uuid), bytes(driver_uuid)
         if len(device_uuid) != 16 or len(driver_uuid) != 16:
             raise ProtocolError('External device and driver UUIDs require exactly 16 bytes')
-        return self.request(OpCode.SHARE_IMAGE, [Field.u64(Tag.IMAGE_READER_ID, image_reader, True),
-                            Field.binary(Tag.DEVICE_UUID, device_uuid, True), Field.binary(Tag.DRIVER_UUID, driver_uuid, True)],
-                            handles=(consumer_fence_fd,))
+        if completion_kind not in (0, 1):
+            raise ProtocolError('Unknown image completion kind')
+        fields = [Field.u64(Tag.IMAGE_READER_ID, image_reader, True),
+                  Field.binary(Tag.DEVICE_UUID, device_uuid, True), Field.binary(Tag.DRIVER_UUID, driver_uuid, True)]
+        if completion_kind:
+            fields.append(Field.u32(Tag.COMPLETION_KIND, completion_kind, True))
+        return self.request(OpCode.SHARE_IMAGE, fields, handles=(consumer_fence_fd,))
 
     def delivery_info(self, delivery):
         return self.request(OpCode.DELIVERY_INFO, [Field.u64(Tag.DELIVERY_ID, delivery, True)])

@@ -97,6 +97,10 @@ void ImageLifetimesAndReplay()
 	auto unknown = client.Request(wire::OpCode::ImageInfo,
 								  {wire::Field::U64(tag::ImageReaderId, image), wire::Field::U32(60000, 1, true)});
 	Require(Error(client.Send(unknown)) == wire::ErrorCode::UnsupportedField, "Unknown critical image field accepted");
+	auto mismatched = client.Share(image);
+	mismatched.message.fields.push_back(wire::Field::U32(tag::CompletionKind, 1, true));
+	Require(Error(client.Send(mismatched)) == wire::ErrorCode::Invalid && fixture.state->shares == 0,
+			"Mismatched completion kind reached native handle import");
 	auto request = client.Share(image);
 	auto offered = client.Send(request);
 	Require(Error(offered) == wire::ErrorCode::Ok && offered.handles.size() == 2 && offered.exposure &&

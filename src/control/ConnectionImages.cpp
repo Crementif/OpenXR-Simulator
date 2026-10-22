@@ -275,6 +275,10 @@ Message ConnectionImages::Dispatch(const ControlPacket& incoming, ControlPacket&
 			if (!nativeHandles || !image->value->Capabilities().gpuPreview)
 				throw RequestFailure{ErrorCode::UnsupportedCommand,
 									 "GPU delivery is unavailable for this image or transport"};
+			const auto completion = request.Find(tag::CompletionKind);
+			const auto kind = completion ? completion->AsU32() : std::optional<std::uint32_t>{0};
+			if (!kind || *kind != static_cast<std::uint32_t>(image->value->Description().completionKind))
+				throw RequestFailure{ErrorCode::Invalid, "Consumer completion kind does not match this image"};
 			m_state->deliveries.CheckCapacity();
 			auto delivery = image->value->Share(DeviceIdentity(request), incoming.handles.front());
 			if (!delivery)

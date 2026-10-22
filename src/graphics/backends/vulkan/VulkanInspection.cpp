@@ -73,15 +73,20 @@ class VulkanDeliveryNative
 		const auto consumer = m_payload->consumer.load();
 		return consumer ? consumer->PollCompletion() : CompletionStatus::Pending;
 	}
-	void RegisterConsumer(const VulkanExternalDevice& external, const VulkanExternalIdentity& identity, VulkanExternalHandle& fd)
+	void RegisterConsumer(const VulkanExternalDevice& external, const VulkanExternalIdentity& identity,
+						  VulkanExternalHandle& fd, ImageCompletionKind kind)
 	{
 		std::lock_guard lock(m_mutex);
 		if (m_payload->consumer.load())
 			throw std::logic_error("Shared image already has a consumer");
 		auto duplicate = fd.Duplicate();
-		auto consumer = external.ImportFence(identity, duplicate);
+		std::shared_ptr<GpuCompletion> consumer;
+		if (kind == ImageCompletionKind::Timeline)
+			consumer = external.ImportTimeline(identity, duplicate);
+		else
+			consumer = external.ImportFence(identity, duplicate);
 		if (consumer->PollCompletion() != CompletionStatus::Pending)
-			throw std::invalid_argument("Shared image requires an unsignaled consumer fence");
+			throw std::invalid_argument("Shared image requires an unsignaled consumer completion");
 		m_payload->consumer.store(std::move(consumer));
 		fd.Reset();
 	}
@@ -126,7 +131,7 @@ class VulkanDeliveryNative
 		std::shared_ptr<VulkanInspectionWork> work;
 		std::shared_ptr<VulkanExternalImage> image;
 		std::shared_ptr<VulkanExternalSemaphore> ready;
-		std::atomic<std::shared_ptr<VulkanExternalFence>> consumer;
+		std::atomic<std::shared_ptr<GpuCompletion>> consumer;
 		VulkanExternalHandle readyFd;
 	};
 	VulkanDeliveryNative() = default;
@@ -296,8 +301,9 @@ class VulkanInspectionQueue
 {
   public:
 	explicit VulkanInspectionQueue(VulkanInspectionDevice owner)
-		: m_device(owner.Device()), m_external(m_device, owner.EnabledExtensions(), VK_API_VERSION_1_1),
-		  m_fences(owner.ConsumerFencesEnabled())
+		: m_device(owner.Device()),
+		  m_external(m_device, owner.EnabledExtensions(), VK_API_VERSION_1_1, owner.ConsumerTimelineEnabled()),
+		  m_fences(owner.ConsumerFencesEnabled()), m_timeline(owner.ConsumerTimelineEnabled())
 	{
 		m_active.reserve(m_capacity.Capacity());
 	}
@@ -324,7 +330,11 @@ class VulkanInspectionQueue
 	}
 	bool CanShare() const noexcept
 	{
-		return m_fences && m_external.FenceCommandsEnabled();
+		return (m_fences && m_external.FenceCommandsEnabled()) || (m_timeline && m_external.TimelineCommandsEnabled());
+	}
+	ImageCompletionKind CompletionKind() const noexcept
+	{
+		return m_timeline ? ImageCompletionKind::Timeline : ImageCompletionKind::Fence;
 	}
 	void Collect()
 	{
@@ -427,6 +437,7 @@ class VulkanInspectionQueue
 	VulkanExternalDevice m_external;
 	FramePool m_capacity{64};
 	const bool m_fences;
+	const bool m_timeline;
 	ImagePoolGeneration m_generation;
 	std::optional<VulkanExternalImageSpec> m_deliverySpec;
 	std::atomic<std::uint64_t> m_nextImage{1};
@@ -981,9 +992,13 @@ CompletionStatus VulkanImageDelivery::PollConsumerCompletion() const noexcept
 {
 	return m_resources->native->ConsumerCompletion();
 }
+ImageCompletionKind VulkanImageDelivery::CompletionKind() const noexcept
+{
+	return m_resources->Queue()->CompletionKind();
+}
 void VulkanImageDelivery::RegisterConsumer(const VulkanExternalIdentity& identity, VulkanExternalHandle& fd)
 {
-	m_resources->native->RegisterConsumer(m_resources->Queue()->External(), identity, fd);
+	m_resources->native->RegisterConsumer(m_resources->Queue()->External(), identity, fd, CompletionKind());
 }
 VulkanDeliveryHandles VulkanImageDelivery::ExportHandles(bool expose)
 {
@@ -1002,6 +1017,10 @@ std::function<void()> VulkanInspectionFrame::Collector() const
 			queue->Collect();
 	};
 }
+ImageCompletionKind VulkanInspectionFrame::CompletionKind() const noexcept
+{
+	return m_resources->Queue()->CompletionKind();
+}
 bool VulkanInspectionFrame::CanShare() const noexcept
 {
 	return m_resources->Queue()->CanShare();
@@ -1009,7 +1028,7 @@ bool VulkanInspectionFrame::CanShare() const noexcept
 std::shared_ptr<VulkanImageDelivery> VulkanInspectionFrame::Share() const
 {
 	if (!CanShare())
-		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Consumer external fences are unavailable");
+		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Consumer external completion is unavailable");
 	if (PollCompletion() != CompletionStatus::Complete)
 		throw VulkanError(VK_NOT_READY, "Inspection image is not ready for sharing");
 	auto& queue = *m_resources->Queue();
@@ -1050,6 +1069,10 @@ VulkanInspection::VulkanInspection(const VulkanExternalIdentity& identity, std::
 		throw std::invalid_argument("Invalid inspection capacity");
 	DeliveryRetirement().Start();
 	m_state = std::make_unique<State>(VulkanInspectionDevice(identity, std::move(validation)), capacity);
+}
+ImageCompletionKind VulkanInspection::CompletionKind() const noexcept
+{
+	return m_state->Queue()->CompletionKind();
 }
 bool VulkanInspection::CanShare() const noexcept
 {

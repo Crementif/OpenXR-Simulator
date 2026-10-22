@@ -122,6 +122,7 @@ ImageDescription Describe(const VulkanInspectionFrame& frame)
 	result.producerQueueFamily = image.device->binding.queueFamily;
 	result.layout = VK_IMAGE_LAYOUT_GENERAL;
 	result.views.assign(frame.Views().begin(), frame.Views().end());
+	result.completionKind = frame.CompletionKind();
 	return result;
 }
 struct ExportCharge;
@@ -210,6 +211,7 @@ class Delivery final : public ImageDelivery
 	{
 		auto result = Describe(m_native->Descriptor());
 		result.views = m_views;
+		result.completionKind = m_native->CompletionKind();
 		return result;
 	}
 	CompletionStatus ProducerCompletion() const noexcept override

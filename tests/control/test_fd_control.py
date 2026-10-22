@@ -387,6 +387,11 @@ class FdTests(unittest.TestCase):
             client.share_image(1, bytes(15), bytes(16), 0)
         client.share_image(1, bytes(16), bytes(range(16)), 42)
         self.assertEqual(requests[-1][2], {'handles': (42,)})
+        self.assertNotIn('completion_kind', requests[-1][1])
+        client.share_image(1, bytes(16), bytes(16), 42, completion_kind=1)
+        self.assertEqual(requests[-1][1]['completion_kind'], 1)
+        with self.assertRaises(ProtocolError):
+            client.share_image(1, bytes(16), bytes(16), 42, completion_kind=99)
         with self.assertRaises(ProtocolError):
             to_dict([Field.binary(Tag.DRIVER_UUID, b'short')])
 

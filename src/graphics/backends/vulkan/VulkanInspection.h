@@ -76,18 +76,19 @@ struct VulkanDeliveryHandles
 };
 
 // Immutable one-consumer GPU allocation. The producer never reuses its pixels.
-// Consumer completion is an imported external fence, observed without queuing
+// Consumer completion is an imported external fence or timeline, observed without queuing
 // any consumer-dependent wait. Callers must finish all sampling before signaling
-// that one-shot fence. Handle duplicates retry that same consumer only.
+// that one-shot completion. Handle duplicates retry that same consumer only.
 class VulkanImageDelivery final : public GpuCompletion
 {
   public:
 	~VulkanImageDelivery();
 	SharedImageKey Key() const noexcept;
+	ImageCompletionKind CompletionKind() const noexcept;
 	const VulkanExternalImageDescriptor& Descriptor() const noexcept;
 	CompletionStatus PollCompletion() const noexcept override;
 	CompletionStatus PollConsumerCompletion() const noexcept;
-	// Requires an unsignaled, compatible opaque native fence. Failure preserves the handle.
+	// Requires an unsignaled, compatible opaque native completion. Failure preserves the handle.
 	void RegisterConsumer(const VulkanExternalIdentity& identity, VulkanExternalHandle& fd);
 	// Registration precedes exposure. Ready is a binary GPU semaphore; it must
 	// be imported/waited once, even when the producing CPU fence is complete.
@@ -121,6 +122,7 @@ class VulkanInspectionFrame final : public FrameOutput
 												std::shared_ptr<const void> retirementOwner = {}) const;
 	// Weak queue callback: collection keeps no queue alive and submits no work.
 	std::function<void()> Collector() const;
+	ImageCompletionKind CompletionKind() const noexcept;
 	bool CanShare() const noexcept;
 	// A private GPU copy on the owned queue, independent of host calls/device
 	// lifetime. Delivery has its own bounded budget, separate from captures.
@@ -166,6 +168,7 @@ class VulkanInspection
 													  std::function<void(SharedImageKey)> deliveryRetired = {});
 	VkResult Drain(std::uint64_t timeout = 5000000000ULL);
 	VkResult Close(std::uint64_t timeout = 5000000000ULL);
+	ImageCompletionKind CompletionKind() const noexcept;
 	bool CanShare() const noexcept;
 
   private:
