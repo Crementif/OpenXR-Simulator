@@ -33,6 +33,10 @@ class VulkanInspectionWork;
 // Initialize before the runtime/control worker graph so its bounded observer is
 // joined after those workers at process teardown. Creates no Vulkan resources.
 void InitializeVulkanImageDelivery();
+// Stop before DLL unload, outside loader lock. A later inspection owner restarts it.
+void StopVulkanImageDelivery();
+// Final shutdown after public readers close, before driver process-exit handlers.
+void ShutdownVulkanImageDelivery();
 
 struct VulkanInspectionValidation
 {

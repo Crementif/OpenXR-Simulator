@@ -6,6 +6,7 @@
 #include "control/LocalControlServer.h"
 #include "control/backends/vulkan/VulkanImageInspection.h"
 #include "control/legacy/LegacyFileChannel.h"
+#include "control/legacy/backends/vulkan/VulkanLegacyCapture.h"
 #include "flicker_detector.h"
 #include "runtime/SimulationExtensions.h"
 #include "simulation/HeadsetProfiles.h"
@@ -254,10 +255,11 @@ XrResult LinuxRuntime::CreateSession(XrInstance handle, const XrSessionCreateInf
 	std::unique_ptr<VulkanSessionGraphics> graphics;
 	const auto* requestedValidation = std::getenv("SIMXR_VULKAN_VALIDATION");
 	const bool validation = requestedValidation && std::strcmp(requestedValidation, "1") == 0;
-	result = VulkanSessionGraphics::Create(binding, core.Shared(), instance->m_files, instance->m_diagnostics,
-										   validation, graphics);
+	result = VulkanSessionGraphics::Create(binding, core.Shared(), validation, graphics);
 	if (XR_FAILED(result))
 		return result;
+	graphics->SetObserver(std::make_unique<VulkanLegacyCapture>(graphics->Device(), core.Shared(), instance->m_files,
+																instance->m_diagnostics));
 	auto native = std::make_unique<SessionBinding>(instance, core, std::move(graphics));
 	result = core->Ready({Duration{instance->mode == ExecutionMode::Deterministic ? 1000000000LL : MonotonicTime()}});
 	if (XR_FAILED(result))

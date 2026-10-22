@@ -169,6 +169,7 @@ if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES OR SIMXR_BUILD_COMPANION)
     else()
         find_library(SIMXR_VULKAN_LIBRARY NAMES vulkan libvulkan.so.1 REQUIRED)
     endif()
+    include(cmake/SimxrVulkanLoader.cmake)
     add_library(simxr_vulkan STATIC
         src/graphics/backends/vulkan/VulkanDevice.cpp
         src/graphics/backends/vulkan/VulkanResources.cpp
@@ -180,10 +181,13 @@ if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES OR SIMXR_BUILD_COMPANION)
         src/graphics/backends/vulkan/VulkanInspectionDevice.cpp
         src/graphics/backends/vulkan/VulkanSubmission.cpp
         src/graphics/backends/vulkan/VulkanBackend.cpp)
-    target_sources(simxr_vulkan PRIVATE src/graphics/backends/vulkan/VulkanSwapchain.cpp)
+    target_sources(simxr_vulkan PRIVATE src/graphics/backends/vulkan/VulkanSwapchain.cpp
+        src/graphics/backends/vulkan/VulkanSessionGraphics.cpp
+        src/graphics/backends/vulkan/VulkanInstanceGraphics.cpp
+        src/graphics/backends/vulkan/VulkanFrameSubmission.cpp)
     simxr_configure_target(simxr_vulkan)
     target_include_directories(simxr_vulkan PUBLIC "${SIMXR_VULKAN_INCLUDE_DIR}" PRIVATE "${PROJECT_SOURCE_DIR}")
-    target_link_libraries(simxr_vulkan PUBLIC simxr_graphics "${SIMXR_VULKAN_LIBRARY}")
+    target_link_libraries(simxr_vulkan PUBLIC simxr_graphics simxr_vulkan_loader)
     add_library(simxr_vulkan_control STATIC src/control/backends/vulkan/VulkanImageInspection.cpp
         src/control/backends/vulkan/VulkanControlHandle.cpp
         src/control/backends/vulkan/VulkanImageConsumer.cpp
@@ -211,9 +215,7 @@ if(SIMXR_BUILD_RUNTIME)
             src/platform/windows/D3D12Preview.cpp
             src/platform/windows/D3D12PreviewPipelines.cpp)
     else()
-        set(SIMXR_RUNTIME_SOURCE src/runtime_linux.cpp src/platform/linux/LinuxRuntime.cpp
-            src/platform/linux/VulkanFrameSubmission.cpp
-            src/platform/linux/VulkanSessionGraphics.cpp src/platform/linux/VulkanInstanceGraphics.cpp)
+        set(SIMXR_RUNTIME_SOURCE src/runtime_linux.cpp src/platform/linux/LinuxRuntime.cpp)
     endif()
     add_library(openxr_simulator SHARED ${SIMXR_RUNTIME_SOURCE})
     simxr_configure_target(openxr_simulator)
@@ -222,6 +224,7 @@ if(SIMXR_BUILD_RUNTIME)
     target_link_libraries(openxr_simulator PRIVATE simxr_core simxr_graphics simxr_control simxr_diagnostics Threads::Threads ${CMAKE_DL_LIBS})
     if(WIN32)
         target_link_libraries(openxr_simulator PRIVATE d3d11 d3d12 dxgi d3dcompiler opengl32 dwmapi msimg32 uxtheme)
+        target_link_libraries(openxr_simulator PRIVATE simxr_vulkan simxr_vulkan_control)
     else()
         find_library(SIMXR_VULKAN_LIBRARY NAMES vulkan libvulkan.so.1 REQUIRED)
         target_link_libraries(openxr_simulator PRIVATE "${SIMXR_VULKAN_LIBRARY}")
@@ -485,8 +488,7 @@ if(SIMXR_BUILD_PROBES)
         simxr_set_output_directory(vulkan_compositor_probe)
         target_link_libraries(vulkan_compositor_probe PRIVATE simxr_vulkan)
         add_executable(vulkan_inspection_probe probes/VulkanInspectionProbe.cpp probes/VulkanImageDeliveryProbe.cpp
-            probes/VulkanReprojectionProbe.cpp probes/VulkanRetentionProbe.cpp
-            src/platform/linux/VulkanFrameSubmission.cpp)
+            probes/VulkanReprojectionProbe.cpp probes/VulkanRetentionProbe.cpp)
         simxr_configure_target(vulkan_inspection_probe)
         simxr_set_output_directory(vulkan_inspection_probe)
         target_link_libraries(vulkan_inspection_probe PRIVATE simxr_vulkan)

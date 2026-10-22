@@ -23,6 +23,28 @@ bool CaptureFormat(VkFormat format)
 }
 } // namespace
 
+void VulkanLegacyCapture::Observe(const XrFrameEndInfo& info, const CompositionPlan& composition,
+								  const VulkanCaptureBindings& bindings) noexcept
+{
+	try
+	{
+		Submit(info, composition, bindings);
+		std::uint32_t projections = 0;
+		for (std::uint32_t layer = 0; layer < info.layerCount; ++layer)
+			if (info.layers[layer]->type == XR_TYPE_COMPOSITION_LAYER_PROJECTION)
+				++projections;
+		m_diagnostics->ObserveSubmission(m_session->Snapshot().lastSubmitted.value, projections, info.layerCount);
+	}
+	catch (const std::exception& error)
+	{
+		Log(error.what());
+	}
+	catch (...)
+	{
+		Log("submitted frame observer failed");
+	}
+}
+
 struct VulkanLegacyCapture::Job
 {
 	std::shared_ptr<VulkanReadbackBatch> readback;

@@ -2,8 +2,8 @@
 
 #include "control/legacy/LegacyInput.h"
 #include "platform/linux/LinuxRuntimeStatus.h"
-#include "platform/linux/VulkanInstanceGraphics.h"
-#include "platform/linux/VulkanSessionGraphics.h"
+#include "graphics/backends/vulkan/VulkanInstanceGraphics.h"
+#include "graphics/backends/vulkan/VulkanSessionGraphics.h"
 #include "runtime/NativeBindings.h"
 #include "runtime/Runtime.h"
 

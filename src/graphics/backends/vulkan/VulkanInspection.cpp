@@ -152,22 +152,47 @@ class VulkanDeliveryRetirement
 {
   public:
 	VulkanDeliveryRetirement()
-		: m_worker(
-			  [this]
-			  {
-				  Run();
-			  })
 	{
+		Start();
 	}
 	~VulkanDeliveryRetirement()
 	{
+		Stop();
+	}
+	void Start()
+	{
+		std::lock_guard lifecycle(m_workerMutex);
+		if (m_worker.joinable())
+			return;
+		std::lock_guard lock(m_mutex);
+		m_stopping = false;
+		m_worker = std::thread(
+			[this]
+			{
+				Run();
+			});
+	}
+	void Stop()
+	{
+		std::lock_guard lifecycle(m_workerMutex);
 		{
 			std::lock_guard lock(m_mutex);
 			m_stopping = true;
 		}
 		m_changed.notify_all();
-		m_worker.join();
-		// Unproved final owners preserve their bounded native block and token.
+		if (m_worker.joinable())
+			m_worker.join();
+	}
+	void Shutdown()
+	{
+		Stop();
+		std::array<std::shared_ptr<VulkanDeliveryNative>, 8> retired;
+		{
+			std::lock_guard lock(m_mutex);
+			retired.swap(m_deliveries);
+		}
+		// Destruction preserves unproved payloads; completed owners retire while
+		// the driver is still alive, outside the observer lock.
 	}
 	void Add(const std::shared_ptr<VulkanDeliveryNative>& delivery)
 	{
@@ -183,6 +208,7 @@ class VulkanDeliveryRetirement
 	}
 
   private:
+	std::mutex m_workerMutex;
 	std::mutex m_mutex;
 	std::condition_variable m_changed;
 	std::array<std::shared_ptr<VulkanDeliveryNative>, 8> m_deliveries;
@@ -239,8 +265,25 @@ class VulkanDeliveryRetirement
 };
 VulkanDeliveryRetirement& DeliveryRetirement()
 {
+#ifdef _WIN32
+	// DLL process detach cannot join workers. Normal runtime teardown stops the
+	// worker explicitly; unproved native owners remain bounded until process exit.
+	static auto* retirement = new VulkanDeliveryRetirement;
+	return *retirement;
+#else
 	static VulkanDeliveryRetirement retirement;
 	return retirement;
+#endif
+}
+
+void ShutdownVulkanImageDelivery()
+{
+	DeliveryRetirement().Shutdown();
+}
+
+void StopVulkanImageDelivery()
+{
+	DeliveryRetirement().Stop();
 }
 
 void InitializeVulkanImageDelivery()
@@ -1005,6 +1048,7 @@ VulkanInspection::VulkanInspection(const VulkanExternalIdentity& identity, std::
 {
 	if (capacity > SnapshotBudget::MaxCapacity)
 		throw std::invalid_argument("Invalid inspection capacity");
+	DeliveryRetirement().Start();
 	m_state = std::make_unique<State>(VulkanInspectionDevice(identity, std::move(validation)), capacity);
 }
 bool VulkanInspection::CanShare() const noexcept

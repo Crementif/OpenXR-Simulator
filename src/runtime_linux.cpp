@@ -1,37 +1,36 @@
 #define XR_USE_TIMESPEC
 #define XR_USE_GRAPHICS_API_VULKAN
-#include <vulkan/vulkan.h>
-#include "platform/linux/LinuxRuntime.h"
-#include "graphics/backends/vulkan/VulkanInspection.h"
 #include "Math.h"
-#include "runtime/EventQueue.h"
+#include "control/backends/vulkan/VulkanImageInspection.h"
+#include "control/legacy/backends/vulkan/VulkanLegacyCapture.h"
+#include "graphics/backends/vulkan/VulkanInspection.h"
+#include "graphics/backends/vulkan/VulkanInstanceGraphics.h"
+#include "graphics/backends/vulkan/VulkanSessionGraphics.h"
+#include "graphics/backends/vulkan/VulkanSwapchain.h"
+#include "platform/linux/LinuxRuntime.h"
+#include "presentation/FrameScheduler.h"
 #include "runtime/DispatchTable.h"
-#include "runtime/HandleRegistry.h"
 #include "runtime/EntryPoints.h"
+#include "runtime/EventQueue.h"
+#include "runtime/HandleRegistry.h"
 #include "runtime/Instance.h"
-#include "runtime/Session.h"
 #include "runtime/Runtime.h"
+#include "runtime/Session.h"
 #include "runtime/SimulationExtensions.h"
 #include "runtime/SpaceQueries.h"
-#include "control/legacy/backends/vulkan/VulkanLegacyCapture.h"
 #include "runtime/validation/StructureChain.h"
-#include "control/backends/vulkan/VulkanImageInspection.h"
 #include "simulation/HapticState.h"
-#include "presentation/FrameScheduler.h"
-#include "graphics/backends/vulkan/VulkanSwapchain.h"
-#include "platform/linux/VulkanSessionGraphics.h"
-#include "platform/linux/VulkanInstanceGraphics.h"
 #include <algorithm>
-#include <charconv>
 #include <array>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <loader_interfaces.h>
 #include <memory>
-#include <limits>
 #include <mutex>
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
@@ -40,6 +39,7 @@
 #include <unistd.h>
 #include <utility>
 #include <vector>
+#include <vulkan/vulkan.h>
 
 namespace sim
 {
@@ -294,7 +294,24 @@ FN(xrGetVulkanGraphicsDevice2KHR)(XrInstance handle, const XrVulkanGraphicsDevic
 }
 FN(xrCreateSession)(XrInstance handle, const XrSessionCreateInfo* info, XrSession* output)
 {
-	return sim::Host().CreateSession(handle, info, output);
+	const auto result = sim::Host().CreateSession(handle, info, output);
+	if (XR_FAILED(result))
+		return result;
+	// Driver/validation DSOs register their exit handlers during native creation.
+	// Close retained control readers and the retirement worker before those handlers.
+	// Rearm after each creation because drivers may have been unloaded and reloaded.
+	if (std::atexit(
+			[]
+			{
+				sim::Host().Shutdown();
+				simxr::ShutdownVulkanImageDelivery();
+			}) != 0)
+	{
+		sim::Host().DestroySession(*output);
+		*output = XR_NULL_HANDLE;
+		return XR_ERROR_OUT_OF_MEMORY;
+	}
+	return result;
 }
 FN(xrBeginSession)(XrSession handle, const XrSessionBeginInfo* info)
 {

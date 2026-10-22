@@ -3,7 +3,7 @@
 #include "VulkanReprojectionProbe.h"
 #include "graphics/RotationalReprojection.h"
 #include "graphics/backends/vulkan/VulkanReprojection.h"
-#include "platform/linux/VulkanFrameSubmission.h"
+#include "graphics/backends/vulkan/VulkanFrameSubmission.h"
 #include "runtime/Session.h"
 
 #include <algorithm>

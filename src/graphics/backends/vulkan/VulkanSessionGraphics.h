@@ -11,19 +11,13 @@
 #include <mutex>
 #include <optional>
 
-namespace flicker
-{
-class Diagnostics;
-}
-
 namespace simxr
 {
-class LegacyFileChannel;
 class Session;
 class VulkanBackend;
 class VulkanCaptureBindings;
 class VulkanInspection;
-class VulkanLegacyCapture;
+class VulkanFrameObserver;
 class VulkanSwapchain;
 struct LegacyCaptureRequest;
 struct CompositionPlan;
@@ -38,12 +32,13 @@ class VulkanSessionGraphics final
   public:
 	using SwapchainRef = HandleRef<XrSwapchain, VulkanSwapchain>;
 
-	static XrResult Create(const VulkanBinding& binding, std::shared_ptr<Session> session,
-						   std::shared_ptr<LegacyFileChannel> files, std::shared_ptr<flicker::Diagnostics> diagnostics,
-						   bool validation, std::unique_ptr<VulkanSessionGraphics>& output);
+	static XrResult Create(const VulkanBinding& binding, std::shared_ptr<Session> session, bool validation,
+						   std::unique_ptr<VulkanSessionGraphics>& output);
 	~VulkanSessionGraphics();
 	VulkanSessionGraphics(const VulkanSessionGraphics&) = delete;
 	VulkanSessionGraphics& operator=(const VulkanSessionGraphics&) = delete;
+	std::shared_ptr<VulkanDevice> Device() const;
+	void SetObserver(std::unique_ptr<VulkanFrameObserver> observer);
 	control::ImageCapabilities Capabilities() const noexcept;
 	bool SupportsReprojection() const noexcept;
 	XrResult CreateSwapchain(const XrSwapchainCreateInfo& description, XrSwapchain& output);
@@ -68,23 +63,16 @@ class VulkanSessionGraphics final
 		Closed
 	};
 
-	VulkanSessionGraphics(const VulkanBinding& binding, std::shared_ptr<Session> session,
-						  std::shared_ptr<LegacyFileChannel> files, std::shared_ptr<flicker::Diagnostics> diagnostics,
-						  bool validation);
+	VulkanSessionGraphics(const VulkanBinding& binding, std::shared_ptr<Session> session, bool validation);
 	XrResult ConfigureCapture();
 	XrResult GraphicsFailure(VkResult result);
-	void ObserveFrame(const XrFrameEndInfo& info, const CompositionPlan& composition,
-					  const VulkanCaptureBindings& bindings) noexcept;
-	void LogObserverFailure(const char* detail) noexcept;
 
 	const std::shared_ptr<Session> m_session;
-	const std::shared_ptr<LegacyFileChannel> m_files;
-	const std::shared_ptr<flicker::Diagnostics> m_diagnostics;
 	std::unique_ptr<VulkanBackend> m_backend;
 	HandleRegistry<XrSwapchain, VulkanSwapchain, const Session*> m_swapchains;
 	std::shared_ptr<VulkanInspectionValidation> m_validation;
 	std::unique_ptr<VulkanInspection> m_inspection;
-	std::unique_ptr<VulkanLegacyCapture> m_capture;
+	std::unique_ptr<VulkanFrameObserver> m_observer;
 	control::ImageCapabilities m_capabilities;
 	SwapchainWaits m_waits;
 	std::mutex m_closeMutex;

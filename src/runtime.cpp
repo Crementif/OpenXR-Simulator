@@ -19,35 +19,39 @@
 #include <dxgi1_6.h>
 
 #define VK_USE_PLATFORM_WIN32_KHR
-#define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
 
-#include "flicker_detector.h"
-#include "presentation/FrameScheduler.h"
-#include "graphics/Swapchain.h"
-#include "runtime/EventQueue.h"
-#include "runtime/DispatchTable.h"
-#include "runtime/EntryPoints.h"
-#include "runtime/Instance.h"
-#include "runtime/Session.h"
-#include "runtime/Runtime.h"
-#include "runtime/SimulationExtensions.h"
-#include "runtime/SpaceQueries.h"
 #include "Math.h"
-#include "runtime/validation/LayerValidation.h"
+#include "control/ControlService.h"
+#include "control/LocalControlServer.h"
+#include "control/backends/vulkan/VulkanImageInspection.h"
+#include "flicker_detector.h"
 #include "graphics/LayerBuilder.h"
-#include "runtime/validation/StructureChain.h"
-#include "platform/windows/WindowsClock.h"
-#include "platform/windows/D3D11Preview.h"
 #include "graphics/PreviewGeometry.h"
-#include "platform/windows/OpenGLPreviewReadback.h"
-#include "platform/windows/OpenGLSwapchain.h"
+#include "graphics/Swapchain.h"
+#include "graphics/backends/vulkan/VulkanInspection.h"
+#include "graphics/backends/vulkan/VulkanInstanceGraphics.h"
+#include "graphics/backends/vulkan/VulkanSessionGraphics.h"
+#include "graphics/backends/vulkan/VulkanSwapchain.h"
+#include "platform/windows/D3D11Preview.h"
 #include "platform/windows/D3D11PreviewContext.h"
 #include "platform/windows/D3D12Preview.h"
 #include "platform/windows/D3D12PreviewPipelines.h"
+#include "platform/windows/OpenGLPreviewReadback.h"
+#include "platform/windows/OpenGLSwapchain.h"
+#include "platform/windows/WindowsClock.h"
+#include "presentation/FrameScheduler.h"
+#include "runtime/DispatchTable.h"
+#include "runtime/EntryPoints.h"
+#include "runtime/EventQueue.h"
+#include "runtime/Instance.h"
+#include "runtime/Runtime.h"
+#include "runtime/Session.h"
+#include "runtime/SimulationExtensions.h"
+#include "runtime/SpaceQueries.h"
+#include "runtime/validation/LayerValidation.h"
+#include "runtime/validation/StructureChain.h"
 #include "simulation/LegacyControllerMotion.h"
-#include "control/ControlService.h"
-#include "control/LocalControlServer.h"
 #include <charconv>
 #include <memory>
 
@@ -238,8 +242,11 @@ static std::atomic<bool> g_windowClassRegistered{false};
 static std::atomic<UINT> g_sourceWidth{0};
 static std::atomic<UINT> g_sourceHeight{0};
 
+static std::mutex g_vulkanMutex;
+
 struct Instance {
-    XrInstance handle{XR_NULL_HANDLE};
+	std::unique_ptr<simxr::VulkanInstanceGraphics> vulkan = std::make_unique<simxr::VulkanInstanceGraphics>();
+	XrInstance handle{XR_NULL_HANDLE};
     std::shared_ptr<simxr::Instance> core;
     std::shared_ptr<simxr::legacy::LegacyControllerMotion> controllerMotion;
     std::shared_ptr<mcp::WindowsLegacyChannel> compatibilityFiles;
@@ -313,7 +320,8 @@ struct Session {
     // Vulkan support. usesD3D12 is set alongside this: the compositor is the D3D12 one.
     bool usesVulkan{false};
     VulkanSession vk;
-    // OpenGL support
+	std::shared_ptr<simxr::VulkanSessionGraphics> vulkan;
+	// OpenGL support
     HDC glDC{nullptr};
     HGLRC glRC{nullptr};
     bool usesOpenGL{false};
@@ -2101,7 +2109,8 @@ static const simxr::ExtensionRegistry& Extensions()
 
 static simxr::Runtime& RuntimeState()
 {
-    static simxr::Runtime runtime(Extensions());
+	simxr::InitializeVulkanImageDelivery();
+	static simxr::Runtime runtime(Extensions());
     return runtime;
 }
 
@@ -2121,12 +2130,22 @@ struct NativeControlEndpoint
             const auto* selected = std::getenv("SIMXR_CONTROL_SOCKET");
             const auto path = selected && *selected ? std::string(selected)
                 : std::string(R"(\\.\pipe\SimXR.Control.)") + std::to_string(GetCurrentProcessId());
-            auto nextService = std::make_unique<simxr::control::ControlService>(RuntimeState(), 16);
-            auto nextServer = std::make_unique<simxr::control::LocalControlServer>(*nextService, path, 16);
+			auto nextService = std::make_unique<simxr::control::ControlService>(
+				RuntimeState(), 16,
+				simxr::control::CreateVulkanImageInspectionProvider(
+					[](XrSession handle)
+					{
+						std::lock_guard lock(rt::g_vulkanMutex);
+						return rt::g_session.handle == handle && rt::g_session.vulkan
+								   ? rt::g_session.vulkan->Capabilities()
+								   : simxr::control::ImageCapabilities{};
+					}));
+			auto nextServer = std::make_unique<simxr::control::LocalControlServer>(*nextService, path, 16);
             service = std::move(nextService);
             server = std::move(nextServer);
-            Logf("[SimXR] Local control endpoint: %s (CPU control/inspection; native GPU transport unavailable)", path.c_str());
-            return true;
+			Logf("[SimXR] Local control endpoint: %s (control/inspection; session-dependent native GPU transport)",
+				 path.c_str());
+			return true;
         }
         catch (const std::exception& error) { Logf("[SimXR] Local control endpoint unavailable: %s", error.what()); return false; }
     }
@@ -2201,7 +2220,8 @@ static XrResult XRAPI_PTR xrDestroySwapchain_runtime(XrSwapchain swapchain);
 
 extern "C" __declspec(dllexport) XrResult XRAPI_CALL xrNegotiateLoaderRuntimeInterface(const XrNegotiateLoaderInfo* loaderInfo,
                                                                             XrNegotiateRuntimeRequest* runtimeRequest) {
-    try {
+
+	try {
         Log("\n[SimXR] ========== OpenXR Simulator Runtime Starting ==========\n");
         if (!loaderInfo || !runtimeRequest) {
             Log("[SimXR] xrNegotiateLoaderRuntimeInterface: ERROR - null parameters");
@@ -2407,11 +2427,8 @@ static XrResult GetVulkanRequirements(XrInstance instance, XrSystemId system,
 	auto result = RequireGraphicsExtension(instance, system, extension);
 	if (XR_FAILED(result))
 		return result;
-	if (!requirements || requirements->type != XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR)
-		return XR_ERROR_VALIDATION_FAILURE;
-	requirements->minApiVersionSupported = XR_MAKE_VERSION(1, 0, 0);
-	requirements->maxApiVersionSupported = XR_MAKE_VERSION(1, 4, 0);
-	return XR_SUCCESS;
+	std::lock_guard lock(rt::g_vulkanMutex);
+	return rt::g_instance.vulkan->Requirements(system, requirements);
 }
 
 static XrResult XRAPI_PTR xrGetVulkanGraphicsRequirementsKHR_runtime(
@@ -2438,126 +2455,60 @@ static XrResult CopyExtensionString(const std::string& s, uint32_t capacity, uin
 
 static XrResult XRAPI_PTR xrGetVulkanInstanceExtensionsKHR_runtime(
     XrInstance instance, XrSystemId system, uint32_t capacity, uint32_t* countOutput, char* buffer) {
-    auto result = RequireGraphicsExtension(instance, system, XR_KHR_VULKAN_ENABLE_EXTENSION_NAME);
-    if (XR_FAILED(result)) return result;
-
-    const std::string s = vkrt::JoinExtensions(vkrt::kInstanceExtensions, std::size(vkrt::kInstanceExtensions));
-    if (capacity) Logf("[SimXR] xrGetVulkanInstanceExtensionsKHR: %s", s.c_str());
-    return CopyExtensionString(s, capacity, countOutput, buffer);
+	auto result = RequireGraphicsExtension(instance, system, XR_KHR_VULKAN_ENABLE_EXTENSION_NAME);
+	if (XR_FAILED(result))
+		return result;
+	std::lock_guard lock(rt::g_vulkanMutex);
+	return rt::g_instance.vulkan->InstanceExtensions(system, capacity, countOutput, buffer);
 }
 
 static XrResult XRAPI_PTR xrGetVulkanDeviceExtensionsKHR_runtime(
     XrInstance instance, XrSystemId system, uint32_t capacity, uint32_t* countOutput, char* buffer) {
-    auto result = RequireGraphicsExtension(instance, system, XR_KHR_VULKAN_ENABLE_EXTENSION_NAME);
-    if (XR_FAILED(result)) return result;
-
-    const std::string s = vkrt::JoinExtensions(vkrt::kDeviceExtensions, std::size(vkrt::kDeviceExtensions));
-    if (capacity) Logf("[SimXR] xrGetVulkanDeviceExtensionsKHR: %s", s.c_str());
-    return CopyExtensionString(s, capacity, countOutput, buffer);
+	auto result = RequireGraphicsExtension(instance, system, XR_KHR_VULKAN_ENABLE_EXTENSION_NAME);
+	if (XR_FAILED(result))
+		return result;
+	std::lock_guard lock(rt::g_vulkanMutex);
+	return rt::g_instance.vulkan->DeviceExtensions(system, capacity, countOutput, buffer);
 }
 
 static XrResult XRAPI_PTR xrGetVulkanGraphicsDeviceKHR_runtime(
     XrInstance instance, XrSystemId system, VkInstance vkInstance, VkPhysicalDevice* out) {
-    auto result = RequireGraphicsExtension(instance, system, XR_KHR_VULKAN_ENABLE_EXTENSION_NAME);
-    if (XR_FAILED(result)) return result;
-    return vkrt::PickPhysicalDevice(vkInstance, out);
+	auto result = RequireGraphicsExtension(instance, system, XR_KHR_VULKAN_ENABLE_EXTENSION_NAME);
+	if (XR_FAILED(result))
+		return result;
+	std::lock_guard lock(rt::g_vulkanMutex);
+	return rt::g_instance.vulkan->PhysicalDevice(system, vkInstance, out);
 }
 
 static XrResult XRAPI_PTR xrGetVulkanGraphicsDevice2KHR_runtime(
     XrInstance instance, const XrVulkanGraphicsDeviceGetInfoKHR* getInfo, VkPhysicalDevice* out) {
-    auto result = RequireExtension(instance, XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME);
-    if (XR_FAILED(result)) return result;
-    if (!getInfo || getInfo->type != XR_TYPE_VULKAN_GRAPHICS_DEVICE_GET_INFO_KHR) return XR_ERROR_VALIDATION_FAILURE;
-    if (getInfo->systemId != 1) return XR_ERROR_SYSTEM_INVALID;
-    return vkrt::PickPhysicalDevice(getInfo->vulkanInstance, out);
+	auto result = RequireExtension(instance, XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME);
+	if (XR_FAILED(result))
+		return result;
+	if (!getInfo || getInfo->type != XR_TYPE_VULKAN_GRAPHICS_DEVICE_GET_INFO_KHR)
+		return XR_ERROR_VALIDATION_FAILURE;
+	std::lock_guard lock(rt::g_vulkanMutex);
+	return rt::g_instance.vulkan->PhysicalDevice(getInfo->systemId, getInfo->vulkanInstance, out);
 }
 
 // Thin passthrough: the app's own vkCreateInstance runs, with the interop extensions the
 // runtime needs appended to whatever it asked for.
 static XrResult XRAPI_PTR xrCreateVulkanInstanceKHR_runtime(
     XrInstance instance, const XrVulkanInstanceCreateInfoKHR* createInfo, VkInstance* vulkanInstance, VkResult* vulkanResult) {
-    auto result = RequireExtension(instance, XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME);
-    if (XR_FAILED(result)) return result;
-    if (!createInfo || createInfo->type != XR_TYPE_VULKAN_INSTANCE_CREATE_INFO_KHR) return XR_ERROR_VALIDATION_FAILURE;
-    if (createInfo->systemId != 1) return XR_ERROR_SYSTEM_INVALID;
-
-    if (!createInfo || !createInfo->pfnGetInstanceProcAddr || !createInfo->vulkanCreateInfo ||
-        !vulkanInstance || !vulkanResult) return XR_ERROR_VALIDATION_FAILURE;
-
-    vkrt::g_appGipa = createInfo->pfnGetInstanceProcAddr;
-    auto enumerate = (PFN_vkEnumerateInstanceExtensionProperties)vkrt::g_appGipa(
-        VK_NULL_HANDLE, "vkEnumerateInstanceExtensionProperties");
-    auto create = (PFN_vkCreateInstance)vkrt::g_appGipa(VK_NULL_HANDLE, "vkCreateInstance");
-    if (!create) { Log("[SimXR][VK] xrCreateVulkanInstanceKHR: no vkCreateInstance"); return XR_ERROR_RUNTIME_FAILURE; }
-
-    std::vector<std::string> available;
-    if (enumerate) {
-        uint32_t n = 0;
-        enumerate(nullptr, &n, nullptr);
-        std::vector<VkExtensionProperties> props(n);
-        if (n) enumerate(nullptr, &n, props.data());
-        for (const auto& p : props) available.emplace_back(p.extensionName);
-    }
-
-    std::vector<std::string> storage;
-    std::vector<const char*> names = vkrt::MergeExtensions(
-        vkrt::kInstanceExtensions, std::size(vkrt::kInstanceExtensions),
-        createInfo->vulkanCreateInfo->ppEnabledExtensionNames,
-        createInfo->vulkanCreateInfo->enabledExtensionCount, available, storage);
-
-    VkInstanceCreateInfo ici = *createInfo->vulkanCreateInfo;
-    ici.enabledExtensionCount = (uint32_t)names.size();
-    ici.ppEnabledExtensionNames = names.data();
-
-    *vulkanResult = create(&ici, createInfo->vulkanAllocator, vulkanInstance);
-    if (*vulkanResult == VK_SUCCESS) vkrt::g_lastInstance = *vulkanInstance;
-    Logf("[SimXR] xrCreateVulkanInstanceKHR: %u extensions, VkResult=%d",
-         ici.enabledExtensionCount, (int)*vulkanResult);
-    return XR_SUCCESS;
+	auto result = RequireExtension(instance, XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME);
+	if (XR_FAILED(result))
+		return result;
+	std::lock_guard lock(rt::g_vulkanMutex);
+	return rt::g_instance.vulkan->CreateInstance(createInfo, vulkanInstance, vulkanResult);
 }
 
 static XrResult XRAPI_PTR xrCreateVulkanDeviceKHR_runtime(
     XrInstance instance, const XrVulkanDeviceCreateInfoKHR* createInfo, VkDevice* vulkanDevice, VkResult* vulkanResult) {
-    auto result = RequireExtension(instance, XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME);
-    if (XR_FAILED(result)) return result;
-    if (!createInfo || createInfo->type != XR_TYPE_VULKAN_DEVICE_CREATE_INFO_KHR) return XR_ERROR_VALIDATION_FAILURE;
-    if (createInfo->systemId != 1) return XR_ERROR_SYSTEM_INVALID;
-
-    if (!createInfo || !createInfo->pfnGetInstanceProcAddr || !createInfo->vulkanCreateInfo ||
-        !createInfo->vulkanPhysicalDevice || !vulkanDevice || !vulkanResult) return XR_ERROR_VALIDATION_FAILURE;
-
-    vkrt::g_appGipa = createInfo->pfnGetInstanceProcAddr;
-    // Both are instance-level, and the only VkInstance in reach is the one the app made
-    // through xrCreateVulkanInstanceKHR or named in xrGetVulkanGraphicsDevice2KHR.
-    const VkInstance inst = vkrt::g_lastInstance;
-    auto enumerate = (PFN_vkEnumerateDeviceExtensionProperties)vkrt::g_appGipa(
-        inst, "vkEnumerateDeviceExtensionProperties");
-    auto create = (PFN_vkCreateDevice)vkrt::g_appGipa(inst, "vkCreateDevice");
-    if (!create) { Log("[SimXR][VK] xrCreateVulkanDeviceKHR: no vkCreateDevice"); return XR_ERROR_RUNTIME_FAILURE; }
-
-    std::vector<std::string> available;
-    if (enumerate) {
-        uint32_t n = 0;
-        enumerate(createInfo->vulkanPhysicalDevice, nullptr, &n, nullptr);
-        std::vector<VkExtensionProperties> props(n);
-        if (n) enumerate(createInfo->vulkanPhysicalDevice, nullptr, &n, props.data());
-        for (const auto& p : props) available.emplace_back(p.extensionName);
-    }
-
-    std::vector<std::string> storage;
-    std::vector<const char*> names = vkrt::MergeExtensions(
-        vkrt::kDeviceExtensions, std::size(vkrt::kDeviceExtensions),
-        createInfo->vulkanCreateInfo->ppEnabledExtensionNames,
-        createInfo->vulkanCreateInfo->enabledExtensionCount, available, storage);
-
-    VkDeviceCreateInfo dci = *createInfo->vulkanCreateInfo;
-    dci.enabledExtensionCount = (uint32_t)names.size();
-    dci.ppEnabledExtensionNames = names.data();
-
-    *vulkanResult = create(createInfo->vulkanPhysicalDevice, &dci, createInfo->vulkanAllocator, vulkanDevice);
-    Logf("[SimXR] xrCreateVulkanDeviceKHR: %u extensions, VkResult=%d",
-         dci.enabledExtensionCount, (int)*vulkanResult);
-    return XR_SUCCESS;
+	auto result = RequireExtension(instance, XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME);
+	if (XR_FAILED(result))
+		return result;
+	std::lock_guard lock(rt::g_vulkanMutex);
+	return rt::g_instance.vulkan->CreateDevice(createInfo, vulkanDevice, vulkanResult);
 }
 
 // --- Minimal implementations ---
@@ -2711,6 +2662,7 @@ static XrResult XRAPI_PTR xrDestroyInstance_runtime(XrInstance instance) {
             rt::g_windowClassRegistered = false;
             Log("[SimXR] xrDestroyInstance: Window class unregistered");
         }
+        simxr::StopVulkanImageDelivery();
         Log("[SimXR] xrDestroyInstance: Window destroyed for safe DLL unload");
     }
 
@@ -2826,11 +2778,23 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
             DestroyNativeSession(rt::g_session.handle);
         }
     } creation;
-    auto publish = [&]() -> XrResult
+	std::optional<simxr::VulkanBinding> vulkanBinding;
+	auto publish = [&]() -> XrResult
     {
         auto result = RuntimeState().CreateSession(instance, creation.core, std::make_shared<simxr::WindowsClock>());
         if (XR_FAILED(result)) return result;
-        {
+		if (vulkanBinding)
+		{
+			std::lock_guard lock(rt::g_vulkanMutex);
+			std::unique_ptr<simxr::VulkanSessionGraphics> graphics;
+			const auto* validation = std::getenv("SIMXR_VULKAN_VALIDATION");
+			result = simxr::VulkanSessionGraphics::Create(*vulkanBinding, creation.core.Shared(),
+														  validation && std::strcmp(validation, "1") == 0, graphics);
+			if (XR_FAILED(result))
+				return result;
+			rt::g_session.vulkan = std::move(graphics);
+		}
+		{
             std::lock_guard lock(rt::g_coreMutex);
             if (rt::g_instance.handle != instance || rt::g_instance.controllerMotion != controllerMotion)
                 return XR_ERROR_HANDLE_INVALID;
@@ -2909,25 +2873,18 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
                 return XR_ERROR_GRAPHICS_DEVICE_INVALID;
             // XR_TYPE_GRAPHICS_BINDING_VULKAN2_KHR is an alias of this, so one branch serves
             // XR_KHR_vulkan_enable and XR_KHR_vulkan_enable2 alike.
-            const auto* bVk = reinterpret_cast<const XrGraphicsBindingVulkanKHR*>(entry);
-            rt::g_session.preview11.reset();
-            rt::g_session.d3d11Device.Reset();
-            rt::g_session.d3d11Context.Reset();
-            rt::g_session.previewSwapchain.Reset();
-            rt::g_session.usesOpenGL = false;
-            rt::g_session.d3d12Device.Reset();
-            rt::g_session.d3d12Queue.Reset();
-            rt::ResetD3D12PreviewResources(rt::g_session);
-            if (!vkrt::InitSession(rt::g_session, *bVk)) {
-                vkrt::ShutdownSession(rt::g_session);
-                Log("[SimXR] xrCreateSession: ERROR - the Vulkan binding could not be set up");
-                return XR_ERROR_GRAPHICS_DEVICE_INVALID;
-            }
-            // The compositor is the D3D12 one either way; usesVulkan only changes what the
-            // app is handed and how the two queues are ordered.
-            rt::g_session.usesVulkan = true;
-            rt::g_session.usesD3D12 = true;
-            return publish();
+			simxr::VulkanBinding binding{};
+			{
+				std::lock_guard lock(rt::g_vulkanMutex);
+				const auto result = rt::g_instance.vulkan->SessionBinding(*info, binding);
+				if (XR_FAILED(result))
+					return result;
+			}
+			vulkanBinding = binding;
+			rt::g_session.usesVulkan = true;
+			rt::g_session.usesD3D12 = false;
+			rt::g_session.usesOpenGL = false;
+			return publish();
         } else if (entry->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR) {
             auto enabled = RequireExtension(instance, XR_KHR_OPENGL_ENABLE_EXTENSION_NAME);
             if (XR_FAILED(enabled)) return XR_ERROR_GRAPHICS_DEVICE_INVALID;
@@ -2951,6 +2908,29 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
     return XR_ERROR_GRAPHICS_DEVICE_INVALID;
 }
 
+static XrResult CloseVulkanSession()
+{
+	std::shared_ptr<simxr::VulkanSessionGraphics> graphics;
+	std::shared_ptr<simxr::Session> core;
+	{
+		std::lock_guard lock(rt::g_vulkanMutex);
+		graphics = rt::g_session.vulkan;
+		if (!graphics)
+			return XR_SUCCESS;
+		graphics->BeginClose();
+		core = rt::g_session.core;
+	}
+	if (core)
+		core->Close();
+	auto result = graphics->Drain();
+	if (XR_FAILED(result))
+		return result;
+	std::lock_guard lock(rt::g_vulkanMutex);
+	result = graphics->FinishClose();
+	if (XR_SUCCEEDED(result))
+		rt::g_session.vulkan.reset();
+	return result;
+}
 
 static XrResult DestroyNativeSession(XrSession s) {
     Logf("[SimXR] xrDestroySession called (handle=%llu)", (unsigned long long)s);
@@ -2960,7 +2940,10 @@ static XrResult DestroyNativeSession(XrSession s) {
         return XR_ERROR_HANDLE_INVALID;
     }
 
-    if (rt::g_session.usesD3D12 && !rt::WaitForPreviewIdle(rt::g_session))
+	const auto vulkanClosed = CloseVulkanSession();
+	if (XR_FAILED(vulkanClosed))
+		return vulkanClosed;
+	if (rt::g_session.usesD3D12 && !rt::WaitForPreviewIdle(rt::g_session))
         return XR_ERROR_RUNTIME_FAILURE;
     if (rt::g_session.usesD3D12) ConsumeCompletedPreviewFrame(rt::g_session);
     if (rt::g_session.core) rt::g_session.core->Close();
@@ -3038,14 +3021,38 @@ static XrResult XRAPI_PTR xrDestroySession_runtime(XrSession handle)
 {
     if (handle == rt::g_session.handle && rt::g_session.usesD3D12 && !rt::WaitForPreviewIdle(rt::g_session))
         return XR_ERROR_RUNTIME_FAILURE;
-    auto result = RuntimeState().DestroySession(handle);
+	if (handle == rt::g_session.handle)
+	{
+		const auto closed = CloseVulkanSession();
+		if (XR_FAILED(closed))
+			return closed;
+	}
+	auto result = RuntimeState().DestroySession(handle);
     if (XR_FAILED(result)) return result;
     return DestroyNativeSession(handle);
 }
 
 
 static XrResult XRAPI_PTR xrEnumerateSwapchainFormats_runtime(XrSession session, uint32_t capacity, uint32_t* count, int64_t* formats) {
-    // Vulkan path - VkFormat values, in the order an app should prefer them
+	{
+		std::lock_guard lock(rt::g_vulkanMutex);
+		if (rt::g_session.vulkan)
+		{
+			if (session != rt::g_session.handle)
+				return XR_ERROR_HANDLE_INVALID;
+			if (!count || (capacity && !formats))
+				return XR_ERROR_VALIDATION_FAILURE;
+			const auto supported = simxr::VulkanSwapchain::Formats();
+			*count = static_cast<std::uint32_t>(supported.size());
+			if (!capacity)
+				return XR_SUCCESS;
+			if (capacity < supported.size())
+				return XR_ERROR_SIZE_INSUFFICIENT;
+			std::copy(supported.begin(), supported.end(), formats);
+			return XR_SUCCESS;
+		}
+	}
+	// Vulkan path - VkFormat values, in the order an app should prefer them
     if (rt::g_session.usesVulkan) {
         const uint32_t formatCount = (uint32_t)std::size(vkrt::kFormats);
         if (count) *count = formatCount;
@@ -3104,7 +3111,18 @@ static XrResult XRAPI_PTR xrEnumerateSwapchainFormats_runtime(XrSession session,
 }
 
 static XrResult XRAPI_PTR xrCreateSwapchain_runtime(XrSession session, const XrSwapchainCreateInfo* ci, XrSwapchain* sc) {
-    Log("[SimXR] ============================================");
+	{
+		std::lock_guard lock(rt::g_vulkanMutex);
+		if (rt::g_session.vulkan)
+		{
+			if (session != rt::g_session.handle)
+				return XR_ERROR_HANDLE_INVALID;
+			if (!ci || !sc)
+				return XR_ERROR_VALIDATION_FAILURE;
+			return rt::g_session.vulkan->CreateSwapchain(*ci, *sc);
+		}
+	}
+	Log("[SimXR] ============================================");
     Logf("[SimXR] xrCreateSwapchain called: format=%d, size=%ux%u, arraySize=%u, mipCount=%u, sampleCount=%u, usageFlags=0x%X",
          ci ? (int)ci->format : -1, 
          ci ? ci->width : 0, 
@@ -3350,7 +3368,15 @@ static XrResult XRAPI_PTR xrCreateSwapchain_runtime(XrSession session, const XrS
 }
 
 static XrResult XRAPI_PTR xrEnumerateSwapchainImages_runtime(XrSwapchain sc, uint32_t capacity, uint32_t* count, XrSwapchainImageBaseHeader* images) {
-    auto it = rt::g_swapchains.find(sc); if (it == rt::g_swapchains.end()) return XR_ERROR_HANDLE_INVALID;
+	{
+		std::lock_guard lock(rt::g_vulkanMutex);
+		if (rt::g_session.vulkan)
+		{
+			const auto chain = rt::g_session.vulkan->FindSwapchain(sc);
+			return chain ? chain->EnumerateImages(capacity, count, images) : XR_ERROR_HANDLE_INVALID;
+		}
+	}
+	auto it = rt::g_swapchains.find(sc); if (it == rt::g_swapchains.end()) return XR_ERROR_HANDLE_INVALID;
     if (it->second.isVulkan) {
         // XrSwapchainImageVulkan2KHR is a typedef of XrSwapchainImageVulkanKHR, so this is
         // the right shape for both extensions.
@@ -3406,8 +3432,22 @@ static XrResult XRAPI_PTR xrEnumerateSwapchainImages_runtime(XrSwapchain sc, uin
     }
 }
 
-static XrResult XRAPI_PTR xrAcquireSwapchainImage_runtime(XrSwapchain sc, const XrSwapchainImageAcquireInfo*, uint32_t* index) {
-    auto it = rt::g_swapchains.find(sc); if (it == rt::g_swapchains.end()) return XR_ERROR_HANDLE_INVALID;
+static XrResult XRAPI_PTR xrAcquireSwapchainImage_runtime(XrSwapchain sc, const XrSwapchainImageAcquireInfo* info,
+														  uint32_t* index)
+{
+	{
+		std::lock_guard lock(rt::g_vulkanMutex);
+		if (rt::g_session.vulkan)
+		{
+			const auto chain = rt::g_session.vulkan->FindSwapchain(sc);
+			if (!chain)
+				return XR_ERROR_HANDLE_INVALID;
+			if (!index || (info && info->type != XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO))
+				return XR_ERROR_VALIDATION_FAILURE;
+			return rt::g_session.vulkan->Acquire(*chain.Shared(), *index);
+		}
+	}
+	auto it = rt::g_swapchains.find(sc); if (it == rt::g_swapchains.end()) return XR_ERROR_HANDLE_INVALID;
     auto& ch = it->second;
     if (!index) return XR_ERROR_VALIDATION_FAILURE;
     uint32_t i;
@@ -3427,13 +3467,42 @@ static XrResult XRAPI_PTR xrAcquireSwapchainImage_runtime(XrSwapchain sc, const 
     return XR_SUCCESS;
 }
 static XrResult XRAPI_PTR xrWaitSwapchainImage_runtime(XrSwapchain sc, const XrSwapchainImageWaitInfo* info) {
-    auto it = rt::g_swapchains.find(sc);
+	{
+		std::unique_lock lock(rt::g_vulkanMutex);
+		if (auto graphics = rt::g_session.vulkan)
+		{
+			const auto chain = graphics->FindSwapchain(sc);
+			if (!chain)
+				return XR_ERROR_HANDLE_INVALID;
+			if (!info || info->type != XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO || info->timeout < 0)
+				return XR_ERROR_VALIDATION_FAILURE;
+			auto registration = graphics->EnterWait();
+			if (!registration)
+				return XR_ERROR_SESSION_LOST;
+			lock.unlock();
+			return chain->Wait(info->timeout);
+		}
+	}
+	auto it = rt::g_swapchains.find(sc);
     if (it == rt::g_swapchains.end()) return XR_ERROR_HANDLE_INVALID;
     if (!info || info->type != XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO) return XR_ERROR_VALIDATION_FAILURE;
     return it->second.state->Wait(info->timeout, true);
 }
-static XrResult XRAPI_PTR xrReleaseSwapchainImage_runtime(XrSwapchain sc, const XrSwapchainImageReleaseInfo*) {
-    auto it = rt::g_swapchains.find(sc);
+static XrResult XRAPI_PTR xrReleaseSwapchainImage_runtime(XrSwapchain sc, const XrSwapchainImageReleaseInfo* info)
+{
+	{
+		std::lock_guard lock(rt::g_vulkanMutex);
+		if (rt::g_session.vulkan)
+		{
+			const auto chain = rt::g_session.vulkan->FindSwapchain(sc);
+			if (!chain)
+				return XR_ERROR_HANDLE_INVALID;
+			if (info && info->type != XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO)
+				return XR_ERROR_VALIDATION_FAILURE;
+			return chain->Release();
+		}
+	}
+	auto it = rt::g_swapchains.find(sc);
     if (it == rt::g_swapchains.end()) return XR_ERROR_HANDLE_INVALID;
     auto& ch = it->second;
     auto result = ch.state->Release(ch.lastReleased);
@@ -3453,7 +3522,6 @@ static XrResult XRAPI_PTR xrReleaseSwapchainImage_runtime(XrSwapchain sc, const 
     }
     return XR_SUCCESS;
 }
-
 
 namespace rt {
     void PushState(XrSession session, XrSessionState state) {
@@ -3512,8 +3580,35 @@ static XrResult XRAPI_PTR xrBeginSession_runtime(XrSession handle, const XrSessi
     }
     auto configured = core->ConfigureCommands(seed, baseline, false);
     if (XR_FAILED(configured)) return configured;
-    auto result = core->Begin(*info, config);
-    rt::g_session.state = core->Snapshot().state;
+	simxr::PresentationPolicy policy = simxr::PresentationPolicy::Repeat;
+	{
+		std::lock_guard lock(rt::g_vulkanMutex);
+		if (rt::g_session.vulkan)
+		{
+			if (const auto* text = std::getenv("SIMXR_APPLICATION_CADENCE"))
+			{
+				const std::string_view value{text};
+				if (value == "auto")
+					config.automaticCadence = true;
+				else if (value == "1" || value == "2")
+					config.cadence = value == "2" ? 2 : 1;
+				else
+					return XR_ERROR_VALIDATION_FAILURE;
+			}
+			if (const auto* text = std::getenv("SIMXR_PRESENTATION_POLICY"))
+			{
+				const std::string_view value{text};
+				if (value == "rotational")
+					policy = simxr::PresentationPolicy::Rotational;
+				else if (value != "repeat")
+					return XR_ERROR_VALIDATION_FAILURE;
+			}
+			if (policy == simxr::PresentationPolicy::Rotational && !rt::g_session.vulkan->SupportsReprojection())
+				return XR_ERROR_FEATURE_UNSUPPORTED;
+		}
+	}
+	auto result = core->Begin(*info, config, policy);
+	rt::g_session.state = core->Snapshot().state;
     if (XR_SUCCEEDED(result)) rt::g_session.isFocused = true;
     return result;
 }
@@ -5160,7 +5255,12 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
     if (info->displayTime <= 0) return XR_ERROR_TIME_INVALID;
     if (info->environmentBlendMode != XR_ENVIRONMENT_BLEND_MODE_OPAQUE)
         return XR_ERROR_ENVIRONMENT_BLEND_MODE_UNSUPPORTED;
-    simxr::LayerValidationContext context;
+	{
+		std::lock_guard lock(rt::g_vulkanMutex);
+		if (rt::g_session.vulkan)
+			return rt::g_session.vulkan->EndFrame(*info);
+	}
+	simxr::LayerValidationContext context;
     context.depthEnabled = core->Extensions().Contains(XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME);
     context.validSpace = [core](XrSpace space) { return core->Spaces().Owns(space); };
     context.swapchain = [](XrSwapchain handle) -> std::optional<simxr::SwapchainDescription> {
@@ -5760,6 +5860,17 @@ static XrResult XRAPI_PTR xrSyncActions_runtime(XrSession handle, const XrAction
 
 static XrResult XRAPI_PTR xrDestroySwapchain_runtime(XrSwapchain sc)
 {
+	{
+		std::lock_guard lock(rt::g_vulkanMutex);
+		if (rt::g_session.vulkan)
+		{
+			const auto chain = rt::g_session.vulkan->FindSwapchain(sc);
+			if (!chain)
+				return XR_ERROR_HANDLE_INVALID;
+			rt::g_session.vulkan->DestroySwapchain(chain);
+			return XR_SUCCESS;
+		}
+	}
 	auto it = rt::g_swapchains.find(sc);
 	if (it == rt::g_swapchains.end())
 		return XR_ERROR_HANDLE_INVALID;

@@ -2,7 +2,7 @@
 
 #include "control/legacy/LegacyCaptureImage.h"
 #include "control/legacy/LegacyFileChannel.h"
-#include "graphics/backends/vulkan/VulkanReadbackBatch.h"
+#include "graphics/backends/vulkan/VulkanFrameObserver.h"
 #include "runtime/Session.h"
 
 #include <array>
@@ -16,35 +16,19 @@ class Diagnostics;
 
 namespace simxr
 {
-struct VulkanCaptureSource
-{
-	VulkanReadbackRegion region;
-	XrSwapchain swapchain = XR_NULL_HANDLE;
-	std::uint32_t imageIndex = 0;
-};
-
-// A synchronous native binding view. Capture preparation copies the resolved
-// values; neither this interface nor application structure pointers are retained.
-class VulkanCaptureBindings
-{
-  public:
-	virtual ~VulkanCaptureBindings() = default;
-	virtual std::optional<VulkanCaptureSource> ResolveSource(const LayerImageDescription& image) const = 0;
-	virtual void MarkSourceUsed(const VulkanCaptureSource& source,
-								const std::shared_ptr<VulkanReadbackBatch>& completion) const noexcept = 0;
-};
-
-class VulkanLegacyCapture
+class VulkanLegacyCapture final : public VulkanFrameObserver
 {
   public:
 	VulkanLegacyCapture(std::shared_ptr<VulkanDevice> device, std::shared_ptr<Session> session,
 						std::shared_ptr<LegacyFileChannel> files, std::shared_ptr<flicker::Diagnostics> diagnostics);
-	~VulkanLegacyCapture();
-	void Request(LegacyCaptureRequest request, FrameId frame);
+	~VulkanLegacyCapture() override;
+	void Request(LegacyCaptureRequest request, FrameId frame) override;
+	void Observe(const XrFrameEndInfo& frame, const CompositionPlan& composition,
+				 const VulkanCaptureBindings& bindings) noexcept override;
 	// Caller holds the application's binding-queue access. No GPU wait occurs.
 	void Submit(const XrFrameEndInfo& frame, const CompositionPlan& composition, const VulkanCaptureBindings& bindings);
-	void Poll();
-	VkResult Close(std::uint64_t timeout);
+	void Poll() override;
+	VkResult Close(std::uint64_t timeout) override;
 
   private:
 	struct RequestState

@@ -1,4 +1,4 @@
-#include "platform/linux/VulkanInstanceGraphics.h"
+#include "graphics/backends/vulkan/VulkanInstanceGraphics.h"
 
 #define XR_USE_GRAPHICS_API_VULKAN
 #include <openxr/openxr_platform.h>
@@ -111,7 +111,7 @@ std::vector<const char*> VulkanSharingExtensions(VkPhysicalDevice physicalDevice
 	if (!capabilities.CanExportImage() || !capabilities.CanImportImage() || !capabilities.CanExportSemaphore() ||
 		!capabilities.CanImportSemaphore())
 		return {};
-	return {VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME};
+	return {VulkanExternalMemoryExtension, VulkanExternalSemaphoreExtension};
 }
 
 XrResult VulkanInstanceGraphics::Requirements(XrSystemId system, XrGraphicsRequirementsVulkanKHR* output)

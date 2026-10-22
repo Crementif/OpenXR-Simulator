@@ -1,11 +1,11 @@
-#include "platform/linux/VulkanSessionGraphics.h"
+#include "graphics/backends/vulkan/VulkanSessionGraphics.h"
 
-#include "control/legacy/backends/vulkan/VulkanLegacyCapture.h"
-#include "flicker_detector.h"
+#include "control/legacy/LegacyFileChannel.h"
+#include "graphics/backends/vulkan/VulkanFrameObserver.h"
+#include "graphics/backends/vulkan/VulkanFrameSubmission.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
+#include "graphics/backends/vulkan/VulkanInstanceGraphics.h"
 #include "graphics/backends/vulkan/VulkanSwapchain.h"
-#include "platform/linux/VulkanFrameSubmission.h"
-#include "platform/linux/VulkanInstanceGraphics.h"
 #include "runtime/Session.h"
 
 #include <algorithm>
@@ -70,19 +70,17 @@ class VulkanSessionGraphics::FrameBindings final : public VulkanCaptureBindings,
 	const VulkanSessionGraphics& m_graphics;
 };
 
-XrResult VulkanSessionGraphics::Create(const VulkanBinding& binding, std::shared_ptr<Session> session,
-									   std::shared_ptr<LegacyFileChannel> files,
-									   std::shared_ptr<flicker::Diagnostics> diagnostics, bool validation,
+XrResult VulkanSessionGraphics::Create(const VulkanBinding& binding, std::shared_ptr<Session> session, bool validation,
 									   std::unique_ptr<VulkanSessionGraphics>& output)
 {
 	if (!binding.instance || !binding.physicalDevice || !binding.device)
 		return XR_ERROR_GRAPHICS_DEVICE_INVALID;
-	if (!session || !files || !diagnostics)
-		throw std::invalid_argument("Vulkan session graphics requires matching session and observation owners");
+	if (!session)
+		throw std::invalid_argument("Vulkan session graphics requires a session owner");
 	try
 	{
-		auto candidate = std::unique_ptr<VulkanSessionGraphics>(new VulkanSessionGraphics(
-			binding, std::move(session), std::move(files), std::move(diagnostics), validation));
+		auto candidate =
+			std::unique_ptr<VulkanSessionGraphics>(new VulkanSessionGraphics(binding, std::move(session), validation));
 		const auto result = candidate->ConfigureCapture();
 		if (XR_FAILED(result))
 			return result;
@@ -102,14 +100,22 @@ XrResult VulkanSessionGraphics::Create(const VulkanBinding& binding, std::shared
 }
 
 VulkanSessionGraphics::VulkanSessionGraphics(const VulkanBinding& binding, std::shared_ptr<Session> session,
-											 std::shared_ptr<LegacyFileChannel> files,
-											 std::shared_ptr<flicker::Diagnostics> diagnostics, bool validation)
-	: m_session(std::move(session)), m_files(std::move(files)), m_diagnostics(std::move(diagnostics))
+											 bool validation)
+	: m_session(std::move(session))
 {
 	const auto sharing = VulkanSharingExtensions(binding.physicalDevice);
-	if (!sharing.empty() && (!vkGetDeviceProcAddr(binding.device, "vkGetMemoryFdKHR") ||
-							 !vkGetDeviceProcAddr(binding.device, "vkGetSemaphoreFdKHR") ||
-							 !vkGetDeviceProcAddr(binding.device, "vkImportSemaphoreFdKHR")))
+#ifdef _WIN32
+	constexpr const char* memoryCommand = "vkGetMemoryWin32HandleKHR";
+	constexpr const char* semaphoreCommand = "vkGetSemaphoreWin32HandleKHR";
+	constexpr const char* importCommand = "vkImportSemaphoreWin32HandleKHR";
+#else
+	constexpr const char* memoryCommand = "vkGetMemoryFdKHR";
+	constexpr const char* semaphoreCommand = "vkGetSemaphoreFdKHR";
+	constexpr const char* importCommand = "vkImportSemaphoreFdKHR";
+#endif
+	if (!sharing.empty() &&
+		(!vkGetDeviceProcAddr(binding.device, memoryCommand) ||
+		 !vkGetDeviceProcAddr(binding.device, semaphoreCommand) || !vkGetDeviceProcAddr(binding.device, importCommand)))
 		throw std::invalid_argument("Vulkan sharing extensions were not enabled on the device");
 	m_backend = std::make_unique<VulkanBackend>(binding, 0, sharing, VK_API_VERSION_1_1);
 	if (m_backend->Sharing())
@@ -120,7 +126,6 @@ VulkanSessionGraphics::VulkanSessionGraphics(const VulkanBinding& binding, std::
 		m_inspection = std::make_unique<VulkanInspection>(external.Identity(), 0, m_validation);
 		m_capabilities = {m_inspection->CanShare(), true};
 	}
-	m_capture = std::make_unique<VulkanLegacyCapture>(m_backend->Device(), m_session, m_files, m_diagnostics);
 }
 
 VulkanSessionGraphics::~VulkanSessionGraphics() = default;
@@ -129,7 +134,8 @@ XrResult VulkanSessionGraphics::ConfigureCapture()
 {
 	if (!m_inspection)
 		return XR_SUCCESS;
-	const auto result = m_session->ConfigureCapturePool(m_backend->Reservations(), true, PromoteInspectionCapture, true, true);
+	const auto result =
+		m_session->ConfigureCapturePool(m_backend->Reservations(), true, PromoteInspectionCapture, true, true);
 	return XR_FAILED(result) ? result : m_session->EnableImageHistory();
 }
 
@@ -215,54 +221,32 @@ XrResult VulkanSessionGraphics::EndFrame(const XrFrameEndInfo& info)
 									 {m_session->Snapshot().generation, begun->id},
 									 m_session->Display().Policy() == PresentationPolicy::Rotational);
 	const auto result = submission.Execute(info);
-	if (XR_SUCCEEDED(result))
-		ObserveFrame(info, submission.Composition(), bindings);
+	if (XR_SUCCEEDED(result) && m_observer)
+		m_observer->Observe(info, submission.Composition(), bindings);
 	return result;
 }
 
-void VulkanSessionGraphics::ObserveFrame(const XrFrameEndInfo& info, const CompositionPlan& composition,
-										 const VulkanCaptureBindings& bindings) noexcept
+std::shared_ptr<VulkanDevice> VulkanSessionGraphics::Device() const
 {
-	try
-	{
-		m_capture->Submit(info, composition, bindings);
-		std::uint32_t projections = 0;
-		for (std::uint32_t layer = 0; layer < info.layerCount; ++layer)
-			if (info.layers[layer]->type == XR_TYPE_COMPOSITION_LAYER_PROJECTION)
-				++projections;
-		m_diagnostics->ObserveSubmission(m_session->Snapshot().lastSubmitted.value, projections, info.layerCount);
-	}
-	catch (const std::exception& error)
-	{
-		LogObserverFailure(error.what());
-	}
-	catch (...)
-	{
-		LogObserverFailure("unknown exception");
-	}
+	return m_backend->Device();
 }
-
-void VulkanSessionGraphics::LogObserverFailure(const char* detail) noexcept
+void VulkanSessionGraphics::SetObserver(std::unique_ptr<VulkanFrameObserver> observer)
 {
-	try
-	{
-		m_files->Log(std::string("submitted frame observer failed: ") + detail);
-	}
-	catch (...)
-	{
-	}
+	if (m_observer || m_closing)
+		throw std::logic_error("Vulkan frame observer is already installed or closing");
+	m_observer = std::move(observer);
 }
 
 void VulkanSessionGraphics::RequestCapture(LegacyCaptureRequest request, FrameId frame)
 {
-	if (m_capture)
-		m_capture->Request(std::move(request), frame);
+	if (m_observer)
+		m_observer->Request(std::move(request), frame);
 }
 
 void VulkanSessionGraphics::PollCaptures()
 {
-	if (m_capture)
-		m_capture->Poll();
+	if (m_observer)
+		m_observer->Poll();
 }
 
 void VulkanSessionGraphics::BeginClose()
@@ -303,7 +287,7 @@ XrResult VulkanSessionGraphics::Drain(std::chrono::nanoseconds timeout)
 		if (m_validation && m_validation->errors.load())
 			return XR_ERROR_RUNTIME_FAILURE;
 	}
-	if (m_capture->Close(static_cast<std::uint64_t>(remaining().count())) != VK_SUCCESS)
+	if (m_observer && m_observer->Close(static_cast<std::uint64_t>(remaining().count())) != VK_SUCCESS)
 		return XR_ERROR_RUNTIME_FAILURE;
 	m_closeStage = CloseStage::Drained;
 	return XR_SUCCESS;
@@ -321,7 +305,7 @@ XrResult VulkanSessionGraphics::FinishClose()
 	const auto result = m_backend->Close();
 	if (XR_FAILED(result))
 		return result;
-	m_capture.reset();
+	m_observer.reset();
 	m_inspection.reset();
 	m_validation.reset();
 	m_backend.reset();
