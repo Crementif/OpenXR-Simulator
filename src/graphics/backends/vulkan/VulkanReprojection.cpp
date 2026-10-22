@@ -101,7 +101,8 @@ XrResult VulkanReprojectionPreparation::Prepare(VulkanBackend& backend, VulkanIn
 												const FrameLayers& layers, const CompositionTarget& target,
 												const PoseSample& head, const VulkanImageResolver& resolve,
 												std::size_t capacity,
-												std::unique_ptr<VulkanReprojectionPreparation>& output)
+												std::unique_ptr<VulkanReprojectionPreparation>& output,
+												std::function<void(SharedImageKey)> deliveryRetired)
 {
 	if (!resolve)
 		return XR_ERROR_VALIDATION_FAILURE;
@@ -144,7 +145,7 @@ XrResult VulkanReprojectionPreparation::Prepare(VulkanBackend& backend, VulkanIn
 				image.extent = {static_cast<std::int32_t>(frame->Image().extent.width),
 					static_cast<std::int32_t>(frame->Image().extent.height)};
 				image.fullMipChain = frame->Image().mipLevels > 1;
-				auto transfer = inspection.Prepare(frame, {}, {}, VulkanInspectionKind::Reprojection);
+				auto transfer = inspection.Prepare(frame, {}, {}, VulkanInspectionKind::Reprojection, deliveryRetired);
 				image.output = transfer->Output();
 				prepared->m_frames.push_back(std::move(frame));
 				prepared->m_swapchains.push_back(description.source);

@@ -780,7 +780,8 @@ class ConsumerCopy
 };
 } // namespace
 void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
-						 std::shared_ptr<VulkanInspectionFrame> resized, bool verifyPixels)
+						 std::shared_ptr<VulkanInspectionFrame> resized, bool verifyPixels,
+						 const std::function<bool(SharedImageKey)>& retired)
 {
 	VerifyPreservationOwnership();
 	Require(original && resized, "Missing retained images for delivery proof");
@@ -971,6 +972,7 @@ void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
 			stillFull = error.Result() == VK_ERROR_OUT_OF_POOL_MEMORY;
 		}
 		Require(stillFull, "CPU release reused native delivery capacity before actual consumer completion");
+		Require(!retired(abandonedKey), "Delivery retirement was reported before consumer completion");
 		std::this_thread::sleep_for(std::chrono::milliseconds(2));
 	}
 	waiting.Submit();
@@ -991,6 +993,7 @@ void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		}
 	}
+	Require(retired(abandonedKey), "Actual delivery destruction omitted its immutable image identity");
 	Require(recovered->Key() != abandonedKey, "Recovered delivery reused an old immutable allocation identity");
 	Await(
 		[&]

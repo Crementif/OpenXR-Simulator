@@ -46,7 +46,8 @@ class VulkanDeliveryNative
 	static std::shared_ptr<VulkanDeliveryNative> Prepare(VulkanInspectionQueue& queue,
 														 std::shared_ptr<VulkanImage> source,
 														 std::shared_ptr<FrameReservation> sourceBudget,
-														 std::shared_ptr<FrameReservation> admission);
+														 std::shared_ptr<FrameReservation> admission,
+														 std::function<void(SharedImageKey)> retired);
 	~VulkanDeliveryNative()
 	{
 		if (!Safe())
@@ -394,7 +395,8 @@ class VulkanInspectionQueue
 std::shared_ptr<VulkanDeliveryNative> VulkanDeliveryNative::Prepare(VulkanInspectionQueue& queue,
 																	std::shared_ptr<VulkanImage> source,
 																	std::shared_ptr<FrameReservation> sourceBudget,
-																	std::shared_ptr<FrameReservation> admission)
+																	std::shared_ptr<FrameReservation> admission,
+																	std::function<void(SharedImageKey)> retired)
 {
 	// The payload preservation cell is acquired before any delivery image.
 	auto delivery = std::shared_ptr<VulkanDeliveryNative>(new VulkanDeliveryNative());
@@ -409,6 +411,11 @@ std::shared_ptr<VulkanDeliveryNative> VulkanDeliveryNative::Prepare(VulkanInspec
 	delivery->m_key = queue.DeliveryKey(spec);
 	payload.work = queue.Delivery(std::move(source), std::move(sourceBudget), spec);
 	payload.image = payload.work->ExternalOutput();
+	if (retired)
+		payload.image->Image()->retired = [retired = std::move(retired), key = delivery->m_key]
+		{
+			retired(key);
+		};
 	payload.ready = payload.work->Signal();
 	return delivery;
 }
@@ -445,7 +452,8 @@ class VulkanInspectionFrame::Resources
 											 std::shared_ptr<VulkanImage> image,
 											 std::shared_ptr<FrameReservation> budget,
 											 std::function<void(CompletionStatus)> completed,
-		std::shared_ptr<const GpuCompletion> completion = {})
+											 std::shared_ptr<const GpuCompletion> completion = {},
+											 std::function<void(SharedImageKey)> deliveryRetired = {})
 	{
 		// Construct the owner before any view acquisition. A later view failure
 		// destroys all earlier views while the owned device/image remain alive.
@@ -453,6 +461,7 @@ class VulkanInspectionFrame::Resources
 			std::shared_ptr<Resources>(new Resources(
 				std::move(queue), std::move(image), std::move(budget), std::move(completion)));
 		resources->m_completed = std::move(completed);
+		resources->m_deliveryRetired = std::move(deliveryRetired);
 		if (resources->m_image->layers > resources->m_views.size())
 			throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Inspection supports at most two image slices");
 		for (std::uint32_t eye = 0; eye < resources->m_image->layers; ++eye)
@@ -481,6 +490,10 @@ class VulkanInspectionFrame::Resources
 	const std::shared_ptr<VulkanImage>& Image() const noexcept
 	{
 		return m_image;
+	}
+	const std::function<void(SharedImageKey)>& DeliveryRetired() const noexcept
+	{
+		return m_deliveryRetired;
 	}
 	VkImageView View(std::uint32_t eye) const
 	{
@@ -540,6 +553,7 @@ class VulkanInspectionFrame::Resources
 	mutable std::mutex m_retentionMutex;
 	std::atomic<CompletionStatus> m_status{CompletionStatus::Pending};
 	std::function<void(CompletionStatus)> m_completed;
+	std::function<void(SharedImageKey)> m_deliveryRetired;
 	const std::shared_ptr<const GpuCompletion> m_completion;
 };
 
@@ -831,7 +845,8 @@ std::shared_ptr<VulkanInspectionFrame> VulkanInspectionFrame::Compose(const Comp
 	if (pending)
 		return {};
 	auto frame = queue->PrepareComposition(plan, retained);
-	auto resources = Resources::Create(queue, frame->RetainImage(), frame->Reservation(), {}, frame);
+	auto resources = Resources::Create(queue, frame->RetainImage(), frame->Reservation(), {}, frame,
+									   sources.front()->m_resources->DeliveryRetired());
 	auto output = std::shared_ptr<VulkanInspectionFrame>(new VulkanInspectionFrame(std::move(resources), frame->Views()));
 	queue->SubmitComposition(frame);
 	return output;
@@ -960,7 +975,8 @@ std::shared_ptr<VulkanImageDelivery> VulkanInspectionFrame::Share() const
 	if (!slot)
 		throw VulkanError(VK_ERROR_OUT_OF_POOL_MEMORY, "Shared image delivery capacity exhausted");
 	auto sourceBudget = m_resources->Budget();
-	auto native = VulkanDeliveryNative::Prepare(queue, m_resources->Image(), std::move(sourceBudget), std::move(slot));
+	auto native = VulkanDeliveryNative::Prepare(queue, m_resources->Image(), std::move(sourceBudget), std::move(slot),
+												m_resources->DeliveryRetired());
 	auto resources = std::make_shared<VulkanImageDelivery::Resources>(m_resources->Queue(), native);
 	auto result = std::shared_ptr<VulkanImageDelivery>(new VulkanImageDelivery(std::move(resources)));
 	// Both retirement lists reserve their complete capacities before queue use.
@@ -1001,7 +1017,10 @@ VulkanInspection::~VulkanInspection()
 }
 
 std::unique_ptr<VulkanInspectionTransfer> VulkanInspection::Prepare(std::shared_ptr<VulkanFrame> source,
-	std::function<void(CompletionStatus)> completed, std::function<void()> retired, VulkanInspectionKind kind)
+																	std::function<void(CompletionStatus)> completed,
+																	std::function<void()> retired,
+																	VulkanInspectionKind kind,
+																	std::function<void(SharedImageKey)> deliveryRetired)
 {
 	if (!source || !source->ExternalImage())
 		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Frame is not externally shareable");
@@ -1021,7 +1040,7 @@ std::unique_ptr<VulkanInspectionTransfer> VulkanInspection::Prepare(std::shared_
 	auto work = m_state->Queue()->ImportCopy(source);
 	work->Image()->retired = std::move(retired);
 	auto resources = VulkanInspectionFrame::Resources::Create(m_state->Queue(), work->Image(), source->Reservation(),
-		std::move(completed));
+															  std::move(completed), {}, std::move(deliveryRetired));
 	auto output = std::shared_ptr<VulkanInspectionFrame>(new VulkanInspectionFrame(std::move(resources), source->Views()));
 	auto job =
 		std::make_shared<VulkanInspectionTransfer::State>(std::move(admission), std::move(work), std::move(output));

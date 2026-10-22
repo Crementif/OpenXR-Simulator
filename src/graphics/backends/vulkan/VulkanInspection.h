@@ -156,8 +156,10 @@ class VulkanInspection
 	VulkanInspection& operator=(const VulkanInspection&) = delete;
 	// Observers are installed before worker publication and never retain source images.
 	std::unique_ptr<VulkanInspectionTransfer> Prepare(std::shared_ptr<VulkanFrame> source,
-		std::function<void(CompletionStatus)> completed = {}, std::function<void()> retired = {},
-		VulkanInspectionKind kind = VulkanInspectionKind::Required);
+													  std::function<void(CompletionStatus)> completed = {},
+													  std::function<void()> retired = {},
+													  VulkanInspectionKind kind = VulkanInspectionKind::Required,
+													  std::function<void(SharedImageKey)> deliveryRetired = {});
 	VkResult Drain(std::uint64_t timeout = 5000000000ULL);
 	VkResult Close(std::uint64_t timeout = 5000000000ULL);
 	bool CanShare() const noexcept;

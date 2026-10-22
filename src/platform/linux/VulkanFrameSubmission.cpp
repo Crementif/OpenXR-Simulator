@@ -146,7 +146,7 @@ XrResult VulkanFrameSubmission::PrepareReprojection()
 			{
 				return m_bindings.ReleasedImage(swapchain);
 			},
-			capacity, m_retention);
+			capacity, m_retention, DeliveryRetirementObserver());
 		if (m_reprojection.status == XR_SUCCESS)
 		{
 			const auto frames = m_retention->Frames();
@@ -364,7 +364,8 @@ VulkanFrameSubmission::PrepareInspection(std::shared_ptr<VulkanFrame> source, Ca
 		: target.kind == CaptureKind::ProjectionLayers ? std::string{"owned_projection_layers"}
 		: target.kind == CaptureKind::QuadLayers ? std::string{"owned_quad_layers"}
 		: label + std::to_string(target.layer) + ":" + std::to_string(target.view);
-	return m_inspection->Prepare(std::move(source),
+	return m_inspection->Prepare(
+		std::move(source),
 		[journal, key, time, detail](CompletionStatus status)
 		{
 			journal->Trace(status == CompletionStatus::Complete ? FrameTraceKind::GpuComplete : FrameTraceKind::GpuFailed,
@@ -375,7 +376,18 @@ VulkanFrameSubmission::PrepareInspection(std::shared_ptr<VulkanFrame> source, Ca
 		{
 			journal->Trace(FrameTraceKind::ImageRetired, key, time, XR_SUCCESS,
 				FrameDiagnosticCategory::Timing, 0, detail);
-		}, kind);
+		},
+		kind, DeliveryRetirementObserver());
+}
+
+std::function<void(SharedImageKey)> VulkanFrameSubmission::DeliveryRetirementObserver() const
+{
+	return [journal = m_session.History().DiagnosticsJournal(), key = m_key,
+			time = m_layers->displayTime](SharedImageKey image)
+	{
+		journal->Trace(FrameTraceKind::ImageRetired, key, time, XR_SUCCESS, FrameDiagnosticCategory::Timing,
+					   image.image.value, "delivery_pool:" + std::to_string(image.pool.value));
+	};
 }
 
 XrResult VulkanFrameSubmission::Submit()

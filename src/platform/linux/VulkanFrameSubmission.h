@@ -2,7 +2,9 @@
 
 #include "graphics/Compositor.h"
 #include "graphics/RotationalSource.h"
+#include "graphics/SharedImageTypes.h"
 #include "presentation/SnapshotStore.h"
+#include <functional>
 
 #include <memory>
 #include <optional>
@@ -63,6 +65,7 @@ class VulkanFrameSubmission final
 							std::shared_ptr<FrameReservation> reservation);
 	std::unique_ptr<VulkanInspectionTransfer> PrepareInspection(std::shared_ptr<VulkanFrame> source,
 		CaptureTarget target, VulkanInspectionKind kind);
+	std::function<void(SharedImageKey)> DeliveryRetirementObserver() const;
 	XrResult Submit();
 	void DropLiveOutput();
 	void AbandonUnsubmitted(const std::shared_ptr<VulkanFrame>& producer, CaptureTarget target = {});

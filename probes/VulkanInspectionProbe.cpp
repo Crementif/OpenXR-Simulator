@@ -10,6 +10,7 @@
 #include "runtime/Instance.h"
 #include "runtime/Session.h"
 
+#include <algorithm>
 #include <array>
 #include <barrier>
 #include <chrono>
@@ -19,6 +20,7 @@
 #include <cstring>
 #include <future>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -1034,6 +1036,7 @@ std::vector<SnapshotRecord> LiveCapacity(Device& device, const VulkanBinding& bi
 bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validation)
 {
 	std::shared_ptr<VulkanInspectionFrame> retained, resized, closedOutput;
+	auto retirements = std::make_shared<std::pair<std::mutex, std::vector<SharedImageKey>>>();
 	std::optional<SnapshotRecord> retainedCpuReader, sequenceRetention;
 	RawRetention rawRetention, srgbRawRetention;
 	std::vector<simxr::probe::RetainedSubmission> automatic;
@@ -1111,7 +1114,12 @@ bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validat
 						},
 						producer, capture.session->Captures().ProducerReservation(key)) == XR_SUCCESS,
 					"Prepare captured external producer output");
-			auto transfer = inspection.Prepare(producer);
+			auto transfer = inspection.Prepare(producer, {}, {}, VulkanInspectionKind::Required,
+											   [retirements](SharedImageKey image)
+											   {
+												   std::lock_guard lock(retirements->first);
+												   retirements->second.push_back(image);
+											   });
 			retained = transfer->Output();
 			const std::array<std::shared_ptr<const VulkanInspectionFrame>, 2> pending{retained, retained};
 			Require(!VulkanInspectionFrame::Compose(plan, pending), "Pending imports were sampled by composition");
@@ -1188,7 +1196,13 @@ bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validat
 			"Retained closed-service output lost its terminal result after borrowed teardown");
 	Require(retainedCpuReader && retainedCpuReader->output.get() == retained.get(),
 			"Explicit reader did not survive logical/session/native parent teardown");
-	simxr::probe::VerifyImageDelivery(retained, resized, verify);
+	simxr::probe::VerifyImageDelivery(retained, resized, verify,
+									  [retirements](SharedImageKey image)
+									  {
+										  std::lock_guard lock(retirements->first);
+										  return std::count(retirements->second.begin(), retirements->second.end(),
+															image) == 1;
+									  });
 	if (verify)
 	{
 		const auto sequenceImage = std::dynamic_pointer_cast<const VulkanInspectionFrame>(sequenceRetention->output);

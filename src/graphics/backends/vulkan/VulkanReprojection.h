@@ -15,7 +15,8 @@ class VulkanReprojectionPreparation final
   public:
 	static XrResult Prepare(VulkanBackend& backend, VulkanInspection& inspection, const FrameLayers& layers,
 							const CompositionTarget& target, const PoseSample& head, const VulkanImageResolver& resolve,
-							std::size_t capacity, std::unique_ptr<VulkanReprojectionPreparation>& output);
+							std::size_t capacity, std::unique_ptr<VulkanReprojectionPreparation>& output,
+							std::function<void(SharedImageKey)> deliveryRetired = {});
 	std::span<const std::shared_ptr<VulkanFrame>> Frames() const noexcept;
 	std::span<const XrSwapchain> Swapchains() const noexcept;
 	std::shared_ptr<const RotationalSource> Source() const noexcept;
