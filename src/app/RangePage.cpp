@@ -116,14 +116,12 @@ void RangePage::SaveTake(const RangeSel& range, std::size_t first, std::size_t l
 		const std::string name = m_take.data();
 		if (name.empty() || name == "." || name == ".." || name.find_first_of("/\\:") != std::string::npos)
 			throw std::runtime_error("Give the take a name without folder separators or a colon");
-		if (!m_session.Setup())
-			throw std::runtime_error("Device setup is not known yet");
 		const auto& history = m_session.History();
 		std::vector<const InputSample*> samples;
 		for (auto index = first; index <= last; ++index)
 			if (const auto* sample = m_session.InputSamples().Find(history.At(index).input))
 				samples.push_back(sample);
-		const auto take = TakeFromInput(samples, m_session.Setup()->values);
+		const auto take = TakeFromInput(samples);
 		const auto script = automation::EditableRig(take);
 		const auto directory = CompanionSettingsPath().parent_path() / "recordings";
 		std::filesystem::create_directories(directory);

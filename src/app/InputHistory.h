@@ -30,6 +30,9 @@ struct InputSample
 	std::optional<XrPosef> bodyRoot;
 	std::shared_ptr<const TrackerDevices> trackers;
 	std::optional<GazeInput> gaze;
+	// Encoded frame-local view/profile/proportion/reference-space commands.
+	// Equal contexts share storage; absent on older runtimes.
+	std::shared_ptr<const std::vector<std::byte>> context;
 	ScenarioState scenarios{};
 	// Channels owned by a script, MCP or replay, by ControlChannel bit.
 	std::uint32_t driven = 0;
@@ -56,12 +59,12 @@ class InputHistory
 	std::uint64_t m_next = 1;
 	std::shared_ptr<const BodyControls> m_body;
 	std::shared_ptr<const TrackerDevices> m_trackers;
+	std::shared_ptr<const std::vector<std::byte>> m_context;
 };
 
 // A take with the same structure the runtime recorder exports: the first sample
-// and the setup's views, proportions, profiles and spaces are its origin, later
+// and its recorded views, proportions, profiles and spaces are its origin; later
 // samples become transactions where they change. Every sample must carry body,
 // gaze and trackers.
-automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& samples,
-										 const CommandConfiguration& setup);
+automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& samples);
 } // namespace simxr::app

@@ -1,4 +1,5 @@
 #include "app/InputHistory.h"
+#include "control/SimulationControl.h"
 
 #include <algorithm>
 #include <cmath>
@@ -94,6 +95,30 @@ bool Same(const GazeInput& a, const GazeInput& b)
 {
 	return a.yaw == b.yaw && a.pitch == b.pitch && a.available == b.available && a.tracked == b.tracked;
 }
+bool Same(const std::vector<std::byte>& a, const std::vector<std::byte>& b)
+{
+	return a == b;
+}
+std::vector<SimulationCommand> ContextCommands(const InputSample& sample)
+{
+	if (!sample.context)
+		throw std::invalid_argument("This run did not record its view/profile context");
+	const auto fields = control::DecodeFields(*sample.context);
+	if (fields.error != control::DecodeError::None || fields.fields.size() != 5)
+		throw std::invalid_argument("Invalid recorded input context");
+	std::vector<SimulationCommand> commands;
+	for (const auto& field : fields.fields)
+	{
+		auto command = control::DecodeSimulationCommand(field);
+		if (!std::holds_alternative<SetViewSettings>(command) &&
+			!std::holds_alternative<SetBodyProportions>(command) &&
+			!std::holds_alternative<SetControllerProfile>(command) &&
+			!std::holds_alternative<SetReferenceSpaces>(command))
+			throw std::invalid_argument("Unexpected recorded context command");
+		commands.push_back(std::move(command));
+	}
+	return commands;
+}
 // Keeps one block per run of equal values; 32k frames of a still body cost one copy.
 template <typename T> void Share(std::shared_ptr<const T>& value, std::shared_ptr<const T>& previous)
 {
@@ -126,6 +151,7 @@ std::uint64_t InputHistory::Append(InputSample sample)
 {
 	Share(sample.body, m_body);
 	Share(sample.trackers, m_trackers);
+	Share(sample.context, m_context);
 	const auto sequence = m_next++;
 	m_samples[sequence % m_samples.size()] = std::move(sample);
 	return sequence;
@@ -141,8 +167,7 @@ void InputHistory::Clear() noexcept
 	// Sequence numbers keep rising so stale references never resolve.
 	m_next += m_samples.size();
 }
-automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& samples,
-										 const CommandConfiguration& setup)
+automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& samples)
 {
 	if (samples.size() < 2)
 		throw std::invalid_argument("Select at least two frames with input");
@@ -152,6 +177,8 @@ automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& 
 		if (sample->identity.session != origin.identity.session || sample->identity.run != origin.identity.run ||
 			sample->seed != origin.seed)
 			throw std::invalid_argument("The range spans more than one run");
+		if (!sample->context)
+			throw std::invalid_argument("This run did not record its view/profile context");
 		if (!sample->body || !sample->trackers || !sample->gaze)
 			throw std::invalid_argument("This run did not report body, gaze and tracker input; a take needs all of it");
 	}
@@ -167,15 +194,13 @@ automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& 
 	{
 		initial.push_back(SetControllerPose{hand, origin.poses[hand]});
 		initial.push_back(SetControllerControls{hand, origin.controls[hand]});
-		initial.push_back(SetControllerProfile{hand, setup.input.preferredProfiles[hand]});
 	}
 	initial.push_back(SetBodyControls{BodyOf(origin)});
 	initial.push_back(SetGaze{*origin.gaze});
 	for (std::uint32_t index = 0; index < origin.trackers->size(); ++index)
 		initial.push_back(SetTracker{index, (*origin.trackers)[index]});
-	initial.push_back(SetViewSettings{setup.views});
-	initial.push_back(SetBodyProportions{setup.proportions});
-	initial.push_back(SetReferenceSpaces{setup.referenceSpaces});
+	for (auto& command : ContextCommands(origin))
+		initial.push_back(std::move(command));
 
 	// Frames whose input changed; a long range keeps an even subset so the take
 	// stays within the recorder's 1024-transaction limit.
@@ -189,7 +214,8 @@ automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& 
 		if (!Same(a.head, b.head) || !Same(a.poses, b.poses) || !Same(a.controls, b.controls) ||
 			!Same(*a.gaze, *b.gaze) || !Same(a.bodyRoot, b.bodyRoot, SamePose) ||
 			(a.body != b.body && !Same(*a.body, *b.body)) ||
-			(a.trackers != b.trackers && !Same(*a.trackers, *b.trackers)))
+			(a.trackers != b.trackers && !Same(*a.trackers, *b.trackers)) ||
+			(a.context != b.context && *a.context != *b.context))
 			changed.push_back(index);
 	}
 	// One transaction is kept for the end of the range.
@@ -222,6 +248,9 @@ automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& 
 		for (std::uint32_t slot = 0; slot < sample.trackers->size(); ++slot)
 			if (!Same((*previous->trackers)[slot], (*sample.trackers)[slot]))
 				transaction.commands.push_back(SetTracker{slot, (*sample.trackers)[slot]});
+		if (previous->context != sample.context && *previous->context != *sample.context)
+			for (auto& command : ContextCommands(sample))
+				transaction.commands.push_back(std::move(command));
 		if (transaction.commands.empty())
 			continue;
 		take.transactions.push_back(std::move(transaction));

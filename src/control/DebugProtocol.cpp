@@ -354,6 +354,12 @@ Field EncodeAppliedInput(const FrameSubmissionState& submission)
 	for (std::uint32_t slot = 0; slot < tracking.trackers.size(); ++slot)
 		fields.push_back(
 			EncodeSimulationCommand(SetTracker{slot, tracking.trackers[slot]}, static_cast<std::uint16_t>(8 + slot)));
+	fields.push_back(Nested(tag::InputContext, {
+		EncodeSimulationCommand(SetViewSettings{configuration.views}, 1),
+		EncodeSimulationCommand(SetBodyProportions{configuration.proportions}, 2),
+		EncodeSimulationCommand(SetControllerProfile{0, configuration.input.preferredProfiles[0]}, 3),
+		EncodeSimulationCommand(SetControllerProfile{1, configuration.input.preferredProfiles[1]}, 4),
+		EncodeSimulationCommand(SetReferenceSpaces{configuration.referenceSpaces}, 5)}));
 	fields.push_back(Field::U64(tag::Seed, applied.seed));
 	std::uint32_t scenarios = 0, owned = 0, active = 0;
 	for (std::size_t index = 0; index < applied.scenarios.size(); ++index)

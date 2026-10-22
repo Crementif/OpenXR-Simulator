@@ -130,6 +130,15 @@ void AppliedInputFeed()
 				applied.push_back(wire::EncodeSimulationCommand(SetTracker{slot, tracking.trackers[slot]},
 																static_cast<std::uint16_t>(8 + slot)));
 		}
+		ViewSettings views;
+		views.ipd = id < 150 ? .06f : .07f;
+		const std::vector<wire::Field> context{
+			wire::EncodeSimulationCommand(SetViewSettings{views}, 1),
+			wire::EncodeSimulationCommand(SetBodyProportions{}, 2),
+			wire::EncodeSimulationCommand(SetControllerProfile{0, id < 150 ? "first" : "second"}, 3),
+			wire::EncodeSimulationCommand(SetControllerProfile{1, "right"}, 4),
+			wire::EncodeSimulationCommand(SetReferenceSpaces{}, 5)};
+		applied.push_back(wire::Field::Bytes(tag::InputContext, wire::EncodeFields(context)));
 		for (const auto name : {tag::Seed, tag::Scenario, tag::Ownership, tag::ActiveActions})
 			applied.push_back(wire::Field::U32(name, 0));
 		applied[applied.size() - 4] = wire::Field::U64(tag::Seed, 5);
@@ -179,7 +188,25 @@ void AppliedInputFeed()
 	Require(bodies.size() == 2 && bytes < 64 * 1024 * 1024, "Walking frames copied the body every frame");
 
 	const std::vector<const InputSample*> range(samples.begin() + 50, samples.begin() + 260);
-	const auto take = TakeFromInput(range, {});
+	const auto take = TakeFromInput(range);
+	bool initialViews = false, initialProfile = false, changedViews = false, changedProfile = false;
+	for (const auto& command : take.initial)
+	{
+		if (const auto* views = std::get_if<SetViewSettings>(&command))
+			initialViews = views->value.ipd == .06f;
+		if (const auto* profile = std::get_if<SetControllerProfile>(&command); profile && profile->hand == 0)
+			initialProfile = profile->path == "first";
+	}
+	for (const auto& transaction : take.transactions)
+		for (const auto& command : transaction.commands)
+		{
+			if (const auto* views = std::get_if<SetViewSettings>(&command))
+				changedViews |= views->value.ipd == .07f;
+			if (const auto* profile = std::get_if<SetControllerProfile>(&command); profile && profile->hand == 0)
+				changedProfile |= profile->path == "second";
+		}
+	Require(initialViews && initialProfile && changedViews && changedProfile,
+			"Cut take lost its recorded view/profile context or changes");
 	const auto initialBody = std::find_if(take.initial.begin(), take.initial.end(), [](const auto& command)
 										  { return std::holds_alternative<SetBodyControls>(command); });
 	Require(initialBody != take.initial.end() &&
@@ -208,7 +235,7 @@ void AppliedInputFeed()
 	bool refused = false;
 	try
 	{
-		TakeFromInput(headOnly, {});
+		TakeFromInput(headOnly);
 	}
 	catch (const std::invalid_argument&)
 	{

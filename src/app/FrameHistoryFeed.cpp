@@ -46,6 +46,8 @@ InputSample ReadInput(const control::Message& applied)
 	}
 	if (trackerSlots == (1u << trackers.size()) - 1)
 		sample.trackers = std::make_shared<const TrackerDevices>(trackers);
+	if (const auto* context = applied.Find(tag::InputContext))
+		sample.context = std::make_shared<const std::vector<std::byte>>(context->value);
 	sample.seed = U64(applied, tag::Seed);
 	const auto scenarios = U32(applied, tag::Scenario);
 	for (std::size_t index = 0; index < sample.scenarios.size(); ++index)
