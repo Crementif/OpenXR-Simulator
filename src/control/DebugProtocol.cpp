@@ -620,12 +620,23 @@ void EncodeFrameHistory(Message& response, const FrameHistorySnapshot& history, 
 {
 	std::vector<Field> frames;
 	frames.reserve(std::min(count, history.frames.size()));
+	std::size_t bytes = 0;
+	constexpr std::size_t budget = MaxPayload - 4096;
 	for (const auto& frame : history.frames)
 	{
 		if (frame->key.generation != history.generation || frame->key.frame.value <= after ||
 			frame->stage == FrameStage::Issued || frame->stage == FrameStage::Begun)
 			continue;
 		auto encoded = EncodeFrameMetadata(*frame);
+		// Each frame is one TLV; reserve room for the response metadata.
+		const auto size = encoded.value.size() + 8;
+		if (size > budget - bytes)
+		{
+			if (frames.empty())
+				throw std::length_error("Frame metadata exceeds the wire page budget");
+			break;
+		}
+		bytes += size;
 		encoded.tag = static_cast<std::uint16_t>(frames.size() + 1);
 		frames.push_back(std::move(encoded));
 		if (frames.size() == count)

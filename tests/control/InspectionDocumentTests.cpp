@@ -1,5 +1,7 @@
 #include "../TestSupport.h"
 #include "control/FrameInspection.h"
+#include "control/DebugProtocol.h"
+#include "control/ControlSchema.h"
 #include "simulation/TrackingSystem.h"
 
 #include <algorithm>
@@ -264,6 +266,41 @@ void DepthEncodingPreservesNonfiniteBits()
 	}
 }
 
+void FrameHistoryBytePages()
+{
+	FrameHistorySnapshot history;
+	history.generation = {1};
+	history.capacity = 128;
+	auto applied = std::make_shared<AppliedCommandSnapshot>();
+	for (auto& joint : applied->configuration.tracking.body.joints)
+		joint = BodyJointOverride{XrPosef{{0, 0, 0, 1}, {0, 0, 0}}, true};
+	auto frame = Fixture();
+	frame.submission->commands = applied;
+	for (std::uint64_t id = 1; id <= 128; ++id)
+	{
+		frame.key = {history.generation, {id}};
+		history.frames.push_back(std::make_shared<const FrameRecord>(frame));
+	}
+	std::uint64_t after = 0;
+	unsigned pages = 0;
+	while (after < 128)
+	{
+		Message response;
+		response.requestId = {1};
+		EncodeFrameHistory(response, history, after, 128);
+		Require(Encode(response).size() <= HeaderSize + MaxPayload, "Frame page exceeds wire budget");
+		const auto frames = DecodeFields(response.Find(tag::Frames)->value);
+		Require(frames.error == DecodeError::None && !frames.fields.empty(), "History page made no progress");
+		for (const auto& entry : frames.fields)
+		{
+			const auto fields = Fields(entry.value);
+			Require(Find(fields, tag::FrameId).AsU64() == ++after, "Frame pagination skipped or repeated history");
+			Require(!Find(fields, tag::AppliedInput).value.empty(), "Frame pagination dropped input metadata");
+		}
+		++pages;
+	}
+	Require(pages > 1, "Large frame history did not exercise byte pagination");
+}
 void ProjectionHistoryBoundaries()
 {
 	FrameHistorySnapshot history;
@@ -346,6 +383,7 @@ int main(int argc, char** argv)
 		FrameStateAndRevisions();
 		ArrayBoundaries();
 		ProjectionHistoryBoundaries();
+		FrameHistoryBytePages();
 		DepthEncodingPreservesNonfiniteBits();
 		std::cout << "Immutable inspection transactions, revision deduplication, reader capacity and historical state "
 					 "passed\n";
