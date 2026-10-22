@@ -431,7 +431,17 @@ struct WorkspacePanels::Impl
 		DrawToolbar(runtime);
 		ImGui::EndChild();
 		const bool compact = width / scale < 1100, overlay = width / scale < 800;
-		const float rail = previewExpanded ? 0 : (compact || settings.railCollapsed ? 48 : 176) * scale;
+		static constexpr const char* railLabels[] = {"Player", "Head",	   "Left",	  "Right",	  "Body",
+													 "Gaze",   "Trackers", "Headset", "Scenarios"};
+		// Pilot target keys shown beside the device rows when the rail has room for them.
+		static constexpr PilotAction railKeys[] = {PilotAction::TargetPlayer, PilotAction::TargetHead,
+												   PilotAction::TargetLeft, PilotAction::TargetRight};
+		float labelWidth = 0;
+		for (const auto* label : railLabels)
+			labelWidth = std::max(labelWidth, ImGui::CalcTextSize(label).x);
+		const float narrowRail = labelWidth + (ImGui::GetStyle().WindowPadding.x + 4 * scale) * 2;
+		const bool narrow = compact || settings.railCollapsed;
+		const float rail = previewExpanded ? 0 : narrow ? narrowRail : 176 * scale;
 		const float inspector =
 			previewExpanded ? 0 : std::min(settings.inspectorWidth, compact ? 320.0f : 520.0f) * scale;
 		const float timelineSize =
@@ -447,9 +457,6 @@ struct WorkspacePanels::Impl
 		{
 			ImGui::SetCursorPos({origin.x, top});
 			ImGui::BeginChild("Device rail", {rail, bodyHeight}, 0, ImGuiWindowFlags_NoScrollbar);
-			const char* labels[] = {"Player", "Head",	  "Left",	 "Right",	 "Body",
-									"Gaze",	  "Trackers", "Headset", "Scenarios"};
-			const char* icons[] = {"P", "1", "2", "3", "B", "G", "T", "H", "S"};
 			for (int index = 0; index < 9; ++index)
 			{
 				ImGui::PushID(index);
@@ -458,8 +465,7 @@ struct WorkspacePanels::Impl
 					selected = index == static_cast<int>(device->page);
 				if (const auto item = std::get_if<SessionItemSel>(&shell.selection))
 					selected = index == 7 + static_cast<int>(item->item);
-				if (ImGui::Selectable(compact || settings.railCollapsed ? icons[index] : labels[index], selected, 0,
-									  {0, 28 * scale}))
+				if (ImGui::Selectable(railLabels[index], selected, 0, {0, 28 * scale}))
 				{
 					if (index < 7)
 						shell.selection = DeviceSel{static_cast<DevicePage>(index)};
@@ -467,7 +473,19 @@ struct WorkspacePanels::Impl
 						shell.selection = SessionItemSel{static_cast<SessionItem>(index - 7)};
 					drawer = true;
 				}
-				ImGui::SetItemTooltip("%s", labels[index]);
+				if (index < 4)
+				{
+					const auto key = PilotBindingLabel(settings.pilotBindings[static_cast<std::size_t>(railKeys[index])]);
+					if (!narrow)
+					{
+						const auto size = ImGui::CalcTextSize(key.c_str());
+						const auto row = ImGui::GetItemRectMax();
+						ImGui::GetWindowDrawList()->AddText(
+							{row.x - size.x - 6 * scale, row.y - (28 * scale + size.y) / 2},
+							ImGui::GetColorU32(ImGuiCol_TextDisabled), key.c_str());
+					}
+					ImGui::SetItemTooltip("%s (pilot with %s)", railLabels[index], key.c_str());
+				}
 				ImGui::PopID();
 			}
 			ImGui::EndChild();

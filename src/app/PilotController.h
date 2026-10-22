@@ -23,6 +23,7 @@ class PilotController
 	void Stop(Window* window, ManualInputController& input, bool discard, bool forceButtons = false);
 	void DrawHelp() const;
 	bool DrawHud(ImVec2 imageMin, ImVec2 imageMax, ManualInputController& input);
+
 	bool Active() const
 	{
 		return m_captured || m_starting;
@@ -41,6 +42,7 @@ class PilotController
 	}
 
   private:
+	std::string KeyName(PilotAction action) const;
 	bool Down(PilotAction action) const;
 	bool Pressed(PilotAction action) const;
 	void Submit(ManualInputController& input, const ObservedSetup& observed, bool poseChanged,
