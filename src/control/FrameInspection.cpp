@@ -372,6 +372,7 @@ InspectionValue InspectBodyInput(const BodyControls& value)
 	return InspectionValue::Object({{"active", InspectionValue::Boolean(value.active)},
 									{"confidence", InspectionValue::Float(value.confidence)},
 									{"preset", InspectionValue::Text(preset)},
+									{"root_pose", value.rootPose ? InspectPose(*value.rootPose) : InspectionValue::Null()},
 									{"controls", InspectionValue::Array(std::move(controls))},
 									{"joint_overrides", InspectionValue::Array(std::move(joints))}});
 }

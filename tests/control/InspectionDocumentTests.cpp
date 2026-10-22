@@ -128,6 +128,7 @@ FrameRecord Fixture()
 	TrackingState input;
 	input.head.pose.position.x = 0.75f;
 	input.body.preset = BodyPreset::Seated;
+	input.body.rootPose = XrPosef{{0, 1, 0, 0}, {2, 3, 4}};
 	input.gaze.yaw = 0.2f;
 	state.tracking = tracking.Publish({119ns}, input);
 	{
@@ -209,12 +210,23 @@ void FrameStateAndRevisions()
 	const auto viewRevision = Unsigned(Member(first->document, "view_settings"));
 	const auto actionRevision = Unsigned(Member(Member(first->document, "actions"), "dictionary"));
 	const auto skeletonRevision = Unsigned(Member(Member(Member(first->document, "tracking"), "body"), "skeleton"));
+	const auto bodyRoot = [](const auto& document)
+	{
+		return Member(Member(Member(Member(document, "tracking"), "input"), "body"), "root_pose");
+	};
+	const auto root = bodyRoot(first->document);
+	Require(Find(Fields(Member(Member(root, "position"), "x")), 3).AsU32() == std::bit_cast<std::uint32_t>(2.f) &&
+			Find(Fields(Member(Member(root, "orientation"), "y")), 3).AsU32() == std::bit_cast<std::uint32_t>(1.f),
+			"Historical body root pose was not preserved");
 	const auto original = first->document;
 	frame.key.frame.value++;
 	frame.prediction.id = frame.key.frame;
 	frame.submission->input.controllers[0].trigger = 0.75f;
 	frame.submission->tracking->head.pose.position.x = -1;
+	frame.submission->tracking->input.body.rootPose.reset();
 	auto second = InspectFrame(store, {7}, frame);
+	Require(Find(Fields(bodyRoot(second->document)), 2).AsU32() == static_cast<std::uint32_t>(InspectionType::Null) &&
+			bodyRoot(first->document) == root, "Absent body root or retained historical pose changed");
 	Require(first->document == original && Unsigned(Member(second->document, "view_settings")) == viewRevision &&
 				Unsigned(Member(Member(second->document, "actions"), "dictionary")) == actionRevision &&
 				Unsigned(Member(Member(Member(second->document, "tracking"), "body"), "skeleton")) == skeletonRevision,
