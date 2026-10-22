@@ -283,6 +283,16 @@ XrResult LinuxRuntime::BeginSession(XrSession handle, const XrSessionBeginInfo* 
 	FrameSchedulerConfig config;
 	config.epoch = {Duration{session->owner->mode == ExecutionMode::Deterministic ? 1000000000LL : MonotonicTime()}};
 	config.mode = session->owner->mode;
+	if (const auto* text = std::getenv("SIMXR_APPLICATION_CADENCE"))
+	{
+		const std::string_view value{text};
+		if (value == "auto")
+			config.automaticCadence = true;
+		else if (value == "1" || value == "2")
+			config.cadence = value == "2" ? 2 : 1;
+		else
+			return XR_ERROR_VALIDATION_FAILURE;
+	}
 	std::uint64_t seed = 0;
 	if (const auto* text = std::getenv("SIMXR_SEED"))
 	{

@@ -7,8 +7,9 @@
 
 namespace simxr
 {
-VirtualDisplay::VirtualDisplay(std::shared_ptr<Clock> clock, std::size_t capacity, FrameHistory* history)
-	: m_clock(std::move(clock)), m_controller(capacity, history)
+VirtualDisplay::VirtualDisplay(std::shared_ptr<Clock> clock, std::size_t capacity, FrameHistory* history,
+							   PresentationController::CompletionObserver completed)
+	: m_clock(std::move(clock)), m_controller(capacity, history, std::move(completed))
 {
 	if (!m_clock)
 		throw std::invalid_argument("Missing virtual display clock");

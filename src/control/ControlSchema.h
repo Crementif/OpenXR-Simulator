@@ -90,7 +90,8 @@ enum class Capability : std::uint64_t
 	QuadImageHistory = 1ULL << 21,
 	PoseSequences = 1ULL << 22,
 	SnapshotPins = 1ULL << 23,
-	FrameHistory = 1ULL << 24
+	FrameHistory = 1ULL << 24,
+	RotationalReprojection = 1ULL << 25
 };
 
 // Wire values are explicit and independent of the core's enum representation.

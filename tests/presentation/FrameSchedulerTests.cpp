@@ -271,8 +271,72 @@ void PauseReservationBoundaryAndLimits()
 			"Rebase subtracted large virtual tick from host anchor and underflowed");
 }
 
+void AutomaticCadence()
+{
+	auto clock = std::make_shared<FakeClock>();
+	FrameScheduler scheduler(clock);
+	FrameSchedulerConfig config;
+	config.period = 10ms;
+	config.automaticCadence = true;
+	scheduler.Start(config, {7});
+	const auto frame = [&](bool slow)
+	{
+		FramePrediction prediction;
+		auto waiting = std::async(std::launch::async, [&] { return scheduler.WaitFrame(prediction); });
+		for (int attempts = 0; attempts < 500 && waiting.wait_for(1ms) != std::future_status::ready; ++attempts)
+			clock->Advance(1ms);
+		if (waiting.wait_for(0ms) != std::future_status::ready)
+			scheduler.Stop();
+		Require(waiting.get() == XR_SUCCESS, "Adaptive wait");
+		Require(scheduler.BeginFrame() == XR_SUCCESS, "Adaptive begin");
+		FramePrediction submitted;
+		Require(scheduler.EndFrame(submitted) == XR_SUCCESS, "Adaptive end");
+		const RuntimeTime observed{prediction.displayTime.value - prediction.displayPeriod + (slow ? 20ms : 10ms)};
+		scheduler.ObserveCompletion({{7}, prediction.id}, prediction, observed);
+		clock->Advance(30ms);
+		return prediction;
+	};
+	frame(true);
+	frame(true);
+	Require(scheduler.Snapshot().cadence == 1, "Cadence reacted before hysteresis threshold");
+	const auto old = frame(true);
+	Require(scheduler.Snapshot().cadence == 2 && old.displayPeriod == 10ms,
+			"Slow completion did not lower cadence or changed an issued prediction");
+	for (int i = 0; i < 29; ++i)
+	{
+		Require(frame(false).displayPeriod == 20ms, "Half-rate prediction changed before recovery");
+		if (i == 14)
+			frame(true); // Second-tick observation is neutral, not evidence that recovery was lost.
+	}
+	Require(scheduler.Snapshot().cadence == 2, "Recovery hysteresis ended early");
+	frame(false);
+	Require(scheduler.Snapshot().cadence == 1 && frame(false).displayPeriod == 10ms,
+			"Fast completions did not restore full cadence");
+	frame(true);
+	const auto pending = frame(true);
+	scheduler.Pause();
+	scheduler.ObserveCompletion({{7}, pending.id}, pending, {pending.displayTime.value + 100ms});
+	Require(scheduler.Resume(clock->Now(), scheduler.Snapshot().nextAdmission) == XR_SUCCESS, "Adaptive resume");
+	frame(true);
+	Require(scheduler.Snapshot().cadence == 1, "Pause retained stale hysteresis");
+	scheduler.Stop();
+	scheduler.Start(config, {8});
+	scheduler.ObserveCompletion({{7}, pending.id}, pending, {pending.displayTime.value + 100ms});
+	Require(scheduler.Snapshot().cadence == 1, "Old generation changed new cadence");
+	for (auto mode : {ExecutionMode::Deterministic, ExecutionMode::Unpaced})
+	{
+		scheduler.Stop();
+		config.mode = mode;
+		scheduler.Start(config, {7});
+		for (int i = 0; i < 4; ++i)
+			frame(true);
+		Require(scheduler.Snapshot().cadence == 1, "Virtual execution adapted to completion timing");
+	}
+}
+
 int main()
 {
+	AutomaticCadence();
 	HostElapsedOverflow();
 	ManualAdmission();
 	PauseDuringPacingAndRebase();

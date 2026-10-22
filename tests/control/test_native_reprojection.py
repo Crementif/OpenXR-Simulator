@@ -9,6 +9,7 @@ import time
 
 from test_native_quad import export, require, wait_file
 from simxr_control import Client
+from simxr_control.protocol import Capability
 
 
 def multiply(a, b):
@@ -79,6 +80,10 @@ def run(probe, policy):
             wait_file(data / 'control.ready', host)
             with Client(data / f'control.{host.pid}.sock') as client:
                 session, = client.sessions()
+                status = client.status(session)
+                require(status['capabilities'] & Capability.ROTATIONAL_REPROJECTION, status)
+                require(not client.hello['capabilities'] & Capability.ROTATIONAL_REPROJECTION,
+                        'Session-specific support must not be promised by Hello')
                 (data / 'control.continue').touch()
                 for frame in range(3, 7):
                     wait_file(data / f'rendering.{frame}.ready', host)

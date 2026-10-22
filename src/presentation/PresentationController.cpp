@@ -10,8 +10,8 @@
 
 namespace simxr
 {
-PresentationController::PresentationController(std::size_t capacity, FrameHistory* history)
-	: m_capacity(capacity), m_history(history)
+PresentationController::PresentationController(std::size_t capacity, FrameHistory* history, CompletionObserver completed)
+	: m_capacity(capacity), m_history(history), m_completed(std::move(completed))
 {
 	if (!capacity)
 		throw std::invalid_argument("Presentation queue requires capacity");
@@ -219,6 +219,12 @@ std::optional<PresentationTick> PresentationController::Advance(RuntimeTime now,
 				++entry;
 				continue;
 			}
+			if (!entry->completionReported && value->status == CompletionStatus::Complete &&
+				entry->submission.output && entry->submission.metadata)
+			{
+				entry->completionReported = true;
+				value->reportCompletion = true;
+			}
 			if (!entry->retiring && entry->submission.key.frame <= m_lastSelected)
 				entry->retiring = true;
 			if (value->status == CompletionStatus::Failed ||
@@ -250,6 +256,10 @@ std::optional<PresentationTick> PresentationController::Advance(RuntimeTime now,
 				FrameDiagnosticCategory::Timing, next.tick.value, detail);
 		}
 	}
+	if (m_completed)
+		for (const auto& value : observed)
+			if (value.reportCompletion)
+				m_completed(value.submission.key, value.submission.metadata->prediction, time);
 	return next;
 }
 

@@ -19,6 +19,7 @@ struct FrameSchedulerConfig
 	Duration period{11111111};
 	ExecutionMode mode = ExecutionMode::RealTime;
 	std::uint32_t cadence = 1;
+	bool automaticCadence = false;
 	std::optional<HostTime> hostEpoch;
 	std::uint32_t manualPermitLimit = 8;
 };
@@ -32,6 +33,7 @@ struct FramePipelineState
 	bool paused = false;
 	std::uint32_t permits = 0;
 	DisplayTick nextAdmission;
+	std::uint32_t cadence = 1;
 };
 
 class FrameScheduler
@@ -39,7 +41,8 @@ class FrameScheduler
   public:
 	explicit FrameScheduler(std::shared_ptr<Clock> clock = std::make_shared<SteadyClock>());
 	~FrameScheduler();
-	void Start(const FrameSchedulerConfig& config);
+	void Start(const FrameSchedulerConfig& config, SessionGeneration generation = {});
+	void ObserveCompletion(FrameKey key, const FramePrediction& prediction, RuntimeTime observed);
 	void Stop();
 	// Low-level admission controls. The caller owns command idempotence and must
 	// reserve capture capacity before granting permits. Pause preserves admitted
@@ -65,6 +68,10 @@ class FrameScheduler
 	mutable std::mutex m_mutex;
 	std::condition_variable m_changed;
 	FrameSchedulerConfig m_config;
+	SessionGeneration m_generation;
+	FrameId m_lastFeedback;
+	unsigned m_slowFrames = 0;
+	unsigned m_fastFrames = 0;
 	DisplayTimeline m_timeline;
 	HostTime m_hostEpoch{};
 	DisplayTick m_hostTick;

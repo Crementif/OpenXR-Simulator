@@ -135,7 +135,9 @@ XrResult VulkanSessionGraphics::ConfigureCapture()
 
 control::ImageCapabilities VulkanSessionGraphics::Capabilities() const noexcept
 {
-	return m_capabilities;
+	auto capabilities = m_capabilities;
+	capabilities.rotationalReprojection = SupportsReprojection();
+	return capabilities;
 }
 
 bool VulkanSessionGraphics::SupportsReprojection() const noexcept

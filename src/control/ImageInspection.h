@@ -18,6 +18,8 @@ struct ImageCapabilities
 {
 	bool gpuPreview = false;
 	bool imageExport = false;
+	// Session support; individual retained images do not advertise this capability.
+	bool rotationalReprojection = false;
 };
 
 struct ImageDeviceIdentity

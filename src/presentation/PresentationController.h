@@ -97,7 +97,10 @@ class PresentationController
 {
   public:
 	// The optional history must outlive this controller; tracing never takes its frame-record lock.
-	explicit PresentationController(std::size_t capacity = 8, FrameHistory* history = nullptr);
+	// Completion observers run after publication, outside presentation locks.
+	using CompletionObserver = std::function<void(FrameKey, const FramePrediction&, RuntimeTime)>;
+	explicit PresentationController(std::size_t capacity = 8, FrameHistory* history = nullptr,
+									CompletionObserver completed = {});
 	void Start(SessionGeneration generation, const DisplayTimeline& timeline);
 	// Reserve queue storage before committing frame state. The callback may throw
 	// but must not reenter this controller. It runs before publication to readers.
@@ -122,14 +125,17 @@ class PresentationController
 	{
 		PresentationSubmission submission;
 		bool retiring = false;
+		bool completionReported = false;
 	};
 	struct Observation
 	{
 		PresentationSubmission submission;
 		CompletionStatus status = CompletionStatus::Pending;
+		bool reportCompletion = false;
 	};
 	const std::size_t m_capacity;
 	FrameHistory* const m_history;
+	const CompletionObserver m_completed;
 	mutable std::mutex m_mutex;
 	bool m_running = false;
 	std::uint64_t m_revision = 0;

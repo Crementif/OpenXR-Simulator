@@ -20,7 +20,7 @@ FrameScheduler::~FrameScheduler()
 	Stop();
 }
 
-void FrameScheduler::Start(const FrameSchedulerConfig& config)
+void FrameScheduler::Start(const FrameSchedulerConfig& config, SessionGeneration generation)
 {
 	DisplayTimeline timeline(config.epoch, config.period);
 	if (config.cadence == 0 || config.cadence > 2 || !config.manualPermitLimit)
@@ -29,6 +29,9 @@ void FrameScheduler::Start(const FrameSchedulerConfig& config)
 	std::lock_guard lock(m_mutex);
 	++m_revision;
 	m_config = config;
+	m_generation = generation;
+	m_lastFeedback = {};
+	m_slowFrames = m_fastFrames = 0;
 	m_timeline = timeline;
 	m_hostEpoch = hostEpoch;
 	m_hostTick = {};
@@ -37,8 +40,45 @@ void FrameScheduler::Start(const FrameSchedulerConfig& config)
 	m_nextAdmission = {};
 	m_state = {};
 	m_state.running = true;
+	m_state.cadence = config.cadence;
 	m_clock->Wake();
 	m_changed.notify_all();
+}
+
+void FrameScheduler::ObserveCompletion(FrameKey key, const FramePrediction& prediction, RuntimeTime observed)
+{
+	std::lock_guard lock(m_mutex);
+	if (!m_state.running || m_state.paused || !m_config.automaticCadence ||
+		m_config.mode != ExecutionMode::RealTime || key.generation != m_generation ||
+		key.frame <= m_lastFeedback || key.frame != prediction.id || key.frame.value >= m_nextFrame)
+		return;
+	m_lastFeedback = key.frame;
+	if (prediction.displayPeriod != m_config.period * m_state.cadence ||
+		prediction.displayTime.value < prediction.displayPeriod)
+		return;
+	const auto admission = prediction.displayTime.value - prediction.displayPeriod;
+	if (observed.value < admission)
+		return;
+	const bool slow = observed.value - admission > m_config.period;
+	m_slowFrames = slow ? m_slowFrames + 1 : 0;
+	if (!slow)
+		++m_fastFrames;
+	else if (observed.value - admission > m_config.period * 2)
+		m_fastFrames = 0;
+	// Completion is observed at display ticks. At half rate, the second tick
+	// cannot distinguish slow work from polling jitter, so it is neutral.
+	// Three full-rate misses lower load; thirty first-tick completions recover.
+	if ((m_state.cadence == 1 && m_slowFrames >= 3) || (m_state.cadence == 2 && m_fastFrames >= 30))
+	{
+		m_state.cadence = m_state.cadence == 1 ? 2 : 1;
+		m_slowFrames = m_fastFrames = 0;
+		++m_policyRevision;
+		m_clock->Wake();
+		m_changed.notify_all();
+	}
+	// Bound counters even when a fixed half-rate workload stays slow indefinitely.
+	m_slowFrames = std::min(m_slowFrames, 3U);
+	m_fastFrames = std::min(m_fastFrames, 30U);
 }
 
 void FrameScheduler::Stop()
@@ -56,6 +96,8 @@ FramePipelineState FrameScheduler::Pause()
 	if (m_state.running && !m_state.paused)
 	{
 		m_state.paused = true;
+		m_lastFeedback = {m_nextFrame - 1};
+		m_slowFrames = m_fastFrames = 0;
 		m_state.permits = 0;
 		++m_policyRevision;
 		m_clock->Wake();
@@ -103,9 +145,9 @@ XrResult FrameScheduler::RebasePaused(DisplayTick boundary)
 	boundary = std::max(boundary, m_nextAdmission);
 	try
 	{
-		if (boundary.value > std::numeric_limits<std::uint64_t>::max() - m_config.cadence)
+		if (boundary.value > std::numeric_limits<std::uint64_t>::max() - m_state.cadence)
 			return XR_ERROR_RUNTIME_FAILURE;
-		m_timeline.TimeAt({boundary.value + m_config.cadence});
+		m_timeline.TimeAt({boundary.value + m_state.cadence});
 	}
 	catch (const std::overflow_error&)
 	{
@@ -128,9 +170,9 @@ XrResult FrameScheduler::Resume(HostTime anchor, DisplayTick boundary)
 	boundary = std::max(boundary, m_nextAdmission);
 	try
 	{
-		if (boundary.value > std::numeric_limits<std::uint64_t>::max() - m_config.cadence)
+		if (boundary.value > std::numeric_limits<std::uint64_t>::max() - m_state.cadence)
 			return XR_ERROR_RUNTIME_FAILURE;
-		m_timeline.TimeAt({boundary.value + m_config.cadence});
+		m_timeline.TimeAt({boundary.value + m_state.cadence});
 	}
 	catch (const std::overflow_error&)
 	{
@@ -140,6 +182,8 @@ XrResult FrameScheduler::Resume(HostTime anchor, DisplayTick boundary)
 	m_hostTick = boundary;
 	m_nextAdmission = boundary;
 	m_state.paused = false;
+	m_lastFeedback = {m_nextFrame - 1};
+	m_slowFrames = m_fastFrames = 0;
 	m_state.permits = 0;
 	++m_policyRevision;
 	m_clock->Wake();
@@ -193,11 +237,11 @@ XrResult FrameScheduler::WaitFrame(FramePrediction& prediction,
 					continue;
 			}
 			if (m_nextFrame == std::numeric_limits<std::uint64_t>::max() ||
-				admission.value > std::numeric_limits<std::uint64_t>::max() - m_config.cadence)
+				admission.value > std::numeric_limits<std::uint64_t>::max() - m_state.cadence)
 				throw std::overflow_error("Frame identities exhausted");
-			const DisplayTick display{admission.value + m_config.cadence};
+			const DisplayTick display{admission.value + m_state.cadence};
 			const FramePrediction candidate{
-				{m_nextFrame}, display, m_timeline.TimeAt(display), m_config.period * m_config.cadence};
+				{m_nextFrame}, display, m_timeline.TimeAt(display), m_config.period * m_state.cadence};
 			if (reserve)
 				reserve(candidate);
 			prediction = candidate;

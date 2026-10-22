@@ -475,10 +475,41 @@ void LiveClearMailbox()
 			"Invalid live-clear GPU owner was released under controller lock");
 }
 
+void CompletionFeedback()
+{
+	unsigned reports = 0;
+	PresentationController* reader = nullptr;
+	PresentationController controller(8, nullptr,
+		[&](FrameKey key, const FramePrediction& prediction, RuntimeTime observed)
+		{
+			Require(key.frame == prediction.id && observed == RuntimeTime{Duration{110}}, "Completion feedback identity/time");
+			reader->Snapshot(); // Callback must be outside the presentation lock.
+			++reports;
+		});
+	reader = &controller;
+	controller.Start({1}, {{Duration{100}}, Duration{10}});
+	auto output = std::make_shared<Output>();
+	auto submission = Submission(1, 120, output);
+	auto record = std::make_shared<FrameRecord>();
+	record->prediction = {{1}, {2}, {Duration{120}}, Duration{20}};
+	submission.metadata = record;
+	Require(controller.Submit(submission) == PresentationAdmission::Accepted, "Feedback admission");
+	controller.Advance({Duration{100}});
+	Require(reports == 0, "Pending GPU work reported complete");
+	output->state = CompletionStatus::Complete;
+	const auto early = controller.Advance({Duration{110}});
+	Require(reports == 1 && early && early->kind == PresentationKind::Empty,
+			"Completion was delayed until display selection");
+	controller.Advance({Duration{120}});
+	controller.Advance({Duration{130}});
+	Require(reports == 1, "Selected/repeated frame duplicated completion feedback");
+}
+
 } // namespace
 
 int main()
 {
+	CompletionFeedback();
 	ReprojectionOwnership();
 	DisplayHistory();
 	Selection();

@@ -103,6 +103,7 @@ class Capability(IntFlag):
     IMAGE_WINDOW = 1 << 20
     QUAD_IMAGE_HISTORY = 1 << 21
     POSE_SEQUENCES = 1 << 22
+    ROTATIONAL_REPROJECTION = 1 << 25
 
 
 class CommandKind(IntEnum):

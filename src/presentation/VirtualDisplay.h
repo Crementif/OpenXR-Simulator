@@ -17,7 +17,7 @@ class VirtualDisplay
 {
   public:
 	explicit VirtualDisplay(std::shared_ptr<Clock> clock = std::make_shared<SteadyClock>(), std::size_t capacity = 8,
-							FrameHistory* history = nullptr);
+							FrameHistory* history = nullptr, PresentationController::CompletionObserver completed = {});
 	~VirtualDisplay();
 	VirtualDisplay(const VirtualDisplay&) = delete;
 	VirtualDisplay& operator=(const VirtualDisplay&) = delete;

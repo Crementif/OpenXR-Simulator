@@ -727,7 +727,8 @@ void CapabilityAndValidation()
 							 static_cast<std::uint64_t>(wire::Capability::GpuPreview) |
 							 static_cast<std::uint64_t>(wire::Capability::ImageExport) |
 							 static_cast<std::uint64_t>(wire::Capability::FullFrameState) |
-							 static_cast<std::uint64_t>(wire::Capability::DepthCapture);
+							 static_cast<std::uint64_t>(wire::Capability::DepthCapture) |
+							 static_cast<std::uint64_t>(wire::Capability::RotationalReprojection);
 	Require((U64(status, wire::tag::Capabilities) & unsupported) == 0,
 			"Unconfigured backend advertised unavailable images or omitted full state");
 	const auto unknown = client.Submit(1, static_cast<wire::CommandKind>(0xffffffff));

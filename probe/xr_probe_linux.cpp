@@ -841,7 +841,7 @@ static int runProbe()
         if (std::getenv("SIMXR_PROBE_RENDER_GATE"))
         {
             const auto gate = "rendering." + std::to_string(frame + 3);
-            std::ofstream(data / (gate + ".ready")).put('1');
+            std::ofstream(data / (gate + ".ready")) << fs.predictedDisplayPeriod << ' ' << fs.predictedDisplayTime;
             const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
             while (!std::filesystem::exists(data / (gate + ".continue")))
             {

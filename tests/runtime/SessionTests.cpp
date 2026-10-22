@@ -468,13 +468,14 @@ void TestCaptureConfigurationOwnership()
 		FramePool pool(1);
 		if (!accepted)
 			Require(session->ConfigureCapturePool(pool) == XR_SUCCESS, "Configure first capture pool");
+		const auto expectedCapacity = session->Captures().Snapshot().capacity;
 		bool destroyed = false;
 		auto reader = std::make_shared<CaptureOutput>(nullptr);
 		reader->destroy = [&]
 		{
 			const auto state = session->Snapshot();
 			Require(state.closed == accepted && session->SupportsCapture() == !accepted &&
-						session->Captures().Snapshot().capacity == 32,
+						session->Captures().Snapshot().capacity == expectedCapacity,
 					"Configuration's last reader reentered an inconsistent or locked capture owner");
 			destroyed = true;
 		};

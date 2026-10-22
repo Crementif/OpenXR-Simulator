@@ -530,6 +530,8 @@ class ControlService::State
 			{
 				const auto native = m_images->Capabilities(binding.handle);
 				capabilities |= ImageCapabilitiesMask(native, client.nativeHandles);
+				if (native.rotationalReprojection)
+					capabilities |= static_cast<std::uint64_t>(Capability::RotationalReprojection);
 				if (client.requests.Minor() >= 3 && (native.gpuPreview || native.imageExport))
 					capabilities |= static_cast<std::uint64_t>(Capability::LivePreview);
 			}
