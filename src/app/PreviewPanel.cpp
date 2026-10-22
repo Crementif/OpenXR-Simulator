@@ -157,11 +157,12 @@ void PreviewPanel::DrawImage(ShellState& shell, const RuntimeView& view, bool& p
 		}
 		if (eyes)
 		{
-			if (m_slice == -1)
+			const bool both = m_slice == -1;
+			if (both)
 				ImGui::PushStyleColor(ImGuiCol_Button, theme::Mix(theme::SurfaceRaised, theme::Accent, .45f));
 			if (ImGui::SmallButton("Both"))
 				m_slice = -1;
-			if (m_slice == -1)
+			if (both)
 				ImGui::PopStyleColor();
 		}
 	}

@@ -28,6 +28,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <iostream>
+#include <set>
 #include <sstream>
 
 namespace
@@ -1965,9 +1966,111 @@ void CheckLayouts(Interaction& test, const std::filesystem::path& qa)
 	test.window.Resize(1280, 800);
 	test.workspace.SetScale(1);
 	pump(4);
+	// Switching eyes, including to Both and back (D12: Both aborted on a style pop).
+	for (const char* eye : {"Both", "Right", "Both", "Left"})
+	{
+		ImGui::ActivateItemByID(FindPanel("GPU preview")->GetID(eye));
+		pump(4);
+	}
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Validation errors in layout capture");
 	std::cout << "PASS connected layouts at four sizes and the overlay drawer\n";
+}
+
+// D12 feedback: ImGui reports duplicate IDs only for the hovered item, so sweep the pointer
+// over every page (the Frame page with its value sections open) and collect conflicts.
+void CheckIdConflicts(Interaction& test)
+{
+	const auto pump = [&](int count)
+	{
+		for (int index = 0; index < count; ++index)
+		{
+			test.Frame();
+			SDL_Delay(5);
+		}
+	};
+	const auto move = [&](ImVec2 point)
+	{
+		SDL_Event event{};
+		event.type = SDL_EVENT_MOUSE_MOTION;
+		event.motion.windowID = SDL_GetWindowID(test.window.Native());
+		event.motion.x = point.x;
+		event.motion.y = point.y;
+		Require(SDL_PushEvent(&event), "Push sweep motion");
+	};
+	std::set<std::string> conflicts;
+	const auto sweep = [&](const char* page, const char* region)
+	{
+		const auto* window = FindPanel(region);
+		if (!window)
+			return;
+		const auto min = window->Rect().Min, max = window->Rect().Max;
+		for (float y = min.y + 2; y < max.y; y += 10)
+			for (float x = min.x + 4; x < max.x; x += 22)
+			{
+				move({x, y});
+				test.Frame();
+				const auto& g = *ImGui::GetCurrentContext();
+				if (g.DebugDrawIdConflictsId)
+				{
+					const char* window = g.HoveredWindow ? g.HoveredWindow->Name : "?";
+					conflicts.insert(std::string(page) + " in " + window + " at " + std::to_string(int(x)) + "," +
+									 std::to_string(int(y)));
+				}
+			}
+	};
+	test.window.Resize(1280, 800);
+	test.workspace.SetScale(1);
+	const std::array<Selection, 10> pages{DeviceSel{DevicePage::Player},	DeviceSel{DevicePage::Head},
+										  DeviceSel{DevicePage::Left},		DeviceSel{DevicePage::Right},
+										  DeviceSel{DevicePage::Body},		DeviceSel{DevicePage::Gaze},
+										  DeviceSel{DevicePage::Trackers},	SessionItemSel{SessionItem::Headset},
+										  SessionItemSel{SessionItem::Scenarios}, LibrarySel{}};
+	// Conflicts hide inside sections that start closed, so open every section a page may have.
+	const auto openSections = [&]
+	{
+		for (const char* region : {"Inspector", "Head details", "Hand details", "Configuration details"})
+			if (auto* window = FindPanel(region))
+				for (const char* header : {"Exact pose", "Connection and profile", "Output", "Advanced connection",
+										   "Advanced stepping"})
+					window->StateStorage.SetInt(window->GetID(header), 1);
+		pump(3);
+	};
+	for (std::size_t page = 0; page < pages.size(); ++page)
+	{
+		test.workspace.Select(pages[page]);
+		pump(4);
+		openSections();
+		sweep(("page " + std::to_string(page)).c_str(), "Inspector");
+	}
+	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Pause"));
+	Eventually([&] { pump(1); return test.runtime.Snapshot().manual; }, "Sweep pause");
+	test.workspace.Select(FrameSel{test.runtime.Snapshot().time.cursor, test.runtime.Snapshot().time.epoch});
+	pump(30);
+	auto* inspector = FindPanel("Inspector");
+	for (const char* header : {"All input values", "Input owners and commands", "All actions and bindings", "Layers",
+							   "Timing", "Raw"})
+	{
+		auto* details = FindPanel("Frame details");
+		ImGui::ActivateItemByID((details ? details : inspector)->GetID(header));
+		pump(3);
+	}
+	if (auto* details = FindPanel("Frame details"))
+		details->StateStorage.SetInt(details->GetID("Export image"), 1);
+	pump(3);
+	sweep("frame page", "Inspector");
+	if (auto* details = FindPanel("Frame details"))
+	{
+		ImGui::ActivateItemByID(details->GetID("Open in window"));
+		pump(4);
+		sweep("raw window", "Raw metadata");
+	}
+	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Continue"));
+	pump(4);
+	for (const auto& conflict : conflicts)
+		std::cout << "ID conflict: " << conflict << '\n';
+	Require(conflicts.empty(), "Duplicate ImGui IDs on a page");
+	std::cout << "PASS no duplicate IDs under the pointer on any page\n";
 }
 
 // D10: record, stop, name, replay and cancel with only Rec, the stop popover and the Library.
@@ -2422,6 +2525,8 @@ void CheckToolbarLaunch(const char* executable)
 		CheckLibrary(test, directory);
 	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"); qa && std::getenv("SIMXR_LAYOUT_QA"))
 		CheckLayouts(test, qa);
+	if (std::getenv("SIMXR_ID_QA"))
+		CheckIdConflicts(test);
 	if (std::getenv("SIMXR_INPUT_QA"))
 		CheckManualEdges(state);
 	if (std::getenv("SIMXR_RIG_QA"))

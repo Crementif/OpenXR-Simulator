@@ -138,7 +138,7 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 			ImGui::InputTextWithHint("##Image file", "File (.ppm or .rgba)", m_exportFile.data(), m_exportFile.size());
 			ImGui::BeginDisabled(!image->reader || image->scope.epoch != m_session.Epoch() ||
 								 m_session.Exports().Busy());
-			if (ImGui::Button("Export image"))
+			if (ImGui::Button("Export"))
 				m_session.RequestExport(m_exportFile.data());
 			ImGui::EndDisabled();
 			if (!m_session.Exports().Detail().empty())
