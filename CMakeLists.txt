@@ -698,6 +698,13 @@ if(SIMXR_BUILD_PROBES)
                             ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1;SIMXR_PROBE_DEPTH_FORMAT=${depth_format}"
                             TIMEOUT 90 SKIP_RETURN_CODE 77)
                     endforeach()
+                    add_test(NAME linux_vulkan_msaa_sources COMMAND "${Python3_EXECUTABLE}"
+                        "${PROJECT_SOURCE_DIR}/tests/control/test_native_quad.py" "$<TARGET_FILE:xr_probe_linux>")
+                    add_test(NAME linux_vulkan_msaa_reprojection COMMAND "${Python3_EXECUTABLE}"
+                        "${PROJECT_SOURCE_DIR}/tests/control/test_native_reprojection.py" "$<TARGET_FILE:xr_probe_linux>")
+                    set_tests_properties(linux_vulkan_msaa_sources linux_vulkan_msaa_reprojection PROPERTIES
+                        ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_PROBE_MSAA=1"
+                        TIMEOUT 90 SKIP_RETURN_CODE 77)
                     add_test(NAME linux_vulkan_mip_reprojection COMMAND "${Python3_EXECUTABLE}"
                         "${PROJECT_SOURCE_DIR}/tests/control/test_native_reprojection.py" "$<TARGET_FILE:xr_probe_linux>")
                     set_tests_properties(linux_vulkan_mip_reprojection PROPERTIES

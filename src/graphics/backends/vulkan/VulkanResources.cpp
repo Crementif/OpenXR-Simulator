@@ -9,10 +9,12 @@ namespace simxr
 VulkanImage::VulkanImage(std::shared_ptr<VulkanDevice> owner) : device(std::move(owner)) {}
 
 std::shared_ptr<VulkanImage> VulkanImage::Create(std::shared_ptr<VulkanDevice> device, VkFormat format,
-												 VkExtent2D extent, std::uint32_t layers, VkImageUsageFlags usage, std::uint32_t mipLevels)
+												 VkExtent2D extent, std::uint32_t layers, VkImageUsageFlags usage, std::uint32_t mipLevels, VkSampleCountFlagBits samples)
 {
 	if (!device || !extent.width || !extent.height || !layers || !usage || !mipLevels ||
-		mipLevels > std::bit_width(std::max(extent.width, extent.height)))
+		mipLevels > std::bit_width(std::max(extent.width, extent.height)) ||
+		!std::has_single_bit(static_cast<std::uint32_t>(samples)) ||
+		(samples != VK_SAMPLE_COUNT_1_BIT && mipLevels != 1))
 		throw std::invalid_argument("Vulkan image requires device, extent, layers and usage");
 	VkImageFormatProperties supported{};
 	CheckVulkan(vkGetPhysicalDeviceImageFormatProperties(device->binding.physicalDevice, format, VK_IMAGE_TYPE_2D,
@@ -20,13 +22,14 @@ std::shared_ptr<VulkanImage> VulkanImage::Create(std::shared_ptr<VulkanDevice> d
 				"Query Vulkan image format and usage");
 	if (extent.width > supported.maxExtent.width || extent.height > supported.maxExtent.height ||
 		layers > supported.maxArrayLayers || mipLevels > supported.maxMipLevels ||
-		!(supported.sampleCounts & VK_SAMPLE_COUNT_1_BIT))
+		!(supported.sampleCounts & samples))
 		throw VulkanError(VK_ERROR_FORMAT_NOT_SUPPORTED, "Vulkan image extent or layers unsupported");
 	auto result = std::shared_ptr<VulkanImage>(new VulkanImage(std::move(device)));
 	result->format = format;
 	result->extent = extent;
 	result->layers = layers;
 	result->mipLevels = mipLevels;
+	result->samples = samples;
 	result->usage = usage;
 	VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
 	image.imageType = VK_IMAGE_TYPE_2D;
@@ -34,7 +37,7 @@ std::shared_ptr<VulkanImage> VulkanImage::Create(std::shared_ptr<VulkanDevice> d
 	image.extent = {extent.width, extent.height, 1};
 	image.mipLevels = mipLevels;
 	image.arrayLayers = layers;
-	image.samples = VK_SAMPLE_COUNT_1_BIT;
+	image.samples = samples;
 	image.tiling = VK_IMAGE_TILING_OPTIMAL;
 	image.usage = usage;
 	CheckVulkan(vkCreateImage(result->device->binding.device, &image, nullptr, &result->image),

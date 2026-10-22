@@ -63,6 +63,7 @@ struct VulkanReadbackBatch::Native
 		VkBuffer buffer = VK_NULL_HANDLE;
 		VkDeviceMemory memory = VK_NULL_HANDLE;
 		std::size_t bytes = 0;
+		std::shared_ptr<VulkanImage> resolved;
 	};
 	VulkanNativePreservation<Native, 4>::Reservation preservation{
 		"Four explicit readback batches are retained across all application devices"};
@@ -157,8 +158,29 @@ void VulkanReadbackBatch::Record(std::span<const VulkanReadbackRegion> regions)
 		copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, region.layer, 1};
 		copy.imageOffset = {region.offset.x, region.offset.y, 0};
 		copy.imageExtent = {region.extent.width, region.extent.height, 1};
-		vkCmdCopyImageToBuffer(m_native->command, region.image->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-							   m_native->sources[index].buffer, 1, &copy);
+		auto sourceImage = region.image->image;
+		if (region.image->samples != VK_SAMPLE_COUNT_1_BIT)
+		{
+			auto& resolved = m_native->sources[index].resolved;
+			resolved = VulkanImage::Create(device, region.image->format, region.extent, 1,
+				VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+			VulkanImageBarrier(m_native->command, *resolved, VK_IMAGE_LAYOUT_UNDEFINED,
+				VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+			VkImageResolve resolve{};
+			resolve.srcSubresource = copy.imageSubresource;
+			resolve.srcOffset = copy.imageOffset;
+			resolve.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+			resolve.extent = copy.imageExtent;
+			vkCmdResolveImage(m_native->command, region.image->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				resolved->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &resolve);
+			VulkanImageBarrier(m_native->command, *resolved, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+				VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+			sourceImage = resolved->image;
+			copy.imageSubresource.baseArrayLayer = 0;
+			copy.imageOffset = {};
+		}
+		vkCmdCopyImageToBuffer(m_native->command, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			m_native->sources[index].buffer, 1, &copy);
 		VulkanImageBarrier(m_native->command, *region.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
 						   region.image->ApplicationLayout(), VK_ACCESS_TRANSFER_READ_BIT,
 						   VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);

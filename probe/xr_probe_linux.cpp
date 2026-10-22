@@ -648,6 +648,7 @@ static int runProbe()
     chain.sampleCount = chain.faceCount = chain.mipCount = 1;
     const uint32_t mipLevels = std::getenv("SIMXR_PROBE_MIPS") ? 4 : 1;
     chain.mipCount = mipLevels;
+    chain.sampleCount = std::getenv("SIMXR_PROBE_MSAA") ? 4 : 1;
     chain.width = 64;
     chain.height = 48;
     chain.arraySize = activeViewCount;
@@ -704,6 +705,7 @@ static int runProbe()
         ((depthFormat == VK_FORMAT_D24_UNORM_S8_UINT || depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT) ?
             VK_IMAGE_ASPECT_STENCIL_BIT : 0);
     chain.format = depthFormat;
+    chain.sampleCount = 1;
     chain.mipCount = 1;
     chain.usageFlags = XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
     XrSwapchain depth;

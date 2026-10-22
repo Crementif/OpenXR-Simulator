@@ -27,9 +27,12 @@ XrResult ValidateDescription(const XrSwapchainCreateInfo& description, const Vul
 		XR_SWAPCHAIN_USAGE_UNORDERED_ACCESS_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT |
 		XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
 	if ((description.createFlags & ~XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) ||
-		(description.usageFlags & ~SupportedUsage) || description.sampleCount != 1 ||
+		(description.usageFlags & ~SupportedUsage) ||
 		description.faceCount != 1)
 		return XR_ERROR_FEATURE_UNSUPPORTED;
+	if (!std::has_single_bit(description.sampleCount) || description.sampleCount > 64 ||
+		(description.sampleCount != 1 && description.mipCount != 1))
+		return XR_ERROR_VALIDATION_FAILURE;
 	VkPhysicalDeviceProperties properties{};
 	vkGetPhysicalDeviceProperties(device.binding.physicalDevice, &properties);
 	if (description.width > properties.limits.maxImageDimension2D ||
@@ -91,13 +94,14 @@ XrResult VulkanSwapchain::Create(VulkanBackend& backend, const XrSwapchainCreate
 			static_cast<VkFormat>(description.format), VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
 			usage | VK_IMAGE_USAGE_SAMPLED_BIT, 0, &properties) == VK_SUCCESS &&
 			description.width <= properties.maxExtent.width && description.height <= properties.maxExtent.height &&
-			description.arraySize <= properties.maxArrayLayers && (properties.sampleCounts & VK_SAMPLE_COUNT_1_BIT))
+			description.arraySize <= properties.maxArrayLayers && (properties.sampleCounts & description.sampleCount))
 			usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
 	}
 	for (auto& image : prepared->m_images)
 		image.resource =
 			backend.CreateImage(static_cast<VkFormat>(description.format), {description.width, description.height},
-								description.arraySize, usage, description.mipCount);
+								description.arraySize, usage, description.mipCount,
+								static_cast<VkSampleCountFlagBits>(description.sampleCount));
 	output = std::move(prepared);
 	return XR_SUCCESS;
 }
