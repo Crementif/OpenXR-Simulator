@@ -1,4 +1,5 @@
 #include "Math.h"
+#include "app/Theme.h"
 #include "app/widgets/SpatialWidgets.h"
 #include <algorithm>
 #include <cmath>
@@ -26,7 +27,7 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 	const auto minimum = ImGui::GetCursorScreenPos();
 	const ImVec2 maximum{minimum.x + size.x, minimum.y + size.y};
 	auto* draw = ImGui::GetWindowDrawList();
-	draw->AddRectFilled(minimum, maximum, IM_COL32(20, 26, 33, 255), 5 * scale);
+	draw->AddRectFilled(minimum, maximum, theme::Bg, theme::Radius * scale);
 	ImGui::PushID(id);
 	ImGui::SetCursorScreenPos({minimum.x + 5 * scale, minimum.y + 5 * scale});
 	if (ImGui::SmallButton("Top"))
@@ -77,14 +78,14 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 	for (int cell = -3; cell <= 3; ++cell)
 	{
 		const auto root = scene.root.position;
-		line({root.x + cell, root.y, root.z - 3}, {root.x + cell, root.y, root.z + 3}, IM_COL32(62, 76, 89, 160));
-		line({root.x - 3, root.y, root.z + cell}, {root.x + 3, root.y, root.z + cell}, IM_COL32(62, 76, 89, 160));
+		line({root.x + cell, root.y, root.z - 3}, {root.x + cell, root.y, root.z + 3}, theme::Fade(theme::Line, .9f));
+		line({root.x - 3, root.y, root.z + cell}, {root.x + 3, root.y, root.z + cell}, theme::Fade(theme::Line, .9f));
 	}
-	line({-.1f, 0, 0}, {.1f, 0, 0}, IM_COL32(200, 200, 200, 255));
-	line({0, 0, -.1f}, {0, 0, .1f}, IM_COL32(200, 200, 200, 255));
-	line({}, {.3f, 0, 0}, IM_COL32(225, 74, 83, 255), 2);
-	line({}, {0, .3f, 0}, IM_COL32(83, 220, 118, 255), 2);
-	line({}, {0, 0, -.3f}, IM_COL32(74, 140, 235, 255), 2);
+	line({-.1f, 0, 0}, {.1f, 0, 0}, theme::TextDim);
+	line({0, 0, -.1f}, {0, 0, .1f}, theme::TextDim);
+	line({}, {.3f, 0, 0}, theme::AxisX, 2);
+	line({}, {0, .3f, 0}, theme::AxisY, 2);
+	line({}, {0, 0, -.3f}, theme::AxisZ, 2);
 	const auto renderScene = [&](const SpatialScene& value, float alpha)
 	{
 		for (std::size_t joint = 0; joint < BodyJointCount; ++joint)
@@ -93,7 +94,7 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 			if (sample.flags && value.body.skeleton[joint].parent)
 				line(sample.pose.position,
 					 value.body.joints[static_cast<std::size_t>(*value.body.skeleton[joint].parent)].pose.position,
-					 IM_COL32(118, 140, 156, static_cast<int>(alpha * 190)));
+					 theme::Fade(theme::TextDim, alpha * .75f));
 		}
 		const auto renderDevice = [&](int device)
 		{
@@ -148,7 +149,7 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 			renderDevice(selected);
 		if (value.gaze)
 			line(value.gaze->position, Compose(*value.gaze, {{0, 0, 0, 1}, {0, 0, -1}}).position,
-				 IM_COL32(230, 198, 83, static_cast<int>(alpha * 180)));
+				 theme::Fade(theme::Warn, alpha * .7f));
 	};
 	if (ghost)
 		renderScene(*ghost, .3f);

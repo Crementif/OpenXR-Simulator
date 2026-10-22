@@ -85,6 +85,7 @@ void RuntimeSession::ScopeChanged()
 	m_scopeChanged = true;
 	m_manualInput.SetTarget({});
 	m_observation = 0;
+	m_setup.reset();
 	m_input = {};
 	m_followOnResume = m_stepRequested = false;
 	m_stepped.reset();
@@ -141,6 +142,16 @@ void RuntimeSession::Poll(bool piloting)
 		{
 			m_observation = m_input.observation;
 			m_observationChanged = true;
+			m_setup.reset();
+			if (m_input.state.Find(tag::Document))
+				try
+				{
+					m_setup = ReadObservedSetup(m_input.state);
+				}
+				catch (const std::exception&)
+				{
+					// The runtime has not published its device configuration yet.
+				}
 		}
 		if (!m_input.error.empty() && m_input.error != previousError)
 			Notify("Input rejected", m_input.error);
@@ -572,6 +583,7 @@ RuntimeView RuntimeSession::View() const
 	view.captures = m_workspace.Captures().size();
 	view.images = m_preview.ReadyCount();
 	view.appliedPilotUpdates = m_input.appliedPoses;
+	view.setup = m_setup;
 	view.pending = m_requests.Pending() || m_exports.Busy();
 	view.error = !m_failure.empty()								 ? m_failure
 				 : connection.state == RuntimeConnectionState::Failed ? connection.detail

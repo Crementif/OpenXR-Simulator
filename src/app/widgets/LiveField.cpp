@@ -1,4 +1,5 @@
 #include "app/widgets/LiveField.h"
+#include "app/Theme.h"
 #include <imgui.h>
 namespace simxr::app
 {
@@ -15,7 +16,7 @@ void DrawLiveField(bool pending, std::string_view rejection)
 	}
 	if (!rejection.empty())
 	{
-		ImGui::GetWindowDrawList()->AddRect(minimum, maximum, IM_COL32(229, 72, 77, 255));
+		ImGui::GetWindowDrawList()->AddRect(minimum, maximum, theme::Record);
 		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
 			ImGui::SetTooltip("%.*s", static_cast<int>(rejection.size()), rejection.data());
 	}

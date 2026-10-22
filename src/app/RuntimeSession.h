@@ -152,6 +152,7 @@ class RuntimeSession
 	ManualInputSnapshot m_input;
 	TimeCursor m_time;
 	std::optional<SteppedFrame> m_stepped;
+	std::optional<ObservedSetup> m_setup;
 	std::vector<HistoryFrame> m_coverage;
 	std::vector<Notice> m_notices;
 	std::vector<std::string> m_endpoints;

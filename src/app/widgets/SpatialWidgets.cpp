@@ -1,4 +1,5 @@
 #include "app/widgets/SpatialWidgets.h"
+#include "app/Theme.h"
 #include "Math.h"
 #include <ImGuizmo.h>
 #include <cmath>
@@ -8,11 +9,8 @@ namespace simxr::app
 {
 ImU32 DeviceColor(int device, float alpha)
 {
-	const ImVec4 color = device == 1   ? ImVec4{.24f, .75f, .94f, alpha}
-						 : device == 2 ? ImVec4{.96f, .55f, .30f, alpha}
-						 : device == 0 ? ImVec4{.82f, .84f, .88f, alpha}
-									   : ImVec4{.72f, .55f, .91f, alpha};
-	return ImGui::ColorConvertFloat4ToU32(color);
+	const auto color = device == 1 ? theme::Left : device == 2 ? theme::Right : device == 0 ? theme::Text : theme::Head;
+	return theme::Fade(color, alpha);
 }
 void CancelPoseGizmo(GizmoState& state)
 {

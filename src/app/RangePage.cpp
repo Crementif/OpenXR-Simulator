@@ -120,7 +120,7 @@ void RangePage::Draw(const RangeSel& range, ShellState& shell)
 	}
 	ImGui::Text("%.3f seconds / %zu frames", history.At(*last).seconds - history.At(*first).seconds,
 				*last - *first + 1);
-	ImGui::TextDisabled("Device activity not recorded yet");
+	ImGui::TextDisabled("Device activity not recorded for these frames");
 	ImGui::BeginDisabled();
 	ImGui::Button("Save as take");
 	ImGui::EndDisabled();

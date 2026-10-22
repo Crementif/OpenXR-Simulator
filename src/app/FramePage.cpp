@@ -52,18 +52,16 @@ std::vector<std::vector<std::byte>> InspectionElements(std::span<const std::byte
 				elements.push_back(item.value);
 	return elements;
 }
-const char* OwnerName(const std::optional<CommandSource>& source)
+const char* OwnerName(const CommandSource& source)
 {
-	if (!source)
-		return "Nobody";
-	switch (source->kind)
+	switch (source.kind)
 	{
 	case CommandSourceKind::Manual:
 		return "You";
 	case CommandSourceKind::Rig:
 		return "Script";
 	case CommandSourceKind::Sequence:
-		return "Sequence";
+		return "Replay";
 	default:
 		return "MCP";
 	}
@@ -185,7 +183,8 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 				for (const auto& [label, channel] : {std::pair{"Head", ControlChannel::Head},
 													{"Left", ControlChannel::LeftControls},
 													{"Right", ControlChannel::RightControls}})
-					ImGui::Text("%s driven by %s", label, OwnerName(setup.owners[static_cast<std::size_t>(channel)]));
+					if (const auto& owner = setup.owners[static_cast<std::size_t>(channel)])
+						ImGui::Text("%s driven by %s", label, OwnerName(*owner));
 			}
 			else
 				workspace.RequestRevision(revisionId, documentEpoch);

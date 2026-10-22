@@ -1,4 +1,6 @@
 #include "app/RigPanel.h"
+#include "app/Theme.h"
+#include "app/widgets/Controls.h"
 #include "app/LaunchAttachment.h"
 #include "app/RuntimePanels.h"
 #include "app/Utf8Path.h"
@@ -229,9 +231,11 @@ struct RigPanel::Impl
 		ImGui::Text("%s / %llu / %llu", PhaseName(state.phase), static_cast<unsigned long long>(state.transactions),
 					static_cast<unsigned long long>(state.captures));
 		if (!boundEndpoint.empty())
-			ImGui::TextWrapped("Bound to %s / session %llu / run %llu", boundEndpoint.c_str(),
-							   static_cast<unsigned long long>(boundSession),
-							   static_cast<unsigned long long>(boundGeneration));
+		{
+			ImGui::TextDisabled("Bound to %s", std::filesystem::path(boundEndpoint).filename().string().c_str());
+			ImGui::SetItemTooltip("Session %llu, run %llu", static_cast<unsigned long long>(boundSession),
+								  static_cast<unsigned long long>(boundGeneration));
+		}
 		if (Active(state.phase) && (current.endpoint != boundEndpoint || current.session != boundSession ||
 									current.generation != boundGeneration))
 			ImGui::TextUnformatted("Different session");
@@ -272,8 +276,7 @@ struct RigPanel::Impl
 		ImGui::EndDisabled();
 #else
 		(void)runtime;
-		ImGui::TextWrapped(
-			"This build has no Luau automation support. Build with SIMXR_BUILD_AUTOMATION to enable scripts.");
+		ImGui::TextDisabled("Scripts need a Luau-enabled build");
 #endif
 		if (!error.empty())
 			ImGui::TextWrapped("%s", error.c_str());
@@ -326,17 +329,17 @@ void RigPanel::DrawTransport()
 		return;
 	const auto state = m_impl->runner ? m_impl->runner->Snapshot() : automation::RigSnapshot{};
 	const bool active = IsActive();
-	ImGui::Text("%s: %s", m_impl->recordingReplay ? "Replay" : "Script",
-				m_impl->error.empty() ? PhaseName(state.phase) : "Failed");
-	ImGui::SameLine();
+	const auto chip = std::string(m_impl->recordingReplay ? "Replay" : "Script") + " \u00b7 " +
+					  (m_impl->error.empty() ? PhaseName(state.phase) : "Failed");
+	StateChip("Replay status", !m_impl->error.empty() ? theme::Record : active ? theme::Past : theme::TextDim,
+			  chip.c_str(), m_impl->recordingReplay ? "Restores inputs, not game state." : nullptr);
+	ImGui::SameLine(0, 2);
 	if (active)
 	{
-		if (ImGui::Button("Cancel replay"))
+		if (IconButton("Cancel replay", Icon::Stop, "Stops replay and releases its inputs"))
 			m_impl->runner->Cancel();
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("Stops the script and releases its simulated inputs and frame-control lease.");
 	}
-	else if (ImGui::SmallButton("Dismiss replay status"))
+	else if (IconButton("Dismiss replay status", Icon::Close, "Hide"))
 		m_impl->showTransport = false;
 	if (!state.error.empty() || !m_impl->error.empty())
 	{

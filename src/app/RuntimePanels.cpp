@@ -8,9 +8,10 @@
 #include "app/RangePage.h"
 #include "app/RecordingPanel.h"
 #include "app/RuntimeSession.h"
-#include "app/SimulationEdits.h"
 #include "app/SpatialEditor.h"
+#include "app/Theme.h"
 #include "app/Window.h"
+#include "app/widgets/Controls.h"
 
 #include <array>
 #include <filesystem>
@@ -111,28 +112,20 @@ class RuntimePanels::Impl
 	{
 		if (!m_view.connected)
 		{
-			ImGui::TextDisabled("No app connected");
+			const auto available = ImGui::GetContentRegionAvail();
+			const auto origin = ImGui::GetCursorScreenPos();
+			const float unit = ImGui::GetFontSize() / 17;
+			const char* text = "No app connected";
+			const auto size = ImGui::CalcTextSize(text);
+			DrawIcon(ImGui::GetWindowDrawList(), Icon::Headset, {origin.x + available.x / 2, origin.y + 60 * unit},
+					 36 * unit, theme::TextDim);
+			ImGui::SetCursorScreenPos({origin.x + (available.x - size.x) / 2, origin.y + 90 * unit});
+			ImGui::TextDisabled("%s", text);
+			const float width = ImGui::CalcTextSize("Open app").x + ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x;
+			ImGui::SetCursorScreenPos({origin.x + (available.x - width) / 2, ImGui::GetCursorScreenPos().y + 4 * unit});
+			if (IconButton("Open app##Inspector", Icon::App, "Launch or connect an OpenXR app", false, "Open app"))
+				shell.openAppPicker = true;
 			return;
-		}
-		const auto& input = m_session.Input();
-		const auto phase = SimulationEditPhase(input.result);
-		if (ImGui::SmallButton(phase.empty() ? "Input details" : ("Input: " + phase + "##Input details").c_str()))
-			ImGui::OpenPopup("Input details");
-		ImGui::SetNextWindowSizeConstraints({240, 0}, ImGui::GetMainViewport()->WorkSize);
-		if (ImGui::BeginPopup("Input details"))
-		{
-			m_documents.Begin(m_session.Epoch());
-			if (const auto value = input.result.Find(tag::Document))
-			{
-				ImGui::SeparatorText("Latest request");
-				m_documents.Draw(value->value);
-			}
-			if (const auto value = input.state.Find(tag::Document))
-			{
-				ImGui::SeparatorText("Applied state and input owners");
-				m_documents.Draw(value->value);
-			}
-			ImGui::EndPopup();
 		}
 		m_spatial.DrawInspector(shell.selection);
 		m_devices.SetRigPiloting(m_pilot.Active() || m_spatial.Active());
@@ -192,9 +185,10 @@ class RuntimePanels::Impl
 			ImGui::TextWrapped("%s", state.detail.c_str());
 		for (const auto& session : m_session.Debugger().Sessions())
 		{
-			const auto label = "Session " + std::to_string(session.id) + " / run " + std::to_string(session.generation);
+			const auto label = "Session " + std::to_string(session.id) + "##" + std::to_string(session.generation);
 			if (ImGui::Selectable(label.c_str(), session.id == selected.id && session.generation == selected.generation))
 				m_session.ChooseSession(session);
+			ImGui::SetItemTooltip("Run %llu", static_cast<unsigned long long>(session.generation));
 		}
 		if (ImGui::CollapsingHeader("Advanced connection"))
 		{

@@ -12,20 +12,49 @@
 #include "app/RigPanel.h"
 #endif
 
+#include "app/DeviceRail.h"
+#include "app/Theme.h"
+#include "app/widgets/Controls.h"
+
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <fstream>
+#include <optional>
 #include <filesystem>
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <stdexcept>
+#include <utility>
 
 namespace simxr::app
 {
+namespace
+{
+// The application's process name when the endpoint names its process id
+// (control.<pid>.sock), otherwise the endpoint file name.
+std::string AppName(const std::string& endpoint)
+{
+	const auto file = std::filesystem::path(endpoint).filename().string();
+	const auto first = file.find('.'), last = file.rfind('.');
+	if (first != std::string::npos && last > first)
+	{
+		std::ifstream comm("/proc/" + file.substr(first + 1, last - first - 1) + "/comm");
+		std::string name;
+		if (comm && std::getline(comm, name) && !name.empty())
+			return name;
+	}
+	return file;
+}
+} // namespace
 struct WorkspacePanels::Impl
 {
 	bool enabled = false, showLaunch = false, showSettings = false, reset = false, dirty = false;
 	bool previewExpanded = false;
 
-	bool showConnection = false;
+	bool showConnection = false, showError = false;
+	std::vector<std::string> endpoints;
+	std::optional<std::chrono::steady_clock::time_point> recordingSince;
 	ShellState shell;
 	bool drawer = true;
 
@@ -162,6 +191,50 @@ struct WorkspacePanels::Impl
 #endif
 		}
 	}
+	void DrawAppPicker(RuntimePanels& runtime, const RuntimeView& view)
+	{
+		std::string label = view.connected ? AppName(view.endpoint)
+							: profiles.Selected() >= 0 ? settings.activeProfile
+													   : "Open app";
+		if (IconButton("##App picker", Icon::App, "Launch or connect an OpenXR app", false, label.c_str()) ||
+			std::exchange(shell.openAppPicker, false))
+		{
+			endpoints = DiscoverRuntimeEndpoints();
+			ImGui::OpenPopup("App picker");
+		}
+		if (!ImGui::BeginPopup("App picker"))
+			return;
+		ImGui::SeparatorText("Running now");
+		ImGui::SameLine();
+		if (IconButton("Refresh", Icon::Refresh, "Look for running apps again"))
+			endpoints = DiscoverRuntimeEndpoints();
+		if (endpoints.empty())
+			ImGui::TextDisabled("No running apps found");
+		for (const auto& endpoint : endpoints)
+		{
+			ImGui::PushID(endpoint.c_str());
+			if (ImGui::Selectable(AppName(endpoint).c_str(), endpoint == view.endpoint))
+				runtime.ConnectEndpoint(endpoint);
+			ImGui::SetItemTooltip("%s", endpoint.c_str());
+			ImGui::PopID();
+		}
+		ImGui::SeparatorText("Launch");
+		for (std::size_t index = 0; index < settings.profiles.size(); ++index)
+			if (ImGui::Selectable(settings.profiles[index].name.c_str()))
+			{
+				profiles.Edit(settings, static_cast<int>(index));
+				settings.activeProfile = settings.profiles[index].name;
+				LaunchSelected();
+			}
+		ImGui::Separator();
+		if (ImGui::Selectable("Edit profiles"))
+			showLaunch = true;
+		if (ImGui::Selectable("Connect endpoint"))
+			showConnection = true;
+		if (view.connected && ImGui::Selectable("Disconnect"))
+			runtime.Disconnect();
+		ImGui::EndPopup();
+	}
 	void DrawToolbar(RuntimePanels& runtime)
 	{
 		const auto& snapshot = runtime.View();
@@ -174,56 +247,50 @@ struct WorkspacePanels::Impl
 			shell.selection = stepped->frame;
 			drawer = drawer || stepped->requested;
 		}
-		ImGui::SetNextItemWidth(180 * settings.scale);
-		if (ImGui::BeginCombo("##App picker", profiles.Selected() >= 0 ? settings.activeProfile.c_str() : "App"))
+		DrawAppPicker(runtime, snapshot);
+		ImGui::SameLine();
+		const auto state = shell.session.state;
+		const auto dot = state == RunState::Running	  ? theme::Ok
+						 : state == RunState::Paused  ? theme::Paused
+						 : state == RunState::Failed  ? theme::Record
+						 : state == RunState::Launching || state == RunState::WaitingForSession ? theme::Warn
+																								   : theme::TextDim;
+		std::string chip = RunStateLabel(state);
+		if (state == RunState::Running && shell.session.fps > 0)
+			chip += " \u00b7 " + std::to_string(static_cast<int>(shell.session.fps + .5f)) + " fps";
+		const Icon details = Icon::Warning;
+		if (StateChip("Run state", dot, chip.c_str(), shell.session.error.empty() ? nullptr : shell.session.error.c_str(),
+					  state == RunState::Failed ? &details : nullptr, "Details"))
+			showError = true;
+		if (snapshot.recording)
 		{
-			ImGui::SeparatorText("Running now");
-			for (const auto& endpoint : DiscoverRuntimeEndpoints())
-			{
-				ImGui::PushID(endpoint.c_str());
-				if (ImGui::Selectable(std::filesystem::path(endpoint).filename().string().c_str(),
-									  endpoint == snapshot.endpoint))
-					runtime.ConnectEndpoint(endpoint);
-				ImGui::SetItemTooltip("%s", endpoint.c_str());
-				ImGui::PopID();
-			}
-			ImGui::SeparatorText("Launch");
-			for (std::size_t index = 0; index < settings.profiles.size(); ++index)
-				if (ImGui::Selectable(settings.profiles[index].name.c_str()))
-				{
-					profiles.Edit(settings, static_cast<int>(index));
-					settings.activeProfile = settings.profiles[index].name;
-					LaunchSelected();
-				}
-			if (ImGui::Selectable("Edit profiles"))
-				showLaunch = true;
-			if (ImGui::Selectable("Connect endpoint"))
-				showConnection = true;
-			ImGui::EndCombo();
+			if (!recordingSince)
+				recordingSince = std::chrono::steady_clock::now();
+			const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() -
+																				   *recordingSince)
+									 .count();
+			char label[32];
+			std::snprintf(label, sizeof(label), "REC %lld:%02lld", static_cast<long long>(seconds / 60),
+						  static_cast<long long>(seconds % 60));
+			ImGui::SameLine();
+			StateChip("Recording", theme::Record, label,
+					  (std::to_string(snapshot.recordedChanges) + " input changes recorded").c_str());
 		}
-		ImGui::SameLine();
-		const auto chipStart = ImGui::GetCursorScreenPos();
-		const auto label = RunStateLabel(shell.session.state);
-		const auto labelSize = ImGui::CalcTextSize(label);
-		const auto chipSize = ImVec2{labelSize.x + 24 * settings.scale, ImGui::GetFrameHeight()};
-		const auto color =
-			ImGui::GetColorU32(shell.session.state == RunState::Running ? ImGuiCol_CheckMark : ImGuiCol_TextDisabled);
-		ImGui::GetWindowDrawList()->AddRectFilled(chipStart, {chipStart.x + chipSize.x, chipStart.y + chipSize.y},
-												  ImGui::GetColorU32(ImGuiCol_FrameBg), 12 * settings.scale);
-		ImGui::GetWindowDrawList()->AddCircleFilled({chipStart.x + 8 * settings.scale, chipStart.y + chipSize.y / 2},
-													3 * settings.scale, color);
-		ImGui::GetWindowDrawList()->AddText(
-			{chipStart.x + 16 * settings.scale, chipStart.y + (chipSize.y - labelSize.y) / 2},
-			ImGui::GetColorU32(ImGuiCol_Text), label);
-		ImGui::Dummy(chipSize);
-		ImGui::SameLine();
-		if (ImGui::Button("Library"))
+		else
+			recordingSince.reset();
+#ifdef SIMXR_COMPANION_AUTOMATION
+		if (rigs.HasStatus())
 		{
-			shell.selection = LibrarySel{};
-			drawer = true;
+			ImGui::SameLine();
+			rigs.DrawTransport();
 		}
-		ImGui::SameLine();
-		if (ImGui::Button(snapshot.recording ? "Stop recording" : "Rec"))
+#endif
+		const float right = ImGui::GetContentRegionMax().x;
+		const float button = ImGui::GetFrameHeight(), spacing = ImGui::GetStyle().ItemSpacing.x;
+		ImGui::SameLine(std::max(ImGui::GetCursorPosX(), right - button * 3 - spacing * 2));
+		if (snapshot.recording ? IconButton("Stop recording", Icon::Stop, "Stop recording (Ctrl+R)", false, nullptr,
+										   theme::Record)
+							   : IconButton("Rec", Icon::Record, "Record inputs (Ctrl+R)", false, nullptr, theme::Record))
 		{
 			if (snapshot.recording)
 				runtime.StopRecording();
@@ -235,7 +302,14 @@ struct WorkspacePanels::Impl
 			}
 		}
 		ImGui::SameLine();
-		if (ImGui::Button("..."))
+		if (IconButton("Library", Icon::Library, "Library: takes and scripts (Ctrl+L)",
+					   std::holds_alternative<LibrarySel>(shell.selection)))
+		{
+			shell.selection = LibrarySel{};
+			drawer = true;
+		}
+		ImGui::SameLine();
+		if (IconButton("...", Icon::More, "More"))
 			ImGui::OpenPopup("Options");
 		if (ImGui::BeginPopup("Options"))
 		{
@@ -264,13 +338,6 @@ struct WorkspacePanels::Impl
 			}
 			ImGui::EndPopup();
 		}
-#ifdef SIMXR_COMPANION_AUTOMATION
-		if (rigs.HasStatus())
-		{
-			ImGui::SameLine();
-			rigs.DrawTransport();
-		}
-#endif
 		if (!ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive())
 		{
 			if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_L, false))
@@ -346,17 +413,9 @@ struct WorkspacePanels::Impl
 		DrawToolbar(runtime);
 		ImGui::EndChild();
 		const bool compact = width / scale < 1100, overlay = width / scale < 800;
-		static constexpr const char* railLabels[] = {"Player", "Head",	   "Left",	  "Right",	  "Body",
-													 "Gaze",   "Trackers", "Headset", "Scenarios"};
-		// Pilot target keys shown beside the device rows when the rail has room for them.
-		static constexpr PilotAction railKeys[] = {PilotAction::TargetPlayer, PilotAction::TargetHead,
-												   PilotAction::TargetLeft, PilotAction::TargetRight};
-		float labelWidth = 0;
-		for (const auto* label : railLabels)
-			labelWidth = std::max(labelWidth, ImGui::CalcTextSize(label).x);
-		const float narrowRail = labelWidth + (ImGui::GetStyle().WindowPadding.x + 4 * scale) * 2;
+		const float narrowRail = NarrowRailWidth();
 		const bool narrow = compact || settings.railCollapsed;
-		const float rail = previewExpanded ? 0 : narrow ? narrowRail : 176 * scale;
+		const float rail = previewExpanded ? 0 : narrow ? narrowRail : 196 * scale;
 		const float inspector =
 			previewExpanded ? 0 : std::min(settings.inspectorWidth, compact ? 320.0f : 520.0f) * scale;
 		const float timelineSize =
@@ -371,39 +430,12 @@ struct WorkspacePanels::Impl
 		if (!previewExpanded)
 		{
 			ImGui::SetCursorPos({origin.x, top});
+			ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::Surface);
 			ImGui::BeginChild("Device rail", {rail, bodyHeight}, 0, ImGuiWindowFlags_NoScrollbar);
-			for (int index = 0; index < 9; ++index)
-			{
-				ImGui::PushID(index);
-				bool selected = false;
-				if (const auto device = std::get_if<DeviceSel>(&shell.selection))
-					selected = index == static_cast<int>(device->page);
-				if (const auto item = std::get_if<SessionItemSel>(&shell.selection))
-					selected = index == 7 + static_cast<int>(item->item);
-				if (ImGui::Selectable(railLabels[index], selected, 0, {0, 28 * scale}))
-				{
-					if (index < 7)
-						shell.selection = DeviceSel{static_cast<DevicePage>(index)};
-					else
-						shell.selection = SessionItemSel{static_cast<SessionItem>(index - 7)};
-					drawer = true;
-				}
-				if (index < 4)
-				{
-					const auto key = PilotBindingLabel(settings.pilotBindings[static_cast<std::size_t>(railKeys[index])]);
-					if (!narrow)
-					{
-						const auto size = ImGui::CalcTextSize(key.c_str());
-						const auto row = ImGui::GetItemRectMax();
-						ImGui::GetWindowDrawList()->AddText(
-							{row.x - size.x - 6 * scale, row.y - (28 * scale + size.y) / 2},
-							ImGui::GetColorU32(ImGuiCol_TextDisabled), key.c_str());
-					}
-					ImGui::SetItemTooltip("%s (pilot with %s)", railLabels[index], key.c_str());
-				}
-				ImGui::PopID();
-			}
+			if (DrawDeviceRail(shell.selection, runtime.View(), settings))
+				drawer = true;
 			ImGui::EndChild();
+			ImGui::PopStyleColor();
 			ImGui::SetCursorPos({origin.x + rail - 3 * scale, top});
 			ImGui::InvisibleButton("Rail splitter", {6 * scale, bodyHeight});
 			if (!compact && ImGui::IsItemClicked())
@@ -423,9 +455,11 @@ struct WorkspacePanels::Impl
 		if (shell.inspectorVisible)
 		{
 			ImGui::SetCursorPos({shell.inspector.x, shell.inspector.y});
+			ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::Surface);
 			ImGui::BeginChild("Inspector", {shell.inspector.width, shell.inspector.height});
 			DrawInspector(runtime);
 			ImGui::EndChild();
+			ImGui::PopStyleColor();
 		}
 		for (auto& notice : runtime.TakeNotices())
 			notices.Push(std::move(notice));
@@ -434,17 +468,19 @@ struct WorkspacePanels::Impl
 		if (!previewExpanded)
 		{
 			ImGui::SetCursorPos({origin.x, top + bodyHeight + 6 * scale});
+			ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::Surface);
 			ImGui::BeginChild("Timeline", {width, timelineSize});
 			if (timeline.Draw(runtime, shell))
 			{
 				drawer = true;
 			}
 			ImGui::EndChild();
+			ImGui::PopStyleColor();
 		}
 		const auto state = shell.session.state;
-		const ImU32 border = state == RunState::Paused		   ? IM_COL32(240, 164, 58, 255)
-							 : !runtime.View().time.following ? IM_COL32(76, 141, 255, 255)
-							 : state == RunState::Disconnected ? IM_COL32(139, 147, 161, 255)
+		const ImU32 border = state == RunState::Paused			  ? theme::Paused
+							 : !runtime.View().time.following ? theme::Past
+							 : state == RunState::Disconnected ? theme::TextDim
 															   : 0;
 		if (border)
 			ImGui::GetForegroundDrawList()->AddRect(
@@ -484,15 +520,16 @@ struct WorkspacePanels::Impl
 		DrawShell(runtime);
 		if (showConnection)
 			runtime.DrawConnection(&showConnection);
-		if (!error.empty())
+		if (!error.empty() || showError)
 		{
 			ImGui::OpenPopup("Error details");
 			if (ImGui::BeginPopupModal("Error details"))
 			{
-				ImGui::TextWrapped("%s", error.c_str());
+				ImGui::TextWrapped("%s", (error.empty() ? shell.session.error : error).c_str());
 				if (ImGui::Button("Dismiss"))
 				{
 					error.clear();
+					showError = false;
 					ImGui::CloseCurrentPopup();
 				}
 				ImGui::EndPopup();

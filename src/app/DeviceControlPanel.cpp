@@ -1,4 +1,5 @@
 #include "app/DeviceControlPanel.h"
+#include "app/Theme.h"
 #include "Math.h"
 #include "app/widgets/LiveField.h"
 #include <algorithm>
@@ -19,11 +20,12 @@ std::optional<SimulationEdit> DeviceControlPanel::Draw(bool supported, const Sel
 	m_continuousEdit = false;
 	if (m_observed && !m_pending && !ImGui::IsAnyItemActive())
 		LoadObservedSettings();
-	if (!supported)
-		ImGui::TextUnformatted("Not connected");
 	if (supported && !m_observed)
-		ImGui::Text("Configuration unavailable: %s",
-					m_observationError.empty() ? "waiting for runtime values" : m_observationError.c_str());
+	{
+		ImGui::TextDisabled("Waiting for runtime values\u2026");
+		if (!m_observationError.empty())
+			ImGui::SetItemTooltip("%s", m_observationError.c_str());
+	}
 	supported = supported && m_observed.has_value() && m_configurationLoaded;
 	ImGui::PushItemWidth(-1);
 	if (selection)
@@ -317,29 +319,28 @@ void DeviceControlPanel::DrawOwner(ControlChannel channel)
 	{
 		return;
 	}
+	// You are the implicit owner; only another driver gets a badge.
 	const auto& owner = m_observed->owners[static_cast<std::size_t>(channel)];
-	if (!owner)
-	{
-		ImGui::TextUnformatted("You");
+	if (!owner || (owner->kind == CommandSourceKind::Manual && m_manualSource && *owner == *m_manualSource))
 		return;
-	}
 	const char* name = "Unknown source";
 	switch (owner->kind)
 	{
 	case CommandSourceKind::Manual:
-		name = m_manualSource && *owner == *m_manualSource ? "You" : "Other companion";
+		name = "Another companion";
 		break;
 	case CommandSourceKind::Mcp:
 		name = "MCP client";
 		break;
 	case CommandSourceKind::Rig:
-		name = "Replay / script";
+		name = "Script";
 		break;
 	case CommandSourceKind::Sequence:
-		name = "Pose sequence";
+		name = "Replay";
 		break;
 	}
-	ImGui::Text("Owner: %s #%llu", name, static_cast<unsigned long long>(owner->id));
+	ImGui::TextColored(theme::Vec(theme::Head), "Driven by %s", name);
+	ImGui::SetItemTooltip("Source %llu. Editing here takes over.", static_cast<unsigned long long>(owner->id));
 }
 void DeviceControlPanel::DrawHead()
 {
@@ -348,8 +349,7 @@ void DeviceControlPanel::DrawHead()
 	if (ImGui::Button("Recenter view", {-1, 0}))
 		ApplyOwned(ControlChannel::Session, SetScenario{FailureScenario::Recenter, true});
 	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-		ImGui::SetTooltip("Makes the current head position and facing direction the new origin.\nThis changes the "
-						  "reference space; it does not reset the head pose.");
+		ImGui::SetTooltip("Makes your current view the forward direction. Does not move devices.");
 	DrawHandRest();
 	ImGui::SeparatorText("Head pose");
 	DrawOwner(ControlChannel::Head);
@@ -606,9 +606,7 @@ void DeviceControlPanel::DrawTrackers()
 		if (index != static_cast<std::size_t>(m_selectedTracker) && tracker.connected && other.connected &&
 			tracker.role != TrackerRole::Unassigned && other.role == tracker.role)
 		{
-			ImGui::Text("This role is already assigned to tracker %u. Choose another role or disconnect "
-						"that tracker first.",
-						static_cast<unsigned>(index + 1));
+			ImGui::TextColored(theme::Vec(theme::Warn), "Role used by tracker %u", static_cast<unsigned>(index + 1));
 			duplicateRole = true;
 		}
 	}
@@ -670,10 +668,10 @@ void DeviceControlPanel::DrawScenarios()
 	{
 
 		if (ImGui::Button("Request session loss", {-1, 0}))
-			ImGui::OpenPopup("Session loss");
-		if (ImGui::BeginPopupModal("Session loss", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+			ImGui::OpenPopup("Request session loss?");
+		if (ImGui::BeginPopupModal("Request session loss?", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
 		{
-			ImGui::TextWrapped("The application must recreate its XR session or relaunch to recover.");
+			ImGui::TextUnformatted("The app must recreate its XR session or be relaunched.");
 			if (ImGui::Button("Request loss"))
 			{
 				ApplyOwned(channel, SetScenario{scenario, true});

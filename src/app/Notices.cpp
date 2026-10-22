@@ -1,4 +1,5 @@
 #include "app/Notices.h"
+#include "app/Theme.h"
 
 #include <algorithm>
 #include <imgui.h>
@@ -47,7 +48,7 @@ void Notices::Draw(ShellRect area)
 		{
 			const auto& notice = m_entries[index].notice;
 			ImGui::PushID(static_cast<int>(index));
-			ImGui::TextColored({0.96f, 0.69f, 0.32f, 1}, "!");
+			ImGui::TextColored(theme::Vec(theme::Warn), "!");
 			ImGui::SameLine();
 			ImGui::TextUnformatted(notice.title.c_str());
 			if (!notice.detail.empty() && ImGui::BeginItemTooltip())

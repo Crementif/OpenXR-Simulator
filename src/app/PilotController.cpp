@@ -1,4 +1,5 @@
 #include "app/PilotController.h"
+#include "app/Theme.h"
 #include "Math.h"
 #include "app/ManualInputController.h"
 #include <algorithm>
@@ -410,7 +411,7 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 	};
 	const auto saved = ImGui::GetCursorScreenPos();
 	ImGui::SetCursorScreenPos({(minimum.x + maximum.x - width) / 2, maximum.y - height - 6 * scale});
-	ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(20, 25, 33, 215));
+	ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::Fade(theme::Bg, .85f));
 	ImGui::PushStyleVar(ImGuiStyleVar_Alpha, Active() || ImGui::GetTime() - m_lastInput < 3 ? 1.0f : .55f);
 	ImGui::BeginChild("Pilot HUD", {width, height}, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar);
 	auto* draw = ImGui::GetWindowDrawList();

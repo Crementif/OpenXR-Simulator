@@ -3,7 +3,9 @@
 #include "app/PilotController.h"
 #include "app/RuntimeSession.h"
 #include "app/SpatialEditor.h"
+#include "app/Theme.h"
 #include "app/Window.h"
+#include "app/widgets/Controls.h"
 
 #include <algorithm>
 #include <cmath>
@@ -18,13 +20,12 @@ namespace
 namespace wire = control;
 std::string ImageLabel(const PreviewImageSummary& image)
 {
-	if (image.target == wire::TargetKind::ComposedEyes)
-		return "Composited output";
-	if (image.target == wire::TargetKind::VirtualDisplay)
-		return "Display output";
+	// Composited and display output are the normal case and need no label.
 	if (image.target == wire::TargetKind::LayerView)
-		return "Submitted layer " + std::to_string(image.layer + 1) + " / view " + std::to_string(image.view + 1);
-	return "Captured image";
+		return " \u00b7 Layer " + std::to_string(image.layer + 1) + ", view " + std::to_string(image.view + 1);
+	if (image.target == wire::TargetKind::ComposedEyes || image.target == wire::TargetKind::VirtualDisplay)
+		return "";
+	return " \u00b7 Captured image";
 }
 } // namespace
 PreviewPanel::PreviewPanel(RuntimeSession& session, PilotController& pilot, SpatialEditor& spatial,
@@ -38,45 +39,64 @@ bool PreviewPanel::Draw(ShellState& shell, const RuntimeView& view)
 	ImGui::SetCursorPos({shell.preview.x, shell.preview.y});
 	if (ImGui::BeginChild("GPU preview", {shell.preview.width, shell.preview.height}))
 	{
-		auto& preview = m_session.Preview();
-		const auto image = preview.Selected();
+		const auto image = m_session.Preview().Selected();
 		const bool live = view.time.following;
-		const auto accent = !view.connected ? ImVec4{0.62f, 0.66f, 0.72f, 1}
-							: view.manual	? ImVec4{0.96f, 0.69f, 0.32f, 1}
-							: !live			? ImVec4{0.48f, 0.72f, 0.95f, 1}
-											: ImVec4{0.35f, 0.80f, 0.65f, 1};
-		ImGui::TextColored(accent, "%s",
-						   !view.connected ? "DISCONNECTED"
-						   : view.manual   ? "PAUSED"
-						   : !live		   ? "PAST"
-										   : "LIVE");
-		if (image)
-		{
-			ImGui::SameLine();
-			ImGui::TextDisabled("Frame %llu  /  %s", static_cast<unsigned long long>(image->frame),
-								ImageLabel(*image).c_str());
-		}
-		if (!live && !view.manual && view.connected)
-		{
-			if (ImGui::SmallButton("Show live output"))
-				m_session.SetLive(true);
-			ImGui::SetItemTooltip("Follows new images. The application is already running.");
-		}
 		if (image && image->ready && !image->released)
-			DrawImage(shell, view, pilotArea);
-		else
 		{
-			ImGui::Spacing();
-			if (m_spatial.Expanded())
-				m_spatial.DrawExpanded(shell.selection, ImGui::GetContentRegionAvail());
-			else if (!live)
-				ImGui::TextDisabled("Frame %llu / No image", static_cast<unsigned long long>(view.time.cursor.frame));
-			else
-				ImGui::TextDisabled("%s", view.connected ? "Waiting for image" : "No app");
+			if (view.manual || !live)
+			{
+				ImGui::TextColored(theme::Vec(view.manual ? theme::Paused : theme::Past), "%s",
+								   view.manual ? "PAUSED" : "PAST");
+				ImGui::SameLine();
+			}
+			ImGui::TextDisabled("Frame %llu%s", static_cast<unsigned long long>(image->frame),
+								ImageLabel(*image).c_str());
+			DrawImage(shell, view, pilotArea);
 		}
+		else if (m_spatial.Expanded())
+			m_spatial.DrawExpanded(shell.selection, ImGui::GetContentRegionAvail());
+		else
+			DrawEmpty(shell, view);
 	}
 	ImGui::EndChild();
 	return pilotArea;
+}
+void PreviewPanel::DrawEmpty(ShellState& shell, const RuntimeView& view)
+{
+	const auto available = ImGui::GetContentRegionAvail();
+	const auto origin = ImGui::GetCursorScreenPos();
+	const float unit = ImGui::GetFontSize() / 17;
+	const ImVec2 center{origin.x + available.x / 2, origin.y + available.y / 2};
+	auto* draw = ImGui::GetWindowDrawList();
+	const auto line = [&](const char* text, float y, ImU32 color)
+	{
+		const auto size = ImGui::CalcTextSize(text);
+		draw->AddText({center.x - size.x / 2, y}, color, text);
+	};
+	if (!view.connected)
+	{
+		DrawIcon(draw, Icon::App, {center.x, center.y - 48 * unit}, 40 * unit, theme::TextDim);
+		line("Launch or connect an OpenXR app", center.y - 14 * unit, theme::Text);
+		const char* label = "Open app";
+		const float width = ImGui::CalcTextSize(label).x + ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x;
+		ImGui::SetCursorScreenPos({center.x - width / 2, center.y + 16 * unit});
+		if (IconButton("Open app", Icon::App, "Launch or connect an OpenXR app", false, label))
+			shell.openAppPicker = true;
+		return;
+	}
+	if (!view.time.following)
+	{
+		const auto text = "Frame " + std::to_string(view.time.cursor.frame);
+		line(text.c_str(), center.y - 20 * unit, theme::Text);
+		line("Image not kept", center.y + 4 * unit, theme::TextDim);
+		return;
+	}
+	// A small spinner while the first image is on its way.
+	const float angle = static_cast<float>(ImGui::GetTime()) * 6;
+	draw->PathArcTo({center.x, center.y - 24 * unit}, 10 * unit, angle, angle + 4.4f);
+	draw->PathStroke(theme::TextDim, ImDrawFlags_None, 2 * unit);
+	line(view.sessionAvailable ? "Waiting for first frame\u2026" : "Waiting for the app to start XR\u2026",
+		 center.y, theme::TextDim);
 }
 void PreviewPanel::DrawImage(ShellState& shell, const RuntimeView& view, bool& pilotArea)
 {
@@ -85,67 +105,72 @@ void PreviewPanel::DrawImage(ShellState& shell, const RuntimeView& view, bool& p
 	const bool live = view.time.following;
 	if (m_slice >= static_cast<int>(image->slices))
 		m_slice = 0;
-	const bool eyes = image->target == wire::TargetKind::ComposedEyes && image->slices == 2;
-	if (eyes)
+	// Two slices with two views are the left and right eye, live or captured.
+	const bool eyes = image->slices == 2 && image->description.views.size() == 2;
+	if (image->slices > 1)
 	{
-		for (const auto [label, slice] : {std::pair{"Left eye", 0}, {"Right eye", 1}, {"Both", -1}})
+		ImGui::SameLine();
+		for (int slice = eyes ? 0 : -1; slice < static_cast<int>(image->slices); ++slice)
 		{
+			std::string label = eyes ? (slice == 0 ? "Left" : "Right") : "View " + std::to_string(slice + 1);
+			if (slice < 0)
+				label = "All";
 			if (m_slice == slice)
-				ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-			const bool chosen = ImGui::Button(label);
+				ImGui::PushStyleColor(ImGuiCol_Button, theme::Mix(theme::SurfaceRaised, theme::Accent, .45f));
+			const bool chosen = ImGui::SmallButton(label.c_str());
 			if (m_slice == slice)
 				ImGui::PopStyleColor();
 			if (chosen)
 				m_slice = slice;
-			ImGui::SameLine();
+			ImGui::SameLine(0, 2);
 		}
-	}
-	else if (image->slices > 1)
-	{
-		ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7);
-		const auto label = m_slice < 0 ? "All slices" : "Slice " + std::to_string(m_slice + 1);
-		if (ImGui::BeginCombo("##Image slice", label.c_str()))
+		if (eyes)
 		{
-			for (int slice = -1; slice < static_cast<int>(image->slices); ++slice)
-				if (ImGui::Selectable(slice < 0 ? "All slices" : ("Slice " + std::to_string(slice + 1)).c_str(),
-									  m_slice == slice))
-					m_slice = slice;
-			ImGui::EndCombo();
+			if (m_slice == -1)
+				ImGui::PushStyleColor(ImGuiCol_Button, theme::Mix(theme::SurfaceRaised, theme::Accent, .45f));
+			if (ImGui::SmallButton("Both"))
+				m_slice = -1;
+			if (m_slice == -1)
+				ImGui::PopStyleColor();
 		}
-		ImGui::SameLine();
 	}
-	if (ImGui::Button("Fit"))
+	ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x * 2);
+	if (ImGui::SmallButton("Fit"))
 		m_fit = true;
-	ImGui::SameLine();
-	if (ImGui::Button("1:1"))
+	ImGui::SetItemTooltip("Fit the image to the preview");
+	ImGui::SameLine(0, 2);
+	if (ImGui::SmallButton("1:1"))
 	{
 		m_fit = false;
 		m_zoom = 1;
 	}
-	ImGui::SameLine();
-	if (ImGui::Button("Zoom..."))
+	ImGui::SetItemTooltip("1:1 shows native pixels. Middle-drag pans.");
+	ImGui::SameLine(0, 2);
+	const auto zoom = std::to_string(static_cast<int>(m_zoom * 100 + .5f)) + "%##Zoom";
+	if (ImGui::SmallButton(zoom.c_str()))
 		ImGui::OpenPopup("Image zoom");
+	ImGui::SetItemTooltip("Zoom. Mouse wheel zooms; middle-drag pans.");
 	if (ImGui::BeginPopup("Image zoom"))
 	{
 		ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12);
 		if (ImGui::SliderFloat("##Zoom", &m_zoom, 0.05f, 16.0f, "%.2fx", ImGuiSliderFlags_Logarithmic))
 			m_fit = false;
-		ImGui::TextUnformatted("Middle-drag pans the image.\n1:1 shows native pixels.");
 		ImGui::EndPopup();
 	}
+	ImGui::SameLine();
+	m_spatial.DrawSpaceToggle();
 	if (live && !view.manual && view.connected)
 	{
-		ImGui::SameLine();
-		if (ImGui::Button("Pilot help"))
+		ImGui::SameLine(0, 2);
+		if (ImGui::SmallButton("?##Pilot keys"))
 			ImGui::OpenPopup("Piloting");
+		ImGui::SetItemTooltip("Pilot keys");
 		if (ImGui::BeginPopup("Piloting"))
 		{
 			m_pilot.DrawHelp();
 			ImGui::EndPopup();
 		}
 	}
-	ImGui::SameLine();
-	m_spatial.DrawSpaceToggle();
 	ImGui::BeginChild("Image area", {0, 0}, 0, ImGuiWindowFlags_NoScrollWithMouse);
 	if (m_spatial.Expanded())
 	{

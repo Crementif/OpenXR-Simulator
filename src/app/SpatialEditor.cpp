@@ -1,5 +1,7 @@
 #include "app/SpatialEditor.h"
 #include "Math.h"
+#include "app/Theme.h"
+#include "app/widgets/Controls.h"
 #include "simulation/TrackingSystem.h"
 #include <algorithm>
 #include <cmath>
@@ -283,11 +285,12 @@ void SpatialEditor::DrawExpanded(Selection& selection, ImVec2 size)
 }
 void SpatialEditor::DrawSpaceToggle()
 {
-	if (ImGui::SmallButton(m_view.gizmo.local ? "Local" : "World"))
+	if (IconButton("Gizmo space", m_view.gizmo.local ? Icon::Axes : Icon::Globe,
+				   m_view.gizmo.local ? "Gizmo axes: local. Space cycles move, rotate or both; Ctrl snaps."
+									  : "Gizmo axes: world. Space cycles move, rotate or both; Ctrl snaps."))
 		m_view.gizmo.local = !m_view.gizmo.local;
 	for (auto& gizmo : m_previewGizmos)
 		gizmo.local = m_view.gizmo.local;
-	ImGui::SetItemTooltip("Space cycles move, rotate, or both; Ctrl snaps to 5 cm and 15 degrees.");
 }
 bool SpatialEditor::DrawPreview(Selection& selection, ImVec2 minimum, ImVec2 maximum, const FrameView& camera,
 								unsigned eye)
@@ -368,7 +371,7 @@ bool SpatialEditor::DrawPreview(Selection& selection, ImVec2 minimum, ImVec2 max
 			if (!editable[device])
 			{
 				const auto owner = m_observed->owners[static_cast<std::size_t>(DeviceChannel(device))];
-				draw->AddText(position, IM_COL32(190, 180, 153, 230),
+				draw->AddText(position, theme::Fade(theme::Warn, .9f),
 							  owner && owner != m_source ? "Other owner" : "Scenario");
 				continue;
 			}
@@ -387,7 +390,7 @@ bool SpatialEditor::DrawPreview(Selection& selection, ImVec2 minimum, ImVec2 max
 			if (device == selected)
 				draw->AddCircle(position, radius + 3 * scale, color, 32, 2 * scale);
 			const char label[2]{device == 1 ? 'L' : device == 2 ? 'R' : static_cast<char>('1' + device - 3), 0};
-			draw->AddText({position.x - 4 * scale, position.y - 7 * scale}, IM_COL32(14, 20, 27, 255), label);
+			draw->AddText({position.x - 4 * scale, position.y - 7 * scale}, theme::Ink, label);
 			ImGui::SetCursorScreenPos({position.x - radius, position.y - radius});
 			ImGui::PushID(device);
 			ImGui::BeginDisabled(gizmo.hovered || gizmo.active);

@@ -103,6 +103,18 @@ bool LaunchProfilesDialog::Draw(CompanionSettings& settings, const LaunchSnapsho
 	ImGui::SetNextWindowSizeConstraints({400, 260}, ImGui::GetMainViewport()->WorkSize);
 	if (!ImGui::BeginPopupModal("Launch profiles", &open))
 		return false;
+	if (ImGui::SmallButton("?"))
+		ImGui::OpenPopup("Launch help");
+	ImGui::SetItemTooltip("How launching works");
+	if (ImGui::BeginPopup("Launch help"))
+	{
+		ImGui::TextUnformatted("Launching an app");
+		ImGui::TextDisabled("The runtime JSON and environment apply only to the launched app.");
+		ImGui::TextDisabled("A script runs only after the new app exposes one running session.");
+		ImGui::TextDisabled("Closing the companion leaves the launched app running.");
+		ImGui::EndPopup();
+	}
+	ImGui::SameLine();
 	if (ImGui::BeginCombo("Profile", m_selected >= 0 ? settings.profiles[static_cast<std::size_t>(m_selected)].name.c_str()
 													 : "New profile"))
 	{
@@ -126,11 +138,15 @@ bool LaunchProfilesDialog::Draw(CompanionSettings& settings, const LaunchSnapsho
 	}
 	ImGui::InputText("Name", m_name.data(), m_name.size());
 	ImGui::InputText("Executable", m_executable.data(), m_executable.size());
-	ImGui::TextUnformatted("Arguments: one literal argument per line; no shell expansion");
+	ImGui::TextUnformatted("Arguments");
+	ImGui::SameLine();
+	ImGui::TextDisabled("one per line, no shell expansion");
 	ImGui::InputTextMultiline("##arguments", m_arguments.data(), m_arguments.size(), {-1, 90});
 	ImGui::InputText("Working directory", m_workingDirectory.data(), m_workingDirectory.size());
 	ImGui::InputText("OpenXR runtime JSON", m_manifest.data(), m_manifest.size());
-	ImGui::TextUnformatted("Child environment: KEY=value per line (including WINEPREFIX / Proton values)");
+	ImGui::TextUnformatted("Environment");
+	ImGui::SameLine();
+	ImGui::TextDisabled("KEY=value per line, e.g. WINEPREFIX");
 	ImGui::InputTextMultiline("##environment", m_environment.data(), m_environment.size(), {-1, 90});
 	if (ImGui::BeginCombo("Headset profile", m_headset[0] ? m_headset.data() : "Runtime default"))
 	{
@@ -141,9 +157,7 @@ bool LaunchProfilesDialog::Draw(CompanionSettings& settings, const LaunchSnapsho
 				Copy(m_headset, profile.id);
 		ImGui::EndCombo();
 	}
-	ImGui::InputText("Luau rig after launch", m_rig.data(), m_rig.size());
-	ImGui::TextWrapped("The headset profile applies to the launched runtime. A rig runs only after the new "
-					   "child endpoint exposes one running session; an existing connection is never reused.");
+	ImGui::InputText("Script after launch", m_rig.data(), m_rig.size());
 	if (ImGui::Button("Save profile"))
 		try
 		{
@@ -162,8 +176,6 @@ bool LaunchProfilesDialog::Draw(CompanionSettings& settings, const LaunchSnapsho
 		ImGui::Text("Process: %llu", static_cast<unsigned long long>(process.process));
 	if (!process.detail.empty())
 		ImGui::TextWrapped("%s", process.detail.c_str());
-	ImGui::TextWrapped("The runtime manifest and environment apply only to the child. After launch, use Find "
-					   "runtimes to attach. Closing the companion leaves the launched application running.");
 	ImGui::EndPopup();
 	return launch;
 }

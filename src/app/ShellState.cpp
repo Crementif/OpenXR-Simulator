@@ -9,7 +9,8 @@ SessionState DeriveRunState(const RuntimeView& snapshot, bool launching, const s
 	result.endpoint = snapshot.endpoint;
 	result.session = snapshot.session;
 	result.generation = snapshot.generation;
-	result.run = snapshot.epoch;
+	result.run = snapshot.generation;
+	result.fps = snapshot.fps;
 	result.error = error.empty() ? snapshot.error : error;
 	if (!result.error.empty())
 		result.state = RunState::Failed;

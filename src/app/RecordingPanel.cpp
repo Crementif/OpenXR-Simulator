@@ -1,4 +1,5 @@
 #include "app/RecordingPanel.h"
+#include "app/Theme.h"
 #include "app/CompanionSettings.h"
 #include "app/Utf8Path.h"
 
@@ -161,7 +162,7 @@ std::optional<automation::SavedRecording> RecordingPanel::Draw(bool supported, b
 	ImGui::EndDisabled();
 	if (state.page)
 	{
-		ImGui::TextColored(active ? ImVec4{1, .38f, .36f, 1} : ImGui::GetStyleColorVec4(ImGuiCol_Text),
+		ImGui::TextColored(active ? theme::Vec(theme::Record) : ImGui::GetStyleColorVec4(ImGuiCol_Text),
 						   "%s / %llu input changes", active ? "Recording" : "Stopped",
 						   static_cast<unsigned long long>(state.page->total));
 		if (state.page->overflow)
@@ -181,7 +182,7 @@ std::optional<automation::SavedRecording> RecordingPanel::Draw(bool supported, b
 	}
 	if (ImGui::BeginPopup("Replace saved take?"))
 	{
-		ImGui::TextUnformatted("A take with this name already exists.");
+		ImGui::TextColored(theme::Vec(theme::Record), "Name already used");
 		if (ImGui::Button("Replace file"))
 		{
 			Save();

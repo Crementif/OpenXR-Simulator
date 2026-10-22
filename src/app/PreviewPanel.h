@@ -24,6 +24,7 @@ class PreviewPanel
 
   private:
 	void DrawImage(ShellState& shell, const RuntimeView& view, bool& pilotArea);
+	void DrawEmpty(ShellState& shell, const RuntimeView& view);
 	RuntimeSession& m_session;
 	PilotController& m_pilot;
 	SpatialEditor& m_spatial;

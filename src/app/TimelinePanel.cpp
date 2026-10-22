@@ -1,4 +1,6 @@
 #include "app/TimelinePanel.h"
+#include "app/widgets/Controls.h"
+#include "app/Theme.h"
 #include <algorithm>
 #include <cstdio>
 #include <imgui.h>
@@ -196,14 +198,15 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell)
 
 	// Left column: transport, then the lane names the canvas draws below it.
 	const auto& style = ImGui::GetStyle();
+	// Icon buttons with a word are one frame height wide plus the word.
 	const auto buttonWidth = [&](const char* label)
 	{
-		return ImGui::CalcTextSize(label).x + style.FramePadding.x * 2;
+		return ImGui::GetFrameHeight() + ImGui::CalcTextSize(label).x + style.FramePadding.x;
 	};
 	const float arrows = ImGui::GetFrameHeight() * 2 + style.ItemSpacing.x;
 	const float transport = buttonWidth("Continue") + buttonWidth("Next") + arrows + style.ItemSpacing.x * 2;
 	const float header = std::max(transport, ImGui::CalcTextSize("Recording").x) + style.ItemSpacing.x * 2;
-	const float liveWidth = buttonWidth("LIVE >|") + style.ItemSpacing.x * 2;
+	const float liveWidth = buttonWidth("LIVE") + style.ItemSpacing.x * 2;
 	m_canvas.Begin(header, liveWidth);
 	const auto cell = m_canvas.TransportRect();
 	ImGui::SetCursorScreenPos(
@@ -212,7 +215,9 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell)
 					  : state.operationPending ? "Waiting for the last command"
 											   : nullptr;
 	ImGui::BeginDisabled(why != nullptr);
-	if (state.manual ? ImGui::Button("Continue") : ImGui::Button("Pause"))
+	const char* pauseTip = why ? why : state.manual ? "Continue (F8)" : "Pause (F6)";
+	if (state.manual ? IconButton("Continue", Icon::Play, pauseTip, false, "Continue")
+					 : IconButton("Pause", Icon::Pause, pauseTip, false, "Pause"))
 	{
 		if (state.manual)
 		{
@@ -223,25 +228,23 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell)
 			runtime.Pause();
 	}
 	ImGui::EndDisabled();
-	ImGui::SetItemTooltip("%s", why ? why : state.manual ? "Continue (F8)" : "Pause (F6)");
 	ImGui::SameLine();
 	ImGui::BeginDisabled(why != nullptr || !state.manual);
-	if (ImGui::Button("Next"))
+	if (IconButton("Next", Icon::StepForward,
+				   why ? why : !state.manual ? "Next frame (F7). Pause first." : "Next frame (F7)", false, "Next"))
 	{
 		runtime.Step();
 		inspect = true;
 	}
 	ImGui::EndDisabled();
-	ImGui::SetItemTooltip("%s", why ? why : !state.manual ? "Next frame (F7) — pause first" : "Next frame (F7)");
 	ImGui::SameLine();
 	ImGui::BeginDisabled(m_markers.empty());
-	if (ImGui::ArrowButton("Previous marker", ImGuiDir_Left))
+	const char* noMarkers = "Press M over the timeline to add a marker";
+	if (IconButton("Previous marker", Icon::ChevronLeft, m_markers.empty() ? noMarkers : "Previous marker (,)"))
 		jump(false);
-	ImGui::SetItemTooltip("Previous marker (,)");
 	ImGui::SameLine();
-	if (ImGui::ArrowButton("Next marker", ImGuiDir_Right))
+	if (IconButton("Next marker", Icon::ChevronRight, m_markers.empty() ? noMarkers : "Next marker (.)"))
 		jump(true);
-	ImGui::SetItemTooltip(m_markers.empty() ? "Press M over the timeline to add a marker" : "Next marker (.)");
 	ImGui::EndDisabled();
 	if (!ImGui::GetIO().WantTextInput && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows))
 	{
@@ -256,14 +259,13 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell)
 		{live.x + style.ItemSpacing.x, live.y + std::max(0.f, (live.height - ImGui::GetFrameHeight()) / 2)});
 	if (!state.time.following && state.sessionAvailable)
 	{
-		if (ImGui::Button("LIVE >|"))
+		if (IconButton("LIVE >|", Icon::Live, "Back to the newest frame (End)", false, "LIVE"))
 			goLive();
-		ImGui::SetItemTooltip("Back to the newest frame (End)");
 	}
 	else if (state.sessionAvailable)
 	{
 		ImGui::AlignTextToFramePadding();
-		ImGui::TextColored({0.35f, 0.80f, 0.65f, 1}, "LIVE");
+		ImGui::TextColored(theme::Vec(theme::Ok), "LIVE");
 		ImGui::SetItemTooltip(state.manual ? "Following the paused frame" : "Following the newest frame");
 	}
 	if (state.historyFull)
@@ -273,7 +275,7 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell)
 		ImGui::GetWindowDrawList()->AddText(
 			{bounds.x + bounds.width / 2 - ImGui::CalcTextSize(full).x / 2,
 			 cell.y + (cell.height - ImGui::GetFontSize()) / 2},
-			IM_COL32(240, 164, 58, 255), full);
+			theme::Paused, full);
 	}
 
 	if (shell.timeline.zoomToRange)

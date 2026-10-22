@@ -1,4 +1,5 @@
 #include "app/TimelineCanvas.h"
+#include "app/Theme.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -8,8 +9,7 @@ namespace simxr::app
 {
 namespace
 {
-constexpr ImU32 Accent = IM_COL32(47, 143, 163, 255), MarkerColor = IM_COL32(229, 181, 58, 255),
-				Alert = IM_COL32(229, 72, 77, 255), Paused = IM_COL32(240, 164, 58, 255);
+constexpr ImU32 Accent = theme::Accent, MarkerColor = theme::Warn, Alert = theme::Record, Paused = theme::Paused;
 }
 void TimelineCanvas::Zoom(double first, double last) noexcept
 {
@@ -148,7 +148,7 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, bool following
 	if (selection)
 		draw->AddRectFilled({X(selection->first), top}, {std::max(X(selection->first) + 1, X(selection->second)),
 														 top + height},
-							IM_COL32(47, 143, 163, 60));
+							theme::Fade(theme::Accent, .24f));
 	float lastRunLabel = left - 100 * scale, lastSnapshot = left - 12 * scale;
 	const float markerY = m_compact ? top + 5 * scale : top + ruler - 5 * scale;
 	for (int column = 0; column < int(pixels); ++column)
@@ -251,12 +251,12 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, bool following
 		}
 	}
 	if (cursor)
-		draw->AddLine({X(*cursor), top}, {X(*cursor), top + height}, IM_COL32(150, 200, 255, 255), 2 * scale);
+		draw->AddLine({X(*cursor), top}, {X(*cursor), top + height}, theme::Past, 2 * scale);
 	if (m_dragStart && m_rangeDrag)
 	{
 		const float x = X(*m_dragStart);
 		draw->AddRectFilled({std::min(x, io.MousePos.x), top}, {std::max(x, io.MousePos.x), top + height},
-							IM_COL32(47, 143, 163, 60));
+							theme::Fade(theme::Accent, .24f));
 	}
 	draw->PopClipRect();
 	if (hovered)
@@ -266,8 +266,7 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, bool following
 		if (result.hovered)
 		{
 			const auto& frame = history.At(*result.hovered);
-			ImGui::SetTooltip("Run %llu / frame %llu\nRun time %.3fs\nDisplay interval %.2f ms%s%s",
-							  static_cast<unsigned long long>(frame.identity.run),
+			ImGui::SetTooltip("Frame %llu\nRun time %.3fs\nDisplay interval %.2f ms%s%s",
 							  static_cast<unsigned long long>(frame.identity.frame), frame.runSeconds,
 							  frame.frameMilliseconds,
 							  frame.flags & HistorySnapshot
@@ -287,7 +286,7 @@ void TimelineCanvas::DrawEvent(double time, double observed, const char* text, b
 	const float scale = ImGui::GetFontSize() / 16, x = X(time), y = LaneY(Events) + m_lane / 2;
 	if (x < m_bounds.x || x > m_bounds.x + m_bounds.width)
 		return;
-	const auto color = failed ? Alert : dim ? ImGui::GetColorU32(ImGuiCol_TextDisabled) : IM_COL32(201, 167, 255, 255);
+	const auto color = failed ? Alert : dim ? ImGui::GetColorU32(ImGuiCol_TextDisabled) : theme::Head;
 	ImGui::GetWindowDrawList()->AddCircle({x, y}, 4 * scale, color, 0, 2);
 	const auto mouse = ImGui::GetIO().MousePos;
 	if (std::abs(mouse.x - x) < 6 * scale && std::abs(mouse.y - y) < 6 * scale && ImGui::IsWindowHovered())
@@ -301,7 +300,7 @@ ClipHit TimelineCanvas::DrawClip(double first, double last, const char* label, b
 	const float y = LaneY(Recording);
 	const float x = X(std::max(first, m_start)), end = std::max(x + 2, X(std::min(last, m_start + m_span)));
 	ImGui::GetWindowDrawList()->AddRect({x, y + 2}, {end, y + m_lane - 2},
-										replay ? IM_COL32(80, 150, 230, 255) : Alert);
+										replay ? theme::Past : Alert);
 	const auto mouse = ImGui::GetIO().MousePos;
 	if (mouse.x < x || mouse.x > end || mouse.y < y || mouse.y >= y + m_lane || !ImGui::IsWindowHovered())
 		return ClipHit::None;
@@ -319,7 +318,7 @@ void TimelineCanvas::DrawPause(double first, double last)
 				end = std::min(m_bounds.x + m_bounds.width, std::max(X(first) + 3 * scale, X(last)));
 	auto* draw = ImGui::GetWindowDrawList();
 	draw->PushClipRect({x, y}, {end, y + m_lane}, true);
-	draw->AddRectFilled({x, y}, {end, y + m_lane}, IM_COL32(240, 164, 58, 40));
+	draw->AddRectFilled({x, y}, {end, y + m_lane}, theme::Fade(theme::Paused, .16f));
 	for (float hatch = x - m_lane; hatch < end; hatch += 6 * scale)
 		draw->AddLine({hatch, y + m_lane}, {hatch + m_lane, y}, Paused, scale);
 	draw->PopClipRect();

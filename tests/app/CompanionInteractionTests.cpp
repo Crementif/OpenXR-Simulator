@@ -415,7 +415,7 @@ void CheckShell()
 		auto* rail = FindPanel("Device rail");
 		Require(rail != nullptr, "Rail missing");
 		test.Click({rail->Pos.x + 12, rail->Pos.y + ImGui::GetStyle().WindowPadding.y +
-										  index * (28 + ImGui::GetStyle().ItemSpacing.y) + 10});
+										  index * (36 * ImGui::GetFontSize() / 17 + ImGui::GetStyle().ItemSpacing.y) + 18});
 		const auto& selection = test.workspace.State().selection;
 		if (index < 7)
 			Require(std::holds_alternative<DeviceSel>(selection) &&

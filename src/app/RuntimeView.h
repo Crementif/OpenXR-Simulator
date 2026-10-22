@@ -1,10 +1,12 @@
 #pragma once
 
 #include "app/ShellState.h"
+#include "app/SimulationEdits.h"
 #include "graphics/FrameOutput.h"
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -32,6 +34,8 @@ struct SteppedFrame
 struct RuntimeView
 {
 	TimeCursor time;
+	// The latest applied device state and input owners, once the runtime reported one.
+	std::optional<ObservedSetup> setup;
 	std::vector<FrameView> selectedViews;
 	double historySeconds = 0;
 	// The loaded image (or capture) the preview currently shows.

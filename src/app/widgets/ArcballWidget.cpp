@@ -1,4 +1,5 @@
 #include "Math.h"
+#include "app/Theme.h"
 #include "app/widgets/SpatialWidgets.h"
 #include <algorithm>
 #include <cmath>
@@ -25,13 +26,14 @@ SpatialEditResult ArcballWidget(const char* id, ArcballState& state, XrQuaternio
 	auto* draw = ImGui::GetWindowDrawList();
 	for (int ring = 24; ring > 0; --ring)
 	{
-		const int shade = 33 + (24 - ring) * 2;
-		draw->AddCircleFilled(center, radius * ring / 24, IM_COL32(shade, shade + 5, shade + 9, 255), 64);
+		// Shaded rings make the ball read as a sphere.
+		draw->AddCircleFilled(center, radius * ring / 24,
+							  theme::Mix(theme::SurfaceRaised, theme::Text, (24 - ring) * .006f), 64);
 	}
-	draw->AddCircle(center, radius * .88f, IM_COL32(100, 109, 120, 160), 64);
+	draw->AddCircle(center, radius * .88f, theme::Fade(theme::TextDim, .6f), 64);
 	const auto local = RelativePose({orientation, {}}, {view, {}}).orientation;
 	const std::array axes{Rotate(local, {1, 0, 0}), Rotate(local, {0, 1, 0}), Rotate(local, {0, 0, -1})};
-	const std::array colors{IM_COL32(235, 86, 94, 255), IM_COL32(91, 210, 126, 255), IM_COL32(79, 150, 240, 255)};
+	const std::array colors{theme::AxisX, theme::AxisY, theme::AxisZ};
 	int tip = -1;
 	for (std::size_t axis = 0; axis < axes.size(); ++axis)
 	{
