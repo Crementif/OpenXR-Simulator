@@ -55,11 +55,37 @@ bool PreviewPanel::Draw(ShellState& shell, const RuntimeView& view)
 		}
 		else if (m_spatial.Expanded())
 			m_spatial.DrawExpanded(shell.selection, ImGui::GetContentRegionAvail());
-		else
+		else if (!DrawKept(view))
 			DrawEmpty(shell, view);
 	}
 	ImGui::EndChild();
 	return pilotArea;
+}
+bool PreviewPanel::DrawKept(const RuntimeView& view)
+{
+	if (view.time.following || !view.connected)
+		return false;
+	auto& history = m_session.Preview().History();
+	const auto shot = history.Nearest(view.time.cursor, view.time.epoch);
+	if (!shot)
+		return false;
+	ImGui::TextColored(theme::Vec(view.manual ? theme::Paused : theme::Past), "%s", view.manual ? "PAUSED" : "PAST");
+	ImGui::SameLine();
+	ImGui::TextDisabled("Frame %llu", static_cast<unsigned long long>(view.time.cursor.frame));
+	ImGui::SameLine();
+	StateChip("Kept preview", theme::TextDim, "Preview", "Downscaled copy of what was shown; not the exact frame");
+	if (shot->frame.frame != view.time.cursor.frame)
+	{
+		ImGui::SameLine();
+		ImGui::TextDisabled("from frame %llu", static_cast<unsigned long long>(shot->frame.frame));
+	}
+	const auto available = ImGui::GetContentRegionAvail();
+	const float aspect = history.Aspect();
+	const float width = std::max(16.f, std::min(available.x, available.y / aspect));
+	ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, (available.x - width) / 2));
+	ImGui::SetCursorPosY(ImGui::GetCursorPosY() + std::max(0.f, (available.y - width * aspect) / 2));
+	history.Draw(*shot, width);
+	return true;
 }
 void PreviewPanel::DrawEmpty(ShellState& shell, const RuntimeView& view)
 {

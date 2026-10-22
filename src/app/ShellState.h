@@ -70,7 +70,6 @@ struct TimeCursor
 	FrameIdentity cursor;
 	std::uint64_t epoch = 0;
 };
-// The timeline's visible span, owned by the timeline.
 // Where a take cut from history came from, so its replay can show the source.
 struct TakeSource
 {
@@ -78,6 +77,7 @@ struct TakeSource
 	FrameIdentity first, last;
 	std::uint64_t epoch = 0;
 };
+// The timeline's visible span, owned by the timeline.
 struct TimelineWindow
 {
 	double first = 0, last = 0;

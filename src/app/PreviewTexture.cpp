@@ -70,6 +70,7 @@ struct PreviewTexture::State::Retirement
 	std::mutex mutex;
 	std::array<bool, SnapshotBudget::MaxCapacity> reserved{};
 	std::array<std::unique_ptr<State>, SnapshotBudget::MaxCapacity> preserved;
+	std::uint64_t preservedBytes = 0;
 	std::size_t Reserve()
 	{
 		std::lock_guard lock(mutex);
@@ -91,7 +92,9 @@ struct PreviewTexture::State::Retirement
 	void Preserve(std::unique_ptr<State> texture) noexcept
 	{
 		const auto index = texture->reservation.index;
+		const auto& description = texture->description;
 		std::lock_guard lock(mutex);
+		preservedBytes += std::uint64_t(description.width) * description.height * description.arrayLayers * 4;
 		preserved[index] = std::move(texture);
 	}
 };
@@ -270,6 +273,23 @@ void PreviewTexture::Submitted(std::uint64_t serial)
 void PreviewTexture::ObserveCompletion(std::uint64_t serial)
 {
 	m_state->completed = std::max(m_state->completed, serial);
+}
+VkImage PreviewTexture::UseForCopy()
+{
+	if (!m_state->ready)
+		return VK_NULL_HANDLE;
+	m_state->drawn = true;
+#ifdef __linux__
+	return m_state->native->Image().image;
+#else
+	return VK_NULL_HANDLE;
+#endif
+}
+std::uint64_t PreviewTexture::PreservedBytes()
+{
+	auto& retirement = State::Retirements();
+	std::lock_guard lock(retirement.mutex);
+	return retirement.preservedBytes;
 }
 bool PreviewTexture::CanRetire(std::uint64_t completed)
 {

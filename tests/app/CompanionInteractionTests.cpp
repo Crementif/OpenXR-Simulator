@@ -88,7 +88,11 @@ class Interaction
 		if (live)
 		{
 			workspace.Draw(runtime);
-			Require(renderer.Render(runtime.ReadyWaits()), "Live launch UI frame was not rendered");
+			const auto transfers = [&](VkCommandBuffer command)
+			{
+				runtime.RecordTransfers(command);
+			};
+			Require(renderer.Render(runtime.ReadyWaits(), transfers), "Live launch UI frame was not rendered");
 			runtime.Submitted(renderer.SubmittedFrames());
 			return;
 		}
@@ -108,7 +112,11 @@ class Interaction
 		inputCenter = {inputMinimum.x + 10, inputMinimum.y + 10};
 		ImGui::End();
 		if (extraDraw) extraDraw();
-		Require(renderer.Render(runtime.ReadyWaits()), "Admitted UI frame was not rendered");
+		const auto transfers = [&](VkCommandBuffer command)
+		{
+			runtime.RecordTransfers(command);
+		};
+		Require(renderer.Render(runtime.ReadyWaits(), transfers), "Admitted UI frame was not rendered");
 		runtime.Submitted(renderer.SubmittedFrames());
 	}
 	void Click(ImVec2 position)
@@ -455,7 +463,11 @@ void PilotLiveRuntime(const char* endpoint)
 		test.runtime.Poll();
 		test.workspace.BeginFrame(test.runtime);
 		test.workspace.Draw(test.runtime);
-		Require(test.renderer.Render(test.runtime.ReadyWaits()), "Pilot UI frame was not rendered");
+		const auto transfers = [&](VkCommandBuffer command)
+		{
+			test.runtime.RecordTransfers(command);
+		};
+		Require(test.renderer.Render(test.runtime.ReadyWaits(), transfers), "Pilot UI frame was not rendered");
 		test.runtime.Submitted(test.renderer.SubmittedFrames());
 	};
 	Eventually(
@@ -1862,6 +1874,45 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 	std::cout << "PASS retroactive take replayed over its source frames\n";
 }
 
+// D9: while the app runs, look back a few seconds and see the kept preview.
+void CheckPreviewHistory(Interaction& test)
+{
+	const auto& history = test.runtime.History();
+	const auto& kept = test.runtime.KeptPreviews();
+	const auto started = std::chrono::steady_clock::now();
+	while (std::chrono::steady_clock::now() - started < std::chrono::seconds(6))
+		test.Frame();
+	Require(kept.Error().empty(), kept.Error().c_str());
+	std::size_t shots = 0;
+	for (const auto& shot : kept.Shots())
+		shots += shot.frame.frame != 0;
+	std::size_t covered = 0;
+	for (std::size_t index = 0; index < history.Size(); ++index)
+		covered += (history.At(index).flags & HistoryPreview) != 0;
+	std::cout << "Kept " << shots << " previews, " << kept.Bytes() / (1 << 20) << " MiB of "
+			  << kept.Budget() / (1 << 20) << " MiB; Images lane covers " << covered << " frames\n";
+	Require(shots >= 40 && covered >= shots / 2, "Preview history kept too few images");
+	Require(kept.Bytes() <= kept.Budget(), "Preview history exceeds its budget");
+	const auto index = history.LowerBound(history.At(history.Size() - 1).seconds - 3);
+	test.runtime.LookAt(index);
+	for (int frame = 0; frame < 4; ++frame)
+		test.Frame();
+	const auto& frame = history.At(index);
+	Require(kept.Nearest(frame.identity, frame.epoch).has_value(), "No kept preview three seconds back");
+	Require(!test.runtime.Snapshot().time.following, "Looking back still follows");
+	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
+	{
+		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "preview-history.bmp").string());
+		test.Frame();
+	}
+	test.runtime.SetLive(true);
+	for (int frame = 0; frame < 4; ++frame)
+		test.Frame();
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Validation errors with preview history");
+	std::cout << "PASS kept preview shown three seconds back while running\n";
+}
+
 void CheckSnapshotRetention(Interaction& test)
 {
 	const auto wait = [&](const auto& ready, const char* failure)
@@ -1994,6 +2045,8 @@ void CheckToolbarLaunch(const char* executable)
 	std::ofstream(directory / "attached.endpoint") << state.endpoint;
 	if (std::getenv("SIMXR_TIMELINE_QA"))
 		CheckTimelineWorkflow(test);
+	if (std::getenv("SIMXR_HISTORY_QA"))
+		CheckPreviewHistory(test);
 	if (std::getenv("SIMXR_TAKE_QA"))
 		CheckInputTake(test, directory);
 	if (std::getenv("SIMXR_INPUT_QA"))

@@ -198,7 +198,12 @@ int Application::Run()
 			bool rendered = false;
 			try
 			{
-				rendered = renderer.Render(waits);
+				rendered = renderer.Render(waits,
+										   [&](VkCommandBuffer command)
+										   {
+											   if (panels)
+												   panels->RecordTransfers(command);
+										   });
 			}
 			catch (...)
 			{

@@ -25,6 +25,8 @@ class PreviewPanel
   private:
 	void DrawImage(ShellState& shell, const RuntimeView& view, bool& pilotArea);
 	void DrawEmpty(ShellState& shell, const RuntimeView& view);
+	// A downscaled image kept while running, for a past frame without an exact one.
+	bool DrawKept(const RuntimeView& view);
 	RuntimeSession& m_session;
 	PilotController& m_pilot;
 	SpatialEditor& m_spatial;

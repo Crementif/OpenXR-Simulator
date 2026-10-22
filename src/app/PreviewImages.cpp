@@ -22,7 +22,7 @@ struct PreviewImages::Image
 	std::unique_ptr<PreviewTexture> texture;
 };
 PreviewImages::PreviewImages(UiRenderer& renderer, RuntimePanelRequests& requests)
-	: m_renderer(renderer), m_requests(requests)
+	: m_renderer(renderer), m_requests(requests), m_history(renderer)
 {
 	m_images.reserve(SnapshotBudget::Capacity());
 }
@@ -166,6 +166,7 @@ bool PreviewImages::HasPendingLive() const
 }
 void PreviewImages::BeginFrame()
 {
+	m_history.BeginFrame();
 	for (auto& image : m_images)
 	{
 		image->texture->BeginFrame();
@@ -181,7 +182,16 @@ void PreviewImages::DrawSelected(float width, std::optional<std::size_t> slice)
 void PreviewImages::DrawImage(std::uint64_t id, float width, std::optional<std::size_t> slice)
 {
 	if (auto image = Find(id); image && !image->release && image->texture->Ready())
+	{
 		image->texture->Draw(width, slice);
+		if (image->live)
+			m_history.Offer(*image->texture, static_cast<std::uint32_t>(slice.value_or(0)),
+							{image->session, image->generation, image->frame}, image->epoch);
+	}
+}
+void PreviewImages::RecordTransfers(VkCommandBuffer command)
+{
+	m_history.Record(command);
 }
 std::vector<VkSemaphore> PreviewImages::ReadyWaits() const
 {
@@ -195,6 +205,7 @@ void PreviewImages::Submitted(std::uint64_t serial)
 {
 	for (auto& image : m_images)
 		image->texture->Submitted(serial);
+	m_history.Submitted(serial);
 }
 void PreviewImages::Retained(const wire::Message& message, bool preview)
 {

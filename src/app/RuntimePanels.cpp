@@ -335,6 +335,14 @@ std::vector<Notice> RuntimePanels::TakeNotices()
 {
 	return m_impl->TakeNotices();
 }
+const PreviewHistory& RuntimePanels::KeptPreviews() const
+{
+	return m_impl->m_session.Preview().History();
+}
+void RuntimePanels::RecordTransfers(VkCommandBuffer command)
+{
+	m_impl->m_session.Preview().RecordTransfers(command);
+}
 std::vector<VkSemaphore> RuntimePanels::ReadyWaits() const
 {
 	return m_impl->m_session.Preview().ReadyWaits();

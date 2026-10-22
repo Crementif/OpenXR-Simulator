@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/PreviewHistory.h"
 #include "app/PreviewTexture.h"
 #include "app/RuntimePanelRequests.h"
 
@@ -48,7 +49,16 @@ class PreviewImages
 	void DrawSelected(float width, std::optional<std::size_t> slice = {});
 	void DrawImage(std::uint64_t id, float width, std::optional<std::size_t> slice = {});
 	std::vector<VkSemaphore> ReadyWaits() const;
+	void RecordTransfers(VkCommandBuffer command);
 	void Submitted(std::uint64_t serial);
+	PreviewHistory& History() noexcept
+	{
+		return m_history;
+	}
+	const PreviewHistory& History() const noexcept
+	{
+		return m_history;
+	}
 	std::string TakeError();
 
   private:
@@ -65,6 +75,7 @@ class PreviewImages
 	RuntimePanelRequests& m_requests;
 	PanelScope m_scope;
 	std::vector<std::unique_ptr<Image>> m_images;
+	PreviewHistory m_history;
 	std::uint64_t m_nextImage = 1, m_selectedImage = 0, m_selectedCapture = 0;
 	bool m_live = true;
 	std::string m_error;

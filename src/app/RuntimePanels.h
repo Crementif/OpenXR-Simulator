@@ -1,7 +1,9 @@
 #pragma once
+
 #include "app/PilotBindings.h"
 
 #include "app/Notices.h"
+#include "app/PreviewHistory.h"
 #include "app/RuntimeView.h"
 #include "automation/Recording.h"
 #include "control/ControlSchema.h"
@@ -41,6 +43,7 @@ class RuntimePanels
 	void DrawWindows();
 	std::vector<Notice> TakeNotices();
 	std::vector<VkSemaphore> ReadyWaits() const;
+	void RecordTransfers(VkCommandBuffer command);
 	void Submitted(std::uint64_t serial);
 	// A freshly built view, for automation and tests outside the UI frame.
 	RuntimeView Snapshot() const;
@@ -53,6 +56,7 @@ class RuntimePanels
 	void SelectCapture(std::uint64_t capture);
 	std::vector<RuntimeFrame> TimelineFrames() const;
 	const HistoryStore& History() const;
+	const PreviewHistory& KeptPreviews() const;
 	void LookAt(std::size_t historyIndex);
 	void MarkHistoryFrame(std::size_t index, bool enabled);
 	void SelectFrame(std::uint64_t local);

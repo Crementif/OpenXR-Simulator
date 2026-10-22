@@ -208,6 +208,13 @@ void RuntimeSession::Poll(bool piloting)
 									frame.flags | (image.live ? HistoryPreview : HistorySnapshot));
 				m_coverage.push_back(frame);
 			}
+	for (const auto& shot : m_preview.History().Shots())
+		if (shot.frame.frame)
+			if (const auto index = history.Find(shot.frame, shot.epoch))
+			{
+				m_coverage.push_back(history.At(*index));
+				history.SetFlags(*index, HistoryPreview, true);
+			}
 	for (const auto& capture : m_workspace.Captures())
 		if (!capture.released && Boolean(capture.metadata, tag::Pinned))
 			if (const auto index = history.Find({capture.scope.session, capture.scope.generation, capture.frame},

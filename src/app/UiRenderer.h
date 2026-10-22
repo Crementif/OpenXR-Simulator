@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 #include <string>
@@ -25,7 +26,9 @@ class UiRenderer
 	UiRenderer(const UiRenderer&) = delete;
 	UiRenderer& operator=(const UiRenderer&) = delete;
 	bool BeginFrame();
-	bool Render(std::span<const VkSemaphore> readyWaits = {});
+	// transfers records GPU copies before the UI pass in the same submission.
+	bool Render(std::span<const VkSemaphore> readyWaits = {},
+				const std::function<void(VkCommandBuffer)>& transfers = {});
 	VulkanDeviceAccess DeviceAccess() const;
 	std::uint64_t CompletedFrames();
 	void WaitIdle();

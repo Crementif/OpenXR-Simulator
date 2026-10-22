@@ -686,7 +686,7 @@ struct UiRenderer::Impl
 		return true;
 	}
 
-	bool Render(std::span<const VkSemaphore> readyWaits)
+	bool Render(std::span<const VkSemaphore> readyWaits, const std::function<void(VkCommandBuffer)>& transfers)
 	{
 		if (!m_frameStarted)
 			throw std::logic_error("UI rendering requires an admitted frame");
@@ -700,6 +700,8 @@ struct UiRenderer::Impl
 		VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
 		begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 		Check(vkBeginCommandBuffer(frame.command, &begin));
+		if (transfers)
+			transfers(frame.command);
 		VkClearValue clear{};
 		clear.color = {{0.04f, 0.05f, 0.07f, 1}};
 		VkRenderPassBeginInfo pass{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
@@ -716,7 +718,9 @@ struct UiRenderer::Impl
 		Check(vkEndCommandBuffer(frame.command));
 		std::vector<VkSemaphore> waits{frame.acquired};
 		waits.insert(waits.end(), readyWaits.begin(), readyWaits.end());
-		std::vector<VkPipelineStageFlags> stages(waits.size(), VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+		// Ready images are sampled by the UI pass or copied before it.
+		std::vector<VkPipelineStageFlags> stages(waits.size(),
+												 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT);
 		stages[0] = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 		VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
 		submit.waitSemaphoreCount = static_cast<std::uint32_t>(waits.size());
@@ -771,9 +775,10 @@ bool UiRenderer::BeginFrame()
 {
 	return m_impl->BeginFrame();
 }
-bool UiRenderer::Render(std::span<const VkSemaphore> readyWaits)
+bool UiRenderer::Render(std::span<const VkSemaphore> readyWaits,
+						const std::function<void(VkCommandBuffer)>& transfers)
 {
-	return m_impl->Render(readyWaits);
+	return m_impl->Render(readyWaits, transfers);
 }
 VulkanDeviceAccess UiRenderer::DeviceAccess() const
 {

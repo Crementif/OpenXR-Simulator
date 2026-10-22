@@ -39,7 +39,7 @@ target_compile_features(simxr_imgui PRIVATE cxx_std_20)
 target_include_directories(simxr_imgui SYSTEM PUBLIC ${simxr_imguizmo_SOURCE_DIR}/src ${simxr_imgui_SOURCE_DIR} ${simxr_imgui_SOURCE_DIR}/backends "${SIMXR_VULKAN_INCLUDE_DIR}")
 target_link_libraries(simxr_imgui PUBLIC SDL3::SDL3-static "${SIMXR_VULKAN_LIBRARY}")
 
-add_library(simxr_app STATIC src/app/Application.cpp src/app/Window.cpp src/app/UiRenderer.cpp src/app/RuntimePanels.cpp src/app/PreviewTexture.cpp src/app/PreviewImages.cpp src/app/DeviceControlPanel.cpp src/app/WorkspacePanels.cpp)
+add_library(simxr_app STATIC src/app/Application.cpp src/app/Window.cpp src/app/UiRenderer.cpp src/app/RuntimePanels.cpp src/app/PreviewTexture.cpp src/app/PreviewImages.cpp src/app/PreviewHistory.cpp src/app/DeviceControlPanel.cpp src/app/WorkspacePanels.cpp)
 simxr_configure_target(simxr_app)
 target_include_directories(simxr_app PRIVATE "${PROJECT_SOURCE_DIR}/shaders/generated")
 target_sources(simxr_app PRIVATE src/app/RecordingPanel.cpp src/app/TimelinePanel.cpp src/app/TimelineCanvas.cpp src/app/ShellState.cpp

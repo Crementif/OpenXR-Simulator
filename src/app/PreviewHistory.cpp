@@ -1,0 +1,359 @@
+#include "app/PreviewHistory.h"
+#include "app/UiRenderer.h"
+#ifdef __linux__
+#include "graphics/backends/vulkan/VulkanDevice.h"
+#include "graphics/backends/vulkan/VulkanResources.h"
+#endif
+
+#include <algorithm>
+#include <bit>
+#include <cstdio>
+#include <imgui.h>
+#include <imgui_impl_vulkan.h>
+#include <mutex>
+#include <thread>
+
+namespace simxr::app
+{
+namespace
+{
+constexpr std::uint32_t ChunkLayers = 64, Width = 640;
+constexpr auto Interval = std::chrono::milliseconds(100);
+// Frames between a requested frame and the kept image shown for it.
+constexpr std::uint64_t MaximumGap = 120;
+} // namespace
+
+#ifdef __linux__
+struct PreviewHistory::Resources
+{
+	std::shared_ptr<VulkanDevice> device;
+	VkFormat format = VK_FORMAT_UNDEFINED;
+	VkExtent2D extent{};
+	std::size_t capacity = 0;
+	std::vector<std::shared_ptr<VulkanImage>> chunks;
+	std::size_t initialized = 0;
+	std::shared_ptr<VulkanImage> display;
+	bool displayInitialized = false;
+	VkImageView view = VK_NULL_HANDLE;
+	VkSampler sampler = VK_NULL_HANDLE;
+	VkDescriptorSet descriptor = VK_NULL_HANDLE;
+	std::uint64_t lastUse = 0;
+	~Resources()
+	{
+		if (descriptor)
+			ImGui_ImplVulkan_RemoveTexture(descriptor);
+		if (view)
+			vkDestroyImageView(device->binding.device, view, nullptr);
+		if (sampler)
+			vkDestroySampler(device->binding.device, sampler, nullptr);
+	}
+	std::uint64_t Bytes() const
+	{
+		std::uint64_t bytes = display ? display->allocationSize : 0;
+		for (const auto& chunk : chunks)
+			bytes += chunk->allocationSize;
+		return bytes;
+	}
+};
+namespace
+{
+// Unknown GPU completion never justifies destruction: such rings stay for the
+// process lifetime and count against later budgets.
+struct Preserved
+{
+	std::mutex mutex;
+	std::vector<std::unique_ptr<PreviewHistory::Resources>> rings;
+	std::uint64_t bytes = 0;
+};
+Preserved& PreservedRings()
+{
+	static auto* preserved = new Preserved;
+	return *preserved;
+}
+} // namespace
+#else
+struct PreviewHistory::Resources
+{
+	std::uint64_t Bytes() const
+	{
+		return 0;
+	}
+};
+#endif
+
+PreviewHistory::PreviewHistory(UiRenderer& renderer, std::uint64_t budget) : m_renderer(renderer), m_budget(budget)
+{
+}
+PreviewHistory::~PreviewHistory()
+{
+	Retire();
+}
+void PreviewHistory::Retire()
+{
+#ifdef __linux__
+	if (!m_resources)
+		return;
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+	try
+	{
+		while (m_renderer.CompletedFrames() < m_resources->lastUse && std::chrono::steady_clock::now() < deadline)
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		if (m_renderer.CompletedFrames() >= m_resources->lastUse)
+		{
+			m_resources.reset();
+			return;
+		}
+	}
+	catch (const std::exception& error)
+	{
+		std::fprintf(stderr, "Preview history retirement: %s\n", error.what());
+	}
+	std::fputs("Preview history completion unknown; preserving its images\n", stderr);
+	auto& preserved = PreservedRings();
+	std::lock_guard lock(preserved.mutex);
+	preserved.bytes += m_resources->Bytes();
+	preserved.rings.push_back(std::move(m_resources));
+#endif
+}
+bool PreviewHistory::Prepare(const control::ImageDescription& description)
+{
+#ifdef __linux__
+	const VkExtent2D extent{std::min(Width, description.width),
+							std::max(1u, std::min(Width, description.width) * description.height / description.width)};
+	const auto format = static_cast<VkFormat>(description.format);
+	if (m_resources && m_resources->format == format && m_resources->extent.width == extent.width &&
+		m_resources->extent.height == extent.height)
+		return true;
+	Retire();
+	m_shots.clear();
+	m_lastUse.clear();
+	m_next = 0;
+	m_display = m_displayed = std::nullopt;
+	const auto access = m_renderer.DeviceAccess();
+	VkFormatProperties properties;
+	vkGetPhysicalDeviceFormatProperties(access.physical, format, &properties);
+	constexpr VkFormatFeatureFlags needed = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT |
+											VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+											VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+	if ((properties.optimalTilingFeatures & needed) != needed)
+	{
+		m_error = "Preview history needs a blittable, filterable preview format";
+		return false;
+	}
+	std::uint64_t preserved = PreviewTexture::PreservedBytes();
+	{
+		auto& rings = PreservedRings();
+		std::lock_guard lock(rings.mutex);
+		preserved += rings.bytes;
+	}
+	const std::uint64_t slot = std::uint64_t(extent.width) * extent.height * 4;
+	// The display image is one more slot.
+	const auto available = m_budget > preserved ? m_budget - preserved : 0;
+	const auto capacity = available / slot > 1 ? available / slot - 1 : 0;
+	if (!capacity)
+	{
+		m_error = "Preview history budget is used up by preserved images";
+		return false;
+	}
+	auto resources = std::make_unique<Resources>();
+	resources->device = std::make_shared<VulkanDevice>(
+		VulkanBinding{access.instance, access.physical, access.device, access.queueFamily, 0}, access.owner);
+	resources->format = format;
+	resources->extent = extent;
+	resources->capacity = static_cast<std::size_t>(std::min<std::uint64_t>(capacity, 16384));
+	resources->display = VulkanImage::Create(resources->device, format, extent, 1,
+											 VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+	VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+	view.image = resources->display->image;
+	view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	view.format = format;
+	view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+	CheckVulkan(vkCreateImageView(access.device, &view, nullptr, &resources->view), "create preview history view");
+	VkSamplerCreateInfo sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+	sampler.magFilter = sampler.minFilter = VK_FILTER_LINEAR;
+	sampler.addressModeU = sampler.addressModeV = sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	CheckVulkan(vkCreateSampler(access.device, &sampler, nullptr, &resources->sampler),
+				"create preview history sampler");
+	resources->descriptor = ImGui_ImplVulkan_AddTexture(resources->sampler, resources->view, VK_IMAGE_LAYOUT_GENERAL);
+	if (!resources->descriptor)
+		throw std::runtime_error("Preview history descriptor allocation failed");
+	m_shots.resize(resources->capacity);
+	m_lastUse.resize(resources->capacity);
+	m_resources = std::move(resources);
+	return true;
+#else
+	(void)description;
+	return false;
+#endif
+}
+void PreviewHistory::Offer(PreviewTexture& source, std::uint32_t layer, FrameIdentity frame, std::uint64_t epoch)
+{
+#ifdef __linux__
+	const auto now = std::chrono::steady_clock::now();
+	if (m_copy || frame == m_lastFrame || now - m_lastCapture < Interval || !source.Ready() ||
+		layer >= source.Description().arrayLayers)
+		return;
+	try
+	{
+		if (!Prepare(source.Description()))
+			return;
+		auto& resources = *m_resources;
+		const auto completed = m_renderer.CompletedFrames();
+		const auto slot = m_next % resources.capacity;
+		if (m_lastUse[slot] > completed)
+			return;
+		if (slot / ChunkLayers >= resources.chunks.size())
+		{
+			const auto layers = static_cast<std::uint32_t>(
+				std::min<std::size_t>(ChunkLayers, resources.capacity - resources.chunks.size() * ChunkLayers));
+			resources.chunks.push_back(VulkanImage::Create(resources.device, resources.format, resources.extent,
+														   layers,
+														   VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+															   VK_IMAGE_USAGE_TRANSFER_SRC_BIT));
+		}
+		const auto image = source.UseForCopy();
+		if (!image)
+			return;
+		m_copy = Copy{image, layer, {source.Description().width, source.Description().height}, slot};
+		m_shots[slot] = {slot, frame, epoch};
+		if (m_displayed == slot)
+			m_displayed.reset();
+		++m_next;
+		m_lastFrame = frame;
+		m_lastCapture = now;
+	}
+	catch (const std::exception& error)
+	{
+		m_error = error.what();
+	}
+#else
+	(void)source;
+	(void)layer;
+	(void)frame;
+	(void)epoch;
+#endif
+}
+std::optional<PreviewShot> PreviewHistory::Nearest(FrameIdentity frame, std::uint64_t epoch) const
+{
+	std::optional<PreviewShot> best;
+	for (const auto& shot : m_shots)
+		if (shot.frame.frame && shot.epoch == epoch && shot.frame.session == frame.session &&
+			shot.frame.run == frame.run && shot.frame.frame <= frame.frame &&
+			frame.frame - shot.frame.frame <= MaximumGap && (!best || shot.frame.frame > best->frame.frame))
+			best = shot;
+	return best;
+}
+float PreviewHistory::Aspect() const noexcept
+{
+#ifdef __linux__
+	if (m_resources)
+		return float(m_resources->extent.height) / float(m_resources->extent.width);
+#endif
+	return 9.f / 16;
+}
+void PreviewHistory::Draw(const PreviewShot& shot, float width)
+{
+#ifdef __linux__
+	if (!m_resources || shot.slot >= m_shots.size())
+		return;
+	m_display = shot.slot;
+	ImGui::Image(std::bit_cast<ImTextureID>(m_resources->descriptor), {width, width * Aspect()});
+#else
+	(void)shot;
+	(void)width;
+#endif
+}
+void PreviewHistory::Record(VkCommandBuffer command)
+{
+#ifdef __linux__
+	if (!m_resources)
+		return;
+	auto& resources = *m_resources;
+	const bool show = m_display && m_display != m_displayed;
+	if (!m_copy && !show)
+		return;
+	for (; resources.initialized < resources.chunks.size(); ++resources.initialized)
+		VulkanImageBarrier(command, *resources.chunks[resources.initialized], VK_IMAGE_LAYOUT_UNDEFINED,
+						   VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+	if (!resources.displayInitialized)
+	{
+		VulkanImageBarrier(command, *resources.display, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0,
+						   VK_ACCESS_TRANSFER_WRITE_BIT);
+		resources.displayInitialized = true;
+	}
+	// Earlier frames on this queue may still sample the display image or copy slots.
+	VkMemoryBarrier before{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+	before.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+	before.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+	vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+						 VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &before, 0, nullptr, 0, nullptr);
+	if (m_copy)
+	{
+		VkImageBlit blit{};
+		blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, m_copy->layer, 1};
+		blit.srcOffsets[1] = {static_cast<std::int32_t>(m_copy->extent.width),
+							  static_cast<std::int32_t>(m_copy->extent.height), 1};
+		blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, static_cast<std::uint32_t>(m_copy->slot % ChunkLayers),
+							   1};
+		blit.dstOffsets[1] = {static_cast<std::int32_t>(resources.extent.width),
+							  static_cast<std::int32_t>(resources.extent.height), 1};
+		vkCmdBlitImage(command, m_copy->source, VK_IMAGE_LAYOUT_GENERAL,
+					   resources.chunks[m_copy->slot / ChunkLayers]->image, VK_IMAGE_LAYOUT_GENERAL, 1, &blit,
+					   VK_FILTER_LINEAR);
+	}
+	if (show)
+	{
+		VkMemoryBarrier written{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+		written.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		written.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+		vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &written,
+							 0, nullptr, 0, nullptr);
+		VkImageCopy copy{};
+		copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, static_cast<std::uint32_t>(*m_display % ChunkLayers), 1};
+		copy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+		copy.extent = {resources.extent.width, resources.extent.height, 1};
+		vkCmdCopyImage(command, resources.chunks[*m_display / ChunkLayers]->image, VK_IMAGE_LAYOUT_GENERAL,
+					   resources.display->image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+	}
+	VkMemoryBarrier after{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+	after.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	after.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
+	vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT,
+						 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &after, 0,
+						 nullptr, 0, nullptr);
+#else
+	(void)command;
+#endif
+}
+void PreviewHistory::Submitted(std::uint64_t serial)
+{
+	if (!m_resources)
+		return;
+	if (m_copy)
+	{
+		m_lastUse[m_copy->slot] = serial;
+		m_copy.reset();
+	}
+	if (m_display)
+	{
+		m_lastUse[*m_display] = serial;
+		m_displayed = m_display;
+		m_display.reset();
+	}
+#ifdef __linux__
+	m_resources->lastUse = serial;
+#endif
+}
+void PreviewHistory::BeginFrame()
+{
+	// Work offered for a frame that was never submitted is dropped with it.
+	if (m_copy)
+		m_shots[m_copy->slot] = {};
+	m_copy.reset();
+	m_display.reset();
+}
+std::uint64_t PreviewHistory::Bytes() const noexcept
+{
+	return m_resources ? m_resources->Bytes() : 0;
+}
+} // namespace simxr::app
