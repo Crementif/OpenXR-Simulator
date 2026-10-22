@@ -16,27 +16,26 @@ inline const std::filesystem::path& GetSimulatorDataDirectory()
 {
 	static const auto directory = []
 	{
-		const auto count = GetEnvironmentVariableW(L"LOCALAPPDATA", nullptr, 0);
-		std::wstring base(count ? count : 1, L'\0');
-		if (count)
+		const auto environment = [](const wchar_t* name)
 		{
-			GetEnvironmentVariableW(L"LOCALAPPDATA", base.data(), count);
-			base.resize(count - 1);
-		}
-		else
-			base = L".";
-		return std::filesystem::path(base) / L"OpenXR-Simulator";
+			std::wstring value;
+			for (;;)
+			{
+				const auto count = GetEnvironmentVariableW(name, value.data(), static_cast<DWORD>(value.size()));
+				if (count < value.size() || count == 0)
+				{
+					value.resize(count);
+					return value;
+				}
+				value.resize(count);
+			}
+		};
+		if (const auto explicitPath = environment(L"SIMXR_DATA_DIR"); !explicitPath.empty())
+			return std::filesystem::path(explicitPath);
+		const auto base = environment(L"LOCALAPPDATA");
+		return std::filesystem::path(base.empty() ? L"." : base) / L"OpenXR-Simulator";
 	}();
 	return directory;
-}
-inline const std::string& GetSimulatorDataPath()
-{
-	static const auto path = []
-	{
-		const auto utf8 = GetSimulatorDataDirectory().u8string();
-		return std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size());
-	}();
-	return path;
 }
 inline const char* GetSessionStateName(int state)
 {

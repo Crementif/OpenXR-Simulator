@@ -8,6 +8,7 @@
 #include <dwmapi.h>
 #include <string>
 #include <functional>
+#include <filesystem>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -624,7 +625,7 @@ inline InputPolling InputPollingFromName(const char* s, InputPolling def) {
 
 // Empty until LoadSettings() runs, which makes every SaveSettings() before that
 // a no-op -- startup can't write defaults over a file it hasn't read yet.
-inline std::string g_settingsPath;
+inline std::filesystem::path g_settingsPath;
 inline std::string g_lastSettingsJson;
 
 inline std::string SerializeSettings() {
@@ -678,7 +679,7 @@ inline void SaveSettings() {
     if (json == g_lastSettingsJson) return;
 
     FILE* f = nullptr;
-    if (fopen_s(&f, g_settingsPath.c_str(), "w") != 0 || !f) return;
+    if (_wfopen_s(&f, g_settingsPath.c_str(), L"w") != 0 || !f) return;
     fwrite(json.data(), 1, json.size(), f);
     fclose(f);
     g_lastSettingsJson = std::move(json);
@@ -741,12 +742,13 @@ inline void ApplySettingsJson(const char* text) {
 }
 
 // Restore saved settings from `dataDir` and arm SaveSettings().
-inline void LoadSettings(const std::string& dataDir) {
-    CreateDirectoryA(dataDir.c_str(), nullptr);
-    std::string path = dataDir + "\\settings.json";
+inline void LoadSettings(const std::filesystem::path& dataDir) {
+    std::error_code error;
+    std::filesystem::create_directories(dataDir, error);
+    const auto path = dataDir / L"settings.json";
 
     FILE* f = nullptr;
-    if (fopen_s(&f, path.c_str(), "rb") == 0 && f) {
+    if (_wfopen_s(&f, path.c_str(), L"rb") == 0 && f) {
         char buf[2048];
         size_t n = fread(buf, 1, sizeof(buf) - 1, f);
         buf[n] = '\0';

@@ -2608,7 +2608,7 @@ static XrResult XRAPI_PTR xrCreateInstance_runtime(const XrInstanceCreateInfo* c
     static bool s_settingsLoaded = false;
     if (!s_settingsLoaded) {
         s_settingsLoaded = true;
-        ui::LoadSettings(mcp::GetSimulatorDataPath());
+        ui::LoadSettings(mcp::GetSimulatorDataDirectory());
         char zoomDesc[32] = "fit";
         if (!ui::g_uiState.fitToWindow) {
             snprintf(zoomDesc, sizeof(zoomDesc), "%d%%", (int)(ui::g_uiState.zoomLevel * 100));
