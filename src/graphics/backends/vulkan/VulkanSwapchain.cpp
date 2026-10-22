@@ -94,7 +94,8 @@ XrResult VulkanSwapchain::Create(VulkanBackend& backend, const XrSwapchainCreate
 			static_cast<VkFormat>(description.format), VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
 			usage | VK_IMAGE_USAGE_SAMPLED_BIT, 0, &properties) == VK_SUCCESS &&
 			description.width <= properties.maxExtent.width && description.height <= properties.maxExtent.height &&
-			description.arraySize <= properties.maxArrayLayers && (properties.sampleCounts & description.sampleCount))
+			description.arraySize <= properties.maxArrayLayers && description.mipCount <= properties.maxMipLevels &&
+			(properties.sampleCounts & description.sampleCount))
 			usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
 	}
 	for (auto& image : prepared->m_images)
