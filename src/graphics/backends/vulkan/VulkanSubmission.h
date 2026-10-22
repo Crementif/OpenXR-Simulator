@@ -92,6 +92,12 @@ class VulkanFrame final : public FrameOutput
 	std::shared_ptr<VulkanSubmission> m_submission;
 	std::mutex m_inspectionMutex;
 	VulkanExternalHandle m_readyFd;
-	std::uint32_t m_inspection = 0;
+	enum class InspectionClaim
+	{
+		Available,
+		Prepared,
+		Committed
+	};
+	InspectionClaim m_inspection = InspectionClaim::Available;
 };
 } // namespace simxr

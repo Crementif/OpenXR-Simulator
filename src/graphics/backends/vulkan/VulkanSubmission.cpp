@@ -250,24 +250,24 @@ VulkanExternalHandle VulkanFrame::ExportReady()
 bool VulkanFrame::ClaimInspection()
 {
 	std::lock_guard lock(m_inspectionMutex);
-	if (m_inspection)
+	if (m_inspection != InspectionClaim::Available)
 		return false;
-	m_inspection = 1;
+	m_inspection = InspectionClaim::Prepared;
 	return true;
 }
 
 void VulkanFrame::CancelInspection() noexcept
 {
 	std::lock_guard lock(m_inspectionMutex);
-	if (m_inspection == 1)
-		m_inspection = 0;
+	if (m_inspection == InspectionClaim::Prepared)
+		m_inspection = InspectionClaim::Available;
 }
 
 void VulkanFrame::CommitInspection() noexcept
 {
 	std::lock_guard lock(m_inspectionMutex);
-	if (m_inspection == 1)
-		m_inspection = 2;
+	if (m_inspection == InspectionClaim::Prepared)
+		m_inspection = InspectionClaim::Committed;
 }
 
 std::shared_ptr<FrameReservation> VulkanFrame::Reservation() const
