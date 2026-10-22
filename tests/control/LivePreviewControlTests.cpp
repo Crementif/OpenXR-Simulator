@@ -1,5 +1,6 @@
 #include "FakeImageInspection.h"
 #include "control/ConnectionImages.h"
+#include "graphics/SnapshotBudget.h"
 
 #include <iostream>
 
@@ -182,8 +183,8 @@ void DistinctDisplayImagesFromOneFrame()
 	}
 	Require(state->readersDestroyed == 1 && retain(rotated, 6) == rotatedReader,
 			"Publication rollback replaced an existing image or retained its failed reader");
-	for (unsigned index = 0; index < 6; ++index)
-		retain(std::make_shared<wire::test::Output>(nullptr), 10 + index);
+	for (std::size_t index = 2; index < SnapshotBudget::Capacity(); ++index)
+		retain(std::make_shared<wire::test::Output>(nullptr), 100 + index);
 	Require(retain(rotated, 6) == rotatedReader, "Full table rejected an existing display image");
 	const auto retained = state->retains.load();
 	try
@@ -351,7 +352,7 @@ void ValidationAndRollback()
 	Require(Error(retried) == wire::ErrorCode::Ok && fixture.state->retains == 2,
 			"Failed live-reader publication poisoned selected-source retry");
 	std::vector<std::uint64_t> readers{Id(retried.message, tag::ImageReaderId)};
-	for (int index = 1; index < 8; ++index)
+	for (std::size_t index = 1; index < SnapshotBudget::Capacity(); ++index)
 	{
 		const auto frame = Submit(fixture, NewOutput(fixture, CompletionStatus::Complete));
 		Through(fixture, frame.displayTick);
@@ -363,10 +364,10 @@ void ValidationAndRollback()
 			"Full table rejected already retained selection");
 	const auto next = Submit(fixture, NewOutput(fixture, CompletionStatus::Complete));
 	Through(fixture, next.displayTick);
-	Require(Error(client.Preview()) == wire::ErrorCode::Capacity && fixture.state->retains == 9,
+	Require(Error(client.Preview()) == wire::ErrorCode::Capacity && fixture.state->retains == SnapshotBudget::Capacity() + 1,
 			"Live reader table capacity was checked after native provider retention");
 	client.Call(wire::OpCode::ReleaseImage, {wire::Field::U64(tag::ImageReaderId, readers.front())});
-	Require(Error(client.Preview()) == wire::ErrorCode::Ok && fixture.state->retains == 10,
+	Require(Error(client.Preview()) == wire::ErrorCode::Ok && fixture.state->retains == SnapshotBudget::Capacity() + 2,
 			"Released live image-reader capacity did not recover");
 	Require(fixture.session->Captures().Snapshot().captures == std::vector<CaptureId>{fixture.capture} &&
 				fixture.state->reads == 0,

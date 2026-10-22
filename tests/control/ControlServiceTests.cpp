@@ -333,6 +333,42 @@ void ContinuousFrameHistory()
 	Require(newPage.fields.size() == 1 && U64(Nested(newPage, newPage.fields.front().tag), wire::tag::Generation) == client.generation,
 		"New run history included retained records from the previous generation");
 }
+void NegotiationPublicationRollback()
+{
+#ifndef SIMXR_TEST_TSAN_ALLOCATOR
+	int failures = 0;
+	bool exhausted = false;
+	for (int skip = 0; skip < 32; ++skip)
+	{
+		Fixture f;
+		Client client(f.service);
+		const auto hello = client.Request(wire::OpCode::Hello);
+		wire::Message response;
+		bool failed = false;
+		{
+			// Hello publishes four fields; include the replay-cache copy.
+			MatchingAllocationFailure failure(4 * sizeof(wire::Field), skip);
+			response = f.service.Handle(client.connection, hello);
+			failed = allocationFailed;
+		}
+		if (!failed)
+		{
+			Require(Error(response) == wire::ErrorCode::Ok, "Hello failed without allocation injection");
+			exhausted = true;
+			break;
+		}
+		++failures;
+		Require(Error(response) == wire::ErrorCode::Capacity, "Hello allocation failure was not reported");
+		const auto retry = f.service.Handle(client.connection, hello);
+		Require(Error(retry) == wire::ErrorCode::Ok, "Failed Hello publication stranded negotiation");
+		Require(wire::Encode(f.service.Handle(client.connection, hello)) == wire::Encode(retry),
+			"Retried Hello did not publish an exact replay");
+		Require(Error(client.Call(wire::OpCode::Sessions)) == wire::ErrorCode::Ok,
+			"Retried Hello did not enable connection requests");
+	}
+	Require(exhausted && failures > 0, "Hello publication allocation failure was not exercised");
+#endif
+}
 void NegotiationAndReplay()
 {
 	Fixture f;
@@ -1546,6 +1582,7 @@ int main()
 	{
 		ContinuousFrameHistory();
 		NegotiationAndReplay();
+		NegotiationPublicationRollback();
 		LegacyMinorNegotiation();
 		OwnershipAndExactClear();
 		LeaseOwnerRetirementAndRollback();

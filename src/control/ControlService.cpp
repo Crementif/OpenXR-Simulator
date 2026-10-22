@@ -621,8 +621,6 @@ class ControlService::State
 			response.fields.push_back(Field::U32(tag::Minor, negotiatedMinor));
 			response.fields.push_back(Field::U64(tag::Capabilities, capabilities));
 			response.fields.push_back(Field::U32(tag::PayloadLimit, MaxPayload));
-			if (!client.requests.Negotiate(negotiatedMinor))
-				throw ControlRequestError{ErrorCode::Conflict, "Connection already negotiated"};
 			return response;
 		}
 		if (!client.requests.Negotiated())
@@ -792,7 +790,13 @@ ControlPacket ControlService::State::HandlePacket(ConnectionId connection, const
 		response.encoded = std::make_shared<const std::vector<std::byte>>(Encode(response.message));
 		exchange.Publish(response, retiredReplay);
 		if (response.message.fields.front().AsU32() == static_cast<std::uint32_t>(ErrorCode::Ok))
+		{
+			// Commit negotiation only after its reply is replayable. Admission
+			// remains exclusive, including while a disconnect awaits settlement.
+			if (request.opcode == static_cast<std::uint16_t>(OpCode::Hello))
+				client->requests.Negotiate(response.message.minor);
 			publication.Commit();
+		}
 		return response;
 	}
 	catch (const ImageInspectionError& error)
