@@ -682,11 +682,17 @@ if(SIMXR_BUILD_PROBES)
                     set_tests_properties(linux_vulkan_mcp_screenshot PROPERTIES
                         ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
                         TIMEOUT 60 SKIP_RETURN_CODE 77)
-                    add_test(NAME linux_vulkan_control_depth COMMAND "${Python3_EXECUTABLE}"
-                        "${PROJECT_SOURCE_DIR}/tests/control/test_native_depth.py" "$<TARGET_FILE:xr_probe_linux>")
-                    set_tests_properties(linux_vulkan_control_depth PROPERTIES
-                        ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
-                        TIMEOUT 90 SKIP_RETURN_CODE 77)
+                    foreach(depth_format d32 d16 d24s8 d32s8)
+                        set(depth_test linux_vulkan_control_depth_${depth_format})
+                        if(depth_format STREQUAL "d32")
+                            set(depth_test linux_vulkan_control_depth)
+                        endif()
+                        add_test(NAME ${depth_test} COMMAND "${Python3_EXECUTABLE}"
+                            "${PROJECT_SOURCE_DIR}/tests/control/test_native_depth.py" "$<TARGET_FILE:xr_probe_linux>")
+                        set_tests_properties(${depth_test} PROPERTIES
+                            ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1;SIMXR_PROBE_DEPTH_FORMAT=${depth_format}"
+                            TIMEOUT 90 SKIP_RETURN_CODE 77)
+                    endforeach()
                     add_test(NAME linux_vulkan_control_quad COMMAND "${Python3_EXECUTABLE}"
                         "${PROJECT_SOURCE_DIR}/tests/control/test_native_quad.py" "$<TARGET_FILE:xr_probe_linux>")
                     set_tests_properties(linux_vulkan_control_quad PROPERTIES

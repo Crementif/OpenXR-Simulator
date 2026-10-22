@@ -55,7 +55,7 @@ def main():
                     depth = inspected['document']['layers']['layers'][0]['views'][view]['depth']
                     require(depth['image']['array_slice'] == view, depth)
                     if frame >= 6:
-                        require(depth['far_z'] == '+infinity', depth)
+                        require(depth['far_z'] == '+Infinity', depth)
                     if frame == 7:
                         require(not capture['image_available'], 'Infinite-range linear depth falsely available')
                     else:

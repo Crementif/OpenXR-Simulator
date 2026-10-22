@@ -66,9 +66,9 @@ VulkanSwapchain::VulkanSwapchain(XrSwapchainCreateInfo description)
 
 std::span<const std::int64_t> VulkanSwapchain::Formats()
 {
-	static constexpr std::array<std::int64_t, 7> s_formats{
+	static constexpr std::array<std::int64_t, 8> s_formats{
 		VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_UNORM,	  VK_FORMAT_B8G8R8A8_SRGB, VK_FORMAT_B8G8R8A8_UNORM,
-		VK_FORMAT_D32_SFLOAT,	 VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D16_UNORM};
+		VK_FORMAT_D32_SFLOAT,	 VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D16_UNORM, VK_FORMAT_D32_SFLOAT_S8_UINT};
 	return s_formats;
 }
 

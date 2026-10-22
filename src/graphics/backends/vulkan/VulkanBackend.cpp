@@ -587,7 +587,8 @@ XrResult VulkanBackend::PrepareDepthCapture(const LayerDepthDescription& depth, 
 	const auto image = resolve(depth.image.source);
 	if (!image || !(image->Aspect() & VK_IMAGE_ASPECT_DEPTH_BIT))
 		return XR_ERROR_LAYER_INVALID;
-	if (image->format != VK_FORMAT_D32_SFLOAT)
+	if (image->format != VK_FORMAT_D32_SFLOAT && image->format != VK_FORMAT_D16_UNORM &&
+		image->format != VK_FORMAT_D24_UNORM_S8_UINT && image->format != VK_FORMAT_D32_SFLOAT_S8_UINT)
 		return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
 	if (!(image->usage & VK_IMAGE_USAGE_SAMPLED_BIT) ||
 		(linear && (!std::isfinite(depth.nearZ) || !std::isfinite(depth.farZ))))

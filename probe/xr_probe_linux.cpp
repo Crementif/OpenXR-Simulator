@@ -682,14 +682,29 @@ static int runProbe()
         invalidImages[0].image == VK_NULL_HANDLE);
     XR(xrEnumerateSwapchainImages(swapchain, count, &count, (XrSwapchainImageBaseHeader *)images.data()));
     // Also exercise depth swapchain allocation and exact acquire/wait/release ordering.
-    chain.format = VK_FORMAT_D32_SFLOAT;
+    VkFormat depthFormat = VK_FORMAT_D32_SFLOAT;
+    if (const auto* selected = std::getenv("SIMXR_PROBE_DEPTH_FORMAT"))
+    {
+        if (std::strcmp(selected, "d16") == 0)
+            depthFormat = VK_FORMAT_D16_UNORM;
+        else if (std::strcmp(selected, "d24s8") == 0)
+            depthFormat = VK_FORMAT_D24_UNORM_S8_UINT;
+        else if (std::strcmp(selected, "d32s8") == 0)
+            depthFormat = VK_FORMAT_D32_SFLOAT_S8_UINT;
+        else
+            CHECK(std::strcmp(selected, "d32") == 0);
+    }
+    const auto depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT |
+        ((depthFormat == VK_FORMAT_D24_UNORM_S8_UINT || depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT) ?
+            VK_IMAGE_ASPECT_STENCIL_BIT : 0);
+    chain.format = depthFormat;
     chain.usageFlags = XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
     XrSwapchain depth;
     XR(xrCreateSwapchain(session, &chain, &depth));
     std::vector<XrSwapchainImageVulkanKHR> depthImages;
     VkBuffer depthUpload = VK_NULL_HANDLE;
     VkDeviceMemory depthMemory = VK_NULL_HANDLE;
-    float* depthPixels = nullptr;
+    void* depthPixels = nullptr;
     if (depthMode)
     {
         XR(xrEnumerateSwapchainImages(depth, 0, &count, nullptr));
@@ -716,7 +731,7 @@ static int runProbe()
         VK(vkBindBufferMemory(device, depthUpload, depthMemory, 0));
         void* mapped = nullptr;
         VK(vkMapMemory(device, depthMemory, 0, VK_WHOLE_SIZE, 0, &mapped));
-        depthPixels = static_cast<float*>(mapped);
+        depthPixels = mapped;
     }
     else
         XR(xrDestroySwapchain(depth));
@@ -1065,7 +1080,16 @@ static int runProbe()
             for (uint32_t eye = 0; eye < activeViewCount; ++eye)
                 for (uint32_t y = 0; y < 48; ++y)
                     for (uint32_t x = 0; x < 64; ++x)
-                        depthPixels[(eye * 48 + y) * 64 + x] = .1f * (frame % 4 + 1) + .15f * eye + .05f * (x / 16) + .025f * (y / 12);
+                    {
+                        const auto pixel = (eye * 48 + y) * 64 + x;
+                        const auto value = .1f * (frame % 4 + 1) + .15f * eye + .05f * (x / 16) + .025f * (y / 12);
+                        if (depthFormat == VK_FORMAT_D16_UNORM)
+                            static_cast<uint16_t*>(depthPixels)[pixel] = static_cast<uint16_t>(std::lround(value * 65535));
+                        else if (depthFormat == VK_FORMAT_D24_UNORM_S8_UINT)
+                            static_cast<uint32_t*>(depthPixels)[pixel] = static_cast<uint32_t>(std::lround(value * 16777215));
+                        else
+                            static_cast<float*>(depthPixels)[pixel] = value;
+                    }
         }
         VK(vkResetCommandPool(device, pool, 0));
         VkCommandBufferBeginInfo cb{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -1109,7 +1133,7 @@ static int runProbe()
             depthBarrier.image = depthImages[depthIndex].image;
             depthBarrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
             depthBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            depthBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+            depthBarrier.subresourceRange.aspectMask = depthAspect;
             depthBarrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
             depthBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
             vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
