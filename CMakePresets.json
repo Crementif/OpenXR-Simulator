@@ -50,7 +50,7 @@
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "SIMXR_HEADLESS": "ON"
+        "SIMXR_BUILD_COMPANION": "OFF"
       }
     },
     {
@@ -60,7 +60,7 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_CXX_COMPILER": "clang++",
         "SIMXR_SANITIZER": "address",
-        "SIMXR_HEADLESS": "ON"
+        "SIMXR_BUILD_COMPANION": "OFF"
       }
     },
     {

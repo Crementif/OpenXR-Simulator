@@ -8,7 +8,8 @@ find_package(Threads REQUIRED)
 option(SIMXR_ENABLE_PCH "Use private precompiled headers" OFF)
 option(SIMXR_BUILD_RUNTIME "Build the OpenXR runtime" ON)
 option(SIMXR_BUILD_PROBES "Build native graphics compatibility probes" ON)
-option(SIMXR_HEADLESS "Exclude the legacy in-process preview" OFF)
+option(SIMXR_BUILD_AUTOMATION "Build Luau rig runtime and headless runner" ON)
+option(SIMXR_BUILD_COMPANION "Build the separate SDL3/Vulkan companion" OFF)
 set(SIMXR_SANITIZER "" CACHE STRING "Sanitizer: address, thread, or empty")
 set_property(CACHE SIMXR_SANITIZER PROPERTY STRINGS "" address thread)
 set(SIMXR_MCP_TEST_PYTHON "" CACHE FILEPATH "Optional Python interpreter with the MCP SDK for stdio integration tests")
@@ -655,13 +656,15 @@ if(SIMXR_BUILD_PROBES)
                     set_tests_properties(linux_vulkan_mcp_incident PROPERTIES
                         ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
                         TIMEOUT 90 SKIP_RETURN_CODE 77)
-                    add_test(NAME linux_vulkan_history_bindings COMMAND "${Python3_EXECUTABLE}"
-                        "${PROJECT_SOURCE_DIR}/tests/control/test_native_history_bindings.py" "$<TARGET_FILE:xr_probe_linux>" "$<TARGET_FILE:simxr_runner>")
-                    add_test(NAME linux_vulkan_ui_history_bindings COMMAND "${Python3_EXECUTABLE}"
-                        "${PROJECT_SOURCE_DIR}/tests/control/test_native_history_bindings.py" "$<TARGET_FILE:xr_probe_linux>" "$<TARGET_FILE:simxr_runner>" --ui)
-                    set_tests_properties(linux_vulkan_history_bindings linux_vulkan_ui_history_bindings PROPERTIES
-                        ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
-                        TIMEOUT 90 SKIP_RETURN_CODE 77)
+                    if(SIMXR_BUILD_AUTOMATION)
+                        add_test(NAME linux_vulkan_history_bindings COMMAND "${Python3_EXECUTABLE}"
+                            "${PROJECT_SOURCE_DIR}/tests/control/test_native_history_bindings.py" "$<TARGET_FILE:xr_probe_linux>" "$<TARGET_FILE:simxr_runner>")
+                        add_test(NAME linux_vulkan_ui_history_bindings COMMAND "${Python3_EXECUTABLE}"
+                            "${PROJECT_SOURCE_DIR}/tests/control/test_native_history_bindings.py" "$<TARGET_FILE:xr_probe_linux>" "$<TARGET_FILE:simxr_runner>" --ui)
+                        set_tests_properties(linux_vulkan_history_bindings linux_vulkan_ui_history_bindings PROPERTIES
+                            ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
+                            TIMEOUT 90 SKIP_RETURN_CODE 77)
+                    endif()
                     add_test(NAME linux_vulkan_ui_window COMMAND "${Python3_EXECUTABLE}"
                         "${PROJECT_SOURCE_DIR}/tests/control/test_native_image_window.py" "$<TARGET_FILE:xr_probe_linux>" --ui)
                     add_test(NAME linux_vulkan_mcp_ui_incident COMMAND "${Python3_EXECUTABLE}"
@@ -720,12 +723,10 @@ if(SIMXR_BUILD_PROBES)
     endif()
 endif()
 
-option(SIMXR_BUILD_AUTOMATION "Build Luau rig runtime and headless runner" ON)
 if(SIMXR_BUILD_AUTOMATION)
     include(cmake/SimxrAutomation.cmake)
 endif()
 
-option(SIMXR_BUILD_COMPANION "Build the separate SDL3/Vulkan companion" OFF)
 if(SIMXR_BUILD_COMPANION)
     include(cmake/SimxrCompanion.cmake)
 endif()
