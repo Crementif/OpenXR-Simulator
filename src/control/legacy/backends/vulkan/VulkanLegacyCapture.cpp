@@ -56,6 +56,7 @@ struct VulkanLegacyCapture::Job
 	bool hasProjection = false;
 	std::uint32_t quadLayers = 0;
 	std::optional<LegacyScreenshot> image;
+	std::function<bool(LegacyScreenshot&)> complete;
 };
 
 VulkanLegacyCapture::VulkanLegacyCapture(std::shared_ptr<VulkanDevice> device, std::shared_ptr<Session> session,
@@ -107,13 +108,14 @@ std::optional<std::size_t> VulkanLegacyCapture::AddSource(Job& job, const LayerI
 
 std::unique_ptr<VulkanLegacyCapture::Job> VulkanLegacyCapture::Prepare(const CompositionPlan& composition,
 																	   XrExtent2Di outputExtent,
-																	   const VulkanCaptureBindings& bindings)
+																	   const VulkanCaptureBindings& bindings,
+																	   const RequestState& request)
 {
 	if (outputExtent.width <= 0 || outputExtent.height <= 0)
 		return {};
 	auto job = std::make_unique<Job>();
 	job->frame = m_session->Snapshot().lastSubmitted;
-	job->request = *m_request;
+	job->request = request;
 	auto& plan = job->plan;
 	plan.firstEye = job->request.selection.eye == "right" ? 1 : 0;
 	plan.eyeCount = job->request.selection.eye == "both" ? 2 : 1;
@@ -179,26 +181,42 @@ void VulkanLegacyCapture::Submit(const XrFrameEndInfo& frame, const CompositionP
 	}
 	if (m_request || requests.projectionLog)
 		DumpProjection();
-	if (!m_request || (!hasProjection && !quadLayers) || m_jobs.size() >= MaxCaptureJobs ||
-		(m_request->selection.layer == "projection" && !hasProjection) ||
-		(m_request->selection.layer == "quad" && !quadLayers))
-		return;
-	auto job = Prepare(composition, outputExtent, bindings);
-	if (!job)
-		return;
-	job->hasProjection = hasProjection;
-	job->quadLayers = job->request.selection.layer == "projection" ? 0 : quadLayers;
-	m_jobs.push_back(std::move(job));
-	auto& submitted = *m_jobs.back();
-	const auto result = submitted.readback->Submit();
-	for (const auto& source : submitted.sources)
-		bindings.MarkSourceUsed(source, submitted.readback);
-	if (result != VK_SUCCESS)
+	auto submit =
+		[&](const RequestState& request, XrExtent2Di extent, std::function<bool(LegacyScreenshot&)> complete = {})
 	{
-		Log("Legacy screenshot submission failed");
-		return;
+		if ((!hasProjection && !quadLayers) || m_jobs.size() >= MaxCaptureJobs ||
+			(request.selection.layer == "projection" && !hasProjection) ||
+			(request.selection.layer == "quad" && !quadLayers))
+			return false;
+		auto job = Prepare(composition, extent, bindings, request);
+		if (!job)
+			return false;
+		job->hasProjection = hasProjection;
+		job->quadLayers = request.selection.layer == "projection" ? 0 : quadLayers;
+		job->complete = std::move(complete);
+		m_jobs.push_back(std::move(job));
+		auto& submitted = *m_jobs.back();
+		const auto result = submitted.readback->Submit();
+		for (const auto& source : submitted.sources)
+			bindings.MarkSourceUsed(source, submitted.readback);
+		if (result != VK_SUCCESS)
+		{
+			Log("Legacy capture submission failed");
+			return false;
+		}
+		return true;
+	};
+	if (m_request && submit(*m_request, outputExtent))
+		m_request.reset();
+	if (requests.frameCapture)
+	{
+		auto& request = *requests.frameCapture;
+		if (submit({std::move(request.selection), m_session->Snapshot().lastSubmitted},
+				   {static_cast<std::int32_t>(composition.width), static_cast<std::int32_t>(composition.height)},
+				   std::move(request.complete)) &&
+			request.submitted)
+			request.submitted();
 	}
-	m_request.reset();
 }
 
 void VulkanLegacyCapture::CompleteImage(Job& job)
@@ -264,7 +282,7 @@ void VulkanLegacyCapture::PollJobs()
 				}
 				CompleteImage(job);
 			}
-			if (!m_files->SaveScreenshot(*job.image))
+			if (!(job.complete ? job.complete(*job.image) : m_files->SaveScreenshot(*job.image)))
 			{
 				if (!m_files->Status().closed)
 					return;
@@ -378,7 +396,7 @@ VkResult VulkanLegacyCapture::Close(std::uint64_t timeout)
 			std::lock_guard lock(m_mutex);
 			PollJobs();
 			if (m_jobs.empty())
-				return VK_SUCCESS;
+				break;
 		}
 		const auto remaining = deadline - std::chrono::steady_clock::now();
 		if (remaining <= std::chrono::steady_clock::duration::zero())
@@ -387,5 +405,8 @@ VkResult VulkanLegacyCapture::Close(std::uint64_t timeout)
 			!m_files->Status().closed)
 			return VK_TIMEOUT;
 	}
+	const auto remaining = std::max(deadline - Clock::now(), Clock::duration::zero());
+	return m_files->FinishCaptures(std::chrono::duration_cast<std::chrono::milliseconds>(remaining)) ? VK_SUCCESS
+																									 : VK_TIMEOUT;
 }
 } // namespace simxr

@@ -46,12 +46,12 @@ class WindowsLegacyCapture
 	void BurstOnFrame(const std::uint8_t* pixels, std::uint32_t width, std::uint32_t height, std::size_t stride,
 					  BurstFrameMeta metadata);
 	void PublishStatus(FrameStatus status);
+	bool FlushBurst();
 	void Close();
 
   private:
 	static BitmapOutput CopyPixels(const std::uint8_t* pixels, std::uint32_t width, std::uint32_t height,
 								   std::size_t stride, bool bgra, std::string filename);
-	bool FlushBurst();
 	std::shared_ptr<WindowsLegacyChannel> m_files;
 	mutable std::mutex m_mutex;
 	ScreenshotRequest m_request;

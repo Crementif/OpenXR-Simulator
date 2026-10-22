@@ -306,6 +306,7 @@ bool WindowsLegacyCapture::FlushBurst()
 	const auto height = m_burstImages.front().height;
 	std::ostringstream manifest;
 	manifest.imbue(std::locale::classic());
+	manifest << std::setprecision(17);
 	manifest << "{\"width\":" << width << ",\"height\":" << height << ",\"count\":" << metadata.size()
 			 << ",\"frames\":[";
 	for (std::size_t index = 0; index < metadata.size(); ++index)

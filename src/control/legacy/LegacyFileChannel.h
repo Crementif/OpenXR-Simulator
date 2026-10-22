@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -30,10 +31,20 @@ struct LegacyFileCommands
 	std::optional<LegacyInput::Sequence> sequence;
 };
 
+struct LegacyScreenshot;
+// One submitted frame only; the completion owns its frame-specific CPU metadata.
+struct LegacyFrameCapture
+{
+	LegacyCaptureRequest selection;
+	std::function<bool(LegacyScreenshot&)> complete;
+	std::function<void()> submitted;
+};
+
 struct LegacyFileRequests
 {
 	std::optional<LegacyCaptureRequest> capture;
 	bool projectionLog = false;
+	std::optional<LegacyFrameCapture> frameCapture;
 };
 
 enum class LegacyOutputFile
@@ -70,6 +81,10 @@ class LegacyCaptureChannel
 	virtual bool Publish(LegacyOutputFile file, std::string document) = 0;
 	virtual bool SaveScreenshot(LegacyScreenshot& screenshot) = 0;
 	virtual bool DrainScreenshots(std::chrono::milliseconds timeout) = 0;
+	virtual bool FinishCaptures(std::chrono::milliseconds timeout)
+	{
+		return DrainScreenshots(timeout);
+	}
 	virtual bool Log(std::string message) = 0;
 	virtual LegacyFileStatus Status() const = 0;
 };

@@ -46,7 +46,7 @@ class VulkanLegacyCapture final : public VulkanFrameObserver
 		std::array<XrRect2Di, 2> rect;
 	};
 	std::unique_ptr<Job> Prepare(const CompositionPlan& composition, XrExtent2Di outputExtent,
-								 const VulkanCaptureBindings& bindings);
+								 const VulkanCaptureBindings& bindings, const RequestState& request);
 	std::optional<std::size_t> AddSource(Job& job, const LayerImageDescription& image,
 										 const VulkanCaptureBindings& bindings);
 	void RecordProjection(const XrCompositionLayerProjection& projection, XrTime time);

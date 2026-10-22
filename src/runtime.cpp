@@ -2800,7 +2800,28 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
 				return result;
 			graphics->SetObserver(std::make_unique<simxr::VulkanLegacyCapture>(
 				graphics->Device(), creation.core.Shared(),
-				std::make_shared<simxr::WindowsVulkanCaptureChannel>(compatibilityFiles), diagnostics));
+				std::make_shared<simxr::WindowsVulkanCaptureChannel>(
+					compatibilityFiles, rt::g_instance.compatibilityCapture, creation.core.Shared(),
+					[]
+					{
+						mcp::HeadPoseCommand head;
+						head.x = rt::g_headPos.x;
+						head.y = rt::g_headPos.y;
+						head.z = rt::g_headPos.z;
+						head.yaw = rt::g_headYaw;
+						head.pitch = rt::g_headPitch;
+						head.roll = rt::g_headRoll;
+						return head;
+					},
+					[](const mcp::HeadPoseCommand& pose)
+					{
+						rt::g_headPos = {pose.x, pose.y, pose.z};
+						rt::g_headYaw = pose.yaw;
+						rt::g_headPitch = pose.pitch;
+						if (pose.hasRoll)
+							rt::g_headRoll = pose.roll;
+					}),
+				diagnostics));
 			rt::g_session.vulkan = std::move(graphics);
 		}
 		{
