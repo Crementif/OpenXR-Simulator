@@ -171,7 +171,10 @@ SpatialScene SpatialEditor::LiveScene() const
 	for (std::size_t hand = 0; hand < 2; ++hand)
 		tracking.controllers[hand].pose.pose = m_rig.Hand(hand);
 	for (std::size_t slot = 0; slot < 4; ++slot)
+	{
+		tracking.trackers[slot].jointOffset.reset();
 		tracking.trackers[slot].poseOverride = m_rig.Tracker(slot);
+	}
 	auto scene = SceneFromTracking(
 		TrackingSystem::Evaluate(RuntimeTime{Duration{1}}, tracking, BodyModel{m_observed->values.proportions}));
 	scene.root = m_rig.Root();

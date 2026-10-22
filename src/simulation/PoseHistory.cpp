@@ -66,7 +66,8 @@ bool Continuous(const TrackingSnapshot& a, const TrackingSnapshot& b)
 		const auto& second = b.trackers[index].device;
 		if (first.identity != second.identity || first.role != second.role || first.connected != second.connected ||
 			first.tracked != second.tracked || first.anchor != second.anchor ||
-			first.poseOverride.has_value() != second.poseOverride.has_value())
+			first.poseOverride.has_value() != second.poseOverride.has_value() ||
+			first.jointOffset.has_value() != second.jointOffset.has_value())
 			return false;
 	}
 	for (std::size_t index = 0; index < a.input.body.controls.size(); ++index)
@@ -130,6 +131,10 @@ std::optional<TrackingSnapshot> PoseHistory::Sample(RuntimeTime time) const
 		if (input.trackers[index].poseOverride)
 			input.trackers[index].poseOverride =
 				Interpolate(*input.trackers[index].poseOverride, *right->input.trackers[index].poseOverride, fraction);
+	for (std::size_t index = 0; index < input.trackers.size(); ++index)
+		if (input.trackers[index].jointOffset)
+			input.trackers[index].jointOffset =
+				Interpolate(*input.trackers[index].jointOffset, *right->input.trackers[index].jointOffset, fraction);
 	input.gaze.yaw = InterpolateAngle(input.gaze.yaw, right->input.gaze.yaw, fraction);
 	input.gaze.pitch = InterpolateAngle(input.gaze.pitch, right->input.gaze.pitch, fraction);
 	input.body.confidence += (right->input.body.confidence - input.body.confidence) * fraction;

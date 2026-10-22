@@ -41,6 +41,8 @@ class SimulationTests(unittest.TestCase):
             {'kind': 'body', 'preset': 1, 'joints': [{'joint': 3, 'tracked': False, 'position': [1, 2, 3]}]},
             {'kind': 'gaze', 'yaw': .25, 'tracked': False},
             {'kind': 'tracker', 'identity': 2**64 - 1, 'role': 6, 'anchor': 12, 'position': [1, 2, 3]},
+            {'kind': 'tracker', 'identity': 1, 'anchor': 0,
+             'joint_offset': {'position': [.125, .25, -.5], 'orientation': [0, 0, 0, 1]}},
             {'kind': 'views', 'ipd': .065},
             {'kind': 'proportions', 'height': 1.9},
             {'kind': 'controller_profile', 'hand': 1, 'path': '/interaction_profiles/oculus/touch_controller'},

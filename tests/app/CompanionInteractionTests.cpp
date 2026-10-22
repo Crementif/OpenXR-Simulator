@@ -1890,6 +1890,7 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 	{
 		tracking.body.preset = pulse >= 1 ? simxr::BodyPreset::TPose : simxr::BodyPreset::Standing;
 		tracking.gaze.yaw = pulse >= 2 ? .3f : 0;
+		tracking.trackers[0].jointOffset.reset();
 		tracking.trackers[0].poseOverride = XrPosef{{0, 0, 0, 1}, {0.1f * float(pulse), 1.0f, -0.3f}};
 		ManualTransaction edit;
 		edit.commands = {simxr::TakeControl{simxr::ControlChannel::Body, false}, simxr::SetBodyControls{tracking.body},

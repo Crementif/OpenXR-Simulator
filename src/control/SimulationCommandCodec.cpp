@@ -106,9 +106,9 @@ template <std::size_t Count> std::array<float, Count> DecodeFloats(const Field& 
 		values[index] = ReadFloat(fields[index]);
 	return values;
 }
-Field EncodePose(const XrPosef& pose)
+Field EncodePose(const XrPosef& pose, std::uint16_t fieldTag = tag::Pose)
 {
-	return EncodeFloats(tag::Pose, {pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w,
+	return EncodeFloats(fieldTag, {pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w,
 									pose.position.x, pose.position.y, pose.position.z});
 }
 XrPosef DecodePose(const Field& field)
@@ -276,6 +276,8 @@ CommandPayload EncodeCommand(const SetTracker& command)
 		Field::Bool(tag::Enabled, tracker.connected, true), Field::Bool(tag::Running, tracker.tracked, true)};
 	if (tracker.anchor)
 		fields.push_back(Field::U32(tag::Channel, static_cast<std::uint32_t>(*tracker.anchor), true));
+	if (tracker.jointOffset)
+		fields.push_back(EncodePose(*tracker.jointOffset, tag::JointOffset));
 	if (tracker.poseOverride)
 		fields.push_back(EncodePose(*tracker.poseOverride));
 	return {SimulationCommandKind::Tracker, std::move(fields)};
@@ -379,7 +381,7 @@ SimulationCommand DecodeSimulationCommand(const Field& field)
 	case SimulationCommandKind::Tracker:
 	{
 		const auto fields = DecodePayload(
-			payload, {tag::Layer, tag::Source, tag::Kind, tag::Enabled, tag::Running, tag::Channel, tag::Pose});
+			payload, {tag::Layer, tag::Source, tag::Kind, tag::Enabled, tag::Running, tag::Channel, tag::Pose, tag::JointOffset});
 		TrackerDevice tracker;
 		tracker.identity = {ReadU64(fields, tag::Source)};
 		tracker.role = static_cast<TrackerRole>(ReadU32(fields, tag::Kind));
@@ -389,6 +391,8 @@ SimulationCommand DecodeSimulationCommand(const Field& field)
 			tracker.anchor = static_cast<BodyJoint>(ReadU32(fields, tag::Channel));
 		if (const auto* pose = fields.Find(tag::Pose))
 			tracker.poseOverride = DecodePose(*pose);
+		if (const auto* offset = fields.Find(tag::JointOffset))
+			tracker.jointOffset = DecodePose(*offset);
 		return SetTracker{ReadU32(fields, tag::Layer), std::move(tracker)};
 	}
 	case SimulationCommandKind::ViewSettings:

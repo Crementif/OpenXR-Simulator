@@ -40,10 +40,6 @@ XrVector3f Normalize(XrVector3f a)
 	const float length = Length(a);
 	return length > 1e-6f ? Scale(a, 1 / length) : XrVector3f{0, 0, -1};
 }
-bool IsIdentity(XrPosef pose)
-{
-	return Length(pose.position) < 1e-4f && std::abs(pose.orientation.w) > .99999f;
-}
 std::size_t Index(BodyJoint joint)
 {
 	return static_cast<std::size_t>(joint);
@@ -392,7 +388,9 @@ void PlayerRig::ObserveTrackers(const ObservedSetup& observed)
 		m_trackerDevices[slot] = device;
 		auto& tracker = m_trackers[slot];
 		const auto joint = device.anchor.value_or(BodyModel::TrackerJoint(device.role));
-		if (!device.poseOverride)
+		if (device.jointOffset)
+			tracker = {joint, *device.jointOffset};
+		else if (!device.poseOverride)
 			tracker = {joint, IdentityPose()};
 		else if (!tracker.joint)
 			tracker.offset = *device.poseOverride;
@@ -518,10 +516,8 @@ ManualTransaction PlayerRig::Transaction(const ObservedSetup& observed, std::opt
 			auto tracker = m_trackerDevices[slot];
 			if (attachment.joint)
 				tracker.anchor = attachment.joint;
-			// A tracker exactly on its joint follows the body natively, also during replays.
-			tracker.poseOverride = attachment.joint && IsIdentity(attachment.offset)
-									   ? std::nullopt
-									   : std::optional{Tracker(static_cast<std::size_t>(slot))};
+			tracker.jointOffset = attachment.joint ? std::optional{attachment.offset} : std::nullopt;
+			tracker.poseOverride = attachment.joint ? std::nullopt : std::optional{Tracker(slot)};
 			result.commands.emplace_back(SetTracker{slot, tracker});
 		}
 	}

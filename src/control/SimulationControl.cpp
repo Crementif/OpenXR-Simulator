@@ -108,6 +108,7 @@ InspectionValue Configuration(const CommandConfiguration& configuration)
 			 {"tracked", InspectionValue::Boolean(tracker.tracked)},
 			 {"anchor", tracker.anchor ? InspectionValue::Unsigned(static_cast<std::uint32_t>(*tracker.anchor))
 									   : InspectionValue::Null()},
+			 {"joint_offset", tracker.jointOffset ? PoseValue(*tracker.jointOffset) : InspectionValue::Null()},
 			 {"pose_override", tracker.poseOverride ? PoseValue(*tracker.poseOverride) : InspectionValue::Null()}}));
 	return InspectionValue::Object(
 		{{"head", PoseValue(configuration.tracking.head)},

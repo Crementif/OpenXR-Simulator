@@ -75,8 +75,8 @@ def _uint(value, maximum=2**32 - 1):
     return value
 
 
-def _pose(command):
-    return _floats(Tag.POSE, list(command.get('orientation', [0, 0, 0, 1])) + list(
+def _pose(command, tag=Tag.POSE):
+    return _floats(tag, list(command.get('orientation', [0, 0, 0, 1])) + list(
         command.get('position', [0, 0, 0])), 7)
 
 
@@ -147,7 +147,7 @@ def _encode_command(command, index=1):
              Field.boolean(Tag.ENABLED, command.get('available', True), True),
              Field.boolean(Tag.RUNNING, command.get('tracked', True), True)]
     elif kind == 'tracker':
-        allow('index', 'identity', 'role', 'connected', 'tracked', 'anchor', 'position', 'orientation')
+        allow('index', 'identity', 'role', 'connected', 'tracked', 'anchor', 'position', 'orientation', 'joint_offset')
         f = [Field.u32(Tag.LAYER, _uint(command.get('index', 0), 3), True),
              Field.u64(Tag.SOURCE, _uint(command['identity'], 2**64 - 1), True),
              Field.u32(Tag.KIND, _uint(command.get('role', 4), 17), True),
@@ -157,6 +157,8 @@ def _encode_command(command, index=1):
             f.append(Field.u32(Tag.CHANNEL, _uint(command['anchor'], 83), True))
         if 'position' in command or 'orientation' in command:
             f.append(_pose(command))
+        if command.get('joint_offset') is not None:
+            f.append(_pose(command['joint_offset'], Tag.JOINT_OFFSET))
     elif kind == 'views':
         allow('ipd', 'inset_half_angle', 'outer_fov', 'outer_width', 'outer_height', 'inset_width', 'inset_height')
         fov = command.get('outer_fov', [-0.9, 0.9, 0.9, -0.9] * 2)
@@ -240,6 +242,9 @@ def decode_command(record):
         c.update(index=f[Tag.LAYER].as_u32(), identity=f[Tag.SOURCE].as_u64(), role=f[Tag.KIND].as_u32(), connected=f[Tag.ENABLED].as_bool(), tracked=f[Tag.RUNNING].as_bool())
         if Tag.CHANNEL in f: c['anchor'] = f[Tag.CHANNEL].as_u32()
         if Tag.POSE in f: pose()
+        if Tag.JOINT_OFFSET in f:
+            v = floats(Tag.JOINT_OFFSET)
+            c['joint_offset'] = dict(orientation=v[:4], position=v[4:])
     elif kind == 'views':
         v = floats(Tag.VALUES)
         c.update(ipd=v[0], inset_half_angle=v[1], outer_fov=v[2:], outer_width=f[Tag.WIDTH].as_u32(), outer_height=f[Tag.HEIGHT].as_u32(), inset_width=f[Tag.DEPTH].as_u32(), inset_height=f[Tag.ARRAY_LAYERS].as_u32())

@@ -96,6 +96,11 @@ TrackingSnapshot TrackingSystem::Evaluate(RuntimeTime time, const TrackingState&
 		}
 		auto& tracker = snapshot.trackers[index];
 		tracker.device = device;
+		if (device.poseOverride && device.jointOffset)
+			throw std::invalid_argument("Tracker cannot have both world and joint-relative poses");
+		if (device.jointOffset)
+			snapshot.input.trackers[index].jointOffset =
+				Normalize({*device.jointOffset, TrackedPoseFlags}, time).pose;
 		if (device.poseOverride)
 			snapshot.input.trackers[index].poseOverride =
 				Normalize({*device.poseOverride, TrackedPoseFlags}, time).pose;
@@ -103,6 +108,8 @@ TrackingSnapshot TrackingSystem::Evaluate(RuntimeTime time, const TrackingState&
 		if (static_cast<std::size_t>(anchor) >= BodyJointCount)
 			throw std::invalid_argument("Invalid tracker anchor");
 		tracker.pose = trackerBody.joints[static_cast<std::size_t>(anchor)];
+		if (device.jointOffset)
+			tracker.pose.pose = Compose(tracker.pose.pose, *snapshot.input.trackers[index].jointOffset);
 		if (device.poseOverride)
 			tracker.pose = Normalize({*device.poseOverride, TrackedPoseFlags}, time);
 		if (!device.connected || !state.focused)

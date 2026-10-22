@@ -331,6 +331,9 @@ ObservedSetup ReadObservedSetup(const control::Message& state)
 		if (!anchor || !pose)
 			result.trackerAttachmentsAvailable = false;
 		out.anchor.reset();
+		out.jointOffset.reset();
+		if (const auto offset = FindMember(node, "joint_offset"); offset && !Null(*offset))
+			out.jointOffset = ReadPose(*offset);
 		out.poseOverride.reset();
 		if (anchor && !Null(*anchor))
 			out.anchor = static_cast<BodyJoint>(Unsigned(*anchor));

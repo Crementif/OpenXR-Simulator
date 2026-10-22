@@ -217,6 +217,12 @@ std::string Format(const SetTracker& command)
 	table.Boolean("tracked", command.value.tracked);
 	if (command.value.anchor)
 		table.Integer("anchor", static_cast<std::uint32_t>(*command.value.anchor));
+	if (command.value.jointOffset)
+	{
+		Table offset;
+		offset.Pose(*command.value.jointOffset);
+		table.Raw("joint_offset", offset.Finish());
+	}
 	if (command.value.poseOverride)
 		table.Pose(*command.value.poseOverride);
 	return table.Finish();

@@ -242,6 +242,7 @@ struct TrackerDevice
 	bool tracked = true;
 	std::optional<BodyJoint> anchor{};
 	std::optional<XrPosef> poseOverride{};
+	std::optional<XrPosef> jointOffset{};
 };
 
 struct TrackerSample

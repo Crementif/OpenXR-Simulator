@@ -302,6 +302,10 @@ TrackerDevice ReadTracker(lua_State* state, int table)
 	lua_pop(state, 1);
 	if (hasPosition || hasOrientation)
 		tracker.poseOverride = Pose(state, table).pose;
+	lua_getfield(state, table, "joint_offset");
+	if (!lua_isnil(state, -1))
+		tracker.jointOffset = Pose(state, lua_gettop(state)).pose;
+	lua_pop(state, 1);
 	return tracker;
 }
 ViewSettings ReadViews(lua_State* state, int table)

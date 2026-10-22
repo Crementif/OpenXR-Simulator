@@ -335,6 +335,7 @@ InspectionValue InspectTracker(const TrackerDevice& device)
 		 {"connected", InspectionValue::Boolean(device.connected)},
 		 {"tracked", InspectionValue::Boolean(device.tracked)},
 		 {"anchor", device.anchor ? InspectionValue::Text(JointName(*device.anchor)) : InspectionValue::Null()},
+		 {"joint_offset", device.jointOffset ? InspectPose(*device.jointOffset) : InspectionValue::Null()},
 		 {"pose_override", device.poseOverride ? InspectPose(*device.poseOverride) : InspectionValue::Null()}});
 }
 InspectionValue InspectBodyInput(const BodyControls& value)

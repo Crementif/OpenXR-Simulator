@@ -938,7 +938,7 @@ void DeviceControlPanel::DrawTrackers()
 		}
 		ImGui::EndCombo();
 	}
-	ImGui::SetItemTooltip("Offsets follow rig edits in this companion; app-driven body motion may differ.");
+	ImGui::SetItemTooltip("Joint offsets follow body animation. World attachments stay fixed.");
 	ImGui::SameLine();
 	if (ImGui::Button("Snap to body") && m_playerRig.Ready())
 	{
@@ -979,6 +979,7 @@ void DeviceControlPanel::DrawTrackers()
 			m_playerRig.SetTrackerOffset(slot, IdentityPose());
 			tracker.anchor = BodyModel::TrackerJoint(tracker.role);
 			tracker.poseOverride.reset();
+			tracker.jointOffset.reset();
 		}
 		edited |= roleChanged;
 	}

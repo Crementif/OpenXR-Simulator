@@ -363,6 +363,10 @@ void CheckEditableCommands()
 	tracker.poseOverride = XrPosef{{0, 0, 0, 1}, {3, 2, 1}};
 	tracker.anchor.reset();
 	tracker.connected = tracker.tracked = false;
+
+	TrackerDevice attached = configuration.tracking.trackers[0];
+	attached.anchor = BodyJoint::Chest;
+	attached.jointOffset = XrPosef{EulerAngles(.2f, .3f, -.1f), {.1f, -.2f, .3f}};
 	configuration.views.ipd = .071f;
 	configuration.views.outerWidth = 321;
 	configuration.views.insetHalfAngle = .275f;
@@ -375,6 +379,7 @@ void CheckEditableCommands()
 											SetBodyControls{body},
 											SetGaze{{-.125f, .625f, false, true}},
 											SetTracker{2, tracker},
+											SetTracker{0, attached},
 											SetViewSettings{configuration.views},
 											SetBodyProportions{{1.9f, .4f, .3f}},
 											SetControllerProfile{1, "/quote\"/slash\\/line\n/Grüße"},

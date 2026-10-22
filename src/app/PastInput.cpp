@@ -66,6 +66,8 @@ class Rows
 };
 std::string Placement(const TrackerDevice& tracker)
 {
+	if (tracker.jointOffset)
+		return "Joint offset " + Position(tracker.jointOffset->position);
 	if (tracker.poseOverride)
 		return Position(tracker.poseOverride->position);
 	return tracker.anchor ? "On the body" : "Default";

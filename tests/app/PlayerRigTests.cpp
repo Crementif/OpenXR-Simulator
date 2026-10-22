@@ -168,6 +168,30 @@ void BodyPoses()
 		}
 	}
 }
+void JointOffsetsFollowBody()
+{
+	ObservedSetup observed;
+	PlayerRig rig;
+	rig.Reset(observed);
+	const XrPosef offset{EulerAngles(.2f, -.3f, .1f), {.12f, .08f, -.04f}};
+	rig.SetTrackerOffset(0, offset);
+	auto tracking = Applied(rig.Transaction(observed, std::nullopt, true));
+	Require(tracking.trackers[0].jointOffset.has_value() && !tracking.trackers[0].poseOverride,
+			"Attached offset was frozen in world space");
+	// No further tracker command: application body animation must move the tracker.
+	for (const auto preset : {BodyPreset::Standing, BodyPreset::Seated, BodyPreset::TPose})
+	{
+		tracking.body.preset = preset;
+		tracking.body.rootPose = XrPosef{EulerAngles(.7f, 0, 0), {2, 0, -3}};
+		const auto frame = TrackingSystem::Evaluate(RuntimeTime{Duration{1}}, tracking, BodyModel{});
+		const auto joint = *tracking.trackers[0].anchor;
+		SamePose(frame.trackers[0].pose.pose,
+				 Compose(frame.body.joints[static_cast<std::size_t>(joint)].pose, offset));
+		observed.values.tracking = frame.input;
+		rig.Reset(observed);
+		SamePose(rig.Tracker(0), frame.trackers[0].pose.pose);
+	}
+}
 void Undo()
 {
 	ObservedSetup before;
@@ -208,6 +232,7 @@ int main()
 		RigComposition();
 		AtomicOwnership();
 		BodyPoses();
+		JointOffsetsFollowBody();
 		Undo();
 		std::cout << "PASS Player rig composition, inverse, anchors, body poses, undo and atomic ownership\n";
 	}

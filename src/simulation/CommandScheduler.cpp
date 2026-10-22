@@ -102,6 +102,9 @@ class CommandIdentityBuilder
 		Add(value.anchor.has_value());
 		if (value.anchor)
 			Add(*value.anchor);
+		Add(value.jointOffset.has_value());
+		if (value.jointOffset)
+			Add(*value.jointOffset);
 		Add(value.poseOverride.has_value());
 		if (value.poseOverride)
 			Add(*value.poseOverride);

@@ -79,7 +79,8 @@ bool Same(const BodyControls& a, const BodyControls& b)
 bool Same(const TrackerDevice& a, const TrackerDevice& b)
 {
 	return a.identity == b.identity && a.role == b.role && a.connected == b.connected && a.tracked == b.tracked &&
-		   a.anchor == b.anchor && Same(a.poseOverride, b.poseOverride, SamePose);
+		   a.anchor == b.anchor && Same(a.poseOverride, b.poseOverride, SamePose) &&
+		   Same(a.jointOffset, b.jointOffset, SamePose);
 }
 bool Same(const TrackerDevices& a, const TrackerDevices& b)
 {
