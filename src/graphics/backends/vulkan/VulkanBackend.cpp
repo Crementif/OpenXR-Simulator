@@ -75,7 +75,7 @@ VkImageView View(const VulkanImage& image, std::uint32_t slice, VkImageAspectFla
 	info.image = image.image;
 	info.viewType = VK_IMAGE_VIEW_TYPE_2D;
 	info.format = image.format;
-	info.subresourceRange = {aspect, 0, 1, slice, 1};
+	info.subresourceRange = {aspect, 0, image.mipLevels, slice, 1};
 	VkImageView result;
 	CheckVulkan(vkCreateImageView(image.device->binding.device, &info, nullptr, &result),
 				"Create compositor image view");
@@ -190,10 +190,13 @@ std::shared_ptr<Pipeline> CreatePipeline(std::shared_ptr<VulkanDevice> device)
 				"Create shared compositor pipeline");
 	VkSamplerCreateInfo sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
 	sampler.minFilter = sampler.magFilter = VK_FILTER_LINEAR;
-	sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+	sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+	sampler.maxLod = VK_LOD_CLAMP_NONE;
 	sampler.addressModeU = sampler.addressModeV = sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
 	CheckVulkan(vkCreateSampler(native, &sampler, nullptr, &result->sampler), "Create compositor sampler");
 	sampler.minFilter = sampler.magFilter = VK_FILTER_NEAREST;
+	sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+	sampler.maxLod = 0;
 	CheckVulkan(vkCreateSampler(native, &sampler, nullptr, &result->nearestSampler), "Create depth preview sampler");
 	return result;
 }
@@ -315,11 +318,11 @@ bool VulkanBackend::Sharing() const
 }
 
 std::shared_ptr<VulkanImage> VulkanBackend::CreateImage(VkFormat format, VkExtent2D extent, std::uint32_t layers,
-														VkImageUsageFlags usage)
+														VkImageUsageFlags usage, std::uint32_t mipLevels)
 {
 	if (m_state->closed || m_state->failed || m_state->device->lost.load())
 		throw std::logic_error("Vulkan backend closed");
-	auto image = VulkanImage::Create(m_state->device, format, extent, layers, usage);
+	auto image = VulkanImage::Create(m_state->device, format, extent, layers, usage, mipLevels);
 	SnapshotBudget::ObserveImageBytes(image->allocationSize);
 	m_state->images.push_back(image);
 	return image;

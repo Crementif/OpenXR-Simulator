@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 
 namespace simxr
 {
@@ -26,14 +27,15 @@ XrResult ValidateDescription(const XrSwapchainCreateInfo& description, const Vul
 		XR_SWAPCHAIN_USAGE_UNORDERED_ACCESS_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT |
 		XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
 	if ((description.createFlags & ~XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) ||
-		(description.usageFlags & ~SupportedUsage) || description.sampleCount != 1 || description.mipCount != 1 ||
+		(description.usageFlags & ~SupportedUsage) || description.sampleCount != 1 ||
 		description.faceCount != 1)
 		return XR_ERROR_FEATURE_UNSUPPORTED;
 	VkPhysicalDeviceProperties properties{};
 	vkGetPhysicalDeviceProperties(device.binding.physicalDevice, &properties);
 	if (description.width > properties.limits.maxImageDimension2D ||
 		description.height > properties.limits.maxImageDimension2D ||
-		description.arraySize > properties.limits.maxImageArrayLayers)
+		description.arraySize > properties.limits.maxImageArrayLayers ||
+		description.mipCount > std::bit_width(std::max(description.width, description.height)))
 		return XR_ERROR_VALIDATION_FAILURE;
 	const auto formats = VulkanSwapchain::Formats();
 	if (std::find(formats.begin(), formats.end(), description.format) == formats.end())
@@ -95,7 +97,7 @@ XrResult VulkanSwapchain::Create(VulkanBackend& backend, const XrSwapchainCreate
 	for (auto& image : prepared->m_images)
 		image.resource =
 			backend.CreateImage(static_cast<VkFormat>(description.format), {description.width, description.height},
-								description.arraySize, usage);
+								description.arraySize, usage, description.mipCount);
 	output = std::move(prepared);
 	return XR_SUCCESS;
 }

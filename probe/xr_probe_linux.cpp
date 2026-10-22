@@ -646,6 +646,8 @@ static int runProbe()
     chain.format = bgra ? (srgb ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_B8G8R8A8_UNORM)
                         : (srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM);
     chain.sampleCount = chain.faceCount = chain.mipCount = 1;
+    const uint32_t mipLevels = std::getenv("SIMXR_PROBE_MIPS") ? 4 : 1;
+    chain.mipCount = mipLevels;
     chain.width = 64;
     chain.height = 48;
     chain.arraySize = activeViewCount;
@@ -666,6 +668,10 @@ static int runProbe()
           rejectedSwapchain == XR_NULL_HANDLE);
     unsupported = chain;
     unsupported.arraySize = imageLimits.limits.maxImageArrayLayers + 1;
+    CHECK(xrCreateSwapchain(session, &unsupported, &rejectedSwapchain) == XR_ERROR_VALIDATION_FAILURE &&
+          rejectedSwapchain == XR_NULL_HANDLE);
+    unsupported = chain;
+    unsupported.mipCount = 8;
     CHECK(xrCreateSwapchain(session, &unsupported, &rejectedSwapchain) == XR_ERROR_VALIDATION_FAILURE &&
           rejectedSwapchain == XR_NULL_HANDLE);
     XrSwapchain swapchain;
@@ -698,6 +704,7 @@ static int runProbe()
         ((depthFormat == VK_FORMAT_D24_UNORM_S8_UINT || depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT) ?
             VK_IMAGE_ASPECT_STENCIL_BIT : 0);
     chain.format = depthFormat;
+    chain.mipCount = 1;
     chain.usageFlags = XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
     XrSwapchain depth;
     XR(xrCreateSwapchain(session, &chain, &depth));
@@ -1099,7 +1106,7 @@ static int runProbe()
         barrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, activeViewCount};
+        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mipLevels, 0, activeViewCount};
         barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
         barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
@@ -1112,7 +1119,7 @@ static int runProbe()
             colors[0] = colors[2];
         for (uint32_t eye = 0; eye < activeViewCount; ++eye)
         {
-            VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, eye, 1};
+            VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, mipLevels, eye, 1};
             vkCmdClearColorImage(cmd, images[index].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &colors[eye], 1,
                                  &range);
         }
@@ -1134,6 +1141,7 @@ static int runProbe()
             depthBarrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
             depthBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
             depthBarrier.subresourceRange.aspectMask = depthAspect;
+            depthBarrier.subresourceRange.levelCount = 1;
             depthBarrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
             depthBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
             vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
