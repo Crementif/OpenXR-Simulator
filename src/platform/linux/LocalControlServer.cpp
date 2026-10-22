@@ -289,7 +289,10 @@ struct LocalControlServer::State
 				ControlPacket packet;
 				auto deadline = Clock::time_point::max();
 				if (!Read(worker.socket, bytes, HeaderSize, packet, stopping, deadline))
-				{ trace("header-read-failed"); break; }
+				{
+					trace("header-read-failed");
+					break;
+				}
 				auto decoded = Decode(bytes);
 				if (decoded.error == DecodeError::UnsupportedVersion)
 				{
@@ -309,16 +312,25 @@ struct LocalControlServer::State
 				if (decoded.error == DecodeError::Incomplete)
 				{
 					if (!Read(worker.socket, bytes, decoded.requiredBytes, packet, stopping, deadline))
-					{ trace("payload-read-failed"); break; }
+					{
+						trace("payload-read-failed");
+						break;
+					}
 					decoded = Decode(bytes);
 				}
 				if (!decoded.message || decoded.message->flags)
-				{ trace("invalid-request"); break; }
+				{
+					trace("invalid-request");
+					break;
+				}
 				packet.message = std::move(*decoded.message);
 				trace("request", packet.message.opcode, packet.message.requestId.value);
 				const auto response = service.HandlePacket(connection, std::move(packet));
 				if (!Write(worker.socket, response, stopping))
-				{ trace("response-write-failed", response.message.opcode, response.message.requestId.value); break; }
+				{
+					trace("response-write-failed", response.message.opcode, response.message.requestId.value);
+					break;
+				}
 			}
 		}
 		catch (const std::exception& error)
