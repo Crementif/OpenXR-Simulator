@@ -35,10 +35,11 @@ InspectionValue ReadRecording(Session& session, const Message& request, Message&
 	for (;;)
 	{
 		const auto page = session.Commands().Recorder().Snapshot(offset, count);
-		auto document = SimulationRecording(page);
+		InspectionValue document;
 		bool fits = false;
 		try
 		{
+			document = SimulationRecording(page);
 			fits = document.Encode().size() <= MaxPayload - 4096;
 		}
 		catch (const std::length_error&)

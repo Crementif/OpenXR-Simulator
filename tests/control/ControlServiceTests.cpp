@@ -6,6 +6,7 @@
 #include "control/ControlSchema.h"
 #include "control/ControlService.h"
 #include "control/ControlSessions.h"
+#include "control/SimulationControl.h"
 #include "runtime/Runtime.h"
 #include "runtime/SimulationExtensions.h"
 
@@ -332,6 +333,52 @@ void ContinuousFrameHistory()
 	const auto newPage = Nested(client.Call(wire::OpCode::ReadFrameHistory, client.Common()), wire::tag::Frames);
 	Require(newPage.fields.size() == 1 && U64(Nested(newPage, newPage.fields.front().tag), wire::tag::Generation) == client.generation,
 		"New run history included retained records from the previous generation");
+}
+void RecordingPagesShrinkBeforeEncoding()
+{
+	Fixture f;
+	Client client(f.service);
+	client.Hello();
+	client.Discover();
+	Require(Error(client.Call(wire::OpCode::StartRecording, client.Common())) == wire::ErrorCode::Ok,
+		"Start large recording fixture");
+	BodyControls body;
+	for (auto& joint : body.joints)
+		joint = BodyJointOverride{XrPosef{{0, 0, 0, 1}, {0, 0, 0}}, true};
+	CommandOutcome outcome;
+	outcome.transaction.source = {CommandSourceKind::Mcp, client.connection.value};
+	outcome.transaction.commands.assign(8, SetBodyControls{body});
+	for (std::uint64_t id = 1; id <= 16; ++id)
+	{
+		outcome.transaction.id = id;
+		Require(f.session->Commands().Recorder().Observe(outcome), "Record large transaction");
+	}
+	Require(wire::SimulationRecording(f.session->Commands().Recorder().Snapshot(0, 1)).Encode().size() <
+		wire::MaxPayload - 4096, "Single transaction must fit the wire budget");
+	bool oversized = false;
+	try
+	{
+		wire::SimulationRecording(f.session->Commands().Recorder().Snapshot(0, 16));
+	}
+	catch (const std::length_error&)
+	{
+		oversized = true;
+	}
+	Require(oversized, "Recording fixture must exceed the document construction budget");
+	std::uint64_t offset = 0;
+	while (offset < 16)
+	{
+		auto fields = client.Common();
+		fields.push_back(wire::Field::U64(wire::tag::Offset, offset));
+		fields.push_back(wire::Field::U64(wire::tag::Length, 16));
+		const auto response = client.Call(wire::OpCode::ReadRecording, std::move(fields));
+		Require(Error(response) == wire::ErrorCode::Ok, "Oversized recording page did not shrink");
+		const auto count = U64(response, wire::tag::Length);
+		Require(U64(response, wire::tag::Offset) == offset && count && count < 16 && count <= 16 - offset,
+			"Shrunk recording page lost progress or its offset");
+		offset += count;
+		Require(response.Find(wire::tag::End)->AsBool() == (offset == 16), "Incorrect recording end marker");
+	}
 }
 void NegotiationPublicationRollback()
 {
@@ -1583,6 +1630,7 @@ int main()
 		ContinuousFrameHistory();
 		NegotiationAndReplay();
 		NegotiationPublicationRollback();
+		RecordingPagesShrinkBeforeEncoding();
 		LegacyMinorNegotiation();
 		OwnershipAndExactClear();
 		LeaseOwnerRetirementAndRollback();
