@@ -76,24 +76,32 @@ ImageDescription DecodeImageDescription(const Field& field)
 	if (!device || !driver || device->value.size() != 16 || driver->value.size() != 16 || !allocation ||
 		!allocation->AsU64() || !dedicated || !dedicated->AsBool())
 		throw std::invalid_argument("Invalid image identity or allocation metadata");
+	const auto u32 = [&](std::uint16_t name)
+	{
+		const auto* scalar = message.Find(name);
+		const auto value = scalar ? scalar->AsU32() : std::nullopt;
+		if (!value)
+			throw std::invalid_argument("Missing or invalid image description uint32 field");
+		return *value;
+	};
 	ImageDescription result;
 	std::copy(device->value.begin(), device->value.end(), result.identity.device.begin());
 	std::copy(driver->value.begin(), driver->value.end(), result.identity.driver.begin());
-	result.format = RequireRequestU32(message, tag::Format);
-	result.width = RequireRequestU32(message, tag::Width);
-	result.height = RequireRequestU32(message, tag::Height);
-	result.depth = RequireRequestU32(message, tag::Depth);
-	result.arrayLayers = RequireRequestU32(message, tag::ArrayLayers);
-	result.mipLevels = RequireRequestU32(message, tag::MipLevels);
-	result.samples = RequireRequestU32(message, tag::Samples);
-	result.usage = RequireRequestU32(message, tag::Usage);
-	result.tiling = RequireRequestU32(message, tag::Tiling);
-	result.imageType = RequireRequestU32(message, tag::ImageType);
-	result.flags = RequireRequestU32(message, tag::ImageFlags);
-	result.memoryTypeIndex = RequireRequestU32(message, tag::MemoryTypeIndex);
-	result.producerQueueFamily = RequireRequestU32(message, tag::ProducerQueueFamily);
-	result.layout = RequireRequestU32(message, tag::Layout);
-	result.handleKind = RequireRequestU32(message, tag::HandleKind);
+	result.format = u32(tag::Format);
+	result.width = u32(tag::Width);
+	result.height = u32(tag::Height);
+	result.depth = u32(tag::Depth);
+	result.arrayLayers = u32(tag::ArrayLayers);
+	result.mipLevels = u32(tag::MipLevels);
+	result.samples = u32(tag::Samples);
+	result.usage = u32(tag::Usage);
+	result.tiling = u32(tag::Tiling);
+	result.imageType = u32(tag::ImageType);
+	result.flags = u32(tag::ImageFlags);
+	result.memoryTypeIndex = u32(tag::MemoryTypeIndex);
+	result.producerQueueFamily = u32(tag::ProducerQueueFamily);
+	result.layout = u32(tag::Layout);
+	result.handleKind = u32(tag::HandleKind);
 	if (const auto completion = message.Find(tag::CompletionKind))
 	{
 		const auto value = completion->AsU32();

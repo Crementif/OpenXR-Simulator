@@ -19,6 +19,44 @@ std::uint64_t Id(const wire::ControlPacket& packet, std::uint16_t field)
 	Require(packet.message.Find(field) && packet.message.Find(field)->AsU64(), "Missing image identifier");
 	return *packet.message.Find(field)->AsU64();
 }
+void MalformedImageDescriptions()
+{
+	const auto encoded = wire::EncodeImageDescription(wire::test::Description());
+	const auto baseline = wire::DecodeFields(encoded.value);
+	Require(baseline.error == wire::DecodeError::None, "Prepare image descriptor fields");
+	for (const auto& original : baseline.fields)
+	{
+		if (!original.AsU32())
+			continue;
+		for (bool missing : {false, true})
+		{
+			auto fields = baseline.fields;
+			for (auto iterator = fields.begin(); iterator != fields.end(); ++iterator)
+				if (iterator->tag == original.tag)
+				{
+					if (missing)
+						fields.erase(iterator);
+					else
+						iterator->value.pop_back();
+					break;
+				}
+			bool rejected = false;
+			try
+			{
+				wire::DecodeImageDescription(wire::Field::Bytes(tag::ImageDescriptor, wire::EncodeFields(fields)));
+			}
+			catch (const std::invalid_argument&)
+			{
+				rejected = true;
+			}
+			catch (...)
+			{
+				throw std::runtime_error("Malformed image descriptor escaped standard decoder error handling");
+			}
+			Require(rejected, "Malformed required image scalar was accepted");
+		}
+	}
+}
 struct Client
 {
 	wire::ControlService& service;
@@ -264,6 +302,7 @@ int main()
 {
 	try
 	{
+		MalformedImageDescriptions();
 		ImageLifetimesAndReplay();
 		BoundedImageReadersAndReentry();
 		PublicationFailureRollback();
