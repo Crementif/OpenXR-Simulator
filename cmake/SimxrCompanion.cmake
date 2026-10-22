@@ -49,6 +49,7 @@ target_sources(simxr_app PRIVATE src/app/RecordingPanel.cpp src/app/TimelinePane
     src/app/PilotController.cpp src/app/SpatialEditor.cpp src/app/widgets/LiveField.cpp
     src/app/widgets/SpatialWidgets.cpp src/app/widgets/ArcballWidget.cpp
     src/app/widgets/ReachMap.cpp src/app/widgets/InputPad.cpp src/app/widgets/RigView.cpp)
+target_sources(simxr_app PRIVATE src/app/PastInput.cpp src/app/AppPicker.cpp src/app/RunningApps.cpp)
 target_link_libraries(simxr_app PUBLIC simxr_imgui simxr_connection simxr_app_settings simxr_recording_controller)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(simxr_app PRIVATE simxr_vulkan_control)

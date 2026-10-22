@@ -67,7 +67,7 @@ class RangePage
 	explicit RangePage(RuntimeSession& session) : m_session(session), m_export(session)
 	{
 	}
-	// Returns a take to replay when one was saved and the user asked to replay it.
+	// Returns a take to play when one was saved and the user asked to play it.
 	std::optional<automation::SavedRecording> Draw(const RangeSel& range, ShellState& shell);
 	void Poll()
 	{
@@ -77,6 +77,11 @@ class RangePage
 	{
 		return m_export.Busy();
 	}
+	// The take whose save notice's Play was pressed.
+	std::optional<automation::SavedRecording> TakePlayRequest()
+	{
+		return std::exchange(m_play, {});
+	}
 
   private:
 	void SaveTake(const RangeSel& range, std::size_t first, std::size_t last, ShellState& shell);
@@ -84,7 +89,7 @@ class RangePage
 	RangeExportTask m_export;
 	std::array<char, 512> m_path{"frames.csv"};
 	std::array<char, 128> m_take{};
-	std::optional<automation::SavedRecording> m_last;
+	std::optional<automation::SavedRecording> m_last, m_play;
 	std::string m_takeStatus;
 };
 } // namespace simxr::app

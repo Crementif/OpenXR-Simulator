@@ -140,6 +140,10 @@ void RangePage::SaveTake(const RangeSel& range, std::size_t first, std::size_t l
 		m_last = automation::SavedRecording{{text.begin(), text.end()}, take.seed};
 		shell.timeline.savedTake = TakeSource{m_last->path, range.first, range.last, range.epoch};
 		m_takeStatus = "Saved " + std::to_string(take.total) + " changes";
+		m_session.Notify({"Take saved", name, "Play", [this, saved = *m_last]
+						  {
+							  m_play = saved;
+						  }});
 	}
 	catch (const std::exception& error)
 	{
@@ -181,17 +185,17 @@ std::optional<automation::SavedRecording> RangePage::Draw(const RangeSel& range,
 	if (ImGui::Button("Save as take"))
 		SaveTake(range, *first, *last, shell);
 	ImGui::EndDisabled();
-	ImGui::SetItemTooltip(recorded ? "Saves the head and hand input of these frames as a replayable take"
+	ImGui::SetItemTooltip(recorded ? "Saves the device input of these frames as a take"
 								   : "No input was recorded for these frames");
 	std::optional<automation::SavedRecording> replay;
 	if (m_last)
 	{
 		ImGui::SameLine();
 		ImGui::BeginDisabled(!m_session.Connected());
-		if (ImGui::Button("Replay"))
+		if (ImGui::Button("Play"))
 			replay = m_last;
 		ImGui::EndDisabled();
-		ImGui::SetItemTooltip("Replay %s", Utf8Path(m_last->path).stem().string().c_str());
+		ImGui::SetItemTooltip("Play %s on the app", Utf8Path(m_last->path).stem().string().c_str());
 	}
 	if (!m_takeStatus.empty())
 		ImGui::TextDisabled("%s", m_takeStatus.c_str());

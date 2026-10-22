@@ -47,8 +47,8 @@ void Notices::Draw(ShellRect area)
 		for (std::size_t index = m_entries.size(); index-- > 0;)
 		{
 			const auto& notice = m_entries[index].notice;
-			ImGui::PushID(static_cast<int>(index));
-			ImGui::TextColored(theme::Vec(theme::Warn), "!");
+			ImGui::PushID(notice.title.c_str());
+			ImGui::TextColored(theme::Vec(notice.run ? theme::Accent : theme::Warn), "!");
 			ImGui::SameLine();
 			ImGui::TextUnformatted(notice.title.c_str());
 			if (!notice.detail.empty() && ImGui::BeginItemTooltip())
@@ -57,6 +57,15 @@ void Notices::Draw(ShellRect area)
 				ImGui::TextUnformatted(notice.detail.c_str());
 				ImGui::PopTextWrapPos();
 				ImGui::EndTooltip();
+			}
+			if (notice.run)
+			{
+				ImGui::SameLine();
+				if (ImGui::SmallButton(notice.action.c_str()))
+				{
+					notice.run();
+					m_entries[index].shown = now - Lifetime - std::chrono::seconds(1);
+				}
 			}
 			ImGui::SameLine();
 			if (ImGui::SmallButton("x"))

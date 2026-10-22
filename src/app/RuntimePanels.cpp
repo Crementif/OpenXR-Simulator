@@ -3,6 +3,7 @@
 #include "app/DeviceControlPanel.h"
 #include "app/DocumentTree.h"
 #include "app/FramePage.h"
+#include "app/PastInput.h"
 #include "app/PilotController.h"
 #include "app/PreviewPanel.h"
 #include "app/RangePage.h"
@@ -133,9 +134,13 @@ class RuntimePanels::Impl
 		if (!m_view.time.following)
 		{
 			// Looking back: the rig above shows the recorded poses; live controls stay hidden.
+			ImGui::TextColored(theme::Vec(theme::Past), "PAST");
+			ImGui::SameLine();
 			ImGui::TextDisabled("Frame %llu", static_cast<unsigned long long>(m_view.time.cursor.frame));
+			ImGui::SameLine();
 			if (ImGui::SmallButton("Frame details"))
 				shell.selection = FrameSel{m_view.time.cursor, m_view.time.epoch};
+			DrawPastDevice(shell.selection);
 			return;
 		}
 		const auto placement = [&]
@@ -149,6 +154,27 @@ class RuntimePanels::Impl
 		}
 		if (auto device = std::get_if<DeviceSel>(&shell.selection); device && device->page == DevicePage::Trackers)
 			device->slot = static_cast<unsigned>(m_devices.SelectedTracker());
+	}
+	void DrawPastDevice(const Selection& selection)
+	{
+		const auto* device = std::get_if<DeviceSel>(&selection);
+		if (!device || (device->page != DevicePage::Body && device->page != DevicePage::Gaze &&
+						device->page != DevicePage::Trackers))
+			return;
+		const auto& history = m_session.History();
+		const auto index = history.Find(m_view.time.cursor, m_view.time.epoch);
+		const auto* sample = index ? m_session.InputSamples().Find(history.At(*index).input) : nullptr;
+		if (!sample)
+		{
+			ImGui::TextDisabled("Input not kept for this frame");
+			return;
+		}
+		if (device->page == DevicePage::Body)
+			DrawPastBody(*sample);
+		else if (device->page == DevicePage::Gaze)
+			DrawPastGaze(*sample);
+		else
+			DrawPastTrackers(*sample, device->slot);
 	}
 	void DrawConnection(bool* open)
 	{
@@ -230,6 +256,8 @@ class RuntimePanels::Impl
 	}
 	std::optional<automation::SavedRecording> TakeRecordingReplay()
 	{
+		if (auto play = m_range.TakePlayRequest())
+			m_recordingReplay = RecordingReplay{std::move(*play), m_session.Debugger().Scope()};
 		auto replay = std::exchange(m_recordingReplay, {});
 		if (!replay)
 			return {};
@@ -410,6 +438,10 @@ void RuntimePanels::LookAt(std::size_t index)
 const HistoryStore& RuntimePanels::History() const
 {
 	return m_impl->m_session.History();
+}
+const InputHistory& RuntimePanels::InputSamples() const
+{
+	return m_impl->m_session.InputSamples();
 }
 std::vector<RuntimeFrame> RuntimePanels::TimelineFrames() const
 {

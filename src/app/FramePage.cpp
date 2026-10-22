@@ -1,5 +1,6 @@
 #include "app/FramePage.h"
 #include "app/DocumentTree.h"
+#include "app/PastInput.h"
 #include "app/RuntimeSession.h"
 #include "app/SimulationEdits.h"
 #include "app/SpatialEditor.h"
@@ -146,6 +147,9 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 				ImGui::TextDisabled("%s", m_session.Exports().Detail().c_str());
 		}
 	ImGui::SeparatorText("Input at this frame");
+	if (const auto index = m_session.History().Find(identity, selection.epoch))
+		if (const auto* sample = m_session.InputSamples().Find(m_session.History().At(*index).input))
+			DrawInputSummary(*sample);
 	if (!bytes.empty())
 	{
 		if (const auto tracking = ReadInspectionTracking(capture->document))
@@ -194,7 +198,7 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 			m_documents.Draw(commands);
 	}
 	else
-		ImGui::TextDisabled(capture ? "Loading frame details" : "Input not kept for this frame");
+		ImGui::TextDisabled(capture ? "Loading frame details" : "Head and hand details not kept for this frame");
 	ImGui::SeparatorText("Actions");
 	if (!bytes.empty())
 	{

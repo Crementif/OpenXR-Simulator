@@ -46,6 +46,8 @@ class TimelinePanel
 	{
 		double first = 0, last = 0;
 		bool replay = false;
+		// The saved take of a Recording clip, once known.
+		std::string take;
 	};
 	// Source frames of a take cut from history, and where its replay began.
 	struct Ghost
@@ -57,6 +59,7 @@ class TimelinePanel
 		std::optional<HistoryFrame> anchor;
 	};
 	void Observe(const RuntimeView& state);
+	void Play(RuntimePanels& runtime, const std::string& path);
 	void DrawGhost(const HistoryStore& history);
 	void Push(Event event);
 	// The frame-rate meter in the LIVE column: numbers, and a sparkline when there is room.

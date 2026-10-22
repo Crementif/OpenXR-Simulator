@@ -10,14 +10,6 @@
 
 namespace simxr::app
 {
-namespace
-{
-std::string PathText(const std::filesystem::path& path)
-{
-	const auto text = path.u8string();
-	return {text.begin(), text.end()};
-}
-} // namespace
 RecordingPanel::RecordingPanel()
 {
 	try

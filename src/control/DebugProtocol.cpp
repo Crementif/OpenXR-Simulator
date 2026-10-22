@@ -336,19 +336,25 @@ const char* Name(SnapshotAdmission value)
 	}
 	throw ControlRequestError{ErrorCode::Internal, "Unknown snapshot admission"};
 }
-// The applied head/hand values and action activity of one frame, so the
-// companion can draw input over time and cut takes from any range.
+// The applied device input and action activity of one frame, so the companion
+// can draw input over time and cut takes from any range. Fields 1-5 are head and
+// hands, 6 body, 7 gaze and 8-11 the tracker slots; body overrides stay sparse.
 Field EncodeAppliedInput(const FrameSubmissionState& submission)
 {
 	const auto& applied = *submission.commands;
 	const auto& configuration = applied.configuration;
-	std::vector<Field> fields{
-		EncodeSimulationCommand(SetHeadPose{configuration.tracking.head}, 1),
-		EncodeSimulationCommand(SetControllerPose{0, configuration.tracking.controllers[0]}, 2),
-		EncodeSimulationCommand(SetControllerPose{1, configuration.tracking.controllers[1]}, 3),
-		EncodeSimulationCommand(SetControllerControls{0, configuration.input.controllers[0]}, 4),
-		EncodeSimulationCommand(SetControllerControls{1, configuration.input.controllers[1]}, 5),
-		Field::U64(tag::Seed, applied.seed)};
+	const auto& tracking = configuration.tracking;
+	std::vector<Field> fields{EncodeSimulationCommand(SetHeadPose{tracking.head}, 1),
+							  EncodeSimulationCommand(SetControllerPose{0, tracking.controllers[0]}, 2),
+							  EncodeSimulationCommand(SetControllerPose{1, tracking.controllers[1]}, 3),
+							  EncodeSimulationCommand(SetControllerControls{0, configuration.input.controllers[0]}, 4),
+							  EncodeSimulationCommand(SetControllerControls{1, configuration.input.controllers[1]}, 5),
+							  EncodeSimulationCommand(SetBodyControls{tracking.body}, 6),
+							  EncodeSimulationCommand(SetGaze{tracking.gaze}, 7)};
+	for (std::uint32_t slot = 0; slot < tracking.trackers.size(); ++slot)
+		fields.push_back(
+			EncodeSimulationCommand(SetTracker{slot, tracking.trackers[slot]}, static_cast<std::uint16_t>(8 + slot)));
+	fields.push_back(Field::U64(tag::Seed, applied.seed));
 	std::uint32_t scenarios = 0, owned = 0, active = 0;
 	for (std::size_t index = 0; index < applied.scenarios.size(); ++index)
 		if (applied.scenarios[index])

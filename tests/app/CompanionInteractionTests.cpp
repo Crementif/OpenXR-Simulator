@@ -3,10 +3,12 @@
 #include "app/DeviceControlPanel.h"
 #include "app/ManualInputController.h"
 #include "app/ProcessSupervisor.h"
+#include "app/RunningApps.h"
 #include "app/RecordingController.h"
 #include "app/RuntimeConnection.h"
 #include "app/RuntimePanels.h"
 #include "app/HistoryStore.h"
+#include "app/InputHistory.h"
 #include "app/TimelineCanvas.h"
 #include <functional>
 #include "app/SimulationEdits.h"
@@ -21,6 +23,15 @@
 #include <thread>
 
 #include <SDL3/SDL.h>
+#ifdef __linux__
+#include <csignal>
+#include <spawn.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/wait.h>
+#include <unistd.h>
+extern char** environ;
+#endif
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -756,7 +767,7 @@ void PilotLiveRuntime(const char* endpoint)
 		frame();
 		frame();
 	}
-	activate("Inspector", "Replay take");
+	activate("Inspector", "Play take");
 	Eventually(
 		[&]
 		{
@@ -1724,7 +1735,7 @@ void CheckSpatialEditing(Interaction& test)
 // replay's applied input with the source frames it was cut from.
 // Pilots the right hand through real SDL events: about two seconds of trigger
 // and primary-button pulses, then Escape.
-void DrivePilotPulses(Interaction& test)
+void DrivePilotPulses(Interaction& test, const std::function<void(int)>& onPulse = {})
 {
 	const auto pump = [&](int count)
 	{
@@ -1778,6 +1789,8 @@ void DrivePilotPulses(Interaction& test)
 	// Pulses of the right trigger and the primary button, about two seconds.
 	for (int pulse = 0; pulse < 4; ++pulse)
 	{
+		if (onPulse)
+			onPulse(pulse);
 		button(SDL_BUTTON_LEFT, true);
 		pump(15);
 		button(SDL_BUTTON_LEFT, false);
@@ -1802,8 +1815,40 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 		}
 	};
 	const auto& history = test.runtime.History();
+	// A second client drives body, gaze and one tracker while the pilot presses
+	// buttons, so the cut take must carry every device channel.
+	const auto target = test.runtime.Snapshot();
+	ManualInputController devices;
+	devices.SetTarget({target.endpoint, target.session, target.generation});
+	Eventually([&] { pump(1); return devices.Snapshot().observation != 0; }, "Device client did not connect");
+	auto tracking = ReadObservedSetup(devices.Snapshot().state).values.tracking;
+	const auto submitDevices = [&](int pulse)
+	{
+		tracking.body.preset = pulse >= 1 ? simxr::BodyPreset::TPose : simxr::BodyPreset::Standing;
+		tracking.gaze.yaw = pulse >= 2 ? .3f : 0;
+		tracking.trackers[0].poseOverride = XrPosef{{0, 0, 0, 1}, {0.1f * float(pulse), 1.0f, -0.3f}};
+		ManualTransaction edit;
+		edit.commands = {simxr::TakeControl{simxr::ControlChannel::Body, false}, simxr::SetBodyControls{tracking.body},
+						 simxr::TakeControl{simxr::ControlChannel::Gaze, false}, simxr::SetGaze{tracking.gaze},
+						 simxr::TakeControl{simxr::ControlChannel::Trackers, false},
+						 simxr::SetTracker{0, tracking.trackers[0]}};
+		Require(devices.Submit(edit), "Device edit refused");
+		Eventually(
+			[&]
+			{
+				pump(1);
+				const auto s = devices.Snapshot();
+				Require(s.error.empty(), s.error.c_str());
+				return !s.editPending;
+			},
+			"Device edit did not apply");
+	};
+	submitDevices(0);
+	pump(20);
 	const auto begin = history.Size();
-	DrivePilotPulses(test);
+	DrivePilotPulses(test, submitDevices);
+	Require(devices.Submit(ReleaseManualInputs{}), "Device release refused");
+	Eventually([&] { pump(1); return !devices.Snapshot().editPending; }, "Device release did not apply");
 	Require(history.Size() > begin + 60, "Too few frames while driving input");
 	std::size_t pressed = 0;
 	for (auto index = begin; index < history.Size(); ++index)
@@ -1817,6 +1862,9 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 	Require(inspector, "Inspector missing for the range page");
 	ImGui::ActivateItemByID(inspector->GetID("Save as take"));
 	pump(2);
+	const auto* notices = FindPanel("##Notices");
+	Require(notices, "Save as take showed no notice");
+	const auto play = ImHashStr("Play", 0, ImHashStr("Take saved", 0, notices->ID));
 	const auto recordings = directory / "recordings";
 	std::filesystem::path take;
 	for (const auto& entry : std::filesystem::directory_iterator(recordings))
@@ -1825,8 +1873,33 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 	Require(!take.empty(), "Save as take wrote no file");
 	std::cout << "PASS saved " << history.Size() - begin << " frames as " << take.filename() << '\n';
 
+	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
+	{
+		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "take-saved.bmp").string());
+		pump(1);
+		// Hover the cut take's clip on the Recording lane, where its play button appears.
+		const auto& shell = test.workspace.State();
+		const auto canvas = shell.timelineCanvas;
+		const float ruler = ImGui::GetFrameHeight() + 2 * ImGui::GetFontSize() / 16;
+		const float lane = (canvas.height - ruler) / 5;
+		const float x = canvas.x + float((first.seconds - shell.timeline.first) / (shell.timeline.last - shell.timeline.first)) *
+									   canvas.width;
+		SDL_Event motion{};
+		motion.type = SDL_EVENT_MOUSE_MOTION;
+		motion.motion.windowID = SDL_GetWindowID(test.window.Native());
+		motion.motion.x = std::max(canvas.x, x) + 2 + (lane - 4) / 2;
+		motion.motion.y = canvas.y + ruler + 3.5f * lane;
+		Require(SDL_PushEvent(&motion), "Hover the take clip");
+		pump(3);
+		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "take-clip-hover.bmp").string());
+		pump(1);
+		motion.motion.x = canvas.x + canvas.width / 2;
+		motion.motion.y = canvas.y - 200;
+		Require(SDL_PushEvent(&motion), "Leave the take clip");
+		pump(2);
+	}
 	const auto replayFrom = history.Size();
-	ImGui::ActivateItemByID(inspector->GetID("Replay"));
+	ImGui::ActivateItemByID(play);
 	pump(2);
 	std::optional<std::size_t> anchor;
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
@@ -1872,6 +1945,59 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 	}
 	std::cout << "Replay matched " << matched << "/" << sourceCount << " frames\n";
 	Require(matched * 10 >= sourceCount * 9, "Replayed input diverges from the source frames");
+	const auto sampleAt = [&](std::size_t index)
+	{
+		const auto* sample = test.runtime.InputSamples().Find(history.At(index).input);
+		Require(sample && sample->body && sample->trackers && sample->gaze, "Frame lacks body, gaze or trackers");
+		return sample;
+	};
+	std::size_t devicesMatched = 0, tposed = 0;
+	std::set<float> trackerPositions;
+	for (std::size_t offset = 0; offset < sourceCount; ++offset)
+	{
+		const auto *a = sampleAt(source + offset), *b = sampleAt(*anchor + offset);
+		const auto& x = (*a->trackers)[0].poseOverride;
+		const auto& y = (*b->trackers)[0].poseOverride;
+		tposed += a->body->preset == simxr::BodyPreset::TPose;
+		if (x)
+			trackerPositions.insert(x->position.x);
+		const bool same = a->body->preset == b->body->preset && a->gaze->yaw == b->gaze->yaw &&
+						  x.has_value() == y.has_value() &&
+						  (!x || (std::abs(x->position.x - y->position.x) < 1e-4f &&
+								  std::abs(x->position.z - y->position.z) < 1e-4f));
+		devicesMatched += same;
+		if (!same)
+			std::cout << "device mismatch at " << offset << ": preset " << int(a->body->preset) << "/"
+					  << int(b->body->preset) << " yaw " << a->gaze->yaw << "/" << b->gaze->yaw << " tracker "
+					  << (x ? x->position.x : -1) << "/" << (y ? y->position.x : -1) << '\n';
+	}
+	std::cout << "Body/gaze/tracker replay matched " << devicesMatched << "/" << sourceCount << " frames ("
+			  << tposed << " in T pose, " << trackerPositions.size() << " tracker positions)\n";
+	Require(tposed > 0 && tposed < sourceCount && trackerPositions.size() >= 3,
+			"Source range lacks T pose or tracker motion");
+	Require(devicesMatched * 10 >= sourceCount * 9, "Replayed body, gaze or trackers diverge from the source");
+
+	// Looking back at a T-pose source frame shows its recorded body read-only.
+	std::size_t past = source;
+	while (sampleAt(past)->body->preset != simxr::BodyPreset::TPose)
+		++past;
+	test.runtime.LookAt(past + 5);
+	test.workspace.Select(DeviceSel{DevicePage::Body});
+	pump(4);
+	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
+	{
+		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "past-body.bmp").string());
+		pump(1);
+		test.workspace.Select(DeviceSel{DevicePage::Trackers});
+		pump(3);
+		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "past-trackers.bmp").string());
+		pump(1);
+		test.workspace.Select(FrameSel{history.At(past + 5).identity, history.At(past + 5).epoch});
+		pump(3);
+		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "past-frame.bmp").string());
+		pump(1);
+	}
+	test.runtime.SetLive(true);
 	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
 	{
 		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "take-replay.bmp").string());
@@ -2292,7 +2418,7 @@ void CheckLibrary(Interaction& test, const std::filesystem::path& directory)
 			"Saved take is not in the isolated recordings folder");
 	pump(3);
 	screenshot("library-take.bmp");
-	ImGui::ActivateItemByID(FindPanel("Inspector")->GetID("Replay take"));
+	ImGui::ActivateItemByID(FindPanel("Inspector")->GetID("Play take"));
 	Eventually([&] { pump(1); return test.runtime.Snapshot().manual; }, "Library replay did not drive the app");
 	pump(10);
 	screenshot("library-replay.bmp");
@@ -2645,6 +2771,131 @@ void CheckSnapshotRetention(Interaction& test)
 	std::cout << "PASS 200 native Next frame actions with pinned snapshot surviving; normalReadback=0\n";
 }
 
+// F9: an app whose companion is gone is listed under Running without being
+// attached, Connect attaches it explicitly, the connected app becomes a recent
+// entry and a profile in two clicks, and the editor marks a bad path inline.
+void CheckAppPicker(const char* executable)
+{
+	const auto directoryValue = std::getenv("SIMXR_LAUNCH_QA_DIRECTORY");
+	Require(directoryValue != nullptr, "Picker QA requires a new private directory");
+	const std::filesystem::path directory(directoryValue);
+	Require(directory.is_absolute() && std::filesystem::create_directory(directory),
+			"Picker QA directory must be new and absolute");
+	const auto settingsPath = directory / "companion.settings";
+	Require(::setenv("SIMXR_COMPANION_SETTINGS", settingsPath.c_str(), 1) == 0, "Set isolated settings path");
+	// Discovery and the probe both use only this run's socket directory.
+	Require(::setenv("SIMXR_DATA_DIR", directory.c_str(), 1) == 0 && ::unsetenv("SIMXR_CONTROL_SOCKET") == 0,
+			"Isolate the socket directory");
+	CompanionSettings settings;
+	settings.profiles.push_back({"Broken path", "/nonexistent/simxr-app"});
+	settings.activeProfile = "Broken path";
+	SaveSettings(settingsPath, settings);
+
+	// A socket left by a process that no longer listens must not be listed.
+	const auto stale = directory / ("control." + std::to_string(::getpid()) + ".sock");
+	{
+		const int descriptor = ::socket(AF_UNIX, SOCK_STREAM, 0);
+		sockaddr_un address{};
+		address.sun_family = AF_UNIX;
+		std::snprintf(address.sun_path, sizeof(address.sun_path), "%s", stale.c_str());
+		Require(descriptor >= 0 && ::bind(descriptor, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0,
+				"Create a stale socket");
+		::close(descriptor);
+	}
+	pid_t probe = 0;
+	char* arguments[] = {const_cast<char*>(executable), nullptr};
+	Require(::posix_spawn(&probe, executable, nullptr, nullptr, arguments, environ) == 0, "Start the orphan app");
+	struct StopProbe
+	{
+		pid_t pid;
+		~StopProbe()
+		{
+			::kill(pid, SIGTERM);
+			::waitpid(pid, nullptr, 0);
+		}
+	} stopProbe{probe};
+	const auto endpoint = (directory / ("control." + std::to_string(probe) + ".sock")).string();
+	Eventually([&] { return std::filesystem::is_socket(endpoint); }, "Orphan app exposed no control socket");
+
+	Interaction test(true);
+	const auto pump = [&](int count)
+	{
+		for (int index = 0; index < count; ++index)
+			test.Frame();
+	};
+	const auto shot = [&](const char* name)
+	{
+		if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
+		{
+			test.renderer.RequestScreenshot((std::filesystem::path(qa) / name).string());
+			pump(1);
+		}
+	};
+	const auto openPicker = [&]
+	{
+		pump(2);
+		const auto* toolbar = FindPanel("##Workspace toolbar");
+		Require(toolbar != nullptr, "Top bar absent");
+		test.Click({toolbar->Pos.x + 20, toolbar->Pos.y + ImGui::GetFrameHeight() / 2});
+		const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+		Require(!popups.empty() && popups.back().Window, "App picker did not open");
+		pump(1);
+		return popups.back().Window->ID;
+	};
+	const auto closeEditor = [&]
+	{
+		auto* editor = ImGui::FindWindowByName("Launch profiles");
+		Require(editor != nullptr, "Profile editor did not open");
+		ImGui::ActivateItemByID(ImHashStr("#CLOSE", 0, editor->ID));
+		pump(3);
+	};
+
+	const auto running = DiscoverRunningApps();
+	Require(running.size() == 1 && running.front().endpoint == endpoint && running.front().process == std::uint64_t(probe) &&
+				running.front().name == "xr_probe_linux" && running.front().started,
+			"Running did not list exactly the orphan app with its PID and start time");
+	auto picker = openPicker();
+	pump(10);
+	Require(!test.runtime.Snapshot().connected, "Discovery attached to a running app");
+	shot("picker-running.bmp");
+
+	ImGui::ActivateItemByID(ImHashStr("Edit profiles", 0, picker));
+	pump(4);
+	shot("editor-invalid.bmp");
+	closeEditor();
+
+	picker = openPicker();
+	ImGui::ActivateItemByID(ImHashStr("Connect", 0, ImHashStr(endpoint.c_str(), 0, picker)));
+	Eventually(
+		[&]
+		{
+			pump(1);
+			const auto state = test.runtime.Snapshot();
+			return state.connected && state.endpoint == endpoint && state.selectedReady;
+		},
+		"Connect did not attach the orphan app");
+	const auto stored = LoadSettings(settingsPath);
+	Require(stored.recent.size() == 1 && stored.recent.front().launch.executable == executable,
+			"The connected app is not a recent entry");
+	std::cout << "PASS orphan app listed under Running, not attached until Connect, then connected " << endpoint
+			  << '\n';
+
+	picker = openPicker();
+	shot("picker-recent.bmp");
+	const int first = 0;
+	ImGui::ActivateItemByID(ImHashStr("Save as profile", 0, ImHashData(&first, sizeof(first), picker)));
+	pump(4);
+	shot("editor-from-recent.bmp");
+	const auto saved = LoadSettings(settingsPath);
+	Require(saved.profiles.size() == 2 && saved.profiles.back().executable == executable &&
+				saved.profiles.back().name == "xr_probe_linux",
+			"Save as profile did not store the recent app");
+	closeEditor();
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Validation errors in the app picker");
+	std::cout << "PASS recent app saved as profile \"" << saved.profiles.back().name << "\" in two clicks\n";
+}
+
 void CheckToolbarLaunch(const char* executable)
 {
 	const auto directoryValue = std::getenv("SIMXR_LAUNCH_QA_DIRECTORY");
@@ -2814,6 +3065,11 @@ int main()
 		if (const auto endpoint = std::getenv("SIMXR_DEBUG_QA_ENDPOINT"))
 		{
 			CheckDebuggerWorkflow(endpoint);
+			return 0;
+		}
+		if (const auto executable = std::getenv("SIMXR_LAUNCH_QA_EXECUTABLE"); executable && std::getenv("SIMXR_PICKER_QA"))
+		{
+			CheckAppPicker(executable);
 			return 0;
 		}
 		if (const auto executable = std::getenv("SIMXR_LAUNCH_QA_EXECUTABLE"))

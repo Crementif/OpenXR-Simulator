@@ -35,6 +35,7 @@ class RuntimeSession
 	bool TakeScopeChanged();
 	std::vector<Notice> TakeNotices();
 	void Notify(std::string title, std::string detail = {});
+	void Notify(Notice notice);
 
 	void Command(control::CommandKind kind, std::uint64_t capture = 0, bool raw = false, std::uint32_t layer = 0,
 				 std::uint32_t view = 0);

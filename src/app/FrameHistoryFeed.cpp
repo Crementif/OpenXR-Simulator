@@ -14,9 +14,12 @@ InputSample ReadInput(const control::Message& applied)
 	using namespace panel;
 	namespace tag = control::tag;
 	InputSample sample;
+	TrackerDevices trackers;
+	std::uint32_t trackerSlots = 0;
+	// Fields 1-11 are input commands; the named fields follow at higher tags.
 	for (const auto& field : applied.fields)
 	{
-		if (field.tag > 5)
+		if (field.tag > 11)
 			continue;
 		const auto command = control::DecodeSimulationCommand(field);
 		if (const auto* head = std::get_if<SetHeadPose>(&command))
@@ -25,9 +28,24 @@ InputSample ReadInput(const control::Message& applied)
 			sample.poses[pose->hand] = pose->value;
 		else if (const auto* controls = std::get_if<SetControllerControls>(&command); controls && controls->hand < 2)
 			sample.controls[controls->hand] = controls->value;
+		else if (const auto* body = std::get_if<SetBodyControls>(&command))
+		{
+			auto shared = body->value;
+			sample.bodyRoot = std::exchange(shared.rootPose, std::nullopt);
+			sample.body = std::make_shared<const BodyControls>(std::move(shared));
+		}
+		else if (const auto* gaze = std::get_if<SetGaze>(&command))
+			sample.gaze = gaze->value;
+		else if (const auto* tracker = std::get_if<SetTracker>(&command); tracker && tracker->index < trackers.size())
+		{
+			trackers[tracker->index] = tracker->value;
+			trackerSlots |= 1u << tracker->index;
+		}
 		else
 			throw std::runtime_error("Frame history has an unexpected input command");
 	}
+	if (trackerSlots == (1u << trackers.size()) - 1)
+		sample.trackers = std::make_shared<const TrackerDevices>(trackers);
 	sample.seed = U64(applied, tag::Seed);
 	const auto scenarios = U32(applied, tag::Scenario);
 	for (std::size_t index = 0; index < sample.scenarios.size(); ++index)

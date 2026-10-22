@@ -15,7 +15,8 @@ enum class ClipHit
 {
 	None,
 	Clicked,
-	Opened
+	Opened,
+	Play
 };
 // Ruler, lanes, the lane-header column on the left and the LIVE column on the
 // right. Begin() lays the regions out; the caller then draws transport controls
@@ -27,7 +28,8 @@ class TimelineCanvas
 	TimelineGesture Draw(const HistoryStore& history, bool following, std::optional<double> cursor = {},
 						 std::optional<std::pair<double, double>> selection = {});
 	void DrawEvent(double time, double observed, const char* text, bool failed, bool dim);
-	ClipHit DrawClip(double first, double last, const char* label, bool replay);
+	// A playable clip shows a play button while hovered.
+	ClipHit DrawClip(double first, double last, const char* label, bool replay, bool playable = false);
 	// A paused span: a solid band on the Frame time lane, labelled when wide enough.
 	void DrawPause(double first, double last);
 	// The frame budget in milliseconds (the display period); 0 scales bars to 30 fps.

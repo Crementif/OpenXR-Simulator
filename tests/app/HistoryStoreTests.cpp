@@ -1,9 +1,11 @@
 #include "../TestSupport.h"
 #include "app/FrameHistoryFeed.h"
 #include "app/HistoryStore.h"
+#include "control/SimulationControl.h"
 #include <chrono>
 #include <iostream>
 #include <limits>
+#include <set>
 
 namespace
 {
@@ -105,6 +107,115 @@ void RuntimeFeed()
 				(feed.History().At(3).flags & HistoryGap),
 			"Frame after a skipped page lacks its gap");
 }
+// A walking player in T pose with a moving tracker: 32k frames keep one body
+// block, and a take cut from them carries body, gaze and tracker changes.
+void AppliedInputFeed()
+{
+	namespace wire = simxr::control;
+	namespace tag = wire::tag;
+	using namespace simxr;
+	const auto frame = [](std::uint64_t id, bool reported)
+	{
+		TrackingState tracking;
+		tracking.body.preset = id < 100 ? BodyPreset::Standing : BodyPreset::TPose;
+		tracking.body.rootPose = XrPosef{{0, 0, 0, 1}, {0, 0, -0.01f * float(id)}};
+		tracking.gaze.yaw = id < 200 ? 0 : .25f;
+		tracking.trackers[0].poseOverride = XrPosef{{0, 0, 0, 1}, {0, 1, -0.01f * float(id % 50)}};
+		std::vector<wire::Field> applied{wire::EncodeSimulationCommand(SetHeadPose{tracking.head}, 1)};
+		if (reported)
+		{
+			applied.push_back(wire::EncodeSimulationCommand(SetBodyControls{tracking.body}, 6));
+			applied.push_back(wire::EncodeSimulationCommand(SetGaze{tracking.gaze}, 7));
+			for (std::uint32_t slot = 0; slot < 4; ++slot)
+				applied.push_back(wire::EncodeSimulationCommand(SetTracker{slot, tracking.trackers[slot]},
+																static_cast<std::uint16_t>(8 + slot)));
+		}
+		for (const auto name : {tag::Seed, tag::Scenario, tag::Ownership, tag::ActiveActions})
+			applied.push_back(wire::Field::U32(name, 0));
+		applied[applied.size() - 4] = wire::Field::U64(tag::Seed, 5);
+		const std::vector<wire::Field> prediction{wire::Field::I64(tag::Time, std::int64_t(id) * 11000000),
+												  wire::Field::I64(tag::Period, 11000000)};
+		const std::vector<wire::Field> fields{wire::Field::U64(tag::Generation, 2), wire::Field::U64(tag::FrameId, id),
+											  wire::Field::Bytes(tag::Prediction, wire::EncodeFields(prediction)),
+											  wire::Field::Text(tag::Stage, "presented"),
+											  wire::Field::Bytes(tag::AppliedInput, wire::EncodeFields(applied))};
+		return wire::Field::Bytes(tag::Frame, wire::EncodeFields(fields));
+	};
+	const auto page = [&](std::uint64_t first, std::uint64_t count, bool reported)
+	{
+		std::vector<wire::Field> frames;
+		for (auto id = first; id < first + count; ++id)
+		{
+			frames.push_back(frame(id, reported));
+			frames.back().tag = static_cast<std::uint16_t>(frames.size());
+		}
+		wire::Message message;
+		message.fields = {wire::Field::U64(tag::Session, 9), wire::Field::U64(tag::Generation, 2),
+						  wire::Field::Bytes(tag::Frames, wire::EncodeFields(frames)), wire::Field::I64(tag::Time, 0)};
+		return message;
+	};
+	FrameHistoryFeed feed;
+	feed.SetScope({1, 9, 2});
+	constexpr std::uint64_t Frames = 32768;
+	for (std::uint64_t first = 1; first <= Frames; first += 128)
+		Require(feed.Accept(page(first, 128, true)).empty(), "Applied input page rejected");
+	const auto& history = feed.History();
+	std::vector<const InputSample*> samples;
+	for (std::size_t index = 0; index < history.Size(); ++index)
+		samples.push_back(feed.Input().Find(history.At(index).input));
+	Require(samples.size() == Frames && samples.back() && samples.back()->body && samples.back()->trackers,
+			"Applied input lost body or trackers");
+	std::set<const BodyControls*> bodies;
+	std::set<const TrackerDevices*> trackers;
+	for (const auto* sample : samples)
+	{
+		bodies.insert(sample->body.get());
+		trackers.insert(sample->trackers.get());
+	}
+	const auto bytes = sizeof(InputSample) * Frames + bodies.size() * sizeof(BodyControls) +
+					   trackers.size() * sizeof(TrackerDevices);
+	std::cout << Frames << " input samples: " << bodies.size() << " body blocks, " << trackers.size()
+			  << " tracker blocks, about " << bytes / (1024 * 1024) << " MiB\n";
+	Require(bodies.size() == 2 && bytes < 64 * 1024 * 1024, "Walking frames copied the body every frame");
+
+	const std::vector<const InputSample*> range(samples.begin() + 50, samples.begin() + 260);
+	const auto take = TakeFromInput(range, {});
+	const auto initialBody = std::find_if(take.initial.begin(), take.initial.end(), [](const auto& command)
+										  { return std::holds_alternative<SetBodyControls>(command); });
+	Require(initialBody != take.initial.end() &&
+				std::get<SetBodyControls>(*initialBody).value.preset == BodyPreset::Standing &&
+				std::get<SetBodyControls>(*initialBody).value.rootPose,
+			"Take origin lost the recorded body");
+	bool tpose = false, tracker = false, gaze = false;
+	for (const auto& transaction : take.transactions)
+		for (const auto& command : transaction.commands)
+		{
+			if (const auto* body = std::get_if<SetBodyControls>(&command))
+				tpose |= body->value.preset == BodyPreset::TPose && transaction.frame.value == 100;
+			if (const auto* device = std::get_if<SetTracker>(&command))
+				tracker |= device->index == 0 && device->value.poseOverride;
+			if (const auto* value = std::get_if<SetGaze>(&command))
+				gaze |= value->value.yaw == .25f && transaction.frame.value == 200;
+		}
+	Require(tpose && tracker && gaze, "Cut take lacks body, tracker or gaze changes");
+
+	FrameHistoryFeed older;
+	older.SetScope({1, 9, 2});
+	Require(older.Accept(page(1, 4, false)).empty(), "Head-only page rejected");
+	std::vector<const InputSample*> headOnly;
+	for (std::size_t index = 0; index < older.History().Size(); ++index)
+		headOnly.push_back(older.Input().Find(older.History().At(index).input));
+	bool refused = false;
+	try
+	{
+		TakeFromInput(headOnly, {});
+	}
+	catch (const std::invalid_argument&)
+	{
+		refused = true;
+	}
+	Require(refused, "A take was cut from frames without body, gaze and trackers");
+}
 void ThirtyMinutes()
 {
 	HistoryStore history;
@@ -135,6 +246,7 @@ int main()
 	{
 		RingAndBuckets();
 		RuntimeFeed();
+		AppliedInputFeed();
 		ThirtyMinutes();
 		std::cout << "PASS history wrap, min/max/flags aggregation, identity and binary hit-testing\n";
 	}

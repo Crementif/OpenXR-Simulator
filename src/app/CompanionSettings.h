@@ -2,6 +2,7 @@
 #include "app/PilotBindings.h"
 #include "graphics/SnapshotBudget.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <utility>
@@ -21,6 +22,16 @@ struct LaunchProfile
 	std::string rig;
 	bool operator==(const LaunchProfile&) const = default;
 };
+// An app launched or connected from this companion. The profile's name is a
+// display name; it need not be unique.
+struct RecentApp
+{
+	LaunchProfile launch;
+	// Seconds since the Unix epoch.
+	std::int64_t lastUsed = 0;
+	bool operator==(const RecentApp&) const = default;
+};
+inline constexpr std::size_t MaxRecentApps = 8;
 struct SavedLayout
 {
 	std::string name;
@@ -49,11 +60,23 @@ struct CompanionSettings
 	std::string activeLayout;
 	std::vector<LaunchProfile> profiles;
 	std::vector<SavedLayout> layouts;
+	std::vector<RecentApp> recent;
 	bool operator==(const CompanionSettings&) const = default;
 };
 // Explicit override must be absolute. With no HOME/config base, report unavailable.
 std::filesystem::path CompanionSettingsPath();
 void ValidateSettings(const CompanionSettings& settings);
+// Puts the app first, replacing an older entry with the same executable,
+// arguments and working directory, and keeps at most MaxRecentApps.
+void RememberRecentApp(CompanionSettings& settings, LaunchProfile launch, std::int64_t lastUsed);
 CompanionSettings LoadSettings(const std::filesystem::path& path);
 void SaveSettings(const std::filesystem::path& path, const CompanionSettings& settings);
+enum class PathKind
+{
+	Executable,
+	Folder,
+	File
+};
+// Empty when the path can be used as that kind, otherwise a short reason.
+std::string PathProblem(const std::string& path, PathKind kind);
 } // namespace simxr::app

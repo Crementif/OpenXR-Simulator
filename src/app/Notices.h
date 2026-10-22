@@ -3,6 +3,7 @@
 #include "app/ShellState.h"
 
 #include <chrono>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,9 @@ struct Notice
 	// At most about six words; the same title replaces an older notice.
 	std::string title;
 	std::string detail;
+	// An optional one-word button; running it dismisses the notice.
+	std::string action;
+	std::function<void()> run;
 };
 // The shell's notice toasts at the top right of the preview. They never change
 // the run state or the border and disappear after a few seconds.
