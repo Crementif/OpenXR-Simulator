@@ -67,14 +67,14 @@ class VulkanImageReadback final : public GpuCompletion
 
 struct VulkanDeliveryHandles
 {
-	UniqueFd memory;
-	UniqueFd ready;
+	VulkanExternalHandle memory;
+	VulkanExternalHandle ready;
 };
 
 // Immutable one-consumer GPU allocation. The producer never reuses its pixels.
 // Consumer completion is an imported external fence, observed without queuing
 // any consumer-dependent wait. Callers must finish all sampling before signaling
-// that one-shot fence. FD duplicates are retries for that same consumer only.
+// that one-shot fence. Handle duplicates retry that same consumer only.
 class VulkanImageDelivery final : public GpuCompletion
 {
   public:
@@ -83,8 +83,8 @@ class VulkanImageDelivery final : public GpuCompletion
 	const VulkanExternalImageDescriptor& Descriptor() const noexcept;
 	CompletionStatus PollCompletion() const noexcept override;
 	CompletionStatus PollConsumerCompletion() const noexcept;
-	// Requires an unsignaled, compatible opaque-FD fence. Failure preserves fd.
-	void RegisterConsumer(const VulkanExternalIdentity& identity, UniqueFd& fd);
+	// Requires an unsignaled, compatible opaque native fence. Failure preserves the handle.
+	void RegisterConsumer(const VulkanExternalIdentity& identity, VulkanExternalHandle& fd);
 	// Registration precedes exposure. Ready is a binary GPU semaphore; it must
 	// be imported/waited once, even when the producing CPU fence is complete.
 	VulkanDeliveryHandles ExportHandles(bool expose = true);

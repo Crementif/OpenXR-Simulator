@@ -315,7 +315,7 @@ class Reader final : public ImageReader
 				} while (value < 0 && errno == EINTR);
 				if (value < 0)
 					throw std::system_error(errno, std::generic_category(), "Duplicate incoming consumer fence");
-				UniqueFd fd(value);
+				VulkanExternalHandle fd(value);
 				auto delivery = m_frame->Share();
 				delivery->RegisterConsumer(Identity(identity), fd);
 				return std::make_shared<Delivery>(std::move(delivery), m_description.views);

@@ -85,13 +85,13 @@ class VulkanFrame final : public FrameOutput
 	friend class VulkanInspectionTransfer;
 	friend class VulkanInspectionWork;
 	explicit VulkanFrame(std::shared_ptr<VulkanSubmission> submission, std::span<const FrameView> views = {});
-	UniqueFd ExportReady();
+	VulkanExternalHandle ExportReady();
 	bool ClaimInspection();
 	void CancelInspection() noexcept;
 	void CommitInspection() noexcept;
 	std::shared_ptr<VulkanSubmission> m_submission;
 	std::mutex m_inspectionMutex;
-	UniqueFd m_readyFd;
+	VulkanExternalHandle m_readyFd;
 	std::uint32_t m_inspection = 0;
 };
 } // namespace simxr

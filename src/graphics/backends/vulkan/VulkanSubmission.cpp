@@ -236,7 +236,7 @@ std::shared_ptr<VulkanExternalImage> VulkanFrame::ExternalImage() const
 	return m_submission->m_resources->external;
 }
 
-UniqueFd VulkanFrame::ExportReady()
+VulkanExternalHandle VulkanFrame::ExportReady()
 {
 	std::lock_guard lock(m_inspectionMutex);
 	const auto& ready = m_submission->m_resources->ready;

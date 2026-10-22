@@ -10,12 +10,11 @@ namespace simxr
 {
 namespace
 {
-constexpr std::array<const char*, 2> ExternalExtensions{VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
-														VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME};
+constexpr std::array<const char*, 2> ExternalExtensions{VulkanExternalMemoryExtension,
+														VulkanExternalSemaphoreExtension};
 
-constexpr std::array<const char*, 3> DeliveryExtensions{VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
-														VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
-														VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME};
+constexpr std::array<const char*, 3> DeliveryExtensions{VulkanExternalMemoryExtension, VulkanExternalSemaphoreExtension,
+														VulkanExternalFenceExtension};
 
 VKAPI_ATTR VkBool32 VKAPI_CALL Validation(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
 										  VkDebugUtilsMessageTypeFlagsEXT,
@@ -122,7 +121,7 @@ VulkanInspectionDevice::VulkanInspectionDevice(const VulkanExternalIdentity& ide
 			std::any_of(extensions.begin(), extensions.end(),
 						[](const auto& extension)
 						{
-							return std::strcmp(extension.extensionName, VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME) == 0;
+							return std::strcmp(extension.extensionName, VulkanExternalFenceExtension) == 0;
 						});
 		vkGetPhysicalDeviceQueueFamilyProperties(physical, &count, nullptr);
 		std::vector<VkQueueFamilyProperties> families(count);

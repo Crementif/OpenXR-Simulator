@@ -5,7 +5,9 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#ifndef _WIN32
 #include <fcntl.h>
+#endif
 #include <memory>
 #include <stdexcept>
 #include <thread>
@@ -14,12 +16,20 @@ namespace
 {
 using namespace simxr;
 using simxr::probe::Check;
-constexpr std::array SharingExtensions{VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
-									   VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME};
-constexpr std::array FenceExtensions{VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
-									 VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
-									 VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME};
+constexpr std::array SharingExtensions{VulkanExternalMemoryExtension, VulkanExternalSemaphoreExtension};
+constexpr std::array FenceExtensions{VulkanExternalMemoryExtension, VulkanExternalSemaphoreExtension,
+									 VulkanExternalFenceExtension};
 constexpr std::uint64_t Timeout = 5000000000ULL;
+bool ValidNonInherited(VulkanNativeHandle handle)
+{
+#ifdef _WIN32
+	DWORD flags = 0;
+	return GetHandleInformation(handle, &flags) && !(flags & HANDLE_FLAG_INHERIT);
+#else
+	const auto flags = fcntl(handle, F_GETFD);
+	return flags >= 0 && (flags & FD_CLOEXEC);
+#endif
+}
 void Require(bool value, const char* message)
 {
 	if (!value)
@@ -220,6 +230,48 @@ struct ConsumerWork
 		gateReleased = true;
 	}
 };
+void ExerciseMemoryAndSemaphore(VulkanExternalDevice& exporter, VulkanExternalDevice& importer)
+{
+	VulkanExternalImageSpec spec;
+	spec.extent = {8, 8, 1};
+	auto image = exporter.CreateExportable(spec);
+	auto memory = image->ExportMemory();
+	Require(memory && ValidNonInherited(memory.Get()), "Export non-inherited image memory");
+	auto invalid = image->Descriptor();
+	invalid.identity.deviceUuid[0] ^= 1;
+	Rejected(
+		[&]
+		{
+			importer.ImportImage(invalid, memory);
+		},
+		VK_ERROR_INVALID_EXTERNAL_HANDLE, "Reject another adapter's image handle");
+	Require(memory && ValidNonInherited(memory.Get()), "Rejected import retains caller memory handle");
+	auto importedImage = importer.ImportImage(image->Descriptor(), memory);
+	Require(!memory && importedImage->Descriptor().allocationSize == image->Descriptor().allocationSize,
+			"Import exact dedicated allocation and consume caller ownership on success");
+	auto semaphore = exporter.CreateExportableSemaphore();
+	auto handle = semaphore->ExportOnce();
+	Require(handle && ValidNonInherited(handle.Get()), "Export non-inherited semaphore");
+	auto importedSemaphore = importer.ImportSemaphore(exporter.Identity(), handle);
+	Require(!handle, "Successful semaphore import consumes caller ownership");
+	const auto signal = semaphore->Get(), wait = importedSemaphore->Get();
+	VkSubmitInfo producer{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+	producer.signalSemaphoreCount = 1;
+	producer.pSignalSemaphores = &signal;
+	Check(vkQueueSubmit(exporter.Device()->queue, 1, &producer, VK_NULL_HANDLE), "Signal external semaphore");
+	// Drain accepted work before any exceptional teardown of the signal owner.
+	if (vkQueueWaitIdle(exporter.Device()->queue) != VK_SUCCESS)
+		std::_Exit(1);
+	const VkPipelineStageFlags stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+	VkSubmitInfo consumer{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+	consumer.waitSemaphoreCount = 1;
+	consumer.pWaitSemaphores = &wait;
+	consumer.pWaitDstStageMask = &stage;
+	Check(vkQueueSubmit(importer.Device()->queue, 1, &consumer, VK_NULL_HANDLE), "Wait imported semaphore");
+	if (vkQueueWaitIdle(importer.Device()->queue) != VK_SUCCESS)
+		std::_Exit(1);
+	std::puts("PASS dedicated image import and two-device binary semaphore signal/wait");
+}
 void Exercise(VkInstance instance, VkPhysicalDevice physical, std::uint32_t family)
 {
 	Device consumer(instance, physical, family, FenceExtensions, true);
@@ -233,14 +285,14 @@ void Exercise(VkInstance instance, VkPhysicalDevice physical, std::uint32_t fami
 			"Fence owner identity mismatch");
 	Require(native->PollCompletion() == CompletionStatus::Pending, "Unsubmitted fence falsely complete");
 	auto fd = native->ExportOnce();
-	Require(fd && (fcntl(fd.Get(), F_GETFD) & FD_CLOEXEC), "Exported fence FD must be close-on-exec");
+	Require(fd && ValidNonInherited(fd.Get()), "Exported fence handle must be close-on-exec");
 	Rejected([&] { native->ExportOnce(); }, VK_ERROR_INVALID_EXTERNAL_HANDLE, "Second fence export accepted");
 	auto mismatched = exporter.Identity();
 	mismatched.driverUuid[0] ^= 1;
 	const auto original = fd.Get();
 	Rejected([&] { importer.ImportFence(mismatched, fd); }, VK_ERROR_INVALID_EXTERNAL_HANDLE,
 			 "Wrong driver identity accepted");
-	Require(fd.Get() == original && fcntl(original, F_GETFD) >= 0, "Rejected identity consumed caller FD");
+	Require(fd.Get() == original && ValidNonInherited(original), "Rejected identity consumed caller handle");
 	mismatched = exporter.Identity();
 	mismatched.deviceUuid[0] ^= 1;
 	Rejected([&] { importer.ImportFence(mismatched, fd); }, VK_ERROR_INVALID_EXTERNAL_HANDLE,
@@ -249,13 +301,13 @@ void Exercise(VkInstance instance, VkPhysicalDevice physical, std::uint32_t fami
 			 "Disabled fence extension allowed export");
 	Rejected([&] { unavailable.ImportFence(exporter.Identity(), fd); }, VK_ERROR_EXTENSION_NOT_PRESENT,
 			 "Disabled fence extension allowed import");
-	Require(fd.Get() == original && fcntl(original, F_GETFD) >= 0, "Disabled fence extension consumed caller FD");
+	Require(fd.Get() == original && ValidNonInherited(original), "Disabled fence extension consumed caller handle");
 	// Optional fence absence leaves the existing semaphore path usable.
 	auto semaphore = unavailable.CreateExportableSemaphore();
 	Require(semaphore->Get() != VK_NULL_HANDLE, "Optional fence requirement broke semaphore sharing");
 	auto imported = importer.ImportFence(exporter.Identity(), fd);
 	Require(!fd && imported->Device() == observer.device && imported->Identity() == native->Identity(),
-			"Successful fence import did not transfer FD ownership");
+			"Successful fence import did not transfer handle ownership");
 	Rejected([&] { imported->ExportOnce(); }, VK_ERROR_INVALID_EXTERNAL_HANDLE,
 			 "Imported fence unexpectedly re-exportable");
 	Require(imported->PollCompletion() == CompletionStatus::Pending, "Imported unsignaled fence falsely complete");
@@ -297,8 +349,9 @@ void Exercise(VkInstance instance, VkPhysicalDevice physical, std::uint32_t fami
 	// Only the fence payload is needed after actual consumer work retirement.
 	for (int poll = 0; poll != 100; ++poll)
 		Require(imported->PollCompletion() == CompletionStatus::Complete, "Terminal fence observation regressed");
-	std::printf("PASS: two-device OPAQUE_FD fence pending->complete, one-shot export, success-only FD consumption, "
-				"optional disabled path; no pixels/readback, observer queue submissions=0\n");
+	std::printf(
+		"PASS: two-device opaque-native fence pending->complete, one-shot export, success-only handle consumption, "
+		"optional disabled path; no pixels/readback, observer queue submissions=0\n");
 }
 } // namespace
 int main()
@@ -312,7 +365,7 @@ int main()
 			Check(vkEnumeratePhysicalDevices(instance.handle, &count, nullptr), "enumerate fence adapters");
 			std::vector<VkPhysicalDevice> adapters(count);
 			Check(vkEnumeratePhysicalDevices(instance.handle, &count, adapters.data()), "enumerate fence adapters");
-			bool exercised = false;
+			bool exercised = false, sharedResources = false;
 			for (auto physical : adapters)
 			{
 				VkPhysicalDeviceProperties properties;
@@ -325,12 +378,11 @@ int main()
 							properties.deviceName, capabilities.result, capabilities.fence.compatibleHandleTypes,
 							capabilities.fence.externalFenceFeatures, capabilities.CanImport(),
 							capabilities.CanExport());
-				if (!capabilities.CanImport() || !capabilities.CanExport())
-					continue;
 				VulkanExternalImageSpec image;
 				image.extent = {1, 1, 1};
 				const auto sharing = VulkanExternalDevice::Query(physical, image, VK_API_VERSION_1_1);
-				if (!sharing.CanExportSemaphore() || !sharing.CanImportSemaphore())
+				if (!sharing.CanExportImage() || !sharing.CanImportImage() || !sharing.CanExportSemaphore() ||
+					!sharing.CanImportSemaphore())
 					continue;
 				vkGetPhysicalDeviceQueueFamilyProperties(physical, &count, nullptr);
 				std::vector<VkQueueFamilyProperties> families(count);
@@ -338,8 +390,20 @@ int main()
 				for (std::uint32_t family = 0; family != count; ++family)
 					if (families[family].queueCount && (families[family].queueFlags & VK_QUEUE_GRAPHICS_BIT))
 					{
-						Exercise(instance.handle, physical, family);
-						exercised = true;
+						if (!sharedResources)
+						{
+							Device producer(instance.handle, physical, family, SharingExtensions);
+							Device consumer(instance.handle, physical, family, SharingExtensions);
+							VulkanExternalDevice exporter(producer.device, SharingExtensions, VK_API_VERSION_1_1);
+							VulkanExternalDevice importer(consumer.device, SharingExtensions, VK_API_VERSION_1_1);
+							ExerciseMemoryAndSemaphore(exporter, importer);
+							sharedResources = true;
+						}
+						if (capabilities.CanImport() && capabilities.CanExport())
+						{
+							Exercise(instance.handle, physical, family);
+							exercised = true;
+						}
 						break;
 					}
 				if (exercised)
@@ -347,7 +411,7 @@ int main()
 			}
 			if (!exercised)
 			{
-				std::printf("SKIP: no adapter supports the production image/semaphore path plus optional OPAQUE_FD "
+				std::printf("SKIP: no adapter supports the production image/semaphore path plus optional opaque-native "
 							"external fence import/export\n");
 				return 77;
 			}

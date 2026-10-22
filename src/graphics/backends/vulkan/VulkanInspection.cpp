@@ -73,7 +73,7 @@ class VulkanDeliveryNative
 		const auto consumer = m_payload->consumer.load();
 		return consumer ? consumer->PollCompletion() : CompletionStatus::Pending;
 	}
-	void RegisterConsumer(const VulkanExternalDevice& external, const VulkanExternalIdentity& identity, UniqueFd& fd)
+	void RegisterConsumer(const VulkanExternalDevice& external, const VulkanExternalIdentity& identity, VulkanExternalHandle& fd)
 	{
 		std::lock_guard lock(m_mutex);
 		if (m_payload->consumer.load())
@@ -127,7 +127,7 @@ class VulkanDeliveryNative
 		std::shared_ptr<VulkanExternalImage> image;
 		std::shared_ptr<VulkanExternalSemaphore> ready;
 		std::atomic<std::shared_ptr<VulkanExternalFence>> consumer;
-		UniqueFd readyFd;
+		VulkanExternalHandle readyFd;
 	};
 	VulkanDeliveryNative() = default;
 	bool Safe() const noexcept
@@ -938,7 +938,7 @@ CompletionStatus VulkanImageDelivery::PollConsumerCompletion() const noexcept
 {
 	return m_resources->native->ConsumerCompletion();
 }
-void VulkanImageDelivery::RegisterConsumer(const VulkanExternalIdentity& identity, UniqueFd& fd)
+void VulkanImageDelivery::RegisterConsumer(const VulkanExternalIdentity& identity, VulkanExternalHandle& fd)
 {
 	m_resources->native->RegisterConsumer(m_resources->Queue()->External(), identity, fd);
 }

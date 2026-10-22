@@ -10,25 +10,54 @@
 #include <mutex>
 #include <span>
 
+#ifdef _WIN32
+#include <windows.h>
+
+#include <vulkan/vulkan_win32.h>
+#endif
+
 namespace simxr
 {
-class UniqueFd
+#ifdef _WIN32
+using VulkanNativeHandle = HANDLE;
+inline constexpr VulkanNativeHandle InvalidVulkanHandle = nullptr;
+inline constexpr auto VulkanExternalMemoryExtension = VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME;
+inline constexpr auto VulkanExternalSemaphoreExtension = VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME;
+inline constexpr auto VulkanExternalFenceExtension = VK_KHR_EXTERNAL_FENCE_WIN32_EXTENSION_NAME;
+using VulkanGetMemoryHandle = PFN_vkGetMemoryWin32HandleKHR;
+using VulkanGetSemaphoreHandle = PFN_vkGetSemaphoreWin32HandleKHR;
+using VulkanImportSemaphoreHandle = PFN_vkImportSemaphoreWin32HandleKHR;
+using VulkanGetFenceHandle = PFN_vkGetFenceWin32HandleKHR;
+using VulkanImportFenceHandle = PFN_vkImportFenceWin32HandleKHR;
+#else
+using VulkanNativeHandle = int;
+inline constexpr VulkanNativeHandle InvalidVulkanHandle = -1;
+inline constexpr auto VulkanExternalMemoryExtension = VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME;
+inline constexpr auto VulkanExternalSemaphoreExtension = VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME;
+inline constexpr auto VulkanExternalFenceExtension = VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME;
+using VulkanGetMemoryHandle = PFN_vkGetMemoryFdKHR;
+using VulkanGetSemaphoreHandle = PFN_vkGetSemaphoreFdKHR;
+using VulkanImportSemaphoreHandle = PFN_vkImportSemaphoreFdKHR;
+using VulkanGetFenceHandle = PFN_vkGetFenceFdKHR;
+using VulkanImportFenceHandle = PFN_vkImportFenceFdKHR;
+#endif
+class VulkanExternalHandle
 {
   public:
-	explicit UniqueFd(int descriptor = -1) noexcept;
-	~UniqueFd();
-	UniqueFd(UniqueFd&& other) noexcept;
-	UniqueFd& operator=(UniqueFd&& other) noexcept;
-	UniqueFd(const UniqueFd&) = delete;
-	UniqueFd& operator=(const UniqueFd&) = delete;
-	int Get() const noexcept;
+	explicit VulkanExternalHandle(VulkanNativeHandle descriptor = InvalidVulkanHandle) noexcept;
+	~VulkanExternalHandle();
+	VulkanExternalHandle(VulkanExternalHandle&& other) noexcept;
+	VulkanExternalHandle& operator=(VulkanExternalHandle&& other) noexcept;
+	VulkanExternalHandle(const VulkanExternalHandle&) = delete;
+	VulkanExternalHandle& operator=(const VulkanExternalHandle&) = delete;
+	VulkanNativeHandle Get() const noexcept;
 	explicit operator bool() const noexcept;
-	int Release() noexcept;
-	void Reset(int descriptor = -1) noexcept;
-	UniqueFd Duplicate() const;
+	VulkanNativeHandle Release() noexcept;
+	void Reset(VulkanNativeHandle descriptor = InvalidVulkanHandle) noexcept;
+	VulkanExternalHandle Duplicate() const;
 
   private:
-	int m_descriptor;
+	VulkanNativeHandle m_descriptor;
 };
 
 struct VulkanExternalIdentity
@@ -39,7 +68,7 @@ struct VulkanExternalIdentity
 };
 
 // Native transfers preserve RGBA8/BGRA8 UNORM/sRGB, one or two slices, optimal
-// 2D tiling, one mip, one sample and no image-create flags. All creation fields
+// 2D tiling, complete mip chains, one sample and no image-create flags. Creation fields
 // remain explicit in transport metadata; unsupported variants are rejected.
 struct VulkanExternalImageSpec
 {
@@ -96,15 +125,15 @@ class VulkanExternalImage final
   public:
 	std::shared_ptr<VulkanImage> Image() const noexcept;
 	const VulkanExternalImageDescriptor& Descriptor() const noexcept;
-	UniqueFd ExportMemory() const;
+	VulkanExternalHandle ExportMemory() const;
 
   private:
 	friend class VulkanExternalDevice;
 	VulkanExternalImage(std::shared_ptr<VulkanImage> image, VulkanExternalImageDescriptor descriptor,
-						PFN_vkGetMemoryFdKHR getMemoryFd, bool exportable);
+						VulkanGetMemoryHandle getMemoryHandle, bool exportable);
 	const std::shared_ptr<VulkanImage> m_image;
 	const VulkanExternalImageDescriptor m_descriptor;
-	const PFN_vkGetMemoryFdKHR m_getMemoryFd;
+	const VulkanGetMemoryHandle m_getMemoryHandle;
 	const bool m_exportable;
 	mutable std::mutex m_exportMutex;
 };
@@ -118,22 +147,22 @@ class VulkanExternalSemaphore final
 	VkSemaphore Get() const noexcept;
 	std::shared_ptr<VulkanDevice> Device() const noexcept;
 	const VulkanExternalIdentity& Identity() const noexcept;
-	UniqueFd ExportOnce();
+	VulkanExternalHandle ExportOnce();
 
   private:
 	friend class VulkanExternalDevice;
 	VulkanExternalSemaphore(std::shared_ptr<VulkanDevice> device, VulkanExternalIdentity identity,
-							PFN_vkGetSemaphoreFdKHR getSemaphoreFd, bool exportable);
+							VulkanGetSemaphoreHandle getSemaphoreHandle, bool exportable);
 	const std::shared_ptr<VulkanDevice> m_device;
 	const VulkanExternalIdentity m_identity;
-	const PFN_vkGetSemaphoreFdKHR m_getSemaphoreFd;
+	const VulkanGetSemaphoreHandle m_getSemaphoreHandle;
 	const bool m_exportable;
 	VkSemaphore m_semaphore = VK_NULL_HANDLE;
 	bool m_exported = false;
 	std::mutex m_exportMutex;
 };
 
-// One-shot OPAQUE_FD fence, permanently imported/exported. Never reset the
+// One-shot opaque native fence, permanently imported/exported. Never reset the
 // native fence. Polling observes real fence status without waiting or queue
 // access. The submitted-use owner must retain this object until actual native
 // completion; Failed does not authorize destruction of pending GPU resources.
@@ -144,16 +173,16 @@ class VulkanExternalFence final : public GpuCompletion
 	VkFence Get() const noexcept;
 	std::shared_ptr<VulkanDevice> Device() const noexcept;
 	const VulkanExternalIdentity& Identity() const noexcept;
-	UniqueFd ExportOnce();
+	VulkanExternalHandle ExportOnce();
 	CompletionStatus PollCompletion() const noexcept override;
 
   private:
 	friend class VulkanExternalDevice;
 	VulkanExternalFence(std::shared_ptr<VulkanDevice> device, VulkanExternalIdentity identity,
-						PFN_vkGetFenceFdKHR getFenceFd, bool exportable);
+						VulkanGetFenceHandle getFenceHandle, bool exportable);
 	const std::shared_ptr<VulkanDevice> m_device;
 	const VulkanExternalIdentity m_identity;
-	const PFN_vkGetFenceFdKHR m_getFenceFd;
+	const VulkanGetFenceHandle m_getFenceHandle;
 	const bool m_exportable;
 	VkFence m_fence = VK_NULL_HANDLE;
 	bool m_exported = false;
@@ -176,27 +205,28 @@ class VulkanExternalDevice
 	std::shared_ptr<VulkanDevice> Device() const noexcept;
 	std::shared_ptr<VulkanExternalImage> CreateExportable(const VulkanExternalImageSpec& image,
 														  VkImageLayout producerLayout = VK_IMAGE_LAYOUT_GENERAL) const;
-	// Imports duplicate the supplied FD for Vulkan. Every failure preserves the
-	// original; only complete helper success resets the caller's FD ownership.
+	// Imports duplicate the supplied native handle for Vulkan. Every failure preserves the
+	// original; only complete helper success resets the caller's handle ownership.
 	std::shared_ptr<VulkanExternalImage> ImportImage(const VulkanExternalImageDescriptor& descriptor,
-													 UniqueFd& fd) const;
+													 VulkanExternalHandle& fd) const;
 	std::shared_ptr<VulkanExternalSemaphore> CreateExportableSemaphore() const;
 	std::shared_ptr<VulkanExternalSemaphore> ImportSemaphore(const VulkanExternalIdentity& identity,
-															 UniqueFd& fd) const;
+															 VulkanExternalHandle& fd) const;
 
 	bool FenceCommandsEnabled() const noexcept;
 	std::shared_ptr<VulkanExternalFence> CreateExportableFence() const;
-	std::shared_ptr<VulkanExternalFence> ImportFence(const VulkanExternalIdentity& identity, UniqueFd& fd) const;
+	std::shared_ptr<VulkanExternalFence> ImportFence(const VulkanExternalIdentity& identity,
+													 VulkanExternalHandle& fd) const;
 
   private:
 	std::shared_ptr<VulkanImage> CreateImage(const VulkanExternalImageSpec& image) const;
 	const std::shared_ptr<VulkanDevice> m_device;
 	const std::uint32_t m_instanceApiVersion;
 	VulkanExternalIdentity m_identity;
-	PFN_vkGetMemoryFdKHR m_getMemoryFd = nullptr;
-	PFN_vkGetSemaphoreFdKHR m_getSemaphoreFd = nullptr;
-	PFN_vkImportSemaphoreFdKHR m_importSemaphoreFd = nullptr;
-	PFN_vkGetFenceFdKHR m_getFenceFd = nullptr;
-	PFN_vkImportFenceFdKHR m_importFenceFd = nullptr;
+	VulkanGetMemoryHandle m_getMemoryHandle = nullptr;
+	VulkanGetSemaphoreHandle m_getSemaphoreHandle = nullptr;
+	VulkanImportSemaphoreHandle m_importSemaphoreHandle = nullptr;
+	VulkanGetFenceHandle m_getFenceHandle = nullptr;
+	VulkanImportFenceHandle m_importFenceHandle = nullptr;
 };
 } // namespace simxr

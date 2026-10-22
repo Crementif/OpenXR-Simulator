@@ -285,7 +285,7 @@ VulkanBackend::VulkanBackend(const VulkanBinding& binding, std::size_t frameCapa
 							   return value && std::strcmp(value, name) == 0;
 						   });
 	};
-	if (enabled(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) && enabled(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME))
+	if (enabled(VulkanExternalMemoryExtension) && enabled(VulkanExternalSemaphoreExtension))
 		m_state->external =
 			std::make_shared<VulkanExternalDevice>(m_state->device, enabledExtensions, instanceApiVersion);
 	m_state->pipeline = CreatePipeline(m_state->device);

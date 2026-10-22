@@ -225,7 +225,7 @@ void VulkanImageConsumer::Import(const ImageDescription& description,
 		} while (value < 0 && errno == EINTR);
 		if (value < 0)
 			throw std::system_error(errno, std::generic_category(), "Duplicate consumer import FD");
-		return UniqueFd(value);
+		return VulkanExternalHandle(value);
 	};
 	auto memory = duplicate(handles[0]), ready = duplicate(handles[1]);
 	m_state->imported = m_state->external.ImportImage(native, memory);
