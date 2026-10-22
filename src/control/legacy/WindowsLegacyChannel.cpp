@@ -510,6 +510,16 @@ bool WindowsLegacyChannel::PublishImages(ImageOutput& output)
 	m_changed.notify_all();
 	return true;
 }
+bool WindowsLegacyChannel::DrainImages(std::chrono::milliseconds timeout)
+{
+	std::unique_lock lock(m_mutex);
+	return m_changed.wait_for(lock, timeout,
+							  [this]
+							  {
+								  return m_status.activeImages == 0 || m_status.closed;
+							  }) &&
+		   m_status.activeImages == 0;
+}
 bool WindowsLegacyChannel::WaitForImageCapacity(std::size_t bytes)
 {
 	if (bytes > MaxImageBytes)

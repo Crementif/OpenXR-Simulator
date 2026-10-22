@@ -61,6 +61,7 @@ class WindowsLegacyChannel
 	std::optional<std::string> TakeWrittenScreenshot();
 	bool Publish(WindowsDocument kind, std::string document);
 	bool PublishImages(ImageOutput& output);
+	bool DrainImages(std::chrono::milliseconds timeout);
 	bool WaitForImageCapacity(std::size_t bytes);
 	bool Log(std::string message);
 	void Acknowledge(std::string_view command, bool success);

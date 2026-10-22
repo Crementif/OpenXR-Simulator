@@ -20,7 +20,7 @@ class VulkanLegacyCapture final : public VulkanFrameObserver
 {
   public:
 	VulkanLegacyCapture(std::shared_ptr<VulkanDevice> device, std::shared_ptr<Session> session,
-						std::shared_ptr<LegacyFileChannel> files, std::shared_ptr<flicker::Diagnostics> diagnostics);
+						std::shared_ptr<LegacyCaptureChannel> files, std::shared_ptr<flicker::Diagnostics> diagnostics);
 	~VulkanLegacyCapture() override;
 	void Request(LegacyCaptureRequest request, FrameId frame) override;
 	void Observe(const XrFrameEndInfo& frame, const CompositionPlan& composition,
@@ -57,7 +57,7 @@ class VulkanLegacyCapture final : public VulkanFrameObserver
 
 	const std::shared_ptr<VulkanDevice> m_device;
 	const std::shared_ptr<Session> m_session;
-	const std::shared_ptr<LegacyFileChannel> m_files;
+	const std::shared_ptr<LegacyCaptureChannel> m_files;
 	const std::shared_ptr<flicker::Diagnostics> m_diagnostics;
 	std::mutex m_mutex;
 	std::mutex m_closeMutex;

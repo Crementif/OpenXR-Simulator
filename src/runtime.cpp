@@ -25,6 +25,8 @@
 #include "control/ControlService.h"
 #include "control/LocalControlServer.h"
 #include "control/backends/vulkan/VulkanImageInspection.h"
+#include "control/legacy/backends/vulkan/VulkanLegacyCapture.h"
+#include "control/legacy/backends/vulkan/WindowsVulkanCaptureChannel.h"
 #include "flicker_detector.h"
 #include "graphics/LayerBuilder.h"
 #include "graphics/PreviewGeometry.h"
@@ -2759,11 +2761,15 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
     
     if (!RuntimeState().FindInstance(instance)) return XR_ERROR_HANDLE_INVALID;
     std::shared_ptr<simxr::legacy::LegacyControllerMotion> controllerMotion;
-    {
+	std::shared_ptr<mcp::WindowsLegacyChannel> compatibilityFiles;
+	std::shared_ptr<flicker::Diagnostics> diagnostics;
+	{
         std::lock_guard lock(rt::g_coreMutex);
         if (rt::g_instance.handle != instance) return XR_ERROR_HANDLE_INVALID;
         controllerMotion = rt::g_instance.controllerMotion;
-    }
+		compatibilityFiles = rt::g_instance.compatibilityFiles;
+		diagnostics = rt::g_instance.diagnostics;
+	}
     if (!controllerMotion) return XR_ERROR_HANDLE_INVALID;
     if (rt::g_session.handle != XR_NULL_HANDLE) return XR_ERROR_LIMIT_REACHED;
     if (rt::g_session.usesVulkan) vkrt::ShutdownSession(rt::g_session);
@@ -2792,6 +2798,9 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
 														  validation && std::strcmp(validation, "1") == 0, graphics);
 			if (XR_FAILED(result))
 				return result;
+			graphics->SetObserver(std::make_unique<simxr::VulkanLegacyCapture>(
+				graphics->Device(), creation.core.Shared(),
+				std::make_shared<simxr::WindowsVulkanCaptureChannel>(compatibilityFiles), diagnostics));
 			rt::g_session.vulkan = std::move(graphics);
 		}
 		{
@@ -5258,7 +5267,22 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
 	{
 		std::lock_guard lock(rt::g_vulkanMutex);
 		if (rt::g_session.vulkan)
-			return rt::g_session.vulkan->EndFrame(*info);
+		{
+			const auto result = rt::g_session.vulkan->EndFrame(*info);
+			if (XR_SUCCEEDED(result))
+			{
+				const auto snapshot = core->Snapshot();
+				const auto views = core->ViewsAt(simxr::RuntimeTime{simxr::Duration{info->displayTime}});
+				const auto width = views.views.empty() ? 0u : views.views.front().description.width * 2;
+				const auto height = views.views.empty() ? 0u : views.views.front().description.height;
+				compatibilityCapture->SetFrame(snapshot.lastSubmitted.value);
+				compatibilityCapture->PublishStatus(
+					{static_cast<std::uint32_t>(snapshot.lastSubmitted.value), width, height, "RGBA8",
+					 mcp::GetSessionStateName(static_cast<int>(snapshot.state)), rt::g_headYaw, rt::g_headPitch,
+					 rt::g_headRoll, rt::g_headPos.x, rt::g_headPos.y, rt::g_headPos.z});
+			}
+			return result;
+		}
 	}
 	simxr::LayerValidationContext context;
     context.depthEnabled = core->Extensions().Contains(XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME);

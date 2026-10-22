@@ -49,6 +49,7 @@ struct LegacyScreenshot
 	std::uint32_t height = 0;
 	std::vector<std::uint8_t> bgra;
 	std::string status;
+	LegacyCaptureRequest selection;
 };
 
 struct LegacyFileStatus
@@ -59,18 +60,32 @@ struct LegacyFileStatus
 	std::string detail;
 };
 
-class LegacyFileChannel
+// The GPU capture observer only exchanges CPU requests and completed images.
+// Platform file workers retain accepted bytes and perform all filesystem I/O.
+class LegacyCaptureChannel
+{
+  public:
+	virtual ~LegacyCaptureChannel() = default;
+	virtual LegacyFileRequests TakeRequests() = 0;
+	virtual bool Publish(LegacyOutputFile file, std::string document) = 0;
+	virtual bool SaveScreenshot(LegacyScreenshot& screenshot) = 0;
+	virtual bool DrainScreenshots(std::chrono::milliseconds timeout) = 0;
+	virtual bool Log(std::string message) = 0;
+	virtual LegacyFileStatus Status() const = 0;
+};
+
+class LegacyFileChannel : public LegacyCaptureChannel
 {
   public:
 	explicit LegacyFileChannel(std::filesystem::path directory, std::filesystem::path initialSequence = {});
-	~LegacyFileChannel();
+	~LegacyFileChannel() override;
 	LegacyFileCommands TakeCommands();
-	LegacyFileRequests TakeRequests();
-	bool Publish(LegacyOutputFile file, std::string document);
-	bool SaveScreenshot(LegacyScreenshot& screenshot);
-	bool DrainScreenshots(std::chrono::milliseconds timeout);
-	bool Log(std::string message);
-	LegacyFileStatus Status() const;
+	LegacyFileRequests TakeRequests() override;
+	bool Publish(LegacyOutputFile file, std::string document) override;
+	bool SaveScreenshot(LegacyScreenshot& screenshot) override;
+	bool DrainScreenshots(std::chrono::milliseconds timeout) override;
+	bool Log(std::string message) override;
+	LegacyFileStatus Status() const override;
 	void Close();
 
   private:

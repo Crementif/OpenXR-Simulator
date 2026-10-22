@@ -59,7 +59,7 @@ struct VulkanLegacyCapture::Job
 };
 
 VulkanLegacyCapture::VulkanLegacyCapture(std::shared_ptr<VulkanDevice> device, std::shared_ptr<Session> session,
-										 std::shared_ptr<LegacyFileChannel> files,
+										 std::shared_ptr<LegacyCaptureChannel> files,
 										 std::shared_ptr<flicker::Diagnostics> diagnostics)
 	: m_device(std::move(device)), m_session(std::move(session)), m_files(std::move(files)),
 	  m_diagnostics(std::move(diagnostics))
@@ -219,6 +219,7 @@ void VulkanLegacyCapture::CompleteImage(Job& job)
 			 std::move(pixels[index])});
 	}
 	LegacyScreenshot image;
+	image.selection = job.request.selection;
 	image.width = job.plan.width * job.plan.eyeCount;
 	image.height = job.plan.height;
 	image.bgra = ComposeCaptureImage(job.plan, sources);
