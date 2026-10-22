@@ -325,7 +325,7 @@ void RigPanel::DrawTransport()
 		if (IconButton("Cancel replay", Icon::Stop, "Stops replay and releases its inputs"))
 			m_impl->runner->Cancel();
 	}
-	else if (IconButton("Dismiss replay status", Icon::Close, "Hide"))
+	else if (IconButton("Dismiss replay status", Icon::Close, "Hide the finished replay status"))
 		m_impl->showTransport = false;
 	if (!state.error.empty() || !m_impl->error.empty())
 	{

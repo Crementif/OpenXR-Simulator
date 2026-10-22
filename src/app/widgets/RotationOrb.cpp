@@ -200,9 +200,11 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 	if (hovered && !state.dragging)
 	{
 		if (onNose)
-			ImGui::SetTooltip("Point at me");
+			ImGui::SetTooltip("Turn this device toward the rig camera");
 		else if (hoveredRing >= 0)
-			ImGui::SetTooltip("%s", hoveredRing == 0 ? "Turn (yaw)" : hoveredRing == 1 ? "Tilt (pitch)" : "Roll");
+			ImGui::SetTooltip("%s", hoveredRing == 0 ? "Drag to turn (yaw); Ctrl snaps to 15 degrees"
+							 : hoveredRing == 1 ? "Drag to tilt (pitch); Ctrl snaps to 15 degrees"
+												: "Drag to roll; Ctrl snaps to 15 degrees");
 	}
 	bool changed = false;
 	if (enabled && hovered && distance <= 1 && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))

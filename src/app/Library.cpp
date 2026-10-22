@@ -188,7 +188,9 @@ void Library::DrawList(Selection& selection, RuntimePanels& runtime, RigPanel& r
 			ImGui::TextDisabled("%s", Age(entry.modified).c_str());
 			ImGui::TableNextColumn();
 			ImGui::BeginDisabled(!idle);
-			if (IconButton("Play entry", Icon::Play, entry.take ? "Play take" : "Run script"))
+			if (IconButton("Play entry", Icon::Play,
+						   entry.take ? "Restore recorded inputs on the selected app; not game state"
+								  : "Run this script on the selected app"))
 				Play(entry, runtime);
 			ImGui::EndDisabled();
 			ImGui::PopID();
@@ -208,7 +210,7 @@ void Library::DrawList(Selection& selection, RuntimePanels& runtime, RigPanel& r
 }
 bool Library::DrawHeader(Selection& selection, const std::string& path, const char* kind)
 {
-	if (IconButton("Back to library", Icon::ChevronLeft, "Library"))
+	if (IconButton("Back to library", Icon::ChevronLeft, "Browse saved takes and scripts"))
 	{
 		selection = LibrarySel{};
 		return false;
@@ -222,13 +224,14 @@ bool Library::DrawHeader(Selection& selection, const std::string& path, const ch
 	ImGui::SetItemTooltip("%s", path.c_str());
 	const float button = ImGui::GetFrameHeight(), spacing = ImGui::GetStyle().ItemSpacing.x;
 	ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetContentRegionMax().x - button * 2 - spacing));
-	if (IconButton("Rename entry", Icon::Rename, "Rename"))
+	if (IconButton("Rename entry", Icon::Rename, "Change this file name on disk"))
 	{
 		std::snprintf(m_rename.data(), m_rename.size(), "%s", name.c_str());
 		ImGui::OpenPopup("Rename");
 	}
 	ImGui::SameLine();
-	if (IconButton("Delete entry", Icon::Delete, "Delete", false, nullptr, theme::Record))
+	if (IconButton("Delete entry", Icon::Delete, "Delete this file from disk; asks for confirmation",
+				   false, nullptr, theme::Record))
 		ImGui::OpenPopup("Delete?");
 	bool exists = true;
 	if (ImGui::BeginPopup("Rename"))
@@ -378,8 +381,8 @@ void Library::DrawScript(Selection& selection, const std::string& path, RuntimeP
 	if (active)
 	{
 		const bool paused = state.phase == automation::RigPhase::Paused;
-		if (paused ? IconButton("Resume script", Icon::Play, "Resume")
-				   : IconButton("Pause script", Icon::Pause, "Pause"))
+		if (paused ? IconButton("Resume script", Icon::Play, "Continue executing this paused script")
+				   : IconButton("Pause script", Icon::Pause, "Hold this script before its next transaction"))
 			paused ? rigs.Resume() : rigs.Pause();
 		ImGui::SameLine();
 		ImGui::BeginDisabled(!paused);

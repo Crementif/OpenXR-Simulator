@@ -304,7 +304,7 @@ struct WorkspacePanels::Impl
 			chip += " \u00b7 " + std::to_string(static_cast<int>(shell.session.fps + .5f)) + " fps";
 		const Icon details = Icon::Warning;
 		if (StateChip("Run state", dot, chip.c_str(), shell.session.error.empty() ? nullptr : shell.session.error.c_str(),
-					  state == RunState::Failed ? &details : nullptr, "Details"))
+					  state == RunState::Failed ? &details : nullptr, "Show the connection or launch error"))
 			showError = true;
 		if (snapshot.recording)
 		{
@@ -350,7 +350,7 @@ struct WorkspacePanels::Impl
 					   previewExpanded))
 			previewExpanded = !previewExpanded;
 		ImGui::SameLine();
-		if (IconButton("...", Icon::More, "More"))
+		if (IconButton("...", Icon::More, "Preferences, layout and advanced controls"))
 			ImGui::OpenPopup("Options");
 		if (ImGui::BeginPopup("Options"))
 		{

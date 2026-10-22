@@ -159,7 +159,7 @@ void PreviewPanel::DrawImage(ShellState& shell, const RuntimeView& view, bool& p
 		ImGui::SameLine(0, 2);
 		if (ImGui::SmallButton("?##Pilot keys"))
 			ImGui::OpenPopup("Piloting");
-		ImGui::SetItemTooltip("Pilot keys");
+		ImGui::SetItemTooltip("Mouse, keyboard and gamepad bindings for piloting");
 		if (ImGui::BeginPopup("Piloting"))
 		{
 			m_pilot.DrawHelp();

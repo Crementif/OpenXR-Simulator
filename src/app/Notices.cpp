@@ -70,7 +70,7 @@ void Notices::Draw(ShellRect area)
 			ImGui::SameLine();
 			if (ImGui::SmallButton("x"))
 				m_entries[index].shown = now - Lifetime - std::chrono::seconds(1);
-			ImGui::SetItemTooltip("Dismiss");
+			ImGui::SetItemTooltip("Hide this notice; the app keeps running");
 			ImGui::PopID();
 		}
 	}

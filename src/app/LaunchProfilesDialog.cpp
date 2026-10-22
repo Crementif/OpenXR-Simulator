@@ -336,7 +336,7 @@ bool LaunchProfilesDialog::DrawForm(CompanionSettings& settings, const LaunchSna
 			ImGui::InputTextWithHint("##Value", "value", variable.value.data(), variable.value.size());
 			edited |= ImGui::IsItemDeactivatedAfterEdit();
 			ImGui::TableNextColumn();
-			if (IconButton("Remove variable", Icon::Close, "Remove this variable"))
+			if (IconButton("Remove variable", Icon::Close, "The next launch will no longer set this variable"))
 				removed = index;
 			ImGui::PopID();
 		}

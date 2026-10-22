@@ -41,9 +41,18 @@ void TimelineCanvas::Begin(float headerWidth, float liveWidth)
 	auto* draw = ImGui::GetWindowDrawList();
 	const auto muted = ImGui::GetColorU32(ImGuiCol_TextDisabled), line = ImGui::GetColorU32(ImGuiCol_Border);
 	static constexpr const char* labels[]{"Frame time", "Images", "Input", "Recording", "Events"};
+	static constexpr const char* tips[]{
+		"Display interval against the headset period; red marks late or dropped frames",
+		"Kept preview coverage; snapshots can be pinned. Gaps have no saved image.",
+		"Applied hand inputs; green marks actions read by the app",
+		"Red: recorded inputs. Blue: replay or script. Hover a saved take to play it.",
+		"App and script events; hollow marks use the nearest observed frame"};
 	for (int lane = 0; lane < m_lanes; ++lane)
 	{
 		const float y = m_laneY[lane];
+		if (!m_compact && ImGui::IsWindowHovered() &&
+			ImGui::IsMouseHoveringRect({top.x, y}, {top.x + m_header, y + m_lane}))
+			ImGui::SetTooltip("%s", tips[lane]);
 		draw->AddLine({top.x, y}, {top.x + width, y}, line);
 		if (!m_compact && m_lane >= font)
 			draw->AddText({top.x + 6 * scale, y + (m_lane - font) / 2}, muted, labels[lane]);
@@ -290,14 +299,14 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, bool following
 		if (result.hovered)
 		{
 			const auto& frame = history.At(*result.hovered);
-			ImGui::SetTooltip("Frame %llu\nRun time %.3fs\nDisplay interval %.2f ms%s%s",
+			ImGui::SetTooltip("Frame %llu / run %.3f s\nDisplay interval %.2f ms%s%s",
 							  static_cast<unsigned long long>(frame.identity.frame), frame.runSeconds,
 							  frame.frameMilliseconds,
 							  frame.flags & HistorySnapshot
-								  ? frame.flags & HistoryPinned ? "\nPinned snapshot (click to unpin)"
-																: "\nSnapshot (click to pin)"
+								  ? frame.flags & HistoryPinned ? " / pinned (click to unpin)"
+																: " / snapshot (click to pin)"
 								  : "",
-							  frame.flags & HistoryPreview ? "\nPreview" : "");
+							  frame.flags & HistoryPreview ? " / kept preview" : "");
 		}
 	}
 	ImGui::PopID();
@@ -315,7 +324,7 @@ void TimelineCanvas::DrawEvent(double time, double observed, const char* text, b
 	const auto mouse = ImGui::GetIO().MousePos;
 	if (std::abs(mouse.x - x) < 6 * scale && std::abs(mouse.y - y) < 6 * scale && ImGui::IsWindowHovered())
 		ImGui::SetTooltip("%s%s\nObserved +%.2fs (nearest observed frame)", text,
-						  dim ? "\nAnother app or session" : "", observed);
+						  dim ? " (another app or session)" : "", observed);
 }
 ClipHit TimelineCanvas::DrawClip(double first, double last, const char* label, bool replay, bool playable)
 {
@@ -339,7 +348,7 @@ ClipHit TimelineCanvas::DrawClip(double first, double last, const char* label, b
 								{left + size - inset, y + m_lane / 2}, theme::Text);
 		if (over)
 		{
-			ImGui::SetTooltip("Play %s", label);
+			ImGui::SetTooltip("Play %s on the app; restores inputs, not game state", label);
 			return ImGui::IsMouseReleased(ImGuiMouseButton_Left) ? ClipHit::Play : ClipHit::None;
 		}
 	}

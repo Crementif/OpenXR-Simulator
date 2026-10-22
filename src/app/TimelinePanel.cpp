@@ -191,11 +191,10 @@ void TimelinePanel::DrawMeter(const HistoryStore& history, const RuntimeView& st
 	if (ImGui::IsMouseHoveringRect(hoverMin, hoverMax) && ImGui::IsWindowHovered())
 	{
 		ImGui::BeginTooltip();
-		ImGui::Text("Frame interval over the last %zu frames", count);
-		ImGui::TextDisabled("min %.1f \u00b7 avg %.1f \u00b7 max %.1f ms", minimum, average, maximum);
-		ImGui::TextDisabled("Budget %.1f ms (%.0f Hz display)", budget, budget > 0 ? 1000 / budget : 0);
-		ImGui::TextDisabled("%zu missed frames in the last 10 s", missed);
-		ImGui::TextDisabled("Time between display times; the app's render time is not reported");
+		ImGui::Text("Last %zu display intervals (ms): min %.1f / avg %.1f / max %.1f",
+					count, minimum, average, maximum);
+		ImGui::TextDisabled("%.0f Hz / %.1f ms budget; %zu misses / 10 s. Render time unavailable.",
+							   budget > 0 ? 1000 / budget : 0, budget, missed);
 		ImGui::EndTooltip();
 	}
 }

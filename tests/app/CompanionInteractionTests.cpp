@@ -2138,6 +2138,21 @@ void CheckLayouts(Interaction& test, const std::filesystem::path& qa)
 							  "-" + std::to_string(page) + ".bmp";
 			test.renderer.RequestScreenshot((qa / name).string());
 			pump(2);
+			if (page == 0)
+			{
+				const auto rig = FindPanel("Inspector")->GetID("Rig view");
+				ImGui::ActivateItemByID(ImHashStr("?##Rig help", 0, rig));
+				pump(3);
+				const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+				Require(!popups.empty() && popups.back().Window, "Rig help did not open");
+				const auto* help = popups.back().Window;
+				Require(help->Pos.x >= 0 && help->Pos.x + help->Size.x <= size.width + 1,
+						"Rig help is clipped");
+				test.renderer.RequestScreenshot((qa / ("help-" + name)).string());
+				pump(2);
+				ImGui::ClosePopupsExceptModals();
+				pump(2);
+			}
 		}
 		if (overlay)
 		{

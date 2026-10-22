@@ -208,7 +208,8 @@ std::optional<SimulationEdit> DeviceControlPanel::DrawHeader(const Selection& se
 	{
 		ImGui::SameLine(right - ImGui::GetFrameHeight());
 		ImGui::BeginDisabled(!ready);
-		const std::string tip = std::string("Reset ") + titles[static_cast<int>(page)];
+		const std::string tip =
+			std::string("Restore defaults for ") + titles[static_cast<int>(page)] + "; other pages stay";
 		if (IconButton("Reset page", Icon::Refresh, tip.c_str()))
 			ResetPage(page);
 		ImGui::EndDisabled();
@@ -937,7 +938,7 @@ void DeviceControlPanel::DrawTrackers()
 		}
 		ImGui::EndCombo();
 	}
-	ImGui::SetItemTooltip("Attached trackers follow the joint. The offset stays in joint space.");
+	ImGui::SetItemTooltip("Offsets follow rig edits in this companion; app-driven body motion may differ.");
 	ImGui::SameLine();
 	if (ImGui::Button("Snap to body") && m_playerRig.Ready())
 	{

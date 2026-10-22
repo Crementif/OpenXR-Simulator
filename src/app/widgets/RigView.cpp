@@ -100,6 +100,19 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 				 hovered ? theme::Text : theme::TextDim);
 		ImGui::SetItemTooltip("Reset view: behind the player");
 	}
+	ImGui::SetCursorScreenPos({minimum.x + 5 * scale, maximum.y - ImGui::GetFrameHeight() - 4 * scale});
+	if (ImGui::SmallButton("?##Rig help"))
+		ImGui::OpenPopup("Rig help");
+	ImGui::SetItemTooltip("Camera controls, device handles and undo");
+	if (ImGui::BeginPopup("Rig help"))
+	{
+		ImGui::TextUnformatted("Placing devices");
+		ImGui::TextDisabled("Drag empty space to orbit; middle-drag pans.");
+		ImGui::TextDisabled("Wheel zooms. Top / Side / Back / Eye set the view.");
+		ImGui::TextDisabled("Select a device, then drag its handles. Ctrl snaps.");
+		ImGui::TextDisabled("Ctrl+Z undoes. Reset view only moves the camera.");
+		ImGui::EndPopup();
+	}
 	const bool headerHovered = ImGui::IsAnyItemHovered();
 	const auto camera = RigCamera(state, scene, size.x / size.y, 30 * scale / size.y);
 	const auto project = [&](XrVector3f world)
