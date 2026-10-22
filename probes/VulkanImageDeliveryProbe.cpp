@@ -21,6 +21,7 @@
 #include <memory>
 #include <stdexcept>
 #include <thread>
+#include <utility>
 
 namespace
 {
@@ -33,6 +34,7 @@ struct SubmissionFault
 	void* context = nullptr;
 };
 thread_local SubmissionFault submissionFault;
+thread_local bool failRecording = false;
 } // namespace
 // GNU --wrap affects this probe and linked static-library call sites only.
 // Dynamic Vulkan loader/layer/driver calls keep their native symbol behavior.
@@ -49,6 +51,14 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL __wrap_vkQueueSubmit(VkQueue queue, st
 		return submissionFault.result;
 	}
 	return __real_vkQueueSubmit(queue, count, submits, fence);
+}
+
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL __real_vkEndCommandBuffer(VkCommandBuffer);
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL __wrap_vkEndCommandBuffer(VkCommandBuffer command)
+{
+	if (std::exchange(failRecording, false))
+		return VK_ERROR_OUT_OF_HOST_MEMORY;
+	return __real_vkEndCommandBuffer(command);
 }
 
 namespace simxr::probe
@@ -1112,8 +1122,17 @@ void VerifyControlImage(const std::string& socket, std::uint64_t session, std::u
 			bounded.front()->AbandonUnsent();
 			Require(bounded.front()->NativeIdle(), "Unsent consumer fence required a GPU acknowledgement");
 		}
-		for (const auto expected : {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY})
+		enum class ConsumerFailure
 		{
+			Recording,
+			HostSubmission,
+			DeviceSubmission
+		};
+		for (const auto failure :
+			 {ConsumerFailure::Recording, ConsumerFailure::HostSubmission, ConsumerFailure::DeviceSubmission})
+		{
+			const auto expected = failure == ConsumerFailure::DeviceSubmission ? VK_ERROR_OUT_OF_DEVICE_MEMORY
+																			   : VK_ERROR_OUT_OF_HOST_MEMORY;
 			wire::VulkanImageConsumer rejected(device, Extensions, VK_API_VERSION_1_1);
 			const auto offered = call(wire::OpCode::ShareImage,
 									  {wire::Field::U64(tag::ImageReaderId, image),
@@ -1122,22 +1141,44 @@ void VerifyControlImage(const std::string& socket, std::uint64_t session, std::u
 									   wire::Field::U32(tag::HandleCount, 1)},
 									  {rejected.ConsumerFence()});
 			const auto description = wire::DecodeImageDescription(*offered.message.Find(tag::ImageDescriptor));
-			rejected.Import(description, offered.handles);
-			VkResult observed = VK_SUCCESS;
+			if (failure == ConsumerFailure::Recording)
 			{
+				failRecording = true;
+				Rejected<VulkanError>(
+					[&]
+					{
+						rejected.Import(description, offered.handles);
+					},
+					"Consumer import ignored command recording failure");
+				Require(!failRecording, "Recording failure was not exercised");
 				SubmissionFailure injection(device->queue, expected);
-				try
-				{
-					rejected.Submit();
-				}
-				catch (const VulkanError& error)
-				{
-					observed = error.Result();
-				}
-				Require(injection.Fired() && observed == expected,
-						"Native consumer OOM did not preserve exact rejection");
+				Rejected<std::logic_error>(
+					[&]
+					{
+						rejected.Submit();
+					},
+					"Partially prepared consumer accepted submission");
+				Require(!injection.Fired(), "Partially prepared consumer reached the native queue");
 			}
-			Require(rejected.Poll() == CompletionStatus::Failed, "Rejected native copy falsely published Ready");
+			else
+			{
+				rejected.Import(description, offered.handles);
+				VkResult observed = VK_SUCCESS;
+				{
+					SubmissionFailure injection(device->queue, expected);
+					try
+					{
+						rejected.Submit();
+					}
+					catch (const VulkanError& error)
+					{
+						observed = error.Result();
+					}
+					Require(injection.Fired() && observed == expected,
+							"Native consumer OOM did not preserve exact rejection");
+				}
+				Require(rejected.Poll() == CompletionStatus::Failed, "Rejected native copy falsely published Ready");
+			}
 			rejected.CancelUnused();
 			const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 			while (!rejected.NativeIdle())

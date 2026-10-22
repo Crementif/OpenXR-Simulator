@@ -76,8 +76,8 @@ struct VulkanImageConsumer::State
 	VkCommandBuffer command = VK_NULL_HANDLE;
 	VkSemaphore sampleReady = VK_NULL_HANDLE;
 	VkFence retirement = VK_NULL_HANDLE;
-	bool submitted = false, markerSubmitted = false, markerUnknown = false, idle = false, cancelled = false,
-		 failed = false;
+	bool prepared = false, submitted = false, markerSubmitted = false, markerUnknown = false, idle = false,
+		 cancelled = false, failed = false;
 	State(std::shared_ptr<VulkanDevice> owner, std::span<const char* const> extensions, std::uint32_t api,
 		  ImageCompletionKind kind, bool timelineEnabled)
 		: slot(ConsumerBudget().Reserve()), device(std::move(owner)), external(device, extensions, api, timelineEnabled)
@@ -307,10 +307,11 @@ void VulkanImageConsumer::Import(const ImageDescription& description,
 	VulkanImageBarrier(m_state->command, *m_state->image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
 					   VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
 	CheckVulkan(vkEndCommandBuffer(m_state->command), "finish consumer copy");
+	m_state->prepared = true;
 }
 void VulkanImageConsumer::Submit()
 {
-	if (m_state->submitted || !m_state->image || !m_state->sampleReady)
+	if (m_state->submitted || !m_state->prepared)
 		throw std::logic_error("Native image consumer is not prepared for one submission");
 	const auto ready = m_state->ready->Get();
 	const VkPipelineStageFlags stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
