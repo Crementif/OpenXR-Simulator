@@ -1,15 +1,11 @@
 #include "control/backends/vulkan/VulkanImageInspection.h"
+#include "control/backends/vulkan/VulkanControlHandle.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
-#include "platform/linux/ControlFd.h"
 
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cstdio>
-#include <fcntl.h>
-#include <limits>
 #include <mutex>
-#include <system_error>
 #include <utility>
 
 namespace simxr::control
@@ -99,6 +95,7 @@ ImageDescription Describe(const VulkanExternalImageDescriptor& value)
 	result.tiling = image.tiling;
 	result.imageType = image.imageType;
 	result.flags = image.flags;
+	result.handleKind = static_cast<std::uint32_t>(VulkanTransferKind);
 	result.allocationSize = value.allocationSize;
 	result.memoryTypeIndex = value.memoryTypeIndex;
 	result.dedicated = value.dedicated;
@@ -231,8 +228,8 @@ class Delivery final : public ImageDelivery
 				auto handles = m_native->ExportHandles(false);
 				std::vector<std::shared_ptr<TransferHandle>> result;
 				result.reserve(2);
-				result.push_back(OwnControlFd(handles.memory.Release()));
-				result.push_back(OwnControlFd(handles.ready.Release()));
+				result.push_back(OwnVulkanControlHandle(std::move(handles.memory)));
+				result.push_back(OwnVulkanControlHandle(std::move(handles.ready)));
 				return result;
 			});
 	}
@@ -305,17 +302,7 @@ class Reader final : public ImageReader
 		return Translate(
 			[&]() -> std::shared_ptr<ImageDelivery>
 			{
-				if (!consumer || consumer->Kind() != TransferHandleKind::OpaqueFd || consumer->Value() < 0 ||
-					consumer->Value() > std::numeric_limits<int>::max())
-					throw std::invalid_argument("An opaque-FD consumer fence is required");
-				int value;
-				do
-				{
-					value = fcntl(static_cast<int>(consumer->Value()), F_DUPFD_CLOEXEC, 0);
-				} while (value < 0 && errno == EINTR);
-				if (value < 0)
-					throw std::system_error(errno, std::generic_category(), "Duplicate incoming consumer fence");
-				VulkanExternalHandle fd(value);
+				auto fd = DuplicateVulkanControlHandle(consumer);
 				auto delivery = m_frame->Share();
 				delivery->RegisterConsumer(Identity(identity), fd);
 				return std::make_shared<Delivery>(std::move(delivery), m_description.views);

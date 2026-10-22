@@ -80,6 +80,16 @@ void MetadataAndHistory()
 	image.views.clear();
 	Require(control::DecodeImageDescription(control::EncodeImageDescription(image)).views.empty(),
 			"Legacy metadata fabricated a camera");
+	image.allocationSize = 4096;
+	for (auto kind : {control::TransferHandleKind::OpaqueFd, control::TransferHandleKind::OpaqueWin32})
+	{
+		image.handleKind = static_cast<std::uint32_t>(kind);
+		Require(control::DecodeImageDescription(control::EncodeImageDescription(image, true)).handleKind ==
+					image.handleKind,
+				"External metadata changed the producer handle kind");
+		Require(control::DecodeImageDescription(control::EncodeImageDescription(image)).handleKind == 0,
+				"Readback metadata advertised external handles");
+	}
 	FrameRecord frame;
 	frame.key = {{1}, {55}};
 	frame.stage = FrameStage::Submitted;

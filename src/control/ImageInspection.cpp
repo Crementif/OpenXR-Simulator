@@ -14,26 +14,25 @@ namespace simxr::control
 {
 Field EncodeImageDescription(const ImageDescription& value, bool external)
 {
-	std::vector<Field> fields{
-		Field::Bytes(tag::DeviceUuid, value.identity.device, true),
-		Field::Bytes(tag::DriverUuid, value.identity.driver, true),
-		Field::U32(tag::Format, value.format, true),
-		Field::U32(tag::Width, value.width, true),
-		Field::U32(tag::Height, value.height, true),
-		Field::U32(tag::Depth, value.depth, true),
-		Field::U32(tag::ArrayLayers, value.arrayLayers, true),
-		Field::U32(tag::MipLevels, value.mipLevels, true),
-		Field::U32(tag::Samples, value.samples, true),
-		Field::U32(tag::Usage, value.usage, true),
-		Field::U32(tag::Tiling, value.tiling, true),
-		Field::U32(tag::ImageType, value.imageType, true),
-		Field::U32(tag::ImageFlags, value.flags, true),
-		Field::U64(tag::AllocationSize, value.allocationSize, true),
-		Field::U32(tag::MemoryTypeIndex, value.memoryTypeIndex, true),
-		Field::Bool(tag::Dedicated, value.dedicated, true),
-		Field::U32(tag::ProducerQueueFamily, value.producerQueueFamily, true),
-		Field::U32(tag::Layout, value.layout, true),
-		Field::U32(tag::HandleKind, external ? static_cast<std::uint32_t>(TransferHandleKind::OpaqueFd) : 0, true)};
+	std::vector<Field> fields{Field::Bytes(tag::DeviceUuid, value.identity.device, true),
+							  Field::Bytes(tag::DriverUuid, value.identity.driver, true),
+							  Field::U32(tag::Format, value.format, true),
+							  Field::U32(tag::Width, value.width, true),
+							  Field::U32(tag::Height, value.height, true),
+							  Field::U32(tag::Depth, value.depth, true),
+							  Field::U32(tag::ArrayLayers, value.arrayLayers, true),
+							  Field::U32(tag::MipLevels, value.mipLevels, true),
+							  Field::U32(tag::Samples, value.samples, true),
+							  Field::U32(tag::Usage, value.usage, true),
+							  Field::U32(tag::Tiling, value.tiling, true),
+							  Field::U32(tag::ImageType, value.imageType, true),
+							  Field::U32(tag::ImageFlags, value.flags, true),
+							  Field::U64(tag::AllocationSize, value.allocationSize, true),
+							  Field::U32(tag::MemoryTypeIndex, value.memoryTypeIndex, true),
+							  Field::Bool(tag::Dedicated, value.dedicated, true),
+							  Field::U32(tag::ProducerQueueFamily, value.producerQueueFamily, true),
+							  Field::U32(tag::Layout, value.layout, true),
+							  Field::U32(tag::HandleKind, external ? value.handleKind : 0, true)};
 	if (!value.views.empty())
 	{
 		std::vector<Field> views;
@@ -94,7 +93,7 @@ ImageDescription DecodeImageDescription(const Field& field)
 	result.handleKind = RequireRequestU32(message, tag::HandleKind);
 	result.allocationSize = *allocation->AsU64();
 	result.dedicated = *dedicated->AsBool();
-	if (result.handleKind > static_cast<std::uint32_t>(TransferHandleKind::OpaqueFd) ||
+	if (result.handleKind > static_cast<std::uint32_t>(TransferHandleKind::OpaqueWin32) ||
 		(result.handleKind && !result.allocationSize))
 		throw std::invalid_argument("Invalid image sharing handle kind");
 	if (const auto metadata = message.Find(tag::ImageViews))

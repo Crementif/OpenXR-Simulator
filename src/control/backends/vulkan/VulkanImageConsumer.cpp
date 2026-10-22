@@ -1,16 +1,12 @@
-#include "graphics/SnapshotBudget.h"
 #include "control/backends/vulkan/VulkanImageConsumer.h"
+#include "control/backends/vulkan/VulkanControlHandle.h"
 #include "graphics/FramePool.h"
+#include "graphics/SnapshotBudget.h"
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
-#include "platform/linux/ControlFd.h"
 
 #include <algorithm>
-#include <cerrno>
 #include <chrono>
 #include <cstdio>
-#include <fcntl.h>
-#include <limits>
-#include <system_error>
 #include <thread>
 
 namespace simxr::control
@@ -30,7 +26,7 @@ VulkanExternalImageDescriptor NativeDescription(const ImageDescription& value)
 {
 	constexpr auto allowed = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
 							 VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-	if (value.handleKind != static_cast<std::uint32_t>(TransferHandleKind::OpaqueFd) ||
+	if (value.handleKind != static_cast<std::uint32_t>(VulkanTransferKind) ||
 		(value.format != VK_FORMAT_R8G8B8A8_UNORM && value.format != VK_FORMAT_R8G8B8A8_SRGB) || !value.width ||
 		!value.height || value.depth != 1 || !value.arrayLayers || value.arrayLayers > 2 || value.mipLevels != 1 ||
 		value.samples != 1 || value.tiling != VK_IMAGE_TILING_OPTIMAL || value.imageType != VK_IMAGE_TYPE_2D ||
@@ -198,7 +194,7 @@ std::shared_ptr<TransferHandle> VulkanImageConsumer::ConsumerFence()
 	if (!m_state->offered)
 	{
 		auto fd = m_state->completion->ExportOnce();
-		m_state->offered = OwnControlFd(fd.Release());
+		m_state->offered = OwnVulkanControlHandle(std::move(fd));
 	}
 	return m_state->offered;
 }
@@ -213,21 +209,8 @@ void VulkanImageConsumer::Import(const ImageDescription& description,
 		throw VulkanError(VK_ERROR_OUT_OF_POOL_MEMORY, "Snapshot image exceeds current retention capacity");
 	// TransferHandle has shared ownership. Duplicate into independent native RAII
 	// before a Vulkan helper consumes its own successful import ownership.
-	const auto duplicate = [](const std::shared_ptr<TransferHandle>& handle)
-	{
-		if (!handle || handle->Kind() != TransferHandleKind::OpaqueFd || handle->Value() < 0 ||
-			handle->Value() > std::numeric_limits<int>::max())
-			throw std::invalid_argument("Invalid received image handle");
-		int value;
-		do
-		{
-			value = fcntl(static_cast<int>(handle->Value()), F_DUPFD_CLOEXEC, 0);
-		} while (value < 0 && errno == EINTR);
-		if (value < 0)
-			throw std::system_error(errno, std::generic_category(), "Duplicate consumer import FD");
-		return VulkanExternalHandle(value);
-	};
-	auto memory = duplicate(handles[0]), ready = duplicate(handles[1]);
+	auto memory = DuplicateVulkanControlHandle(handles[0]);
+	auto ready = DuplicateVulkanControlHandle(handles[1]);
 	m_state->imported = m_state->external.ImportImage(native, memory);
 	m_state->ready = m_state->external.ImportSemaphore(native.identity, ready);
 	m_state->description = description;

@@ -42,6 +42,7 @@ inline ImageDescription Description()
 	result.arrayLayers = 2;
 	result.usage = 7;
 	result.allocationSize = 4096;
+	result.handleKind = static_cast<std::uint32_t>(TransferHandleKind::OpaqueFd);
 	result.dedicated = true;
 	result.layout = 1;
 	return result;

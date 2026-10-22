@@ -184,13 +184,12 @@ if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES)
     simxr_configure_target(simxr_vulkan)
     target_include_directories(simxr_vulkan PUBLIC "${SIMXR_VULKAN_INCLUDE_DIR}" PRIVATE "${PROJECT_SOURCE_DIR}")
     target_link_libraries(simxr_vulkan PUBLIC simxr_graphics "${SIMXR_VULKAN_LIBRARY}")
-    if(NOT WIN32)
-        add_library(simxr_vulkan_control STATIC src/control/backends/vulkan/VulkanImageInspection.cpp
-            src/control/backends/vulkan/VulkanImageConsumer.cpp
-            src/control/legacy/backends/vulkan/VulkanLegacyCapture.cpp)
-        simxr_configure_target(simxr_vulkan_control)
-        target_link_libraries(simxr_vulkan_control PUBLIC simxr_control simxr_vulkan simxr_diagnostics)
-    endif()
+    add_library(simxr_vulkan_control STATIC src/control/backends/vulkan/VulkanImageInspection.cpp
+        src/control/backends/vulkan/VulkanControlHandle.cpp
+        src/control/backends/vulkan/VulkanImageConsumer.cpp
+        src/control/legacy/backends/vulkan/VulkanLegacyCapture.cpp)
+    simxr_configure_target(simxr_vulkan_control)
+    target_link_libraries(simxr_vulkan_control PUBLIC simxr_control simxr_vulkan simxr_diagnostics)
 endif()
 
 add_library(simxr_diagnostics STATIC
