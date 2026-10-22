@@ -84,6 +84,7 @@ struct FrameHistorySnapshot
 	std::uint64_t evicted = 0;
 	std::size_t capacity = 0;
 	std::vector<std::shared_ptr<const FrameRecord>> frames;
+	RuntimeTime origin;
 };
 
 class FrameHistory
@@ -99,7 +100,7 @@ class FrameHistory
 								 std::optional<FrameKey> frame = {}) const;
 	// GPU observers retain only this bounded journal, never the session or its images.
 	std::shared_ptr<FrameDiagnosticsJournal> DiagnosticsJournal() const { return m_diagnostics; }
-	SessionGeneration StartGeneration();
+	SessionGeneration StartGeneration(RuntimeTime origin = {});
 	// Reserve copied diagnostic ownership before committing issue. The callback
 	// must not reenter history. Failure rolls back insertion and eviction.
 	void Issue(const FramePrediction& prediction,
@@ -126,6 +127,7 @@ class FrameHistory
 	const std::size_t m_capacity;
 	mutable std::mutex m_mutex;
 	SessionGeneration m_generation;
+	RuntimeTime m_origin;
 	std::uint64_t m_evicted = 0;
 	Records m_records;
 	std::shared_ptr<FrameDiagnosticsJournal> m_diagnostics;

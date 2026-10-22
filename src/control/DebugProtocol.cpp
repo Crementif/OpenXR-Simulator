@@ -533,7 +533,8 @@ void EncodeFrameHistory(Message& response, const FrameHistorySnapshot& history, 
 	frames.reserve(std::min(count, history.frames.size()));
 	for (const auto& frame : history.frames)
 	{
-		if (frame->key.frame.value <= after || frame->stage == FrameStage::Issued || frame->stage == FrameStage::Begun)
+		if (frame->key.generation != history.generation || frame->key.frame.value <= after ||
+			frame->stage == FrameStage::Issued || frame->stage == FrameStage::Begun)
 			continue;
 		auto encoded = EncodeFrameMetadata(*frame);
 		encoded.tag = static_cast<std::uint16_t>(frames.size() + 1);
@@ -541,8 +542,11 @@ void EncodeFrameHistory(Message& response, const FrameHistorySnapshot& history, 
 		if (frames.size() == count)
 			break;
 	}
+	response.fields.push_back(Field::I64(tag::Time, history.origin.value.count()));
 	response.fields.push_back(Field::U64(tag::Capacity, history.capacity));
-	response.fields.push_back(Field::U64(tag::Offset, history.frames.empty() ? 0 : history.frames.front()->key.frame.value));
+	const auto oldest = std::find_if(history.frames.begin(), history.frames.end(),
+		[&](const auto& frame) { return frame->key.generation == history.generation; });
+	response.fields.push_back(Field::U64(tag::Offset, oldest == history.frames.end() ? 0 : (*oldest)->key.frame.value));
 	response.fields.push_back(Nested(tag::Frames, std::move(frames)));
 }
 } // namespace simxr::control

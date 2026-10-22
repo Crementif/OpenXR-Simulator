@@ -32,6 +32,11 @@ void RingAndBuckets()
 			Require(result.minimum == minimum && result.maximum == maximum && result.flags == flags,
 					"Bucket lost a one-frame peak or event across ring wrap");
 		}
+	Require(history.Find({4, 2, 40}, 7) == 17, "Identity lookup lost wrapped frame");
+	Require(!history.Find({4, 2, 1}, 7), "Identity lookup retained evicted frame");
+	history.SetFlags(17, HistoryMarker, true);
+	Require(history.Query(0, 37).flags & HistoryMarker, "Marker absent from density buckets");
+	history.SetFlags(17, HistoryMarker, false);
 	history.SetCoverage(17, 89, HistorySnapshot);
 	Require(history.At(17).identity.frame == 40 && history.At(17).identity.run == 2 && history.At(17).epoch == 7,
 			"Coverage changed frame identity");
@@ -57,17 +62,18 @@ void RuntimeFeed()
 {
 	namespace wire = simxr::control;
 	namespace tag = wire::tag;
-	const auto page = [](std::uint64_t run, std::uint64_t id, std::int64_t time)
+	const auto page = [](std::uint64_t run, std::uint64_t id, std::int64_t time, std::uint64_t frameRun = 0)
 	{
 		wire::Message message;
 		const std::vector<wire::Field> prediction{wire::Field::I64(tag::Time, time),
 												  wire::Field::I64(tag::Period, 10000000)};
-		const std::vector<wire::Field> frame{wire::Field::U64(tag::Generation, run), wire::Field::U64(tag::FrameId, id),
+		const std::vector<wire::Field> frame{wire::Field::U64(tag::Generation, frameRun ? frameRun : run),
+											 wire::Field::U64(tag::FrameId, id),
 											 wire::Field::Bytes(tag::Prediction, wire::EncodeFields(prediction)),
 											 wire::Field::Text(tag::Stage, "discarded")};
 		const std::vector<wire::Field> frames{wire::Field::Bytes(tag::Frame, wire::EncodeFields(frame))};
 		message.fields = {wire::Field::U64(tag::Session, 9), wire::Field::U64(tag::Generation, run),
-						  wire::Field::Bytes(tag::Frames, wire::EncodeFields(frames))};
+						  wire::Field::Bytes(tag::Frames, wire::EncodeFields(frames)), wire::Field::I64(tag::Time, 0)};
 		return message;
 	};
 	FrameHistoryFeed feed;
@@ -78,6 +84,11 @@ void RuntimeFeed()
 	Require(feed.History().Size() == 2 && feed.After() == 12, "Feed repeated a paginated frame");
 	Require(feed.History().At(1).flags == (HistoryDropped | HistoryGap) && feed.History().At(1).frameMilliseconds == 20,
 			"Feed lost a dropped frame, gap or runtime interval");
+	Require(std::abs(feed.History().At(1).runSeconds - .12) < .000001, "Run-relative time used attachment time");
+	feed.SetScope({});
+	feed.SetScope({1, 9, 2});
+	feed.Accept(page(2, 12, 120000000));
+	Require(feed.History().Size() == 2, "Scope revisit duplicated retained frames");
 	feed.SetScope({2, 9, 3});
 	feed.Accept(page(2, 13, 130000000));
 	Require(feed.After() == 0, "Old run response advanced new run cursor");
@@ -86,6 +97,11 @@ void RuntimeFeed()
 				(feed.History().At(2).flags & HistoryRunStart) &&
 				feed.History().At(2).seconds > feed.History().At(1).seconds,
 			"Run clocks were joined without a divider");
+	// A rejected page is skipped once and leaves a gap, never a retry loop.
+	Require(!feed.Accept(page(3, 2, 2000, 4)).empty() && feed.After() == 2, "Invalid history page was not skipped");
+	Require(feed.Accept(page(3, 3, 3000)).empty() && feed.History().Size() == 4 &&
+				(feed.History().At(3).flags & HistoryGap),
+			"Frame after a skipped page lacks its gap");
 }
 void ThirtyMinutes()
 {

@@ -326,6 +326,12 @@ void ContinuousFrameHistory()
 	f.Restart();
 	Require(Error(client.Call(wire::OpCode::ReadFrameHistory, client.Common())) == wire::ErrorCode::StaleGeneration,
 		"Continuous history crossed a run boundary");
+	client.Discover();
+	const auto restarted = f.Issue();
+	f.Clear(restarted);
+	const auto newPage = Nested(client.Call(wire::OpCode::ReadFrameHistory, client.Common()), wire::tag::Frames);
+	Require(newPage.fields.size() == 1 && U64(Nested(newPage, newPage.fields.front().tag), wire::tag::Generation) == client.generation,
+		"New run history included retained records from the previous generation");
 }
 void NegotiationAndReplay()
 {

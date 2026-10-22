@@ -174,7 +174,8 @@ void CheckTimelineCanvas(Interaction& test)
 {
 	HistoryStore history;
 	for (std::uint64_t frame = 1; frame <= 54000; ++frame)
-		history.Append({{1, 1, frame}, 1, 0, double(frame) / 90, 11.11f, frame == 200 ? HistoryDropped : 0U});
+		history.Append(
+			{{1, 1, frame}, 1, 0, double(frame) / 90, 11.11f, (frame == 200 ? HistoryDropped : 0U) | HistoryMarker});
 	HistoryStore emptyHistory;
 	bool populated = true;
 	double canvasSeconds = 0;
@@ -192,6 +193,7 @@ void CheckTimelineCanvas(Interaction& test)
 		const float labels = std::min(available.x * .25f, ImGui::GetFontSize() * 6);
 		point = {top.x + labels + (available.x - labels) * .5f, top.y + 10};
 		const auto drawStarted = std::chrono::steady_clock::now();
+		canvas.Begin(labels, 0);
 		const auto gesture = canvas.Draw(populated ? history : emptyHistory, false);
 		canvasSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - drawStarted).count();
 		if (gesture.first || gesture.marker)
@@ -225,12 +227,178 @@ void CheckTimelineCanvas(Interaction& test)
 	canvasSeconds = 0;
 	const auto started = std::chrono::steady_clock::now();
 	for (int i = 0; i < 120; ++i)
+	{
+		canvas.Zoom(i * 4, i * 4 + 120);
 		test.Frame();
+	}
 	const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
 	std::cout << "PASS native canvas hit-testing and marker; 54000 records, " << 120 / elapsed << " UI frames/s; empty "
 			  << 60 / baseline << "; canvas CPU " << canvasSeconds * 1000 / 120 << " ms/frame\n";
 	test.extraDraw = {};
 	test.Frame();
+}
+
+void CheckTimelineWorkflow(Interaction& test)
+{
+	test.workspace.SetScale(1);
+	test.workspace.Select(FrameSel{});
+	const auto activate = [&](const char* label)
+	{
+		auto* timeline = FindPanel("Timeline");
+		Require(timeline != nullptr, "Timeline missing");
+		ImGui::ActivateItemByID(timeline->GetID(label));
+		test.Frame();
+	};
+	const auto await = [&](auto predicate, const char* failure)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+		do
+		{
+			test.Frame();
+			if (predicate(test.runtime.Snapshot()))
+				return;
+		} while (std::chrono::steady_clock::now() < deadline);
+		throw std::runtime_error(failure);
+	};
+	test.Frame();
+	activate("Pause");
+	await(
+		[](const auto& state)
+		{
+			return state.manual && !state.operationPending;
+		},
+		"Timeline pause failed");
+	RuntimePanelSnapshot earlier;
+	for (int step = 0; step < 3; ++step)
+	{
+		const auto previous = test.runtime.Snapshot().selectedCapture;
+		activate("Next");
+		await(
+			[&](const auto& state)
+			{
+				return !state.operationPending && state.selectedReady && state.selectedCapture != previous &&
+					   state.inspectedFrame == state.selectedFrame;
+			},
+			"Timeline step did not retain image and CPU state");
+		if (!step)
+			earlier = test.runtime.Snapshot();
+	}
+	const auto newest = test.runtime.Snapshot();
+	Require(newest.following, "Next frame stopped following the paused live edge");
+	await(
+		[&](const auto&)
+		{
+			return test.runtime.History().Find(earlier.selectedIdentity, earlier.selectedEpoch).has_value() &&
+				   test.runtime.History().Find(newest.selectedIdentity, newest.selectedEpoch).has_value();
+		},
+		"Snapshot frame absent from timeline");
+	Require(std::holds_alternative<FrameSel>(test.workspace.State().selection) &&
+				std::get<FrameSel>(test.workspace.State().selection).identity == newest.selectedIdentity,
+			"Next frame did not select the new frame");
+	const auto index = *test.runtime.History().Find(earlier.selectedIdentity, earlier.selectedEpoch);
+	Require(test.runtime.History().At(index).flags & HistorySnapshot, "Images lane omitted retained snapshot");
+	test.Frame();
+	const auto bounds = test.workspace.State().timelineCanvas;
+	ImGui::GetIO().AddMousePosEvent(bounds.x + bounds.width - 1, bounds.y + 2);
+	test.Frame();
+	ImGui::GetIO().AddMouseWheelEvent(0, 8);
+	test.Frame();
+	test.Frame();
+	const auto& shell = test.workspace.State();
+	const double seconds = test.runtime.History().At(index).seconds;
+	const float x =
+		shell.timelineCanvas.x +
+		float((seconds - shell.time.first) / (shell.time.last - shell.time.first)) * shell.timelineCanvas.width;
+	Require(x >= shell.timelineCanvas.x && x <= shell.timelineCanvas.x + shell.timelineCanvas.width,
+			"Earlier snapshot not visible after timeline zoom");
+	test.Click({x, shell.timelineCanvas.y + shell.timelineCanvas.height * .35f});
+	await(
+		[&](const auto& state)
+		{
+			return state.manual && !state.following && state.selectedFrame == earlier.selectedFrame &&
+				   state.selectedReady && state.inspectedFrame == earlier.selectedFrame;
+		},
+		"Canvas did not select earlier image and inputs/actions");
+	Require(std::holds_alternative<FrameSel>(test.workspace.State().selection),
+			"Canvas selection did not open Frame page");
+	const auto* details = FindPanel("Frame details");
+	Require(details != nullptr, "Merged Frame page absent");
+	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
+	{
+		test.renderer.RequestScreenshot((std::filesystem::path(directory) / "timeline-paused.bmp").string());
+		test.Frame();
+		test.Frame();
+		ImGui::SetScrollY(const_cast<ImGuiWindow*>(details), 410);
+		test.Frame();
+		test.Frame();
+		test.renderer.RequestScreenshot((std::filesystem::path(directory) / "frame-input-actions.bmp").string());
+		test.Frame();
+		test.Frame();
+	}
+	// Select a range through the ruler, then use its inspector action.
+	const auto beforeRange = test.workspace.State();
+	const auto rectangle = beforeRange.timelineCanvas;
+	const float rangeStart = x - 1, rangeEnd = rectangle.x + rectangle.width - 1;
+	auto& io = ImGui::GetIO();
+	io.AddMousePosEvent(rangeStart, rectangle.y + 2);
+	test.Frame();
+	io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+	test.Frame();
+	io.AddMousePosEvent(rangeEnd, rectangle.y + 2);
+	test.Frame();
+	io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+	test.Frame();
+	test.Frame();
+	Require(std::holds_alternative<RangeSel>(test.workspace.State().selection), "Ruler drag did not open Range page");
+	auto* inspector = FindPanel("Inspector");
+	ImGui::ActivateItemByID(inspector->GetID("Zoom to range"));
+	test.Frame();
+	test.Frame();
+	Require(test.workspace.State().time.last - test.workspace.State().time.first <
+				beforeRange.time.last - beforeRange.time.first,
+			"Range zoom did not narrow the timeline");
+	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
+	{
+		test.renderer.RequestScreenshot((std::filesystem::path(directory) / "timeline-range.bmp").string());
+		test.Frame();
+		test.Frame();
+	}
+	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
+	{
+		const auto destination = std::filesystem::path(directory)/"range.csv";
+		ImGui::ActivateItemByID(inspector->GetID("##Range export file"));
+		ImGui::GetCurrentContext()->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
+		test.Frame();
+		io.AddKeyEvent(ImGuiMod_Ctrl, true); io.AddKeyEvent(ImGuiKey_A, true);
+		test.Frame();
+		io.AddKeyEvent(ImGuiKey_A, false); io.AddKeyEvent(ImGuiMod_Ctrl, false);
+		io.AddInputCharactersUTF8(destination.string().c_str());
+		test.Frame();
+		io.AddKeyEvent(ImGuiKey_Enter, true); test.Frame();
+		io.AddKeyEvent(ImGuiKey_Enter, false); test.Frame();
+		ImGui::ActivateItemByID(inspector->GetID("Export frames"));
+		test.Frame();
+		await([&](const auto& state)
+		{
+			std::size_t images = 0;
+			for (const auto& file : std::filesystem::directory_iterator(directory))
+				if (file.path().filename().string().starts_with("range-frame-") && file.path().extension()==".ppm" && file.file_size()>100) ++images;
+			return !state.pending && std::filesystem::exists(destination) && images>=3;
+		}, "Range export did not save metadata and three snapshots");
+	}
+	activate("Continue");
+	await(
+		[](const auto& state)
+		{
+			return !state.manual && state.following && !state.operationPending;
+		},
+		"Continue did not return to LIVE");
+	Require(test.runtime.Snapshot().error.empty(), "Timeline workflow reported runtime error");
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0,
+			"Timeline snapshot/thumbnail workflow produced Vulkan validation errors");
+	std::cout << "PASS timeline pause, three steps, canvas click, historical image/input/actions, range "
+				 "selection/zoom, Continue to LIVE\n";
 }
 
 void CheckShell()
@@ -614,17 +782,17 @@ void PilotLiveRuntime(const char* endpoint)
 			return test.runtime.Snapshot().manual && !test.runtime.Snapshot().operationPending;
 		},
 		"Application did not pause");
-	activate("##Frame timeline", "Next frame");
+	activate("##Frame timeline", "Next");
 	Eventually(
 		[&]
 		{
 			frame();
 			const auto state = test.runtime.Snapshot();
-			return !state.operationPending && state.selectedCapture && state.selectedReady && !state.following;
+			return !state.operationPending && state.selectedCapture && state.selectedReady && state.following;
 		},
 		"Step did not select its captured frame");
 	const auto retained = test.runtime.Snapshot().selectedCapture;
-	activate("##Frame timeline", "Next frame");
+	activate("##Frame timeline", "Next");
 	Eventually(
 		[&]
 		{
@@ -1596,7 +1764,7 @@ void CheckSnapshotRetention(Interaction& test)
 		const auto previous = test.runtime.Snapshot().selectedCapture;
 		const auto timeline = FindPanel("##Frame timeline");
 		Require(timeline, "Retention timeline missing");
-		ImGui::ActivateItemByID(timeline->GetID("Next frame"));
+		ImGui::ActivateItemByID(timeline->GetID("Next"));
 		test.Frame();
 		wait(
 			[&](const auto& state)
@@ -1677,6 +1845,8 @@ void CheckToolbarLaunch(const char* executable)
 			"Launched stereo session not selected");
 	Require(std::filesystem::path(state.endpoint).parent_path() == directory, "Launch selected unrelated endpoint");
 	std::ofstream(directory / "attached.endpoint") << state.endpoint;
+	if (std::getenv("SIMXR_TIMELINE_QA"))
+		CheckTimelineWorkflow(test);
 	if (std::getenv("SIMXR_INPUT_QA"))
 		CheckManualEdges(state);
 	if (std::getenv("SIMXR_RIG_QA"))
@@ -1745,6 +1915,15 @@ int main()
 	{
 
 #ifdef __linux__
+		if (const auto endpoint = std::getenv("SIMXR_TIMELINE_ENDPOINT"))
+		{
+			Interaction test;
+			test.live = true;
+			test.runtime.ConnectEndpoint(endpoint);
+			Eventually([&] { test.Frame(); return test.runtime.Snapshot().selectedReady; }, "Timeline app preview absent");
+			CheckTimelineWorkflow(test);
+			return 0;
+		}
 		if (const auto endpoint = std::getenv("SIMXR_PREVIEW_PILOT_ENDPOINT"))
 		{
 			Interaction test;

@@ -23,6 +23,12 @@ SessionState DeriveRunState(const RuntimePanelSnapshot& snapshot, bool launching
 		result.state = snapshot.manual ? RunState::Paused : RunState::Running;
 	return result;
 }
+void LeaveHistory(ShellState& shell, bool range)
+{
+	if (std::holds_alternative<FrameSel>(shell.selection) ||
+		(range && std::holds_alternative<RangeSel>(shell.selection)))
+		shell.selection = shell.device;
+}
 const char* RunStateLabel(RunState state)
 {
 	switch (state)

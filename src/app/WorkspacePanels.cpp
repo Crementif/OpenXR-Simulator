@@ -262,6 +262,15 @@ struct WorkspacePanels::Impl
 		shell.time.following = snapshot.following;
 		shell.time.cursor = snapshot.following ? FrameIdentity{snapshot.session, snapshot.generation, snapshot.latestFrame}
 			: snapshot.selectedIdentity;
+		shell.time.epoch = snapshot.following ? snapshot.epoch : snapshot.selectedEpoch;
+		if (std::holds_alternative<DeviceSel>(shell.selection) || std::holds_alternative<SessionItemSel>(shell.selection))
+			shell.device = shell.selection;
+		if (const auto stepped = runtime.TakeSteppedFrame();
+			stepped && (stepped->requested || std::holds_alternative<FrameSel>(shell.selection)))
+		{
+			shell.selection = stepped->frame;
+			drawer = drawer || stepped->requested;
+		}
 		ImGui::SetNextItemWidth(180 * settings.scale);
 		if (ImGui::BeginCombo("##App picker", selectedProfile >= 0 ? settings.activeProfile.c_str() : "App"))
 		{
@@ -340,7 +349,7 @@ struct WorkspacePanels::Impl
 			}
 			if (ImGui::MenuItem("Frame details"))
 			{
-				shell.selection = FrameSel{shell.time.cursor};
+				shell.selection = FrameSel{shell.time.cursor, shell.time.epoch};
 				drawer = true;
 			}
 			if (ImGui::MenuItem("Reset layout"))
@@ -378,16 +387,19 @@ struct WorkspacePanels::Impl
 				}
 			}
 			if (ImGui::IsKeyPressed(ImGuiKey_F6, false))
-				runtime.Command(control::CommandKind::Pause);
+				runtime.Pause();
 			if (ImGui::IsKeyPressed(ImGuiKey_F7, false))
 			{
 				if (ImGui::GetIO().KeyShift)
 					runtime.CancelPending();
 				else
-					runtime.Command(control::CommandKind::Step);
+					runtime.Step();
 			}
 			if (ImGui::IsKeyPressed(ImGuiKey_F8, false))
+			{
 				runtime.ResumeLive();
+				LeaveHistory(shell, false);
+			}
 			if (ImGui::IsKeyPressed(ImGuiKey_F11, false))
 				previewExpanded = !previewExpanded;
 			if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))

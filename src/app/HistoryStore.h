@@ -17,7 +17,9 @@ enum HistoryFlags : std::uint32_t
 	HistoryRecording = 1 << 4,
 	HistoryObserved = 1 << 5,
 	HistoryRunStart = 1 << 6,
-	HistoryGap = 1 << 7
+	HistoryGap = 1 << 7,
+	HistoryMarker = 1 << 8,
+	HistoryPinned = 1 << 9
 };
 struct HistoryFrame
 {
@@ -29,6 +31,7 @@ struct HistoryFrame
 	// Interval between predicted display times, not GPU render duration.
 	float frameMilliseconds = 0;
 	std::uint32_t flags = 0;
+	double runSeconds = 0;
 };
 struct HistoryBucket
 {
@@ -55,11 +58,23 @@ class HistoryStore
 	const HistoryFrame& At(std::size_t index) const;
 	// Coverage changes preserve the original frame/time identity.
 	void SetCoverage(std::size_t index, std::uint64_t capture, std::uint32_t flags);
+	void SetFlags(std::size_t index, std::uint32_t mask, bool enabled);
+	std::optional<std::size_t> Find(FrameIdentity identity, std::uint64_t epoch) const;
+	std::optional<std::size_t> Latest(FrameIdentity scope, std::uint64_t epoch) const;
 	std::size_t LowerBound(double seconds) const noexcept;
 	std::optional<std::size_t> Nearest(double seconds) const noexcept;
 	HistoryBucket Query(std::size_t first, std::size_t end) const;
 
   private:
+	// Consecutive frames of one run, as absolute append positions [begin, end).
+	// Frame ids rise within a segment, so lookups binary-search one segment.
+	struct Segment
+	{
+		std::uint64_t epoch = 0, session = 0, run = 0;
+		std::size_t begin = 0, end = 0;
+	};
+	std::vector<Segment> m_segments;
+	std::size_t m_appended = 0;
 	std::vector<HistoryFrame> m_frames;
 	std::vector<HistoryBucket> m_buckets;
 	std::size_t m_start = 0, m_size = 0, m_leaves = 1;

@@ -287,11 +287,12 @@ bool DebuggerPanelController::Handle(const PanelTask& task, const wire::Message&
 						pending.push_back({operation.subject, 0, false, true});
 					if (operation.kind == wire::CommandKind::Release && prepared.progress == "released")
 						pending.push_back({operation.subject, 0, true});
+					const bool paused = operation.kind == wire::CommandKind::Pause;
 					if (const auto capture = U64(message, tag::CaptureId))
-						pending.push_back({capture, Frame(message)});
+						pending.push_back({capture, Frame(message), false, false, paused});
 					for (const auto& capture : Nested(message.Find(tag::Captures)).fields)
 						if (capture.AsU64())
-							pending.push_back({*capture.AsU64(), Frame(message)});
+							pending.push_back({*capture.AsU64(), Frame(message), false, false, paused});
 				}
 				if (pending.size() > 32 - m_effects.size())
 					throw std::runtime_error("Runtime capture notices exceed the bounded catalog");

@@ -96,7 +96,7 @@ XrResult Session::Begin(const XrSessionBeginInfo& info, const FrameSchedulerConf
 	auto timing = config;
 	if (!timing.hostEpoch)
 		timing.hostEpoch = m_clock->Now();
-	m_state.generation = m_history.StartGeneration();
+	m_state.generation = m_history.StartGeneration(timing.epoch);
 	try
 	{
 		retiredHistory = m_captures.Start(m_state.generation);

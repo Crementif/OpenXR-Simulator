@@ -25,6 +25,9 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <future>
+#include <sstream>
 #include <imgui.h>
 #include <optional>
 #include <stdexcept>
@@ -58,6 +61,24 @@ std::vector<std::byte> InspectionMember(std::span<const std::byte> bytes, std::s
 			return field.value;
 	}
 	return {};
+}
+
+wire::Field InspectionScalar(std::span<const std::byte> bytes, std::string_view member)
+{
+	wire::Message node;
+	node.fields = wire::DecodeFields(InspectionMember(bytes, member)).fields;
+	return node.Find(3) ? *node.Find(3) : wire::Field{};
+}
+std::vector<std::vector<std::byte>> InspectionElements(std::span<const std::byte> bytes)
+{
+	wire::Message node;
+	node.fields = wire::DecodeFields(bytes).fields;
+	std::vector<std::vector<std::byte>> elements;
+	if (const auto data = node.Find(3))
+		for (const auto& page : wire::DecodeFields(data->value).fields)
+			for (const auto& item : wire::DecodeFields(page.value).fields)
+				elements.push_back(item.value);
+	return elements;
 }
 
 std::string ImageLabel(const PreviewImageSummary& image)
@@ -148,11 +169,67 @@ class RuntimePanels::Impl
 		{
 			m_preview.ClearSelection();
 			m_workspace.SelectImage({}, 0);
+			for (const auto& image : m_preview.Images())
+				if (image.ready && !image.released && image.scope.epoch == frame.epoch &&
+					image.scope.session == frame.identity.session && image.scope.generation == frame.identity.run &&
+					image.frame == frame.identity.frame)
+				{
+					m_preview.SelectImage(image.id);
+					break;
+				}
 		}
 		m_preview.Follow(false);
+		m_following = false;
 		m_historySelection = frame;
 	}
 	const HistoryStore& History() const { return m_history.History(); }
+	void MarkHistoryFrame(std::size_t index, bool enabled)
+	{
+		m_history.History().SetFlags(index, HistoryMarker, enabled);
+	}
+	void TogglePin(std::size_t index)
+	{
+		const auto& frame = m_history.History().At(index);
+		for (const auto& capture : m_workspace.Captures())
+			if (!capture.released && capture.scope == m_debugger.Scope() && capture.scope.epoch == frame.epoch &&
+				capture.scope.session == frame.identity.session && capture.scope.generation == frame.identity.run &&
+				capture.frame == frame.identity.frame)
+			{
+				const bool pinned = Boolean(capture.metadata, tag::Pinned);
+				m_debugger.Command(pinned ? wire::CommandKind::UnpinSnapshot : wire::CommandKind::PinSnapshot,
+								   capture.id);
+				return;
+			}
+	}
+	void UpdateCoverage()
+	{
+		auto& history = m_history.History();
+		for (const auto& frame : m_coverage)
+			if (const auto index = history.Find(frame.identity, frame.epoch))
+			{
+				history.SetCoverage(*index, 0, 0);
+				history.SetFlags(*index, HistoryPinned, false);
+			}
+		m_coverage.clear();
+		for (const auto& image : m_preview.Images())
+			if (image.ready && !image.released)
+				if (const auto index = history.Find({image.scope.session, image.scope.generation, image.frame}, image.scope.epoch))
+				{
+					const auto frame = history.At(*index);
+					history.SetCoverage(*index, image.capture ? image.capture : frame.capture,
+						frame.flags | (image.live ? HistoryPreview : HistorySnapshot));
+					m_coverage.push_back(frame);
+				}
+		for (const auto& capture : m_workspace.Captures())
+			if (!capture.released && Boolean(capture.metadata, tag::Pinned))
+				if (const auto index = history.Find({capture.scope.session, capture.scope.generation, capture.frame},
+													capture.scope.epoch))
+				{
+					const auto frame = history.At(*index);
+					history.SetFlags(*index, HistoryPinned, true);
+					m_coverage.push_back(frame);
+				}
+	}
 	std::vector<RuntimeFrame> TimelineFrames() const
 	{
 		std::vector<RuntimeFrame> frames;
@@ -184,6 +261,7 @@ class RuntimePanels::Impl
 	void SelectFrame(std::uint64_t local)
 	{
 		m_historySelection.reset();
+		m_following = false;
 		for (const auto& capture : m_workspace.Captures())
 			if (capture.local == local)
 			{
@@ -208,8 +286,25 @@ class RuntimePanels::Impl
 			m_followOnResume = false;
 		m_debugger.Command(kind, capture, raw, layer, view);
 	}
+	void Pause()
+	{
+		Command(wire::CommandKind::Pause);
+	}
+	void Step()
+	{
+		m_following = true;
+		m_stepRequested = true;
+		m_historySelection.reset();
+		Command(wire::CommandKind::Step);
+	}
+	std::optional<SteppedFrame> TakeSteppedFrame()
+	{
+		return std::exchange(m_stepped, {});
+	}
 	void ResumeLive()
 	{
+		m_following = true;
+		m_historySelection.reset();
 		m_resumeAfter = m_debugger.Operations().empty() ? 0 : m_debugger.Operations().back().local;
 		m_followOnResume = true;
 		m_debugger.Command(wire::CommandKind::Resume);
@@ -260,7 +355,7 @@ class RuntimePanels::Impl
 	void RequestExport(std::string path)
 	{
 		const auto image = m_preview.Selected();
-		if (!image || !image->reader || image->scope.epoch != m_requests.Epoch() ||
+		if (!m_rangeImages.empty() || !image || !image->reader || image->scope.epoch != m_requests.Epoch() ||
 			!m_exports.Request(image->reader, std::move(path)))
 			m_detail = "Retain an exact source image before requesting export";
 	}
@@ -277,6 +372,9 @@ class RuntimePanels::Impl
 	}
 	void SetLive(bool enabled)
 	{
+		m_following = enabled;
+		if (enabled)
+			m_historySelection.reset();
 		m_preview.Follow(enabled);
 	}
 	std::vector<std::uint64_t> CaptureIds() const
@@ -310,7 +408,7 @@ class RuntimePanels::Impl
 		const auto retention = Nested(m_debugger.Status().Find(tag::Retention));
 		const auto capacity = U64(retention, tag::Capacity);
 		snapshot.historyFull = capacity && U64(retention, tag::Pinned) >= capacity;
-		snapshot.following = m_preview.Following();
+		snapshot.following = m_following;
 		const auto recording = m_recording.Snapshot();
 		snapshot.recording = recording.page && recording.page->active;
 		snapshot.recordingOverflow = recording.page && recording.page->overflow;
@@ -336,6 +434,7 @@ class RuntimePanels::Impl
 			snapshot.lastCapture = m_workspace.Captures().back().id;
 		if (const auto image = m_preview.Selected())
 		{
+			snapshot.selectedEpoch = image->scope.epoch;
 			snapshot.selectedIdentity = {image->scope.session, image->scope.generation, image->frame};
 			snapshot.selectedFrame = image->frame;
 			snapshot.selectedImageCapture = image->capture;
@@ -345,9 +444,18 @@ class RuntimePanels::Impl
 			snapshot.selectedViews = image->description.views;
 		}
 		if (const auto capture = m_workspace.Selected(); capture && capture->document.Find(tag::Document))
+		{
 			snapshot.inspectedFrame = panel::Frame(capture->document);
+			if (!snapshot.selectedFrame && !snapshot.following)
+			{
+				snapshot.selectedEpoch = capture->scope.epoch;
+				snapshot.selectedFrame = capture->frame;
+				snapshot.selectedIdentity = {capture->scope.session, capture->scope.generation, capture->frame};
+			}
+		}
 		if (!m_preview.Following() && m_historySelection)
 		{
+			snapshot.selectedEpoch = m_historySelection->epoch;
 			snapshot.selectedIdentity = m_historySelection->identity;
 			snapshot.selectedFrame = m_historySelection->identity.frame;
 		}
@@ -461,7 +569,9 @@ class RuntimePanels::Impl
 					}
 				}
 		m_exports.Poll();
+		PollRangeExports();
 		m_preview.Poll();
+		UpdateCoverage();
 		for (auto error :
 			 {m_requests.TakeError(), m_debugger.TakeError(), m_workspace.TakeError(), m_preview.TakeError()})
 			if (!error.empty())
@@ -498,8 +608,7 @@ class RuntimePanels::Impl
 		m_spatial.SetContext(
 			connected && selected.id && m_preview.Following() && !m_pilot.Active(), !m_preview.Following(),
 			spatialImage ? std::span<const FrameView>{spatialImage->description.views} : std::span<const FrameView>{},
-			historical && spatialImage && historical->scope == spatialImage->scope &&
-					historical->frame == spatialImage->frame
+			historical && !m_preview.Following()
 				? &historical->document
 				: nullptr,
 			historical ? historical->local : 0);
@@ -616,91 +725,23 @@ class RuntimePanels::Impl
 		}
 		if (shell.inspectorVisible)
 			if (const auto* range = std::get_if<RangeSel>(&shell.selection))
-			{
-				ImGui::SeparatorText("Range");
-				ImGui::Text("Frames %llu – %llu", static_cast<unsigned long long>(range->first.frame),
-					static_cast<unsigned long long>(range->last.frame));
-				ImGui::Text("%llu frames", static_cast<unsigned long long>(range->last.frame-range->first.frame+1));
-			}
+				DrawRange(*range, shell);
 		if (shell.inspectorVisible && framePage)
-		{
-			ImGui::SeparatorText("Frame");
-			m_nodesDrawn = 0;
-			if (auto capture = m_workspace.Selected(); capture && capture->document.Find(tag::Document))
-			{
-				m_documentEpoch = capture->scope.epoch;
-				ImGui::Text("Capture %llu / frame %llu", static_cast<unsigned long long>(capture->id),
-							static_cast<unsigned long long>(capture->frame));
-				ImGui::SeparatorText("Frame images");
-				bool hasImage = false;
-				for (const auto& image : m_preview.Images())
-					if (image.scope == capture->scope && image.frame == capture->frame &&
-						image.capture == capture->id && image.ready && !image.released)
-					{
-						hasImage = true;
-						ImGui::PushID(static_cast<int>(image.id));
-						ImGui::TextWrapped("%s", ImageLabel(image).c_str());
-						const float maximum = ImGui::GetFontSize() * 7.5f;
-						const auto& size = image.description;
-						const float width = std::min(ImGui::GetContentRegionAvail().x,
-													 std::min(maximum, maximum * size.width / size.height));
-						m_preview.DrawImage(image.id, width, 0);
-						bool open = ImGui::IsItemClicked();
-						if (ImGui::IsItemHovered())
-							ImGui::SetTooltip("Show this image in the main view");
-						ImGui::SameLine();
-						ImGui::BeginGroup();
-						ImGui::TextDisabled("%u x %u", size.width, size.height);
-						if (image.slices > 1)
-							ImGui::TextWrapped("%s", image.target == wire::TargetKind::ComposedEyes
-														 ? "Left eye shown"
-														 : "First slice shown");
-						open |= ImGui::Button("View image");
-						ImGui::EndGroup();
-						if (open)
-						{
-							m_preview.SelectImage(image.id);
-							m_previewView = 0;
-							m_focusPreview = true;
-						}
-
-						ImGui::PopID();
-					}
-				if (!hasImage)
-					ImGui::TextUnformatted("Image unavailable");
-				const auto bytes = capture->document.Find(tag::Document)->value;
-				if (ImGui::CollapsingHeader("Submitted layers"))
-					Document(InspectionMember(bytes, "layers"));
-				if (ImGui::CollapsingHeader("All frame metadata"))
-					Document(bytes);
-			}
-			else
-				ImGui::TextUnformatted("Select frame");
-
-			ImGui::SeparatorText("Actions");
-			m_nodesDrawn = 0;
-			if (auto capture = m_workspace.Selected(); capture && capture->document.Find(tag::Document))
-			{
-				m_documentEpoch = capture->scope.epoch;
-				ImGui::Text("Frame %llu / capture %llu", static_cast<unsigned long long>(capture->frame),
-							static_cast<unsigned long long>(capture->id));
-				const auto bytes = capture->document.Find(tag::Document)->value;
-				const auto actions = InspectionMember(bytes, "actions"), input = InspectionMember(bytes, "input");
-				ImGui::SeparatorText("Action sync, profiles, bindings and inactivity reasons");
-				if (!actions.empty())
-					Document(actions);
-				ImGui::SeparatorText("Raw simulated controls at submission");
-				if (!input.empty())
-					Document(input);
-			}
-			else
-			{
-				ImGui::TextUnformatted("Select frame");
-			}
-		}
+			DrawFramePage(shell);
 		if (shell.inspectorVisible && devicePage)
 			DeviceControls(shell.selection);
 		ImGui::EndChild();
+		if (m_rawOpen)
+		{
+			ImGui::SetNextWindowSize({600, 480}, ImGuiCond_FirstUseEver);
+			if (ImGui::Begin("Raw metadata", &m_rawOpen))
+			{
+				m_nodesDrawn = 0;
+				m_documentEpoch = m_rawEpoch;
+				Document(m_rawDocument);
+			}
+			ImGui::End();
+		}
 		ImGui::SetCursorPos({shell.preview.x, shell.preview.y});
 		bool pilotArea = false;
 		m_focusPreview = false;
@@ -715,7 +756,7 @@ class RuntimePanels::Impl
 			ImGui::TextColored(accent, "%s",
 							   !connected ? "DISCONNECTED"
 							   : manual	  ? "PAUSED"
-							   : !live	  ? "INSPECTING"
+							   : !live	  ? "PAST"
 										  : "LIVE");
 			if (image)
 			{
@@ -995,6 +1036,11 @@ class RuntimePanels::Impl
 		m_devices.ResetObservations();
 		m_spatial.Reset();
 		m_followOnResume = false;
+		m_following = true;
+		m_preview.Follow(true);
+		m_stepRequested = false;
+		m_stepped.reset();
+		m_historySelection.reset();
 		m_simulationState = {};
 		m_simulationResult = {};
 		m_manualInput.Refresh();
@@ -1052,8 +1098,21 @@ class RuntimePanels::Impl
 				}
 				if (effect.released)
 					m_workspace.MarkReleased(effect.capture);
-				else if (m_workspace.Add(effect.capture, effect.frame) && effect.frame && m_autoSelect)
-					Select(effect.capture);
+				else if (m_workspace.Add(effect.capture, effect.frame))
+				{
+					// Pausing keeps the frame it stopped on.
+					if (effect.paused && (U64(m_debugger.Status(), tag::Capabilities) &
+										  static_cast<std::uint64_t>(wire::Capability::SnapshotPins)))
+						m_debugger.Command(wire::CommandKind::PinSnapshot, effect.capture);
+					// Following while paused: the newest stepped frame is the live edge.
+					if (effect.frame && m_autoSelect && m_following)
+					{
+						Select(effect.capture);
+						const auto scope = m_debugger.Scope();
+						m_stepped = SteppedFrame{{{scope.session, scope.generation, effect.frame}, scope.epoch},
+												 std::exchange(m_stepRequested, false)};
+					}
+				}
 			}
 			return;
 		}
@@ -1077,7 +1136,8 @@ class RuntimePanels::Impl
 		switch (task.kind)
 		{
 		case Work::FrameHistory:
-			m_history.Accept(message);
+			if (auto skipped = m_history.Accept(message); !skipped.empty() && m_historyNotice.empty())
+				m_detail = m_historyNotice = "Frame history page skipped: " + skipped;
 			break;
 		case Work::Retain:
 		case Work::Preview:
@@ -1090,8 +1150,309 @@ class RuntimePanels::Impl
 			break;
 		}
 	}
+	void PollRangeExports()
+	{
+		if (m_rangeImages.empty()) return;
+		const auto finish = [&](std::string result)
+		{
+			m_rangeImageResult = std::move(result);
+			m_rangeImages.clear();
+			m_preview.ProtectExports({});
+		};
+		if (m_rangeImageEpoch != m_requests.Epoch() || m_requests.Snapshot().state != RuntimeConnectionState::Connected)
+		{
+			finish("Snapshot export stopped: connection changed");
+			return;
+		}
+		if (m_exports.Busy()) return;
+		if (m_rangeImagePending)
+		{
+			if (!m_exports.Succeeded()) { finish(m_exports.Detail()); return; }
+			++m_rangeImageIndex;
+			m_rangeImagePending = false;
+		}
+		if (m_rangeImageIndex == m_rangeImages.size())
+		{
+			finish("Saved " + std::to_string(m_rangeImageIndex) + " snapshots");
+			return;
+		}
+		const auto& image = m_rangeImages[m_rangeImageIndex];
+		m_rangeImagePending = m_exports.Request(image.first, image.second);
+		if (!m_rangeImagePending) finish("Snapshot export could not start");
+	}
+	void DrawRange(const RangeSel& range, ShellState& shell)
+	{
+		const auto& history = m_history.History();
+		const auto first = history.Find(range.first, range.epoch), last = history.Find(range.last, range.epoch);
+		ImGui::SeparatorText("Range");
+		ImGui::Text("Run %llu / frames %llu – %llu", static_cast<unsigned long long>(range.first.run),
+					static_cast<unsigned long long>(range.first.frame),
+					static_cast<unsigned long long>(range.last.frame));
+		if (!first || !last || *last < *first)
+		{
+			ImGui::TextDisabled("Range expired");
+			return;
+		}
+		ImGui::Text("%.3f seconds / %zu retained frames", history.At(*last).seconds - history.At(*first).seconds,
+					*last - *first + 1);
+		ImGui::TextDisabled("Device activity: not recorded");
+		ImGui::BeginDisabled();
+		ImGui::Button("Save as take");
+		ImGui::EndDisabled();
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+			ImGui::SetTooltip("Requires continuous input history (D8)");
+		if (ImGui::Button("Zoom to range"))
+		{
+			shell.time.first = history.At(*first).seconds;
+			shell.time.last = history.At(*last).seconds;
+			shell.time.zoomToRange = true;
+		}
+		ImGui::SetNextItemWidth(-1);
+		ImGui::InputText("##Range export file", m_rangePath.data(), m_rangePath.size());
+		ImGui::BeginDisabled(m_rangeExport.valid() || !m_rangeImages.empty() || m_exports.Busy());
+		if (ImGui::Button("Export frames"))
+		{
+			std::vector<HistoryFrame> frames;
+			frames.reserve(*last - *first + 1);
+			for (auto index = *first; index <= *last; ++index)
+				frames.push_back(history.At(index));
+			m_rangeResult.clear();
+			m_rangeImageResult.clear();
+			m_rangeImages.clear();
+			const auto prefix = std::filesystem::path(m_rangePath.data()).replace_extension().string();
+			std::vector<std::uint64_t> protectedImages;
+			for (const auto& image : m_preview.Images())
+				if (!image.live && image.ready && !image.released && image.reader && image.scope.epoch == range.epoch &&
+					image.scope.epoch == m_requests.Epoch() && image.scope.session == range.first.session &&
+					image.scope.generation == range.first.run && image.frame >= range.first.frame && image.frame <= range.last.frame)
+				{
+					protectedImages.push_back(image.id);
+					m_rangeImages.push_back({image.reader, prefix + "-frame-" + std::to_string(image.frame) + "-image-" + std::to_string(image.id) + ".ppm"});
+				}
+			m_rangeImageEpoch = m_requests.Epoch();
+			m_rangeImageIndex = 0;
+			m_rangeImagePending = false;
+			m_preview.ProtectExports(protectedImages);
+			if (m_rangeImages.empty()) m_rangeImageResult = "No exportable snapshots in range";
+			m_rangeExport = std::async(
+				std::launch::async,
+				[frames = std::move(frames), path = std::string(m_rangePath.data())]
+				{
+					std::ofstream output(path);
+					output << "epoch,session,run,frame,run_seconds,display_interval_ms,snapshot,preview,dropped\n";
+					for (const auto& frame : frames)
+						output << frame.epoch << ',' << frame.identity.session << ',' << frame.identity.run << ','
+							   << frame.identity.frame << ',' << frame.runSeconds << ',' << frame.frameMilliseconds
+							   << ',' << bool(frame.flags & HistorySnapshot) << ','
+							   << bool(frame.flags & HistoryPreview) << ',' << bool(frame.flags & HistoryDropped)
+							   << '\n';
+					output.close();
+					return output ? "Saved frame metadata: " + path : "Could not save frame metadata: " + path;
+				});
+		}
+		ImGui::EndDisabled();
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+			ImGui::SetTooltip("Export frame metadata as CSV and retained snapshots as PPM");
+		if (m_rangeExport.valid() && m_rangeExport.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+			m_rangeResult = m_rangeExport.get();
+		if (!m_rangeResult.empty())
+			ImGui::TextWrapped("%s", m_rangeResult.c_str());
+		if (!m_rangeImageResult.empty()) ImGui::TextWrapped("%s", m_rangeImageResult.c_str());
+	}
+	void DrawFramePage(ShellState& shell)
+	{
+		// The page shows exactly the selected frame; an empty FrameSel means the time cursor.
+		auto selection = std::get<FrameSel>(shell.selection);
+		if (!selection.identity.frame)
+			selection = {shell.time.cursor, shell.time.epoch};
+		const auto& identity = selection.identity;
+		const auto selectedCapture = m_workspace.Selected();
+		const auto capture = selectedCapture && selectedCapture->scope.epoch == selection.epoch &&
+									 selectedCapture->scope.session == identity.session &&
+									 selectedCapture->scope.generation == identity.run &&
+									 selectedCapture->frame == identity.frame
+								 ? selectedCapture
+								 : nullptr;
+		const auto field = capture ? capture->document.Find(tag::Document) : nullptr;
+		const auto bytes = field ? std::span<const std::byte>{field->value} : std::span<const std::byte>{};
+		m_nodesDrawn = 0;
+		m_documentEpoch = capture ? capture->scope.epoch : 0;
+		ImGui::Text("Frame %llu", static_cast<unsigned long long>(identity.frame));
+		// The header stays visible while the frame contents scroll.
+		ImGui::BeginChild("Frame details", {0, 0});
+		if (!bytes.empty())
+		{
+			auto rigSelection = shell.selection;
+			m_spatial.DrawRig(rigSelection, {ImGui::GetContentRegionAvail().x / (ImGui::GetFontSize() / 16), 150});
+		}
+		ImGui::SeparatorText("Images");
+		bool hasImage = false;
+		for (const auto& image : m_preview.Images())
+			if (image.scope.epoch == selection.epoch && image.scope.session == identity.session &&
+				image.scope.generation == identity.run && image.frame == identity.frame &&
+				image.ready && !image.released)
+			{
+				hasImage = true;
+				ImGui::PushID(static_cast<int>(image.id));
+				ImGui::Text("%s / %u x %u", image.live ? "Preview" : "Snapshot", image.description.width,
+							image.description.height);
+				m_preview.DrawImage(image.id, std::min(ImGui::GetContentRegionAvail().x, ImGui::GetFontSize() * 8), 0);
+				if (ImGui::IsItemClicked())
+				{
+					m_preview.SelectImage(image.id);
+					m_previewView = 0;
+				}
+				ImGui::PopID();
+			}
+		if (!hasImage)
+			ImGui::TextDisabled("No image");
+		if (capture && !capture->released && capture->scope == m_debugger.Scope())
+		{
+			const bool pinned = Boolean(capture->metadata, tag::Pinned);
+			if (ImGui::SmallButton(pinned ? "Unpin snapshot" : "Pin snapshot"))
+				m_debugger.Command(pinned ? wire::CommandKind::UnpinSnapshot : wire::CommandKind::PinSnapshot,
+								   capture->id);
+		}
+		ImGui::SeparatorText("Input at this frame");
+		if (!bytes.empty())
+		{
+			if (const auto tracking = ReadInspectionTracking(capture->document))
+			{
+				const auto pose = [](const char* name, const PoseSample& value)
+				{
+					const auto& p = value.pose.position;
+					ImGui::Text("%s  %.2f, %.2f, %.2f m", name, p.x, p.y, p.z);
+				};
+				pose("Head", tracking->head);
+				pose("Left", tracking->controllers[0].pose);
+				pose("Right", tracking->controllers[1].pose);
+			}
+			const auto input = InspectionMember(bytes, "input");
+			const auto controllers = InspectionElements(InspectionMember(input, "controllers"));
+			for (std::size_t hand = 0; hand < std::min<std::size_t>(2, controllers.size()); ++hand)
+			{
+				const auto& controls = controllers[hand];
+				ImGui::Text("%s  Trigger %.2f / Grip %.2f", hand ? "Right" : "Left",
+							InspectionScalar(controls, "trigger").AsF32().value_or(0),
+							InspectionScalar(controls, "grip").AsF32().value_or(0));
+				ImGui::Text("A %s / B %s",
+							InspectionScalar(controls, "primary").AsBool().value_or(false) ? "down" : "up",
+							InspectionScalar(controls, "secondary").AsBool().value_or(false) ? "down" : "up");
+			}
+			if (ImGui::CollapsingHeader("All input values"))
+				Document(input);
+			const auto commands = InspectionMember(bytes, "applied_commands");
+			wire::Message commandNode;
+			commandNode.fields = wire::DecodeFields(commands).fields;
+			const auto revisionId = U64(commandNode, 3);
+			if (revisionId && m_documentEpoch == m_requests.Epoch())
+			{
+				if (const auto revision = m_workspace.Revision(revisionId))
+				{
+					const auto setup = ReadObservedSetup(*revision);
+					const auto owner = [&](const char* label, ControlChannel channel)
+					{
+						const auto& source = setup.owners[static_cast<std::size_t>(channel)];
+						const char* name = !source										 ? "Unowned"
+										   : source->kind == CommandSourceKind::Manual	 ? "Manual"
+										   : source->kind == CommandSourceKind::Rig		 ? "Script"
+										   : source->kind == CommandSourceKind::Sequence ? "Sequence"
+																						 : "MCP";
+						ImGui::Text("%s owner: %s", label, name);
+					};
+					owner("Head", ControlChannel::Head);
+					owner("Left", ControlChannel::LeftControls);
+					owner("Right", ControlChannel::RightControls);
+				}
+				else
+					m_workspace.RequestRevision(revisionId, m_documentEpoch);
+			}
+			if (ImGui::CollapsingHeader("Input owners and commands"))
+				Document(commands);
+		}
+		else
+			ImGui::TextDisabled(capture ? "Loading frame details" : "Input not retained");
+		ImGui::SeparatorText("Actions");
+		if (!bytes.empty())
+		{
+			const auto actions = InspectionMember(bytes, "actions");
+			const auto entries = InspectionElements(InspectionMember(actions, "actions"));
+			const auto dictionaryId = InspectionScalar(actions, "dictionary").AsU64().value_or(0);
+			std::vector<std::vector<std::byte>> definitions;
+			if (const auto dictionary = m_workspace.Revision(dictionaryId))
+			{
+				if (const auto document = dictionary->Find(tag::Document))
+					definitions = InspectionElements(InspectionMember(document->value, "actions"));
+			}
+			else if (dictionaryId)
+				m_workspace.RequestRevision(dictionaryId, m_documentEpoch);
+			ImGui::Text("%zu actions", entries.size());
+			for (std::size_t index = 0; index < std::min<std::size_t>(8, entries.size()); ++index)
+			{
+				const auto& action = entries[index];
+				const auto id = InspectionScalar(action, "id").AsU64().value_or(0);
+				std::string name = "Action " + std::to_string(id);
+				for (const auto& definition : definitions)
+					if (InspectionScalar(definition, "id").AsU64() == id)
+					{
+						const auto field = InspectionScalar(definition, "name");
+						if (field.AsText())
+							name = std::string(*field.AsText());
+						break;
+					}
+				ImGui::PushID(static_cast<int>(index));
+				if (ImGui::TreeNode(name.c_str()))
+				{
+					for (const auto& value : InspectionElements(InspectionMember(action, "values")))
+					{
+						ImGui::Text("%s / bool %s / %.3f",
+									InspectionScalar(value, "active").AsBool().value_or(false) ? "Active" : "Inactive",
+									InspectionScalar(value, "boolean").AsBool().value_or(false) ? "true" : "false",
+									InspectionScalar(value, "scalar").AsF32().value_or(0));
+						Document(value);
+					}
+					Document(InspectionMember(action, "bindings"));
+					ImGui::TreePop();
+				}
+				ImGui::PopID();
+			}
+			if (ImGui::CollapsingHeader("All actions and bindings"))
+				Document(actions);
+		}
+		else
+			ImGui::TextDisabled("Actions not retained");
+		if (ImGui::CollapsingHeader("Layers") && !bytes.empty())
+			Document(InspectionMember(bytes, "layers"));
+		if (ImGui::CollapsingHeader("Timing"))
+		{
+			if (const auto index = m_history.History().Find(identity, selection.epoch))
+			{
+				const auto& frame = m_history.History().At(*index);
+				ImGui::Text("Run time %.3f s", frame.runSeconds);
+				ImGui::Text("Display interval %.3f ms", frame.frameMilliseconds);
+			}
+			if (!bytes.empty())
+			{
+				Document(InspectionMember(bytes, "prediction"));
+				Document(InspectionMember(bytes, "frame_trace"));
+			}
+		}
+		if (ImGui::CollapsingHeader("Raw") && !bytes.empty())
+		{
+			if (ImGui::Button("Open in window"))
+			{
+				m_rawDocument.assign(bytes.begin(), bytes.end());
+				m_rawEpoch = m_documentEpoch;
+				m_rawOpen = true;
+			}
+			Document(bytes);
+		}
+		ImGui::EndChild();
+	}
 	void Document(std::span<const std::byte> bytes, unsigned depth = 0)
 	{
+		if (bytes.empty())
+			return;
 		if (depth > 20 || ++m_nodesDrawn > 2048)
 		{
 			ImGui::TextUnformatted("Expand fewer fields to inspect this document");
@@ -1238,7 +1599,11 @@ class RuntimePanels::Impl
 	bool m_previewExpanded = false;
 	bool m_panning = false;
 	FrameHistoryFeed m_history;
+	std::vector<HistoryFrame> m_coverage;
 	std::optional<HistoryFrame> m_historySelection;
+	std::optional<SteppedFrame> m_stepped;
+	std::string m_historyNotice;
+	bool m_following = true, m_stepRequested = false;
 	Clock::time_point m_nextHistory{};
 	RuntimePanelRequests m_requests;
 	DebuggerPanelController m_debugger;
@@ -1266,6 +1631,16 @@ class RuntimePanels::Impl
 	Clock::time_point m_nextPreview{}, m_nextCapture{};
 	std::string m_detail;
 	std::array<char, 512> m_exportFile{};
+	std::array<char, 512> m_rangePath{"frames.csv"};
+	std::future<std::string> m_rangeExport;
+	std::string m_rangeResult, m_rangeImageResult;
+	std::vector<std::pair<std::uint64_t, std::string>> m_rangeImages;
+	std::uint64_t m_rangeImageEpoch = 0;
+	std::size_t m_rangeImageIndex = 0;
+	bool m_rangeImagePending = false;
+	bool m_rawOpen = false;
+	std::uint64_t m_rawEpoch = 0;
+	std::vector<std::byte> m_rawDocument;
 	bool m_autoSelect = true, m_focusPreview = true, m_fitPreview = true;
 	bool m_followOnResume = false;
 	std::uint64_t m_resumeAfter = 0;
@@ -1322,6 +1697,26 @@ void RuntimePanels::Command(control::CommandKind kind, std::uint64_t capture, bo
 {
 	m_impl->Command(kind, capture, raw, layer, view);
 }
+void RuntimePanels::Pause()
+{
+	m_impl->Pause();
+}
+void RuntimePanels::Step()
+{
+	m_impl->Step();
+}
+std::optional<SteppedFrame> RuntimePanels::TakeSteppedFrame()
+{
+	return m_impl->TakeSteppedFrame();
+}
+void RuntimePanels::TogglePin(std::size_t index)
+{
+	m_impl->TogglePin(index);
+}
+void RuntimePanels::MarkHistoryFrame(std::size_t index, bool enabled)
+{
+	m_impl->MarkHistoryFrame(index, enabled);
+}
 void RuntimePanels::SelectHistoryFrame(std::size_t index)
 {
 	m_impl->SelectHistoryFrame(index);
@@ -1340,6 +1735,7 @@ void RuntimePanels::SelectFrame(std::uint64_t local)
 }
 void RuntimePanels::SelectCapture(std::uint64_t capture)
 {
+	m_impl->SetLive(false);
 	m_impl->Select(capture);
 }
 void RuntimePanels::ReleaseSelected()

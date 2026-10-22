@@ -68,6 +68,7 @@ class ImageExportTask
 	void Poll();
 	bool Busy() const;
 	const std::string& Detail() const noexcept;
+	bool Succeeded() const noexcept { return m_succeeded; }
 
   private:
 	void Abort(std::string detail);
@@ -75,7 +76,7 @@ class ImageExportTask
 	RuntimePanelRequests& m_requests;
 	ImageExportWriter m_writer;
 	std::uint64_t m_id = 0, m_offset = 0, m_size = 0;
-	bool m_requested = false;
+	bool m_requested = false, m_succeeded = false;
 	std::vector<std::byte> m_bytes;
 	std::string m_path, m_detail;
 	ImageExportMetadata m_metadata;

@@ -15,7 +15,7 @@ using Work = PanelWork;
 struct PreviewImages::Image
 {
 	std::uint64_t id = 0, reader = 0, delivery = 0, frame = 0, capture = 0, epoch = 0, session = 0, generation = 0;
-	bool live = false, release = false;
+	bool live = false, release = false, exporting = false;
 	std::optional<std::uint64_t> imageTick;
 	std::optional<wire::TargetKind> target;
 	std::uint32_t layer = 0, view = 0;
@@ -325,6 +325,11 @@ void PreviewImages::ShareFailed(std::uint64_t id)
 	if (auto image = Find(id))
 		image->release = true;
 }
+void PreviewImages::ProtectExports(std::span<const std::uint64_t> images)
+{
+	for (auto& image : m_images)
+		image->exporting = std::find(images.begin(), images.end(), image->id) != images.end();
+}
 void PreviewImages::Poll()
 {
 	std::size_t retained = std::count_if(m_images.begin(), m_images.end(),
@@ -335,7 +340,7 @@ void PreviewImages::Poll()
 	const auto capacity = SnapshotBudget::Capacity();
 	const auto cacheLimit = capacity > 2 ? capacity - 2 : 1;
 	for (auto& image : m_images)
-		if (retained > cacheLimit && image->id != m_selectedImage && !image->release && image->texture->Ready())
+		if (retained > cacheLimit && !image->exporting && image->id != m_selectedImage && !image->release && image->texture->Ready())
 		{
 			image->release = true;
 			--retained;
@@ -375,14 +380,14 @@ void PreviewImages::Poll()
 				m_requests.Release(wire::OpCode::ReleaseDelivery, tag::DeliveryId, image.delivery);
 				image.delivery = 0;
 			}
-			if ((image.release || (image.live && image.texture->Ready())) &&
+			if (!image.exporting && (image.release || (image.live && image.texture->Ready())) &&
 				image.reader)
 			{
 				m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId, image.reader);
 				image.reader = 0;
 			}
 		}
-		if (!image.release || m_requests.Has(Work::Share, image.id))
+		if (image.exporting || !image.release || m_requests.Has(Work::Share, image.id))
 		{
 			++iterator;
 			continue;

@@ -45,7 +45,7 @@ struct RuntimePanelSnapshot
 	std::uint64_t recordedChanges = 0;
 	std::string connectionState;
 	std::uint64_t epoch = 0, session = 0, generation = 0, appliedPilotUpdates = 0, latestFrame = 0;
-	std::uint64_t selectedFrame = 0, selectedCapture = 0, selectedReader = 0, inspectedFrame = 0,
+	std::uint64_t selectedEpoch = 0, selectedFrame = 0, selectedCapture = 0, selectedReader = 0, inspectedFrame = 0,
 				  selectedImageCapture = 0;
 	std::size_t images = 0, captures = 0;
 	bool pending = false;
@@ -54,6 +54,13 @@ struct RuntimePanelSnapshot
 	std::uint32_t selectedLayers = 0;
 	std::string phase, progress, endpoint;
 	std::string error;
+};
+// A frame that Next frame (or following while paused) moved to.
+struct SteppedFrame
+{
+	FrameSel frame;
+	// Next frame asked for it; otherwise it only updates an open Frame page.
+	bool requested = false;
 };
 class RuntimePanels
 {
@@ -71,10 +78,17 @@ class RuntimePanels
 	RuntimePanelSnapshot Snapshot() const;
 	void Command(control::CommandKind kind, std::uint64_t capture = 0, bool raw = false, std::uint32_t layer = 0,
 				 std::uint32_t view = 0);
+	// Pause keeps following: the paused frame becomes the live edge.
+	void Pause();
+	// Advances one frame, follows it and reports it through TakeSteppedFrame.
+	void Step();
+	std::optional<SteppedFrame> TakeSteppedFrame();
+	void TogglePin(std::size_t historyIndex);
 	void SelectCapture(std::uint64_t capture);
 	std::vector<RuntimeFrame> TimelineFrames() const;
 	const HistoryStore& History() const;
 	void SelectHistoryFrame(std::size_t index);
+	void MarkHistoryFrame(std::size_t index, bool enabled);
 	void SelectFrame(std::uint64_t local);
 	void ReleaseSelected();
 	void CancelPending();

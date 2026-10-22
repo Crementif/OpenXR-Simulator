@@ -150,6 +150,7 @@ bool ImageExportTask::Request(std::uint64_t reader, std::string path)
 {
 	if (!reader || Busy())
 		return false;
+	m_succeeded = false;
 	m_path = std::move(path);
 	if (m_path.empty())
 		throw std::invalid_argument("Image export destination is empty");
@@ -251,6 +252,7 @@ void ImageExportTask::Poll()
 		switch (result->status)
 		{
 		case ImageExportWriteResult::Status::Saved:
+			m_succeeded = true;
 			m_detail = (Utf8Path(result->path).extension() == ".ppm" ? "Saved viewable image with frame identity to "
 				: "Saved exact RGBA bytes to ") + result->path;
 			break;

@@ -31,6 +31,7 @@ class PreviewImages
 	void Shared(std::uint64_t id, const RuntimeReply& reply);
 	void ShareFailed(std::uint64_t id);
 	void Poll();
+	void ProtectExports(std::span<const std::uint64_t> images);
 	bool HasPendingLive() const;
 	bool SelectCapture(PanelScope scope, std::uint64_t capture);
 	void SelectImage(std::uint64_t id);

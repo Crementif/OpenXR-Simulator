@@ -15,6 +15,7 @@ class SpatialEditor
 					const control::Message* historical, std::uint64_t historyIdentity);
 	void Reset();
 	void DrawInspector(Selection& selection);
+	void DrawRig(Selection& selection, ImVec2 size);
 	bool DrawPreview(Selection& selection, ImVec2 minimum, ImVec2 maximum, const FrameView& camera, unsigned eye);
 	void DrawExpanded(Selection& selection, ImVec2 size);
 	ShellRect RotationBallRect() const
@@ -49,7 +50,6 @@ class SpatialEditor
 	std::array<bool, 7> EditableDevices(const SpatialScene& scene) const;
 	void EditPose(int device, XrPosef pose, bool final);
 	void ApplyResult(const SpatialEditResult& result, int device, XrPosef pose);
-	void DrawRig(Selection& selection, ImVec2 size);
 	PlayerRig& m_rig;
 	ManualInputController& m_input;
 	std::optional<ObservedSetup> m_observed;

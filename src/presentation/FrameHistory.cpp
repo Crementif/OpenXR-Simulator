@@ -48,11 +48,12 @@ FrameDiagnostics FrameHistory::Diagnostics(std::uint64_t after, std::size_t coun
 	return m_diagnostics->Read(after, count, frame);
 }
 
-SessionGeneration FrameHistory::StartGeneration()
+SessionGeneration FrameHistory::StartGeneration(RuntimeTime origin)
 {
 	std::lock_guard lock(m_mutex);
 	CancelPendingLocked();
 	m_generation = NextGeneration();
+	m_origin = origin;
 	return m_generation;
 }
 
@@ -226,6 +227,7 @@ FrameHistorySnapshot FrameHistory::Snapshot() const
 {
 	std::lock_guard lock(m_mutex);
 	FrameHistorySnapshot result{m_generation, m_evicted, m_capacity, {}};
+	result.origin = m_origin;
 	result.frames.reserve(m_records.size());
 	for (const auto& entry : m_records)
 		result.frames.push_back(entry.record);

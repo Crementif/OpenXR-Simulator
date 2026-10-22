@@ -28,6 +28,7 @@ HistoryStore::HistoryStore(std::size_t capacity)
 void HistoryStore::Clear() noexcept
 {
 	m_start = m_size = 0;
+	m_segments.clear();
 	std::fill(m_buckets.begin(), m_buckets.end(), HistoryBucket{});
 }
 std::size_t HistoryStore::Physical(std::size_t index) const noexcept
@@ -57,11 +58,21 @@ void HistoryStore::Append(const HistoryFrame& frame)
 		(m_size && frame.seconds < At(m_size - 1).seconds))
 		throw std::invalid_argument("Frame history requires finite ordered times");
 	const auto physical = Physical(m_size);
+	const auto& run = frame.identity;
+	if (m_segments.empty() || m_segments.back().end != m_appended || m_segments.back().epoch != frame.epoch ||
+		m_segments.back().session != run.session || m_segments.back().run != run.run ||
+		run.frame <= At(m_size - 1).identity.frame)
+		m_segments.push_back({frame.epoch, run.session, run.run, m_appended, m_appended});
+	++m_segments.back().end;
+	++m_appended;
 	m_frames[physical] = frame;
 	if (m_size == Capacity())
 		m_start = (m_start + 1) % Capacity();
 	else
 		++m_size;
+	const auto oldest = m_appended - m_size;
+	if (m_segments.front().end <= oldest)
+		m_segments.erase(m_segments.begin());
 	Update(physical);
 }
 void HistoryStore::SetCoverage(std::size_t index, std::uint64_t capture, std::uint32_t flags)
@@ -72,6 +83,43 @@ void HistoryStore::SetCoverage(std::size_t index, std::uint64_t capture, std::ui
 	frame.capture = capture;
 	constexpr auto coverage = HistorySnapshot | HistoryPreview;
 	frame.flags = (frame.flags & ~coverage) | (flags & coverage);
+	Update(physical);
+}
+std::optional<std::size_t> HistoryStore::Find(FrameIdentity identity, std::uint64_t epoch) const
+{
+	const auto oldest = m_appended - m_size;
+	for (auto segment = m_segments.rbegin(); segment != m_segments.rend(); ++segment)
+	{
+		if (segment->epoch != epoch || segment->session != identity.session || segment->run != identity.run)
+			continue;
+		auto first = std::max(segment->begin, oldest) - oldest, end = segment->end - oldest;
+		while (first < end)
+		{
+			const auto middle = first + (end - first) / 2;
+			const auto frame = m_frames[Physical(middle)].identity.frame;
+			if (frame == identity.frame)
+				return middle;
+			if (frame < identity.frame)
+				first = middle + 1;
+			else
+				end = middle;
+		}
+	}
+	return {};
+}
+std::optional<std::size_t> HistoryStore::Latest(FrameIdentity scope, std::uint64_t epoch) const
+{
+	for (auto segment = m_segments.rbegin(); segment != m_segments.rend(); ++segment)
+		if (segment->epoch == epoch && segment->session == scope.session && segment->run == scope.run)
+			return segment->end - 1 - (m_appended - m_size);
+	return {};
+}
+void HistoryStore::SetFlags(std::size_t index, std::uint32_t mask, bool enabled)
+{
+	(void)At(index);
+	const auto physical = Physical(index);
+	auto& flags = m_frames[physical].flags;
+	flags = enabled ? flags | mask : flags & ~mask;
 	Update(physical);
 }
 std::size_t HistoryStore::LowerBound(double seconds) const noexcept

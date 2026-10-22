@@ -38,10 +38,12 @@ struct SessionItemSel
 struct FrameSel
 {
 	FrameIdentity identity;
+	std::uint64_t epoch = 0;
 };
 struct RangeSel
 {
 	FrameIdentity first, last;
+	std::uint64_t epoch = 0;
 };
 struct TakeSel
 {
@@ -63,7 +65,9 @@ struct TimeCursor
 {
 	bool following = true;
 	FrameIdentity cursor;
+	std::uint64_t epoch = 0;
 	double first = 0, last = 0, zoom = 1;
+	bool zoomToRange = false;
 };
 enum class RunState
 {
@@ -93,8 +97,13 @@ struct ShellState
 {
 	SessionState session;
 	Selection selection = DeviceSel{};
+	// The device page to return to when a frame or range selection ends.
+	Selection device = DeviceSel{};
 	TimeCursor time;
-	ShellRect preview, inspector;
+	ShellRect preview, inspector, timelineCanvas;
 	bool inspectorVisible = true;
 };
+// Returning to the live edge ends a frame selection (and, with range, a range
+// selection) and shows the device page that was open before.
+void LeaveHistory(ShellState& shell, bool range);
 } // namespace simxr::app

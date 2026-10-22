@@ -94,8 +94,7 @@ int Application::Run()
 						throw std::runtime_error("Runtime smoke operation failed: " + state.error);
 					if (runtimeStage == 0 && state.sessionAvailable)
 					{
-						panels->SetLive(false);
-						panels->Command(control::CommandKind::Pause);
+						panels->Pause();
 						runtimeStage = 1;
 					}
 					else if (runtimeStage == 1 && !state.operationPending && state.progress == "paused")
