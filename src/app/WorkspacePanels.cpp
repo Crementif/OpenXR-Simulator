@@ -1,67 +1,29 @@
 #include "app/WorkspacePanels.h"
 #include "app/LaunchAttachment.h"
+#include "app/LaunchProfilesDialog.h"
+#include "app/Notices.h"
+#include "app/PreferencesDialog.h"
 #include "app/ProcessLauncher.h"
 #include "app/RuntimeConnection.h"
 #include "app/RuntimeEndpoints.h"
 #include "app/RuntimePanels.h"
 #include "app/TimelinePanel.h"
-#include "simulation/HeadsetProfiles.h"
 #ifdef SIMXR_COMPANION_AUTOMATION
 #include "app/RigPanel.h"
 #endif
 
-#include <SDL3/SDL.h>
 #include <algorithm>
-#include <array>
-#include <cstdio>
 #include <filesystem>
 #include <imgui.h>
 #include <imgui_internal.h>
-#include <map>
 #include <stdexcept>
-#include <string_view>
 
 namespace simxr::app
 {
-namespace
-{
-std::vector<std::string> Lines(const char* text)
-{
-	std::vector<std::string> result;
-	std::string_view remaining(text);
-	while (!remaining.empty())
-	{
-		const auto end = remaining.find('\n');
-		result.emplace_back(remaining.substr(0, end));
-		if (!result.back().empty() && result.back().back() == '\r')
-			result.back().pop_back();
-		if (end == std::string_view::npos)
-			break;
-		remaining.remove_prefix(end + 1);
-	}
-	return result;
-}
-std::string Join(const std::vector<std::string>& lines)
-{
-	std::string result;
-	for (const auto& line : lines)
-	{
-		if (!result.empty())
-			result += '\n';
-		result += line;
-	}
-	return result;
-}
-template <std::size_t N> void Copy(std::array<char, N>& buffer, const std::string& text)
-{
-	std::snprintf(buffer.data(), buffer.size(), "%s", text.c_str());
-}
-} // namespace
 struct WorkspacePanels::Impl
 {
 	bool enabled = false, showLaunch = false, showSettings = false, reset = false, dirty = false;
 	bool previewExpanded = false;
-	int bindingCapture = -1, bindingCaptureFrame = 0;
 
 	bool showConnection = false;
 	ShellState shell;
@@ -76,12 +38,10 @@ struct WorkspacePanels::Impl
 #ifdef SIMXR_COMPANION_AUTOMATION
 	RigPanel rigs;
 #endif
+	PreferencesDialog preferences;
+	LaunchProfilesDialog profiles;
+	Notices notices;
 	std::string error, iniPath;
-	std::array<char, 128> layoutName{}, profileName{};
-	std::array<char, 2048> executable{}, workingDirectory{}, manifest{}, rig{};
-	std::array<char, 256> headset{};
-	std::array<char, 16384> arguments{}, environment{};
-	int selectedProfile = -1;
 	float appliedScale = 1;
 	ImGuiStyle originalStyle;
 	bool styleCaptured = false;
@@ -110,7 +70,7 @@ struct WorkspacePanels::Impl
 			settings.endpoint = endpoint;
 		for (std::size_t index = 0; index < settings.profiles.size(); ++index)
 			if (settings.profiles[index].name == settings.activeProfile)
-				EditProfile(static_cast<int>(index));
+				profiles.Edit(settings, static_cast<int>(index));
 	}
 	~Impl()
 	{
@@ -136,59 +96,6 @@ struct WorkspacePanels::Impl
 			error = failure.what();
 		}
 	}
-	void EditProfile(int index)
-	{
-		selectedProfile = index;
-		LaunchProfile profile;
-		if (index >= 0)
-			profile = settings.profiles.at(static_cast<std::size_t>(index));
-		Copy(profileName, profile.name);
-		Copy(executable, profile.executable);
-		Copy(workingDirectory, profile.workingDirectory);
-		Copy(manifest, profile.runtimeManifest);
-		Copy(rig, profile.rig);
-		Copy(headset, profile.headsetProfile);
-		Copy(arguments, Join(profile.arguments));
-		std::vector<std::string> values;
-		for (const auto& [key, value] : profile.environment)
-			values.push_back(key + "=" + value);
-		Copy(environment, Join(values));
-	}
-	LaunchProfile Profile() const
-	{
-		LaunchProfile profile;
-		profile.name = profileName.data();
-		profile.executable = executable.data();
-		profile.arguments = Lines(arguments.data());
-		profile.workingDirectory = workingDirectory.data();
-		profile.runtimeManifest = manifest.data();
-		profile.headsetProfile = headset.data();
-		profile.rig = rig.data();
-		for (const auto& line : Lines(environment.data()))
-		{
-			const auto equals = line.find('=');
-			if (equals == std::string::npos)
-				throw std::invalid_argument("Environment lines must be KEY=value");
-			profile.environment.emplace_back(line.substr(0, equals), line.substr(equals + 1));
-		}
-		return profile;
-	}
-	void StoreProfile()
-	{
-		auto candidate = settings;
-		auto profile = Profile();
-		if (selectedProfile < 0)
-			candidate.profiles.push_back(profile);
-		else
-			candidate.profiles.at(static_cast<std::size_t>(selectedProfile)) = profile;
-		candidate.activeProfile = profile.name;
-		ValidateSettings(candidate);
-		settings = std::move(candidate);
-		if (selectedProfile < 0)
-			selectedProfile = static_cast<int>(settings.profiles.size()) - 1;
-		dirty = true;
-		Save();
-	}
 	void BeginFrame(RuntimePanels&)
 	{
 		if (!styleCaptured)
@@ -208,7 +115,7 @@ struct WorkspacePanels::Impl
 	{
 		try
 		{
-			const auto profile = Profile();
+			const auto profile = profiles.Profile();
 			auto pending = std::make_unique<LaunchAttachment>(launchDiscovery, profile);
 #ifdef SIMXR_COMPANION_AUTOMATION
 			rigs.PrepareLaunch(profile);
@@ -257,12 +164,8 @@ struct WorkspacePanels::Impl
 	}
 	void DrawToolbar(RuntimePanels& runtime)
 	{
-		const auto snapshot = runtime.Snapshot();
+		const auto& snapshot = runtime.View();
 		shell.session = DeriveRunState(snapshot, attachment != nullptr, error);
-		shell.time.following = snapshot.following;
-		shell.time.cursor = snapshot.following ? FrameIdentity{snapshot.session, snapshot.generation, snapshot.latestFrame}
-			: snapshot.selectedIdentity;
-		shell.time.epoch = snapshot.following ? snapshot.epoch : snapshot.selectedEpoch;
 		if (std::holds_alternative<DeviceSel>(shell.selection) || std::holds_alternative<SessionItemSel>(shell.selection))
 			shell.device = shell.selection;
 		if (const auto stepped = runtime.TakeSteppedFrame();
@@ -272,7 +175,7 @@ struct WorkspacePanels::Impl
 			drawer = drawer || stepped->requested;
 		}
 		ImGui::SetNextItemWidth(180 * settings.scale);
-		if (ImGui::BeginCombo("##App picker", selectedProfile >= 0 ? settings.activeProfile.c_str() : "App"))
+		if (ImGui::BeginCombo("##App picker", profiles.Selected() >= 0 ? settings.activeProfile.c_str() : "App"))
 		{
 			ImGui::SeparatorText("Running now");
 			for (const auto& endpoint : DiscoverRuntimeEndpoints())
@@ -288,7 +191,7 @@ struct WorkspacePanels::Impl
 			for (std::size_t index = 0; index < settings.profiles.size(); ++index)
 				if (ImGui::Selectable(settings.profiles[index].name.c_str()))
 				{
-					EditProfile(static_cast<int>(index));
+					profiles.Edit(settings, static_cast<int>(index));
 					settings.activeProfile = settings.profiles[index].name;
 					LaunchSelected();
 				}
@@ -349,7 +252,7 @@ struct WorkspacePanels::Impl
 			}
 			if (ImGui::MenuItem("Frame details"))
 			{
-				shell.selection = FrameSel{shell.time.cursor, shell.time.epoch};
+				shell.selection = FrameSel{snapshot.time.cursor, snapshot.time.epoch};
 				drawer = true;
 			}
 			if (ImGui::MenuItem("Reset layout"))
@@ -516,17 +419,18 @@ struct WorkspacePanels::Impl
 		}
 		runtime.ConfigurePilot(settings.pilotBindings, settings.gamepadBindings);
 		runtime.ConfigureSnapshots(settings.snapshotBudgetMiB);
-		runtime.SetPreviewExpanded(previewExpanded);
-		runtime.Draw(shell);
-#ifdef SIMXR_COMPANION_AUTOMATION
-		if (shell.inspectorVisible && std::holds_alternative<LibrarySel>(shell.selection))
+		runtime.DrawPreview(shell);
+		if (shell.inspectorVisible)
 		{
 			ImGui::SetCursorPos({shell.inspector.x, shell.inspector.y});
 			ImGui::BeginChild("Inspector", {shell.inspector.width, shell.inspector.height});
-			rigs.Draw(runtime, true);
+			DrawInspector(runtime);
 			ImGui::EndChild();
 		}
-#endif
+		for (auto& notice : runtime.TakeNotices())
+			notices.Push(std::move(notice));
+		const auto window = ImGui::GetWindowPos();
+		notices.Draw({window.x + shell.preview.x, window.y + shell.preview.y, shell.preview.width, shell.preview.height});
 		if (!previewExpanded)
 		{
 			ImGui::SetCursorPos({origin.x, top + bodyHeight + 6 * scale});
@@ -539,7 +443,7 @@ struct WorkspacePanels::Impl
 		}
 		const auto state = shell.session.state;
 		const ImU32 border = state == RunState::Paused		   ? IM_COL32(240, 164, 58, 255)
-							 : !shell.time.following		   ? IM_COL32(76, 141, 255, 255)
+							 : !runtime.View().time.following ? IM_COL32(76, 141, 255, 255)
 							 : state == RunState::Disconnected ? IM_COL32(139, 147, 161, 255)
 															   : 0;
 		if (border)
@@ -548,135 +452,28 @@ struct WorkspacePanels::Impl
 				2 * scale);
 		ImGui::End();
 	}
-	void DrawKeymap()
+	void DrawInspector(RuntimePanels& runtime)
 	{
-		if (ImGui::BeginTabBar("Preference pages"))
+		if (std::holds_alternative<DeviceSel>(shell.selection) || std::holds_alternative<SessionItemSel>(shell.selection))
+			runtime.DrawDevicePage(shell);
+		else if (std::holds_alternative<FrameSel>(shell.selection))
+			runtime.DrawFramePage(shell);
+		else if (const auto range = std::get_if<RangeSel>(&shell.selection))
+			runtime.DrawRangePage(RangeSel{*range}, shell);
+		else if (std::holds_alternative<AdvancedSel>(shell.selection))
+			runtime.DrawAdvancedPage();
+		else if (std::holds_alternative<LibrarySel>(shell.selection))
 		{
-			if (ImGui::BeginTabItem("Keyboard & mouse"))
-			{
-				if (ImGui::Button("Reset keymap"))
-				{
-					settings.pilotBindings = DefaultPilotBindings();
-					dirty = true;
-					bindingCapture = -1;
-				}
-				if (ImGui::BeginTable("Bindings", 2, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg, {0, 320}))
-				{
-					ImGui::TableSetupColumn("Action");
-					ImGui::TableSetupColumn("Binding");
-					ImGui::TableHeadersRow();
-					for (std::size_t index = 0; index < settings.pilotBindings.size(); ++index)
-					{
-						auto& binding = settings.pilotBindings[index];
-						ImGui::PushID(static_cast<int>(index));
-						ImGui::TableNextRow();
-						ImGui::TableNextColumn();
-						ImGui::TextUnformatted(PilotActionNames[index]);
-						ImGui::TableNextColumn();
-						std::string label =
-							bindingCapture == static_cast<int>(index) ? "Press a key…" : PilotBindingLabel(binding);
-						if (ImGui::Button(label.c_str(), {-1, 0}))
-						{
-							bindingCapture = static_cast<int>(index);
-							bindingCaptureFrame = ImGui::GetFrameCount();
-						}
-						ImGui::PopID();
-					}
-					ImGui::EndTable();
-				}
-				if (bindingCapture >= 0 && ImGui::GetFrameCount() > bindingCaptureFrame + 1)
-				{
-					if (ImGui::IsKeyPressed(ImGuiKey_Escape))
-						bindingCapture = -1;
-					else
-						for (int key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_NamedKey_END; ++key)
-						{
-							if (key >= ImGuiKey_GamepadStart && key <= ImGuiKey_GamepadRStickDown)
-								continue;
-							if (!ImGui::IsKeyPressed(static_cast<ImGuiKey>(key), false))
-								continue;
-							const auto& io = ImGui::GetIO();
-							auto& binding = settings.pilotBindings[static_cast<std::size_t>(bindingCapture)];
-							binding.key = ImGui::GetKeyName(static_cast<ImGuiKey>(key));
-							binding.modifiers = (io.KeyCtrl ? 1 : 0) | (io.KeyShift ? 2 : 0) | (io.KeyAlt ? 4 : 0) |
-												(io.KeySuper ? 8 : 0);
-							bindingCapture = -1;
-							dirty = true;
-							break;
-						}
-				}
-				ImGui::EndTabItem();
-			}
-			if (ImGui::BeginTabItem("Gamepad"))
-			{
-				auto& bindings = settings.gamepadBindings;
-				dirty |= ImGui::SliderFloat("Deadzone", &bindings.deadzone, 0, .5f, "%.2f");
-				const auto mapping = [&](const char* label, std::string& name, bool axis)
-				{
-					if (ImGui::BeginCombo(label, name.c_str()))
-					{
-						for (int index = 0;
-							 index < (axis ? int(SDL_GAMEPAD_AXIS_COUNT) : int(SDL_GAMEPAD_BUTTON_COUNT)); ++index)
-						{
-							const char* value =
-								axis ? SDL_GetGamepadStringForAxis(static_cast<SDL_GamepadAxis>(index))
-									 : SDL_GetGamepadStringForButton(static_cast<SDL_GamepadButton>(index));
-							if (ImGui::Selectable(value, name == value))
-							{
-								name = value;
-								dirty = true;
-							}
-						}
-						ImGui::EndCombo();
-					}
-				};
-				if (ImGui::BeginTable("Gamepad mapping", 3, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg, {0, 300}))
-				{
-					ImGui::TableSetupColumn("Input");
-					ImGui::TableSetupColumn("Left");
-					ImGui::TableSetupColumn("Right");
-					ImGui::TableHeadersRow();
-					int row = 0;
-					for (const auto& [label, entries] : {std::pair{"Stick X", &bindings.stickX},
-														 {"Stick Y", &bindings.stickY},
-														 {"Trigger", &bindings.trigger},
-														 {"Grip", &bindings.grip},
-														 {"Primary", &bindings.primary},
-														 {"Secondary", &bindings.secondary},
-														 {"Menu", &bindings.menu},
-														 {"Stick click", &bindings.stickClick}})
-					{
-						ImGui::TableNextRow();
-						ImGui::TableNextColumn();
-						ImGui::TextUnformatted(label);
-						ImGui::PushID(row);
-						for (int hand = 0; hand < 2; ++hand)
-						{
-							ImGui::TableNextColumn();
-							ImGui::PushID(hand);
-							ImGui::SetNextItemWidth(-1);
-							mapping("##Mapping", (*entries)[hand], row < 3);
-							ImGui::PopID();
-						}
-						ImGui::PopID();
-						++row;
-					}
-					ImGui::EndTable();
-				}
-				mapping("Hold for gyro", bindings.gyroHold, false);
-				if (ImGui::Button("Reset gamepad"))
-				{
-					bindings = {};
-					dirty = true;
-				}
-				ImGui::EndTabItem();
-			}
-			ImGui::EndTabBar();
+			runtime.DrawLibrary();
+#ifdef SIMXR_COMPANION_AUTOMATION
+			rigs.Draw(runtime, true);
+#endif
 		}
 	}
 	void Draw(RuntimePanels& runtime)
 	{
 		PollLaunch(runtime);
+		runtime.BeginFrame();
 #ifdef SIMXR_COMPANION_AUTOMATION
 		if (const auto recording = runtime.TakeRecordingReplay())
 			rigs.ReplayRecording(runtime, recording->path, recording->seed);
@@ -701,106 +498,20 @@ struct WorkspacePanels::Impl
 				ImGui::EndPopup();
 			}
 		}
-		if (showSettings)
-			ImGui::OpenPopup("Workspace settings");
-		ImGui::SetNextWindowSize({620, 500}, ImGuiCond_FirstUseEver);
-		ImGui::SetNextWindowSizeConstraints({400, 260}, ImGui::GetMainViewport()->WorkSize);
-		if (ImGui::BeginPopupModal("Workspace settings", &showSettings))
+		if (preferences.Draw(settings, showSettings, dirty))
 		{
-			if (ImGui::SliderFloat("UI scale", &settings.scale, 0.75f, 2.5f, "%.2f"))
-				dirty = true;
-			int budget = static_cast<int>(settings.snapshotBudgetMiB);
-			if (ImGui::SliderInt("Snapshots (MiB)", &budget, SnapshotBudget::MinMiB, SnapshotBudget::MaxMiB))
-			{
-				settings.snapshotBudgetMiB = static_cast<std::uint32_t>(budget);
-				dirty = true;
-			}
-			DrawKeymap();
-			if (ImGui::Button("Close"))
-			{
-				showSettings = false;
-				bindingCapture = -1;
-				settings.endpoint = runtime.Endpoint();
-				Save();
-				ImGui::CloseCurrentPopup();
-			}
-			ImGui::EndPopup();
+			settings.endpoint = runtime.Endpoint();
+			Save();
 		}
-		if (showLaunch)
-			ImGui::OpenPopup("Launch profiles");
-		ImGui::SetNextWindowSize({620, 500}, ImGuiCond_FirstUseEver);
-		ImGui::SetNextWindowSizeConstraints({400, 260}, ImGui::GetMainViewport()->WorkSize);
-		if (ImGui::BeginPopupModal("Launch profiles", &showLaunch))
+		bool changed = false;
+		if (profiles.Draw(settings, launcher.Snapshot(), showLaunch, changed, error))
+			LaunchSelected();
+		if (changed)
 		{
-			ImGui::SetNextWindowSize({620, 650}, ImGuiCond_FirstUseEver);
-			if (ImGui::BeginCombo("Profile",
-								  selectedProfile >= 0
-									  ? settings.profiles[static_cast<std::size_t>(selectedProfile)].name.c_str()
-									  : "New profile"))
-			{
-				for (std::size_t index = 0; index < settings.profiles.size(); ++index)
-					if (ImGui::Selectable(settings.profiles[index].name.c_str(),
-										  selectedProfile == static_cast<int>(index)))
-						EditProfile(static_cast<int>(index));
-				ImGui::EndCombo();
-			}
-			if (ImGui::Button("New profile"))
-				EditProfile(-1);
-			if (selectedProfile >= 0)
-			{
-				ImGui::SameLine();
-				if (ImGui::Button("Delete profile"))
-				{
-					settings.profiles.erase(settings.profiles.begin() + selectedProfile);
-					settings.activeProfile.clear();
-					EditProfile(-1);
-					dirty = true;
-					Save();
-				}
-			}
-			ImGui::InputText("Name", profileName.data(), profileName.size());
-			ImGui::InputText("Executable", executable.data(), executable.size());
-			ImGui::TextUnformatted("Arguments: one literal argument per line; no shell expansion");
-			ImGui::InputTextMultiline("##arguments", arguments.data(), arguments.size(), {-1, 90});
-			ImGui::InputText("Working directory", workingDirectory.data(), workingDirectory.size());
-			ImGui::InputText("OpenXR runtime JSON", manifest.data(), manifest.size());
-			ImGui::TextUnformatted("Child environment: KEY=value per line (including WINEPREFIX / Proton values)");
-			ImGui::InputTextMultiline("##environment", environment.data(), environment.size(), {-1, 90});
-			if (ImGui::BeginCombo("Headset profile", headset[0] ? headset.data() : "Runtime default"))
-			{
-				if (ImGui::Selectable("Runtime default", !headset[0]))
-					headset.fill(0);
-				for (const auto& profile : HeadsetProfiles())
-					if (ImGui::Selectable(profile.id, std::string_view(profile.id) == headset.data()))
-						Copy(headset, profile.id);
-				ImGui::EndCombo();
-			}
-			ImGui::InputText("Luau rig after launch", rig.data(), rig.size());
-			ImGui::TextWrapped("The headset profile applies to the launched runtime. A rig runs only after the new "
-							   "child endpoint exposes one running session; an existing connection is never reused.");
-			if (ImGui::Button("Save profile"))
-				try
-				{
-					StoreProfile();
-				}
-				catch (const std::exception& failure)
-				{
-					error = failure.what();
-				}
-			ImGui::SameLine();
-			const auto process = launcher.Snapshot();
-			ImGui::BeginDisabled(process.state == LaunchState::Starting || process.state == LaunchState::Running);
-			if (ImGui::Button("Launch"))
-				LaunchSelected();
-			ImGui::EndDisabled();
-			if (process.process)
-				ImGui::Text("Process: %llu", static_cast<unsigned long long>(process.process));
-			if (!process.detail.empty())
-				ImGui::TextWrapped("%s", process.detail.c_str());
-			ImGui::TextWrapped("The runtime manifest and environment apply only to the child. After launch, use Find "
-							   "runtimes to attach. Closing the companion leaves the launched application running.");
-			ImGui::EndPopup();
+			dirty = true;
+			Save();
 		}
+		runtime.DrawWindows();
 	}
 };
 WorkspacePanels::WorkspacePanels(ProcessSupervisor& processes, bool enabled, std::string endpoint)

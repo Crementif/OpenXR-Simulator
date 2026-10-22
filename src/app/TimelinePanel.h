@@ -16,7 +16,7 @@ class TimelinePanel
 {
   public:
 	bool Draw(RuntimePanels& runtime, ShellState& shell);
-	void ObserveRig(const RuntimePanelSnapshot& runtime, std::uint64_t run, const automation::RigSnapshot& state,
+	void ObserveRig(const RuntimeView& runtime, std::uint64_t run, const automation::RigSnapshot& state,
 					bool matchesTarget);
 
   private:
@@ -39,7 +39,7 @@ class TimelinePanel
 		double first = 0, last = 0;
 		bool replay = false;
 	};
-	void Observe(const RuntimePanelSnapshot& state);
+	void Observe(const RuntimeView& state);
 	void Push(Event event);
 	std::map<double, Marker> m_markers;
 	std::optional<HistoryFrame> m_pendingMarker;
@@ -48,7 +48,7 @@ class TimelinePanel
 	std::optional<double> m_recordingBegin, m_scriptBegin, m_pauseBegin, m_pauseEnd;
 	// The runtime's last submitted frame when the pause was first seen.
 	std::optional<HistoryFrame> m_pauseFrame;
-	std::optional<RuntimePanelSnapshot> m_previous;
+	std::optional<RuntimeView> m_previous;
 	double m_cursorSeconds = 0;
 	std::vector<Event> m_events;
 	std::chrono::steady_clock::time_point m_started = std::chrono::steady_clock::now();

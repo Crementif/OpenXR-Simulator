@@ -1,9 +1,9 @@
 #include "app/ShellState.h"
-#include "app/RuntimePanels.h"
+#include "app/RuntimeView.h"
 
 namespace simxr::app
 {
-SessionState DeriveRunState(const RuntimePanelSnapshot& snapshot, bool launching, const std::string& error)
+SessionState DeriveRunState(const RuntimeView& snapshot, bool launching, const std::string& error)
 {
 	SessionState result;
 	result.endpoint = snapshot.endpoint;

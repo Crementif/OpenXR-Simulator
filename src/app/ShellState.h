@@ -61,12 +61,18 @@ struct AdvancedSel
 };
 using Selection = std::variant<std::monostate, DeviceSel, SessionItemSel, FrameSel, RangeSel, TakeSel, ScriptSel,
 							   LibrarySel, AdvancedSel>;
+// Which frame the app shows. Written only by RuntimeSession: following shows
+// the live edge (the paused frame while paused); otherwise the cursor frame.
 struct TimeCursor
 {
 	bool following = true;
 	FrameIdentity cursor;
 	std::uint64_t epoch = 0;
-	double first = 0, last = 0, zoom = 1;
+};
+// The timeline's visible span, owned by the timeline.
+struct TimelineWindow
+{
+	double first = 0, last = 0;
 	bool zoomToRange = false;
 };
 enum class RunState
@@ -86,8 +92,8 @@ struct SessionState
 	std::uint64_t session = 0, generation = 0, run = 0;
 	float fps = 0;
 };
-struct RuntimePanelSnapshot;
-SessionState DeriveRunState(const RuntimePanelSnapshot& snapshot, bool launching, const std::string& error);
+struct RuntimeView;
+SessionState DeriveRunState(const RuntimeView& view, bool launching, const std::string& launchError);
 const char* RunStateLabel(RunState state);
 struct ShellRect
 {
@@ -99,7 +105,7 @@ struct ShellState
 	Selection selection = DeviceSel{};
 	// The device page to return to when a frame or range selection ends.
 	Selection device = DeviceSel{};
-	TimeCursor time;
+	TimelineWindow timeline;
 	ShellRect preview, inspector, timelineCanvas;
 	bool inspectorVisible = true;
 };

@@ -71,7 +71,7 @@ void PreviewImages::SetScope(PanelScope scope)
 bool PreviewImages::SelectCapture(PanelScope scope, std::uint64_t capture)
 {
 	m_selectedCapture = capture;
-	m_follow = false;
+	m_live = false;
 	// A newly selected snapshot must never display the previous frame while
 	// its private image is still being requested.
 	m_selectedImage = 0;
@@ -89,7 +89,7 @@ void PreviewImages::SelectImage(std::uint64_t id)
 	if (Find(id))
 	{
 		m_selectedImage = id;
-		m_follow = false;
+		m_live = false;
 	}
 }
 void PreviewImages::ClearSelection()
@@ -101,13 +101,13 @@ void PreviewImages::ReleaseSelected()
 	if (auto image = Find(m_selectedImage))
 		image->release = true;
 }
-void PreviewImages::Follow(bool enabled) noexcept
+void PreviewImages::ShowLive(bool enabled) noexcept
 {
-	m_follow = enabled;
+	m_live = enabled;
 }
-bool PreviewImages::Following() const noexcept
+bool PreviewImages::ShowingLive() const noexcept
 {
-	return m_follow;
+	return m_live;
 }
 std::uint64_t PreviewImages::SelectedId() const noexcept
 {
@@ -169,7 +169,7 @@ void PreviewImages::BeginFrame()
 	for (auto& image : m_images)
 	{
 		image->texture->BeginFrame();
-		if (m_follow && image->live && image->texture->Ready() && !image->release && image->epoch == m_scope.epoch &&
+		if (m_live && image->live && image->texture->Ready() && !image->release && image->epoch == m_scope.epoch &&
 			image->session == m_scope.session && image->generation == m_scope.generation)
 			m_selectedImage = image->id;
 	}
@@ -203,7 +203,7 @@ void PreviewImages::Retained(const wire::Message& message, bool preview)
 		for (auto& image : m_images)
 			if (image->live)
 				image->release = true;
-		if (m_follow)
+		if (m_live)
 			m_selectedImage = 0;
 		return;
 	}
@@ -220,7 +220,7 @@ void PreviewImages::Retained(const wire::Message& message, bool preview)
 				image->reader = reader;
 			else if (image->reader != reader)
 				m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId, reader);
-			if ((preview && m_follow) || (!preview && m_selectedCapture == capture))
+			if ((preview && m_live) || (!preview && m_selectedCapture == capture))
 				m_selectedImage = image->id;
 			return;
 		}
@@ -310,7 +310,7 @@ void PreviewImages::Shared(std::uint64_t id, const RuntimeReply& reply)
 		}
 		const bool currentSource = image->epoch == m_scope.epoch && image->session == m_scope.session &&
 								   image->generation == m_scope.generation;
-		if (currentSource && ((!image->live && m_selectedCapture == image->capture) || (image->live && m_follow)))
+		if (currentSource && ((!image->live && m_selectedCapture == image->capture) || (image->live && m_live)))
 			m_selectedImage = image->id;
 	}
 }

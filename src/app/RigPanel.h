@@ -11,7 +11,7 @@
 namespace simxr::app
 {
 class RuntimePanels;
-struct RuntimePanelSnapshot;
+struct RuntimeView;
 struct LaunchedSession;
 class RigPanel
 {
@@ -22,7 +22,7 @@ class RigPanel
 	bool IsActive() const;
 	std::uint64_t RunId() const;
 	automation::RigSnapshot Snapshot() const;
-	bool MatchesTarget(const RuntimePanelSnapshot& state) const;
+	bool MatchesTarget(const RuntimeView& state) const;
 	bool HasStatus() const;
 	void DrawTransport();
 	void ReplayRecording(RuntimePanels& runtime, const std::string& path, std::uint64_t seed);

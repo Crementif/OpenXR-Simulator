@@ -297,7 +297,7 @@ automation::RigSnapshot RigPanel::Snapshot() const
 	return {};
 #endif
 }
-bool RigPanel::MatchesTarget(const RuntimePanelSnapshot& state) const
+bool RigPanel::MatchesTarget(const RuntimeView& state) const
 {
 #ifdef SIMXR_COMPANION_AUTOMATION
 	return state.endpoint == m_impl->boundEndpoint && state.session == m_impl->boundSession &&

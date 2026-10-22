@@ -37,8 +37,9 @@ class PreviewImages
 	void SelectImage(std::uint64_t id);
 	void ClearSelection();
 	void ReleaseSelected();
-	void Follow(bool enabled) noexcept;
-	bool Following() const noexcept;
+	// Shows the newest live image instead of a chosen one.
+	void ShowLive(bool enabled) noexcept;
+	bool ShowingLive() const noexcept;
 	std::uint64_t SelectedId() const noexcept;
 	std::optional<PreviewImageSummary> Selected() const;
 	std::vector<PreviewImageSummary> Images() const;
@@ -65,7 +66,7 @@ class PreviewImages
 	PanelScope m_scope;
 	std::vector<std::unique_ptr<Image>> m_images;
 	std::uint64_t m_nextImage = 1, m_selectedImage = 0, m_selectedCapture = 0;
-	bool m_follow = true;
+	bool m_live = true;
 	std::string m_error;
 };
 } // namespace simxr::app

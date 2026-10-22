@@ -32,7 +32,7 @@ template <typename T> void Bounded(std::vector<T>& values)
 	if (values.size() > 128)
 		values.erase(values.begin());
 }
-RuntimeFrameRun RunOf(const RuntimePanelSnapshot& state)
+RuntimeFrameRun RunOf(const RuntimeView& state)
 {
 	return {state.epoch, state.session, state.generation};
 }
@@ -42,7 +42,7 @@ void TimelinePanel::Push(Event event)
 	m_events.push_back(std::move(event));
 	Bounded(m_events);
 }
-void TimelinePanel::ObserveRig(const RuntimePanelSnapshot& runtime, std::uint64_t run,
+void TimelinePanel::ObserveRig(const RuntimeView& runtime, std::uint64_t run,
 							   const automation::RigSnapshot& state, bool matchesTarget)
 {
 	if (!run)
@@ -85,9 +85,9 @@ void TimelinePanel::ObserveRig(const RuntimePanelSnapshot& runtime, std::uint64_
 	while (m_output < state.output.size())
 		append(state.output[m_output++]);
 }
-void TimelinePanel::Observe(const RuntimePanelSnapshot& state)
+void TimelinePanel::Observe(const RuntimeView& state)
 {
-	const auto observed = [&](const char* text, const RuntimePanelSnapshot& at)
+	const auto observed = [&](const char* text, const RuntimeView& at)
 	{
 		Push({RunOf(at), std::chrono::duration<double>(std::chrono::steady_clock::now() - m_started).count(),
 			  at.historySeconds, text, false});
@@ -155,9 +155,7 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell)
 	const auto choose = [&](std::size_t index)
 	{
 		const auto& frame = history.At(index);
-		runtime.SelectHistoryFrame(index);
-		shell.time.cursor = frame.identity;
-		shell.time.epoch = frame.epoch;
+		runtime.LookAt(index);
 		shell.selection = FrameSel{frame.identity, frame.epoch};
 		m_cursorSeconds = frame.seconds;
 		inspect = true;
@@ -178,10 +176,10 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell)
 	if (history.Size())
 		while (!m_markers.empty() && m_markers.begin()->first < history.At(0).seconds)
 			m_markers.erase(m_markers.begin());
-	const auto cursorIndex = history.Find(state.selectedIdentity, state.selectedEpoch);
+	const auto cursorIndex = history.Find(state.time.cursor, state.time.epoch);
 	if (cursorIndex)
 		m_cursorSeconds = history.At(*cursorIndex).seconds;
-	const double cursor = state.following ? state.historySeconds : m_cursorSeconds;
+	const double cursor = state.time.following ? state.historySeconds : m_cursorSeconds;
 	const auto jump = [&](bool next)
 	{
 		auto marker = next ? m_markers.upper_bound(cursor) : m_markers.lower_bound(cursor);
@@ -256,7 +254,7 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell)
 	const auto live = m_canvas.LiveRect();
 	ImGui::SetCursorScreenPos(
 		{live.x + style.ItemSpacing.x, live.y + std::max(0.f, (live.height - ImGui::GetFrameHeight()) / 2)});
-	if (!state.following && state.sessionAvailable)
+	if (!state.time.following && state.sessionAvailable)
 	{
 		if (ImGui::Button("LIVE >|"))
 			goLive();
@@ -278,10 +276,10 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell)
 			IM_COL32(240, 164, 58, 255), full);
 	}
 
-	if (shell.time.zoomToRange)
+	if (shell.timeline.zoomToRange)
 	{
-		m_canvas.Zoom(shell.time.first, shell.time.last);
-		shell.time.zoomToRange = false;
+		m_canvas.Zoom(shell.timeline.first, shell.timeline.last);
+		shell.timeline.zoomToRange = false;
 		runtime.SetLive(false);
 	}
 	std::optional<std::pair<double, double>> selectedRange;
@@ -292,9 +290,9 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell)
 			selectedRange = {history.At(*first).seconds, history.At(*last).seconds};
 	}
 	const auto gesture =
-		m_canvas.Draw(history, state.following, state.following ? std::optional<double>{} : cursor, selectedRange);
+		m_canvas.Draw(history, state.time.following, state.time.following ? std::optional<double>{} : cursor, selectedRange);
 	shell.timelineCanvas = m_canvas.Bounds();
-	std::tie(shell.time.first, shell.time.last) = m_canvas.VisibleRange();
+	std::tie(shell.timeline.first, shell.timeline.last) = m_canvas.VisibleRange();
 	if (gesture.stopFollowing)
 		runtime.SetLive(false);
 	if (gesture.goLive)

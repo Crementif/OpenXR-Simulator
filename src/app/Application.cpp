@@ -97,7 +97,7 @@ int Application::Run()
 						panels->Pause();
 						runtimeStage = 1;
 					}
-					else if (runtimeStage == 1 && !state.operationPending && state.progress == "paused")
+					else if (runtimeStage == 1 && !state.operationPending && state.manual)
 					{
 						std::puts("READY companion production controls paused");
 						std::fflush(stdout);

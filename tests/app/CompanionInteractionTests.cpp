@@ -268,7 +268,7 @@ void CheckTimelineWorkflow(Interaction& test)
 			return state.manual && !state.operationPending;
 		},
 		"Timeline pause failed");
-	RuntimePanelSnapshot earlier;
+	RuntimeView earlier;
 	for (int step = 0; step < 3; ++step)
 	{
 		const auto previous = test.runtime.Snapshot().selectedCapture;
@@ -284,7 +284,7 @@ void CheckTimelineWorkflow(Interaction& test)
 			earlier = test.runtime.Snapshot();
 	}
 	const auto newest = test.runtime.Snapshot();
-	Require(newest.following, "Next frame stopped following the paused live edge");
+	Require(newest.time.following, "Next frame stopped following the paused live edge");
 	await(
 		[&](const auto&)
 		{
@@ -308,14 +308,14 @@ void CheckTimelineWorkflow(Interaction& test)
 	const double seconds = test.runtime.History().At(index).seconds;
 	const float x =
 		shell.timelineCanvas.x +
-		float((seconds - shell.time.first) / (shell.time.last - shell.time.first)) * shell.timelineCanvas.width;
+		float((seconds - shell.timeline.first) / (shell.timeline.last - shell.timeline.first)) * shell.timelineCanvas.width;
 	Require(x >= shell.timelineCanvas.x && x <= shell.timelineCanvas.x + shell.timelineCanvas.width,
 			"Earlier snapshot not visible after timeline zoom");
 	test.Click({x, shell.timelineCanvas.y + shell.timelineCanvas.height * .35f});
 	await(
 		[&](const auto& state)
 		{
-			return state.manual && !state.following && state.selectedFrame == earlier.selectedFrame &&
+			return state.manual && !state.time.following && state.selectedFrame == earlier.selectedFrame &&
 				   state.selectedReady && state.inspectedFrame == earlier.selectedFrame;
 		},
 		"Canvas did not select earlier image and inputs/actions");
@@ -354,8 +354,8 @@ void CheckTimelineWorkflow(Interaction& test)
 	ImGui::ActivateItemByID(inspector->GetID("Zoom to range"));
 	test.Frame();
 	test.Frame();
-	Require(test.workspace.State().time.last - test.workspace.State().time.first <
-				beforeRange.time.last - beforeRange.time.first,
+	Require(test.workspace.State().timeline.last - test.workspace.State().timeline.first <
+				beforeRange.timeline.last - beforeRange.timeline.first,
 			"Range zoom did not narrow the timeline");
 	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
 	{
@@ -390,7 +390,7 @@ void CheckTimelineWorkflow(Interaction& test)
 	await(
 		[](const auto& state)
 		{
-			return !state.manual && state.following && !state.operationPending;
+			return !state.manual && state.time.following && !state.operationPending;
 		},
 		"Continue did not return to LIVE");
 	Require(test.runtime.Snapshot().error.empty(), "Timeline workflow reported runtime error");
@@ -788,7 +788,7 @@ void PilotLiveRuntime(const char* endpoint)
 		{
 			frame();
 			const auto state = test.runtime.Snapshot();
-			return !state.operationPending && state.selectedCapture && state.selectedReady && state.following;
+			return !state.operationPending && state.selectedCapture && state.selectedReady && state.time.following;
 		},
 		"Step did not select its captured frame");
 	const auto retained = test.runtime.Snapshot().selectedCapture;
@@ -847,7 +847,7 @@ void PilotLiveRuntime(const char* endpoint)
 		{
 			frame();
 			const auto state = test.runtime.Snapshot();
-			return !state.operationPending && !state.manual && state.following;
+			return !state.operationPending && !state.manual && state.time.following;
 		},
 		"Continue did not resume and follow live output");
 	activate("##Frame timeline", "Previous snapshot");
@@ -856,12 +856,12 @@ void PilotLiveRuntime(const char* endpoint)
 			"Timeline did not return to the historical snapshot while running");
 	for (int i = 0; i < 6; ++i)
 		frame();
-	Require(!test.runtime.Snapshot().manual && !test.runtime.Snapshot().following,
+	Require(!test.runtime.Snapshot().manual && !test.runtime.Snapshot().time.following,
 			"Inspecting a retained frame falsely paused the application");
 	captureContext("cemu-inspection-running.bmp");
 	test.runtime.SetLive(true);
 	frame();
-	Require(test.runtime.Snapshot().following && !test.runtime.Snapshot().manual,
+	Require(test.runtime.Snapshot().time.following && !test.runtime.Snapshot().manual,
 			"Showing live output changed the application pause state");
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Validation errors in frame inspection and thumbnail rendering");
@@ -1121,7 +1121,7 @@ void CheckDebuggerWorkflow(const char* endpoint)
 			  << exact.selectedFrame << " -> " << raw.selectedFrame << '\n';
 }
 
-void CheckManualEdges(const RuntimePanelSnapshot& target)
+void CheckManualEdges(const RuntimeView& target)
 {
 	RecordingController recording;
 	recording.SetTarget({target.endpoint, target.session, target.generation});
@@ -1250,7 +1250,7 @@ void CheckManualEdges(const RuntimePanelSnapshot& target)
 	std::cout << "PASS native 30 ms tap: press frame " << pressFrame << ", release frame " << releaseFrame << "\n";
 }
 
-void CheckNativePlayerRig(const RuntimePanelSnapshot& target)
+void CheckNativePlayerRig(const RuntimeView& target)
 {
 	ManualInputController input;
 	input.SetTarget({target.endpoint, target.session, target.generation});
