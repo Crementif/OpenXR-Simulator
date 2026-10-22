@@ -43,6 +43,11 @@ bool PreviewPanel::Draw(ShellState& shell, const RuntimeView& view)
 		const bool live = view.time.following;
 		if (image && image->ready && !image->released)
 		{
+			// The header row starts at the image's left edge when both fit.
+			const float available = ImGui::GetContentRegionAvail().x;
+			const float imageLeft = std::max(0.0f, (available - m_previousImageSize.x) / 2);
+			ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::min(imageLeft, std::max(0.0f, available - m_headerWidth)));
+			const float headerStart = ImGui::GetCursorScreenPos().x;
 			if (view.manual || !live)
 			{
 				ImGui::TextColored(theme::Vec(view.manual ? theme::Paused : theme::Past), "%s",
@@ -51,7 +56,7 @@ bool PreviewPanel::Draw(ShellState& shell, const RuntimeView& view)
 			}
 			ImGui::TextDisabled("Frame %llu%s", static_cast<unsigned long long>(image->frame),
 								ImageLabel(*image).c_str());
-			DrawImage(shell, view, pilotArea);
+			DrawImage(shell, view, pilotArea, headerStart);
 		}
 		else if (m_spatial.Expanded())
 			m_spatial.DrawExpanded(shell.selection, ImGui::GetContentRegionAvail());
@@ -124,7 +129,7 @@ void PreviewPanel::DrawEmpty(ShellState& shell, const RuntimeView& view)
 	line(view.sessionAvailable ? "Waiting for first frame\u2026" : "Waiting for the app to start XR\u2026",
 		 center.y, theme::TextDim);
 }
-void PreviewPanel::DrawImage(ShellState& shell, const RuntimeView& view, bool& pilotArea)
+void PreviewPanel::DrawImage(ShellState& shell, const RuntimeView& view, bool& pilotArea, float headerStart)
 {
 	auto& preview = m_session.Preview();
 	const auto image = preview.Selected();
@@ -197,6 +202,7 @@ void PreviewPanel::DrawImage(ShellState& shell, const RuntimeView& view, bool& p
 			ImGui::EndPopup();
 		}
 	}
+	m_headerWidth = ImGui::GetItemRectMax().x - headerStart;
 	ImGui::BeginChild("Image area", {0, 0}, 0, ImGuiWindowFlags_NoScrollWithMouse);
 	if (m_spatial.Expanded())
 	{

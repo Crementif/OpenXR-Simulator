@@ -25,6 +25,8 @@ struct RailStatus
 	ImU32 badgeColor = 0;
 	// Shortcut key drawn dim at the right when there is room.
 	const char* key = nullptr;
+	// Only the icon; the name moves to the tooltip.
+	bool iconOnly = false;
 };
 // One full-width device rail row: accent bar when selected, icon, name, status.
 // Height 0 uses the standard 36 base px row.

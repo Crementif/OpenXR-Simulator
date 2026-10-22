@@ -375,46 +375,93 @@ void PilotController::DrawHelp() const
 bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputController& input)
 {
 	const float scale = ImGui::GetFontSize() / 16;
-	const float width = std::min((maximum.x - minimum.x) * .8f, 620 * scale);
+	const float width = std::min((maximum.x - minimum.x) * .8f, 720 * scale);
 	if (width < 200 * scale)
 		return false;
 	const auto& style = ImGui::GetStyle();
 	const float rowHeight = ImGui::GetFrameHeight();
 	const auto textWidth = [](const char* text) { return ImGui::CalcTextSize(text).x; };
+	bool conflict = false;
+	const auto state = input.Snapshot();
+	std::vector<ControlChannel> channels{m_hand ? ControlChannel::RightControls : ControlChannel::LeftControls};
+	if (m_target == PilotTarget::Player)
+		channels.insert(channels.end(), {ControlChannel::Head, ControlChannel::LeftPose, ControlChannel::RightPose,
+										 ControlChannel::Trackers});
+	else
+		channels.push_back(m_target == PilotTarget::Head   ? ControlChannel::Head
+						   : m_target == PilotTarget::Left ? ControlChannel::LeftPose
+														   : ControlChannel::RightPose);
+	std::optional<ObservedSetup> observed;
+	try
+	{
+		if (state.observation)
+			observed = ReadObservedSetup(state.state);
+	}
+	catch (const std::exception&)
+	{
+	}
+	if (observed)
+		for (const auto channel : channels)
+		{
+			const auto& owner = observed->owners[static_cast<std::size_t>(channel)];
+			conflict |= owner && (!state.source || *owner != *state.source);
+		}
 	const float buttonPadding = style.FramePadding.x * 2;
 	// Groups wrap onto further rows when the image is too narrow for one row.
-	const std::array<float, 5> groupWidths{
+	std::array<float, 5> groupWidths{
 		textWidth("Move: Right hand") + ImGui::GetFrameHeight() * 1.5f,
 		textWidth("Buttons: Right") + buttonPadding,
-		textWidth("Trigger") + textWidth("Grip") + 2 * 40 * scale + style.ItemSpacing.x,
-		textWidth("A") + textWidth("B") + textWidth("Menu") + 3 * 14 * scale + 26 * scale,
+		conflict ? textWidth("Take over") + buttonPadding
+				 : textWidth("Trigger") + textWidth("Grip") + 2 * 40 * scale + style.ItemSpacing.x,
+		conflict ? 0 : textWidth("A") + textWidth("B") + textWidth("Menu") + 3 * 14 * scale + 26 * scale,
 		textWidth("Unlock") + buttonPadding};
 	std::array<int, 5> groupRows{};
 	int rows = 1;
-	for (float used = 0, available = width - style.WindowPadding.x * 2; const auto index : {0, 1, 2, 3, 4})
+	float height = 0;
+	const auto layout = [&]
 	{
-		const float needed = groupWidths[index] + (used > 0 ? style.ItemSpacing.x : 0);
-		if (used > 0 && used + needed > available)
+		rows = 1;
+		for (float used = 0, available = width - style.WindowPadding.x * 2; const auto index : {0, 1, 2, 3, 4})
 		{
-			++rows;
-			used = 0;
+			if (!groupWidths[index])
+				continue;
+			const float needed = groupWidths[index] + (used > 0 ? style.ItemSpacing.x : 0);
+			if (used > 0 && used + needed > available)
+			{
+				++rows;
+				used = 0;
+			}
+			used += used > 0 ? needed : groupWidths[index];
+			groupRows[index] = rows - 1;
 		}
-		used += used > 0 ? needed : groupWidths[index];
-		groupRows[index] = rows - 1;
+		height = rows * rowHeight + ImGui::GetTextLineHeight() + style.WindowPadding.y * 2 + rows * style.ItemSpacing.y;
+	};
+	layout();
+	// On a small image the HUD keeps only what is not on the hand page: target, hand and lock.
+	const bool compact = !conflict && height > (maximum.y - minimum.y) * .3f;
+	if (compact)
+	{
+		groupWidths[2] = groupWidths[3] = 0;
+		layout();
 	}
-	const float height = rows * rowHeight + ImGui::GetTextLineHeight() + style.WindowPadding.y * 2 +
-						 rows * style.ItemSpacing.y;
 	const auto place = [&](int group)
 	{
-		if (group > 0 && groupRows[group] == groupRows[group - 1])
+		int previous = group - 1;
+		while (previous >= 0 && !groupWidths[previous])
+			--previous;
+		if (previous >= 0 && groupRows[group] == groupRows[previous])
 			ImGui::SameLine();
 	};
 	const auto saved = ImGui::GetCursorScreenPos();
 	ImGui::SetCursorScreenPos({(minimum.x + maximum.x - width) / 2, maximum.y - height - 6 * scale});
-	ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::Fade(theme::Bg, .85f));
-	ImGui::PushStyleVar(ImGuiStyleVar_Alpha, Active() || ImGui::GetTime() - m_lastInput < 3 ? 1.0f : .55f);
+	// Idle, only the content dims; the backing stays solid so markers under it do not show through.
+	ImGui::PushStyleColor(ImGuiCol_ChildBg, 0);
+	ImGui::PushStyleVar(ImGuiStyleVar_Alpha, Active() || ImGui::GetTime() - m_lastInput < 3 ? 1.0f : .6f);
 	ImGui::BeginChild("Pilot HUD", {width, height}, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar);
 	auto* draw = ImGui::GetWindowDrawList();
+	const auto corner = ImGui::GetWindowPos();
+	draw->AddRectFilled(corner, {corner.x + width, corner.y + height}, theme::Bg,
+						ImGui::GetStyle().ChildRounding);
 	const auto& controls = m_controls[m_hand];
 	static constexpr const char* targetNames[] = {"Player", "Head", "Left hand", "Right hand"};
 	static constexpr PilotAction targetKeys[] = {PilotAction::TargetPlayer, PilotAction::TargetHead,
@@ -447,7 +494,7 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 		const ImVec2 size{36 * scale, 8 * scale};
 		ImGui::Dummy({size.x, rowHeight});
 		const ImVec2 top{position.x, position.y + (rowHeight - size.y) / 2};
-		draw->AddRectFilled(top, {top.x + size.x, top.y + size.y}, ImGui::GetColorU32(ImGuiCol_FrameBg), 2);
+		draw->AddRectFilled(top, {top.x + size.x, top.y + size.y}, ImGui::GetColorU32(theme::Line), 2);
 		draw->AddRectFilled(top, {top.x + size.x * std::clamp(value, 0.0f, 1.0f), top.y + size.y},
 							ImGui::GetColorU32(ImGuiCol_SliderGrabActive), 2);
 	};
@@ -466,31 +513,6 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 		draw->AddText({top.x + 5 * scale, top.y + 2 * scale},
 					  ImGui::GetColorU32(held ? ImGuiCol_Text : ImGuiCol_TextDisabled), label);
 	};
-	bool conflict = false;
-	const auto state = input.Snapshot();
-	std::vector<ControlChannel> channels{m_hand ? ControlChannel::RightControls : ControlChannel::LeftControls};
-	if (m_target == PilotTarget::Player)
-		channels.insert(channels.end(), {ControlChannel::Head, ControlChannel::LeftPose, ControlChannel::RightPose,
-										 ControlChannel::Trackers});
-	else
-		channels.push_back(m_target == PilotTarget::Head   ? ControlChannel::Head
-						   : m_target == PilotTarget::Left ? ControlChannel::LeftPose
-														   : ControlChannel::RightPose);
-	std::optional<ObservedSetup> observed;
-	try
-	{
-		if (state.observation)
-			observed = ReadObservedSetup(state.state);
-	}
-	catch (const std::exception&)
-	{
-	}
-	if (observed)
-		for (const auto channel : channels)
-		{
-			const auto& owner = observed->owners[static_cast<std::size_t>(channel)];
-			conflict |= owner && (!state.source || *owner != *state.source);
-		}
 	if (conflict)
 	{
 		place(2);
@@ -504,7 +526,7 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 		}
 		ImGui::SetItemTooltip("Take these devices back from the replay or script that controls them.");
 	}
-	else
+	else if (!compact)
 	{
 		place(2);
 		bar("Trigger", controls.trigger);
@@ -541,6 +563,9 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 		hint = "Hold " + KeyName(PilotAction::Capture) + " over the image to pilot";
 	if (m_gamepadActive)
 		hint += " · Gamepad active";
+	if (textWidth(hint.c_str()) > width - style.WindowPadding.x * 2)
+		hint = m_captured ? KeyName(PilotAction::Escape) + " releases"
+						  : "Hold " + KeyName(PilotAction::Capture) + " to pilot";
 	ImGui::TextDisabled("%s", hint.c_str());
 	const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
 	ImGui::EndChild();

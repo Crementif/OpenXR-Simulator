@@ -96,7 +96,11 @@ float NarrowRailWidth()
 	const float unit = ImGui::GetFontSize() / 17;
 	return label + 46 * unit + ImGui::GetStyle().WindowPadding.x * 2;
 }
-bool DrawDeviceRail(Selection& selection, const RuntimeView& view, const CompanionSettings& settings)
+float IconRailWidth()
+{
+	return 34 * ImGui::GetFontSize() / 17 + ImGui::GetStyle().WindowPadding.x * 2;
+}
+bool DrawDeviceRail(Selection& selection, const RuntimeView& view, const CompanionSettings& settings, bool iconOnly)
 {
 	bool picked = false;
 	std::string scenarios;
@@ -116,6 +120,7 @@ bool DrawDeviceRail(Selection& selection, const RuntimeView& view, const Compani
 		if (const auto item = std::get_if<SessionItemSel>(&selection))
 			selected = index == 7 + static_cast<std::size_t>(item->item);
 		RailStatus status;
+		status.iconOnly = iconOnly;
 		std::string key;
 		if (row.key)
 		{

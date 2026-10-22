@@ -1,13 +1,15 @@
 #include "app/PreferencesDialog.h"
 
 #include <SDL3/SDL.h>
+#include <cstdio>
 #include <imgui.h>
 #include <string>
 #include <utility>
 
 namespace simxr::app
 {
-bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirty)
+bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirty, std::uint64_t keptBytes,
+							 std::uint64_t keptBudget)
 {
 	if (open)
 		ImGui::OpenPopup("Workspace settings");
@@ -22,6 +24,17 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 	{
 		settings.snapshotBudgetMiB = static_cast<std::uint32_t>(budget);
 		dirty = true;
+	}
+	if (keptBudget)
+	{
+		char usage[48];
+		std::snprintf(usage, sizeof(usage), "%llu / %llu MiB", static_cast<unsigned long long>(keptBytes >> 20),
+					  static_cast<unsigned long long>(keptBudget >> 20));
+		ImGui::ProgressBar(static_cast<float>(keptBytes) / static_cast<float>(keptBudget),
+						   {ImGui::CalcItemWidth(), 0}, usage);
+		ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+		ImGui::TextUnformatted("Kept previews");
+		ImGui::SetItemTooltip("Downscaled copies of shown frames for looking back while the app runs");
 	}
 	if (ImGui::BeginTabBar("Preference pages"))
 	{

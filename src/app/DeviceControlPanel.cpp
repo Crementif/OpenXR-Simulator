@@ -451,7 +451,30 @@ void DeviceControlPanel::DrawPlayer()
 void DeviceControlPanel::DrawAnchor(bool tracker, std::size_t index)
 {
 	int anchor = static_cast<int>(tracker ? m_playerRig.TrackerAnchor(index) : m_playerRig.HandAnchor(index));
-	if (ImGui::Combo("Anchor", &anchor, "Body\0Head\0World\0"))
+	static constexpr const char* names[] = {"Body", "Head", "World"};
+	static constexpr const char* tips[] = {"Moves and turns with the player", "Follows the head",
+										   "Stays put in the room"};
+	bool changed = false;
+	ImGui::PushID("Anchor");
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextDisabled("Follows");
+	for (int option = 0; option < 3; ++option)
+	{
+		ImGui::SameLine(0, option ? 2.0f : -1.0f);
+		const bool selected = option == anchor;
+		if (selected)
+			ImGui::PushStyleColor(ImGuiCol_Button, theme::Accent);
+		if (ImGui::Button(names[option]) && !selected)
+		{
+			anchor = option;
+			changed = true;
+		}
+		if (selected)
+			ImGui::PopStyleColor();
+		ImGui::SetItemTooltip("%s", tips[option]);
+	}
+	ImGui::PopID();
+	if (changed)
 	{
 		if (tracker)
 			m_playerRig.SetTrackerAnchor(index, static_cast<Anchor>(anchor));

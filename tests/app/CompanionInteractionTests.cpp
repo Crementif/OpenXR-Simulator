@@ -1877,6 +1877,99 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 	std::cout << "PASS retroactive take replayed over its source frames\n";
 }
 
+// D11: connected layouts at the target sizes and the overlay drawer below 800 effective pixels.
+void CheckLayouts(Interaction& test, const std::filesystem::path& qa)
+{
+	const auto pump = [&](int count)
+	{
+		for (int index = 0; index < count; ++index)
+		{
+			test.Frame();
+			SDL_Delay(10);
+		}
+	};
+	const auto click = [&](ImVec2 point)
+	{
+		for (const bool down : {true, false})
+		{
+			SDL_Event event{};
+			event.type = SDL_EVENT_MOUSE_MOTION;
+			event.motion.windowID = SDL_GetWindowID(test.window.Native());
+			event.motion.x = point.x;
+			event.motion.y = point.y;
+			Require(SDL_PushEvent(&event), "Push layout motion");
+			event = {};
+			event.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+			event.button.windowID = SDL_GetWindowID(test.window.Native());
+			event.button.button = SDL_BUTTON_LEFT;
+			event.button.down = down;
+			event.button.x = point.x;
+			event.button.y = point.y;
+			Require(SDL_PushEvent(&event), "Push layout click");
+			pump(2);
+		}
+	};
+	struct Size
+	{
+		int width, height;
+		float scale;
+	};
+	const std::array<Selection, 4> pages{DeviceSel{DevicePage::Player}, DeviceSel{DevicePage::Right},
+										 SessionItemSel{SessionItem::Headset}, LibrarySel{}};
+	for (const auto size : {Size{1280, 720, 1}, Size{1280, 720, 1.5f}, Size{1920, 1080, 1}, Size{1920, 1080, 1.5f},
+							Size{1024, 640, 1.5f}})
+	{
+		test.window.Resize(size.width, size.height);
+		test.workspace.SetScale(size.scale);
+		const bool overlay = size.width / size.scale < 800;
+		for (std::size_t page = 0; page < pages.size(); ++page)
+		{
+			test.workspace.Select(pages[page]);
+			pump(6);
+			const auto& shell = test.workspace.State();
+			Require(shell.inspectorVisible, "Selecting a page did not show the inspector");
+			for (const char* name : {"Top bar", "Device rail", "Inspector", "Timeline", "GPU preview"})
+			{
+				const auto* window = FindPanel(name);
+				Require(window && !window->ScrollbarX, "Shell region has horizontal scrolling");
+				Require(window->Pos.x >= 0 && window->Pos.x + window->Size.x <= size.width + 1,
+						"Shell region extends beyond window");
+			}
+			Require(FindPanel("Inspector")->Pos.x + FindPanel("Inspector")->Size.x <= size.width + 1,
+					"Inspector is clipped");
+			const auto name = std::to_string(size.width) + "-" + std::to_string(static_cast<int>(size.scale * 100)) +
+							  "-" + std::to_string(page) + ".bmp";
+			test.renderer.RequestScreenshot((qa / name).string());
+			pump(2);
+		}
+		if (overlay)
+		{
+			const auto& shell = test.workspace.State();
+			const auto* inspector = FindPanel("Inspector");
+			const auto* preview = FindPanel("GPU preview");
+			Require(inspector->Pos.x < preview->Pos.x + preview->Size.x, "Overlay drawer does not cover the preview");
+			// The drawer is drawn after the preview, so it covers it.
+			Require(inspector->ParentWindow == preview->ParentWindow &&
+						inspector->BeginOrderWithinParent > preview->BeginOrderWithinParent,
+					"Overlay drawer is drawn under the preview");
+			click({preview->Pos.x + 30, preview->Pos.y + preview->Size.y * .6f});
+			pump(2);
+			Require(!shell.inspectorVisible, "Clicking the preview did not close the drawer");
+			test.renderer.RequestScreenshot((qa / "overlay-closed.bmp").string());
+			pump(2);
+			ImGui::ActivateItemByID(FindPanel("Device rail")->GetID("Right"));
+			pump(3);
+			Require(shell.inspectorVisible, "Selecting a rail row did not open the drawer");
+		}
+	}
+	test.window.Resize(1280, 800);
+	test.workspace.SetScale(1);
+	pump(4);
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Validation errors in layout capture");
+	std::cout << "PASS connected layouts at four sizes and the overlay drawer\n";
+}
+
 // D10: record, stop, name, replay and cancel with only Rec, the stop popover and the Library.
 void CheckLibrary(Interaction& test, const std::filesystem::path& directory)
 {
@@ -2327,6 +2420,8 @@ void CheckToolbarLaunch(const char* executable)
 		CheckInputTake(test, directory);
 	if (std::getenv("SIMXR_LIBRARY_QA"))
 		CheckLibrary(test, directory);
+	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"); qa && std::getenv("SIMXR_LAYOUT_QA"))
+		CheckLayouts(test, qa);
 	if (std::getenv("SIMXR_INPUT_QA"))
 		CheckManualEdges(state);
 	if (std::getenv("SIMXR_RIG_QA"))

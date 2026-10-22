@@ -47,6 +47,16 @@ std::string AppName(const std::string& endpoint)
 	}
 	return file;
 }
+// Which page a selection shows, for noticing a new selection.
+std::pair<std::size_t, int> SelectionKey(const Selection& selection)
+{
+	int page = -1;
+	if (const auto device = std::get_if<DeviceSel>(&selection))
+		page = static_cast<int>(device->page);
+	else if (const auto item = std::get_if<SessionItemSel>(&selection))
+		page = static_cast<int>(item->item);
+	return {selection.index(), page};
+}
 } // namespace
 struct WorkspacePanels::Impl
 {
@@ -422,7 +432,7 @@ struct WorkspacePanels::Impl
 		const bool compact = width / scale < 1100, overlay = width / scale < 800;
 		const float narrowRail = NarrowRailWidth();
 		const bool narrow = compact || settings.railCollapsed;
-		const float rail = previewExpanded ? 0 : narrow ? narrowRail : 196 * scale;
+		const float rail = previewExpanded ? 0 : overlay ? IconRailWidth() : narrow ? narrowRail : 196 * scale;
 		const float inspector =
 			previewExpanded ? 0 : std::min(settings.inspectorWidth, compact ? 320.0f : 520.0f) * scale;
 		const float timelineSize =
@@ -439,7 +449,7 @@ struct WorkspacePanels::Impl
 			ImGui::SetCursorPos({origin.x, top});
 			ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::Surface);
 			ImGui::BeginChild("Device rail", {rail, bodyHeight}, 0, ImGuiWindowFlags_NoScrollbar);
-			if (DrawDeviceRail(shell.selection, runtime.View(), settings))
+			if (DrawDeviceRail(shell.selection, runtime.View(), settings, overlay))
 				drawer = true;
 			ImGui::EndChild();
 			ImGui::PopStyleColor();
@@ -458,7 +468,21 @@ struct WorkspacePanels::Impl
 		}
 		runtime.ConfigurePilot(settings.pilotBindings, settings.gamepadBindings);
 		runtime.ConfigureSnapshots(settings.snapshotBudgetMiB);
+		// The overlay drawer closes on a click into the preview and opens on any new selection.
+		const auto window = ImGui::GetWindowPos();
+		const auto contains = [&](const ShellRect& rect, ImVec2 point)
+		{
+			return point.x >= window.x + rect.x && point.x < window.x + rect.x + rect.width &&
+				   point.y >= window.y + rect.y && point.y < window.y + rect.y + rect.height;
+		};
+		const auto selected = SelectionKey(shell.selection);
+		if (overlay && drawer && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+			!ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) &&
+			contains(shell.preview, ImGui::GetIO().MousePos) && !contains(shell.inspector, ImGui::GetIO().MousePos))
+			drawer = false;
 		runtime.DrawPreview(shell);
+		if (SelectionKey(shell.selection) != selected)
+			drawer = true;
 		if (shell.inspectorVisible)
 		{
 			ImGui::SetCursorPos({shell.inspector.x, shell.inspector.y});
@@ -470,7 +494,6 @@ struct WorkspacePanels::Impl
 		}
 		for (auto& notice : runtime.TakeNotices())
 			notices.Push(std::move(notice));
-		const auto window = ImGui::GetWindowPos();
 		notices.Draw({window.x + shell.preview.x, window.y + shell.preview.y, shell.preview.width, shell.preview.height});
 		if (!previewExpanded)
 		{
@@ -573,7 +596,7 @@ struct WorkspacePanels::Impl
 				ImGui::EndPopup();
 			}
 		}
-		if (preferences.Draw(settings, showSettings, dirty))
+		if (preferences.Draw(settings, showSettings, dirty, runtime.KeptPreviews().Bytes(), runtime.KeptPreviews().Budget()))
 		{
 			settings.endpoint = runtime.Endpoint();
 			Save();

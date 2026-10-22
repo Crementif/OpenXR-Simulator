@@ -230,7 +230,10 @@ void SpatialEditor::DrawRigView(Selection& selection)
 {
 	if (!std::holds_alternative<DeviceSel>(selection) || (!m_observed && !m_historical) || m_view.expanded)
 		return;
-	DrawRig(selection, {ImGui::GetContentRegionAvail().x / (ImGui::GetFontSize() / 16), 220});
+	// A short drawer keeps room for the controls below the rig.
+	const float scale = ImGui::GetFontSize() / 16;
+	const auto available = ImGui::GetContentRegionAvail();
+	DrawRig(selection, {available.x / scale, std::clamp(available.y / scale * .3f, 120.0f, 220.0f)});
 }
 void SpatialEditor::DrawPlacement(Selection& selection)
 {

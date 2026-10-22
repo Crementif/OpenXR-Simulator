@@ -3,6 +3,7 @@
 #include "app/widgets/SpatialWidgets.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <numbers>
 
 namespace simxr::app
@@ -45,6 +46,13 @@ SpatialEditResult ArcballWidget(const char* id, ArcballState& state, XrQuaternio
 		if (std::hypot(mouse.x - end.x, mouse.y - end.y) < 9 * scale)
 			tip = static_cast<int>(axis);
 	}
+	// Axis legend in the lower-left corner.
+	for (std::size_t axis = 0; axis < axes.size(); ++axis)
+	{
+		const char label[2] = {static_cast<char>('X' + axis), 0};
+		draw->AddText({center.x - radius + axis * ImGui::GetFontSize() * .8f, center.y + radius - ImGui::GetFontSize()},
+					  colors[axis], label);
+	}
 	if (enabled && hovered && distance <= 1 && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
 	{
 		orientation = reset;
@@ -73,7 +81,13 @@ SpatialEditResult ArcballWidget(const char* id, ArcballState& state, XrQuaternio
 		else
 			delta = ArcballRotation(state.start, point);
 		if (ImGui::GetIO().KeyCtrl)
+		{
 			delta = SnapRotation(delta, std::numbers::pi_v<float> / 12);
+			char angle[16];
+			std::snprintf(angle, sizeof(angle), "%.0f\u00b0",
+						  2 * std::acos(std::clamp(std::abs(delta.w), 0.0f, 1.0f)) * 180 / std::numbers::pi_v<float>);
+			draw->AddText({center.x - ImGui::CalcTextSize(angle).x / 2, center.y - radius}, theme::Text, angle);
+		}
 		const auto start = RelativePose({state.orientation, {}}, {view, {}}).orientation;
 		orientation = Multiply(view, Multiply(delta, start));
 		changed = true;

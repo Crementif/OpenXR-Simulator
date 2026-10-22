@@ -93,8 +93,11 @@ bool RailItem(const char* label, Icon icon, bool selected, const RailStatus& sta
 		draw->AddCircleFilled({iconX + iconSize / 2, minimum.y + height / 2 + iconSize / 2 - 2 * unit}, 3.5f * unit,
 							  status.dot);
 	const float textX = iconX + iconSize / 2 + 8 * unit;
-	draw->AddText({textX, minimum.y + (height - ImGui::GetFontSize()) / 2}, selected ? theme::Text : theme::TextDim,
-				  label);
+	// An icon-only rail names the row in its tooltip.
+	const bool named = !status.iconOnly;
+	if (named)
+		draw->AddText({textX, minimum.y + (height - ImGui::GetFontSize()) / 2}, selected ? theme::Text : theme::TextDim,
+					  label);
 	float right = maximum.x - 6 * unit;
 	const float textEnd = textX + ImGui::CalcTextSize(label).x + 6 * unit;
 	for (const auto& [text, color] : {std::pair{status.key, theme::TextDim}, {status.badge, status.badgeColor}})
@@ -102,12 +105,12 @@ bool RailItem(const char* label, Icon icon, bool selected, const RailStatus& sta
 		if (!text)
 			continue;
 		const auto size = ImGui::CalcTextSize(text);
-		if (right - size.x < textEnd)
+		if (!named || right - size.x < textEnd)
 			break;
 		draw->AddText({right - size.x, minimum.y + (height - size.y) / 2}, color, text);
 		right -= size.x + 8 * unit;
 	}
-	if (hovered && (status.dotTooltip || status.key))
+	if (hovered && (status.dotTooltip || status.key || !named))
 	{
 		ImGui::BeginTooltip();
 		ImGui::TextUnformatted(label);
