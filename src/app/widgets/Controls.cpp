@@ -81,12 +81,21 @@ bool RailItem(const char* label, Icon icon, bool selected, const RailStatus& sta
 	const bool hovered = ImGui::IsItemHovered();
 	auto* draw = ImGui::GetWindowDrawList();
 	const ImVec2 maximum{minimum.x + width, minimum.y + height};
-	if (selected || hovered)
-		draw->AddRectFilled(minimum, maximum,
-							selected ? theme::SurfaceRaised : theme::Mix(theme::Surface, theme::Text, .05f),
-							theme::Radius * unit);
+	if (hovered || ImGui::IsItemActive())
+		ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+	// The rail's window padding is crossed so a selected tab meets the inspector.
+	const float join = ImGui::GetCurrentWindowRead()->WindowPadding.x;
 	if (selected)
+	{
+		const auto window = ImGui::GetWindowPos(), size = ImGui::GetWindowSize();
+		draw->PushClipRect(window, {window.x + size.x, window.y + size.y});
+		draw->AddRectFilled(minimum, {maximum.x + join, maximum.y}, theme::Surface, theme::Radius * unit,
+							ImDrawFlags_RoundCornersLeft);
+		draw->PopClipRect();
 		draw->AddRectFilled(minimum, {minimum.x + 3 * unit, maximum.y}, theme::Accent, 1.5f * unit);
+	}
+	else if (hovered)
+		draw->AddRectFilled(minimum, maximum, theme::Mix(theme::Bg, theme::Text, .07f), theme::Radius * unit);
 	const float iconSize = 18 * unit, iconX = minimum.x + 8 * unit + iconSize / 2;
 	DrawIcon(draw, icon, {iconX, minimum.y + height / 2}, iconSize, selected ? theme::Text : theme::TextDim);
 	if (status.dot)
@@ -117,7 +126,7 @@ bool RailItem(const char* label, Icon icon, bool selected, const RailStatus& sta
 		if (status.dotTooltip)
 			ImGui::TextDisabled("%s", status.dotTooltip);
 		if (status.key)
-			ImGui::TextDisabled("Pilot with %s", status.key);
+			ImGui::TextDisabled(status.pilotKey ? "Pilot with %s" : "%s", status.key);
 		ImGui::EndTooltip();
 	}
 	return pressed;

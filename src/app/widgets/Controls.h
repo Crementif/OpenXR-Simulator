@@ -25,10 +25,13 @@ struct RailStatus
 	ImU32 badgeColor = 0;
 	// Shortcut key drawn dim at the right when there is room.
 	const char* key = nullptr;
+	// The key picks this row as the pilot target, rather than opening it.
+	bool pilotKey = true;
 	// Only the icon; the name moves to the tooltip.
 	bool iconOnly = false;
 };
-// One full-width device rail row: accent bar when selected, icon, name, status.
-// Height 0 uses the standard 36 base px row.
+// One full-width rail tab: the selected tab takes the inspector's surface colour
+// up to the rail's right edge, so it joins the page it opens. Height 0 uses the
+// standard 36 base px row.
 bool RailItem(const char* label, Icon icon, bool selected, const RailStatus& status, float height = 0);
 } // namespace simxr::app

@@ -790,6 +790,10 @@ static int runProbe()
         frames = std::max(4, std::atoi(value));
     std::future<std::pair<XrResult, XrFrameState>> nextWait;
     const bool threaded = std::getenv("SIMXR_PROBE_THREADED") != nullptr;
+    // Every Nth frame renders 40 ms late, so frame timing views have misses to show.
+    int slowEvery = 0;
+    if (auto value = std::getenv("SIMXR_PROBE_SLOW_EVERY"))
+        slowEvery = std::max(0, std::atoi(value));
     if (std::getenv("SIMXR_PROBE_CONTROL"))
     {
         std::ofstream(data / "control.ready") << "ready\n";
@@ -832,6 +836,8 @@ static int runProbe()
             firstTime = prior;
         XrFrameBeginInfo bi{XR_TYPE_FRAME_BEGIN_INFO};
         XR(xrBeginFrame(session, &bi));
+        if (slowEvery && frame % slowEvery == slowEvery - 1)
+            std::this_thread::sleep_for(std::chrono::milliseconds(40));
         if (std::getenv("SIMXR_PROBE_RENDER_GATE"))
         {
             const auto gate = "rendering." + std::to_string(frame + 3);

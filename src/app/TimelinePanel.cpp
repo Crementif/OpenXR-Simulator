@@ -116,6 +116,103 @@ void TimelinePanel::DrawGhost(const HistoryStore& history)
 	if (first && last && anchor && *last >= *first)
 		m_canvas.DrawGhost(history, *first, *anchor, *last - *first + 1);
 }
+void TimelinePanel::DrawMeter(const HistoryStore& history, const RuntimeView& state, ShellRect area, bool oneRow)
+{
+	if (!history.Size() || !state.sessionAvailable || area.width <= 0 || area.height <= 0)
+		return;
+	// The last 90 frames of this run, and every missed frame in the last 10 s.
+	const auto last = history.Size() - 1;
+	const auto& newest = history.At(last);
+	std::size_t first = last;
+	float sum = 0, minimum = newest.frameMilliseconds, maximum = 0;
+	while (first > 0 && last - first < 89 && !(history.At(first).flags & HistoryRunStart))
+		--first;
+	for (auto index = first; index <= last; ++index)
+	{
+		const float value = history.At(index).frameMilliseconds;
+		sum += value;
+		minimum = std::min(minimum, value);
+		maximum = std::max(maximum, value);
+	}
+	const auto count = last - first + 1;
+	const float average = sum / count, budget = newest.periodMilliseconds;
+	std::size_t missed = 0;
+	for (auto index = history.LowerBound(newest.seconds - 10); index <= last; ++index)
+		missed += (history.At(index).flags & (HistoryLate | HistoryDropped)) != 0;
+	// Green at budget, amber when frames run long, red when frames were missed.
+	const ImU32 color = state.manual ? theme::TextDim
+						: missed > 3 || average > budget * 1.5f ? theme::Record
+						: missed || average > budget * 1.05f	 ? theme::Warn
+																 : theme::Ok;
+	char text[48];
+	if (oneRow)
+		std::snprintf(text, sizeof(text), "%.0f fps", average > 0 ? 1000 / average : 0);
+	else
+		std::snprintf(text, sizeof(text), "%.0f fps \u00b7 %.1f ms", average > 0 ? 1000 / average : 0, average);
+	auto* draw = ImGui::GetWindowDrawList();
+	const float font = ImGui::GetFontSize(), scale = font / 16;
+	const float textY = oneRow ? area.y + (area.height - font) / 2 : area.y + 2 * scale;
+	draw->AddText({area.x, textY}, color, text);
+	const ImVec2 hoverMin{area.x, area.y}, hoverMax{area.x + area.width, area.y + area.height};
+	// A sparkline under the numbers: one bar per frame, dashed budget at mid height.
+	const float sparkTop = textY + font + 3 * scale, sparkBottom = area.y + area.height - 3 * scale;
+	if (!oneRow && sparkBottom - sparkTop >= 10 * scale)
+	{
+		const float height = sparkBottom - sparkTop, step = area.width / 90;
+		for (auto index = first; index <= last; ++index)
+		{
+			const auto& frame = history.At(index);
+			const float bar = std::min(height, height * frame.frameMilliseconds / (2 * std::max(1.f, budget)));
+			const float x = area.x + (index - first) * step;
+			const ImU32 tone = frame.flags & (HistoryLate | HistoryDropped) ? theme::Record
+							   : frame.frameMilliseconds > budget * 1.05f		 ? theme::Warn
+																			 : theme::Accent;
+			draw->AddRectFilled({x, sparkBottom - bar}, {x + std::max(1.f, step - scale), sparkBottom}, tone);
+		}
+		const float middle = sparkBottom - height / 2;
+		for (float dash = area.x; dash < area.x + area.width; dash += 6 * scale)
+			draw->AddLine({dash, middle}, {std::min(area.x + area.width, dash + 3 * scale), middle},
+						  theme::Fade(theme::TextDim, .7f), scale);
+	}
+	if (ImGui::IsMouseHoveringRect(hoverMin, hoverMax) && ImGui::IsWindowHovered())
+	{
+		ImGui::BeginTooltip();
+		ImGui::Text("Frame interval over the last %zu frames", count);
+		ImGui::TextDisabled("min %.1f \u00b7 avg %.1f \u00b7 max %.1f ms", minimum, average, maximum);
+		ImGui::TextDisabled("Budget %.1f ms (%.0f Hz display)", budget, budget > 0 ? 1000 / budget : 0);
+		ImGui::TextDisabled("%zu missed frames in the last 10 s", missed);
+		ImGui::TextDisabled("Time between display times; the app's render time is not reported");
+		ImGui::EndTooltip();
+	}
+}
+void TimelinePanel::DrawLegend()
+{
+	if (!ImGui::BeginPopup("Timeline legend"))
+		return;
+	const auto row = [](const char* name, const char* meaning)
+	{
+		ImGui::TextUnformatted(name);
+		ImGui::SameLine(ImGui::GetFontSize() * 7);
+		ImGui::TextDisabled("%s", meaning);
+	};
+	ImGui::SeparatorText("Lanes");
+	row("Frame time", "One bar per frame; dashed line is the frame budget");
+	row("", "Amber ran long, red missed its display time");
+	row("paused", "The app was frozen; it only advanced when stepped");
+	row("Images", "Kept images; diamonds are snapshots, filled when pinned");
+	row("Input", "Left hand rises, right hand falls; shading is script or replay");
+	row("Recording", "Recordings and replays; double-click opens the Library");
+	row("Events", "Connects, pauses and script output");
+	ImGui::SeparatorText("Mouse and keys");
+	row("Wheel", "Zoom around the pointer");
+	row("Middle drag", "Pan");
+	row("Click", "Show that frame");
+	row("Drag ruler", "Select a range");
+	row(", and .", "Previous and next frame; with Shift, markers");
+	row("M", "Add a marker");
+	row("Home / End", "Fit everything / go live");
+	ImGui::EndPopup();
+}
 void TimelinePanel::Observe(const RuntimeView& state)
 {
 	const auto observed = [&](const char* text, const RuntimeView& at)
@@ -178,7 +275,7 @@ void TimelinePanel::Observe(const RuntimeView& state)
 	}
 	m_previous = state;
 }
-bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell)
+bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded, bool& fold)
 {
 	const auto state = runtime.Snapshot();
 	const auto& history = runtime.History();
@@ -234,24 +331,31 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell)
 
 	// Left column: transport, then the lane names the canvas draws below it.
 	const auto& style = ImGui::GetStyle();
+	const float button = ImGui::GetFrameHeight();
 	// Icon buttons with a word are one frame height wide plus the word.
 	const auto buttonWidth = [&](const char* label)
 	{
-		return ImGui::GetFrameHeight() + ImGui::CalcTextSize(label).x + style.FramePadding.x;
+		return button + ImGui::CalcTextSize(label).x + style.FramePadding.x;
 	};
-	const float arrows = ImGui::GetFrameHeight() * 2 + style.ItemSpacing.x;
-	const float transport = buttonWidth("Continue") + buttonWidth("Next") + arrows + style.ItemSpacing.x * 2;
-	const float header = std::max(transport, ImGui::CalcTextSize("Recording").x) + style.ItemSpacing.x * 2;
-	const float liveWidth = buttonWidth("LIVE") + style.ItemSpacing.x * 2;
+	const float transport = buttonWidth("Continue") + button * 3 + style.ItemSpacing.x * 3;
+	const float header = std::max(transport, ImGui::CalcTextSize("Frame time").x) + style.ItemSpacing.x * 2;
+	const float liveWidth = std::max(buttonWidth("Go live"), ImGui::CalcTextSize("LIVE \u00b7 paused").x + button) +
+							button * 2 + style.ItemSpacing.x * 4 +
+							(folded ? ImGui::CalcTextSize("000 fps").x + style.ItemSpacing.x : 0);
+	m_canvas.SetTint(m_tint);
+	if (history.Size())
+		m_canvas.SetBudget(history.At(history.Size() - 1).periodMilliseconds);
 	m_canvas.Begin(header, liveWidth);
 	const auto cell = m_canvas.TransportRect();
 	ImGui::SetCursorScreenPos(
-		{cell.x + style.ItemSpacing.x, cell.y + std::max(0.f, (cell.height - ImGui::GetFrameHeight()) / 2)});
+		{cell.x + style.ItemSpacing.x, cell.y + std::max(0.f, (cell.height - button) / 2)});
 	const char* why = !state.sessionAvailable ? "Connect an app first"
 					  : state.operationPending ? "Waiting for the last command"
 											   : nullptr;
 	ImGui::BeginDisabled(why != nullptr);
-	const char* pauseTip = why ? why : state.manual ? "Continue (F8)" : "Pause (F6)";
+	const char* pauseTip = why			? why
+						   : state.manual ? "Let the app run again (F8)"
+										  : "Freeze the app on its current frame (F6)";
 	if (state.manual ? IconButton("Continue", Icon::Play, pauseTip, false, "Continue")
 					 : IconButton("Pause", Icon::Pause, pauseTip, false, "Pause"))
 	{
@@ -264,45 +368,101 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell)
 			runtime.Pause();
 	}
 	ImGui::EndDisabled();
-	ImGui::SameLine();
-	ImGui::BeginDisabled(why != nullptr || !state.manual);
-	if (IconButton("Next", Icon::StepForward,
-				   why ? why : !state.manual ? "Next frame (F7). Pause first." : "Next frame (F7)", false, "Next"))
+	// The arrows step through frames; at the paused live edge the next frame is
+	// made by the app. Shift jumps between markers instead.
+	const std::optional<std::size_t> latest =
+		history.Size() ? std::optional<std::size_t>(history.Size() - 1) : std::nullopt;
+	const auto current = state.time.following ? latest : cursorIndex;
+	const bool atEdge = !current || *current == *latest;
+	const bool shift = ImGui::GetIO().KeyShift;
+	const auto stepBack = [&]
 	{
-		runtime.Step();
-		inspect = true;
-	}
+		if (shift)
+			jump(false);
+		else if (current && *current > 0)
+			choose(*current - 1);
+	};
+	const auto stepForward = [&]
+	{
+		if (shift)
+			jump(true);
+		else if (!atEdge)
+			choose(*current + 1);
+		else if (state.manual && !why)
+		{
+			runtime.Step();
+			inspect = true;
+		}
+		else if (!state.time.following)
+			goLive();
+	};
+	ImGui::SameLine();
+	ImGui::BeginDisabled(!shift && (!current || *current == 0));
+	if (IconButton("Step back", Icon::StepBack, shift ? "Previous marker (Shift+,)" : "Previous frame (,)"))
+		stepBack();
 	ImGui::EndDisabled();
 	ImGui::SameLine();
-	ImGui::BeginDisabled(m_markers.empty());
-	const char* noMarkers = "Press M over the timeline to add a marker";
-	if (IconButton("Previous marker", Icon::ChevronLeft, m_markers.empty() ? noMarkers : "Previous marker (,)"))
-		jump(false);
-	ImGui::SameLine();
-	if (IconButton("Next marker", Icon::ChevronRight, m_markers.empty() ? noMarkers : "Next marker (.)"))
-		jump(true);
+	const bool canStep = shift || !atEdge || (state.manual && !why) || !state.time.following;
+	ImGui::BeginDisabled(!canStep);
+	const char* forwardTip = shift			  ? "Next marker (Shift+.)"
+							 : !atEdge		  ? "Next frame (.)"
+							 : state.manual	  ? "Let the app make one more frame (. or F7)"
+											  : "Pause first to step the app (F6)";
+	if (IconButton("Step forward", Icon::StepForward, forwardTip))
+		stepForward();
 	ImGui::EndDisabled();
+	ImGui::SameLine();
+	if (IconButton("Timeline help", Icon::Help, "What the lanes, marks and keys mean"))
+		ImGui::OpenPopup("Timeline legend");
+	DrawLegend();
 	if (!ImGui::GetIO().WantTextInput && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows))
 	{
 		if (ImGui::IsKeyPressed(ImGuiKey_Comma))
-			jump(false);
+			stepBack();
 		if (ImGui::IsKeyPressed(ImGuiKey_Period))
-			jump(true);
+			stepForward();
 	}
-	// LIVE has its own column right of the lanes: a label while following, the way back otherwise.
+	// The LIVE column right of the lanes: where the view is, the frame rate,
+	// the slow-frame tint and the fold chevron.
 	const auto live = m_canvas.LiveRect();
-	ImGui::SetCursorScreenPos(
-		{live.x + style.ItemSpacing.x, live.y + std::max(0.f, (live.height - ImGui::GetFrameHeight()) / 2)});
+	// A narrow window keeps only LIVE and the chevron in this column.
+	const bool roomy = live.width >= liveWidth - 1;
+	const float rowY = live.y + std::max(0.f, (live.height - button) / 2);
+	ImGui::SetCursorScreenPos({live.x + style.ItemSpacing.x, rowY});
 	if (!state.time.following && state.sessionAvailable)
 	{
-		if (IconButton("LIVE >|", Icon::Live, "Back to the newest frame (End)", false, "LIVE"))
+		if (IconButton("Go live", Icon::Live, "Jump to the newest frame (End)", false, "Go live"))
 			goLive();
 	}
 	else if (state.sessionAvailable)
+		StateChip("Live state", state.manual ? theme::Paused : theme::Ok, state.manual ? "LIVE \u00b7 paused" : "LIVE",
+				  state.manual ? "Showing the paused frame; stepping shows each new frame"
+							   : "Showing the newest frame as the app makes it");
+	if (folded && roomy)
 	{
-		ImGui::AlignTextToFramePadding();
-		ImGui::TextColored(theme::Vec(theme::Ok), "LIVE");
-		ImGui::SetItemTooltip(state.manual ? "Following the paused frame" : "Following the newest frame");
+		ImGui::SameLine();
+		const auto position = ImGui::GetCursorScreenPos();
+		DrawMeter(history, state, {position.x, live.y, ImGui::CalcTextSize("000 fps").x, live.height}, true);
+	}
+	ImGui::SetCursorScreenPos({live.x + live.width - button * (roomy ? 2 : 1) - style.ItemSpacing.x * 2, rowY});
+	if (roomy)
+	{
+		if (IconButton("Slow frames", Icon::Gauge,
+					   m_tint ? "Stop highlighting missed frames" : "Highlight frames that missed their display time",
+					   m_tint))
+			m_tint = !m_tint;
+		ImGui::SameLine();
+	}
+	if (IconButton("Fold timeline", folded ? Icon::ChevronUp : Icon::ChevronDown,
+				   folded ? "Show the timeline (Ctrl+T)" : "Hide the timeline (Ctrl+T)"))
+		fold = true;
+	if (!folded && roomy)
+	{
+		const auto bounds = m_canvas.Bounds();
+		const float below = live.y + live.height;
+		DrawMeter(history, state, {live.x + style.ItemSpacing.x, below, live.width - style.ItemSpacing.x * 2,
+								   bounds.y + bounds.height - below},
+				  false);
 	}
 	if (state.historyFull)
 	{

@@ -40,7 +40,7 @@ void TimelineCanvas::Begin(float headerWidth, float liveWidth)
 		m_laneY[lane] = top.y + ruler + lane * m_lane;
 	auto* draw = ImGui::GetWindowDrawList();
 	const auto muted = ImGui::GetColorU32(ImGuiCol_TextDisabled), line = ImGui::GetColorU32(ImGuiCol_Border);
-	static constexpr const char* labels[]{"Frames", "Images", "Input", "Recording", "Events"};
+	static constexpr const char* labels[]{"Frame time", "Images", "Input", "Recording", "Events"};
 	for (int lane = 0; lane < m_lanes; ++lane)
 	{
 		const float y = m_laneY[lane];
@@ -150,6 +150,13 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, bool following
 														 top + height},
 							theme::Fade(theme::Accent, .24f));
 	float lastRunLabel = left - 100 * scale, lastSnapshot = left - 12 * scale;
+	const float budget = m_budget > 0 ? m_budget : 33.3f / 2;
+	// The budget line: frames under it made their display time.
+	{
+		const float y = framesBottom - (m_lane - 2) / 2;
+		for (float dash = left; dash < right; dash += 8 * scale)
+			draw->AddLine({dash, y}, {std::min(right, dash + 4 * scale), y}, theme::Fade(theme::TextDim, .5f), scale);
+	}
 	const float markerY = m_compact ? top + 5 * scale : top + ruler - 5 * scale;
 	for (int column = 0; column < int(pixels); ++column)
 	{
@@ -159,9 +166,13 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, bool following
 		if (!bucket.count)
 			continue;
 		const float x = left + column;
-		const auto color = bucket.flags & (HistoryLate | HistoryDropped) ? Alert : Accent;
-		const auto bar = std::max(0.f, std::min(m_lane - 2, m_lane * bucket.maximum / 33.3f));
+		// Bars reach half the lane at the budget; amber above it, red for a missed frame.
+		const bool missed = bucket.flags & (HistoryLate | HistoryDropped);
+		const auto color = missed ? Alert : budget > 0 && bucket.maximum > budget * 1.05f ? theme::Warn : Accent;
+		const auto bar = std::max(1.f, std::min(m_lane - 2, (m_lane - 2) * bucket.maximum / (2 * budget)));
 		draw->AddLine({x, framesBottom}, {x, framesBottom - bar}, color);
+		if (m_tint && missed)
+			draw->AddLine({x, top}, {x, top + height}, theme::Fade(Alert, .22f));
 		if (m_lanes > Images)
 		{
 			const float y = LaneY(Images);
@@ -331,10 +342,15 @@ void TimelineCanvas::DrawPause(double first, double last)
 				end = std::min(m_bounds.x + m_bounds.width, std::max(X(first) + 3 * scale, X(last)));
 	auto* draw = ImGui::GetWindowDrawList();
 	draw->PushClipRect({x, y}, {end, y + m_lane}, true);
-	draw->AddRectFilled({x, y}, {end, y + m_lane}, theme::Fade(theme::Paused, .16f));
-	for (float hatch = x - m_lane; hatch < end; hatch += 6 * scale)
-		draw->AddLine({hatch, y + m_lane}, {hatch + m_lane, y}, Paused, scale);
+	draw->AddRectFilled({x, y}, {end, y + m_lane}, theme::Mix(theme::Surface, theme::Paused, .22f));
+	const char* label = "paused";
+	const auto size = ImGui::CalcTextSize(label);
+	if (end - x > size.x + 8 * scale && m_lane >= size.y)
+		draw->AddText({x + 4 * scale, y + (m_lane - size.y) / 2}, Paused, label);
 	draw->PopClipRect();
+	const auto mouse = ImGui::GetIO().MousePos;
+	if (mouse.x >= x && mouse.x < end && mouse.y >= y && mouse.y < y + m_lane && ImGui::IsWindowHovered())
+		ImGui::SetTooltip("App paused for %.1f s\nIt only advanced when stepped; Continue resumes it", last - first);
 }
 void TimelineCanvas::DrawGhost(const HistoryStore& history, std::size_t source, std::size_t anchor, std::size_t count)
 {

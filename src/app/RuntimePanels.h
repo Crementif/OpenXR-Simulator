@@ -33,6 +33,12 @@ class RuntimePanels
 	// Builds this UI frame's view; drawers read it until the next BeginFrame.
 	const RuntimeView& BeginFrame();
 	const RuntimeView& View() const;
+	// The pointer is captured for piloting; Esc belongs to the pilot.
+	bool PilotActive() const;
+	// Whether the pilot HUD is folded into a strip; the shell persists it.
+	bool& HudFolded();
+	// The preview's pinned crop; the shell keeps one per launch profile.
+	std::optional<ImVec4>& PreviewCrop();
 	void DrawPreview(ShellState& shell);
 	void DrawFramePage(ShellState& shell);
 	void DrawRangePage(const RangeSel& range, ShellState& shell);

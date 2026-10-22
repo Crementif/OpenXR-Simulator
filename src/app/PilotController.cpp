@@ -1,5 +1,6 @@
 #include "app/PilotController.h"
 #include "app/Theme.h"
+#include "app/widgets/Controls.h"
 #include "Math.h"
 #include "app/ManualInputController.h"
 #include <algorithm>
@@ -375,8 +376,8 @@ void PilotController::DrawHelp() const
 bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputController& input)
 {
 	const float scale = ImGui::GetFontSize() / 16;
-	const float width = std::min((maximum.x - minimum.x) * .8f, 720 * scale);
-	if (width < 200 * scale)
+	const float margin = 8 * scale, available = maximum.x - minimum.x - margin * 2;
+	if (available < 120 * scale || maximum.y - minimum.y < 80 * scale)
 		return false;
 	const auto& style = ImGui::GetStyle();
 	const float rowHeight = ImGui::GetFrameHeight();
@@ -412,169 +413,206 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 	const auto targetIndex = static_cast<std::size_t>(m_target);
 	const std::string preview = std::string{"Move: "} + targetNames[targetIndex];
 	const char* lock = m_locked ? "Unlock" : "Lock";
-	const ImVec2 padding{8 * scale, 6 * scale};
-	const float buttonPadding = style.FramePadding.x * 2;
-	// Groups wrap onto further rows when the image is too narrow for one row.
-	std::array<float, 5> groupWidths{
-		textWidth(preview.c_str()) + ImGui::GetFrameHeight() * 1.5f,
-		textWidth("Buttons: Right") + buttonPadding,
-		conflict ? textWidth("Take over") + buttonPadding
-				 : textWidth("Trigger") + textWidth("Grip") + 2 * 40 * scale + style.ItemSpacing.x,
-		conflict ? 0 : textWidth("A") + textWidth("B") + textWidth("Menu") + 3 * 14 * scale + 26 * scale,
-		textWidth(lock) + buttonPadding};
-	std::array<int, 5> groupRows{};
-	int rows = 1;
-	float height = 0;
-	const auto layout = [&]
-	{
-		rows = 1;
-		for (float used = 0, available = width - padding.x * 2; const auto index : {0, 1, 2, 3, 4})
-		{
-			if (!groupWidths[index])
-				continue;
-			const float needed = groupWidths[index] + (used > 0 ? style.ItemSpacing.x : 0);
-			if (used > 0 && used + needed > available)
-			{
-				++rows;
-				used = 0;
-			}
-			used += used > 0 ? needed : groupWidths[index];
-			groupRows[index] = rows - 1;
-		}
-		height = rows * rowHeight + ImGui::GetTextLineHeight() + padding.y * 2 + rows * style.ItemSpacing.y;
-	};
-	layout();
-	// On a small image the HUD keeps only what is not on the hand page: target, hand and lock.
-	const bool compact = !conflict && height > (maximum.y - minimum.y) * .3f;
-	if (compact)
-	{
-		groupWidths[2] = groupWidths[3] = 0;
-		layout();
-	}
-	const auto place = [&](int group)
-	{
-		int previous = group - 1;
-		while (previous >= 0 && !groupWidths[previous])
-			--previous;
-		if (previous >= 0 && groupRows[group] == groupRows[previous])
-			ImGui::SameLine();
-	};
-	const auto saved = ImGui::GetCursorScreenPos();
-	ImGui::SetCursorScreenPos({(minimum.x + maximum.x - width) / 2, maximum.y - height - 6 * scale});
-	// Idle, only the content dims; the backing stays solid so markers under it do not show through.
-	ImGui::PushStyleColor(ImGuiCol_ChildBg, 0);
-	ImGui::PushStyleVar(ImGuiStyleVar_Alpha, Active() || ImGui::GetTime() - m_lastInput < 3 ? 1.0f : .6f);
-	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, padding);
-	ImGui::BeginChild("Pilot HUD", {width, height}, ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
-					  ImGuiWindowFlags_NoScrollbar);
-	auto* draw = ImGui::GetWindowDrawList();
-	const auto corner = ImGui::GetWindowPos();
-	draw->AddRectFilled(corner, {corner.x + width, corner.y + height}, theme::Bg,
-						ImGui::GetStyle().ChildRounding);
+	const ImVec2 padding{8 * scale, 5 * scale};
+	const float buttonPadding = style.FramePadding.x * 2, gap = style.ItemSpacing.x;
+	const float chevron = rowHeight;
 	const auto& controls = m_controls[m_hand];
-	ImGui::SetNextItemWidth(groupWidths[0]);
-	if (ImGui::BeginCombo("##Pilot target", preview.c_str()))
-	{
-		for (std::size_t index = 0; index < std::size(targetNames); ++index)
-		{
-			const auto label = std::string{targetNames[index]} + "  (" + KeyName(targetKeys[index]) + ")";
-			if (ImGui::Selectable(label.c_str(), index == targetIndex))
-				m_target = static_cast<PilotTarget>(index);
-		}
-		ImGui::EndCombo();
-	}
-	ImGui::SetItemTooltip("What mouse look and walking keys move");
-	place(1);
-	if (ImGui::Button(m_hand ? "Buttons: Right" : "Buttons: Left"))
-		m_hand = 1 - m_hand;
-	ImGui::SetItemTooltip("Trigger, grip and buttons go to this hand. Switch with %s.",
-						  KeyName(PilotAction::SwapHand).c_str());
-	const auto bar = [&](const char* label, float value)
-	{
-		ImGui::AlignTextToFramePadding();
-		ImGui::TextUnformatted(label);
-		ImGui::SameLine(0, 4 * scale);
-		const auto position = ImGui::GetCursorScreenPos();
-		const ImVec2 size{36 * scale, 8 * scale};
-		ImGui::Dummy({size.x, rowHeight});
-		const ImVec2 top{position.x, position.y + (rowHeight - size.y) / 2};
-		draw->AddRectFilled(top, {top.x + size.x, top.y + size.y}, ImGui::GetColorU32(theme::Line), 2);
-		draw->AddRectFilled(top, {top.x + size.x * std::clamp(value, 0.0f, 1.0f), top.y + size.y},
-							ImGui::GetColorU32(ImGuiCol_SliderGrabActive), 2);
-	};
-	const auto pill = [&](const char* label, bool held)
-	{
-		const auto text = ImGui::CalcTextSize(label);
-		const auto position = ImGui::GetCursorScreenPos();
-		const ImVec2 size{text.x + 10 * scale, text.y + 4 * scale};
-		ImGui::Dummy({size.x, rowHeight});
-		const ImVec2 top{position.x, position.y + (rowHeight - size.y) / 2};
-		const ImVec2 bottom{top.x + size.x, top.y + size.y};
-		if (held)
-			draw->AddRectFilled(top, bottom, ImGui::GetColorU32(ImGuiCol_ButtonActive), size.y / 2);
-		else
-			draw->AddRect(top, bottom, ImGui::GetColorU32(ImGuiCol_Border), size.y / 2);
-		draw->AddText({top.x + 5 * scale, top.y + 2 * scale},
-					  ImGui::GetColorU32(held ? ImGuiCol_Text : ImGuiCol_TextDisabled), label);
-	};
-	if (conflict)
-	{
-		place(2);
-		if (ImGui::Button("Take over"))
-		{
-			m_rig.Observe(*observed);
-			ManualTransaction edit;
-			for (const auto channel : channels)
-				edit.commands.emplace_back(TakeControl{channel, true});
-			input.Submit(std::move(edit));
-		}
-		ImGui::SetItemTooltip("Take these devices back from the replay or script that controls them.");
-	}
-	else if (!compact)
-	{
-		place(2);
-		bar("Trigger", controls.trigger);
-		ImGui::SameLine();
-		bar("Grip", controls.grip);
-		place(3);
-		pill(m_hand ? "A" : "X", controls.primary);
-		ImGui::SameLine(0, 4 * scale);
-		pill(m_hand ? "B" : "Y", controls.secondary);
-		ImGui::SameLine(0, 4 * scale);
-		pill("Menu", controls.menu);
-		ImGui::SameLine(0, 8 * scale);
-		const auto stickMin = ImGui::GetCursorScreenPos();
-		const float radius = 8 * scale;
-		ImGui::Dummy({radius * 2 + 2, rowHeight});
-		ImGui::SetItemTooltip("Thumbstick");
-		const ImVec2 stickCenter{stickMin.x + radius + 1, stickMin.y + rowHeight / 2};
-		draw->AddCircle(stickCenter, radius, ImGui::GetColorU32(controls.thumbClick ? ImGuiCol_ButtonActive
-																					: ImGuiCol_TextDisabled));
-		draw->AddCircleFilled({stickCenter.x + controls.stick.x * radius, stickCenter.y - controls.stick.y * radius},
-							  2.5f * scale, ImGui::GetColorU32(ImGuiCol_Text));
-	}
-	place(4);
-	if (ImGui::SmallButton(lock))
-		m_locked = !m_locked;
-	ImGui::SetItemTooltip("Keep the pointer captured without holding %s.", KeyName(PilotAction::Capture).c_str());
 	std::string hint;
 	if (conflict)
 		hint = "A replay or script controls these devices";
 	else if (m_captured)
-		hint = (m_locked ? std::string{"Capture locked · "} : std::string{}) + KeyName(PilotAction::Escape) +
-			   " releases · " + KeyName(PilotAction::FreeLook) + ": look without turning";
+		hint = (m_locked ? std::string{"Locked · "} : std::string{}) + KeyName(PilotAction::Escape) + " releases · " +
+			   KeyName(PilotAction::FreeLook) + ": look only";
 	else
 		hint = "Hold " + KeyName(PilotAction::Capture) + " over the image to pilot";
-	if (m_gamepadActive)
-		hint += " · Gamepad active";
-	if (textWidth(hint.c_str()) > width - padding.x * 2)
-		hint = m_captured ? KeyName(PilotAction::Escape) + " releases"
-						  : "Hold " + KeyName(PilotAction::Capture) + " to pilot";
-	ImGui::TextDisabled("%s", hint.c_str());
-	const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
-	ImGui::EndChild();
-	ImGui::PopStyleVar(2);
+	// Group widths, content only.
+	const float targetWidth = textWidth(preview.c_str()) + rowHeight * 1.5f;
+	float left = targetWidth + gap + textWidth(lock) + buttonPadding;
+	const float handButton = textWidth("Buttons: Right") + buttonPadding;
+	const float bars = textWidth("Trigger") + textWidth("Grip") + 2 * (36 + 4) * scale + gap;
+	const float pills = textWidth("A") + textWidth("B") + textWidth("Menu") + 3 * 10 * scale + 8 * scale;
+	const float sticks = (m_gamepadActive ? 2 : 1) * (16 * scale + 2) + 8 * scale;
+	float middle = conflict ? handButton + gap + textWidth("Take over") + buttonPadding
+							: handButton + gap + bars + gap + pills + sticks;
+	float right = textWidth(hint.c_str()) + (m_gamepadActive ? textWidth("Gamepad") + 10 * scale + gap : 0);
+	const float frame = padding.x * 2;
+	// Too narrow for all three: the hint goes, then the middle keeps only the hand switch.
+	bool showRight = true, fullMiddle = true;
+	if (left + middle + right + chevron + frame * 3 + gap * 2 > available)
+		showRight = false;
+	if (left + middle + chevron + frame * 2 + gap > available)
+	{
+		fullMiddle = conflict;
+		middle = conflict ? middle : handButton;
+	}
+	const bool folded = m_hudFolded || left + middle + chevron + frame * 2 + gap > available;
+	const float height = rowHeight + padding.y * 2;
+	const float y = maximum.y - height - margin;
+	const auto saved = ImGui::GetCursorScreenPos();
+	bool hovered = false;
+	// Idle, only the content dims; each backing stays solid so markers under it do not show through.
+	ImGui::PushStyleVar(ImGuiStyleVar_Alpha, Active() || ImGui::GetTime() - m_lastInput < 3 ? 1.0f : .6f);
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, padding);
+	ImGui::PushStyleColor(ImGuiCol_ChildBg, 0);
+	const auto group = [&](const char* id, float x, float width, const auto& content)
+	{
+		ImGui::SetCursorScreenPos({x, y});
+		ImGui::BeginChild(id, {width + frame, height},
+						  ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
+						  ImGuiWindowFlags_NoScrollbar);
+		const auto corner = ImGui::GetWindowPos();
+		ImGui::GetWindowDrawList()->AddRectFilled(corner, {corner.x + width + frame, corner.y + height}, theme::Bg,
+												  style.ChildRounding);
+		content();
+		hovered |= ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+		ImGui::EndChild();
+	};
+	const auto foldButton = [&]
+	{
+		if (IconButton("Fold HUD", m_hudFolded ? Icon::ChevronUp : Icon::ChevronDown,
+					   m_hudFolded ? "Show the pilot controls" : "Fold the pilot controls into a strip"))
+			m_hudFolded = !m_hudFolded;
+	};
+	if (folded)
+	{
+		// The strip: target and hand as letters, lock state, and the way back open.
+		static constexpr const char* targetLetters[] = {"Player", "Head", "L", "R"};
+		const std::string strip = std::string{targetLetters[targetIndex]} + " · " + (m_hand ? "R" : "L") + " buttons" +
+								  (m_locked ? " · locked" : "");
+		const float width = textWidth(strip.c_str()) + gap + chevron;
+		group("HUD strip", (minimum.x + maximum.x - width - frame) / 2, width,
+			  [&]
+			  {
+				  ImGui::AlignTextToFramePadding();
+				  ImGui::TextDisabled("%s", strip.c_str());
+				  ImGui::SetItemTooltip("Moving %s; buttons go to the %s hand", targetNames[targetIndex],
+										m_hand ? "right" : "left");
+				  ImGui::SameLine();
+				  foldButton();
+			  });
+	}
+	else
+	{
+		group("HUD target", minimum.x + margin, left,
+			  [&]
+			  {
+				  ImGui::SetNextItemWidth(targetWidth);
+				  if (ImGui::BeginCombo("##Pilot target", preview.c_str()))
+				  {
+					  for (std::size_t index = 0; index < std::size(targetNames); ++index)
+					  {
+						  const auto label = std::string{targetNames[index]} + "  (" + KeyName(targetKeys[index]) + ")";
+						  if (ImGui::Selectable(label.c_str(), index == targetIndex))
+							  m_target = static_cast<PilotTarget>(index);
+					  }
+					  ImGui::EndCombo();
+				  }
+				  ImGui::SetItemTooltip("What mouse look and walking keys move");
+				  ImGui::SameLine();
+				  if (ImGui::Button(lock))
+					  m_locked = !m_locked;
+				  ImGui::SetItemTooltip("Keep the pointer captured without holding %s",
+										KeyName(PilotAction::Capture).c_str());
+			  });
+		const float middleWidth = middle + gap + chevron;
+		const float middleX =
+			std::max(minimum.x + margin + left + frame + gap, (minimum.x + maximum.x - middleWidth - frame) / 2);
+		group("HUD hand", middleX, middleWidth,
+			  [&]
+			  {
+				  auto* draw = ImGui::GetWindowDrawList();
+				  if (ImGui::Button(m_hand ? "Buttons: Right" : "Buttons: Left"))
+					  m_hand = 1 - m_hand;
+				  ImGui::SetItemTooltip("Trigger, grip and buttons go to this hand; %s switches",
+										KeyName(PilotAction::SwapHand).c_str());
+				  const auto bar = [&](const char* label, float value)
+				  {
+					  ImGui::SameLine();
+					  ImGui::AlignTextToFramePadding();
+					  ImGui::TextUnformatted(label);
+					  ImGui::SameLine(0, 4 * scale);
+					  const auto position = ImGui::GetCursorScreenPos();
+					  const ImVec2 size{36 * scale, 8 * scale};
+					  ImGui::Dummy({size.x, rowHeight});
+					  const ImVec2 top{position.x, position.y + (rowHeight - size.y) / 2};
+					  draw->AddRectFilled(top, {top.x + size.x, top.y + size.y}, theme::Line, 2);
+					  draw->AddRectFilled(top, {top.x + size.x * std::clamp(value, 0.0f, 1.0f), top.y + size.y},
+										  theme::Accent, 2);
+				  };
+				  const auto pill = [&](const char* label, bool held)
+				  {
+					  ImGui::SameLine(0, 4 * scale);
+					  const auto text = ImGui::CalcTextSize(label);
+					  const auto position = ImGui::GetCursorScreenPos();
+					  const ImVec2 size{text.x + 10 * scale, text.y + 4 * scale};
+					  ImGui::Dummy({size.x, rowHeight});
+					  const ImVec2 top{position.x, position.y + (rowHeight - size.y) / 2};
+					  const ImVec2 bottom{top.x + size.x, top.y + size.y};
+					  if (held)
+						  draw->AddRectFilled(top, bottom, theme::Accent, size.y / 2);
+					  else
+						  draw->AddRect(top, bottom, theme::Line, size.y / 2);
+					  draw->AddText({top.x + 5 * scale, top.y + 2 * scale}, held ? theme::Text : theme::TextDim, label);
+				  };
+				  const auto stick = [&](const ControllerControls& value, const char* tooltip)
+				  {
+					  ImGui::SameLine(0, 6 * scale);
+					  const auto position = ImGui::GetCursorScreenPos();
+					  const float radius = 8 * scale;
+					  ImGui::Dummy({radius * 2 + 2, rowHeight});
+					  ImGui::SetItemTooltip("%s", tooltip);
+					  const ImVec2 center{position.x + radius + 1, position.y + rowHeight / 2};
+					  draw->AddCircle(center, radius, value.thumbClick ? theme::Accent : theme::TextDim);
+					  draw->AddCircleFilled({center.x + value.stick.x * radius, center.y - value.stick.y * radius},
+											2.5f * scale, theme::Text);
+				  };
+				  if (conflict)
+				  {
+					  ImGui::SameLine();
+					  if (ImGui::Button("Take over"))
+					  {
+						  m_rig.Observe(*observed);
+						  ManualTransaction edit;
+						  for (const auto channel : channels)
+							  edit.commands.emplace_back(TakeControl{channel, true});
+						  input.Submit(std::move(edit));
+					  }
+					  ImGui::SetItemTooltip("Take these devices back from the replay or script that controls them");
+				  }
+				  else if (fullMiddle)
+				  {
+					  bar("Trigger", controls.trigger);
+					  bar("Grip", controls.grip);
+					  pill(m_hand ? "A" : "X", controls.primary);
+					  pill(m_hand ? "B" : "Y", controls.secondary);
+					  pill("Menu", controls.menu);
+					  if (m_gamepadActive)
+					  {
+						  stick(m_controls[0], "Left thumbstick");
+						  stick(m_controls[1], "Right thumbstick");
+					  }
+					  else
+						  stick(controls, "Thumbstick");
+				  }
+				  ImGui::SameLine();
+				  foldButton();
+			  });
+		if (showRight)
+			group("HUD hint", maximum.x - margin - right - frame, right,
+				  [&]
+				  {
+					  ImGui::AlignTextToFramePadding();
+					  if (m_gamepadActive)
+					  {
+						  ImGui::TextColored(theme::Vec(theme::Ok), "Gamepad");
+						  ImGui::SetItemTooltip("A gamepad is driving the selected hand");
+						  ImGui::SameLine();
+					  }
+					  ImGui::TextDisabled("%s", hint.c_str());
+				  });
+	}
 	ImGui::PopStyleColor();
+	ImGui::PopStyleVar(2);
 	ImGui::SetCursorScreenPos({saved.x, saved.y - ImGui::GetStyle().ItemSpacing.y});
 	ImGui::Dummy({0, 0});
 	return hovered;

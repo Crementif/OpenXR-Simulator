@@ -3,6 +3,7 @@
 #include "app/VulkanDeviceAccess.h"
 #include "control/ImageInspection.h"
 
+#include <imgui.h>
 #include <memory>
 #include <optional>
 #include <span>
@@ -27,7 +28,9 @@ class PreviewTexture
 	const control::ImageDescription& Description() const;
 	std::size_t SliceCount() const;
 	void BeginFrame();
-	void Draw(float width, std::optional<std::size_t> slice = {});
+	// crop is the shown region (x0, y0, x1, y1) in normalized image coordinates;
+	// width is the shown width and the height follows the region's aspect.
+	void Draw(float width, std::optional<std::size_t> slice = {}, ImVec4 crop = {0, 0, 1, 1});
 	VkSemaphore ReadyWait() const;
 	void Submitted(std::uint64_t serial);
 	void ObserveCompletion(std::uint64_t serial);

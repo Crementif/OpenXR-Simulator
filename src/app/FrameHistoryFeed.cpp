@@ -124,10 +124,15 @@ void FrameHistoryFeed::Append(const control::Message& message)
 				flags |= HistoryAction;
 			input = m_input.Append(std::move(sample));
 		}
+		const auto periodMilliseconds = static_cast<long double>(*period->AsI64()) / 1000000.L;
 		const auto elapsed = double((static_cast<long double>(timestamp) - m_origin) / 1000000000.L);
 		const auto previousSeconds = m_history.Size() ? m_history.At(m_history.Size() - 1).seconds : m_offset;
 		const auto interval = !m_newSegment ? (static_cast<long double>(timestamp) - m_previous) / 1000000.L
-											: static_cast<long double>(*period->AsI64()) / 1000000.L;
+											: periodMilliseconds;
+		// A display time more than half a period late means the app missed its frame;
+		// a gap of a second or more is a pause or stall, not a missed frame.
+		if (interval > periodMilliseconds * 1.5L && interval < 1000)
+			flags |= HistoryLate;
 		m_history.Append({{m_scope.session, m_scope.generation, id},
 						  m_scope.epoch,
 						  0,
@@ -136,7 +141,8 @@ void FrameHistoryFeed::Append(const control::Message& message)
 						  flags,
 						  elapsed,
 						  input,
-						  hands});
+						  hands,
+						  float(periodMilliseconds)});
 		m_previous = timestamp;
 		m_after = id;
 		m_newSegment = false;

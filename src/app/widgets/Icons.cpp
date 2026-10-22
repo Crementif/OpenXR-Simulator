@@ -236,6 +236,35 @@ void DrawIcon(ImDrawList* draw, Icon icon, ImVec2 center, float size, ImU32 colo
 		pen.Polyline({{4, -8}, {9, 0}, {4, 8}});
 		pen.Line(2, -9, -2, 9);
 		break;
+	case Icon::StepBack:
+		pen.Fill({{7, -8}, {-4, 0}, {7, 8}});
+		pen.Rect(-8, -8, -5, 8, 1, true);
+		break;
+	case Icon::ChevronUp:
+		pen.Polyline({{-8, 4}, {0, -4}, {8, 4}});
+		break;
+	case Icon::ChevronDown:
+		pen.Polyline({{-8, -4}, {0, 4}, {8, -4}});
+		break;
+	case Icon::Focus:
+		pen.Polyline({{-9, -3}, {-9, -9}, {-3, -9}});
+		pen.Polyline({{3, -9}, {9, -9}, {9, -3}});
+		pen.Polyline({{9, 3}, {9, 9}, {3, 9}});
+		pen.Polyline({{-3, 9}, {-9, 9}, {-9, 3}});
+		break;
+	case Icon::Crop:
+		pen.Polyline({{-5, -10}, {-5, 5}, {10, 5}});
+		pen.Polyline({{-10, -5}, {5, -5}, {5, 10}});
+		break;
+	case Icon::Zoom:
+		pen.Circle(-2, -2, 6);
+		pen.Line(2.5f, 2.5f, 8, 8);
+		break;
+	case Icon::Gauge:
+		pen.Arc(0, 3, 9, std::numbers::pi_v<float>, 2 * std::numbers::pi_v<float>);
+		pen.Line(0, 3, 5, -3);
+		pen.Circle(0, 3, 1.5f, true);
+		break;
 	}
 }
 } // namespace simxr::app

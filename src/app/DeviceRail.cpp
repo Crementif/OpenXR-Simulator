@@ -17,7 +17,7 @@ struct Row
 	std::optional<ControlChannel> channel;
 	std::optional<PilotAction> key;
 };
-constexpr std::array<Row, 9> Rows{{
+constexpr std::array<Row, 10> Rows{{
 	{"Player", Icon::Player, {}, PilotAction::TargetPlayer},
 	{"Head", Icon::Head, ControlChannel::Head, PilotAction::TargetHead},
 	{"Left", Icon::HandLeft, ControlChannel::LeftPose, PilotAction::TargetLeft},
@@ -27,7 +27,10 @@ constexpr std::array<Row, 9> Rows{{
 	{"Trackers", Icon::Tracker, ControlChannel::Trackers, {}},
 	{"Headset", Icon::Headset, {}, {}},
 	{"Scenarios", Icon::Scenarios, {}, {}},
+	{"Library", Icon::Library, {}, {}},
 }};
+// Rows from this index on are under SETUP.
+constexpr std::size_t SetupRow = 7;
 bool Tracked(const PoseSample& pose)
 {
 	return (pose.flags & TrackedPoseFlags) == TrackedPoseFlags;
@@ -100,25 +103,51 @@ float IconRailWidth()
 {
 	return 34 * ImGui::GetFontSize() / 17 + ImGui::GetStyle().WindowPadding.x * 2;
 }
-bool DrawDeviceRail(Selection& selection, const RuntimeView& view, const CompanionSettings& settings, bool iconOnly)
+std::optional<Selection> DrawDeviceRail(const Selection& selection, const RuntimeView& view,
+										const CompanionSettings& settings, bool iconOnly, float reserve)
 {
-	bool picked = false;
+	std::optional<Selection> picked;
 	std::string scenarios;
 	if (view.setup)
 		if (const auto active = std::ranges::count(view.setup->scenarios, true))
 			scenarios = std::to_string(active) + " on";
+	const float unit = ImGui::GetFontSize() / 17;
+	// Section labels are small caps text; the icon-only rail uses a divider instead.
+	const auto section = [&](const char* name)
+	{
+		const auto position = ImGui::GetCursorScreenPos();
+		auto* draw = ImGui::GetWindowDrawList();
+		if (iconOnly)
+		{
+			draw->AddLine({position.x + 6 * unit, position.y + 4 * unit},
+						  {position.x + ImGui::GetContentRegionAvail().x - 6 * unit, position.y + 4 * unit}, theme::Line,
+						  unit);
+			ImGui::Dummy({0, 8 * unit});
+			return;
+		}
+		ImGui::SetWindowFontScale(.78f);
+		draw->AddText({position.x + 8 * unit, position.y + 4 * unit}, theme::TextDim, name);
+		ImGui::Dummy({0, ImGui::GetFontSize() + 6 * unit});
+		ImGui::SetWindowFontScale(1);
+	};
 	// Rows shrink (down to one text line) rather than clip when the window is short.
 	const float spacing = ImGui::GetStyle().ItemSpacing.y;
-	const float height = std::clamp((ImGui::GetContentRegionAvail().y - spacing * (Rows.size() - 1)) / Rows.size(),
-									ImGui::GetFontSize() + 4, 36 * ImGui::GetFontSize() / 17);
+	const float labels = iconOnly ? 2 * (8 * unit + spacing) : 2 * (ImGui::GetFontSize() * .78f + 6 * unit + spacing);
+	const float height =
+		std::clamp((ImGui::GetContentRegionAvail().y - reserve - labels - spacing * (Rows.size() - 1)) / Rows.size(),
+				   ImGui::GetFontSize() + 4, 36 * unit);
+	const bool library = std::holds_alternative<LibrarySel>(selection) || std::holds_alternative<TakeSel>(selection) ||
+						 std::holds_alternative<ScriptSel>(selection);
 	for (std::size_t index = 0; index < Rows.size(); ++index)
 	{
+		if (index == 0 || index == SetupRow)
+			section(index == 0 ? "DEVICES" : "SETUP");
 		const auto& row = Rows[index];
-		bool selected = false;
+		bool selected = index == 9 && library;
 		if (const auto device = std::get_if<DeviceSel>(&selection))
 			selected = index == static_cast<std::size_t>(device->page);
 		if (const auto item = std::get_if<SessionItemSel>(&selection))
-			selected = index == 7 + static_cast<std::size_t>(item->item);
+			selected = index == SetupRow + static_cast<std::size_t>(item->item);
 		RailStatus status;
 		status.iconOnly = iconOnly;
 		std::string key;
@@ -126,6 +155,11 @@ bool DrawDeviceRail(Selection& selection, const RuntimeView& view, const Compani
 		{
 			key = PilotBindingLabel(settings.pilotBindings[static_cast<std::size_t>(*row.key)]);
 			status.key = key.c_str();
+		}
+		else if (index == 9)
+		{
+			status.key = "Ctrl+L";
+			status.pilotKey = false;
 		}
 		if (view.setup && view.connected)
 		{
@@ -141,11 +175,12 @@ bool DrawDeviceRail(Selection& selection, const RuntimeView& view, const Compani
 		}
 		if (RailItem(row.label, row.icon, selected, status, height))
 		{
-			if (index < 7)
-				selection = DeviceSel{static_cast<DevicePage>(index)};
+			if (index < SetupRow)
+				picked = DeviceSel{static_cast<DevicePage>(index)};
+			else if (index < 9)
+				picked = SessionItemSel{static_cast<SessionItem>(index - SetupRow)};
 			else
-				selection = SessionItemSel{static_cast<SessionItem>(index - 7)};
-			picked = true;
+				picked = LibrarySel{};
 		}
 	}
 	return picked;

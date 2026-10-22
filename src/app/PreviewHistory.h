@@ -39,7 +39,7 @@ class PreviewHistory
 		return m_shots;
 	}
 	float Aspect() const noexcept;
-	void Draw(const PreviewShot& shot, float width);
+	void Draw(const PreviewShot& shot, float width, ImVec4 crop = {0, 0, 1, 1});
 	void BeginFrame();
 	void Record(VkCommandBuffer command);
 	void Submitted(std::uint64_t serial);

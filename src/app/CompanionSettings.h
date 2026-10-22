@@ -27,6 +27,13 @@ struct SavedLayout
 	std::string ini;
 	bool operator==(const SavedLayout&) const = default;
 };
+// A preview region pinned for one launch profile, in normalized image coordinates.
+struct PreviewCrop
+{
+	std::string profile;
+	float x0 = 0, y0 = 0, x1 = 1, y1 = 1;
+	bool operator==(const PreviewCrop&) const = default;
+};
 struct CompanionSettings
 {
 	float scale = 1;
@@ -35,6 +42,8 @@ struct CompanionSettings
 	GamepadBindings gamepadBindings;
 	float inspectorWidth = 340, timelineHeight = 132;
 	bool railCollapsed = false, timelineResized = false;
+	bool inspectorFolded = false, timelineFolded = false, hudFolded = false;
+	std::vector<PreviewCrop> crops;
 	std::string endpoint;
 	std::string activeProfile;
 	std::string activeLayout;

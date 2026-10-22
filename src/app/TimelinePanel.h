@@ -15,7 +15,13 @@ namespace simxr::app
 class TimelinePanel
 {
   public:
-	bool Draw(RuntimePanels& runtime, ShellState& shell);
+	// Folded draws one row: transport, LIVE and the frame rate. fold is set when
+	// the user asks to fold or unfold the timeline.
+	bool Draw(RuntimePanels& runtime, ShellState& shell, bool folded, bool& fold);
+	static float FoldedHeight(float scale)
+	{
+		return 36 * scale;
+	}
 	void ObserveRig(const RuntimeView& runtime, std::uint64_t run, const automation::RigSnapshot& state,
 					bool matchesTarget);
 	// A take is about to replay; when it was cut from history, its source is drawn over the replay.
@@ -53,6 +59,9 @@ class TimelinePanel
 	void Observe(const RuntimeView& state);
 	void DrawGhost(const HistoryStore& history);
 	void Push(Event event);
+	// The frame-rate meter in the LIVE column: numbers, and a sparkline when there is room.
+	void DrawMeter(const HistoryStore& history, const RuntimeView& state, ShellRect area, bool oneRow);
+	void DrawLegend();
 	std::map<double, Marker> m_markers;
 	std::optional<HistoryFrame> m_pendingMarker;
 	std::array<char, 96> m_markerName{};
@@ -70,5 +79,6 @@ class TimelinePanel
 	std::vector<TakeSource> m_takes;
 	std::optional<Ghost> m_ghost;
 	TimelineCanvas m_canvas;
+	bool m_tint = false;
 };
 } // namespace simxr::app

@@ -239,16 +239,18 @@ void PreviewTexture::BeginFrame()
 {
 	m_state->drawn = false;
 }
-void PreviewTexture::Draw(float width, std::optional<std::size_t> slice)
+void PreviewTexture::Draw(float width, std::optional<std::size_t> slice, ImVec4 crop)
 {
 	if (!m_state->ready || (slice && *slice >= m_state->descriptors.size()))
 		return;
-	const auto height = width * m_state->description.height / m_state->description.width;
+	const auto height = width * (crop.w - crop.y) * m_state->description.height /
+						((crop.z - crop.x) * m_state->description.width);
 	const auto first = slice.value_or(0);
 	const auto end = slice ? first + 1 : m_state->descriptors.size();
 	for (std::size_t index = first; index < end; ++index)
 	{
-		ImGui::Image(std::bit_cast<ImTextureID>(m_state->descriptors[index]), {width, height});
+		ImGui::Image(std::bit_cast<ImTextureID>(m_state->descriptors[index]), {width, height}, {crop.x, crop.y},
+					 {crop.z, crop.w});
 		if (index + 1 < end)
 			ImGui::SameLine(0, 12);
 	}

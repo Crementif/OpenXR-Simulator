@@ -41,6 +41,8 @@ struct HistoryFrame
 	std::uint64_t input = 0;
 	// Left/right press intensity, 0..255.
 	std::array<std::uint8_t, 2> hands{};
+	// The display period the runtime predicted for this frame (the frame budget).
+	float periodMilliseconds = 0;
 };
 struct HistoryBucket
 {

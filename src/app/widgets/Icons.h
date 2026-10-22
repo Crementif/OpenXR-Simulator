@@ -40,6 +40,13 @@ enum class Icon
 	Rename,
 	Delete,
 	Script,
+	StepBack,
+	ChevronUp,
+	ChevronDown,
+	Focus,
+	Crop,
+	Zoom,
+	Gauge,
 };
 // Draws an icon centred on center inside a square of the given side length.
 void DrawIcon(ImDrawList* draw, Icon icon, ImVec2 center, float size, ImU32 color);

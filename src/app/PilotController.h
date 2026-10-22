@@ -22,7 +22,14 @@ class PilotController
 	void Update(Window& window, ManualInputController& input, bool available, bool hovered);
 	void Stop(Window* window, ManualInputController& input, bool discard, bool forceButtons = false);
 	void DrawHelp() const;
+	// The HUD along the image's bottom edge: target and lock at the left, the
+	// hand's inputs in the middle, the hint at the right. Returns whether it is hovered.
 	bool DrawHud(ImVec2 imageMin, ImVec2 imageMax, ManualInputController& input);
+	// Folded, the HUD is one slim strip; the shell persists this.
+	bool& HudFolded()
+	{
+		return m_hudFolded;
+	}
 
 	bool Active() const
 	{
@@ -54,7 +61,7 @@ class PilotController
 	PilotTarget m_target = PilotTarget::Player;
 	unsigned m_hand = 1, m_handEdits = 0;
 	bool m_poseEngaged = false;
-	bool m_captured = false, m_starting = false, m_locked = false, m_gamepadActive = false;
+	bool m_captured = false, m_starting = false, m_locked = false, m_gamepadActive = false, m_hudFolded = false;
 	std::uint64_t m_startObservation = 0;
 	std::array<ControllerControls, 2> m_controls{};
 	std::array<bool, 2> m_engaged{};

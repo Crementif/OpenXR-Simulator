@@ -124,6 +124,14 @@ void ValidateSettings(const CompanionSettings& settings)
 		settings.gamepadBindings.deadzone >= 1)
 		throw std::invalid_argument("Invalid gamepad deadzone");
 	TextValid(settings.gamepadBindings.gyroHold);
+	if (settings.crops.size() > 32)
+		throw std::invalid_argument("Too many pinned preview crops");
+	for (const auto& crop : settings.crops)
+	{
+		TextValid(crop.profile);
+		if (!(crop.x0 >= 0 && crop.x0 < crop.x1 && crop.x1 <= 1 && crop.y0 >= 0 && crop.y0 < crop.y1 && crop.y1 <= 1))
+			throw std::invalid_argument("Invalid pinned preview crop");
+	}
 	for (const auto* bindings :
 		 {&settings.gamepadBindings.stickX, &settings.gamepadBindings.stickY, &settings.gamepadBindings.trigger,
 		  &settings.gamepadBindings.grip, &settings.gamepadBindings.primary, &settings.gamepadBindings.secondary,
@@ -245,6 +253,22 @@ CompanionSettings LoadSettings(const std::filesystem::path& path)
 		result.snapshotBudgetMiB = reader.Number();
 	}
 	if (!reader.bytes.empty())
+	{
+		if (reader.Number() != 5)
+			throw std::runtime_error("Unknown view settings version");
+		result.inspectorFolded = reader.Count(1) != 0;
+		result.timelineFolded = reader.Count(1) != 0;
+		result.hudFolded = reader.Count(1) != 0;
+		for (auto count = reader.Count(32); count; --count)
+		{
+			PreviewCrop crop;
+			crop.profile = reader.Text();
+			for (auto* value : {&crop.x0, &crop.y0, &crop.x1, &crop.y1})
+				*value = reader.Number() / 100000.0f;
+			result.crops.push_back(std::move(crop));
+		}
+	}
+	if (!reader.bytes.empty())
 		throw std::runtime_error("Unexpected trailing companion settings data");
 	ValidateSettings(result);
 	return result;
@@ -305,6 +329,17 @@ void SaveSettings(const std::filesystem::path& path, const CompanionSettings& se
 	Put(bytes, static_cast<std::uint32_t>(std::lround(settings.gamepadBindings.deadzone * 1000)));
 	Put(bytes, std::uint32_t{4});
 	Put(bytes, settings.snapshotBudgetMiB);
+	Put(bytes, std::uint32_t{5});
+	Put(bytes, static_cast<std::uint32_t>(settings.inspectorFolded));
+	Put(bytes, static_cast<std::uint32_t>(settings.timelineFolded));
+	Put(bytes, static_cast<std::uint32_t>(settings.hudFolded));
+	Put(bytes, static_cast<std::uint32_t>(settings.crops.size()));
+	for (const auto& crop : settings.crops)
+	{
+		Put(bytes, crop.profile);
+		for (const float value : {crop.x0, crop.y0, crop.x1, crop.y1})
+			Put(bytes, static_cast<std::uint32_t>(std::lround(value * 100000)));
+	}
 	if (bytes.size() > MaxFile)
 		throw std::invalid_argument("Companion settings exceed the file budget");
 	std::filesystem::create_directories(path.parent_path());

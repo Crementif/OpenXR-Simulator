@@ -68,6 +68,11 @@ struct WorkspacePanels::Impl
 	std::optional<std::chrono::steady_clock::time_point> recordingSince;
 	ShellState shell;
 	bool drawer = true;
+	// Where clicking Library again (or Esc on the Library) returns to.
+	Selection beforeLibrary = DeviceSel{};
+	// The launch profile whose pinned crop the preview holds.
+	std::optional<std::string> cropProfile;
+	bool wasOverlay = false;
 
 	std::filesystem::path path;
 	CompanionSettings settings;
@@ -309,7 +314,7 @@ struct WorkspacePanels::Impl
 #endif
 		const float right = ImGui::GetContentRegionMax().x;
 		const float button = ImGui::GetFrameHeight(), spacing = ImGui::GetStyle().ItemSpacing.x;
-		ImGui::SameLine(std::max(ImGui::GetCursorPosX(), right - button * 3 - spacing * 2));
+		ImGui::SameLine(std::max(ImGui::GetCursorPosX(), right - button * 4 - spacing * 3));
 		if (snapshot.recording ? IconButton("Stop recording", Icon::Stop, "Stop recording (Ctrl+R)", false, nullptr,
 										   theme::Record)
 							   : IconButton("Rec", Icon::Record, "Record inputs (Ctrl+R)", false, nullptr, theme::Record))
@@ -320,21 +325,29 @@ struct WorkspacePanels::Impl
 				runtime.StartRecording();
 		}
 		ImGui::SameLine();
-		const bool library = std::holds_alternative<LibrarySel>(shell.selection) ||
-							 std::holds_alternative<TakeSel>(shell.selection) ||
-							 std::holds_alternative<ScriptSel>(shell.selection);
-		if (IconButton("Library", Icon::Library, "Library: takes and scripts (Ctrl+L)", library))
-		{
-			shell.selection = LibrarySel{};
-			drawer = true;
-		}
+		if (IconButton("Library", Icon::Library,
+					   InLibrary() ? "Close the Library (Ctrl+L)" : "Library: takes and scripts (Ctrl+L)", InLibrary()))
+			ToggleLibrary();
+		ImGui::SameLine();
+		if (IconButton("Focus", Icon::Focus, previewExpanded ? "Exit focus (F11)" : "Focus: only the image (F11)",
+					   previewExpanded))
+			previewExpanded = !previewExpanded;
 		ImGui::SameLine();
 		if (IconButton("...", Icon::More, "More"))
 			ImGui::OpenPopup("Options");
 		if (ImGui::BeginPopup("Options"))
 		{
 			ImGui::MenuItem("Preferences", nullptr, &showSettings);
-			ImGui::MenuItem("Full preview", "F11", &previewExpanded);
+			ImGui::MenuItem("Focus", "F11", &previewExpanded);
+			if (ImGui::MenuItem("Hide timeline", "Ctrl+T", settings.timelineFolded))
+				FoldTimeline();
+			if (ImGui::MenuItem("Hide inspector", "Ctrl+I", settings.inspectorFolded))
+				FoldInspector();
+			if (ImGui::MenuItem("Compact device tabs", nullptr, settings.railCollapsed))
+			{
+				settings.railCollapsed = !settings.railCollapsed;
+				dirty = true;
+			}
 			if (ImGui::MenuItem("Release inputs"))
 				runtime.ReleaseInputs();
 			if (ImGui::MenuItem("Cancel pending", "Shift+F7"))
@@ -355,6 +368,9 @@ struct WorkspacePanels::Impl
 				settings.timelineHeight = 132;
 				settings.timelineResized = false;
 				settings.railCollapsed = false;
+				settings.inspectorFolded = false;
+				settings.timelineFolded = false;
+				dirty = true;
 			}
 			ImGui::EndPopup();
 		}
@@ -362,10 +378,11 @@ struct WorkspacePanels::Impl
 		if (!ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive())
 		{
 			if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_L, false))
-			{
-				shell.selection = LibrarySel{};
-				drawer = true;
-			}
+				ToggleLibrary();
+			if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_T, false))
+				FoldTimeline();
+			if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_I, false))
+				FoldInspector();
 			if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_R, false))
 			{
 				if (snapshot.recording)
@@ -389,9 +406,90 @@ struct WorkspacePanels::Impl
 			}
 			if (ImGui::IsKeyPressed(ImGuiKey_F11, false))
 				previewExpanded = !previewExpanded;
-			if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
-				drawer = false;
+			if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !runtime.PilotActive())
+			{
+				if (previewExpanded)
+					previewExpanded = false;
+				else if (InLibrary())
+					ToggleLibrary();
+				else
+					drawer = false;
+			}
 		}
+	}
+	bool InLibrary() const
+	{
+		return std::holds_alternative<LibrarySel>(shell.selection) || std::holds_alternative<TakeSel>(shell.selection) ||
+			   std::holds_alternative<ScriptSel>(shell.selection);
+	}
+	void ToggleLibrary()
+	{
+		if (InLibrary())
+			shell.selection = beforeLibrary;
+		else
+		{
+			beforeLibrary = shell.selection;
+			shell.selection = LibrarySel{};
+		}
+		ShowInspector();
+	}
+	void ShowInspector()
+	{
+		drawer = true;
+		if (std::exchange(settings.inspectorFolded, false))
+			dirty = true;
+	}
+	void FoldTimeline()
+	{
+		settings.timelineFolded = !settings.timelineFolded;
+		dirty = true;
+	}
+	void FoldInspector()
+	{
+		settings.inspectorFolded = !settings.inspectorFolded;
+		dirty = true;
+	}
+	// A rail tab: Library toggles back to the previous page; the open tab
+	// clicked again folds or unfolds the inspector.
+	void PickTab(Selection picked, bool overlay)
+	{
+		if (std::holds_alternative<LibrarySel>(picked))
+		{
+			ToggleLibrary();
+			return;
+		}
+		if (picked.index() == shell.selection.index() && SelectionKey(picked) == SelectionKey(shell.selection))
+		{
+			if (overlay)
+				drawer = !drawer;
+			else
+				FoldInspector();
+			return;
+		}
+		shell.selection = std::move(picked);
+		ShowInspector();
+	}
+	// The preview's pinned crop belongs to the active launch profile.
+	void StoreCrop(const std::optional<ImVec4>& crop)
+	{
+		auto stored = std::ranges::find(settings.crops, settings.activeProfile, &PreviewCrop::profile);
+		if (!crop)
+		{
+			if (stored != settings.crops.end())
+			{
+				settings.crops.erase(stored);
+				dirty = true;
+			}
+			return;
+		}
+		const PreviewCrop value{settings.activeProfile, crop->x, crop->y, crop->z, crop->w};
+		if (stored != settings.crops.end() && *stored == value)
+			return;
+		if (stored != settings.crops.end())
+			*stored = value;
+		else if (settings.crops.size() < 32)
+			settings.crops.push_back(value);
+		dirty = true;
 	}
 	void Splitter(const char* id, ImVec2 position, ImVec2 size, float& value, float minimum, float maximum,
 				  bool vertical, float defaultValue)
@@ -399,7 +497,18 @@ struct WorkspacePanels::Impl
 		ImGui::SetCursorPos(position);
 		ImGui::InvisibleButton(id, size);
 		if (ImGui::IsItemHovered() || ImGui::IsItemActive())
+		{
 			ImGui::SetMouseCursor(vertical ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_ResizeNS);
+			// A thin accent line shows what will move.
+			const auto minimum = ImGui::GetItemRectMin(), maximum = ImGui::GetItemRectMax();
+			const ImVec2 center{(minimum.x + maximum.x) / 2, (minimum.y + maximum.y) / 2};
+			const float thickness = 2 * settings.scale;
+			ImGui::GetWindowDrawList()->AddLine(vertical ? ImVec2{center.x, minimum.y} : ImVec2{minimum.x, center.y},
+												vertical ? ImVec2{center.x, maximum.y} : ImVec2{maximum.x, center.y},
+												ImGui::IsItemActive() ? theme::Accent : theme::Fade(theme::Accent, .6f),
+												thickness);
+			ImGui::SetItemTooltip("Drag to resize; double-click to reset");
+		}
 		if (ImGui::IsItemActive())
 		{
 			value = std::clamp(value - (vertical ? ImGui::GetIO().MouseDelta.x : ImGui::GetIO().MouseDelta.y) /
@@ -429,42 +538,63 @@ struct WorkspacePanels::Impl
 		ImGui::BeginChild("Top bar", {width, 40 * scale}, 0, ImGuiWindowFlags_NoScrollbar);
 		DrawToolbar(runtime);
 		ImGui::EndChild();
+		// Preview | rail | inspector, timeline below. The rail sits beside the
+		// inspector so its tabs join the page they open.
 		const bool compact = width / scale < 1100, overlay = width / scale < 800;
-		const float narrowRail = NarrowRailWidth();
-		const bool narrow = compact || settings.railCollapsed;
-		const float rail = previewExpanded ? 0 : overlay ? IconRailWidth() : narrow ? narrowRail : 196 * scale;
-		const float inspector =
-			previewExpanded ? 0 : std::min(settings.inspectorWidth, compact ? 320.0f : 520.0f) * scale;
+		const bool focus = previewExpanded;
+		const float rail = focus		  ? 0
+						   : overlay	  ? IconRailWidth()
+						   : compact || settings.railCollapsed ? NarrowRailWidth()
+														 : 196 * scale;
+		// Narrowing into the drawer layout must not cover the image with the drawer.
+		if (overlay && !std::exchange(wasOverlay, true))
+			drawer = false;
+		wasOverlay = overlay;
+		const bool inspectorFolded = settings.inspectorFolded && !overlay;
+		const float inspector = focus || inspectorFolded
+									? 0
+									: std::min(std::min(settings.inspectorWidth, compact ? 320.0f : 520.0f) * scale,
+											   std::max(0.0f, width - rail - 120 * scale));
+		const float gap = focus ? 0 : 6 * scale;
 		const float timelineSize =
-			previewExpanded
-				? 0
-				: std::min(height * .5f,
-						   (!settings.timelineResized && height / scale < 560 ? 56 : settings.timelineHeight) * scale);
-		const float top = origin.y + 40 * scale, bodyHeight = std::max(1.0f, height - 46 * scale - timelineSize);
-		shell.preview = {origin.x + rail, top, std::max(1.0f, width - rail - (overlay ? 0 : inspector)), bodyHeight};
-		shell.inspector = {origin.x + width - inspector, top, std::max(1.0f, inspector), bodyHeight};
-		shell.inspectorVisible = !previewExpanded && (!overlay || drawer);
-		if (!previewExpanded)
+			focus						? 0
+			: settings.timelineFolded ? TimelinePanel::FoldedHeight(scale)
+									  : std::min(height * .5f, (!settings.timelineResized && height / scale < 560
+																	? 56
+																	: settings.timelineHeight) *
+																   scale);
+		const float top = origin.y + 40 * scale, bodyHeight = std::max(1.0f, height - 40 * scale - gap - timelineSize);
+		const float railX = origin.x + width - rail - (overlay ? 0 : inspector);
+		shell.preview = {origin.x, top, std::max(1.0f, railX - origin.x), bodyHeight};
+		shell.inspector = {overlay ? railX - inspector : railX + rail, top, std::max(1.0f, inspector), bodyHeight};
+		shell.inspectorVisible = !focus && !inspectorFolded && (!overlay || drawer);
+		if (!focus)
 		{
-			ImGui::SetCursorPos({origin.x, top});
-			ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::Surface);
-			ImGui::BeginChild("Device rail", {rail, bodyHeight}, 0, ImGuiWindowFlags_NoScrollbar);
-			if (DrawDeviceRail(shell.selection, runtime.View(), settings, overlay))
-				drawer = true;
+			ImGui::SetCursorPos({railX, top});
+			ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::Bg);
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {0, 4 * scale});
+			ImGui::BeginChild("Device rail", {rail, bodyHeight}, ImGuiChildFlags_AlwaysUseWindowPadding,
+							  ImGuiWindowFlags_NoScrollbar);
+			ImGui::PopStyleVar();
+			const float footer = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y;
+			if (auto picked = DrawDeviceRail(shell.selection, runtime.View(), settings, overlay, footer))
+				PickTab(std::move(*picked), overlay);
+			if (!overlay)
+			{
+				ImGui::SetCursorPosY(ImGui::GetWindowHeight() - ImGui::GetFrameHeight() - 4 * scale);
+				ImGui::SetCursorPosX((rail - ImGui::GetFrameHeight()) / 2);
+				if (IconButton("Fold inspector", inspectorFolded ? Icon::ChevronLeft : Icon::ChevronRight,
+							   inspectorFolded ? "Show the inspector (Ctrl+I)" : "Hide the inspector (Ctrl+I)"))
+					FoldInspector();
+			}
 			ImGui::EndChild();
 			ImGui::PopStyleColor();
-			ImGui::SetCursorPos({origin.x + rail - 3 * scale, top});
-			ImGui::InvisibleButton("Rail splitter", {6 * scale, bodyHeight});
-			if (!compact && ImGui::IsItemClicked())
-			{
-				settings.railCollapsed = !settings.railCollapsed;
-				dirty = true;
-			}
-			if (!overlay)
-				Splitter("Inspector splitter", {shell.inspector.x - 3 * scale, top}, {6 * scale, bodyHeight},
-						 settings.inspectorWidth, 280, compact ? 320 : 520, true, 340);
-			Splitter("Timeline splitter", {origin.x, top + bodyHeight}, {width, 6 * scale}, settings.timelineHeight, 56,
-					 height / scale * .5f, false, 132);
+			if (!overlay && !inspectorFolded)
+				Splitter("Inspector splitter", {railX - 3 * scale, top}, {6 * scale, bodyHeight}, settings.inspectorWidth,
+						 280, compact ? 320 : 520, true, 340);
+			if (!settings.timelineFolded)
+				Splitter("Timeline splitter", {origin.x, top + bodyHeight}, {width, 6 * scale}, settings.timelineHeight,
+						 56, height / scale * .5f, false, 132);
 		}
 		runtime.ConfigurePilot(settings.pilotBindings, settings.gamepadBindings);
 		runtime.ConfigureSnapshots(settings.snapshotBudgetMiB);
@@ -480,7 +610,19 @@ struct WorkspacePanels::Impl
 			!ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) &&
 			contains(shell.preview, ImGui::GetIO().MousePos) && !contains(shell.inspector, ImGui::GetIO().MousePos))
 			drawer = false;
+		runtime.HudFolded() = settings.hudFolded;
+		if (cropProfile != settings.activeProfile)
+		{
+			const auto crop = std::ranges::find(settings.crops, settings.activeProfile, &PreviewCrop::profile);
+			runtime.PreviewCrop() = crop == settings.crops.end()
+										? std::nullopt
+										: std::optional<ImVec4>(ImVec4{crop->x0, crop->y0, crop->x1, crop->y1});
+			cropProfile = settings.activeProfile;
+		}
 		runtime.DrawPreview(shell);
+		if (std::exchange(settings.hudFolded, runtime.HudFolded()) != settings.hudFolded)
+			dirty = true;
+		StoreCrop(runtime.PreviewCrop());
 		if (SelectionKey(shell.selection) != selected)
 			drawer = true;
 		if (shell.inspectorVisible)
@@ -495,15 +637,30 @@ struct WorkspacePanels::Impl
 		for (auto& notice : runtime.TakeNotices())
 			notices.Push(std::move(notice));
 		notices.Draw({window.x + shell.preview.x, window.y + shell.preview.y, shell.preview.width, shell.preview.height});
-		if (!previewExpanded)
+		if (focus)
 		{
-			ImGui::SetCursorPos({origin.x, top + bodyHeight + 6 * scale});
+			// Focus mode keeps one visible way back at the image's top right.
+			const char* label = "Exit focus";
+			const float chip = ImGui::CalcTextSize(label).x + ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x * 3;
+			ImGui::SetCursorPos({shell.preview.x + shell.preview.width - chip - 8 * scale, shell.preview.y + 4 * scale});
+			// Its own child, created after the preview, so it draws and hovers above the image.
+			ImGui::BeginChild("Focus exit", {chip, ImGui::GetFrameHeight()}, 0,
+							  ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
+			if (IconButton("Exit focus", Icon::Focus, "Back to the full layout (F11 or Esc)", true, label))
+				previewExpanded = false;
+			ImGui::EndChild();
+		}
+		else
+		{
+			ImGui::SetCursorPos({origin.x, top + bodyHeight + gap});
 			ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::Surface);
-			ImGui::BeginChild("Timeline", {width, timelineSize});
-			if (timeline.Draw(runtime, shell))
-			{
-				drawer = true;
-			}
+			ImGui::BeginChild("Timeline", {width, timelineSize}, 0,
+							  settings.timelineFolded ? ImGuiWindowFlags_NoScrollbar : ImGuiWindowFlags_None);
+			bool fold = false;
+			if (timeline.Draw(runtime, shell, settings.timelineFolded, fold))
+				ShowInspector();
+			if (fold)
+				FoldTimeline();
 			ImGui::EndChild();
 			ImGui::PopStyleColor();
 		}
@@ -636,7 +793,9 @@ const ShellState& WorkspacePanels::State() const
 void WorkspacePanels::Select(Selection selection)
 {
 	m_impl->shell.selection = std::move(selection);
-	m_impl->drawer = true;
+	m_impl->ShowInspector();
+	// An explicit selection opens the drawer even when the window just narrowed.
+	m_impl->wasOverlay = true;
 }
 void WorkspacePanels::SetPreviewExpanded(bool expanded)
 {

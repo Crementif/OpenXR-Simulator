@@ -3,6 +3,7 @@
 #include "app/RuntimeSession.h"
 #include "app/SimulationEdits.h"
 #include "app/SpatialEditor.h"
+#include "app/Theme.h"
 #include "control/InspectionDocument.h"
 
 #include <algorithm>
@@ -251,8 +252,12 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 		if (const auto index = history.Find(identity, selection.epoch))
 		{
 			const auto& frame = history.At(*index);
+			const bool missed = frame.flags & (HistoryLate | HistoryDropped);
+			ImGui::TextColored(theme::Vec(missed ? theme::Record : theme::Text), "Interval %.1f ms of %.1f ms budget%s",
+							   frame.frameMilliseconds, frame.periodMilliseconds, missed ? " \u00b7 missed" : "");
+			ImGui::SetItemTooltip("Time between this frame's display time and the previous one; the budget is the "
+								  "display period");
 			ImGui::Text("Run time %.3f s", frame.runSeconds);
-			ImGui::Text("Display interval %.3f ms", frame.frameMilliseconds);
 		}
 		if (!bytes.empty())
 		{

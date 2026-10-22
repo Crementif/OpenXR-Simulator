@@ -82,8 +82,10 @@ void RuntimeFeed()
 	feed.Accept(page(2, 10, 100000000));
 	feed.Accept(page(2, 12, 120000000));
 	Require(feed.History().Size() == 2 && feed.After() == 12, "Feed repeated a paginated frame");
-	Require(feed.History().At(1).flags == (HistoryDropped | HistoryGap) && feed.History().At(1).frameMilliseconds == 20,
-			"Feed lost a dropped frame, gap or runtime interval");
+	// Twice the 10 ms period is a missed display time.
+	Require(feed.History().At(1).flags == (HistoryDropped | HistoryGap | HistoryLate) &&
+				feed.History().At(1).frameMilliseconds == 20 && feed.History().At(1).periodMilliseconds == 10,
+			"Feed lost a dropped frame, gap, late frame or runtime interval");
 	Require(std::abs(feed.History().At(1).runSeconds - .12) < .000001, "Run-relative time used attachment time");
 	feed.SetScope({});
 	feed.SetScope({1, 9, 2});

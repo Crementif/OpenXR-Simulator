@@ -290,6 +290,18 @@ const RuntimeView& RuntimePanels::View() const
 {
 	return m_impl->m_view;
 }
+bool RuntimePanels::PilotActive() const
+{
+	return m_impl->m_pilot.Active();
+}
+bool& RuntimePanels::HudFolded()
+{
+	return m_impl->m_pilot.HudFolded();
+}
+std::optional<ImVec4>& RuntimePanels::PreviewCrop()
+{
+	return m_impl->m_preview.Crop();
+}
 void RuntimePanels::DrawPreview(ShellState& shell)
 {
 	m_impl->DrawPreview(shell);

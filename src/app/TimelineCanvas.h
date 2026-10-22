@@ -28,7 +28,18 @@ class TimelineCanvas
 						 std::optional<std::pair<double, double>> selection = {});
 	void DrawEvent(double time, double observed, const char* text, bool failed, bool dim);
 	ClipHit DrawClip(double first, double last, const char* label, bool replay);
+	// A paused span: a solid band on the Frame time lane, labelled when wide enough.
 	void DrawPause(double first, double last);
+	// The frame budget in milliseconds (the display period); 0 scales bars to 30 fps.
+	void SetBudget(float milliseconds) noexcept
+	{
+		m_budget = milliseconds;
+	}
+	// Tints every lane under frames that missed their display time.
+	void SetTint(bool tint) noexcept
+	{
+		m_tint = tint;
+	}
 	// Draws the source frames of a replayed take over the replay's Input lane,
 	// frame for frame from anchor, so recorded and applied input can be compared.
 	void DrawGhost(const HistoryStore& history, std::size_t source, std::size_t anchor, std::size_t count);
@@ -83,7 +94,8 @@ class TimelineCanvas
 	float m_header = 0, m_live = 0, m_lane = 0, m_top = 0, m_height = 0;
 	int m_lanes = 0;
 	double m_start = 0, m_span = 10;
-	bool m_fit = false, m_compact = false;
+	float m_budget = 0;
+	bool m_fit = false, m_compact = false, m_tint = false;
 	std::optional<double> m_dragStart;
 	bool m_rangeDrag = false;
 };

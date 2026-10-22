@@ -1,8 +1,10 @@
 #pragma once
 
+#include "app/PreviewImages.h"
 #include "app/RuntimeView.h"
 
 #include <imgui.h>
+#include <optional>
 #include <string>
 
 namespace simxr::app
@@ -21,9 +23,19 @@ class PreviewPanel
 				 Window* window);
 	// Returns whether the image may be piloted this frame.
 	bool Draw(ShellState& shell, const RuntimeView& view);
+	// The pinned region (x0, y0, x1, y1, normalized), shown instead of the whole
+	// image across frames; the shell keeps one per launch profile.
+	std::optional<ImVec4>& Crop()
+	{
+		return m_crop;
+	}
 
   private:
 	void DrawImage(ShellState& shell, const RuntimeView& view, bool& pilotArea, float headerStart);
+	// The single view button: eye, zoom and crop live in its popover.
+	void DrawViewButton(const PreviewImageSummary& image);
+	// Picking a crop: drag a rectangle over one eye's image.
+	void PickCrop(ImVec2 imageMin, float eyeWidth, float height, int eyes);
 	void DrawEmpty(ShellState& shell, const RuntimeView& view);
 	// A downscaled image kept while running, for a past frame without an exact one.
 	bool DrawKept(const RuntimeView& view);
@@ -37,7 +49,9 @@ class PreviewPanel
 	// The header row's width last frame, so it can align with the image without clipping.
 	float m_headerWidth = 0;
 	int m_slice = 0;
-	bool m_fit = true, m_panning = false;
+	bool m_fit = true, m_panning = false, m_picking = false;
+	std::optional<ImVec4> m_crop;
+	std::optional<ImVec2> m_pickStart;
 	std::string m_pilotError;
 };
 } // namespace simxr::app

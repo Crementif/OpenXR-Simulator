@@ -28,6 +28,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <iostream>
+#include <optional>
 #include <set>
 #include <sstream>
 
@@ -281,7 +282,7 @@ void CheckTimelineWorkflow(Interaction& test)
 	for (int step = 0; step < 3; ++step)
 	{
 		const auto previous = test.runtime.Snapshot().selectedCapture;
-		activate("Next");
+		activate("Step forward");
 		await(
 			[&](const auto& state)
 			{
@@ -419,12 +420,15 @@ void CheckShell()
 	const auto inspector = FindPanel("Inspector");
 	Require(preview && inspector && !preview->DockId && !inspector->DockId, "Shell still uses docks");
 	Require(preview->Pos.x + preview->Size.x <= inspector->Pos.x + 1, "Inspector overlaps the wide preview");
+	static constexpr const char* tabs[]{"Player", "Head", "Left", "Right", "Body", "Gaze", "Trackers", "Headset",
+										"Scenarios"};
 	for (int index = 0; index < 9; ++index)
 	{
 		auto* rail = FindPanel("Device rail");
 		Require(rail != nullptr, "Rail missing");
-		test.Click({rail->Pos.x + 12, rail->Pos.y + ImGui::GetStyle().WindowPadding.y +
-										  index * (36 * ImGui::GetFontSize() / 17 + ImGui::GetStyle().ItemSpacing.y) + 18});
+		ImGui::ActivateItemByID(rail->GetID(tabs[index]));
+		test.Frame();
+		test.Frame();
 		const auto& selection = test.workspace.State().selection;
 		if (index < 7)
 			Require(std::holds_alternative<DeviceSel>(selection) &&
@@ -783,7 +787,7 @@ void PilotLiveRuntime(const char* endpoint)
 			return test.runtime.Snapshot().manual && !test.runtime.Snapshot().operationPending;
 		},
 		"Application did not pause");
-	activate("##Frame timeline", "Next");
+	activate("##Frame timeline", "Step forward");
 	Eventually(
 		[&]
 		{
@@ -793,7 +797,7 @@ void PilotLiveRuntime(const char* endpoint)
 		},
 		"Step did not select its captured frame");
 	const auto retained = test.runtime.Snapshot().selectedCapture;
-	activate("##Frame timeline", "Next");
+	activate("##Frame timeline", "Step forward");
 	Eventually(
 		[&]
 		{
@@ -1969,12 +1973,182 @@ void CheckLayouts(Interaction& test, const std::filesystem::path& qa)
 	// Switching eyes, including to Both and back (D12: Both aborted on a style pop).
 	for (const char* eye : {"Both", "Right", "Both", "Left"})
 	{
-		ImGui::ActivateItemByID(FindPanel("GPU preview")->GetID(eye));
+		ImGui::ActivateItemByID(FindPanel("GPU preview")->GetID("View"));
+		pump(2);
+		const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+		Require(!popups.empty() && popups.back().Window, "Image view popover did not open");
+		ImGui::ActivateItemByID(popups.back().Window->GetID(eye));
 		pump(4);
+		ImGui::ClosePopupsExceptModals();
+		pump(2);
 	}
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Validation errors in layout capture");
 	std::cout << "PASS connected layouts at four sizes and the overlay drawer\n";
+}
+
+// F1-F4: folding, focus, Library toggle, image fit at every width, frame
+// stepping, the pinned crop and missed-frame timing (the probe runs with
+// SIMXR_PROBE_SLOW_EVERY so some frames miss their display time).
+void CheckShell(Interaction& test, const char* qa)
+{
+	const auto pump = [&](int count)
+	{
+		for (int index = 0; index < count; ++index)
+		{
+			test.Frame();
+			SDL_Delay(10);
+		}
+	};
+	const auto pointer = [&](ImVec2 point, std::optional<bool> down)
+	{
+		SDL_Event event{};
+		event.type = SDL_EVENT_MOUSE_MOTION;
+		event.motion.windowID = SDL_GetWindowID(test.window.Native());
+		event.motion.x = point.x;
+		event.motion.y = point.y;
+		Require(SDL_PushEvent(&event), "Push shell motion");
+		if (down)
+		{
+			event = {};
+			event.type = *down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+			event.button.windowID = SDL_GetWindowID(test.window.Native());
+			event.button.button = SDL_BUTTON_LEFT;
+			event.button.down = *down;
+			event.button.x = point.x;
+			event.button.y = point.y;
+			Require(SDL_PushEvent(&event), "Push shell button");
+		}
+		pump(2);
+	};
+	const auto activate = [&](const char* window, const char* id)
+	{
+		auto* panel = FindPanel(window);
+		Require(panel != nullptr, (std::string("Missing ") + window).c_str());
+		ImGui::ActivateItemByID(panel->GetID(id));
+		pump(3);
+	};
+	const auto screenshot = [&](const std::string& name)
+	{
+		if (qa)
+		{
+			test.renderer.RequestScreenshot((std::filesystem::path(qa) / name).string());
+			pump(2);
+		}
+	};
+	const auto& shell = test.workspace.State();
+	test.window.Resize(1280, 800);
+	test.workspace.SetScale(1);
+	test.workspace.Select(DeviceSel{DevicePage::Head});
+	pump(6);
+	// The image fits in one piece at every width, single eye and both eyes.
+	for (const float scale : {1.0f, 1.5f})
+		for (int width = 640; width <= 1920; width += 80)
+		{
+			test.window.Resize(width, 800);
+			test.workspace.SetScale(scale);
+			pump(4);
+			const auto* preview = FindPanel("GPU preview");
+			const auto* area = FindPanel("Image area");
+			Require(preview && area, "Preview image missing during the width sweep");
+			Require(area->ContentSize.x <= area->Size.x + 1 && area->Pos.x + area->Size.x <= preview->Pos.x + preview->Size.x + 1,
+					("Image overflows its region at width " + std::to_string(width)).c_str());
+			if (width == 640 || width == 1040)
+				screenshot("width-" + std::to_string(width) + "-" + std::to_string(int(scale * 100)) + ".bmp");
+		}
+	test.window.Resize(1280, 800);
+	test.workspace.SetScale(1);
+	pump(4);
+	// Folding the timeline leaves one row; folding the inspector widens the preview.
+	const float timelineHeight = FindPanel("Timeline")->Size.y;
+	activate("Timeline", "Fold timeline");
+	pump(2);
+	Require(FindPanel("Timeline")->Size.y < timelineHeight * .6f, "Timeline did not fold");
+	screenshot("timeline-folded.bmp");
+	activate("Timeline", "Fold timeline");
+	pump(2);
+	Require(std::abs(FindPanel("Timeline")->Size.y - timelineHeight) < 1, "Timeline did not unfold");
+	const float previewWidth = FindPanel("GPU preview")->Size.x;
+	activate("Device rail", "Fold inspector");
+	pump(2);
+	Require(!shell.inspectorVisible && FindPanel("GPU preview")->Size.x > previewWidth + 100, "Inspector did not fold");
+	activate("Device rail", "Head");
+	pump(2);
+	Require(shell.inspectorVisible, "Clicking the open tab did not unfold the inspector");
+	// Library toggles back to the page that was open.
+	activate("Top bar", "Library");
+	Require(std::holds_alternative<LibrarySel>(shell.selection), "Library did not open");
+	activate("Top bar", "Library");
+	Require(std::holds_alternative<DeviceSel>(shell.selection) &&
+				std::get<DeviceSel>(shell.selection).page == DevicePage::Head,
+			"Library did not return to the previous page");
+	// Focus shows one way back.
+	activate("Top bar", "Focus");
+	pump(2);
+	Require(FindPanel("Focus exit") && FindPanel("GPU preview")->Size.x > previewWidth + 100, "Focus did not expand");
+	screenshot("focus.bmp");
+	activate("Focus exit", "Exit focus");
+	pump(2);
+	Require(std::abs(FindPanel("GPU preview")->Size.x - previewWidth) < 1, "Exit focus did not restore the layout");
+	// Pin a crop by dragging over the image, then step frames: it stays.
+	activate("GPU preview", "View");
+	const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+	Require(!popups.empty() && popups.back().Window, "Image view popover did not open");
+	ImGui::ActivateItemByID(popups.back().Window->GetID("Pick region"));
+	pump(3);
+	const auto* area = FindPanel("Image area");
+	const ImVec2 corner{area->Pos.x + area->Size.x * .3f, area->Pos.y + area->Size.y * .3f};
+	pointer(corner, true);
+	pointer({corner.x + area->Size.x * .2f, corner.y + area->Size.y * .2f}, std::nullopt);
+	pointer({corner.x + area->Size.x * .2f, corner.y + area->Size.y * .2f}, false);
+	pump(3);
+	Require(test.runtime.PreviewCrop().has_value(), "Dragging over the image did not pin a crop");
+	activate("Timeline", "Pause");
+	Eventually([&] { pump(1); return test.runtime.Snapshot().manual && !test.runtime.Snapshot().operationPending; },
+			   "Shell check did not pause");
+	for (int step = 0; step < 5; ++step)
+	{
+		activate("Timeline", "Step forward");
+		Eventually([&] { pump(1); return !test.runtime.Snapshot().operationPending; }, "Step did not finish");
+	}
+	Require(test.runtime.PreviewCrop().has_value(), "Stepping cleared the crop");
+	screenshot("crop.bmp");
+	// Stepping back walks older frames; stepping forward returns to the edge.
+	const auto edge = test.runtime.Snapshot().time.cursor.frame;
+	activate("Timeline", "Step back");
+	activate("Timeline", "Step back");
+	const auto* back = std::get_if<FrameSel>(&shell.selection);
+	Require(back && back->identity.frame < edge && !test.runtime.Snapshot().time.following,
+			"Step back did not select an older frame");
+	const auto older = back->identity.frame;
+	activate("Timeline", "Step forward");
+	const auto* forward = std::get_if<FrameSel>(&shell.selection);
+	Require(forward && forward->identity.frame > older, "Step forward did not select a newer frame");
+	test.runtime.PreviewCrop().reset();
+	activate("Timeline", "Continue");
+	Eventually([&] { pump(1); return !test.runtime.Snapshot().manual && test.runtime.Snapshot().time.following; },
+			   "Shell check did not continue");
+	// Missed frames from the slowed probe are marked and the tint shows them.
+	std::size_t late = 0;
+	Eventually(
+		[&]
+		{
+			pump(5);
+			const auto& history = test.runtime.History();
+			late = 0;
+			for (std::size_t index = history.Size() > 600 ? history.Size() - 600 : 0; index < history.Size(); ++index)
+				late += (history.At(index).flags & HistoryLate) != 0;
+			return late > 0;
+		},
+		"No missed frames marked from the slowed probe");
+	activate("Timeline", "Slow frames");
+	pump(4);
+	screenshot("slow-frames.bmp");
+	activate("Timeline", "Slow frames");
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Validation errors in the shell check");
+	std::cout << "PASS shell: image fits 640-1920 at 100/150 %, folds, focus, Library toggle, crop across steps, "
+			  << late << " missed frames marked\n";
 }
 
 // D12 feedback: ImGui reports duplicate IDs only for the hovered item, so sweep the pointer
@@ -2214,6 +2388,13 @@ void CheckInputPad(Interaction& test)
 			const auto controls = observed();
 			if (ready(controls))
 				return;
+			if (std::chrono::steady_clock::now() >= deadline)
+				if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
+				{
+					test.renderer.RequestScreenshot((std::filesystem::path(qa) / "input-pad-failure.bmp").string());
+					pump(2);
+					test.renderer.WaitIdle();
+				}
 			Require(std::chrono::steady_clock::now() < deadline, failure);
 		}
 	};
@@ -2432,7 +2613,7 @@ void CheckSnapshotRetention(Interaction& test)
 		const auto previous = test.runtime.Snapshot().selectedCapture;
 		const auto timeline = FindPanel("##Frame timeline");
 		Require(timeline, "Retention timeline missing");
-		ImGui::ActivateItemByID(timeline->GetID("Next"));
+		ImGui::ActivateItemByID(timeline->GetID("Step forward"));
 		test.Frame();
 		wait(
 			[&](const auto& state)
@@ -2525,6 +2706,8 @@ void CheckToolbarLaunch(const char* executable)
 		CheckLibrary(test, directory);
 	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"); qa && std::getenv("SIMXR_LAYOUT_QA"))
 		CheckLayouts(test, qa);
+	if (std::getenv("SIMXR_SHELL_QA"))
+		CheckShell(test, std::getenv("SIMXR_UI_QA_DIR"));
 	if (std::getenv("SIMXR_ID_QA"))
 		CheckIdConflicts(test);
 	if (std::getenv("SIMXR_INPUT_QA"))

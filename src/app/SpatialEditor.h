@@ -37,6 +37,10 @@ class SpatialEditor
 	{
 		return m_view.expanded;
 	}
+	void SetExpanded(bool expanded)
+	{
+		m_view.expanded = expanded;
+	}
 	bool Active() const;
 	std::uint64_t ObservedFrame() const
 	{

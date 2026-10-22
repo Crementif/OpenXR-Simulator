@@ -251,16 +251,18 @@ float PreviewHistory::Aspect() const noexcept
 #endif
 	return 9.f / 16;
 }
-void PreviewHistory::Draw(const PreviewShot& shot, float width)
+void PreviewHistory::Draw(const PreviewShot& shot, float width, ImVec4 crop)
 {
 #ifdef __linux__
 	if (!m_resources || shot.slot >= m_shots.size())
 		return;
 	m_display = shot.slot;
-	ImGui::Image(std::bit_cast<ImTextureID>(m_resources->descriptor), {width, width * Aspect()});
+	ImGui::Image(std::bit_cast<ImTextureID>(m_resources->descriptor),
+				 {width, width * Aspect() * (crop.w - crop.y) / (crop.z - crop.x)}, {crop.x, crop.y}, {crop.z, crop.w});
 #else
 	(void)shot;
 	(void)width;
+	(void)crop;
 #endif
 }
 void PreviewHistory::Record(VkCommandBuffer command)
