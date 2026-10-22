@@ -180,6 +180,18 @@ bool DeviceControlPanel::Field(const char* key, bool changed, bool continuous, c
 																						 : std::string{});
 	return changed;
 }
+bool DeviceControlPanel::InputField(const char* key, bool changed)
+{
+	const std::string field = m_fieldScope + key;
+	if (changed)
+	{
+		m_pendingFields.insert(field);
+		m_rejectedFields.erase(field);
+	}
+	DrawLiveField(false, m_rejectedFields.contains(field) && ImGui::GetTime() < m_rejectedUntil ? m_deliveryError
+																							   : std::string{});
+	return changed;
+}
 std::optional<SimulationEdit> DeviceControlPanel::DrawHeader(const Selection& selection)
 {
 	m_edit.reset();
@@ -210,7 +222,7 @@ std::optional<SimulationEdit> DeviceControlPanel::DrawHeader(const Selection& se
 		ImGui::BeginDisabled(!ready);
 		const std::string tip =
 			std::string("Restore defaults for ") + titles[static_cast<int>(page)] + "; other pages stay";
-		if (IconButton("Reset page", Icon::Refresh, tip.c_str()))
+		if (IconButton("Reset page", Icon::ResetPose, tip.c_str()))
 			ResetPage(page);
 		ImGui::EndDisabled();
 	}
@@ -718,27 +730,36 @@ void DeviceControlPanel::DrawInputPad(std::uint32_t hand)
 	DrawOwner(hand ? ControlChannel::RightControls : ControlChannel::LeftControls);
 	bool changed = false, continuous = false;
 	bool stickClick = controls.thumbClick;
+	const auto top = ImGui::GetCursorPosY();
 	const bool stick = StickPad("Stick", controls.stick.x, controls.stick.y, stickClick, latched.stick, color);
 	controls.thumbClick = stickClick;
-	changed |= Field("Stick", stick, true);
+	changed |= InputField("Stick", stick);
 	continuous |= stick && ImGui::IsItemActive();
-	ImGui::SameLine();
+	const float stickHeight = ImGui::GetItemRectSize().y;
+	ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x * 2);
+	// Trigger, grip and the face buttons, centred beside the stick.
+	const float unit = ImGui::GetFontSize() / 17, spacing = ImGui::GetStyle().ItemSpacing.y;
+	ImGui::SetCursorPosY(top + std::max(0.0f, (stickHeight - (24 * 2 + 34) * unit - spacing * 2) / 2));
 	ImGui::BeginGroup();
 	const float width = std::max(60.f, ImGui::GetContentRegionAvail().x);
 	const bool trigger = TriggerBar("Trigger", "Trigger", controls.trigger, latched.trigger, color, width);
-	changed |= Field("Trigger", trigger, true);
+	changed |= InputField("Trigger", trigger);
 	continuous |= trigger && ImGui::IsItemActive();
 	const bool grip = TriggerBar("Grip", "Grip", controls.grip, latched.grip, color, width);
-	changed |= Field("Grip", grip, true);
+	changed |= InputField("Grip", grip);
 	continuous |= grip && ImGui::IsItemActive();
-	changed |= Field("Primary", HoldButton("Primary", primary, controls.primary, latched.primary, color));
+	changed |= InputField("Primary", HoldButton("Primary", primary, controls.primary, latched.primary, color));
 	ImGui::SameLine();
-	changed |= Field("Secondary", HoldButton("Secondary", secondary, controls.secondary, latched.secondary, color));
+	changed |= InputField("Secondary", HoldButton("Secondary", secondary, controls.secondary, latched.secondary, color));
 	ImGui::SameLine();
-	changed |= Field("Menu", HoldButton("Menu", "M##Menu", controls.menu, latched.menu, color));
-	ImGui::SameLine();
+	changed |= InputField("Menu", HoldButton("Menu", "M##Menu", controls.menu, latched.menu, color));
+	// Release-all sits at the row's right end, centred on the round buttons.
+	const float buttonRow = ImGui::GetItemRectSize().y;
+	ImGui::SameLine(width - ImGui::GetFrameHeight());
+	ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (buttonRow - ImGui::GetFrameHeight()) / 2);
 	const bool clear = IconButton("Clear hand", Icon::Close, "Release every input of this hand");
 	ImGui::EndGroup();
+	ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY(), top + stickHeight + spacing));
 	if (clear)
 	{
 		controls = {};

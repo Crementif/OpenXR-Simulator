@@ -79,6 +79,8 @@ class DeviceControlPanel
 	// double-click on a slider) when reset is given.
 	bool Field(const char* key, bool changed, bool continuous = false, const std::function<void()>& reset = {},
 			   bool slider = false);
+	// Pad inputs are momentary and show their own state: only a rejection is drawn on them.
+	bool InputField(const char* key, bool changed);
 	bool m_replaceOwner = false, m_exactAnchor = false;
 	bool m_configurationLoaded = false;
 	std::optional<ObservedSetup> m_observed;

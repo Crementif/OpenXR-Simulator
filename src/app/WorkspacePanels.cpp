@@ -26,6 +26,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <stdexcept>
+#include <tuple>
 #include <utility>
 
 namespace simxr::app
@@ -73,6 +74,14 @@ struct WorkspacePanels::Impl
 	// The launch profile whose pinned crop the preview holds.
 	std::optional<std::string> cropProfile;
 	bool wasOverlay = false;
+	struct DividerDrag
+	{
+		ImGuiID id;
+		// The size the pointer asks for, before clamping or folding.
+		float request;
+		float travel;
+	};
+	std::optional<DividerDrag> dividerDrag;
 
 	std::filesystem::path path;
 	CompanionSettings settings;
@@ -331,7 +340,7 @@ struct WorkspacePanels::Impl
 #endif
 		const float right = ImGui::GetContentRegionMax().x;
 		const float button = ImGui::GetFrameHeight(), spacing = ImGui::GetStyle().ItemSpacing.x;
-		ImGui::SameLine(std::max(ImGui::GetCursorPosX(), right - button * 4 - spacing * 3));
+		ImGui::SameLine(std::max(ImGui::GetCursorPosX(), right - button * 3 - spacing * 2));
 		if (snapshot.recording ? IconButton("Stop recording", Icon::Stop, "Stop recording (Ctrl+R)", false, nullptr,
 										   theme::Record)
 							   : IconButton("Rec", Icon::Record, "Record inputs (Ctrl+R)", false, nullptr, theme::Record))
@@ -341,10 +350,6 @@ struct WorkspacePanels::Impl
 			else
 				runtime.StartRecording();
 		}
-		ImGui::SameLine();
-		if (IconButton("Library", Icon::Library,
-					   InLibrary() ? "Close the Library (Ctrl+L)" : "Library: takes and scripts (Ctrl+L)", InLibrary()))
-			ToggleLibrary();
 		ImGui::SameLine();
 		if (IconButton("Focus", Icon::Focus, previewExpanded ? "Exit focus (F11)" : "Focus: only the image (F11)",
 					   previewExpanded))
@@ -518,38 +523,100 @@ struct WorkspacePanels::Impl
 			settings.crops.push_back(value);
 		dirty = true;
 	}
-	void Splitter(const char* id, ImVec2 position, ImVec2 size, float& value, float minimum, float maximum,
-				  bool vertical, float defaultValue)
+	// A region edge drawn above the regions it separates: drag to resize, drag
+	// past the minimum to fold, and click its tab to fold or unfold. Sizes are
+	// base pixels; returns true when the region should fold or unfold.
+	bool Divider(const char* id, ShellRect strip, bool vertical, float& value, float minimum, float maximum,
+				 float defaultValue, bool folded, float foldBelow)
 	{
-		ImGui::SetCursorPos(position);
-		ImGui::InvisibleButton(id, size);
-		if (ImGui::IsItemHovered() || ImGui::IsItemActive())
+		const float scale = settings.scale;
+		const auto& io = ImGui::GetIO();
+		ImGui::PushID(id);
+		const auto region = [&](const char* part, ShellRect rect)
 		{
-			ImGui::SetMouseCursor(vertical ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_ResizeNS);
-			// A thin accent line shows what will move.
-			const auto minimum = ImGui::GetItemRectMin(), maximum = ImGui::GetItemRectMax();
-			const ImVec2 center{(minimum.x + maximum.x) / 2, (minimum.y + maximum.y) / 2};
-			const float thickness = 2 * settings.scale;
-			ImGui::GetWindowDrawList()->AddLine(vertical ? ImVec2{center.x, minimum.y} : ImVec2{minimum.x, center.y},
-												vertical ? ImVec2{center.x, maximum.y} : ImVec2{maximum.x, center.y},
-												ImGui::IsItemActive() ? theme::Accent : theme::Fade(theme::Accent, .6f),
-												thickness);
-			ImGui::SetItemTooltip("Drag to resize; double-click to reset");
-		}
-		if (ImGui::IsItemActive())
+			ImGui::SetCursorPos({rect.x, rect.y});
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {0, 0});
+			ImGui::BeginChild((std::string(id) + " " + part).c_str(), {rect.width, rect.height}, 0,
+							  ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
+								  ImGuiWindowFlags_NoBackground);
+			ImGui::PopStyleVar();
+			ImGui::InvisibleButton("##Edge", {rect.width, rect.height}, ImGuiButtonFlags_EnableNav);
+			const bool hovered = ImGui::IsItemHovered(), active = ImGui::IsItemActive();
+			const bool released = ImGui::IsItemDeactivated(), doubleClicked = hovered && ImGui::IsMouseDoubleClicked(0);
+			const auto itemMin = ImGui::GetItemRectMin(), itemMax = ImGui::GetItemRectMax();
+			auto* draw = ImGui::GetWindowDrawList();
+			ImGui::EndChild();
+			return std::tuple{hovered, active, released, doubleClicked, itemMin, itemMax, draw};
+		};
+		const auto [lineHovered, lineActive, lineReleased, lineDoubleClicked, lineMin, lineMax, lineDraw] =
+			region("line", strip);
+		const ImVec2 tabSize = vertical ? ImVec2{14 * scale, 40 * scale} : ImVec2{40 * scale, 14 * scale};
+		const ShellRect tab{strip.x + (strip.width - tabSize.x) / 2, strip.y + (strip.height - tabSize.y) / 2, tabSize.x,
+							tabSize.y};
+		const auto [tabHovered, tabActive, tabReleased, tabDoubleClicked, tabMin, tabMax, tabDraw] = region("tab", tab);
+		bool toggle = false;
+		const ImGuiID key = ImGui::GetID("Drag");
+		const bool active = lineActive || tabActive;
+		if (active)
 		{
-			value = std::clamp(value - (vertical ? ImGui::GetIO().MouseDelta.x : ImGui::GetIO().MouseDelta.y) /
-										   settings.scale,
-							   minimum, maximum);
+			// Starting folded, the pointer begins at the fold line so a short drag opens it.
+			if (!dividerDrag || dividerDrag->id != key)
+				dividerDrag = DividerDrag{key, folded ? foldBelow : value, 0};
+			const float delta = (vertical ? io.MouseDelta.x : io.MouseDelta.y) / scale;
+			dividerDrag->request -= delta;
+			dividerDrag->travel += std::abs(delta);
+			const float request = dividerDrag->request;
+			if (!folded && request < foldBelow)
+				toggle = true;
+			else if (folded && request > foldBelow + 40)
+			{
+				toggle = true;
+				value = std::clamp(request, minimum, maximum);
+			}
+			else if (!folded)
+				value = std::clamp(request, minimum, maximum);
 			if (!vertical)
 				settings.timelineResized = true;
 			dirty = true;
 		}
-		if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0))
+		// A click on the tab without a drag folds or unfolds.
+		if (tabReleased && dividerDrag && dividerDrag->id == key && dividerDrag->travel * scale < 3)
+			toggle = !toggle;
+		if (!active && dividerDrag && dividerDrag->id == key)
+			dividerDrag.reset();
+		if (lineDoubleClicked || tabDoubleClicked)
 		{
 			value = defaultValue;
+			toggle = folded;
 			dirty = true;
 		}
+		const bool hot = lineHovered || tabHovered || active;
+		if (hot)
+			ImGui::SetMouseCursor(vertical ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_ResizeNS);
+		const ImVec2 center{(lineMin.x + lineMax.x) / 2, (lineMin.y + lineMax.y) / 2};
+		lineDraw->AddLine(vertical ? ImVec2{center.x, lineMin.y} : ImVec2{lineMin.x, center.y},
+						  vertical ? ImVec2{center.x, lineMax.y} : ImVec2{lineMax.x, center.y},
+						  active ? theme::Accent : hot ? theme::Fade(theme::Accent, .6f) : theme::Line,
+						  (hot ? 2.0f : 1.0f) * scale);
+		tabDraw->AddRectFilled(tabMin, tabMax,
+							   tabHovered || active ? theme::Mix(theme::SurfaceRaised, theme::Text, .14f)
+													: theme::SurfaceRaised,
+							   theme::Radius * scale);
+		tabDraw->AddRect(tabMin, tabMax, hot ? theme::Fade(theme::Accent, .7f) : theme::Line, theme::Radius * scale);
+		// The chevron points the way the region goes when clicked.
+		const Icon chevron = vertical ? (folded ? Icon::ChevronLeft : Icon::ChevronRight)
+									  : (folded ? Icon::ChevronUp : Icon::ChevronDown);
+		DrawIcon(tabDraw, chevron, {(tabMin.x + tabMax.x) / 2, (tabMin.y + tabMax.y) / 2}, 12 * scale,
+				 tabHovered || active ? theme::Text : theme::TextDim);
+		if (tabHovered && !active)
+			ImGui::SetTooltip("%s", vertical ? (folded ? "Show the inspector (Ctrl+I); drag to resize"
+													   : "Hide the inspector (Ctrl+I); drag to resize")
+											 : (folded ? "Show the timeline (Ctrl+T); drag to resize"
+													   : "Hide the timeline (Ctrl+T); drag to resize"));
+		else if (lineHovered && !active)
+			ImGui::SetTooltip("Drag to resize; drag past the edge to hide; double-click resets");
+		ImGui::PopID();
+		return toggle;
 	}
 	void DrawShell(RuntimePanels& runtime)
 	{
@@ -603,25 +670,10 @@ struct WorkspacePanels::Impl
 			ImGui::BeginChild("Device rail", {rail, bodyHeight}, ImGuiChildFlags_AlwaysUseWindowPadding,
 							  ImGuiWindowFlags_NoScrollbar);
 			ImGui::PopStyleVar();
-			const float footer = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y;
-			if (auto picked = DrawDeviceRail(shell.selection, runtime.View(), settings, overlay, footer))
+			if (auto picked = DrawDeviceRail(shell.selection, runtime.View(), settings, overlay, 0))
 				PickTab(std::move(*picked), overlay);
-			if (!overlay)
-			{
-				ImGui::SetCursorPosY(ImGui::GetWindowHeight() - ImGui::GetFrameHeight() - 4 * scale);
-				ImGui::SetCursorPosX((rail - ImGui::GetFrameHeight()) / 2);
-				if (IconButton("Fold inspector", inspectorFolded ? Icon::ChevronLeft : Icon::ChevronRight,
-							   inspectorFolded ? "Show the inspector (Ctrl+I)" : "Hide the inspector (Ctrl+I)"))
-					FoldInspector();
-			}
 			ImGui::EndChild();
 			ImGui::PopStyleColor();
-			if (!overlay && !inspectorFolded)
-				Splitter("Inspector splitter", {railX - 3 * scale, top}, {6 * scale, bodyHeight}, settings.inspectorWidth,
-						 280, compact ? 320 : 520, true, 340);
-			if (!settings.timelineFolded)
-				Splitter("Timeline splitter", {origin.x, top + bodyHeight}, {width, 6 * scale}, settings.timelineHeight,
-						 56, height / scale * .5f, false, 132);
 		}
 		runtime.ConfigurePilot(settings.pilotBindings, settings.gamepadBindings);
 		runtime.ConfigureSnapshots(settings.snapshotBudgetMiB);
@@ -683,13 +735,20 @@ struct WorkspacePanels::Impl
 			ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::Surface);
 			ImGui::BeginChild("Timeline", {width, timelineSize}, 0,
 							  settings.timelineFolded ? ImGuiWindowFlags_NoScrollbar : ImGuiWindowFlags_None);
-			bool fold = false;
-			if (timeline.Draw(runtime, shell, settings.timelineFolded, fold))
+			if (timeline.Draw(runtime, shell, settings.timelineFolded))
 				ShowInspector();
-			if (fold)
-				FoldTimeline();
 			ImGui::EndChild();
 			ImGui::PopStyleColor();
+		}
+		if (!focus)
+		{
+			// Created after the regions so they draw and hover above them.
+			if (!overlay && Divider("Inspector divider", {railX - 3 * scale, top, 6 * scale, bodyHeight}, true,
+									settings.inspectorWidth, 280, compact ? 320 : 520, 340, inspectorFolded, 200))
+				FoldInspector();
+			if (Divider("Timeline divider", {origin.x, top + bodyHeight, width, gap}, false, settings.timelineHeight, 56,
+						height / scale * .5f, 132, settings.timelineFolded, 40))
+				FoldTimeline();
 		}
 		const auto state = shell.session.state;
 		const ImU32 border = state == RunState::Paused			  ? theme::Paused

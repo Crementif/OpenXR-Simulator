@@ -1944,15 +1944,17 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 		const auto& shell = test.workspace.State();
 		const auto canvas = shell.timelineCanvas;
 		const float ruler = ImGui::GetFrameHeight() + 2 * ImGui::GetFontSize() / 16;
-		const float lane = (canvas.height - ruler) / 5;
+		// The Play button leads the clip's name tab at the top-left of its band.
+		const float lane = (canvas.height - ruler) / 3;
+		const float tab = std::min(ImGui::GetFontSize() * (1 + 4.0f / 16), lane);
 		const float x = canvas.x + float((first.seconds - shell.timeline.first) /
 			(shell.timeline.last - shell.timeline.first)) * canvas.width;
 		SDL_Event motion{};
 		motion.type = SDL_EVENT_MOUSE_MOTION;
 		motion.motion.which = TestMouse;
 		motion.motion.windowID = SDL_GetWindowID(test.window.Native());
-		motion.motion.x = std::max(canvas.x, x) + 2 + (lane - 4) / 2;
-		motion.motion.y = canvas.y + ruler + 3.5f * lane;
+		motion.motion.x = std::max(canvas.x, x) + tab / 2;
+		motion.motion.y = canvas.y + ruler + tab / 2;
 		Require(SDL_PushEvent(&motion), "Hover the take clip");
 		pump(2);
 		if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
@@ -2292,24 +2294,24 @@ void CheckShell(Interaction& test, const char* qa)
 	pump(4);
 	// Folding the timeline leaves one row; folding the inspector widens the preview.
 	const float timelineHeight = FindPanel("Timeline")->Size.y;
-	activate("Timeline", "Fold timeline");
+	activate("Timeline divider tab", "##Edge");
 	pump(2);
 	Require(FindPanel("Timeline")->Size.y < timelineHeight * .6f, "Timeline did not fold");
 	screenshot("timeline-folded.bmp");
-	activate("Timeline", "Fold timeline");
+	activate("Timeline divider tab", "##Edge");
 	pump(2);
 	Require(std::abs(FindPanel("Timeline")->Size.y - timelineHeight) < 1, "Timeline did not unfold");
 	const float previewWidth = FindPanel("GPU preview")->Size.x;
-	activate("Device rail", "Fold inspector");
+	activate("Inspector divider tab", "##Edge");
 	pump(2);
 	Require(!shell.inspectorVisible && FindPanel("GPU preview")->Size.x > previewWidth + 100, "Inspector did not fold");
 	activate("Device rail", "Head");
 	pump(2);
 	Require(shell.inspectorVisible, "Clicking the open tab did not unfold the inspector");
 	// Library toggles back to the page that was open.
-	activate("Top bar", "Library");
+	activate("Device rail", "Library");
 	Require(std::holds_alternative<LibrarySel>(shell.selection), "Library did not open");
-	activate("Top bar", "Library");
+	activate("Device rail", "Library");
 	Require(std::holds_alternative<DeviceSel>(shell.selection) &&
 				std::get<DeviceSel>(shell.selection).page == DevicePage::Head,
 			"Library did not return to the previous page");
@@ -2577,7 +2579,7 @@ void CheckLibrary(Interaction& test, const std::filesystem::path& directory)
 	Eventually([&] { pump(1); return test.runtime.Snapshot().recording; }, "Rec did not start recording");
 	DrivePilotPulses(test);
 	Require(test.runtime.Snapshot().recordedChanges > 0, "Piloting recorded no input");
-	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Fold timeline"));
+	ImGui::ActivateItemByID(FindPanel("Timeline divider tab")->GetID("##Edge"));
 	pump(3);
 	screenshot("timeline-recording-folded.bmp");
 	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Stop recording"));
@@ -2597,7 +2599,7 @@ void CheckLibrary(Interaction& test, const std::filesystem::path& directory)
 			"Saved take is not in the isolated recordings folder");
 	pump(3);
 	screenshot("library-take.bmp");
-	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Fold timeline"));
+	ImGui::ActivateItemByID(FindPanel("Timeline divider tab")->GetID("##Edge"));
 	pump(3);
 	ImGui::ActivateItemByID(FindPanel("Inspector")->GetID("Play take"));
 	Eventually([&] { pump(1); return test.runtime.Snapshot().manual; }, "Library replay did not drive the app");
@@ -2786,6 +2788,11 @@ void CheckInputPad(Interaction& test)
 	move(primary.GetCenter());
 	button(SDL_BUTTON_LEFT, true);
 	settle([](const auto& c) { return c.primary; }, "Primary hold did not press");
+	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
+	{
+		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "input-pad-hold.bmp").string());
+		pump(1);
+	}
 	button(SDL_BUTTON_LEFT, false);
 	settle([](const auto& c) { return !c.primary; }, "Primary did not release");
 	move(secondary.GetCenter());
@@ -2802,6 +2809,18 @@ void CheckInputPad(Interaction& test)
 	settle([](const auto& c) { return !c.menu; }, "Menu did not release");
 	std::cout << "PASS pad grip, face buttons and menu\n";
 
+	// An arrow pushes the stick fully that way while held, for menu navigation.
+	move({stick.Min.x + stick.GetWidth() * .12f, stick.GetCenter().y});
+	button(SDL_BUTTON_LEFT, true);
+	settle([](const auto& c) { return c.stick.x < -.99f && c.stick.y == 0 && !c.thumbClick; },
+		   "Stick left arrow did not push fully left");
+	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
+	{
+		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "input-pad-arrow.bmp").string());
+		pump(1);
+	}
+	button(SDL_BUTTON_LEFT, false);
+	settle([](const auto& c) { return c.stick.x == 0 && c.stick.y == 0; }, "Stick arrow did not release");
 	move(stick.GetCenter());
 	button(SDL_BUTTON_LEFT, true);
 	settle([](const auto& c) { return c.thumbClick; }, "Stick click did not press");
@@ -2830,6 +2849,65 @@ void CheckInputPad(Interaction& test)
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Validation errors on the input pad");
 	std::cout << "PASS pad stick drag, click, spring-back and latch\n";
+}
+
+// Screenshots of the reworked surfaces: rig view orbiting a hand and through the eye,
+// the recording band, the folded HUD, the dividers and the single paused indicator.
+void CapturePolish(Interaction& test, const std::filesystem::path& qa)
+{
+	const auto pump = [&](int count)
+	{
+		for (int index = 0; index < count; ++index)
+		{
+			test.Frame();
+			SDL_Delay(10);
+		}
+	};
+	const auto screenshot = [&](const char* name)
+	{
+		test.renderer.RequestScreenshot((qa / name).string());
+		pump(2);
+	};
+	const auto activate = [&](const char* window, const char* label)
+	{
+		auto* target = FindPanel(window);
+		Require(target != nullptr, (std::string("Window missing: ") + window).c_str());
+		ImGui::ActivateItemByID(target->GetID(label));
+		pump(3);
+	};
+	test.window.Resize(1600, 900);
+	test.workspace.SetScale(1);
+	test.workspace.Select(DeviceSel{DevicePage::Right});
+	pump(8);
+	screenshot("polish-hand.bmp");
+	const auto rig = FindPanel("Inspector")->GetID("Rig view");
+	ImGui::ActivateItemByID(ImHashStr("Eye", 0, rig));
+	pump(4);
+	screenshot("polish-eye.bmp");
+	ImGui::ActivateItemByID(ImHashStr("Back", 0, rig));
+	pump(2);
+	activate("HUD hand", "Fold HUD");
+	Require(FindPanel("HUD strip") != nullptr, "Folded HUD shows no way back");
+	screenshot("polish-hud-folded.bmp");
+	activate("HUD strip", "Show HUD");
+	activate("Timeline", "Rec");
+	Eventually([&] { pump(1); return test.runtime.Snapshot().recording; }, "Rec did not start recording");
+	pump(90);
+	screenshot("polish-recording.bmp");
+	activate("Timeline", "Pause");
+	Eventually([&] { pump(1); return test.runtime.Snapshot().manual; }, "Pause did not pause");
+	screenshot("polish-paused.bmp");
+	activate("Inspector divider tab", "##Edge");
+	activate("Timeline divider tab", "##Edge");
+	Require(!test.workspace.State().inspectorVisible, "Inspector divider tab did not fold the inspector");
+	screenshot("polish-folded.bmp");
+	activate("Inspector divider tab", "##Edge");
+	activate("Timeline divider tab", "##Edge");
+	Require(test.workspace.State().inspectorVisible, "Inspector divider tab did not unfold the inspector");
+	activate("Timeline", "Continue");
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Validation errors during the polish capture");
+	std::cout << "PASS polish capture\n";
 }
 
 // D9: while the app runs, look back a few seconds and see the kept preview.
@@ -3514,16 +3592,16 @@ void CheckSoak(Interaction& test, const std::filesystem::path& directory)
 				activate("Top bar", test.runtime.Snapshot().recording ? "Stop recording" : "Rec");
 				break;
 			case 8:
-				activate("Top bar", "Library");
+				activate("Device rail", "Library");
 				break;
 			case 9:
 				activate("Top bar", "Focus");
 				break;
 			case 10:
-				activate("Timeline", "Fold timeline");
+				activate("Timeline divider tab", "##Edge");
 				break;
 			case 11:
-				activate("Device rail", "Fold inspector");
+				activate("Inspector divider tab", "##Edge");
 				break;
 			case 12:
 			{
@@ -3627,6 +3705,8 @@ void CheckToolbarLaunch(const char* executable)
 		CheckTimelineWorkflow(test);
 	if (std::getenv("SIMXR_PAD_QA"))
 		CheckInputPad(test);
+	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"); qa && std::getenv("SIMXR_POLISH_QA"))
+		CapturePolish(test, qa);
 	if (std::getenv("SIMXR_TIMING_QA"))
 		CheckMeasuredTiming(test);
 	if (std::getenv("SIMXR_HISTORY_QA"))

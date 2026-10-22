@@ -3,6 +3,7 @@
 #include <array>
 #include <imgui.h>
 #include <optional>
+#include <string>
 #include <utility>
 
 namespace simxr::app
@@ -31,11 +32,16 @@ class TimelineCanvas
 						 std::optional<std::pair<double, double>> selection = {});
 	void DrawThumbnails(const HistoryStore& history, PreviewHistory& previews, ImVec4 crop);
 	void DrawEvent(double time, double observed, const char* text, bool failed, bool dim);
-	// A playable clip shows a play button while hovered.
+	// A recording (red) or replay (blue) tints every lane over its frames, with a
+	// name tab at its top-left; a playable clip's tab carries a play button.
 	ClipHit DrawClip(double first, double last, const char* label, bool replay, bool playable = false);
 	// A paused span: a solid band on the Frame time lane, labelled when wide enough.
 	void DrawPause(double first, double last);
-	void DrawInputLabel(const char* text);
+	// Extra lines for the Input lane's tooltip, such as the connected tracker roles. Set before Begin().
+	void SetInputDetail(std::string detail)
+	{
+		m_inputDetail = std::move(detail);
+	}
 	// The frame budget in milliseconds (the display period); 0 scales bars to 30 fps.
 	void SetBudget(float milliseconds) noexcept
 	{
@@ -83,8 +89,6 @@ class TimelineCanvas
 		Frames,
 		Images,
 		Input,
-		Recording,
-		Events,
 		LaneCount
 	};
 	float LaneY(Lane lane) const noexcept
@@ -102,6 +106,7 @@ class TimelineCanvas
 	double m_start = 0, m_span = 10;
 	float m_budget = 0;
 	bool m_fit = false, m_compact = false, m_tint = false;
+	std::string m_inputDetail;
 	std::optional<double> m_dragStart;
 	bool m_rangeDrag = false;
 };

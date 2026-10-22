@@ -48,10 +48,11 @@ bool PreviewPanel::Draw(ShellState& shell, const RuntimeView& view)
 			const float imageLeft = std::max(0.0f, (available - m_previousImageSize.x) / 2);
 			ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::min(imageLeft, std::max(0.0f, available - m_headerWidth)));
 			const float headerStart = ImGui::GetCursorScreenPos().x;
-			if (view.manual || !live)
+			ImGui::AlignTextToFramePadding();
+			// Paused is the top bar's run chip and the amber border; only looking back is said here.
+			if (!live)
 			{
-				ImGui::TextColored(theme::Vec(view.manual ? theme::Paused : theme::Past), "%s",
-								   view.manual ? "PAUSED" : "PAST");
+				ImGui::TextColored(theme::Vec(theme::Past), "PAST");
 				ImGui::SameLine();
 			}
 			ImGui::TextDisabled("Frame %llu%s", static_cast<unsigned long long>(image->frame),
@@ -74,7 +75,8 @@ bool PreviewPanel::DrawKept(const RuntimeView& view)
 	const auto shot = history.Nearest(view.time.cursor, view.time.epoch);
 	if (!shot)
 		return false;
-	ImGui::TextColored(theme::Vec(view.manual ? theme::Paused : theme::Past), "%s", view.manual ? "PAUSED" : "PAST");
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextColored(theme::Vec(theme::Past), "PAST");
 	ImGui::SameLine();
 	ImGui::TextDisabled("Frame %llu", static_cast<unsigned long long>(view.time.cursor.frame));
 	ImGui::SameLine();
@@ -156,10 +158,9 @@ void PreviewPanel::DrawImage(ShellState& shell, const RuntimeView& view, bool& p
 	m_spatial.DrawSpaceToggle();
 	if (live && !view.manual && view.connected)
 	{
-		ImGui::SameLine(0, 2);
-		if (ImGui::SmallButton("?##Pilot keys"))
+		ImGui::SameLine();
+		if (IconButton("Pilot keys", Icon::Keyboard, "Mouse, keyboard and gamepad bindings for piloting"))
 			ImGui::OpenPopup("Piloting");
-		ImGui::SetItemTooltip("Mouse, keyboard and gamepad bindings for piloting");
 		if (ImGui::BeginPopup("Piloting"))
 		{
 			m_pilot.DrawHelp();

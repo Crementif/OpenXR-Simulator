@@ -1,6 +1,5 @@
 #include "Math.h"
 #include "app/Theme.h"
-#include "app/widgets/Controls.h"
 #include "app/widgets/SpatialWidgets.h"
 #include <ImGuizmo.h>
 #include <algorithm>
@@ -14,6 +13,14 @@ namespace
 constexpr RigViewState s_defaultView{};
 // Shown when the displayed image carries no eye metadata yet.
 constexpr XrFovf s_defaultFov{-.8f, .8f, .8f, -.8f};
+// Lines are cut at this distance in front of the camera; nearer points would project far off the view.
+constexpr float s_near = .05f;
+// Orbiting a single device starts closer than orbiting the whole player.
+constexpr float s_deviceDistance = 1.2f;
+float DefaultDistance(int focus)
+{
+	return focus >= 0 ? s_deviceDistance : s_defaultView.distance;
+}
 float Yaw(XrQuaternionf q)
 {
 	const auto forward = Rotate(q, {0, 0, -1});
@@ -23,14 +30,16 @@ float Yaw(XrQuaternionf q)
 FrameView RigCamera(const RigViewState& state, const SpatialScene& scene, float aspect, float header)
 {
 	if (state.eye && scene.eye)
-		return {scene.devices[0], scene.eye->fov};
+		return *scene.eye;
 	const auto rotation = EulerAngles(Yaw(scene.root.orientation) + state.yaw, state.pitch, 0);
 	const auto offset = Rotate(rotation, {0, 0, state.distance});
 	// The player is centred in the area below the view buttons; the buttons get the extra field above.
 	const float extent = std::tan(.55f), below = 1 - std::clamp(header, 0.0f, .5f);
 	const float horizontal = std::atan(extent * aspect / below);
 	const float up = std::atan(extent * (1 + 2 * (1 - below) / below));
-	const auto target = Compose(scene.root, {{0, 0, 0, 1}, {0, .9f, 0}}).position;
+	const bool device = state.focus >= 0 && state.focus < 7 && scene.available[state.focus];
+	const auto target = device ? scene.devices[state.focus].position
+							   : Compose(scene.root, {{0, 0, 0, 1}, {0, .9f, 0}}).position;
 	return {{rotation,
 			 {target.x + state.pan.x + offset.x, target.y + state.pan.y + offset.y, target.z + state.pan.z + offset.z}},
 			{-horizontal, horizontal, up, -.55f}};
@@ -48,58 +57,45 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 	state.size = size;
 	state.points = {};
 	ImGui::PushID(id);
+	// A hand or tracker page orbits that device; a new focus starts from its own distance.
+	const int focus = selected >= 1 && selected < 7 ? selected : -1;
+	if (focus != state.focus)
+	{
+		state.focus = focus;
+		state.pan = {};
+		state.distance = DefaultDistance(focus);
+	}
+	// Each view button also re-centres and resets the zoom, so Back is the way home.
+	const auto view = [&](float yaw, float pitch)
+	{
+		state.eye = false;
+		state.yaw = yaw;
+		state.pitch = pitch;
+		state.pan = {};
+		state.distance = DefaultDistance(state.focus);
+	};
 	ImGui::SetCursorScreenPos({minimum.x + 5 * scale, minimum.y + 5 * scale});
 	if (ImGui::SmallButton("Top"))
-	{
-		state.eye = false;
-		state.pitch = -1.56f;
-		state.yaw = 0;
-	}
+		view(0, -1.56f);
+	ImGui::SetItemTooltip("Look down on the player");
 	ImGui::SameLine();
 	if (ImGui::SmallButton("Side"))
-	{
-		state.eye = false;
-		state.pitch = -.1f;
-		state.yaw = std::numbers::pi_v<float> / 2;
-	}
+		view(std::numbers::pi_v<float> / 2, -.1f);
+	ImGui::SetItemTooltip("Look from the player's right");
 	ImGui::SameLine();
 	if (ImGui::SmallButton("Back"))
-	{
-		state.eye = false;
-		state.pitch = s_defaultView.pitch;
-		state.yaw = 0;
-	}
+		view(0, s_defaultView.pitch);
+	ImGui::SetItemTooltip("Behind the player; also double-click the view");
 	ImGui::SameLine();
 	ImGui::BeginDisabled(!scene.eye);
 	if (ImGui::SmallButton("Eye"))
 		state.eye = true;
 	ImGui::EndDisabled();
-	if (!scene.eye && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-		ImGui::SetTooltip("The displayed image has no eye metadata.");
+	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+		ImGui::SetTooltip("%s", scene.eye ? "Through the app's left eye" : "The displayed image has no eye metadata.");
 	ImGui::SameLine();
 	if (ImGui::SmallButton(state.expanded ? "Restore" : "Expand"))
 		state.expanded = !state.expanded;
-	{
-		// Bottom-right corner, clear of the view buttons at any width.
-		const float side = ImGui::GetFrameHeight() - 2 * ImGui::GetStyle().FramePadding.y;
-		const ImVec2 position{maximum.x - side - 10 * scale, maximum.y - side - 4 * scale};
-		ImGui::SetCursorScreenPos(position);
-		if (ImGui::InvisibleButton("Reset view", {side + 6 * scale, side}))
-		{
-			const bool expanded = state.expanded;
-			const auto gizmo = state.gizmo;
-			state = s_defaultView;
-			state.expanded = expanded;
-			state.gizmo = gizmo;
-		}
-		const bool hovered = ImGui::IsItemHovered();
-		if (hovered)
-			draw->AddRectFilled(position, {position.x + side + 6 * scale, position.y + side},
-								ImGui::GetColorU32(ImGuiCol_ButtonHovered), theme::Radius * scale);
-		DrawIcon(draw, Icon::Refresh, {position.x + side / 2 + 3 * scale, position.y + side / 2}, side * .8f,
-				 hovered ? theme::Text : theme::TextDim);
-		ImGui::SetItemTooltip("Reset view: behind the player");
-	}
 	ImGui::SetCursorScreenPos({minimum.x + 5 * scale, maximum.y - ImGui::GetFrameHeight() - 4 * scale});
 	if (ImGui::SmallButton("?##Rig help"))
 		ImGui::OpenPopup("Rig help");
@@ -107,33 +103,49 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 	if (ImGui::BeginPopup("Rig help"))
 	{
 		ImGui::TextUnformatted("Placing devices");
-		ImGui::TextDisabled("Drag empty space to orbit; middle-drag pans.");
-		ImGui::TextDisabled("Wheel zooms. Top / Side / Back / Eye set the view.");
+		ImGui::TextDisabled("Drag empty space to orbit; middle-drag pans; wheel zooms.");
+		ImGui::TextDisabled("Top / Side / Back reset the camera; double-click is Back.");
 		ImGui::TextDisabled("Select a device, then drag its handles. Ctrl snaps.");
-		ImGui::TextDisabled("Ctrl+Z undoes. Reset view only moves the camera.");
+		ImGui::TextDisabled("Ctrl+Z undoes. Camera moves never change devices.");
 		ImGui::EndPopup();
 	}
 	const bool headerHovered = ImGui::IsAnyItemHovered();
 	const auto camera = RigCamera(state, scene, size.x / size.y, 30 * scale / size.y);
+	const float tanLeft = std::tan(camera.fov.angleLeft), tanRight = std::tan(camera.fov.angleRight);
+	const float tanUp = std::tan(camera.fov.angleUp), tanDown = std::tan(camera.fov.angleDown);
+	const float focal = size.x / (tanRight - tanLeft);
+	const auto toCamera = [&](XrVector3f world)
+	{
+		return RelativePose({{0, 0, 0, 1}, world}, camera.pose).position;
+	};
+	// A camera-space point in front of the near plane, on screen.
+	const auto screen = [&](XrVector3f local)
+	{
+		const float depth = -local.z;
+		return ImVec2{minimum.x + (local.x / depth - tanLeft) / (tanRight - tanLeft) * size.x,
+					  minimum.y + (tanUp - local.y / depth) / (tanUp - tanDown) * size.y};
+	};
 	const auto project = [&](XrVector3f world)
 	{
-		const auto point = ProjectPoint(camera, world);
-		return std::pair{ImVec2{minimum.x + point.uv.x * size.x, minimum.y + point.uv.y * size.y}, point.behind};
+		const auto local = toCamera(world);
+		return local.z > -s_near ? std::pair{ImVec2{}, true} : std::pair{screen(local), false};
 	};
 	const auto line = [&](XrVector3f first, XrVector3f second, ImU32 color, float thickness = 1.0f)
 	{
-		const auto [a, aBehind] = project(first);
-		const auto [b, bBehind] = project(second);
-		if (!aBehind && !bBehind)
-			draw->AddLine(a, b, color, thickness * scale);
-	};
-	// Pixel size of a world length at a point, for glyphs that scale with distance.
-	const auto pixels = [&](XrVector3f at, float length)
-	{
-		const auto right = Rotate(camera.pose.orientation, {length, 0, 0});
-		const auto [a, aBehind] = project(at);
-		const auto [b, bBehind] = project({at.x + right.x, at.y + right.y, at.z + right.z});
-		return aBehind || bBehind ? 0.0f : std::hypot(b.x - a.x, b.y - a.y);
+		auto a = toCamera(first), b = toCamera(second);
+		if (a.z > -s_near && b.z > -s_near)
+			return;
+		// Keep only the part in front of the near plane.
+		const auto cut = [](XrVector3f inside, XrVector3f outside)
+		{
+			const float t = (inside.z + s_near) / (inside.z - outside.z);
+			return XrVector3f{inside.x + (outside.x - inside.x) * t, inside.y + (outside.y - inside.y) * t, -s_near};
+		};
+		if (a.z > -s_near)
+			a = cut(b, a);
+		else if (b.z > -s_near)
+			b = cut(a, b);
+		draw->AddLine(screen(a), screen(b), color, thickness * scale);
 	};
 	draw->PushClipRect({minimum.x, minimum.y + 30 * scale}, maximum, true);
 	const auto root = scene.root.position;
@@ -161,40 +173,65 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 	}
 	// A hand page dims the body so the hands stand out.
 	const bool handPage = selected == 1 || selected == 2;
-	const auto drawController = [&](XrPosef pose, ImU32 color, float alpha, bool highlight)
+	const auto drawController = [&](XrPosef pose, ImU32 color, float alpha)
 	{
-		// At least 20 px long so a far or small view still shows the controller clearly.
-		const float perMeter = pixels(pose.position, 1);
-		const float glyph = std::max(1.6f, 20 * scale / std::max(perMeter * .12f, .001f));
-		const auto point = [&](XrVector3f local)
-		{
-			return project(Compose(pose, {{0, 0, 0, 1}, {local.x * glyph, local.y * glyph, local.z * glyph}}).position);
-		};
-		const auto [bottom, bottomBehind] = point({0, -.035f, .05f});
-		const auto [top, topBehind] = point({0, .005f, -.03f});
-		if (bottomBehind || topBehind)
+		// Through the eye it is true to scale; from outside it grows to stay readable, within limits.
+		const auto centre = toCamera(pose.position);
+		if (centre.z > -s_near)
 			return;
-		const float radius = std::max(3.5f * scale, perMeter * .03f * glyph);
-		const auto ink = theme::Fade(theme::Ink, alpha);
-		draw->AddLine(bottom, top, ink, radius * 2 + 2 * scale);
-		draw->AddCircleFilled(bottom, radius + scale, ink);
-		draw->AddCircleFilled(top, radius + scale, ink);
-		draw->AddLine(bottom, top, color, radius * 2);
-		draw->AddCircleFilled(bottom, radius, color);
-		draw->AddCircleFilled(top, radius, color);
-		std::array<ImVec2, 24> ring;
+		const float perMeter = focal / -centre.z;
+		const float glyph = state.eye ? 1.0f : std::clamp(20 * scale / (perMeter * .12f), 1.0f, 4.0f);
+		const auto local = [&](XrVector3f offset)
+		{
+			return toCamera(Compose(pose, {{0, 0, 0, 1}, {offset.x * glyph, offset.y * glyph, offset.z * glyph}}).position);
+		};
+		const auto bottom = local({0, -.035f, .05f}), top = local({0, .005f, -.03f});
+		std::array<XrVector3f, 24> ring;
 		for (std::size_t step = 0; step < ring.size(); ++step)
 		{
 			const float angle = step * 2 * std::numbers::pi_v<float> / ring.size();
 			const float c = std::cos(angle) * .045f, s = std::sin(angle) * .045f;
-			ring[step] = point({c, .015f - .866f * s, -.065f - .5f * s}).first;
+			ring[step] = local({c, .015f - .866f * s, -.065f - .5f * s});
 		}
-		draw->AddPolyline(ring.data(), static_cast<int>(ring.size()), ink, ImDrawFlags_Closed, radius + 3 * scale);
-		draw->AddPolyline(ring.data(), static_cast<int>(ring.size()), color, ImDrawFlags_Closed, radius + scale);
+		const bool clipped = bottom.z > -s_near || top.z > -s_near ||
+							 std::ranges::any_of(ring, [](XrVector3f point) { return point.z > -s_near; });
+		// Each end is as thick as its own depth makes it, so the near end reads as near.
+		const auto radiusAt = [&](XrVector3f point)
+		{
+			return std::max(2.5f * scale, .015f * glyph * focal / -point.z);
+		};
+		const auto ink = theme::Fade(theme::Ink, alpha);
+		if (!clipped)
+		{
+			const auto a = screen(bottom), b = screen(top);
+			const float ra = radiusAt(bottom), rb = radiusAt(top);
+			const float length = std::max(.001f, std::hypot(b.x - a.x, b.y - a.y));
+			const ImVec2 across{-(b.y - a.y) / length, (b.x - a.x) / length};
+			const auto capsule = [&](float grow, ImU32 fill)
+			{
+				draw->AddQuadFilled({a.x + across.x * (ra + grow), a.y + across.y * (ra + grow)},
+									{b.x + across.x * (rb + grow), b.y + across.y * (rb + grow)},
+									{b.x - across.x * (rb + grow), b.y - across.y * (rb + grow)},
+									{a.x - across.x * (ra + grow), a.y - across.y * (ra + grow)}, fill);
+				draw->AddCircleFilled(a, ra + grow, fill);
+				draw->AddCircleFilled(b, rb + grow, fill);
+			};
+			capsule(scale, ink);
+			capsule(0, color);
+			std::array<ImVec2, 24> points;
+			float depth = 0;
+			for (std::size_t step = 0; step < ring.size(); ++step)
+			{
+				points[step] = screen(ring[step]);
+				depth += -ring[step].z / ring.size();
+			}
+			const float thickness = std::clamp(.01f * glyph * focal / depth, 1.5f * scale, 8 * scale);
+			draw->AddPolyline(points.data(), static_cast<int>(points.size()), ink, ImDrawFlags_Closed,
+							  thickness + 2 * scale);
+			draw->AddPolyline(points.data(), static_cast<int>(points.size()), color, ImDrawFlags_Closed, thickness);
+		}
 		line(Compose(pose, {{0, 0, 0, 1}, {0, 0, -.08f * glyph}}).position,
 			 Compose(pose, {{0, 0, 0, 1}, {0, 0, -.3f * glyph}}).position, theme::Fade(color, .8f), 1.5f);
-		if (highlight)
-			draw->AddCircle(top, radius * 2 + 10 * scale, color, 32, 2 * scale);
 	};
 	const auto renderScene = [&](const SpatialScene& value, float alpha)
 	{
@@ -234,7 +271,7 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 				}
 			}
 			else if (device == 1 || device == 2)
-				drawController(pose, color, alpha, false);
+				drawController(pose, color, alpha);
 			else
 			{
 				const float radius = 5 * scale;
@@ -308,7 +345,12 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 	ImGui::BeginDisabled(headerHovered || result.hovered || result.active);
 	ImGui::InvisibleButton("Orbit", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle);
 	const bool hovered = ImGui::IsItemHovered();
+	// The wheel zooms here instead of scrolling the page around the view.
+	if (hovered)
+		ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
 	ImGui::EndDisabled();
+	if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+		view(0, s_defaultView.pitch);
 	const auto& input = ImGui::GetIO();
 	if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
 	{
@@ -345,7 +387,7 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 	if (hovered && input.MouseWheel)
 	{
 		state.eye = false;
-		state.distance = std::clamp(state.distance * std::pow(.85f, input.MouseWheel), .5f, 10.0f);
+		state.distance = std::clamp(state.distance * std::pow(.85f, input.MouseWheel), .2f, 10.0f);
 	}
 	ImGui::PopID();
 	return result;

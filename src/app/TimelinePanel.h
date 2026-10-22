@@ -17,7 +17,7 @@ class TimelinePanel
   public:
 	// Folded draws one row: transport, LIVE and the frame rate. fold is set when
 	// the user asks to fold or unfold the timeline.
-	bool Draw(RuntimePanels& runtime, ShellState& shell, bool folded, bool& fold);
+	bool Draw(RuntimePanels& runtime, ShellState& shell, bool folded);
 	static float FoldedHeight(float scale)
 	{
 		return 36 * scale;
