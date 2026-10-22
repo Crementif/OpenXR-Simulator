@@ -1,11 +1,11 @@
 #include "app/WorkspacePanels.h"
+#include "app/AppPicker.h"
 #include "app/LaunchAttachment.h"
 #include "app/LaunchProfilesDialog.h"
 #include "app/Notices.h"
 #include "app/PreferencesDialog.h"
 #include "app/ProcessLauncher.h"
 #include "app/RuntimeConnection.h"
-#include "app/RuntimeEndpoints.h"
 #include "app/RuntimePanels.h"
 #include "app/TimelinePanel.h"
 #ifdef SIMXR_COMPANION_AUTOMATION
@@ -64,7 +64,7 @@ struct WorkspacePanels::Impl
 	bool previewExpanded = false;
 
 	bool showConnection = false, showError = false;
-	std::vector<std::string> endpoints;
+	AppPicker picker;
 	std::optional<std::chrono::steady_clock::time_point> recordingSince;
 	ShellState shell;
 	bool drawer = true;
@@ -162,11 +162,27 @@ struct WorkspacePanels::Impl
 			appliedScale = settings.scale;
 		}
 	}
-	void LaunchSelected()
+	static std::int64_t Now()
+	{
+		return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+			.count();
+	}
+	void Remember(LaunchProfile launch)
 	{
 		try
 		{
-			const auto profile = profiles.Profile();
+			RememberRecentApp(settings, std::move(launch), Now());
+			Save();
+		}
+		catch (const std::exception& failure)
+		{
+			error = failure.what();
+		}
+	}
+	void Launch(const LaunchProfile& profile)
+	{
+		try
+		{
 			auto pending = std::make_unique<LaunchAttachment>(launchDiscovery, profile);
 #ifdef SIMXR_COMPANION_AUTOMATION
 			rigs.PrepareLaunch(profile);
@@ -178,6 +194,7 @@ struct WorkspacePanels::Impl
 			{
 				attachment = std::move(pending);
 				error.clear();
+				Remember(profile);
 			}
 		}
 		catch (const std::exception& failure)
@@ -215,47 +232,47 @@ struct WorkspacePanels::Impl
 	}
 	void DrawAppPicker(RuntimePanels& runtime, const RuntimeView& view)
 	{
-		std::string label = view.connected ? AppName(view.endpoint)
-							: profiles.Selected() >= 0 ? settings.activeProfile
-													   : "Open app";
-		if (IconButton("##App picker", Icon::App, "Launch or connect an OpenXR app", false, label.c_str()) ||
-			std::exchange(shell.openAppPicker, false))
+		const std::string label = view.connected ? AppName(view.endpoint)
+								  : profiles.Selected() >= 0 ? settings.activeProfile
+															 : "Open app";
+		const auto choice = picker.Draw(settings, view, label, std::exchange(shell.openAppPicker, false));
+		if (choice.connect)
 		{
-			endpoints = DiscoverRuntimeEndpoints();
-			ImGui::OpenPopup("App picker");
+			// Only an explicit Connect attaches; the picker names the process first.
+			runtime.ConnectEndpoint(choice.connect->endpoint);
+			if (auto launch = DescribeProcess(choice.connect->process))
+				Remember(std::move(*launch));
 		}
-		if (!ImGui::BeginPopup("App picker"))
-			return;
-		ImGui::SeparatorText("Running now");
-		ImGui::SameLine();
-		if (IconButton("Refresh", Icon::Refresh, "Look for running apps again"))
-			endpoints = DiscoverRuntimeEndpoints();
-		if (endpoints.empty())
-			ImGui::TextDisabled("No running apps found");
-		for (const auto& endpoint : endpoints)
+		if (choice.launchProfile)
 		{
-			ImGui::PushID(endpoint.c_str());
-			if (ImGui::Selectable(AppName(endpoint).c_str(), endpoint == view.endpoint))
-				runtime.ConnectEndpoint(endpoint);
-			ImGui::SetItemTooltip("%s", endpoint.c_str());
-			ImGui::PopID();
+			const auto index = *choice.launchProfile;
+			profiles.Edit(settings, index);
+			settings.activeProfile = settings.profiles[static_cast<std::size_t>(index)].name;
+			Launch(settings.profiles[static_cast<std::size_t>(index)]);
 		}
-		ImGui::SeparatorText("Launch");
-		for (std::size_t index = 0; index < settings.profiles.size(); ++index)
-			if (ImGui::Selectable(settings.profiles[index].name.c_str()))
-			{
-				profiles.Edit(settings, static_cast<int>(index));
-				settings.activeProfile = settings.profiles[index].name;
-				LaunchSelected();
-			}
-		ImGui::Separator();
-		if (ImGui::Selectable("Edit profiles"))
+		if (choice.launchRecent)
+			Launch(*choice.launchRecent);
+		if (choice.saveRecent && *choice.saveRecent < settings.recent.size())
+		{
+			if (profiles.Create(settings, settings.recent[*choice.saveRecent].launch))
+				Save();
 			showLaunch = true;
-		if (ImGui::Selectable("Connect endpoint"))
+		}
+		if (choice.addProfile)
+		{
+			profiles.Edit(settings, -1);
+			showLaunch = true;
+		}
+		if (choice.editProfiles)
+		{
+			if (profiles.Selected() < 0)
+				profiles.Edit(settings, 0);
+			showLaunch = true;
+		}
+		if (choice.connectEndpoint)
 			showConnection = true;
-		if (view.connected && ImGui::Selectable("Disconnect"))
+		if (choice.disconnect)
 			runtime.Disconnect();
-		ImGui::EndPopup();
 	}
 	void DrawToolbar(RuntimePanels& runtime)
 	{
@@ -569,10 +586,17 @@ struct WorkspacePanels::Impl
 		}
 		runtime.SetReplayActive(rigs.IsActive());
 		timeline.ObserveRig(runtime.Snapshot(), rigs.RunId(), rigs.Snapshot(), rigs.MatchesTarget(runtime.Snapshot()));
+		shell.timeline.playing = rigs.IsActive() && rigs.ReplayingTake();
+		shell.timeline.playbackPaused = rigs.Snapshot().phase == automation::RigPhase::Paused;
 #endif
 		DrawShell(runtime);
+#ifdef SIMXR_COMPANION_AUTOMATION
+		if (std::exchange(shell.timeline.togglePlayback, false))
+			shell.timeline.playbackPaused ? rigs.Resume() : rigs.Pause();
+#endif
 		if (auto saved = runtime.TakeSavedTake())
 		{
+			shell.timeline.recordedTake = *saved;
 #ifdef SIMXR_COMPANION_AUTOMATION
 			library.Refresh();
 #endif
@@ -602,8 +626,8 @@ struct WorkspacePanels::Impl
 			Save();
 		}
 		bool changed = false;
-		if (profiles.Draw(settings, launcher.Snapshot(), showLaunch, changed, error))
-			LaunchSelected();
+		if (profiles.Draw(settings, launcher.Snapshot(), showLaunch, changed))
+			Launch(profiles.Profile());
 		if (changed)
 		{
 			dirty = true;

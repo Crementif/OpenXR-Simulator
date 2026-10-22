@@ -1,4 +1,6 @@
 #include "app/TimelinePanel.h"
+#include "app/RecordingController.h"
+#include "app/Utf8Path.h"
 #include "app/widgets/Controls.h"
 #include "app/Theme.h"
 #include <algorithm>
@@ -86,6 +88,18 @@ void TimelinePanel::ObserveRig(const RuntimeView& runtime, std::uint64_t run,
 	}
 	while (m_output < state.output.size())
 		append(state.output[m_output++]);
+}
+void TimelinePanel::Play(RuntimePanels& runtime, const std::string& path)
+{
+	try
+	{
+		runtime.RequestReplay(OpenSavedRecording(path));
+	}
+	catch (const std::exception& error)
+	{
+		Push({{}, std::chrono::duration<double>(std::chrono::steady_clock::now() - m_started).count(),
+			  m_previous ? m_previous->historySeconds : 0, std::string("Cannot play take: ") + error.what(), true});
+	}
 }
 void TimelinePanel::ReplayTake(const std::string& path)
 {
@@ -204,6 +218,14 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell)
 		if (m_takes.size() > 16)
 			m_takes.erase(m_takes.begin());
 	}
+	if (auto recorded = std::exchange(shell.timeline.recordedTake, {}))
+		for (auto span = m_clips.rbegin(); span != m_clips.rend(); ++span)
+			if (!span->replay)
+			{
+				if (span->take.empty())
+					span->take = std::move(*recorded);
+				break;
+			}
 	// A pause starts at the frame it stopped on, which history learns about a little later.
 	if (m_pauseBegin && m_pauseFrame)
 		if (const auto paused = history.Find(m_pauseFrame->identity, m_pauseFrame->epoch))
@@ -250,12 +272,20 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell)
 	const char* why = !state.sessionAvailable ? "Connect an app first"
 					  : state.operationPending ? "Waiting for the last command"
 											   : nullptr;
-	ImGui::BeginDisabled(why != nullptr);
-	const char* pauseTip = why ? why : state.manual ? "Continue (F8)" : "Pause (F6)";
-	if (state.manual ? IconButton("Continue", Icon::Play, pauseTip, false, "Continue")
-					 : IconButton("Pause", Icon::Pause, pauseTip, false, "Pause"))
+	const bool take = shell.timeline.playing;
+	// A playing take steps the paused app itself; Pause holds the take instead.
+	const bool held = take ? shell.timeline.playbackPaused : state.manual;
+	ImGui::BeginDisabled(!take && why != nullptr);
+	const char* pauseTip = take ? (held ? "Continue the take" : "Pause the take")
+					   : why	? why
+					   : held	? "Continue (F8)"
+								: "Pause (F6)";
+	if (held ? IconButton("Continue", Icon::Play, pauseTip, false, "Continue")
+			 : IconButton("Pause", Icon::Pause, pauseTip, false, "Pause"))
 	{
-		if (state.manual)
+		if (take)
+			shell.timeline.togglePlayback = true;
+		else if (state.manual)
 		{
 			runtime.ResumeLive();
 			LeaveHistory(shell, false);
@@ -398,10 +428,14 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell)
 	for (const auto& event : m_events)
 		m_canvas.DrawEvent(event.axisSeconds, event.seconds, event.text.c_str(), event.failed,
 						   event.run == RuntimeFrameRun{});
-	const auto clip = [&](double first, double last, bool replay)
+	const auto clip = [&](double first, double last, bool replay, const std::string& take = {})
 	{
-		const auto hit = m_canvas.DrawClip(first, last, replay ? "Script" : "Recording", replay);
-		if (hit == ClipHit::Opened)
+		const auto name = take.empty() ? std::string(replay ? (shell.timeline.playing ? "Take" : "Script") : "Recording")
+									   : PathText(Utf8Path(take).stem());
+		const auto hit = m_canvas.DrawClip(first, last, name.c_str(), replay, !take.empty() && runtime.CanReplay());
+		if (hit == ClipHit::Play)
+			Play(runtime, take);
+		else if (hit == ClipHit::Opened)
 		{
 			shell.selection = LibrarySel{};
 			inspect = true;
@@ -414,7 +448,12 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell)
 			}
 	};
 	for (const auto& span : m_clips)
-		clip(span.first, span.last, span.replay);
+		clip(span.first, span.last, span.replay, span.take);
+	// Takes cut from history sit over their source frames.
+	for (const auto& take : m_takes)
+		if (take.epoch == state.epoch)
+			if (const auto a = history.Find(take.first, take.epoch), b = history.Find(take.last, take.epoch); a && b)
+				clip(history.At(*a).seconds, history.At(*b).seconds, false, take.path);
 	if (m_scriptBegin)
 		clip(*m_scriptBegin, state.historySeconds, true);
 	if (m_recordingBegin)

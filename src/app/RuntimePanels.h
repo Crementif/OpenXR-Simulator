@@ -18,6 +18,7 @@
 namespace simxr::app
 {
 class HistoryStore;
+class InputHistory;
 class UiRenderer;
 class Window;
 // The runtime half of the companion UI: one RuntimeSession plus the controllers
@@ -59,6 +60,7 @@ class RuntimePanels
 	void SelectCapture(std::uint64_t capture);
 	std::vector<RuntimeFrame> TimelineFrames() const;
 	const HistoryStore& History() const;
+	const InputHistory& InputSamples() const;
 	const PreviewHistory& KeptPreviews() const;
 	void LookAt(std::size_t historyIndex);
 	void MarkHistoryFrame(std::size_t index, bool enabled);

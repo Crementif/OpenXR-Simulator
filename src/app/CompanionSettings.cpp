@@ -76,6 +76,66 @@ struct Reader
 		return count;
 	}
 };
+void ValidateProfile(const LaunchProfile& profile)
+{
+	TextValid(profile.name);
+	TextValid(profile.executable);
+	TextValid(profile.workingDirectory);
+	TextValid(profile.runtimeManifest);
+	TextValid(profile.headsetProfile);
+	TextValid(profile.rig);
+	if (!profile.headsetProfile.empty() && !FindHeadsetProfile(profile.headsetProfile))
+		throw std::invalid_argument("Unknown headset profile");
+	if (profile.arguments.size() > 256 || profile.environment.size() > 64)
+		throw std::invalid_argument("Launch profile exceeds its bounds");
+	for (const auto& argument : profile.arguments)
+		TextValid(argument);
+	std::set<std::string> keys;
+	for (const auto& [key, value] : profile.environment)
+	{
+		TextValid(key);
+		TextValid(value);
+		if (key.empty() || key.find('=') != std::string::npos || !keys.insert(key).second)
+			throw std::invalid_argument("Invalid or duplicate environment key");
+	}
+}
+void PutProfile(std::string& bytes, const LaunchProfile& profile)
+{
+	Put(bytes, profile.name);
+	Put(bytes, profile.executable);
+	Put(bytes, profile.workingDirectory);
+	Put(bytes, profile.runtimeManifest);
+	Put(bytes, profile.headsetProfile);
+	Put(bytes, profile.rig);
+	Put(bytes, static_cast<std::uint32_t>(profile.arguments.size()));
+	for (const auto& argument : profile.arguments)
+		Put(bytes, argument);
+	Put(bytes, static_cast<std::uint32_t>(profile.environment.size()));
+	for (const auto& [key, value] : profile.environment)
+	{
+		Put(bytes, key);
+		Put(bytes, value);
+	}
+}
+LaunchProfile ReadProfile(Reader& reader)
+{
+	LaunchProfile profile;
+	profile.name = reader.Text();
+	profile.executable = reader.Text();
+	profile.workingDirectory = reader.Text();
+	profile.runtimeManifest = reader.Text();
+	profile.headsetProfile = reader.Text();
+	profile.rig = reader.Text();
+	for (auto arguments = reader.Count(256); arguments; --arguments)
+		profile.arguments.push_back(reader.Text());
+	for (auto values = reader.Count(64); values; --values)
+	{
+		auto key = reader.Text();
+		auto value = reader.Text();
+		profile.environment.emplace_back(std::move(key), std::move(value));
+	}
+	return profile;
+}
 std::filesystem::path Absolute(const char* value)
 {
 	auto path = Utf8Path(value);
@@ -136,28 +196,14 @@ void ValidateSettings(const CompanionSettings& settings)
 	std::set<std::string> names;
 	for (const auto& profile : settings.profiles)
 	{
-		TextValid(profile.name);
-		TextValid(profile.executable);
-		TextValid(profile.workingDirectory);
-		TextValid(profile.runtimeManifest);
-		TextValid(profile.headsetProfile);
-		TextValid(profile.rig);
-		if (!profile.headsetProfile.empty() && !FindHeadsetProfile(profile.headsetProfile))
-			throw std::invalid_argument("Unknown headset profile");
-		if (profile.name.empty() || !names.insert(profile.name).second || profile.arguments.size() > 256 ||
-			profile.environment.size() > 64)
+		ValidateProfile(profile);
+		if (profile.name.empty() || !names.insert(profile.name).second)
 			throw std::invalid_argument("Invalid or duplicate launch profile");
-		for (const auto& argument : profile.arguments)
-			TextValid(argument);
-		std::set<std::string> keys;
-		for (const auto& [key, value] : profile.environment)
-		{
-			TextValid(key);
-			TextValid(value);
-			if (key.empty() || key.find('=') != std::string::npos || !keys.insert(key).second)
-				throw std::invalid_argument("Invalid or duplicate environment key");
-		}
 	}
+	if (settings.recent.size() > MaxRecentApps)
+		throw std::invalid_argument("Too many recent apps");
+	for (const auto& recent : settings.recent)
+		ValidateProfile(recent.launch);
 	names.clear();
 	for (const auto& layout : settings.layouts)
 	{
@@ -166,6 +212,39 @@ void ValidateSettings(const CompanionSettings& settings)
 		if (layout.name.empty() || !names.insert(layout.name).second)
 			throw std::invalid_argument("Invalid or duplicate layout name");
 	}
+}
+std::string PathProblem(const std::string& path, PathKind kind)
+{
+	if (path.empty())
+		return "Required";
+	std::error_code error;
+	const auto target = Utf8Path(path);
+	const auto status = std::filesystem::status(target, error);
+	if (error || !std::filesystem::exists(status))
+		return kind == PathKind::Folder ? "Folder not found" : "File not found";
+	if (kind == PathKind::Folder)
+		return std::filesystem::is_directory(status) ? std::string{} : "Not a folder";
+	if (std::filesystem::is_directory(status))
+		return "This is a folder";
+#ifdef __linux__
+	if (kind == PathKind::Executable && ::access(path.c_str(), X_OK) != 0)
+		return "Not executable";
+#endif
+	return {};
+}
+void RememberRecentApp(CompanionSettings& settings, LaunchProfile launch, std::int64_t lastUsed)
+{
+	ValidateProfile(launch);
+	std::erase_if(settings.recent,
+				  [&](const RecentApp& recent)
+				  {
+					  return recent.launch.executable == launch.executable &&
+							 recent.launch.arguments == launch.arguments &&
+							 recent.launch.workingDirectory == launch.workingDirectory;
+				  });
+	settings.recent.insert(settings.recent.begin(), RecentApp{std::move(launch), lastUsed});
+	if (settings.recent.size() > MaxRecentApps)
+		settings.recent.resize(MaxRecentApps);
 }
 CompanionSettings LoadSettings(const std::filesystem::path& path)
 {
@@ -191,24 +270,7 @@ CompanionSettings LoadSettings(const std::filesystem::path& path)
 	result.activeProfile = reader.Text();
 	result.activeLayout = reader.Text();
 	for (auto count = reader.Count(32); count; --count)
-	{
-		LaunchProfile profile;
-		profile.name = reader.Text();
-		profile.executable = reader.Text();
-		profile.workingDirectory = reader.Text();
-		profile.runtimeManifest = reader.Text();
-		profile.headsetProfile = reader.Text();
-		profile.rig = reader.Text();
-		for (auto arguments = reader.Count(256); arguments; --arguments)
-			profile.arguments.push_back(reader.Text());
-		for (auto values = reader.Count(64); values; --values)
-		{
-			auto key = reader.Text();
-			auto value = reader.Text();
-			profile.environment.emplace_back(std::move(key), std::move(value));
-		}
-		result.profiles.push_back(std::move(profile));
-	}
+		result.profiles.push_back(ReadProfile(reader));
 	for (auto count = reader.Count(16); count; --count)
 		result.layouts.push_back({reader.Text(), reader.Text()});
 	if (!reader.bytes.empty())
@@ -245,6 +307,19 @@ CompanionSettings LoadSettings(const std::filesystem::path& path)
 		result.snapshotBudgetMiB = reader.Number();
 	}
 	if (!reader.bytes.empty())
+	{
+		if (reader.Number() != 6)
+			throw std::runtime_error("Unknown recent apps settings version");
+		for (auto count = reader.Count(MaxRecentApps); count; --count)
+		{
+			RecentApp recent;
+			recent.launch = ReadProfile(reader);
+			const std::uint64_t low = reader.Number(), high = reader.Number();
+			recent.lastUsed = static_cast<std::int64_t>(high << 32 | low);
+			result.recent.push_back(std::move(recent));
+		}
+	}
+	if (!reader.bytes.empty())
 		throw std::runtime_error("Unexpected trailing companion settings data");
 	ValidateSettings(result);
 	return result;
@@ -261,23 +336,7 @@ void SaveSettings(const std::filesystem::path& path, const CompanionSettings& se
 	Put(bytes, settings.activeLayout);
 	Put(bytes, static_cast<std::uint32_t>(settings.profiles.size()));
 	for (const auto& profile : settings.profiles)
-	{
-		Put(bytes, profile.name);
-		Put(bytes, profile.executable);
-		Put(bytes, profile.workingDirectory);
-		Put(bytes, profile.runtimeManifest);
-		Put(bytes, profile.headsetProfile);
-		Put(bytes, profile.rig);
-		Put(bytes, static_cast<std::uint32_t>(profile.arguments.size()));
-		for (const auto& argument : profile.arguments)
-			Put(bytes, argument);
-		Put(bytes, static_cast<std::uint32_t>(profile.environment.size()));
-		for (const auto& [key, value] : profile.environment)
-		{
-			Put(bytes, key);
-			Put(bytes, value);
-		}
-	}
+		PutProfile(bytes, profile);
 	Put(bytes, static_cast<std::uint32_t>(settings.layouts.size()));
 	for (const auto& layout : settings.layouts)
 	{
@@ -305,6 +364,15 @@ void SaveSettings(const std::filesystem::path& path, const CompanionSettings& se
 	Put(bytes, static_cast<std::uint32_t>(std::lround(settings.gamepadBindings.deadzone * 1000)));
 	Put(bytes, std::uint32_t{4});
 	Put(bytes, settings.snapshotBudgetMiB);
+	Put(bytes, std::uint32_t{6});
+	Put(bytes, static_cast<std::uint32_t>(settings.recent.size()));
+	for (const auto& recent : settings.recent)
+	{
+		PutProfile(bytes, recent.launch);
+		const auto lastUsed = static_cast<std::uint64_t>(recent.lastUsed);
+		Put(bytes, static_cast<std::uint32_t>(lastUsed));
+		Put(bytes, static_cast<std::uint32_t>(lastUsed >> 32));
+	}
 	if (bytes.size() > MaxFile)
 		throw std::invalid_argument("Companion settings exceed the file budget");
 	std::filesystem::create_directories(path.parent_path());

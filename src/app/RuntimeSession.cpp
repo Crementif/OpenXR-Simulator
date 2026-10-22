@@ -67,6 +67,10 @@ void RuntimeSession::Notify(std::string title, std::string detail)
 {
 	m_notices.push_back({std::move(title), std::move(detail)});
 }
+void RuntimeSession::Notify(Notice notice)
+{
+	m_notices.push_back(std::move(notice));
+}
 std::vector<Notice> RuntimeSession::TakeNotices()
 {
 	return std::exchange(m_notices, {});

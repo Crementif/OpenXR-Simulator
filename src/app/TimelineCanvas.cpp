@@ -306,17 +306,32 @@ void TimelineCanvas::DrawEvent(double time, double observed, const char* text, b
 		ImGui::SetTooltip("%s%s\nObserved +%.2fs (nearest observed frame)", text,
 						  dim ? "\nAnother app or session" : "", observed);
 }
-ClipHit TimelineCanvas::DrawClip(double first, double last, const char* label, bool replay)
+ClipHit TimelineCanvas::DrawClip(double first, double last, const char* label, bool replay, bool playable)
 {
 	if (m_lanes <= Recording || last < m_start || first > m_start + m_span)
 		return ClipHit::None;
 	const float y = LaneY(Recording);
 	const float x = X(std::max(first, m_start)), end = std::max(x + 2, X(std::min(last, m_start + m_span)));
-	ImGui::GetWindowDrawList()->AddRect({x, y + 2}, {end, y + m_lane - 2},
-										replay ? theme::Past : Alert);
+	auto* draw = ImGui::GetWindowDrawList();
+	draw->AddRect({x, y + 2}, {end, y + m_lane - 2}, replay ? theme::Past : Alert);
 	const auto mouse = ImGui::GetIO().MousePos;
 	if (mouse.x < x || mouse.x > end || mouse.y < y || mouse.y >= y + m_lane || !ImGui::IsWindowHovered())
 		return ClipHit::None;
+	if (playable)
+	{
+		const float size = m_lane - 4, left = std::max(m_bounds.x, std::min(x + 2, end - size));
+		const bool over = mouse.x >= left && mouse.x < left + size;
+		draw->AddRectFilled({left, y + 2}, {left + size, y + m_lane - 2}, over ? theme::Accent : theme::SurfaceRaised,
+							theme::Radius);
+		const float inset = size * .3f;
+		draw->AddTriangleFilled({left + inset, y + 2 + inset}, {left + inset, y + m_lane - 2 - inset},
+								{left + size - inset, y + m_lane / 2}, theme::Text);
+		if (over)
+		{
+			ImGui::SetTooltip("Play %s", label);
+			return ImGui::IsMouseReleased(ImGuiMouseButton_Left) ? ClipHit::Play : ClipHit::None;
+		}
+	}
 	ImGui::SetTooltip("%s\nClick selects its frames; double-click opens the library", label);
 	if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
 		return ClipHit::Opened;

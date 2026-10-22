@@ -95,8 +95,22 @@ void Persistence()
 								 "quest3",
 								 "rig.lua"});
 	settings.layouts.push_back({"Wide", "[Window][GPU preview]\nPos=1,2\nSize=300,200\n"});
+	for (std::int64_t index = 0; index < 10; ++index)
+		RememberRecentApp(settings, {"App", "/games/app" + std::to_string(index % 9), {"--level", "1"}, "/games"},
+						  1'700'000'000'000 + index);
+	Require(settings.recent.size() == MaxRecentApps && settings.recent.front().lastUsed == 1'700'000'000'009 &&
+				settings.recent.front().launch.executable == "/games/app0",
+			"Recent apps keep the newest distinct entries first");
 	SaveSettings(file, settings);
-	Require(LoadSettings(file) == settings, "Every profile/layout field round trips exactly");
+	Require(LoadSettings(file) == settings, "Every profile/layout/recent field round trips exactly");
+#ifdef __linux__
+	Require(PathProblem("/bin/sh", PathKind::Executable).empty() &&
+				PathProblem("/nonexistent/simxr-app", PathKind::Executable) == "File not found" &&
+				PathProblem("/", PathKind::Executable) == "This is a folder" &&
+				PathProblem(file.string(), PathKind::Executable) == "Not executable" &&
+				PathProblem(file.string(), PathKind::Folder) == "Not a folder" && PathProblem("", PathKind::File) == "Required",
+			"Launch paths are validated with a short reason");
+#endif
 #ifdef __linux__
 	struct stat info{};
 	Require(::stat(file.c_str(), &info) == 0 && (info.st_mode & 0777) == 0600, "Settings file remains private");

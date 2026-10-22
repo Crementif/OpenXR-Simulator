@@ -17,11 +17,6 @@ namespace simxr::app
 {
 namespace
 {
-std::string PathText(const std::filesystem::path& path)
-{
-	const auto text = path.u8string();
-	return {text.begin(), text.end()};
-}
 bool Contains(const std::string& text, const char* search)
 {
 	const std::string_view needle = search;
@@ -193,7 +188,7 @@ void Library::DrawList(Selection& selection, RuntimePanels& runtime, RigPanel& r
 			ImGui::TextDisabled("%s", Age(entry.modified).c_str());
 			ImGui::TableNextColumn();
 			ImGui::BeginDisabled(!idle);
-			if (IconButton("Play entry", Icon::Play, entry.take ? "Replay take" : "Run script"))
+			if (IconButton("Play entry", Icon::Play, entry.take ? "Play take" : "Run script"))
 				Play(entry, runtime);
 			ImGui::EndDisabled();
 			ImGui::PopID();
@@ -308,13 +303,13 @@ void Library::DrawTake(Selection& selection, const std::string& path, RuntimePan
 	const bool mine = rigs.ReplayingTake() && rigs.Script() == path;
 	if (mine && rigs.IsActive())
 	{
-		if (IconButton("Stop take replay", Icon::Stop, "Stop replay and release its inputs", false, "Stop"))
+		if (IconButton("Stop take", Icon::Stop, "Stop playing and release its inputs", false, "Stop"))
 			rigs.Cancel();
 	}
 	else
 	{
 		ImGui::BeginDisabled(!runtime.CanReplay() || rigs.IsActive() || rigs.WaitingForLaunch());
-		if (IconButton("Replay take", Icon::Play, "Replay this take on the selected session", false, "Replay"))
+		if (IconButton("Play take", Icon::Play, "Play this take on the selected session", false, "Play"))
 			Play(*entry, runtime);
 		ImGui::EndDisabled();
 	}
