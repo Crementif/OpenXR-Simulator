@@ -1921,6 +1921,7 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 	Require(pressed > 20, "Input lane has no right-hand presses");
 	const auto& first = history.At(begin);
 	const auto& last = history.At(history.Size() - 1);
+	const auto sourceCount = history.Size() - begin;
 	test.workspace.Select(RangeSel{first.identity, last.identity, first.epoch});
 	pump(3);
 	auto* inspector = FindPanel("Inspector");
@@ -1968,7 +1969,6 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 	pump(2);
 	std::optional<std::size_t> anchor;
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-	const auto sourceCount = history.Size() > begin ? replayFrom - begin : 0;
 	for (;;)
 	{
 		pump(1);
@@ -2009,7 +2009,7 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 		matched += std::abs(int(a[1]) - int(b[1])) <= 2 && std::abs(int(a[0]) - int(b[0])) <= 2;
 	}
 	std::cout << "Replay matched " << matched << "/" << sourceCount << " frames\n";
-	Require(matched * 10 >= sourceCount * 9, "Replayed input diverges from the source frames");
+	Require(matched == sourceCount, "Replayed input diverges from the source frames");
 	const auto sampleAt = [&](std::size_t index)
 	{
 		const auto* sample = test.runtime.InputSamples().Find(history.At(index).input);
@@ -2040,7 +2040,7 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 			  << tposed << " in T pose, " << trackerPositions.size() << " tracker positions)\n";
 	Require(tposed > 0 && tposed < sourceCount && trackerPositions.size() >= 3,
 			"Source range lacks T pose or tracker motion");
-	Require(devicesMatched * 10 >= sourceCount * 9, "Replayed body, gaze or trackers diverge from the source");
+	Require(devicesMatched == sourceCount, "Replayed body, gaze or trackers diverge from the source");
 
 	// Looking back at a T-pose source frame shows its recorded body read-only.
 	std::size_t past = source;
