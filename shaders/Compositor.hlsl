@@ -12,7 +12,11 @@ struct LayerConstants
 };
 #ifdef SIMXR_VULKAN
 [[vk::push_constant]] ConstantBuffer<LayerConstants> layer;
+#ifdef SIMXR_DEPTH_MS
+[[vk::binding(0, 0)]] Texture2DMS<float4> sourceTexture : register(t0);
+#else
 [[vk::binding(0, 0)]] Texture2D<float4> sourceTexture : register(t0);
+#endif
 [[vk::binding(1, 0)]] SamplerState sourceSampler : register(s1);
 #else
 cbuffer LayerBuffer : register(b2)
@@ -44,7 +48,11 @@ float4 PSMain(VertexOutput input) : SV_Target
     if (layer.control.x == 2)
     {
         int2 pixel = int2(layer.imageRectangle.xy + input.uv * layer.imageRectangle.zw);
+        #ifdef SIMXR_DEPTH_MS
+        float sample = sourceTexture.Load(pixel, 0).r;
+#else
         float sample = sourceTexture.Load(int3(pixel, 0)).r;
+#endif
         float value = saturate((sample - layer.quadParameters.x) / (layer.quadParameters.y - layer.quadParameters.x));
         if (layer.control.y != 0 && value > 0 && value < 1)
         {
@@ -53,6 +61,9 @@ float4 PSMain(VertexOutput input) : SV_Target
         }
         return float4(value, value, value, 1);
     }
+#ifdef SIMXR_DEPTH_MS
+    return float4(0, 0, 0, 1);
+#else
     float3 eyeRay = float3(lerp(layer.eyeTangents.x, layer.eyeTangents.y, input.uv.x),
         lerp(layer.eyeTangents.z, layer.eyeTangents.w, input.uv.y), -1);
     float3 ray = Rotate(layer.sourceFromEyeRotation, eyeRay);
@@ -87,4 +98,5 @@ float4 PSMain(VertexOutput input) : SV_Target
     else if ((layer.control.y & 2) != 0)
         color.rgb *= color.a;
     return color; // Backend uses ONE / ONE_MINUS_SRC_ALPHA and sRGB output encode.
+#endif
 }

@@ -127,6 +127,8 @@ def main():
                     for y in range(46):
                         for x in range(62):
                             value = .1 * ((frame - 3) % 4 + 1) + .15 * view + .05 * ((x + 1) // 16) + .025 * ((y + 1) // 12)
+                            if os.getenv('SIMXR_PROBE_DEPTH_MSAA'):
+                                value = .1 * ((frame - 3) % 4 + 1) + .15 * view
                             if target == TargetKind.LAYER_DEPTH_LINEAR:
                                 near, far = (10, .1) if frame == 5 else (.1, 10)
                                 value = near * value / (far * (1 - value) + near * value)

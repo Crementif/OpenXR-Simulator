@@ -723,7 +723,8 @@ static int runProbe()
         ((depthFormat == VK_FORMAT_D24_UNORM_S8_UINT || depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT) ?
             VK_IMAGE_ASPECT_STENCIL_BIT : 0);
     chain.format = depthFormat;
-    chain.sampleCount = 1;
+    const bool multisampledDepth = depthMode && std::getenv("SIMXR_PROBE_DEPTH_MSAA");
+    chain.sampleCount = multisampledDepth ? 4 : 1;
     chain.mipCount = 1;
     chain.usageFlags = XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
     XrSwapchain depth;
@@ -1178,8 +1179,19 @@ static int runProbe()
             VkBufferImageCopy copy{};
             copy.imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, activeViewCount};
             copy.imageExtent = {64, 48, 1};
-            vkCmdCopyBufferToImage(cmd, depthUpload, depthImages[depthIndex].image,
-                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+            if (multisampledDepth)
+            {
+                for (uint32_t eye = 0; eye < activeViewCount; ++eye)
+                {
+                    const VkClearDepthStencilValue value{.1f * (frame % 4 + 1) + .15f * eye, 0};
+                    const VkImageSubresourceRange range{depthAspect, 0, 1, eye, 1};
+                    vkCmdClearDepthStencilImage(cmd, depthImages[depthIndex].image,
+                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &value, 1, &range);
+                }
+            }
+            else
+                vkCmdCopyBufferToImage(cmd, depthUpload, depthImages[depthIndex].image,
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
             depthBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
             depthBarrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
             depthBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;

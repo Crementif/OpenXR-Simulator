@@ -53,8 +53,10 @@ def main():
     generated = {}
     arrays = []
     with tempfile.TemporaryDirectory(prefix='simxr-compositor-') as temporary:
-        for name, entry, profile in [('vertex', 'VSMain', 'vs_6_0'), ('pixel', 'PSMain', 'ps_6_0')]:
+        for name, entry, profile in [('vertex', 'VSMain', 'vs_6_0'), ('pixel', 'PSMain', 'ps_6_0'), ('depth_ms', 'PSMain', 'ps_6_0')]:
             flags = ['-spirv', '-fspv-target-env=vulkan1.1', '-T', profile, '-E', entry, '-D', 'SIMXR_VULKAN', '-O3', '-Ges', '-WX']
+            if name == 'depth_ms':
+                flags += ['-D', 'SIMXR_DEPTH_MS']
             if name == 'vertex':
                 flags += ['-fvk-invert-y']
             binary = Path(temporary) / f'{name}.spv'
@@ -75,7 +77,7 @@ def main():
                 metadata['targets'][name]['glsl_flags'] = cross_flags
                 generated[f'Compositor.{name}.glsl'] = glsl
                 reflection = json.loads(run([args.spirv_cross, binary, '--reflect']))
-                if name == 'pixel':
+                if name in ('pixel', 'depth_ms'):
                     constants = reflection.get('push_constants', [])
                     if len(constants) != 1:
                         raise RuntimeError('Pixel shader must contain one push-constant block')
@@ -83,7 +85,7 @@ def main():
                     expected = ['eyeTangents', 'sourceTangents', 'sourceFromEyeRotation', 'sourceFromEyePosition', 'imageRectangle', 'quadParameters', 'control']
                     if [(member['name'], member['offset']) for member in members] != list(zip(expected, range(0, 112, 16))):
                         raise RuntimeError('Shader constants do not match seven-slot C++ layout')
-                    if [image['binding'] for image in reflection.get('separate_images', [])] != [0] or [sampler['binding'] for sampler in reflection.get('separate_samplers', [])] != [1]:
+                    if [image['binding'] for image in reflection.get('separate_images', [])] != [0] or [sampler['binding'] for sampler in reflection.get('separate_samplers', [])] != ([] if name == 'depth_ms' else [1]):
                         raise RuntimeError('Shader texture/sampler descriptor bindings changed')
                 generated[f'Compositor.{name}.reflection.json'] = (json.dumps(reflection, indent=2, sort_keys=True) + '\n').encode()
         if args.spirv_cross:
@@ -93,7 +95,7 @@ def main():
     header += '\n\n'.join(arrays) + '\n}\n'
     generated['CompositorSpirv.h'] = header.encode()
     generated['Compositor.provenance.json'] = (json.dumps(metadata, indent=2, sort_keys=True) + '\n').encode()
-    optional_names = [f'Compositor.{stage}.{kind}' for stage in ['vertex', 'pixel'] for kind in ['glsl', 'reflection.json']]
+    optional_names = [f'Compositor.{stage}.{kind}' for stage in ['vertex', 'pixel', 'depth_ms'] for kind in ['glsl', 'reflection.json']]
     stale = [name for name in optional_names if name not in generated and (args.output / name).exists()]
     if args.check:
         changed = [name for name, data in generated.items() if not (args.output / name).exists() or (args.output / name).read_bytes() != data]

@@ -688,6 +688,11 @@ if(SIMXR_BUILD_PROBES)
                         ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1;SIMXR_PROBE_BUNDLE=1"
                         TIMEOUT 90 SKIP_RETURN_CODE 77)
                     foreach(depth_format d32 d16 d24s8 d32s8)
+                        add_test(NAME linux_vulkan_msaa_depth_${depth_format} COMMAND "${Python3_EXECUTABLE}"
+                            "${PROJECT_SOURCE_DIR}/tests/control/test_native_depth.py" "$<TARGET_FILE:xr_probe_linux>")
+                        set_tests_properties(linux_vulkan_msaa_depth_${depth_format} PROPERTIES
+                            ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1;SIMXR_PROBE_MSAA=1;SIMXR_PROBE_DEPTH_MSAA=1;SIMXR_PROBE_DEPTH_FORMAT=${depth_format}"
+                            TIMEOUT 90 SKIP_RETURN_CODE 77)
                         set(depth_test linux_vulkan_control_depth_${depth_format})
                         if(depth_format STREQUAL "d32")
                             set(depth_test linux_vulkan_control_depth)

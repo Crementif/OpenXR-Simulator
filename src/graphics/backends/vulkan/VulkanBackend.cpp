@@ -82,7 +82,7 @@ VkImageView View(const VulkanImage& image, std::uint32_t slice, VkImageAspectFla
 	return result;
 }
 
-std::shared_ptr<Pipeline> CreatePipeline(std::shared_ptr<VulkanDevice> device)
+std::shared_ptr<Pipeline> CreatePipeline(std::shared_ptr<VulkanDevice> device, bool multisampledDepth = false)
 {
 	auto result = std::make_shared<Pipeline>();
 	result->device = std::move(device);
@@ -140,8 +140,10 @@ std::shared_ptr<Pipeline> CreatePipeline(std::shared_ptr<VulkanDevice> device)
 	module.pCode = shaders::vertex.data();
 	CheckVulkan(vkCreateShaderModule(native, &module, nullptr, &result->vertex),
 				"Create generated compositor vertex shader");
-	module.codeSize = sizeof(shaders::pixel);
-	module.pCode = shaders::pixel.data();
+	const std::span<const std::uint32_t> pixel = multisampledDepth ? std::span<const std::uint32_t>{shaders::depth_ms} :
+		std::span<const std::uint32_t>{shaders::pixel};
+	module.codeSize = pixel.size_bytes();
+	module.pCode = pixel.data();
 	CheckVulkan(vkCreateShaderModule(native, &module, nullptr, &result->pixel),
 				"Create generated compositor pixel shader");
 	const std::array stages{
@@ -236,6 +238,7 @@ struct VulkanBackend::State
 	};
 	std::shared_ptr<VulkanDevice> device;
 	std::shared_ptr<Pipeline> pipeline;
+	std::shared_ptr<Pipeline> depthMultisamplePipeline;
 	std::shared_ptr<VulkanExternalDevice> external;
 	std::shared_ptr<Retirement> retirement = std::make_shared<Retirement>();
 	State(std::size_t capacity, std::size_t liveCapacity)
@@ -436,11 +439,19 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 		reservation = m_state->reservations.Reserve();
 	if (!reservation)
 		return XR_ERROR_LIMIT_REACHED;
+	const bool multisampledDepth = !plan.draws.empty() && plan.draws.front().constants.control[0] == 2 &&
+		plan.draws.front().constants.control[2] != 0;
+	if (multisampledDepth && std::any_of(plan.draws.begin(), plan.draws.end(), [](const auto& draw)
+		{ return draw.constants.control[0] != 2 || !draw.constants.control[2]; }))
+		return XR_ERROR_VALIDATION_FAILURE;
+	if (multisampledDepth && !m_state->depthMultisamplePipeline)
+		m_state->depthMultisamplePipeline = CreatePipeline(m_state->device, true);
+	const auto& pipeline = multisampledDepth ? m_state->depthMultisamplePipeline : m_state->pipeline;
 	auto job = std::shared_ptr<VulkanSubmission>(new VulkanSubmission(m_state->device));
 	auto frame = std::shared_ptr<VulkanFrame>(new VulkanFrame(job, plan.views));
 	m_state->submissions.push_back(job);
 	auto& resources = *job->m_resources;
-	resources.pipeline = m_state->pipeline;
+	resources.pipeline = pipeline;
 	job->BeginTiming();
 	if (m_state->external)
 	{
@@ -462,7 +473,7 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 	{
 		resources.outputViews[eye] = View(*resources.output, eye);
 		VkFramebufferCreateInfo framebuffer{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-		framebuffer.renderPass = m_state->pipeline->pass;
+		framebuffer.renderPass = pipeline->pass;
 		framebuffer.attachmentCount = 1;
 		framebuffer.pAttachments = &resources.outputViews[eye];
 		framebuffer.width = plan.width;
@@ -483,7 +494,7 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 		pool.pPoolSizes = sizes.data();
 		CheckVulkan(vkCreateDescriptorPool(native, &pool, nullptr, &resources.descriptors),
 					"Create bounded compositor descriptor storage");
-		std::vector<VkDescriptorSetLayout> layouts(count, m_state->pipeline->descriptors);
+		std::vector<VkDescriptorSetLayout> layouts(count, pipeline->descriptors);
 		VkDescriptorSetAllocateInfo allocate{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
 		allocate.descriptorPool = resources.descriptors;
 		allocate.descriptorSetCount = count;
@@ -511,9 +522,11 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 			!(image->usage & VK_IMAGE_USAGE_SAMPLED_BIT) ||
 			(depth ? !(image->Aspect() & VK_IMAGE_ASPECT_DEPTH_BIT) : image->Aspect() != VK_IMAGE_ASPECT_COLOR_BIT))
 			return XR_ERROR_LAYER_INVALID;
-		if (image->samples != VK_SAMPLE_COUNT_1_BIT)
+		if (depth && (image->samples != VK_SAMPLE_COUNT_1_BIT) != multisampledDepth)
+			return XR_ERROR_VALIDATION_FAILURE;
+		if (!depth && image->samples != VK_SAMPLE_COUNT_1_BIT)
 		{
-			if (depth || !resolve || !(image->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
+			if (!resolve || !(image->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
 				return XR_ERROR_FEATURE_UNSUPPORTED;
 			const auto found = std::find_if(resolved.begin(), resolved.end(),
 				[&](const auto& entry) { return entry.first == image; });
@@ -558,7 +571,7 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 		if (std::find(resources.sources.begin(), resources.sources.end(), image) == resources.sources.end())
 			resources.sources.push_back(image);
 		const VkDescriptorImageInfo sampled{VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-		const VkDescriptorImageInfo sampler{depth ? m_state->pipeline->nearestSampler : m_state->pipeline->sampler,
+		const VkDescriptorImageInfo sampler{depth ? pipeline->nearestSampler : pipeline->sampler,
 			VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED};
 		const std::array writes{VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, sets[index], 0, 0,
 													 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &sampled, nullptr, nullptr},
@@ -574,13 +587,13 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 	{
 		const VkClearValue clear{{{0, 0, 0, 1}}};
 		VkRenderPassBeginInfo pass{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-		pass.renderPass = m_state->pipeline->pass;
+		pass.renderPass = pipeline->pass;
 		pass.framebuffer = resources.framebuffers[eye];
 		pass.renderArea.extent = {plan.width, plan.height};
 		pass.clearValueCount = 1;
 		pass.pClearValues = &clear;
 		vkCmdBeginRenderPass(resources.command, &pass, VK_SUBPASS_CONTENTS_INLINE);
-		vkCmdBindPipeline(resources.command, VK_PIPELINE_BIND_POINT_GRAPHICS, m_state->pipeline->pipeline);
+		vkCmdBindPipeline(resources.command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->pipeline);
 		const VkViewport viewport{0, 0, static_cast<float>(plan.width), static_cast<float>(plan.height), 0, 1};
 		const VkRect2D scissor{{0, 0}, {plan.width, plan.height}};
 		vkCmdSetViewport(resources.command, 0, 1, &viewport);
@@ -588,9 +601,9 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 		for (std::size_t index = 0; index < plan.draws.size(); ++index)
 			if (plan.draws[index].eye == eye)
 			{
-				vkCmdBindDescriptorSets(resources.command, VK_PIPELINE_BIND_POINT_GRAPHICS, m_state->pipeline->layout,
+				vkCmdBindDescriptorSets(resources.command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->layout,
 										0, 1, &sets[index], 0, nullptr);
-				vkCmdPushConstants(resources.command, m_state->pipeline->layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+				vkCmdPushConstants(resources.command, pipeline->layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
 								   sizeof(LayerConstants), &plan.draws[index].constants);
 				vkCmdDraw(resources.command, 3, 1, 0, 0);
 			}
@@ -635,7 +648,7 @@ XrResult VulkanBackend::PrepareDepthCapture(const LayerDepthDescription& depth, 
 	if (image->format != VK_FORMAT_D32_SFLOAT && image->format != VK_FORMAT_D16_UNORM &&
 		image->format != VK_FORMAT_D24_UNORM_S8_UINT && image->format != VK_FORMAT_D32_SFLOAT_S8_UINT)
 		return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
-	if (image->samples != VK_SAMPLE_COUNT_1_BIT || !(image->usage & VK_IMAGE_USAGE_SAMPLED_BIT) ||
+	if (!(image->usage & VK_IMAGE_USAGE_SAMPLED_BIT) ||
 		(linear && (!std::isfinite(depth.nearZ) || !std::isfinite(depth.farZ))))
 		return XR_ERROR_FEATURE_UNSUPPORTED;
 	const auto& rectangle = depth.image.rectangle;
@@ -660,7 +673,7 @@ XrResult VulkanBackend::PrepareDepthCapture(const LayerDepthDescription& depth, 
 		draw.constants.quadParameters[2] = depth.nearZ / scale;
 		draw.constants.quadParameters[3] = depth.farZ / scale;
 	}
-	draw.constants.control = {2, linear ? 1U : 0U, 0, 0};
+	draw.constants.control = {2, linear ? 1U : 0U, image->samples != VK_SAMPLE_COUNT_1_BIT ? 1U : 0U, 0};
 	plan.draws.push_back(draw);
 	return Prepare(plan, resolve, output, std::move(reservation), 1);
 }
