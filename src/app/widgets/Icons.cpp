@@ -220,6 +220,22 @@ void DrawIcon(ImDrawList* draw, Icon icon, ImVec2 center, float size, ImU32 colo
 		pen.Line(0, -3, 0, 2);
 		pen.Circle(0, 5, 1, true);
 		break;
+	case Icon::Rename:
+		pen.Polyline({{-8, 8}, {-8, 4}, {5, -9}, {9, -5}, {-4, 8}}, true);
+		pen.Line(2, -6, 6, -2);
+		break;
+	case Icon::Delete:
+		pen.Line(-9, -6, 9, -6);
+		pen.Polyline({{-3, -6}, {-3, -9}, {3, -9}, {3, -6}});
+		pen.Polyline({{-7, -6}, {-6, 9}, {6, 9}, {7, -6}});
+		pen.Line(-2, -2, -2, 5);
+		pen.Line(2, -2, 2, 5);
+		break;
+	case Icon::Script:
+		pen.Polyline({{-4, -8}, {-9, 0}, {-4, 8}});
+		pen.Polyline({{4, -8}, {9, 0}, {4, 8}});
+		pen.Line(2, -9, -2, 9);
+		break;
 	}
 }
 } // namespace simxr::app

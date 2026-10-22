@@ -5,6 +5,7 @@
 #include "app/SimulationEdits.h"
 
 #include <array>
+#include <functional>
 #include <optional>
 #include <set>
 #include <string>
@@ -16,7 +17,9 @@ class DeviceControlPanel
 {
   public:
 	explicit DeviceControlPanel(PlayerRig& rig);
-	std::optional<SimulationEdit> Draw(bool supported, const Selection* selection = nullptr);
+	// placement draws the spatial editors; hand pages put it below the input pad.
+	std::optional<SimulationEdit> Draw(bool supported, const Selection* selection = nullptr,
+									   const std::function<void()>& placement = {});
 	void ClearHeldInputs();
 	int SelectedTracker() const
 	{
@@ -49,7 +52,8 @@ class DeviceControlPanel
 	void DrawHead();
 	void DrawExactPose(int device);
 	void DrawHandRest();
-	void DrawController();
+	void DrawController(const std::function<void()>& placement);
+	void DrawInputPad(std::uint32_t hand);
 	void DrawBody();
 	void DrawGaze();
 	void DrawTrackers();
@@ -81,6 +85,11 @@ class DeviceControlPanel
 	int m_trackerRole = 0;
 	TrackingState m_authoredTracking;
 	std::array<ControllerControls, 2> m_authoredControls;
+	struct Latches
+	{
+		bool trigger = false, grip = false, primary = false, secondary = false, menu = false, stick = false;
+	};
+	std::array<Latches, 2> m_latches{};
 	BodyProportions m_authoredProportions;
 	ViewSettings m_authoredViews;
 	std::array<std::array<char, 256>, 2> m_controllerProfiles{};

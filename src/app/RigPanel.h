@@ -13,12 +13,30 @@ namespace simxr::app
 class RuntimePanels;
 struct RuntimeView;
 struct LaunchedSession;
+struct ScriptOptions
+{
+	std::uint64_t seed = 0;
+	int deadlineSeconds = 30, memoryMiB = 64;
+};
+// Runs one Luau script or take replay at a time against the selected session,
+// and draws its status chip. The Library draws the script pages.
 class RigPanel
 {
   public:
 	RigPanel();
 	~RigPanel();
-	void Draw(RuntimePanels& runtime, bool visible = true);
+	void RunScript(RuntimePanels& runtime, const std::string& path, const ScriptOptions& options);
+	void Pause();
+	void Step();
+	void Resume();
+	void Cancel();
+	// The path of the current or last run.
+	std::string Script() const;
+	bool ReplayingTake() const;
+	bool WaitingForLaunch() const;
+	const std::string& Error() const;
+	// Returns the failure, empty on success.
+	std::string SaveReport(const std::string& path, bool junit);
 	bool IsActive() const;
 	std::uint64_t RunId() const;
 	automation::RigSnapshot Snapshot() const;

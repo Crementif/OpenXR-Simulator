@@ -37,6 +37,9 @@ enum class Icon
 	Export,
 	Live,
 	Warning,
+	Rename,
+	Delete,
+	Script,
 };
 // Draws an icon centred on center inside a square of the given side length.
 void DrawIcon(ImDrawList* draw, Icon icon, ImVec2 center, float size, ImU32 color);

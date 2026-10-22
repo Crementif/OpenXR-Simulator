@@ -48,7 +48,7 @@ target_sources(simxr_app PRIVATE src/app/RecordingPanel.cpp src/app/TimelinePane
     src/app/AdvancedSteppingPage.cpp src/app/PreviewPanel.cpp src/app/PreferencesDialog.cpp src/app/LaunchProfilesDialog.cpp
     src/app/PilotController.cpp src/app/SpatialEditor.cpp src/app/widgets/LiveField.cpp
     src/app/widgets/SpatialWidgets.cpp src/app/widgets/ArcballWidget.cpp
-    src/app/widgets/ReachMap.cpp src/app/widgets/RigView.cpp)
+    src/app/widgets/ReachMap.cpp src/app/widgets/InputPad.cpp src/app/widgets/RigView.cpp)
 target_link_libraries(simxr_app PUBLIC simxr_imgui simxr_connection simxr_app_settings simxr_recording_controller)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(simxr_app PRIVATE simxr_vulkan_control)
@@ -57,7 +57,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_compile_definitions(simxr_app PRIVATE SIMXR_COMPANION_PROOF)
 endif()
 if(SIMXR_BUILD_AUTOMATION)
-    target_sources(simxr_app PRIVATE src/app/RigPanel.cpp)
+    target_sources(simxr_app PRIVATE src/app/RigPanel.cpp src/app/Library.cpp)
     target_link_libraries(simxr_app PUBLIC simxr_automation)
     target_compile_definitions(simxr_app PRIVATE SIMXR_COMPANION_AUTOMATION)
 endif()

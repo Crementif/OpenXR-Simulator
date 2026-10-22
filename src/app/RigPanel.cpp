@@ -181,112 +181,98 @@ struct RigPanel::Impl
 		throw std::runtime_error("This companion build does not provide native rig execution");
 #endif
 	}
-	void Draw(RuntimePanels& runtime, bool visible)
-	{
-		if (!visible)
-			return;
-		ImGui::SeparatorText("Scripts");
-#ifdef SIMXR_COMPANION_AUTOMATION
-		const auto current = runtime.Snapshot();
-		ImGui::TextUnformatted("Luau script");
-		ImGui::SetNextItemWidth(-1);
-		ImGui::InputText("##Luau script", script.data(), script.size());
-		ImGui::TextUnformatted("Seed");
-		ImGui::SetNextItemWidth(-1);
-		ImGui::InputScalar("##Seed", ImGuiDataType_U64, &seed);
-		ImGui::TextUnformatted("Deadline seconds");
-		ImGui::SetNextItemWidth(-1);
-		ImGui::InputInt("##Deadline seconds", &deadlineSeconds);
-		ImGui::TextUnformatted("Memory MiB");
-		ImGui::SetNextItemWidth(-1);
-		ImGui::InputInt("##Memory MiB", &memoryMiB);
-		const auto state = runner ? runner->Snapshot() : automation::RigSnapshot{};
-		ImGui::BeginDisabled(!current.connected || !current.sessionAvailable || Active(state.phase) ||
-							 launch != nullptr);
-		if (ImGui::Button("Run script"))
-			try
-			{
-				recordingReplay = false;
-				Start(current.endpoint, current.session, current.generation, LoadScript(Utf8Path(script.data())),
-					  script.data());
-			}
-			catch (const std::exception& failure)
-			{
-				error = failure.what();
-			}
-		ImGui::EndDisabled();
-		ImGui::BeginDisabled(!runner || !Active(state.phase));
-		if (ImGui::Button("Pause script"))
-			runner->Pause();
-		ImGui::SameLine();
-		if (ImGui::Button("Step script"))
-			runner->Step();
-		if (ImGui::Button("Resume script"))
-			runner->Resume();
-		if (ImGui::Button("Stop script"))
-			runner->Cancel();
-		ImGui::EndDisabled();
-		if (launch)
-			ImGui::TextUnformatted("Waiting for session");
-		ImGui::Text("%s / %llu / %llu", PhaseName(state.phase), static_cast<unsigned long long>(state.transactions),
-					static_cast<unsigned long long>(state.captures));
-		if (!boundEndpoint.empty())
-		{
-			ImGui::TextDisabled("Bound to %s", std::filesystem::path(boundEndpoint).filename().string().c_str());
-			ImGui::SetItemTooltip("Session %llu, run %llu", static_cast<unsigned long long>(boundSession),
-								  static_cast<unsigned long long>(boundGeneration));
-		}
-		if (Active(state.phase) && (current.endpoint != boundEndpoint || current.session != boundSession ||
-									current.generation != boundGeneration))
-			ImGui::TextUnformatted("Different session");
-		if (!state.error.empty())
-			ImGui::TextWrapped("%s", state.error.c_str());
-		for (std::size_t index = 0; index < state.checkpoints.size(); ++index)
-		{
-			const auto& checkpoint = state.checkpoints[index];
-			ImGui::TextWrapped("%s: %s — %s", checkpoint.passed ? "PASS" : "FAIL", checkpoint.name.c_str(),
-							   checkpoint.detail.c_str());
-		}
-		if (ImGui::CollapsingHeader("Script output"))
-			for (const auto& line : state.output)
-				ImGui::TextUnformatted(line.c_str());
-		ImGui::TextUnformatted("Report path");
-		ImGui::SetNextItemWidth(-1);
-		ImGui::InputText("##Report path", report.data(), report.size());
-		ImGui::BeginDisabled(!runner);
-		if (ImGui::Button("Save JSON report"))
-			try
-			{
-				Save(false);
-			}
-			catch (const std::exception& failure)
-			{
-				error = failure.what();
-			}
-		ImGui::SameLine();
-		if (ImGui::Button("Save JUnit report"))
-			try
-			{
-				Save(true);
-			}
-			catch (const std::exception& failure)
-			{
-				error = failure.what();
-			}
-		ImGui::EndDisabled();
-#else
-		(void)runtime;
-		ImGui::TextDisabled("Scripts need a Luau-enabled build");
-#endif
-		if (!error.empty())
-			ImGui::TextWrapped("%s", error.c_str());
-	}
 };
 RigPanel::RigPanel() : m_impl(std::make_unique<Impl>()) {}
 RigPanel::~RigPanel() = default;
-void RigPanel::Draw(RuntimePanels& runtime, bool visible)
+void RigPanel::RunScript(RuntimePanels& runtime, const std::string& path, const ScriptOptions& options)
 {
-	m_impl->Draw(runtime, visible);
+#ifdef SIMXR_COMPANION_AUTOMATION
+	try
+	{
+		const auto current = runtime.Snapshot();
+		m_impl->seed = options.seed;
+		m_impl->deadlineSeconds = options.deadlineSeconds;
+		m_impl->memoryMiB = options.memoryMiB;
+		m_impl->recordingReplay = false;
+		m_impl->Start(current.endpoint, current.session, current.generation, LoadScript(Utf8Path(path)), path);
+		std::snprintf(m_impl->script.data(), m_impl->script.size(), "%s", path.c_str());
+	}
+	catch (const std::exception& failure)
+	{
+		m_impl->error = failure.what();
+	}
+#else
+	(void)runtime;
+	(void)path;
+	(void)options;
+#endif
+}
+void RigPanel::Pause()
+{
+#ifdef SIMXR_COMPANION_AUTOMATION
+	if (IsActive())
+		m_impl->runner->Pause();
+#endif
+}
+void RigPanel::Step()
+{
+#ifdef SIMXR_COMPANION_AUTOMATION
+	if (IsActive())
+		m_impl->runner->Step();
+#endif
+}
+void RigPanel::Resume()
+{
+#ifdef SIMXR_COMPANION_AUTOMATION
+	if (IsActive())
+		m_impl->runner->Resume();
+#endif
+}
+void RigPanel::Cancel()
+{
+#ifdef SIMXR_COMPANION_AUTOMATION
+	if (IsActive())
+		m_impl->runner->Cancel();
+#endif
+}
+std::string RigPanel::Script() const
+{
+	return m_impl->script.data();
+}
+bool RigPanel::ReplayingTake() const
+{
+	return m_impl->recordingReplay;
+}
+bool RigPanel::WaitingForLaunch() const
+{
+#ifdef SIMXR_COMPANION_AUTOMATION
+	return m_impl->launch != nullptr;
+#else
+	return false;
+#endif
+}
+const std::string& RigPanel::Error() const
+{
+	return m_impl->error;
+}
+std::string RigPanel::SaveReport(const std::string& path, bool junit)
+{
+#ifdef SIMXR_COMPANION_AUTOMATION
+	try
+	{
+		std::snprintf(m_impl->report.data(), m_impl->report.size(), "%s", path.c_str());
+		m_impl->Save(junit);
+		return {};
+	}
+	catch (const std::exception& failure)
+	{
+		return failure.what();
+	}
+#else
+	(void)path;
+	(void)junit;
+	return "Scripts need a Luau-enabled build";
+#endif
 }
 std::uint64_t RigPanel::RunId() const
 {

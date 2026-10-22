@@ -14,7 +14,10 @@ class SpatialEditor
 	void SetContext(bool editable, bool lookingBack, std::span<const FrameView> eyes,
 					const control::Message* historical, std::uint64_t historyIdentity);
 	void Reset();
-	void DrawInspector(Selection& selection);
+	// The rig view at the top of a device page.
+	void DrawRigView(Selection& selection);
+	// Rotation ball and reach map for the selected device, side by side when wide.
+	void DrawPlacement(Selection& selection);
 	void DrawRig(Selection& selection, ImVec2 size);
 	bool DrawPreview(Selection& selection, ImVec2 minimum, ImVec2 maximum, const FrameView& camera, unsigned eye);
 	void DrawExpanded(Selection& selection, ImVec2 size);

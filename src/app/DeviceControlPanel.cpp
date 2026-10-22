@@ -1,10 +1,13 @@
 #include "app/DeviceControlPanel.h"
 #include "app/Theme.h"
 #include "Math.h"
+#include "app/widgets/Controls.h"
+#include "app/widgets/InputPad.h"
 #include "app/widgets/LiveField.h"
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <string_view>
 
 #include <cstdio>
 #include <exception>
@@ -14,7 +17,8 @@
 namespace simxr::app
 {
 DeviceControlPanel::DeviceControlPanel(PlayerRig& rig) : m_playerRig(rig) {}
-std::optional<SimulationEdit> DeviceControlPanel::Draw(bool supported, const Selection* selection)
+std::optional<SimulationEdit> DeviceControlPanel::Draw(bool supported, const Selection* selection,
+													   const std::function<void()>& placement)
 {
 	m_edit.reset();
 	m_continuousEdit = false;
@@ -31,7 +35,15 @@ std::optional<SimulationEdit> DeviceControlPanel::Draw(bool supported, const Sel
 	if (selection)
 	{
 		ImGui::BeginDisabled(!supported);
-		if (const auto device = std::get_if<DeviceSel>(selection))
+		const auto device = std::get_if<DeviceSel>(selection);
+		const bool hand = device && (device->page == DevicePage::Left || device->page == DevicePage::Right);
+		if (placement && !hand)
+		{
+			ImGui::EndDisabled();
+			placement();
+			ImGui::BeginDisabled(!supported);
+		}
+		if (device)
 		{
 			m_fieldScope = "device/" + std::to_string(static_cast<int>(device->page)) + "/";
 			switch (device->page)
@@ -45,7 +57,7 @@ std::optional<SimulationEdit> DeviceControlPanel::Draw(bool supported, const Sel
 			case DevicePage::Left:
 			case DevicePage::Right:
 				m_controlHand = device->page == DevicePage::Right;
-				DrawController();
+				DrawController(placement);
 				break;
 			case DevicePage::Body:
 				DrawBody();
@@ -91,7 +103,7 @@ std::optional<SimulationEdit> DeviceControlPanel::Draw(bool supported, const Sel
 				ImGui::BeginDisabled(!supported);
 				ImGui::BeginChild("Hand details");
 				ImGui::PushItemWidth(-1);
-				DrawController();
+				DrawController({});
 				ImGui::PopItemWidth();
 				ImGui::EndChild();
 				ImGui::EndDisabled();
@@ -211,6 +223,7 @@ void DeviceControlPanel::DrawOwnership()
 void DeviceControlPanel::ClearHeldInputs()
 {
 	m_authoredControls = {};
+	m_latches = {};
 }
 void DeviceControlPanel::ResetObservations()
 {
@@ -469,44 +482,71 @@ void DeviceControlPanel::DrawHandRest()
 		}
 	}
 }
-void DeviceControlPanel::DrawController()
+void DeviceControlPanel::DrawInputPad(std::uint32_t hand)
+{
+	auto& controller = m_authoredTracking.controllers[hand];
+	auto& controls = m_authoredControls[hand];
+	auto& latched = m_latches[hand];
+	const auto previous = controls;
+	const auto color = hand ? theme::Right : theme::Left;
+	// Face button names follow the interaction profile.
+	const std::string_view profile = m_controllerProfiles[hand].data();
+	const bool touch = profile.find("oculus") != std::string_view::npos || profile.find("meta") != std::string_view::npos ||
+					   profile.find("pico") != std::string_view::npos;
+	const bool index = profile.find("valve/index") != std::string_view::npos;
+	const char* primary = touch ? (hand ? "A##Primary" : "X##Primary") : index ? "A##Primary" : "1##Primary";
+	const char* secondary = touch ? (hand ? "B##Secondary" : "Y##Secondary") : index ? "B##Secondary" : "2##Secondary";
+	ImGui::SeparatorText("Input");
+	DrawOwner(hand ? ControlChannel::RightControls : ControlChannel::LeftControls);
+	bool changed = false, continuous = false;
+	bool stickClick = controls.thumbClick;
+	const bool stick = StickPad("Stick", controls.stick.x, controls.stick.y, stickClick, latched.stick, color);
+	controls.thumbClick = stickClick;
+	changed |= Field("Stick", stick, true);
+	continuous |= stick && ImGui::IsItemActive();
+	ImGui::SameLine();
+	ImGui::BeginGroup();
+	const float width = std::max(60.f, ImGui::GetContentRegionAvail().x);
+	const bool trigger = TriggerBar("Trigger", "Trigger", controls.trigger, latched.trigger, color, width);
+	changed |= Field("Trigger", trigger, true);
+	continuous |= trigger && ImGui::IsItemActive();
+	const bool grip = TriggerBar("Grip", "Grip", controls.grip, latched.grip, color, width);
+	changed |= Field("Grip", grip, true);
+	continuous |= grip && ImGui::IsItemActive();
+	changed |= Field("Primary", HoldButton("Primary", primary, controls.primary, latched.primary, color));
+	ImGui::SameLine();
+	changed |= Field("Secondary", HoldButton("Secondary", secondary, controls.secondary, latched.secondary, color));
+	ImGui::SameLine();
+	changed |= Field("Menu", HoldButton("Menu", "M##Menu", controls.menu, latched.menu, color));
+	ImGui::SameLine();
+	const bool clear = IconButton("Clear hand", Icon::Close, "Release every input of this hand");
+	ImGui::EndGroup();
+	if (clear)
+	{
+		controls = {};
+		latched = {};
+	}
+	if (!clear && !changed)
+		return;
+	controls.connected = controller.connected;
+	ApplyOwned(hand ? ControlChannel::RightControls : ControlChannel::LeftControls, SetControllerControls{hand, controls});
+	auto& edit = std::get<ManualTransaction>(*m_edit);
+	edit.continuous = continuous;
+	edit.releaseEdge = clear || (previous.primary && !controls.primary) ||
+					   (previous.secondary && !controls.secondary) || (previous.menu && !controls.menu) ||
+					   (previous.thumbClick && !controls.thumbClick);
+}
+void DeviceControlPanel::DrawController(const std::function<void()>& placement)
 {
 	const auto hand = static_cast<std::uint32_t>(m_controlHand);
 	DrawAnchor(false, hand);
 	ImGui::BeginDisabled(DrawScenarioNotice(hand ? ControlChannel::RightPose : ControlChannel::LeftPose));
 	auto& controller = m_authoredTracking.controllers[hand];
-	auto& controls = m_authoredControls[hand];
-	const auto previous = controls;
+	DrawInputPad(hand);
+	if (placement)
+		placement();
+	ImGui::SeparatorText("Pose");
 	DrawHandRest();
-	ImGui::SeparatorText("Buttons and axes");
-	DrawOwner(hand ? ControlChannel::RightControls : ControlChannel::LeftControls);
-	bool edited = Field("Primary", ImGui::Checkbox("Primary", &controls.primary), false);
-	ImGui::SameLine();
-	edited |= Field("Secondary", ImGui::Checkbox("Secondary", &controls.secondary), false);
-	edited |= Field("Menu", ImGui::Checkbox("Menu", &controls.menu), false);
-	ImGui::SameLine();
-	edited |= Field("Stick click", ImGui::Checkbox("Stick click", &controls.thumbClick), false);
-	ImGui::TextUnformatted("Trigger");
-	Field("##Trigger", ImGui::SliderFloat("##Trigger", &controls.trigger, 0, 1, "%.2f"), true);
-	edited |= (ImGui::IsItemEdited() || ImGui::IsItemDeactivatedAfterEdit());
-	ImGui::TextUnformatted("Grip");
-	Field("##Grip", ImGui::SliderFloat("##Grip", &controls.grip, 0, 1, "%.2f"), true);
-	edited |= (ImGui::IsItemEdited() || ImGui::IsItemDeactivatedAfterEdit());
-	ImGui::TextUnformatted("Thumbstick (X, Y)");
-	Field("##Stick", ImGui::SliderFloat2("##Stick", &controls.stick.x, -1, 1, "%.2f"), true);
-	edited |= (ImGui::IsItemEdited() || ImGui::IsItemDeactivatedAfterEdit());
-	const bool clear = ImGui::Button("Clear hand");
-	if (clear)
-		controls = {};
-	if (clear || edited)
-	{
-		controls.connected = controller.connected;
-		ApplyOwned(hand ? ControlChannel::RightControls : ControlChannel::LeftControls,
-				   SetControllerControls{hand, controls});
-		std::get<ManualTransaction>(*m_edit).releaseEdge =
-			clear || (previous.primary && !controls.primary) || (previous.secondary && !controls.secondary) ||
-			(previous.menu && !controls.menu) || (previous.thumbClick && !controls.thumbClick);
-	}
 	DrawExactPose(static_cast<int>(hand) + 1);
 	if (ImGui::CollapsingHeader("Connection and profile"))
 	{

@@ -496,12 +496,13 @@ void PilotLiveRuntime(const char* endpoint)
 			return !test.runtime.Snapshot().recordingBusy;
 		},
 		"Initial recording read did not finish");
-	activate("Recording", "Start recording");
+	activate("##Workspace toolbar", "Rec");
+	frame();
 	const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
 	if (!popups.empty() && popups.back().Window &&
-		popups.back().PopupId == FindPanel("Recording")->GetID("Replace unsaved take?"))
+		popups.back().PopupId == FindPanel("##Workspace toolbar")->GetID("Replace unsaved take?"))
 	{
-		ImGui::ActivateItemByID(popups.back().Window->GetID("Start new take"));
+		ImGui::ActivateItemByID(popups.back().Window->GetID("Record new take"));
 		frame();
 	}
 	Eventually(
@@ -729,29 +730,16 @@ void PilotLiveRuntime(const char* endpoint)
 		},
 		"Stop recording failed outside the recording workspace");
 	Require(test.runtime.Snapshot().recordedChanges > 0, "Real piloting produced no recorded input");
-	test.workspace.Select(LibrarySel{});
-	for (int i = 0; i < 4; ++i)
-		frame();
-	Eventually(
-		[&]
-		{
-			frame();
-			return !test.runtime.Snapshot().recordingBusy;
-		},
-		"Recorder remained busy before saving");
-	activate("Recording", "Save take");
-	const auto library = CompanionSettingsPath().parent_path() / "recordings";
+	Require(!popups.empty() && popups.back().Window, "Stop did not open the save popover");
+	ImGui::ActivateItemByID(popups.back().Window->GetID("Save"));
 	std::string savedPath;
 	Eventually(
 		[&]
 		{
 			frame();
-			if (test.runtime.Snapshot().recordingBusy || !std::filesystem::exists(library))
-				return false;
-			for (const auto& entry : std::filesystem::directory_iterator(library))
-				if (entry.path().extension() == ".luau")
-					savedPath = entry.path().string();
-			return !savedPath.empty();
+			if (const auto take = std::get_if<TakeSel>(&test.workspace.State().selection))
+				savedPath = take->id;
+			return !savedPath.empty() && std::filesystem::exists(savedPath);
 		},
 		"Save take did not produce a persistent file");
 	Require(!OpenSavedRecording(savedPath).path.empty(), "Saved take cannot be reopened independently");
@@ -763,7 +751,7 @@ void PilotLiveRuntime(const char* endpoint)
 		frame();
 		frame();
 	}
-	activate("Recording", "Replay selected take");
+	activate("Inspector", "Replay take");
 	Eventually(
 		[&]
 		{
@@ -1729,7 +1717,9 @@ void CheckSpatialEditing(Interaction& test)
 
 // D8: play without Rec, cut the range into a take, replay it, and compare the
 // replay's applied input with the source frames it was cut from.
-void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
+// Pilots the right hand through real SDL events: about two seconds of trigger
+// and primary-button pulses, then Escape.
+void DrivePilotPulses(Interaction& test)
 {
 	const auto pump = [&](int count)
 	{
@@ -1777,8 +1767,6 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 	SDL_RaiseWindow(test.window.Native());
 	Eventually([&] { pump(1); return test.window.Focused(); }, "Take window did not receive focus");
 	pump(3);
-	const auto& history = test.runtime.History();
-	const auto begin = history.Size();
 	button(SDL_BUTTON_RIGHT, true);
 	Eventually([&] { pump(1); return SDL_GetWindowRelativeMouseMode(test.window.Native()); },
 			   "Take pilot did not capture pointer");
@@ -1795,7 +1783,22 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 	}
 	key(SDL_SCANCODE_ESCAPE, true);
 	key(SDL_SCANCODE_ESCAPE, false);
+	button(SDL_BUTTON_RIGHT, false);
 	pump(10);
+}
+void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
+{
+	const auto pump = [&](int count)
+	{
+		for (int index = 0; index < count; ++index)
+		{
+			test.Frame();
+			SDL_Delay(10);
+		}
+	};
+	const auto& history = test.runtime.History();
+	const auto begin = history.Size();
+	DrivePilotPulses(test);
 	Require(history.Size() > begin + 60, "Too few frames while driving input");
 	std::size_t pressed = 0;
 	for (auto index = begin; index < history.Size(); ++index)
@@ -1872,6 +1875,277 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Validation errors during take replay");
 	std::cout << "PASS retroactive take replayed over its source frames\n";
+}
+
+// D10: record, stop, name, replay and cancel with only Rec, the stop popover and the Library.
+void CheckLibrary(Interaction& test, const std::filesystem::path& directory)
+{
+	const auto pump = [&](int count)
+	{
+		for (int index = 0; index < count; ++index)
+		{
+			test.Frame();
+			SDL_Delay(10);
+		}
+	};
+	const auto screenshot = [&](const char* name)
+	{
+		if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
+		{
+			test.renderer.RequestScreenshot((std::filesystem::path(qa) / name).string());
+			pump(2);
+		}
+	};
+	test.workspace.Select(DeviceSel{});
+	test.runtime.ResumeLive();
+	Eventually([&] { pump(1); return test.runtime.Snapshot().time.following && !test.runtime.Snapshot().manual; },
+			   "Library check did not start live");
+	Eventually([&] { pump(1); return !test.runtime.Snapshot().recordingBusy; }, "Recorder did not finish its first read");
+	ImGui::ActivateItemByID(FindPanel("Top bar")->GetID("Rec"));
+	Eventually([&] { pump(1); return test.runtime.Snapshot().recording; }, "Rec did not start recording");
+	DrivePilotPulses(test);
+	Require(test.runtime.Snapshot().recordedChanges > 0, "Piloting recorded no input");
+	ImGui::ActivateItemByID(FindPanel("Top bar")->GetID("Stop recording"));
+	const auto popover = FindPanel("Top bar")->GetID("Save take");
+	Eventually([&] { pump(1); return ImGui::IsPopupOpen(popover, ImGuiPopupFlags_AnyPopupLevel); },
+			   "Stop did not open the save popover");
+	Eventually([&] { pump(1); return !test.runtime.Snapshot().recording && !test.runtime.Snapshot().recordingBusy; },
+			   "Recording did not stop");
+	screenshot("library-save.bmp");
+	auto* popup = ImGui::GetCurrentContext()->OpenPopupStack.back().Window;
+	Require(popup, "Save popover has no window");
+	ImGui::ActivateItemByID(popup->GetID("Save"));
+	Eventually([&] { pump(1); return std::holds_alternative<TakeSel>(test.workspace.State().selection); },
+			   "Saved take was not selected in the Library");
+	const auto path = std::get<TakeSel>(test.workspace.State().selection).id;
+	Require(std::filesystem::path(path).parent_path() == directory / "recordings" && std::filesystem::exists(path),
+			"Saved take is not in the isolated recordings folder");
+	pump(3);
+	screenshot("library-take.bmp");
+	ImGui::ActivateItemByID(FindPanel("Inspector")->GetID("Replay take"));
+	Eventually([&] { pump(1); return test.runtime.Snapshot().manual; }, "Library replay did not drive the app");
+	pump(10);
+	screenshot("library-replay.bmp");
+	ImGui::ActivateItemByID(FindPanel("Top bar")->GetID("Cancel replay"));
+	Eventually([&] { pump(1); return !test.runtime.Snapshot().manual; }, "Cancel replay did not release the app");
+	std::cout << "PASS Rec, stop popover, Library replay and cancel\n";
+
+	// A script from the Library: run, pause, step, resume, finish and report.
+	std::filesystem::create_directories(directory / "scripts");
+	const auto script = directory / "scripts" / "pose_sweep.luau";
+	// examples/rigs/pose_sweep.luau
+	std::ofstream(script) << R"(simxr.pause()
+for sample = 0, 15 do
+    local frame = simxr.frame_add(simxr.state().frame_id or "0", "1")
+    local transaction = simxr.schedule({frame=frame, commands={
+        {kind="take_control", channel="head"},
+        {kind="head_pose", position={math.sin(sample * math.pi / 8) * 0.2, 1.7, 0}},
+    }})
+    while simxr.frame_before(simxr.state().frame_id or "0", frame) do
+        local capture = simxr.step()
+        if capture then simxr.release_capture(capture) end
+        local applied = simxr.state().frame_id
+        repeat
+            local displayCapture, progress, source = simxr.step_display()
+            if displayCapture then simxr.release_capture(displayCapture) end
+        until source and not simxr.frame_before(source, applied)
+    end
+    local applied = simxr.await_transaction(transaction)
+    simxr.checkpoint("head sample " .. sample, applied.applied_frame == frame)
+end
+simxr.release_inputs()
+simxr.resume())";
+	test.workspace.Select(LibrarySel{});
+	pump(3);
+	ImGui::ActivateItemByID(FindPanel("Top bar")->GetID("Dismiss replay status"));
+	ImGui::ActivateItemByID(FindPanel("Inspector")->GetID("Refresh library"));
+	pump(3);
+	screenshot("library-list.bmp");
+	test.workspace.Select(ScriptSel{script.string()});
+	pump(3);
+	auto* inspector = FindPanel("Inspector");
+	ImGui::ActivateItemByID(inspector->GetID("Run script"));
+	Eventually([&] { pump(1); return test.runtime.Snapshot().manual; }, "Script did not start");
+	ImGui::ActivateItemByID(inspector->GetID("Pause script"));
+	pump(5);
+	ImGui::ActivateItemByID(inspector->GetID("Step script"));
+	pump(5);
+	screenshot("library-script-paused.bmp");
+	ImGui::ActivateItemByID(inspector->GetID("Resume script"));
+	Eventually([&] { pump(1); return !test.runtime.Snapshot().manual; }, "Script did not finish and release the app");
+	pump(5);
+	ImGui::ActivateItemByID(inspector->GetID("Save JSON report"));
+	pump(2);
+	Require(std::filesystem::exists(directory / "scripts" / "pose_sweep.report.json"), "Script report was not saved");
+	screenshot("library-script.bmp");
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Validation errors in the Library flow");
+	std::cout << "PASS Library script run, pause, step, resume and report\n";
+}
+
+// D10: every hand input is operable with the mouse alone, through real SDL events.
+void CheckInputPad(Interaction& test)
+{
+	const auto target = test.runtime.Snapshot();
+	ManualInputController observer;
+	observer.SetTarget({target.endpoint, target.session, target.generation});
+	const auto pump = [&](int count)
+	{
+		for (int index = 0; index < count; ++index)
+		{
+			test.Frame();
+			SDL_Delay(10);
+		}
+	};
+	const auto observed = [&]
+	{
+		const auto before = observer.Snapshot().observation;
+		observer.Refresh();
+		Eventually(
+			[&]
+			{
+				pump(1);
+				return observer.Snapshot().observation > before;
+			},
+			"Pad observation stalled");
+		return ReadObservedSetup(observer.Snapshot().state).values.input.controllers[1];
+	};
+	const auto settle = [&](const auto& ready, const char* failure)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+		for (;;)
+		{
+			const auto controls = observed();
+			if (ready(controls))
+				return;
+			Require(std::chrono::steady_clock::now() < deadline, failure);
+		}
+	};
+	const auto window = SDL_GetWindowID(test.window.Native());
+	const auto move = [&](ImVec2 at)
+	{
+		SDL_Event event{};
+		event.type = SDL_EVENT_MOUSE_MOTION;
+		event.motion.windowID = window;
+		event.motion.x = at.x;
+		event.motion.y = at.y;
+		Require(SDL_PushEvent(&event), "Push pad motion");
+		pump(1);
+	};
+	const auto button = [&](unsigned code, bool down)
+	{
+		SDL_Event event{};
+		event.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+		event.button.windowID = window;
+		event.button.button = code;
+		event.button.down = down;
+		Require(SDL_PushEvent(&event), "Push pad button");
+		pump(2);
+	};
+	// The pad lives somewhere inside the inspector; nav focus reports an item's rectangle.
+	const auto rect = [&](const char* name)
+	{
+		auto& g = *ImGui::GetCurrentContext();
+		for (auto* candidate : g.Windows)
+			if (std::string_view(candidate->Name).find("Inspector") != std::string_view::npos && candidate->Active)
+			{
+				const auto id = candidate->GetID(name);
+				ImGui::SetFocusID(id, candidate);
+				pump(1);
+				if (g.NavId == id && g.NavIdIsAlive)
+				{
+					const auto value = ImGui::WindowRectRelToAbs(candidate, candidate->NavRectRel[0]);
+					ImGui::ClearActiveID();
+					g.NavId = 0;
+					return value;
+				}
+			}
+		if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
+		{
+			test.renderer.RequestScreenshot((std::filesystem::path(qa) / "input-pad-missing.bmp").string());
+			pump(1);
+			test.renderer.WaitIdle();
+		}
+		throw std::runtime_error(std::string("Input pad item not found: ") + name);
+	};
+	Require(SDL_ShowWindow(test.window.Native()), "Show pad window");
+	test.workspace.Select(DeviceSel{DevicePage::Right});
+	pump(4);
+	const auto trigger = rect("Trigger"), grip = rect("Grip"), primary = rect("Primary"),
+			   secondary = rect("Secondary"), menu = rect("Menu"), stick = rect("Stick");
+
+	move(trigger.GetCenter());
+	button(SDL_BUTTON_LEFT, true);
+	settle([](const auto& c) { return c.trigger > .99f; }, "Trigger hold did not press fully");
+	button(SDL_BUTTON_LEFT, false);
+	settle([](const auto& c) { return c.trigger == 0; }, "Trigger release did not return to zero");
+	move({trigger.Min.x + 2, trigger.GetCenter().y});
+	button(SDL_BUTTON_LEFT, true);
+	move({trigger.Min.x + trigger.GetWidth() * .3f, trigger.GetCenter().y});
+	move({trigger.Min.x + trigger.GetWidth() * .5f, trigger.GetCenter().y});
+	settle([](const auto& c) { return std::abs(c.trigger - .5f) < .1f; }, "Trigger drag did not set half");
+	button(SDL_BUTTON_LEFT, false);
+	move({trigger.Min.x + trigger.GetWidth() * .7f, trigger.GetCenter().y});
+	button(SDL_BUTTON_RIGHT, true);
+	button(SDL_BUTTON_RIGHT, false);
+	settle([](const auto& c) { return std::abs(c.trigger - .7f) < .1f; }, "Trigger latch did not hold 70%");
+	button(SDL_BUTTON_RIGHT, true);
+	button(SDL_BUTTON_RIGHT, false);
+	settle([](const auto& c) { return c.trigger == 0; }, "Trigger unlatch did not release");
+	std::cout << "PASS pad trigger hold, drag, latch\n";
+
+	move(grip.GetCenter());
+	button(SDL_BUTTON_LEFT, true);
+	settle([](const auto& c) { return c.grip > .99f; }, "Grip hold did not press");
+	button(SDL_BUTTON_LEFT, false);
+	settle([](const auto& c) { return c.grip == 0; }, "Grip did not release");
+	move(primary.GetCenter());
+	button(SDL_BUTTON_LEFT, true);
+	settle([](const auto& c) { return c.primary; }, "Primary hold did not press");
+	button(SDL_BUTTON_LEFT, false);
+	settle([](const auto& c) { return !c.primary; }, "Primary did not release");
+	move(secondary.GetCenter());
+	button(SDL_BUTTON_RIGHT, true);
+	button(SDL_BUTTON_RIGHT, false);
+	settle([](const auto& c) { return c.secondary; }, "Secondary latch did not press");
+	button(SDL_BUTTON_RIGHT, true);
+	button(SDL_BUTTON_RIGHT, false);
+	settle([](const auto& c) { return !c.secondary; }, "Secondary unlatch did not release");
+	move(menu.GetCenter());
+	button(SDL_BUTTON_LEFT, true);
+	settle([](const auto& c) { return c.menu; }, "Menu hold did not press");
+	button(SDL_BUTTON_LEFT, false);
+	settle([](const auto& c) { return !c.menu; }, "Menu did not release");
+	std::cout << "PASS pad grip, face buttons and menu\n";
+
+	move(stick.GetCenter());
+	button(SDL_BUTTON_LEFT, true);
+	settle([](const auto& c) { return c.thumbClick; }, "Stick click did not press");
+	move({stick.GetCenter().x + stick.GetWidth() * .2f, stick.GetCenter().y});
+	move({stick.Max.x, stick.GetCenter().y});
+	settle([](const auto& c) { return c.stick.x > .95f && !c.thumbClick; }, "Stick drag did not reach full right");
+	button(SDL_BUTTON_LEFT, false);
+	settle([](const auto& c) { return c.stick.x == 0 && c.stick.y == 0; }, "Stick did not spring back");
+	move({stick.GetCenter().x, stick.Min.y + 2});
+	button(SDL_BUTTON_RIGHT, true);
+	button(SDL_BUTTON_RIGHT, false);
+	move(stick.GetCenter());
+	button(SDL_BUTTON_LEFT, true);
+	move({stick.GetCenter().x, stick.GetCenter().y - stick.GetHeight() * .2f});
+	move({stick.GetCenter().x, stick.Min.y});
+	button(SDL_BUTTON_LEFT, false);
+	settle([](const auto& c) { return c.stick.y > .95f; }, "Latched stick did not stay up");
+	button(SDL_BUTTON_RIGHT, true);
+	button(SDL_BUTTON_RIGHT, false);
+	settle([](const auto& c) { return c.stick.y == 0; }, "Stick unlatch did not centre");
+	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
+	{
+		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "input-pad.bmp").string());
+		pump(1);
+	}
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Validation errors on the input pad");
+	std::cout << "PASS pad stick drag, click, spring-back and latch\n";
 }
 
 // D9: while the app runs, look back a few seconds and see the kept preview.
@@ -2045,10 +2319,14 @@ void CheckToolbarLaunch(const char* executable)
 	std::ofstream(directory / "attached.endpoint") << state.endpoint;
 	if (std::getenv("SIMXR_TIMELINE_QA"))
 		CheckTimelineWorkflow(test);
+	if (std::getenv("SIMXR_PAD_QA"))
+		CheckInputPad(test);
 	if (std::getenv("SIMXR_HISTORY_QA"))
 		CheckPreviewHistory(test);
 	if (std::getenv("SIMXR_TAKE_QA"))
 		CheckInputTake(test, directory);
+	if (std::getenv("SIMXR_LIBRARY_QA"))
+		CheckLibrary(test, directory);
 	if (std::getenv("SIMXR_INPUT_QA"))
 		CheckManualEdges(state);
 	if (std::getenv("SIMXR_RIG_QA"))

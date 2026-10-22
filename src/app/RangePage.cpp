@@ -138,7 +138,6 @@ void RangePage::SaveTake(const RangeSel& range, std::size_t first, std::size_t l
 		std::filesystem::rename(temporary, path);
 		const auto text = path.u8string();
 		m_last = automation::SavedRecording{{text.begin(), text.end()}, take.seed};
-		m_saved = m_last->path;
 		shell.timeline.savedTake = TakeSource{m_last->path, range.first, range.last, range.epoch};
 		m_takeStatus = "Saved " + std::to_string(take.total) + " changes";
 	}

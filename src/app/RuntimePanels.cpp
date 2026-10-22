@@ -128,7 +128,7 @@ class RuntimePanels::Impl
 				shell.openAppPicker = true;
 			return;
 		}
-		m_spatial.DrawInspector(shell.selection);
+		m_spatial.DrawRigView(shell.selection);
 		m_devices.SetRigPiloting(m_pilot.Active() || m_spatial.Active());
 		if (!m_view.time.following)
 		{
@@ -138,23 +138,17 @@ class RuntimePanels::Impl
 				shell.selection = FrameSel{m_view.time.cursor, m_view.time.epoch};
 			return;
 		}
-		if (auto edit = m_devices.Draw(m_session.SupportsEdits(), &shell.selection))
+		const auto placement = [&]
+		{
+			m_spatial.DrawPlacement(shell.selection);
+		};
+		if (auto edit = m_devices.Draw(m_session.SupportsEdits(), &shell.selection, placement))
 		{
 			StopPilot();
 			m_session.SubmitEdit(*edit);
 		}
 		if (auto device = std::get_if<DeviceSel>(&shell.selection); device && device->page == DevicePage::Trackers)
 			device->slot = static_cast<unsigned>(m_devices.SelectedTracker());
-	}
-	void DrawLibrary()
-	{
-#ifdef SIMXR_COMPANION_AUTOMATION
-		const bool replayAvailable = CanRecord() && !m_replayActive;
-#else
-		constexpr bool replayAvailable = false;
-#endif
-		if (auto replay = m_recording.Draw(CanRecord(), replayAvailable, m_replayActive))
-			m_recordingReplay = RecordingReplay{std::move(*replay), m_session.Debugger().Scope()};
 	}
 	void DrawConnection(bool* open)
 	{
@@ -260,6 +254,7 @@ class RuntimePanels::Impl
 	RecordingPanel m_recording;
 	bool m_replayActive = false;
 	std::optional<RecordingReplay> m_recordingReplay;
+	std::optional<std::string> m_savedTake;
 	PlayerRig m_playerRig;
 	PilotController m_pilot{m_playerRig};
 	DeviceControlPanel m_devices{m_playerRig};
@@ -308,8 +303,6 @@ void RuntimePanels::DrawRangePage(const RangeSel& range, ShellState& shell)
 	auto& impl = *m_impl;
 	if (auto replay = impl.m_range.Draw(range, shell))
 		impl.m_recordingReplay = Impl::RecordingReplay{std::move(*replay), impl.m_session.Debugger().Scope()};
-	if (const auto saved = impl.m_range.TakeSaved())
-		impl.m_recording.Added(*saved);
 }
 void RuntimePanels::DrawAdvancedPage()
 {
@@ -319,9 +312,27 @@ void RuntimePanels::DrawDevicePage(ShellState& shell)
 {
 	m_impl->DrawDevicePage(shell);
 }
-void RuntimePanels::DrawLibrary()
+void RuntimePanels::DrawRecordingPopovers()
 {
-	m_impl->DrawLibrary();
+	m_impl->m_recording.DrawPopovers(m_impl->CanRecord());
+	if (auto saved = m_impl->m_recording.TakeSaved())
+		m_impl->m_savedTake = std::move(*saved);
+}
+std::optional<std::string> RuntimePanels::TakeSavedTake()
+{
+	return std::exchange(m_impl->m_savedTake, {});
+}
+bool RuntimePanels::CanReplay() const
+{
+#ifdef SIMXR_COMPANION_AUTOMATION
+	return m_impl->CanRecord() && !m_impl->m_replayActive;
+#else
+	return false;
+#endif
+}
+void RuntimePanels::RequestReplay(automation::SavedRecording recording)
+{
+	m_impl->m_recordingReplay = Impl::RecordingReplay{std::move(recording), m_impl->m_session.Debugger().Scope()};
 }
 void RuntimePanels::DrawConnection(bool* open)
 {
@@ -442,7 +453,7 @@ void RuntimePanels::StartRecording()
 }
 void RuntimePanels::StopRecording()
 {
-	m_impl->m_recording.Stop();
+	m_impl->m_recording.RequestStop();
 }
 void RuntimePanels::SetReplayActive(bool active)
 {

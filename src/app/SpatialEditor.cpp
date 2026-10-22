@@ -226,22 +226,28 @@ void SpatialEditor::DrawRig(Selection& selection, ImVec2 size)
 	if (selected >= 0)
 		ApplyResult(result, selected, scene.devices[selected]);
 }
-void SpatialEditor::DrawInspector(Selection& selection)
+void SpatialEditor::DrawRigView(Selection& selection)
+{
+	if (!std::holds_alternative<DeviceSel>(selection) || (!m_observed && !m_historical) || m_view.expanded)
+		return;
+	DrawRig(selection, {ImGui::GetContentRegionAvail().x / (ImGui::GetFontSize() / 16), 220});
+}
+void SpatialEditor::DrawPlacement(Selection& selection)
 {
 	const auto devicePage = std::get_if<DeviceSel>(&selection);
-	if (!devicePage || (!m_observed && !m_historical))
+	if (!devicePage || !m_observed || m_lookingBack)
 		return;
 	const auto page = devicePage->page;
 	const float scale = ImGui::GetFontSize() / 16;
-	if (!m_view.expanded)
-		DrawRig(selection, {ImGui::GetContentRegionAvail().x / scale, 220});
-	if (m_lookingBack)
-		return;
 	auto scene = LiveScene();
 	const auto editable = EditableDevices(scene);
 	const int selected = SelectedDevice(selection);
+	const bool reach = page == DevicePage::Player || page == DevicePage::Left || page == DevicePage::Right;
+	const bool sideBySide = selected >= 0 && reach && ImGui::GetContentRegionAvail().x / scale >= 340;
 	if (selected >= 0)
 	{
+		if (sideBySide)
+			ImGui::BeginGroup();
 		ImGui::SeparatorText("Rotation");
 		const auto anchor = selected == 0  ? Anchor::Body
 							: selected < 3 ? m_rig.HandAnchor(selected - 1)
@@ -258,9 +264,16 @@ void SpatialEditor::DrawInspector(Selection& selection)
 		ApplyResult(result, selected, pose);
 		if (!editable[selected])
 			ImGui::TextDisabled("Read only");
+		if (sideBySide)
+		{
+			ImGui::EndGroup();
+			ImGui::SameLine();
+		}
 	}
-	if (page == DevicePage::Player || page == DevicePage::Left || page == DevicePage::Right)
+	if (reach)
 	{
+		if (sideBySide)
+			ImGui::BeginGroup();
 		ImGui::SeparatorText("Reach");
 		if (!m_reach.dragging && (selected == 1 || selected == 2))
 			m_reach.hand = selected - 1;
@@ -274,6 +287,8 @@ void SpatialEditor::DrawInspector(Selection& selection)
 		ApplyResult(result, m_reach.hand + 1, hands[m_reach.hand]);
 		if (result.active && (page == DevicePage::Left || page == DevicePage::Right))
 			SelectDevice(selection, m_reach.hand + 1);
+		if (sideBySide)
+			ImGui::EndGroup();
 	}
 	if (!m_error.empty() && ImGui::IsWindowHovered())
 		ImGui::SetTooltip("%s", m_error.c_str());

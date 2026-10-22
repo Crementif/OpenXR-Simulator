@@ -9,6 +9,7 @@
 #include "app/RuntimePanels.h"
 #include "app/TimelinePanel.h"
 #ifdef SIMXR_COMPANION_AUTOMATION
+#include "app/Library.h"
 #include "app/RigPanel.h"
 #endif
 
@@ -66,11 +67,14 @@ struct WorkspacePanels::Impl
 	std::unique_ptr<LaunchAttachment> attachment;
 #ifdef SIMXR_COMPANION_AUTOMATION
 	RigPanel rigs;
+	Library library;
 	// A replay waits until the companion has released its manual inputs and
 	// session control, or the script's pause and take_control would conflict.
 	struct PendingReplay
 	{
 		automation::SavedRecording recording;
+		// Set for a Library script; otherwise a take replay.
+		std::optional<ScriptOptions> script;
 		std::chrono::steady_clock::time_point deadline;
 	};
 	std::optional<PendingReplay> replay;
@@ -303,15 +307,13 @@ struct WorkspacePanels::Impl
 			if (snapshot.recording)
 				runtime.StopRecording();
 			else
-			{
-				shell.selection = LibrarySel{};
 				runtime.StartRecording();
-				drawer = true;
-			}
 		}
 		ImGui::SameLine();
-		if (IconButton("Library", Icon::Library, "Library: takes and scripts (Ctrl+L)",
-					   std::holds_alternative<LibrarySel>(shell.selection)))
+		const bool library = std::holds_alternative<LibrarySel>(shell.selection) ||
+							 std::holds_alternative<TakeSel>(shell.selection) ||
+							 std::holds_alternative<ScriptSel>(shell.selection);
+		if (IconButton("Library", Icon::Library, "Library: takes and scripts (Ctrl+L)", library))
 		{
 			shell.selection = LibrarySel{};
 			drawer = true;
@@ -346,6 +348,7 @@ struct WorkspacePanels::Impl
 			}
 			ImGui::EndPopup();
 		}
+		runtime.DrawRecordingPopovers();
 		if (!ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive())
 		{
 			if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_L, false))
@@ -358,11 +361,7 @@ struct WorkspacePanels::Impl
 				if (snapshot.recording)
 					runtime.StopRecording();
 				else
-				{
-					shell.selection = LibrarySel{};
-					drawer = true;
 					runtime.StartRecording();
-				}
 			}
 			if (ImGui::IsKeyPressed(ImGuiKey_F6, false))
 				runtime.Pause();
@@ -506,11 +505,18 @@ struct WorkspacePanels::Impl
 			runtime.DrawRangePage(RangeSel{*range}, shell);
 		else if (std::holds_alternative<AdvancedSel>(shell.selection))
 			runtime.DrawAdvancedPage();
-		else if (std::holds_alternative<LibrarySel>(shell.selection))
+		else if (std::holds_alternative<LibrarySel>(shell.selection) ||
+				 std::holds_alternative<TakeSel>(shell.selection) ||
+				 std::holds_alternative<ScriptSel>(shell.selection))
 		{
-			runtime.DrawLibrary();
 #ifdef SIMXR_COMPANION_AUTOMATION
-			rigs.Draw(runtime, true);
+			if (auto run = library.Draw(shell.selection, runtime, rigs))
+			{
+				runtime.PrepareReplay();
+				replay = PendingReplay{{run->path}, run->options, std::chrono::steady_clock::now() + std::chrono::seconds(3)};
+			}
+#else
+			ImGui::TextDisabled("Takes and scripts need a Luau-enabled build");
 #endif
 		}
 	}
@@ -522,22 +528,34 @@ struct WorkspacePanels::Impl
 		if (auto recording = runtime.TakeRecordingReplay())
 		{
 			runtime.PrepareReplay();
-			replay = PendingReplay{std::move(*recording), std::chrono::steady_clock::now() + std::chrono::seconds(3)};
+			replay = PendingReplay{std::move(*recording), {}, std::chrono::steady_clock::now() + std::chrono::seconds(3)};
 		}
 		if (replay)
 		{
 			if (runtime.ReplayReady() || std::chrono::steady_clock::now() >= replay->deadline)
 			{
-				timeline.ReplayTake(replay->recording.path);
-				rigs.ReplayRecording(runtime, replay->recording.path, replay->recording.seed);
+				if (replay->script)
+					rigs.RunScript(runtime, replay->recording.path, *replay->script);
+				else
+				{
+					timeline.ReplayTake(replay->recording.path);
+					rigs.ReplayRecording(runtime, replay->recording.path, replay->recording.seed);
+				}
 				replay.reset();
 			}
 		}
-		rigs.Draw(runtime, false);
 		runtime.SetReplayActive(rigs.IsActive());
 		timeline.ObserveRig(runtime.Snapshot(), rigs.RunId(), rigs.Snapshot(), rigs.MatchesTarget(runtime.Snapshot()));
 #endif
 		DrawShell(runtime);
+		if (auto saved = runtime.TakeSavedTake())
+		{
+#ifdef SIMXR_COMPANION_AUTOMATION
+			library.Refresh();
+#endif
+			shell.selection = TakeSel{std::move(*saved)};
+			drawer = true;
+		}
 		if (showConnection)
 			runtime.DrawConnection(&showConnection);
 		if (!error.empty() || showError)

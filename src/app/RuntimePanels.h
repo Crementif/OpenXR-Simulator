@@ -38,7 +38,10 @@ class RuntimePanels
 	void DrawRangePage(const RangeSel& range, ShellState& shell);
 	void DrawAdvancedPage();
 	void DrawDevicePage(ShellState& shell);
-	void DrawLibrary();
+	// The Rec button's start-confirm and "Save take" popovers.
+	void DrawRecordingPopovers();
+	// A take the stop popover just saved.
+	std::optional<std::string> TakeSavedTake();
 	void DrawConnection(bool* open = nullptr);
 	void DrawWindows();
 	std::vector<Notice> TakeNotices();
@@ -77,6 +80,8 @@ class RuntimePanels
 	std::vector<std::uint64_t> CaptureIds() const;
 	void RequestExport(std::string path);
 	void InspectSelected();
+	bool CanReplay() const;
+	void RequestReplay(automation::SavedRecording recording);
 	std::optional<automation::SavedRecording> TakeRecordingReplay();
 	// A replay script needs the devices and the session's control: release the
 	// companion's manual inputs and lease, then start once ReplayReady().
