@@ -35,6 +35,7 @@ class TimelineCanvas
 	ClipHit DrawClip(double first, double last, const char* label, bool replay, bool playable = false);
 	// A paused span: a solid band on the Frame time lane, labelled when wide enough.
 	void DrawPause(double first, double last);
+	void DrawInputLabel(const char* text);
 	// The frame budget in milliseconds (the display period); 0 scales bars to 30 fps.
 	void SetBudget(float milliseconds) noexcept
 	{

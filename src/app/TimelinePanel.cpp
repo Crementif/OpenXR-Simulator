@@ -3,6 +3,8 @@
 #include "app/Utf8Path.h"
 #include "app/widgets/Controls.h"
 #include "app/Theme.h"
+#include "app/InputHistory.h"
+#include "app/PlayerRig.h"
 #include <algorithm>
 #include <cstdio>
 #include <imgui.h>
@@ -558,6 +560,18 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded,
 	const auto gesture = m_canvas.Draw(history, runtime.KeptPreviews(),
 		 runtime.PreviewCrop().value_or(ImVec4{0, 0, 1, 1}), state.time.following,
 		 state.time.following ? std::optional<double>{} : cursor, selectedRange);
+	if (const auto index = history.Nearest(state.time.following ? state.historySeconds : cursor))
+		if (const auto* sample = runtime.InputSamples().Find(history.At(*index).input); sample && sample->trackers)
+		{
+			std::string roles;
+			for (const auto& tracker : *sample->trackers)
+				if (tracker.connected)
+				{
+					roles += roles.empty() ? "Trackers: " : ", ";
+					roles += TrackerRoleName(tracker.role);
+				}
+			m_canvas.DrawInputLabel(roles.c_str());
+		}
 	shell.timelineCanvas = m_canvas.Bounds();
 	std::tie(shell.timeline.first, shell.timeline.last) = m_canvas.VisibleRange();
 	if (gesture.stopFollowing)

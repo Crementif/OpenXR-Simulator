@@ -1,5 +1,6 @@
 #include "app/DeviceRail.h"
 #include "app/Theme.h"
+#include "app/PlayerRig.h"
 #include "app/widgets/Controls.h"
 
 #include <algorithm>
@@ -150,7 +151,7 @@ std::optional<Selection> DrawDeviceRail(const Selection& selection, const Runtim
 			selected = index == SetupRow + static_cast<std::size_t>(item->item);
 		RailStatus status;
 		status.iconOnly = iconOnly;
-		std::string key;
+		std::string key, trackerStatus;
 		if (row.key)
 		{
 			key = PilotBindingLabel(settings.pilotBindings[static_cast<std::size_t>(*row.key)]);
@@ -164,6 +165,19 @@ std::optional<Selection> DrawDeviceRail(const Selection& selection, const Runtim
 		if (view.setup && view.connected)
 		{
 			std::tie(status.dot, status.dotTooltip) = DeviceDot(index, *view.setup);
+			if (index == 6)
+			{
+				trackerStatus = status.dotTooltip;
+				for (const auto& tracker : view.setup->values.tracking.trackers)
+					if (tracker.connected)
+					{
+						trackerStatus += "\n";
+						trackerStatus += TrackerRoleName(tracker.role);
+						if (!tracker.tracked)
+							trackerStatus += " (not tracked)";
+					}
+				status.dotTooltip = trackerStatus.c_str();
+			}
 			if (row.channel)
 				status.badge = OwnerBadge(view.setup->owners[static_cast<std::size_t>(*row.channel)]);
 			status.badgeColor = theme::Head;

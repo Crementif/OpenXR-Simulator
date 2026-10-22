@@ -315,6 +315,22 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 	ImGui::PopID();
 	return result;
 }
+
+void TimelineCanvas::DrawInputLabel(const char* text)
+{
+	if (m_lanes <= Input || !*text)
+		return;
+	const ImVec2 start{m_bounds.x + 4, LaneY(Input) + 2};
+	const ImVec2 end{std::min(m_bounds.x + m_bounds.width, start.x + ImGui::CalcTextSize(text).x + 8),
+					std::min(LaneY(Input) + m_lane, start.y + ImGui::GetFontSize() + 2)};
+	auto* draw = ImGui::GetWindowDrawList();
+	draw->PushClipRect(start, end, true);
+	draw->AddRectFilled(start, end, ImGui::GetColorU32(ImGuiCol_WindowBg));
+	draw->AddText(start, theme::TextDim, text);
+	draw->PopClipRect();
+	if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(start, end))
+		ImGui::SetTooltip("%s", text);
+}
 void TimelineCanvas::DrawThumbnails(const HistoryStore& history, PreviewHistory& previews, ImVec4 crop)
 {
 	if (m_lanes <= Images || !history.Size())
