@@ -96,6 +96,11 @@ if(BUILD_TESTING)
             "${PROJECT_SOURCE_DIR}/tests/control/test_native_companion.py" "$<TARGET_FILE:xr_probe_linux>" "$<TARGET_FILE:simxr_companion>")
         add_test(NAME companion_runtime_pixels COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/control/test_native_companion.py" "$<TARGET_FILE:xr_probe_linux>" "$<TARGET_FILE:simxr_companion>" --verify-pixels)
+        add_test(NAME companion_runtime_x11 COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/control/test_native_companion.py" "$<TARGET_FILE:xr_probe_linux>" "$<TARGET_FILE:simxr_companion>" --visible --verify-pixels)
+        set_tests_properties(companion_runtime_x11 PROPERTIES
+            ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1;SDL_VIDEODRIVER=x11"
+            TIMEOUT 60 SKIP_RETURN_CODE 77)
         add_test(NAME companion_gamma_unorm COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/control/test_native_companion.py" "$<TARGET_FILE:xr_probe_linux>" "$<TARGET_FILE:simxr_companion>" --verify-pixels --midtone)
         add_test(NAME companion_gamma_srgb COMMAND "${Python3_EXECUTABLE}"

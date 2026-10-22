@@ -11,6 +11,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'sdk/python'))
 from simxr_control import Capability, Client
+from test_native_quad import wait_file
 
 
 def require(condition, message):
@@ -19,6 +20,10 @@ def require(condition, message):
 
 
 def main():
+    visible = '--visible' in sys.argv[3:]
+    if visible and os.getenv('SDL_VIDEODRIVER') == 'x11' and not os.getenv('DISPLAY'):
+        print('SKIP: no X11 display available')
+        return 77
     pixels = '--verify-pixels' in sys.argv[3:]
     midtone = '--midtone' in sys.argv[3:]
     srgb = '--srgb' in sys.argv[3:]
@@ -52,7 +57,9 @@ def main():
                     require(host.returncode == 0, output)
                     print('SKIP: production owned GPU preview capability unavailable')
                     return 77
-                arguments = [sys.argv[2], '--connect', str(path), '--runtime-smoke', '--hidden', '--validation']
+                arguments = [sys.argv[2], '--connect', str(path), '--runtime-smoke', '--validation']
+                if not visible:
+                    arguments.append('--hidden')
                 if pixels:
                     arguments += ['--export', str(data / 'frame.ppm'), '--screenshot', str(data / 'companion.bmp')]
                 companion = subprocess.Popen(arguments, env=environment, stdout=subprocess.PIPE,
@@ -91,7 +98,7 @@ def main():
                 require('PASS companion production controls' in output, output)
                 require('0 validation errors' in output and 'normalReadback=0' in output, output)
                 require('VUID-' not in output and 'preserving' not in output, output)
-                require((data / 'control.destroyed').exists(), 'Companion finished before actual application-device teardown')
+                wait_file(data / 'control.destroyed', host)
                 require(not observer.sessions(), 'Public XR sessions survived teardown')
                 if pixels:
                     ppm = (data / 'frame.ppm').read_bytes()
