@@ -1930,7 +1930,6 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 	pump(2);
 	const auto* notices = FindPanel("##Notices");
 	Require(notices, "Save as take showed no notice");
-	const auto play = ImHashStr("Play", 0, ImHashStr("Take saved", 0, notices->ID));
 	const auto recordings = directory / "recordings";
 	std::filesystem::path take;
 	for (const auto& entry : std::filesystem::directory_iterator(recordings))
@@ -1939,34 +1938,39 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 	Require(!take.empty(), "Save as take wrote no file");
 	std::cout << "PASS saved " << history.Size() - begin << " frames as " << take.filename() << '\n';
 
-	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
+	const auto replayFrom = history.Size();
+	// Real pointer hover and click on the Recording clip's revealed Play button.
 	{
-		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "take-saved.bmp").string());
-		pump(1);
-		// Hover the cut take's clip on the Recording lane, where its play button appears.
 		const auto& shell = test.workspace.State();
 		const auto canvas = shell.timelineCanvas;
 		const float ruler = ImGui::GetFrameHeight() + 2 * ImGui::GetFontSize() / 16;
 		const float lane = (canvas.height - ruler) / 5;
-		const float x = canvas.x + float((first.seconds - shell.timeline.first) / (shell.timeline.last - shell.timeline.first)) *
-									   canvas.width;
+		const float x = canvas.x + float((first.seconds - shell.timeline.first) /
+			(shell.timeline.last - shell.timeline.first)) * canvas.width;
 		SDL_Event motion{};
 		motion.type = SDL_EVENT_MOUSE_MOTION;
+		motion.motion.which = TestMouse;
 		motion.motion.windowID = SDL_GetWindowID(test.window.Native());
 		motion.motion.x = std::max(canvas.x, x) + 2 + (lane - 4) / 2;
 		motion.motion.y = canvas.y + ruler + 3.5f * lane;
 		Require(SDL_PushEvent(&motion), "Hover the take clip");
-		pump(3);
-		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "take-clip-hover.bmp").string());
+		pump(2);
+		if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
+			test.renderer.RequestScreenshot((std::filesystem::path(qa) / "take-clip-hover.bmp").string());
+		SDL_Event click{};
+		click.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+		click.button.which = TestMouse;
+		click.button.windowID = motion.motion.windowID;
+		click.button.button = SDL_BUTTON_LEFT;
+		click.button.x = motion.motion.x;
+		click.button.y = motion.motion.y;
+		Require(SDL_PushEvent(&click), "Press clip Play");
 		pump(1);
-		motion.motion.x = canvas.x + canvas.width / 2;
-		motion.motion.y = canvas.y - 200;
-		Require(SDL_PushEvent(&motion), "Leave the take clip");
+		click.type = SDL_EVENT_MOUSE_BUTTON_UP;
+		Require(SDL_PushEvent(&click), "Release clip Play");
 		pump(2);
 	}
-	const auto replayFrom = history.Size();
-	ImGui::ActivateItemByID(play);
-	pump(2);
+	bool checkedHold = false;
 	std::optional<std::size_t> anchor;
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
 	for (;;)
@@ -1979,6 +1983,22 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 					anchor = index;
 					break;
 				}
+		if (anchor && !checkedHold)
+		{
+			ImGui::GetIO().AddKeyEvent(ImGuiKey_F6, true);
+			pump(1);
+			ImGui::GetIO().AddKeyEvent(ImGuiKey_F6, false);
+			Eventually([&] { pump(1); return test.workspace.State().timeline.playbackPaused; },
+				"F6 did not hold the active take");
+			pump(10);
+			const auto held = history.Size();
+			pump(10);
+			Require(history.Size() == held, "Held take continued advancing frames");
+			ImGui::GetIO().AddKeyEvent(ImGuiKey_F8, true);
+			pump(1);
+			ImGui::GetIO().AddKeyEvent(ImGuiKey_F8, false);
+			checkedHold = true;
+		}
 		if (anchor && history.Size() >= *anchor + sourceCount && !(history.At(history.Size() - 1).flags & HistoryDriven))
 			break;
 		if (std::chrono::steady_clock::now() >= deadline)

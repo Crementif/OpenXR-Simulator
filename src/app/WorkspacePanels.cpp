@@ -408,7 +408,12 @@ struct WorkspacePanels::Impl
 					runtime.StartRecording();
 			}
 			if (ImGui::IsKeyPressed(ImGuiKey_F6, false))
-				runtime.Pause();
+			{
+				if (shell.timeline.playing)
+					shell.timeline.togglePlayback = !shell.timeline.playbackPaused;
+				else
+					runtime.Pause();
+			}
 			if (ImGui::IsKeyPressed(ImGuiKey_F7, false))
 			{
 				if (ImGui::GetIO().KeyShift)
@@ -418,8 +423,13 @@ struct WorkspacePanels::Impl
 			}
 			if (ImGui::IsKeyPressed(ImGuiKey_F8, false))
 			{
-				runtime.ResumeLive();
-				LeaveHistory(shell, false);
+				if (shell.timeline.playing)
+					shell.timeline.togglePlayback = shell.timeline.playbackPaused;
+				else
+				{
+					runtime.ResumeLive();
+					LeaveHistory(shell, false);
+				}
 			}
 			if (ImGui::IsKeyPressed(ImGuiKey_F11, false))
 				previewExpanded = !previewExpanded;
