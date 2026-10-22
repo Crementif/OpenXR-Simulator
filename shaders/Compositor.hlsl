@@ -57,28 +57,31 @@ float4 PSMain(VertexOutput input) : SV_Target
         lerp(layer.eyeTangents.z, layer.eyeTangents.w, input.uv.y), -1);
     float3 ray = Rotate(layer.sourceFromEyeRotation, eyeRay);
     float2 uv;
+    bool visible = ray.z < 0;
+    float rayZ = abs(ray.z) < 1e-6 ? -1e-6 : ray.z;
     if (layer.control.x == 0)
     {
-        if (ray.z >= 0) discard;
-        float2 tangent = ray.xy / -ray.z;
+        float2 tangent = ray.xy / -rayZ;
         uv = float2((tangent.x - layer.sourceTangents.x) / (layer.sourceTangents.y - layer.sourceTangents.x),
             (layer.sourceTangents.z - tangent.y) / (layer.sourceTangents.z - layer.sourceTangents.w));
     }
     else
     {
-        if (layer.sourceFromEyePosition.z <= 0 || ray.z >= 0) discard;
-        float distance = -layer.sourceFromEyePosition.z / ray.z;
+        visible = visible && layer.sourceFromEyePosition.z > 0;
+        float distance = -layer.sourceFromEyePosition.z / rayZ;
         float2 hit = layer.sourceFromEyePosition.xy + distance * ray.xy;
         uv = float2(hit.x * layer.quadParameters.x + 0.5, 0.5 - hit.y * layer.quadParameters.y);
     }
-    if (any(uv < 0) || any(uv > 1)) discard;
+    float2 gradientX = ddx(uv) * layer.imageRectangle.zw;
+    float2 gradientY = ddy(uv) * layer.imageRectangle.zw;
+    if (!visible || any(uv < 0) || any(uv > 1)) discard;
     uv = layer.imageRectangle.xy + uv * layer.imageRectangle.zw;
     uint width, height;
     sourceTexture.GetDimensions(width, height);
     float2 halfTexel = 0.5 / float2(width, height);
     uv = clamp(uv, layer.imageRectangle.xy + halfTexel,
         layer.imageRectangle.xy + layer.imageRectangle.zw - halfTexel);
-    float4 color = sourceTexture.Sample(sourceSampler, uv);
+    float4 color = sourceTexture.SampleGrad(sourceSampler, uv, gradientX, gradientY);
     if ((layer.control.y & 1) == 0)
         color.a = 1;
     else if ((layer.control.y & 2) != 0)

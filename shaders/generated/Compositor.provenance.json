@@ -7,11 +7,11 @@
     "sha256": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
     "version": "libdxcompiler.so: 1.9(5512-01b62ad4)(1.9.2609.5)"
   },
-  "generator_sha256": "eae134f6dbb37b6d660574f68d03d67212c7517625f73e8f8fba9baca998ce94",
+  "generator_sha256": "6e44c55e14ccbf1e3775f6973ead1c589f05c0e1fe0431d32569c2405bfc83a2",
   "source": "shaders/Compositor.hlsl",
-  "source_sha256": "fbe37622fb9620bd33e3b837648bdc6f761d16e58aa754ce0fc666e00998d39e",
+  "source_sha256": "2c0426161d59a8c92e7ee3599f009d69c7e22c1c111fafde55fe51eff6b0c6e8",
   "spirv_cross": {
-    "sha256": "dabfca5e5cd778a73c964426d5b2d0d15705b7ac480cc9e0702f15e707cc12e6"
+    "sha256": "995ca28e73af04be5104a79267e47f37a925e0df6a7511bc3b92bea9f9f34af4"
   },
   "targets": {
     "pixel": {
@@ -35,7 +35,7 @@
         "--no-es",
         "--combined-samplers-inherit-bindings"
       ],
-      "sha256": "d3f50b11893292f18158be3b32b1e1c8734a57b940674a1cbfcddd49c79c3043"
+      "sha256": "290c09a95b4630764ca288cf37aa970e1c83eaddad5acff0c37f7f27955eb400"
     },
     "vertex": {
       "entry": "VSMain",

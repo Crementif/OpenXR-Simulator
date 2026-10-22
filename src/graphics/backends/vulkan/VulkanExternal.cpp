@@ -1,6 +1,7 @@
 #include "graphics/backends/vulkan/VulkanExternal.h"
 
 #include <algorithm>
+#include <bit>
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
@@ -27,7 +28,9 @@ bool SupportedShape(const VulkanExternalImageSpec& image)
 	return (image.format == VK_FORMAT_R8G8B8A8_SRGB || image.format == VK_FORMAT_R8G8B8A8_UNORM ||
 			image.format == VK_FORMAT_B8G8R8A8_SRGB || image.format == VK_FORMAT_B8G8R8A8_UNORM) &&
 		   image.extent.width && image.extent.height && image.extent.depth == 1 && image.arrayLayers >= 1 &&
-		   image.arrayLayers <= 2 && image.mipLevels == 1 && image.samples == VK_SAMPLE_COUNT_1_BIT &&
+		   image.arrayLayers <= 2 && image.mipLevels >= 1 &&
+		   image.mipLevels <= std::bit_width(std::max(image.extent.width, image.extent.height)) &&
+		   image.samples == VK_SAMPLE_COUNT_1_BIT &&
 		   image.tiling == VK_IMAGE_TILING_OPTIMAL && image.imageType == VK_IMAGE_TYPE_2D && !image.flags &&
 		   image.usage && !(image.usage & ~ImageUsages);
 }
@@ -468,6 +471,7 @@ std::shared_ptr<VulkanImage> VulkanExternalDevice::CreateImage(const VulkanExter
 	result->format = spec.format;
 	result->extent = {spec.extent.width, spec.extent.height};
 	result->layers = spec.arrayLayers;
+	result->mipLevels = spec.mipLevels;
 	result->usage = spec.usage;
 	VkExternalMemoryImageCreateInfo external{VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO};
 	external.handleTypes = MemoryHandle;

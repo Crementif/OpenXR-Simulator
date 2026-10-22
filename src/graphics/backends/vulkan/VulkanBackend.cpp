@@ -689,6 +689,12 @@ XrResult VulkanBackend::PrepareImageCopy(const LayerImageDescription& descriptio
 	spec.extent = {static_cast<std::uint32_t>(rectangle.extent.width),
 				   static_cast<std::uint32_t>(rectangle.extent.height), 1};
 	spec.arrayLayers = 1;
+	const bool fullMipChain = retained && image->mipLevels > 1;
+	if (fullMipChain)
+	{
+		spec.extent = {image->extent.width, image->extent.height, 1};
+		spec.mipLevels = image->mipLevels;
+	}
 	resources.external = m_state->external->CreateExportable(spec);
 	resources.output = resources.external->Image();
 		SnapshotBudget::ObserveImageBytes(resources.external->Descriptor().allocationSize);
@@ -701,11 +707,15 @@ XrResult VulkanBackend::PrepareImageCopy(const LayerImageDescription& descriptio
 					   VK_ACCESS_TRANSFER_WRITE_BIT);
 	VkImageCopy copy{};
 	copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, description.arraySlice, 1};
-	copy.srcOffset = {rectangle.offset.x, rectangle.offset.y, 0};
+	copy.srcOffset = fullMipChain ? VkOffset3D{} : VkOffset3D{rectangle.offset.x, rectangle.offset.y, 0};
 	copy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-	copy.extent = spec.extent;
-	vkCmdCopyImage(resources.command, image->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, resources.output->image,
-				   VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+	for (std::uint32_t mip = 0; mip < spec.mipLevels; ++mip)
+	{
+		copy.srcSubresource.mipLevel = copy.dstSubresource.mipLevel = mip;
+		copy.extent = {std::max(1U, spec.extent.width >> mip), std::max(1U, spec.extent.height >> mip), 1};
+		vkCmdCopyImage(resources.command, image->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, resources.output->image,
+			VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+	}
 	VulkanImageBarrier(resources.command, *image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image->ApplicationLayout(),
 					   VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
 	VkImageMemoryBarrier release{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -714,7 +724,7 @@ XrResult VulkanBackend::PrepareImageCopy(const LayerImageDescription& descriptio
 	release.srcQueueFamilyIndex = m_state->device->binding.queueFamily;
 	release.dstQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;
 	release.image = resources.output->image;
-	release.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+	release.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, spec.mipLevels, 0, 1};
 	vkCmdPipelineBarrier(resources.command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
 						 0, nullptr, 0, nullptr, 1, &release);
 	CheckVulkan(vkEndCommandBuffer(resources.command), "End exact layer/view copy commands");

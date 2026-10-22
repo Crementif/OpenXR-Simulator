@@ -12,6 +12,8 @@ struct RetainedImage
 {
 	LayerImageDescription original;
 	std::shared_ptr<const VulkanInspectionFrame> output;
+	XrExtent2Di extent{};
+	bool fullMipChain = false;
 };
 
 bool SameImage(const LayerImageDescription& a, const LayerImageDescription& b)
@@ -61,7 +63,7 @@ class VulkanRotationalSource final : public RotationalSource
 				const auto index = reinterpret_cast<std::uintptr_t>(source) - 1;
 				if (index >= m_images.size())
 					return {};
-				const auto extent = m_images[index].original.rectangle.extent;
+				const auto extent = m_images[index].extent;
 				return XrExtent2Di{std::max(1, extent.width), std::max(1, extent.height)};
 			},
 			plan);
@@ -130,7 +132,7 @@ XrResult VulkanReprojectionPreparation::Prepare(VulkanBackend& backend, VulkanIn
 		std::size_t index = static_cast<std::size_t>(found - images.begin());
 		if (found == images.end())
 		{
-			RetainedImage image{description, {}};
+			RetainedImage image{description, {}, description.rectangle.extent};
 			if (description.rectangle.extent.width && description.rectangle.extent.height)
 			{
 				if (prepared->m_frames.size() >= capacity)
@@ -139,6 +141,9 @@ XrResult VulkanReprojectionPreparation::Prepare(VulkanBackend& backend, VulkanIn
 				const auto result = backend.PrepareRetainedLayer(description, resolve, frame);
 				if (XR_FAILED(result))
 					return result;
+				image.extent = {static_cast<std::int32_t>(frame->Image().extent.width),
+					static_cast<std::int32_t>(frame->Image().extent.height)};
+				image.fullMipChain = frame->Image().mipLevels > 1;
 				auto transfer = inspection.Prepare(frame, {}, {}, VulkanInspectionKind::Reprojection);
 				image.output = transfer->Output();
 				prepared->m_frames.push_back(std::move(frame));
@@ -147,11 +152,11 @@ XrResult VulkanReprojectionPreparation::Prepare(VulkanBackend& backend, VulkanIn
 			}
 			images.push_back(std::move(image));
 		}
-		// The compositor clamps to the crop texel centers. Exact crops therefore
-		// retain the same filtering without adjacent pixels or application handles.
+		// Mip chains keep original texel coordinates; base-only sources use exact crops.
 		description.source = reinterpret_cast<XrSwapchain>(index + 1);
 		description.arraySlice = 0;
-		description.rectangle.offset = {0, 0};
+		if (!images[index].fullMipChain)
+			description.rectangle.offset = {0, 0};
 		return XR_SUCCESS;
 	};
 	try

@@ -2,6 +2,7 @@
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
 #include "graphics/backends/vulkan/VulkanSubmission.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <limits>
@@ -243,7 +244,7 @@ std::shared_ptr<VulkanInspectionWork> VulkanInspectionWork::Import(std::shared_p
 	const auto& spec = descriptor.image;
 	auto destination = VulkanImage::Create(
 		device, spec.format, {spec.extent.width, spec.extent.height}, spec.arrayLayers,
-		VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+		VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, spec.mipLevels);
 	work->m_native->image = destination;
 	const auto& imported = *work->m_native->imported->Image();
 	VkImageMemoryBarrier acquire{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -252,7 +253,7 @@ std::shared_ptr<VulkanInspectionWork> VulkanInspectionWork::Import(std::shared_p
 	acquire.dstQueueFamilyIndex = device->binding.queueFamily;
 	acquire.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
 	acquire.image = imported.image;
-	acquire.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, spec.arrayLayers};
+	acquire.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, spec.mipLevels, 0, spec.arrayLayers};
 	vkCmdPipelineBarrier(work->m_native->command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
 						 VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &acquire);
 	VulkanImageBarrier(work->m_native->command, *destination, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0,
@@ -260,9 +261,13 @@ std::shared_ptr<VulkanInspectionWork> VulkanInspectionWork::Import(std::shared_p
 	VkImageCopy copy{};
 	copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, spec.arrayLayers};
 	copy.dstSubresource = copy.srcSubresource;
-	copy.extent = spec.extent;
-	vkCmdCopyImage(work->m_native->command, imported.image, acquire.newLayout, destination->image,
-				   VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+	for (std::uint32_t mip = 0; mip < spec.mipLevels; ++mip)
+	{
+		copy.srcSubresource.mipLevel = copy.dstSubresource.mipLevel = mip;
+		copy.extent = {std::max(1U, spec.extent.width >> mip), std::max(1U, spec.extent.height >> mip), 1};
+		vkCmdCopyImage(work->m_native->command, imported.image, acquire.newLayout, destination->image,
+			VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+	}
 	VkImageMemoryBarrier release = acquire;
 	release.srcQueueFamilyIndex = acquire.dstQueueFamilyIndex;
 	release.dstQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;

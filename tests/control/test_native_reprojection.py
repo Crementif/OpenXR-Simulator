@@ -12,6 +12,12 @@ from simxr_control import Client
 from simxr_control.protocol import Capability
 
 
+MINIFIED = bool(os.getenv('SIMXR_PROBE_MIP_MINIFY'))
+WIDTH, HEIGHT = (16, 16) if MINIFIED else (64, 48)
+LEFT = (0, 255, 0, 255) if MINIFIED else (255, 0, 0, 255)
+RIGHT = (255, 255, 0, 255) if MINIFIED else (0, 0, 255, 255)
+
+
 def multiply(a, b):
     x, y, z, w = a
     u, v, t, s = b
@@ -23,20 +29,20 @@ def pixels_for_eye(fov, ipd, eye, yaw):
     left, right, up, down = map(math.tan, fov)
     cosine, sine = math.cos(yaw), math.sin(yaw)
     pixels = bytearray()
-    for y in range(48):
-        ray_y = up + (y + .5) / 48 * (down - up)
-        for x in range(64):
-            ray_x = left + (x + .5) / 64 * (right - left)
+    for y in range(HEIGHT):
+        ray_y = up + (y + .5) / HEIGHT * (down - up)
+        for x in range(WIDTH):
+            ray_x = left + (x + .5) / WIDTH * (right - left)
             source_x = cosine * ray_x - sine
             source_z = -sine * ray_x - cosine
             visible = (source_z < 0 and left <= source_x / -source_z <= right
                        and down <= ray_y / -source_z <= up)
-            color = (255, 0, 0, 255) if eye == 0 else (0, 0, 255, 255)
+            color = LEFT if eye == 0 else RIGHT
             if not visible:
                 color = (0, 0, 0, 255)
             # The right-eye VIEW quad stays fixed while the STAGE projection rotates.
             if eye == 1 and abs(ipd / 2 + 2 * ray_x) < .5 and abs(2 * ray_y) < .5:
-                color = (255, 0, 0, 255)
+                color = LEFT
             pixels.extend(color)
     return pixels
 
@@ -59,14 +65,14 @@ def verify_pixels(client, reader, views, yaw):
         expected = pixels_for_eye(views['outer_fov'][eye*4:eye*4+4], views['ipd'], eye, yaw)
         require(len(pixels) == len(expected), metadata)
         wrong = [i // 4 for i in range(0, len(pixels), 4) if pixels[i:i+4] != expected[i:i+4]]
-        require(not wrong, f'Eye {eye}, yaw {yaw}: {len(wrong)} wrong pixels; first {wrong[:8]}')
+        require(not wrong, f'Eye {eye}, yaw {yaw}: {len(wrong)} wrong pixels; first {[(i, list(pixels[i*4:i*4+4]), list(expected[i*4:i*4+4])) for i in wrong[:8]]}')
 
 
 def run(probe, policy):
     with tempfile.TemporaryDirectory(prefix='sx-rotate-') as temporary:
         data = Path(temporary)
         environment = dict(os.environ, SIMXR_DATA_DIR=temporary, SIMXR_DETERMINISTIC='0',
-                           SIMXR_WIDTH='64', SIMXR_HEIGHT='48', SIMXR_PROBE_CONTROL='1',
+                           SIMXR_WIDTH=str(WIDTH), SIMXR_HEIGHT=str(HEIGHT), SIMXR_PROBE_CONTROL='1',
                            SIMXR_PROBE_GPU_INSPECTION='1', SIMXR_PROBE_RECORDING='1',
                            SIMXR_PROBE_RENDER_GATE='1', SIMXR_PROBE_WORLD_PROJECTION='1',
                            SIMXR_PROBE_INTERACTIVE='1', SIMXR_PROBE_FRAMES='6',

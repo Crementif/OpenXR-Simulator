@@ -1119,9 +1119,18 @@ static int runProbe()
             colors[0] = colors[2];
         for (uint32_t eye = 0; eye < activeViewCount; ++eye)
         {
-            VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, mipLevels, eye, 1};
+            const bool minify = mipLevels > 1 && std::getenv("SIMXR_PROBE_MIP_MINIFY");
+            VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, minify ? 1U : mipLevels, eye, 1};
             vkCmdClearColorImage(cmd, images[index].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &colors[eye], 1,
                                  &range);
+            if (minify)
+            {
+                range.baseMipLevel = 1;
+                range.levelCount = mipLevels - 1;
+                const VkClearColorValue minified = eye == 0 ? colors[2] : colors[3];
+                vkCmdClearColorImage(cmd, images[index].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    &minified, 1, &range);
+            }
         }
         barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         barrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
