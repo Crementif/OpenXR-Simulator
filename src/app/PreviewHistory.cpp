@@ -37,9 +37,24 @@ struct PreviewHistory::Resources
 	VkImageView view = VK_NULL_HANDLE;
 	VkSampler sampler = VK_NULL_HANDLE;
 	VkDescriptorSet descriptor = VK_NULL_HANDLE;
+	VkDescriptorPool thumbnailPool = VK_NULL_HANDLE;
+	VkDescriptorSetLayout thumbnailLayout = VK_NULL_HANDLE;
+	struct Thumbnail
+	{
+		VkImageView view = VK_NULL_HANDLE;
+		VkDescriptorSet descriptor = VK_NULL_HANDLE;
+	};
+	std::vector<Thumbnail> thumbnails;
 	std::uint64_t lastUse = 0;
 	~Resources()
 	{
+		if (thumbnailPool)
+			vkDestroyDescriptorPool(device->binding.device, thumbnailPool, nullptr);
+		for (const auto& thumbnail : thumbnails)
+			if (thumbnail.view)
+				vkDestroyImageView(device->binding.device, thumbnail.view, nullptr);
+		if (thumbnailLayout)
+			vkDestroyDescriptorSetLayout(device->binding.device, thumbnailLayout, nullptr);
 		if (descriptor)
 			ImGui_ImplVulkan_RemoveTexture(descriptor);
 		if (view)
@@ -127,6 +142,7 @@ bool PreviewHistory::Prepare(const control::ImageDescription& description)
 	Retire();
 	m_shots.clear();
 	m_lastUse.clear();
+	m_sampled.clear();
 	m_next = 0;
 	m_display = m_displayed = std::nullopt;
 	const auto access = m_renderer.DeviceAccess();
@@ -177,6 +193,24 @@ bool PreviewHistory::Prepare(const control::ImageDescription& description)
 	resources->descriptor = ImGui_ImplVulkan_AddTexture(resources->sampler, resources->view, VK_IMAGE_LAYOUT_GENERAL);
 	if (!resources->descriptor)
 		throw std::runtime_error("Preview history descriptor allocation failed");
+	// A dedicated pool bounds the ring's descriptors without exhausting the UI pool.
+	VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
+										 VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
+	VkDescriptorSetLayoutCreateInfo layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+	layout.bindingCount = 1;
+	layout.pBindings = &binding;
+	CheckVulkan(vkCreateDescriptorSetLayout(access.device, &layout, nullptr, &resources->thumbnailLayout),
+				"create thumbnail layout");
+	VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+								 static_cast<std::uint32_t>(resources->capacity)};
+	VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+	pool.maxSets = poolSize.descriptorCount;
+	pool.poolSizeCount = 1;
+	pool.pPoolSizes = &poolSize;
+	CheckVulkan(vkCreateDescriptorPool(access.device, &pool, nullptr, &resources->thumbnailPool),
+				"create thumbnail pool");
+	resources->thumbnails.resize(resources->capacity);
+	m_sampled.reserve(resources->capacity);
 	m_shots.resize(resources->capacity);
 	m_lastUse.resize(resources->capacity);
 	m_resources = std::move(resources);
@@ -209,7 +243,7 @@ void PreviewHistory::Offer(PreviewTexture& source, std::uint32_t layer, FrameIde
 			resources.chunks.push_back(VulkanImage::Create(resources.device, resources.format, resources.extent,
 														   layers,
 														   VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-															   VK_IMAGE_USAGE_TRANSFER_SRC_BIT));
+															   VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT));
 		}
 		const auto image = source.UseForCopy();
 		if (!image)
@@ -262,6 +296,49 @@ void PreviewHistory::Draw(const PreviewShot& shot, float width, ImVec4 crop)
 #else
 	(void)shot;
 	(void)width;
+	(void)crop;
+#endif
+}
+void PreviewHistory::DrawThumbnail(const PreviewShot& shot, ImVec2 minimum, ImVec2 maximum, ImVec4 crop)
+{
+#ifdef __linux__
+	if (!m_resources || shot.slot >= m_shots.size() || m_shots[shot.slot].frame != shot.frame ||
+		m_shots[shot.slot].epoch != shot.epoch)
+		return;
+	auto& resources = *m_resources;
+	auto& thumbnail = resources.thumbnails[shot.slot];
+	if (!thumbnail.descriptor)
+	{
+		VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+		view.image = resources.chunks[shot.slot / ChunkLayers]->image;
+		view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		view.format = resources.format;
+		view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1,
+								static_cast<std::uint32_t>(shot.slot % ChunkLayers), 1};
+		if (!thumbnail.view)
+			CheckVulkan(vkCreateImageView(resources.device->binding.device, &view, nullptr, &thumbnail.view),
+						"create thumbnail view");
+		VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+		allocation.descriptorPool = resources.thumbnailPool;
+		allocation.descriptorSetCount = 1;
+		allocation.pSetLayouts = &resources.thumbnailLayout;
+		CheckVulkan(vkAllocateDescriptorSets(resources.device->binding.device, &allocation, &thumbnail.descriptor),
+					"allocate thumbnail descriptor");
+		VkDescriptorImageInfo image{resources.sampler, thumbnail.view, VK_IMAGE_LAYOUT_GENERAL};
+		VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+		write.dstSet = thumbnail.descriptor;
+		write.descriptorCount = 1;
+		write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		write.pImageInfo = &image;
+		vkUpdateDescriptorSets(resources.device->binding.device, 1, &write, 0, nullptr);
+	}
+	m_sampled.push_back(shot.slot);
+	ImGui::GetWindowDrawList()->AddImage(std::bit_cast<ImTextureID>(thumbnail.descriptor), minimum, maximum,
+									   {crop.x, crop.y}, {crop.z, crop.w});
+#else
+	(void)shot;
+	(void)minimum;
+	(void)maximum;
 	(void)crop;
 #endif
 }
@@ -331,6 +408,9 @@ void PreviewHistory::Submitted(std::uint64_t serial)
 {
 	if (!m_resources)
 		return;
+	for (const auto slot : m_sampled)
+		m_lastUse[slot] = serial;
+	m_sampled.clear();
 	if (m_copy)
 	{
 		m_lastUse[m_copy->slot] = serial;
@@ -348,6 +428,7 @@ void PreviewHistory::Submitted(std::uint64_t serial)
 }
 void PreviewHistory::BeginFrame()
 {
+	m_sampled.clear();
 	// Work offered for a frame that was never submitted is dropped with it.
 	if (m_copy)
 		m_shots[m_copy->slot] = {};

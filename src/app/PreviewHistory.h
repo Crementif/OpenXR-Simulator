@@ -40,6 +40,7 @@ class PreviewHistory
 	}
 	float Aspect() const noexcept;
 	void Draw(const PreviewShot& shot, float width, ImVec4 crop = {0, 0, 1, 1});
+	void DrawThumbnail(const PreviewShot& shot, ImVec2 minimum, ImVec2 maximum, ImVec4 crop);
 	void BeginFrame();
 	void Record(VkCommandBuffer command);
 	void Submitted(std::uint64_t serial);
@@ -70,6 +71,7 @@ class PreviewHistory
 	std::unique_ptr<Resources> m_resources;
 	std::vector<PreviewShot> m_shots;
 	std::vector<std::uint64_t> m_lastUse;
+	std::vector<std::size_t> m_sampled;
 	std::size_t m_next = 0;
 	std::optional<Copy> m_copy;
 	std::optional<std::size_t> m_display, m_displayed;

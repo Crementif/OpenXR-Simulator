@@ -1,6 +1,7 @@
 #pragma once
 #include "app/HistoryStore.h"
 #include <array>
+#include <imgui.h>
 #include <optional>
 #include <utility>
 
@@ -21,12 +22,14 @@ enum class ClipHit
 // Ruler, lanes, the lane-header column on the left and the LIVE column on the
 // right. Begin() lays the regions out; the caller then draws transport controls
 // into TransportRect() and LiveRect() and Draw() submits the canvas between them.
+class PreviewHistory;
 class TimelineCanvas
 {
   public:
 	void Begin(float headerWidth, float liveWidth);
-	TimelineGesture Draw(const HistoryStore& history, bool following, std::optional<double> cursor = {},
+	TimelineGesture Draw(const HistoryStore& history, PreviewHistory& previews, ImVec4 crop, bool following, std::optional<double> cursor = {},
 						 std::optional<std::pair<double, double>> selection = {});
+	void DrawThumbnails(const HistoryStore& history, PreviewHistory& previews, ImVec4 crop);
 	void DrawEvent(double time, double observed, const char* text, bool failed, bool dim);
 	// A playable clip shows a play button while hovered.
 	ClipHit DrawClip(double first, double last, const char* label, bool replay, bool playable = false);

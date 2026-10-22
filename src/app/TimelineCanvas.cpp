@@ -1,5 +1,6 @@
 #include "app/TimelineCanvas.h"
 #include "app/Theme.h"
+#include "app/PreviewHistory.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -60,7 +61,7 @@ void TimelineCanvas::Begin(float headerWidth, float liveWidth)
 	draw->AddLine({m_bounds.x, top.y}, {m_bounds.x, top.y + height}, line);
 	draw->AddLine({m_bounds.x + m_bounds.width, top.y}, {m_bounds.x + m_bounds.width, top.y + height}, line);
 }
-TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, bool following, std::optional<double> cursor,
+TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory& previews, ImVec4 crop, bool following, std::optional<double> cursor,
 									 std::optional<std::pair<double, double>> selection)
 {
 	TimelineGesture result;
@@ -158,6 +159,7 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, bool following
 		draw->AddRectFilled({X(selection->first), top}, {std::max(X(selection->first) + 1, X(selection->second)),
 														 top + height},
 							theme::Fade(theme::Accent, .24f));
+	DrawThumbnails(history, previews, crop);
 	float lastRunLabel = left - 100 * scale, lastSnapshot = left - 12 * scale;
 	const float budget = m_budget > 0 ? m_budget : 33.3f / 2;
 	// The budget line: frames under it made their display time.
@@ -186,7 +188,7 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, bool following
 		{
 			const float y = LaneY(Images);
 			if (bucket.flags & HistoryPreview)
-				draw->AddLine({x, y + 2}, {x, y + m_lane - 2}, Accent);
+				draw->AddLine({x, y + m_lane - 2}, {x, y + m_lane - 1}, Accent);
 			if ((bucket.flags & HistorySnapshot) && x - lastSnapshot >= 10 * scale)
 			{
 				// ★ pinned snapshots are filled; unpinned ones may be evicted.
@@ -311,6 +313,38 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, bool following
 	}
 	ImGui::PopID();
 	return result;
+}
+void TimelineCanvas::DrawThumbnails(const HistoryStore& history, PreviewHistory& previews, ImVec4 crop)
+{
+	if (m_lanes <= Images || !history.Size())
+		return;
+	const float scale = ImGui::GetFontSize() / 16;
+	const float height = m_lane - 4 * scale;
+	if (height < 4 * scale)
+		return;
+	const float aspect = previews.Aspect() * (crop.w - crop.y) / (crop.z - crop.x);
+	const float width = std::clamp(height / aspect,
+								  16 * scale, 96 * scale);
+	auto* draw = ImGui::GetWindowDrawList();
+	draw->PushClipRect({m_bounds.x, LaneY(Images)},
+					  {m_bounds.x + m_bounds.width, LaneY(Images) + m_lane}, true);
+	for (float x = m_bounds.x; x + width <= m_bounds.x + m_bounds.width; x += width + 3 * scale)
+	{
+		const auto index = history.Nearest(m_start + (x + width / 2 - m_bounds.x) * m_span / m_bounds.width);
+		if (!index)
+			continue;
+		const auto& frame = history.At(*index);
+		const auto shot = previews.Nearest(frame.identity, frame.epoch);
+		const auto source = shot ? history.Find(shot->frame, shot->epoch) : std::nullopt;
+		// Do not stretch a kept image over a gap or an empty part of the timeline.
+		const double time = m_start + (x + width / 2 - m_bounds.x) * m_span / m_bounds.width;
+		if (!source || std::abs(history.At(*source).seconds - time) > .2)
+			continue;
+		const float shownHeight = std::min(height, width * aspect), shownWidth = shownHeight / aspect;
+		const float y = LaneY(Images) + (m_lane - shownHeight) / 2;
+		previews.DrawThumbnail(*shot, {x, y}, {x + shownWidth, y + shownHeight}, crop);
+	}
+	draw->PopClipRect();
 }
 void TimelineCanvas::DrawEvent(double time, double observed, const char* text, bool failed, bool dim)
 {

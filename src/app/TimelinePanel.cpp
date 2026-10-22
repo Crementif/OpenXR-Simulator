@@ -514,8 +514,9 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded,
 		if (first && last)
 			selectedRange = {history.At(*first).seconds, history.At(*last).seconds};
 	}
-	const auto gesture =
-		m_canvas.Draw(history, state.time.following, state.time.following ? std::optional<double>{} : cursor, selectedRange);
+	const auto gesture = m_canvas.Draw(history, runtime.KeptPreviews(),
+		 runtime.PreviewCrop().value_or(ImVec4{0, 0, 1, 1}), state.time.following,
+		 state.time.following ? std::optional<double>{} : cursor, selectedRange);
 	shell.timelineCanvas = m_canvas.Bounds();
 	std::tie(shell.timeline.first, shell.timeline.last) = m_canvas.VisibleRange();
 	if (gesture.stopFollowing)

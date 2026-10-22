@@ -242,7 +242,7 @@ void CheckTimelineCanvas(Interaction& test)
 		point = {top.x + labels + (available.x - labels) * .5f, top.y + 10};
 		const auto drawStarted = std::chrono::steady_clock::now();
 		canvas.Begin(labels, 0);
-		const auto gesture = canvas.Draw(populated ? history : emptyHistory, false);
+		const auto gesture = canvas.Draw(populated ? history : emptyHistory, test.runtime.KeptPreviews(), {0, 0, 1, 1}, false);
 		canvasSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - drawStarted).count();
 		if (gesture.first || gesture.marker)
 			selected = gesture;
@@ -2822,6 +2822,26 @@ void CheckPreviewHistory(Interaction& test)
 			  << kept.Budget() / (1 << 20) << " MiB; Images lane covers " << covered << " frames\n";
 	Require(shots >= 40 && covered >= shots / 2, "Preview history kept too few images");
 	Require(kept.Bytes() <= kept.Budget(), "Preview history exceeds its budget");
+	const ImVec4 crop{.2f, .3f, .7f, .8f};
+	test.runtime.PreviewCrop() = crop;
+	for (int frame = 0; frame < 4; ++frame)
+		test.Frame();
+	const auto* timeline = FindPanel("Timeline");
+	Require(timeline, "Thumbnail timeline missing");
+	std::set<ImTextureID> thumbnails;
+	for (const auto& command : timeline->DrawList->CmdBuffer)
+	{
+		if (command.ElemCount != 6)
+			continue;
+		const auto& a = timeline->DrawList->VtxBuffer[command.VtxOffset +
+			timeline->DrawList->IdxBuffer[command.IdxOffset]];
+		const auto& b = timeline->DrawList->VtxBuffer[command.VtxOffset +
+			timeline->DrawList->IdxBuffer[command.IdxOffset + 2]];
+		if (std::abs(a.uv.x - crop.x) < .001f && std::abs(a.uv.y - crop.y) < .001f &&
+			std::abs(b.uv.x - crop.z) < .001f && std::abs(b.uv.y - crop.w) < .001f)
+			thumbnails.insert(command.GetTexID());
+	}
+	Require(thumbnails.size() >= 2, "Images lane did not draw distinct retained images with the pinned crop");
 	const auto index = history.LowerBound(history.At(history.Size() - 1).seconds - 3);
 	test.runtime.LookAt(index);
 	for (int frame = 0; frame < 4; ++frame)
@@ -2839,7 +2859,8 @@ void CheckPreviewHistory(Interaction& test)
 		test.Frame();
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Validation errors with preview history");
-	std::cout << "PASS kept preview shown three seconds back while running\n";
+	test.runtime.PreviewCrop().reset();
+	std::cout << "PASS cropped GPU thumbnails and kept preview shown three seconds back while running\n";
 }
 
 void CheckSnapshotRetention(Interaction& test)

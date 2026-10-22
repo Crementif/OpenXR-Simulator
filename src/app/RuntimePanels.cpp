@@ -404,6 +404,10 @@ std::vector<Notice> RuntimePanels::TakeNotices()
 {
 	return m_impl->TakeNotices();
 }
+PreviewHistory& RuntimePanels::KeptPreviews()
+{
+	return m_impl->m_session.Preview().History();
+}
 const PreviewHistory& RuntimePanels::KeptPreviews() const
 {
 	return m_impl->m_session.Preview().History();
