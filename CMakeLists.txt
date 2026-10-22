@@ -126,6 +126,7 @@ add_library(simxr_connection STATIC
     src/app/PlayerRig.cpp
     src/app/FrameHistoryFeed.cpp
     src/app/HistoryStore.cpp
+    src/app/InputHistory.cpp
     src/app/SpatialMath.cpp
     src/app/ManualInputController.cpp
     src/app/WorkerConnection.cpp

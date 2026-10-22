@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/HistoryStore.h"
+#include "app/InputHistory.h"
 #include "app/RuntimePanelProtocol.h"
 #include <string>
 
@@ -25,9 +26,14 @@ class FrameHistoryFeed
 	{
 		return m_history;
 	}
+	const InputHistory& Input() const noexcept
+	{
+		return m_input;
+	}
 
   private:
 	HistoryStore m_history;
+	InputHistory m_input;
 	PanelScope m_scope;
 	std::uint64_t m_after = 0;
 	std::int64_t m_origin = 0, m_previous = 0;

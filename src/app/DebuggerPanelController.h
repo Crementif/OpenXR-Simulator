@@ -46,6 +46,9 @@ class DebuggerPanelController
 	PanelScope Scope() const noexcept;
 	bool Manual() const noexcept;
 	bool HasLease() const noexcept;
+	// Gives the session's control to another client (a replay script).
+	void Relinquish();
+	bool Relinquishing() const;
 	bool Pending() const;
 
   private:

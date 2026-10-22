@@ -79,7 +79,7 @@ void DebuggerPanelController::ResetEpoch()
 	m_deferred.reset();
 	m_nextSessions = m_nextStatus = m_nextOperations = m_nextRenew = {};
 }
-void DebuggerPanelController::ChooseSession(PanelSession session)
+void DebuggerPanelController::Relinquish()
 {
 	if (m_lease)
 	{
@@ -87,10 +87,18 @@ void DebuggerPanelController::ChooseSession(PanelSession session)
 		fields.push_back(wire::Field::U64(tag::Lease, m_lease));
 		m_requests.Send(wire::OpCode::Relinquish, Work::Release, std::move(fields));
 	}
-	m_selected = session;
 	m_lease = 0;
 	m_manual = false;
 	m_deferred.reset();
+}
+bool DebuggerPanelController::Relinquishing() const
+{
+	return m_requests.Has(Work::Release);
+}
+void DebuggerPanelController::ChooseSession(PanelSession session)
+{
+	Relinquish();
+	m_selected = session;
 	m_operations.clear();
 	m_effects.clear();
 	m_acknowledged = 0;

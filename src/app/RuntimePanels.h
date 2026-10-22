@@ -74,6 +74,10 @@ class RuntimePanels
 	void RequestExport(std::string path);
 	void InspectSelected();
 	std::optional<automation::SavedRecording> TakeRecordingReplay();
+	// A replay script needs the devices and the session's control: release the
+	// companion's manual inputs and lease, then start once ReplayReady().
+	void PrepareReplay();
+	bool ReplayReady() const;
 
   private:
 	class Impl;

@@ -3,6 +3,7 @@
 #include "control/ControlRequestError.h"
 #include "control/ControlSchema.h"
 #include "control/InspectionDocument.h"
+#include "control/SimulationControl.h"
 #include "runtime/Session.h"
 
 #include <array>
@@ -335,6 +336,35 @@ const char* Name(SnapshotAdmission value)
 	}
 	throw ControlRequestError{ErrorCode::Internal, "Unknown snapshot admission"};
 }
+// The applied head/hand values and action activity of one frame, so the
+// companion can draw input over time and cut takes from any range.
+Field EncodeAppliedInput(const FrameSubmissionState& submission)
+{
+	const auto& applied = *submission.commands;
+	const auto& configuration = applied.configuration;
+	std::vector<Field> fields{
+		EncodeSimulationCommand(SetHeadPose{configuration.tracking.head}, 1),
+		EncodeSimulationCommand(SetControllerPose{0, configuration.tracking.controllers[0]}, 2),
+		EncodeSimulationCommand(SetControllerPose{1, configuration.tracking.controllers[1]}, 3),
+		EncodeSimulationCommand(SetControllerControls{0, configuration.input.controllers[0]}, 4),
+		EncodeSimulationCommand(SetControllerControls{1, configuration.input.controllers[1]}, 5),
+		Field::U64(tag::Seed, applied.seed)};
+	std::uint32_t scenarios = 0, owned = 0, active = 0;
+	for (std::size_t index = 0; index < applied.scenarios.size(); ++index)
+		if (applied.scenarios[index])
+			scenarios |= 1u << index;
+	for (std::size_t index = 0; index < applied.owners.size(); ++index)
+		if (applied.owners[index] && applied.owners[index]->kind != CommandSourceKind::Manual)
+			owned |= 1u << index;
+	for (const auto& action : submission.actions.actions)
+		for (const auto& [path, value] : action.values)
+			if (value.active && (value.boolean || value.scalar != 0 || value.vector.x != 0 || value.vector.y != 0))
+				++active;
+	fields.push_back(Field::U32(tag::Scenario, scenarios));
+	fields.push_back(Field::U32(tag::Ownership, owned));
+	fields.push_back(Field::U32(tag::ActiveActions, active));
+	return Nested(tag::AppliedInput, std::move(fields));
+}
 Field EncodeFrameMetadata(const FrameRecord& frame)
 {
 	std::vector<Field> fields{
@@ -348,6 +378,8 @@ Field EncodeFrameMetadata(const FrameRecord& frame)
 									 Field::U32(tag::LayerCount, submission.layerCount),
 									 Field::Text(tag::OutputDisposition, Name(submission.outputDisposition)),
 									 Field::Text(tag::DropReason, Name(submission.dropReason))}));
+		if (submission.commands && submission.commands->configurationAvailable)
+			fields.push_back(EncodeAppliedInput(submission));
 	}
 	return Nested(tag::Frame, std::move(fields));
 }

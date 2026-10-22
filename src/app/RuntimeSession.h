@@ -90,6 +90,14 @@ class RuntimeSession
 	{
 		return m_history.History();
 	}
+	const InputHistory& InputSamples() const
+	{
+		return m_history.Input();
+	}
+	const std::optional<ObservedSetup>& Setup() const noexcept
+	{
+		return m_setup;
+	}
 	DebuggerPanelController& Debugger() noexcept
 	{
 		return m_debugger;

@@ -26,7 +26,7 @@ void TimelineCanvas::Begin(float headerWidth, float liveWidth)
 	// Lane count follows the window, not this region (guide §3.2).
 	const float effectiveWidth = ImGui::GetMainViewport()->Size.x / scale;
 	m_compact = height < ImGui::GetFrameHeight() * 2.2f;
-	m_lanes = m_compact ? 1 : effectiveWidth < 800 ? 2 : 4;
+	m_lanes = m_compact ? 1 : effectiveWidth < 800 ? 2 : LaneCount;
 	const float ruler = m_compact ? 0 : ImGui::GetFrameHeight() + 2 * scale;
 	m_header = std::min(headerWidth, width * .5f);
 	m_live = std::min(liveWidth, width * .2f);
@@ -40,7 +40,7 @@ void TimelineCanvas::Begin(float headerWidth, float liveWidth)
 		m_laneY[lane] = top.y + ruler + lane * m_lane;
 	auto* draw = ImGui::GetWindowDrawList();
 	const auto muted = ImGui::GetColorU32(ImGuiCol_TextDisabled), line = ImGui::GetColorU32(ImGuiCol_Border);
-	static constexpr const char* labels[]{"Frames", "Images", "Recording", "Events"};
+	static constexpr const char* labels[]{"Frames", "Images", "Input", "Recording", "Events"};
 	for (int lane = 0; lane < m_lanes; ++lane)
 	{
 		const float y = m_laneY[lane];
@@ -189,6 +189,19 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, bool following
 				}
 			}
 		}
+		if (m_lanes > Input)
+		{
+			// Left presses rise from the middle, right presses fall from it.
+			const float y = LaneY(Input), middle = y + m_lane / 2, reach = m_lane / 2 - 2;
+			if (bucket.flags & HistoryDriven)
+				draw->AddLine({x, y + 1}, {x, y + m_lane - 1}, theme::Fade(theme::Past, .22f));
+			if (bucket.hands[0])
+				draw->AddLine({x, middle}, {x, middle - std::max(1.f, reach * bucket.hands[0] / 255)}, theme::Left);
+			if (bucket.hands[1])
+				draw->AddLine({x, middle}, {x, middle + std::max(1.f, reach * bucket.hands[1] / 255)}, theme::Right);
+			if (bucket.flags & HistoryAction)
+				draw->AddLine({x, y + m_lane - 3 * scale}, {x, y + m_lane - 1}, theme::Ok);
+		}
 		if (m_lanes > Recording && (bucket.flags & HistoryRecording))
 			draw->AddLine({x, LaneY(Recording) + 2}, {x, LaneY(Recording) + m_lane - 2}, Alert);
 		if (bucket.flags & HistoryRunStart)
@@ -321,6 +334,35 @@ void TimelineCanvas::DrawPause(double first, double last)
 	draw->AddRectFilled({x, y}, {end, y + m_lane}, theme::Fade(theme::Paused, .16f));
 	for (float hatch = x - m_lane; hatch < end; hatch += 6 * scale)
 		draw->AddLine({hatch, y + m_lane}, {hatch + m_lane, y}, Paused, scale);
+	draw->PopClipRect();
+}
+void TimelineCanvas::DrawGhost(const HistoryStore& history, std::size_t source, std::size_t anchor, std::size_t count)
+{
+	if (m_lanes <= Input || !history.Size())
+		return;
+	const float scale = ImGui::GetFontSize() / 16, y = LaneY(Input), middle = y + m_lane / 2, reach = m_lane / 2 - 2;
+	auto* draw = ImGui::GetWindowDrawList();
+	draw->PushClipRect({m_bounds.x, y}, {m_bounds.x + m_bounds.width, y + m_lane}, true);
+	const auto ink = theme::Fade(theme::Text, .8f);
+	for (int column = 0; column < int(m_bounds.width); ++column)
+	{
+		const auto begin = history.LowerBound(m_start + column * m_span / m_bounds.width);
+		const auto end = history.LowerBound(m_start + (column + 1) * m_span / m_bounds.width);
+		if (begin >= end || end <= anchor || begin >= anchor + count)
+			continue;
+		const auto a = std::max(begin, anchor) - anchor, b = std::min(end, anchor + count) - anchor;
+		if (source + b > history.Size())
+			continue;
+		const auto bucket = history.Query(source + a, source + b);
+		const float x = m_bounds.x + column;
+		// A tick where the recorded value was; it sits on the bar tip when replay matches.
+		for (int hand = 0; hand < 2; ++hand)
+			if (bucket.hands[hand])
+			{
+				const float tip = middle + (hand ? reach : -reach) * bucket.hands[hand] / 255;
+				draw->AddLine({x - scale, tip}, {x + scale, tip}, ink);
+			}
+	}
 	draw->PopClipRect();
 }
 } // namespace simxr::app

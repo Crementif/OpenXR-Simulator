@@ -1,9 +1,12 @@
 #include "app/RangePage.h"
 #include "app/RuntimeSession.h"
+#include "app/CompanionSettings.h"
+#include "app/Utf8Path.h"
 
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <ctime>
 #include <imgui.h>
 
 namespace simxr::app
@@ -106,7 +109,46 @@ void RangeExportTask::Poll()
 	if (!m_requested)
 		Finish("Snapshot export could not start");
 }
-void RangePage::Draw(const RangeSel& range, ShellState& shell)
+void RangePage::SaveTake(const RangeSel& range, std::size_t first, std::size_t last, ShellState& shell)
+{
+	try
+	{
+		const std::string name = m_take.data();
+		if (name.empty() || name == "." || name == ".." || name.find_first_of("/\\:") != std::string::npos)
+			throw std::runtime_error("Give the take a name without folder separators or a colon");
+		if (!m_session.Setup())
+			throw std::runtime_error("Device setup is not known yet");
+		const auto& history = m_session.History();
+		std::vector<const InputSample*> samples;
+		for (auto index = first; index <= last; ++index)
+			if (const auto* sample = m_session.InputSamples().Find(history.At(index).input))
+				samples.push_back(sample);
+		const auto take = TakeFromInput(samples, m_session.Setup()->values);
+		const auto script = automation::EditableRig(take);
+		const auto directory = CompanionSettingsPath().parent_path() / "recordings";
+		std::filesystem::create_directories(directory);
+		const auto path = directory / Utf8Path(name + ".luau");
+		const auto temporary = std::filesystem::path(path).concat(".writing");
+		{
+			std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+			output.write(script.data(), static_cast<std::streamsize>(script.size()));
+			if (!output.flush())
+				throw std::runtime_error("Cannot write the take");
+		}
+		std::filesystem::rename(temporary, path);
+		const auto text = path.u8string();
+		m_last = automation::SavedRecording{{text.begin(), text.end()}, take.seed};
+		m_saved = m_last->path;
+		shell.timeline.savedTake = TakeSource{m_last->path, range.first, range.last, range.epoch};
+		m_takeStatus = "Saved " + std::to_string(take.total) + " changes";
+	}
+	catch (const std::exception& error)
+	{
+		m_last.reset();
+		m_takeStatus = error.what();
+	}
+}
+std::optional<automation::SavedRecording> RangePage::Draw(const RangeSel& range, ShellState& shell)
 {
 	const auto& history = m_session.History();
 	const auto first = history.Find(range.first, range.epoch), last = history.Find(range.last, range.epoch);
@@ -116,21 +158,46 @@ void RangePage::Draw(const RangeSel& range, ShellState& shell)
 	if (!first || !last || *last < *first)
 	{
 		ImGui::TextDisabled("These frames are no longer in history");
-		return;
+		return {};
 	}
 	ImGui::Text("%.3f seconds / %zu frames", history.At(*last).seconds - history.At(*first).seconds,
 				*last - *first + 1);
-	ImGui::TextDisabled("Device activity not recorded for these frames");
-	ImGui::BeginDisabled();
-	ImGui::Button("Save as take");
-	ImGui::EndDisabled();
-	ImGui::SetItemTooltip("Needs continuous input history (coming in a later step)");
 	if (ImGui::Button("Zoom to range"))
 	{
 		shell.timeline.first = history.At(*first).seconds;
 		shell.timeline.last = history.At(*last).seconds;
 		shell.timeline.zoomToRange = true;
 	}
+
+	ImGui::SeparatorText("Take");
+	const bool recorded = m_session.InputSamples().Find(history.At(*first).input) && m_session.InputSamples().Find(history.At(*last).input);
+	if (!m_take[0])
+	{
+		const auto now = std::time(nullptr);
+		std::strftime(m_take.data(), m_take.size(), "Cut %Y-%m-%d %H-%M-%S", std::localtime(&now));
+	}
+	ImGui::SetNextItemWidth(-1);
+	ImGui::InputText("##Take name", m_take.data(), m_take.size());
+	ImGui::BeginDisabled(!recorded);
+	if (ImGui::Button("Save as take"))
+		SaveTake(range, *first, *last, shell);
+	ImGui::EndDisabled();
+	ImGui::SetItemTooltip(recorded ? "Saves the head and hand input of these frames as a replayable take"
+								   : "No input was recorded for these frames");
+	std::optional<automation::SavedRecording> replay;
+	if (m_last)
+	{
+		ImGui::SameLine();
+		ImGui::BeginDisabled(!m_session.Connected());
+		if (ImGui::Button("Replay"))
+			replay = m_last;
+		ImGui::EndDisabled();
+		ImGui::SetItemTooltip("Replay %s", Utf8Path(m_last->path).stem().string().c_str());
+	}
+	if (!m_takeStatus.empty())
+		ImGui::TextDisabled("%s", m_takeStatus.c_str());
+
+	ImGui::SeparatorText("Export");
 	ImGui::SetNextItemWidth(-1);
 	ImGui::InputText("##Range export file", m_path.data(), m_path.size());
 	ImGui::BeginDisabled(m_export.Busy() || m_session.Exports().Busy());
@@ -142,5 +209,6 @@ void RangePage::Draw(const RangeSel& range, ShellState& shell)
 		ImGui::TextWrapped("%s", m_export.Metadata().c_str());
 	if (!m_export.Images().empty())
 		ImGui::TextWrapped("%s", m_export.Images().c_str());
+	return replay;
 }
 } // namespace simxr::app

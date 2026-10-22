@@ -1,10 +1,42 @@
 #include "app/FrameHistoryFeed.h"
+#include "control/SimulationControl.h"
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <utility>
 
 namespace simxr::app
 {
+namespace
+{
+InputSample ReadInput(const control::Message& applied)
+{
+	using namespace panel;
+	namespace tag = control::tag;
+	InputSample sample;
+	for (const auto& field : applied.fields)
+	{
+		if (field.tag > 5)
+			continue;
+		const auto command = control::DecodeSimulationCommand(field);
+		if (const auto* head = std::get_if<SetHeadPose>(&command))
+			sample.head = head->value;
+		else if (const auto* pose = std::get_if<SetControllerPose>(&command); pose && pose->hand < 2)
+			sample.poses[pose->hand] = pose->value;
+		else if (const auto* controls = std::get_if<SetControllerControls>(&command); controls && controls->hand < 2)
+			sample.controls[controls->hand] = controls->value;
+		else
+			throw std::runtime_error("Frame history has an unexpected input command");
+	}
+	sample.seed = U64(applied, tag::Seed);
+	const auto scenarios = U32(applied, tag::Scenario);
+	for (std::size_t index = 0; index < sample.scenarios.size(); ++index)
+		sample.scenarios[index] = scenarios & (1u << index);
+	sample.driven = U32(applied, tag::Ownership);
+	sample.actions = U32(applied, tag::ActiveActions);
+	return sample;
+}
+} // namespace
 void FrameHistoryFeed::SetScope(PanelScope scope)
 {
 	if (scope == m_scope)
@@ -72,6 +104,26 @@ void FrameHistoryFeed::Append(const control::Message& message)
 		const auto submission = Nested(frame.Find(tag::Submission));
 		if (Text(submission, tag::OutputDisposition) == "dropped" || Text(frame, tag::Stage) == "discarded")
 			flags |= HistoryDropped;
+		std::uint64_t input = 0;
+		std::array<std::uint8_t, 2> hands{};
+		if (const auto* applied = frame.Find(tag::AppliedInput))
+		{
+			auto sample = ReadInput(Nested(applied));
+			sample.identity = {m_scope.session, m_scope.generation, id};
+			sample.epoch = m_scope.epoch;
+			for (std::size_t hand = 0; hand < 2; ++hand)
+				hands[hand] = static_cast<std::uint8_t>(std::lround(Intensity(sample.controls[hand]) * 255));
+			constexpr auto Pointing = 1u << static_cast<int>(ControlChannel::Head) |
+									  1u << static_cast<int>(ControlChannel::LeftPose) |
+									  1u << static_cast<int>(ControlChannel::RightPose) |
+									  1u << static_cast<int>(ControlChannel::LeftControls) |
+									  1u << static_cast<int>(ControlChannel::RightControls);
+			if (sample.driven & Pointing)
+				flags |= HistoryDriven;
+			if (sample.actions)
+				flags |= HistoryAction;
+			input = m_input.Append(std::move(sample));
+		}
 		const auto elapsed = double((static_cast<long double>(timestamp) - m_origin) / 1000000000.L);
 		const auto previousSeconds = m_history.Size() ? m_history.At(m_history.Size() - 1).seconds : m_offset;
 		const auto interval = !m_newSegment ? (static_cast<long double>(timestamp) - m_previous) / 1000000.L
@@ -82,7 +134,9 @@ void FrameHistoryFeed::Append(const control::Message& message)
 						  std::max(previousSeconds, m_offset + elapsed),
 						  float(std::max(0.L, interval)),
 						  flags,
-						  elapsed});
+						  elapsed,
+						  input,
+						  hands});
 		m_previous = timestamp;
 		m_after = id;
 		m_newSegment = false;

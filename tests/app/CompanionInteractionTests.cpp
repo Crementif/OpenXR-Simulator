@@ -1715,6 +1715,153 @@ void CheckSpatialEditing(Interaction& test)
 	Require(test.validation->errors.load() == 0, "Spatial preview validation errors");
 }
 
+// D8: play without Rec, cut the range into a take, replay it, and compare the
+// replay's applied input with the source frames it was cut from.
+void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
+{
+	const auto pump = [&](int count)
+	{
+		for (int index = 0; index < count; ++index)
+		{
+			test.Frame();
+			SDL_Delay(10);
+		}
+	};
+	const auto push = [&](SDL_Event event)
+	{
+		Require(SDL_PushEvent(&event), "Push take input");
+		pump(1);
+	};
+	const auto button = [&](unsigned code, bool down)
+	{
+		SDL_Event event{};
+		event.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+		event.button.windowID = SDL_GetWindowID(test.window.Native());
+		event.button.button = code;
+		event.button.down = down;
+		if (code == SDL_BUTTON_RIGHT && down)
+		{
+			const auto center = FindPanel("Image area")->InnerRect.GetCenter();
+			SDL_Event pointer{};
+			pointer.type = SDL_EVENT_MOUSE_MOTION;
+			pointer.motion.windowID = event.button.windowID;
+			pointer.motion.x = center.x;
+			pointer.motion.y = center.y;
+			push(pointer);
+		}
+		push(event);
+	};
+	const auto key = [&](SDL_Scancode code, bool down)
+	{
+		SDL_Event event{};
+		event.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+		event.key.windowID = SDL_GetWindowID(test.window.Native());
+		event.key.scancode = code;
+		event.key.key = SDL_GetKeyFromScancode(code, SDL_KMOD_NONE, false);
+		event.key.down = down;
+		push(event);
+	};
+	Require(SDL_ShowWindow(test.window.Native()), "Show take window");
+	SDL_RaiseWindow(test.window.Native());
+	Eventually([&] { pump(1); return test.window.Focused(); }, "Take window did not receive focus");
+	pump(3);
+	const auto& history = test.runtime.History();
+	const auto begin = history.Size();
+	button(SDL_BUTTON_RIGHT, true);
+	Eventually([&] { pump(1); return SDL_GetWindowRelativeMouseMode(test.window.Native()); },
+			   "Take pilot did not capture pointer");
+	// Pulses of the right trigger and the primary button, about two seconds.
+	for (int pulse = 0; pulse < 4; ++pulse)
+	{
+		button(SDL_BUTTON_LEFT, true);
+		pump(15);
+		button(SDL_BUTTON_LEFT, false);
+		key(SDL_SCANCODE_R, true);
+		pump(10);
+		key(SDL_SCANCODE_R, false);
+		pump(10);
+	}
+	key(SDL_SCANCODE_ESCAPE, true);
+	key(SDL_SCANCODE_ESCAPE, false);
+	pump(10);
+	Require(history.Size() > begin + 60, "Too few frames while driving input");
+	std::size_t pressed = 0;
+	for (auto index = begin; index < history.Size(); ++index)
+		pressed += history.At(index).hands[1] > 200;
+	Require(pressed > 20, "Input lane has no right-hand presses");
+	const auto& first = history.At(begin);
+	const auto& last = history.At(history.Size() - 1);
+	test.workspace.Select(RangeSel{first.identity, last.identity, first.epoch});
+	pump(3);
+	auto* inspector = FindPanel("Inspector");
+	Require(inspector, "Inspector missing for the range page");
+	ImGui::ActivateItemByID(inspector->GetID("Save as take"));
+	pump(2);
+	const auto recordings = directory / "recordings";
+	std::filesystem::path take;
+	for (const auto& entry : std::filesystem::directory_iterator(recordings))
+		if (entry.path().extension() == ".luau")
+			take = entry.path();
+	Require(!take.empty(), "Save as take wrote no file");
+	std::cout << "PASS saved " << history.Size() - begin << " frames as " << take.filename() << '\n';
+
+	const auto replayFrom = history.Size();
+	ImGui::ActivateItemByID(inspector->GetID("Replay"));
+	pump(2);
+	std::optional<std::size_t> anchor;
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+	const auto sourceCount = history.Size() > begin ? replayFrom - begin : 0;
+	for (;;)
+	{
+		pump(1);
+		if (!anchor)
+			for (auto index = replayFrom; index < history.Size(); ++index)
+				if (history.At(index).flags & HistoryDriven)
+				{
+					anchor = index;
+					break;
+				}
+		if (anchor && history.Size() >= *anchor + sourceCount && !(history.At(history.Size() - 1).flags & HistoryDriven))
+			break;
+		if (std::chrono::steady_clock::now() >= deadline)
+		{
+			std::size_t driven = 0;
+			for (auto index = replayFrom; index < history.Size(); ++index)
+				driven += (history.At(index).flags & HistoryDriven) != 0;
+			std::cout << "replay frames=" << history.Size() - replayFrom << " driven=" << driven
+					  << " anchor=" << anchor.has_value() << " source=" << sourceCount << '\n';
+			for (const auto& notice : test.runtime.TakeNotices())
+				std::cout << "notice: " << notice.title << " " << notice.detail << '\n';
+			if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
+			{
+				ImGui::ActivateItemByID(FindPanel("Top bar")->GetID("Replay details"));
+				pump(2);
+				test.renderer.RequestScreenshot((std::filesystem::path(qa) / "take-failed.bmp").string());
+				pump(1);
+				test.renderer.WaitIdle();
+			}
+			Require(false, "Take replay did not drive and release the app");
+		}
+	}
+	std::size_t matched = 0;
+	const auto source = *history.Find(first.identity, first.epoch);
+	for (std::size_t offset = 0; offset < sourceCount; ++offset)
+	{
+		const auto a = history.At(source + offset).hands, b = history.At(*anchor + offset).hands;
+		matched += std::abs(int(a[1]) - int(b[1])) <= 2 && std::abs(int(a[0]) - int(b[0])) <= 2;
+	}
+	std::cout << "Replay matched " << matched << "/" << sourceCount << " frames\n";
+	Require(matched * 10 >= sourceCount * 9, "Replayed input diverges from the source frames");
+	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
+	{
+		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "take-replay.bmp").string());
+		pump(1);
+	}
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Validation errors during take replay");
+	std::cout << "PASS retroactive take replayed over its source frames\n";
+}
+
 void CheckSnapshotRetention(Interaction& test)
 {
 	const auto wait = [&](const auto& ready, const char* failure)
@@ -1847,6 +1994,8 @@ void CheckToolbarLaunch(const char* executable)
 	std::ofstream(directory / "attached.endpoint") << state.endpoint;
 	if (std::getenv("SIMXR_TIMELINE_QA"))
 		CheckTimelineWorkflow(test);
+	if (std::getenv("SIMXR_TAKE_QA"))
+		CheckInputTake(test, directory);
 	if (std::getenv("SIMXR_INPUT_QA"))
 		CheckManualEdges(state);
 	if (std::getenv("SIMXR_RIG_QA"))

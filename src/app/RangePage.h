@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/RuntimeView.h"
+#include "automation/Recording.h"
 
 #include <array>
 #include <cstdint>
@@ -66,7 +67,8 @@ class RangePage
 	explicit RangePage(RuntimeSession& session) : m_session(session), m_export(session)
 	{
 	}
-	void Draw(const RangeSel& range, ShellState& shell);
+	// Returns a take to replay when one was saved and the user asked to replay it.
+	std::optional<automation::SavedRecording> Draw(const RangeSel& range, ShellState& shell);
 	void Poll()
 	{
 		m_export.Poll();
@@ -76,9 +78,20 @@ class RangePage
 		return m_export.Busy();
 	}
 
+	// The take written by the last Save as take, for the library to select.
+	std::optional<std::string> TakeSaved()
+	{
+		return std::exchange(m_saved, {});
+	}
+
   private:
+	void SaveTake(const RangeSel& range, std::size_t first, std::size_t last, ShellState& shell);
 	RuntimeSession& m_session;
 	RangeExportTask m_export;
 	std::array<char, 512> m_path{"frames.csv"};
+	std::array<char, 128> m_take{};
+	std::optional<std::string> m_saved;
+	std::optional<automation::SavedRecording> m_last;
+	std::string m_takeStatus;
 };
 } // namespace simxr::app

@@ -22,6 +22,12 @@ class RecordingPanel
 	{
 		m_startRequested = true;
 	}
+	// A take written elsewhere (Save as take): list and select it.
+	void Added(const std::string& path)
+	{
+		RefreshFiles();
+		SelectFile(path);
+	}
 	std::optional<automation::SavedRecording> Draw(bool supported, bool replayAvailable, bool replayActive = false);
 
   private:

@@ -18,6 +18,8 @@ class TimelinePanel
 	bool Draw(RuntimePanels& runtime, ShellState& shell);
 	void ObserveRig(const RuntimeView& runtime, std::uint64_t run, const automation::RigSnapshot& state,
 					bool matchesTarget);
+	// A take is about to replay; when it was cut from history, its source is drawn over the replay.
+	void ReplayTake(const std::string& path);
 
   private:
 	struct Event
@@ -39,7 +41,17 @@ class TimelinePanel
 		double first = 0, last = 0;
 		bool replay = false;
 	};
+	// Source frames of a take cut from history, and where its replay began.
+	struct Ghost
+	{
+		TakeSource source;
+		// Requested at this canvas time; an earlier script is not the replay.
+		double requested = 0;
+		std::optional<double> begin;
+		std::optional<HistoryFrame> anchor;
+	};
 	void Observe(const RuntimeView& state);
+	void DrawGhost(const HistoryStore& history);
 	void Push(Event event);
 	std::map<double, Marker> m_markers;
 	std::optional<HistoryFrame> m_pendingMarker;
@@ -55,6 +67,8 @@ class TimelinePanel
 	std::uint64_t m_rigRun = 0;
 	automation::RigPhase m_phase = automation::RigPhase::Idle;
 	std::size_t m_output = 0, m_checkpoints = 0;
+	std::vector<TakeSource> m_takes;
+	std::optional<Ghost> m_ghost;
 	TimelineCanvas m_canvas;
 };
 } // namespace simxr::app

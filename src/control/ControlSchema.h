@@ -61,7 +61,7 @@ inline constexpr std::uint16_t Error = 1, Detail = 2, Session = 3, Generation = 
 							   PresentationPolicy = 185, Reprojected = 186, ReprojectionResult = 187,
 							   ReprojectionSubmissionTime = 188, ReprojectionCompletionLatency = 189, DisplayHead = 190,
 							   ImageViews = 191, Pinned = 192, AdvanceDisplay = 193, SnapshotBudgetMiB = 194,
-							   SnapshotImageBytes = 195, Frames = 196;
+							   SnapshotImageBytes = 195, Frames = 196, AppliedInput = 197, ActiveActions = 198;
 }
 
 enum class Capability : std::uint64_t

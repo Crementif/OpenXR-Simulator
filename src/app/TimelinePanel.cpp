@@ -87,6 +87,35 @@ void TimelinePanel::ObserveRig(const RuntimeView& runtime, std::uint64_t run,
 	while (m_output < state.output.size())
 		append(state.output[m_output++]);
 }
+void TimelinePanel::ReplayTake(const std::string& path)
+{
+	m_ghost.reset();
+	for (const auto& take : m_takes)
+		if (take.path == path)
+			m_ghost = Ghost{take, m_previous ? m_previous->historySeconds : 0};
+}
+void TimelinePanel::DrawGhost(const HistoryStore& history)
+{
+	if (!m_ghost)
+		return;
+	if (!m_ghost->begin && m_scriptBegin && *m_scriptBegin >= m_ghost->requested)
+		m_ghost->begin = m_scriptBegin;
+	// The take's initial values apply on the first frame the replay drives.
+	if (m_ghost->begin && !m_ghost->anchor)
+		for (auto index = history.LowerBound(*m_ghost->begin); index < history.Size(); ++index)
+			if (history.At(index).flags & HistoryDriven)
+			{
+				m_ghost->anchor = history.At(index);
+				break;
+			}
+	if (!m_ghost->anchor)
+		return;
+	const auto& source = m_ghost->source;
+	const auto first = history.Find(source.first, source.epoch), last = history.Find(source.last, source.epoch);
+	const auto anchor = history.Find(m_ghost->anchor->identity, m_ghost->anchor->epoch);
+	if (first && last && anchor && *last >= *first)
+		m_canvas.DrawGhost(history, *first, *anchor, *last - *first + 1);
+}
 void TimelinePanel::Observe(const RuntimeView& state)
 {
 	const auto observed = [&](const char* text, const RuntimeView& at)
@@ -168,6 +197,13 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell)
 		LeaveHistory(shell, true);
 	};
 	Observe(state);
+	if (auto saved = std::exchange(shell.timeline.savedTake, {}))
+	{
+		std::erase_if(m_takes, [&](const TakeSource& take) { return take.path == saved->path; });
+		m_takes.push_back(std::move(*saved));
+		if (m_takes.size() > 16)
+			m_takes.erase(m_takes.begin());
+	}
 	// A pause starts at the frame it stopped on, which history learns about a little later.
 	if (m_pauseBegin && m_pauseFrame)
 		if (const auto paused = history.Find(m_pauseFrame->identity, m_pauseFrame->epoch))
@@ -354,6 +390,7 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell)
 		if (const auto marker = m_markers.find(history.At(*gesture.hovered).seconds); marker != m_markers.end())
 			ImGui::SetTooltip("%s / frame %llu", marker->second.name.c_str(),
 							  static_cast<unsigned long long>(marker->second.frame.identity.frame));
+	DrawGhost(history);
 	for (const auto& pause : m_pauses)
 		m_canvas.DrawPause(pause.first, pause.last);
 	if (m_pauseBegin)

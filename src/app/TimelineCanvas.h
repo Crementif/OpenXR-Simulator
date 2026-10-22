@@ -29,6 +29,9 @@ class TimelineCanvas
 	void DrawEvent(double time, double observed, const char* text, bool failed, bool dim);
 	ClipHit DrawClip(double first, double last, const char* label, bool replay);
 	void DrawPause(double first, double last);
+	// Draws the source frames of a replayed take over the replay's Input lane,
+	// frame for frame from anchor, so recorded and applied input can be compared.
+	void DrawGhost(const HistoryStore& history, std::size_t source, std::size_t anchor, std::size_t count);
 	void Fit() noexcept
 	{
 		m_fit = true;
@@ -62,6 +65,7 @@ class TimelineCanvas
 	{
 		Frames,
 		Images,
+		Input,
 		Recording,
 		Events,
 		LaneCount

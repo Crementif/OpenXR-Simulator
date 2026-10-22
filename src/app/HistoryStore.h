@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/ShellState.h"
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -19,7 +20,11 @@ enum HistoryFlags : std::uint32_t
 	HistoryRunStart = 1 << 6,
 	HistoryGap = 1 << 7,
 	HistoryMarker = 1 << 8,
-	HistoryPinned = 1 << 9
+	HistoryPinned = 1 << 9,
+	// A script, MCP or replay owned the head or a hand on this frame.
+	HistoryDriven = 1 << 10,
+	// At least one app action was pressed or moved.
+	HistoryAction = 1 << 11
 };
 struct HistoryFrame
 {
@@ -32,12 +37,17 @@ struct HistoryFrame
 	float frameMilliseconds = 0;
 	std::uint32_t flags = 0;
 	double runSeconds = 0;
+	// InputHistory sequence, 0 when the frame carried no applied input.
+	std::uint64_t input = 0;
+	// Left/right press intensity, 0..255.
+	std::array<std::uint8_t, 2> hands{};
 };
 struct HistoryBucket
 {
 	std::size_t count = 0;
 	float minimum = 0, maximum = 0;
 	std::uint32_t flags = 0;
+	std::array<std::uint8_t, 2> hands{};
 };
 // Fixed-size frame ring with a hierarchy of min/max/flags buckets. Appending
 // and querying visit O(log capacity) buckets, without per-frame allocation.

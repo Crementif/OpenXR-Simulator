@@ -13,6 +13,7 @@
 #include "app/Window.h"
 #include "app/widgets/Controls.h"
 
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <imgui.h>
@@ -304,7 +305,11 @@ void RuntimePanels::DrawFramePage(ShellState& shell)
 }
 void RuntimePanels::DrawRangePage(const RangeSel& range, ShellState& shell)
 {
-	m_impl->m_range.Draw(range, shell);
+	auto& impl = *m_impl;
+	if (auto replay = impl.m_range.Draw(range, shell))
+		impl.m_recordingReplay = Impl::RecordingReplay{std::move(*replay), impl.m_session.Debugger().Scope()};
+	if (const auto saved = impl.m_range.TakeSaved())
+		impl.m_recording.Added(*saved);
 }
 void RuntimePanels::DrawAdvancedPage()
 {
@@ -454,6 +459,22 @@ void RuntimePanels::InspectSelected()
 void RuntimePanels::RequestExport(std::string path)
 {
 	m_impl->RequestExport(std::move(path));
+}
+void RuntimePanels::PrepareReplay()
+{
+	m_impl->ReleaseInputs();
+	m_impl->m_session.Debugger().Relinquish();
+}
+bool RuntimePanels::ReplayReady() const
+{
+	const auto& debugger = m_impl->m_session.Debugger();
+	const auto& setup = m_impl->m_session.Setup();
+	return !debugger.HasLease() && !debugger.Relinquishing() &&
+		   !(setup && std::ranges::any_of(setup->owners,
+										  [](const std::optional<CommandSource>& owner)
+										  {
+											  return owner && owner->kind == CommandSourceKind::Manual;
+										  }));
 }
 std::optional<automation::SavedRecording> RuntimePanels::TakeRecordingReplay()
 {

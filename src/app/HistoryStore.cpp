@@ -13,7 +13,11 @@ HistoryBucket Merge(HistoryBucket a, HistoryBucket b) noexcept
 		return b;
 	if (!b.count)
 		return a;
-	return {a.count + b.count, std::min(a.minimum, b.minimum), std::max(a.maximum, b.maximum), a.flags | b.flags};
+	return {a.count + b.count,
+			std::min(a.minimum, b.minimum),
+			std::max(a.maximum, b.maximum),
+			a.flags | b.flags,
+			{std::max(a.hands[0], b.hands[0]), std::max(a.hands[1], b.hands[1])}};
 }
 } // namespace
 HistoryStore::HistoryStore(std::size_t capacity)
@@ -45,7 +49,7 @@ void HistoryStore::Update(std::size_t physical) noexcept
 {
 	const auto& frame = m_frames[physical];
 	auto node = m_leaves + physical;
-	m_buckets[node] = {1, frame.frameMilliseconds, frame.frameMilliseconds, frame.flags};
+	m_buckets[node] = {1, frame.frameMilliseconds, frame.frameMilliseconds, frame.flags, frame.hands};
 	while (node > 1)
 	{
 		node /= 2;

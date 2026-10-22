@@ -66,6 +66,14 @@ struct WorkspacePanels::Impl
 	std::unique_ptr<LaunchAttachment> attachment;
 #ifdef SIMXR_COMPANION_AUTOMATION
 	RigPanel rigs;
+	// A replay waits until the companion has released its manual inputs and
+	// session control, or the script's pause and take_control would conflict.
+	struct PendingReplay
+	{
+		automation::SavedRecording recording;
+		std::chrono::steady_clock::time_point deadline;
+	};
+	std::optional<PendingReplay> replay;
 #endif
 	PreferencesDialog preferences;
 	LaunchProfilesDialog profiles;
@@ -511,8 +519,20 @@ struct WorkspacePanels::Impl
 		PollLaunch(runtime);
 		runtime.BeginFrame();
 #ifdef SIMXR_COMPANION_AUTOMATION
-		if (const auto recording = runtime.TakeRecordingReplay())
-			rigs.ReplayRecording(runtime, recording->path, recording->seed);
+		if (auto recording = runtime.TakeRecordingReplay())
+		{
+			runtime.PrepareReplay();
+			replay = PendingReplay{std::move(*recording), std::chrono::steady_clock::now() + std::chrono::seconds(3)};
+		}
+		if (replay)
+		{
+			if (runtime.ReplayReady() || std::chrono::steady_clock::now() >= replay->deadline)
+			{
+				timeline.ReplayTake(replay->recording.path);
+				rigs.ReplayRecording(runtime, replay->recording.path, replay->recording.seed);
+				replay.reset();
+			}
+		}
 		rigs.Draw(runtime, false);
 		runtime.SetReplayActive(rigs.IsActive());
 		timeline.ObserveRig(runtime.Snapshot(), rigs.RunId(), rigs.Snapshot(), rigs.MatchesTarget(runtime.Snapshot()));
