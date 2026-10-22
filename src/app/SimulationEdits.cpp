@@ -208,6 +208,8 @@ ObservedSetup ReadObservedSetup(const control::Message& state)
 	ObservedSetup result;
 	auto& values = result.values;
 	result.frame = Unsigned(Member(root, "frame_id"));
+	if (const auto trackers = FindMember(root, "tracker_interaction"))
+		result.appTrackers = Boolean(*trackers);
 	values.tracking.head = ReadSample(Member(config, "head"));
 	values.tracking.focused = Boolean(Member(config, "focused"));
 	const auto hands = Elements(Member(config, "controllers"));
@@ -362,6 +364,75 @@ ObservedSetup ReadObservedSetup(const control::Message& state)
 			throw std::runtime_error("Unsupported simulation scenario");
 		result.scenarios[index] = true;
 	}
+	return result;
+}
+void UndoStack::Record(const ObservedSetup& before, const ManualTransaction& edit)
+{
+	const bool pose = std::any_of(edit.commands.begin(), edit.commands.end(),
+								  [](const SimulationCommand& command)
+								  {
+									  return std::holds_alternative<SetHeadPose>(command) ||
+											 std::holds_alternative<SetControllerPose>(command) ||
+											 std::holds_alternative<SetBodyControls>(command) ||
+											 std::holds_alternative<SetGaze>(command) ||
+											 std::holds_alternative<SetTracker>(command) ||
+											 std::holds_alternative<SetBodyProportions>(command);
+								  });
+	if (!pose)
+		return;
+	// The first edit of a drag opens the group; its continuous updates and final edit join it.
+	if (!m_open)
+	{
+		constexpr std::size_t capacity = 64;
+		if (m_entries.size() == capacity)
+			m_entries.erase(m_entries.begin());
+		m_entries.push_back({before.values.tracking, before.values.proportions});
+	}
+	m_open = edit.continuous;
+}
+void UndoStack::Clear()
+{
+	m_entries.clear();
+	m_open = false;
+}
+std::optional<ManualTransaction> UndoStack::Undo(const ObservedSetup& current, std::optional<CommandSource> source)
+{
+	m_open = false;
+	if (m_entries.empty())
+		return {};
+	const auto entry = std::move(m_entries.back());
+	m_entries.pop_back();
+	ManualTransaction result;
+	const auto allowed = [&](ControlChannel channel)
+	{
+		const auto& owner = current.owners[static_cast<std::size_t>(channel)];
+		return !owner || owner == source;
+	};
+	const auto restore = [&](ControlChannel channel, SimulationCommand command)
+	{
+		if (!allowed(channel))
+			return;
+		result.commands.emplace_back(TakeControl{channel, false});
+		result.commands.push_back(std::move(command));
+	};
+	restore(ControlChannel::Head, SetHeadPose{entry.tracking.head});
+	for (std::uint32_t hand = 0; hand < 2; ++hand)
+		restore(hand ? ControlChannel::RightPose : ControlChannel::LeftPose,
+				SetControllerPose{hand, entry.tracking.controllers[hand]});
+	auto body = entry.tracking.body;
+	if (!current.bodyRootAvailable)
+		body.rootPose.reset();
+	restore(ControlChannel::Body, SetBodyControls{body});
+	restore(ControlChannel::Gaze, SetGaze{entry.tracking.gaze});
+	if (current.trackerAttachmentsAvailable && allowed(ControlChannel::Trackers))
+	{
+		result.commands.emplace_back(TakeControl{ControlChannel::Trackers, false});
+		for (std::uint32_t slot = 0; slot < entry.tracking.trackers.size(); ++slot)
+			result.commands.emplace_back(SetTracker{slot, entry.tracking.trackers[slot]});
+	}
+	restore(ControlChannel::Proportions, SetBodyProportions{entry.proportions});
+	if (result.commands.empty())
+		return {};
 	return result;
 }
 ControlChannel ScenarioInputChannel(FailureScenario scenario)

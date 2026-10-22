@@ -38,6 +38,8 @@ class DeviceControlPanel
 	void ResetObservations();
 	void ObserveDelivery(bool pending, const std::string& error);
 	std::optional<SimulationEdit> DrawAdvanced();
+	// Page title with the page's Reset button (Reset all on Player).
+	std::optional<SimulationEdit> DrawHeader(const Selection& selection);
 
   private:
 	void Apply(std::vector<SimulationCommand> commands);
@@ -48,10 +50,13 @@ class DeviceControlPanel
 	bool DrawScenarioNotice(ControlChannel channel);
 	void ReloadRecoveredChannel(ControlChannel channel);
 	void DrawPlayer();
-	void DrawAnchor(bool tracker, std::size_t index);
+	void DrawAnchor(std::size_t hand);
 	void DrawHead();
 	void DrawExactPose(int device);
-	void DrawHandRest();
+	void DrawHandPresets(std::size_t hand);
+	void DrawBodyPoses();
+	void ResetPage(DevicePage page);
+	void ApplyRig(std::vector<SimulationCommand> extra = {});
 	void DrawController(const std::function<void()>& placement);
 	void DrawInputPad(std::uint32_t hand);
 	void DrawBody();
@@ -70,7 +75,10 @@ class DeviceControlPanel
 	std::set<std::string> m_pendingFields, m_rejectedFields;
 	std::string m_deliveryError, m_fieldScope;
 	double m_rejectedUntil = 0;
-	bool Field(const char* key, bool changed, bool continuous = false);
+	// Marks a field edited, draws its live state and offers Reset to default (right-click, or
+	// double-click on a slider) when reset is given.
+	bool Field(const char* key, bool changed, bool continuous = false, const std::function<void()>& reset = {},
+			   bool slider = false);
 	bool m_replaceOwner = false, m_exactAnchor = false;
 	bool m_configurationLoaded = false;
 	std::optional<ObservedSetup> m_observed;
@@ -80,7 +88,6 @@ class DeviceControlPanel
 	int m_selectedChannel = 0;
 	int m_controlHand = 0;
 	int m_selectedScenario = 0;
-	int m_bodyPreset = 0;
 	int m_selectedTracker = 0;
 	int m_trackerRole = 0;
 	TrackingState m_authoredTracking;

@@ -71,7 +71,10 @@ SpatialScene SceneFromTracking(const TrackingSnapshot& tracking)
 	return scene;
 }
 } // namespace
-SpatialEditor::SpatialEditor(PlayerRig& rig, ManualInputController& input) : m_rig(rig), m_input(input) {}
+SpatialEditor::SpatialEditor(PlayerRig& rig, ManualInputController& input, UndoStack& undo)
+	: m_rig(rig), m_input(input), m_undo(undo)
+{
+}
 void SpatialEditor::Reset()
 {
 	CancelPoseGizmo(m_view.gizmo);
@@ -79,6 +82,7 @@ void SpatialEditor::Reset()
 		CancelPoseGizmo(state);
 	m_observed.reset();
 	m_historical.reset();
+	m_eye.reset();
 	m_observation = m_historyIdentity = 0;
 	m_arcballs = {};
 	m_reach = {};
@@ -121,7 +125,9 @@ void SpatialEditor::SetContext(bool editable, bool lookingBack, std::span<const 
 	m_lookingBack = lookingBack;
 	m_markerRects = {};
 	m_rotationBallRect = m_reachMapRect = {};
-	m_eye = eyes.empty() ? std::nullopt : std::optional{eyes.front()};
+	// Some displayed frames carry no view metadata; keep the last eye so the head glyph does not flicker.
+	if (!eyes.empty())
+		m_eye = eyes.front();
 	if (historyIdentity != m_historyIdentity)
 	{
 		m_historyIdentity = historyIdentity;
@@ -160,6 +166,7 @@ SpatialScene SpatialEditor::LiveScene() const
 		return {};
 	auto tracking = m_observed->values.tracking;
 	tracking.head.pose = m_rig.Head();
+	tracking.body = m_rig.Body();
 	tracking.body.rootPose = m_rig.Root();
 	for (std::size_t hand = 0; hand < 2; ++hand)
 		tracking.controllers[hand].pose.pose = m_rig.Hand(hand);
@@ -169,6 +176,9 @@ SpatialScene SpatialEditor::LiveScene() const
 		TrackingSystem::Evaluate(RuntimeTime{Duration{1}}, tracking, BodyModel{m_observed->values.proportions}));
 	scene.root = m_rig.Root();
 	scene.eye = m_lookingBack ? std::nullopt : m_eye;
+	for (std::size_t slot = 0; slot < 4; ++slot)
+		scene.labels[slot + 3] = TrackerRoleLetter(m_rig.TrackerDeviceAt(slot).role);
+	scene.attachable = AttachableJoints();
 	return scene;
 }
 std::array<bool, 7> SpatialEditor::EditableDevices(const SpatialScene& scene) const
@@ -198,8 +208,13 @@ void SpatialEditor::EditPose(int device, XrPosef pose, bool final)
 		m_rig.SetHandWorld(device - 1, pose);
 	else
 		m_rig.SetTrackerWorld(device - 3, pose);
+	Submit(final);
+}
+void SpatialEditor::Submit(bool final)
+{
 	auto edit = m_rig.Transaction(*m_observed, m_source, true);
 	edit.continuous = !final;
+	m_undo.Record(*m_observed, edit);
 	if (!m_input.Submit(edit))
 		m_error = "Pose rejected — retry";
 }
@@ -223,7 +238,14 @@ void SpatialEditor::DrawRig(Selection& selection, ImVec2 size)
 		RigView("Rig view", m_view, scene, selected, EditableDevices(scene), size, m_lookingBack ? &live : nullptr);
 	if (selected != previous)
 		SelectDevice(selection, selected);
-	if (selected >= 0)
+	if (selected >= 3 && result.joint >= 0 && Editable() && EditableDevices(live)[selected])
+	{
+		const auto slot = static_cast<std::size_t>(selected - 3);
+		m_rig.AttachTracker(slot, static_cast<BodyJoint>(result.joint));
+		m_rig.SetTrackerOffset(slot, IdentityPose());
+		Submit(result.finished);
+	}
+	else if (selected >= 0)
 		ApplyResult(result, selected, scene.devices[selected]);
 }
 void SpatialEditor::DrawRigView(Selection& selection)
@@ -252,18 +274,23 @@ void SpatialEditor::DrawPlacement(Selection& selection)
 		if (sideBySide)
 			ImGui::BeginGroup();
 		ImGui::SeparatorText("Rotation");
-		const auto anchor = selected == 0  ? Anchor::Body
-							: selected < 3 ? m_rig.HandAnchor(selected - 1)
-										   : m_rig.TrackerAnchor(selected - 3);
-		const auto reset = anchor == Anchor::World	? IdentityPose().orientation
-						   : anchor == Anchor::Head ? m_rig.Head().orientation
-													: m_rig.Root().orientation;
+		XrQuaternionf reference = m_rig.Root().orientation;
+		if (selected == 1 || selected == 2)
+			reference = m_rig.AnchorPose(m_rig.HandAnchor(selected - 1)).orientation;
+		else if (selected > 2)
+		{
+			const auto joint = m_rig.TrackerAt(selected - 3).joint;
+			reference = joint ? m_rig.JointPose(*joint).orientation : IdentityPose().orientation;
+		}
 		const auto camera = RigCamera(m_view, scene, 1);
 		auto pose = scene.devices[selected];
 		const auto rotationMinimum = ImGui::GetCursorScreenPos();
 		m_rotationBallRect = {rotationMinimum.x, rotationMinimum.y, 160 * scale, 160 * scale};
-		const auto result = ArcballWidget("Rotation ball", m_arcballs[selected], pose.orientation,
-										  camera.pose.orientation, reset, editable[selected]);
+		const float column = sideBySide ? ImGui::GetContentRegionAvail().x / 2 - ImGui::GetStyle().ItemSpacing.x
+										: ImGui::GetContentRegionAvail().x;
+		const auto model = selected == 0 ? OrbModel::Headset : selected < 3 ? OrbModel::Controller : OrbModel::Puck;
+		const auto result = RotationOrb("Rotation ball", m_arcballs[selected], pose.orientation, camera.pose.orientation,
+										reference, editable[selected], model, DeviceColor(selected), column);
 		ApplyResult(result, selected, pose);
 		if (!editable[selected])
 			ImGui::TextDisabled("Read only");
@@ -301,6 +328,17 @@ void SpatialEditor::DrawExpanded(Selection& selection, ImVec2 size)
 	const float scale = ImGui::GetFontSize() / 16;
 	DrawRig(selection, {size.x / scale, size.y / scale});
 }
+ShellRect SpatialEditor::RigViewRect() const
+{
+	return {m_view.minimum.x, m_view.minimum.y, m_view.size.x, m_view.size.y};
+}
+std::array<ShellRect, 7> SpatialEditor::RigDevicePoints() const
+{
+	std::array<ShellRect, 7> result{};
+	for (std::size_t device = 0; device < result.size(); ++device)
+		result[device] = {m_view.points[device].x, m_view.points[device].y, 0, 0};
+	return result;
+}
 void SpatialEditor::DrawSpaceToggle()
 {
 	if (IconButton("Gizmo space", m_view.gizmo.local ? Icon::Axes : Icon::Globe,
@@ -320,7 +358,8 @@ bool SpatialEditor::DrawPreview(Selection& selection, ImVec2 minimum, ImVec2 max
 	const int selected = SelectedDevice(selection);
 	SpatialEditResult gizmo;
 	ImGui::PushID(static_cast<int>(eye));
-	if (selected >= 0)
+	// The head gizmo would sit on the eye itself; the rig view owns it.
+	if (selected > 0)
 	{
 		gizmo = DrawPoseGizmo("Preview pose", m_previewGizmos[eye], camera, minimum, maximum, scene.devices[selected],
 							  editable[selected]);
@@ -341,6 +380,9 @@ bool SpatialEditor::DrawPreview(Selection& selection, ImVec2 minimum, ImVec2 max
 		for (int device = 1; device < 7; ++device)
 		{
 			if (!scene.available[device])
+				continue;
+			// Trackers show only when the app uses tracker interaction (guide §0.2).
+			if (device > 2 && (!m_observed->appTrackers || !m_observed->values.tracking.trackers[device - 3].connected))
 				continue;
 			const auto projected = ProjectPoint(camera, scene.devices[device].position);
 			ImVec2 position{minimum.x + projected.uv.x * (maximum.x - minimum.x),
@@ -407,7 +449,7 @@ bool SpatialEditor::DrawPreview(Selection& selection, ImVec2 minimum, ImVec2 max
 				draw->AddCircleFilled(position, radius, color);
 			if (device == selected)
 				draw->AddCircle(position, radius + 3 * scale, color, 32, 2 * scale);
-			const char label[2]{device == 1 ? 'L' : device == 2 ? 'R' : static_cast<char>('1' + device - 3), 0};
+			const char label[2]{scene.labels[device], 0};
 			draw->AddText({position.x - 4 * scale, position.y - 7 * scale}, theme::Ink, label);
 			ImGui::SetCursorScreenPos({position.x - radius, position.y - radius});
 			ImGui::PushID(device);
@@ -419,19 +461,19 @@ bool SpatialEditor::DrawPreview(Selection& selection, ImVec2 minimum, ImVec2 max
 			if (clicked)
 			{
 				SelectDevice(selection, device);
-				if (outside)
+				if (outside && device < 3)
 				{
-					if (device < 3)
-					{
-						m_rig.Preset(device - 1, HandPreset::Forward);
-						EditPose(device, m_rig.Hand(device - 1), true);
-					}
-					else
-						EditPose(device, Compose(m_rig.Root(), {{0, 0, 0, 1}, {0, m_rig.height - .15f, -.55f}}), true);
+					m_rig.Preset(device - 1, HandPreset::Forward);
+					EditPose(device, m_rig.Hand(device - 1), true);
 				}
 			}
 			if (markerHovered)
-				ImGui::SetTooltip("%s", outside ? "Bring forward" : "Select device");
+			{
+				if (device > 2)
+					ImGui::SetTooltip("%s tracker", TrackerRoleName(m_rig.TrackerDeviceAt(device - 3).role));
+				else
+					ImGui::SetTooltip("%s", outside ? "Bring forward" : "Select hand");
+			}
 			ImGui::PopID();
 		}
 	ImGui::SetCursorScreenPos({saved.x, saved.y - ImGui::GetStyle().ItemSpacing.y});

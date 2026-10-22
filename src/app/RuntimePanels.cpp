@@ -48,6 +48,7 @@ class RuntimePanels::Impl
 			m_devices.ClearHeldInputs();
 			m_devices.ResetObservations();
 			m_spatial.Reset();
+			m_undo.Clear();
 		}
 		if (m_session.Connected())
 		{
@@ -75,6 +76,8 @@ class RuntimePanels::Impl
 		view.rotationBall = m_spatial.RotationBallRect();
 		view.reachMap = m_spatial.ReachMapRect();
 		view.markers = m_spatial.MarkerRects();
+		view.rigView = m_spatial.RigViewRect();
+		view.rigDevices = m_spatial.RigDevicePoints();
 		if (view.notice.empty())
 			view.notice = m_lastNotice;
 		return view;
@@ -106,6 +109,13 @@ class RuntimePanels::Impl
 	}
 	void DrawPreview(ShellState& shell)
 	{
+		const auto& io = ImGui::GetIO();
+		if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false) && !io.WantTextInput &&
+			!m_pilot.Active() && !m_spatial.Active() && m_view.time.following && m_session.Setup())
+		{
+			if (auto undo = m_undo.Undo(*m_session.Setup(), m_session.Input().source))
+				m_session.SubmitEdit(*undo);
+		}
 		if (!m_preview.Draw(shell, m_view))
 			StopPilot();
 	}
@@ -128,6 +138,8 @@ class RuntimePanels::Impl
 				shell.openAppPicker = true;
 			return;
 		}
+		if (auto edit = m_devices.DrawHeader(shell.selection))
+			SubmitEdit(*edit);
 		m_spatial.DrawRigView(shell.selection);
 		m_devices.SetRigPiloting(m_pilot.Active() || m_spatial.Active());
 		if (!m_view.time.following)
@@ -143,10 +155,7 @@ class RuntimePanels::Impl
 			m_spatial.DrawPlacement(shell.selection);
 		};
 		if (auto edit = m_devices.Draw(m_session.SupportsEdits(), &shell.selection, placement))
-		{
-			StopPilot();
-			m_session.SubmitEdit(*edit);
-		}
+			SubmitEdit(*edit);
 		if (auto device = std::get_if<DeviceSel>(&shell.selection); device && device->page == DevicePage::Trackers)
 			device->slot = static_cast<unsigned>(m_devices.SelectedTracker());
 	}
@@ -203,6 +212,14 @@ class RuntimePanels::Impl
 			m_lastNotice = notices.back().title + (notices.back().detail.empty() ? "" : ": " + notices.back().detail);
 		return notices;
 	}
+	// Device page edits are undoable; Ctrl+Z restores the poses observed before them.
+	void SubmitEdit(const SimulationEdit& edit)
+	{
+		StopPilot();
+		if (const auto transaction = std::get_if<ManualTransaction>(&edit); transaction && m_session.Setup())
+			m_undo.Record(*m_session.Setup(), *transaction);
+		m_session.SubmitEdit(edit);
+	}
 	void StopPilot()
 	{
 		m_pilot.Stop(m_window, m_session.ManualInput(), true);
@@ -258,7 +275,8 @@ class RuntimePanels::Impl
 	PlayerRig m_playerRig;
 	PilotController m_pilot{m_playerRig};
 	DeviceControlPanel m_devices{m_playerRig};
-	SpatialEditor m_spatial{m_playerRig, m_session.ManualInput()};
+	UndoStack m_undo;
+	SpatialEditor m_spatial{m_playerRig, m_session.ManualInput(), m_undo};
 	DocumentTree m_documents{m_session};
 	FramePage m_frame{m_session, m_spatial, m_documents};
 	RangePage m_range{m_session};

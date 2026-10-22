@@ -9,7 +9,7 @@ namespace simxr::app
 class SpatialEditor
 {
   public:
-	SpatialEditor(PlayerRig& rig, ManualInputController& input);
+	SpatialEditor(PlayerRig& rig, ManualInputController& input, UndoStack& undo);
 	void Observe(const ManualInputSnapshot& snapshot, bool piloting);
 	void SetContext(bool editable, bool lookingBack, std::span<const FrameView> eyes,
 					const control::Message* historical, std::uint64_t historyIdentity);
@@ -33,6 +33,8 @@ class SpatialEditor
 	{
 		return m_markerRects;
 	}
+	ShellRect RigViewRect() const;
+	std::array<ShellRect, 7> RigDevicePoints() const;
 	bool Expanded() const
 	{
 		return m_view.expanded;
@@ -52,9 +54,11 @@ class SpatialEditor
 	SpatialScene LiveScene() const;
 	std::array<bool, 7> EditableDevices(const SpatialScene& scene) const;
 	void EditPose(int device, XrPosef pose, bool final);
+	void Submit(bool final);
 	void ApplyResult(const SpatialEditResult& result, int device, XrPosef pose);
 	PlayerRig& m_rig;
 	ManualInputController& m_input;
+	UndoStack& m_undo;
 	std::optional<ObservedSetup> m_observed;
 	std::optional<CommandSource> m_source;
 	std::optional<SpatialScene> m_historical;
