@@ -53,7 +53,7 @@ struct Instance
 			vkDestroyInstance(handle, nullptr);
 	}
 
-	void Create()
+	void Create(std::uint32_t apiVersion = VK_API_VERSION_1_1)
 	{
 		std::uint32_t count = 0;
 		Check(vkEnumerateInstanceLayerProperties(&count, nullptr), "enumerate instance layers");
@@ -74,7 +74,7 @@ struct Instance
 		const char* extensionName = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
 		VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
 		application.pApplicationName = "SimXR Vulkan sharing proof";
-		application.apiVersion = VK_API_VERSION_1_1;
+		application.apiVersion = apiVersion;
 		VkDebugUtilsMessengerCreateInfoEXT debug{VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
 		debug.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
 		debug.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT;
@@ -86,7 +86,7 @@ struct Instance
 		info.enabledExtensionCount = debugUtils ? 1 : 0;
 		info.ppEnabledExtensionNames = &extensionName;
 		info.pNext = debugUtils ? &debug : nullptr;
-		Check(vkCreateInstance(&info, nullptr, &handle), "create Vulkan 1.1 instance");
+		Check(vkCreateInstance(&info, nullptr, &handle), "create Vulkan probe instance");
 		if (debugUtils)
 		{
 			auto create = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(

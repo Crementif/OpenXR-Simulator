@@ -733,8 +733,16 @@ VulkanExternalCapabilities VulkanExternalDevice::QueryTimeline(VkPhysicalDevice 
 	VulkanExternalCapabilities result;
 	if (!physical || api < VK_API_VERSION_1_1)
 		return result;
+	VkPhysicalDeviceProperties properties;
+	vkGetPhysicalDeviceProperties(physical, &properties);
+	if (properties.apiVersion < VK_API_VERSION_1_1)
+	{
+		result.result = VK_ERROR_FEATURE_NOT_PRESENT;
+		return result;
+	}
 	constexpr std::array names{VulkanExternalSemaphoreExtension, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME};
-	result.result = PhysicalExtensions(physical, names);
+	const bool coreTimeline = api >= VK_API_VERSION_1_2 && properties.apiVersion >= VK_API_VERSION_1_2;
+	result.result = PhysicalExtensions(physical, std::span(names).first(coreTimeline ? 1 : names.size()));
 	if (result.result != VK_SUCCESS)
 		return result;
 	VkPhysicalDeviceTimelineSemaphoreFeatures timeline{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};

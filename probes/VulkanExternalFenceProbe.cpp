@@ -54,7 +54,7 @@ struct Device
 	bool timeline = false;
 	std::shared_ptr<VulkanDevice> device;
 	Device(VkInstance instance, VkPhysicalDevice physical, std::uint32_t family,
-		   std::span<const char* const> extensions, bool controlledGate = false)
+		   std::span<const char* const> extensions, bool controlledGate = false, bool coreTimeline = false)
 	{
 		const float priority = 1;
 		std::vector<const char*> enabled(extensions.begin(), extensions.end());
@@ -68,13 +68,17 @@ struct Device
 			std::vector<VkExtensionProperties> names(count);
 			Check(vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, names.data()),
 				  "query timeline gate extension");
-			if (std::any_of(names.begin(), names.end(), [](const auto& name)
-							{ return std::strcmp(name.extensionName, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME) == 0; }))
+			if (coreTimeline || std::any_of(names.begin(), names.end(),
+											[](const auto& name)
+											{
+												return std::strcmp(name.extensionName,
+																   VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME) == 0;
+											}))
 			{
 				VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &timelineFeatures};
 				vkGetPhysicalDeviceFeatures2(physical, &features);
 				timeline = timelineFeatures.timelineSemaphore;
-				if (timeline)
+				if (timeline && !coreTimeline)
 					enabled.push_back(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
 			}
 		}
@@ -272,19 +276,21 @@ void ExerciseMemoryAndSemaphore(VulkanExternalDevice& exporter, VulkanExternalDe
 		std::_Exit(1);
 	std::puts("PASS dedicated image import and two-device binary semaphore signal/wait");
 }
-bool ExerciseTimeline(VkInstance instance, VkPhysicalDevice physical, std::uint32_t family)
+bool ExerciseTimeline(VkInstance instance, VkPhysicalDevice physical, std::uint32_t family, std::uint32_t api)
 {
-	const auto caps = VulkanExternalDevice::QueryTimeline(physical, VK_API_VERSION_1_1);
+	const auto caps = VulkanExternalDevice::QueryTimeline(physical, api);
 	if (!caps.CanImportSemaphore() || !caps.CanExportSemaphore())
 		return false;
-	constexpr std::array extensions{VulkanExternalMemoryExtension, VulkanExternalSemaphoreExtension,
-									VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME};
-	Device consumer(instance, physical, family, SharingExtensions, true);
-	Device observer(instance, physical, family, SharingExtensions, true);
+	const bool coreTimeline = api >= VK_API_VERSION_1_2;
+	constexpr std::array names{VulkanExternalMemoryExtension, VulkanExternalSemaphoreExtension,
+							   VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME};
+	const auto extensions = std::span(names).first(coreTimeline ? 2 : names.size());
+	Device consumer(instance, physical, family, SharingExtensions, true, coreTimeline);
+	Device observer(instance, physical, family, SharingExtensions, true, coreTimeline);
 	Require(consumer.timeline && observer.timeline, "Timeline capability must enable device feature");
-	VulkanExternalDevice exporter(consumer.device, extensions, VK_API_VERSION_1_1, true);
-	VulkanExternalDevice importer(observer.device, extensions, VK_API_VERSION_1_1, true);
-	VulkanExternalDevice disabled(observer.device, extensions, VK_API_VERSION_1_1);
+	VulkanExternalDevice exporter(consumer.device, extensions, api, true);
+	VulkanExternalDevice importer(observer.device, extensions, api, true);
+	VulkanExternalDevice disabled(observer.device, extensions, api);
 	Rejected(
 		[&]
 		{
@@ -334,8 +340,8 @@ bool ExerciseTimeline(VkInstance instance, VkPhysicalDevice physical, std::uint3
 	bool stayedPending = true;
 	for (int poll = 0; poll < 100; ++poll)
 		stayedPending &= imported->PollCompletion() == CompletionStatus::Pending;
-	auto release =
-		reinterpret_cast<PFN_vkSignalSemaphoreKHR>(vkGetDeviceProcAddr(consumer.native, "vkSignalSemaphoreKHR"));
+	auto release = reinterpret_cast<PFN_vkSignalSemaphoreKHR>(
+		vkGetDeviceProcAddr(consumer.native, coreTimeline ? "vkSignalSemaphore" : "vkSignalSemaphoreKHR"));
 	VkSemaphoreSignalInfo releaseGate{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO};
 	releaseGate.semaphore = gate;
 	releaseGate.value = 1;
@@ -434,13 +440,17 @@ void Exercise(VkInstance instance, VkPhysicalDevice physical, std::uint32_t fami
 		"optional disabled path; no pixels/readback, observer queue submissions=0\n");
 }
 } // namespace
-int main()
+int main(int argc, char** argv)
 {
+	const bool coreTimeline = argc == 2 && std::strcmp(argv[1], "--core-timeline") == 0;
+	if (argc > 1 && !coreTimeline)
+		return 2;
+	const auto api = coreTimeline ? VK_API_VERSION_1_2 : VK_API_VERSION_1_1;
 	try
 	{
 		{
 			simxr::probe::Instance instance;
-			instance.Create();
+			instance.Create(api);
 			std::uint32_t count = 0;
 			Check(vkEnumeratePhysicalDevices(instance.handle, &count, nullptr), "enumerate fence adapters");
 			std::vector<VkPhysicalDevice> adapters(count);
@@ -450,6 +460,8 @@ int main()
 			{
 				VkPhysicalDeviceProperties properties;
 				vkGetPhysicalDeviceProperties(physical, &properties);
+				if (properties.apiVersion < api)
+					continue;
 				Require(!VulkanExternalDevice::QueryFence(VK_NULL_HANDLE, VK_API_VERSION_1_1).CanExport() &&
 							!VulkanExternalDevice::QueryFence(physical, VK_API_VERSION_1_0).CanImport(),
 						"External fence query accepted absent device or unsupported API");
@@ -479,7 +491,7 @@ int main()
 							ExerciseMemoryAndSemaphore(exporter, importer);
 							sharedResources = true;
 						}
-						exercised |= ExerciseTimeline(instance.handle, physical, family);
+						exercised |= ExerciseTimeline(instance.handle, physical, family, api);
 						if (capabilities.CanImport() && capabilities.CanExport())
 						{
 							Exercise(instance.handle, physical, family);
