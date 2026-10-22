@@ -130,9 +130,7 @@ control::Message RigRuntime::Call(control::OpCode opcode, Fields fields)
 {
 	m_progress.Check();
 	const auto now = std::chrono::steady_clock::now();
-	const bool sessionOperation = opcode == control::OpCode::Status || opcode == control::OpCode::Submit ||
-		opcode == control::OpCode::Operation || opcode == control::OpCode::SimulationStatus;
-	if (m_lease && sessionOperation && now >= m_nextRenew)
+	if (m_lease && now >= m_nextRenew)
 	{
 		auto renewal = Session();
 		renewal.push_back(control::Field::U64(tag::Lease, m_lease, true));

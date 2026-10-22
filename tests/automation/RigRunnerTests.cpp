@@ -160,27 +160,30 @@ assert(not pcall(function() simxr.read_input_recording(0, 17) end))
 
 void CheckLeaseRenewal()
 {
-	Fixture fixture;
-	DebugControllerConfig config;
-	config.leaseDuration = std::chrono::milliseconds{1500};
-	const auto controller = fixture.runtime.Debugger(fixture.session, config);
-	Require(controller != nullptr, "Lease fixture debugger unavailable");
-	unsigned renewals = 0;
-	automation::RigRunner runner(
-		[&](auto opcode, auto fields)
-		{
-			if (opcode == wire::OpCode::Renew)
-				++renewals;
-			if (opcode == wire::OpCode::SimulationStatus)
-				std::this_thread::sleep_for(std::chrono::milliseconds{40});
-			return fixture.Exchange(opcode, std::move(fields));
-		});
-	auto options = fixture.Options("simxr.pause() for i = 1, 55 do simxr.state() end simxr.resume()");
-	options.deadline = std::chrono::seconds{6};
-	runner.Start(std::move(options));
-	runner.Join();
-	Require(runner.Snapshot().phase == automation::RigPhase::Complete && renewals >= 2,
-		"Active rig lost its lease during status polling");
+	for (const auto binding : {"state", "game_state"})
+	{
+		Fixture fixture;
+		DebugControllerConfig config;
+		config.leaseDuration = std::chrono::milliseconds{1500};
+		const auto controller = fixture.runtime.Debugger(fixture.session, config);
+		Require(controller != nullptr, "Lease fixture debugger unavailable");
+		unsigned renewals = 0;
+		automation::RigRunner runner(
+			[&](auto opcode, auto fields)
+			{
+				if (opcode == wire::OpCode::Renew)
+					++renewals;
+				if (opcode == wire::OpCode::SimulationStatus || opcode == wire::OpCode::GameStatus)
+					std::this_thread::sleep_for(std::chrono::milliseconds{40});
+				return fixture.Exchange(opcode, std::move(fields));
+			});
+		auto options = fixture.Options("simxr.pause() for i = 1, 55 do simxr." + std::string(binding) + "() end simxr.resume()");
+		options.deadline = std::chrono::seconds{6};
+		runner.Start(std::move(options));
+		runner.Join();
+		Require(runner.Snapshot().phase == automation::RigPhase::Complete && renewals >= 2,
+			"Active rig lost its lease during status polling");
+	}
 }
 
 void CheckTemporaryResourceCleanup()

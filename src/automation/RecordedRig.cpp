@@ -171,7 +171,12 @@ std::string Format(const SetBodyControls& command)
 	Table table("body");
 	const auto& body = command.value;
 	table.Boolean("active", body.active);
-	if (body.rootPose) { Table root; root.Pose(*body.rootPose); table.Raw("root_pose", root.Finish()); }
+	if (body.rootPose)
+	{
+		Table root;
+		root.Pose(*body.rootPose);
+		table.Raw("root_pose", root.Finish());
+	}
 	table.Float("confidence", body.confidence);
 	table.Integer("preset", static_cast<std::uint32_t>(body.preset));
 	std::string controls = "{";
