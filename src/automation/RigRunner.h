@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,7 @@ struct RigSnapshot
 	std::string error;
 	std::vector<RigCheckpoint> checkpoints;
 	std::vector<std::string> output;
+	std::optional<std::vector<std::string>> compatibilityDeviations;
 };
 struct RigOptions
 {

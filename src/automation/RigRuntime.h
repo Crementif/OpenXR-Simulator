@@ -64,6 +64,7 @@ class RigRuntime
 	RigRuntime& operator=(const RigRuntime&) = delete;
 	void Configure(control::ControlSessionId session, std::uint64_t generation);
 	std::string Cleanup();
+	void ObserveCompatibility();
 	std::uint64_t Schedule(CommandTarget target, CommandLatePolicy policy, std::vector<SimulationCommand> commands);
 	std::vector<std::byte> AwaitTransaction(std::uint64_t transaction);
 	void PauseApplication();

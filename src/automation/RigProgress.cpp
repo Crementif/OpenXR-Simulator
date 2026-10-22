@@ -78,6 +78,11 @@ bool RigProgress::Cancelled() const
 {
 	return m_cancelled.load();
 }
+void RigProgress::SetCompatibility(std::optional<std::vector<std::string>> deviations)
+{
+	std::lock_guard lock(m_mutex);
+	m_result.compatibilityDeviations = std::move(deviations);
+}
 void RigProgress::TransactionScheduled()
 {
 	std::lock_guard lock(m_mutex);

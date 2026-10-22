@@ -23,6 +23,7 @@ struct RigRunner::Impl
 		std::string error;
 		try
 		{
+			m_runtime.ObserveCompatibility();
 			ScriptEngine engine{m_runtime, m_progress, m_options};
 			engine.Execute();
 		}

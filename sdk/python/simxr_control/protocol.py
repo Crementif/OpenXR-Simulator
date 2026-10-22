@@ -204,6 +204,7 @@ class Tag(IntEnum):
     SEQUENCE_ID = 182
     LOOP = 183
     IMAGE_TICK = 184
+    COMPATIBILITY_DEVIATIONS = 199
     PRESENTATION_POLICY = 185
     REPROJECTED = 186
     REPROJECTION_RESULT = 187
@@ -450,6 +451,15 @@ def to_dict(fields):
             value = field.value
         elif tag in (Tag.DOCUMENT, Tag.DISPLAY_HEAD):
             value = decode_inspection(field.value)
+        elif tag == Tag.COMPATIBILITY_DEVIATIONS:
+            if len(field.value) > 8192:
+                raise ProtocolError('Compatibility list exceeds limit')
+            entries = decode_fields(field.value)
+            if len(entries) > 32 or tuple(entries) != tuple(range(1, len(entries) + 1)):
+                raise ProtocolError('Invalid compatibility list')
+            value = [entry.as_text() for entry in entries.values()]
+            if any(not name or len(name.encode('utf-8')) > 128 for name in value):
+                raise ProtocolError('Invalid compatibility name')
         elif tag in _TEXT:
             value = field.as_text()
         elif tag in _BOOL:

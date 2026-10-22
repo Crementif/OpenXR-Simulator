@@ -477,10 +477,31 @@ DebugRequest DecodeDebugRequest(const Message& request)
 		command.capture = {RequireU64(request, tag::CaptureId)};
 	return command;
 }
+std::optional<std::vector<std::string>> DecodeCompatibilityDeviations(const Message& status)
+{
+	const auto* field = status.Find(tag::CompatibilityDeviations);
+	if (!field || field->value.size() > 8192)
+		return {};
+	const auto decoded = DecodeFields(field->value);
+	if (decoded.error != DecodeError::None || decoded.fields.size() > 32)
+		return {};
+	std::vector<std::string> names;
+	for (const auto& entry : decoded.fields)
+	{
+		const auto name = entry.AsText();
+		if (entry.tag != names.size() + 1 || !name || name->empty() || name->size() > 128)
+			return {};
+		names.emplace_back(*name);
+	}
+	return names;
+}
+
 void EncodeDebuggerStatus(Message& response, const DebugControllerSnapshot& status, const SessionSnapshot& state,
 						  const PresentationSnapshot& display, std::uint64_t capabilities)
 {
 	response.fields.push_back(Field::U64(tag::Capabilities, capabilities));
+	// No API compatibility deviations are currently supported. Missing is unknown, not none.
+	response.fields.push_back(Field::Bytes(tag::CompatibilityDeviations, {}));
 	response.fields.push_back(Field::U32(tag::SnapshotBudgetMiB, SnapshotBudget::MiB()));
 	response.fields.push_back(Field::U64(tag::SnapshotImageBytes, SnapshotBudget::ImageBytes()));
 	response.fields.push_back(Field::I64(tag::State, state.state));

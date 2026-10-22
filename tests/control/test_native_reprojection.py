@@ -81,6 +81,7 @@ def run(probe, policy):
             with Client(data / f'control.{host.pid}.sock') as client:
                 session, = client.sessions()
                 status = client.status(session)
+                require(status['compatibility_deviations'] == [], status)
                 require(status['capabilities'] & Capability.ROTATIONAL_REPROJECTION, status)
                 require(not client.hello['capabilities'] & Capability.ROTATIONAL_REPROJECTION,
                         'Session-specific support must not be promised by Hello')

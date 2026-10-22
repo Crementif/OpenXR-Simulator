@@ -101,7 +101,21 @@ std::string SerializeRigJson(const RigSnapshot& result)
 			out << ',';
 		out << '"' << Escape(result.output[i]) << '"';
 	}
-	out << "]}";
+	out << "],\"compatibility_deviations\":";
+	if (!result.compatibilityDeviations)
+		out << "null";
+	else
+	{
+		out << '[';
+		for (std::size_t i = 0; i < result.compatibilityDeviations->size(); ++i)
+		{
+			if (i)
+				out << ',';
+			out << '"' << Escape((*result.compatibilityDeviations)[i]) << '"';
+		}
+		out << ']';
+	}
+	out << '}';
 	return out.str();
 }
 std::string SerializeRigJunit(const RigSnapshot& result)
@@ -115,6 +129,15 @@ std::string SerializeRigJunit(const RigSnapshot& result)
 	std::ostringstream out;
 	out << "<?xml version=\"1.0\" encoding=\"UTF-8\"?><testsuite name=\"simxr-rig\" tests=\""
 		<< result.checkpoints.size() + 1 << "\" failures=\"" << failures + (executionFailure ? 1 : 0) << "\">";
+	out << "<properties><property name=\"compatibility_deviations\" value=\"";
+	if (!result.compatibilityDeviations)
+		out << "unknown";
+	else if (result.compatibilityDeviations->empty())
+		out << "none";
+	else
+		for (std::size_t i = 0; i < result.compatibilityDeviations->size(); ++i)
+			out << (i ? "," : "") << Escape((*result.compatibilityDeviations)[i], true);
+	out << "\"/></properties>";
 	for (const auto& checkpoint : result.checkpoints)
 	{
 		out << "<testcase name=\"" << Escape(checkpoint.name, true) << "\">";

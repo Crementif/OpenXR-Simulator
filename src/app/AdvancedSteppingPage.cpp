@@ -1,6 +1,7 @@
 #include "app/AdvancedSteppingPage.h"
 #include "app/DeviceControlPanel.h"
 #include "app/RuntimeSession.h"
+#include "control/DebugProtocol.h"
 
 #include <algorithm>
 #include <imgui.h>
@@ -56,6 +57,12 @@ void AdvancedSteppingPage::Draw()
 	else
 		ImGui::Text("Admission: %s; controller: %s", debugger.Manual() ? "manual" : "automatic",
 					debugger.HasLease() ? "this connection" : "observer");
+	const auto deviations = wire::DecodeCompatibilityDeviations(status);
+	ImGui::Text("Compatibility deviations: %s", !deviations ? "Unknown" : deviations->empty() ? "None" : "Active");
+	ImGui::SetItemTooltip("Named API exceptions reported by the runtime; execution mode is separate");
+	if (deviations)
+		for (const auto& name : *deviations)
+			ImGui::BulletText("%s", name.c_str());
 	const auto pipeline = Nested(status.Find(tag::Pipeline));
 	if (!selected.id && status.Find(tag::Pipeline))
 		ImGui::TextUnformatted("Last observed pipeline:");

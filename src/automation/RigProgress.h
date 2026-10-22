@@ -22,6 +22,7 @@ class RigProgress
 	void Check(bool bindingBoundary = false);
 	void Finish(RigPhase phase, std::string error);
 	bool Cancelled() const;
+	void SetCompatibility(std::optional<std::vector<std::string>> deviations);
 	void TransactionScheduled();
 	void CaptureRetained();
 	void Checkpoint(RigCheckpoint checkpoint);

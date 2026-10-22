@@ -1,6 +1,7 @@
 #include "automation/RigRuntime.h"
 #include "automation/RigProgress.h"
 #include "control/ControlSchema.h"
+#include "control/DebugProtocol.h"
 #include "control/SimulationControl.h"
 
 #include <algorithm>
@@ -109,6 +110,10 @@ void RigRuntime::Configure(control::ControlSessionId session, std::uint64_t gene
 	m_lease = 0;
 	m_nextRenew = {};
 	m_captures.clear();
+}
+void RigRuntime::ObserveCompatibility()
+{
+	m_progress.SetCompatibility(control::DecodeCompatibilityDeviations(Call(control::OpCode::Status, Session())));
 }
 RigRuntime::Fields RigRuntime::Session() const
 {

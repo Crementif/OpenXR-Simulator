@@ -8,6 +8,7 @@
 #include "control/SimulationControl.h"
 #include "runtime/Runtime.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <iostream>
@@ -217,6 +218,7 @@ void CheckTemporaryResourceCleanup()
 				case wire::OpCode::ReleaseInspection:
 					++releasedInspections;
 					break;
+				case wire::OpCode::Status:
 				case wire::OpCode::ReleaseControl:
 					break;
 				default:
@@ -282,7 +284,8 @@ void CheckImageWindowCleanup()
 			else if (opcode == wire::OpCode::ReleaseExport)
 				++releasedExports;
 			else
-				Require(opcode == wire::OpCode::ReleaseControl, "Unexpected window cleanup operation");
+				Require(opcode == wire::OpCode::ReleaseControl || opcode == wire::OpCode::Status,
+						"Unexpected window cleanup operation");
 			return response;
 		});
 		automation::RigOptions options;
@@ -411,10 +414,28 @@ void CheckEditableCommands()
 				"Editable command table changed semantic command data");
 }
 
+void CheckUnreportedCompatibility()
+{
+	Fixture fixture;
+	automation::RigRunner runner([&](auto opcode, auto fields)
+	{
+		auto response = fixture.Exchange(opcode, std::move(fields));
+		std::erase_if(response.fields, [](const auto& field) { return field.tag == wire::tag::CompatibilityDeviations; });
+		return response;
+	});
+	runner.Start(fixture.Options("simxr.checkpoint('older runtime', true)"));
+	runner.Join();
+	Require(runner.Snapshot().phase == automation::RigPhase::Complete &&
+			runner.JsonReport().find("\"compatibility_deviations\":null") != std::string::npos &&
+			runner.JunitReport().find("value=\"unknown\"") != std::string::npos,
+			"Older runtime was falsely reported as having no deviations");
+}
+
 int main()
 {
 	try
 	{
+		CheckUnreportedCompatibility();
 		Fixture fixture;
 		automation::RigRunner runner(
 			[&](auto opcode, auto fields)
@@ -439,7 +460,9 @@ print("seed", simxr.seed)
 		Require(runner.Snapshot().transactions == 1 && runner.Snapshot().checkpoints.size() == 2,
 				"Actual Luau bindings/checkpoints did not run");
 		Require(runner.JsonReport().find("\"seed\":\"73\"") != std::string::npos &&
-					runner.JunitReport().find("failures=\"0\"") != std::string::npos,
+					runner.JunitReport().find("failures=\"0\"") != std::string::npos &&
+					runner.JsonReport().find("\"compatibility_deviations\":[]") != std::string::npos &&
+					runner.JunitReport().find("name=\"compatibility_deviations\" value=\"none\"") != std::string::npos,
 				"Run reports");
 		const auto applied = fixture.session->Commands().At(FrameId{1});
 		Require(applied && applied->configuration.tracking.head.pose.position.x == 1 &&
