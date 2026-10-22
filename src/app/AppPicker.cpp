@@ -84,7 +84,7 @@ AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const Runtime
 		const bool connected = view.connected && app.endpoint == view.endpoint;
 		ImGui::AlignTextToFramePadding();
 		ImGui::TextUnformatted(app.name.c_str());
-		ImGui::SetItemTooltip("%s", app.endpoint.c_str());
+		ImGui::SetItemTooltip("%s%s%s", app.executable.c_str(), app.executable.empty() ? "" : "\n", app.endpoint.c_str());
 		ImGui::SameLine();
 		std::string detail = app.process ? "PID " + std::to_string(app.process) : std::string{};
 		if (app.started)

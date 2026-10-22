@@ -15,6 +15,7 @@ struct RunningApp
 {
 	std::string endpoint;
 	std::string name;
+	std::string executable;
 	std::uint64_t process = 0;
 	std::optional<std::chrono::system_clock::time_point> started;
 };

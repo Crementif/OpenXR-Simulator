@@ -39,6 +39,64 @@ std::string BaseName(std::string_view path)
 	const auto slash = path.find_last_of("/\\");
 	return std::string(slash == std::string_view::npos ? path : path.substr(slash + 1));
 }
+#ifdef _WIN32
+bool ProbePipe(const std::string& endpoint, std::chrono::milliseconds timeout, std::uint64_t& process)
+{
+	std::wstring path;
+	try
+	{
+		path = LocalPipePath(endpoint);
+	}
+	catch (const std::invalid_argument&)
+	{
+		return false;
+	}
+	const auto connect = [&]
+	{
+		return CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+						   FILE_FLAG_OVERLAPPED, nullptr);
+	};
+	windows::Handle pipe(connect());
+	if (pipe.Get() == INVALID_HANDLE_VALUE && GetLastError() == ERROR_PIPE_BUSY)
+	{
+		const auto wait = static_cast<DWORD>(std::clamp<std::int64_t>(timeout.count(), 1, 2000));
+		if (!WaitNamedPipeW(path.c_str(), wait))
+			return false;
+		pipe = windows::Handle(connect());
+	}
+	if (pipe.Get() == INVALID_HANDLE_VALUE)
+		return false;
+	ULONG server = 0;
+	if (GetNamedPipeServerProcessId(pipe.Get(), &server))
+		process = server;
+	return true;
+}
+void ProcessDetails(RunningApp& app)
+{
+	if (!app.process || app.process > MAXDWORD)
+		return;
+	windows::Handle process(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(app.process)));
+	if (!process.Get())
+		return;
+	std::wstring path(32768, L'\0');
+	DWORD size = static_cast<DWORD>(path.size());
+	if (QueryFullProcessImageNameW(process.Get(), 0, path.data(), &size))
+	{
+		app.executable = windows::Utf8(std::wstring_view(path.data(), size));
+		app.name = BaseName(app.executable);
+	}
+	FILETIME created{}, exited{}, kernel{}, user{};
+	if (GetProcessTimes(process.Get(), &created, &exited, &kernel, &user))
+	{
+		const auto ticks = (std::uint64_t(created.dwHighDateTime) << 32) | created.dwLowDateTime;
+		constexpr std::uint64_t UnixEpoch = 116444736000000000ULL;
+		if (ticks >= UnixEpoch)
+			app.started = std::chrono::system_clock::time_point{
+				std::chrono::duration_cast<std::chrono::system_clock::duration>(
+					std::chrono::duration<std::int64_t, std::ratio<1, 10000000>>(ticks - UnixEpoch))};
+	}
+}
+#endif
 #ifdef __linux__
 std::string ReadFile(const std::string& path)
 {
@@ -139,6 +197,11 @@ std::vector<RunningApp> DiscoverRunningApps(std::chrono::milliseconds timeout)
 	{
 		RunningApp app;
 		app.process = EndpointProcess(endpoint);
+#ifdef _WIN32
+		if (!ProbePipe(endpoint, timeout, app.process))
+			continue;
+		ProcessDetails(app);
+#endif
 #ifdef __linux__
 		std::error_code error;
 		if (app.process && !std::filesystem::exists("/proc/" + std::to_string(app.process), error))
@@ -148,6 +211,7 @@ std::vector<RunningApp> DiscoverRunningApps(std::chrono::milliseconds timeout)
 		if (app.process)
 		{
 			app.name = ProcessName(app.process);
+			app.executable = Link("/proc/" + std::to_string(app.process) + "/exe");
 			app.started = ProcessStart(app.process);
 		}
 #endif
