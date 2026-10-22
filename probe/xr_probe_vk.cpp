@@ -10,14 +10,16 @@
 // else is caught here rather than in a corrupted frame.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
-#include <windows.h>
-#include <unknwn.h>   // XR_USE_PLATFORM_WIN32 exposes extensions declared in terms of IUnknown
+#include <array>
+#include <charconv>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <cmath>
-#include <vector>
 #include <string>
-#include <array>
+#include <string_view>
+#include <unknwn.h> // XR_USE_PLATFORM_WIN32 exposes extensions declared in terms of IUnknown
+#include <vector>
+#include <windows.h>
 
 #define VK_USE_PLATFORM_WIN32_KHR
 #include <vulkan/vulkan.h>
@@ -111,13 +113,62 @@ struct Chain {
     uint32_t idx = 0;
 };
 
-int main() {
-    // Unbuffered: a probe that stalls has to have already told you how far it got.
-    setvbuf(stdout, nullptr, _IONBF, 0);
-    const bool enable1 = EnvOn("XR_PROBE_VK_ENABLE1");
-    printf("== extension path: %s\n", enable1 ? "XR_KHR_vulkan_enable (v1)" : "XR_KHR_vulkan_enable2");
+int main(int argc, char** argv)
+{
+	// Unbuffered: a probe that stalls has to have already told you how far it got.
+	setvbuf(stdout, nullptr, _IONBF, 0);
+	bool enable1 = EnvOn("XR_PROBE_VK_ENABLE1");
+	bool subRect = EnvOn("XR_PROBE_SUBRECT");
+	bool projectionOnly = EnvOn("XR_PROBE_PROJECTION_ONLY");
+	bool retainInspection = false;
+	int totalFrames = 30;
+	int sleepMs = 0;
+	if (const char* value = getenv("XR_PROBE_FRAMES"))
+		if (const int parsed = atoi(value); parsed > 0)
+			totalFrames = parsed;
+	if (const char* value = getenv("XR_PROBE_SLEEP_MS"))
+		if (const int parsed = atoi(value); parsed >= 0)
+			sleepMs = parsed;
+	constexpr const char* usage = "Usage: xr_probe_vk [--vulkan1|--vulkan2] [--frames N] [--sleep-ms N] "
+								  "[--projection-only] [--subrect] [--retain-inspection]\n";
+	for (int index = 1; index < argc; ++index)
+	{
+		const std::string_view option = argv[index];
+		if (option == "--help")
+		{
+			std::fputs(usage, stdout);
+			return 0;
+		}
+		if (option == "--vulkan1" || option == "--vulkan2")
+			enable1 = option == "--vulkan1";
+		else if (option == "--projection-only")
+			projectionOnly = true;
+		else if (option == "--subrect")
+			subRect = true;
+		else if (option == "--retain-inspection")
+			retainInspection = true;
+		else if ((option == "--frames" || option == "--sleep-ms") && index + 1 < argc)
+		{
+			const std::string_view number = argv[++index];
+			int value = 0;
+			const auto parsed = std::from_chars(number.data(), number.data() + number.size(), value);
+			if (parsed.ec != std::errc{} || parsed.ptr != number.data() + number.size() ||
+				value < (option == "--frames" ? 1 : 0))
+			{
+				std::fputs(usage, stderr);
+				return 2;
+			}
+			(option == "--frames" ? totalFrames : sleepMs) = value;
+		}
+		else
+		{
+			std::fputs(usage, stderr);
+			return 2;
+		}
+	}
+	printf("== extension path: %s\n", enable1 ? "XR_KHR_vulkan_enable (v1)" : "XR_KHR_vulkan_enable2");
 
-    step("xrEnumerateInstanceExtensionProperties");
+	step("xrEnumerateInstanceExtensionProperties");
     uint32_t extCount = 0;
     XRC(xrEnumerateInstanceExtensionProperties(nullptr, 0, &extCount, nullptr), "enumerate extension count");
     std::vector<XrExtensionProperties> exts(extCount, { XR_TYPE_EXTENSION_PROPERTIES });
@@ -465,7 +516,6 @@ int main() {
                                : haveColorBgraSrgb ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
     const VkFormat depthFormat = haveD32 ? VK_FORMAT_D32_SFLOAT : VK_FORMAT_D24_UNORM_S8_UINT;
 
-    const bool subRect = EnvOn("XR_PROBE_SUBRECT");
     const uint32_t W = subRect ? 2048u : 1440u;
     const uint32_t H = subRect ? 2048u : 1584u;
     const XrRect2Di viewRect = subRect ? XrRect2Di{ {64, 128}, {1920, 1080} }
@@ -591,17 +641,6 @@ int main() {
     }
     if (!began) { printf("  [FAIL] runtime never delivered SESSION_STATE_READY\n"); return 1; }
 
-    int totalFrames = 30;
-    if (const char* env = getenv("XR_PROBE_FRAMES")) {
-        int parsed = atoi(env);
-        if (parsed > 0) totalFrames = parsed;
-    }
-    // For an observer watching a long run from outside: XR_PROBE_SLEEP_MS paces the loop to
-    // something a screenshot can keep up with, and XR_PROBE_PROJECTION_ONLY drops the
-    // quad-only phase so every frame carries stereo content for validate_stereo to look at.
-    int sleepMs = 0;
-    if (const char* env = getenv("XR_PROBE_SLEEP_MS")) sleepMs = atoi(env);
-    const bool projectionOnly = EnvOn("XR_PROBE_PROJECTION_ONLY");
     char stepLabel[160];
     snprintf(stepLabel, sizeof(stepLabel), "frame loop x %d (render into every acquired image, no barriers of our own)", totalFrames);
     step(stepLabel);
@@ -844,9 +883,10 @@ int main() {
     }
     for (XrSpace s : { headSpace, stageSpace }) if (s) xrDestroySpace(s);
     XRC_SOFT(xrDestroySession(session), "xrDestroySession");
-    XRC_SOFT(xrDestroyInstance(g_instance), "xrDestroyInstance");
+	if (!retainInspection)
+		XRC_SOFT(xrDestroyInstance(g_instance), "xrDestroyInstance");
 
-    printf("       destroying Vulkan objects\n");
+	printf("       destroying Vulkan objects\n");
     vkDestroyCommandPool(device, cmdPool, nullptr);
     vkDestroyDevice(device, nullptr);
     if (messenger) {
@@ -855,7 +895,13 @@ int main() {
     }
     vkDestroyInstance(vkInstance, nullptr);
     ok("Vulkan teardown");
+	if (retainInspection)
+	{
+		std::puts("READY application graphics destroyed; retained inspection available. Press Enter to close.");
+		(void)std::getchar();
+		XRC_SOFT(xrDestroyInstance(g_instance), "xrDestroyInstance after retained inspection");
+	}
 
-    printf("\n================ %d failure(s), %d warning(s) ================\n", g_fail, g_warn);
+	printf("\n================ %d failure(s), %d warning(s) ================\n", g_fail, g_warn);
     return g_fail ? 1 : 0;
 }
