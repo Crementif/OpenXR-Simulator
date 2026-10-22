@@ -2258,6 +2258,9 @@ void CheckShell(Interaction& test, const char* qa)
 			const auto* preview = FindPanel("GPU preview");
 			const auto* area = FindPanel("Image area");
 			Require(preview && area, "Preview image missing during the width sweep");
+			const auto* timeline = FindPanel("Timeline");
+			Require(timeline && timeline->ContentSize.x <= timeline->Size.x + 1,
+					"Timeline transport overflows during the width sweep");
 			Require(area->ContentSize.x <= area->Size.x + 1 && area->Pos.x + area->Size.x <= preview->Pos.x + preview->Size.x + 1,
 					("Image overflows its region at width " + std::to_string(width)).c_str());
 			if (width == 640 || width == 1040)
@@ -2549,11 +2552,14 @@ void CheckLibrary(Interaction& test, const std::filesystem::path& directory)
 	Eventually([&] { pump(1); return test.runtime.Snapshot().time.following && !test.runtime.Snapshot().manual; },
 			   "Library check did not start live");
 	Eventually([&] { pump(1); return !test.runtime.Snapshot().recordingBusy; }, "Recorder did not finish its first read");
-	ImGui::ActivateItemByID(FindPanel("Top bar")->GetID("Rec"));
+	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Rec"));
 	Eventually([&] { pump(1); return test.runtime.Snapshot().recording; }, "Rec did not start recording");
 	DrivePilotPulses(test);
 	Require(test.runtime.Snapshot().recordedChanges > 0, "Piloting recorded no input");
-	ImGui::ActivateItemByID(FindPanel("Top bar")->GetID("Stop recording"));
+	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Fold timeline"));
+	pump(3);
+	screenshot("timeline-recording-folded.bmp");
+	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Stop recording"));
 	const auto popover = FindPanel("Top bar")->GetID("Save take");
 	Eventually([&] { pump(1); return ImGui::IsPopupOpen(popover, ImGuiPopupFlags_AnyPopupLevel); },
 			   "Stop did not open the save popover");
@@ -2570,6 +2576,8 @@ void CheckLibrary(Interaction& test, const std::filesystem::path& directory)
 			"Saved take is not in the isolated recordings folder");
 	pump(3);
 	screenshot("library-take.bmp");
+	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Fold timeline"));
+	pump(3);
 	ImGui::ActivateItemByID(FindPanel("Inspector")->GetID("Play take"));
 	Eventually([&] { pump(1); return test.runtime.Snapshot().manual; }, "Library replay did not drive the app");
 	pump(10);

@@ -358,7 +358,9 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded,
 	{
 		return button + ImGui::CalcTextSize(label).x + style.FramePadding.x;
 	};
-	const float transport = buttonWidth("Continue") + button * 3 + style.ItemSpacing.x * 3;
+	const bool transportWords = ImGui::GetContentRegionAvail().x >= 720 * ImGui::GetFontSize() / 16;
+	const float transport = (transportWords ? buttonWidth("Continue") : button) +
+		button * 4 + style.ItemSpacing.x * 4;
 	const float header = std::max(transport, ImGui::CalcTextSize("Frame time").x) + style.ItemSpacing.x * 2;
 	const float liveWidth = std::max(buttonWidth("Go live"), ImGui::CalcTextSize("LIVE \u00b7 paused").x + button) +
 							button * 2 + style.ItemSpacing.x * 4 +
@@ -381,8 +383,8 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded,
 					   : why	? why
 					   : held	? "Let the app run again (F8)"
 								: "Freeze the app on its current frame (F6)";
-	if (held ? IconButton("Continue", Icon::Play, pauseTip, false, "Continue")
-			 : IconButton("Pause", Icon::Pause, pauseTip, false, "Pause"))
+	if (held ? IconButton("Continue", Icon::Play, pauseTip, false, transportWords ? "Continue" : nullptr)
+			 : IconButton("Pause", Icon::Pause, pauseTip, false, transportWords ? "Pause" : nullptr))
 	{
 		if (take)
 			shell.timeline.togglePlayback = true;
@@ -437,6 +439,18 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded,
 											  : "Pause first to step the app (F6)";
 	if (IconButton("Step forward", Icon::StepForward, forwardTip))
 		stepForward();
+	ImGui::EndDisabled();
+	ImGui::SameLine();
+	ImGui::BeginDisabled(!state.sessionAvailable);
+	if (state.recording ? IconButton("Stop recording", Icon::Stop, "Stop recording and save the take (Ctrl+R)",
+									 false, nullptr, theme::Record)
+						: IconButton("Rec", Icon::Record, "Record inputs (Ctrl+R)", false, nullptr, theme::Record))
+	{
+		if (state.recording)
+			runtime.StopRecording();
+		else
+			runtime.StartRecording();
+	}
 	ImGui::EndDisabled();
 	ImGui::SameLine();
 	if (IconButton("Timeline help", Icon::Help, "What the lanes, marks and keys mean"))
