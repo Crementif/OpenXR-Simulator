@@ -272,6 +272,86 @@ void ExerciseMemoryAndSemaphore(VulkanExternalDevice& exporter, VulkanExternalDe
 		std::_Exit(1);
 	std::puts("PASS dedicated image import and two-device binary semaphore signal/wait");
 }
+bool ExerciseTimeline(VkInstance instance, VkPhysicalDevice physical, std::uint32_t family)
+{
+	const auto caps = VulkanExternalDevice::QueryTimeline(physical, VK_API_VERSION_1_1);
+	if (!caps.CanImportSemaphore() || !caps.CanExportSemaphore())
+		return false;
+	constexpr std::array extensions{VulkanExternalMemoryExtension, VulkanExternalSemaphoreExtension,
+									VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME};
+	Device consumer(instance, physical, family, SharingExtensions, true);
+	Device observer(instance, physical, family, SharingExtensions, true);
+	Require(consumer.timeline && observer.timeline, "Timeline capability must enable device feature");
+	VulkanExternalDevice exporter(consumer.device, extensions, VK_API_VERSION_1_1, true);
+	VulkanExternalDevice importer(observer.device, extensions, VK_API_VERSION_1_1, true);
+	VulkanExternalDevice disabled(observer.device, extensions, VK_API_VERSION_1_1);
+	Rejected(
+		[&]
+		{
+			disabled.CreateExportableTimeline();
+		},
+		VK_ERROR_FEATURE_NOT_PRESENT, "Unconfirmed logical-device timeline feature allowed export");
+	auto completion = exporter.CreateExportableTimeline();
+	auto handle = completion->ExportOnce();
+	Require(handle && ValidNonInherited(handle.Get()), "Timeline export must not be inheritable");
+	Rejected(
+		[&]
+		{
+			completion->ExportOnce();
+		},
+		VK_ERROR_INVALID_EXTERNAL_HANDLE, "Timeline exported twice");
+	auto wrong = exporter.Identity();
+	wrong.deviceUuid[0] ^= 1;
+	Rejected(
+		[&]
+		{
+			importer.ImportTimeline(wrong, handle);
+		},
+		VK_ERROR_INVALID_EXTERNAL_HANDLE, "Timeline accepted mismatched adapter");
+	Require(bool(handle), "Rejected timeline import consumed caller ownership");
+	auto imported = importer.ImportTimeline(exporter.Identity(), handle);
+	Require(!handle, "Successful timeline import retained caller handle");
+	Require(imported->PollCompletion() == CompletionStatus::Pending, "Unsignaled imported timeline completed");
+	// Hold the consumer queue on a private host-controlled gate. The observer
+	// only queries the shared counter and never submits work or waits on it.
+	VkSemaphoreTypeCreateInfo type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
+	type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+	VkSemaphoreCreateInfo create{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
+	VkSemaphore gate = VK_NULL_HANDLE;
+	Check(vkCreateSemaphore(consumer.native, &create, nullptr, &gate), "create timeline proof gate");
+	const auto signal = completion->Get();
+	const std::uint64_t value = 1;
+	const VkPipelineStageFlags stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+	VkTimelineSemaphoreSubmitInfo timeline{VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO};
+	timeline.waitSemaphoreValueCount = timeline.signalSemaphoreValueCount = 1;
+	timeline.pWaitSemaphoreValues = timeline.pSignalSemaphoreValues = &value;
+	VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO, &timeline};
+	submit.waitSemaphoreCount = submit.signalSemaphoreCount = 1;
+	submit.pWaitSemaphores = &gate;
+	submit.pWaitDstStageMask = &stage;
+	submit.pSignalSemaphores = &signal;
+	Check(vkQueueSubmit(consumer.device->queue, 1, &submit, VK_NULL_HANDLE), "submit timeline completion proof");
+	bool stayedPending = true;
+	for (int poll = 0; poll < 100; ++poll)
+		stayedPending &= imported->PollCompletion() == CompletionStatus::Pending;
+	auto release =
+		reinterpret_cast<PFN_vkSignalSemaphoreKHR>(vkGetDeviceProcAddr(consumer.native, "vkSignalSemaphoreKHR"));
+	VkSemaphoreSignalInfo releaseGate{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO};
+	releaseGate.semaphore = gate;
+	releaseGate.value = 1;
+	if (!release || release(consumer.native, &releaseGate) != VK_SUCCESS ||
+		vkQueueWaitIdle(consumer.device->queue) != VK_SUCCESS)
+		std::_Exit(1);
+	vkDestroySemaphore(consumer.native, gate, nullptr);
+	Require(stayedPending, "Timeline completed while consumer work was gated");
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+	while (imported->PollCompletion() == CompletionStatus::Pending && std::chrono::steady_clock::now() < deadline)
+		std::this_thread::yield();
+	Require(imported->PollCompletion() == CompletionStatus::Complete, "Imported timeline missed consumer completion");
+	std::puts("PASS external timeline pending->complete; observer queue submissions=0; one-shot export and retained "
+			  "failed-import ownership");
+	return true;
+}
 void Exercise(VkInstance instance, VkPhysicalDevice physical, std::uint32_t family)
 {
 	Device consumer(instance, physical, family, FenceExtensions, true);
@@ -399,6 +479,7 @@ int main()
 							ExerciseMemoryAndSemaphore(exporter, importer);
 							sharedResources = true;
 						}
+						exercised |= ExerciseTimeline(instance.handle, physical, family);
 						if (capabilities.CanImport() && capabilities.CanExport())
 						{
 							Exercise(instance.handle, physical, family);
@@ -411,8 +492,8 @@ int main()
 			}
 			if (!exercised)
 			{
-				std::printf("SKIP: no adapter supports the production image/semaphore path plus optional opaque-native "
-							"external fence import/export\n");
+				std::printf("SKIP: no adapter supports the production image/semaphore path plus opaque-native "
+							"fence or timeline completion\n");
 				return 77;
 			}
 		}

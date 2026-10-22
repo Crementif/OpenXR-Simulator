@@ -162,6 +162,24 @@ class VulkanExternalSemaphore final
 	std::mutex m_exportMutex;
 };
 
+// A one-shot timeline payload: zero is pending, one is consumer completion.
+// Native submissions must retain it through their own retirement fence.
+class VulkanExternalTimeline final : public GpuCompletion
+{
+  public:
+	VkSemaphore Get() const noexcept;
+	VulkanExternalHandle ExportOnce();
+	CompletionStatus PollCompletion() const noexcept override;
+
+  private:
+	friend class VulkanExternalDevice;
+	VulkanExternalTimeline(std::shared_ptr<VulkanExternalSemaphore> semaphore,
+						   PFN_vkGetSemaphoreCounterValueKHR counter);
+	const std::shared_ptr<VulkanExternalSemaphore> m_semaphore;
+	const PFN_vkGetSemaphoreCounterValueKHR m_counter;
+	mutable std::atomic<CompletionStatus> m_status{CompletionStatus::Pending};
+};
+
 // One-shot opaque native fence, permanently imported/exported. Never reset the
 // native fence. Polling observes real fence status without waiting or queue
 // access. The submitted-use owner must retain this object until actual native
@@ -195,12 +213,18 @@ class VulkanExternalDevice
   public:
 	// Supply the actual instance API version and enabled logical-device names.
 	// Physical extension support alone never enables this sharing path.
+	// timelineEnabled must reflect the feature enabled during logical-device creation.
 	VulkanExternalDevice(std::shared_ptr<VulkanDevice> device, std::span<const char* const> enabledExtensions,
-						 std::uint32_t instanceApiVersion);
+						 std::uint32_t instanceApiVersion, bool timelineEnabled = false);
 	static VulkanExternalCapabilities Query(VkPhysicalDevice physicalDevice, const VulkanExternalImageSpec& image,
 											std::uint32_t instanceApiVersion);
 	static VulkanExternalFenceCapabilities QueryFence(VkPhysicalDevice physicalDevice,
 													  std::uint32_t instanceApiVersion);
+	static VulkanExternalCapabilities QueryTimeline(VkPhysicalDevice physicalDevice, std::uint32_t instanceApiVersion);
+	bool TimelineCommandsEnabled() const noexcept;
+	std::shared_ptr<VulkanExternalTimeline> CreateExportableTimeline() const;
+	std::shared_ptr<VulkanExternalTimeline> ImportTimeline(const VulkanExternalIdentity& identity,
+														   VulkanExternalHandle& handle) const;
 	const VulkanExternalIdentity& Identity() const noexcept;
 	std::shared_ptr<VulkanDevice> Device() const noexcept;
 	std::shared_ptr<VulkanExternalImage> CreateExportable(const VulkanExternalImageSpec& image,
@@ -219,6 +243,10 @@ class VulkanExternalDevice
 													 VulkanExternalHandle& fd) const;
 
   private:
+	std::shared_ptr<VulkanExternalSemaphore> CreateSemaphore(bool timeline) const;
+	std::shared_ptr<VulkanExternalSemaphore> ImportSemaphore(const VulkanExternalIdentity& identity,
+															 VulkanExternalHandle& handle, bool timeline) const;
+	PFN_vkGetSemaphoreCounterValueKHR m_counter = nullptr;
 	std::shared_ptr<VulkanImage> CreateImage(const VulkanExternalImageSpec& image) const;
 	const std::shared_ptr<VulkanDevice> m_device;
 	const std::uint32_t m_instanceApiVersion;

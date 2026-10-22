@@ -412,7 +412,7 @@ VulkanExternalHandle VulkanExternalSemaphore::ExportOnce()
 	std::lock_guard lock(m_exportMutex);
 	RequireLive(*m_device);
 	if (!m_exportable || m_exported || !m_getSemaphoreHandle)
-		throw VulkanError(VK_ERROR_INVALID_EXTERNAL_HANDLE, "Binary semaphore is unavailable for one-shot export");
+		throw VulkanError(VK_ERROR_INVALID_EXTERNAL_HANDLE, "Semaphore is unavailable for one-shot export");
 #ifdef _WIN32
 	VkSemaphoreGetWin32HandleInfoKHR info{VK_STRUCTURE_TYPE_SEMAPHORE_GET_WIN32_HANDLE_INFO_KHR};
 #else
@@ -478,7 +478,7 @@ VulkanExternalCapabilities VulkanExternalDevice::Query(VkPhysicalDevice physical
 
 VulkanExternalDevice::VulkanExternalDevice(std::shared_ptr<VulkanDevice> device,
 										   std::span<const char* const> enabledExtensions,
-										   std::uint32_t instanceApiVersion)
+										   std::uint32_t instanceApiVersion, bool timelineEnabled)
 	: m_device(std::move(device)), m_instanceApiVersion(instanceApiVersion)
 {
 	if (!m_device)
@@ -511,6 +511,17 @@ VulkanExternalDevice::VulkanExternalDevice(std::shared_ptr<VulkanDevice> device,
 		m_getFenceHandle = reinterpret_cast<VulkanGetFenceHandle>(vkGetDeviceProcAddr(native, GetFenceCommand));
 		m_importFenceHandle =
 			reinterpret_cast<VulkanImportFenceHandle>(vkGetDeviceProcAddr(native, ImportFenceCommand));
+	}
+	if (timelineEnabled)
+	{
+		const bool coreTimeline =
+			instanceApiVersion >= VK_API_VERSION_1_2 && properties.apiVersion >= VK_API_VERSION_1_2;
+		if (!HasName(enabledExtensions, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME) && !coreTimeline)
+			throw VulkanError(VK_ERROR_EXTENSION_NOT_PRESENT, "Timeline completion was not enabled");
+		m_counter = reinterpret_cast<PFN_vkGetSemaphoreCounterValueKHR>(
+			vkGetDeviceProcAddr(native, coreTimeline ? "vkGetSemaphoreCounterValue" : "vkGetSemaphoreCounterValueKHR"));
+		if (!m_counter)
+			throw VulkanError(VK_ERROR_EXTENSION_NOT_PRESENT, "Timeline completion command unavailable");
 	}
 }
 const VulkanExternalIdentity& VulkanExternalDevice::Identity() const noexcept
@@ -644,19 +655,28 @@ std::shared_ptr<VulkanExternalImage> VulkanExternalDevice::ImportImage(const Vul
 
 std::shared_ptr<VulkanExternalSemaphore> VulkanExternalDevice::CreateExportableSemaphore() const
 {
+	return CreateSemaphore(false);
+}
+std::shared_ptr<VulkanExternalSemaphore> VulkanExternalDevice::CreateSemaphore(bool timeline) const
+{
 	RequireLive(*m_device);
-	const auto properties = SemaphoreCapabilities(m_device->binding.physicalDevice);
+	if (timeline && !m_counter)
+		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Timeline feature was not enabled on this device");
+	const auto properties = timeline ? QueryTimeline(m_device->binding.physicalDevice, m_instanceApiVersion).semaphore
+									 : SemaphoreCapabilities(m_device->binding.physicalDevice);
 	if (!(properties.compatibleHandleTypes & SemaphoreHandle) ||
 		!(properties.externalSemaphoreFeatures & VK_EXTERNAL_SEMAPHORE_FEATURE_EXPORTABLE_BIT))
-		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Binary semaphore native-handle export unsupported");
+		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Semaphore native-handle export unsupported");
 	auto result = std::shared_ptr<VulkanExternalSemaphore>(
 		new VulkanExternalSemaphore(m_device, m_identity, m_getSemaphoreHandle, true));
 	VkExportSemaphoreCreateInfo external{VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO};
 	external.handleTypes = SemaphoreHandle;
+	VkSemaphoreTypeCreateInfo type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
+	type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+	external.pNext = timeline ? &type : nullptr;
 	VkSemaphoreCreateInfo info{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &external};
 	VkSemaphore semaphore = VK_NULL_HANDLE;
-	CheckVulkan(vkCreateSemaphore(m_device->binding.device, &info, nullptr, &semaphore),
-				"Create exportable binary semaphore");
+	CheckVulkan(vkCreateSemaphore(m_device->binding.device, &info, nullptr, &semaphore), "Create exportable semaphore");
 	result->m_semaphore = semaphore;
 	return result;
 }
@@ -664,19 +684,29 @@ std::shared_ptr<VulkanExternalSemaphore> VulkanExternalDevice::CreateExportableS
 std::shared_ptr<VulkanExternalSemaphore> VulkanExternalDevice::ImportSemaphore(const VulkanExternalIdentity& identity,
 																			   VulkanExternalHandle& fd) const
 {
+	return ImportSemaphore(identity, fd, false);
+}
+std::shared_ptr<VulkanExternalSemaphore> VulkanExternalDevice::ImportSemaphore(const VulkanExternalIdentity& identity,
+																			   VulkanExternalHandle& fd,
+																			   bool timeline) const
+{
 	RequireLive(*m_device);
 	if (!fd || identity != m_identity)
-		throw VulkanError(VK_ERROR_INVALID_EXTERNAL_HANDLE, "External binary semaphore identity mismatch");
-	const auto properties = SemaphoreCapabilities(m_device->binding.physicalDevice);
+		throw VulkanError(VK_ERROR_INVALID_EXTERNAL_HANDLE, "External semaphore identity mismatch");
+	if (timeline && !m_counter)
+		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Timeline feature was not enabled on this device");
+	const auto properties = timeline ? QueryTimeline(m_device->binding.physicalDevice, m_instanceApiVersion).semaphore
+									 : SemaphoreCapabilities(m_device->binding.physicalDevice);
 	if (!(properties.compatibleHandleTypes & SemaphoreHandle) ||
 		!(properties.externalSemaphoreFeatures & VK_EXTERNAL_SEMAPHORE_FEATURE_IMPORTABLE_BIT))
-		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Binary semaphore native-handle import unsupported");
+		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Semaphore native-handle import unsupported");
 	auto result =
 		std::shared_ptr<VulkanExternalSemaphore>(new VulkanExternalSemaphore(m_device, m_identity, nullptr, false));
-	VkSemaphoreCreateInfo create{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+	VkSemaphoreTypeCreateInfo type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
+	type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+	VkSemaphoreCreateInfo create{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, timeline ? &type : nullptr};
 	VkSemaphore semaphore = VK_NULL_HANDLE;
-	CheckVulkan(vkCreateSemaphore(m_device->binding.device, &create, nullptr, &semaphore),
-				"Create imported binary semaphore");
+	CheckVulkan(vkCreateSemaphore(m_device->binding.device, &create, nullptr, &semaphore), "Create imported semaphore");
 	result->m_semaphore = semaphore;
 	auto imported = fd.Duplicate();
 #ifdef _WIN32
@@ -691,13 +721,85 @@ std::shared_ptr<VulkanExternalSemaphore> VulkanExternalDevice::ImportSemaphore(c
 #else
 	info.fd = imported.Get();
 #endif
-	CheckVulkan(m_importSemaphoreHandle(m_device->binding.device, &info), "Import binary semaphore native handle");
+	CheckVulkan(m_importSemaphoreHandle(m_device->binding.device, &info), "Import semaphore native handle");
 #ifndef _WIN32
 	imported.Release(); // Successful FD import transfers ownership to Vulkan.
 #endif
 	fd.Reset();
 	return result;
 }
+VulkanExternalCapabilities VulkanExternalDevice::QueryTimeline(VkPhysicalDevice physical, std::uint32_t api)
+{
+	VulkanExternalCapabilities result;
+	if (!physical || api < VK_API_VERSION_1_1)
+		return result;
+	constexpr std::array names{VulkanExternalSemaphoreExtension, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME};
+	result.result = PhysicalExtensions(physical, names);
+	if (result.result != VK_SUCCESS)
+		return result;
+	VkPhysicalDeviceTimelineSemaphoreFeatures timeline{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
+	VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &timeline};
+	vkGetPhysicalDeviceFeatures2(physical, &features);
+	if (!timeline.timelineSemaphore)
+	{
+		result.result = VK_ERROR_FEATURE_NOT_PRESENT;
+		return result;
+	}
+	VkSemaphoreTypeCreateInfo type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
+	type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+	VkPhysicalDeviceExternalSemaphoreInfo info{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO, &type};
+	info.handleType = SemaphoreHandle;
+	vkGetPhysicalDeviceExternalSemaphoreProperties(physical, &info, &result.semaphore);
+	return result;
+}
+bool VulkanExternalDevice::TimelineCommandsEnabled() const noexcept
+{
+	return m_counter != nullptr;
+}
+std::shared_ptr<VulkanExternalTimeline> VulkanExternalDevice::CreateExportableTimeline() const
+{
+	return std::shared_ptr<VulkanExternalTimeline>(new VulkanExternalTimeline(CreateSemaphore(true), m_counter));
+}
+std::shared_ptr<VulkanExternalTimeline> VulkanExternalDevice::ImportTimeline(const VulkanExternalIdentity& identity,
+																			 VulkanExternalHandle& handle) const
+{
+	// Allocate the wrapper before consuming caller ownership.
+	auto duplicate = handle.Duplicate();
+	auto result = std::shared_ptr<VulkanExternalTimeline>(
+		new VulkanExternalTimeline(ImportSemaphore(identity, duplicate, true), m_counter));
+	handle.Reset();
+	return result;
+}
+VulkanExternalTimeline::VulkanExternalTimeline(std::shared_ptr<VulkanExternalSemaphore> semaphore,
+											   PFN_vkGetSemaphoreCounterValueKHR counter)
+	: m_semaphore(std::move(semaphore)), m_counter(counter)
+{
+}
+VkSemaphore VulkanExternalTimeline::Get() const noexcept
+{
+	return m_semaphore->Get();
+}
+VulkanExternalHandle VulkanExternalTimeline::ExportOnce()
+{
+	return m_semaphore->ExportOnce();
+}
+CompletionStatus VulkanExternalTimeline::PollCompletion() const noexcept
+{
+	auto status = m_status.load();
+	if (status != CompletionStatus::Pending)
+		return status;
+	const auto device = m_semaphore->Device();
+	std::uint64_t value = 0;
+	const auto result = device->lost.load() ? VK_ERROR_DEVICE_LOST : m_counter(device->binding.device, Get(), &value);
+	if (result == VK_SUCCESS && value == 0)
+		return m_status.load();
+	if (result == VK_ERROR_DEVICE_LOST)
+		device->lost.store(true);
+	const auto observed = result == VK_SUCCESS && value == 1 ? CompletionStatus::Complete : CompletionStatus::Failed;
+	m_status.compare_exchange_strong(status, observed);
+	return m_status.load();
+}
+
 bool VulkanExternalDevice::FenceCommandsEnabled() const noexcept
 {
 	return m_getFenceHandle && m_importFenceHandle;
