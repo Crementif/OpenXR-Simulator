@@ -155,7 +155,7 @@ target_link_libraries(simxr_graphics PUBLIC simxr_core)
 target_compile_features(simxr_graphics PUBLIC cxx_std_20)
 target_link_libraries(simxr_control PUBLIC simxr_graphics)
 
-if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES)
+if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES OR SIMXR_BUILD_COMPANION)
     find_path(SIMXR_VULKAN_INCLUDE_DIR vulkan/vulkan.h
         HINTS "$ENV{SIMXR_VULKAN_INCLUDE_DIR}" "$ENV{VULKAN_SDK}/Include" "$ENV{VULKAN_SDK}/include")
     if(NOT SIMXR_VULKAN_INCLUDE_DIR)
@@ -163,7 +163,7 @@ if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES)
     endif()
 endif()
 
-if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES)
+if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES OR SIMXR_BUILD_COMPANION)
     if(WIN32)
         find_library(SIMXR_VULKAN_LIBRARY NAMES vulkan-1 HINTS "$ENV{VULKAN_SDK}/Lib" REQUIRED)
     else()

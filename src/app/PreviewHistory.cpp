@@ -1,6 +1,6 @@
 #include "app/PreviewHistory.h"
 #include "app/UiRenderer.h"
-#ifdef __linux__
+#if defined(__linux__) || defined(_WIN32)
 #include "graphics/backends/vulkan/VulkanDevice.h"
 #include "graphics/backends/vulkan/VulkanResources.h"
 #endif
@@ -23,7 +23,7 @@ constexpr auto Interval = std::chrono::milliseconds(100);
 constexpr std::uint64_t MaximumGap = 120;
 } // namespace
 
-#ifdef __linux__
+#if defined(__linux__) || defined(_WIN32)
 struct PreviewHistory::Resources
 {
 	std::shared_ptr<VulkanDevice> device;
@@ -105,7 +105,7 @@ PreviewHistory::~PreviewHistory()
 }
 void PreviewHistory::Retire()
 {
-#ifdef __linux__
+#if defined(__linux__) || defined(_WIN32)
 	if (!m_resources)
 		return;
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -132,7 +132,7 @@ void PreviewHistory::Retire()
 }
 bool PreviewHistory::Prepare(const control::ImageDescription& description)
 {
-#ifdef __linux__
+#if defined(__linux__) || defined(_WIN32)
 	const VkExtent2D extent{std::min(Width, description.width),
 							std::max(1u, std::min(Width, description.width) * description.height / description.width)};
 	const auto format = static_cast<VkFormat>(description.format);
@@ -222,7 +222,7 @@ bool PreviewHistory::Prepare(const control::ImageDescription& description)
 }
 void PreviewHistory::Offer(PreviewTexture& source, std::uint32_t layer, FrameIdentity frame, std::uint64_t epoch)
 {
-#ifdef __linux__
+#if defined(__linux__) || defined(_WIN32)
 	const auto now = std::chrono::steady_clock::now();
 	if (m_copy || frame == m_lastFrame || now - m_lastCapture < Interval || !source.Ready() ||
 		layer >= source.Description().arrayLayers)
@@ -279,7 +279,7 @@ std::optional<PreviewShot> PreviewHistory::Nearest(FrameIdentity frame, std::uin
 }
 float PreviewHistory::Aspect() const noexcept
 {
-#ifdef __linux__
+#if defined(__linux__) || defined(_WIN32)
 	if (m_resources)
 		return float(m_resources->extent.height) / float(m_resources->extent.width);
 #endif
@@ -287,7 +287,7 @@ float PreviewHistory::Aspect() const noexcept
 }
 void PreviewHistory::Draw(const PreviewShot& shot, float width, ImVec4 crop)
 {
-#ifdef __linux__
+#if defined(__linux__) || defined(_WIN32)
 	if (!m_resources || shot.slot >= m_shots.size())
 		return;
 	m_display = shot.slot;
@@ -301,7 +301,7 @@ void PreviewHistory::Draw(const PreviewShot& shot, float width, ImVec4 crop)
 }
 void PreviewHistory::DrawThumbnail(const PreviewShot& shot, ImVec2 minimum, ImVec2 maximum, ImVec4 crop)
 {
-#ifdef __linux__
+#if defined(__linux__) || defined(_WIN32)
 	if (!m_resources || shot.slot >= m_shots.size() || m_shots[shot.slot].frame != shot.frame ||
 		m_shots[shot.slot].epoch != shot.epoch)
 		return;
@@ -344,7 +344,7 @@ void PreviewHistory::DrawThumbnail(const PreviewShot& shot, ImVec2 minimum, ImVe
 }
 void PreviewHistory::Record(VkCommandBuffer command)
 {
-#ifdef __linux__
+#if defined(__linux__) || defined(_WIN32)
 	if (!m_resources)
 		return;
 	auto& resources = *m_resources;
@@ -422,7 +422,7 @@ void PreviewHistory::Submitted(std::uint64_t serial)
 		m_displayed = m_display;
 		m_display.reset();
 	}
-#ifdef __linux__
+#if defined(__linux__) || defined(_WIN32)
 	m_resources->lastUse = serial;
 #endif
 }

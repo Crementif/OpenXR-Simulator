@@ -243,7 +243,7 @@ void PreviewImages::Retained(const wire::Message& message, bool preview)
 		m_pending = PendingImage{message, preview};
 		return;
 	}
-#ifdef __linux__
+#if defined(__linux__) || defined(_WIN32)
 	std::unique_ptr<Image> prepared;
 	std::uint64_t localId = 0;
 	try
@@ -301,7 +301,7 @@ void PreviewImages::Retained(const wire::Message& message, bool preview)
 	m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId, reader);
 #endif
 }
-#ifdef __linux__
+#if defined(__linux__) || defined(_WIN32)
 void PreviewImages::Shared(std::uint64_t id, const RuntimeReply& reply)
 {
 	if (auto image = Find(id))
@@ -356,7 +356,7 @@ void PreviewImages::Poll()
 			image->release = true;
 			--retained;
 		}
-#ifdef __linux__
+#if defined(__linux__) || defined(_WIN32)
 	for (auto& image : m_images)
 	{
 		if (image->texture && !image->texture->Ready() && image->delivery)

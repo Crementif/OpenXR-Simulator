@@ -1,7 +1,8 @@
 #include "app/UiRenderer.h"
-#include "app/Theme.h"
 #include "CompanionSpirv.h"
+#include "app/Theme.h"
 #include "app/Window.h"
+#include "graphics/backends/vulkan/VulkanExternal.h"
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
@@ -246,7 +247,7 @@ struct UiRenderer::Impl
 		Check(
 			vkEnumerateDeviceExtensionProperties(physical, nullptr, &deviceExtensionCount, supportedExtensions.data()));
 
-#ifdef __linux__
+#if defined(__linux__) || defined(_WIN32)
 		const auto supports = [&](const char* name)
 		{
 			return std::any_of(supportedExtensions.begin(), supportedExtensions.end(),
@@ -259,25 +260,28 @@ struct UiRenderer::Impl
 		vkGetPhysicalDeviceQueueFamilyProperties(physical, &families, nullptr);
 		std::vector<VkQueueFamilyProperties> familyProperties(families);
 		vkGetPhysicalDeviceQueueFamilyProperties(physical, &families, familyProperties.data());
-		externalImages = supports(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) &&
-						 supports(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME) &&
+		externalImages = supports(VulkanExternalMemoryExtension) && supports(VulkanExternalSemaphoreExtension) &&
 						 familyProperties[family].queueCount >= 2;
 		if (externalImages || proofConsumer)
 		{
-			deviceExtensions.push_back(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
-			deviceExtensions.push_back(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
+			deviceExtensions.push_back(VulkanExternalMemoryExtension);
+			deviceExtensions.push_back(VulkanExternalSemaphoreExtension);
 			queueInfo.queueCount = 2;
 		}
-		if (externalImages && supports(VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME))
+		if (externalImages && supports(VulkanExternalFenceExtension))
 		{
 			VkPhysicalDeviceExternalFenceInfo info{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_FENCE_INFO};
+#ifdef _WIN32
+			info.handleType = VK_EXTERNAL_FENCE_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+#else
 			info.handleType = VK_EXTERNAL_FENCE_HANDLE_TYPE_OPAQUE_FD_BIT;
+#endif
 			VkExternalFenceProperties properties{VK_STRUCTURE_TYPE_EXTERNAL_FENCE_PROPERTIES};
 			vkGetPhysicalDeviceExternalFenceProperties(physical, &info, &properties);
 			constexpr auto flags = VK_EXTERNAL_FENCE_FEATURE_IMPORTABLE_BIT | VK_EXTERNAL_FENCE_FEATURE_EXPORTABLE_BIT;
 			externalFence = (properties.externalFenceFeatures & flags) == flags;
 			if (externalFence)
-				deviceExtensions.push_back(VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME);
+				deviceExtensions.push_back(VulkanExternalFenceExtension);
 		}
 #endif
 		for (const auto name : deviceExtensions)
