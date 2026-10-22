@@ -381,8 +381,8 @@ bool SpatialEditor::DrawPreview(Selection& selection, ImVec2 minimum, ImVec2 max
 		{
 			if (!scene.available[device])
 				continue;
-			// Trackers show only when the app uses tracker interaction (guide §0.2).
-			if (device > 2 && (!m_observed->appTrackers || !m_observed->values.tracking.trackers[device - 3].connected))
+			// Only devices resolved by the app's pose bindings get preview markers.
+			if (device > 2 && (!m_observed->boundTrackers[device - 3] || !m_observed->values.tracking.trackers[device - 3].connected))
 				continue;
 			const auto projected = ProjectPoint(camera, scene.devices[device].position);
 			ImVec2 position{minimum.x + projected.uv.x * (maximum.x - minimum.x),

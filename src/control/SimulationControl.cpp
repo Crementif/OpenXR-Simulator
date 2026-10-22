@@ -212,7 +212,7 @@ InspectionValue SimulationOutcome(const CommandOutcome& outcome, bool includeCom
 		 {"commands", InspectionValue::Array(std::move(commands))}});
 }
 InspectionValue SimulationState(const CommandSchedulerSnapshot& state, bool includeCommands,
-								std::optional<bool> trackerInteraction)
+								std::optional<bool> trackerInteraction, std::span<const std::uint64_t> boundTrackers)
 {
 	std::vector<InspectionValue> outcomes;
 	auto recent = std::span{state.outcomes};
@@ -226,7 +226,13 @@ InspectionValue SimulationState(const CommandSchedulerSnapshot& state, bool incl
 		{"pending", InspectionValue::Unsigned(state.pending)},
 		{"transactions", InspectionValue::Array(std::move(outcomes))}};
 	if (trackerInteraction)
+	{
 		fields.emplace_back("tracker_interaction", InspectionValue::Boolean(*trackerInteraction));
+		std::vector<InspectionValue> bound;
+		for (const auto identity : boundTrackers)
+			bound.push_back(InspectionValue::Unsigned(identity));
+		fields.emplace_back("bound_trackers", InspectionValue::Array(std::move(bound)));
+	}
 	if (state.applied)
 	{
 		const auto& applied = *state.applied;

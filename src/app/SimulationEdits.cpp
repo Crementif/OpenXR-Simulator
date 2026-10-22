@@ -364,6 +364,11 @@ ObservedSetup ReadObservedSetup(const control::Message& state)
 			throw std::runtime_error("Unsupported simulation scenario");
 		result.scenarios[index] = true;
 	}
+	if (const auto bound = FindMember(root, "bound_trackers"))
+		for (const auto& identity : Elements(*bound))
+			for (std::size_t slot = 0; slot < values.tracking.trackers.size(); ++slot)
+				if (values.tracking.trackers[slot].identity.value == Unsigned(identity))
+					result.boundTrackers[slot] = true;
 	return result;
 }
 void UndoStack::Record(const ObservedSetup& before, const ManualTransaction& edit)

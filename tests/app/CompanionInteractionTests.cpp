@@ -3176,6 +3176,11 @@ void CheckBodyRig(Interaction& test)
 		trackerMarkers += markers[device].width > 0;
 	std::cout << "Body QA appTrackers=" << state.appTrackers << " trackerMarkers=" << trackerMarkers << "\n";
 	Require(state.appTrackers || trackerMarkers == 0, "Tracker markers shown although the app has no trackers");
+	for (int slot = 0; slot < 4; ++slot)
+		Require(state.boundTrackers[slot] || markers[slot + 3].width == 0, "Unbound tracker has a marker");
+	if (std::getenv("SIMXR_PROBE_DEVICES"))
+		Require(std::count(state.boundTrackers.begin(), state.boundTrackers.end(), true) == 1 && trackerMarkers == 1,
+			"Probe's one bound tracker did not produce exactly one clickable marker");
 	if (trackerMarkers)
 	{
 		int device = 3;

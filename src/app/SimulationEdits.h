@@ -30,6 +30,7 @@ struct ObservedSetup
 	bool bodyRootAvailable = true;
 	// The app enabled tracker interaction; absent from older runtimes.
 	bool appTrackers = false;
+	std::array<bool, 4> boundTrackers{};
 };
 // Ctrl+Z history of device poses: one entry per edit group (a whole drag or one click), never per frame.
 class UndoStack

@@ -133,6 +133,18 @@ Message SimulationConnection::Dispatch(const Message& request, const ControlSess
 	auto& scheduler = session->Commands();
 	const bool trackerInteraction = session->Extensions().Contains(XR_HTCX_VIVE_TRACKER_INTERACTION_EXTENSION_NAME);
 	const auto source = RequestSource(request);
+	const auto simulationState = [&]
+	{
+		std::vector<std::uint64_t> bound;
+		if (trackerInteraction)
+			for (const auto& action : session->Actions().Snapshot().actions)
+				if (action.definition.live && action.definition.type == XR_ACTION_TYPE_POSE_INPUT)
+					for (const auto& resolved : action.sources)
+						if (resolved.device.kind == InputDeviceKind::Tracker &&
+							std::find(bound.begin(), bound.end(), resolved.device.value) == bound.end())
+							bound.push_back(resolved.device.value);
+		return SimulationState(scheduler.Snapshot(), false, trackerInteraction, bound);
+	};
 	InspectionValue document;
 	const auto execute = [&]
 	{
@@ -169,19 +181,19 @@ Message SimulationConnection::Dispatch(const Message& request, const ControlSess
 				document = SimulationOutcome(*outcome, false);
 			}
 			else
-				document = SimulationState(scheduler.Snapshot(), false, trackerInteraction);
+				document = simulationState();
 			break;
 		case OpCode::CancelSimulation:
 			response.fields.push_back(Field::Text(
 				tag::Phase,
 				SimulationResultName(scheduler.Cancel(source, RequireRequestU64(request, tag::TransactionId)))));
-			document = SimulationState(scheduler.Snapshot(), false, trackerInteraction);
+			document = simulationState();
 			break;
 		case OpCode::ReleaseControl:
 			session->ReleaseCommandSource(source);
 			m_game.Disconnect(m_connection.value);
 			response.fields.push_back(Field::Bool(tag::Released, true));
-			document = SimulationState(scheduler.Snapshot(), false, trackerInteraction);
+			document = simulationState();
 			break;
 		case OpCode::StartRecording:
 		case OpCode::StopRecording:
