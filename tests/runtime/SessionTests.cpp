@@ -376,7 +376,10 @@ void TestSequenceCaptureUnsupportedAndOwnership()
 		"Configure shared frame captures");
 	captures.Start(generation);
 	const CommandSource owner{CommandSourceKind::Mcp, 73};
-	const auto manual = captures.Reserve({});
+	const std::array targets{CaptureTarget{}};
+	const auto manual = captures.ReserveBundle(targets);
+	Require(manual.result == SnapshotAdmission::Accepted && manual.captures.size() == 1,
+		"Reserve independent manual capture");
 	const SequenceCaptureIntent request{9, {1}, owner};
 	CaptureId sequenceId;
 	const FramePrediction prediction{{1}, {1}, {Duration{100}}, Duration{10}};
@@ -391,7 +394,7 @@ void TestSequenceCaptureUnsupportedAndOwnership()
 			}, sequence.Record());
 	}
 	captures.Snapshots().RetireSequenceCaptures(owner);
-	Require(!captures.Snapshots().Read(sequenceId) && captures.Snapshots().Read(manual.id) && pool.InUse() == 1,
+	Require(!captures.Snapshots().Read(sequenceId) && captures.Snapshots().Read(manual.captures.front()) && pool.InUse() == 1,
 		"Sequence cleanup retired another owner's capture of the same frame");
 	FrameHistory unsupportedHistory;
 	SessionCaptureCoordinator unsupported(unsupportedHistory);
