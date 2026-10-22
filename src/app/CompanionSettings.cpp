@@ -86,7 +86,7 @@ void ValidateProfile(const LaunchProfile& profile)
 	TextValid(profile.rig);
 	if (!profile.headsetProfile.empty() && !FindHeadsetProfile(profile.headsetProfile))
 		throw std::invalid_argument("Unknown headset profile");
-	if (profile.arguments.size() > 256 || profile.environment.size() > 64)
+	if (profile.arguments.size() > 256 || profile.environment.size() > MaxLaunchEnvironment)
 		throw std::invalid_argument("Launch profile exceeds its bounds");
 	for (const auto& argument : profile.arguments)
 		TextValid(argument);
@@ -128,7 +128,7 @@ LaunchProfile ReadProfile(Reader& reader)
 	profile.rig = reader.Text();
 	for (auto arguments = reader.Count(256); arguments; --arguments)
 		profile.arguments.push_back(reader.Text());
-	for (auto values = reader.Count(64); values; --values)
+	for (auto values = reader.Count(MaxLaunchEnvironment); values; --values)
 	{
 		auto key = reader.Text();
 		auto value = reader.Text();

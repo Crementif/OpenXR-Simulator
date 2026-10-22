@@ -25,7 +25,6 @@ struct RunningApp
 // left behind by ended processes are skipped.
 std::vector<RunningApp> DiscoverRunningApps(std::chrono::milliseconds timeout = std::chrono::milliseconds(150));
 // How the process behind a running app was started, as far as the system shows
-// it: executable, arguments, working folder, runtime JSON, socket folder and
-// Wine prefix.
+// it: executable, arguments, working folder, runtime JSON and process environment.
 std::optional<LaunchProfile> DescribeProcess(std::uint64_t process);
 } // namespace simxr::app

@@ -3032,9 +3032,13 @@ void CheckAppPicker(const char* executable)
 				"Create a stale socket");
 		::close(descriptor);
 	}
+	Require(::setenv("SIMXR_RECENT_CUSTOM", "literal value ; $()", 1) == 0 &&
+			::setenv("SIMXR_RECENT_EMPTY", "", 1) == 0, "Set launch environment fixtures");
 	pid_t probe = 0;
 	char* arguments[] = {const_cast<char*>(executable), nullptr};
 	Require(::posix_spawn(&probe, executable, nullptr, nullptr, arguments, environ) == 0, "Start the orphan app");
+	::unsetenv("SIMXR_RECENT_CUSTOM");
+	::unsetenv("SIMXR_RECENT_EMPTY");
 	struct StopProbe
 	{
 		pid_t pid;
@@ -3107,6 +3111,12 @@ void CheckAppPicker(const char* executable)
 	const auto stored = LoadSettings(settingsPath);
 	Require(stored.recent.size() == 1 && stored.recent.front().launch.executable == executable,
 			"The connected app is not a recent entry");
+	const auto& environment = stored.recent.front().launch.environment;
+	Require(std::find(environment.begin(), environment.end(),
+		std::pair<std::string, std::string>{"SIMXR_RECENT_CUSTOM", "literal value ; $()"}) != environment.end() &&
+		std::find(environment.begin(), environment.end(),
+		std::pair<std::string, std::string>{"SIMXR_RECENT_EMPTY", ""}) != environment.end(),
+		"Recent launch dropped custom or empty environment entries");
 	std::cout << "PASS orphan app listed under Running, not attached until Connect, then connected " << endpoint
 			  << '\n';
 
@@ -3120,6 +3130,7 @@ void CheckAppPicker(const char* executable)
 	Require(saved.profiles.size() == 2 && saved.profiles.back().executable == executable &&
 				saved.profiles.back().name == "xr_probe_linux",
 			"Save as profile did not store the recent app");
+	Require(saved.profiles.back().environment == environment, "Save as profile changed the recent environment");
 	closeEditor();
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Validation errors in the app picker");

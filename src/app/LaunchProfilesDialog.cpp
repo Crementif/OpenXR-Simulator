@@ -347,7 +347,7 @@ bool LaunchProfilesDialog::DrawForm(CompanionSettings& settings, const LaunchSna
 			edited = true;
 		}
 	}
-	ImGui::BeginDisabled(m_environment.size() >= 64);
+	ImGui::BeginDisabled(m_environment.size() >= MaxLaunchEnvironment);
 	if (ImGui::SmallButton("Add variable"))
 		m_environment.emplace_back();
 	ImGui::EndDisabled();

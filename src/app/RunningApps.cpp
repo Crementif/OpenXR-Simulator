@@ -239,7 +239,7 @@ std::optional<LaunchProfile> DescribeProcess(std::uint64_t process)
 	profile.name = BaseName(arguments.front());
 	profile.arguments.assign(arguments.begin() + 1, arguments.end());
 	profile.workingDirectory = Link(base + "/cwd");
-	// Only what the simulator and Wine need to start the app the same way again.
+	// Preserve the launched process environment, including custom graphics and app settings.
 	for (const auto& entry : NulSeparated(ReadFile(base + "/environ")))
 	{
 		const auto equals = entry.find('=');
@@ -249,7 +249,7 @@ std::optional<LaunchProfile> DescribeProcess(std::uint64_t process)
 		auto value = entry.substr(equals + 1);
 		if (key == "XR_RUNTIME_JSON")
 			profile.runtimeManifest = std::move(value);
-		else if (key == "SIMXR_DATA_DIR" || key == "WINEPREFIX")
+		else
 			profile.environment.emplace_back(std::move(key), std::move(value));
 	}
 	if (profile.arguments.size() > 256)

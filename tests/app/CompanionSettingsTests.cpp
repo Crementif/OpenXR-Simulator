@@ -102,6 +102,10 @@ void Persistence()
 				settings.recent.front().launch.executable == "/games/app0",
 			"Recent apps keep the newest distinct entries first");
 	SaveSettings(file, settings);
+	for (int index = 0; index < 80; ++index)
+		settings.recent.front().launch.environment.emplace_back("CUSTOM_" + std::to_string(index),
+			index % 2 ? "" : "literal value ; $()");
+	SaveSettings(file, settings);
 	Require(LoadSettings(file) == settings, "Every profile/layout/recent field round trips exactly");
 #ifdef __linux__
 	Require(PathProblem("/bin/sh", PathKind::Executable).empty() &&

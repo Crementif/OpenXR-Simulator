@@ -10,6 +10,8 @@
 
 namespace simxr::app
 {
+inline constexpr std::size_t MaxLaunchEnvironment = 1024;
+
 struct LaunchProfile
 {
 	std::string name;
