@@ -33,6 +33,10 @@ VulkanDevice::VulkanDevice(const VulkanBinding& value, std::shared_ptr<const voi
 	if (binding.queueFamily >= count || binding.queueIndex >= families[binding.queueFamily].queueCount ||
 		!(families[binding.queueFamily].queueFlags & VK_QUEUE_GRAPHICS_BIT))
 		throw std::invalid_argument("Vulkan binding requires a valid graphics queue");
+	timestampBits = families[binding.queueFamily].timestampValidBits;
+	VkPhysicalDeviceProperties properties;
+	vkGetPhysicalDeviceProperties(binding.physicalDevice, &properties);
+	timestampPeriod = properties.limits.timestampPeriod;
 	vkGetDeviceQueue(binding.device, binding.queueFamily, binding.queueIndex, &queue);
 	if (!queue)
 		throw std::invalid_argument("Vulkan binding queue was not enabled by the application");

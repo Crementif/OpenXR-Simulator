@@ -363,7 +363,8 @@ XrResult Session::BeginFrame()
 XrResult Session::EndFrame(FramePrediction& prediction, const XrFrameEndInfo* info,
 						   std::shared_ptr<const FrameLayers> prepared, std::shared_ptr<const FrameOutput> output,
 						   const std::function<XrResult()>& submit, std::span<const CaptureOutput> captures,
-						   FrameSubmissionPolicy policy, ReprojectionInput reprojection)
+						   FrameSubmissionPolicy policy, ReprojectionInput reprojection,
+						   std::shared_ptr<const FrameGpuTiming> gpuTiming)
 {
 	auto captureSubmission = m_captures.PrepareSubmission(output, captures);
 	if (XR_FAILED(captureSubmission.Validation()))
@@ -398,6 +399,7 @@ XrResult Session::EndFrame(FramePrediction& prediction, const XrFrameEndInfo* in
 	if (XR_FAILED(promoted))
 		return promoted;
 	FrameSubmissionState submission;
+	submission.gpuTiming = std::move(gpuTiming);
 	submission.displayTime = info ? RuntimeTime{Duration{info->displayTime}} : pending->displayTime;
 	submission.layerCount = info ? info->layerCount : 0;
 	submission.blendMode = info ? info->environmentBlendMode : XR_ENVIRONMENT_BLEND_MODE_OPAQUE;

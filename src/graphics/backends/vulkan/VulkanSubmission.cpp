@@ -1,6 +1,8 @@
 #include "graphics/backends/vulkan/VulkanSubmission.h"
 
 #include <cstdio>
+#include <cmath>
+#include <limits>
 #include <utility>
 
 namespace simxr
@@ -22,6 +24,8 @@ VulkanSubmission::Resources::~Resources()
 	for (auto view : outputViews)
 		if (view)
 			vkDestroyImageView(native, view, nullptr);
+	if (timestamps)
+		vkDestroyQueryPool(native, timestamps, nullptr);
 	if (fence)
 		vkDestroyFence(native, fence, nullptr);
 }
@@ -58,11 +62,53 @@ VulkanSubmission::~VulkanSubmission()
 	}
 }
 
+void VulkanSubmission::BeginTiming()
+{
+	const auto& device = *m_resources->device;
+	if (!device.timestampBits || !std::isfinite(device.timestampPeriod) || device.timestampPeriod <= 0)
+		return;
+	VkQueryPoolCreateInfo query{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+	query.queryType = VK_QUERY_TYPE_TIMESTAMP;
+	query.queryCount = 2;
+	const auto result = vkCreateQueryPool(device.binding.device, &query, nullptr, &m_resources->timestamps);
+	if (result != VK_SUCCESS)
+		return;
+	m_resources->timing = std::make_shared<FrameGpuTiming>();
+	vkCmdResetQueryPool(m_resources->command, m_resources->timestamps, 0, 2);
+	vkCmdWriteTimestamp(m_resources->command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m_resources->timestamps, 0);
+}
+void VulkanSubmission::EndTiming()
+{
+	if (m_resources->timestamps)
+		vkCmdWriteTimestamp(m_resources->command, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, m_resources->timestamps, 1);
+}
+void VulkanSubmission::ObserveTiming() const noexcept
+{
+	const auto& resources = *m_resources;
+	if (!resources.timing || resources.timing->compositorNanoseconds.load() >= 0)
+		return;
+	std::array<std::uint64_t, 2> values{};
+	const auto result = vkGetQueryPoolResults(resources.device->binding.device, resources.timestamps, 0, 2,
+		 sizeof(values), values.data(), sizeof(values[0]), VK_QUERY_RESULT_64_BIT);
+	if (result != VK_SUCCESS)
+		return;
+	const auto bits = resources.device->timestampBits;
+	const auto mask = bits >= 64 ? ~std::uint64_t{0} : (std::uint64_t{1} << bits) - 1;
+	const long double ns = static_cast<long double>((values[1] - values[0]) & mask) *
+		resources.device->timestampPeriod;
+	if (ns >= 0 && ns < static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+		resources.timing->compositorNanoseconds.store(static_cast<std::int64_t>(ns));
+}
+
 CompletionStatus VulkanSubmission::PollCompletion() const noexcept
 {
 	const auto cached = m_status.load();
 	if (cached != CompletionStatus::Pending || !m_ready.load())
+	{
+		if (cached == CompletionStatus::Complete)
+			ObserveTiming();
 		return cached;
+	}
 	if (m_resources->completion)
 	{
 		const auto completion = m_resources->completion->PollCompletion();
@@ -71,6 +117,8 @@ CompletionStatus VulkanSubmission::PollCompletion() const noexcept
 			auto expected = CompletionStatus::Pending;
 			m_status.compare_exchange_strong(expected, completion);
 		}
+		if (m_status.load() == CompletionStatus::Complete)
+			ObserveTiming();
 		return m_status.load();
 	}
 	const auto result = vkGetFenceStatus(m_resources->device->binding.device, m_resources->fence);
@@ -86,6 +134,8 @@ CompletionStatus VulkanSubmission::PollCompletion() const noexcept
 		auto expected = CompletionStatus::Pending;
 		m_status.compare_exchange_strong(expected, CompletionStatus::Failed);
 	}
+	if (m_status.load() == CompletionStatus::Complete)
+		ObserveTiming();
 	return m_status.load();
 }
 
@@ -157,6 +207,11 @@ VulkanFrame::VulkanFrame(std::shared_ptr<VulkanSubmission> submission, std::span
 CompletionStatus VulkanFrame::PollCompletion() const noexcept
 {
 	return m_submission->PollCompletion();
+}
+
+std::shared_ptr<const FrameGpuTiming> VulkanFrame::Timing() const noexcept
+{
+	return m_submission->m_resources->timing;
 }
 
 const VulkanImage& VulkanFrame::Image() const

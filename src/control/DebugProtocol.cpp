@@ -384,6 +384,14 @@ Field EncodeFrameMetadata(const FrameRecord& frame)
 									 Field::U32(tag::LayerCount, submission.layerCount),
 									 Field::Text(tag::OutputDisposition, Name(submission.outputDisposition)),
 									 Field::Text(tag::DropReason, Name(submission.dropReason))}));
+		if (const auto cpu = frame.CpuFrameTime())
+			fields.push_back(Field::I64(tag::CpuFrameTime, cpu->count()));
+		if (submission.gpuTiming)
+		{
+			const auto gpu = submission.gpuTiming->compositorNanoseconds.load();
+			if (gpu >= 0)
+				fields.push_back(Field::I64(tag::CompositorGpuTime, gpu));
+		}
 		if (submission.commands && submission.commands->configurationAvailable)
 			fields.push_back(EncodeAppliedInput(submission));
 	}

@@ -159,6 +159,25 @@ void FrameHistory::Begin(FrameId frame, std::optional<FrameId> discarded)
 	Trace(FrameTraceKind::Begun, current->record->key, current->record->prediction.displayTime);
 }
 
+std::optional<Duration> FrameRecord::CpuFrameTime() const noexcept
+{
+	if (!submission || !submission->diagnostics)
+		return {};
+	std::optional<Duration> begin, end;
+	for (const auto& event : submission->diagnostics->events)
+	{
+		if (event.frame != key || event.result != XR_SUCCESS || !event.sequence)
+			continue;
+		if (event.kind == FrameTraceKind::WaitReturned)
+			begin = event.hostTime;
+		if (event.kind == FrameTraceKind::Submitted)
+			end = event.hostTime;
+	}
+	if (!begin || !end || begin->count() < 0 || *end < *begin)
+		return {};
+	return *end - *begin;
+}
+
 XrResult FrameHistory::Submit(FrameId frame, FrameSubmissionState state, const std::function<XrResult()>& beforeCommit)
 {
 	std::lock_guard lock(m_mutex);

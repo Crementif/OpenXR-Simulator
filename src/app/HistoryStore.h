@@ -43,6 +43,8 @@ struct HistoryFrame
 	std::array<std::uint8_t, 2> hands{};
 	// The display period the runtime predicted for this frame (the frame budget).
 	float periodMilliseconds = 0;
+	// Negative means unavailable, never a zero-duration sample.
+	float cpuMilliseconds = -1, compositorGpuMilliseconds = -1;
 };
 struct HistoryBucket
 {
@@ -50,6 +52,7 @@ struct HistoryBucket
 	float minimum = 0, maximum = 0;
 	std::uint32_t flags = 0;
 	std::array<std::uint8_t, 2> hands{};
+	float cpuMaximum = -1;
 };
 // Fixed-size frame ring with a hierarchy of min/max/flags buckets. Appending
 // and querying visit O(log capacity) buckets, without per-frame allocation.

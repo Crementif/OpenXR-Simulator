@@ -36,6 +36,8 @@ class VulkanDevice
 	explicit VulkanDevice(const VulkanBinding& binding, std::shared_ptr<const void> owner = {});
 	const VulkanBinding binding;
 	VkQueue queue = VK_NULL_HANDLE;
+	std::uint32_t timestampBits = 0;
+	float timestampPeriod = 0;
 	std::atomic<bool> lost{false};
 	bool HasNativeOwner() const noexcept;
 	std::uint32_t MemoryType(std::uint32_t bits, VkMemoryPropertyFlags required) const;

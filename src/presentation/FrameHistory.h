@@ -1,6 +1,7 @@
 #pragma once
 
 #include "graphics/LayerBuilder.h"
+#include "graphics/FrameGpuTiming.h"
 #include "presentation/CaptureTypes.h"
 #include "presentation/FrameDiagnosticsJournal.h"
 #include "presentation/FrameTypes.h"
@@ -62,6 +63,7 @@ struct FrameSubmissionState
 	FrameOutputDisposition outputDisposition = FrameOutputDisposition::Unavailable;
 	FrameDropReason dropReason = FrameDropReason::None;
 	ViewLayout viewLayout = ViewLayout::Stereo;
+	std::shared_ptr<const FrameGpuTiming> gpuTiming;
 };
 
 struct SequenceCaptureRecord
@@ -76,6 +78,7 @@ struct FrameRecord
 	FrameStage stage = FrameStage::Issued;
 	std::optional<FrameSubmissionState> submission;
 	std::optional<SequenceCaptureRecord> sequenceCapture;
+	std::optional<Duration> CpuFrameTime() const noexcept;
 };
 
 struct FrameHistorySnapshot

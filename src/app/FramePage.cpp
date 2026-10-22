@@ -261,6 +261,21 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 							   frame.frameMilliseconds, frame.periodMilliseconds, missed ? " \u00b7 missed" : "");
 			ImGui::SetItemTooltip("Time between this frame's display time and the previous one; the budget is the "
 								  "display period");
+			if (frame.cpuMilliseconds >= 0)
+			{
+				ImGui::Text("CPU %.1f ms / %+.1f ms spare", frame.cpuMilliseconds,
+					frame.periodMilliseconds - frame.cpuMilliseconds);
+				ImGui::SetItemTooltip("Host span from xrWaitFrame return to accepted xrEndFrame, including runtime submission");
+			}
+			else
+				ImGui::TextDisabled("CPU timing unavailable");
+			if (frame.compositorGpuMilliseconds >= 0)
+			{
+				ImGui::Text("Compositor GPU %.2f ms", frame.compositorGpuMilliseconds);
+				ImGui::SetItemTooltip("GPU timestamps around composition of submitted layers; excludes app rendering");
+			}
+			else
+				ImGui::TextDisabled("Compositor GPU timing unavailable");
 			ImGui::Text("Run time %.3f s", frame.runSeconds);
 		}
 		if (!bytes.empty())

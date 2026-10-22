@@ -151,6 +151,12 @@ void FrameHistoryFeed::Append(const control::Message& message)
 		// a gap of a second or more is a pause or stall, not a missed frame.
 		if (interval > periodMilliseconds * 1.5L && interval < 1000)
 			flags |= HistoryLate;
+		const auto milliseconds = [&](std::uint16_t tag)
+		{
+			const auto* value = frame.Find(tag);
+			const auto ns = value ? value->AsI64() : std::nullopt;
+			return ns && *ns >= 0 ? float(static_cast<long double>(*ns) / 1000000.L) : -1.f;
+		};
 		m_history.Append({{m_scope.session, m_scope.generation, id},
 						  m_scope.epoch,
 						  0,
@@ -160,7 +166,7 @@ void FrameHistoryFeed::Append(const control::Message& message)
 						  elapsed,
 						  input,
 						  hands,
-						  float(periodMilliseconds)});
+						  float(periodMilliseconds), milliseconds(tag::CpuFrameTime), milliseconds(tag::CompositorGpuTime)});
 		m_previous = timestamp;
 		m_after = id;
 		m_newSegment = false;

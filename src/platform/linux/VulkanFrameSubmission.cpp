@@ -453,6 +453,7 @@ XrResult VulkanFrameSubmission::Execute(const XrFrameEndInfo& info)
 			return Submit();
 		};
 	return m_session.EndFrame(submitted, &info, m_layers, m_output, submit, m_captureOutputs,
-							  m_live ? FrameSubmissionPolicy::Live : FrameSubmissionPolicy::Exact, m_reprojection);
+							  m_live ? FrameSubmissionPolicy::Live : FrameSubmissionPolicy::Exact, m_reprojection,
+							  m_composed ? m_composed->Timing() : nullptr);
 }
 } // namespace simxr

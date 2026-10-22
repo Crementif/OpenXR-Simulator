@@ -43,7 +43,7 @@ void TimelineCanvas::Begin(float headerWidth, float liveWidth)
 	const auto muted = ImGui::GetColorU32(ImGuiCol_TextDisabled), line = ImGui::GetColorU32(ImGuiCol_Border);
 	static constexpr const char* labels[]{"Frame time", "Images", "Input", "Recording", "Events"};
 	static constexpr const char* tips[]{
-		"Display interval against the headset period; red marks late or dropped frames",
+		"CPU frame span against the display period; falls back to display interval when timing is unavailable",
 		"Kept preview coverage; snapshots can be pinned. Gaps have no saved image.",
 		"Applied hand inputs; green marks actions read by the app",
 		"Red: recorded inputs. Blue: replay or script. Hover a saved take to play it.",
@@ -179,8 +179,9 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 		const float x = left + column;
 		// Bars reach half the lane at the budget; amber above it, red for a missed frame.
 		const bool missed = bucket.flags & (HistoryLate | HistoryDropped);
-		const auto color = missed ? Alert : budget > 0 && bucket.maximum > budget * 1.05f ? theme::Warn : Accent;
-		const auto bar = std::max(1.f, std::min(m_lane - 2, (m_lane - 2) * bucket.maximum / (2 * budget)));
+		const float work = bucket.cpuMaximum >= 0 ? bucket.cpuMaximum : bucket.maximum;
+		const auto color = missed || work > budget ? Alert : work >= budget * .9f ? theme::Warn : Accent;
+		const auto bar = std::max(1.f, std::min(m_lane - 2, (m_lane - 2) * work / (2 * budget)));
 		draw->AddLine({x, framesBottom}, {x, framesBottom - bar}, color);
 		if (m_tint && missed)
 			draw->AddLine({x, top}, {x, top + height}, theme::Fade(Alert, .22f));

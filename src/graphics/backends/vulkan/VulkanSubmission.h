@@ -1,6 +1,7 @@
 #pragma once
 
 #include "graphics/FrameOutput.h"
+#include "graphics/FrameGpuTiming.h"
 #include "graphics/FramePool.h"
 #include "graphics/backends/vulkan/VulkanExternal.h"
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
@@ -39,6 +40,8 @@ class VulkanSubmission final : public GpuCompletion
 		VkCommandPool pool = VK_NULL_HANDLE;
 		VkCommandBuffer command = VK_NULL_HANDLE;
 		VkFence fence = VK_NULL_HANDLE;
+		VkQueryPool timestamps = VK_NULL_HANDLE;
+		std::shared_ptr<FrameGpuTiming> timing;
 		VkDescriptorPool descriptors = VK_NULL_HANDLE;
 		std::vector<VkImageView> sourceViews;
 		std::vector<std::shared_ptr<VulkanImage>> sources;
@@ -52,6 +55,9 @@ class VulkanSubmission final : public GpuCompletion
 	};
 	explicit VulkanSubmission(std::shared_ptr<VulkanDevice> device);
 	void ReleaseSources();
+	void BeginTiming();
+	void EndTiming();
+	void ObserveTiming() const noexcept;
 	std::unique_ptr<Resources> m_resources;
 	std::atomic<bool> m_attempted{false};
 	std::atomic<bool> m_ready{false};
@@ -71,6 +77,7 @@ class VulkanFrame final : public FrameOutput
 	std::shared_ptr<VulkanExternalImage> ExternalImage() const;
 	std::shared_ptr<FrameReservation> Reservation() const;
 	bool Submitted() const noexcept;
+	std::shared_ptr<const FrameGpuTiming> Timing() const noexcept;
 
   private:
 	friend class VulkanBackend;

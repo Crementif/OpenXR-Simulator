@@ -63,7 +63,8 @@ class Session
 	XrResult EndFrame(FramePrediction& prediction, const XrFrameEndInfo* info = nullptr,
 					  std::shared_ptr<const FrameLayers> prepared = {}, std::shared_ptr<const FrameOutput> output = {},
 					  const std::function<XrResult()>& submit = {}, std::span<const CaptureOutput> captures = {},
-					  FrameSubmissionPolicy policy = FrameSubmissionPolicy::Exact, ReprojectionInput reprojection = {});
+					  FrameSubmissionPolicy policy = FrameSubmissionPolicy::Exact, ReprojectionInput reprojection = {},
+					  std::shared_ptr<const FrameGpuTiming> gpuTiming = {});
 	XrResult Attach(const XrSessionActionSetsAttachInfo& info);
 	XrResult SyncActions(const XrActionsSyncInfo& info,
 						 std::optional<std::array<ControllerControls, 2>> nativeControls = std::nullopt);

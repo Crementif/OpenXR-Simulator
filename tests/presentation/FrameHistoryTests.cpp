@@ -34,6 +34,35 @@ thread_local bool failDiagnosticAllocation = false;
 	std::free(memory);
 }
 
+void MeasuredFrameTiming()
+{
+	using namespace simxr;
+	FrameRecord frame;
+	frame.key = {{3}, {8}};
+	Require(!frame.CpuFrameTime(), "An unsubmitted frame invented CPU timing");
+	frame.submission.emplace();
+	auto diagnostics = std::make_shared<FrameDiagnostics>();
+	frame.submission->diagnostics = diagnostics;
+	FrameDiagnostic begin, end;
+	begin.sequence = 1;
+	begin.frame = frame.key;
+	begin.hostTime = Duration{1000000};
+	begin.kind = FrameTraceKind::WaitReturned;
+	end = begin;
+	end.sequence = 2;
+	end.hostTime = Duration{6000000};
+	end.kind = FrameTraceKind::Submitted;
+	diagnostics->events = {begin, end};
+	Require(frame.CpuFrameTime() == Duration{5000000}, "CPU span ignored host timestamps");
+	diagnostics->events.front().frame.generation = {4};
+	Require(!frame.CpuFrameTime(), "CPU span mixed generations");
+	diagnostics->events = {end};
+	Require(!frame.CpuFrameTime(), "Truncated history invented CPU timing");
+	diagnostics->events = {begin, end};
+	diagnostics->events.back().hostTime = Duration{0};
+	Require(!frame.CpuFrameTime(), "CPU span accepted a backwards host clock");
+}
+
 void IndependentDiagnosticJournal()
 {
 	using namespace simxr;
@@ -474,6 +503,7 @@ int main()
 	reserved.CancelPending();
 	Require(reserved.Find({reservedGeneration, {3}}) == cancellation && reserved.Snapshot().evicted == 1,
 			"Successful reservation lost preallocated cancellation ownership");
+	MeasuredFrameTiming();
 	IndependentDiagnosticJournal();
 	ConcurrentDiagnosticJournal();
 	DiagnosticClockLifetime();

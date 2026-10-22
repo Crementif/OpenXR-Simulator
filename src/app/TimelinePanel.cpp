@@ -138,7 +138,8 @@ void TimelinePanel::DrawMeter(const HistoryStore& history, const RuntimeView& st
 	const auto last = history.Size() - 1;
 	const auto& newest = history.At(last);
 	std::size_t first = last;
-	float sum = 0, minimum = newest.frameMilliseconds, maximum = 0;
+	float sum = 0, minimum = newest.frameMilliseconds, maximum = 0, cpuSum = 0, gpuSum = 0;
+	std::size_t cpuCount = 0, gpuCount = 0;
 	while (first > 0 && last - first < 89 && !(history.At(first).flags & HistoryRunStart))
 		--first;
 	for (auto index = first; index <= last; ++index)
@@ -147,16 +148,27 @@ void TimelinePanel::DrawMeter(const HistoryStore& history, const RuntimeView& st
 		sum += value;
 		minimum = std::min(minimum, value);
 		maximum = std::max(maximum, value);
+		if (history.At(index).cpuMilliseconds >= 0)
+		{
+			cpuSum += history.At(index).cpuMilliseconds;
+			++cpuCount;
+		}
+		if (history.At(index).compositorGpuMilliseconds >= 0)
+		{
+			gpuSum += history.At(index).compositorGpuMilliseconds;
+			++gpuCount;
+		}
 	}
 	const auto count = last - first + 1;
 	const float average = sum / count, budget = newest.periodMilliseconds;
+	const float cpu = cpuCount ? cpuSum / cpuCount : -1, gpu = gpuCount ? gpuSum / gpuCount : -1;
 	std::size_t missed = 0;
 	for (auto index = history.LowerBound(newest.seconds - 10); index <= last; ++index)
 		missed += (history.At(index).flags & (HistoryLate | HistoryDropped)) != 0;
 	// Green at budget, amber when frames run long, red when frames were missed.
 	const ImU32 color = state.manual ? theme::TextDim
-						: missed > 3 || average > budget * 1.5f ? theme::Record
-						: missed || average > budget * 1.05f	 ? theme::Warn
+						: missed > 3 || (cpu >= 0 ? cpu : average) > budget ? theme::Record
+						: missed || (cpu >= 0 ? cpu : average) >= budget * .9f ? theme::Warn
 																 : theme::Ok;
 	char text[48];
 	if (oneRow)
@@ -169,17 +181,26 @@ void TimelinePanel::DrawMeter(const HistoryStore& history, const RuntimeView& st
 	draw->AddText({area.x, textY}, color, text);
 	const ImVec2 hoverMin{area.x, area.y}, hoverMax{area.x + area.width, area.y + area.height};
 	// A sparkline under the numbers: one bar per frame, dashed budget at mid height.
-	const float sparkTop = textY + font + 3 * scale, sparkBottom = area.y + area.height - 3 * scale;
+	float sparkTop = textY + font + 3 * scale;
+	const float sparkBottom = area.y + area.height - 3 * scale;
+	if (!oneRow && cpu >= 0 && sparkBottom - sparkTop >= font + 3 * scale)
+	{
+		char headroom[48];
+		std::snprintf(headroom, sizeof(headroom), "CPU %+.1f ms spare", budget - cpu);
+		draw->AddText({area.x, sparkTop}, color, headroom);
+		sparkTop += font + 3 * scale;
+	}
 	if (!oneRow && sparkBottom - sparkTop >= 10 * scale)
 	{
 		const float height = sparkBottom - sparkTop, step = area.width / 90;
 		for (auto index = first; index <= last; ++index)
 		{
 			const auto& frame = history.At(index);
-			const float bar = std::min(height, height * frame.frameMilliseconds / (2 * std::max(1.f, budget)));
+			const float work = frame.cpuMilliseconds >= 0 ? frame.cpuMilliseconds : frame.frameMilliseconds;
+			const float bar = std::min(height, height * work / (2 * std::max(1.f, budget)));
 			const float x = area.x + (index - first) * step;
 			const ImU32 tone = frame.flags & (HistoryLate | HistoryDropped) ? theme::Record
-							   : frame.frameMilliseconds > budget * 1.05f		 ? theme::Warn
+							   : work >= budget * .9f		 ? theme::Warn
 																			 : theme::Accent;
 			draw->AddRectFilled({x, sparkBottom - bar}, {x + std::max(1.f, step - scale), sparkBottom}, tone);
 		}
@@ -193,8 +214,14 @@ void TimelinePanel::DrawMeter(const HistoryStore& history, const RuntimeView& st
 		ImGui::BeginTooltip();
 		ImGui::Text("Last %zu display intervals (ms): min %.1f / avg %.1f / max %.1f",
 					count, minimum, average, maximum);
-		ImGui::TextDisabled("%.0f Hz / %.1f ms budget; %zu misses / 10 s. Render time unavailable.",
-							   budget > 0 ? 1000 / budget : 0, budget, missed);
+		char gpuText[32] = "unavailable";
+		if (gpu >= 0)
+			std::snprintf(gpuText, sizeof(gpuText), "%.2f ms", gpu);
+		if (cpu >= 0)
+			ImGui::TextDisabled("CPU %.1f ms / %+.1f ms spare; compositor GPU %s; %zu misses / 10 s",
+				cpu, budget - cpu, gpuText, missed);
+		else
+			ImGui::TextDisabled("%.1f ms budget; CPU/GPU timing unavailable; %zu misses / 10 s", budget, missed);
 		ImGui::EndTooltip();
 	}
 }

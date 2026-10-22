@@ -2812,6 +2812,34 @@ void CheckInputPad(Interaction& test)
 }
 
 // D9: while the app runs, look back a few seconds and see the kept preview.
+void CheckMeasuredTiming(Interaction& test)
+{
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(6);
+	while (std::chrono::steady_clock::now() < deadline)
+		test.Frame();
+	const auto& history = test.runtime.History();
+	std::size_t cpu = 0, gpu = 0, slow = 0, fast = 0;
+	for (std::size_t index = 0; index < history.Size(); ++index)
+	{
+		const auto& frame = history.At(index);
+		cpu += frame.cpuMilliseconds >= 0;
+		gpu += frame.compositorGpuMilliseconds >= 0;
+		slow += frame.cpuMilliseconds >= 35;
+		fast += frame.cpuMilliseconds >= 0 && frame.cpuMilliseconds < 20;
+	}
+	Require(cpu > 50 && gpu > 20 && slow > 2 && fast > 20,
+		"Measured CPU/GPU timing did not distinguish the deliberately slow probe frames");
+	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
+	{
+		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "measured-timing.bmp").string());
+		test.Frame();
+	}
+	test.renderer.WaitIdle();
+	Require(!test.validation->errors.load(), "GPU timing introduced validation errors");
+	std::cout << "PASS measured timing: CPU " << cpu << ", compositor GPU " << gpu
+		<< ", slow " << slow << ", fast " << fast << '\n';
+}
+
 void CheckPreviewHistory(Interaction& test)
 {
 	const auto& history = test.runtime.History();
@@ -3562,6 +3590,8 @@ void CheckToolbarLaunch(const char* executable)
 		CheckTimelineWorkflow(test);
 	if (std::getenv("SIMXR_PAD_QA"))
 		CheckInputPad(test);
+	if (std::getenv("SIMXR_TIMING_QA"))
+		CheckMeasuredTiming(test);
 	if (std::getenv("SIMXR_HISTORY_QA"))
 		CheckPreviewHistory(test);
 	if (std::getenv("SIMXR_TAKE_QA"))

@@ -441,6 +441,7 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 	m_state->submissions.push_back(job);
 	auto& resources = *job->m_resources;
 	resources.pipeline = m_state->pipeline;
+	job->BeginTiming();
 	if (m_state->external)
 	{
 		VulkanExternalImageSpec spec;
@@ -571,6 +572,7 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 		vkCmdPipelineBarrier(resources.command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
 							 0, 0, nullptr, 0, nullptr, 1, &release);
 	}
+	job->EndTiming();
 	CheckVulkan(vkEndCommandBuffer(resources.command), "End shared compositor commands");
 	const auto& pool = m_state->reservations.Owns(reservation) ? m_state->reservations :
 		m_state->historyReservations.Owns(reservation) ? m_state->historyReservations : m_state->liveReservations;
