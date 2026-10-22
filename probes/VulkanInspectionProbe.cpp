@@ -380,6 +380,31 @@ std::shared_ptr<VulkanFrame> Producer(VulkanBackend& backend, const std::shared_
 	return output;
 }
 
+void CancelLargeBatch(const VulkanBinding& binding, const std::shared_ptr<VulkanInspectionValidation>& validation)
+{
+	constexpr std::size_t count = 40;
+	VulkanBackend backend(binding, count, SharingExtensions, VK_API_VERSION_1_1);
+	VulkanExternalDevice external(backend.Device(), SharingExtensions, VK_API_VERSION_1_1);
+	VulkanInspection inspection(external.Identity(), count, validation);
+	auto source = backend.CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {16, 16}, 2, SourceUsage);
+	std::vector<std::unique_ptr<VulkanInspectionTransfer>> transfers;
+	std::vector<std::shared_ptr<VulkanInspectionFrame>> outputs;
+	for (std::size_t index = 0; index < count; ++index)
+	{
+		auto transfer = inspection.Prepare(Producer(backend, source));
+		outputs.push_back(transfer->Output());
+		transfers.push_back(std::move(transfer));
+	}
+	transfers.clear();
+	Check(inspection.Close(Timeout), "Drain forty cancelled inspection transfers");
+	for (const auto& output : outputs)
+		Require(output->PollCompletion() == CompletionStatus::Failed, "Cancelled batch left a pending or ready output");
+	outputs.clear();
+	source.reset();
+	Require(backend.Close() == XR_SUCCESS, "Cancelled batch retained borrowed resources");
+	std::puts("case=large-inspection-batch cancelled=40 drained=yes borrowedResourcesReleased=yes PASS");
+}
+
 void RejectedPreparation(VulkanBackend& backend, const std::shared_ptr<VulkanImage>& source,
 						 const VulkanExternalIdentity& identity,
 						 const std::shared_ptr<VulkanInspectionValidation>& validation)
@@ -1076,6 +1101,7 @@ bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validat
 			Require(!disabled.Sharing(), "Unconfigured logical sharing became enabled");
 			Require(disabled.Close() == XR_SUCCESS, "Close unconfigured backend");
 		}
+		CancelLargeBatch(binding, validation);
 		VulkanBackend backend(binding, 3, SharingExtensions, VK_API_VERSION_1_1);
 		Require(backend.Sharing(), "Explicit logical external-sharing configuration unavailable");
 		bool rejectedBorrow = false;

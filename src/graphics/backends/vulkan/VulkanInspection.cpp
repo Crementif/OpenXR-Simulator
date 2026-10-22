@@ -811,7 +811,7 @@ class VulkanInspection::State
 	void Poll()
 	{
 		std::lock_guard polling(m_polling);
-		std::array<std::shared_ptr<VulkanInspectionTransfer::State>, 35> pending;
+		std::array<std::shared_ptr<VulkanInspectionTransfer::State>, SnapshotBudget::MaxCapacity + 3 + 32> pending;
 		std::size_t count = 0;
 		{
 			std::lock_guard lock(m_mutex);
@@ -820,7 +820,7 @@ class VulkanInspection::State
 		}
 		for (std::size_t index = 0; index < count; ++index)
 			pending[index]->Advance(*m_queue);
-		std::array<std::shared_ptr<VulkanInspectionTransfer::State>, 35> retired;
+		std::array<std::shared_ptr<VulkanInspectionTransfer::State>, SnapshotBudget::MaxCapacity + 3 + 32> retired;
 		count = 0;
 		{
 			std::lock_guard lock(m_mutex);
