@@ -35,12 +35,14 @@ extern char** environ;
 #endif
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <iostream>
 #include <optional>
+#include <random>
 #include <set>
 #include <sstream>
 
@@ -2343,8 +2345,9 @@ void CheckShell(Interaction& test, const char* qa)
 
 // D12 feedback: ImGui reports duplicate IDs only for the hovered item, so sweep the pointer
 // over every page (the Frame page with its value sections open) and collect conflicts.
-void CheckIdConflicts(Interaction& test)
+void CheckIdConflicts(Interaction& test, bool frameOnly)
 {
+	ImGui::GetIO().ConfigDebugHighlightIdConflicts = true;
 	const auto pump = [&](int count)
 	{
 		for (int index = 0; index < count; ++index)
@@ -2401,23 +2404,83 @@ void CheckIdConflicts(Interaction& test)
 					window->StateStorage.SetInt(window->GetID(header), 1);
 		pump(3);
 	};
-	for (std::size_t page = 0; page < pages.size(); ++page)
+	if (!frameOnly)
 	{
-		test.workspace.Select(pages[page]);
+		for (std::size_t page = 0; page < pages.size(); ++page)
+		{
+			test.workspace.Select(pages[page]);
+			pump(4);
+			openSections();
+			sweep(("page " + std::to_string(page)).c_str(), "Inspector");
+			for (const char* region : {"Inspector", "Head details", "Hand details", "Configuration details"})
+				if (auto* details = FindPanel(region); details && details->Active && details->ScrollMax.y > 0)
+				{
+					ImGui::SetScrollY(details, details->ScrollMax.y);
+					pump(3);
+					sweep(("page bottom " + std::to_string(page)).c_str(), region);
+					ImGui::SetScrollY(details, 0);
+				}
+
+		}
+		// The take/script pages require files; the Library workflow supplies real saved takes.
+		const auto directory = std::filesystem::path(test.runtime.Snapshot().endpoint).parent_path();
+		for (const char* folder : {"recordings", "scripts"})
+		{
+			if (!std::filesystem::exists(directory / folder))
+				continue;
+			for (const auto& entry : std::filesystem::directory_iterator(directory / folder))
+			{
+				if (entry.path().extension() != ".luau")
+					continue;
+				if (std::string_view(folder) == "recordings")
+					test.workspace.Select(TakeSel{entry.path().string()});
+				else
+					test.workspace.Select(ScriptSel{entry.path().string()});
+				pump(4);
+				sweep(folder, "Inspector");
+				break;
+			}
+		}
+		ImGui::ActivateItemByID(FindPanel("Top bar")->GetID("##App picker"));
+		pump(3);
+		const auto& picker = ImGui::GetCurrentContext()->OpenPopupStack;
+		Require(!picker.empty() && picker.back().Window, "ID sweep app picker missing");
+		sweep("app picker", picker.back().Window->Name);
+		ImGui::ActivateItemByID(picker.back().Window->GetID("Edit profiles"));
 		pump(4);
-		openSections();
-		sweep(("page " + std::to_string(page)).c_str(), "Inspector");
+		Require(FindPanel("Launch profiles") && FindPanel("Launch profiles")->Active, "ID sweep profiles missing");
+		sweep("launch profiles", "Launch profiles");
+		if (auto* form = FindPanel("Profile form"))
+		{
+			ImGui::SetScrollY(form, form->ScrollMax.y);
+			pump(3);
+			sweep("launch profiles bottom", "Profile form");
+		}
+		ImGui::ClosePopupToLevel(0, true);
+		pump(3);
 	}
 	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Pause"));
 	Eventually([&] { pump(1); return test.runtime.Snapshot().manual; }, "Sweep pause");
-	test.workspace.Select(FrameSel{test.runtime.Snapshot().time.cursor, test.runtime.Snapshot().time.epoch});
+	Eventually([&] { pump(1); return !test.runtime.Snapshot().operationPending; }, "Sweep pause completion");
+	const auto previousCapture = test.runtime.Snapshot().selectedCapture;
+	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Step forward"));
+	Eventually([&]
+	{
+		pump(1);
+		const auto state = test.runtime.Snapshot();
+		return !state.operationPending && state.selectedReady && state.selectedCapture &&
+			state.selectedCapture != previousCapture &&
+			state.inspectedFrame == state.selectedFrame;
+	}, "ID sweep exact capture not ready");
+	const auto captured = test.runtime.Snapshot();
+	test.workspace.Select(FrameSel{captured.selectedIdentity, captured.selectedEpoch});
 	pump(30);
 	auto* inspector = FindPanel("Inspector");
 	for (const char* header : {"All input values", "Input owners and commands", "All actions and bindings", "Layers",
 							   "Timing", "Raw"})
 	{
 		auto* details = FindPanel("Frame details");
-		ImGui::ActivateItemByID((details ? details : inspector)->GetID(header));
+		(details ? details : inspector)->StateStorage.SetInt((details ? details : inspector)->GetID(header), 1);
 		pump(3);
 	}
 	if (auto* details = FindPanel("Frame details"))
@@ -2426,8 +2489,17 @@ void CheckIdConflicts(Interaction& test)
 	sweep("frame page", "Inspector");
 	if (auto* details = FindPanel("Frame details"))
 	{
+		ImGui::SetScrollY(details, details->ScrollMax.y);
+		pump(3);
+		sweep("frame page bottom", "Frame details");
+		if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
+		{
+			test.renderer.RequestScreenshot((std::filesystem::path(qa) / "id-frame-bottom.bmp").string());
+			pump(2);
+		}
 		ImGui::ActivateItemByID(details->GetID("Open in window"));
 		pump(4);
+		Require(FindPanel("Raw metadata") && FindPanel("Raw metadata")->Active, "Raw metadata did not open");
 		sweep("raw window", "Raw metadata");
 	}
 	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Continue"));
@@ -2435,7 +2507,7 @@ void CheckIdConflicts(Interaction& test)
 	for (const auto& conflict : conflicts)
 		std::cout << "ID conflict: " << conflict << '\n';
 	Require(conflicts.empty(), "Duplicate ImGui IDs on a page");
-	std::cout << "PASS no duplicate IDs under the pointer on any page\n";
+	std::cout << "PASS no duplicate IDs under the pointer on " << (frameOnly ? "frame and raw pages" : "all checked pages") << '\n';
 }
 
 // D10: record, stop, name, replay and cancel with only Rec, the stop popover and the Library.
@@ -3204,6 +3276,185 @@ void CheckBodyRig(Interaction& test)
 	Require(test.validation->errors.load() == 0, "Body rig validation errors");
 }
 
+void CheckSoak(Interaction& test, const std::filesystem::path& directory)
+{
+	Require(std::filesystem::path(test.runtime.Snapshot().endpoint).parent_path() == directory,
+			"Soak must use its isolated launch endpoint");
+	const auto seedText = std::getenv("SIMXR_SOAK_SEED");
+	const auto seed = seedText ? static_cast<unsigned>(std::stoul(seedText)) : 51023U;
+	const auto durationText = std::getenv("SIMXR_SOAK_SECONDS");
+	const auto duration = std::chrono::seconds(durationText ? std::stoul(durationText) : 600);
+	std::mt19937 random(seed);
+	std::deque<std::string> recent;
+	unsigned actions = 0;
+	const auto trace = [&](const std::string& action)
+	{
+		recent.push_back(std::to_string(++actions) + " " + action);
+		if (recent.size() > 20)
+			recent.pop_front();
+		// Written before the action: assertions and driver crashes bypass exception handlers.
+		std::ofstream output(directory / "soak-last-actions.txt");
+		output << "seed=" << seed << '\n';
+		for (const auto& entry : recent)
+			output << entry << '\n';
+	};
+	const auto pump = [&]
+	{
+		for (int frame = 0; frame < 3; ++frame)
+			test.Frame();
+		Require(test.validation->errors.load() == 0, "Vulkan validation error during soak");
+		Require(test.runtime.Snapshot().connected && test.runtime.Snapshot().sessionAvailable,
+				"Soak lost its probe session");
+	};
+	const auto activate = [&](const char* region, const char* label)
+	{
+		trace(std::string(region) + ": " + label);
+		if (auto* panel = FindPanel(region); panel && panel->Active)
+			ImGui::ActivateItemByID(panel->GetID(label));
+		pump();
+	};
+	const auto pointer = [&](ImVec2 point, std::optional<bool> down)
+	{
+		SDL_Event event{};
+		event.type = SDL_EVENT_MOUSE_MOTION;
+		event.motion.windowID = SDL_GetWindowID(test.window.Native());
+		event.motion.which = TestMouse;
+		event.motion.x = point.x;
+		event.motion.y = point.y;
+		Require(SDL_PushEvent(&event), "Push soak motion");
+		if (down)
+		{
+			event = {};
+			event.type = *down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+			event.button.windowID = SDL_GetWindowID(test.window.Native());
+			event.button.which = TestMouse;
+			event.button.button = SDL_BUTTON_LEFT;
+			event.button.down = *down;
+			event.button.x = point.x;
+			event.button.y = point.y;
+			Require(SDL_PushEvent(&event), "Push soak button");
+		}
+		pump();
+	};
+	const auto drag = [&](const char* region)
+	{
+		if (auto* panel = FindPanel(region); panel && panel->Active)
+		{
+			const ImVec2 start{panel->Pos.x + panel->Size.x * (.2f + random() % 60 / 100.f),
+							   panel->Pos.y + panel->Size.y * (.2f + random() % 60 / 100.f)};
+			const ImVec2 end{start.x + int(random() % 81) - 40, start.y + int(random() % 61) - 30};
+			trace(std::string(region) + " drag " + std::to_string(start.x) + "," + std::to_string(start.y) +
+				  " -> " + std::to_string(end.x) + "," + std::to_string(end.y));
+			pointer(start, true);
+			pointer(end, std::nullopt);
+			pointer(end, false);
+		}
+	};
+	IgnoreRealPointer();
+	ImGui::GetIO().ConfigDebugHighlightIdConflicts = true;
+	const auto started = std::chrono::steady_clock::now();
+	auto progress = started;
+	std::cout << "Soak seed=" << seed << " seconds=" << duration.count() << std::endl;
+	try
+	{
+		while (std::chrono::steady_clock::now() - started < duration)
+		{
+			ImGui::ClosePopupsExceptModals();
+			const auto action = random() % 14;
+			switch (action)
+			{
+			case 0:
+			{
+				static constexpr const char* pages[]{"Player", "Head", "Left", "Right", "Body", "Gaze",
+					"Trackers", "Headset", "Scenarios", "Library"};
+				activate("Device rail", pages[random() % std::size(pages)]);
+				break;
+			}
+			case 1:
+				drag("Image area");
+				break;
+			case 2:
+				drag("Inspector");
+				break;
+			case 3:
+				drag("Timeline");
+				break;
+			case 4:
+			{
+				activate("GPU preview", "View");
+				const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+				if (!popups.empty() && popups.back().Window)
+				{
+					static constexpr const char* choices[]{"Left", "Right", "Both", "Fit", "1:1", "2:1", "4:1", "Pick region"};
+					const auto* choice = choices[random() % std::size(choices)];
+					trace(std::string("View: ") + choice);
+					ImGui::ActivateItemByID(popups.back().Window->GetID(choice));
+					pump();
+					if (std::string_view(choice) == "Pick region")
+						drag("Image area");
+				}
+				break;
+			}
+			case 5:
+				activate("Timeline", test.runtime.Snapshot().manual ? "Continue" : "Pause");
+				break;
+			case 6:
+				activate("Timeline", random() % 2 ? "Step back" : "Step forward");
+				break;
+			case 7:
+				activate("Top bar", test.runtime.Snapshot().recording ? "Stop recording" : "Rec");
+				break;
+			case 8:
+				activate("Top bar", "Library");
+				break;
+			case 9:
+				activate("Top bar", "Focus");
+				break;
+			case 10:
+				activate("Timeline", "Fold timeline");
+				break;
+			case 11:
+				activate("Device rail", "Fold inspector");
+				break;
+			case 12:
+			{
+				const int width = 640 + int(random() % 17) * 80, height = 640 + int(random() % 6) * 80;
+				trace("resize " + std::to_string(width) + "x" + std::to_string(height));
+				test.window.Resize(width, height);
+				pump();
+				break;
+			}
+			case 13:
+			{
+				const float scale = random() % 2 ? 1.f : 1.5f;
+				trace("scale " + std::to_string(scale));
+				test.workspace.SetScale(scale);
+				pump();
+				break;
+			}
+			}
+			pump();
+			SDL_Delay(25);
+			if (std::chrono::steady_clock::now() - progress > std::chrono::seconds(30))
+			{
+				std::cout << "Soak seed=" << seed << " actions=" << actions << std::endl;
+				progress = std::chrono::steady_clock::now();
+			}
+		}
+		test.renderer.WaitIdle();
+		Require(test.validation->errors.load() == 0, "Soak teardown validation errors");
+	}
+	catch (...)
+	{
+		std::cerr << "Soak failure seed=" << seed << '\n';
+		for (const auto& entry : recent)
+			std::cerr << entry << '\n';
+		throw;
+	}
+	SDL_SetEventFilter(nullptr, nullptr);
+	std::cout << "PASS soak seed=" << seed << " seconds=" << duration.count() << " actions=" << actions << std::endl;
+}
+
 void CheckToolbarLaunch(const char* executable)
 {
 	const auto directoryValue = std::getenv("SIMXR_LAUNCH_QA_DIRECTORY");
@@ -3227,6 +3478,14 @@ void CheckToolbarLaunch(const char* executable)
 			profile.arguments.push_back(argument);
 	}
 	profile.environment = {{"SIMXR_DATA_DIR", directory.string()}, {"SIMXR_CONTROL_SOCKET", ""}};
+	if (std::getenv("SIMXR_SOAK_QA"))
+	{
+		Require(std::filesystem::path(executable).filename() == "xr_probe_linux", "Soak requires the isolated probe");
+		profile.environment.emplace_back("SIMXR_PROBE_INTERACTIVE", "1");
+		profile.environment.emplace_back("SIMXR_PROBE_GPU_INSPECTION", "1");
+		profile.environment.emplace_back("SIMXR_PROBE_FRAMES", "120000");
+		profile.environment.emplace_back("SIMXR_VULKAN_VALIDATION", "1");
+	}
 	settings.profiles.push_back(profile);
 	settings.activeProfile = profile.name;
 	SaveSettings(settingsPath, settings);
@@ -3253,6 +3512,8 @@ void CheckToolbarLaunch(const char* executable)
 			"Launched stereo session not selected");
 	Require(std::filesystem::path(state.endpoint).parent_path() == directory, "Launch selected unrelated endpoint");
 	std::ofstream(directory / "attached.endpoint") << state.endpoint;
+	if (std::getenv("SIMXR_SOAK_QA"))
+		CheckSoak(test, directory);
 	if (std::getenv("SIMXR_TIMELINE_QA"))
 		CheckTimelineWorkflow(test);
 	if (std::getenv("SIMXR_PAD_QA"))
@@ -3267,8 +3528,8 @@ void CheckToolbarLaunch(const char* executable)
 		CheckLayouts(test, qa);
 	if (std::getenv("SIMXR_SHELL_QA"))
 		CheckShell(test, std::getenv("SIMXR_UI_QA_DIR"));
-	if (std::getenv("SIMXR_ID_QA"))
-		CheckIdConflicts(test);
+	if (std::getenv("SIMXR_ID_QA") || std::getenv("SIMXR_ID_FRAME_QA"))
+		CheckIdConflicts(test, std::getenv("SIMXR_ID_FRAME_QA") != nullptr);
 	if (std::getenv("SIMXR_INPUT_QA"))
 		CheckManualEdges(state);
 	if (std::getenv("SIMXR_RIG_QA"))
