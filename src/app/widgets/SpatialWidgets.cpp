@@ -18,25 +18,27 @@ void CancelPoseGizmo(GizmoState& state)
 	{
 		ImGuizmo::PushID(state.id);
 		ImGuizmo::Enable(false);
+		ImGuizmo::Enable(true);
 		ImGuizmo::PopID();
 		state.usingGizmo = false;
+		state.screenMove = false;
 	}
 }
 SpatialEditResult DrawPoseGizmo(const char* id, GizmoState& state, const FrameView& camera, ImVec2 minimum,
 								ImVec2 maximum, XrPosef& pose, bool enabled)
 {
 	state.id = static_cast<int>(ImGui::GetID(id));
+	// A disabled gizmo draws nothing and leaves the shared ImGuizmo state to the views that edit.
+	if (!enabled)
+	{
+		CancelPoseGizmo(state);
+		return {};
+	}
 	ImGuizmo::PushID(state.id);
 	ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
 	ImGuizmo::SetRect(minimum.x, minimum.y, maximum.x - minimum.x, maximum.y - minimum.y);
 	ImGuizmo::SetOrthographic(false);
-	ImGuizmo::Enable(enabled);
-	if (!enabled)
-	{
-		state.usingGizmo = false;
-		ImGuizmo::PopID();
-		return {};
-	}
+	ImGuizmo::Enable(true);
 	const bool hovering = ImGui::IsMouseHoveringRect(minimum, maximum);
 	if (hovering && !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space))
 		state.operation = (state.operation + 1) % 3;
@@ -53,6 +55,8 @@ SpatialEditResult DrawPoseGizmo(const char* id, GizmoState& state, const FrameVi
 	const bool active = ImGuizmo::IsUsing();
 	const bool finished = state.usingGizmo && !active;
 	state.usingGizmo = active;
+	if (active)
+		state.screenMove = ImGuizmo::GetActiveHandleType() == ImGuizmo::MT_MOVE_SCREEN;
 	if (changed)
 	{
 		pose = MatrixPose(matrix);

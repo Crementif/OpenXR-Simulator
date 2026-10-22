@@ -1,9 +1,11 @@
 #include "app/DeviceControlPanel.h"
 #include "app/Theme.h"
 #include "Math.h"
+#include "app/SpatialMath.h"
 #include "app/widgets/Controls.h"
 #include "app/widgets/InputPad.h"
 #include "app/widgets/LiveField.h"
+#include "simulation/BodyModel.h"
 #include <algorithm>
 #include <cmath>
 #include <numbers>
@@ -146,21 +148,138 @@ std::optional<SimulationEdit> DeviceControlPanel::Draw(bool supported, const Sel
 	ImGui::PopItemWidth();
 	return std::exchange(m_edit, {});
 }
-bool DeviceControlPanel::Field(const char* key, bool changed, bool continuous)
+bool DeviceControlPanel::Field(const char* key, bool changed, bool continuous, const std::function<void()>& reset,
+							   bool slider)
 {
 	const std::string field = m_fieldScope + key;
 	const bool finished = continuous && ImGui::IsItemDeactivatedAfterEdit();
 	changed |= finished;
+	bool restored = false;
+	if (reset)
+	{
+		restored = slider && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+		if (ImGui::BeginPopupContextItem(field.c_str()))
+		{
+			restored |= ImGui::MenuItem("Reset to default");
+			ImGui::EndPopup();
+		}
+		if (restored)
+		{
+			reset();
+			changed = true;
+		}
+	}
 	if (changed)
 	{
 		m_pendingFields.insert(field);
-		m_continuousEdit = continuous && !finished;
+		m_continuousEdit = continuous && !finished && !restored;
 		m_rejectedFields.erase(field);
 	}
 	DrawLiveField(m_pending && m_pendingFields.contains(field),
 				  m_rejectedFields.contains(field) && ImGui::GetTime() < m_rejectedUntil ? m_deliveryError
 																						 : std::string{});
 	return changed;
+}
+std::optional<SimulationEdit> DeviceControlPanel::DrawHeader(const Selection& selection)
+{
+	m_edit.reset();
+	m_continuousEdit = false;
+	const auto device = std::get_if<DeviceSel>(&selection);
+	if (!device)
+		return {};
+	static constexpr const char* titles[] = {"Player", "Head",	   "Left hand", "Right hand",
+											 "Body",   "Eye gaze", "Trackers"};
+	const auto page = device->page;
+	const bool ready = m_observed && m_configurationLoaded && m_playerRig.Ready();
+	const float right = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextUnformatted(titles[static_cast<int>(page)]);
+	if (page == DevicePage::Player)
+	{
+		const float width = ImGui::CalcTextSize("Reset all").x + ImGui::GetStyle().FramePadding.x * 2;
+		ImGui::SameLine(right - width);
+		ImGui::BeginDisabled(!ready);
+		if (ImGui::Button("Reset all"))
+			ResetPage(page);
+		ImGui::EndDisabled();
+		ImGui::SetItemTooltip("Player, devices, body and trackers back to defaults. Settings stay.");
+	}
+	else
+	{
+		ImGui::SameLine(right - ImGui::GetFrameHeight());
+		ImGui::BeginDisabled(!ready);
+		const std::string tip = std::string("Reset ") + titles[static_cast<int>(page)];
+		if (IconButton("Reset page", Icon::Refresh, tip.c_str()))
+			ResetPage(page);
+		ImGui::EndDisabled();
+	}
+	return std::exchange(m_edit, {});
+}
+void DeviceControlPanel::ResetPage(DevicePage page)
+{
+	if (!m_observed || !m_playerRig.Ready())
+		return;
+	const auto allowed = [&](ControlChannel channel)
+	{
+		const auto& owner = m_observed->owners[static_cast<std::size_t>(channel)];
+		return !owner || owner == m_manualSource;
+	};
+	std::vector<SimulationCommand> extra;
+	const auto resetControls = [&](std::uint32_t hand)
+	{
+		const auto channel = hand ? ControlChannel::RightControls : ControlChannel::LeftControls;
+		m_authoredControls[hand] = {};
+		m_latches[hand] = {};
+		if (!allowed(channel))
+			return;
+		extra.emplace_back(TakeControl{channel, false});
+		extra.emplace_back(SetControllerControls{hand, ControllerControls{}});
+	};
+	switch (page)
+	{
+	case DevicePage::Player:
+		m_playerRig.ResetAll();
+		m_playerRig.height = m_observed->values.proportions.height;
+		for (std::uint32_t hand = 0; hand < 2; ++hand)
+			resetControls(hand);
+		m_authoredTracking.gaze = {};
+		if (allowed(ControlChannel::Gaze))
+		{
+			extra.emplace_back(TakeControl{ControlChannel::Gaze, false});
+			extra.emplace_back(SetGaze{GazeInput{}});
+		}
+		break;
+	case DevicePage::Head:
+		m_playerRig.ResetHead();
+		break;
+	case DevicePage::Left:
+	case DevicePage::Right:
+		m_playerRig.ResetHand(page == DevicePage::Right);
+		resetControls(page == DevicePage::Right);
+		break;
+	case DevicePage::Body:
+		m_playerRig.ResetBody();
+		break;
+	case DevicePage::Gaze:
+		m_authoredTracking.gaze = {};
+		if (allowed(ControlChannel::Gaze))
+			ApplyOwned(ControlChannel::Gaze, SetGaze{GazeInput{}});
+		return;
+	case DevicePage::Trackers:
+		m_playerRig.ResetTracker(static_cast<std::size_t>(m_selectedTracker));
+		break;
+	}
+	auto commands = PlayerEdit(true).commands;
+	for (auto& command : commands)
+		if (auto controller = std::get_if<SetControllerPose>(&command);
+			controller && (page == DevicePage::Player || controller->hand == (page == DevicePage::Right ? 1u : 0u)))
+			controller->value.connected = true;
+	for (auto& command : extra)
+		commands.push_back(std::move(command));
+	m_continuousEdit = false;
+	Apply(std::move(commands));
+	if (auto edit = std::get_if<ManualTransaction>(&*m_edit))
+		edit->releaseEdge = !extra.empty();
 }
 void DeviceControlPanel::ObserveDelivery(bool pending, const std::string& error)
 {
@@ -252,7 +371,6 @@ void DeviceControlPanel::LoadObservedSettings()
 	m_authoredControls = values.input.controllers;
 	m_authoredViews = values.views;
 	m_authoredProportions = values.proportions;
-	m_bodyPreset = static_cast<int>(values.tracking.body.preset);
 	m_trackerRole = static_cast<int>(values.tracking.trackers[static_cast<std::size_t>(m_selectedTracker)].role);
 	for (unsigned hand = 0; hand != 2; ++hand)
 	{
@@ -302,7 +420,6 @@ void DeviceControlPanel::ReloadRecoveredChannel(ControlChannel channel)
 	}
 	case ControlChannel::Body:
 		m_authoredTracking.body = values.tracking.body;
-		m_bodyPreset = static_cast<int>(values.tracking.body.preset);
 		break;
 	case ControlChannel::Gaze:
 		m_authoredTracking.gaze = values.tracking.gaze;
@@ -363,15 +480,15 @@ void DeviceControlPanel::DrawHead()
 		ApplyOwned(ControlChannel::Session, SetScenario{FailureScenario::Recenter, true});
 	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
 		ImGui::SetTooltip("Makes your current view the forward direction. Does not move devices.");
-	DrawHandRest();
-	ImGui::SeparatorText("Head pose");
 	DrawOwner(ControlChannel::Head);
 	DrawExactPose(0);
 	ImGui::EndDisabled();
 }
 void DeviceControlPanel::DrawExactPose(int device)
 {
-	if (!ImGui::CollapsingHeader("Exact pose") || !m_playerRig.Ready())
+	const float scale = ImGui::GetFontSize() / 16;
+	const auto flags = ImGui::GetContentRegionAvail().x >= 340 * scale ? ImGuiTreeNodeFlags_DefaultOpen : 0;
+	if (!ImGui::CollapsingHeader("Position & rotation", flags) || !m_playerRig.Ready())
 		return;
 	const auto channel = device == 0   ? ControlChannel::Head
 						 : device == 1 ? ControlChannel::LeftPose
@@ -379,39 +496,89 @@ void DeviceControlPanel::DrawExactPose(int device)
 									   : ControlChannel::Trackers;
 	const auto owner = m_observed ? m_observed->owners[static_cast<std::size_t>(channel)] : std::nullopt;
 	ImGui::BeginDisabled(owner && owner != m_manualSource);
-	if (ImGui::SmallButton(m_exactAnchor ? "Anchor" : "World"))
-		m_exactAnchor = !m_exactAnchor;
-	const auto anchor = device == 0	 ? Anchor::Body
-						: device < 3 ? m_playerRig.HandAnchor(device - 1)
-									 : m_playerRig.TrackerAnchor(device - 3);
-	const auto base = m_exactAnchor ? m_playerRig.AnchorPose(anchor) : IdentityPose();
-	const auto world = device == 0	? m_playerRig.Head()
-					   : device < 3 ? m_playerRig.Hand(device - 1)
-									: m_playerRig.Tracker(device - 3);
-	auto pose = RelativePose(world, base);
-	const auto q = pose.orientation;
-	constexpr float degrees = 180 / std::numbers::pi_v<float>, radians = 1 / degrees;
-	std::array<float, 3> angles{std::atan2(2 * (q.x * q.z + q.w * q.y), 1 - 2 * (q.x * q.x + q.y * q.y)) * degrees,
-								std::asin(std::clamp(2 * (q.w * q.x - q.y * q.z), -1.0f, 1.0f)) * degrees,
-								std::atan2(2 * (q.x * q.y + q.w * q.z), 1 - 2 * (q.x * q.x + q.z * q.z)) * degrees};
-	ImGui::TextUnformatted("Position (m)");
-	bool edited =
-		Field("##Exact position", ImGui::DragFloat3("##Exact position", &pose.position.x, .005f, 0, 0, "%.3f"), true);
-	ImGui::TextUnformatted("Rotation (deg)");
-	if (Field("##Exact rotation", ImGui::DragFloat3("##Exact rotation", angles.data(), .5f, 0, 0, "%.1f"), true))
+	// The numbers are relative to what the device follows (its anchor or joint), or to the world.
+	XrPosef base = m_playerRig.Root();
+	const char* follows = "Body";
+	if (device == 1 || device == 2)
 	{
-		pose.orientation = EulerAngles(angles[0] * radians, angles[1] * radians, angles[2] * radians);
-		edited = true;
+		const auto anchor = m_playerRig.HandAnchor(static_cast<std::size_t>(device - 1));
+		base = m_playerRig.AnchorPose(anchor);
+		follows = anchor == Anchor::Head ? "Head" : anchor == Anchor::World ? "World" : "Body";
 	}
-	if (edited)
+	else if (device > 2)
+	{
+		const auto joint = m_playerRig.TrackerAt(static_cast<std::size_t>(device - 3)).joint;
+		base = joint ? m_playerRig.JointPose(*joint) : IdentityPose();
+		follows = joint ? BodyJointName(*joint) : "World";
+	}
+	if (!m_exactAnchor)
+		base = IdentityPose();
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextDisabled("Relative to");
+	ImGui::SameLine();
+	const std::string relative = std::string(m_exactAnchor ? follows : "World") + "##Relative";
+	if (ImGui::SmallButton(relative.c_str()))
+		m_exactAnchor = !m_exactAnchor;
+	ImGui::SetItemTooltip("%s", m_exactAnchor ? "Click for world coordinates"
+											  : "Click for coordinates relative to what the device follows");
+	const auto world = device == 0	? m_playerRig.Head()
+					   : device < 3 ? m_playerRig.Hand(static_cast<std::size_t>(device - 1))
+									: m_playerRig.Tracker(static_cast<std::size_t>(device - 3));
+	auto pose = RelativePose(world, base);
+	constexpr float degrees = 180 / std::numbers::pi_v<float>;
+	const auto radiansAngles = YawPitchRoll(pose.orientation);
+	std::array<float, 3> angles{radiansAngles.x * degrees, radiansAngles.y * degrees, radiansAngles.z * degrees};
+	const float width = (ImGui::GetContentRegionAvail().x - 2 * ImGui::GetStyle().ItemSpacing.x) / 3;
+	// Resets only this device's pose; controls and connection stay.
+	const auto reset = [this, device]
+	{
+		if (device == 0)
+			m_playerRig.ResetHead();
+		else if (device < 3)
+			m_playerRig.ResetHand(static_cast<std::size_t>(device - 1));
+		else
+			m_playerRig.SnapTracker(static_cast<std::size_t>(device - 3));
+		ApplyRig();
+	};
+	static constexpr const char* positionIds[] = {"##X", "##Y", "##Z"};
+	static constexpr const char* positionFormats[] = {"X %.2f m", "Y %.2f m", "Z %.2f m"};
+	float* positions[] = {&pose.position.x, &pose.position.y, &pose.position.z};
+	bool edited = false;
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		if (axis)
+			ImGui::SameLine();
+		ImGui::SetNextItemWidth(width);
+		edited |= Field(positionIds[axis],
+						ImGui::DragFloat(positionIds[axis], positions[axis], .005f, 0, 0, positionFormats[axis]), true,
+						reset);
+		ImGui::SetItemTooltip("X right, Y up, Z back. Right-click to reset.");
+	}
+	static constexpr const char* angleIds[] = {"##Yaw", "##Pitch", "##Roll"};
+	static constexpr const char* angleFormats[] = {"Yaw %.0f°", "Pitch %.0f°", "Roll %.0f°"};
+	bool turned = false;
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		if (axis)
+			ImGui::SameLine();
+		ImGui::SetNextItemWidth(width);
+		const float limit = axis == 1 ? 89.9f : 180.0f;
+		turned |= Field(angleIds[axis],
+						ImGui::DragFloat(angleIds[axis], &angles[static_cast<std::size_t>(axis)], .5f, -limit, limit,
+										 angleFormats[axis], ImGuiSliderFlags_AlwaysClamp),
+						true, reset);
+	}
+	if (turned)
+		pose.orientation = EulerAngles(angles[0] / degrees, angles[1] / degrees, angles[2] / degrees);
+	if ((edited || turned) && !m_edit)
 	{
 		pose = Compose(base, pose);
 		if (device == 0)
 			m_playerRig.SetHeadWorld(pose);
 		else if (device < 3)
-			m_playerRig.SetHandWorld(device - 1, pose);
+			m_playerRig.SetHandWorld(static_cast<std::size_t>(device - 1), pose);
 		else
-			m_playerRig.SetTrackerWorld(device - 3, pose);
+			m_playerRig.SetTrackerWorld(static_cast<std::size_t>(device - 3), pose);
 		Apply(PlayerEdit(true).commands);
 	}
 	ImGui::EndDisabled();
@@ -420,37 +587,73 @@ ManualTransaction DeviceControlPanel::PlayerEdit(bool includeWorld) const
 {
 	return m_observed ? m_playerRig.Transaction(*m_observed, m_manualSource, includeWorld) : ManualTransaction{};
 }
+void DeviceControlPanel::ApplyRig(std::vector<SimulationCommand> extra)
+{
+	auto commands = PlayerEdit(true).commands;
+	for (auto& command : extra)
+		commands.push_back(std::move(command));
+	m_continuousEdit = false;
+	Apply(std::move(commands));
+}
+void DeviceControlPanel::DrawBodyPoses()
+{
+	static constexpr const char* tips[] = {"Arms down at the sides", "Arms straight out to the sides",
+										   "Arms 45° down", "Seated, hands on the thighs"};
+	const auto current = m_playerRig.CurrentBodyPose();
+	ImGui::PushID("Body pose");
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextDisabled("Pose");
+	for (std::size_t pose = 0; pose < BodyPoseNames.size(); ++pose)
+	{
+		ImGui::SameLine(0, pose ? 2.0f : -1.0f);
+		const bool selected = current && static_cast<std::size_t>(*current) == pose;
+		if (selected)
+			ImGui::PushStyleColor(ImGuiCol_Button, theme::Accent);
+		const bool clicked = ImGui::Button(BodyPoseNames[pose]);
+		if (selected)
+			ImGui::PopStyleColor();
+		ImGui::SetItemTooltip("%s. Hands and attached trackers follow.", tips[pose]);
+		if (clicked && m_observed && m_playerRig.Ready())
+		{
+			m_playerRig.ApplyBodyPose(static_cast<BodyPose>(pose));
+			ApplyRig();
+		}
+	}
+	ImGui::PopID();
+}
 void DeviceControlPanel::DrawPlayer()
 {
-	DrawHandRest();
-	ImGui::TextUnformatted("Walk speed (m/s)");
-	ImGui::SliderFloat("##Walk speed", &m_playerRig.walkSpeed, .1f, 5.0f, "%.1f");
-	ImGui::TextUnformatted("Height (m)");
+	DrawBodyPoses();
+	ImGui::TextUnformatted("Walk speed");
+	ImGui::SliderFloat("##Walk speed", &m_playerRig.walkSpeed, .1f, 5.0f, "%.1f m/s");
+	if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+		m_playerRig.walkSpeed = 1;
+	ImGui::SetItemTooltip("Piloting speed. Double-click for 1 m/s.");
+	const float defaultHeight = m_observed ? m_observed->values.proportions.height : 1.7f;
+	ImGui::TextUnformatted("Height");
 	bool changed = Field("##Player height",
-						 ImGui::DragFloat("##Player height", &m_playerRig.height, .01f, .4f, 2.2f, "%.2f"), true);
-	ImGui::TextUnformatted("Floor position (m)");
+						 ImGui::DragFloat("##Player height", &m_playerRig.height, .01f, .4f, 2.2f, "%.2f m"), true,
+						 [&]
+						 {
+							 m_playerRig.height = defaultHeight;
+						 });
+	ImGui::TextUnformatted("Floor position");
 	changed |= Field("##Player position",
-					 ImGui::DragFloat3("##Player position", &m_playerRig.position.x, .01f, 0, 0, "%.2f"), true);
-	if (ImGui::Button("Reset rig", {-1, 0}) && m_observed)
-	{
-		m_playerRig.Reset(*m_observed);
-		m_playerRig.position = {};
-		m_playerRig.facing = 0;
-		m_playerRig.height = m_observed->values.proportions.height;
-		for (std::size_t hand = 0; hand < 2; ++hand)
-			m_playerRig.Preset(hand, HandPreset::Rest);
-		changed = true;
-	}
-	if (changed)
+					 ImGui::DragFloat3("##Player position", &m_playerRig.position.x, .01f, 0, 0, "%.2f m"), true,
+					 [&]
+					 {
+						 m_playerRig.position = {};
+					 });
+	if (changed && !m_edit)
 	{
 		auto edit = PlayerEdit();
 		edit.continuous = m_continuousEdit;
 		m_edit = std::move(edit);
 	}
 }
-void DeviceControlPanel::DrawAnchor(bool tracker, std::size_t index)
+void DeviceControlPanel::DrawAnchor(std::size_t hand)
 {
-	int anchor = static_cast<int>(tracker ? m_playerRig.TrackerAnchor(index) : m_playerRig.HandAnchor(index));
+	int anchor = static_cast<int>(m_playerRig.HandAnchor(hand));
 	static constexpr const char* names[] = {"Body", "Head", "World"};
 	static constexpr const char* tips[] = {"Moves and turns with the player", "Follows the head",
 										   "Stays put in the room"};
@@ -475,35 +678,26 @@ void DeviceControlPanel::DrawAnchor(bool tracker, std::size_t index)
 	}
 	ImGui::PopID();
 	if (changed)
-	{
-		if (tracker)
-			m_playerRig.SetTrackerAnchor(index, static_cast<Anchor>(anchor));
-		else
-			m_playerRig.SetHandAnchor(index, static_cast<Anchor>(anchor));
-		if (tracker)
-		{
-			auto edit = PlayerEdit(true);
-			edit.continuous = false;
-			m_edit = std::move(edit);
-		}
-	}
+		m_playerRig.SetHandAnchor(hand, static_cast<Anchor>(anchor));
 }
-void DeviceControlPanel::DrawHandRest()
+void DeviceControlPanel::DrawHandPresets(std::size_t hand)
 {
-	static constexpr const char* names[] = {"Rest", "Forward", "Up", "T-pose"};
-	for (int index = 0; index < 4; ++index)
+	static constexpr const char* names[] = {"Rest", "Forward", "Up"};
+	static constexpr const char* tips[] = {"Low in front, holding the controller", "Reaching forward at eye level",
+										   "Pointing straight up"};
+	ImGui::PushID("Hand presets");
+	for (int index = 0; index < 3; ++index)
 	{
 		if (index)
 			ImGui::SameLine();
-		if (ImGui::Button(names[index]))
+		if (ImGui::Button(names[index]) && m_observed && m_playerRig.Ready())
 		{
-			for (std::size_t hand = 0; hand < 2; ++hand)
-				m_playerRig.Preset(hand, static_cast<HandPreset>(index));
-			auto edit = PlayerEdit(true);
-			edit.continuous = false;
-			m_edit = std::move(edit);
+			m_playerRig.Preset(hand, static_cast<HandPreset>(index));
+			ApplyRig();
 		}
+		ImGui::SetItemTooltip("%s. This hand only.", tips[index]);
 	}
+	ImGui::PopID();
 }
 void DeviceControlPanel::DrawInputPad(std::uint32_t hand)
 {
@@ -562,18 +756,22 @@ void DeviceControlPanel::DrawInputPad(std::uint32_t hand)
 void DeviceControlPanel::DrawController(const std::function<void()>& placement)
 {
 	const auto hand = static_cast<std::uint32_t>(m_controlHand);
-	DrawAnchor(false, hand);
+	DrawAnchor(hand);
 	ImGui::BeginDisabled(DrawScenarioNotice(hand ? ControlChannel::RightPose : ControlChannel::LeftPose));
 	auto& controller = m_authoredTracking.controllers[hand];
 	DrawInputPad(hand);
 	if (placement)
 		placement();
 	ImGui::SeparatorText("Pose");
-	DrawHandRest();
+	DrawHandPresets(hand);
 	DrawExactPose(static_cast<int>(hand) + 1);
 	if (ImGui::CollapsingHeader("Connection and profile"))
 	{
-		if (Field("Connected", ImGui::Checkbox("Connected", &controller.connected), false))
+		if (Field("Connected", ImGui::Checkbox("Connected", &controller.connected), false,
+				  [&]
+				  {
+					  controller.connected = true;
+				  }))
 			ApplyOwned(hand ? ControlChannel::RightPose : ControlChannel::LeftPose,
 					   SetControllerPose{hand, controller});
 		ImGui::Text("Interaction profile path");
@@ -595,29 +793,53 @@ void DeviceControlPanel::DrawBody()
 		ImGui::TextUnformatted("Body unavailable");
 	const bool scenario = DrawScenarioNotice(ControlChannel::Body);
 	ImGui::BeginDisabled(scenario || !m_observed || !m_observed->bodyOverridesAvailable);
+	DrawBodyPoses();
 	auto& body = m_authoredTracking.body;
-	bool edited = Field("Body active", ImGui::Checkbox("Body active", &body.active), false);
+	bool edited = Field("Body active", ImGui::Checkbox("Body active", &body.active), false,
+						[&]
+						{
+							body.active = true;
+						});
 	ImGui::Text("Confidence");
-	edited |= Field("##Confidence", ImGui::SliderFloat("##Confidence", &body.confidence, 0, 1), true);
-	ImGui::Text("Pose preset");
-	edited |= Field("##Pose preset", ImGui::Combo("##Pose preset", &m_bodyPreset, "Standing\0T pose\0Seated\0"), false);
-	body.preset = static_cast<BodyPreset>(m_bodyPreset);
-	if (edited)
+	edited |= Field(
+		"##Confidence", ImGui::SliderFloat("##Confidence", &body.confidence, 0, 1), true,
+		[&]
+		{
+			body.confidence = 1;
+		},
+		true);
+	if (edited && !m_edit)
 		ApplyOwned(ControlChannel::Body, SetBodyControls{body});
 	ImGui::EndDisabled();
 	ImGui::SeparatorText("Body proportions");
 	DrawOwner(ControlChannel::Proportions);
-	ImGui::Text("Height / metres");
-	bool proportionsEdited =
-		Field("##Height", ImGui::SliderFloat("##Height", &m_authoredProportions.height, 0.5f, 2.5f), true);
-	ImGui::Text("Shoulder width / metres");
-	proportionsEdited |=
-		Field("##Shoulder width",
-			  ImGui::SliderFloat("##Shoulder width", &m_authoredProportions.shoulderWidth, 0.1f, 0.8f), true);
-	ImGui::Text("Hip width / metres");
-	proportionsEdited |=
-		Field("##Hip width", ImGui::SliderFloat("##Hip width", &m_authoredProportions.hipWidth, 0.1f, 0.8f), true);
-	if (proportionsEdited)
+	const BodyProportions defaults;
+	ImGui::Text("Height");
+	bool proportionsEdited = Field(
+		"##Height", ImGui::SliderFloat("##Height", &m_authoredProportions.height, 0.5f, 2.5f, "%.2f m"), true,
+		[&]
+		{
+			m_authoredProportions.height = defaults.height;
+		},
+		true);
+	ImGui::Text("Shoulder width");
+	proportionsEdited |= Field(
+		"##Shoulder width",
+		ImGui::SliderFloat("##Shoulder width", &m_authoredProportions.shoulderWidth, 0.1f, 0.8f, "%.2f m"), true,
+		[&]
+		{
+			m_authoredProportions.shoulderWidth = defaults.shoulderWidth;
+		},
+		true);
+	ImGui::Text("Hip width");
+	proportionsEdited |= Field(
+		"##Hip width", ImGui::SliderFloat("##Hip width", &m_authoredProportions.hipWidth, 0.1f, 0.8f, "%.2f m"), true,
+		[&]
+		{
+			m_authoredProportions.hipWidth = defaults.hipWidth;
+		},
+		true);
+	if (proportionsEdited && !m_edit)
 		ApplyOwned(ControlChannel::Proportions, SetBodyProportions{m_authoredProportions});
 }
 void DeviceControlPanel::DrawGaze()
@@ -626,59 +848,153 @@ void DeviceControlPanel::DrawGaze()
 	DrawOwner(ControlChannel::Gaze);
 	ImGui::BeginDisabled(DrawScenarioNotice(ControlChannel::Gaze));
 	auto& gaze = m_authoredTracking.gaze;
+	const GazeInput defaults;
 	ImGui::Text("Yaw");
-	bool edited = Field("##Yaw", ImGui::SliderAngle("##Yaw", &gaze.yaw, -90, 90), true);
+	bool edited = Field(
+		"##Yaw", ImGui::SliderAngle("##Yaw", &gaze.yaw, -90, 90), true,
+		[&]
+		{
+			gaze.yaw = defaults.yaw;
+		},
+		true);
 	ImGui::Text("Pitch");
-	edited |= Field("##Pitch", ImGui::SliderAngle("##Pitch", &gaze.pitch, -90, 90), true);
-	edited |= Field("Gaze available", ImGui::Checkbox("Gaze available", &gaze.available), false);
-	edited |= Field("Gaze tracked", ImGui::Checkbox("Gaze tracked", &gaze.tracked), false);
-	if (edited)
+	edited |= Field(
+		"##Pitch", ImGui::SliderAngle("##Pitch", &gaze.pitch, -90, 90), true,
+		[&]
+		{
+			gaze.pitch = defaults.pitch;
+		},
+		true);
+	edited |= Field("Gaze available", ImGui::Checkbox("Gaze available", &gaze.available), false,
+					[&]
+					{
+						gaze.available = defaults.available;
+					});
+	edited |= Field("Gaze tracked", ImGui::Checkbox("Gaze tracked", &gaze.tracked), false,
+					[&]
+					{
+						gaze.tracked = defaults.tracked;
+					});
+	if (edited && !m_edit)
 		ApplyOwned(ControlChannel::Gaze, SetGaze{gaze});
 	ImGui::EndDisabled();
 }
 void DeviceControlPanel::DrawTrackers()
 {
-	ImGui::SeparatorText("Trackers");
 	if (m_observed && !m_observed->trackerAttachmentsAvailable)
 		ImGui::TextUnformatted("Trackers unavailable");
 	const bool scenario = DrawScenarioNotice(ControlChannel::Trackers);
 	ImGui::BeginDisabled(scenario || !m_observed || !m_observed->trackerAttachmentsAvailable);
 	DrawOwner(ControlChannel::Trackers);
-	ImGui::Text("Tracker slot");
-	const bool selected =
-		ImGui::Combo("##Tracker slot", &m_selectedTracker, "Tracker 1\0Tracker 2\0Tracker 3\0Tracker 4\0");
-	auto& tracker = m_authoredTracking.trackers[static_cast<std::size_t>(m_selectedTracker)];
-	DrawAnchor(true, static_cast<std::size_t>(m_selectedTracker));
-	DrawExactPose(m_selectedTracker + 3);
+	// One chip per tracker, named by its role.
+	ImGui::PushID("Tracker chips");
+	bool selected = false;
+	const float right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+	for (int slot = 0; slot < static_cast<int>(m_authoredTracking.trackers.size()); ++slot)
+	{
+		const auto& device = m_authoredTracking.trackers[static_cast<std::size_t>(slot)];
+		const char* name = TrackerRoleName(device.role);
+		const float chip = ImGui::CalcTextSize(name).x + ImGui::GetStyle().FramePadding.x * 2;
+		if (slot && ImGui::GetItemRectMax().x + 2 + chip <= right)
+			ImGui::SameLine(0, 2);
+		const bool current = slot == m_selectedTracker;
+		ImGui::PushStyleColor(ImGuiCol_Button, current ? theme::Accent : theme::SurfaceRaised);
+		ImGui::PushStyleColor(ImGuiCol_Text, device.connected ? theme::Text : theme::TextDim);
+		ImGui::PushID(slot);
+		if (ImGui::Button(name) && !current)
+		{
+			m_selectedTracker = slot;
+			selected = true;
+		}
+		ImGui::PopID();
+		ImGui::PopStyleColor(2);
+		ImGui::SetItemTooltip("Tracker %d%s", slot + 1, device.connected ? "" : " (disconnected)");
+	}
+	ImGui::PopID();
+	const auto slot = static_cast<std::size_t>(m_selectedTracker);
+	auto& tracker = m_authoredTracking.trackers[slot];
 	if (selected)
 		m_trackerRole = static_cast<int>(tracker.role);
+	const auto attachment = m_playerRig.TrackerAt(slot);
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextDisabled("Attached to");
+	ImGui::SameLine();
+	const float snapWidth = ImGui::CalcTextSize("Snap to body").x + ImGui::GetStyle().FramePadding.x * 2;
+	ImGui::SetNextItemWidth(
+		std::max(80.0f, ImGui::GetContentRegionAvail().x - snapWidth - ImGui::GetStyle().ItemSpacing.x));
+	if (ImGui::BeginCombo("##Attached to", attachment.joint ? BodyJointName(*attachment.joint) : "World"))
+	{
+		for (const auto joint : AttachableJoints())
+			if (ImGui::Selectable(BodyJointName(joint), attachment.joint == joint) && m_playerRig.Ready())
+			{
+				m_playerRig.AttachTracker(slot, joint);
+				ApplyRig();
+			}
+		if (ImGui::Selectable("World", !attachment.joint) && m_playerRig.Ready())
+		{
+			m_playerRig.AttachTracker(slot, std::nullopt);
+			ApplyRig();
+		}
+		ImGui::EndCombo();
+	}
+	ImGui::SetItemTooltip("Attached trackers follow the joint. The offset stays in joint space.");
+	ImGui::SameLine();
+	if (ImGui::Button("Snap to body") && m_playerRig.Ready())
+	{
+		m_playerRig.SnapTracker(slot);
+		ApplyRig();
+	}
+	ImGui::SetItemTooltip("Back on the %s joint, no offset", BodyJointName(BodyModel::TrackerJoint(tracker.role)));
+	DrawExactPose(m_selectedTracker + 3);
 	static constexpr const char* roles[] = {
 		"Waist",		 "Chest",		   "Left foot",	 "Right foot",	"Unassigned", "Handheld object",
 		"Left shoulder", "Right shoulder", "Left elbow", "Right elbow", "Left knee",  "Right knee",
 		"Left wrist",	 "Right wrist",	   "Left ankle", "Right ankle", "Camera",	  "Keyboard"};
-	ImGui::Text("Role");
-	bool edited = Field("##Role", ImGui::Combo("##Role", &m_trackerRole, roles, IM_ARRAYSIZE(roles)), false);
-	tracker.role = static_cast<TrackerRole>(m_trackerRole);
-	edited |= Field("Tracker connected", ImGui::Checkbox("Tracker connected", &tracker.connected), false);
-	edited |= Field("Tracker tracked", ImGui::Checkbox("Tracker tracked", &tracker.tracked), false);
-	ImGui::Text("Persistent identity: %llu", static_cast<unsigned long long>(tracker.identity.value));
+	bool edited = Field("Tracker connected", ImGui::Checkbox("Connected", &tracker.connected), false,
+						[&]
+						{
+							tracker.connected = true;
+						});
+	ImGui::SameLine();
+	edited |= Field("Tracker tracked", ImGui::Checkbox("Tracked", &tracker.tracked), false,
+					[&]
+					{
+						tracker.tracked = true;
+					});
+	ImGui::SetItemTooltip("Identity %llu", static_cast<unsigned long long>(tracker.identity.value));
+	if (ImGui::CollapsingHeader("Role"))
+	{
+		const auto previousRole = tracker.role;
+		const bool roleChanged =
+			Field("##Role", ImGui::Combo("##Role", &m_trackerRole, roles, IM_ARRAYSIZE(roles)), false);
+		const auto path = BodyModel::TrackerRolePath(static_cast<TrackerRole>(m_trackerRole));
+		ImGui::SetItemTooltip("The app sees this tracker at %s",
+							  path.empty() ? "no role path" : std::string(path).c_str());
+		tracker.role = static_cast<TrackerRole>(m_trackerRole);
+		if (roleChanged && attachment.joint == BodyModel::TrackerJoint(previousRole))
+		{
+			// A tracker on its old role's joint moves with the role.
+			m_playerRig.AttachTracker(slot, BodyModel::TrackerJoint(tracker.role));
+			m_playerRig.SetTrackerOffset(slot, IdentityPose());
+			tracker.anchor = BodyModel::TrackerJoint(tracker.role);
+			tracker.poseOverride.reset();
+		}
+		edited |= roleChanged;
+	}
 	bool duplicateRole = false;
 	for (std::size_t index = 0; index < m_authoredTracking.trackers.size(); ++index)
 	{
 		const auto& other = m_authoredTracking.trackers[index];
-		if (index != static_cast<std::size_t>(m_selectedTracker) && tracker.connected && other.connected &&
-			tracker.role != TrackerRole::Unassigned && other.role == tracker.role)
+		if (index != slot && tracker.connected && other.connected && tracker.role != TrackerRole::Unassigned &&
+			other.role == tracker.role)
 		{
-			ImGui::TextColored(theme::Vec(theme::Warn), "Role used by tracker %u", static_cast<unsigned>(index + 1));
+			ImGui::TextColored(theme::Vec(theme::Warn), "%s is also tracker %u", TrackerRoleName(other.role),
+							   static_cast<unsigned>(index + 1));
 			duplicateRole = true;
 		}
 	}
-	ImGui::BeginDisabled(duplicateRole);
-	if (edited && !duplicateRole)
-	{
-		ApplyOwned(ControlChannel::Trackers, SetTracker{static_cast<std::uint32_t>(m_selectedTracker), tracker});
-	}
-	ImGui::EndDisabled();
+	if (edited && !duplicateRole && !m_edit)
+		ApplyOwned(ControlChannel::Trackers, SetTracker{static_cast<std::uint32_t>(slot), tracker});
 	ImGui::EndDisabled();
 }
 void DeviceControlPanel::DrawViews()
@@ -686,7 +1002,14 @@ void DeviceControlPanel::DrawViews()
 	ImGui::SeparatorText("View settings");
 	DrawOwner(ControlChannel::Views);
 	ImGui::Text("Eye separation (IPD)");
-	bool edited = Field("##IPD", ImGui::SliderFloat("##IPD", &m_authoredViews.ipd, 0.04f, 0.09f, "%.3f m"), true);
+	const ViewSettings defaults;
+	bool edited = Field(
+		"##IPD", ImGui::SliderFloat("##IPD", &m_authoredViews.ipd, 0.04f, 0.09f, "%.3f m"), true,
+		[&]
+		{
+			m_authoredViews.ipd = defaults.ipd;
+		},
+		true);
 	ImGui::Text("Inset angle");
 	float maximum = std::numbers::pi_v<float> / 2;
 	for (const auto& fov : m_authoredViews.outerFov)
@@ -694,6 +1017,11 @@ void DeviceControlPanel::DrawViews()
 	edited |= Field("##Inset half angle",
 					ImGui::SliderAngle("##Inset half angle", &m_authoredViews.insetHalfAngle, 0.1f,
 									   maximum * 180 / std::numbers::pi_v<float>),
+					true,
+					[&]
+					{
+						m_authoredViews.insetHalfAngle = std::min(defaults.insetHalfAngle, maximum);
+					},
 					true);
 	if (edited)
 		ApplyOwned(ControlChannel::Views, SetViewSettings{m_authoredViews});

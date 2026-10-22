@@ -28,6 +28,31 @@ struct ObservedSetup
 	bool trackerAttachmentsAvailable = true;
 	bool bodyOverridesAvailable = true;
 	bool bodyRootAvailable = true;
+	// The app enabled tracker interaction; absent from older runtimes.
+	bool appTrackers = false;
+};
+// Ctrl+Z history of device poses: one entry per edit group (a whole drag or one click), never per frame.
+class UndoStack
+{
+  public:
+	// Call for each submitted edit with the state observed before it. Input-only edits are not recorded.
+	void Record(const ObservedSetup& before, const ManualTransaction& edit);
+	bool Empty() const
+	{
+		return m_entries.empty();
+	}
+	void Clear();
+	// Restores the newest entry on the channels this source may drive.
+	std::optional<ManualTransaction> Undo(const ObservedSetup& current, std::optional<CommandSource> source);
+
+  private:
+	struct Entry
+	{
+		TrackingState tracking;
+		BodyProportions proportions;
+	};
+	std::vector<Entry> m_entries;
+	bool m_open = false;
 };
 std::optional<TrackingSnapshot> ReadInspectionTracking(const control::Message& state);
 ObservedSetup ReadObservedSetup(const control::Message& state);

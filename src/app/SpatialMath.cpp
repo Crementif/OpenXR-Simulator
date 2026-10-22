@@ -124,4 +124,18 @@ XrQuaternionf SnapRotation(XrQuaternionf rotation, float radians)
 	const float scale = std::sin(angle / 2) / length;
 	return {rotation.x * scale, rotation.y * scale, rotation.z * scale, std::cos(angle / 2)};
 }
+XrVector3f YawPitchRoll(XrQuaternionf q)
+{
+	return {std::atan2(2 * (q.x * q.z + q.w * q.y), 1 - 2 * (q.x * q.x + q.y * q.y)),
+			std::asin(std::clamp(2 * (q.w * q.x - q.y * q.z), -1.0f, 1.0f)),
+			std::atan2(2 * (q.x * q.y + q.w * q.z), 1 - 2 * (q.x * q.x + q.z * q.z))};
+}
+XrQuaternionf AxisAngle(XrVector3f axis, float radians)
+{
+	const float length = std::sqrt(axis.x * axis.x + axis.y * axis.y + axis.z * axis.z);
+	if (length < .00001f)
+		return {0, 0, 0, 1};
+	const float scale = std::sin(radians / 2) / length;
+	return {axis.x * scale, axis.y * scale, axis.z * scale, std::cos(radians / 2)};
+}
 } // namespace simxr::app

@@ -131,6 +131,7 @@ Message SimulationConnection::Dispatch(const Message& request, const ControlSess
 	response.fields.push_back(Field::U64(tag::Session, binding.id.value));
 	response.fields.push_back(Field::U64(tag::Generation, session->Snapshot().generation.value));
 	auto& scheduler = session->Commands();
+	const bool trackerInteraction = session->Extensions().Contains(XR_HTCX_VIVE_TRACKER_INTERACTION_EXTENSION_NAME);
 	const auto source = RequestSource(request);
 	InspectionValue document;
 	const auto execute = [&]
@@ -168,19 +169,19 @@ Message SimulationConnection::Dispatch(const Message& request, const ControlSess
 				document = SimulationOutcome(*outcome, false);
 			}
 			else
-				document = SimulationState(scheduler.Snapshot());
+				document = SimulationState(scheduler.Snapshot(), false, trackerInteraction);
 			break;
 		case OpCode::CancelSimulation:
 			response.fields.push_back(Field::Text(
 				tag::Phase,
 				SimulationResultName(scheduler.Cancel(source, RequireRequestU64(request, tag::TransactionId)))));
-			document = SimulationState(scheduler.Snapshot());
+			document = SimulationState(scheduler.Snapshot(), false, trackerInteraction);
 			break;
 		case OpCode::ReleaseControl:
 			session->ReleaseCommandSource(source);
 			m_game.Disconnect(m_connection.value);
 			response.fields.push_back(Field::Bool(tag::Released, true));
-			document = SimulationState(scheduler.Snapshot());
+			document = SimulationState(scheduler.Snapshot(), false, trackerInteraction);
 			break;
 		case OpCode::StartRecording:
 		case OpCode::StopRecording:

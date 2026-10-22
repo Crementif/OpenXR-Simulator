@@ -19,6 +19,7 @@
 #include "control/ControlSchema.h"
 #include "control/SimulationControl.h"
 #include "simulation/CommandScheduler.h"
+#include "simulation/TrackingSystem.h"
 #include <cmath>
 #include <thread>
 
@@ -46,6 +47,30 @@ extern char** environ;
 namespace
 {
 using namespace simxr::app;
+
+// Pushed pointer events carry this mouse id. Spatial drags ignore every other pointer, so the real
+// mouse of whoever is at the desk cannot move the cursor mid-drag when it crosses the test window.
+constexpr SDL_MouseID TestMouse = 0x51A7;
+void IgnoreRealPointer()
+{
+	SDL_SetEventFilter(
+		[](void*, SDL_Event* event)
+		{
+			switch (event->type)
+			{
+			case SDL_EVENT_MOUSE_MOTION:
+				return event->motion.which == TestMouse;
+			case SDL_EVENT_MOUSE_BUTTON_DOWN:
+			case SDL_EVENT_MOUSE_BUTTON_UP:
+				return event->button.which == TestMouse;
+			case SDL_EVENT_MOUSE_WHEEL:
+				return event->wheel.which == TestMouse;
+			default:
+				return true;
+			}
+		},
+		nullptr);
+}
 
 ImGuiWindow* FindPanel(const char* name)
 {
@@ -573,6 +598,7 @@ void PilotLiveRuntime(const char* endpoint)
 	SDL_Event event{};
 	event.type = SDL_EVENT_MOUSE_MOTION;
 	event.motion.windowID = SDL_GetWindowID(test.window.Native());
+	event.motion.which = TestMouse;
 	event.motion.x = center.x;
 	event.motion.y = center.y;
 	SDL_PushEvent(&event);
@@ -580,6 +606,7 @@ void PilotLiveRuntime(const char* endpoint)
 	event = {};
 	event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
 	event.button.windowID = SDL_GetWindowID(test.window.Native());
+	event.button.which = TestMouse;
 	event.button.button = SDL_BUTTON_RIGHT;
 	event.button.down = true;
 	SDL_PushEvent(&event);
@@ -610,6 +637,7 @@ void PilotLiveRuntime(const char* endpoint)
 	event = {};
 	event.type = SDL_EVENT_MOUSE_BUTTON_UP;
 	event.button.windowID = SDL_GetWindowID(test.window.Native());
+	event.button.which = TestMouse;
 	event.button.button = SDL_BUTTON_RIGHT;
 	SDL_PushEvent(&event);
 	for (unsigned index = 0; index < 20; ++index)
@@ -668,6 +696,7 @@ void PilotLiveRuntime(const char* endpoint)
 	event = {};
 	event.type = SDL_EVENT_MOUSE_MOTION;
 	event.motion.windowID = SDL_GetWindowID(test.window.Native());
+	event.motion.which = TestMouse;
 	event.motion.xrel = 40;
 	event.motion.yrel = 20;
 	SDL_PushEvent(&event);
@@ -983,7 +1012,7 @@ void ConfigureObservedDevices()
 	Require(std::get<simxr::SetGaze>(transaction.commands.back()).value.yaw == .25f, "Live gaze edit lost direction");
 	selection = DeviceSel{DevicePage::Trackers};
 	frame();
-	transaction = activate("Tracker tracked");
+	transaction = activate("Tracked");
 	Require(std::get<simxr::SetTracker>(transaction.commands.back()).value.identity ==
 				initial.tracking.trackers[0].identity,
 			"Live tracker edit changed identity");
@@ -1383,6 +1412,7 @@ void CheckPreviewPilot(Interaction& test)
 		SDL_Event event{};
 		event.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
 		event.button.windowID = SDL_GetWindowID(test.window.Native());
+		event.button.which = TestMouse;
 		event.button.button = code;
 		event.button.down = down;
 		Require(SDL_PushEvent(&event), "Push pilot button");
@@ -1393,6 +1423,7 @@ void CheckPreviewPilot(Interaction& test)
 		SDL_Event event{};
 		event.type = SDL_EVENT_MOUSE_MOTION;
 		event.motion.windowID = SDL_GetWindowID(test.window.Native());
+		event.motion.which = TestMouse;
 		event.motion.xrel = x;
 		event.motion.yrel = y;
 		Require(SDL_PushEvent(&event), "Push pilot motion");
@@ -1561,6 +1592,7 @@ void CheckPreviewPilot(Interaction& test)
 
 void CheckSpatialEditing(Interaction& test)
 {
+	IgnoreRealPointer();
 	using namespace simxr;
 	const auto target = test.runtime.Snapshot();
 	Require(target.selectedViews.size() == 2, "Displayed image omitted exact compositor views");
@@ -1592,6 +1624,7 @@ void CheckSpatialEditing(Interaction& test)
 		SDL_Event event{};
 		event.type = SDL_EVENT_MOUSE_MOTION;
 		event.motion.windowID = SDL_GetWindowID(test.window.Native());
+		event.motion.which = TestMouse;
 		event.motion.x = position.x;
 		event.motion.y = position.y;
 		Require(SDL_PushEvent(&event), "Push spatial pointer");
@@ -1600,6 +1633,7 @@ void CheckSpatialEditing(Interaction& test)
 			event = {};
 			event.type = button ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
 			event.button.windowID = SDL_GetWindowID(test.window.Native());
+			event.button.which = TestMouse;
 			event.button.button = SDL_BUTTON_LEFT;
 			event.button.down = button != 0;
 			Require(SDL_PushEvent(&event), "Push spatial button");
@@ -1624,10 +1658,24 @@ void CheckSpatialEditing(Interaction& test)
 	PlayerRig rig;
 	rig.Reset(before);
 	auto hand = RelativePose(before.values.tracking.controllers[1].pose.pose, rig.Root());
-	auto reach = test.runtime.Snapshot().reachMap;
-	Require(reach.width > 100 && reach.height > 100, "Reach map not laid out");
-	const ImVec2 center{reach.x + (reach.width - 28) / 2, reach.y + reach.height / 2};
-	const float pixels = std::min(reach.height * .44f, (reach.width - 32) * .45f) / .9f;
+	ShellRect reach;
+	ImVec2 center;
+	float pixels = 0;
+	// Scrolls the inspector so the whole reach map is visible; ImGui scrolls a clipped item into view on click.
+	const auto locateReach = [&]
+	{
+		reach = test.runtime.Snapshot().reachMap;
+		Require(reach.width > 100 && reach.height > 100, "Reach map not laid out");
+		if (auto* scrolled = FindPanel("Inspector"); scrolled && reach.y + reach.height > scrolled->InnerRect.Max.y)
+		{
+			ImGui::SetScrollY(scrolled, scrolled->Scroll.y + reach.y + reach.height - scrolled->InnerRect.Max.y + 4);
+			pump(4);
+			reach = test.runtime.Snapshot().reachMap;
+		}
+		center = {reach.x + (reach.width - 28) / 2, reach.y + reach.height / 2};
+		pixels = std::min(reach.height * .44f, (reach.width - 32) * .45f) / .9f;
+	};
+	locateReach();
 	drag({center.x + hand.position.x * pixels, center.y + hand.position.z * pixels},
 		 {center.x + hand.position.x * pixels, center.y - .30f * pixels});
 	auto after = observe();
@@ -1655,7 +1703,9 @@ void CheckSpatialEditing(Interaction& test)
 	Require(inspector, "Spatial inspector missing");
 	ImGui::ActivateItemByID(ImHashStr("Top", 0, inspector->GetID("Rig view")));
 	pump(2);
-	const auto view = EulerAngles(0, -1.56f, 0);
+	// The rig camera orbits relative to the player's facing.
+	const auto facing = Rotate(rig.Root().orientation, {0, 0, -1});
+	const auto view = EulerAngles(std::atan2(-facing.x, -facing.z), -1.56f, 0);
 	const auto local =
 		RelativePose({after.values.tracking.controllers[1].pose.pose.orientation, {}}, {view, {}}).orientation;
 	const auto forward = Rotate(local, {0, 0, -1});
@@ -1669,9 +1719,20 @@ void CheckSpatialEditing(Interaction& test)
 			"Rotation ball did not point the hand up");
 	std::cout << "PASS spatial reach 30 cm and arcball pointing up through native observed state\n";
 	hand = RelativePose(after.values.tracking.controllers[1].pose.pose, rig.Root());
+	locateReach();
 	drag({center.x + hand.position.x * pixels, center.y + hand.position.z * pixels},
 		 {center.x + 8 * pixels, center.y - .3f * pixels});
 	after = observe();
+	std::cout << "Spatial QA off-screen reach rect=" << reach.x << "," << reach.y << " from=" << hand.position.x << ","
+			  << hand.position.z
+			  << " applied=" << RelativePose(after.values.tracking.controllers[1].pose.pose, rig.Root()).position.x
+			  << "\n";
+	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
+	{
+		test.renderer.RequestScreenshot((std::filesystem::path(directory) / "spatial-offscreen.bmp").string());
+		pump(1);
+		test.renderer.WaitIdle();
+	}
 	Require(RelativePose(after.values.tracking.controllers[1].pose.pose, rig.Root()).position.x > 5,
 			"Off-screen test hand did not move");
 	pump(10);
@@ -1755,6 +1816,7 @@ void DrivePilotPulses(Interaction& test, const std::function<void(int)>& onPulse
 		SDL_Event event{};
 		event.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
 		event.button.windowID = SDL_GetWindowID(test.window.Native());
+		event.button.which = TestMouse;
 		event.button.button = code;
 		event.button.down = down;
 		if (code == SDL_BUTTON_RIGHT && down)
@@ -2026,12 +2088,14 @@ void CheckLayouts(Interaction& test, const std::filesystem::path& qa)
 			SDL_Event event{};
 			event.type = SDL_EVENT_MOUSE_MOTION;
 			event.motion.windowID = SDL_GetWindowID(test.window.Native());
+			event.motion.which = TestMouse;
 			event.motion.x = point.x;
 			event.motion.y = point.y;
 			Require(SDL_PushEvent(&event), "Push layout motion");
 			event = {};
 			event.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
 			event.button.windowID = SDL_GetWindowID(test.window.Native());
+			event.button.which = TestMouse;
 			event.button.button = SDL_BUTTON_LEFT;
 			event.button.down = down;
 			event.button.x = point.x;
@@ -2294,6 +2358,7 @@ void CheckIdConflicts(Interaction& test)
 		SDL_Event event{};
 		event.type = SDL_EVENT_MOUSE_MOTION;
 		event.motion.windowID = SDL_GetWindowID(test.window.Native());
+		event.motion.which = TestMouse;
 		event.motion.x = point.x;
 		event.motion.y = point.y;
 		Require(SDL_PushEvent(&event), "Push sweep motion");
@@ -2331,8 +2396,8 @@ void CheckIdConflicts(Interaction& test)
 	{
 		for (const char* region : {"Inspector", "Head details", "Hand details", "Configuration details"})
 			if (auto* window = FindPanel(region))
-				for (const char* header : {"Exact pose", "Connection and profile", "Output", "Advanced connection",
-										   "Advanced stepping"})
+				for (const char* header : {"Position & rotation", "Role", "Connection and profile", "Output",
+										   "Advanced connection", "Advanced stepping"})
 					window->StateStorage.SetInt(window->GetID(header), 1);
 		pump(3);
 	};
@@ -2896,6 +2961,249 @@ void CheckAppPicker(const char* executable)
 	std::cout << "PASS recent app saved as profile \"" << saved.profiles.back().name << "\" in two clicks\n";
 }
 
+// F5-F7: rig view readability, trackers on the body, body poses, reset and undo.
+void CheckBodyRig(Interaction& test)
+{
+	IgnoreRealPointer();
+	using namespace simxr;
+	const auto target = test.runtime.Snapshot();
+	ManualInputController observer;
+	observer.SetTarget({target.endpoint, target.session, target.generation});
+	const auto qa = std::getenv("SIMXR_UI_QA_DIR");
+	const auto pump = [&](int count)
+	{
+		for (int index = 0; index < count; ++index)
+		{
+			test.Frame();
+			SDL_Delay(10);
+		}
+	};
+	const auto observe = [&]
+	{
+		const auto previous = observer.Snapshot().observation;
+		observer.Refresh();
+		Eventually(
+			[&]
+			{
+				pump(1);
+				return observer.Snapshot().observation > previous;
+			},
+			"Body observation stalled");
+		return ReadObservedSetup(observer.Snapshot().state);
+	};
+	const auto screenshot = [&](const std::string& name)
+	{
+		if (!qa)
+			return;
+		test.renderer.RequestScreenshot((std::filesystem::path(qa) / (name + ".bmp")).string());
+		pump(1);
+	};
+	const auto activate = [&](std::initializer_list<const char*> path)
+	{
+		const auto inspector = FindPanel("Inspector");
+		Require(inspector, "Inspector missing");
+		ImGuiID id = inspector->ID;
+		for (const auto* part : path)
+			id = ImHashStr(part, 0, id);
+		ImGui::ActivateItemByID(id);
+		pump(6);
+	};
+	const auto near = [](XrVector3f a, XrVector3f b, float tolerance)
+	{
+		return std::hypot(a.x - b.x, a.y - b.y, a.z - b.z) < tolerance;
+	};
+	SDL_ShowWindow(test.window.Native());
+	SDL_RaiseWindow(test.window.Native());
+	test.window.Resize(1280, 800);
+	test.workspace.SetScale(1);
+	test.workspace.Select(DeviceSel{DevicePage::Head});
+	pump(10);
+
+	// Trackers start on their joints; their preview markers only select, never bring forward.
+	auto state = observe();
+	for (const auto& tracker : state.values.tracking.trackers)
+	{
+		const auto joint = BodyModel::TrackerJoint(tracker.role);
+		Require(tracker.anchor.value_or(joint) == joint && !tracker.poseOverride, "Tracker did not start on its joint");
+	}
+	const auto markers = test.runtime.Snapshot().markers;
+	int trackerMarkers = 0;
+	for (int device = 3; device < 7; ++device)
+		trackerMarkers += markers[device].width > 0;
+	std::cout << "Body QA appTrackers=" << state.appTrackers << " trackerMarkers=" << trackerMarkers << "\n";
+	Require(state.appTrackers || trackerMarkers == 0, "Tracker markers shown although the app has no trackers");
+	if (trackerMarkers)
+	{
+		int device = 3;
+		while (markers[device].width == 0)
+			++device;
+		const auto before = state.values.tracking.trackers[device - 3];
+		const auto& marker = markers[device];
+		const ImVec2 point{marker.x + marker.width / 2, marker.y + marker.height / 2};
+		for (const bool down : {true, false})
+		{
+			SDL_Event event{};
+			event.type = SDL_EVENT_MOUSE_MOTION;
+			event.motion.windowID = SDL_GetWindowID(test.window.Native());
+			event.motion.which = TestMouse;
+			event.motion.x = point.x;
+			event.motion.y = point.y;
+			SDL_PushEvent(&event);
+			event = {};
+			event.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+			event.button.windowID = SDL_GetWindowID(test.window.Native());
+			event.button.which = TestMouse;
+			event.button.button = SDL_BUTTON_LEFT;
+			event.button.down = down;
+			SDL_PushEvent(&event);
+			pump(1);
+		}
+		pump(8);
+		state = observe();
+		const auto& after = state.values.tracking.trackers[device - 3];
+		Require(after.anchor == before.anchor && after.poseOverride.has_value() == before.poseOverride.has_value(),
+				"Clicking a tracker marker moved the tracker");
+		const auto page = std::get_if<DeviceSel>(&test.workspace.State().selection);
+		Require(page && page->page == DevicePage::Trackers, "Tracker marker did not select the tracker");
+		screenshot("trackers-100");
+		test.workspace.Select(DeviceSel{DevicePage::Head});
+		pump(6);
+	}
+
+	// Head selected for 10 s: the selection ring is drawn on every captured frame.
+	std::vector<std::pair<std::string, ShellRect>> rings;
+	if (qa)
+	{
+		const auto started = SDL_GetTicks();
+		while (SDL_GetTicks() - started < 10000)
+		{
+			const auto name = "head-ring-" + std::to_string(rings.size());
+			rings.emplace_back((std::filesystem::path(qa) / (name + ".bmp")).string(),
+							   test.runtime.Snapshot().rigDevices[0]);
+			screenshot(name);
+			pump(15);
+		}
+		test.renderer.WaitIdle();
+		int fewest = 1 << 30, most = 0;
+		for (const auto& [path, head] : rings)
+		{
+			SDL_Surface* loaded = SDL_LoadBMP(path.c_str());
+			Require(loaded, "Head ring capture missing");
+			SDL_Surface* image = SDL_ConvertSurface(loaded, SDL_PIXELFORMAT_RGBA32);
+			SDL_DestroySurface(loaded);
+			int count = 0;
+			for (int y = static_cast<int>(head.y) - 15; y <= static_cast<int>(head.y) + 15; ++y)
+				for (int x = static_cast<int>(head.x) - 15; x <= static_cast<int>(head.x) + 15; ++x)
+				{
+					const float distance = std::hypot(x - head.x, y - head.y);
+					if (x < 0 || y < 0 || x >= image->w || y >= image->h || distance < 10 || distance > 14)
+						continue;
+					const auto* pixel = static_cast<const std::uint8_t*>(image->pixels) + y * image->pitch + x * 4;
+					count += pixel[0] > 180 && pixel[1] > 180 && pixel[2] > 180;
+				}
+			SDL_DestroySurface(image);
+			fewest = std::min(fewest, count);
+			most = std::max(most, count);
+		}
+		std::cout << "Body QA head ring captures=" << rings.size() << " ringPixels=" << fewest << ".." << most << "\n";
+		Require(rings.size() >= 10 && fewest > 20 && fewest * 10 >= most * 8, "Head selection ring flickered");
+		std::cout << "PASS head ring stable over 10 s\n";
+	}
+
+	// T-pose moves skeleton and hands together, and Ctrl+Z undoes it in one step.
+	test.workspace.Select(DeviceSel{DevicePage::Player});
+	pump(6);
+	const auto standing = observe();
+	activate({"Body pose", "T-pose"});
+	state = observe();
+	const auto evaluate = [](const ObservedSetup& observed)
+	{
+		return TrackingSystem::Evaluate(RuntimeTime{Duration{1}}, observed.values.tracking,
+										BodyModel{observed.values.proportions});
+	};
+	auto posed = evaluate(state);
+	for (std::size_t hand = 0; hand < 2; ++hand)
+	{
+		const auto palm =
+			posed.body.joints[static_cast<std::size_t>(hand ? BodyJoint::RightHandPalm : BodyJoint::LeftHandPalm)]
+				.pose.position;
+		const auto shoulder =
+			posed.body.joints[static_cast<std::size_t>(hand ? BodyJoint::RightArmUpper : BodyJoint::LeftArmUpper)]
+				.pose.position;
+		std::cout << "Body QA T-pose hand " << hand << " controller=" << posed.controllers[hand].pose.pose.position.x
+				  << "," << posed.controllers[hand].pose.pose.position.y << " palm=" << palm.x << "," << palm.y
+				  << " shoulder=" << shoulder.x << "," << shoulder.y << "\n";
+		Require(near(posed.controllers[hand].pose.pose.position, palm, .03f), "T-pose hand is not on its palm");
+		Require(std::abs(palm.y - shoulder.y) < .05f && std::abs(palm.x - shoulder.x) > .4f,
+				"T-pose arms are not out to the sides");
+	}
+	for (std::size_t slot = 0; slot < 4; ++slot)
+		Require(near(posed.trackers[slot].pose.pose.position,
+					 posed.body.joints[static_cast<std::size_t>(
+										   BodyModel::TrackerJoint(state.values.tracking.trackers[slot].role))]
+						 .pose.position,
+					 .001f),
+				"Tracker left its joint in T-pose");
+	std::cout << "PASS T-pose posed skeleton, hands on palms and trackers on joints\n";
+	screenshot("player-tpose-100");
+	SDL_Event key{};
+	key.type = SDL_EVENT_KEY_DOWN;
+	key.key.windowID = SDL_GetWindowID(test.window.Native());
+	key.key.key = SDLK_Z;
+	key.key.scancode = SDL_SCANCODE_Z;
+	key.key.mod = SDL_KMOD_LCTRL;
+	key.key.down = true;
+	SDL_PushEvent(&key);
+	pump(1);
+	key.type = SDL_EVENT_KEY_UP;
+	key.key.down = false;
+	SDL_PushEvent(&key);
+	pump(8);
+	state = observe();
+	for (std::size_t hand = 0; hand < 2; ++hand)
+		Require(near(state.values.tracking.controllers[hand].pose.pose.position,
+					 standing.values.tracking.controllers[hand].pose.pose.position, .015f),
+				"Ctrl+Z did not restore the hands");
+	for (std::size_t joint = 0; joint < BodyJointCount; ++joint)
+		Require(state.values.tracking.body.joints[joint].has_value() ==
+					standing.values.tracking.body.joints[joint].has_value(),
+				"Ctrl+Z did not restore the body joints");
+	std::cout << "PASS Ctrl+Z undid the T-pose in one step\n";
+
+	// Reset all puts the player, hands and body back to their defaults.
+	activate({"Body pose", "A-pose"});
+	activate({"Reset all"});
+	state = observe();
+	const TrackingState defaults;
+	for (std::size_t hand = 0; hand < 2; ++hand)
+		Require(near(state.values.tracking.controllers[hand].pose.pose.position,
+					 defaults.controllers[hand].pose.pose.position, .015f),
+				"Reset all did not restore the hands");
+	Require(state.values.tracking.body.preset == BodyPreset::Standing, "Reset all did not stand the body");
+	std::cout << "PASS Reset all restored hands and body\n";
+
+	if (qa)
+	{
+		for (const float scale : {1.0f, 1.5f})
+		{
+			const std::string suffix = scale == 1 ? "-100" : "-150";
+			test.workspace.SetScale(scale);
+			test.workspace.Select(DeviceSel{DevicePage::Left});
+			pump(8);
+			screenshot("left-hand" + suffix);
+			test.workspace.Select(DeviceSel{DevicePage::Trackers});
+			pump(8);
+			screenshot("trackers" + suffix);
+			test.workspace.Select(DeviceSel{DevicePage::Player});
+			pump(8);
+			screenshot("player" + suffix);
+		}
+		test.workspace.SetScale(1);
+		test.renderer.WaitIdle();
+	}
+	Require(test.validation->errors.load() == 0, "Body rig validation errors");
+}
+
 void CheckToolbarLaunch(const char* executable)
 {
 	const auto directoryValue = std::getenv("SIMXR_LAUNCH_QA_DIRECTORY");
@@ -2969,6 +3277,8 @@ void CheckToolbarLaunch(const char* executable)
 		CheckPreviewPilot(test);
 	if (std::getenv("SIMXR_SPATIAL_QA"))
 		CheckSpatialEditing(test);
+	if (std::getenv("SIMXR_BODY_QA"))
+		CheckBodyRig(test);
 	if (std::getenv("SIMXR_RETENTION_QA"))
 		CheckSnapshotRetention(test);
 	Eventually([&] { test.Frame(); return test.runtime.History().Size() > 0; },

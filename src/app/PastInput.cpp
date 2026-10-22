@@ -1,4 +1,5 @@
 #include "app/PastInput.h"
+#include "app/PlayerRig.h"
 #include "app/Theme.h"
 
 #include <algorithm>
@@ -74,15 +75,6 @@ void Missing(const char* what)
 	ImGui::TextDisabled("%s not recorded for this frame", what);
 }
 } // namespace
-const char* TrackerRoleName(TrackerRole role)
-{
-	static constexpr const char* names[] = {
-		"Waist",	  "Chest",		 "Left foot",  "Right foot", "Unassigned", "Handheld object",
-		"Left shoulder", "Right shoulder", "Left elbow", "Right elbow", "Left knee",	"Right knee",
-		"Left wrist", "Right wrist", "Left ankle", "Right ankle", "Camera",	 "Keyboard"};
-	const auto index = static_cast<std::size_t>(role);
-	return index < std::size(names) ? names[index] : "Unknown";
-}
 void DrawPastBody(const InputSample& sample)
 {
 	if (!sample.body)

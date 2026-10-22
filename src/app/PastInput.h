@@ -11,5 +11,4 @@ void DrawPastGaze(const InputSample& sample);
 void DrawPastTrackers(const InputSample& sample, std::size_t selected);
 // One line each for body, gaze and connected trackers.
 void DrawInputSummary(const InputSample& sample);
-const char* TrackerRoleName(TrackerRole role);
 } // namespace simxr::app
