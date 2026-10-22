@@ -149,15 +149,6 @@ static void PumpMessages(HWND filter) {
     }
 }
 
-static void LogVf(const char* fmt, ...) {
-    if (!g_logVerbose) return;
-    char buf[2048];
-    va_list ap; va_start(ap, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, ap);
-    va_end(ap);
-    Log(buf);
-}
-
 // Helper function to convert a typed format to typeless
 static DXGI_FORMAT ToTypeless(DXGI_FORMAT format) {
     switch (format) {
@@ -281,30 +272,6 @@ struct PreviewFrameMetadata12 {
     mcp::ProjLogEntry proj{};
 };
 
-// Everything a Vulkan session needs on top of the D3D12 compositor it shares with a
-// D3D12 session. The swapchain images are D3D12 resources either way; a Vulkan session
-// creates them shared and hands the app imported VkImages over the same memory, so the
-// preview, screenshot and quad paths never learn there is a second API involved.
-struct VulkanSession {
-    VkPhysicalDevice physicalDevice{VK_NULL_HANDLE};
-    VkDevice device{VK_NULL_HANDLE};
-    VkQueue queue{VK_NULL_HANDLE};
-    VkCommandPool cmdPool{VK_NULL_HANDLE};
-    VkCommandBuffer cmdBuffer{VK_NULL_HANDLE};
-    // One shared D3D12 fence imported as a timeline VkSemaphore orders the app's queue
-    // against the preview queue. Values are a single monotonic counter (Vulkan signals
-    // one, D3D12 signals the next) rather than a two-state ping-pong: some drivers reject a
-    // timeline signal that does not strictly increase.
-    ComPtr<ID3D12Fence> fence;
-    HANDLE fenceHandle{nullptr};
-    VkSemaphore semaphore{VK_NULL_HANDLE};
-    uint64_t counter{0};
-    uint64_t appSignalled{0};       // last value the app's queue signalled, 0 = never
-    uint64_t previewSignalled{0};   // last value the preview queue signalled, 0 = never
-    uint64_t previewWaited{0};      // last previewSignalled the app's queue was made to wait on
-    bool timeline{false};           // false: fall back to CPU waits around the composite
-};
-
 struct Session {
     XrSession handle{XR_NULL_HANDLE};
     std::shared_ptr<simxr::Session> core;
@@ -319,9 +286,6 @@ struct Session {
     ComPtr<ID3D12Device> d3d12Device;
     ComPtr<ID3D12CommandQueue> d3d12Queue;
     bool usesD3D12{false};
-    // Vulkan support. usesD3D12 is set alongside this: the compositor is the D3D12 one.
-    bool usesVulkan{false};
-    VulkanSession vk;
 	std::shared_ptr<simxr::VulkanSessionGraphics> vulkan;
 	// OpenGL support
     HDC glDC{nullptr};
@@ -367,12 +331,6 @@ struct Swapchain {
     // State the app is required to release images in, per XR_KHR_D3D12_enable:
     // RENDER_TARGET for colour, DEPTH_WRITE for depth.
     D3D12_RESOURCE_STATES releaseState12{D3D12_RESOURCE_STATE_COMMON};
-    // Vulkan path: images12 still holds the shared D3D12 resources the compositor reads,
-    // imagesVk the VkImages bound over the same memory that the app is handed.
-    bool isVulkan{false};
-    std::vector<VkImage> imagesVk;
-    std::vector<VkDeviceMemory> memoryVk;
-    std::vector<HANDLE> sharedHandles;
 	std::unique_ptr<simxr::windows::OpenGLSwapchain> glImages;
     std::unique_ptr<simxr::Swapchain> state;
     uint32_t lastAcquired{UINT32_MAX};  // Initialize to invalid
@@ -1393,688 +1351,6 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
 
 } // namespace rt
 
-// ============ Vulkan sessions (XR_KHR_vulkan_enable / XR_KHR_vulkan_enable2) ============
-//
-// The compositor stays D3D12. A Vulkan session's swapchain images are D3D12 committed
-// resources created with D3D12_HEAP_FLAG_SHARED and imported into the app's VkDevice
-// through VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE_BIT, so the app renders into
-// VkImages and the preview, quad, screenshot and burst-capture paths read the very same
-// pixels as ID3D12Resources without knowing a second API exists.
-//
-// Interop needs ALLOW_SIMULTANEOUS_ACCESS on colour so the D3D12
-// side is uncompressed, a typeless format for depth, an explicit
-// D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT, and a timeline semaphore driven by one
-// strictly increasing counter rather than a two-value ping-pong.
-namespace vkrt {
-
-struct Dispatch {
-    PFN_vkGetInstanceProcAddr GetInstanceProcAddr{nullptr};
-    PFN_vkGetDeviceProcAddr GetDeviceProcAddr{nullptr};
-    PFN_vkEnumeratePhysicalDevices EnumeratePhysicalDevices{nullptr};
-    PFN_vkGetPhysicalDeviceProperties2 GetPhysicalDeviceProperties2{nullptr};
-    PFN_vkGetPhysicalDeviceMemoryProperties GetPhysicalDeviceMemoryProperties{nullptr};
-    PFN_vkGetDeviceQueue GetDeviceQueue{nullptr};
-    PFN_vkDeviceWaitIdle DeviceWaitIdle{nullptr};
-    PFN_vkQueueWaitIdle QueueWaitIdle{nullptr};
-    PFN_vkQueueSubmit QueueSubmit{nullptr};
-    PFN_vkCreateImage CreateImage{nullptr};
-    PFN_vkDestroyImage DestroyImage{nullptr};
-    PFN_vkGetImageMemoryRequirements2 GetImageMemoryRequirements2{nullptr};
-    PFN_vkBindImageMemory2 BindImageMemory2{nullptr};
-    PFN_vkAllocateMemory AllocateMemory{nullptr};
-    PFN_vkFreeMemory FreeMemory{nullptr};
-    PFN_vkGetMemoryWin32HandlePropertiesKHR GetMemoryWin32HandlePropertiesKHR{nullptr};
-    PFN_vkCreateSemaphore CreateSemaphore{nullptr};
-    PFN_vkDestroySemaphore DestroySemaphore{nullptr};
-    PFN_vkImportSemaphoreWin32HandleKHR ImportSemaphoreWin32HandleKHR{nullptr};
-    PFN_vkCreateCommandPool CreateCommandPool{nullptr};
-    PFN_vkDestroyCommandPool DestroyCommandPool{nullptr};
-    PFN_vkAllocateCommandBuffers AllocateCommandBuffers{nullptr};
-    PFN_vkResetCommandPool ResetCommandPool{nullptr};
-    PFN_vkBeginCommandBuffer BeginCommandBuffer{nullptr};
-    PFN_vkEndCommandBuffer EndCommandBuffer{nullptr};
-    PFN_vkCmdPipelineBarrier CmdPipelineBarrier{nullptr};
-};
-
-static Dispatch g_d{};
-
-// The app hands one over with XR_KHR_vulkan_enable2; a v1 app never does, so fall back to
-// whatever vulkan-1.dll the process already has. GetModuleHandle first: an app that ships
-// a proxy loader next to its executable would have LoadLibrary resolve to the proxy
-// anyway, and this avoids a second reference on it.
-static PFN_vkGetInstanceProcAddr g_appGipa = nullptr;
-
-// vkCreateDevice and vkEnumerateDeviceExtensionProperties are instance-level: a null
-// VkInstance only resolves the four global entry points. xrCreateVulkanDeviceKHR is not
-// handed an instance, so remember the one the app created or asked about.
-static VkInstance g_lastInstance = VK_NULL_HANDLE;
-
-static PFN_vkGetInstanceProcAddr Gipa() {
-    if (g_appGipa) return g_appGipa;
-    static PFN_vkGetInstanceProcAddr cached = []() -> PFN_vkGetInstanceProcAddr {
-        HMODULE m = GetModuleHandleA("vulkan-1.dll");
-        if (!m) m = LoadLibraryA("vulkan-1.dll");
-        if (!m) { Log("[SimXR][VK] vulkan-1.dll is not loadable"); return nullptr; }
-        char path[MAX_PATH]{};
-        GetModuleFileNameA(m, path, (DWORD)sizeof(path));
-        Logf("[SimXR][VK] loader module: %s", path);
-        return (PFN_vkGetInstanceProcAddr)GetProcAddress(m, "vkGetInstanceProcAddr");
-    }();
-    return cached;
-}
-
-template <typename T>
-static T InstFn(VkInstance inst, const char* name, const char* altName = nullptr) {
-    PFN_vkGetInstanceProcAddr gipa = Gipa();
-    if (!gipa) return nullptr;
-    T fn = (T)gipa(inst, name);
-    if (!fn && altName) fn = (T)gipa(inst, altName);
-    return fn;
-}
-
-template <typename T>
-static T DevFn(VkDevice dev, const char* name, const char* altName = nullptr) {
-    if (!g_d.GetDeviceProcAddr) return nullptr;
-    T fn = (T)g_d.GetDeviceProcAddr(dev, name);
-    if (!fn && altName) fn = (T)g_d.GetDeviceProcAddr(dev, altName);
-    return fn;
-}
-
-static bool LoadInstanceLevel(VkInstance inst) {
-    g_d.GetInstanceProcAddr = Gipa();
-    if (!g_d.GetInstanceProcAddr) return false;
-    g_d.GetDeviceProcAddr = InstFn<PFN_vkGetDeviceProcAddr>(inst, "vkGetDeviceProcAddr");
-    g_d.EnumeratePhysicalDevices = InstFn<PFN_vkEnumeratePhysicalDevices>(inst, "vkEnumeratePhysicalDevices");
-    g_d.GetPhysicalDeviceProperties2 = InstFn<PFN_vkGetPhysicalDeviceProperties2>(
-        inst, "vkGetPhysicalDeviceProperties2", "vkGetPhysicalDeviceProperties2KHR");
-    g_d.GetPhysicalDeviceMemoryProperties = InstFn<PFN_vkGetPhysicalDeviceMemoryProperties>(inst, "vkGetPhysicalDeviceMemoryProperties");
-    return g_d.GetDeviceProcAddr && g_d.EnumeratePhysicalDevices && g_d.GetPhysicalDeviceProperties2;
-}
-
-static bool LoadDeviceLevel(VkDevice dev) {
-    g_d.GetDeviceQueue = DevFn<PFN_vkGetDeviceQueue>(dev, "vkGetDeviceQueue");
-    g_d.DeviceWaitIdle = DevFn<PFN_vkDeviceWaitIdle>(dev, "vkDeviceWaitIdle");
-    g_d.QueueWaitIdle = DevFn<PFN_vkQueueWaitIdle>(dev, "vkQueueWaitIdle");
-    g_d.QueueSubmit = DevFn<PFN_vkQueueSubmit>(dev, "vkQueueSubmit");
-    g_d.CreateImage = DevFn<PFN_vkCreateImage>(dev, "vkCreateImage");
-    g_d.DestroyImage = DevFn<PFN_vkDestroyImage>(dev, "vkDestroyImage");
-    g_d.GetImageMemoryRequirements2 = DevFn<PFN_vkGetImageMemoryRequirements2>(
-        dev, "vkGetImageMemoryRequirements2", "vkGetImageMemoryRequirements2KHR");
-    g_d.BindImageMemory2 = DevFn<PFN_vkBindImageMemory2>(dev, "vkBindImageMemory2", "vkBindImageMemory2KHR");
-    g_d.AllocateMemory = DevFn<PFN_vkAllocateMemory>(dev, "vkAllocateMemory");
-    g_d.FreeMemory = DevFn<PFN_vkFreeMemory>(dev, "vkFreeMemory");
-    g_d.GetMemoryWin32HandlePropertiesKHR = DevFn<PFN_vkGetMemoryWin32HandlePropertiesKHR>(dev, "vkGetMemoryWin32HandlePropertiesKHR");
-    g_d.CreateSemaphore = DevFn<PFN_vkCreateSemaphore>(dev, "vkCreateSemaphore");
-    g_d.DestroySemaphore = DevFn<PFN_vkDestroySemaphore>(dev, "vkDestroySemaphore");
-    g_d.ImportSemaphoreWin32HandleKHR = DevFn<PFN_vkImportSemaphoreWin32HandleKHR>(dev, "vkImportSemaphoreWin32HandleKHR");
-    g_d.CreateCommandPool = DevFn<PFN_vkCreateCommandPool>(dev, "vkCreateCommandPool");
-    g_d.DestroyCommandPool = DevFn<PFN_vkDestroyCommandPool>(dev, "vkDestroyCommandPool");
-    g_d.AllocateCommandBuffers = DevFn<PFN_vkAllocateCommandBuffers>(dev, "vkAllocateCommandBuffers");
-    g_d.ResetCommandPool = DevFn<PFN_vkResetCommandPool>(dev, "vkResetCommandPool");
-    g_d.BeginCommandBuffer = DevFn<PFN_vkBeginCommandBuffer>(dev, "vkBeginCommandBuffer");
-    g_d.EndCommandBuffer = DevFn<PFN_vkEndCommandBuffer>(dev, "vkEndCommandBuffer");
-    g_d.CmdPipelineBarrier = DevFn<PFN_vkCmdPipelineBarrier>(dev, "vkCmdPipelineBarrier");
-
-    const void* required[] = {
-        (const void*)g_d.GetDeviceQueue, (const void*)g_d.QueueSubmit, (const void*)g_d.CreateImage,
-        (const void*)g_d.DestroyImage, (const void*)g_d.GetImageMemoryRequirements2,
-        (const void*)g_d.BindImageMemory2, (const void*)g_d.AllocateMemory, (const void*)g_d.FreeMemory,
-        (const void*)g_d.GetMemoryWin32HandlePropertiesKHR, (const void*)g_d.CreateCommandPool,
-        (const void*)g_d.AllocateCommandBuffers, (const void*)g_d.BeginCommandBuffer,
-        (const void*)g_d.EndCommandBuffer, (const void*)g_d.CmdPipelineBarrier,
-    };
-    for (const void* p : required) if (!p) return false;
-    return true;
-}
-
-// --- formats ------------------------------------------------------------------------------
-// The pairing is the DXGI format the shared resource is created with. Colour keeps the
-// typed sRGB/UNORM format (the projection binding selects a UNORM sampling view, so
-// the encoded bytes pass through unchanged); depth goes typeless, which is both what a DSV
-// wants and what BetterVR's own shared depth textures use.
-struct FormatPair { int64_t vk; DXGI_FORMAT typed; DXGI_FORMAT resource; bool depth; };
-
-static const FormatPair kFormats[] = {
-    { VK_FORMAT_R8G8B8A8_SRGB,            DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, false },
-    { VK_FORMAT_B8G8R8A8_SRGB,            DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, false },
-    { VK_FORMAT_R8G8B8A8_UNORM,           DXGI_FORMAT_R8G8B8A8_UNORM,      DXGI_FORMAT_R8G8B8A8_UNORM,      false },
-    { VK_FORMAT_B8G8R8A8_UNORM,           DXGI_FORMAT_B8G8R8A8_UNORM,      DXGI_FORMAT_B8G8R8A8_UNORM,      false },
-    { VK_FORMAT_A2B10G10R10_UNORM_PACK32, DXGI_FORMAT_R10G10B10A2_UNORM,   DXGI_FORMAT_R10G10B10A2_UNORM,   false },
-    { VK_FORMAT_R16G16B16A16_SFLOAT,      DXGI_FORMAT_R16G16B16A16_FLOAT,  DXGI_FORMAT_R16G16B16A16_FLOAT,  false },
-    { VK_FORMAT_D32_SFLOAT,               DXGI_FORMAT_D32_FLOAT,           DXGI_FORMAT_R32_TYPELESS,        true  },
-    { VK_FORMAT_D24_UNORM_S8_UINT,        DXGI_FORMAT_D24_UNORM_S8_UINT,   DXGI_FORMAT_R24G8_TYPELESS,      true  },
-    { VK_FORMAT_D32_SFLOAT_S8_UINT,       DXGI_FORMAT_D32_FLOAT_S8X24_UINT,DXGI_FORMAT_R32G8X24_TYPELESS,   true  },
-    { VK_FORMAT_D16_UNORM,                DXGI_FORMAT_D16_UNORM,           DXGI_FORMAT_R16_TYPELESS,        true  },
-};
-
-static const FormatPair* FindFormat(int64_t vkFormat) {
-    for (const auto& f : kFormats) if (f.vk == vkFormat) return &f;
-    return nullptr;
-}
-
-// --- adapter matching ---------------------------------------------------------------------
-
-static bool PreferredAdapterLuid(LUID& out) {
-    ComPtr<IDXGIFactory1> f;
-    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(f.GetAddressOf())))) return false;
-    for (UINT i = 0;; ++i) {
-        ComPtr<IDXGIAdapter1> a;
-        if (f->EnumAdapters1(i, a.GetAddressOf()) == DXGI_ERROR_NOT_FOUND) break;
-        DXGI_ADAPTER_DESC1 d{}; a->GetDesc1(&d);
-        if (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) continue;
-        out = d.AdapterLuid;
-        return true;
-    }
-    return false;
-}
-
-static bool PhysicalDeviceLuid(VkPhysicalDevice pd, LUID& out) {
-    if (!g_d.GetPhysicalDeviceProperties2) return false;
-    VkPhysicalDeviceIDProperties id{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES };
-    VkPhysicalDeviceProperties2 props{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
-    props.pNext = &id;
-    g_d.GetPhysicalDeviceProperties2(pd, &props);
-    if (!id.deviceLUIDValid) return false;
-    memcpy(&out, id.deviceLUID, sizeof(LUID));
-    return true;
-}
-
-// The VkPhysicalDevice for the adapter the compositor will run on. Matching the LUID is
-// what makes the shared-handle import legal: a D3D12 resource can only be opened by a
-// Vulkan device on the same physical adapter.
-static XrResult PickPhysicalDevice(VkInstance vkInstance, VkPhysicalDevice* out) {
-    if (!vkInstance || !out) return XR_ERROR_VALIDATION_FAILURE;
-    g_lastInstance = vkInstance;
-    if (!LoadInstanceLevel(vkInstance)) {
-        Log("[SimXR][VK] could not resolve the instance-level entry points");
-        return XR_ERROR_RUNTIME_FAILURE;
-    }
-    uint32_t count = 0;
-    if (g_d.EnumeratePhysicalDevices(vkInstance, &count, nullptr) != VK_SUCCESS || count == 0) {
-        Log("[SimXR][VK] vkEnumeratePhysicalDevices returned nothing");
-        return XR_ERROR_RUNTIME_FAILURE;
-    }
-    std::vector<VkPhysicalDevice> devices(count);
-    if (g_d.EnumeratePhysicalDevices(vkInstance, &count, devices.data()) != VK_SUCCESS) return XR_ERROR_RUNTIME_FAILURE;
-
-    LUID want{};
-    const bool haveWant = PreferredAdapterLuid(want);
-    for (VkPhysicalDevice pd : devices) {
-        LUID got{};
-        if (!PhysicalDeviceLuid(pd, got)) continue;
-        Logf("[SimXR][VK] physical device %p LUID=%08lX:%08lX", (void*)pd,
-             (unsigned long)got.HighPart, (unsigned long)got.LowPart);
-        if (haveWant && got.LowPart == want.LowPart && got.HighPart == want.HighPart) {
-            *out = pd;
-            Logf("[SimXR][VK] matched the compositor's adapter LUID=%08lX:%08lX",
-                 (unsigned long)want.HighPart, (unsigned long)want.LowPart);
-            return XR_SUCCESS;
-        }
-    }
-    *out = devices[0];
-    Log("[SimXR][VK] no physical device matched the compositor's adapter LUID; using the first one");
-    return XR_SUCCESS;
-}
-
-// --- extension injection ------------------------------------------------------------------
-
-static const char* kInstanceExtensions[] = {
-    VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME,
-    VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME,
-    VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
-};
-
-static const char* kDeviceExtensions[] = {
-    VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
-    VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME,
-    VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
-    VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME,
-    VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME,
-    VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,
-    VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
-};
-
-static std::string JoinExtensions(const char* const* names, size_t count) {
-    std::string s;
-    for (size_t i = 0; i < count; ++i) { if (i) s += ' '; s += names[i]; }
-    return s;
-}
-
-// Merge the runtime's requirements into the app's list, skipping anything the app already
-// asked for and anything the driver does not advertise -- a promoted extension is core on
-// a 1.1+ instance and may be missing from the enumeration, in which case enabling it by
-// name is an error rather than a no-op.
-static std::vector<const char*> MergeExtensions(const char* const* wanted, size_t wantedCount,
-                                                const char* const* appNames, uint32_t appCount,
-                                                const std::vector<std::string>& available,
-                                                std::vector<std::string>& storage) {
-    std::vector<const char*> out;
-    for (uint32_t i = 0; i < appCount; ++i) out.push_back(appNames[i]);
-    for (size_t i = 0; i < wantedCount; ++i) {
-        bool already = false;
-        for (const char* n : out) if (strcmp(n, wanted[i]) == 0) { already = true; break; }
-        if (already) continue;
-        bool supported = false;
-        for (const auto& a : available) if (a == wanted[i]) { supported = true; break; }
-        if (!supported) { Logf("[SimXR][VK] %s is not advertised; not injecting it", wanted[i]); continue; }
-        storage.emplace_back(wanted[i]);
-        Logf("[SimXR][VK] injecting %s", wanted[i]);
-    }
-    for (const auto& s : storage) out.push_back(s.c_str());
-    return out;
-}
-
-// --- session ------------------------------------------------------------------------------
-
-static VkImageAspectFlags AspectOf(const FormatPair& fp) {
-    if (!fp.depth) return VK_IMAGE_ASPECT_COLOR_BIT;
-    if (fp.vk == VK_FORMAT_D24_UNORM_S8_UINT || fp.vk == VK_FORMAT_D32_SFLOAT_S8_UINT)
-        return VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
-    return VK_IMAGE_ASPECT_DEPTH_BIT;
-}
-
-// The compositor's own D3D12 device. It has to sit on the same physical adapter as the
-// app's VkPhysicalDevice or every CreateSharedHandle import fails.
-static bool CreateCompositorDevice(rt::Session& s) {
-    ComPtr<IDXGIFactory1> factory;
-    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(factory.GetAddressOf())))) return false;
-
-    LUID want{};
-    const bool haveWant = PhysicalDeviceLuid(s.vk.physicalDevice, want);
-    ComPtr<IDXGIAdapter1> chosen, firstHardware;
-    for (UINT i = 0;; ++i) {
-        ComPtr<IDXGIAdapter1> a;
-        if (factory->EnumAdapters1(i, a.GetAddressOf()) == DXGI_ERROR_NOT_FOUND) break;
-        DXGI_ADAPTER_DESC1 d{}; a->GetDesc1(&d);
-        if (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) continue;
-        if (!firstHardware) firstHardware = a;
-        if (haveWant && d.AdapterLuid.LowPart == want.LowPart && d.AdapterLuid.HighPart == want.HighPart) {
-            chosen = a;
-            break;
-        }
-    }
-    if (!chosen) {
-        chosen = firstHardware;
-        if (haveWant) Log("[SimXR][VK] the app's VkPhysicalDevice LUID matched no DXGI adapter; interop may fail");
-    }
-    if (FAILED(D3D12CreateDevice(chosen.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(s.d3d12Device.GetAddressOf())))) {
-        Log("[SimXR][VK] D3D12CreateDevice for the compositor failed");
-        return false;
-    }
-    D3D12_COMMAND_QUEUE_DESC qd{};
-    qd.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
-    if (FAILED(s.d3d12Device->CreateCommandQueue(&qd, IID_PPV_ARGS(s.d3d12Queue.GetAddressOf())))) {
-        Log("[SimXR][VK] the compositor's D3D12 command queue could not be created");
-        s.d3d12Device.Reset();
-        return false;
-    }
-    if (chosen) {
-        DXGI_ADAPTER_DESC1 d{}; chosen->GetDesc1(&d);
-        char name[128]{};
-        wcstombs(name, d.Description, sizeof(name) - 1);
-        Logf("[SimXR][VK] compositor D3D12 device on %s (LUID %08lX:%08lX)", name,
-             (unsigned long)d.AdapterLuid.HighPart, (unsigned long)d.AdapterLuid.LowPart);
-    }
-    return true;
-}
-
-// One shared D3D12 fence imported as a timeline VkSemaphore. Without it the session still
-// works, on CPU waits instead (see FrameSyncBegin).
-static void InitFrameSync(rt::Session& s) {
-    s.vk.timeline = false;
-    char noTimeline[8]{};
-    if (GetEnvironmentVariableA("SIMXR_VK_NO_TIMELINE", noTimeline, (DWORD)sizeof(noTimeline)) > 0 && noTimeline[0] != '0') {
-        Log("[SimXR][VK] SIMXR_VK_NO_TIMELINE set; preview unavailable without external timeline synchronization");
-        return;
-    }
-    if (!g_d.CreateSemaphore || !g_d.ImportSemaphoreWin32HandleKHR || !g_d.QueueSubmit) {
-        Log("[SimXR][VK] no external-semaphore entry points; preview unavailable without external timeline synchronization");
-        return;
-    }
-    if (FAILED(s.d3d12Device->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(s.vk.fence.GetAddressOf())))) {
-        Log("[SimXR][VK] CreateFence(SHARED) failed; preview unavailable without external timeline synchronization");
-        return;
-    }
-    if (FAILED(s.d3d12Device->CreateSharedHandle(s.vk.fence.Get(), nullptr, GENERIC_ALL, nullptr, &s.vk.fenceHandle))) {
-        Log("[SimXR][VK] CreateSharedHandle(fence) failed; preview unavailable without external timeline synchronization");
-        s.vk.fence.Reset();
-        return;
-    }
-
-    VkSemaphoreTypeCreateInfo timelineInfo{ VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO };
-    timelineInfo.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
-    timelineInfo.initialValue = 0;
-    VkSemaphoreCreateInfo semInfo{ VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-    semInfo.pNext = &timelineInfo;
-    if (g_d.CreateSemaphore(s.vk.device, &semInfo, nullptr, &s.vk.semaphore) != VK_SUCCESS) {
-        Log("[SimXR][VK] timeline VkSemaphore creation failed; preview unavailable without external timeline synchronization");
-        s.vk.semaphore = VK_NULL_HANDLE;
-        return;
-    }
-    VkImportSemaphoreWin32HandleInfoKHR import{ VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_WIN32_HANDLE_INFO_KHR };
-    import.semaphore = s.vk.semaphore;
-    import.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_D3D12_FENCE_BIT;
-    import.handle = s.vk.fenceHandle;
-    const VkResult r = g_d.ImportSemaphoreWin32HandleKHR(s.vk.device, &import);
-    if (r != VK_SUCCESS) {
-        Logf("[SimXR][VK] ImportSemaphoreWin32HandleKHR failed (%d); preview unavailable without external timeline synchronization", (int)r);
-        g_d.DestroySemaphore(s.vk.device, s.vk.semaphore, nullptr);
-        s.vk.semaphore = VK_NULL_HANDLE;
-        return;
-    }
-    s.vk.timeline = true;
-    Log("[SimXR][VK] frame sync: shared ID3D12Fence imported as a timeline VkSemaphore");
-}
-
-static bool InitSession(rt::Session& s, const XrGraphicsBindingVulkanKHR& b) {
-    s.vk = rt::VulkanSession{};
-    s.vk.physicalDevice = b.physicalDevice;
-    s.vk.device = b.device;
-
-    if (!LoadInstanceLevel(b.instance)) { Log("[SimXR][VK] instance-level entry points missing"); return false; }
-    if (!LoadDeviceLevel(b.device)) { Log("[SimXR][VK] device-level entry points missing (external memory not enabled?)"); return false; }
-    g_d.GetDeviceQueue(b.device, b.queueFamilyIndex, b.queueIndex, &s.vk.queue);
-    if (!s.vk.queue) { Log("[SimXR][VK] vkGetDeviceQueue returned nothing"); return false; }
-
-    VkCommandPoolCreateInfo pci{ VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
-    pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    pci.queueFamilyIndex = b.queueFamilyIndex;
-    if (g_d.CreateCommandPool(b.device, &pci, nullptr, &s.vk.cmdPool) != VK_SUCCESS) {
-        Log("[SimXR][VK] vkCreateCommandPool failed");
-        return false;
-    }
-    VkCommandBufferAllocateInfo cbi{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
-    cbi.commandPool = s.vk.cmdPool;
-    cbi.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cbi.commandBufferCount = 1;
-    if (g_d.AllocateCommandBuffers(b.device, &cbi, &s.vk.cmdBuffer) != VK_SUCCESS) {
-        Log("[SimXR][VK] vkAllocateCommandBuffers failed");
-        return false;
-    }
-    if (!CreateCompositorDevice(s)) return false;
-    InitFrameSync(s);
-    Logf("[SimXR][VK] session bound to VkDevice %p, queue family %u index %u",
-         (void*)b.device, b.queueFamilyIndex, b.queueIndex);
-    return true;
-}
-
-static void ShutdownSession(rt::Session& s) {
-    if (s.vk.device) {
-        if (g_d.DeviceWaitIdle) g_d.DeviceWaitIdle(s.vk.device);
-        if (s.vk.semaphore && g_d.DestroySemaphore) g_d.DestroySemaphore(s.vk.device, s.vk.semaphore, nullptr);
-        if (s.vk.cmdPool && g_d.DestroyCommandPool) g_d.DestroyCommandPool(s.vk.device, s.vk.cmdPool, nullptr);
-    }
-    if (s.vk.fenceHandle) CloseHandle(s.vk.fenceHandle);
-    s.vk = rt::VulkanSession{};
-    s.usesVulkan = false;
-}
-
-// --- swapchain images ---------------------------------------------------------------------
-
-static void DestroySwapchainImages(rt::Session& s, rt::Swapchain& chain) {
-    if (s.vk.device && g_d.DestroyImage && g_d.FreeMemory) {
-        if (g_d.DeviceWaitIdle) g_d.DeviceWaitIdle(s.vk.device);
-        for (VkImage img : chain.imagesVk) if (img) g_d.DestroyImage(s.vk.device, img, nullptr);
-        for (VkDeviceMemory mem : chain.memoryVk) if (mem) g_d.FreeMemory(s.vk.device, mem, nullptr);
-    }
-    for (HANDLE h : chain.sharedHandles) if (h) CloseHandle(h);
-    chain.imagesVk.clear();
-    chain.memoryVk.clear();
-    chain.sharedHandles.clear();
-}
-
-// Hand the images over in the layouts XR_KHR_vulkan_enable mandates -- colour in
-// COLOR_ATTACHMENT_OPTIMAL, depth in DEPTH_STENCIL_ATTACHMENT_OPTIMAL -- and leave them
-// there for the rest of the session. A conforming app renders straight into an acquired
-// image with no barrier of its own, so anything else is a layout the app never corrects.
-static bool TransitionToRequiredLayout(rt::Session& s, rt::Swapchain& chain, const FormatPair& fp) {
-    VkCommandBufferBeginInfo bi{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
-    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    if (g_d.ResetCommandPool) g_d.ResetCommandPool(s.vk.device, s.vk.cmdPool, 0);
-    if (g_d.BeginCommandBuffer(s.vk.cmdBuffer, &bi) != VK_SUCCESS) return false;
-
-    std::vector<VkImageMemoryBarrier> barriers;
-    barriers.reserve(chain.imagesVk.size());
-    for (VkImage img : chain.imagesVk) {
-        VkImageMemoryBarrier b{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
-        b.srcAccessMask = 0;
-        b.dstAccessMask = fp.depth ? VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        b.newLayout = fp.depth ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-                               : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.image = img;
-        b.subresourceRange.aspectMask = AspectOf(fp);
-        b.subresourceRange.levelCount = chain.mipCount ? chain.mipCount : 1;
-        b.subresourceRange.layerCount = chain.arraySize ? chain.arraySize : 1;
-        barriers.push_back(b);
-    }
-    g_d.CmdPipelineBarrier(s.vk.cmdBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                           fp.depth ? VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
-                                    : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                           0, 0, nullptr, 0, nullptr, (uint32_t)barriers.size(), barriers.data());
-    if (g_d.EndCommandBuffer(s.vk.cmdBuffer) != VK_SUCCESS) return false;
-
-    VkSubmitInfo si{ VK_STRUCTURE_TYPE_SUBMIT_INFO };
-    si.commandBufferCount = 1;
-    si.pCommandBuffers = &s.vk.cmdBuffer;
-    if (g_d.QueueSubmit(s.vk.queue, 1, &si, VK_NULL_HANDLE) != VK_SUCCESS) return false;
-    if (g_d.QueueWaitIdle) g_d.QueueWaitIdle(s.vk.queue);
-    return true;
-}
-
-static XrResult CreateSwapchainImages(rt::Session& s, rt::Swapchain& chain, const XrSwapchainCreateInfo& ci) {
-    const FormatPair* fp = FindFormat(ci.format);
-    if (!fp) {
-        Logf("[SimXR][VK] xrCreateSwapchain: VkFormat %lld is not one this runtime offers", (long long)ci.format);
-        return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
-    }
-
-    const uint32_t arraySize = chain.arraySize ? chain.arraySize : 1;
-    const uint32_t mips = ci.mipCount ? ci.mipCount : 1;
-    const uint32_t samples = ci.sampleCount ? ci.sampleCount : 1;
-    chain.isVulkan = true;
-    chain.format = fp->typed;
-    chain.backend = rt::Swapchain::Backend::D3D12;
-    chain.mipCount = mips;
-    chain.imageCount = (ci.createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) ? 1 : 3;
-
-    D3D12_RESOURCE_DESC rd{};
-    rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-    // Some drivers need this spelled out on a shared committed resource; 0 (let the runtime pick)
-    // produces a resource whose Vulkan import fails.
-    rd.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
-    rd.Width = chain.width;
-    rd.Height = chain.height;
-    rd.DepthOrArraySize = (UINT16)arraySize;
-    rd.MipLevels = (UINT16)mips;
-    rd.Format = fp->resource;
-    rd.SampleDesc.Count = samples;
-    rd.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-    if (fp->depth) {
-        rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
-    } else {
-        rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
-        // ALLOW_SIMULTANEOUS_ACCESS turns off DCC, which is what makes the bytes Vulkan
-        // wrote through a COLOR_ATTACHMENT_OPTIMAL layout readable by a D3D12 SRV. It is
-        // illegal on depth and on MSAA resources.
-        if (samples == 1) rd.Flags |= D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS;
-    }
-
-    D3D12_HEAP_PROPERTIES hp{};
-    hp.Type = D3D12_HEAP_TYPE_DEFAULT;
-
-    VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-    if (ci.usageFlags & XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT) usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-    if (ci.usageFlags & XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-    if (ci.usageFlags & XR_SWAPCHAIN_USAGE_SAMPLED_BIT) usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
-    if (ci.usageFlags & XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT) usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-    if (ci.usageFlags & XR_SWAPCHAIN_USAGE_UNORDERED_ACCESS_BIT) usage |= VK_IMAGE_USAGE_STORAGE_BIT;
-    if (!(usage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT))) {
-        usage |= fp->depth ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-    }
-
-    VkPhysicalDeviceMemoryProperties memProps{};
-    if (g_d.GetPhysicalDeviceMemoryProperties) g_d.GetPhysicalDeviceMemoryProperties(s.vk.physicalDevice, &memProps);
-
-    for (uint32_t i = 0; i < chain.imageCount; ++i) {
-        ComPtr<ID3D12Resource> res;
-        HRESULT hr = s.d3d12Device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_SHARED, &rd,
-                                                            D3D12_RESOURCE_STATE_COMMON, nullptr,
-                                                            IID_PPV_ARGS(res.GetAddressOf()));
-        if (FAILED(hr)) {
-            Logf("[SimXR][VK] CreateCommittedResource(SHARED)[%u] failed 0x%08X", i, (unsigned)hr);
-            return XR_ERROR_RUNTIME_FAILURE;
-        }
-        HANDLE shared = nullptr;
-        hr = s.d3d12Device->CreateSharedHandle(res.Get(), nullptr, GENERIC_ALL, nullptr, &shared);
-        if (FAILED(hr)) {
-            Logf("[SimXR][VK] CreateSharedHandle[%u] failed 0x%08X", i, (unsigned)hr);
-            return XR_ERROR_RUNTIME_FAILURE;
-        }
-        chain.images12.push_back(res);
-        chain.imageStates12.push_back(D3D12_RESOURCE_STATE_COMMON);
-        chain.sharedHandles.push_back(shared);
-
-        VkExternalMemoryImageCreateInfo external{ VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO };
-        external.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE_BIT;
-        VkImageCreateInfo ici{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
-        ici.pNext = &external;
-        ici.flags = (ci.usageFlags & XR_SWAPCHAIN_USAGE_MUTABLE_FORMAT_BIT) ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : 0;
-        ici.imageType = VK_IMAGE_TYPE_2D;
-        ici.format = (VkFormat)ci.format;
-        ici.extent = { chain.width, chain.height, 1 };
-        ici.mipLevels = mips;
-        ici.arrayLayers = arraySize;
-        ici.samples = (VkSampleCountFlagBits)samples;
-        ici.tiling = VK_IMAGE_TILING_OPTIMAL;
-        ici.usage = usage;
-        ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        VkImage image = VK_NULL_HANDLE;
-        VkResult vr = g_d.CreateImage(s.vk.device, &ici, nullptr, &image);
-        if (vr != VK_SUCCESS) {
-            Logf("[SimXR][VK] vkCreateImage[%u] failed (%d)", i, (int)vr);
-            return XR_ERROR_RUNTIME_FAILURE;
-        }
-        chain.imagesVk.push_back(image);
-
-        VkImageMemoryRequirementsInfo2 reqInfo{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2 };
-        reqInfo.image = image;
-        VkMemoryRequirements2 req{ VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2 };
-        g_d.GetImageMemoryRequirements2(s.vk.device, &reqInfo, &req);
-
-        VkMemoryWin32HandlePropertiesKHR handleProps{ VK_STRUCTURE_TYPE_MEMORY_WIN32_HANDLE_PROPERTIES_KHR };
-        vr = g_d.GetMemoryWin32HandlePropertiesKHR(s.vk.device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE_BIT,
-                                                   shared, &handleProps);
-        if (vr != VK_SUCCESS) {
-            Logf("[SimXR][VK] vkGetMemoryWin32HandlePropertiesKHR[%u] failed (%d)", i, (int)vr);
-            return XR_ERROR_RUNTIME_FAILURE;
-        }
-        uint32_t typeIndex = UINT32_MAX;
-        const uint32_t bits = handleProps.memoryTypeBits & req.memoryRequirements.memoryTypeBits;
-        for (uint32_t t = 0; t < memProps.memoryTypeCount; ++t) {
-            if (!(bits & (1u << t))) continue;
-            if (memProps.memoryTypes[t].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) { typeIndex = t; break; }
-        }
-        if (typeIndex == UINT32_MAX) {
-            for (uint32_t t = 0; t < memProps.memoryTypeCount; ++t) {
-                if (handleProps.memoryTypeBits & (1u << t)) { typeIndex = t; break; }
-            }
-        }
-        if (typeIndex == UINT32_MAX) {
-            Logf("[SimXR][VK] no importable memory type for image %u", i);
-            return XR_ERROR_RUNTIME_FAILURE;
-        }
-
-        VkImportMemoryWin32HandleInfoKHR importInfo{ VK_STRUCTURE_TYPE_IMPORT_MEMORY_WIN32_HANDLE_INFO_KHR };
-        importInfo.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE_BIT;
-        importInfo.handle = shared;
-        VkMemoryDedicatedAllocateInfo dedicated{ VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO };
-        dedicated.pNext = &importInfo;
-        dedicated.image = image;
-        VkMemoryAllocateInfo alloc{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
-        alloc.pNext = &dedicated;
-        alloc.allocationSize = req.memoryRequirements.size;
-        alloc.memoryTypeIndex = typeIndex;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
-        vr = g_d.AllocateMemory(s.vk.device, &alloc, nullptr, &memory);
-        if (vr != VK_SUCCESS) {
-            Logf("[SimXR][VK] vkAllocateMemory(import)[%u] failed (%d)", i, (int)vr);
-            return XR_ERROR_RUNTIME_FAILURE;
-        }
-        chain.memoryVk.push_back(memory);
-
-        VkBindImageMemoryInfo bind{ VK_STRUCTURE_TYPE_BIND_IMAGE_MEMORY_INFO };
-        bind.image = image;
-        bind.memory = memory;
-        vr = g_d.BindImageMemory2(s.vk.device, 1, &bind);
-        if (vr != VK_SUCCESS) {
-            Logf("[SimXR][VK] vkBindImageMemory2[%u] failed (%d)", i, (int)vr);
-            return XR_ERROR_RUNTIME_FAILURE;
-        }
-    }
-
-    // COMMON is where the D3D12 half of a shared resource lives between accesses, and the
-    // preview transitions out of and back into it around every read.
-    chain.releaseState12 = D3D12_RESOURCE_STATE_COMMON;
-    if (!TransitionToRequiredLayout(s, chain, *fp)) {
-        Log("[SimXR][VK] could not put the swapchain images in their required layout");
-        return XR_ERROR_RUNTIME_FAILURE;
-    }
-    Logf("[SimXR][VK] swapchain: %u shared images %ux%u array=%u VkFormat=%lld -> DXGI %d, layout %s",
-         chain.imageCount, chain.width, chain.height, arraySize, (long long)ci.format, (int)fp->resource,
-         fp->depth ? "DEPTH_STENCIL_ATTACHMENT_OPTIMAL" : "COLOR_ATTACHMENT_OPTIMAL");
-    return XR_SUCCESS;
-}
-
-// --- frame sync ---------------------------------------------------------------------------
-// Runs at the top of xrEndFrame: everything the app submitted for this frame is ahead of
-// this signal on its queue, so the preview queue waiting on it is waiting on the frame.
-static void FrameSyncBegin(rt::Session& s) {
-    if (!s.usesVulkan || !s.vk.queue) return;
-    if (s.vk.timeline) {
-        const uint64_t value = ++s.vk.counter;
-        VkTimelineSemaphoreSubmitInfo tsi{ VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO };
-        tsi.signalSemaphoreValueCount = 1;
-        tsi.pSignalSemaphoreValues = &value;
-        VkSubmitInfo si{ VK_STRUCTURE_TYPE_SUBMIT_INFO };
-        si.pNext = &tsi;
-        si.signalSemaphoreCount = 1;
-        si.pSignalSemaphores = &s.vk.semaphore;
-        if (g_d.QueueSubmit(s.vk.queue, 1, &si, VK_NULL_HANDLE) == VK_SUCCESS) s.vk.appSignalled = value;
-        LogVf("[SimXR][VK] sync: app signals %llu (fence at %llu)", (unsigned long long)value,
-              (unsigned long long)(s.vk.fence ? s.vk.fence->GetCompletedValue() : 0));
-        return;
-    }
-    // Without a shared timeline the private compositor cannot order source
-    // reuse. This optional preview is disabled rather than serializing the app
-    // through CPU queue-idle waits or presenting an unsafe source.
-    return;
-}
-
-// Runs after the composite has been submitted: the app's queue is made to wait for the
-// preview's read before anything it submits next can overwrite those images.
-static void FrameSyncEnd(rt::Session& s) {
-    if (!s.usesVulkan || !s.vk.timeline || !s.vk.queue) return;
-    if (s.vk.previewSignalled == s.vk.previewWaited) return;
-    const uint64_t value = s.vk.previewSignalled;
-    VkPipelineStageFlags stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-    VkTimelineSemaphoreSubmitInfo tsi{ VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO };
-    tsi.waitSemaphoreValueCount = 1;
-    tsi.pWaitSemaphoreValues = &value;
-    VkSubmitInfo si{ VK_STRUCTURE_TYPE_SUBMIT_INFO };
-    si.pNext = &tsi;
-    si.waitSemaphoreCount = 1;
-    si.pWaitSemaphores = &s.vk.semaphore;
-    si.pWaitDstStageMask = &stage;
-    if (g_d.QueueSubmit(s.vk.queue, 1, &si, VK_NULL_HANDLE) == VK_SUCCESS) s.vk.previewWaited = value;
-    LogVf("[SimXR][VK] sync: app waits for %llu (fence at %llu)", (unsigned long long)value,
-          (unsigned long long)(s.vk.fence ? s.vk.fence->GetCompletedValue() : 0));
-}
-
-} // namespace vkrt
 
 static constexpr XrVersion SupportedApiVersion = XR_MAKE_VERSION(1, 0, 27);
 
@@ -2445,16 +1721,6 @@ static XrResult XRAPI_PTR xrGetVulkanGraphicsRequirements2KHR_runtime(
 	return GetVulkanRequirements(instance, system, requirements, XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME);
 }
 
-static XrResult CopyExtensionString(const std::string& s, uint32_t capacity, uint32_t* countOutput, char* buffer) {
-    const uint32_t needed = (uint32_t)s.size() + 1;
-    if (!countOutput || (capacity && !buffer)) return XR_ERROR_VALIDATION_FAILURE;
-    *countOutput = needed;
-    if (capacity == 0) return XR_SUCCESS;
-    if (capacity < needed) return XR_ERROR_SIZE_INSUFFICIENT;
-    memcpy(buffer, s.c_str(), needed);
-    return XR_SUCCESS;
-}
-
 static XrResult XRAPI_PTR xrGetVulkanInstanceExtensionsKHR_runtime(
     XrInstance instance, XrSystemId system, uint32_t capacity, uint32_t* countOutput, char* buffer) {
 	auto result = RequireGraphicsExtension(instance, system, XR_KHR_VULKAN_ENABLE_EXTENSION_NAME);
@@ -2772,7 +2038,6 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
 	}
     if (!controllerMotion) return XR_ERROR_HANDLE_INVALID;
     if (rt::g_session.handle != XR_NULL_HANDLE) return XR_ERROR_LIMIT_REACHED;
-    if (rt::g_session.usesVulkan) vkrt::ShutdownSession(rt::g_session);
     struct SessionCreation
     {
         simxr::Runtime::SessionRef core;
@@ -2911,7 +2176,6 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
 					return result;
 			}
 			vulkanBinding = binding;
-			rt::g_session.usesVulkan = true;
 			rt::g_session.usesD3D12 = false;
 			rt::g_session.usesOpenGL = false;
 			return publish();
@@ -3025,14 +2289,6 @@ static XrResult DestroyNativeSession(XrSession s) {
     rt::g_session.d3d11Context.Reset();
     rt::g_session.usesD3D12 = false;
     rt::ResetD3D12PreviewResources(rt::g_session);
-    if (rt::g_session.usesVulkan) {
-        // The images live on the app's VkDevice, which goes away right after this call, so
-        // they cannot wait for an xrDestroySwapchain the app may never make.
-        for (auto& sc : rt::g_swapchains) {
-            if (sc.second.isVulkan) vkrt::DestroySwapchainImages(rt::g_session, sc.second);
-        }
-        vkrt::ShutdownSession(rt::g_session);
-    }
     rt::g_session.d3d12Device.Reset();
     rt::g_session.d3d12Queue.Reset();
     // Reset OpenGL state
@@ -3082,19 +2338,6 @@ static XrResult XRAPI_PTR xrEnumerateSwapchainFormats_runtime(XrSession session,
 			return XR_SUCCESS;
 		}
 	}
-	// Vulkan path - VkFormat values, in the order an app should prefer them
-    if (rt::g_session.usesVulkan) {
-        const uint32_t formatCount = (uint32_t)std::size(vkrt::kFormats);
-        if (count) *count = formatCount;
-        if (capacity > 0 && formats) {
-            const uint32_t copyCount = (capacity < formatCount) ? capacity : formatCount;
-            for (uint32_t i = 0; i < copyCount; ++i) formats[i] = vkrt::kFormats[i].vk;
-            Logf("[SimXR] xrEnumerateSwapchainFormats(Vulkan): %u formats (first: VkFormat %lld)",
-                 copyCount, (long long)formats[0]);
-        }
-        return XR_SUCCESS;
-    }
-
 	if (rt::g_session.usesOpenGL)
 	{
 		if (!session || session != rt::g_session.handle)
@@ -3192,19 +2435,6 @@ static XrResult XRAPI_PTR xrCreateSwapchain_runtime(XrSession session, const XrS
     chain.lastAcquired = UINT32_MAX;  // No image acquired yet
     chain.lastReleased = UINT32_MAX;  // No image released yet
     // Create textures on appropriate backend
-    if (rt::g_session.usesVulkan) {
-        const XrResult r = vkrt::CreateSwapchainImages(rt::g_session, chain, *ci);
-        if (XR_FAILED(r)) {
-            vkrt::DestroySwapchainImages(rt::g_session, chain);
-            return r;
-        }
-        chain.state = std::make_unique<simxr::Swapchain>(chain.imageCount, (ci->createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) != 0);
-        rt::g_swapchains.emplace(chain.handle, std::move(chain));
-        *sc = chain.handle;
-        Logf("[SimXR] xrCreateSwapchain(Vulkan): sc=%p fmt=%lld %ux%u array=%u samples=%u",
-             *sc, (long long)ci->format, ci->width, ci->height, ci->arraySize, ci->sampleCount);
-        return XR_SUCCESS;
-    }
     if (rt::g_session.usesD3D12) {
         chain.backend = rt::Swapchain::Backend::D3D12;
         chain.imageCount = (ci->createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) ? 1 : 3;
@@ -3407,18 +2637,6 @@ static XrResult XRAPI_PTR xrEnumerateSwapchainImages_runtime(XrSwapchain sc, uin
 		}
 	}
 	auto it = rt::g_swapchains.find(sc); if (it == rt::g_swapchains.end()) return XR_ERROR_HANDLE_INVALID;
-    if (it->second.isVulkan) {
-        // XrSwapchainImageVulkan2KHR is a typedef of XrSwapchainImageVulkanKHR, so this is
-        // the right shape for both extensions.
-        const uint32_t n = (uint32_t)it->second.imagesVk.size();
-        if (count) *count = n;
-        if (capacity >= n && images) {
-            auto* arr = reinterpret_cast<XrSwapchainImageVulkanKHR*>(images);
-            for (uint32_t i = 0; i < n; ++i) { arr[i].type = XR_TYPE_SWAPCHAIN_IMAGE_VULKAN_KHR; arr[i].image = it->second.imagesVk[i]; }
-        }
-        Logf("[SimXR] xrEnumerateSwapchainImages(Vulkan): sc=%p count=%u", sc, n);
-        return XR_SUCCESS;
-    }
     if (it->second.backend == rt::Swapchain::Backend::D3D12) {
         const uint32_t n = (uint32_t)it->second.images12.size();
         if (count) *count = n;
@@ -4429,19 +3647,7 @@ static void ClosePreviewSlot(rt::Session& session, uint32_t frameCount, bool has
 	metadata.headZ = rt::g_headPos.z;
 	if (session.compatibilityCapture)
 		metadata.proj = session.compatibilityCapture->LastProjection();
-	simxr::windows::PreviewFencePoint ready;
-	simxr::windows::PreviewFencePoint released;
-	if (session.usesVulkan && session.vk.timeline && session.vk.fence)
-	{
-		ready = {session.vk.fence.Get(), session.vk.appSignalled};
-		released = {session.vk.fence.Get(), ++session.vk.counter};
-	}
-	if (session.preview12->Submit(session.usesVulkan ? nullptr : session.d3d12Queue.Get(), ready, released))
-	{
-		if (released.fence)
-			session.vk.previewSignalled = released.value;
-	}
-	else
+	if (!session.preview12->Submit(session.d3d12Queue.Get(), {}, {}))
 	{
 		Logf("[SimXR] DX12 GPU preview submission rejected: 0x%08X",
 			 static_cast<unsigned>(session.preview12->Failure()));
@@ -5391,7 +4597,7 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
             Log("[SimXR] burst: only D3D12 and Vulkan sessions can be recorded");
             compatibilityFiles->Acknowledge("burst", false);
         } else if (bc.valid) {
-            const bool burstAccepted = (!rt::g_session.usesVulkan || rt::g_session.vk.timeline) && compatibilityCapture->BeginBurst(bc.frames);
+            const bool burstAccepted = compatibilityCapture->BeginBurst(bc.frames);
             if (burstAccepted && bc.pose.valid) {
                 rt::g_headPos.x = bc.pose.x;
                 rt::g_headPos.y = bc.pose.y;
@@ -5409,18 +4615,6 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
     // overrides the cap - both asked for a particular frame, not for the next one the rate
     // happens to allow, and with the mirror off there would be no next one.
     g_previewDueThisFrame = ui::PreviewFrameDue() || compatibilityCapture->ScreenshotRequested() || compatibilityCapture->BurstActive();
-    if (rt::g_session.usesVulkan && !rt::g_session.vk.timeline) {
-        g_previewDueThisFrame = false;
-        if (compatibilityCapture->ScreenshotRequested())
-            compatibilityCapture->FailScreenshot("Windows Vulkan preview requires external timeline synchronization", frameCount);
-        if (frameCount <= 1 || frameCount % 300 == 0)
-            Log("[SimXR] Windows Vulkan preview unavailable: external timeline synchronization is required");
-    }
-
-    // Order the app's Vulkan queue against the compositor's D3D12 queue. Skipped when the
-    // mirror is not due this frame: nothing reads the app's images then.
-    if (g_previewDueThisFrame) vkrt::FrameSyncBegin(rt::g_session);
-
     if (shouldLog) {
         Logf("[SimXR] xrEndFrame: layers=%u", info->layerCount);
     }
@@ -5547,7 +4741,6 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
     // Only explicitly requested captures/diagnostics map a fenced readback.
     if (rt::g_session.usesD3D12) {
         ClosePreviewSlot(rt::g_session, (uint32_t)frameCount, projectionCount > 0);
-        vkrt::FrameSyncEnd(rt::g_session);
         // Shows a finished composite if the GPU has produced one, and serves the
         // screenshot and burst requests off the very pixels it showed.
         ConsumeCompletedPreviewFrame(rt::g_session);
@@ -5929,9 +5122,6 @@ static XrResult XRAPI_PTR xrDestroySwapchain_runtime(XrSwapchain sc)
 
 	if (it->second.glImages && !it->second.glImages->Close())
 		return XR_ERROR_RUNTIME_FAILURE;
-
-	if (it->second.isVulkan)
-		vkrt::DestroySwapchainImages(rt::g_session, it->second);
 
 	rt::g_swapchains.erase(it);
 	Logf("[SimXR] xrDestroySwapchain: sc=%p", sc);
