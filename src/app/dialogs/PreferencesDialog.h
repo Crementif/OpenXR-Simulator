@@ -1,8 +1,9 @@
 #pragma once
 
-#include <cstdint>
-
 #include "app/services/CompanionSettings.h"
+
+#include <cstdint>
+#include <imgui.h>
 
 namespace simxr::app
 {
@@ -16,8 +17,12 @@ class PreferencesDialog
 			  std::uint64_t keptBudget = 0);
 
   private:
-	void DrawKeyboard(CompanionSettings& settings, bool& dirty);
+	bool DrawKeyboard(CompanionSettings& settings, bool& dirty);
 	void DrawGamepad(CompanionSettings& settings, bool& dirty);
-	int m_capture = -1, m_captureFrame = 0;
+	void CaptureKey(CompanionSettings& settings, bool& dirty, bool overBinding);
+	void CancelCapture();
+	int m_capture = -1, m_captureFrame = 0, m_lastFrame = -1;
+	ImGuiKey m_modifier = ImGuiKey_None;
+	bool m_escapeBlocked = false;
 };
 } // namespace simxr::app

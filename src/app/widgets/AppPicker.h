@@ -1,11 +1,10 @@
 #pragma once
 
-#include "app/services/CompanionSettings.h"
 #include "app/services/RunningApps.h"
 
 #include <imgui.h>
 
-#include <chrono>
+#include <cstddef>
 #include <functional>
 #include <optional>
 #include <string>
@@ -13,6 +12,7 @@
 
 namespace simxr::app
 {
+struct CompanionSettings;
 struct RuntimeView;
 // What the user chose in the app picker; the shell carries it out.
 struct AppPickerChoice
@@ -37,6 +37,5 @@ class AppPicker
 	std::string Refresh();
 	bool m_discoveryFailed = false;
 	std::vector<RunningApp> m_running;
-	std::chrono::steady_clock::time_point m_nextScan;
 };
 } // namespace simxr::app

@@ -1,31 +1,34 @@
+#include "app/widgets/AppPicker.h"
 #include "Pch.h"
-#include "app/AppPicker.h"
 #include "app/RuntimeView.h"
 #include "app/Theme.h"
+#include "app/services/CompanionSettings.h"
 #include "app/widgets/Controls.h"
 
+#include <cfloat>
 #include <ctime>
+#include <exception>
 #include <imgui.h>
+#include <initializer_list>
 
 namespace simxr::app
 {
-namespace
-{
-std::string Clock(std::chrono::system_clock::time_point time)
+static std::string Clock(std::chrono::system_clock::time_point time)
 {
 	const auto seconds = std::chrono::system_clock::to_time_t(time);
 	const auto age = std::chrono::system_clock::now() - time;
-	char text[32];
-	std::strftime(text, sizeof(text), age < std::chrono::hours(20) ? "%H:%M" : "%b %d %H:%M",
-				  std::localtime(&seconds));
+	const auto* local = std::localtime(&seconds);
+	char text[32]{};
+	if (!local || !std::strftime(text, sizeof(text), age < std::chrono::hours(20) ? "%H:%M" : "%b %d %H:%M", local))
+		return "unknown";
 	return text;
 }
-std::string Age(std::int64_t lastUsed)
+static std::string Age(std::int64_t lastUsed)
 {
-	const auto now = std::chrono::duration_cast<std::chrono::seconds>(
-						 std::chrono::system_clock::now().time_since_epoch())
-						 .count();
-	const auto seconds = std::max<std::int64_t>(0, now - lastUsed);
+	const auto now =
+		std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+	const auto seconds =
+		lastUsed >= now ? std::uint64_t{0} : static_cast<std::uint64_t>(now) - static_cast<std::uint64_t>(lastUsed);
 	if (seconds < 60)
 		return "now";
 	if (seconds < 3600)
@@ -34,7 +37,7 @@ std::string Age(std::int64_t lastUsed)
 		return std::to_string(seconds / 3600) + " h ago";
 	return std::to_string(seconds / 86400) + " d ago";
 }
-std::string CommandLine(const LaunchProfile& launch)
+static std::string CommandLine(const LaunchProfile& launch)
 {
 	std::string text = launch.executable;
 	for (const auto& argument : launch.arguments)
@@ -43,19 +46,32 @@ std::string CommandLine(const LaunchProfile& launch)
 		text += "\nin " + launch.workingDirectory;
 	return text;
 }
-// Right-aligns the next buttons, given their labels.
-void AlignRight(std::initializer_list<const char*> labels)
+static void ClippedText(const char* text, float width, ImU32 color)
+{
+	const auto position = ImGui::GetCursorScreenPos();
+	const float height = ImGui::GetTextLineHeight();
+	auto* draw = ImGui::GetWindowDrawList();
+	draw->PushClipRect(position, {position.x + width, position.y + height}, true);
+	draw->AddText(position, color, text);
+	draw->PopClipRect();
+	ImGui::Dummy({width, height});
+}
+// Keeps the detail beside the actions when both fit, otherwise above them.
+static void AppDetail(const std::string& detail, std::initializer_list<const char*> labels)
 {
 	const auto& style = ImGui::GetStyle();
-	float width = 0;
+	float actionsWidth = 0;
 	for (const auto* label : labels)
-		width += ImGui::CalcTextSize(label).x + style.FramePadding.x * 2 + style.ItemSpacing.x;
-	ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetContentRegionMax().x - width + style.ItemSpacing.x));
+		actionsWidth += ImGui::CalcTextSize(label).x + style.FramePadding.x * 2 + style.ItemSpacing.x;
+	const float available = ImGui::GetContentRegionAvail().x;
+	const bool sameLine = available >= actionsWidth + ImGui::GetFontSize() * 4;
+	ClippedText(detail.c_str(), sameLine ? available - actionsWidth : available, theme::TextDim);
+	ImGui::SetItemTooltip("%s", detail.c_str());
+	if (sameLine)
+		ImGui::SameLine();
 }
-} // namespace
 std::string AppPicker::Refresh()
 {
-	m_nextScan = std::chrono::steady_clock::now() + std::chrono::seconds(2);
 	try
 	{
 		m_running = DiscoverRunningApps();
@@ -98,11 +114,13 @@ AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const Runtime
 		ImGui::OpenPopup("App picker");
 	}
 	ImGui::SetNextWindowPos({minimum.x, minimum.y + height + 2 * unit});
-	ImGui::SetNextWindowSizeConstraints({ImGui::GetFontSize() * 24, 0}, {ImGui::GetFontSize() * 40, FLT_MAX});
+	const auto* viewport = ImGui::GetWindowViewport();
+	const float availableWidth = std::max(1.0f, viewport->WorkSize.x - ImGui::GetStyle().DisplaySafeAreaPadding.x * 2);
+	const float maximumWidth = std::min(ImGui::GetFontSize() * 40, availableWidth);
+	ImGui::SetNextWindowSizeConstraints({std::min(ImGui::GetFontSize() * 24, maximumWidth), 0},
+										{maximumWidth, FLT_MAX});
 	if (!ImGui::BeginPopup("App picker"))
 		return choice;
-	if (std::chrono::steady_clock::now() >= m_nextScan)
-		choice.discoveryError = Refresh();
 	if (view.connected && session)
 	{
 		SectionLabel("Session");
@@ -119,20 +137,15 @@ AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const Runtime
 	{
 		ImGui::PushID(app.endpoint.c_str());
 		const bool connected = view.connected && app.endpoint == view.endpoint;
-		ImGui::AlignTextToFramePadding();
-		ImGui::TextUnformatted(app.name.c_str());
-		ImGui::SetItemTooltip("%s%s%s", app.executable.c_str(), app.executable.empty() ? "" : "\n", app.endpoint.c_str());
-		ImGui::SameLine();
+		ClippedText(app.name.c_str(), ImGui::GetContentRegionAvail().x, theme::Text);
+		ImGui::SetItemTooltip("%s\n%s%s%s", app.name.c_str(), app.executable.c_str(),
+							  app.executable.empty() ? "" : "\n", app.endpoint.c_str());
 		std::string detail = app.process ? "PID " + std::to_string(app.process) : std::string{};
 		if (app.started)
 			detail += " · started " + Clock(*app.started);
-		ImGui::TextDisabled("%s", detail.c_str());
-		AlignRight({"Connect"});
+		AppDetail(detail, {connected ? "Connected" : "Connect"});
 		if (connected)
-		{
-			ImGui::AlignTextToFramePadding();
 			ImGui::TextColored(theme::Vec(theme::Ok), "Connected");
-		}
 		else if (ImGui::SmallButton("Connect"))
 		{
 			choice.connect = app;
@@ -148,12 +161,11 @@ AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const Runtime
 	{
 		const auto& recent = settings.recent[index];
 		ImGui::PushID(static_cast<int>(index));
-		ImGui::AlignTextToFramePadding();
-		ImGui::TextUnformatted(recent.launch.name.empty() ? recent.launch.executable.c_str() : recent.launch.name.c_str());
-		ImGui::SetItemTooltip("%s", CommandLine(recent.launch).c_str());
-		ImGui::SameLine();
-		ImGui::TextDisabled("%s", Age(recent.lastUsed).c_str());
-		AlignRight({"Launch", "Save as profile"});
+		const auto& name = recent.launch.name.empty() ? recent.launch.executable : recent.launch.name;
+		ClippedText(name.c_str(), ImGui::GetContentRegionAvail().x, theme::Text);
+		ImGui::SetItemTooltip("%s\n%s", name.c_str(), CommandLine(recent.launch).c_str());
+		AppDetail(Age(recent.lastUsed), {"Launch", "Save as profile"});
+		const float actionsRight = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
 		const auto problem = PathProblem(recent.launch.executable, PathKind::Executable);
 		ImGui::BeginDisabled(!problem.empty());
 		if (ImGui::SmallButton("Launch"))
@@ -162,9 +174,13 @@ AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const Runtime
 			ImGui::CloseCurrentPopup();
 		}
 		ImGui::EndDisabled();
-		if (!problem.empty())
-			ImGui::SetItemTooltip("%s: %s", problem.c_str(), recent.launch.executable.c_str());
-		ImGui::SameLine();
+		const float launchRight = ImGui::GetItemRectMax().x;
+		if (!problem.empty() &&
+			ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled))
+			ImGui::SetTooltip("%s: %s", problem.c_str(), recent.launch.executable.c_str());
+		const float saveWidth = ImGui::CalcTextSize("Save as profile").x + ImGui::GetStyle().FramePadding.x * 2;
+		if (launchRight + ImGui::GetStyle().ItemSpacing.x + saveWidth <= actionsRight)
+			ImGui::SameLine();
 		if (ImGui::SmallButton("Save as profile"))
 		{
 			choice.saveRecent = index;
@@ -174,11 +190,20 @@ AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const Runtime
 	}
 
 	SectionLabel("Profiles");
+	ImGui::PushID("Profiles");
 	for (std::size_t index = 0; index < settings.profiles.size(); ++index)
-		if (ImGui::Selectable(settings.profiles[index].name.c_str()))
+	{
+		const auto& profile = settings.profiles[index];
+		ImGui::PushID(static_cast<int>(index));
+		const auto position = ImGui::GetCursorScreenPos();
+		if (ImGui::Selectable("##Launch profile", false, 0, {0, ImGui::GetTextLineHeight()}))
 			choice.launchProfile = static_cast<int>(index);
 		else
-			ImGui::SetItemTooltip("Launch %s", CommandLine(settings.profiles[index]).c_str());
+			ImGui::SetItemTooltip("Launch %s", CommandLine(profile).c_str());
+		ImGui::GetWindowDrawList()->AddText(position, ImGui::GetColorU32(ImGuiCol_Text), profile.name.c_str());
+		ImGui::PopID();
+	}
+	ImGui::PopID();
 	if (ImGui::Selectable("Add…"))
 		choice.addProfile = true;
 	if (!settings.profiles.empty() && ImGui::Selectable("Edit profiles"))

@@ -3,6 +3,7 @@
 #include "app/services/CompanionSettings.h"
 #include "app/services/LaunchTypes.h"
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -16,7 +17,8 @@ class LaunchProfilesDialog
 {
   public:
 	LaunchProfilesDialog();
-	~LaunchProfilesDialog();
+	LaunchProfilesDialog(const LaunchProfilesDialog&) = delete;
+	LaunchProfilesDialog& operator=(const LaunchProfilesDialog&) = delete;
 	// Loads a stored profile into the editor; -1 starts a new one.
 	void Edit(const CompanionSettings& settings, int index);
 	// Stores a new profile made from an existing launch (a recent app) under a
@@ -43,8 +45,11 @@ class LaunchProfilesDialog
 		WorkingDirectory,
 		Manifest
 	};
-	class FileRequest;
+	struct FileResult;
 	void Load(const LaunchProfile& profile);
+	void RefreshSelection(const CompanionSettings& settings);
+	void BrowsePath(Browse browse, bool folder, const char* start);
+	bool TakePath();
 	std::string NameProblem(const CompanionSettings& settings) const;
 	std::string EnvironmentProblem() const;
 	// Stores the form when it is valid; returns true when settings changed.
@@ -53,6 +58,8 @@ class LaunchProfilesDialog
 	bool DrawForm(CompanionSettings& settings, const LaunchSnapshot& process, bool& changed);
 	bool PathField(const char* label, std::vector<char>& buffer, PathKind kind, Browse browse, bool optional);
 	int m_selected = -1;
+	std::uint64_t m_form = 0;
+	std::string m_storedName, m_problem, m_browseProblem;
 	std::vector<char> m_name;
 	std::vector<char> m_executable, m_workingDirectory, m_manifest, m_rig;
 	std::vector<char> m_headset;
@@ -60,6 +67,6 @@ class LaunchProfilesDialog
 	std::vector<std::string> m_originalArguments;
 	std::vector<Variable> m_environment;
 	std::optional<Browse> m_browsing;
-	std::unique_ptr<FileRequest> m_file;
+	std::shared_ptr<FileResult> m_file;
 };
 } // namespace simxr::app

@@ -1,16 +1,17 @@
 #include "../TestSupport.h"
 #include "Math.h"
-#include "app/AppPicker.h"
+#include "app/widgets/AppPicker.h"
 #include "app/pages/DeviceControlPanel.h"
 #include "app/pages/FramePage.h"
 #include "app/services/PlayerRig.h"
 #include "app/services/ManualInputController.h"
-#include "app/LaunchProfilesDialog.h"
+#include "app/dialogs/LaunchProfilesDialog.h"
 #include "app/services/ProcessSupervisor.h"
 #include "app/widgets/PilotController.h"
 #include "app/services/RunningApps.h"
 #include "app/services/RecordingController.h"
 #include "app/widgets/RecordingPanel.h"
+#include "app/dialogs/PreferencesDialog.h"
 #include "app/services/RuntimeConnection.h"
 #include "app/RuntimePanels.h"
 #include "app/services/RuntimeSession.h"
@@ -25,6 +26,7 @@
 #include "app/services/HistoryStore.h"
 #include "app/services/InputHistory.h"
 #include "app/widgets/TimelineCanvas.h"
+#include "app/widgets/Notices.h"
 #include <functional>
 #include "app/services/SimulationEdits.h"
 #include "app/services/SpatialMath.h"
@@ -255,6 +257,53 @@ class Interaction
 		Require(std::char_traits<char>::length(input) == length + 1, "Text input stopped responding");
 	}
 };
+void CheckNotices(Interaction& test)
+{
+	Notices notices;
+	unsigned opened = 0, replaced = 0;
+	notices.Push({"A saved take is ready", "A long description stays in the tooltip and notice history", "Play", [&]
+	{
+		++opened;
+		notices.Push({"Opened", "The action replaced its own notice collection"});
+	}});
+	test.extraDraw = [&] { notices.Draw({70, 80, 300, 240}); };
+	test.Frame();
+	test.Frame();
+	auto* window = FindPanel("##Notices");
+	Require(window && window->Pos.x >= 70 && window->Pos.x + window->Size.x <= 370,
+		"Notice escaped the preview's width");
+	if (const auto directory = std::getenv("SIMXR_DIALOG_QA_DIR"))
+	{
+		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "bounded-notice.bmp");
+		test.Frame();
+	}
+	const auto activate = [&](unsigned id, const char* label)
+	{
+		ImGui::ActivateItemByID(ImHashStr(label, 0, window->GetID(std::to_string(id).c_str())));
+		test.Frame();
+	};
+	activate(1, "Play");
+	Require(opened == 1 && notices.Latest() && notices.Latest()->title == "Opened",
+		"Notice action could not safely replace its own entries");
+	notices.Push({"Unavailable action", "", "Open", [] { throw std::runtime_error("No longer available"); }});
+	test.Frame();
+	activate(3, "Open");
+	Require(notices.Latest() && notices.Latest()->title == "Action failed" &&
+			notices.Latest()->detail == "No longer available", "Notice action failure escaped or lost its explanation");
+	notices.Push({"Replacement", "", "Open", [&] { ++opened; }});
+	test.Frame();
+	const auto old = ImHashStr("Open", 0, window->GetID("5"));
+	notices.Push({"Replacement", "", "Open", [&] { ++replaced; }});
+	ImGui::ActivateItemByID(old);
+	test.Frame();
+	Require(opened == 1 && replaced == 0, "A replacement notice inherited the retired action's activation");
+	activate(6, "Open");
+	Require(replaced == 1, "The replacement notice's own action was unavailable");
+	test.extraDraw = {};
+	test.Frame();
+	std::cout << "PASS bounded notices, reentrant actions, failure handling and replacement identity\n";
+}
+
 void CheckTimelineCanvas(Interaction& test)
 {
 	HistoryStore history;
@@ -532,6 +581,172 @@ void CheckTimelineCanvas(Interaction& test)
 	std::cout << "PASS replay ghost frame gaps, completion bounds and input release\n";
 	test.extraDraw = {};
 	test.Frame();
+}
+
+void CheckPreferences(Interaction& test)
+{
+	PreferencesDialog dialog;
+	CompanionSettings settings;
+	bool open = true, dirty = false, visible = true;
+	unsigned closed = 0;
+	ImVec2 closeMinimum, closeMaximum;
+	test.workspace.SetScale(1);
+	test.extraDraw = [&]
+	{
+		ImGui::Begin("Preferences fixture");
+		if (visible)
+		{
+			closed += dialog.Draw(settings, open, dirty, 64ULL << 20, 512ULL << 20);
+			closeMinimum = ImGui::GetItemRectMin();
+			closeMaximum = ImGui::GetItemRectMax();
+		}
+		ImGui::End();
+	};
+	const auto pump = [&]
+	{
+		test.Frame();
+		test.Frame();
+	};
+	auto& io = ImGui::GetIO();
+	const auto tap = [&](ImGuiKey key)
+	{
+		io.AddKeyEvent(key, true);
+		test.Frame();
+		io.AddKeyEvent(key, false);
+		test.Frame();
+	};
+	pump();
+	const int action = static_cast<int>(PilotAction::Forward);
+	const auto contentsWindow = []() -> ImGuiWindow*
+	{
+		for (auto* window : ImGui::GetCurrentContext()->Windows)
+			if (window->Active && window->ParentWindow == FindPanel("Workspace settings") &&
+				std::string_view(window->Name).find("/Preference contents_") != std::string_view::npos)
+				return window;
+		return nullptr;
+	};
+	const auto capture = [&](const char* step)
+	{
+		auto* contents = contentsWindow();
+		if (!contents || !contents->Active)
+		{
+			const auto* context = ImGui::GetCurrentContext();
+			const auto* modal = FindPanel("Workspace settings");
+			std::cout << "Preferences content missing before " << step << ": open=" << open << " visible=" << visible
+				<< " closed=" << closed << " focusLost=" << io.AppFocusLost
+				<< " active=" << context->ActiveId << " nav=" << context->NavId
+				<< " modalActive=" << (modal && modal->Active) << " popups=" << context->OpenPopupStack.Size << '\n';
+			const auto directory = std::getenv("SIMXR_DIALOG_QA_DIR");
+			const auto image = (directory ? std::filesystem::path(directory) : std::filesystem::temp_directory_path()) /
+				"preferences-content-failure.bmp";
+			test.renderer.RequestScreenshot(image);
+			test.Frame();
+			test.renderer.WaitIdle();
+			Require(false, (std::string("Preferences content missing before ") + step).c_str());
+		}
+		const auto keyboard = ImHashStr("Keyboard & mouse", 0, contents->GetID("Preference pages"));
+		const auto row = ImHashData(&action, sizeof(action), ImHashStr("Bindings", 0, keyboard));
+		ImGui::ActivateItemByID(ImHashStr("###Binding", 0, row));
+		pump();
+	};
+	const auto tab = [&](const char* name)
+	{
+		auto* contents = contentsWindow();
+		Require(contents, "Preferences content missing for tab selection");
+		ImGui::ActivateItemByID(ImHashStr(name, 0, contents->GetID("Preference pages")));
+		pump();
+	};
+	capture("Ctrl+K chord");
+	io.AddKeyEvent(ImGuiMod_Ctrl, true);
+	io.AddKeyEvent(ImGuiKey_LeftCtrl, true);
+	test.Frame();
+	Require(settings.pilotBindings[action] == DefaultPilotBindings()[action] && !dirty,
+		"Modifier press finished a binding before its chord key");
+	tap(ImGuiKey_K);
+	io.AddKeyEvent(ImGuiKey_LeftCtrl, false);
+	io.AddKeyEvent(ImGuiMod_Ctrl, false);
+	test.Frame();
+	const bool chordCaptured = settings.pilotBindings[action] == PilotBinding{"K", 1} && dirty;
+	if (!chordCaptured)
+	{
+		const auto* context = ImGui::GetCurrentContext();
+		std::cout << "Preferences capture failure: open=" << open << " focusLost=" << io.AppFocusLost
+			<< " active=" << context->ActiveId << " nav=" << context->NavId
+			<< " mouse=" << io.MousePos.x << ',' << io.MousePos.y << " down=" << io.MouseDown[0]
+			<< " binding=" << PilotBindingLabel(settings.pilotBindings[action]) << "\n";
+		const auto directory = std::getenv("SIMXR_DIALOG_QA_DIR");
+		const auto image = (directory ? std::filesystem::path(directory) : std::filesystem::temp_directory_path()) /
+			"preferences-failure.bmp";
+		test.renderer.RequestScreenshot(image);
+		test.Frame();
+		test.renderer.WaitIdle();
+	}
+	Require(chordCaptured, "Preferences did not capture Ctrl+K");
+	capture("modifier-only binding");
+	io.AddKeyEvent(ImGuiMod_Shift, true);
+	io.AddKeyEvent(ImGuiKey_RightShift, true);
+	test.Frame();
+	io.AddKeyEvent(ImGuiKey_RightShift, false);
+	io.AddKeyEvent(ImGuiMod_Shift, false);
+	test.Frame();
+	Require(settings.pilotBindings[action] == PilotBinding{"RightShift", 0},
+		"A modifier-only binding did not finish on release");
+	const auto bindings = settings.pilotBindings;
+	dirty = false;
+	capture("tab cancellation");
+	tab("Gamepad");
+	Require(FindPanel("Gamepad mapping") && FindPanel("Gamepad mapping")->Active, "Gamepad tab did not open");
+	tap(ImGuiKey_J);
+	tab("Keyboard & mouse");
+	tap(ImGuiKey_L);
+	Require(settings.pilotBindings == bindings && !dirty, "Changing tabs left a keyboard binding armed");
+	capture("focus cancellation");
+	io.AddFocusEvent(false);
+	test.Frame();
+	io.AddFocusEvent(true);
+	test.Frame();
+	tap(ImGuiKey_N);
+	Require(settings.pilotBindings == bindings && !dirty, "Focus loss left a keyboard binding armed");
+	capture("hidden-dialog cancellation");
+	visible = false;
+	test.Frame();
+	visible = true;
+	pump();
+	tap(ImGuiKey_J);
+	Require(settings.pilotBindings == bindings && !dirty, "A hidden Preferences dialog kept its key capture");
+	capture("Escape cancellation");
+	tap(ImGuiKey_Escape);
+	Require(open && !closed, "Esc closed Preferences instead of cancelling key capture");
+	tap(ImGuiKey_J);
+	Require(settings.pilotBindings == bindings && !dirty, "Esc did not cancel the pending binding");
+	if (const auto directory = std::getenv("SIMXR_DIALOG_QA_DIR"))
+	{
+		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "preferences-normal.bmp");
+		test.Frame();
+	}
+	tap(ImGuiKey_Escape);
+	Require(!open && closed == 1, "Esc did not close an idle Preferences dialog");
+	open = true;
+	settings.scale = 2.5f;
+	test.workspace.SetScale(settings.scale);
+	pump();
+	tab("Gamepad");
+	const auto* viewport = ImGui::GetMainViewport();
+	Require(closeMinimum.y >= viewport->WorkPos.y && closeMaximum.y <= viewport->WorkPos.y + viewport->WorkSize.y &&
+		closeMaximum.x <= viewport->WorkPos.x + viewport->WorkSize.x,
+		"Enlarged Preferences put Close outside the visible viewport");
+	if (const auto directory = std::getenv("SIMXR_DIALOG_QA_DIR"))
+	{
+		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "preferences-enlarged.bmp");
+		test.Frame();
+	}
+	ImGui::ActivateItemByID(FindPanel("Workspace settings")->GetID("Close"));
+	test.Frame();
+	Require(!open && closed == 2, "Preferences Close did not report the completed edit session");
+	test.extraDraw = {};
+	test.workspace.SetScale(1);
+	pump();
+	std::cout << "PASS Preferences chords, capture cancellation and enlarged close controls\n";
 }
 
 void CheckTimelineWorkflow(Interaction& test)
@@ -4480,6 +4695,53 @@ void CheckAppPicker(const char* executable)
 			"Save as profile did not store the recent app");
 	Require(saved.profiles.back().environment == environment, "Save as profile changed the recent environment");
 	closeEditor();
+
+	AppPicker namedPicker;
+	CompanionSettings namedSettings;
+	for (const auto* name : {"Edit profiles", "Disconnect", "First###shared", "Second###shared"})
+		namedSettings.profiles.push_back({name, executable});
+	RuntimeView connectedView;
+	connectedView.connected = true;
+	AppPickerChoice namedChoice;
+	bool openNamed = false;
+	test.live = false;
+	test.extraDraw = [&]
+	{
+		ImGui::Begin("Named profile picker");
+		const auto choice =
+			namedPicker.Draw(namedSettings, connectedView, "Apps", 0, "", std::exchange(openNamed, false), {});
+		if (choice.launchProfile || choice.editProfiles || choice.disconnect)
+			namedChoice = choice;
+		ImGui::End();
+	};
+	const auto openNamedPicker = [&]
+	{
+		namedChoice = {};
+		openNamed = true;
+		pump(2);
+		const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+		Require(!popups.empty() && popups.back().Window, "Named profile picker did not open");
+		return popups.back().Window->ID;
+	};
+	for (int index = 0; index < static_cast<int>(namedSettings.profiles.size()); ++index)
+	{
+		const auto popup = openNamedPicker();
+		const auto row = ImHashData(&index, sizeof(index), ImHashStr("Profiles", 0, popup));
+		ImGui::ActivateItemByID(ImHashStr("##Launch profile", 0, row));
+		pump(2);
+		Require(namedChoice.launchProfile == index && !namedChoice.editProfiles && !namedChoice.disconnect,
+				"Profile name changed its launch selection or activated a picker action");
+	}
+	for (const auto* action : {"Edit profiles", "Disconnect"})
+	{
+		ImGui::ActivateItemByID(ImHashStr(action, 0, openNamedPicker()));
+		pump(2);
+		Require(!namedChoice.launchProfile &&
+					(std::string_view(action) == "Edit profiles" ? namedChoice.editProfiles : namedChoice.disconnect),
+				"Picker action launched a profile with the same name");
+	}
+	test.extraDraw = {};
+	test.live = true;
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Validation errors in the app picker");
 	std::cout << "PASS recent app saved as profile \"" << saved.profiles.back().name << "\" in two clicks\n";
@@ -4956,7 +5218,10 @@ void CheckToolbarLaunch(const char* executable)
 	test.Click({toolbar->Pos.x + 20, toolbar->Pos.y + ImGui::GetFrameHeight() / 2});
 	const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
 	Require(!popups.empty() && popups.back().Window, "App picker did not open");
-	ImGui::ActivateItemByID(popups.back().Window->GetID(profile.name.c_str()));
+	const auto profilesId = popups.back().Window->GetID("Profiles");
+	const int profileIndex = 0;
+	const auto profileId = ImHashData(&profileIndex, sizeof(profileIndex), profilesId);
+	ImGui::ActivateItemByID(ImHashStr("##Launch profile", 0, profileId));
 	test.Frame();
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
 	while (!test.runtime.Snapshot().selectedReady)
@@ -5207,6 +5472,9 @@ int main()
 			settings.profiles.clear();
 			Require(editor.Create(settings, source), "Long launch profile could not be saved");
 			check(settings.profiles.front());
+			editor.Edit(settings, static_cast<int>(settings.profiles.size()));
+			Require(editor.Selected() == -1 && editor.Profile() == simxr::app::LaunchProfile{},
+				"A retired launch-profile index did not open a new draft");
 		}
 
 
@@ -5321,6 +5589,66 @@ int main()
 				test.CheckControls();
 			}
 			{
+				CompanionSettings profiles;
+				profiles.profiles = {{"One", "/missing-one"}, {"Two##literal", "/missing-two"}};
+				LaunchProfilesDialog editor;
+				editor.Edit(profiles, 0);
+				bool open = true, changed = false;
+				test.extraDraw = [&]
+				{
+					ImGui::Begin("Launch editor fixture");
+					editor.Draw(profiles, {}, open, changed);
+					ImGui::End();
+				};
+				for (int frame = 0; frame < 3; ++frame)
+					test.Frame();
+				auto* form = FindPanel("Profile form");
+				Require(form, "Launch profile form missing");
+				test.Click({form->DC.CursorStartPos.x + 20,
+					form->DC.CursorStartPos.y + ImGui::GetFrameHeightWithSpacing() + ImGui::GetFrameHeight() / 2});
+				auto& io = ImGui::GetIO();
+				io.AddKeyEvent(ImGuiMod_Ctrl, true);
+				io.AddKeyEvent(ImGuiKey_A, true);
+				test.Frame();
+				io.AddKeyEvent(ImGuiKey_A, false);
+				io.AddKeyEvent(ImGuiMod_Ctrl, false);
+				test.Frame();
+				const auto longName = std::string(1800, 'n') + " Ångström";
+				io.AddInputCharactersUTF8(longName.c_str());
+				test.Frame();
+				Require(changed && profiles.profiles[0].name == longName && ImGui::GetActiveID() != 0,
+					"Launch profile typing was truncated or waited for blur before saving");
+				auto* names = FindPanel("Profile names");
+				Require(names, "Launch profile list missing");
+				test.Click({names->DC.CursorStartPos.x + 20,
+					names->DC.CursorStartPos.y + ImGui::GetTextLineHeightWithSpacing() * 1.5f});
+				Require(editor.Selected() == 1 && editor.Profile().name == "Two##literal" &&
+					profiles.profiles[0].name == longName,
+					"Switching launch profiles lost the outgoing edit or replaced the new form");
+				profiles.profiles.insert(profiles.profiles.begin(), {"Inserted", "/missing-inserted"});
+				test.Frame();
+				Require(editor.Selected() == 2 && editor.Profile().name == "Two##literal",
+					"Launch editor followed a shifted profile index");
+				test.workspace.SetScale(2);
+				for (int frame = 0; frame < 3; ++frame)
+					test.Frame();
+				if (const auto directory = std::getenv("SIMXR_DIALOG_QA_DIR"))
+				{
+					test.renderer.RequestScreenshot(std::filesystem::path(directory) / "launch-profiles.bmp");
+					test.Frame();
+				}
+				test.workspace.SetScale(1);
+				profiles.profiles.erase(profiles.profiles.begin() + 2);
+				test.Frame();
+				Require(editor.Selected() == -1 && profiles.profiles.size() == 2 &&
+					profiles.profiles[0].name == "Inserted" && profiles.profiles[1].name == longName,
+					"Removing the edited profile overwrote another profile");
+				open = false;
+				test.Frame();
+				test.extraDraw = {};
+				std::cout << "PASS launch editor live text, profile switching and retained selection identity\n";
+			}
+			{
 				RecordingPanel recording;
 				recording.SetTarget({"retired-recording-target", 1, 1});
 				recording.RequestStart();
@@ -5343,6 +5671,8 @@ int main()
 					"An earlier Start or background read overrode the queued Stop");
 				test.extraDraw = {};
 			}
+			CheckNotices(test);
+			CheckPreferences(test);
 			CheckTimelineCanvas(test);
 			test.CheckFocusLoss();
 			test.renderer.WaitIdle();

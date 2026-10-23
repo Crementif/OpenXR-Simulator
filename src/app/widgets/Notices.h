@@ -4,6 +4,7 @@
 #include "app/services/Notice.h"
 
 #include <chrono>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -43,9 +44,11 @@ class Notices
 	{
 		Notice notice;
 		std::chrono::steady_clock::time_point shown;
+		std::uint64_t id = 0;
 	};
 	std::vector<Entry> m_entries;
 	std::vector<Logged> m_log;
+	std::uint64_t m_nextId = 1;
 	bool m_unseen = false;
 };
 } // namespace simxr::app

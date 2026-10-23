@@ -52,12 +52,12 @@ target_include_directories(simxr_app PRIVATE "${PROJECT_SOURCE_DIR}/shaders/gene
 target_sources(simxr_app PRIVATE src/app/widgets/RecordingPanel.cpp src/app/widgets/TimelinePanel.cpp src/app/widgets/TimelineCanvas.cpp src/app/ShellState.cpp
     src/app/Theme.cpp src/app/widgets/Icons.cpp src/app/widgets/Controls.cpp src/app/DeviceRail.cpp
     src/app/services/RuntimeSession.cpp src/app/services/RuntimeSessionReplies.cpp src/app/services/RuntimeSessionFrames.cpp
-    src/app/dialogs/ConnectionDialog.cpp src/app/Notices.cpp src/app/widgets/DocumentTree.cpp src/app/pages/FramePage.cpp src/app/pages/RangePage.cpp src/app/services/RangeExportTask.cpp
-    src/app/pages/AdvancedSteppingPage.cpp src/app/PreviewPanel.cpp src/app/PreferencesDialog.cpp src/app/LaunchProfilesDialog.cpp
+    src/app/dialogs/ConnectionDialog.cpp src/app/widgets/Notices.cpp src/app/widgets/DocumentTree.cpp src/app/pages/FramePage.cpp src/app/pages/RangePage.cpp src/app/services/RangeExportTask.cpp
+    src/app/pages/AdvancedSteppingPage.cpp src/app/PreviewPanel.cpp src/app/dialogs/PreferencesDialog.cpp src/app/dialogs/LaunchProfilesDialog.cpp
     src/app/widgets/PilotController.cpp src/app/widgets/PilotHud.cpp src/app/widgets/SpatialEditor.cpp src/app/widgets/SpatialPreview.cpp src/app/widgets/LiveField.cpp
     src/app/widgets/SpatialWidgets.cpp src/app/widgets/RotationOrb.cpp
     src/app/widgets/InputPad.cpp src/app/widgets/RigView.cpp src/app/widgets/HapticEvents.cpp src/app/platform/GamepadFeedback.cpp)
-target_sources(simxr_app PRIVATE src/app/widgets/PastInput.cpp src/app/AppPicker.cpp)
+target_sources(simxr_app PRIVATE src/app/widgets/PastInput.cpp src/app/widgets/AppPicker.cpp)
 target_link_libraries(simxr_app PUBLIC simxr_imgui simxr_connection simxr_app_settings simxr_recording_controller)
 # The icon SVGs are compiled in as {file stem, source} pairs; Icons.cpp parses them once.
 file(GLOB simxr_icon_files CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/resources/icons/*.svg")

@@ -1,9 +1,9 @@
 #include "app/WorkspacePanels.h"
-#include "app/AppPicker.h"
+#include "app/widgets/AppPicker.h"
 #include "app/services/LaunchAttachment.h"
-#include "app/LaunchProfilesDialog.h"
-#include "app/Notices.h"
-#include "app/PreferencesDialog.h"
+#include "app/dialogs/LaunchProfilesDialog.h"
+#include "app/widgets/Notices.h"
+#include "app/dialogs/PreferencesDialog.h"
 #include "app/services/ProcessLauncher.h"
 #include "app/services/RuntimeConnection.h"
 #include "app/RuntimePanels.h"
@@ -450,7 +450,8 @@ struct WorkspacePanels::Impl
 		if (IconButton("Settings", Icon::Settings, "Preferences: scale, snapshots, keys and layout", showSettings))
 			showSettings = true;
 		runtime.DrawRecordingPopovers();
-		if (!ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive())
+		if (!ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive() &&
+			!ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
 		{
 			if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_L, false))
 				ToggleLibrary();
