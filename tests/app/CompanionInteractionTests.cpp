@@ -1219,12 +1219,11 @@ void CheckDebuggerWorkflow(const char* endpoint)
 		},
 		"Debugger did not attach live output");
 	test.SelectWorkspace(FrameSel{});
-	test.runtime.SetLive(false);
 	test.runtime.Command(simxr::control::CommandKind::Pause);
 	wait(
 		[](const auto& state)
 		{
-			return !state.operationPending && state.progress == "paused";
+			return state.manual && !state.operationPending && state.phase == "complete";
 		},
 		"Pause failed");
 	test.runtime.Command(simxr::control::CommandKind::StrictAdmission);

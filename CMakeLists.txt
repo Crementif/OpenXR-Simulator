@@ -160,9 +160,9 @@ add_library(simxr_connection STATIC
     src/app/services/ManualInputController.cpp
     src/app/services/WorkerConnection.cpp
     src/app/services/RuntimePanelRequests.cpp
-    src/app/DebuggerPanelController.cpp
-    src/app/InspectionWorkspace.cpp
-    src/app/ImageExportTask.cpp)
+    src/app/services/DebuggerPanelController.cpp
+    src/app/services/InspectionWorkspace.cpp
+    src/app/services/ImageExportTask.cpp)
 if(WIN32)
     target_sources(simxr_connection PRIVATE src/app/platform/windows/LaunchAttachment.cpp)
 else()

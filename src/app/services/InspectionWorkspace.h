@@ -37,11 +37,12 @@ class InspectionWorkspace
 	void InspectSelected();
 	bool Handle(const PanelTask& task, const control::Message& message);
 	void RequestRevision(std::uint64_t id, std::uint64_t documentEpoch);
-	const control::Message* Revision(std::uint64_t id) const;
+	const control::Message* Revision(std::uint64_t id, std::uint64_t documentEpoch) const;
 	std::string TakeError();
 
   private:
 	InspectionCapture* Find(std::uint64_t capture);
+	void ReleaseInspection(InspectionCapture& capture);
 	RuntimePanelRequests& m_requests;
 	PanelScope m_scope;
 	std::vector<InspectionCapture> m_captures;

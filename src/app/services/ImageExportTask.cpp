@@ -1,8 +1,8 @@
+#include "app/services/ImageExportTask.h"
 #include "Pch.h"
-#include "app/ImageExportTask.h"
-#include "graphics/ColorPixels.h"
 #include "app/services/Utf8Path.h"
 #include "control/ImageInspection.h"
+#include "graphics/ColorPixels.h"
 
 #include <cmath>
 #include <fstream>
@@ -28,9 +28,9 @@ static void WritePpm(std::ostream& file, const ImageExportMetadata& image, std::
 {
 	const auto height = static_cast<std::uint64_t>(image.height) * image.slices;
 	file << "P6\n# session=" << image.session << " generation=" << image.generation << " frame=" << image.frame
-		<< " capture=" << image.capture << "\n# target=" << image.target << " layer=" << image.layer
-		<< " view=" << image.view << " slices=" << image.slices << " slice_height=" << image.height
-		<< " format=" << image.format << " alpha=omitted\n";
+		 << " capture=" << image.capture << "\n# target=" << image.target << " layer=" << image.layer
+		 << " view=" << image.view << " slices=" << image.slices << " slice_height=" << image.height
+		 << " format=" << image.format << " alpha=omitted\n";
 	const auto pixelBytes = ColorPixelBytes(image.format);
 	const bool linear = pixelBytes > 4 || image.format == static_cast<uint32_t>(ColorFormat::Rgb10A2Unorm);
 	if (linear)
@@ -79,16 +79,17 @@ bool ImageExportWriter::Save(std::string path, std::vector<std::byte> bytes, Ima
 	{
 		const auto pixelBytes = ColorPixelBytes(metadata.format);
 		// Division avoids overflow from untrusted dimensions before any file is opened.
-		if (!metadata.width || !metadata.height || !metadata.slices || !metadata.session ||
-			!metadata.generation || !metadata.frame || !pixelBytes || bytes.size() % pixelBytes ||
+		if (!metadata.width || !metadata.height || !metadata.slices || !metadata.session || !metadata.generation ||
+			!metadata.frame || !pixelBytes || bytes.size() % pixelBytes ||
 			bytes.size() / pixelBytes / metadata.width / metadata.height != metadata.slices ||
 			static_cast<std::uint64_t>(metadata.width) * metadata.height * metadata.slices != bytes.size() / pixelBytes)
-			throw std::invalid_argument("PPM export requires a supported color image, exact dimensions and frame identity");
+			throw std::invalid_argument(
+				"PPM export requires a supported color image, exact dimensions and frame identity");
 	}
 	else if (destination.extension() != ".rgba")
 		throw std::invalid_argument("Use .ppm for a viewable image or .rgba for exact bytes");
 	std::lock_guard lock(m_mutex);
-	if (m_stopping || m_busy)
+	if (m_stopping || m_busy || m_result)
 		return false;
 	m_job.emplace(Job{std::move(path), std::move(destination), std::move(bytes), metadata, ppm});
 	m_busy = true;
@@ -99,7 +100,7 @@ bool ImageExportWriter::Save(std::string path, std::vector<std::byte> bytes, Ima
 bool ImageExportWriter::Busy() const
 {
 	std::lock_guard lock(m_mutex);
-	return m_busy;
+	return m_busy || m_result.has_value();
 }
 std::optional<ImageExportWriteResult> ImageExportWriter::TakeResult()
 {
@@ -135,7 +136,7 @@ void ImageExportWriter::Run() noexcept
 					WritePpm(file, job->metadata, job->bytes);
 				else
 					file.write(reinterpret_cast<const char*>(job->bytes.data()),
-						static_cast<std::streamsize>(job->bytes.size()));
+							   static_cast<std::streamsize>(job->bytes.size()));
 				file.close();
 				if (file)
 					status = ImageExportWriteResult::Status::Saved;
@@ -161,6 +162,11 @@ const std::string& ImageExportTask::Detail() const noexcept
 }
 void ImageExportTask::ResetEpoch()
 {
+	if (m_requested || m_id)
+	{
+		m_detail = "Image export interrupted by disconnect";
+		m_succeeded = false;
+	}
 	m_id = m_offset = m_size = 0;
 	m_requested = false;
 	m_bytes.clear();
@@ -211,9 +217,17 @@ bool ImageExportTask::Handle(const PanelTask& task, const wire::Message& message
 			{
 				const auto image = wire::DecodeImageDescription(*description);
 				const auto target = Nested(message.Find(tag::Target));
-				m_metadata = {U64(message, tag::Session), U64(message, tag::Generation), Frame(message),
-					U64(message, tag::CaptureId), image.width, image.height, image.arrayLayers, image.format,
-					U32(target, tag::CaptureKind), U32(target, tag::Layer), U32(target, tag::View)};
+				m_metadata = {U64(message, tag::Session),
+							  U64(message, tag::Generation),
+							  Frame(message),
+							  U64(message, tag::CaptureId),
+							  image.width,
+							  image.height,
+							  image.arrayLayers,
+							  image.format,
+							  U32(target, tag::CaptureKind),
+							  U32(target, tag::Layer),
+							  U32(target, tag::View)};
 			}
 			if (!m_id || !m_size || m_size > 512ULL * 1024 * 1024)
 				throw std::runtime_error("Runtime export exceeds the exact image byte capacity");
@@ -274,7 +288,8 @@ void ImageExportTask::Poll()
 		case ImageExportWriteResult::Status::Saved:
 			m_succeeded = true;
 			m_detail = (Utf8Path(result->path).extension() == ".ppm" ? "Saved viewable image with frame identity to "
-				: "Saved exact image bytes to ") + result->path;
+																	 : "Saved exact image bytes to ") +
+					   result->path;
 			break;
 		case ImageExportWriteResult::Status::OpenFailed:
 			m_detail = "Cannot open image export destination";

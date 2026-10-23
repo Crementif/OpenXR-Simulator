@@ -1,8 +1,6 @@
-#include "app/InspectionWorkspace.h"
+#include "app/services/InspectionWorkspace.h"
+#include "Pch.h"
 #include "graphics/SnapshotBudget.h"
-
-#include <algorithm>
-#include <utility>
 
 namespace simxr::app
 {
@@ -43,18 +41,18 @@ bool InspectionWorkspace::Add(std::uint64_t id, std::uint64_t frame)
 	}
 	if (m_captures.size() >= SnapshotBudget::Capacity())
 	{
-		const auto oldest =
-			std::find_if(m_captures.begin(), m_captures.end(),
-						 [&](const auto& capture)
-						 {
-							 return capture.local != m_selectedLocal && !Boolean(capture.metadata, tag::Pinned);
-						 });
+		const auto oldest = std::find_if(m_captures.begin(), m_captures.end(),
+										 [&](const auto& capture)
+										 {
+											 return capture.local != m_selectedLocal &&
+													(capture.released || !Boolean(capture.metadata, tag::Pinned));
+										 });
 		if (oldest == m_captures.end())
 		{
 			if (std::all_of(m_captures.begin(), m_captures.end(),
 							[](const auto& capture)
 							{
-								return Boolean(capture.metadata, tag::Pinned);
+								return !capture.released && Boolean(capture.metadata, tag::Pinned);
 							}))
 				m_error = "History full — unpin snapshots";
 			return false;
@@ -74,7 +72,10 @@ bool InspectionWorkspace::Add(std::uint64_t id, std::uint64_t frame)
 void InspectionWorkspace::MarkReleased(std::uint64_t capture)
 {
 	if (auto current = Find(capture))
+	{
+		ReleaseInspection(*current);
 		current->released = true;
+	}
 }
 bool InspectionWorkspace::Select(std::uint64_t id)
 {
@@ -126,15 +127,19 @@ std::vector<std::uint64_t> InspectionWorkspace::CaptureIds() const
 			result.push_back(capture.id);
 	return result;
 }
+void InspectionWorkspace::ReleaseInspection(InspectionCapture& capture)
+{
+	if (capture.inspection && capture.scope.epoch == m_scope.epoch)
+		m_requests.Release(wire::OpCode::ReleaseInspection, tag::InspectionId, capture.inspection);
+	capture.inspection = 0;
+	capture.document = {};
+}
 void InspectionWorkspace::ReleaseSelected()
 {
 	for (auto& capture : m_captures)
 		if (capture.local == m_selectedLocal)
 		{
-			if (capture.inspection && capture.scope.epoch == m_scope.epoch)
-				m_requests.Release(wire::OpCode::ReleaseInspection, tag::InspectionId, capture.inspection);
-			capture.inspection = 0;
-			capture.document = {};
+			ReleaseInspection(capture);
 			if (capture.scope != m_scope)
 				capture.released = true;
 		}
@@ -169,7 +174,7 @@ bool InspectionWorkspace::Handle(const PanelTask& task, const wire::Message& mes
 		const auto inspection = U64(message, tag::InspectionId);
 		try
 		{
-			if (auto capture = Find(task.id))
+			if (auto capture = Find(task.id); capture && !capture->released)
 			{
 				auto prepared = message;
 				const auto previous = capture->inspection;
@@ -208,8 +213,10 @@ void InspectionWorkspace::RequestRevision(std::uint64_t id, std::uint64_t docume
 		m_requests.Send(wire::OpCode::FeatureRevision, PanelWork::Revision,
 						{wire::Field::U64(tag::RevisionId, id, true)}, id);
 }
-const wire::Message* InspectionWorkspace::Revision(std::uint64_t id) const
+const wire::Message* InspectionWorkspace::Revision(std::uint64_t id, std::uint64_t documentEpoch) const
 {
+	if (documentEpoch != m_scope.epoch)
+		return nullptr;
 	const auto found = m_revisions.find(id);
 	return found == m_revisions.end() ? nullptr : &found->second;
 }

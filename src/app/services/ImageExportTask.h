@@ -68,7 +68,10 @@ class ImageExportTask
 	void Poll();
 	bool Busy() const;
 	const std::string& Detail() const noexcept;
-	bool Succeeded() const noexcept { return m_succeeded; }
+	bool Succeeded() const noexcept
+	{
+		return m_succeeded;
+	}
 
   private:
 	void Abort(std::string detail);

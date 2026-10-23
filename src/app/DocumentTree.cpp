@@ -91,7 +91,7 @@ void DocumentTree::Node(std::span<const std::byte> bytes, unsigned depth)
 			workspace.RequestRevision(id, m_documentEpoch);
 		ImGui::EndDisabled();
 		if (current)
-			if (const auto revision = workspace.Revision(id))
+			if (const auto revision = workspace.Revision(id, m_documentEpoch))
 				if (auto document = revision->Find(tag::Document))
 					Node(document->value, depth + 1);
 	}

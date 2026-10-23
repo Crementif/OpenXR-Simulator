@@ -1,7 +1,7 @@
 #include "../TestSupport.h"
-#include "app/DebuggerPanelController.h"
-#include "app/ImageExportTask.h"
-#include "app/InspectionWorkspace.h"
+#include "app/services/DebuggerPanelController.h"
+#include "app/services/ImageExportTask.h"
+#include "app/services/InspectionWorkspace.h"
 #include "graphics/SnapshotBudget.h"
 #include "graphics/ColorPixels.h"
 #include "app/services/Utf8Path.h"
@@ -72,7 +72,10 @@ void ScopedInspectionReaders()
 				app::panel::Text(workspace.Selected()->document, tag::Detail) == "original immutable document",
 			"A later capture response mutated the original CPU document");
 	workspace.SetScope(reconnect);
-	Require(!workspace.Revision(31), "A revision from another endpoint epoch survived as a live lookup");
+	Require(!workspace.Revision(31, reconnect.epoch), "A revision from another endpoint epoch survived as a live lookup");
+	workspace.Handle({app::PanelWork::Revision, 31}, Message({wire::Field::Text(tag::Detail, "new revision")}));
+	Require(workspace.Revision(31, reconnect.epoch) && !workspace.Revision(31, original.epoch),
+		"A historical document resolved a reused revision ID from another endpoint");
 	workspace.SelectLocal(originalLocal);
 	Require(workspace.Selected() && workspace.Selected()->inspection == 19,
 			"Reconnect lost retained historical metadata");
@@ -115,6 +118,33 @@ void ScopedInspectionReaders()
 	bounded.ReleaseSelected();
 	Require(bounded.Selected()->released && bounded.Add(133, 133) && bounded.Captures().size() == capacity,
 			"Historical selection from another session remained non-recyclable");
+
+	app::InspectionWorkspace pinned(requests);
+	pinned.SetScope(original);
+	for (std::uint64_t id = 1; id <= capacity; ++id)
+	{
+		Require(pinned.Add(id, id), "Admit pinned capture");
+		pinned.Handle({app::PanelWork::Capture, id},
+			Message({wire::Field::Text(tag::Phase, "ready"), wire::Field::Bool(tag::Pinned, true), Frame(id)}));
+	}
+	Require(!pinned.Add(capacity + 1, capacity + 1), "Catalog evicted an active pinned capture");
+	Require(pinned.Select(1), "Select pinned capture for release");
+	pinned.Handle({app::PanelWork::Inspect, 1}, Message({wire::Field::U64(tag::InspectionId, 81)}));
+	pinned.MarkReleased(1);
+	Require(pinned.Selected()->released && !pinned.Selected()->inspection && pinned.Selected()->document.fields.empty(),
+		"Capture release retained an inspection reader");
+	pinned.Handle({app::PanelWork::Inspect, 1}, Message({wire::Field::U64(tag::InspectionId, 82)}));
+	Require(!pinned.Selected()->inspection && pinned.Selected()->document.fields.empty(),
+		"Late inspection response revived a released capture");
+	pinned.Select(2);
+	Require(pinned.Add(capacity + 1, capacity + 1) && pinned.Captures().front().id == 2,
+		"Released pin permanently blocked catalog admission");
+	pinned.SetScope(reconnect);
+	pinned.SelectLocal(pinned.Captures().front().local);
+	pinned.ReleaseSelected();
+	pinned.SelectLocal(pinned.Captures().back().local);
+	Require(pinned.Add(capacity + 2, capacity + 2) && pinned.Captures().front().id == 3,
+		"Released historical pin blocked the new run");
 }
 std::filesystem::path Directory()
 {
@@ -154,6 +184,9 @@ void FileWorkerAndChunkValidation()
 	{
 		app::ImageExportWriter writer;
 		Require(writer.Save(PathString(directory / "exact.rgba"), expected), "Admit explicit CPU file job");
+		std::this_thread::sleep_for(50ms);
+		Require(writer.Busy() && !writer.Save(PathString(directory / "lost-result.rgba"), expected),
+			"An unread file result was overwritten by a later export");
 		std::optional<app::ImageExportWriteResult> result;
 		Eventually(
 			[&]
@@ -327,6 +360,53 @@ void ActualConnectionAndDebugger()
 			return debugger.Selected().id != 0;
 		},
 		"Debugger owner did not discover actual core session");
+	for (const bool malformed : {false, true})
+	{
+		debugger.Command(wire::CommandKind::Pause);
+		bool rejected = false;
+		Eventually([&]
+		{
+			requests.FlushReleases();
+			debugger.Poll();
+			for (auto& reply : requests.Poll())
+			{
+				if (reply.task.kind != app::PanelWork::Acquire)
+				{
+					debugger.Handle(reply.task, reply.response.packet.message);
+					continue;
+				}
+				const auto lease = app::panel::U64(reply.response.packet.message, tag::Lease);
+				Require(lease != 0, "Acquire did not return a test lease");
+				requests.Release(wire::OpCode::Relinquish, tag::Lease, lease,
+					reply.task.session, reply.task.generation);
+				if (malformed)
+				{
+					try
+					{
+						debugger.Handle(reply.task, Message({}));
+					}
+					catch (const std::runtime_error&)
+					{
+						rejected = true;
+					}
+				}
+				else
+				{
+					debugger.Failed(reply.task, wire::ErrorCode::Busy, "Another client owns debugging");
+					rejected = true;
+				}
+			}
+			return rejected;
+		}, "Debugger did not consume the rejected lease reply");
+		Eventually([&]
+		{
+			pump();
+			return !debugger.Relinquishing();
+		}, "Test lease was not relinquished");
+		debugger.Poll();
+		Require(!debugger.Pending() && !requests.Has(app::PanelWork::Acquire) && !debugger.HasLease(),
+			"Rejected lease request kept retrying its deferred command");
+	}
 	debugger.Command(wire::CommandKind::Pause);
 	Eventually(
 		[&]

@@ -1,7 +1,5 @@
-#include "app/DebuggerPanelController.h"
-
-#include <algorithm>
-#include <utility>
+#include "app/services/DebuggerPanelController.h"
+#include "Pch.h"
 
 namespace simxr::app
 {
@@ -77,6 +75,7 @@ void DebuggerPanelController::ResetEpoch()
 	m_operations.clear();
 	m_effects.clear();
 	m_deferred.reset();
+	m_detail.clear();
 	m_nextSessions = m_nextStatus = m_nextOperations = m_nextRenew = {};
 }
 void DebuggerPanelController::Relinquish()
@@ -201,6 +200,8 @@ void DebuggerPanelController::InterruptSession()
 }
 void DebuggerPanelController::Failed(const PanelTask& task, wire::ErrorCode error, const std::string& errorDetail)
 {
+	if (task.kind == Work::Acquire)
+		m_deferred.reset();
 	if (task.session && (error == wire::ErrorCode::NotFound || error == wire::ErrorCode::Closed ||
 						 error == wire::ErrorCode::StaleGeneration))
 	{
@@ -232,11 +233,12 @@ bool DebuggerPanelController::Handle(const PanelTask& task, const wire::Message&
 				{U64(session, tag::Session), U64(session, tag::Generation), Boolean(session, tag::Running)});
 		}
 		m_sessions = std::move(prepared);
-		const auto selected = std::find_if(m_sessions.begin(), m_sessions.end(),
-			[&](const auto& session)
-			{
-				return session.id == m_selected.id && session.generation == m_selected.generation;
-			});
+		const auto selected =
+			std::find_if(m_sessions.begin(), m_sessions.end(),
+						 [&](const auto& session)
+						 {
+							 return session.id == m_selected.id && session.generation == m_selected.generation;
+						 });
 		if (selected == m_sessions.end())
 			ChooseSession(m_sessions.empty() ? PanelSession{} : m_sessions.front());
 		else
@@ -249,6 +251,11 @@ bool DebuggerPanelController::Handle(const PanelTask& task, const wire::Message&
 		break;
 	case Work::Acquire:
 		m_lease = U64(message, tag::Lease);
+		if (!m_lease)
+		{
+			m_deferred.reset();
+			throw std::runtime_error("Runtime returned an empty debugger lease");
+		}
 		m_command = 1;
 		m_acknowledged = 0;
 		m_operations.clear();
@@ -292,7 +299,7 @@ bool DebuggerPanelController::Handle(const PanelTask& task, const wire::Message&
 				if (Terminal(phase))
 				{
 					if (phase == "complete" && (operation.kind == wire::CommandKind::PinSnapshot ||
-						operation.kind == wire::CommandKind::UnpinSnapshot))
+												operation.kind == wire::CommandKind::UnpinSnapshot))
 						pending.push_back({operation.subject, 0, false, true});
 					if (operation.kind == wire::CommandKind::Release && prepared.progress == "released")
 						pending.push_back({operation.subject, 0, true});

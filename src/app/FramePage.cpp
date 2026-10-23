@@ -187,7 +187,7 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 		const auto revisionId = U64(commandNode, 3);
 		if (revisionId && documentEpoch == m_session.Epoch())
 		{
-			if (const auto revision = workspace.Revision(revisionId))
+			if (const auto revision = workspace.Revision(revisionId, documentEpoch))
 			{
 				const auto setup = ReadObservedSetup(*revision);
 				for (const auto& [label, channel] : {std::pair{"Head", ControlChannel::Head},
@@ -213,7 +213,7 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 		std::vector<std::vector<std::byte>> definitions;
 		if (documentEpoch == m_session.Epoch())
 		{
-			if (const auto dictionary = workspace.Revision(dictionaryId))
+			if (const auto dictionary = workspace.Revision(dictionaryId, documentEpoch))
 			{
 				if (const auto document = dictionary->Find(tag::Document))
 					definitions = InspectionElements(InspectionMember(document->value, "actions"));

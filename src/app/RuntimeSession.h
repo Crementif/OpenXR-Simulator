@@ -1,9 +1,9 @@
 #pragma once
 
-#include "app/DebuggerPanelController.h"
+#include "app/services/DebuggerPanelController.h"
 #include "app/services/FrameHistoryFeed.h"
-#include "app/ImageExportTask.h"
-#include "app/InspectionWorkspace.h"
+#include "app/services/ImageExportTask.h"
+#include "app/services/InspectionWorkspace.h"
 #include "app/services/ManualInputController.h"
 #include "app/services/HapticFeedback.h"
 #include "app/Notices.h"
