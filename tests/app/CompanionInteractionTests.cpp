@@ -143,6 +143,17 @@ bool UseValidation()
 	}();
 	return enabled;
 }
+
+std::filesystem::path QaDirectory(const char* name)
+{
+#ifdef _WIN32
+	return Utf8Path(windows::Environment(name));
+#else
+	const auto value = std::getenv(name);
+	return value ? Utf8Path(value) : std::filesystem::path{};
+#endif
+}
+
 class Interaction
 {
   public:
@@ -860,16 +871,16 @@ void CheckTimelineWorkflow(Interaction& test)
 			"Canvas selection did not open Frame page");
 	auto* details = FindPanel("Frame details");
 	Require(details != nullptr, "Merged Frame page absent");
-	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
+	if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
 	{
-		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "timeline-paused.bmp");
+		test.renderer.RequestScreenshot(directory / "timeline-paused.bmp");
 		test.Frame();
 		test.Frame();
 		ImGui::ActivateItemByID(ImHashStr("Expand", 0, details->GetID("Recorded rig")));
 		test.Frame();
 		test.Frame();
 		Require(test.runtime.Snapshot().rigExpanded, "Recorded rig did not expand into the preview");
-		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "frame-rig-expanded.bmp");
+		test.renderer.RequestScreenshot(directory / "frame-rig-expanded.bmp");
 		test.Frame();
 		auto* imageArea = FindPanel("Image area");
 		Require(imageArea, "Expanded recorded rig image area missing");
@@ -880,7 +891,7 @@ void CheckTimelineWorkflow(Interaction& test)
 		ImGui::SetScrollY(details, 410);
 		test.Frame();
 		test.Frame();
-		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "frame-input-actions.bmp");
+		test.renderer.RequestScreenshot(directory / "frame-input-actions.bmp");
 		test.Frame();
 		test.Frame();
 	}
@@ -907,13 +918,13 @@ void CheckTimelineWorkflow(Interaction& test)
 	Require(test.workspace.State().timeline.last - test.workspace.State().timeline.first <
 				beforeRange.timeline.last - beforeRange.timeline.first,
 			"Range zoom did not narrow the timeline");
-	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
+	if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
 	{
-		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "timeline-range.bmp");
+		test.renderer.RequestScreenshot(directory / "timeline-range.bmp");
 		test.Frame();
 		test.Frame();
 	}
-	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
+	if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
 	{
 		const auto setPath = [&](const std::filesystem::path& destination)
 		{
@@ -932,7 +943,7 @@ void CheckTimelineWorkflow(Interaction& test)
 			io.AddKeyEvent(ImGuiKey_Enter, false);
 			test.Frame();
 		};
-		const auto invalid = std::filesystem::path(directory) / "range-missing-directory" / "frames.csv";
+		const auto invalid = directory / "range-missing-directory" / "frames.csv";
 		Require(!std::filesystem::exists(invalid.parent_path()), "Invalid range export fixture already exists");
 		setPath(invalid);
 		ImGui::ActivateItemByID(inspector->GetID("Export frames"));
@@ -953,7 +964,7 @@ void CheckTimelineWorkflow(Interaction& test)
 			}
 		} restoreLocale{std::locale()};
 		std::locale::global(std::locale(std::locale::classic(), new CommaNumbers));
-		const auto destination = std::filesystem::path(directory) / Utf8Path("range-\u65e5\u672c\u8a9e.csv");
+		const auto destination = directory / Utf8Path("range-\u65e5\u672c\u8a9e.csv");
 		setPath(destination);
 		ImGui::ActivateItemByID(inspector->GetID("Export frames"));
 		test.Frame();
@@ -2230,9 +2241,8 @@ void ConfigureObservedDevices()
 
 void CheckDebuggerWorkflow(const char* endpoint)
 {
-	const auto destination = std::getenv("SIMXR_DEBUG_QA_DIRECTORY");
-	Require(destination, "Debugger QA requires a new private output directory");
-	const auto directory = Utf8Path(destination);
+	const auto directory = QaDirectory("SIMXR_DEBUG_QA_DIRECTORY");
+	Require(!directory.empty(), "Debugger QA requires a new private output directory");
 	Require(directory.is_absolute() && std::filesystem::create_directory(directory), "Debugger output must be new");
 #ifdef _WIN32
 	Require(SetEnvironmentVariableW(L"SIMXR_COMPANION_SETTINGS", (directory / "companion.settings").c_str()),
@@ -2681,9 +2691,9 @@ void CheckPreviewPilot(Interaction& test)
 	pump(60);
 	auto* handHud = FindPanel("HUD hand");
 	Require(handHud && handHud->Active, "Pilot ownership HUD missing");
-	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
+	if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
 	{
-		test.renderer.RequestScreenshot(Utf8Path(directory) / "pilot-body-takeover.bmp");
+		test.renderer.RequestScreenshot(directory / "pilot-body-takeover.bmp");
 		pump(1);
 	}
 	ImGui::ActivateItemByID(handHud->GetID("Take over"));
@@ -6026,9 +6036,9 @@ int main()
 				"Connected layout/spatial fixtures are not enabled on this platform");
 			CheckPreviewPilot(test);
 #endif
-			if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
+			if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
 			{
-				test.renderer.RequestScreenshot(Utf8Path(directory) / "application-gameplay.bmp");
+				test.renderer.RequestScreenshot(directory / "application-gameplay.bmp");
 				test.Frame();
 				test.renderer.WaitIdle();
 			}
