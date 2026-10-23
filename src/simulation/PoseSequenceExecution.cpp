@@ -1,41 +1,47 @@
 #include "simulation/PoseSequenceExecution.h"
+#include "Pch.h"
 #include "Math.h"
 
-#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 #include <tuple>
 
 namespace simxr
 {
-namespace
+template <class T, std::size_t N> static bool Any(const std::array<std::optional<T>, N>& values)
 {
-template <class T, std::size_t N> bool Any(const std::array<std::optional<T>, N>& values)
-{
-	return std::any_of(values.begin(), values.end(), [](const auto& value) { return value.has_value(); });
+	return std::any_of(values.begin(), values.end(),
+					   [](const auto& value)
+					   {
+						   return value.has_value();
+					   });
 }
-void Position(XrVector3f& value, const std::array<std::optional<float>, 3>& patch)
+
+static void Position(XrVector3f& value, const std::array<std::optional<float>, 3>& patch)
 {
 	value = {patch[0].value_or(value.x), patch[1].value_or(value.y), patch[2].value_or(value.z)};
 }
-bool SamePose(const XrPosef& left, const XrPosef& right)
+
+static bool SamePose(const XrPosef& left, const XrPosef& right)
 {
 	return std::tie(left.position.x, left.position.y, left.position.z, left.orientation.x, left.orientation.y,
-		left.orientation.z, left.orientation.w) ==
-		std::tie(right.position.x, right.position.y, right.position.z, right.orientation.x, right.orientation.y,
-			right.orientation.z, right.orientation.w);
+					left.orientation.z, left.orientation.w) ==
+		   std::tie(right.position.x, right.position.y, right.position.z, right.orientation.x, right.orientation.y,
+					right.orientation.z, right.orientation.w);
 }
-std::array<float, 3> Angles(const XrQuaternionf& q)
+
+static std::array<float, 3> Angles(const XrQuaternionf& q)
 {
 	const auto pitch = std::asin(std::clamp(2 * (q.w * q.x - q.y * q.z), -1.0f, 1.0f));
 	if (std::abs(std::cos(pitch)) < 0.00001f)
 		return {std::atan2(2 * (q.w * q.y - q.x * q.z), 1 - 2 * (q.y * q.y + q.z * q.z)), pitch, 0};
 	return {std::atan2(2 * (q.x * q.z + q.w * q.y), 1 - 2 * (q.x * q.x + q.y * q.y)), pitch,
-		std::atan2(2 * (q.x * q.y + q.w * q.z), 1 - 2 * (q.x * q.x + q.z * q.z))};
+			std::atan2(2 * (q.x * q.y + q.w * q.z), 1 - 2 * (q.x * q.x + q.z * q.z))};
 }
-}
+
 PoseSequenceExecution::PoseSequenceExecution(std::uint64_t id, CommandSource owner,
-	std::shared_ptr<const PoseSequence> program, std::array<bool, ControlChannelCount> inherited)
+											 std::shared_ptr<const PoseSequence> program,
+											 std::array<bool, ControlChannelCount> inherited)
 	: m_program(std::move(program))
 {
 	if (!id || !owner.id || !m_program)
@@ -52,11 +58,12 @@ PoseSequenceExecution::PoseSequenceExecution(std::uint64_t id, CommandSource own
 			if (const auto& patch = step.controllers[hand])
 			{
 				m_channels[hand + 1] = m_channels[hand + 1] || Any(patch->position) || patch->orientation.has_value();
-				m_channels[hand + 3] = m_channels[hand + 3] || patch->trigger || patch->grip ||
-					Any(patch->stick) || patch->primary || patch->secondary;
+				m_channels[hand + 3] = m_channels[hand + 3] || patch->trigger || patch->grip || Any(patch->stick) ||
+									   patch->primary || patch->secondary;
 			}
 	}
 }
+
 void PoseSequenceExecution::Initialize(FrameId frame, const CommandConfiguration& initial)
 {
 	m_playback.Start(m_program, frame);
@@ -83,6 +90,7 @@ void PoseSequenceExecution::Initialize(FrameId frame, const CommandConfiguration
 	}
 	m_started = true;
 }
+
 void PoseSequenceExecution::Patch(const PoseSequenceStep& step)
 {
 	if (step.head)
@@ -127,6 +135,7 @@ void PoseSequenceExecution::Patch(const PoseSequenceStep& step)
 		}
 	}
 }
+
 std::vector<SimulationCommand> PoseSequenceExecution::Commands() const
 {
 	std::vector<SimulationCommand> commands;
@@ -145,6 +154,7 @@ std::vector<SimulationCommand> PoseSequenceExecution::Commands() const
 	}
 	return commands;
 }
+
 PoseSequenceFrame PoseSequenceExecution::Prepare(FrameId frame, const CommandConfiguration& initial)
 {
 	PoseSequenceFrame result;
@@ -184,6 +194,7 @@ PoseSequenceFrame PoseSequenceExecution::Prepare(FrameId frame, const CommandCon
 	}
 	return result;
 }
+
 void PoseSequenceExecution::Accept(FrameId frame, CommandResult result) noexcept
 {
 	m_status.result = result;
@@ -197,6 +208,7 @@ void PoseSequenceExecution::Accept(FrameId frame, CommandResult result) noexcept
 		m_playback = {};
 	}
 }
+
 void PoseSequenceExecution::Cancel() noexcept
 {
 	m_status.active = false;
@@ -204,10 +216,12 @@ void PoseSequenceExecution::Cancel() noexcept
 	m_program.reset();
 	m_playback = {};
 }
+
 bool PoseSequenceExecution::CanPrepare() const noexcept
 {
 	return m_status.result == CommandResult::Queued || m_status.result == CommandResult::Applied;
 }
+
 bool PoseSequenceExecution::HasControl(const std::array<bool, ControlChannelCount>& owned) const noexcept
 {
 	for (std::size_t index = 0; index < m_channels.size(); ++index)
@@ -215,10 +229,12 @@ bool PoseSequenceExecution::HasControl(const std::array<bool, ControlChannelCoun
 			return false;
 	return true;
 }
+
 const PoseSequenceStatus& PoseSequenceExecution::Status() const noexcept
 {
 	return m_status;
 }
+
 CommandSource PoseSequenceExecution::Source() const noexcept
 {
 	return {CommandSourceKind::Sequence, m_status.id};

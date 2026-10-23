@@ -1,7 +1,6 @@
 #pragma once
 
 #include "presentation/FrameTypes.h"
-#include <openxr/openxr.h>
 
 #include <array>
 #include <cstddef>
@@ -9,6 +8,8 @@
 #include <optional>
 #include <span>
 #include <vector>
+
+#include <openxr/openxr.h>
 
 namespace simxr
 {

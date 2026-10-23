@@ -1,45 +1,52 @@
 #include "simulation/PoseSequence.h"
+#include "Pch.h"
 
-#include <algorithm>
 #include <limits>
 #include <stdexcept>
-#include <utility>
 
 namespace simxr
 {
-PoseSequence::PoseSequence(std::vector<PoseSequenceStep> steps, bool loop)
-	: m_steps(std::move(steps)), m_loop(loop)
+PoseSequence::PoseSequence(std::vector<PoseSequenceStep> steps, bool loop) : m_steps(std::move(steps)), m_loop(loop)
 {
 	if (m_steps.size() > MaxSteps)
 		throw std::length_error("Pose sequence exceeds its step limit");
 	std::stable_sort(m_steps.begin(), m_steps.end(),
-		[](const auto& left, const auto& right) { return left.frame < right.frame; });
+					 [](const auto& left, const auto& right)
+					 {
+						 return left.frame < right.frame;
+					 });
 }
+
 std::size_t PoseSequence::Size() const noexcept
 {
 	return m_steps.size();
 }
+
 std::span<const PoseSequenceStep> PoseSequence::Steps() const noexcept
 {
 	return m_steps;
 }
+
 bool PoseSequence::Loops() const noexcept
 {
 	return m_loop;
 }
+
 void PoseSequencePlayback::Start(PoseSequence sequence, FrameId origin)
 {
 	Start(std::make_shared<const PoseSequence>(std::move(sequence)), origin);
 }
+
 void PoseSequencePlayback::Start(std::shared_ptr<const PoseSequence> sequence, FrameId origin)
 {
-	if (sequence && sequence->Size() && sequence->Steps().back().frame.value >
-		std::numeric_limits<std::uint64_t>::max() - origin.value)
+	if (sequence && sequence->Size() &&
+		sequence->Steps().back().frame.value > std::numeric_limits<std::uint64_t>::max() - origin.value)
 		throw std::overflow_error("Pose sequence extends beyond the frame counter");
 	m_sequence = std::move(sequence);
 	m_origin = origin;
 	m_next = 0;
 }
+
 std::span<const PoseSequenceStep> PoseSequencePlayback::Advance(FrameId submitted) noexcept
 {
 	const auto steps = m_sequence ? m_sequence->Steps() : std::span<const PoseSequenceStep>{};
@@ -58,6 +65,7 @@ std::span<const PoseSequenceStep> PoseSequencePlayback::Advance(FrameId submitte
 		++m_next;
 	return steps.subspan(first, m_next - first);
 }
+
 std::optional<FrameId> PoseSequencePlayback::NextFrame() const noexcept
 {
 	const auto steps = m_sequence ? m_sequence->Steps() : std::span<const PoseSequenceStep>{};
@@ -79,6 +87,7 @@ std::optional<FrameId> PoseSequencePlayback::NextFrame() const noexcept
 		return {};
 	return FrameId{m_origin.value + offset};
 }
+
 bool PoseSequencePlayback::Complete() const noexcept
 {
 	return !m_sequence || !m_sequence->Size() || (!m_sequence->Loops() && m_next == m_sequence->Size());

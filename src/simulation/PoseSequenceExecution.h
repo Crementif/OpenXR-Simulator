@@ -2,6 +2,7 @@
 
 #include "simulation/CommandTypes.h"
 #include "simulation/PoseSequence.h"
+
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -29,7 +30,7 @@ class PoseSequenceExecution
 {
   public:
 	PoseSequenceExecution(std::uint64_t id, CommandSource owner, std::shared_ptr<const PoseSequence> program,
-		std::array<bool, ControlChannelCount> inherited = {});
+						  std::array<bool, ControlChannelCount> inherited = {});
 	PoseSequenceFrame Prepare(FrameId frame, const CommandConfiguration& initial);
 	void Accept(FrameId frame, CommandResult result) noexcept;
 	void Cancel() noexcept;
