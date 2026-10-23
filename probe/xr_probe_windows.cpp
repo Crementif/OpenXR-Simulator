@@ -19,6 +19,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <future>
+#include <latch>
 #include <vector>
 
 using Microsoft::WRL::ComPtr;
@@ -346,8 +348,34 @@ int main(int argc, char** argv)
 			throw std::runtime_error("Probe requires at least two frames and one session");
 		for (unsigned cycle = 0; cycle < sessions; ++cycle)
 		{
-			XrSession session;
-			Check(xrCreateSession(instance, &sessionInfo, &session), "Create session");
+			XrSession session = XR_NULL_HANDLE;
+#ifdef SIMXR_PROBE_OPENGL
+			auto missingBinding = sessionInfo;
+			missingBinding.next = nullptr;
+			if (xrCreateSession(instance, &missingBinding, &session) != XR_ERROR_GRAPHICS_DEVICE_INVALID ||
+				session != XR_NULL_HANDLE)
+				throw std::runtime_error("Failed session creation changed output or retained session capacity");
+			Check(xrCreateSession(instance, &sessionInfo, &session), "Create session after rejected binding");
+#else
+			std::latch start(2);
+			const auto createSession = [&]
+			{
+				XrSession output = XR_NULL_HANDLE;
+				start.arrive_and_wait();
+				const auto result = xrCreateSession(instance, &sessionInfo, &output);
+				return std::pair{result, output};
+			};
+			auto first = std::async(std::launch::async, createSession);
+			const auto secondResult = createSession();
+			const auto firstResult = first.get();
+			const auto& accepted = firstResult.first == XR_SUCCESS ? firstResult : secondResult;
+			const auto& rejected = firstResult.first == XR_SUCCESS ? secondResult : firstResult;
+			if (accepted.first != XR_SUCCESS || accepted.second == XR_NULL_HANDLE ||
+				rejected.first != XR_ERROR_LIMIT_REACHED || rejected.second != XR_NULL_HANDLE)
+				throw std::runtime_error("Concurrent session creation corrupted admission or failed output");
+			session = accepted.second;
+#endif
+
 			XrSessionActionSetsAttachInfo attach{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
 			attach.countActionSets = 1;
 			attach.actionSets = &actionSet;
@@ -557,6 +585,14 @@ int main(int argc, char** argv)
 		}
 		Check(xrDestroyActionSet(actionSet), "Destroy action set");
 		Check(xrDestroyInstance(instance), "Destroy instance");
+		XrInstance recreated = XR_NULL_HANDLE;
+		Check(xrCreateInstance(&create, &recreated), "Recreate instance after complete retirement");
+		if (recreated == instance)
+			throw std::runtime_error("Recreated instance reused a retired identity");
+		XrInstanceProperties recreatedProperties{XR_TYPE_INSTANCE_PROPERTIES};
+		Check(xrGetInstanceProperties(recreated, &recreatedProperties), "Query recreated instance");
+		Check(xrDestroyInstance(recreated), "Destroy recreated instance");
+
 		if (std::getenv("XR_PROBE_REQUIRE_INPUT") && (!pressed || !released))
 			throw std::runtime_error("Application did not observe both trigger press and release");
 		std::printf("PASS: native loader completed %u sessions, %u frames each, views=%u, foveated=%s, resize=%s\n",
