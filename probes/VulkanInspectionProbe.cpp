@@ -1,11 +1,12 @@
 #include "Pch.h"
-#include "graphics/ColorPixels.h"
-#include "control/backends/vulkan/VulkanImageInspection.h"
+
 #include "Math.h"
 #include "VulkanImageDeliveryProbe.h"
 #include "VulkanProbeInstance.h"
 #include "VulkanReprojectionProbe.h"
 #include "VulkanRetentionProbe.h"
+#include "control/backends/vulkan/VulkanImageInspection.h"
+#include "graphics/ColorPixels.h"
 #include "graphics/backends/vulkan/VulkanBackend.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
 #include "graphics/backends/vulkan/VulkanInspectionDevice.h"
@@ -13,38 +14,39 @@
 #include "runtime/Instance.h"
 #include "runtime/Session.h"
 
-#include <algorithm>
-#include <array>
-#include <barrier>
-#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <future>
-#include <memory>
+#include <latch>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
-#include <vector>
 
-namespace
+namespace simxr::probe::inspection
 {
-using namespace simxr;
-using simxr::probe::Check;
-constexpr std::uint64_t Timeout = 5000000000ULL;
-constexpr VkImageUsageFlags SourceUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-										  VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-constexpr std::array SharingExtensions{VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
-									   VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME};
+constexpr std::uint64_t s_timeout = 5000000000ULL;
+constexpr VkImageUsageFlags s_sourceUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+											VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+constexpr std::array s_sharingExtensions{VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
+										 VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME};
 
-void Require(bool value, const char* operation)
+static void Require(bool value, const char* operation)
 {
 	if (!value)
 		throw std::runtime_error(operation);
 }
 
-template <class Predicate> void Await(Predicate predicate, const char* operation)
+[[noreturn]] static void UnknownCompletion(const char* operation)
+{
+	std::fprintf(stderr, "FAIL: %s; GPU completion unknown, preserving process-owned resources\n", operation);
+	std::fflush(nullptr);
+	std::_Exit(1);
+}
+
+template <class Predicate> static void Await(Predicate predicate, const char* operation)
 {
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 	while (!predicate())
@@ -54,7 +56,7 @@ template <class Predicate> void Await(Predicate predicate, const char* operation
 	}
 }
 
-void AwaitComplete(const GpuCompletion& completion)
+static void AwaitComplete(const GpuCompletion& completion)
 {
 	Await(
 		[&]
@@ -66,8 +68,8 @@ void AwaitComplete(const GpuCompletion& completion)
 		"Production inspection GPU completion timed out");
 }
 
-void VerifyOwnedDeviceAcquisition(const VulkanExternalIdentity& identity,
-								  const std::shared_ptr<VulkanInspectionValidation>& validation)
+static void VerifyOwnedDeviceAcquisition(const VulkanExternalIdentity& identity,
+										 const std::shared_ptr<VulkanInspectionValidation>& validation)
 {
 	const auto before = validation->liveOwnedDevices.load();
 	auto mismatch = identity;
@@ -105,22 +107,29 @@ void VerifyOwnedDeviceAcquisition(const VulkanExternalIdentity& identity,
 
 struct Device
 {
-	VkPhysicalDevice physical = VK_NULL_HANDLE;
-	VkDevice native = VK_NULL_HANDLE;
-	VkQueue queue = VK_NULL_HANDLE;
-	std::uint32_t family = 0;
-	std::uint32_t index = 0;
+	Device() = default;
+	Device(const Device&) = delete;
+	Device& operator=(const Device&) = delete;
+	VkPhysicalDevice m_physical = VK_NULL_HANDLE;
+	VkDevice m_native = VK_NULL_HANDLE;
+	VkQueue m_queue = VK_NULL_HANDLE;
+	std::uint32_t m_family = 0;
+	std::uint32_t m_index = 0;
 	~Device()
 	{
-		if (native)
-			vkDestroyDevice(native, nullptr);
+		if (m_native)
+			vkDestroyDevice(m_native, nullptr);
 	}
 	bool Create(VkInstance instance)
 	{
+		Require(!m_native, "Inspection probe device was already created");
 		std::uint32_t count = 0;
 		Check(vkEnumeratePhysicalDevices(instance, &count, nullptr), "enumerate inspection adapters");
+		if (!count)
+			return false;
 		std::vector<VkPhysicalDevice> adapters(count);
 		Check(vkEnumeratePhysicalDevices(instance, &count, adapters.data()), "enumerate inspection adapters");
+		adapters.resize(count);
 		VulkanExternalImageSpec spec;
 		spec.extent = {32, 24, 1};
 		for (auto adapter : adapters)
@@ -136,25 +145,25 @@ struct Device
 			{
 				if (!(families[candidate].queueFlags & VK_QUEUE_GRAPHICS_BIT) || !families[candidate].queueCount)
 					continue;
-				physical = adapter;
-				family = candidate;
-				index = families[candidate].queueCount > 1 ? 1 : 0;
+				m_physical = adapter;
+				m_family = candidate;
+				m_index = families[candidate].queueCount > 1 ? 1 : 0;
 				const std::array priorities{1.0f, 1.0f};
 				VkDeviceQueueCreateInfo queues{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
-				queues.queueFamilyIndex = family;
-				queues.queueCount = index + 1;
+				queues.queueFamilyIndex = m_family;
+				queues.queueCount = m_index + 1;
 				queues.pQueuePriorities = priorities.data();
 				VkDeviceCreateInfo info{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
 				info.queueCreateInfoCount = 1;
 				info.pQueueCreateInfos = &queues;
-				info.enabledExtensionCount = SharingExtensions.size();
-				info.ppEnabledExtensionNames = SharingExtensions.data();
-				Check(vkCreateDevice(physical, &info, nullptr, &native), "create inspection producer device");
-				vkGetDeviceQueue(native, family, index, &queue);
+				info.enabledExtensionCount = static_cast<std::uint32_t>(s_sharingExtensions.size());
+				info.ppEnabledExtensionNames = s_sharingExtensions.data();
+				Check(vkCreateDevice(m_physical, &info, nullptr, &m_native), "create inspection producer device");
+				vkGetDeviceQueue(m_native, m_family, m_index, &m_queue);
 				VkPhysicalDeviceProperties properties;
-				vkGetPhysicalDeviceProperties(physical, &properties);
+				vkGetPhysicalDeviceProperties(m_physical, &properties);
 				std::printf("adapter=%s queueFamily=%u queueIndex=%u optionalFeatures=none externalFD=enabled\n",
-							properties.deviceName, family, index);
+							properties.deviceName, m_family, m_index);
 				return true;
 			}
 		}
@@ -164,64 +173,92 @@ struct Device
 
 // Probe-owned GPU source generation. Unknown completion must not free pending
 // command/image owners. This exceptional process policy is confined to the probe.
-struct Commands
+class Commands
 {
-	Device& device;
-	VkCommandPool pool = VK_NULL_HANDLE;
-	VkCommandBuffer command = VK_NULL_HANDLE;
-	VkFence fence = VK_NULL_HANDLE;
-	bool submitted = false;
-	bool complete = false;
-	explicit Commands(Device& owner) : device(owner)
+  public:
+	explicit Commands(Device& owner) : m_device(owner)
 	{
-		VkCommandPoolCreateInfo create{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-		create.queueFamilyIndex = device.family;
-		Check(vkCreateCommandPool(device.native, &create, nullptr, &pool), "create source paint pool");
-		VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-		allocate.commandPool = pool;
-		allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-		allocate.commandBufferCount = 1;
-		Check(vkAllocateCommandBuffers(device.native, &allocate, &command), "allocate source paint commands");
-		VkFenceCreateInfo signal{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-		Check(vkCreateFence(device.native, &signal, nullptr, &fence), "create source paint fence");
-		VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-		begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-		Check(vkBeginCommandBuffer(command, &begin), "begin source paint");
+		try
+		{
+			VkCommandPoolCreateInfo create{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+			create.queueFamilyIndex = m_device.m_family;
+			Check(vkCreateCommandPool(m_device.m_native, &create, nullptr, &m_pool), "create source paint pool");
+			VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+			allocate.commandPool = m_pool;
+			allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+			allocate.commandBufferCount = 1;
+			Check(vkAllocateCommandBuffers(m_device.m_native, &allocate, &m_command), "allocate source paint commands");
+			VkFenceCreateInfo signal{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+			Check(vkCreateFence(m_device.m_native, &signal, nullptr, &m_fence), "create source paint fence");
+			VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+			begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+			Check(vkBeginCommandBuffer(m_command, &begin), "begin source paint");
+		}
+		catch (...)
+		{
+			Destroy();
+			throw;
+		}
 	}
+	Commands(const Commands&) = delete;
+	Commands& operator=(const Commands&) = delete;
 	~Commands()
 	{
-		if (submitted && !complete)
-		{
-			std::fputs("FAIL: probe source paint completion unknown; preserving GPU resources\n", stderr);
-			std::fflush(nullptr);
-			std::_Exit(1);
-		}
-		if (fence)
-			vkDestroyFence(device.native, fence, nullptr);
-		if (pool)
-			vkDestroyCommandPool(device.native, pool, nullptr);
+		if (m_submitted && !m_complete)
+			UnknownCompletion("probe source paint teardown");
+		Destroy();
+	}
+	VkCommandBuffer Handle() const
+	{
+		return m_command;
 	}
 	void Finish()
 	{
-		Check(vkEndCommandBuffer(command), "finish source paint");
+		Require(!m_submitted, "Probe source commands were already submitted");
+		Check(vkEndCommandBuffer(m_command), "finish source paint");
 		VkSubmitInfo info{VK_STRUCTURE_TYPE_SUBMIT_INFO};
 		info.commandBufferCount = 1;
-		info.pCommandBuffers = &command;
-		Check(vkQueueSubmit(device.queue, 1, &info, fence), "submit source paint");
-		submitted = true;
-		Check(vkWaitForFences(device.native, 1, &fence, VK_TRUE, Timeout), "wait source paint fence");
-		complete = true;
+		info.pCommandBuffers = &m_command;
+		const auto result = vkQueueSubmit(m_device.m_queue, 1, &info, m_fence);
+		if (result != VK_SUCCESS)
+		{
+			std::fprintf(stderr, "FAIL: source paint submission returned %d\n", result);
+			UnknownCompletion("source paint submission failed");
+		}
+		m_submitted = true;
+		const auto waited = vkWaitForFences(m_device.m_native, 1, &m_fence, VK_TRUE, s_timeout);
+		if (waited != VK_SUCCESS)
+		{
+			std::fprintf(stderr, "FAIL: source paint fence returned %d\n", waited);
+			UnknownCompletion("source paint fence wait failed");
+		}
+		m_complete = true;
 	}
+
+  private:
+	void Destroy() noexcept
+	{
+		if (m_fence)
+			vkDestroyFence(m_device.m_native, m_fence, nullptr);
+		if (m_pool)
+			vkDestroyCommandPool(m_device.m_native, m_pool, nullptr);
+	}
+	Device& m_device;
+	VkCommandPool m_pool = VK_NULL_HANDLE;
+	VkCommandBuffer m_command = VK_NULL_HANDLE;
+	VkFence m_fence = VK_NULL_HANDLE;
+	bool m_submitted = false;
+	bool m_complete = false;
 };
 
 using EyeColors = std::array<std::array<std::uint8_t, 4>, 2>;
-constexpr EyeColors Original{{{{255, 0, 0, 255}}, {{0, 255, 0, 255}}}};
-constexpr EyeColors Reused{{{{255, 255, 0, 255}}, {{0, 255, 255, 255}}}};
+constexpr EyeColors s_original{{{{255, 0, 0, 255}}, {{0, 255, 0, 255}}}};
+constexpr EyeColors s_reused{{{{255, 255, 0, 255}}, {{0, 255, 255, 255}}}};
 
-void Paint(Device& device, const VulkanImage& image, const EyeColors& colors)
+static void Paint(Device& device, const VulkanImage& image, const EyeColors& colors)
 {
 	Commands work(device);
-	VulkanImageBarrier(work.command, image, image.ApplicationLayout(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+	VulkanImageBarrier(work.Handle(), image, image.ApplicationLayout(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 					   VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
 	for (std::uint32_t eye = 0; eye < 2; ++eye)
 	{
@@ -229,25 +266,25 @@ void Paint(Device& device, const VulkanImage& image, const EyeColors& colors)
 		for (std::uint32_t channel = 0; channel < 4; ++channel)
 			color.float32[channel] = static_cast<float>(colors[eye][channel]) / 255;
 		const VkImageSubresourceRange slice{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, eye, 1};
-		vkCmdClearColorImage(work.command, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &color, 1, &slice);
+		vkCmdClearColorImage(work.Handle(), image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &color, 1, &slice);
 	}
-	VulkanImageBarrier(work.command, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, image.ApplicationLayout(),
+	VulkanImageBarrier(work.Handle(), image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, image.ApplicationLayout(),
 					   VK_ACCESS_TRANSFER_WRITE_BIT,
 					   VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
 	work.Finish();
 }
 
-PoseSample Pose()
+static PoseSample Pose()
 {
 	return {IdentityPose(), TrackedPoseFlags, {Duration{1}}};
 }
-XrFovf Fov()
+static XrFovf Fov()
 {
 	const auto angle = std::atan(1.0f);
 	return {-angle, angle, angle, -angle};
 }
 
-std::shared_ptr<const FrameLayers> Layers(XrSwapchain source, RuntimeTime time = {Duration{1}})
+static std::shared_ptr<const FrameLayers> Layers(XrSwapchain source, RuntimeTime time = {Duration{1}})
 {
 	ProjectionLayerDescription layer;
 	layer.space.worldPose = Pose();
@@ -257,7 +294,7 @@ std::shared_ptr<const FrameLayers> Layers(XrSwapchain source, RuntimeTime time =
 											   std::vector<LayerDescription>{std::move(layer)});
 }
 
-CompositionPlan Plan(const FrameLayers& layers, std::uint32_t width, std::uint32_t height)
+static CompositionPlan Plan(const FrameLayers& layers, std::uint32_t width, std::uint32_t height)
 {
 	const CompositionTarget target{width, height, {{{Pose(), Fov()}, {Pose(), Fov()}}}};
 	CompositionPlan plan;
@@ -277,45 +314,45 @@ class DebugCapture
   public:
 	explicit DebugCapture(VulkanBackend& backend, CaptureTarget target = {})
 	{
-		auto instance = std::make_shared<Instance>(reinterpret_cast<XrInstance>(100), std::span<const char* const>{},
-												   XR_MAKE_VERSION(1, 0, 27));
-		session = std::make_shared<Session>(reinterpret_cast<XrSession>(101), instance);
-		Require(session->ConfigureCapturePool(backend.Reservations(), true) == XR_SUCCESS,
+		auto instance = std::make_shared<simxr::Instance>(reinterpret_cast<XrInstance>(100),
+														  std::span<const char* const>{}, XR_MAKE_VERSION(1, 0, 27));
+		m_session = std::make_shared<Session>(reinterpret_cast<XrSession>(101), instance);
+		Require(m_session->ConfigureCapturePool(backend.Reservations(), true) == XR_SUCCESS,
 				"Configure owned capture budget");
 		FrameSchedulerConfig timing;
 		timing.period = Duration{5000000};
 		const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
-		Require(session->Ready(timing.epoch) == XR_SUCCESS && session->Begin(begin, timing) == XR_SUCCESS,
+		Require(m_session->Ready(timing.epoch) == XR_SUCCESS && m_session->Begin(begin, timing) == XR_SUCCESS,
 				"Start owned inspection capture session");
-		controller = std::make_unique<DebugController>(session);
-		const auto acquired = controller->Acquire();
+		m_controller.emplace(m_session);
+		const auto acquired = m_controller->Acquire();
 		Require(acquired.has_value(), "Acquire production debug lease");
-		lease = acquired->id;
+		m_lease = acquired->id;
 		Require(AwaitOperation(Command(DebugCommand::Pause)).progress == DebugProgress::Paused,
 				"Pause production capture session");
-		step = Command(DebugCommand::Step, {}, target);
+		m_step = Command(DebugCommand::Step, {}, target);
 		Await(
 			[&]
 			{
-				const auto operation = controller->Read(step);
+				const auto operation = m_controller->Read(m_step);
 				Require(operation && operation->phase != DebugPhase::Failed, "Reserve inspection capture failed");
-				if (operation->captures.empty() || !session->Scheduler().Snapshot().permits)
+				if (operation->captures.empty() || !m_session->Scheduler().Snapshot().permits)
 					return false;
-				capture = operation->captures.front();
+				m_capture = operation->captures.front();
 				return true;
 			},
 			"Reserve inspection capture timed out");
-		Require(session->WaitFrame(prediction) == XR_SUCCESS && session->BeginFrame() == XR_SUCCESS,
+		Require(m_session->WaitFrame(m_prediction) == XR_SUCCESS && m_session->BeginFrame() == XR_SUCCESS,
 				"Issue exactly one inspection capture frame");
 	}
 	~DebugCapture()
 	{
-		session->Close();
-		controller->Close(false);
+		m_session->Close();
+		m_controller->Close(false);
 	}
 	DebugOperationId Command(DebugCommand kind, CaptureId id = {}, CaptureTarget target = {})
 	{
-		const auto result = controller->Submit(lease, {{next++}, kind, 1, target, {}, id});
+		const auto result = m_controller->Submit(m_lease, {{m_next++}, kind, 1, target, {}, id});
 		Require(result.result == DebugAdmission::Accepted, "Submit owned inspection debug command");
 		return result.operation;
 	}
@@ -325,7 +362,7 @@ class DebugCapture
 		Await(
 			[&]
 			{
-				const auto operation = controller->Read(id);
+				const auto operation = m_controller->Read(id);
 				Require(operation && operation->phase != DebugPhase::Failed &&
 							operation->phase != DebugPhase::Interrupted && operation->phase != DebugPhase::Cancelled,
 						"Owned inspection debug operation failed");
@@ -335,17 +372,17 @@ class DebugCapture
 			"Owned inspection debug operation timed out");
 		return result;
 	}
-	std::shared_ptr<Session> session;
-	std::unique_ptr<DebugController> controller;
-	FramePrediction prediction;
-	CaptureId capture;
-	DebugOperationId step;
-	DebugLeaseId lease;
-	std::uint64_t next = 1;
+	std::shared_ptr<Session> m_session;
+	std::optional<DebugController> m_controller;
+	FramePrediction m_prediction;
+	CaptureId m_capture;
+	DebugOperationId m_step;
+	DebugLeaseId m_lease;
+	std::uint64_t m_next = 1;
 };
 
-void Verify(const VulkanInspectionFrame& frame, std::uint32_t width, std::uint32_t height, const EyeColors& expected,
-			std::optional<std::uint32_t> layer = {})
+static void Verify(const VulkanInspectionFrame& frame, std::uint32_t width, std::uint32_t height,
+				   const EyeColors& expected, std::optional<std::uint32_t> layer = {})
 {
 	auto ticket = frame.Export(layer);
 	AwaitComplete(*ticket);
@@ -367,8 +404,8 @@ void Verify(const VulkanInspectionFrame& frame, std::uint32_t width, std::uint32
 				layers);
 }
 
-void VerifyControlLayer(const std::shared_ptr<VulkanInspectionFrame>& frame, const EyeColors& expected,
-						std::uint32_t layer)
+static void VerifyControlLayer(const std::shared_ptr<VulkanInspectionFrame>& frame, const EyeColors& expected,
+							   std::uint32_t layer)
 {
 	const auto provider = control::CreateVulkanImageInspectionProvider();
 	const auto reader = provider->Retain(frame);
@@ -400,7 +437,7 @@ void VerifyControlLayer(const std::shared_ptr<VulkanInspectionFrame>& frame, con
 	std::puts("case=control-layer-export selectedView=exact metadataRoundTrip=yes pixels=exact PASS");
 }
 
-std::shared_ptr<VulkanFrame> Producer(VulkanBackend& backend, const std::shared_ptr<VulkanImage>& source)
+static std::shared_ptr<VulkanFrame> Producer(VulkanBackend& backend, const std::shared_ptr<VulkanImage>& source)
 {
 	const auto layers = Layers(reinterpret_cast<XrSwapchain>(201));
 	const auto plan = Plan(*layers, 32, 24);
@@ -416,13 +453,14 @@ std::shared_ptr<VulkanFrame> Producer(VulkanBackend& backend, const std::shared_
 	return output;
 }
 
-void CancelLargeBatch(const VulkanBinding& binding, const std::shared_ptr<VulkanInspectionValidation>& validation)
+static void CancelLargeBatch(const VulkanBinding& binding,
+							 const std::shared_ptr<VulkanInspectionValidation>& validation)
 {
 	constexpr std::size_t count = 40;
-	VulkanBackend backend(binding, count, SharingExtensions, VK_API_VERSION_1_1);
-	VulkanExternalDevice external(backend.Device(), SharingExtensions, VK_API_VERSION_1_1);
+	VulkanBackend backend(binding, count, s_sharingExtensions, VK_API_VERSION_1_1);
+	VulkanExternalDevice external(backend.Device(), s_sharingExtensions, VK_API_VERSION_1_1);
 	VulkanInspection inspection(external.Identity(), count, validation);
-	auto source = backend.CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {16, 16}, 2, SourceUsage);
+	auto source = backend.CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {16, 16}, 2, s_sourceUsage);
 	std::vector<std::unique_ptr<VulkanInspectionTransfer>> transfers;
 	std::vector<std::shared_ptr<VulkanInspectionFrame>> outputs;
 	for (std::size_t index = 0; index < count; ++index)
@@ -432,7 +470,7 @@ void CancelLargeBatch(const VulkanBinding& binding, const std::shared_ptr<Vulkan
 		transfers.push_back(std::move(transfer));
 	}
 	transfers.clear();
-	Check(inspection.Close(Timeout), "Drain forty cancelled inspection transfers");
+	Check(inspection.Close(s_timeout), "Drain forty cancelled inspection transfers");
 	for (const auto& output : outputs)
 		Require(output->PollCompletion() == CompletionStatus::Failed, "Cancelled batch left a pending or ready output");
 	outputs.clear();
@@ -441,13 +479,13 @@ void CancelLargeBatch(const VulkanBinding& binding, const std::shared_ptr<Vulkan
 	std::puts("case=large-inspection-batch cancelled=40 drained=yes borrowedResourcesReleased=yes PASS");
 }
 
-void RejectedPreparation(VulkanBackend& backend, const std::shared_ptr<VulkanImage>& source,
-						 const VulkanExternalIdentity& identity,
-						 const std::shared_ptr<VulkanInspectionValidation>& validation)
+static void RejectedPreparation(VulkanBackend& backend, const std::shared_ptr<VulkanImage>& source,
+								const VulkanExternalIdentity& identity,
+								const std::shared_ptr<VulkanInspectionValidation>& validation)
 {
 	{
 		VulkanInspection closed(identity, 1, validation);
-		Check(closed.Close(Timeout), "close inspector before rejected preparation");
+		Check(closed.Close(s_timeout), "close inspector before rejected preparation");
 		auto producer = Producer(backend, source);
 		bool rejected = false;
 		try
@@ -464,7 +502,7 @@ void RejectedPreparation(VulkanBackend& backend, const std::shared_ptr<VulkanIma
 		Require(backend.Submit(producer) == XR_SUCCESS, "Submit producer after closed-inspector rejection");
 		retry->Commit();
 		AwaitComplete(*retry->Output());
-		Check(available.Close(Timeout), "close inspector after successful source retry");
+		Check(available.Close(s_timeout), "close inspector after successful source retry");
 	}
 	{
 		VulkanInspection bounded(identity, 1, validation);
@@ -489,7 +527,7 @@ void RejectedPreparation(VulkanBackend& backend, const std::shared_ptr<VulkanIma
 		blocker.reset();
 		VulkanInspection cancelledRetryService(identity, 1, validation);
 		auto cancelledRetry = cancelledRetryService.Prepare(blockerProducer);
-		Check(bounded.Close(Timeout), "cancel unsubmitted inspector capacity blocker");
+		Check(bounded.Close(s_timeout), "cancel unsubmitted inspector capacity blocker");
 		// Draining the old cancelled job must not revoke this source's newer
 		// consumer claim. Only one binary-semaphore wait may be admitted.
 		VulkanInspection conflicting(identity, 1, validation);
@@ -506,15 +544,16 @@ void RejectedPreparation(VulkanBackend& backend, const std::shared_ptr<VulkanIma
 		Require(backend.Submit(blockerProducer) == XR_SUCCESS, "Submit producer after prepared-transfer cancellation");
 		cancelledRetry->Commit();
 		AwaitComplete(*cancelledRetry->Output());
-		Check(cancelledRetryService.Close(Timeout), "close inspector after cancelled-transfer retry");
-		Check(available.Close(Timeout), "close inspector after capacity-rejected source retry");
+		Check(cancelledRetryService.Close(s_timeout), "close inspector after cancelled-transfer retry");
+		Check(available.Close(s_timeout), "close inspector after capacity-rejected source retry");
 	}
 	std::puts("case=rejected-inspection-prepare closedAndCapacity=checked sameProducerRetry=ready PASS");
 }
 
-std::shared_ptr<VulkanInspectionFrame> EarlyClose(VulkanBackend& backend, const std::shared_ptr<VulkanImage>& source,
-												  const VulkanExternalIdentity& identity,
-												  const std::shared_ptr<VulkanInspectionValidation>& validation)
+static std::shared_ptr<VulkanInspectionFrame> EarlyClose(VulkanBackend& backend,
+														 const std::shared_ptr<VulkanImage>& source,
+														 const VulkanExternalIdentity& identity,
+														 const std::shared_ptr<VulkanInspectionValidation>& validation)
 {
 	auto producer = Producer(backend, source);
 	std::shared_ptr<VulkanInspectionFrame> output;
@@ -532,26 +571,53 @@ std::shared_ptr<VulkanInspectionFrame> EarlyClose(VulkanBackend& backend, const 
 		Require(firstTerminal != CompletionStatus::Pending, "Closed inspection left a nonterminal output");
 		// Explicitly exercise concurrent post-worker control paths. A timed-out
 		// copy still needs retirement, even though its public result is terminal.
-		std::barrier start(4);
-		auto firstDrain = std::async(std::launch::async,
+		std::latch ready(3), start(1);
+		std::future<VkResult> firstDrain, secondDrain, repeatedClose;
+		const auto awaitWorkers = [&]
+		{
+			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(6);
+			for (auto* worker : {&firstDrain, &secondDrain, &repeatedClose})
+				if (worker->valid() && worker->wait_until(deadline) != std::future_status::ready)
+					UnknownCompletion("concurrent inspection drain/close did not finish");
+		};
+		try
+		{
+			firstDrain = std::async(std::launch::async,
+									[&]
+									{
+										ready.count_down();
+										start.wait();
+										return inspection.Drain(s_timeout);
+									});
+			secondDrain = std::async(std::launch::async,
 									 [&]
 									 {
-										 start.arrive_and_wait();
-										 return inspection.Drain(Timeout);
+										 ready.count_down();
+										 start.wait();
+										 return inspection.Drain(s_timeout);
 									 });
-		auto secondDrain = std::async(std::launch::async,
-									  [&]
-									  {
-										  start.arrive_and_wait();
-										  return inspection.Drain(Timeout);
-									  });
-		auto repeatedClose = std::async(std::launch::async,
-										[&]
-										{
-											start.arrive_and_wait();
-											return inspection.Close(Timeout);
-										});
-		start.arrive_and_wait();
+			repeatedClose = std::async(std::launch::async,
+									   [&]
+									   {
+										   ready.count_down();
+										   start.wait();
+										   return inspection.Close(s_timeout);
+									   });
+			Await(
+				[&]
+				{
+					return ready.try_wait();
+				},
+				"Inspection drain/close workers did not start");
+		}
+		catch (...)
+		{
+			start.count_down();
+			awaitWorkers();
+			throw;
+		}
+		start.count_down();
+		awaitWorkers();
 		Check(firstDrain.get(), "first concurrent post-stop inspection drain");
 		Check(secondDrain.get(), "second concurrent post-stop inspection drain");
 		Check(repeatedClose.get(), "concurrent repeated inspection close");
@@ -571,34 +637,34 @@ std::shared_ptr<VulkanInspectionFrame> EarlyClose(VulkanBackend& backend, const 
 }
 
 using RawColor = std::array<std::uint8_t, 4>;
-constexpr std::array<RawColor, 4> RawColors{
+constexpr std::array<RawColor, 4> s_rawColors{
 	{{{64, 128, 192, 77}}, {{17, 45, 93, 125}}, {{111, 37, 201, 222}}, {{33, 199, 78, 159}}}};
 
-constexpr std::array<float, 4> HdrColor{-0.5f, 0.5f, 2.0f, 0.25f};
+constexpr std::array<float, 4> s_hdrColor{-0.5f, 0.5f, 2.0f, 0.25f};
 
-void PaintRaw(Device& device, VulkanBackend& backend, const VulkanImage& image)
+static void PaintRaw(Device& device, VulkanBackend& backend, const VulkanImage& image)
 {
 	const bool hdr = ColorPixelBytes(image.format) > 4 || image.format == VK_FORMAT_A2B10G10R10_UNORM_PACK32;
-	auto patch = backend.CreateImage(hdr ? image.format : VK_FORMAT_R8G8B8A8_UNORM, {4, 5}, 1, SourceUsage);
-	Check(backend.InitializeImage(patch)->Wait(Timeout), "initialize raw source patch");
+	auto patch = backend.CreateImage(hdr ? image.format : VK_FORMAT_R8G8B8A8_UNORM, {4, 5}, 1, s_sourceUsage);
+	Check(backend.InitializeImage(patch)->Wait(s_timeout), "initialize raw source patch");
 	Commands work(device);
-	VulkanImageBarrier(work.command, image, image.ApplicationLayout(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+	VulkanImageBarrier(work.Handle(), image, image.ApplicationLayout(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 					   VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
 	VkClearColorValue border{{0, 0, 1, 1}};
 	VkImageSubresourceRange all{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, image.layers};
-	vkCmdClearColorImage(work.command, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &border, 1, &all);
-	VulkanImageBarrier(work.command, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+	vkCmdClearColorImage(work.Handle(), image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &border, 1, &all);
+	VulkanImageBarrier(work.Handle(), image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 					   VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
-	VulkanImageBarrier(work.command, *patch, patch->ApplicationLayout(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+	VulkanImageBarrier(work.Handle(), *patch, patch->ApplicationLayout(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 					   VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
 	const VkImageSubresourceRange slice{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-	for (std::uint32_t layer = 0; layer < RawColors.size(); ++layer)
+	for (std::uint32_t layer = 0; layer < s_rawColors.size(); ++layer)
 	{
 		VkClearColorValue color{};
 		for (std::uint32_t channel = 0; channel < 4; ++channel)
-			color.float32[channel] = hdr ? HdrColor[channel] : static_cast<float>(RawColors[layer][channel]) / 255;
-		vkCmdClearColorImage(work.command, patch->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &color, 1, &slice);
-		VulkanImageBarrier(work.command, *patch, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			color.float32[channel] = hdr ? s_hdrColor[channel] : static_cast<float>(s_rawColors[layer][channel]) / 255;
+		vkCmdClearColorImage(work.Handle(), patch->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &color, 1, &slice);
+		VulkanImageBarrier(work.Handle(), *patch, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 						   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
 						   VK_ACCESS_TRANSFER_READ_BIT);
 		VkImageCopy copy{};
@@ -606,20 +672,20 @@ void PaintRaw(Device& device, VulkanBackend& backend, const VulkanImage& image)
 		copy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, layer, 1};
 		copy.dstOffset = {static_cast<std::int32_t>(2 + layer), static_cast<std::int32_t>(3 + layer), 0};
 		copy.extent = {4, 5, 1};
-		vkCmdCopyImage(work.command, patch->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image.image,
+		vkCmdCopyImage(work.Handle(), patch->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image.image,
 					   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
-		VulkanImageBarrier(work.command, *patch, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+		VulkanImageBarrier(work.Handle(), *patch, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
 						   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT,
 						   VK_ACCESS_TRANSFER_WRITE_BIT);
 	}
-	VulkanImageBarrier(work.command, *patch, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, patch->ApplicationLayout(),
+	VulkanImageBarrier(work.Handle(), *patch, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, patch->ApplicationLayout(),
 					   VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
-	VulkanImageBarrier(work.command, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, image.ApplicationLayout(),
+	VulkanImageBarrier(work.Handle(), image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, image.ApplicationLayout(),
 					   VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
 	work.Finish();
 }
 
-std::shared_ptr<const FrameLayers> RawLayers(XrSwapchain source, RuntimeTime time)
+static std::shared_ptr<const FrameLayers> RawLayers(XrSwapchain source, RuntimeTime time)
 {
 	ProjectionLayerDescription projection;
 	projection.space.worldPose = Pose();
@@ -641,25 +707,25 @@ struct RawRetention
 	std::vector<std::shared_ptr<VulkanInspectionFrame>> frames;
 	std::vector<SnapshotRecord> readers;
 };
-RawRetention CaptureRaw(Device& device, const VulkanBinding& binding,
-						const std::shared_ptr<VulkanInspectionValidation>& validation, VkFormat format)
+static RawRetention CaptureRaw(Device& device, const VulkanBinding& binding,
+							   const std::shared_ptr<VulkanInspectionValidation>& validation, VkFormat format)
 {
 	RawRetention retained;
-	VulkanBackend backend(binding, 8, SharingExtensions, VK_API_VERSION_1_1);
-	VulkanExternalDevice external(backend.Device(), SharingExtensions, VK_API_VERSION_1_1);
+	VulkanBackend backend(binding, 8, s_sharingExtensions, VK_API_VERSION_1_1);
+	VulkanExternalDevice external(backend.Device(), s_sharingExtensions, VK_API_VERSION_1_1);
 	VulkanInspection inspection(external.Identity(), 8, validation);
-	auto source = backend.CreateImage(format, {16, 16}, 4, SourceUsage);
-	Check(backend.InitializeImage(source)->Wait(Timeout), "initialize four-view raw source");
+	auto source = backend.CreateImage(format, {16, 16}, 4, s_sourceUsage);
+	Check(backend.InitializeImage(source)->Wait(s_timeout), "initialize four-view raw source");
 	PaintRaw(device, backend, *source);
 	const auto sourceId = reinterpret_cast<XrSwapchain>(201);
 	for (std::uint32_t index = 0; index < 5; ++index)
 	{
 		const CaptureTarget target{CaptureKind::LayerView, index < 4 ? 0U : 1U, index < 4 ? index : 0U};
 		DebugCapture capture(backend, target);
-		Require(capture.controller->Snapshot().layerViews, "Actual raw capture capability missing");
-		auto layers = RawLayers(sourceId, capture.prediction.displayTime);
+		Require(capture.m_controller->Snapshot().layerViews, "Actual raw capture capability missing");
+		auto layers = RawLayers(sourceId, capture.m_prediction.displayTime);
 		auto plan = Plan(*layers, 8, 6);
-		const FrameKey key{capture.session->Snapshot().generation, capture.prediction.id};
+		const FrameKey key{capture.m_session->Snapshot().generation, capture.m_prediction.id};
 		std::shared_ptr<VulkanFrame> composed, raw;
 		Require(backend.Prepare(
 					plan,
@@ -667,11 +733,11 @@ RawRetention CaptureRaw(Device& device, const VulkanBinding& binding,
 					{
 						return source;
 					},
-					composed, capture.session->Captures().ProducerReservation(key)) == XR_SUCCESS,
+					composed, capture.m_session->Captures().ProducerReservation(key)) == XR_SUCCESS,
 				"Prepare reserved composed companion for raw capture");
 		const auto selected = FindLayerImage(*layers, target.layer, target.view);
 		Require(selected.has_value(), "Find selected raw source metadata");
-		const auto rawToken = capture.session->Captures().ProducerReservation(key, target);
+		const auto rawToken = capture.m_session->Captures().ProducerReservation(key, target);
 		auto invalid = *selected;
 		invalid.rectangle.offset.x = 16;
 		auto unchanged = composed;
@@ -691,7 +757,7 @@ RawRetention CaptureRaw(Device& device, const VulkanBinding& binding,
 						{
 							return source;
 						},
-						raw, capture.session->Captures().ProducerReservation(key, target)) == XR_SUCCESS,
+						raw, capture.m_session->Captures().ProducerReservation(key, target)) == XR_SUCCESS,
 				"Prepare exact selected layer/view GPU copy");
 		unchanged = raw;
 		Require(backend.PrepareCapture(
@@ -711,10 +777,10 @@ RawRetention CaptureRaw(Device& device, const VulkanBinding& binding,
 				"Rejected duplicate batch consumed a producer or accepted partial GPU work");
 		const std::array batch{composed, raw};
 		const std::array outputs{CaptureOutput{target, output}};
-		XrFrameEndInfo info{XR_TYPE_FRAME_END_INFO,			  nullptr, capture.prediction.displayTime.value.count(),
+		XrFrameEndInfo info{XR_TYPE_FRAME_END_INFO,			  nullptr, capture.m_prediction.displayTime.value.count(),
 							XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 2,	   nullptr};
-		Require(capture.session->EndFrame(
-					capture.prediction, &info, layers, displayTransfer->Output(),
+		Require(capture.m_session->EndFrame(
+					capture.m_prediction, &info, layers, displayTransfer->Output(),
 					[&]
 					{
 						const auto result = backend.Submit(batch);
@@ -727,17 +793,17 @@ RawRetention CaptureRaw(Device& device, const VulkanBinding& binding,
 					},
 					outputs) == XR_SUCCESS,
 				"Atomic raw plus composed native frame acceptance");
-		const auto operation = capture.AwaitOperation(capture.step);
-		Require(operation.progress == DebugProgress::SnapshotReady && operation.capture == capture.capture,
+		const auto operation = capture.AwaitOperation(capture.m_step);
+		Require(operation.progress == DebugProgress::SnapshotReady && operation.capture == capture.m_capture,
 				"Raw GPU readiness needed another host frame call or selected composed output");
-		auto reader = capture.session->Captures().Read(capture.capture);
+		auto reader = capture.m_session->Captures().Read(capture.m_capture);
 		Require(reader && reader->phase == SnapshotPhase::Ready && reader->target == target && reader->frame == key &&
 					reader->output.get() == output.get() && reader->metadata && reader->metadata->submission &&
 					reader->metadata->submission->layers == layers && output->Image().layers == 1 &&
 					output->Image().extent.width == 4 && output->Image().extent.height == 5 &&
 					output->Image().format == format && output->View(0),
 				"Raw capture lost exact target, rectangle, format, metadata or single-slice identity");
-		Require(capture.AwaitOperation(capture.Command(DebugCommand::Release, capture.capture)).progress ==
+		Require(capture.AwaitOperation(capture.Command(DebugCommand::Release, capture.m_capture)).progress ==
 					DebugProgress::Released,
 				"Release exact raw capture");
 		retained.frames.push_back(std::move(output));
@@ -746,17 +812,17 @@ RawRetention CaptureRaw(Device& device, const VulkanBinding& binding,
 	// Replace every source byte; retained outputs must still describe their original views.
 	{
 		Commands work(device);
-		VulkanImageBarrier(work.command, *source, source->ApplicationLayout(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		VulkanImageBarrier(work.Handle(), *source, source->ApplicationLayout(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 						   VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
 		VkClearColorValue clear{{1, 0, 1, 1}};
 		VkImageSubresourceRange all{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 4};
-		vkCmdClearColorImage(work.command, source->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clear, 1, &all);
-		VulkanImageBarrier(work.command, *source, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, source->ApplicationLayout(),
+		vkCmdClearColorImage(work.Handle(), source->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clear, 1, &all);
+		VulkanImageBarrier(work.Handle(), *source, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, source->ApplicationLayout(),
 						   VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
 		work.Finish();
 	}
-	Check(backend.Drain(Timeout), "drain raw and composed common producer fence");
-	Check(inspection.Close(Timeout), "close raw inspection service");
+	Check(backend.Drain(s_timeout), "drain raw and composed common producer fence");
+	Check(inspection.Close(s_timeout), "close raw inspection service");
 	source.reset();
 	Require(backend.Close() == XR_SUCCESS, "Raw readers retained borrowed application resources");
 	std::printf("case=exact-layer-view format=%d rawOuter=2 rawInset=2 rawQuad=1 crop=4x5 preview=8x6 atomicBatch=yes "
@@ -764,7 +830,7 @@ RawRetention CaptureRaw(Device& device, const VulkanBinding& binding,
 				static_cast<int>(format));
 	return retained;
 }
-void VerifyRaw(const RawRetention& retained)
+static void VerifyRaw(const RawRetention& retained)
 {
 	Require(retained.frames.size() == 5 && retained.readers.size() == 5, "Retained raw target count changed");
 	for (std::size_t index = 0; index < retained.frames.size(); ++index)
@@ -773,9 +839,10 @@ void VerifyRaw(const RawRetention& retained)
 		AwaitComplete(*ticket);
 		auto pixels = ticket->Pixels();
 		Require(pixels && pixels->format == retained.frames[index]->Image().format && pixels->width == 4 &&
-					pixels->height == 5 && pixels->layers == 1 && pixels->rgba.size() == 4 * 5 * ColorPixelBytes(pixels->format),
+					pixels->height == 5 && pixels->layers == 1 &&
+					pixels->rgba.size() == 4 * 5 * ColorPixelBytes(pixels->format),
 				"Delayed raw export shape/format mismatch");
-		const auto& expected = RawColors[std::min<std::size_t>(index, 3)];
+		const auto& expected = s_rawColors[std::min<std::size_t>(index, 3)];
 		const auto stride = ColorPixelBytes(pixels->format);
 		const bool packed = pixels->format == VK_FORMAT_A2B10G10R10_UNORM_PACK32;
 		const auto bytes = std::as_bytes(std::span(pixels->rgba));
@@ -787,16 +854,18 @@ void VerifyRaw(const RawRetention& retained)
 				for (std::size_t channel = 0; channel < 4; ++channel)
 				{
 					const float levels = channel == 3 ? 3.0f : 1023.0f;
-					const float value = packed ? std::round(std::clamp(HdrColor[channel], 0.0f, 1.0f) * levels) / levels : HdrColor[channel];
+					const float value = packed
+											? std::round(std::clamp(s_hdrColor[channel], 0.0f, 1.0f) * levels) / levels
+											: s_hdrColor[channel];
 					Require(std::abs(color[channel] - value) <= (packed && channel < 3 ? 1.0f / 1023 : 0.0001f),
-						"HDR crop/slice/range/alpha changed");
+							"HDR crop/slice/range/alpha changed");
 				}
 			}
 			auto provider = control::CreateVulkanImageInspectionProvider();
 			auto reader = provider->Retain(retained.frames[index]);
 			auto exported = reader->Export(std::nullopt);
 			Require(exported->ByteSize() == bytes.size() && exported->Description().format == pixels->format,
-				"Control HDR export size/format mismatch");
+					"Control HDR export size/format mismatch");
 			AwaitComplete(*exported);
 			Require(std::ranges::equal(exported->Read(), bytes), "Control HDR export changed exact source bytes");
 		}
@@ -810,21 +879,21 @@ void VerifyRaw(const RawRetention& retained)
 	std::puts("case=delayed-exact-raw-export-after-application-device-destruction everyByte=checked PASS");
 }
 
-SnapshotAdmission Promote(const std::shared_ptr<const FrameOutput>& output, const FramePool& pool,
-						  std::shared_ptr<FrameReservation> reservation)
+static SnapshotAdmission Promote(const std::shared_ptr<const FrameOutput>& output, const FramePool& pool,
+								 std::shared_ptr<FrameReservation> reservation)
 {
 	const auto frame = std::dynamic_pointer_cast<const VulkanInspectionFrame>(output);
 	return frame && frame->PromoteCaptureBudget(pool, std::move(reservation)) ? SnapshotAdmission::Accepted
 																			  : SnapshotAdmission::Capacity;
 }
 
-SnapshotRecord CaptureOwned(VulkanBackend& backend, VulkanInspection& inspection,
-							const std::shared_ptr<VulkanImage>& source, XrSwapchain sourceId)
+static SnapshotRecord CaptureOwned(VulkanBackend& backend, VulkanInspection& inspection,
+								   const std::shared_ptr<VulkanImage>& source, XrSwapchain sourceId)
 {
 	DebugCapture capture(backend);
-	auto layers = Layers(sourceId, capture.prediction.displayTime);
+	auto layers = Layers(sourceId, capture.m_prediction.displayTime);
 	auto plan = Plan(*layers, 32, 24);
-	const FrameKey key{capture.session->Snapshot().generation, capture.prediction.id};
+	const FrameKey key{capture.m_session->Snapshot().generation, capture.m_prediction.id};
 	std::shared_ptr<VulkanFrame> producer;
 	Require(backend.Prepare(
 				plan,
@@ -832,95 +901,99 @@ SnapshotRecord CaptureOwned(VulkanBackend& backend, VulkanInspection& inspection
 				{
 					return source;
 				},
-				producer, capture.session->Captures().ProducerReservation(key)) == XR_SUCCESS,
+				producer, capture.m_session->Captures().ProducerReservation(key)) == XR_SUCCESS,
 			"Prepare exact retained budget image");
 	auto transfer = inspection.Prepare(producer);
 	auto output = transfer->Output();
-	XrFrameEndInfo info{XR_TYPE_FRAME_END_INFO,			  nullptr, capture.prediction.displayTime.value.count(),
+	XrFrameEndInfo info{XR_TYPE_FRAME_END_INFO,			  nullptr, capture.m_prediction.displayTime.value.count(),
 						XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1,	   nullptr};
-	Require(capture.session->EndFrame(capture.prediction, &info, layers, output,
-									  [&]
-									  {
-										  const auto result = backend.Submit(producer);
-										  if (result == XR_SUCCESS)
-											  transfer->Commit();
-										  return result;
-									  }) == XR_SUCCESS,
+	Require(capture.m_session->EndFrame(capture.m_prediction, &info, layers, output,
+										[&]
+										{
+											const auto result = backend.Submit(producer);
+											if (result == XR_SUCCESS)
+												transfer->Commit();
+											return result;
+										}) == XR_SUCCESS,
 			"Submit exact retained budget image");
-	capture.AwaitOperation(capture.step);
-	auto reader = capture.session->Captures().Read(capture.capture);
+	capture.AwaitOperation(capture.m_step);
+	auto reader = capture.m_session->Captures().Read(capture.m_capture);
 	Require(reader && reader->phase == SnapshotPhase::Ready, "Retain exact budget snapshot");
-	capture.AwaitOperation(capture.Command(DebugCommand::Release, capture.capture));
+	capture.AwaitOperation(capture.Command(DebugCommand::Release, capture.m_capture));
 	return std::move(*reader);
 }
 
-SnapshotRecord CaptureSequence(Device& device, const VulkanBinding& binding,
-	const std::shared_ptr<VulkanInspectionValidation>& validation)
+static SnapshotRecord CaptureSequence(Device& device, const VulkanBinding& binding,
+									  const std::shared_ptr<VulkanInspectionValidation>& validation)
 {
-	VulkanBackend backend(binding, 1, SharingExtensions, VK_API_VERSION_1_1, 1);
-	VulkanExternalDevice external(backend.Device(), SharingExtensions, VK_API_VERSION_1_1);
+	VulkanBackend backend(binding, 1, s_sharingExtensions, VK_API_VERSION_1_1, 1);
+	VulkanExternalDevice external(backend.Device(), s_sharingExtensions, VK_API_VERSION_1_1);
 	VulkanInspection inspection(external.Identity(), 2, validation);
-	auto source = backend.CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {16, 16}, 2, SourceUsage);
-	Check(backend.InitializeImage(source)->Wait(Timeout), "Initialize sequence capture source");
-	Paint(device, *source, Original);
+	auto source = backend.CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {16, 16}, 2, s_sourceUsage);
+	Check(backend.InitializeImage(source)->Wait(s_timeout), "Initialize sequence capture source");
+	Paint(device, *source, s_original);
 	const auto sourceId = reinterpret_cast<XrSwapchain>(402);
-	Instance instance(reinterpret_cast<XrInstance>(400), {}, XR_MAKE_VERSION(1, 0, 27));
+	simxr::Instance instance(reinterpret_cast<XrInstance>(400), {}, XR_MAKE_VERSION(1, 0, 27));
 	Session session(reinterpret_cast<XrSession>(401), instance);
 	Require(session.ConfigureCapturePool(backend.Reservations(), true) == XR_SUCCESS,
-		"Configure sequence native capture budget");
+			"Configure sequence native capture budget");
 	FrameSchedulerConfig timing;
 	timing.period = Duration{5000000};
 	const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
 	Require(session.Ready(timing.epoch) == XR_SUCCESS && session.Begin(begin, timing) == XR_SUCCESS,
-		"Begin real-time native sequence capture");
+			"Begin real-time native sequence capture");
 	PoseSequenceStep step;
 	step.capture = true;
 	step.head = HeadPosePatch{};
 	step.head->position[0] = 4;
 	const CommandSource owner{CommandSourceKind::Mcp, 91};
-	const auto sequence = session.Commands().StartPoseSequence(owner,
-		std::make_shared<const PoseSequence>(std::vector{step}, true));
+	const auto sequence =
+		session.Commands().StartPoseSequence(owner, std::make_shared<const PoseSequence>(std::vector{step}, true));
 	FramePrediction prediction;
 	Require(session.WaitFrame(prediction) == XR_SUCCESS && session.BeginFrame() == XR_SUCCESS,
-		"Issue native sequence frame without a manual permit");
+			"Issue native sequence frame without a manual permit");
 	const FrameKey key{session.Snapshot().generation, prediction.id};
 	const auto receipt = session.History().Find(key)->sequenceCapture;
 	Require(receipt && receipt->request.sequence == sequence->id && receipt->request.frame == key.frame &&
-		receipt->reservation.result == SnapshotAdmission::Accepted && !session.Scheduler().Snapshot().paused,
-		"Native sequence capture changed pacing or lost frame identity");
+				receipt->reservation.result == SnapshotAdmission::Accepted && !session.Scheduler().Snapshot().paused,
+			"Native sequence capture changed pacing or lost frame identity");
 	auto layers = Layers(sourceId, prediction.displayTime);
 	auto plan = Plan(*layers, 32, 24);
 	std::shared_ptr<VulkanFrame> producer;
-	Require(backend.Prepare(plan,
-		[&](XrSwapchain)
-		{
-			return source;
-		}, producer, session.Captures().ProducerReservation(key)) == XR_SUCCESS,
-		"Prepare sequence's reserved native producer");
+	Require(backend.Prepare(
+				plan,
+				[&](XrSwapchain)
+				{
+					return source;
+				},
+				producer, session.Captures().ProducerReservation(key)) == XR_SUCCESS,
+			"Prepare sequence's reserved native producer");
 	auto transfer = inspection.Prepare(producer);
 	auto output = transfer->Output();
-	const XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO, nullptr, prediction.displayTime.value.count(),
-		XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1, nullptr};
+	const XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO,		   nullptr, prediction.displayTime.value.count(),
+							 XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1,		nullptr};
 	Require(session.EndFrame(prediction, &end, layers, output,
-		[&]
-		{
-			const auto result = backend.Submit(producer);
-			if (result == XR_SUCCESS)
-				transfer->Commit();
-			return result;
-		}) == XR_SUCCESS, "Submit native sequence capture");
+							 [&]
+							 {
+								 const auto result = backend.Submit(producer);
+								 if (result == XR_SUCCESS)
+									 transfer->Commit();
+								 return result;
+							 }) == XR_SUCCESS,
+			"Submit native sequence capture");
 	AwaitComplete(*output);
 	session.Captures().Poll();
 	auto reader = session.Captures().Read(receipt->reservation.id);
 	Require(reader && reader->phase == SnapshotPhase::Ready && reader->metadata->key == key &&
-		reader->metadata->submission->commands->configuration.tracking.head.pose.position.x == 4,
-		"Sequence pixels do not retain their exact commanded frame");
-	Paint(device, *source, Reused);
+				reader->metadata->submission->commands->configuration.tracking.head.pose.position.x == 4,
+			"Sequence pixels do not retain their exact commanded frame");
+	Paint(device, *source, s_reused);
 	Require(session.WaitFrame(prediction) == XR_SUCCESS, "Sequence capacity pressure stopped real-time frames");
 	const auto pressure = session.History().Find({key.generation, prediction.id})->sequenceCapture;
 	Require(pressure && pressure->reservation.result == SnapshotAdmission::Capacity &&
-		!pressure->reservation.id.value && session.BeginFrame() == XR_SUCCESS && session.EndFrame(prediction) == XR_SUCCESS,
-		"Native capture pressure lost its explicit result or substituted a frame");
+				!pressure->reservation.id.value && session.BeginFrame() == XR_SUCCESS &&
+				session.EndFrame(prediction) == XR_SUCCESS,
+			"Native capture pressure lost its explicit result or substituted a frame");
 	session.ReleaseCommandSource(owner, true);
 	session.Captures().Poll();
 	Require(!session.Captures().Read(receipt->reservation.id), "Disconnected sequence retained its capture ticket");
@@ -929,11 +1002,12 @@ SnapshotRecord CaptureSequence(Device& device, const VulkanBinding& binding,
 	transfer.reset();
 	producer.reset();
 	output.reset();
-	Check(backend.Drain(Timeout), "Drain sequence capture producer");
-	Check(inspection.Close(Timeout), "Close sequence inspection service");
+	Check(backend.Drain(s_timeout), "Drain sequence capture producer");
+	Check(inspection.Close(s_timeout), "Close sequence inspection service");
 	source.reset();
 	Require(backend.Close() == XR_SUCCESS, "Retained sequence image held borrowed application resources");
-	std::puts("case=sequence-capture realtime=yes exactPoseFrame=yes capacity=explicit sourceReused=yes ownerReleased=yes PASS");
+	std::puts("case=sequence-capture realtime=yes exactPoseFrame=yes capacity=explicit sourceReused=yes "
+			  "ownerReleased=yes PASS");
 	return std::move(*reader);
 }
 
@@ -944,8 +1018,8 @@ struct LiveResult
 	std::shared_ptr<VulkanInspectionFrame> output;
 	bool submitted = false;
 };
-LiveResult SubmitLive(Session& session, VulkanBackend& backend, VulkanInspection& inspection,
-					  const std::shared_ptr<VulkanImage>& source, XrSwapchain sourceId)
+static LiveResult SubmitLive(Session& session, VulkanBackend& backend, VulkanInspection& inspection,
+							 const std::shared_ptr<VulkanImage>& source, XrSwapchain sourceId)
 {
 	FramePrediction prediction;
 	Require(session.WaitFrame(prediction) == XR_SUCCESS && session.BeginFrame() == XR_SUCCESS,
@@ -986,22 +1060,22 @@ LiveResult SubmitLive(Session& session, VulkanBackend& backend, VulkanInspection
 	return result;
 }
 
-std::vector<SnapshotRecord> LiveCapacity(Device& device, const VulkanBinding& binding,
-										 const std::shared_ptr<VulkanInspectionValidation>& validation)
+static std::vector<SnapshotRecord> LiveCapacity(Device& device, const VulkanBinding& binding,
+												const std::shared_ptr<VulkanInspectionValidation>& validation)
 {
-	VulkanBackend backend(binding, 2, SharingExtensions, VK_API_VERSION_1_1, 1);
-	VulkanExternalDevice external(backend.Device(), SharingExtensions, VK_API_VERSION_1_1);
+	VulkanBackend backend(binding, 2, s_sharingExtensions, VK_API_VERSION_1_1, 1);
+	VulkanExternalDevice external(backend.Device(), s_sharingExtensions, VK_API_VERSION_1_1);
 	VulkanInspection inspection(external.Identity(), 4, validation);
-	auto source = backend.CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {16, 16}, 2, SourceUsage);
-	Check(backend.InitializeImage(source)->Wait(Timeout), "Initialize live-pressure source");
-	Paint(device, *source, Original);
+	auto source = backend.CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {16, 16}, 2, s_sourceUsage);
+	Check(backend.InitializeImage(source)->Wait(s_timeout), "Initialize live-pressure source");
+	Paint(device, *source, s_original);
 	const auto sourceId = reinterpret_cast<XrSwapchain>(202);
 	std::optional<SnapshotRecord> first = CaptureOwned(backend, inspection, source, sourceId);
 	auto second = CaptureOwned(backend, inspection, source, sourceId);
 	Require(backend.Reservations().InUse() == 2 && !backend.Reservations().Reserve(),
 			"Exhaust exact snapshot capacity");
-	auto instance = std::make_shared<Instance>(reinterpret_cast<XrInstance>(300), std::span<const char* const>{},
-											   XR_MAKE_VERSION(1, 0, 27));
+	auto instance = std::make_shared<simxr::Instance>(reinterpret_cast<XrInstance>(300), std::span<const char* const>{},
+													  XR_MAKE_VERSION(1, 0, 27));
 	Session session(reinterpret_cast<XrSession>(301), instance);
 	Require(session.ConfigureCapturePool(backend.Reservations(), true, Promote) == XR_SUCCESS,
 			"Configure live snapshot promotion");
@@ -1055,7 +1129,7 @@ std::vector<SnapshotRecord> LiveCapacity(Device& device, const VulkanBinding& bi
 	const auto host = session.ClockSource()->Now();
 	Require(session.Display().Resume(host, tick) && session.Scheduler().Resume(host, tick) == XR_SUCCESS,
 			"Resume after exact boundary promotion");
-	Paint(device, *source, Reused);
+	Paint(device, *source, s_reused);
 	auto resumed = SubmitLive(session, backend, inspection, source, sourceId);
 	Require(resumed.submitted && resumed.output && backend.Reservations().InUse() == 2,
 			"Retained boundary snapshot prevented ordinary output after resume");
@@ -1065,7 +1139,7 @@ std::vector<SnapshotRecord> LiveCapacity(Device& device, const VulkanBinding& bi
 	live.output.reset();
 	session.Close();
 	resumed.output.reset();
-	Check(inspection.Drain(Timeout), "Drain live completion and retirement");
+	Check(inspection.Drain(s_timeout), "Drain live completion and retirement");
 	session.Display().PollRetired();
 	backend.RetireCompleted();
 	Await(
@@ -1112,8 +1186,8 @@ std::vector<SnapshotRecord> LiveCapacity(Device& device, const VulkanBinding& bi
 				"Live capacity pressure repeated a stale image instead of the exact latest clear");
 		pressure.Close();
 	}
-	Check(inspection.Close(Timeout), "Close live-budget inspector");
-	Check(backend.Drain(Timeout), "Drain independent live and debug producers");
+	Check(inspection.Close(s_timeout), "Close live-budget inspector");
+	Check(backend.Drain(s_timeout), "Drain independent live and debug producers");
 	source.reset();
 	Require(backend.Close() == XR_SUCCESS && !backend.LiveReservations().Reserve(),
 			"Close native live budget with retained owned snapshots");
@@ -1122,7 +1196,7 @@ std::vector<SnapshotRecord> LiveCapacity(Device& device, const VulkanBinding& bi
 	return {std::move(second), std::move(*pinned)};
 }
 
-bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validation)
+static bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validation)
 {
 	std::shared_ptr<VulkanInspectionFrame> retained, resized, closedOutput;
 	auto retirements = std::make_shared<std::pair<std::mutex, std::vector<SharedImageKey>>>();
@@ -1141,149 +1215,164 @@ bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validat
 			std::puts("SKIP: adapter lacks complete opaque-FD image and binary-semaphore export/import capability");
 			return false;
 		}
-		const VulkanBinding binding{instance.handle, device.physical, device.native, device.family, device.index};
-		for (const auto format :
-			 {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_B8G8R8A8_SRGB, VK_FORMAT_B8G8R8A8_UNORM})
-		{
-			VulkanBackend backend(binding, 2, SharingExtensions, VK_API_VERSION_1_1);
-			VulkanExternalDevice external(backend.Device(), SharingExtensions, VK_API_VERSION_1_1);
-			VulkanInspection inspection(external.Identity(), 1, validation);
-			auto source = backend.CreateImage(format, {16, 16}, 4, SourceUsage);
-			Check(backend.InitializeImage(source)->Wait(Timeout), "Initialize automatic retention source");
-			PaintRaw(device, backend, *source);
-			automatic.push_back(simxr::probe::RetainSubmittedLayers(backend, inspection, source));
-			Paint(device, *source, Reused);
-			Check(inspection.Close(Timeout), "Close automatic retention inspector");
-			Check(backend.Drain(Timeout), "Drain automatic retention producers");
-			source.reset();
-			Require(backend.Close() == XR_SUCCESS, "Automatic retention kept borrowed native images alive");
-		}
-		sequenceRetention = CaptureSequence(device, binding, validation);
-		liveRetention = LiveCapacity(device, binding, validation);
-		rawRetention = CaptureRaw(device, binding, validation, VK_FORMAT_R8G8B8A8_UNORM);
-		srgbRawRetention = CaptureRaw(device, binding, validation, VK_FORMAT_R8G8B8A8_SRGB);
-		bgraRetention[0] = CaptureRaw(device, binding, validation, VK_FORMAT_B8G8R8A8_UNORM);
-		bgraRetention[1] = CaptureRaw(device, binding, validation, VK_FORMAT_B8G8R8A8_SRGB);
-		hdrRetention[0] = CaptureRaw(device, binding, validation, VK_FORMAT_R16G16B16A16_SFLOAT);
-		hdrRetention[1] = CaptureRaw(device, binding, validation, VK_FORMAT_R32G32B32A32_SFLOAT);
-		hdrRetention[2] = CaptureRaw(device, binding, validation, VK_FORMAT_A2B10G10R10_UNORM_PACK32);
-		{
-			VulkanBackend disabled(binding, 1);
-			Require(!disabled.Sharing(), "Unconfigured logical sharing became enabled");
-			Require(disabled.Close() == XR_SUCCESS, "Close unconfigured backend");
-		}
-		CancelLargeBatch(binding, validation);
-		VulkanBackend backend(binding, 3, SharingExtensions, VK_API_VERSION_1_1);
-		Require(backend.Sharing(), "Explicit logical external-sharing configuration unavailable");
-		bool rejectedBorrow = false;
 		try
 		{
-			VulkanBackend invalid(backend.Device());
+			const VulkanBinding binding{instance.handle, device.m_physical, device.m_native, device.m_family,
+										device.m_index};
+			for (const auto format :
+				 {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_B8G8R8A8_SRGB, VK_FORMAT_B8G8R8A8_UNORM})
+			{
+				VulkanBackend backend(binding, 2, s_sharingExtensions, VK_API_VERSION_1_1);
+				VulkanExternalDevice external(backend.Device(), s_sharingExtensions, VK_API_VERSION_1_1);
+				VulkanInspection inspection(external.Identity(), 1, validation);
+				auto source = backend.CreateImage(format, {16, 16}, 4, s_sourceUsage);
+				Check(backend.InitializeImage(source)->Wait(s_timeout), "Initialize automatic retention source");
+				PaintRaw(device, backend, *source);
+				automatic.push_back(simxr::probe::RetainSubmittedLayers(backend, inspection, source));
+				Paint(device, *source, s_reused);
+				Check(inspection.Close(s_timeout), "Close automatic retention inspector");
+				Check(backend.Drain(s_timeout), "Drain automatic retention producers");
+				source.reset();
+				Require(backend.Close() == XR_SUCCESS, "Automatic retention kept borrowed native images alive");
+			}
+			sequenceRetention = CaptureSequence(device, binding, validation);
+			liveRetention = LiveCapacity(device, binding, validation);
+			rawRetention = CaptureRaw(device, binding, validation, VK_FORMAT_R8G8B8A8_UNORM);
+			srgbRawRetention = CaptureRaw(device, binding, validation, VK_FORMAT_R8G8B8A8_SRGB);
+			bgraRetention[0] = CaptureRaw(device, binding, validation, VK_FORMAT_B8G8R8A8_UNORM);
+			bgraRetention[1] = CaptureRaw(device, binding, validation, VK_FORMAT_B8G8R8A8_SRGB);
+			hdrRetention[0] = CaptureRaw(device, binding, validation, VK_FORMAT_R16G16B16A16_SFLOAT);
+			hdrRetention[1] = CaptureRaw(device, binding, validation, VK_FORMAT_R32G32B32A32_SFLOAT);
+			hdrRetention[2] = CaptureRaw(device, binding, validation, VK_FORMAT_A2B10G10R10_UNORM_PACK32);
+			{
+				VulkanBackend disabled(binding, 1);
+				Require(!disabled.Sharing(), "Unconfigured logical sharing became enabled");
+				Require(disabled.Close() == XR_SUCCESS, "Close unconfigured backend");
+			}
+			CancelLargeBatch(binding, validation);
+			VulkanBackend backend(binding, 3, s_sharingExtensions, VK_API_VERSION_1_1);
+			Require(backend.Sharing(), "Explicit logical external-sharing configuration unavailable");
+			bool rejectedBorrow = false;
+			try
+			{
+				VulkanBackend invalid(backend.Device());
+			}
+			catch (const std::invalid_argument&)
+			{
+				rejectedBorrow = true;
+			}
+			Require(rejectedBorrow, "Borrowed device accepted as an independently owned compositor");
+			VulkanExternalDevice external(backend.Device(), s_sharingExtensions, VK_API_VERSION_1_1);
+			VerifyOwnedDeviceAcquisition(external.Identity(), validation);
+			VulkanInspection inspection(external.Identity(), 3, validation);
+			const auto sourceId = reinterpret_cast<XrSwapchain>(200);
+			auto source = backend.CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {16, 16}, 2, s_sourceUsage);
+			{
+				auto ticket = backend.InitializeImage(source);
+				Check(ticket->Wait(s_timeout), "initialize inspection source");
+			}
+			Paint(device, *source, s_original);
+			RejectedPreparation(backend, source, external.Identity(), validation);
+			closedOutput = EarlyClose(backend, source, external.Identity(), validation);
+			{
+				DebugCapture capture(backend);
+				auto layers = Layers(sourceId, capture.m_prediction.displayTime);
+				auto plan = Plan(*layers, 32, 24);
+				std::shared_ptr<VulkanFrame> producer;
+				const auto key = FrameKey{capture.m_session->Snapshot().generation, capture.m_prediction.id};
+				Require(backend.Prepare(
+							plan,
+							[&](XrSwapchain)
+							{
+								return source;
+							},
+							producer, capture.m_session->Captures().ProducerReservation(key)) == XR_SUCCESS,
+						"Prepare captured external producer output");
+				auto transfer = inspection.Prepare(producer, {}, {}, VulkanInspectionKind::Required,
+												   [retirements](SharedImageKey image)
+												   {
+													   std::lock_guard lock(retirements->first);
+													   retirements->second.push_back(image);
+												   });
+				retained = transfer->Output();
+				const std::array<std::shared_ptr<const VulkanInspectionFrame>, 2> pending{retained, retained};
+				Require(!VulkanInspectionFrame::Compose(plan, pending), "Pending imports were sampled by composition");
+				Require(retained && retained->PollCompletion() == CompletionStatus::Pending,
+						"Uncommitted owned transfer reported GPU completion");
+				XrFrameEndInfo info{
+					XR_TYPE_FRAME_END_INFO,			  nullptr, capture.m_prediction.displayTime.value.count(),
+					XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1,	   nullptr};
+				Require(capture.m_session->EndFrame(capture.m_prediction, &info, layers, retained,
+													[&]
+													{
+														const auto result = backend.Submit(producer);
+														if (result == XR_SUCCESS)
+															transfer->Commit();
+														return result;
+													}) == XR_SUCCESS,
+						"Commit captured owned transfer at actual producer acceptance");
+				// No WaitFrame/BeginFrame/EndFrame occurs from here until capture
+				// readiness: the owned queue and controller worker progress independently.
+				const auto completed = capture.AwaitOperation(capture.m_step);
+				Require(completed.progress == DebugProgress::SnapshotReady && completed.capture == capture.m_capture,
+						"Controller did not observe independently completed owned copy");
+				retainedCpuReader = capture.m_session->Captures().Read(capture.m_capture);
+				Require(retainedCpuReader && retainedCpuReader->phase == SnapshotPhase::Ready &&
+							retainedCpuReader->output.get() == retained.get() && retainedCpuReader->frame == key &&
+							retainedCpuReader->metadata && retainedCpuReader->metadata->submission &&
+							retainedCpuReader->metadata->submission->layers == layers,
+						"Owned snapshot lost exact private output/CPU metadata identity");
+				Require(capture.m_session->Scheduler().Snapshot().paused && capture.m_session->Display().Paused(),
+						"Independent copy secretly reopened paused frame/display admission");
+				Require(capture.AwaitOperation(capture.Command(DebugCommand::Release, capture.m_capture)).progress ==
+								DebugProgress::Released &&
+							!capture.m_session->Captures().Read(capture.m_capture),
+						"Release owned capture logical lookup");
+				std::puts("case=controller-owned-copy-ready paused=yes furtherXRCalls=0 readerRetained=yes PASS");
+			}
+			AwaitComplete(*retained);
+			const auto originalImage = retained->Image().image;
+			Require(retained->Image().device->binding.device != device.m_native && retained->View(0) &&
+						retained->View(1),
+					"Inspection output still belongs to borrowed application device");
+			Paint(device, *source, s_reused);
+			{
+				auto layers = Layers(sourceId);
+				auto plan = Plan(*layers, 40, 30);
+				std::shared_ptr<VulkanFrame> producer;
+				Require(backend.Prepare(
+							plan,
+							[&](XrSwapchain)
+							{
+								return source;
+							},
+							producer) == XR_SUCCESS,
+						"Prepare resized later external output");
+				auto transfer = inspection.Prepare(producer);
+				resized = transfer->Output();
+				Require(backend.Submit(producer) == XR_SUCCESS, "Submit resized later external output");
+				transfer->Commit();
+				AwaitComplete(*resized);
+			}
+			Require(retained->Image().image == originalImage && retained->Image().extent.width == 32 &&
+						retained->Image().extent.height == 24 && resized->Image().extent.width == 40 &&
+						resized->Image().extent.height == 30,
+					"Resize mutated old private owned output");
+			source.reset();
+			Check(inspection.Close(s_timeout), "close independent inspection service with retained output readers");
+			Check(backend.Drain(s_timeout), "drain actual borrowed producer jobs");
+			Require(backend.Close() == XR_SUCCESS, "Owned final readers prevented borrowed backend teardown");
+			std::puts("case=source-reuse-resize retainedPrivateOutputs=2 PASS");
 		}
-		catch (const std::invalid_argument&)
+		catch (const std::exception& error)
 		{
-			rejectedBorrow = true;
+			std::fprintf(stderr, "FAIL: %s\n", error.what());
+			UnknownCompletion("exceptional inspection work may retain borrowed-device resources");
 		}
-		Require(rejectedBorrow, "Borrowed device accepted as an independently owned compositor");
-		VulkanExternalDevice external(backend.Device(), SharingExtensions, VK_API_VERSION_1_1);
-		VerifyOwnedDeviceAcquisition(external.Identity(), validation);
-		VulkanInspection inspection(external.Identity(), 3, validation);
-		const auto sourceId = reinterpret_cast<XrSwapchain>(200);
-		auto source = backend.CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {16, 16}, 2, SourceUsage);
+		catch (...)
 		{
-			auto ticket = backend.InitializeImage(source);
-			Check(ticket->Wait(Timeout), "initialize inspection source");
+			UnknownCompletion("unknown inspection failure may retain borrowed-device resources");
 		}
-		Paint(device, *source, Original);
-		RejectedPreparation(backend, source, external.Identity(), validation);
-		closedOutput = EarlyClose(backend, source, external.Identity(), validation);
-		{
-			DebugCapture capture(backend);
-			auto layers = Layers(sourceId, capture.prediction.displayTime);
-			auto plan = Plan(*layers, 32, 24);
-			std::shared_ptr<VulkanFrame> producer;
-			const auto key = FrameKey{capture.session->Snapshot().generation, capture.prediction.id};
-			Require(backend.Prepare(
-						plan,
-						[&](XrSwapchain)
-						{
-							return source;
-						},
-						producer, capture.session->Captures().ProducerReservation(key)) == XR_SUCCESS,
-					"Prepare captured external producer output");
-			auto transfer = inspection.Prepare(producer, {}, {}, VulkanInspectionKind::Required,
-											   [retirements](SharedImageKey image)
-											   {
-												   std::lock_guard lock(retirements->first);
-												   retirements->second.push_back(image);
-											   });
-			retained = transfer->Output();
-			const std::array<std::shared_ptr<const VulkanInspectionFrame>, 2> pending{retained, retained};
-			Require(!VulkanInspectionFrame::Compose(plan, pending), "Pending imports were sampled by composition");
-			Require(retained && retained->PollCompletion() == CompletionStatus::Pending,
-					"Uncommitted owned transfer reported GPU completion");
-			XrFrameEndInfo info{XR_TYPE_FRAME_END_INFO,			  nullptr, capture.prediction.displayTime.value.count(),
-								XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1,	   nullptr};
-			Require(capture.session->EndFrame(capture.prediction, &info, layers, retained,
-											  [&]
-											  {
-												  const auto result = backend.Submit(producer);
-												  if (result == XR_SUCCESS)
-													  transfer->Commit();
-												  return result;
-											  }) == XR_SUCCESS,
-					"Commit captured owned transfer at actual producer acceptance");
-			// No WaitFrame/BeginFrame/EndFrame occurs from here until capture
-			// readiness: the owned queue and controller worker progress independently.
-			const auto completed = capture.AwaitOperation(capture.step);
-			Require(completed.progress == DebugProgress::SnapshotReady && completed.capture == capture.capture,
-					"Controller did not observe independently completed owned copy");
-			retainedCpuReader = capture.session->Captures().Read(capture.capture);
-			Require(retainedCpuReader && retainedCpuReader->phase == SnapshotPhase::Ready &&
-						retainedCpuReader->output.get() == retained.get() && retainedCpuReader->frame == key &&
-						retainedCpuReader->metadata && retainedCpuReader->metadata->submission &&
-						retainedCpuReader->metadata->submission->layers == layers,
-					"Owned snapshot lost exact private output/CPU metadata identity");
-			Require(capture.session->Scheduler().Snapshot().paused && capture.session->Display().Paused(),
-					"Independent copy secretly reopened paused frame/display admission");
-			Require(capture.AwaitOperation(capture.Command(DebugCommand::Release, capture.capture)).progress ==
-							DebugProgress::Released &&
-						!capture.session->Captures().Read(capture.capture),
-					"Release owned capture logical lookup");
-			std::puts("case=controller-owned-copy-ready paused=yes furtherXRCalls=0 readerRetained=yes PASS");
-		}
-		AwaitComplete(*retained);
-		const auto originalImage = retained->Image().image;
-		Require(retained->Image().device->binding.device != device.native && retained->View(0) && retained->View(1),
-				"Inspection output still belongs to borrowed application device");
-		Paint(device, *source, Reused);
-		{
-			auto layers = Layers(sourceId);
-			auto plan = Plan(*layers, 40, 30);
-			std::shared_ptr<VulkanFrame> producer;
-			Require(backend.Prepare(
-						plan,
-						[&](XrSwapchain)
-						{
-							return source;
-						},
-						producer) == XR_SUCCESS,
-					"Prepare resized later external output");
-			auto transfer = inspection.Prepare(producer);
-			resized = transfer->Output();
-			Require(backend.Submit(producer) == XR_SUCCESS, "Submit resized later external output");
-			transfer->Commit();
-			AwaitComplete(*resized);
-		}
-		Require(retained->Image().image == originalImage && retained->Image().extent.width == 32 &&
-					retained->Image().extent.height == 24 && resized->Image().extent.width == 40 &&
-					resized->Image().extent.height == 30,
-				"Resize mutated old private owned output");
-		source.reset();
-		Check(inspection.Close(Timeout), "close independent inspection service with retained output readers");
-		Check(backend.Drain(Timeout), "drain actual borrowed producer jobs");
-		Require(backend.Close() == XR_SUCCESS, "Owned final readers prevented borrowed backend teardown");
-		std::puts("case=source-reuse-resize retainedPrivateOutputs=2 PASS");
 	}
 	// Both the borrowed device/instance and the inspection service have now gone.
 	// Private outputs retain their independent device and explicit export queue.
@@ -1304,11 +1393,11 @@ bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validat
 	{
 		const auto sequenceImage = std::dynamic_pointer_cast<const VulkanInspectionFrame>(sequenceRetention->output);
 		Require(sequenceImage != nullptr, "Sequence capture lost its independent native image");
-		Verify(*sequenceImage, 32, 24, Original);
-		Verify(*retained, 32, 24, Original);
-		Verify(*retained, 32, 24, Original, 1);
-		VerifyControlLayer(retained, Original, 1);
-		Verify(*resized, 40, 30, Reused);
+		Verify(*sequenceImage, 32, 24, s_original);
+		Verify(*retained, 32, 24, s_original);
+		Verify(*retained, 32, 24, s_original, 1);
+		VerifyControlLayer(retained, s_original, 1);
+		Verify(*resized, 40, 30, s_reused);
 		VerifyRaw(rawRetention);
 		VerifyRaw(srgbRawRetention);
 		for (const auto& bgra : bgraRetention)
@@ -1320,7 +1409,7 @@ bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validat
 			const auto image = std::dynamic_pointer_cast<const VulkanInspectionFrame>(snapshot.output);
 			Require(image && snapshot.phase == SnapshotPhase::Ready,
 					"Retain exact image across ordinary live pressure");
-			Verify(*image, 32, 24, Original);
+			Verify(*image, 32, 24, s_original);
 		}
 	}
 	bgraRetention = {};
@@ -1335,10 +1424,11 @@ bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validat
 				verify ? "explicit-verification-only" : "none");
 	return true;
 }
-} // namespace
+} // namespace simxr::probe::inspection
 
 int main(int argc, char** argv)
 {
+	using namespace simxr::probe::inspection;
 	bool verify = false;
 	for (int index = 1; index < argc; ++index)
 	{
@@ -1347,7 +1437,7 @@ int main(int argc, char** argv)
 		else
 		{
 			std::fprintf(stderr, "Unknown inspection probe argument: %s\n", argv[index]);
-			return 1;
+			return 2;
 		}
 	}
 	try
