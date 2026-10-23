@@ -181,6 +181,20 @@ int main(int argc, char** argv)
 		create.enabledExtensionNames = extensions.data();
 		XrInstance instance;
 		Check(xrCreateInstance(&create, &instance), "Create instance");
+		char resultName[XR_MAX_RESULT_STRING_SIZE]{};
+		char structureName[XR_MAX_STRUCTURE_NAME_SIZE]{};
+		Check(xrResultToString(instance, XR_ERROR_HANDLE_INVALID, resultName), "Name result");
+		Check(xrStructureTypeToString(instance, XR_TYPE_GRAPHICS_BINDING_D3D11_KHR, structureName), "Name structure");
+		if (std::strcmp(resultName, "XR_ERROR_HANDLE_INVALID") != 0 ||
+			std::strcmp(structureName, "XR_TYPE_GRAPHICS_BINDING_D3D11_KHR") != 0)
+			throw std::runtime_error("Runtime returned a placeholder enum name");
+		Check(xrResultToString(instance, static_cast<XrResult>(-123456789), resultName), "Name unknown result");
+		if (std::strcmp(resultName, "XR_UNKNOWN_FAILURE_-123456789") != 0 ||
+			xrResultToString(instance, XR_SUCCESS, nullptr) != XR_ERROR_VALIDATION_FAILURE ||
+			xrStructureTypeToString(instance, XR_TYPE_INSTANCE_PROPERTIES, nullptr) != XR_ERROR_VALIDATION_FAILURE ||
+			xrResultToString(XR_NULL_HANDLE, XR_SUCCESS, resultName) != XR_ERROR_HANDLE_INVALID ||
+			xrStructureTypeToString(XR_NULL_HANDLE, XR_TYPE_INSTANCE_PROPERTIES, structureName) != XR_ERROR_HANDLE_INVALID)
+			throw std::runtime_error("Invalid runtime stringification result or argument validation");
 		XrSystemGetInfo getSystem{XR_TYPE_SYSTEM_GET_INFO};
 		getSystem.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
 		XrSystemId system;

@@ -37,6 +37,7 @@ add_library(simxr_core STATIC
     src/runtime/EventQueue.cpp
     src/runtime/HandleRegistry.cpp
     src/runtime/Instance.cpp
+    src/runtime/EnumNames.cpp
     src/runtime/Runtime.cpp
     src/runtime/Session.cpp
     src/runtime/SessionInteraction.cpp

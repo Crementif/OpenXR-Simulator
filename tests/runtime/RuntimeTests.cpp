@@ -1,4 +1,5 @@
 #include "../TestSupport.h"
+#include "runtime/EnumNames.h"
 #include "runtime/NativeBindings.h"
 #include "runtime/Runtime.h"
 #include "runtime/SimulationExtensions.h"
@@ -6,11 +7,13 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <future>
 #include <iostream>
+#include <limits>
 #include <new>
 #include <thread>
 
@@ -46,6 +49,60 @@ XrInstanceCreateInfo InstanceInfo()
 	info.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
 	std::strcpy(info.applicationInfo.applicationName, "Runtime ownership tests");
 	return info;
+}
+
+void EnumNames()
+{
+	struct ResultCase
+	{
+		XrResult value;
+		const char* expected;
+	};
+	const ResultCase results[]{
+		{XR_SUCCESS, "XR_SUCCESS"},
+		{XR_ERROR_HANDLE_INVALID, "XR_ERROR_HANDLE_INVALID"},
+		{XR_ERROR_DISPLAY_REFRESH_RATE_UNSUPPORTED_FB, "XR_ERROR_DISPLAY_REFRESH_RATE_UNSUPPORTED_FB"},
+		{static_cast<XrResult>(123456789), "XR_UNKNOWN_SUCCESS_123456789"},
+		{static_cast<XrResult>(-123456789), "XR_UNKNOWN_FAILURE_-123456789"},
+		{static_cast<XrResult>(std::numeric_limits<std::int32_t>::min()), "XR_UNKNOWN_FAILURE_-2147483648"}};
+	std::array<char, XR_MAX_RESULT_STRING_SIZE + 1> resultBuffer;
+	for (const auto& test : results)
+	{
+		resultBuffer.fill('!');
+		Require(ResultToString(test.value, resultBuffer.data()) == XR_SUCCESS &&
+					std::memcmp(resultBuffer.data(), test.expected, std::strlen(test.expected) + 1) == 0 &&
+					resultBuffer.back() == '!',
+				"Result string did not preserve its canonical name or signed fallback");
+	}
+	struct StructureCase
+	{
+		XrStructureType value;
+		const char* expected;
+	};
+	const StructureCase structures[]{
+		{XR_TYPE_INSTANCE_PROPERTIES, "XR_TYPE_INSTANCE_PROPERTIES"},
+		{XR_TYPE_GRAPHICS_BINDING_D3D11_KHR, "XR_TYPE_GRAPHICS_BINDING_D3D11_KHR"},
+		{static_cast<XrStructureType>(123456789), "XR_UNKNOWN_STRUCTURE_TYPE_123456789"},
+		{static_cast<XrStructureType>(2147483646), "XR_UNKNOWN_STRUCTURE_TYPE_2147483646"}};
+	std::array<char, XR_MAX_STRUCTURE_NAME_SIZE + 1> structureBuffer;
+	for (const auto& test : structures)
+	{
+		structureBuffer.fill('!');
+		Require(StructureTypeToString(test.value, structureBuffer.data()) == XR_SUCCESS &&
+					std::memcmp(structureBuffer.data(), test.expected, std::strlen(test.expected) + 1) == 0 &&
+					structureBuffer.back() == '!',
+				"Structure string did not preserve its canonical name or signed fallback");
+	}
+	structureBuffer.fill('!');
+	Require(StructureTypeToString(XR_TYPE_INTERACTION_RENDER_MODEL_TOP_LEVEL_USER_PATH_GET_INFO_EXT,
+								  structureBuffer.data()) == XR_SUCCESS &&
+				std::memcmp(structureBuffer.data(), "XR_TYPE_INTERACTION_RENDER_MODEL_TOP_LEVEL_USER_PATH_GET_INFO_EXT",
+							XR_MAX_STRUCTURE_NAME_SIZE - 1) == 0 &&
+				structureBuffer[XR_MAX_STRUCTURE_NAME_SIZE - 1] == '\0' && structureBuffer.back() == '!',
+			"Long structure name did not truncate and terminate within the original API buffer");
+	Require(ResultToString(XR_SUCCESS, nullptr) == XR_ERROR_VALIDATION_FAILURE &&
+				StructureTypeToString(XR_TYPE_INSTANCE_PROPERTIES, nullptr) == XR_ERROR_VALIDATION_FAILURE,
+			"Null string output was accepted");
 }
 
 void AllocationFreeShutdown()
@@ -451,6 +508,7 @@ void DebuggerLifetime()
 
 int main()
 {
+	EnumNames();
 	AllocationFreeShutdown();
 	GameBridgeLifetime();
 	Lifecycle();

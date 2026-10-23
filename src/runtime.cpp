@@ -46,6 +46,7 @@
 #include "presentation/FrameScheduler.h"
 #include "runtime/DispatchTable.h"
 #include "runtime/EntryPoints.h"
+#include "runtime/EnumNames.h"
 #include "runtime/EventQueue.h"
 #include "runtime/Instance.h"
 #include "runtime/Runtime.h"
@@ -2733,20 +2734,22 @@ static XrResult XRAPI_PTR xrDestroySwapchain_runtime(XrSwapchain sc)
 	return XR_SUCCESS;
 }
 
-// Missing functions Unity needs
-static XrResult XRAPI_PTR xrResultToString_runtime(XrInstance, XrResult value, char buffer[XR_MAX_RESULT_STRING_SIZE]) {
-    if (!buffer) return XR_ERROR_VALIDATION_FAILURE;
-    const char* str = "XR_SUCCESS";
-    if (value != XR_SUCCESS) str = "XR_ERROR";
-    strncpy(buffer, str, XR_MAX_RESULT_STRING_SIZE - 1);
-    buffer[XR_MAX_RESULT_STRING_SIZE - 1] = '\0';
-    return XR_SUCCESS;
+static XrResult XRAPI_PTR xrResultToString_runtime(XrInstance instance, XrResult value,
+												   char buffer[XR_MAX_RESULT_STRING_SIZE])
+{
+	const auto core = RuntimeState().FindInstance(instance);
+	if (!core)
+		return XR_ERROR_HANDLE_INVALID;
+	return simxr::ResultToString(value, buffer);
 }
 
-static XrResult XRAPI_PTR xrStructureTypeToString_runtime(XrInstance, XrStructureType value, char buffer[XR_MAX_STRUCTURE_NAME_SIZE]) {
-    if (!buffer) return XR_ERROR_VALIDATION_FAILURE;
-    snprintf(buffer, XR_MAX_STRUCTURE_NAME_SIZE, "XrStructureType_%d", (int)value);
-    return XR_SUCCESS;
+static XrResult XRAPI_PTR xrStructureTypeToString_runtime(XrInstance instance, XrStructureType value,
+														  char buffer[XR_MAX_STRUCTURE_NAME_SIZE])
+{
+	const auto core = RuntimeState().FindInstance(instance);
+	if (!core)
+		return XR_ERROR_HANDLE_INVALID;
+	return simxr::StructureTypeToString(value, buffer);
 }
 
 static XrResult XRAPI_PTR xrGetReferenceSpaceBoundsRect_runtime(XrSession handle, XrReferenceSpaceType type, XrExtent2Df* bounds) {

@@ -25,6 +25,7 @@
 #include <sys/stat.h>
 #include <sstream>
 #include <vector>
+#include <utility>
 #include <unistd.h>
 static int checks = 0;
 static int validationErrors = 0;
@@ -190,7 +191,38 @@ static int runProbe()
     CHECK(xrGetSystem(instance, &invalidSystemInfo, &system) == XR_ERROR_VALIDATION_FAILURE);
     CHECK(xrResultToString(instance, XR_SUCCESS, nullptr) == XR_ERROR_VALIDATION_FAILURE);
     CHECK(xrStructureTypeToString(instance, XR_TYPE_INSTANCE_PROPERTIES, nullptr) == XR_ERROR_VALIDATION_FAILURE);
-    XR(xrEnumerateViewConfigurations(instance, system, 0, &count, nullptr));
+	char resultName[XR_MAX_RESULT_STRING_SIZE]{};
+	char structureName[XR_MAX_STRUCTURE_NAME_SIZE]{};
+	XR(xrResultToString(instance, XR_ERROR_HANDLE_INVALID, resultName));
+	CHECK(std::strcmp(resultName, "XR_ERROR_HANDLE_INVALID") == 0);
+	XR(xrResultToString(instance, static_cast<XrResult>(123456789), resultName));
+	CHECK(std::strcmp(resultName, "XR_UNKNOWN_SUCCESS_123456789") == 0);
+	XR(xrStructureTypeToString(instance, XR_TYPE_GRAPHICS_BINDING_D3D11_KHR, structureName));
+	CHECK(std::strcmp(structureName, "XR_TYPE_GRAPHICS_BINDING_D3D11_KHR") == 0);
+	CHECK(xrResultToString(XR_NULL_HANDLE, XR_SUCCESS, resultName) == XR_ERROR_HANDLE_INVALID);
+	CHECK(xrStructureTypeToString(XR_NULL_HANDLE, XR_TYPE_INSTANCE_PROPERTIES, structureName) == XR_ERROR_HANDLE_INVALID);
+	const auto fromTimespec = fn<PFN_xrConvertTimespecTimeToTimeKHR>(instance, "xrConvertTimespecTimeToTimeKHR");
+	const auto toTimespec = fn<PFN_xrConvertTimeToTimespecTimeKHR>(instance, "xrConvertTimeToTimespecTimeKHR");
+	const timespec nativeTime{17, 23};
+	XrTime convertedTime = 0;
+	XR(fromTimespec(instance, &nativeTime, &convertedTime));
+	CHECK(convertedTime == 17000000023LL);
+	timespec convertedNative{};
+	XR(toTimespec(instance, convertedTime, &convertedNative));
+	CHECK(convertedNative.tv_sec == nativeTime.tv_sec && convertedNative.tv_nsec == nativeTime.tv_nsec);
+	const auto maximumTime = std::numeric_limits<XrTime>::max();
+	const bool fitsNativeTime = std::in_range<decltype(convertedNative.tv_sec)>(maximumTime / 1000000000);
+	convertedNative = nativeTime;
+	CHECK(toTimespec(instance, maximumTime, &convertedNative) == (fitsNativeTime ? XR_SUCCESS : XR_ERROR_TIME_INVALID));
+	if (fitsNativeTime)
+	{
+		XR(fromTimespec(instance, &convertedNative, &convertedTime));
+		CHECK(convertedTime == maximumTime);
+	}
+	else
+		CHECK(convertedNative.tv_sec == nativeTime.tv_sec && convertedNative.tv_nsec == nativeTime.tv_nsec);
+
+	XR(xrEnumerateViewConfigurations(instance, system, 0, &count, nullptr));
     CHECK(count == (quadMode ? 2u : 1u));
     std::vector<XrViewConfigurationType> configurations(count);
     XR(xrEnumerateViewConfigurations(instance, system, count, &count, configurations.data()));
