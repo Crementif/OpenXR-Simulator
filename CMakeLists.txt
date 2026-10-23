@@ -47,9 +47,12 @@ add_library(simxr_core STATIC
     src/runtime/DispatchTable.cpp
     src/runtime/SimulationExtensions.cpp
     src/runtime/validation/LayerValidation.cpp
+    src/runtime/validation/Path.cpp
+    src/runtime/validation/StructureChain.cpp
     src/simulation/HapticState.cpp
     src/runtime/extensions/BodyTracking.cpp
     src/simulation/BodyModel.cpp
+    src/simulation/HeadsetProfiles.cpp
     src/simulation/PoseSequence.cpp
     src/simulation/PoseSequenceExecution.cpp
     src/simulation/PoseHistory.cpp

@@ -2,8 +2,8 @@
 
 #include <cstdint>
 #include <functional>
-#include <optional>
 #include <openxr/openxr.h>
+#include <optional>
 
 namespace simxr
 {
@@ -25,4 +25,4 @@ struct LayerValidationContext
 };
 
 XrResult ValidateLayers(const XrFrameEndInfo& info, const LayerValidationContext& context);
-}
+} // namespace simxr

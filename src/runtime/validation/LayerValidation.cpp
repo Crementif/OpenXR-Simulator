@@ -1,34 +1,30 @@
 #include "runtime/validation/LayerValidation.h"
+#include "Pch.h"
 #include "runtime/validation/StructureChain.h"
 
-#include <array>
 #include <cmath>
-#include <cstdint>
 #include <numbers>
 
 namespace simxr
 {
-namespace
-{
-bool ValidPose(const XrPosef& pose)
+static bool ValidPose(const XrPosef& pose)
 {
 	const auto& q = pose.orientation;
 	float norm = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
-	return std::isfinite(norm) && std::abs(std::sqrt(norm) - 1.0f) <= 0.01f &&
-		std::isfinite(pose.position.x) && std::isfinite(pose.position.y) && std::isfinite(pose.position.z);
+	return std::isfinite(norm) && std::abs(std::sqrt(norm) - 1.0f) <= 0.01f && std::isfinite(pose.position.x) &&
+		   std::isfinite(pose.position.y) && std::isfinite(pose.position.z);
 }
 
-bool ValidFov(const XrFovf& fov)
+static bool ValidFov(const XrFovf& fov)
 {
 	constexpr float halfPi = std::numbers::pi_v<float> / 2;
-	return std::isfinite(fov.angleLeft) && std::isfinite(fov.angleRight) &&
-		std::isfinite(fov.angleUp) && std::isfinite(fov.angleDown) &&
-		fov.angleLeft != fov.angleRight && fov.angleDown != fov.angleUp &&
-		std::abs(fov.angleLeft) < halfPi && std::abs(fov.angleRight) < halfPi &&
-		std::abs(fov.angleDown) < halfPi && std::abs(fov.angleUp) < halfPi;
+	return std::isfinite(fov.angleLeft) && std::isfinite(fov.angleRight) && std::isfinite(fov.angleUp) &&
+		   std::isfinite(fov.angleDown) && fov.angleLeft != fov.angleRight && fov.angleDown != fov.angleUp &&
+		   std::abs(fov.angleLeft) < halfPi && std::abs(fov.angleRight) < halfPi && std::abs(fov.angleDown) < halfPi &&
+		   std::abs(fov.angleUp) < halfPi;
 }
 
-XrResult ValidateImage(const XrSwapchainSubImage& image, const LayerValidationContext& context)
+static XrResult ValidateImage(const XrSwapchainSubImage& image, const LayerValidationContext& context)
 {
 	auto chain = context.swapchain(image.swapchain);
 	if (!chain)
@@ -45,7 +41,7 @@ XrResult ValidateImage(const XrSwapchainSubImage& image, const LayerValidationCo
 	return XR_SUCCESS;
 }
 
-XrResult ValidateProjection(const XrCompositionLayerProjection& layer, const LayerValidationContext& context)
+static XrResult ValidateProjection(const XrCompositionLayerProjection& layer, const LayerValidationContext& context)
 {
 	if (layer.viewCount != context.viewCount || !layer.views)
 		return XR_ERROR_LAYER_INVALID;
@@ -74,9 +70,9 @@ XrResult ValidateProjection(const XrCompositionLayerProjection& layer, const Lay
 		{
 			if (!context.depthEnabled)
 				return XR_ERROR_LAYER_INVALID;
-			if (!std::isfinite(depth->minDepth) || !std::isfinite(depth->maxDepth) ||
-				depth->minDepth < 0 || depth->maxDepth > 1 || depth->minDepth >= depth->maxDepth ||
-				std::isnan(depth->nearZ) || std::isnan(depth->farZ) || depth->nearZ <= 0 || depth->farZ <= 0 || depth->nearZ == depth->farZ)
+			if (!std::isfinite(depth->minDepth) || !std::isfinite(depth->maxDepth) || depth->minDepth < 0 ||
+				depth->maxDepth > 1 || depth->minDepth >= depth->maxDepth || std::isnan(depth->nearZ) ||
+				std::isnan(depth->farZ) || depth->nearZ <= 0 || depth->farZ <= 0 || depth->nearZ == depth->farZ)
 				return XR_ERROR_LAYER_INVALID;
 			result = ValidateImage(depth->subImage, context);
 			if (XR_FAILED(result))
@@ -84,7 +80,6 @@ XrResult ValidateProjection(const XrCompositionLayerProjection& layer, const Lay
 		}
 	}
 	return XR_SUCCESS;
-}
 }
 
 XrResult ValidateLayers(const XrFrameEndInfo& info, const LayerValidationContext& context)
@@ -105,7 +100,8 @@ XrResult ValidateLayers(const XrFrameEndInfo& info, const LayerValidationContext
 		if (!context.validSpace(layer->space))
 			return XR_ERROR_HANDLE_INVALID;
 		constexpr XrCompositionLayerFlags knownFlags = XR_COMPOSITION_LAYER_CORRECT_CHROMATIC_ABERRATION_BIT |
-			XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT | XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
+													   XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
+													   XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
 		if (layer->layerFlags & ~knownFlags)
 			return XR_ERROR_VALIDATION_FAILURE;
 		StructureChain chain(layer->next);
@@ -119,8 +115,10 @@ XrResult ValidateLayers(const XrFrameEndInfo& info, const LayerValidationContext
 			const auto& quad = *reinterpret_cast<const XrCompositionLayerQuad*>(layer);
 			if (!ValidPose(quad.pose))
 				return XR_ERROR_POSE_INVALID;
-			if (!std::isfinite(quad.size.width) || !std::isfinite(quad.size.height) || quad.size.width < 0 || quad.size.height < 0 ||
-				(quad.eyeVisibility != XR_EYE_VISIBILITY_BOTH && quad.eyeVisibility != XR_EYE_VISIBILITY_LEFT && quad.eyeVisibility != XR_EYE_VISIBILITY_RIGHT))
+			if (!std::isfinite(quad.size.width) || !std::isfinite(quad.size.height) || quad.size.width < 0 ||
+				quad.size.height < 0 ||
+				(quad.eyeVisibility != XR_EYE_VISIBILITY_BOTH && quad.eyeVisibility != XR_EYE_VISIBILITY_LEFT &&
+				 quad.eyeVisibility != XR_EYE_VISIBILITY_RIGHT))
 				return XR_ERROR_LAYER_INVALID;
 			result = ValidateImage(quad.subImage, context);
 		}
@@ -131,4 +129,4 @@ XrResult ValidateLayers(const XrFrameEndInfo& info, const LayerValidationContext
 	}
 	return XR_SUCCESS;
 }
-}
+} // namespace simxr
