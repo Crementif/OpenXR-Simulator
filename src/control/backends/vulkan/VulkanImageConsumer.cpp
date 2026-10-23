@@ -1,6 +1,7 @@
 #include "control/backends/vulkan/VulkanImageConsumer.h"
 #include "Pch.h"
 #include "control/backends/vulkan/VulkanControlHandle.h"
+#include "graphics/ColorPixels.h"
 #include "graphics/FramePool.h"
 #include "graphics/SnapshotBudget.h"
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
@@ -24,12 +25,11 @@ static VulkanExternalImageDescriptor NativeDescription(const ImageDescription& v
 {
 	constexpr auto allowed = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
 							 VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-	if (value.handleKind != static_cast<std::uint32_t>(VulkanTransferKind) ||
-		(value.format != VK_FORMAT_R8G8B8A8_UNORM && value.format != VK_FORMAT_R8G8B8A8_SRGB) || !value.width ||
-		!value.height || value.depth != 1 || !value.arrayLayers || value.arrayLayers > 2 || value.mipLevels != 1 ||
-		value.samples != 1 || value.tiling != VK_IMAGE_TILING_OPTIMAL || value.imageType != VK_IMAGE_TYPE_2D ||
-		value.flags || value.layout != VK_IMAGE_LAYOUT_GENERAL || !value.allocationSize ||
-		!(value.usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) || (value.usage & ~allowed))
+	if (value.handleKind != static_cast<std::uint32_t>(VulkanTransferKind) || !ColorPixelBytes(value.format) ||
+		!value.width || !value.height || value.depth != 1 || !value.arrayLayers || value.arrayLayers > 2 ||
+		value.mipLevels != 1 || value.samples != 1 || value.tiling != VK_IMAGE_TILING_OPTIMAL ||
+		value.imageType != VK_IMAGE_TYPE_2D || value.flags || value.layout != VK_IMAGE_LAYOUT_GENERAL ||
+		!value.allocationSize || !(value.usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) || (value.usage & ~allowed))
 		throw std::invalid_argument("Unsupported native image format, shape, usage or handoff metadata");
 	VulkanExternalImageDescriptor result;
 	std::transform(value.identity.device.begin(), value.identity.device.end(), result.identity.deviceUuid.begin(),
@@ -258,7 +258,11 @@ void VulkanImageConsumer::Import(const ImageDescription& description,
 		m_state->views.push_back(view);
 	}
 	VkSamplerCreateInfo sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-	sampler.magFilter = sampler.minFilter = VK_FILTER_LINEAR;
+	VkFormatProperties properties;
+	vkGetPhysicalDeviceFormatProperties(m_state->device->binding.physicalDevice, m_state->image->format, &properties);
+	sampler.magFilter = sampler.minFilter =
+		(properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) ? VK_FILTER_LINEAR
+																							   : VK_FILTER_NEAREST;
 	sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
 	sampler.addressModeU = sampler.addressModeV = sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
 	CheckVulkan(vkCreateSampler(m_state->device->binding.device, &sampler, nullptr, &m_state->sampler),

@@ -5,6 +5,8 @@
 #include "control/ImageInspection.h"
 #include "control/LocalControlClient.h"
 #include "control/backends/vulkan/VulkanImageConsumer.h"
+#include "control/backends/vulkan/VulkanImageInspection.h"
+#include "graphics/ColorPixels.h"
 #include "graphics/SnapshotBudget.h"
 #include "graphics/backends/vulkan/VulkanBackend.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
@@ -656,7 +658,7 @@ class DeliveryConsumerCopy
 	void VerifyBytes(std::span<const std::byte> expected)
 	{
 		const auto size = static_cast<std::size_t>(m_privateImage->extent.width) * m_privateImage->extent.height *
-						  m_privateImage->layers * 4;
+						  m_privateImage->layers * ColorPixelBytes(m_privateImage->format);
 		Require(m_complete && m_buffer && expected.size() == size, "Explicit GPU/CPU comparison shape differs");
 		void* mapping = nullptr;
 		Check(vkMapMemory(m_device->binding.device, m_memory, 0, VK_WHOLE_SIZE, 0, &mapping),
@@ -743,7 +745,7 @@ class DeliveryConsumerCopy
 	void RecordReadback()
 	{
 		const auto size = static_cast<VkDeviceSize>(m_privateImage->extent.width) * m_privateImage->extent.height *
-						  m_privateImage->layers * 4;
+						  m_privateImage->layers * ColorPixelBytes(m_privateImage->format);
 		VkBufferCreateInfo create{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
 		create.size = size;
 		create.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
@@ -815,6 +817,82 @@ class DeliveryConsumerCopy
 	VkDeviceMemory m_memory = VK_NULL_HANDLE;
 	bool m_coherent = false, m_submitted = false, m_markerSubmitted = false, m_complete = false;
 };
+void VerifyConsumerImage(const std::shared_ptr<VulkanInspectionFrame>& source, std::span<const std::byte> expected)
+{
+	auto provider = control::CreateVulkanImageInspectionProvider();
+	auto reader = provider->Retain(source);
+	Require(reader->Capabilities().gpuPreview, "Raw format cannot be delivered to the native consumer");
+	const auto original = reader->Description();
+	VulkanExternalIdentity identity;
+	std::transform(original.identity.device.begin(), original.identity.device.end(), identity.deviceUuid.begin(),
+				   [](auto value)
+				   {
+					   return std::to_integer<std::uint8_t>(value);
+				   });
+	std::transform(original.identity.driver.begin(), original.identity.driver.end(), identity.driverUuid.begin(),
+				   [](auto value)
+				   {
+					   return std::to_integer<std::uint8_t>(value);
+				   });
+	auto instance = std::make_shared<Instance>();
+	instance->Create();
+	auto device = ConsumerDevice(instance, identity);
+	control::VulkanImageConsumer consumer(device, s_extensions, VK_API_VERSION_1_1);
+	auto delivery = reader->Share(consumer.Identity(), consumer.ConsumerFence());
+	Await(
+		[&]
+		{
+			return delivery->ProducerCompletion();
+		},
+		"Raw delivery producer did not complete");
+	const auto description = delivery->Description();
+	auto handles = delivery->PrepareHandles();
+	delivery->MarkTransferred();
+	auto malformed = description;
+	malformed.format = VK_FORMAT_D32_SFLOAT;
+	Rejected<std::invalid_argument>(
+		[&]
+		{
+			consumer.Import(malformed, handles);
+		},
+		"Native color consumer accepted a depth format");
+	for (const auto& handle : handles)
+		Require(fcntl(static_cast<int>(handle->Value()), F_GETFD) >= 0,
+				"Rejected raw format consumed caller descriptor");
+	consumer.Import(description, handles);
+	handles.clear();
+	reader.reset();
+	Require(description.format == original.format && description.width == original.width &&
+				description.height == original.height && description.arrayLayers == original.arrayLayers &&
+				consumer.Image().format == original.format && consumer.Views().size() == original.arrayLayers &&
+				consumer.Views().front() && consumer.Sampler() && consumer.SampleReady() &&
+				consumer.Image().device->binding.device != source->Image().device->binding.device,
+			"Native consumer changed raw format, shape or private sampling resources");
+	Require(delivery->ConsumerCompletion() == CompletionStatus::Pending,
+			"Releasing raw reader invented native consumer completion");
+	consumer.Submit();
+	Await(
+		[&]
+		{
+			return consumer.Poll();
+		},
+		"Production raw consumer copy failed");
+	Require(consumer.NativeIdle(), "Ready raw consumer copy lacks native retirement");
+	Await(
+		[&]
+		{
+			return delivery->ConsumerCompletion();
+		},
+		"Raw delivery did not observe actual consumer completion");
+	delivery.reset();
+	DeliveryConsumerCopy readback(device, consumer.Image());
+	readback.Submit();
+	readback.Finish();
+	readback.VerifyBytes(expected);
+	std::printf("case=production-consumer-raw-format format=%u bytes=%zu privateCopy=exact "
+				"channelsRangeAlpha=preserved viewsSampler=created deliveryReleased=yes PASS\n",
+				original.format, expected.size());
+}
 void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
 						 std::shared_ptr<VulkanInspectionFrame> resized, bool verifyPixels,
 						 const std::function<bool(SharedImageKey)>& retired)

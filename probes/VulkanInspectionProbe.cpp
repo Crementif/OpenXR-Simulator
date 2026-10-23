@@ -872,6 +872,8 @@ static void VerifyRaw(const RawRetention& retained)
 		else
 			for (std::size_t offset = 0; offset < pixels->rgba.size(); ++offset)
 				Require(pixels->rgba[offset] == expected[offset % 4], "Raw crop/slice/format/alpha bytes changed");
+		if (index == 0)
+			simxr::probe::VerifyConsumerImage(retained.frames[index], bytes);
 		Require(retained.readers[index].output.get() == retained.frames[index].get() &&
 					retained.readers[index].phase == SnapshotPhase::Ready,
 				"Raw metadata reader changed after native application parent teardown");

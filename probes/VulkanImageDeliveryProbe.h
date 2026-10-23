@@ -2,10 +2,12 @@
 
 #include "graphics/SharedImageTypes.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <span>
 #include <string>
 
 namespace simxr
@@ -13,6 +15,7 @@ namespace simxr
 class VulkanInspectionFrame;
 namespace probe
 {
+void VerifyConsumerImage(const std::shared_ptr<VulkanInspectionFrame>& source, std::span<const std::byte> expected);
 void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
 						 std::shared_ptr<VulkanInspectionFrame> resized, bool verifyPixels,
 						 const std::function<bool(SharedImageKey)>& retired);

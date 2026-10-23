@@ -2255,15 +2255,164 @@ void CheckDebuggerWorkflow(const char* endpoint)
 #endif
 	Interaction test(true);
 	test.runtime.ConnectEndpoint(endpoint);
+	std::ofstream notices(directory / "notices.log", std::ios::binary);
+	Require(notices.good(), "Open debugger notice log");
+	std::string lastNotice;
+	std::uint64_t composedCapture = 0;
+	const auto diagnose = [&](const RuntimeView& state, const char* failure)
+	{
+		namespace wire = simxr::control;
+		namespace tag = wire::tag;
+		std::ofstream output(directory / "timeout.txt", std::ios::binary);
+		Require(output.good(), "Open debugger timeout diagnostics");
+		output << failure << "\nsession=" << state.session << " generation=" << state.generation
+			   << " operation=" << state.lastOperation << " selected_capture=" << state.selectedCapture
+			   << " last_capture=" << state.lastCapture << " image_capture=" << state.selectedImageCapture
+			   << " selected_frame=" << state.selectedFrame << " ready=" << state.selectedReady
+			   << " slices=" << state.selectedLayers << "\nnotice=" << state.notice << '\n';
+		output.flush();
+		try
+		{
+			RuntimeConnection observer;
+			observer.Connect(endpoint);
+			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+			Eventually(
+				[&]
+				{
+					const auto connection = observer.Snapshot();
+					if (connection.state == RuntimeConnectionState::Failed)
+						throw std::runtime_error(connection.detail);
+					return connection.state == RuntimeConnectionState::Connected;
+				},
+				"Timeout observer connection failed");
+			const auto query = [&](const std::string& name, wire::OpCode opcode, std::vector<wire::Field> fields)
+			{
+				Require(std::chrono::steady_clock::now() < deadline, "Timeout diagnostic deadline exceeded");
+				wire::ControlPacket request;
+				request.message.opcode = static_cast<std::uint16_t>(opcode);
+				request.message.fields = std::move(fields);
+				const auto ticket = observer.Submit(std::move(request));
+				Require(ticket != 0, "Timeout observer request was not admitted");
+				for (;;)
+				{
+					for (auto& reply : observer.Poll())
+						if (reply.ticket == ticket)
+						{
+							if (!reply.error.empty())
+								throw std::runtime_error(name + ": " + reply.error);
+							auto& message = reply.packet.message;
+							const auto bytes = wire::Encode(message);
+							std::ofstream binary(directory / ("timeout-" + name + ".wire"), std::ios::binary);
+							binary.write(reinterpret_cast<const char*>(bytes.data()),
+										 static_cast<std::streamsize>(bytes.size()));
+							binary.close();
+							Require(binary.good(), "Write bounded timeout protocol response");
+							const auto target = panel::Nested(message.Find(tag::Target));
+							output << name << ": error=" << panel::U32(message, tag::Error)
+								   << " detail=" << panel::Text(message, tag::Detail)
+								   << " phase=" << panel::Text(message, tag::Phase)
+								   << " progress=" << panel::Text(message, tag::Progress);
+							if (const auto* result = message.Find(tag::Result); result && result->AsI64())
+								output << " result=" << *result->AsI64();
+							output << " capture=" << panel::U64(message, tag::CaptureId)
+								   << " frame=" << panel::Frame(message)
+								   << " image_available=" << panel::Boolean(message, tag::ImageAvailable)
+								   << " target=" << panel::U32(target, tag::CaptureKind)
+								   << " layer=" << panel::U32(target, tag::Layer)
+								   << " view=" << panel::U32(target, tag::View) << '\n';
+							if (const auto* pipeline = message.Find(tag::Pipeline))
+							{
+								const auto value = panel::Nested(pipeline);
+								output << "pipeline: running=" << panel::Boolean(value, tag::Running)
+									   << " paused=" << panel::Boolean(value, tag::Paused)
+									   << " wait_pending=" << panel::Boolean(value, tag::WaitPending)
+									   << " permits=" << panel::U32(value, tag::Permits)
+									   << " next_admission=" << panel::U64(value, tag::NextAdmission)
+									   << " waited=" << panel::U64(panel::Nested(value.Find(tag::Waited)), tag::FrameId)
+									   << " begun=" << panel::U64(panel::Nested(value.Find(tag::Begun)), tag::FrameId)
+									   << " submitted="
+									   << panel::U64(panel::Nested(message.Find(tag::Presentation)), tag::LastSubmitted)
+									   << '\n';
+							}
+							output.flush();
+							Require(output.good(), "Write debugger timeout summary");
+							return std::move(message);
+						}
+					Require(std::chrono::steady_clock::now() < deadline, "Timeout diagnostic deadline exceeded");
+					std::this_thread::sleep_for(std::chrono::milliseconds(5));
+				}
+			};
+			const auto sessionFields = [&]
+			{
+				return std::vector{wire::Field::U64(tag::Session, state.session, true),
+								   wire::Field::U64(tag::Generation, state.generation, true)};
+			};
+			std::vector<std::uint64_t> captures;
+			const auto addCapture = [&](std::uint64_t identity)
+			{
+				if (identity && captures.size() < 4 &&
+					std::find(captures.begin(), captures.end(), identity) == captures.end())
+					captures.push_back(identity);
+			};
+			query("status", wire::OpCode::Status, sessionFields());
+			if (state.lastOperation)
+			{
+				auto fields = sessionFields();
+				fields.push_back(wire::Field::U64(tag::OperationId, state.lastOperation, true));
+				const auto operation = query("operation", wire::OpCode::Operation, std::move(fields));
+				addCapture(panel::U64(operation, tag::CaptureId));
+				for (const auto& field : panel::Nested(operation.Find(tag::Captures)).fields)
+					addCapture(field.AsU64().value_or(0));
+			}
+			addCapture(state.lastCapture);
+			addCapture(state.selectedCapture);
+			addCapture(composedCapture);
+			addCapture(state.selectedImageCapture);
+			for (const auto capture : captures)
+			{
+				auto fields = sessionFields();
+				fields.push_back(wire::Field::U64(tag::CaptureId, capture, true));
+				query("capture-" + std::to_string(capture), wire::OpCode::Capture, fields);
+				const auto inspection =
+					query("inspect-" + std::to_string(capture), wire::OpCode::InspectFrame, std::move(fields));
+				if (const auto identity = panel::U64(inspection, tag::InspectionId))
+					query("release-inspection-" + std::to_string(identity), wire::OpCode::ReleaseInspection,
+						  {wire::Field::U64(tag::InspectionId, identity, true)});
+			}
+			observer.Close();
+		}
+		catch (const std::exception& error)
+		{
+			output << "diagnostic_error=" << error.what() << '\n';
+		}
+		output.close();
+		Require(output.good(), "Close debugger timeout diagnostics");
+	};
 	const auto wait = [&](const auto& ready, const char* failure)
 	{
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
 		do
 		{
 			test.Frame();
+			const auto observed = test.runtime.Snapshot();
+			if (!observed.notice.empty() && observed.notice != lastNotice)
+			{
+				notices << "frame=" << observed.selectedFrame << ' ' << observed.notice << '\n';
+				notices.flush();
+				Require(notices.good(), "Write debugger notice detail");
+				lastNotice = observed.notice;
+			}
 			if (std::chrono::steady_clock::now() >= deadline)
 			{
 				const auto state = test.runtime.Snapshot();
+				try
+				{
+					diagnose(state, failure);
+				}
+				catch (const std::exception& error)
+				{
+					std::cerr << "Timeout diagnostics failed: " << error.what() << '\n';
+				}
 				throw std::runtime_error(std::string(failure) + ": " + state.phase + "/" + state.progress + " " +
 										 state.error);
 			}
@@ -2292,6 +2441,7 @@ void CheckDebuggerWorkflow(const char* endpoint)
 		},
 		"One admitted frame did not produce a retained image");
 	const auto exact = test.runtime.Snapshot();
+	composedCapture = exact.selectedCapture;
 	test.runtime.InspectSelected();
 	wait(
 		[&](const auto& state)
@@ -2381,6 +2531,8 @@ void CheckDebuggerWorkflow(const char* endpoint)
 		},
 		"Reconnect did not select a fresh runtime preview");
 	Require(test.validation->errors.load() == 0, "Runtime reconnect reported Vulkan validation errors");
+	notices.close();
+	Require(notices.good(), "Close debugger notice log");
 	std::cout << "PASS disconnect clears selected image and reconnect selects the new connection epoch\n";
 }
 
