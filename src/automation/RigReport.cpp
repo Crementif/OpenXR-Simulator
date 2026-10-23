@@ -1,15 +1,12 @@
 #include "automation/RigReport.h"
+#include "Pch.h"
 
-#include <algorithm>
 #include <sstream>
 #include <locale>
-#include <string_view>
 
 namespace simxr::automation
 {
-namespace
-{
-std::string Escape(std::string_view text, bool xml = false)
+static std::string Escape(std::string_view text, bool xml = false)
 {
 	std::string result;
 	for (std::size_t offset = 0; offset < text.size(); ++offset)
@@ -17,8 +14,10 @@ std::string Escape(std::string_view text, bool xml = false)
 		const auto c = static_cast<unsigned char>(text[offset]);
 		if (c >= 128)
 		{
-			const std::size_t length = c >= 0xc2 && c <= 0xdf ? 2 :
-				c >= 0xe0 && c <= 0xef ? 3 : c >= 0xf0 && c <= 0xf4 ? 4 : 0;
+			const std::size_t length = c >= 0xc2 && c <= 0xdf	? 2
+									   : c >= 0xe0 && c <= 0xef ? 3
+									   : c >= 0xf0 && c <= 0xf4 ? 4
+																: 0;
 			unsigned codepoint = length ? c & (0x7f >> length) : 0;
 			bool valid = length && length <= text.size() - offset;
 			for (std::size_t index = 1; valid && index < length; ++index)
@@ -27,8 +26,11 @@ std::string Escape(std::string_view text, bool xml = false)
 				valid = (next & 0xc0) == 0x80;
 				codepoint = (codepoint << 6) | (next & 0x3f);
 			}
-			valid = valid && codepoint >= (length == 2 ? 0x80u : length == 3 ? 0x800u : 0x10000u) &&
-				codepoint <= 0x10ffff && !(codepoint >= 0xd800 && codepoint <= 0xdfff);
+			valid = valid &&
+					codepoint >= (length == 2	? 0x80u
+								  : length == 3 ? 0x800u
+												: 0x10000u) &&
+					codepoint <= 0x10ffff && !(codepoint >= 0xd800 && codepoint <= 0xdfff);
 			if (!valid)
 				result += "\xef\xbf\xbd";
 			else
@@ -99,7 +101,7 @@ std::string Escape(std::string_view text, bool xml = false)
 	}
 	return result;
 }
-const char* PhaseName(RigPhase phase)
+static const char* PhaseName(RigPhase phase)
 {
 	switch (phase)
 	{
@@ -118,7 +120,7 @@ const char* PhaseName(RigPhase phase)
 	}
 	return "failed";
 }
-} // namespace
+
 std::string SerializeRigJson(const RigSnapshot& result)
 {
 	std::ostringstream out;

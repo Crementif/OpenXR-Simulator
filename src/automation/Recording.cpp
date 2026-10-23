@@ -1,34 +1,32 @@
 #include "automation/Recording.h"
+#include "Pch.h"
+
 #include "control/ControlSchema.h"
 #include "control/InspectionDocument.h"
 #include "control/SimulationControl.h"
 
 #include <charconv>
-#include <span>
 #include <stdexcept>
-#include <utility>
 
 namespace simxr::automation
 {
-namespace
-{
 namespace wire = control;
-class Node
+class RecordingNode
 {
   public:
-	explicit Node(std::span<const std::byte> bytes)
+	explicit RecordingNode(std::span<const std::byte> bytes)
 	{
 		auto decoded = wire::DecodeFields(bytes);
 		if (decoded.error != wire::DecodeError::None)
 			throw std::runtime_error("Malformed recording inspection fields");
 		m_fields.fields = std::move(decoded.fields);
 	}
-	Node Member(std::string_view name) const
+	RecordingNode Member(std::string_view name) const
 	{
 		const auto members = Fields(Data(wire::InspectionType::Object).value);
 		for (const auto& field : members)
 		{
-			Node child(field.value);
+			RecordingNode child(field.value);
 			const auto label = child.m_fields.Find(1);
 			if (!label || !label->AsText())
 				throw std::runtime_error("Unnamed recording field");
@@ -37,9 +35,9 @@ class Node
 		}
 		throw std::runtime_error("Missing recording field: " + std::string(name));
 	}
-	std::vector<Node> Elements() const
+	std::vector<RecordingNode> Elements() const
 	{
-		std::vector<Node> result;
+		std::vector<RecordingNode> result;
 		for (const auto& page : Fields(Data(wire::InspectionType::Array).value))
 			for (const auto& child : Fields(page.value))
 			{
@@ -95,7 +93,7 @@ class Node
 	}
 	wire::Message m_fields;
 };
-std::vector<SimulationCommand> Commands(const Node& array)
+static std::vector<SimulationCommand> Commands(const RecordingNode& array)
 {
 	std::vector<SimulationCommand> commands;
 	for (const auto& node : array.Elements())
@@ -123,14 +121,14 @@ std::vector<SimulationCommand> Commands(const Node& array)
 	}
 	return commands;
 }
-std::vector<std::byte> CommandIdentity(std::span<const SimulationCommand> commands)
+static std::vector<std::byte> CommandIdentity(std::span<const SimulationCommand> commands)
 {
 	std::vector<wire::Field> fields;
 	for (const auto& command : commands)
 		fields.push_back(wire::EncodeSimulationCommand(command, static_cast<std::uint16_t>(fields.size() + 1)));
 	return wire::EncodeFields(fields);
 }
-std::uint64_t Number(const wire::Message& response, std::uint16_t name, std::uint64_t fallback)
+static std::uint64_t Number(const wire::Message& response, std::uint16_t name, std::uint64_t fallback)
 {
 	const auto field = response.Find(name);
 	if (!field)
@@ -139,13 +137,13 @@ std::uint64_t Number(const wire::Message& response, std::uint16_t name, std::uin
 		throw std::runtime_error("Invalid recording page identity");
 	return *field->AsU64();
 }
-} // namespace
+
 RecordingPage DecodeRecordingPage(const control::Message& response)
 {
 	const auto document = response.Find(control::tag::Document);
 	if (!document)
 		throw std::runtime_error("Runtime omitted recording metadata");
-	const Node root(document->value);
+	const RecordingNode root(document->value);
 	RecordingPage result;
 	auto& recording = result.recording;
 	recording.version = root.Member("version").Unsigned();
@@ -201,16 +199,26 @@ void RecordingCollection::Append(RecordingPage page)
 			identity != m_initialIdentity)
 			throw std::runtime_error("Recording changed while its pages were collected");
 	}
+	std::size_t bytes = 0;
+	const auto charge = [&](std::size_t size)
+	{
+		if (size > 64 * 1024 * 1024 - m_bytes - bytes)
+			throw std::runtime_error("Recording collection exceeds its byte bound");
+		bytes += size;
+	};
+	if (!m_recording)
+		charge(identity.size());
+	for (const auto& transaction : page.recording.transactions)
+	{
+		charge(transaction.phase.size());
+		charge(CommandIdentity(transaction.commands).size());
+	}
 	auto next = m_recording ? *m_recording : page.recording;
 	if (m_recording)
 		next.transactions.insert(next.transactions.end(), page.recording.transactions.begin(),
 								 page.recording.transactions.end());
-	std::size_t bytes = 0;
-	for (const auto& transaction : page.recording.transactions)
-		bytes += CommandIdentity(transaction.commands).size();
-	if (bytes > 64 * 1024 * 1024 - m_bytes || next.transactions.size() > next.total ||
-		page.end != (next.transactions.size() == next.total))
-		throw std::runtime_error("Recording collection exceeds its bound or has inconsistent pagination");
+	if (next.transactions.size() > next.total || page.end != (next.transactions.size() == next.total))
+		throw std::runtime_error("Recording collection has inconsistent pagination");
 	auto prepared = std::make_optional(std::move(next));
 	m_recording.swap(prepared);
 	m_initialIdentity.swap(identity);

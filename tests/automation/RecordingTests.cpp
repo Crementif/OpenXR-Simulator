@@ -111,6 +111,18 @@ void CollectionIdentityAndRollback()
 			"Inconsistent recording page accepted");
 		Require(collection.Offset() == 16 && !collection.Complete(), "Rejected page partially changed collection");
 	}
+	{
+		auto oversized = last;
+		oversized.recording.transactions.front().phase.assign(64 * 1024 * 1024, 'x');
+		Rejected(
+			[&]
+			{
+				collection.Append(std::move(oversized));
+			},
+			"Recording phase text bypassed the collection byte bound");
+		Require(collection.Offset() == 16 && !collection.Complete(),
+				"Oversized metadata partially replaced the previous recording page");
+	}
 	collection.Append(last);
 	const auto& recording = collection.Recording();
 	Require(recording.seed == std::numeric_limits<std::uint64_t>::max() && recording.originFrame.value == origin &&
@@ -142,6 +154,7 @@ void CollectionIdentityAndRollback()
 		},
 		"Truncated document accepted");
 }
+
 void ReleaseEventExport()
 {
 	CommandRecorder recorder;

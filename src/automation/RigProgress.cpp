@@ -1,4 +1,5 @@
 #include "automation/RigProgress.h"
+#include "Pch.h"
 
 #include <stdexcept>
 
