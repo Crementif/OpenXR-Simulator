@@ -331,11 +331,12 @@ bool VulkanBackend::Sharing() const
 
 std::shared_ptr<VulkanImage> VulkanBackend::CreateImage(VkFormat format, VkExtent2D extent, std::uint32_t layers,
 														VkImageUsageFlags usage, std::uint32_t mipLevels,
-														VkSampleCountFlagBits samples)
+														VkSampleCountFlagBits samples, VkImageCreateFlags flags)
 {
 	if (m_state->closed || m_state->failed || m_state->device->lost.load())
 		throw std::logic_error("Vulkan backend closed");
-	auto image = VulkanImage::Create(m_state->device, format, extent, layers, usage, mipLevels, samples);
+	auto image =
+		VulkanImage::Create(m_state->device, format, extent, layers, usage, mipLevels, samples, VK_WHOLE_SIZE, flags);
 	SnapshotBudget::ObserveImageBytes(image->allocationSize);
 	m_state->images.push_back(image);
 	return image;

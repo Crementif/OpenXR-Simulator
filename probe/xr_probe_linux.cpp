@@ -815,6 +815,12 @@ static int RunProbe()
 	chain.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
 	const bool bgra = std::getenv("SIMXR_PROBE_BGRA") != nullptr;
 	const bool srgb = std::getenv("SIMXR_PROBE_SRGB") != nullptr;
+	const bool mutableFormat = bgra && srgb;
+	if (mutableFormat)
+	{
+		CHECK(hasValidation);
+		chain.usageFlags |= XR_SWAPCHAIN_USAGE_MUTABLE_FORMAT_BIT;
+	}
 	chain.format = bgra ? (srgb ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_B8G8R8A8_UNORM)
 						: (srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM);
 	if (std::getenv("SIMXR_PROBE_HDR32"))
@@ -850,7 +856,7 @@ static int RunProbe()
 	CHECK(xrCreateSwapchain(session, &unsupported, &rejectedSwapchain) == XR_ERROR_FEATURE_UNSUPPORTED &&
 		  rejectedSwapchain == XR_NULL_HANDLE);
 	unsupported = chain;
-	unsupported.usageFlags |= XR_SWAPCHAIN_USAGE_MUTABLE_FORMAT_BIT;
+	unsupported.usageFlags |= XrSwapchainUsageFlags{1} << 63;
 	CHECK(xrCreateSwapchain(session, &unsupported, &rejectedSwapchain) == XR_ERROR_FEATURE_UNSUPPORTED &&
 		  rejectedSwapchain == XR_NULL_HANDLE);
 	VkPhysicalDeviceProperties imageLimits{};
@@ -908,6 +914,49 @@ static int RunProbe()
 		  invalidImages[0].image == VK_NULL_HANDLE);
 	XR(xrEnumerateSwapchainImages(swapchain, count, &count,
 								  reinterpret_cast<XrSwapchainImageBaseHeader*>(images.data())));
+	VkRenderPass mutablePass = VK_NULL_HANDLE;
+	std::vector<VkImageView> mutableViews;
+	std::vector<VkFramebuffer> mutableTargets;
+	if (mutableFormat)
+	{
+		CHECK(chain.format == VK_FORMAT_B8G8R8A8_SRGB);
+		VkAttachmentDescription attachment{};
+		attachment.format = VK_FORMAT_B8G8R8A8_UNORM;
+		attachment.samples = static_cast<VkSampleCountFlagBits>(chain.sampleCount);
+		attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+		attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		attachment.initialLayout = attachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		const VkAttachmentReference color{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+		VkSubpassDescription subpass{};
+		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+		subpass.colorAttachmentCount = 1;
+		subpass.pColorAttachments = &color;
+		VkRenderPassCreateInfo pass{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+		pass.attachmentCount = 1;
+		pass.pAttachments = &attachment;
+		pass.subpassCount = 1;
+		pass.pSubpasses = &subpass;
+		VK(vkCreateRenderPass(device, &pass, nullptr, &mutablePass));
+		mutableViews.resize(images.size());
+		mutableTargets.resize(images.size());
+		for (std::size_t image = 0; image < images.size(); ++image)
+		{
+			VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+			view.image = images[image].image;
+			view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+			view.format = VK_FORMAT_B8G8R8A8_UNORM;
+			view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+			VK(vkCreateImageView(device, &view, nullptr, &mutableViews[image]));
+			VkFramebufferCreateInfo target{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+			target.renderPass = mutablePass;
+			target.attachmentCount = 1;
+			target.pAttachments = &mutableViews[image];
+			target.width = chain.width;
+			target.height = chain.height;
+			target.layers = 1;
+			VK(vkCreateFramebuffer(device, &target, nullptr, &mutableTargets[image]));
+		}
+	}
 	// Also exercise depth swapchain allocation and exact acquire/wait/release ordering.
 	VkFormat depthFormat = VK_FORMAT_D32_SFLOAT;
 	if (const auto* selected = std::getenv("SIMXR_PROBE_DEPTH_FORMAT"))
@@ -1377,6 +1426,20 @@ static int RunProbe()
 		barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 		vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0,
 							 nullptr, 0, nullptr, 1, &barrier);
+		if (mutableFormat)
+		{
+			VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+			begin.renderPass = mutablePass;
+			begin.framebuffer = mutableTargets[index];
+			begin.renderArea.extent = {64, 48};
+			vkCmdBeginRenderPass(cmd, &begin, VK_SUBPASS_CONTENTS_INLINE);
+			VkClearAttachment clear{};
+			clear.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			clear.clearValue.color = {{.25f, .5f, .75f, 1}};
+			const VkClearRect rectangle{{{8, 20}, {8, 8}}, 0, 1};
+			vkCmdClearAttachments(cmd, 1, &clear, 1, &rectangle);
+			vkCmdEndRenderPass(cmd);
+		}
 		if (depthMode)
 		{
 			VkMemoryBarrier upload{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
@@ -1573,6 +1636,15 @@ static int RunProbe()
 		CHECK(bmp.size() == 54 + 128 * 48 * 4);
 		CHECK(bmp[54] == 0 && bmp[56] == 255);
 		CHECK(bmp[54 + 64 * 4] == 255 && bmp[56 + 64 * 4] == 0);
+		if (mutableFormat)
+		{
+			// UNORM attachment writes are already encoded bytes when the runtime samples the canonical SRGB image.
+			const auto pixel = 54 + ((24 * 128) + 12) * 4;
+			CHECK(std::abs(int(bmp[pixel]) - 191) <= 1 && std::abs(int(bmp[pixel + 1]) - 128) <= 1 &&
+				  std::abs(int(bmp[pixel + 2]) - 64) <= 1 && bmp[pixel + 3] == 255);
+			std::puts(
+				"PASS: mutable SRGB swapchain, alternate UNORM attachment clear, canonical SRGB composition pixels");
+		}
 		auto center = 54 + ((24 * 128) + 96) * 4;
 		auto leftCenter = 54 + ((24 * 128) + 32) * 4;
 		if (quadMode)
@@ -1651,6 +1723,12 @@ static int RunProbe()
 	XR(xrEndSession(session));
 	XrHapticActionInfo inactiveHaptic{XR_TYPE_HAPTIC_ACTION_INFO, nullptr, haptic, right};
 	CHECK(xrStopHapticFeedback(session, &inactiveHaptic) == XR_SESSION_NOT_FOCUSED);
+	for (auto target : mutableTargets)
+		vkDestroyFramebuffer(device, target, nullptr);
+	for (auto view : mutableViews)
+		vkDestroyImageView(device, view, nullptr);
+	if (mutablePass)
+		vkDestroyRenderPass(device, mutablePass, nullptr);
 	XR(xrDestroySwapchain(swapchain));
 	if (depthMode)
 	{

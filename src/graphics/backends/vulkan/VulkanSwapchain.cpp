@@ -24,7 +24,7 @@ static XrResult ValidateDescription(const XrSwapchainCreateInfo& description, co
 	constexpr XrSwapchainUsageFlags SupportedUsage =
 		XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
 		XR_SWAPCHAIN_USAGE_UNORDERED_ACCESS_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT |
-		XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
+		XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_MUTABLE_FORMAT_BIT;
 	if ((description.createFlags & ~XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) ||
 		(description.usageFlags & ~SupportedUsage) || description.faceCount != 1)
 		return XR_ERROR_FEATURE_UNSUPPORTED;
@@ -98,12 +98,14 @@ XrResult VulkanSwapchain::Create(VulkanBackend& backend, const XrSwapchainCreate
 	copied.next = nullptr;
 	auto prepared = std::unique_ptr<VulkanSwapchain>(new VulkanSwapchain(copied));
 	auto usage = ImageUsage(description);
+	const VkImageCreateFlags flags =
+		description.usageFlags & XR_SWAPCHAIN_USAGE_MUTABLE_FORMAT_BIT ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : 0;
 	if (DepthFormat(static_cast<VkFormat>(description.format)) && !(usage & VK_IMAGE_USAGE_SAMPLED_BIT))
 	{
 		VkImageFormatProperties properties{};
 		if (vkGetPhysicalDeviceImageFormatProperties(
 				backend.Device()->binding.physicalDevice, static_cast<VkFormat>(description.format), VK_IMAGE_TYPE_2D,
-				VK_IMAGE_TILING_OPTIMAL, usage | VK_IMAGE_USAGE_SAMPLED_BIT, 0, &properties) == VK_SUCCESS &&
+				VK_IMAGE_TILING_OPTIMAL, usage | VK_IMAGE_USAGE_SAMPLED_BIT, flags, &properties) == VK_SUCCESS &&
 			description.width <= properties.maxExtent.width && description.height <= properties.maxExtent.height &&
 			description.arraySize <= properties.maxArrayLayers && description.mipCount <= properties.maxMipLevels &&
 			(properties.sampleCounts & description.sampleCount))
@@ -112,7 +114,7 @@ XrResult VulkanSwapchain::Create(VulkanBackend& backend, const XrSwapchainCreate
 	for (auto& image : prepared->m_images)
 		image.resource = backend.CreateImage(
 			static_cast<VkFormat>(description.format), {description.width, description.height}, description.arraySize,
-			usage, description.mipCount, static_cast<VkSampleCountFlagBits>(description.sampleCount));
+			usage, description.mipCount, static_cast<VkSampleCountFlagBits>(description.sampleCount), flags);
 	output = std::move(prepared);
 	return XR_SUCCESS;
 }

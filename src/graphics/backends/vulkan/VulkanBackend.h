@@ -38,7 +38,8 @@ class VulkanBackend
 	VulkanBackend& operator=(const VulkanBackend&) = delete;
 	std::shared_ptr<VulkanImage> CreateImage(VkFormat format, VkExtent2D extent, std::uint32_t layers,
 											 VkImageUsageFlags usage, std::uint32_t mipLevels = 1,
-											 VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT);
+											 VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT,
+											 VkImageCreateFlags flags = 0);
 	// These two submission points require the host's binding-queue access permit.
 	std::shared_ptr<VulkanSubmission> InitializeImage(std::shared_ptr<VulkanImage> image);
 	XrResult Submit(const std::shared_ptr<VulkanFrame>& frame);

@@ -11,11 +11,10 @@ namespace simxr
 class VulkanImage
 {
   public:
-	static std::shared_ptr<VulkanImage> Create(std::shared_ptr<VulkanDevice> device, VkFormat format, VkExtent2D extent,
-											   std::uint32_t layers, VkImageUsageFlags usage,
-											   std::uint32_t mipLevels = 1,
-											   VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT,
-											   VkDeviceSize allocationLimit = VK_WHOLE_SIZE);
+	static std::shared_ptr<VulkanImage>
+	Create(std::shared_ptr<VulkanDevice> device, VkFormat format, VkExtent2D extent, std::uint32_t layers,
+		   VkImageUsageFlags usage, std::uint32_t mipLevels = 1, VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT,
+		   VkDeviceSize allocationLimit = VK_WHOLE_SIZE, VkImageCreateFlags flags = 0);
 	~VulkanImage();
 	VulkanImage(const VulkanImage&) = delete;
 	VulkanImage& operator=(const VulkanImage&) = delete;

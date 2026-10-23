@@ -11,7 +11,7 @@ VulkanImage::VulkanImage(std::shared_ptr<VulkanDevice> owner) : device(std::move
 std::shared_ptr<VulkanImage> VulkanImage::Create(std::shared_ptr<VulkanDevice> device, VkFormat format,
 												 VkExtent2D extent, std::uint32_t layers, VkImageUsageFlags usage,
 												 std::uint32_t mipLevels, VkSampleCountFlagBits samples,
-												 VkDeviceSize allocationLimit)
+												 VkDeviceSize allocationLimit, VkImageCreateFlags flags)
 {
 	if (!device || !extent.width || !extent.height || !layers || !usage || !mipLevels ||
 		mipLevels > static_cast<std::uint32_t>(std::bit_width(std::max(extent.width, extent.height))) ||
@@ -20,7 +20,7 @@ std::shared_ptr<VulkanImage> VulkanImage::Create(std::shared_ptr<VulkanDevice> d
 		throw std::invalid_argument("Vulkan image requires device, extent, layers and usage");
 	VkImageFormatProperties supported{};
 	CheckVulkan(vkGetPhysicalDeviceImageFormatProperties(device->binding.physicalDevice, format, VK_IMAGE_TYPE_2D,
-														 VK_IMAGE_TILING_OPTIMAL, usage, 0, &supported),
+														 VK_IMAGE_TILING_OPTIMAL, usage, flags, &supported),
 				"Query Vulkan image format and usage");
 	if (extent.width > supported.maxExtent.width || extent.height > supported.maxExtent.height ||
 		layers > supported.maxArrayLayers || mipLevels > supported.maxMipLevels || !(supported.sampleCounts & samples))
@@ -33,6 +33,7 @@ std::shared_ptr<VulkanImage> VulkanImage::Create(std::shared_ptr<VulkanDevice> d
 	result->samples = samples;
 	result->usage = usage;
 	VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+	image.flags = flags;
 	image.imageType = VK_IMAGE_TYPE_2D;
 	image.format = format;
 	image.extent = {extent.width, extent.height, 1};
