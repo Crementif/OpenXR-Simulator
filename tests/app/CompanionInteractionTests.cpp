@@ -12,7 +12,7 @@
 #include "app/RecordingPanel.h"
 #include "app/services/RuntimeConnection.h"
 #include "app/RuntimePanels.h"
-#include "app/RuntimeSession.h"
+#include "app/services/RuntimeSession.h"
 #include "app/widgets/HapticEvents.h"
 #include "app/widgets/SpatialEditor.h"
 #include "control/FrameInspection.h"
@@ -1603,6 +1603,18 @@ void CheckDebuggerWorkflow(const char* endpoint)
 			return !state.pending && std::filesystem::exists(directory / "layer.ppm");
 		},
 		"Layer export failed");
+	test.workspace.Select(DeviceSel{DevicePage::Head});
+	test.Frame();
+	test.runtime.Step();
+	wait(
+		[&](const auto& state)
+		{
+			const auto* selected = std::get_if<FrameSel>(&test.workspace.State().selection);
+			return !state.operationPending && state.selectedReady && state.selectedFrame &&
+				selected && selected->identity == state.selectedIdentity && selected->epoch == state.selectedEpoch;
+		},
+		"Requested single-frame step did not open its Frame page");
+	std::cout << "PASS requested single-frame step opens the captured Frame page from a device page\n";
 	for (const auto capture : test.runtime.CaptureIds())
 		test.runtime.Command(simxr::control::CommandKind::Release, capture);
 	wait(
@@ -1628,6 +1640,22 @@ void CheckDebuggerWorkflow(const char* endpoint)
 		<< " resumed=" << test.runtime.Snapshot().selectedFrame << '\n';
 	std::cout << "PASS production pause/strict-step/inspect/composed-and-layer-export/resume: frame "
 			  << exact.selectedFrame << " -> " << raw.selectedFrame << '\n';
+	const auto previousEpoch = test.runtime.Snapshot().epoch;
+	test.runtime.Disconnect();
+	test.Frame();
+	const auto disconnected = test.runtime.Snapshot();
+	Require(!disconnected.selectedReady && disconnected.selectedFrame == 0 &&
+			disconnected.selectedIdentity.frame == 0 && disconnected.time.following,
+			"Disconnect left the old runtime's preview selected");
+	test.runtime.ConnectEndpoint(endpoint);
+	wait(
+		[&](const auto& state)
+		{
+			return state.connected && state.epoch != previousEpoch && state.selectedReady && state.selectedFrame;
+		},
+		"Reconnect did not select a fresh runtime preview");
+	Require(test.validation->errors.load() == 0, "Runtime reconnect reported Vulkan validation errors");
+	std::cout << "PASS disconnect clears selected image and reconnect selects the new connection epoch\n";
 }
 
 void CheckManualEdges(const RuntimeView& target)
@@ -2093,6 +2121,26 @@ void CheckPreviewPilot(Interaction& test)
 	Require(gamepad.values.input.controllers[1].primary && gamepad.values.input.controllers[1].trigger > .99f &&
 				gamepad.values.input.controllers[0].stick.x > .4f,
 			"Gamepad button, trigger or thumbstick did not reach runtime");
+	test.runtime.PrepareReplay();
+	Require(!test.runtime.ReplayReady(), "Replay accepted held gamepad ownership before releasing it");
+	Eventually([&] { pump(1); return test.runtime.ReplayReady(); }, "Held gamepad prevented replay input release");
+	pump(4);
+	const auto releasedForReplay = observed();
+	std::cout << "Replay preparation ready=" << test.runtime.ReplayReady()
+		<< " operationPending=" << test.runtime.Snapshot().operationPending
+		<< " error=" << test.runtime.Snapshot().error << " owners:";
+	for (std::size_t channel = 0; channel < releasedForReplay.owners.size(); ++channel)
+		if (const auto& owner = releasedForReplay.owners[channel])
+			std::cout << " " << channel << "=" << static_cast<unsigned>(owner->kind) << ":" << owner->id;
+	std::cout << '\n';
+	Require(test.runtime.ReplayReady() && std::none_of(releasedForReplay.owners.begin(), releasedForReplay.owners.end(),
+		[](const auto& owner) { return owner && owner->kind == simxr::CommandSourceKind::Manual; }),
+			"Held gamepad reclaimed inputs during replay preparation");
+	test.runtime.FinishReplayPreparation();
+	pump(10);
+	Require(observed().values.input.controllers[1].primary,
+			"Ending replay preparation did not restore ordinary gamepad input");
+	std::cout << "PASS held gamepad remains released throughout replay preparation\n";
 	key(SDL_SCANCODE_LCTRL, true, SDL_KMOD_CTRL);
 	button(SDL_BUTTON_RIGHT, true);
 	Eventually(
@@ -2275,6 +2323,12 @@ void CheckSpatialEditing(Interaction& test)
 	ImGui::ActivateItemByID(inspector->GetID("##X"));
 	ImGui::GetCurrentContext()->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
 	pump(1);
+	Require(ImGui::GetActiveID() == inspector->GetID("##X"), "Device position field did not activate");
+	const auto activeChanges = test.runtime.Changes().size();
+	Require(activeChanges != 0, "Active-field undo fixture has no prior gesture");
+	test.runtime.UndoChanges(1);
+	Require(test.runtime.Changes().size() == activeChanges && ImGui::GetActiveID() == inspector->GetID("##X"),
+		"Undo changed history while a device field was active");
 	auto& io = ImGui::GetIO();
 	io.AddKeyEvent(ImGuiMod_Ctrl, true);
 	io.AddKeyEvent(ImGuiKey_A, true);
@@ -2368,6 +2422,14 @@ void CheckSpatialEditing(Interaction& test)
 	pump(3);
 	Require(!test.runtime.Snapshot().rigExpanded, "Rig view did not restore the image");
 	std::cout << "PASS expanded rig view and picture-in-picture restore\n";
+	test.runtime.PrepareReplay();
+	Eventually([&] { pump(1); return test.runtime.ReplayReady(); }, "Replay input release did not complete");
+	// Even an already-neutral observation predates the new release request.
+	test.runtime.PrepareReplay();
+	Require(!test.runtime.ReplayReady(), "Replay used the observation from before its release request");
+	Eventually([&] { pump(1); return test.runtime.ReplayReady(); }, "Replay did not observe its new input release");
+	test.runtime.FinishReplayPreparation();
+	std::cout << "PASS active device field blocks undo and replay waits for a fresh release observation\n";
 
 	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
 	{

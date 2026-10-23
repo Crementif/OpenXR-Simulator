@@ -1,633 +1,520 @@
 #include "app/RuntimePanels.h"
 #include "Pch.h"
-#include "app/AdvancedSteppingPage.h"
-#include "app/pages/DeviceControlPanel.h"
-#include "app/services/PlayerRig.h"
-#include "app/DocumentTree.h"
-#include "app/FramePage.h"
 #include "app/PastInput.h"
-#include "app/widgets/PilotController.h"
-#include "app/PreviewPanel.h"
-#include "app/RangePage.h"
-#include "app/RecordingPanel.h"
-#include "app/RuntimeSession.h"
-#include "app/widgets/SpatialEditor.h"
 #include "app/Theme.h"
 #include "app/platform/Window.h"
 #include "app/widgets/Controls.h"
 #include "app/widgets/HapticEvents.h"
-#include "Pch.h"
-
-#include <algorithm>
-#include <array>
-#include <filesystem>
 #include <imgui.h>
-#include <span>
-#include <utility>
 
 namespace simxr::app
 {
 namespace wire = control;
-namespace tag = wire::tag;
-class RuntimePanels::Impl
-{
-  public:
-	Impl(UiRenderer& renderer, const std::string& endpoint, Window* window)
-		: m_session(renderer, endpoint), m_window(window)
-	{
-		std::copy_n(endpoint.data(), std::min(endpoint.size(), m_endpointInput.size() - 1), m_endpointInput.data());
-	}
-	~Impl()
-	{
-		m_spatial.Cancel();
-		StopPilot();
-		if (m_window)
-			m_window->Rumble({});
-	}
-	void Poll()
-	{
-		m_session.Poll(m_pilot.Active());
-		if (m_session.TakeScopeChanged())
-		{
-			StopPilot();
-			m_devices.ClearHeldInputs();
-			m_devices.ResetObservations();
-			m_spatial.Reset();
-			m_undo.Clear();
-		}
-		if (m_session.Connected())
-		{
-			const auto& input = m_session.Input();
-			m_devices.ObserveDelivery(input.editPending, input.error);
-			m_spatial.Observe(input, m_pilot.Active() || m_devices.Active());
-			m_devices.SetManualSource(input.source);
-			m_devices.SetRigPiloting(m_pilot.Active() || m_spatial.Active() || m_devices.Active());
-			if (m_session.TakeObservation())
-			{
-				m_devices.ObserveState(input.state);
-				if (!input.editPending && !input.posePending && m_session.Setup())
-					m_undo.Observe(*m_session.Setup());
-			}
-			if (!input.error.empty())
-				StopPilot();
-		}
-		if (m_window)
-		{
-			if (m_gamepad != m_window->GamepadIdentity())
-			{
-				m_gamepad = m_window->GamepadIdentity();
-				m_rumbleFailed = false;
-				m_session.Haptics().Motors(HapticFeedback::Clock::now(), false);
-			}
-			const bool enabled = m_session.Connected() && m_session.Debugger().Selected().running &&
-				m_window->Focused() && m_window->HasGamepad();
-			const auto motors = m_session.Haptics().Motors(HapticFeedback::Clock::now(), enabled);
-			if (!m_window->Rumble(motors, m_session.Haptics().Deadline()) && !m_rumbleFailed)
-			{
-				m_rumbleFailed = true;
-				m_session.Notify("Gamepad rumble unavailable", "This gamepad could not accept vibration output.");
-			}
-		}
-		m_range.Poll();
-	}
-	RuntimeView Build() const
-	{
-		auto view = m_session.View();
-		const auto recording = m_recording.Snapshot();
-		view.recording = recording.page && recording.page->active;
-		view.recordingOverflow = recording.page && recording.page->overflow;
-		view.recordingBusy = recording.busy;
-		view.recordedChanges = recording.page ? recording.page->total : 0;
-		view.rigExpanded = m_spatial.Expanded();
-		view.rotationBall = m_spatial.RotationBallRect();
-		view.markers = m_spatial.MarkerRects();
-		view.rigView = m_spatial.RigViewRect();
-		view.rigDevices = m_spatial.RigDevicePoints();
-		if (view.notice.empty())
-			view.notice = m_lastNotice;
-		return view;
-	}
-	bool CanRecord() const
-	{
-		return m_session.Connected() && m_session.Debugger().Selected().id &&
-			   m_session.Supports(wire::Capability::CommandRecording);
-	}
-	const RuntimeView& BeginFrame()
-	{
-		const auto connection = m_session.Connection();
-		const auto selected = m_session.Debugger().Selected();
-		const bool connected = m_session.Connected();
-		m_recording.SetTarget(connected && selected.id
-								  ? RecordingTarget{connection.path, selected.id, selected.generation}
-								  : RecordingTarget{});
-		m_recording.Poll(CanRecord());
-		m_view = Build();
-		const bool following = m_view.time.following;
-		const auto image = m_session.Preview().Selected();
-		const auto historical = m_session.Workspace().Selected();
-		m_spatial.SetContext(connected && selected.id && following && !m_pilot.Active() &&
-								(!m_window || m_window->Focused()), !following,
-							 image ? std::span<const FrameView>{image->description.views} : std::span<const FrameView>{},
-							 historical && !following ? &historical->document : nullptr,
-							 historical ? historical->local : 0);
-		m_session.Preview().BeginFrame();
-		return m_view;
-	}
-	void UndoChanges(std::size_t count)
-	{
-		if (m_pilot.Active() || m_spatial.Active() || !m_view.time.following || !m_session.Setup())
-			return;
-		if (m_undo.Empty() || count == 0)
-			return;
-		auto history = m_undo;
-		if (auto undo = history.Undo(*m_session.Setup(), m_session.Input().source, count))
-		{
-			if (m_session.SubmitEdit(*undo))
-				m_undo = std::move(history);
-		}
-		else
-			m_session.Notify("Undo unavailable", "Release the affected devices or restore their tracking first");
-	}
-	void DrawPreview(ShellState& shell)
-	{
-		const auto& io = ImGui::GetIO();
-		if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false) && !io.WantTextInput)
-			UndoChanges(1);
-		if (!m_preview.Draw(shell, m_view))
-			StopPilot();
-	}
-	void DrawDevicePage(ShellState& shell)
-	{
-		if (!m_view.connected)
-		{
-			// The page keeps its title, greyed; the preview's Open app is the one way in.
-			ImGui::BeginDisabled();
-			m_devices.DrawHeader(shell.selection);
-			ImGui::EndDisabled();
-			ImGui::TextDisabled("Values appear once an app connects");
-			return;
-		}
-		ImGui::BeginDisabled(!m_view.time.following || !m_session.SupportsEdits());
-		if (auto edit = m_devices.DrawHeader(shell.selection))
-			SubmitEdit(*edit);
-		ImGui::EndDisabled();
-		m_spatial.DrawRigView(shell.selection);
-		m_devices.SetRigPiloting(m_pilot.Active() || m_spatial.Active() || m_devices.Active());
-		if (!m_view.time.following)
-		{
-			// Looking back: the rig above shows the recorded poses; live controls stay hidden.
-			ImGui::TextColored(theme::Vec(theme::Past), "PAST");
-			ImGui::SameLine();
-			ImGui::TextDisabled("Frame %llu", static_cast<unsigned long long>(m_view.time.cursor.frame));
-			ImGui::SameLine();
-			if (ImGui::SmallButton("Frame details"))
-				shell.selection = FrameSel{m_view.time.cursor, m_view.time.epoch};
-			DrawPastDevice(shell.selection);
-			return;
-		}
-		const auto placement = [&]
-		{
-			m_spatial.DrawPlacement(shell.selection);
-		};
-		if (auto edit = m_devices.Draw(m_session.SupportsEdits(), &shell.selection, placement))
-			SubmitEdit(*edit);
-		if (const auto* device = std::get_if<DeviceSel>(&shell.selection);
-			device && (device->page == DevicePage::Left || device->page == DevicePage::Right))
-			DrawHapticEvents(m_session.Haptics(), device->page == DevicePage::Left ? 0 : 1,
-				m_session.Connected() && m_session.Supports(wire::Capability::LiveHaptics));
-		if (auto device = std::get_if<DeviceSel>(&shell.selection); device && device->page == DevicePage::Trackers)
-			device->slot = static_cast<unsigned>(m_devices.SelectedTracker());
-	}
-	void DrawPastDevice(const Selection& selection)
-	{
-		const auto* device = std::get_if<DeviceSel>(&selection);
-		if (!device || (device->page != DevicePage::Body && device->page != DevicePage::Gaze &&
-						device->page != DevicePage::Trackers))
-			return;
-		const auto& history = m_session.History();
-		const auto index = history.Find(m_view.time.cursor, m_view.time.epoch);
-		const auto* sample = index ? m_session.InputSamples().Find(history.At(*index).input) : nullptr;
-		if (!sample)
-		{
-			ImGui::TextDisabled("Input not kept for this frame");
-			return;
-		}
-		if (device->page == DevicePage::Body)
-			DrawPastBody(*sample);
-		else if (device->page == DevicePage::Gaze)
-			DrawPastGaze(*sample);
-		else
-			DrawPastTrackers(*sample, device->slot);
-	}
-	void DrawConnection(bool* open)
-	{
-		const auto selected = m_session.Debugger().Selected();
-		ImGui::SetNextWindowSize({600, 400}, ImGuiCond_FirstUseEver);
-		ImGui::OpenPopup("Runtime connection");
-		if (!ImGui::BeginPopupModal("Runtime connection", open))
-			return;
-		const auto state = m_session.Connection();
-		ImGui::TextUnformatted(m_view.connectionState.c_str());
-		if (ImGui::Button("Refresh applications"))
-			m_session.RefreshEndpoints();
-		if (state.state == RuntimeConnectionState::Connected)
-		{
-			ImGui::SameLine();
-			if (ImGui::Button("Disconnect"))
-				m_session.Disconnect();
-		}
-		if (m_session.Endpoints().empty())
-			ImGui::TextUnformatted("No applications");
-		for (const auto& path : m_session.Endpoints())
-		{
-			if (ImGui::Selectable(std::filesystem::path(path).filename().string().c_str(),
-								  path == m_session.Endpoint()))
-				m_session.ConnectEndpoint(path);
-			ImGui::SetItemTooltip("%s", path.c_str());
-		}
-		if (!state.detail.empty())
-			ImGui::TextWrapped("%s", state.detail.c_str());
-		for (const auto& session : m_session.Debugger().Sessions())
-		{
-			const auto label = "Session " + std::to_string(session.id) + "##" + std::to_string(session.generation);
-			if (ImGui::Selectable(label.c_str(), session.id == selected.id && session.generation == selected.generation))
-				m_session.ChooseSession(session);
-			ImGui::SetItemTooltip("Run %llu", static_cast<unsigned long long>(session.generation));
-		}
-		if (Section("Advanced connection"))
-		{
-			ImGui::SetNextItemWidth(-1);
-			ImGui::InputText("##Endpoint", m_endpointInput.data(), m_endpointInput.size());
-			if (ImGui::Button("Connect to endpoint"))
-				m_session.ConnectEndpoint(m_endpointInput.data());
-			ImGui::TextWrapped("Queued: %zu; replies: %zu; exchange: %s", state.queued, state.ready,
-							   state.inFlight ? "pending" : "idle");
-		}
-		ImGui::EndPopup();
-	}
-	std::vector<Notice> TakeNotices()
-	{
-		auto notices = m_session.TakeNotices();
-		if (!notices.empty())
-			m_lastNotice = notices.back().title + (notices.back().detail.empty() ? "" : ": " + notices.back().detail);
-		return notices;
-	}
-	// Device page edits are undoable; Ctrl+Z restores the poses observed before them.
-	void SubmitEdit(const SimulationEdit& edit)
-	{
-		StopPilot();
-		if (m_session.SubmitEdit(edit))
-			if (const auto transaction = std::get_if<ManualTransaction>(&edit); transaction && m_session.Setup())
-				m_undo.Record(*m_session.Setup(), *transaction);
-	}
-	void StopPilot()
-	{
-		m_pilot.Stop(m_window, m_session.ManualInput(), true);
-		m_devices.SetRigPiloting(false);
-	}
-	void FocusLost()
-	{
-		m_spatial.Cancel();
-		m_undo.FinishGesture();
-		m_session.Haptics().Motors(HapticFeedback::Clock::now(), false);
-		if (m_window)
-			m_window->Rumble({});
-		m_pilot.Stop(m_window, m_session.ManualInput(), true, true);
-		m_devices.SetRigPiloting(false);
-		m_devices.ClearHeldInputs();
-	}
-	void ReleaseInputs()
-	{
-		StopPilot();
-		m_devices.ClearHeldInputs();
-		if (m_session.Debugger().Selected().id && m_session.Debugger().Selected().running)
-			m_session.SubmitEdit(ReleaseManualInputs{});
-	}
-	void RequestExport(std::string path)
-	{
-		if (m_range.Exporting())
-			m_session.Notify("Export busy", "Wait for the range export to finish");
-		else
-			m_session.RequestExport(std::move(path));
-	}
-	std::optional<automation::SavedRecording> TakeRecordingReplay()
-	{
-		if (auto play = m_range.TakePlayRequest())
-			m_recordingReplay = RecordingReplay{std::move(*play), m_session.Debugger().Scope()};
-		auto replay = std::exchange(m_recordingReplay, {});
-		if (!replay)
-			return {};
-		if (replay->scope != m_session.Debugger().Scope())
-		{
-			m_session.Notify("Replay target changed", "Select the intended session and replay again");
-			return {};
-		}
-		return std::move(replay->saved);
-	}
-
-	struct RecordingReplay
-	{
-		automation::SavedRecording saved;
-		PanelScope scope;
-	};
-	RuntimeSession m_session;
-	Window* m_window = nullptr;
-	std::uint32_t m_gamepad = 0;
-	bool m_rumbleFailed = false;
-	RuntimeView m_view;
-	std::string m_lastNotice;
-	std::array<char, 256> m_endpointInput{};
-	RecordingPanel m_recording;
-	bool m_replayActive = false;
-	std::optional<RecordingReplay> m_recordingReplay;
-	std::optional<std::string> m_savedTake;
-	PlayerRig m_playerRig;
-	PilotController m_pilot{m_playerRig};
-	DeviceControlPanel m_devices{m_playerRig};
-	UndoStack m_undo;
-	SpatialEditor m_spatial{m_playerRig, m_session.ManualInput(), m_undo};
-	DocumentTree m_documents{m_session};
-	FramePage m_frame{m_session, m_spatial, m_documents};
-	RangePage m_range{m_session};
-	AdvancedSteppingPage m_advanced{m_session, m_devices};
-	PreviewPanel m_preview{m_session, m_pilot, m_spatial, m_devices, m_window};
-};
-RuntimePanels::RuntimePanels(UiRenderer& renderer, std::string endpoint, Window* window)
-	: m_impl(std::make_unique<Impl>(renderer, endpoint, window))
-{
-}
-RuntimePanels::~RuntimePanels() = default;
-void RuntimePanels::ConfigureSnapshots(std::uint32_t budgetMiB)
-{
-	m_impl->m_session.ConfigureSnapshots(budgetMiB);
-}
-void RuntimePanels::ConfigurePilot(const PilotBindings& keys, const GamepadBindings& gamepad)
-{
-	m_impl->m_pilot.Configure(keys, gamepad);
-}
 void RuntimePanels::Poll()
 {
-	m_impl->Poll();
+	m_session.Poll(m_pilot.Active());
+	if (m_session.TakeScopeChanged())
+	{
+		StopPilot();
+		m_devices.ClearHeldInputs();
+		m_devices.ResetObservations();
+		m_spatial.Reset();
+		m_undo.Clear();
+		m_replayPreparation.reset();
+	}
+	if (m_replayPreparation && m_session.Debugger().HasLease())
+		m_session.Debugger().Relinquish();
+	if (m_session.Connected())
+	{
+		const auto& input = m_session.Input();
+		m_devices.ObserveDelivery(input.editPending, input.error);
+		m_spatial.Observe(input, m_pilot.Active() || m_devices.Active());
+		m_devices.SetManualSource(input.source);
+		m_devices.SetRigPiloting(m_pilot.Active() || m_spatial.Active() || m_devices.Active());
+		if (m_session.TakeObservation())
+		{
+			m_devices.ObserveState(input.state);
+			if (!input.editPending && !input.posePending && m_session.Setup())
+				m_undo.Observe(*m_session.Setup());
+		}
+		if (!input.error.empty())
+			StopPilot();
+	}
+	if (m_window)
+	{
+		if (m_gamepad != m_window->GamepadIdentity())
+		{
+			m_gamepad = m_window->GamepadIdentity();
+			m_rumbleFailed = false;
+			m_session.Haptics().Motors(HapticFeedback::Clock::now(), false);
+		}
+		const bool enabled = m_session.Connected() && m_session.Debugger().Selected().running && m_window->Focused() &&
+							 m_window->HasGamepad();
+		const auto motors = m_session.Haptics().Motors(HapticFeedback::Clock::now(), enabled);
+		if (!m_window->Rumble(motors, m_session.Haptics().Deadline()) && !m_rumbleFailed)
+		{
+			m_rumbleFailed = true;
+			m_session.Notify("Gamepad rumble unavailable", "This gamepad could not accept vibration output.");
+		}
+	}
+	m_range.Poll();
+}
+RuntimeView RuntimePanels::Build() const
+{
+	RuntimeView view{m_session.View()};
+	const auto recording = m_recording.Snapshot();
+	view.recording = recording.page && recording.page->active;
+	view.recordingOverflow = recording.page && recording.page->overflow;
+	view.recordingBusy = recording.busy;
+	view.recordedChanges = recording.page ? recording.page->total : 0;
+	view.operationPending |= m_replayPreparation.has_value();
+	view.rigExpanded = m_spatial.Expanded();
+	view.rotationBall = m_spatial.RotationBallRect();
+	view.markers = m_spatial.MarkerRects();
+	view.rigView = m_spatial.RigViewRect();
+	view.rigDevices = m_spatial.RigDevicePoints();
+	if (view.notice.empty())
+		view.notice = m_lastNotice;
+	return view;
+}
+bool RuntimePanels::CanRecord() const
+{
+	return m_session.Connected() && m_session.Debugger().Selected().id &&
+		   m_session.Supports(wire::Capability::CommandRecording);
 }
 const RuntimeView& RuntimePanels::BeginFrame()
 {
-	return m_impl->BeginFrame();
+	const auto connection = m_session.Connection();
+	const auto selected = m_session.Debugger().Selected();
+	const bool connected = m_session.Connected();
+	m_recording.SetTarget(connected && selected.id ? RecordingTarget{connection.path, selected.id, selected.generation}
+												   : RecordingTarget{});
+	m_recording.Poll(CanRecord());
+	m_view = Build();
+	const bool following = m_view.time.following;
+	const auto image = m_session.Preview().Selected();
+	const auto historical = m_session.Workspace().Selected();
+	m_spatial.SetContext(
+		connected && selected.id && following && !m_replayPreparation && !m_pilot.Active() &&
+			(!m_window || m_window->Focused()),
+		!following, image ? std::span<const FrameView>{image->description.views} : std::span<const FrameView>{},
+		historical && !following ? &historical->document : nullptr, historical ? historical->local : 0);
+	m_session.Preview().BeginFrame();
+	return m_view;
 }
-const RuntimeView& RuntimePanels::View() const
+void RuntimePanels::UndoChanges(std::size_t count)
 {
-	return m_impl->m_view;
-}
-bool RuntimePanels::PilotActive() const
-{
-	return m_impl->m_pilot.Active();
-}
-bool& RuntimePanels::HudFolded()
-{
-	return m_impl->m_pilot.HudFolded();
-}
-std::optional<ImVec4>& RuntimePanels::PreviewCrop()
-{
-	return m_impl->m_preview.Crop();
+	if (m_replayPreparation || m_pilot.Active() || m_spatial.Active() || m_devices.Active() || !m_view.time.following ||
+		!m_session.Setup())
+		return;
+	if (m_undo.Empty() || count == 0)
+		return;
+	auto history = m_undo;
+	if (auto undo = history.Undo(*m_session.Setup(), m_session.Input().source, count))
+	{
+		if (m_session.SubmitEdit(*undo))
+			m_undo = std::move(history);
+	}
+	else
+		m_session.Notify("Undo unavailable", "Release the affected devices or restore their tracking first");
 }
 void RuntimePanels::DrawPreview(ShellState& shell)
 {
-	m_impl->DrawPreview(shell);
-}
-void RuntimePanels::DrawFramePage(ShellState& shell)
-{
-	m_impl->m_frame.Draw(shell, m_impl->m_view);
-}
-void RuntimePanels::DrawRangePage(const RangeSel& range, ShellState& shell)
-{
-	auto& impl = *m_impl;
-	if (auto replay = impl.m_range.Draw(range, shell))
-		impl.m_recordingReplay = Impl::RecordingReplay{std::move(*replay), impl.m_session.Debugger().Scope()};
-}
-void RuntimePanels::DrawAdvancedPage()
-{
-	m_impl->m_advanced.Draw();
+	const auto& io = ImGui::GetIO();
+	if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false) && !io.WantTextInput)
+		UndoChanges(1);
+	if (!m_preview.Draw(shell, m_view, !m_replayPreparation, !m_replayActive))
+		StopPilot();
 }
 void RuntimePanels::DrawDevicePage(ShellState& shell)
 {
-	m_impl->DrawDevicePage(shell);
+	if (!m_view.connected)
+	{
+		// The page keeps its title, greyed; the preview's Open app is the one way in.
+		ImGui::BeginDisabled();
+		m_devices.DrawHeader(shell.selection);
+		ImGui::EndDisabled();
+		ImGui::TextDisabled("Values appear once an app connects");
+		return;
+	}
+	ImGui::BeginDisabled(m_replayPreparation.has_value() || !m_view.time.following || !m_session.SupportsEdits());
+	if (auto edit = m_devices.DrawHeader(shell.selection))
+		SubmitEdit(*edit);
+	ImGui::EndDisabled();
+	m_spatial.DrawRigView(shell.selection);
+	m_devices.SetRigPiloting(m_pilot.Active() || m_spatial.Active() || m_devices.Active());
+	if (!m_view.time.following)
+	{
+		// Looking back: the rig above shows the recorded poses; live controls stay hidden.
+		ImGui::TextColored(theme::Vec(theme::Past), "PAST");
+		ImGui::SameLine();
+		ImGui::TextDisabled("Frame %llu", static_cast<unsigned long long>(m_view.time.cursor.frame));
+		ImGui::SameLine();
+		if (ImGui::SmallButton("Frame details"))
+			shell.selection = FrameSel{m_view.time.cursor, m_view.time.epoch};
+		DrawPastDevice(shell.selection);
+		return;
+	}
+	const auto placement = [&]
+	{
+		m_spatial.DrawPlacement(shell.selection);
+	};
+	if (auto edit = m_devices.Draw(!m_replayPreparation && m_session.SupportsEdits(), &shell.selection, placement))
+		SubmitEdit(*edit);
+	if (const auto* device = std::get_if<DeviceSel>(&shell.selection);
+		device && (device->page == DevicePage::Left || device->page == DevicePage::Right))
+		DrawHapticEvents(m_session.Haptics(), device->page == DevicePage::Left ? 0 : 1,
+						 m_session.Connected() && m_session.Supports(wire::Capability::LiveHaptics));
+	if (auto device = std::get_if<DeviceSel>(&shell.selection); device && device->page == DevicePage::Trackers)
+		device->slot = static_cast<unsigned>(m_devices.SelectedTracker());
+}
+void RuntimePanels::DrawPastDevice(const Selection& selection)
+{
+	const auto* device = std::get_if<DeviceSel>(&selection);
+	if (!device ||
+		(device->page != DevicePage::Body && device->page != DevicePage::Gaze && device->page != DevicePage::Trackers))
+		return;
+	const auto& history = m_session.History();
+	const auto index = history.Find(m_view.time.cursor, m_view.time.epoch);
+	const auto* sample = index ? m_session.InputSamples().Find(history.At(*index).input) : nullptr;
+	if (!sample)
+	{
+		ImGui::TextDisabled("Input not kept for this frame");
+		return;
+	}
+	if (device->page == DevicePage::Body)
+		DrawPastBody(*sample);
+	else if (device->page == DevicePage::Gaze)
+		DrawPastGaze(*sample);
+	else
+		DrawPastTrackers(*sample, device->slot);
+}
+std::vector<Notice> RuntimePanels::TakeNotices()
+{
+	auto notices = m_session.TakeNotices();
+	if (!notices.empty())
+		m_lastNotice = notices.back().title + (notices.back().detail.empty() ? "" : ": " + notices.back().detail);
+	return notices;
+}
+void RuntimePanels::SubmitEdit(const SimulationEdit& edit)
+{
+	StopPilot();
+	if (m_session.SubmitEdit(edit))
+		if (const auto transaction = std::get_if<ManualTransaction>(&edit); transaction && m_session.Setup())
+			m_undo.Record(*m_session.Setup(), *transaction);
+}
+void RuntimePanels::StopPilot()
+{
+	m_pilot.Stop(m_window, m_session.ManualInput(), true);
+	m_devices.SetRigPiloting(false);
+}
+void RuntimePanels::FocusLost()
+{
+	m_spatial.Cancel();
+	m_undo.FinishGesture();
+	m_session.Haptics().Motors(HapticFeedback::Clock::now(), false);
+	if (m_window)
+		m_window->Rumble({});
+	m_pilot.Stop(m_window, m_session.ManualInput(), true, true);
+	m_devices.SetRigPiloting(false);
+	m_devices.ClearHeldInputs();
+}
+bool RuntimePanels::ReleaseInputs()
+{
+	StopPilot();
+	m_devices.ClearHeldInputs();
+	if (m_session.Connected() && m_session.Debugger().Selected().id && m_session.Debugger().Selected().running)
+		return m_session.SubmitEdit(ReleaseManualInputs{});
+	return false;
+}
+void RuntimePanels::RequestExport(std::string path)
+{
+	if (m_range.Exporting())
+		m_session.Notify("Export busy", "Wait for the range export to finish");
+	else
+		m_session.RequestExport(std::move(path));
+}
+std::optional<automation::SavedRecording> RuntimePanels::TakeRecordingReplay()
+{
+	if (auto play = m_range.TakePlayRequest())
+		m_recordingReplay = RecordingReplay{std::move(*play), m_session.Debugger().Scope()};
+	auto replay = std::exchange(m_recordingReplay, {});
+	if (!replay)
+		return {};
+	if (replay->scope != m_session.Debugger().Scope())
+	{
+		m_session.Notify("Replay target changed", "Select the intended session and replay again");
+		return {};
+	}
+	return std::move(replay->saved);
+}
+RuntimePanels::RuntimePanels(UiRenderer& renderer, std::string endpoint, Window* window)
+	: m_session(renderer, endpoint), m_window(window), m_connection(endpoint)
+{
+}
+RuntimePanels::~RuntimePanels()
+{
+	m_spatial.Cancel();
+	StopPilot();
+	if (m_window)
+		m_window->Rumble({});
+}
+void RuntimePanels::ConfigureSnapshots(std::uint32_t budgetMiB)
+{
+	if (!m_replayPreparation && !m_replayActive)
+		m_session.ConfigureSnapshots(budgetMiB);
+}
+void RuntimePanels::ConfigurePilot(const PilotBindings& keys, const GamepadBindings& gamepad)
+{
+	m_pilot.Configure(keys, gamepad);
+}
+const RuntimeView& RuntimePanels::View() const
+{
+	return m_view;
+}
+bool RuntimePanels::PilotActive() const
+{
+	return m_pilot.Active();
+}
+bool& RuntimePanels::HudFolded()
+{
+	return m_pilot.HudFolded();
+}
+std::optional<ImVec4>& RuntimePanels::PreviewCrop()
+{
+	return m_preview.Crop();
+}
+void RuntimePanels::DrawFramePage(ShellState& shell)
+{
+	ImGui::BeginDisabled(m_replayPreparation.has_value());
+	m_frame.Draw(shell, m_view);
+	ImGui::EndDisabled();
+}
+void RuntimePanels::DrawRangePage(const RangeSel& range, ShellState& shell)
+{
+	ImGui::BeginDisabled(m_replayPreparation.has_value());
+	if (auto replay = m_range.Draw(range, shell))
+		m_recordingReplay = RecordingReplay{std::move(*replay), m_session.Debugger().Scope()};
+	ImGui::EndDisabled();
+}
+void RuntimePanels::DrawAdvancedPage()
+{
+	ImGui::BeginDisabled(m_replayPreparation.has_value());
+	m_advanced.Draw();
+	ImGui::EndDisabled();
 }
 void RuntimePanels::DrawSessionMenu()
 {
-	ImGui::BeginDisabled(!m_impl->m_view.connected || !m_impl->m_view.time.following ||
-						 !m_impl->m_session.SupportsEdits());
-	if (auto edit = m_impl->m_devices.DrawSessionMenu())
-		m_impl->SubmitEdit(*edit);
+	ImGui::BeginDisabled(m_replayPreparation.has_value() || !m_view.connected || !m_view.time.following ||
+						 !m_session.SupportsEdits());
+	if (auto edit = m_devices.DrawSessionMenu())
+		SubmitEdit(*edit);
 	ImGui::EndDisabled();
 }
 void RuntimePanels::DrawRecordingPopovers()
 {
-	m_impl->m_recording.DrawPopovers(m_impl->CanRecord());
-	if (auto saved = m_impl->m_recording.TakeSaved())
-		m_impl->m_savedTake = std::move(*saved);
+	m_recording.DrawPopovers(CanRecord());
+	if (auto saved = m_recording.TakeSaved())
+		m_savedTake = std::move(*saved);
 }
 std::optional<std::string> RuntimePanels::TakeSavedTake()
 {
-	return std::exchange(m_impl->m_savedTake, {});
+	return std::exchange(m_savedTake, {});
 }
 bool RuntimePanels::CanReplay() const
 {
 #ifdef SIMXR_COMPANION_AUTOMATION
-	return m_impl->CanRecord() && !m_impl->m_replayActive;
+	return CanRecord() && !m_replayActive && !m_replayPreparation;
 #else
 	return false;
 #endif
 }
 void RuntimePanels::RequestReplay(automation::SavedRecording recording)
 {
-	m_impl->m_recordingReplay = Impl::RecordingReplay{std::move(recording), m_impl->m_session.Debugger().Scope()};
+	m_recordingReplay = RecordingReplay{std::move(recording), m_session.Debugger().Scope()};
 }
 void RuntimePanels::DrawConnection(bool* open)
 {
-	m_impl->DrawConnection(open);
+	m_connection.Draw(m_session, open);
 }
 void RuntimePanels::DrawWindows()
 {
-	m_impl->m_documents.DrawWindow();
+	m_documents.DrawWindow();
 }
 void RuntimePanels::EndFrame()
 {
-	m_impl->m_spatial.EndFrame();
-	if (auto release = m_impl->m_devices.EndInputFrame())
-		m_impl->m_session.SubmitEdit(*release);
-	if (!m_impl->m_spatial.Active() && !ImGui::IsAnyItemActive())
-		m_impl->m_undo.FinishGesture();
-}
-std::vector<Notice> RuntimePanels::TakeNotices()
-{
-	return m_impl->TakeNotices();
+	m_spatial.EndFrame();
+	if (auto release = m_devices.EndInputFrame())
+		m_session.SubmitEdit(*release);
+	if (!m_spatial.Active() && !ImGui::IsAnyItemActive())
+		m_undo.FinishGesture();
 }
 PreviewHistory& RuntimePanels::KeptPreviews()
 {
-	return m_impl->m_session.Preview().History();
+	return m_session.Preview().History();
 }
 const PreviewHistory& RuntimePanels::KeptPreviews() const
 {
-	return m_impl->m_session.Preview().History();
+	return m_session.Preview().History();
 }
 void RuntimePanels::RecordTransfers(VkCommandBuffer command)
 {
-	m_impl->m_session.Preview().RecordTransfers(command);
+	m_session.Preview().RecordTransfers(command);
 }
 std::vector<VkSemaphore> RuntimePanels::ReadyWaits() const
 {
-	return m_impl->m_session.Preview().ReadyWaits();
+	return m_session.Preview().ReadyWaits();
 }
 void RuntimePanels::Submitted(std::uint64_t serial)
 {
-	m_impl->m_session.Preview().Submitted(serial);
+	m_session.Preview().Submitted(serial);
 }
 RuntimeView RuntimePanels::Snapshot() const
 {
-	return m_impl->Build();
+	return Build();
 }
 void RuntimePanels::Command(control::CommandKind kind, std::uint64_t capture, bool raw, std::uint32_t layer,
 							std::uint32_t view)
 {
-	m_impl->m_session.Command(kind, capture, raw, layer, view);
+	if (!m_replayPreparation)
+		m_session.Command(kind, capture, raw, layer, view);
 }
 void RuntimePanels::Pause()
 {
-	m_impl->m_session.Pause();
+	if (!m_replayPreparation)
+		m_session.Pause();
 }
 void RuntimePanels::Step()
 {
-	m_impl->m_session.Step();
+	if (!m_replayPreparation)
+		m_session.Step();
 }
 std::optional<SteppedFrame> RuntimePanels::TakeSteppedFrame()
 {
-	return m_impl->m_session.TakeSteppedFrame();
+	return m_session.TakeSteppedFrame();
 }
 void RuntimePanels::TogglePin(std::size_t index)
 {
-	m_impl->m_session.TogglePin(index);
+	if (!m_replayPreparation)
+		m_session.TogglePin(index);
 }
 void RuntimePanels::MarkHistoryFrame(std::size_t index, bool enabled)
 {
-	m_impl->m_session.MarkHistoryFrame(index, enabled);
+	m_session.MarkHistoryFrame(index, enabled);
 }
 void RuntimePanels::LookAt(std::size_t index)
 {
-	m_impl->m_session.LookAt(index);
+	m_session.LookAt(index);
 }
 const HistoryStore& RuntimePanels::History() const
 {
-	return m_impl->m_session.History();
+	return m_session.History();
 }
 const InputHistory& RuntimePanels::InputSamples() const
 {
-	return m_impl->m_session.InputSamples();
+	return m_session.InputSamples();
 }
 std::vector<RuntimeFrame> RuntimePanels::TimelineFrames() const
 {
-	return m_impl->m_session.TimelineFrames();
+	return m_session.TimelineFrames();
 }
 void RuntimePanels::SelectFrame(std::uint64_t local)
 {
-	m_impl->m_session.SelectFrame(local);
+	m_session.SelectFrame(local);
 }
 void RuntimePanels::SelectCapture(std::uint64_t capture)
 {
-	m_impl->m_session.SelectCapture(capture);
+	m_session.SelectCapture(capture);
 }
 void RuntimePanels::ReleaseSelected()
 {
-	m_impl->m_session.ReleaseSelected();
+	if (!m_replayPreparation)
+		m_session.ReleaseSelected();
 }
 void RuntimePanels::CancelPending()
 {
-	m_impl->m_session.CancelPending();
-}
-void RuntimePanels::ReleaseInputs()
-{
-	m_impl->ReleaseInputs();
+	if (!m_replayPreparation)
+		m_session.CancelPending();
 }
 std::vector<UndoStack::Change> RuntimePanels::Changes() const
 {
-	return m_impl->m_undo.Changes();
-}
-void RuntimePanels::UndoChanges(std::size_t count)
-{
-	m_impl->UndoChanges(count);
-}
-void RuntimePanels::FocusLost()
-{
-	m_impl->FocusLost();
+	return m_undo.Changes();
 }
 std::string RuntimePanels::Endpoint() const
 {
-	return m_impl->m_session.Endpoint();
+	return m_session.Endpoint();
 }
 const std::vector<std::string>& RuntimePanels::Endpoints() const
 {
-	return m_impl->m_session.Endpoints();
+	return m_session.Endpoints();
 }
 void RuntimePanels::RefreshEndpoints()
 {
-	m_impl->m_session.RefreshEndpoints();
+	m_session.RefreshEndpoints();
 }
 void RuntimePanels::ConnectEndpoint(std::string endpoint)
 {
-	m_impl->m_session.ConnectEndpoint(std::move(endpoint));
+	m_session.ConnectEndpoint(std::move(endpoint));
 }
 void RuntimePanels::Disconnect()
 {
-	m_impl->m_session.Disconnect();
+	m_session.Disconnect();
 }
 void RuntimePanels::StartRecording()
 {
-	m_impl->m_recording.RequestStart();
+	m_recording.RequestStart();
 }
 void RuntimePanels::StopRecording()
 {
-	m_impl->m_recording.RequestStop();
+	m_recording.RequestStop();
 }
 void RuntimePanels::SetReplayActive(bool active)
 {
-	m_impl->m_replayActive = active;
+	m_replayActive = active;
 }
 void RuntimePanels::ResumeLive()
 {
-	m_impl->m_session.ResumeLive();
+	if (!m_replayPreparation)
+		m_session.ResumeLive();
 }
 void RuntimePanels::SetLive(bool enabled)
 {
-	m_impl->m_session.SetLive(enabled);
+	m_session.SetLive(enabled);
 }
 std::vector<std::uint64_t> RuntimePanels::CaptureIds() const
 {
-	return m_impl->m_session.Workspace().CaptureIds();
+	return m_session.Workspace().CaptureIds();
 }
 void RuntimePanels::InspectSelected()
 {
-	m_impl->m_session.Workspace().InspectSelected();
-}
-void RuntimePanels::RequestExport(std::string path)
-{
-	m_impl->RequestExport(std::move(path));
+	m_session.Workspace().InspectSelected();
 }
 void RuntimePanels::PrepareReplay()
 {
-	m_impl->ReleaseInputs();
-	m_impl->m_session.Debugger().Relinquish();
+	m_spatial.SetContext(false, false, {}, nullptr, 0);
+	m_undo.FinishGesture();
+	const auto observation = m_session.ManualInput().Snapshot().observation;
+	m_replayPreparation = ReplayPreparation{m_session.Debugger().Scope(), observation};
+	m_replayPreparation->releaseQueued = ReleaseInputs();
+	m_session.Debugger().Relinquish();
+}
+void RuntimePanels::FinishReplayPreparation()
+{
+	m_replayPreparation.reset();
 }
 bool RuntimePanels::ReplayReady() const
 {
-	const auto& debugger = m_impl->m_session.Debugger();
-	const auto& setup = m_impl->m_session.Setup();
-	return !debugger.HasLease() && !debugger.Relinquishing() &&
-		   !(setup && std::ranges::any_of(setup->owners,
-										  [](const std::optional<CommandSource>& owner)
-										  {
-											  return owner && owner->kind == CommandSourceKind::Manual;
-										  }));
-}
-std::optional<automation::SavedRecording> RuntimePanels::TakeRecordingReplay()
-{
-	return m_impl->TakeRecordingReplay();
+	const auto& debugger = m_session.Debugger();
+	const auto& setup = m_session.Setup();
+	const auto& input = m_session.Input();
+	return m_replayPreparation && m_replayPreparation->releaseQueued &&
+		   m_replayPreparation->scope == debugger.Scope() && m_session.Connected() && debugger.Selected().running &&
+		   input.observation > m_replayPreparation->observation && !input.editPending && !input.posePending &&
+		   input.error.empty() && setup && !debugger.Pending() && !debugger.HasLease() && !debugger.Relinquishing() &&
+		   !std::ranges::any_of(setup->owners,
+								[](const std::optional<CommandSource>& owner)
+								{
+									return owner && owner->kind == CommandSourceKind::Manual;
+								});
 }
 } // namespace simxr::app

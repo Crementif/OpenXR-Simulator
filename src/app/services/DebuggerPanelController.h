@@ -19,8 +19,7 @@ struct DebuggerCaptureEvent
 {
 	std::uint64_t capture = 0, frame = 0;
 	bool released = false, refresh = false;
-	// The capture marks the frame a Pause stopped on.
-	bool paused = false;
+	control::CommandKind kind = control::CommandKind::Pause;
 };
 // Owns one selected session's lease, command identity and bounded operation
 // ledger. Widgets observe const values and request transitions, never edit them.

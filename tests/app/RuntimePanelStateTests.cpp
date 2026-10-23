@@ -6,6 +6,7 @@
 #include "graphics/ColorPixels.h"
 #include "app/services/Utf8Path.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -47,6 +48,38 @@ void SessionRunningUpdates()
 			"Session discovery failed to refresh running state within the same scope");
 	}
 }
+void MissingCaptureKeepsSession()
+{
+	app::RuntimePanelRequests requests;
+	app::DebuggerPanelController debugger(requests);
+	const auto select = [&]
+	{
+		debugger.ChooseSession({11, 5, true});
+		debugger.Handle({app::PanelWork::Status}, Message({wire::Field::Bool(tag::Manual, true)}));
+		debugger.Handle({app::PanelWork::Acquire}, Message({wire::Field::U64(tag::Lease, 17)}));
+	};
+	for (const auto kind : {app::PanelWork::Capture, app::PanelWork::Retain, app::PanelWork::Inspect})
+	{
+		select();
+		const auto scope = debugger.Scope();
+		debugger.Failed({kind, 7, 11, 5}, wire::ErrorCode::NotFound, "Snapshot is absent or released");
+		Require(debugger.Scope() == scope && debugger.Selected().running && debugger.HasLease() && debugger.Manual() &&
+				!debugger.Status().fields.empty(),
+				"Evicted capture retired the running session or its debugger state");
+		for (const auto error : {wire::ErrorCode::Closed, wire::ErrorCode::StaleGeneration})
+		{
+			select();
+			debugger.Failed({kind, 7, 11, 5}, error, "Session retired");
+			Require(!debugger.Selected().id && !debugger.HasLease() && !debugger.Manual() &&
+					debugger.Status().fields.empty(),
+					"Retired session survived a capture request failure");
+		}
+	}
+	select();
+	debugger.Failed({app::PanelWork::Status, 0, 11, 5}, wire::ErrorCode::NotFound, "Session not found");
+	Require(!debugger.Selected().id && !debugger.HasLease() && debugger.Status().fields.empty(),
+			"Missing session status was mistaken for an evicted capture");
+}
 void ScopedInspectionReaders()
 {
 	app::RuntimePanelRequests requests;
@@ -61,10 +94,21 @@ void ScopedInspectionReaders()
 	workspace.Handle({app::PanelWork::Inspect, 7},
 					 Message({wire::Field::U64(tag::InspectionId, 19),
 							  wire::Field::Text(tag::Detail, "original immutable document")}));
+	workspace.MarkUnavailable(7);
+	Require(!workspace.Select(7) && workspace.Selected()->released && workspace.Selected()->inspection == 19 &&
+			workspace.CaptureIds().empty() &&
+			app::panel::Text(workspace.Selected()->document, tag::Detail) == "original immutable document",
+			"Evicted capture remained fetchable or discarded its retained CPU document");
+	workspace.Handle({app::PanelWork::Inspect, 7},
+		Message({wire::Field::U64(tag::InspectionId, 20), wire::Field::Text(tag::Detail, "late response")}));
+	Require(workspace.Selected()->inspection == 19 &&
+			app::panel::Text(workspace.Selected()->document, tag::Detail) == "original immutable document",
+			"Late inspection response replaced the document of an unavailable capture");
 	workspace.Handle({app::PanelWork::Revision, 31}, Message({wire::Field::Text(tag::Detail, "original revision")}));
 	workspace.SetScope(restarted);
 	Require(workspace.Add(7, 202) && workspace.Select(7), "Reuse remote capture ID in a new generation");
-	Require(workspace.Selected()->scope == restarted && workspace.Selected()->frame == 202,
+	Require(workspace.Selected()->scope == restarted && workspace.Selected()->frame == 202 &&
+			!workspace.Selected()->released,
 			"Selection substituted an older generation");
 	workspace.Handle({app::PanelWork::Capture, 7}, Message({wire::Field::Text(tag::Phase, "clear"), Frame(203)}));
 	workspace.SelectLocal(originalLocal);
@@ -417,7 +461,12 @@ void ActualConnectionAndDebugger()
 		"Debugger owner did not settle actual core pause");
 	Require(debugger.HasLease() && debugger.Operations().size() == 1 && debugger.Operations().front().command == 1,
 			"Lease acquisition duplicated or changed command admission");
-	debugger.TakeCaptures();
+	const auto pausedCaptures = debugger.TakeCaptures();
+	Require(!pausedCaptures.empty() && std::all_of(pausedCaptures.begin(), pausedCaptures.end(),
+		[](const auto& capture)
+		{
+			return capture.kind == wire::CommandKind::Pause;
+		}), "Pause capture lost the operation that produced it");
 	// Strict admission remains pending because the application makes no further
 	// WaitFrame call. Replace one already-polled reply with malformed metadata.
 	debugger.Command(wire::CommandKind::StrictAdmission);
@@ -536,6 +585,11 @@ void ActualConnectionAndDebugger()
 			"Explicit export substituted bytes or entered the GPU sharing path");
 	Require(!debugger.Status().fields.empty(), "Reconnect status-reset regression requires an observed status");
 	requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId, reader);
+	Require(requests.Has(app::PanelWork::Release) && requests.Pending() && !debugger.Relinquishing(),
+			"Queued image release was mistaken for a debugger lease release");
+	requests.FlushReleases();
+	Require(requests.Has(app::PanelWork::Release) && requests.Pending() && !debugger.Relinquishing(),
+			"In-flight image release was mistaken for a debugger lease release");
 	requests.Send(wire::OpCode::Sessions, app::PanelWork::Sessions);
 	const auto retiredSession = debugger.Selected();
 	while (requests.Send(wire::OpCode::Sessions, app::PanelWork::Sessions))
@@ -544,7 +598,7 @@ void ActualConnectionAndDebugger()
 	debugger.ChooseSession({});
 	Require(!debugger.HasLease() && debugger.Relinquishing() && requests.Pending(),
 			"Full transport queue lost the deferred debugger release");
-	bool relinquished = false;
+	bool relinquished = false, imageReleased = false;
 	Eventually(
 		[&]
 		{
@@ -552,12 +606,20 @@ void ActualConnectionAndDebugger()
 			for (const auto& reply : requests.Poll())
 				if (reply.response.packet.message.opcode == static_cast<std::uint16_t>(wire::OpCode::Relinquish))
 				{
-					Require(reply.task.session == retiredSession.id && reply.task.generation == retiredSession.generation &&
+					Require(reply.task.kind == app::PanelWork::Relinquish && reply.task.session == retiredSession.id &&
+							reply.task.generation == retiredSession.generation &&
 							reply.response.error.empty() && app::panel::U32(reply.response.packet.message, tag::Error, 1) == 0,
 							"Deferred release lost the original session or failed to release its lease");
 					relinquished = true;
 				}
-			return relinquished && !debugger.Relinquishing();
+				else if (reply.response.packet.message.opcode == static_cast<std::uint16_t>(wire::OpCode::ReleaseImage))
+				{
+					Require(reply.task.kind == app::PanelWork::Release && reply.response.error.empty() &&
+							app::panel::U32(reply.response.packet.message, tag::Error, 1) == 0,
+							"Image release lost its resource-only work category or failed");
+					imageReleased = true;
+				}
+			return relinquished && imageReleased && !debugger.Relinquishing();
 		},
 		"Debugger release did not recover after request capacity became available");
 	debugger.ChooseSession(retiredSession);
@@ -573,6 +635,31 @@ void ActualConnectionAndDebugger()
 				debugger.Operations().back().phase == "complete";
 		},
 		"Deferred command did not retry lease acquisition after queue pressure");
+	debugger.TakeCaptures();
+	debugger.Command(wire::CommandKind::Step);
+	Eventually(
+		[&]
+		{
+			pump();
+			return debugger.Operations().back().kind == wire::CommandKind::Step &&
+				(debugger.Operations().back().phase == "pending" || debugger.Operations().back().phase == "complete");
+		},
+		"Debugger step did not admit a fixture frame");
+	if (debugger.Operations().back().phase == "pending")
+		fixture.Submit();
+	Eventually(
+		[&]
+		{
+			pump();
+			return debugger.Operations().back().phase == "complete";
+		},
+		"Debugger step did not settle the submitted fixture frame");
+	const auto steppedCaptures = debugger.TakeCaptures();
+	Require(!steppedCaptures.empty() && std::all_of(steppedCaptures.begin(), steppedCaptures.end(),
+		[](const auto& capture)
+		{
+			return capture.kind == wire::CommandKind::Step && capture.frame != 0;
+		}), "Step capture lost its command attribution or completed frame identity");
 	requests.Connect(server.Path());
 	Eventually(
 		[&]
@@ -595,6 +682,7 @@ int main()
 	try
 	{
 		SessionRunningUpdates();
+		MissingCaptureKeepsSession();
 		ScopedInspectionReaders();
 		FileWorkerAndChunkValidation();
 #if defined(__linux__)

@@ -88,7 +88,7 @@ void DebuggerPanelController::Relinquish()
 }
 bool DebuggerPanelController::Relinquishing() const
 {
-	return m_requests.Has(Work::Release);
+	return m_requests.Has(Work::Relinquish);
 }
 void DebuggerPanelController::ChooseSession(PanelSession session)
 {
@@ -202,7 +202,8 @@ void DebuggerPanelController::Failed(const PanelTask& task, wire::ErrorCode erro
 {
 	if (task.kind == Work::Acquire)
 		m_deferred.reset();
-	if (task.session && (error == wire::ErrorCode::NotFound || error == wire::ErrorCode::Closed ||
+	const bool captureRequest = task.kind == Work::Capture || task.kind == Work::Retain || task.kind == Work::Inspect;
+	if (task.session && ((error == wire::ErrorCode::NotFound && !captureRequest) || error == wire::ErrorCode::Closed ||
 						 error == wire::ErrorCode::StaleGeneration))
 	{
 		InterruptSession();
@@ -300,15 +301,14 @@ bool DebuggerPanelController::Handle(const PanelTask& task, const wire::Message&
 				{
 					if (phase == "complete" && (operation.kind == wire::CommandKind::PinSnapshot ||
 												operation.kind == wire::CommandKind::UnpinSnapshot))
-						pending.push_back({operation.subject, 0, false, true});
+						pending.push_back({operation.subject, 0, false, true, operation.kind});
 					if (operation.kind == wire::CommandKind::Release && prepared.progress == "released")
-						pending.push_back({operation.subject, 0, true});
-					const bool paused = operation.kind == wire::CommandKind::Pause;
+						pending.push_back({operation.subject, 0, true, false, operation.kind});
 					if (const auto capture = U64(message, tag::CaptureId))
-						pending.push_back({capture, Frame(message), false, false, paused});
+						pending.push_back({capture, Frame(message), false, false, operation.kind});
 					for (const auto& capture : Nested(message.Find(tag::Captures)).fields)
 						if (capture.AsU64())
-							pending.push_back({*capture.AsU64(), Frame(message), false, false, paused});
+							pending.push_back({*capture.AsU64(), Frame(message), false, false, operation.kind});
 				}
 				if (pending.size() > 32 - m_effects.size())
 					throw std::runtime_error("Runtime capture notices exceed the bounded catalog");

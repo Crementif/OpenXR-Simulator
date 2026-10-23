@@ -23,6 +23,8 @@ class InspectionWorkspace
 	explicit InspectionWorkspace(RuntimePanelRequests& requests);
 	void SetScope(PanelScope scope, bool clearSelection = true);
 	bool Add(std::uint64_t capture, std::uint64_t frame);
+	// Remote eviction stops new reads but preserves already-retained CPU data.
+	void MarkUnavailable(std::uint64_t capture);
 	void MarkReleased(std::uint64_t capture);
 	bool Select(std::uint64_t capture);
 	void SelectLocal(std::uint64_t local);

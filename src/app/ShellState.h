@@ -47,14 +47,6 @@ struct AdvancedSel
 {
 };
 using Selection = std::variant<std::monostate, DeviceSel, FrameSel, RangeSel, TakeSel, ScriptSel, AdvancedSel>;
-// Which frame the app shows. Written only by RuntimeSession: following shows
-// the live edge (the paused frame while paused); otherwise the cursor frame.
-struct TimeCursor
-{
-	bool following = true;
-	FrameIdentity cursor;
-	std::uint64_t epoch = 0;
-};
 // Where a take cut from history came from, so its replay can show the source.
 struct TakeSource
 {

@@ -25,7 +25,7 @@ std::uint64_t RuntimePanelRequests::Epoch() const noexcept
 }
 bool RuntimePanelRequests::Pending() const noexcept
 {
-	return !m_tasks.empty() || Has(PanelWork::Release);
+	return !m_tasks.empty() || Has(PanelWork::Release) || Has(PanelWork::Relinquish);
 }
 bool RuntimePanelRequests::RefreshEpoch()
 {
@@ -86,12 +86,13 @@ std::uint64_t RuntimePanelRequests::Send(control::OpCode code, PanelWork kind, P
 }
 bool RuntimePanelRequests::Has(PanelWork kind, std::uint64_t id) const
 {
-	if (kind == PanelWork::Release && std::any_of(m_releases.begin(), m_releases.end(),
-												  [&](const auto& release)
-												  {
-													  return release.id && release.epoch == m_epoch &&
-															 (!id || release.id == id);
-												  }))
+	if ((kind == PanelWork::Release || kind == PanelWork::Relinquish) &&
+		std::any_of(m_releases.begin(), m_releases.end(),
+					[&](const auto& release)
+					{
+						return release.id && release.epoch == m_epoch && (!id || release.id == id) &&
+							   (kind == PanelWork::Relinquish) == (release.code == control::OpCode::Relinquish);
+					}))
 		return true;
 	return std::any_of(m_tasks.begin(), m_tasks.end(),
 					   [&](const auto& entry)
@@ -133,7 +134,8 @@ void RuntimePanelRequests::FlushReleases()
 			fields.push_back(control::Field::U64(control::tag::Session, pending.session, true));
 			fields.push_back(control::Field::U64(control::tag::Generation, pending.generation, true));
 		}
-		if (!Send(pending.code, PanelWork::Release, std::move(fields)))
+		const auto kind = pending.code == control::OpCode::Relinquish ? PanelWork::Relinquish : PanelWork::Release;
+		if (!Send(pending.code, kind, std::move(fields)))
 			break;
 		pending = {};
 	}

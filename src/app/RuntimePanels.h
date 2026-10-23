@@ -1,17 +1,29 @@
 #pragma once
 
-#include "app/services/UndoStack.h"
+#include "app/AdvancedSteppingPage.h"
+#include "app/DocumentTree.h"
+#include "app/FramePage.h"
+#include "app/PreviewPanel.h"
+#include "app/RangePage.h"
+#include "app/RecordingPanel.h"
+#include "app/dialogs/ConnectionDialog.h"
+#include "app/pages/DeviceControlPanel.h"
 #include "app/services/PilotBindings.h"
+#include "app/services/PlayerRig.h"
+#include "app/services/RuntimeSession.h"
+#include "app/services/UndoStack.h"
+#include "app/widgets/PilotController.h"
+#include "app/widgets/SpatialEditor.h"
 
-#include "app/Notices.h"
-#include "app/render/PreviewHistory.h"
 #include "app/RuntimeView.h"
+#include "app/render/PreviewHistory.h"
+#include "app/services/Notice.h"
 #include "app/services/SimulationEdits.h"
 #include "automation/Recording.h"
 #include "control/ControlSchema.h"
 
+#include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -30,6 +42,8 @@ class RuntimePanels
   public:
 	RuntimePanels(UiRenderer& renderer, std::string endpoint = {}, Window* window = nullptr);
 	~RuntimePanels();
+	RuntimePanels(const RuntimePanels&) = delete;
+	RuntimePanels& operator=(const RuntimePanels&) = delete;
 	void ConfigureSnapshots(std::uint32_t budgetMiB);
 	void ConfigurePilot(const PilotBindings& keys, const GamepadBindings& gamepad);
 	void Poll();
@@ -79,7 +93,7 @@ class RuntimePanels
 	void SelectFrame(std::uint64_t local);
 	void ReleaseSelected();
 	void CancelPending();
-	void ReleaseInputs();
+	bool ReleaseInputs();
 	// Undoable pose edits, oldest first; UndoChanges(n) returns to before the newest n.
 	std::vector<UndoStack::Change> Changes() const;
 	void UndoChanges(std::size_t count);
@@ -103,10 +117,48 @@ class RuntimePanels
 	// A replay script needs the devices and the session's control: release the
 	// companion's manual inputs and lease, then start once ReplayReady().
 	void PrepareReplay();
+	void FinishReplayPreparation();
 	bool ReplayReady() const;
 
   private:
-	class Impl;
-	std::unique_ptr<Impl> m_impl;
+	RuntimeView Build() const;
+	bool CanRecord() const;
+	void DrawPastDevice(const Selection& selection);
+	void SubmitEdit(const SimulationEdit& edit);
+	void StopPilot();
+
+	struct RecordingReplay
+	{
+		automation::SavedRecording saved;
+		PanelScope scope;
+	};
+	struct ReplayPreparation
+	{
+		PanelScope scope;
+		std::uint64_t observation = 0;
+		bool releaseQueued = false;
+	};
+	std::optional<ReplayPreparation> m_replayPreparation;
+	RuntimeSession m_session;
+	Window* m_window = nullptr;
+	std::uint32_t m_gamepad = 0;
+	bool m_rumbleFailed = false;
+	RuntimeView m_view;
+	std::string m_lastNotice;
+	ConnectionDialog m_connection;
+	RecordingPanel m_recording;
+	bool m_replayActive = false;
+	std::optional<RecordingReplay> m_recordingReplay;
+	std::optional<std::string> m_savedTake;
+	PlayerRig m_playerRig;
+	PilotController m_pilot{m_playerRig};
+	DeviceControlPanel m_devices{m_playerRig};
+	UndoStack m_undo;
+	SpatialEditor m_spatial{m_playerRig, m_session.ManualInput(), m_undo};
+	DocumentTree m_documents{m_session};
+	FramePage m_frame{m_session, m_spatial, m_documents};
+	RangePage m_range{m_session};
+	AdvancedSteppingPage m_advanced{m_session, m_devices};
+	PreviewPanel m_preview{m_session, m_pilot, m_spatial, m_devices, m_window};
 };
 } // namespace simxr::app

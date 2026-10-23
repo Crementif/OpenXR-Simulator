@@ -1,16 +1,18 @@
 #pragma once
 
+#include "app/render/PreviewImages.h"
 #include "app/services/DebuggerPanelController.h"
 #include "app/services/FrameHistoryFeed.h"
+#include "app/services/HapticFeedback.h"
 #include "app/services/ImageExportTask.h"
 #include "app/services/InspectionWorkspace.h"
 #include "app/services/ManualInputController.h"
-#include "app/services/HapticFeedback.h"
-#include "app/Notices.h"
-#include "app/render/PreviewImages.h"
-#include "app/RuntimeView.h"
+#include "app/services/Notice.h"
+#include "app/services/SessionView.h"
 
 #include <chrono>
+#include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -31,7 +33,7 @@ class RuntimeSession
 
 	// Exchanges requests and replies; piloting raises the live preview rate.
 	void Poll(bool piloting);
-	RuntimeView View() const;
+	SessionView View() const;
 	// True once after the selected session, run or connection changed.
 	bool TakeScopeChanged();
 	std::vector<Notice> TakeNotices();
@@ -174,7 +176,8 @@ class RuntimeSession
 	std::string m_endpoint, m_failure, m_historyNotice, m_hapticFailure;
 	PanelScope m_budgetScope;
 	std::uint32_t m_budgetMiB = 0;
-	Clock::time_point m_nextHistory{}, m_nextPreview{}, m_nextCapture{}, m_nextHaptics{}, m_hapticsRequested{};
+	Clock::time_point m_nextHistory{}, m_nextPreview{}, m_nextCapture{}, m_nextHaptics{}, m_hapticsRequested{},
+		m_nextBudget{};
 	std::uint64_t m_observation = 0, m_resumeAfter = 0;
 	bool m_autoSelect = true, m_followOnResume = false, m_stepRequested = false, m_scopeChanged = false,
 		 m_observationChanged = false;

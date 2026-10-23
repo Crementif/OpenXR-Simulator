@@ -69,6 +69,11 @@ bool InspectionWorkspace::Add(std::uint64_t id, std::uint64_t frame)
 	m_captures.push_back(std::move(capture));
 	return true;
 }
+void InspectionWorkspace::MarkUnavailable(std::uint64_t capture)
+{
+	if (auto current = Find(capture))
+		current->released = true;
+}
 void InspectionWorkspace::MarkReleased(std::uint64_t capture)
 {
 	if (auto current = Find(capture))

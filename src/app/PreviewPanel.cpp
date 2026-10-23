@@ -2,7 +2,7 @@
 #include "Pch.h"
 #include "app/pages/DeviceControlPanel.h"
 #include "app/widgets/PilotController.h"
-#include "app/RuntimeSession.h"
+#include "app/services/RuntimeSession.h"
 #include "app/widgets/SpatialEditor.h"
 #include "app/Theme.h"
 #include "app/platform/Window.h"
@@ -34,7 +34,7 @@ PreviewPanel::PreviewPanel(RuntimeSession& session, PilotController& pilot, Spat
 	: m_session(session), m_pilot(pilot), m_spatial(spatial), m_devices(devices), m_window(window)
 {
 }
-bool PreviewPanel::Draw(ShellState& shell, const RuntimeView& view)
+bool PreviewPanel::Draw(ShellState& shell, const RuntimeView& view, bool inputAvailable, bool automaticGamepad)
 {
 	bool pilotArea = false;
 	ImGui::SetCursorPos({shell.preview.x, shell.preview.y});
@@ -44,7 +44,7 @@ bool PreviewPanel::Draw(ShellState& shell, const RuntimeView& view)
 		const bool live = view.time.following;
 		if (image && image->ready && !image->released)
 		{
-			DrawImage(shell, view, pilotArea);
+			DrawImage(shell, view, pilotArea, inputAvailable, automaticGamepad);
 			DrawCorner(*image, live);
 		}
 		else if (m_spatial.Expanded())
@@ -171,7 +171,8 @@ void PreviewPanel::DrawCorner(const PreviewImageSummary& image, bool live)
 	ImGui::PopStyleVar(2);
 	ImGui::PopStyleColor();
 }
-void PreviewPanel::DrawImage(ShellState& shell, const RuntimeView& view, bool& pilotArea)
+void PreviewPanel::DrawImage(ShellState& shell, const RuntimeView& view, bool& pilotArea, bool inputAvailable,
+							 bool automaticGamepad)
 {
 	auto& preview = m_session.Preview();
 	const auto image = preview.Selected();
@@ -259,14 +260,16 @@ void PreviewPanel::DrawImage(ShellState& shell, const RuntimeView& view, bool& p
 														description.views[eye], static_cast<unsigned>(eye));
 			}
 		}
-	pilotArea = live && view.connected && view.sessionRunning && !view.manual && !m_picking;
+	pilotArea = inputAvailable && live && view.connected && view.sessionRunning && !view.manual && !m_picking;
 	if (m_window)
 	{
 		auto& input = m_session.ManualInput();
+		ImGui::BeginDisabled(!inputAvailable);
 		const bool hudHovered = m_pilot.DrawHud(imageMin, imageMax, input);
+		ImGui::EndDisabled();
 		const bool overImage = !hudHovered && !overlayHovered && !m_cornerHovered &&
 							   ImGui::IsMouseHoveringRect(imageMin, imageMax);
-		m_pilot.Update(*m_window, input, pilotArea, overImage);
+		m_pilot.Update(*m_window, input, pilotArea, overImage, automaticGamepad);
 		m_devices.SetRigPiloting(m_pilot.Active() || m_spatial.Active() || m_devices.Active());
 		if (!m_pilot.Error().empty() && m_pilot.Error() != m_pilotError)
 			m_session.Notify("Piloting stopped", m_pilot.Error());

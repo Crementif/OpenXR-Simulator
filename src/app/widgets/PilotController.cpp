@@ -170,7 +170,8 @@ void PilotController::Submit(ManualInputController& input, const ObservedSetup& 
 	}
 	m_controls = controls;
 }
-void PilotController::Update(Window& window, ManualInputController& input, bool available, bool hovered)
+void PilotController::Update(Window& window, ManualInputController& input, bool available, bool hovered,
+							 bool automaticGamepad)
 {
 	const auto gamepadIdentity = window.GamepadIdentity();
 	const bool removed = m_gamepadIdentity && m_gamepadIdentity != gamepadIdentity;
@@ -226,7 +227,7 @@ void PilotController::Update(Window& window, ManualInputController& input, bool 
 		m_starting = false;
 		m_captured = true;
 	}
-	const auto pad = window.ReadGamepad(m_gamepad);
+	const auto pad = automaticGamepad || m_captured ? window.ReadGamepad(m_gamepad) : GamepadSample{};
 	m_gamepadActive = pad.connected;
 	std::array<ControllerControls, 2> controls = pad.controls;
 	bool poseChanged = false;

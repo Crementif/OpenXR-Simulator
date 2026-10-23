@@ -51,7 +51,8 @@ simxr_configure_target(simxr_app)
 target_include_directories(simxr_app PRIVATE "${PROJECT_SOURCE_DIR}/shaders/generated")
 target_sources(simxr_app PRIVATE src/app/RecordingPanel.cpp src/app/TimelinePanel.cpp src/app/TimelineCanvas.cpp src/app/ShellState.cpp
     src/app/Theme.cpp src/app/widgets/Icons.cpp src/app/widgets/Controls.cpp src/app/DeviceRail.cpp
-    src/app/RuntimeSession.cpp src/app/Notices.cpp src/app/DocumentTree.cpp src/app/FramePage.cpp src/app/RangePage.cpp
+    src/app/services/RuntimeSession.cpp src/app/services/RuntimeSessionReplies.cpp src/app/services/RuntimeSessionFrames.cpp
+    src/app/dialogs/ConnectionDialog.cpp src/app/Notices.cpp src/app/DocumentTree.cpp src/app/FramePage.cpp src/app/RangePage.cpp
     src/app/AdvancedSteppingPage.cpp src/app/PreviewPanel.cpp src/app/PreferencesDialog.cpp src/app/LaunchProfilesDialog.cpp
     src/app/widgets/PilotController.cpp src/app/widgets/PilotHud.cpp src/app/widgets/SpatialEditor.cpp src/app/widgets/SpatialPreview.cpp src/app/widgets/LiveField.cpp
     src/app/widgets/SpatialWidgets.cpp src/app/widgets/RotationOrb.cpp

@@ -22,7 +22,7 @@ class PreviewPanel
 	PreviewPanel(RuntimeSession& session, PilotController& pilot, SpatialEditor& spatial, DeviceControlPanel& devices,
 				 Window* window);
 	// Returns whether the image may be piloted this frame.
-	bool Draw(ShellState& shell, const RuntimeView& view);
+	bool Draw(ShellState& shell, const RuntimeView& view, bool inputAvailable, bool automaticGamepad);
 	// The pinned region (x0, y0, x1, y1, normalized), shown instead of the whole
 	// image across frames; the shell keeps one per launch profile.
 	std::optional<ImVec4>& Crop()
@@ -31,7 +31,8 @@ class PreviewPanel
 	}
 
   private:
-	void DrawImage(ShellState& shell, const RuntimeView& view, bool& pilotArea);
+	void DrawImage(ShellState& shell, const RuntimeView& view, bool& pilotArea, bool inputAvailable,
+				   bool automaticGamepad);
 	// Eye, zoom, crop and gizmo space, floating in the preview's top right corner.
 	void DrawCorner(const PreviewImageSummary& image, bool live);
 	// The single view button: eye, zoom and crop live in its popover.

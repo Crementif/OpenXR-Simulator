@@ -406,7 +406,7 @@ struct WorkspacePanels::Impl
 		if (const auto stepped = runtime.TakeSteppedFrame();
 			stepped && (stepped->requested || std::holds_alternative<FrameSel>(shell.selection)))
 		{
-			shell.selection = stepped->frame;
+			shell.selection = FrameSel{stepped->frame, stepped->epoch};
 			drawer = drawer || stepped->requested;
 		}
 		DrawAppPicker(runtime, snapshot);
@@ -912,13 +912,14 @@ struct WorkspacePanels::Impl
 		if (replay && replay->target != ReplayTarget(runtime))
 		{
 			replay.reset();
+			runtime.FinishReplayPreparation();
 			notices.Push({"Replay target changed", "Select the intended session and replay again"});
 		}
 		const auto rigRuntime = runtime.Snapshot();
 		const RigTarget rigTarget{rigRuntime.endpoint, rigRuntime.session, rigRuntime.generation};
 		if (replay)
 		{
-			if (runtime.ReplayReady() || std::chrono::steady_clock::now() >= replay->deadline)
+			if (runtime.ReplayReady())
 			{
 				if (replay->script)
 					rigs.RunScript(rigTarget, replay->recording.path, *replay->script);
@@ -928,6 +929,13 @@ struct WorkspacePanels::Impl
 					rigs.ReplayRecording(rigTarget, replay->recording.path, replay->recording.seed);
 				}
 				replay.reset();
+				runtime.FinishReplayPreparation();
+			}
+			else if (std::chrono::steady_clock::now() >= replay->deadline)
+			{
+				replay.reset();
+				runtime.FinishReplayPreparation();
+				notices.Push({"Replay unavailable", "Input release did not complete. Release inputs and try again"});
 			}
 		}
 		runtime.SetReplayActive(rigs.IsActive());

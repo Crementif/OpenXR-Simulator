@@ -25,7 +25,8 @@ class PilotController
   public:
 	explicit PilotController(PlayerRig& rig);
 	void Configure(const PilotBindings& keys, const GamepadBindings& gamepad);
-	void Update(Window& window, ManualInputController& input, bool available, bool hovered);
+	void Update(Window& window, ManualInputController& input, bool available, bool hovered,
+				bool automaticGamepad = true);
 	void Stop(Window* window, ManualInputController& input, bool discard, bool forceButtons = false);
 	// The HUD along the image's bottom edge: target and lock at the left, the
 	// hand's inputs in the middle, the hint at the right. Returns whether it is hovered.

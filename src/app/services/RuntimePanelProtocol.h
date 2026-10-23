@@ -26,6 +26,7 @@ enum class PanelWork
 	Preview,
 	Share,
 	Release,
+	Relinquish,
 	Inspect,
 	Revision,
 	Export,
