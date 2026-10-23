@@ -5,6 +5,12 @@
 #include "graphics/backends/vulkan/VulkanBackend.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
 
+#include <cstddef>
+#include <functional>
+#include <memory>
+#include <span>
+#include <vector>
+
 namespace simxr
 {
 // Preparation records copies on the caller's serialized application queue.
@@ -18,11 +24,11 @@ class VulkanReprojectionPreparation final
 							std::size_t capacity, std::unique_ptr<VulkanReprojectionPreparation>& output,
 							std::function<void(SharedImageKey)> deliveryRetired = {});
 	using RetainImage = std::function<XrResult(const LayerImageDescription&, std::shared_ptr<VulkanFrame>&)>;
-	static XrResult Prepare(VulkanInspection& inspection, const FrameLayers& layers,
-		const CompositionTarget& target, const PoseSample& head, const CompositionExtentResolver& extent,
-		const RetainImage& retainImage, std::size_t capacity,
-		std::unique_ptr<VulkanReprojectionPreparation>& output,
-		std::function<void(SharedImageKey)> deliveryRetired = {});
+	static XrResult Prepare(VulkanInspection& inspection, const FrameLayers& layers, const CompositionTarget& target,
+							const PoseSample& head, const CompositionExtentResolver& extent,
+							const RetainImage& retainImage, std::size_t capacity,
+							std::unique_ptr<VulkanReprojectionPreparation>& output,
+							std::function<void(SharedImageKey)> deliveryRetired = {});
 	std::span<const std::shared_ptr<VulkanFrame>> Frames() const noexcept;
 	std::span<const XrSwapchain> Swapchains() const noexcept;
 	std::shared_ptr<const RotationalSource> Source() const noexcept;

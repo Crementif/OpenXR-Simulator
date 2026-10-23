@@ -1,14 +1,10 @@
 #include "graphics/backends/vulkan/VulkanReprojection.h"
+#include "Pch.h"
 #include "graphics/RotationalReprojection.h"
-
-#include <algorithm>
-#include <utility>
 
 namespace simxr
 {
-namespace
-{
-struct RetainedImage
+struct VulkanRetainedImage
 {
 	LayerImageDescription original;
 	std::shared_ptr<const VulkanInspectionFrame> output;
@@ -16,7 +12,7 @@ struct RetainedImage
 	bool fullMipChain = false;
 };
 
-bool SameImage(const LayerImageDescription& a, const LayerImageDescription& b)
+static bool SameImage(const LayerImageDescription& a, const LayerImageDescription& b)
 {
 	return a.source == b.source && a.arraySlice == b.arraySlice && a.rectangle.offset.x == b.rectangle.offset.x &&
 		   a.rectangle.offset.y == b.rectangle.offset.y && a.rectangle.extent.width == b.rectangle.extent.width &&
@@ -27,7 +23,7 @@ class VulkanRotationalSource final : public RotationalSource
 {
   public:
 	VulkanRotationalSource(RuntimeTime time, XrEnvironmentBlendMode blend, std::vector<LayerDescription> layers,
-						   CompositionTarget target, PoseSample head, std::vector<RetainedImage> images)
+						   CompositionTarget target, PoseSample head, std::vector<VulkanRetainedImage> images)
 		: m_layers(time, blend, std::move(layers)), m_target(target), m_head(head), m_images(std::move(images))
 	{
 	}
@@ -93,9 +89,8 @@ class VulkanRotationalSource final : public RotationalSource
 	const FrameLayers m_layers;
 	const CompositionTarget m_target;
 	const PoseSample m_head;
-	const std::vector<RetainedImage> m_images;
+	const std::vector<VulkanRetainedImage> m_images;
 };
-} // namespace
 
 XrResult VulkanReprojectionPreparation::Prepare(VulkanBackend& backend, VulkanInspection& inspection,
 												const FrameLayers& layers, const CompositionTarget& target,
@@ -106,28 +101,32 @@ XrResult VulkanReprojectionPreparation::Prepare(VulkanBackend& backend, VulkanIn
 {
 	if (!resolve)
 		return XR_ERROR_VALIDATION_FAILURE;
-	const auto result = Prepare(inspection, layers, target, head,
+	const auto result = Prepare(
+		inspection, layers, target, head,
 		[&resolve](XrSwapchain source) -> std::optional<XrExtent2Di>
 		{
 			const auto image = resolve(source);
 			if (!image)
 				return {};
 			return XrExtent2Di{static_cast<std::int32_t>(image->extent.width),
-				static_cast<std::int32_t>(image->extent.height)};
+							   static_cast<std::int32_t>(image->extent.height)};
 		},
 		[&backend, &resolve](const LayerImageDescription& image, std::shared_ptr<VulkanFrame>& frame)
 		{
 			return backend.PrepareRetainedLayer(image, resolve, frame);
-		}, capacity, output, std::move(deliveryRetired));
+		},
+		capacity, output, std::move(deliveryRetired));
 	if (result == XR_ERROR_SESSION_LOST)
 		backend.Device()->lost.store(true);
 	return result;
 }
 
 XrResult VulkanReprojectionPreparation::Prepare(VulkanInspection& inspection, const FrameLayers& layers,
-	const CompositionTarget& target, const PoseSample& head, const CompositionExtentResolver& extent,
-	const RetainImage& retainImage, std::size_t capacity,
-	std::unique_ptr<VulkanReprojectionPreparation>& output, std::function<void(SharedImageKey)> deliveryRetired)
+												const CompositionTarget& target, const PoseSample& head,
+												const CompositionExtentResolver& extent, const RetainImage& retainImage,
+												std::size_t capacity,
+												std::unique_ptr<VulkanReprojectionPreparation>& output,
+												std::function<void(SharedImageKey)> deliveryRetired)
 {
 	if (!extent || !retainImage)
 		return XR_ERROR_VALIDATION_FAILURE;
@@ -137,7 +136,7 @@ XrResult VulkanReprojectionPreparation::Prepare(VulkanInspection& inspection, co
 		return valid;
 	auto prepared = std::unique_ptr<VulkanReprojectionPreparation>(new VulkanReprojectionPreparation);
 	auto normalized = layers.layers;
-	std::vector<RetainedImage> images;
+	std::vector<VulkanRetainedImage> images;
 	const auto retain = [&](LayerImageDescription& description) -> XrResult
 	{
 		auto found = std::find_if(images.begin(), images.end(),
@@ -148,7 +147,7 @@ XrResult VulkanReprojectionPreparation::Prepare(VulkanInspection& inspection, co
 		std::size_t index = static_cast<std::size_t>(found - images.begin());
 		if (found == images.end())
 		{
-			RetainedImage image{description, {}, description.rectangle.extent};
+			VulkanRetainedImage image{description, {}, description.rectangle.extent};
 			if (description.rectangle.extent.width && description.rectangle.extent.height)
 			{
 				if (prepared->m_frames.size() >= capacity)
@@ -158,7 +157,7 @@ XrResult VulkanReprojectionPreparation::Prepare(VulkanInspection& inspection, co
 				if (XR_FAILED(result))
 					return result;
 				image.extent = {static_cast<std::int32_t>(frame->Image().extent.width),
-					static_cast<std::int32_t>(frame->Image().extent.height)};
+								static_cast<std::int32_t>(frame->Image().extent.height)};
 				image.fullMipChain = frame->Image().mipLevels > 1;
 				auto transfer = inspection.Prepare(frame, {}, {}, VulkanInspectionKind::Reprojection, deliveryRetired);
 				image.output = transfer->Output();
