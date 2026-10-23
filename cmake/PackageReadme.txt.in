@@ -10,9 +10,12 @@ Launch bin/simxr_companion and create a launch profile with the application's
 executable and this package's bin/openxr_simulator.json. Runtime selection affects
 that child process only when the OpenXR loader permits environment overrides.
 Run Windows applications without elevation: elevated loaders ignore XR_RUNTIME_JSON.
-For command-line launch, set XR_RUNTIME_JSON to the
-absolute manifest path in the application's environment. No system registration
-is needed. On Linux, bin/launch-linux.py also launches and attaches the companion.
+For command-line launch, set XR_RUNTIME_JSON to the absolute manifest path in the
+application's environment. This avoids system registration when the loader
+permits environment overrides. The tested Proton environment reports elevated
+integrity; qualification used runtime registration inside an isolated prefix.
+Child-local runtime selection in that environment remains unresolved. On Linux,
+bin/launch-linux.py also launches and attaches the companion.
 
 The host needs its graphics driver and Vulkan loader. Linux additionally needs
 the usual C/C++ runtime and desktop window-system libraries. This archive does
