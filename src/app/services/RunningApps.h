@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app/services/CompanionSettings.h"
+#include "app/services/LaunchTypes.h"
 
 #include <chrono>
 #include <cstdint>
@@ -24,7 +24,7 @@ struct RunningApp
 // timeout: nothing is sent, so discovery never takes control, and sockets
 // left behind by ended processes are skipped.
 std::vector<RunningApp> DiscoverRunningApps(std::chrono::milliseconds timeout = std::chrono::milliseconds(150));
-// How the process behind a running app was started, as far as the system shows
-// it: executable, arguments, working folder, runtime JSON and process environment.
+// The executable, arguments, working folder and environment needed to relaunch.
+// Unavailable when process details cannot be read or represented without truncation.
 std::optional<LaunchProfile> DescribeProcess(std::uint64_t process);
 } // namespace simxr::app

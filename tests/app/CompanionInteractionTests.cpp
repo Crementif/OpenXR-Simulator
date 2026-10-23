@@ -6,7 +6,7 @@
 #include "app/LaunchProfilesDialog.h"
 #include "app/services/ProcessSupervisor.h"
 #include "app/PilotController.h"
-#include "app/RunningApps.h"
+#include "app/services/RunningApps.h"
 #include "app/services/RecordingController.h"
 #include "app/RecordingPanel.h"
 #include "app/services/RuntimeConnection.h"

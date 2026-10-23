@@ -2,6 +2,7 @@
 #include "app/services/CompanionSettings.h"
 #include "app/services/ProcessLauncher.h"
 #include "app/services/ProcessSupervisor.h"
+#include "app/services/RunningApps.h"
 #include "simulation/HeadsetProfiles.h"
 #include <cmath>
 
@@ -12,6 +13,9 @@
 #include <iostream>
 #include <thread>
 #ifdef __linux__
+#include <spawn.h>
+#include <signal.h>
+#include <sys/wait.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -264,10 +268,77 @@ void Launch(const std::filesystem::path& executable)
 	} while (std::chrono::steady_clock::now() < deadline);
 	Require(state.state == LaunchState::Failed, "Invalid cwd fails explicitly");
 }
+void ProcessDescriptions(const std::filesystem::path& executable)
+{
+	for (const bool oversized : {false, true})
+	{
+		std::vector<std::string> values{executable.string(), "--description-child", "", "literal 日本語 ; $()"};
+		if (oversized)
+			values.resize(258, "must not be truncated");
+		std::vector<char*> arguments;
+		for (auto& value : values)
+			arguments.push_back(value.data());
+		arguments.push_back(nullptr);
+		std::vector<std::string> environment;
+		for (auto value = environ; value && *value; ++value)
+			if (!std::string_view(*value).starts_with("XR_RUNTIME_JSON="))
+				environment.emplace_back(*value);
+		environment.emplace_back("XR_RUNTIME_JSON=");
+		std::vector<char*> variables;
+		for (auto& value : environment)
+			variables.push_back(value.data());
+		variables.push_back(nullptr);
+		pid_t process = 0;
+		Require(::posix_spawn(&process, executable.c_str(), nullptr, nullptr, arguments.data(), variables.data()) == 0,
+			"Start process description fixture");
+		struct StopChild
+		{
+			pid_t process;
+			~StopChild()
+			{
+				::kill(process, SIGKILL);
+				while (::waitpid(process, nullptr, 0) < 0 && errno == EINTR)
+				{
+				}
+			}
+		} child{process};
+		int status = 0;
+		pid_t waited;
+		do
+		{
+			waited = ::waitpid(process, &status, WUNTRACED);
+		} while (waited < 0 && errno == EINTR);
+		Require(waited == process && WIFSTOPPED(status), "Wait for process description fixture startup");
+		Require(::kill(process, SIGCONT) == 0, "Resume process description fixture");
+		const auto described = DescribeProcess(static_cast<std::uint64_t>(process));
+		if (oversized)
+			Require(!described, "An oversized process description must not silently truncate its arguments");
+		else
+		{
+			Require(described.has_value(), "Process description is unavailable");
+			Require(described->executable == executable.string(), "Process description changed its executable");
+			Require(described->arguments == std::vector<std::string>(values.begin() + 1, values.end()),
+				"Process description changed empty/Unicode/literal arguments");
+			Require(described->workingDirectory == std::filesystem::current_path().string(),
+				"Process description changed its working directory");
+			Require(described->runtimeManifest.empty() && std::find(described->environment.begin(),
+				described->environment.end(), std::pair<std::string, std::string>{"XR_RUNTIME_JSON", ""}) !=
+				described->environment.end(), "Process description dropped an empty runtime override");
+		}
+	}
+}
 #endif
 } // namespace
 int main(int argc, char** argv)
 {
+	if (argc >= 2 && std::string_view(argv[1]) == "--description-child")
+	{
+#ifdef __linux__
+		::raise(SIGSTOP);
+#endif
+		std::this_thread::sleep_for(10s);
+		return 0;
+	}
 	if (argc == 3 && std::string_view(argv[1]) == "--child")
 	{
 		const auto manifest = std::getenv("XR_RUNTIME_JSON"), value = std::getenv("SIMXR_LAUNCH_TEST");
@@ -283,6 +354,7 @@ int main(int argc, char** argv)
 		Persistence();
 #ifdef __linux__
 		Launch(std::filesystem::absolute(argv[0]));
+		ProcessDescriptions(std::filesystem::absolute(argv[0]));
 #endif
 		std::cout << "PASS companion settings, layouts and child process launch\n";
 		return 0;

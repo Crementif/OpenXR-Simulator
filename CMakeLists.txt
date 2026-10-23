@@ -115,10 +115,18 @@ if(WIN32)
 else()
     target_sources(simxr_app_platform PRIVATE src/app/platform/FileStorage.cpp src/app/platform/RuntimeEndpoints.cpp)
 endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(simxr_app_platform PRIVATE src/app/platform/linux/RunningApps.cpp)
+elseif(WIN32)
+    target_sources(simxr_app_platform PRIVATE src/app/platform/windows/RunningApps.cpp)
+else()
+    target_sources(simxr_app_platform PRIVATE src/app/platform/RunningApps.cpp)
+endif()
 simxr_configure_target(simxr_app_platform)
 
 add_library(simxr_app_settings STATIC
     src/app/services/CompanionSettings.cpp
+    src/app/services/RunningApps.cpp
     src/app/services/PilotBindings.cpp
     src/app/services/LaunchTypes.cpp
     src/app/services/ProcessLauncher.cpp
@@ -332,9 +340,9 @@ if(BUILD_TESTING)
             add_test(NAME windows_data_directory_${mode} COMMAND windows_data_directory_tests ${mode})
             set_tests_properties(windows_data_directory_${mode} PROPERTIES TIMEOUT 10)
         endforeach()
-        add_executable(windows_running_apps_tests tests/app/WindowsRunningAppsTests.cpp src/app/RunningApps.cpp)
+        add_executable(windows_running_apps_tests tests/app/WindowsRunningAppsTests.cpp)
         simxr_configure_target(windows_running_apps_tests)
-        target_link_libraries(windows_running_apps_tests PRIVATE simxr_app_platform)
+        target_link_libraries(windows_running_apps_tests PRIVATE simxr_app_settings)
         target_include_directories(windows_running_apps_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
         if(MINGW)
             target_link_options(windows_running_apps_tests PRIVATE -static)
