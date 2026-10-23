@@ -54,6 +54,7 @@
 #include "runtime/SpaceQueries.h"
 #include "runtime/validation/LayerValidation.h"
 #include "runtime/validation/StructureChain.h"
+#include <bit>
 #include <charconv>
 #include <cstdarg>
 #include <cstdio>
@@ -75,12 +76,12 @@ static std::mutex s_logMutex;
 static std::weak_ptr<mcp::WindowsLegacyChannel> s_logChannel;
 static const bool s_logVerbose = []()
 {
-	char v[16]{};
-	const DWORD n = GetEnvironmentVariableA("SIMXR_VERBOSE", v, (DWORD)sizeof(v));
-	return n > 0 && n < sizeof(v) && v[0] != '0';
+	char value[16]{};
+	const DWORD length = GetEnvironmentVariableA("SIMXR_VERBOSE", value, static_cast<DWORD>(sizeof(value)));
+	return length > 0 && length < sizeof(value) && value[0] != '0';
 }();
 
-static void Log(const char* msg)
+static void Log(const char* message)
 {
 	std::shared_ptr<mcp::WindowsLegacyChannel> files;
 	{
@@ -91,7 +92,7 @@ static void Log(const char* msg)
 	{
 		try
 		{
-			files->Log(msg);
+			files->Log(message);
 		}
 		catch (...)
 		{
@@ -99,22 +100,20 @@ static void Log(const char* msg)
 	}
 	else
 	{
-		OutputDebugStringA(msg); // Loader/startup diagnostics before an instance exists.
+		OutputDebugStringA(message); // Loader/startup diagnostics before an instance exists.
 	}
 }
-static void Logf(const char* fmt, ...)
+static void Logf(const char* format, ...)
 {
-	char buf[2048];
-	va_list ap;
-	va_start(ap, fmt);
-	vsnprintf(buf, sizeof(buf), fmt, ap);
-	va_end(ap);
-	Log(buf);
+	char message[2048]{};
+	va_list arguments;
+	va_start(arguments, format);
+	const auto written = std::vsnprintf(message, sizeof(message), format, arguments);
+	va_end(arguments);
+	Log(written < 0 ? "[SimXR] Diagnostic formatting failed" : message);
 }
-// Runtime state
 namespace rt
 {
-
 struct Instance
 {
 	std::mutex lifecycleMutex;
@@ -134,10 +133,9 @@ struct Swapchain
 {
 	XrSwapchain handle{XR_NULL_HANDLE};
 	std::int64_t format = 0;
-	uint32_t width{0}, height{0}, arraySize{2};
-	uint32_t mipCount{1};
-	uint32_t sampleCount{1};
-	// Backend type and images
+	std::uint32_t width{0}, height{0}, arraySize{2};
+	std::uint32_t mipCount{1};
+	std::uint32_t sampleCount{1};
 	enum class Backend
 	{
 		D3D11,
@@ -168,7 +166,6 @@ struct Session
 	std::shared_ptr<mcp::WindowsLegacyCapture> compatibilityCapture;
 	std::shared_ptr<flicker::Diagnostics> diagnostics;
 	ComPtr<ID3D11Device> d3d11Device;
-	// DX12 support
 	ComPtr<ID3D12Device> d3d12Device;
 	ComPtr<ID3D12CommandQueue> d3d12Queue;
 	bool usesD3D12 = false;
@@ -178,7 +175,6 @@ struct Session
 	bool nativeClosing = false;
 	std::uint64_t acquireCount = 0;
 	std::uint64_t releaseCount = 0;
-	// OpenGL support
 	HDC glDC{nullptr};
 	HGLRC glRC{nullptr};
 	bool usesOpenGL{false};
@@ -200,8 +196,8 @@ static NativeState& State()
 {
 	// Native cleanup may retain core objects or reenter the binding tables.
 	(void)RuntimeState();
-	static NativeState state;
-	return state;
+	static NativeState s_state;
+	return s_state;
 }
 
 static InstanceRef RetainInstance(XrInstance handle)
@@ -274,41 +270,41 @@ static constexpr XrVersion s_supportedApiVersion = XR_MAKE_VERSION(1, 0, 27);
 
 static const simxr::ExtensionRegistry& Extensions()
 {
-	static constexpr std::array<std::string_view, 1> d3d11Commands{"xrGetD3D11GraphicsRequirementsKHR"};
-	static constexpr std::array<std::string_view, 1> d3d12Commands{"xrGetD3D12GraphicsRequirementsKHR"};
-	static constexpr std::array<std::string_view, 1> openGLCommands{"xrGetOpenGLGraphicsRequirementsKHR"};
-	static constexpr std::array<std::string_view, 4> vulkanCommands{
+	static constexpr std::array<std::string_view, 1> s_d3d11Commands{"xrGetD3D11GraphicsRequirementsKHR"};
+	static constexpr std::array<std::string_view, 1> s_d3d12Commands{"xrGetD3D12GraphicsRequirementsKHR"};
+	static constexpr std::array<std::string_view, 1> s_openGLCommands{"xrGetOpenGLGraphicsRequirementsKHR"};
+	static constexpr std::array<std::string_view, 4> s_vulkanCommands{
 		"xrGetVulkanInstanceExtensionsKHR", "xrGetVulkanDeviceExtensionsKHR", "xrGetVulkanGraphicsDeviceKHR",
 		"xrGetVulkanGraphicsRequirementsKHR"};
-	static constexpr std::array<std::string_view, 4> vulkan2Commands{
+	static constexpr std::array<std::string_view, 4> s_vulkan2Commands{
 		"xrCreateVulkanInstanceKHR", "xrCreateVulkanDeviceKHR", "xrGetVulkanGraphicsDevice2KHR",
 		"xrGetVulkanGraphicsRequirements2KHR"};
-	static constexpr std::array<std::string_view, 2> timeCommands{"xrConvertWin32PerformanceCounterToTimeKHR",
-																  "xrConvertTimeToWin32PerformanceCounterKHR"};
-	static const std::vector<simxr::ExtensionDefinition> definitions = []
+	static constexpr std::array<std::string_view, 2> s_timeCommands{"xrConvertWin32PerformanceCounterToTimeKHR",
+																	"xrConvertTimeToWin32PerformanceCounterKHR"};
+	static const std::vector<simxr::ExtensionDefinition> s_definitions = []
 	{
 		std::vector<simxr::ExtensionDefinition> result{
-			{XR_KHR_D3D11_ENABLE_EXTENSION_NAME, XR_KHR_D3D11_enable_SPEC_VERSION, d3d11Commands},
-			{XR_KHR_D3D12_ENABLE_EXTENSION_NAME, XR_KHR_D3D12_enable_SPEC_VERSION, d3d12Commands},
-			{XR_KHR_OPENGL_ENABLE_EXTENSION_NAME, XR_KHR_opengl_enable_SPEC_VERSION, openGLCommands},
-			{XR_KHR_VULKAN_ENABLE_EXTENSION_NAME, XR_KHR_vulkan_enable_SPEC_VERSION, vulkanCommands},
-			{XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME, XR_KHR_vulkan_enable2_SPEC_VERSION, vulkan2Commands},
+			{XR_KHR_D3D11_ENABLE_EXTENSION_NAME, XR_KHR_D3D11_enable_SPEC_VERSION, s_d3d11Commands},
+			{XR_KHR_D3D12_ENABLE_EXTENSION_NAME, XR_KHR_D3D12_enable_SPEC_VERSION, s_d3d12Commands},
+			{XR_KHR_OPENGL_ENABLE_EXTENSION_NAME, XR_KHR_opengl_enable_SPEC_VERSION, s_openGLCommands},
+			{XR_KHR_VULKAN_ENABLE_EXTENSION_NAME, XR_KHR_vulkan_enable_SPEC_VERSION, s_vulkanCommands},
+			{XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME, XR_KHR_vulkan_enable2_SPEC_VERSION, s_vulkan2Commands},
 			{XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME, XR_KHR_composition_layer_depth_SPEC_VERSION, {}},
 			{XR_KHR_WIN32_CONVERT_PERFORMANCE_COUNTER_TIME_EXTENSION_NAME,
-			 XR_KHR_win32_convert_performance_counter_time_SPEC_VERSION, timeCommands}};
+			 XR_KHR_win32_convert_performance_counter_time_SPEC_VERSION, s_timeCommands}};
 		const auto simulation = simxr::SimulationExtensions({true, true});
 		result.insert(result.end(), simulation.begin(), simulation.end());
 		return result;
 	}();
-	static const simxr::ExtensionRegistry registry(definitions);
-	return registry;
+	static const simxr::ExtensionRegistry s_registry(s_definitions);
+	return s_registry;
 }
 
 static simxr::Runtime& RuntimeState()
 {
 	simxr::InitializeVulkanImageDelivery();
-	static simxr::Runtime runtime(Extensions());
-	return runtime;
+	static simxr::Runtime s_runtime(Extensions());
+	return s_runtime;
 }
 
 struct NativeControlEndpoint
@@ -381,8 +377,8 @@ static NativeControlEndpoint& ControlEndpoint()
 {
 	// Endpoint workers retire before bindings, which retire before the core runtime.
 	(void)rt::State();
-	static NativeControlEndpoint endpoint;
-	return endpoint;
+	static NativeControlEndpoint s_endpoint;
+	return s_endpoint;
 }
 extern "C" __declspec(dllexport) int simxrGetGameBridgeApi(std::uint32_t version, SimxrGameBridgeApi* api) noexcept
 {
@@ -436,8 +432,6 @@ static XrResult RequireGraphicsExtension(XrInstance instance, XrSystemId system,
 	return system == 1 ? XR_SUCCESS : XR_ERROR_SYSTEM_INVALID;
 }
 
-// ----------------- OpenXR runtime exports -----------------
-
 static XrResult XRAPI_PTR xrGetInstanceProcAddr_runtime(XrInstance, const char* name, PFN_xrVoidFunction* fn);
 static XrResult XRAPI_PTR xrDestroySession_runtime(XrSession session);
 static XrResult DestroyNativeSession(const rt::SessionRef& session);
@@ -446,7 +440,6 @@ static XrResult XRAPI_PTR xrDestroySwapchain_runtime(XrSwapchain swapchain);
 extern "C" __declspec(dllexport) XrResult XRAPI_CALL
 xrNegotiateLoaderRuntimeInterface(const XrNegotiateLoaderInfo* loaderInfo, XrNegotiateRuntimeRequest* runtimeRequest)
 {
-
 	try
 	{
 		Log("\n[SimXR] ========== OpenXR Simulator Runtime Starting ==========\n");
@@ -456,17 +449,8 @@ xrNegotiateLoaderRuntimeInterface(const XrNegotiateLoaderInfo* loaderInfo, XrNeg
 			return XR_ERROR_INITIALIZATION_FAILED;
 		}
 
-		// The loader FreeLibrary's the runtime after xrDestroyInstance. That drops the last
-		// reference this process may hold on d3d12/dxgi/opengl32, and unloading those out
-		// from under a live Vulkan driver - the same driver, in a Vulkan session - hangs the
-		// process.
-		{
-			HMODULE self = nullptr;
-			GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
-							   (LPCWSTR)&xrNegotiateLoaderRuntimeInterface, &self);
-		}
-
-		Logf("[SimXR] xrNegotiateLoaderRuntimeInterface: loaderInfo=%p, runtimeRequest=%p", loaderInfo, runtimeRequest);
+		Logf("[SimXR] xrNegotiateLoaderRuntimeInterface: loaderInfo=%p, runtimeRequest=%p",
+			 static_cast<const void*>(loaderInfo), static_cast<void*>(runtimeRequest));
 		Logf("[SimXR]   Loader minInterfaceVersion=%u, maxInterfaceVersion=%u, minApiVersion=0x%llX, "
 			 "maxApiVersion=0x%llX",
 			 loaderInfo->minInterfaceVersion, loaderInfo->maxInterfaceVersion,
@@ -483,6 +467,15 @@ xrNegotiateLoaderRuntimeInterface(const XrNegotiateLoaderInfo* loaderInfo, XrNeg
 			loaderInfo->maxInterfaceVersion < XR_CURRENT_LOADER_RUNTIME_VERSION ||
 			loaderInfo->maxApiVersion < XR_MAKE_VERSION(1, 0, 0) || loaderInfo->minApiVersion > s_supportedApiVersion)
 			return XR_ERROR_INITIALIZATION_FAILED;
+
+		// Native dependencies and preserved GPU payloads are not yet safe to unload.
+		HMODULE self = nullptr;
+		if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+								reinterpret_cast<LPCWSTR>(&xrNegotiateLoaderRuntimeInterface), &self))
+		{
+			Logf("[SimXR] Cannot preserve runtime module lifetime: %lu", GetLastError());
+			return XR_ERROR_INITIALIZATION_FAILED;
+		}
 
 		runtimeRequest->runtimeInterfaceVersion = XR_CURRENT_LOADER_RUNTIME_VERSION;
 		runtimeRequest->getInstanceProcAddr = simxr::AbiBoundary<xrGetInstanceProcAddr_runtime>::Invoke;
@@ -533,40 +526,20 @@ static XrResult XRAPI_PTR xrGetD3D11GraphicsRequirementsKHR_runtime(XrInstance i
 	return XR_SUCCESS;
 }
 
-// xrGetOpenGLGraphicsRequirementsKHR (XR_KHR_opengl_enable)
-static XrResult XRAPI_PTR xrGetOpenGLGraphicsRequirementsKHR_runtime(XrInstance instance, XrSystemId systemId,
-																	 XrGraphicsRequirementsOpenGLKHR* req)
+static XrResult XRAPI_PTR xrGetOpenGLGraphicsRequirementsKHR_runtime(XrInstance instance, XrSystemId system,
+																	 XrGraphicsRequirementsOpenGLKHR* requirements)
 {
-	auto result = RequireGraphicsExtension(instance, systemId, XR_KHR_OPENGL_ENABLE_EXTENSION_NAME);
+	const auto result = RequireGraphicsExtension(instance, system, XR_KHR_OPENGL_ENABLE_EXTENSION_NAME);
 	if (XR_FAILED(result))
 		return result;
-	if (!req || req->type != XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR)
+	if (!requirements || requirements->type != XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR)
 		return XR_ERROR_VALIDATION_FAILURE;
-
-	Logf("[SimXR] xrGetOpenGLGraphicsRequirementsKHR called: instance=%p, systemId=%llu, req=%p", instance,
-		 (unsigned long long)systemId, req);
-	if (!req)
-	{
-		Log("[SimXR] xrGetOpenGLGraphicsRequirementsKHR: ERROR - null req");
-		return XR_ERROR_VALIDATION_FAILURE;
-	}
-
-	req->type = XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR;
 
 	// Canonical GLSL and direct-state-access image storage require OpenGL 4.5.
-	req->minApiVersionSupported = XR_MAKE_VERSION(4, 5, 0);
-	req->maxApiVersionSupported = XR_MAKE_VERSION(4, 6, 0);
-
-	Logf("[SimXR] xrGetOpenGLGraphicsRequirementsKHR: min=%d.%d.%d, max=%d.%d.%d",
-		 XR_VERSION_MAJOR(req->minApiVersionSupported), XR_VERSION_MINOR(req->minApiVersionSupported),
-		 XR_VERSION_PATCH(req->minApiVersionSupported), XR_VERSION_MAJOR(req->maxApiVersionSupported),
-		 XR_VERSION_MINOR(req->maxApiVersionSupported), XR_VERSION_PATCH(req->maxApiVersionSupported));
-
-	Log("[SimXR] xrGetOpenGLGraphicsRequirementsKHR: SUCCESS");
+	requirements->minApiVersionSupported = XR_MAKE_VERSION(4, 5, 0);
+	requirements->maxApiVersionSupported = XR_MAKE_VERSION(4, 6, 0);
 	return XR_SUCCESS;
 }
-
-// --- XR_KHR_vulkan_enable / XR_KHR_vulkan_enable2 -------------------------------------------
 
 static XrResult GetVulkanRequirements(XrInstance instance, XrSystemId system,
 									  XrGraphicsRequirementsVulkanKHR* requirements, std::string_view extension)
@@ -594,7 +567,7 @@ static XrResult XRAPI_PTR xrGetVulkanGraphicsRequirements2KHR_runtime(XrInstance
 }
 
 static XrResult XRAPI_PTR xrGetVulkanInstanceExtensionsKHR_runtime(XrInstance instance, XrSystemId system,
-																   uint32_t capacity, uint32_t* countOutput,
+																   std::uint32_t capacity, std::uint32_t* countOutput,
 																   char* buffer)
 {
 	auto result = RequireGraphicsExtension(instance, system, XR_KHR_VULKAN_ENABLE_EXTENSION_NAME);
@@ -608,7 +581,8 @@ static XrResult XRAPI_PTR xrGetVulkanInstanceExtensionsKHR_runtime(XrInstance in
 }
 
 static XrResult XRAPI_PTR xrGetVulkanDeviceExtensionsKHR_runtime(XrInstance instance, XrSystemId system,
-																 uint32_t capacity, uint32_t* countOutput, char* buffer)
+																 std::uint32_t capacity, std::uint32_t* countOutput,
+																 char* buffer)
 {
 	auto result = RequireGraphicsExtension(instance, system, XR_KHR_VULKAN_ENABLE_EXTENSION_NAME);
 	if (XR_FAILED(result))
@@ -679,10 +653,8 @@ static XrResult XRAPI_PTR xrCreateVulkanDeviceKHR_runtime(XrInstance instance,
 	return native->vulkan.CreateDevice(createInfo, vulkanDevice, vulkanResult);
 }
 
-// --- Minimal implementations ---
-
-static XrResult XRAPI_PTR xrEnumerateApiLayerProperties_runtime(uint32_t propertyCapacityInput,
-																uint32_t* propertyCountOutput,
+static XrResult XRAPI_PTR xrEnumerateApiLayerProperties_runtime(std::uint32_t propertyCapacityInput,
+																std::uint32_t* propertyCountOutput,
 																XrApiLayerProperties* properties)
 {
 	Log("[SimXR] xrEnumerateApiLayerProperties called");
@@ -691,8 +663,8 @@ static XrResult XRAPI_PTR xrEnumerateApiLayerProperties_runtime(uint32_t propert
 	*propertyCountOutput = 0;
 	return XR_SUCCESS;
 }
-static XrResult XRAPI_PTR xrEnumerateInstanceExtensionProperties_runtime(const char* layerName, uint32_t capacity,
-																		 uint32_t* count,
+static XrResult XRAPI_PTR xrEnumerateInstanceExtensionProperties_runtime(const char* layerName, std::uint32_t capacity,
+																		 std::uint32_t* count,
 																		 XrExtensionProperties* properties)
 {
 	if (layerName)
@@ -826,7 +798,7 @@ static XrResult XRAPI_PTR xrGetInstanceProperties_runtime(XrInstance instance, X
 	if (!props || props->type != XR_TYPE_INSTANCE_PROPERTIES)
 		return XR_ERROR_VALIDATION_FAILURE;
 	props->runtimeVersion = simxr::RuntimeVersion;
-	strncpy(props->runtimeName, "OpenXR Simulator Runtime", XR_MAX_RUNTIME_NAME_SIZE - 1);
+	std::strncpy(props->runtimeName, "OpenXR Simulator Runtime", XR_MAX_RUNTIME_NAME_SIZE - 1);
 	props->runtimeName[XR_MAX_RUNTIME_NAME_SIZE - 1] = '\0';
 	Log("[SimXR] xrGetInstanceProperties: returning OpenXR Simulator Runtime");
 	return XR_SUCCESS;
@@ -838,13 +810,13 @@ static XrResult XRAPI_PTR xrGetSystem_runtime(XrInstance instance, const XrSyste
 		return XR_ERROR_HANDLE_INVALID;
 	if (!info || !systemId || info->type != XR_TYPE_SYSTEM_GET_INFO)
 		return XR_ERROR_VALIDATION_FAILURE;
-	Logf("[SimXR] xrGetSystem: formFactor=%d", info->formFactor);
+	Logf("[SimXR] xrGetSystem: formFactor=%d", static_cast<int>(info->formFactor));
 	if (info->formFactor != XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY)
 	{
 		Log("[SimXR] xrGetSystem: ERROR - form factor not HMD");
 		return XR_ERROR_FORM_FACTOR_UNSUPPORTED;
 	}
-	*systemId = (XrSystemId)1;
+	*systemId = 1;
 	Log("[SimXR] xrGetSystem: SUCCESS -> systemId=1");
 	return XR_SUCCESS;
 }
@@ -880,7 +852,7 @@ static XrResult ValidateViewConfiguration(const simxr::EnabledExtensions& extens
 }
 
 static XrResult XRAPI_PTR xrEnumerateViewConfigurations_runtime(XrInstance instance, XrSystemId system,
-																uint32_t capacity, uint32_t* count,
+																std::uint32_t capacity, std::uint32_t* count,
 																XrViewConfigurationType* types)
 {
 	const auto core = RuntimeState().FindInstance(instance);
@@ -902,7 +874,7 @@ static XrResult XRAPI_PTR xrEnumerateViewConfigurations_runtime(XrInstance insta
 	return XR_SUCCESS;
 }
 
-static XrResult GetMaxSwapchainSampleCount(const simxr::EnabledExtensions& extensions, uint32_t& output)
+static XrResult GetMaxSwapchainSampleCount(const simxr::EnabledExtensions& extensions, std::uint32_t& output)
 {
 	output = 1;
 	const bool openGL = extensions.Contains(XR_KHR_OPENGL_ENABLE_EXTENSION_NAME);
@@ -916,7 +888,7 @@ static XrResult GetMaxSwapchainSampleCount(const simxr::EnabledExtensions& exten
 	const bool d3d12 = extensions.Contains(XR_KHR_D3D12_ENABLE_EXTENSION_NAME);
 	if (d3d11 || d3d12)
 	{
-		uint32_t direct3DSamples = 1;
+		std::uint32_t direct3DSamples = 1;
 		const auto result = simxr::windows::Direct3DMaxSampleCount(d3d11, d3d12, direct3DSamples);
 		if (XR_FAILED(result))
 			return result;
@@ -926,7 +898,7 @@ static XrResult GetMaxSwapchainSampleCount(const simxr::EnabledExtensions& exten
 		extensions.Contains(XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME))
 	{
 		simxr::VulkanInstanceGraphics graphics;
-		uint32_t vulkanSamples = 1;
+		std::uint32_t vulkanSamples = 1;
 		const auto result = graphics.MaxSampleCount(vulkanSamples);
 		if (XR_FAILED(result))
 			return result;
@@ -936,8 +908,9 @@ static XrResult GetMaxSwapchainSampleCount(const simxr::EnabledExtensions& exten
 }
 
 static XrResult XRAPI_PTR xrEnumerateViewConfigurationViews_runtime(XrInstance instance, XrSystemId system,
-																	XrViewConfigurationType viewType, uint32_t capacity,
-																	uint32_t* count, XrViewConfigurationView* views)
+																	XrViewConfigurationType viewType,
+																	std::uint32_t capacity, std::uint32_t* count,
+																	XrViewConfigurationView* views)
 {
 	const auto core = RuntimeState().FindInstance(instance);
 	if (!core)
@@ -954,7 +927,7 @@ static XrResult XRAPI_PTR xrEnumerateViewConfigurationViews_runtime(XrInstance i
 		return XR_ERROR_SIZE_INSUFFICIENT;
 	const bool foveationEnabled = core->Extensions().Contains(XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME);
 	const std::array known{XR_TYPE_FOVEATED_VIEW_CONFIGURATION_VIEW_VARJO};
-	for (uint32_t index = 0; index < *count; ++index)
+	for (std::uint32_t index = 0; index < *count; ++index)
 	{
 		const simxr::StructureChain chain(views[index].next);
 		if (views[index].type != XR_TYPE_VIEW_CONFIGURATION_VIEW ||
@@ -967,13 +940,13 @@ static XrResult XRAPI_PTR xrEnumerateViewConfigurationViews_runtime(XrInstance i
 				return XR_ERROR_VALIDATION_FAILURE;
 		}
 	}
-	uint32_t maxSamples = 1;
+	std::uint32_t maxSamples = 1;
 	const auto samplesResult = GetMaxSwapchainSampleCount(core->Extensions(), maxSamples);
 	if (XR_FAILED(samplesResult))
 		return samplesResult;
 	simxr::ViewSettings viewSettings;
 	settings::GetRenderResolution(viewSettings.outerWidth, viewSettings.outerHeight);
-	for (uint32_t index = 0; index < *count; ++index)
+	for (std::uint32_t index = 0; index < *count; ++index)
 	{
 		views[index].recommendedImageRectWidth = index < 2 ? viewSettings.outerWidth : viewSettings.insetWidth;
 		views[index].recommendedImageRectHeight = index < 2 ? viewSettings.outerHeight : viewSettings.insetHeight;
@@ -986,8 +959,9 @@ static XrResult XRAPI_PTR xrEnumerateViewConfigurationViews_runtime(XrInstance i
 }
 
 static XrResult XRAPI_PTR xrEnumerateEnvironmentBlendModes_runtime(XrInstance instance, XrSystemId system,
-																   XrViewConfigurationType viewType, uint32_t capacity,
-																   uint32_t* count, XrEnvironmentBlendMode* modes)
+																   XrViewConfigurationType viewType,
+																   std::uint32_t capacity, std::uint32_t* count,
+																   XrEnvironmentBlendMode* modes)
 {
 	const auto core = RuntimeState().FindInstance(instance);
 	if (!core)
@@ -1110,7 +1084,8 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
 		}
 		*session = attached;
 		creation.committed = true;
-		Logf("[SimXR] xrCreateSession: SUCCESS handle=%llu", (unsigned long long)*session);
+		Logf("[SimXR] xrCreateSession: SUCCESS handle=0x%llX",
+			 static_cast<unsigned long long>(std::bit_cast<std::uint64_t>(*session)));
 		return XR_SUCCESS;
 	};
 	const simxr::StructureChain chain(info->next);
@@ -1124,7 +1099,6 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
 			++bindingCount;
 	if (bindingCount != 1)
 		return XR_ERROR_GRAPHICS_DEVICE_INVALID;
-	// Accept D3D11 and D3D12
 	const XrBaseInStructure* entry = reinterpret_cast<const XrBaseInStructure*>(info->next);
 	while (entry)
 	{
@@ -1137,7 +1111,6 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
 			if (!b->device)
 				return XR_ERROR_GRAPHICS_DEVICE_INVALID;
 
-			// Log the device details
 			ComPtr<IDXGIDevice> dxgiDevice;
 			if (SUCCEEDED(b->device->QueryInterface(IID_PPV_ARGS(&dxgiDevice))))
 			{
@@ -1296,8 +1269,8 @@ static XrResult XRAPI_PTR xrDestroySession_runtime(XrSession handle)
 	return XR_SUCCESS;
 }
 
-static XrResult XRAPI_PTR xrEnumerateSwapchainFormats_runtime(XrSession session, uint32_t capacity, uint32_t* count,
-															  int64_t* formats)
+static XrResult XRAPI_PTR xrEnumerateSwapchainFormats_runtime(XrSession session, std::uint32_t capacity,
+															  std::uint32_t* count, std::int64_t* formats)
 {
 	const auto native = rt::RetainNativeSession(session);
 	if (!native)
@@ -1333,7 +1306,7 @@ static XrResult XRAPI_PTR xrEnumerateSwapchainFormats_runtime(XrSession session,
 	}
 
 	const auto supportedFormats = simxr::windows::Direct3DSwapchainFormats();
-	const auto formatCount = static_cast<uint32_t>(supportedFormats.size());
+	const auto formatCount = static_cast<std::uint32_t>(supportedFormats.size());
 
 	if (!count || (capacity && !formats))
 		return XR_ERROR_VALIDATION_FAILURE;
@@ -1396,13 +1369,14 @@ static XrResult XRAPI_PTR xrCreateSwapchain_runtime(XrSession session, const XrS
 	const auto handle = chain.handle;
 	native->swapchains.emplace(handle, std::move(chain));
 	*output = handle;
-	Logf("[SimXR] xrCreateSwapchain: sc=%p format=%lld %ux%u array=%u samples=%u", handle,
-		 static_cast<long long>(info->format), info->width, info->height, info->arraySize, info->sampleCount);
+	Logf("[SimXR] xrCreateSwapchain: sc=0x%llX format=%lld %ux%u array=%u samples=%u",
+		 static_cast<unsigned long long>(std::bit_cast<std::uint64_t>(handle)), static_cast<long long>(info->format),
+		 info->width, info->height, info->arraySize, info->sampleCount);
 	return XR_SUCCESS;
 }
 
-static XrResult XRAPI_PTR xrEnumerateSwapchainImages_runtime(XrSwapchain sc, uint32_t capacity, uint32_t* count,
-															 XrSwapchainImageBaseHeader* images)
+static XrResult XRAPI_PTR xrEnumerateSwapchainImages_runtime(XrSwapchain sc, std::uint32_t capacity,
+															 std::uint32_t* count, XrSwapchainImageBaseHeader* images)
 {
 	const auto native = rt::RetainNativeSession();
 	if (!native)
@@ -1436,7 +1410,7 @@ static XrResult XRAPI_PTR xrEnumerateSwapchainImages_runtime(XrSwapchain sc, uin
 }
 
 static XrResult XRAPI_PTR xrAcquireSwapchainImage_runtime(XrSwapchain sc, const XrSwapchainImageAcquireInfo* info,
-														  uint32_t* index)
+														  std::uint32_t* index)
 {
 	const auto native = rt::RetainNativeSession();
 	if (!native)
@@ -1457,19 +1431,19 @@ static XrResult XRAPI_PTR xrAcquireSwapchainImage_runtime(XrSwapchain sc, const 
 	auto& ch = it->second;
 	if (!index || (info && info->type != XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO))
 		return XR_ERROR_VALIDATION_FAILURE;
-	uint32_t i;
+	std::uint32_t i;
 	auto result = ch.access->Acquire(i);
 	if (XR_FAILED(result))
 		return result;
 	*index = i;
 
 	const auto acquireCount = ++native->acquireCount;
-	// First few calls give startup context; the recurring line is verbose-only,
-	// since Log() is deliberately expensive (see its comment).
+	// Log initial acquisition and sample recurring calls only in verbose mode.
 	if (acquireCount <= 4 || (s_logVerbose && acquireCount % 60 == 1))
 	{
-		Logf("[SimXR] xrAcquireSwapchainImage: sc=%p idx=%u (format=%lld, %ux%u)", sc, i,
-			 static_cast<long long>(ch.format), ch.width, ch.height);
+		Logf("[SimXR] xrAcquireSwapchainImage: sc=0x%llX idx=%u (format=%lld, %ux%u)",
+			 static_cast<unsigned long long>(std::bit_cast<std::uint64_t>(sc)), i, static_cast<long long>(ch.format),
+			 ch.width, ch.height);
 	}
 	return XR_SUCCESS;
 }
@@ -1537,7 +1511,8 @@ static XrResult XRAPI_PTR xrReleaseSwapchainImage_runtime(XrSwapchain sc, const 
 	bool shouldLog = releaseCount <= 10;
 	if (shouldLog || (s_logVerbose && releaseCount % 60 == 1))
 	{
-		Logf("[SimXR] xrReleaseSwapchainImage: sc=%p released=%u", sc, *ch.access->ReleasedImage());
+		Logf("[SimXR] xrReleaseSwapchainImage: sc=0x%llX released=%u",
+			 static_cast<unsigned long long>(std::bit_cast<std::uint64_t>(sc)), *ch.access->ReleasedImage());
 	}
 	return XR_SUCCESS;
 }
@@ -1780,7 +1755,7 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
 }
 
 static XrResult XRAPI_PTR xrLocateViews_runtime(XrSession handle, const XrViewLocateInfo* info, XrViewState* state,
-												uint32_t capacity, uint32_t* count, XrView* views)
+												std::uint32_t capacity, std::uint32_t* count, XrView* views)
 {
 	auto core = rt::RetainSession(handle);
 	if (!core)
@@ -1790,7 +1765,6 @@ static XrResult XRAPI_PTR xrLocateViews_runtime(XrSession handle, const XrViewLo
 	return core->LocateViews(*info, state, capacity, count, views);
 }
 
-// Add missing space/action functions for compatibility
 static XrResult XRAPI_PTR xrCreateReferenceSpace_runtime(XrSession handle, const XrReferenceSpaceCreateInfo* info,
 														 XrSpace* out)
 {
@@ -1818,8 +1792,8 @@ static XrResult XRAPI_PTR xrLocateSpace_runtime(XrSpace space, XrSpace base, XrT
 	return simxr::LocateSpace(core->Spaces(), space, base, time, location, &core->Extensions());
 }
 
-static XrResult XRAPI_PTR xrEnumerateReferenceSpaces_runtime(XrSession handle, uint32_t capacity, uint32_t* count,
-															 XrReferenceSpaceType* spaces)
+static XrResult XRAPI_PTR xrEnumerateReferenceSpaces_runtime(XrSession handle, std::uint32_t capacity,
+															 std::uint32_t* count, XrReferenceSpaceType* spaces)
 {
 	const auto core = rt::RetainSession(handle);
 	if (!core)
@@ -1950,8 +1924,8 @@ static XrResult XRAPI_PTR xrStringToPath_runtime(XrInstance handle, const char* 
 	return core->Actions().StringToPath(std::string_view(name, end - name), *path);
 }
 
-static XrResult XRAPI_PTR xrPathToString_runtime(XrInstance handle, XrPath path, uint32_t capacity, uint32_t* count,
-												 char* buffer)
+static XrResult XRAPI_PTR xrPathToString_runtime(XrInstance handle, XrPath path, std::uint32_t capacity,
+												 std::uint32_t* count, char* buffer)
 {
 	const auto core = RuntimeState().FindInstance(handle);
 	if (!core)
@@ -1972,7 +1946,8 @@ static XrResult XRAPI_PTR xrGetCurrentInteractionProfile_runtime(XrSession handl
 
 static XrResult XRAPI_PTR xrEnumerateBoundSourcesForAction_runtime(XrSession handle,
 																   const XrBoundSourcesForActionEnumerateInfo* info,
-																   uint32_t capacity, uint32_t* count, XrPath* out)
+																   std::uint32_t capacity, std::uint32_t* count,
+																   XrPath* out)
 {
 	auto core = rt::RetainSession(handle);
 	if (!core)
@@ -1985,7 +1960,7 @@ static XrResult XRAPI_PTR xrEnumerateBoundSourcesForAction_runtime(XrSession han
 		return result;
 	if (!count || (capacity && !out))
 		return XR_ERROR_VALIDATION_FAILURE;
-	*count = static_cast<uint32_t>(paths.size());
+	*count = static_cast<std::uint32_t>(paths.size());
 	if (!capacity)
 		return XR_SUCCESS;
 	if (capacity < *count)
@@ -1996,7 +1971,7 @@ static XrResult XRAPI_PTR xrEnumerateBoundSourcesForAction_runtime(XrSession han
 
 static XrResult XRAPI_PTR xrGetInputSourceLocalizedName_runtime(XrSession handle,
 																const XrInputSourceLocalizedNameGetInfo* info,
-																uint32_t capacity, uint32_t* count, char* out)
+																std::uint32_t capacity, std::uint32_t* count, char* out)
 {
 	auto core = rt::RetainSession(handle);
 	if (!core)
@@ -2007,7 +1982,7 @@ static XrResult XRAPI_PTR xrGetInputSourceLocalizedName_runtime(XrSession handle
 	const auto result = core->Actions().LocalizedName(info->sourcePath, info->whichComponents, name);
 	if (XR_FAILED(result))
 		return result;
-	*count = static_cast<uint32_t>(name.size() + 1);
+	*count = static_cast<std::uint32_t>(name.size() + 1);
 	if (!capacity)
 		return XR_SUCCESS;
 	if (capacity < *count)
@@ -2071,7 +2046,7 @@ static XrResult XRAPI_PTR xrDestroySwapchain_runtime(XrSwapchain sc)
 	if (found->second.glImages && !found->second.glImages->Close())
 		return XR_ERROR_RUNTIME_FAILURE;
 	native->swapchains.erase(found);
-	Logf("[SimXR] xrDestroySwapchain: sc=%p", sc);
+	Logf("[SimXR] xrDestroySwapchain: sc=0x%llX", static_cast<unsigned long long>(std::bit_cast<std::uint64_t>(sc)));
 	return XR_SUCCESS;
 }
 
@@ -2138,8 +2113,8 @@ static XrResult XRAPI_PTR xrStopHapticFeedback_runtime(XrSession handle, const X
 	return core->StopHaptic(info);
 }
 
-static XrResult XRAPI_PTR xrEnumerateViveTrackerPathsHTCX_runtime(XrInstance handle, uint32_t capacity, uint32_t* count,
-																  XrViveTrackerPathsHTCX* paths)
+static XrResult XRAPI_PTR xrEnumerateViveTrackerPathsHTCX_runtime(XrInstance handle, std::uint32_t capacity,
+																  std::uint32_t* count, XrViveTrackerPathsHTCX* paths)
 {
 	auto instance = RuntimeState().FindInstance(handle);
 	if (!instance)
@@ -2260,124 +2235,157 @@ static XrResult XRAPI_PTR xrConvertTimeToWin32PerformanceCounterKHR_runtime(XrIn
 	return converted;
 }
 
-// ----------------------------------------------
-
 static const simxr::DispatchEntry s_functions[] = {
-	{"xrGetInstanceProcAddr", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetInstanceProcAddr_runtime>::Invoke, true},
+	{"xrGetInstanceProcAddr",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetInstanceProcAddr_runtime>::Invoke), true},
 	{"xrEnumerateApiLayerProperties",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrEnumerateApiLayerProperties_runtime>::Invoke, true},
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrEnumerateApiLayerProperties_runtime>::Invoke), true},
 	{"xrEnumerateInstanceExtensionProperties",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrEnumerateInstanceExtensionProperties_runtime>::Invoke, true},
-	{"xrCreateInstance", (PFN_xrVoidFunction)simxr::AbiBoundary<xrCreateInstance_runtime>::Invoke, true},
-	{"xrDestroyInstance", (PFN_xrVoidFunction)simxr::AbiBoundary<xrDestroyInstance_runtime>::Invoke},
-	{"xrGetInstanceProperties", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetInstanceProperties_runtime>::Invoke},
-	{"xrGetSystem", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetSystem_runtime>::Invoke},
-	{"xrGetSystemProperties", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetSystemProperties_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrEnumerateInstanceExtensionProperties_runtime>::Invoke),
+	 true},
+	{"xrCreateInstance", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrCreateInstance_runtime>::Invoke),
+	 true},
+	{"xrDestroyInstance", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrDestroyInstance_runtime>::Invoke)},
+	{"xrGetInstanceProperties",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetInstanceProperties_runtime>::Invoke)},
+	{"xrGetSystem", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetSystem_runtime>::Invoke)},
+	{"xrGetSystemProperties",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetSystemProperties_runtime>::Invoke)},
 	{"xrEnumerateViewConfigurations",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrEnumerateViewConfigurations_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrEnumerateViewConfigurations_runtime>::Invoke)},
 	{"xrEnumerateViewConfigurationViews",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrEnumerateViewConfigurationViews_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrEnumerateViewConfigurationViews_runtime>::Invoke)},
 	{"xrEnumerateEnvironmentBlendModes",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrEnumerateEnvironmentBlendModes_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrEnumerateEnvironmentBlendModes_runtime>::Invoke)},
 	{"xrEnumerateViveTrackerPathsHTCX",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrEnumerateViveTrackerPathsHTCX_runtime>::Invoke},
-	{"xrCreateBodyTrackerFB", (PFN_xrVoidFunction)simxr::AbiBoundary<xrCreateBodyTrackerFB_runtime>::Invoke},
-	{"xrCreateBodyTrackerBD", (PFN_xrVoidFunction)simxr::AbiBoundary<xrCreateBodyTrackerBD_runtime>::Invoke},
-	{"xrDestroyBodyTrackerFB", (PFN_xrVoidFunction)simxr::AbiBoundary<xrDestroyBodyTrackerFB_runtime>::Invoke},
-	{"xrDestroyBodyTrackerBD", (PFN_xrVoidFunction)simxr::AbiBoundary<xrDestroyBodyTrackerBD_runtime>::Invoke},
-	{"xrLocateBodyJointsFB", (PFN_xrVoidFunction)simxr::AbiBoundary<xrLocateBodyJointsFB_runtime>::Invoke},
-	{"xrLocateBodyJointsBD", (PFN_xrVoidFunction)simxr::AbiBoundary<xrLocateBodyJointsBD_runtime>::Invoke},
-	{"xrGetBodySkeletonFB", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetBodySkeletonFB_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrEnumerateViveTrackerPathsHTCX_runtime>::Invoke)},
+	{"xrCreateBodyTrackerFB",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrCreateBodyTrackerFB_runtime>::Invoke)},
+	{"xrCreateBodyTrackerBD",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrCreateBodyTrackerBD_runtime>::Invoke)},
+	{"xrDestroyBodyTrackerFB",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrDestroyBodyTrackerFB_runtime>::Invoke)},
+	{"xrDestroyBodyTrackerBD",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrDestroyBodyTrackerBD_runtime>::Invoke)},
+	{"xrLocateBodyJointsFB",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrLocateBodyJointsFB_runtime>::Invoke)},
+	{"xrLocateBodyJointsBD",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrLocateBodyJointsBD_runtime>::Invoke)},
+	{"xrGetBodySkeletonFB",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetBodySkeletonFB_runtime>::Invoke)},
 	{"xrSuggestBodyTrackingCalibrationOverrideMETA",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrSuggestBodyTrackingCalibrationOverrideMETA_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(
+		 simxr::AbiBoundary<xrSuggestBodyTrackingCalibrationOverrideMETA_runtime>::Invoke)},
 	{"xrResetBodyTrackingCalibrationMETA",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrResetBodyTrackingCalibrationMETA_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrResetBodyTrackingCalibrationMETA_runtime>::Invoke)},
 	{"xrRequestBodyTrackingFidelityMETA",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrRequestBodyTrackingFidelityMETA_runtime>::Invoke},
-	{"xrCreateSession", (PFN_xrVoidFunction)simxr::AbiBoundary<xrCreateSession_runtime>::Invoke},
-	{"xrDestroySession", (PFN_xrVoidFunction)simxr::AbiBoundary<xrDestroySession_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrRequestBodyTrackingFidelityMETA_runtime>::Invoke)},
+	{"xrCreateSession", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrCreateSession_runtime>::Invoke)},
+	{"xrDestroySession", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrDestroySession_runtime>::Invoke)},
 	{"xrEnumerateSwapchainFormats",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrEnumerateSwapchainFormats_runtime>::Invoke},
-	{"xrCreateSwapchain", (PFN_xrVoidFunction)simxr::AbiBoundary<xrCreateSwapchain_runtime>::Invoke},
-	{"xrDestroySwapchain", (PFN_xrVoidFunction)simxr::AbiBoundary<xrDestroySwapchain_runtime>::Invoke},
-	{"xrEnumerateSwapchainImages", (PFN_xrVoidFunction)simxr::AbiBoundary<xrEnumerateSwapchainImages_runtime>::Invoke},
-	{"xrAcquireSwapchainImage", (PFN_xrVoidFunction)simxr::AbiBoundary<xrAcquireSwapchainImage_runtime>::Invoke},
-	{"xrWaitSwapchainImage", (PFN_xrVoidFunction)simxr::AbiBoundary<xrWaitSwapchainImage_runtime>::Invoke},
-	{"xrReleaseSwapchainImage", (PFN_xrVoidFunction)simxr::AbiBoundary<xrReleaseSwapchainImage_runtime>::Invoke},
-	{"xrBeginSession", (PFN_xrVoidFunction)simxr::AbiBoundary<xrBeginSession_runtime>::Invoke},
-	{"xrEndSession", (PFN_xrVoidFunction)simxr::AbiBoundary<xrEndSession_runtime>::Invoke},
-	{"xrWaitFrame", (PFN_xrVoidFunction)simxr::AbiBoundary<xrWaitFrame_runtime>::Invoke},
-	{"xrBeginFrame", (PFN_xrVoidFunction)simxr::AbiBoundary<xrBeginFrame_runtime>::Invoke},
-	{"xrEndFrame", (PFN_xrVoidFunction)simxr::AbiBoundary<xrEndFrame_runtime>::Invoke},
-	{"xrPollEvent", (PFN_xrVoidFunction)simxr::AbiBoundary<xrPollEvent_runtime>::Invoke},
-	{"xrLocateViews", (PFN_xrVoidFunction)simxr::AbiBoundary<xrLocateViews_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrEnumerateSwapchainFormats_runtime>::Invoke)},
+	{"xrCreateSwapchain", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrCreateSwapchain_runtime>::Invoke)},
+	{"xrDestroySwapchain",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrDestroySwapchain_runtime>::Invoke)},
+	{"xrEnumerateSwapchainImages",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrEnumerateSwapchainImages_runtime>::Invoke)},
+	{"xrAcquireSwapchainImage",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrAcquireSwapchainImage_runtime>::Invoke)},
+	{"xrWaitSwapchainImage",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrWaitSwapchainImage_runtime>::Invoke)},
+	{"xrReleaseSwapchainImage",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrReleaseSwapchainImage_runtime>::Invoke)},
+	{"xrBeginSession", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrBeginSession_runtime>::Invoke)},
+	{"xrEndSession", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrEndSession_runtime>::Invoke)},
+	{"xrWaitFrame", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrWaitFrame_runtime>::Invoke)},
+	{"xrBeginFrame", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrBeginFrame_runtime>::Invoke)},
+	{"xrEndFrame", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrEndFrame_runtime>::Invoke)},
+	{"xrPollEvent", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrPollEvent_runtime>::Invoke)},
+	{"xrLocateViews", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrLocateViews_runtime>::Invoke)},
 	{"xrGetD3D11GraphicsRequirementsKHR",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetD3D11GraphicsRequirementsKHR_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetD3D11GraphicsRequirementsKHR_runtime>::Invoke)},
 	{"xrGetD3D12GraphicsRequirementsKHR",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetD3D12GraphicsRequirementsKHR_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetD3D12GraphicsRequirementsKHR_runtime>::Invoke)},
 	{"xrGetOpenGLGraphicsRequirementsKHR",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetOpenGLGraphicsRequirementsKHR_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetOpenGLGraphicsRequirementsKHR_runtime>::Invoke)},
 	// XR_KHR_vulkan_enable
 	{"xrGetVulkanGraphicsRequirementsKHR",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetVulkanGraphicsRequirementsKHR_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetVulkanGraphicsRequirementsKHR_runtime>::Invoke)},
 	{"xrGetVulkanInstanceExtensionsKHR",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetVulkanInstanceExtensionsKHR_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetVulkanInstanceExtensionsKHR_runtime>::Invoke)},
 	{"xrGetVulkanDeviceExtensionsKHR",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetVulkanDeviceExtensionsKHR_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetVulkanDeviceExtensionsKHR_runtime>::Invoke)},
 	{"xrGetVulkanGraphicsDeviceKHR",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetVulkanGraphicsDeviceKHR_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetVulkanGraphicsDeviceKHR_runtime>::Invoke)},
 	// XR_KHR_vulkan_enable2
 	{"xrGetVulkanGraphicsRequirements2KHR",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetVulkanGraphicsRequirements2KHR_runtime>::Invoke},
-	{"xrCreateVulkanInstanceKHR", (PFN_xrVoidFunction)simxr::AbiBoundary<xrCreateVulkanInstanceKHR_runtime>::Invoke},
-	{"xrCreateVulkanDeviceKHR", (PFN_xrVoidFunction)simxr::AbiBoundary<xrCreateVulkanDeviceKHR_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetVulkanGraphicsRequirements2KHR_runtime>::Invoke)},
+	{"xrCreateVulkanInstanceKHR",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrCreateVulkanInstanceKHR_runtime>::Invoke)},
+	{"xrCreateVulkanDeviceKHR",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrCreateVulkanDeviceKHR_runtime>::Invoke)},
 	{"xrGetVulkanGraphicsDevice2KHR",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetVulkanGraphicsDevice2KHR_runtime>::Invoke},
-	{"xrRequestExitSession", (PFN_xrVoidFunction)simxr::AbiBoundary<xrRequestExitSession_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetVulkanGraphicsDevice2KHR_runtime>::Invoke)},
+	{"xrRequestExitSession",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrRequestExitSession_runtime>::Invoke)},
 	// Space functions
-	{"xrCreateReferenceSpace", (PFN_xrVoidFunction)simxr::AbiBoundary<xrCreateReferenceSpace_runtime>::Invoke},
-	{"xrDestroySpace", (PFN_xrVoidFunction)simxr::AbiBoundary<xrDestroySpace_runtime>::Invoke},
-	{"xrLocateSpace", (PFN_xrVoidFunction)simxr::AbiBoundary<xrLocateSpace_runtime>::Invoke},
-	{"xrEnumerateReferenceSpaces", (PFN_xrVoidFunction)simxr::AbiBoundary<xrEnumerateReferenceSpaces_runtime>::Invoke},
-	{"xrCreateActionSpace", (PFN_xrVoidFunction)simxr::AbiBoundary<xrCreateActionSpace_runtime>::Invoke},
+	{"xrCreateReferenceSpace",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrCreateReferenceSpace_runtime>::Invoke)},
+	{"xrDestroySpace", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrDestroySpace_runtime>::Invoke)},
+	{"xrLocateSpace", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrLocateSpace_runtime>::Invoke)},
+	{"xrEnumerateReferenceSpaces",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrEnumerateReferenceSpaces_runtime>::Invoke)},
+	{"xrCreateActionSpace",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrCreateActionSpace_runtime>::Invoke)},
 	// Action functions
-	{"xrCreateActionSet", (PFN_xrVoidFunction)simxr::AbiBoundary<xrCreateActionSet_runtime>::Invoke},
-	{"xrDestroyActionSet", (PFN_xrVoidFunction)simxr::AbiBoundary<xrDestroyActionSet_runtime>::Invoke},
-	{"xrCreateAction", (PFN_xrVoidFunction)simxr::AbiBoundary<xrCreateAction_runtime>::Invoke},
-	{"xrDestroyAction", (PFN_xrVoidFunction)simxr::AbiBoundary<xrDestroyAction_runtime>::Invoke},
+	{"xrCreateActionSet", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrCreateActionSet_runtime>::Invoke)},
+	{"xrDestroyActionSet",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrDestroyActionSet_runtime>::Invoke)},
+	{"xrCreateAction", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrCreateAction_runtime>::Invoke)},
+	{"xrDestroyAction", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrDestroyAction_runtime>::Invoke)},
 	{"xrSuggestInteractionProfileBindings",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrSuggestInteractionProfileBindings_runtime>::Invoke},
-	{"xrAttachSessionActionSets", (PFN_xrVoidFunction)simxr::AbiBoundary<xrAttachSessionActionSets_runtime>::Invoke},
-	{"xrGetActionStateBoolean", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetActionStateBoolean_runtime>::Invoke},
-	{"xrGetActionStateFloat", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetActionStateFloat_runtime>::Invoke},
-	{"xrGetActionStatePose", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetActionStatePose_runtime>::Invoke},
-	{"xrGetActionStateVector2f", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetActionStateVector2f_runtime>::Invoke},
-	{"xrSyncActions", (PFN_xrVoidFunction)simxr::AbiBoundary<xrSyncActions_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrSuggestInteractionProfileBindings_runtime>::Invoke)},
+	{"xrAttachSessionActionSets",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrAttachSessionActionSets_runtime>::Invoke)},
+	{"xrGetActionStateBoolean",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetActionStateBoolean_runtime>::Invoke)},
+	{"xrGetActionStateFloat",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetActionStateFloat_runtime>::Invoke)},
+	{"xrGetActionStatePose",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetActionStatePose_runtime>::Invoke)},
+	{"xrGetActionStateVector2f",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetActionStateVector2f_runtime>::Invoke)},
+	{"xrSyncActions", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrSyncActions_runtime>::Invoke)},
 	// Path functions
-	{"xrStringToPath", (PFN_xrVoidFunction)simxr::AbiBoundary<xrStringToPath_runtime>::Invoke},
-	{"xrPathToString", (PFN_xrVoidFunction)simxr::AbiBoundary<xrPathToString_runtime>::Invoke},
+	{"xrStringToPath", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrStringToPath_runtime>::Invoke)},
+	{"xrPathToString", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrPathToString_runtime>::Invoke)},
 	// Interaction functions
 	{"xrGetCurrentInteractionProfile",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetCurrentInteractionProfile_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetCurrentInteractionProfile_runtime>::Invoke)},
 	{"xrEnumerateBoundSourcesForAction",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrEnumerateBoundSourcesForAction_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrEnumerateBoundSourcesForAction_runtime>::Invoke)},
 	{"xrGetInputSourceLocalizedName",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetInputSourceLocalizedName_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetInputSourceLocalizedName_runtime>::Invoke)},
 	// Utility functions
-	{"xrResultToString", (PFN_xrVoidFunction)simxr::AbiBoundary<xrResultToString_runtime>::Invoke},
-	{"xrStructureTypeToString", (PFN_xrVoidFunction)simxr::AbiBoundary<xrStructureTypeToString_runtime>::Invoke},
+	{"xrResultToString", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrResultToString_runtime>::Invoke)},
+	{"xrStructureTypeToString",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrStructureTypeToString_runtime>::Invoke)},
 	{"xrGetReferenceSpaceBoundsRect",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetReferenceSpaceBoundsRect_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetReferenceSpaceBoundsRect_runtime>::Invoke)},
 	{"xrGetViewConfigurationProperties",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetViewConfigurationProperties_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetViewConfigurationProperties_runtime>::Invoke)},
 	// Haptic functions
-	{"xrApplyHapticFeedback", (PFN_xrVoidFunction)simxr::AbiBoundary<xrApplyHapticFeedback_runtime>::Invoke},
-	{"xrStopHapticFeedback", (PFN_xrVoidFunction)simxr::AbiBoundary<xrStopHapticFeedback_runtime>::Invoke},
+	{"xrApplyHapticFeedback",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrApplyHapticFeedback_runtime>::Invoke)},
+	{"xrStopHapticFeedback",
+	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrStopHapticFeedback_runtime>::Invoke)},
 	// Time conversion functions
 	{"xrConvertWin32PerformanceCounterToTimeKHR",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrConvertWin32PerformanceCounterToTimeKHR_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(
+		 simxr::AbiBoundary<xrConvertWin32PerformanceCounterToTimeKHR_runtime>::Invoke)},
 	{"xrConvertTimeToWin32PerformanceCounterKHR",
-	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrConvertTimeToWin32PerformanceCounterKHR_runtime>::Invoke},
+	 reinterpret_cast<PFN_xrVoidFunction>(
+		 simxr::AbiBoundary<xrConvertTimeToWin32PerformanceCounterKHR_runtime>::Invoke)},
 };
 
 static XrResult XRAPI_PTR xrGetInstanceProcAddr_runtime(XrInstance instance, const char* name,
@@ -2391,8 +2399,8 @@ static XrResult XRAPI_PTR xrGetInstanceProcAddr_runtime(XrInstance instance, con
 	const auto core = RuntimeState().FindInstance(instance);
 	if (instance != XR_NULL_HANDLE && !core)
 		return XR_ERROR_HANDLE_INVALID;
-	static const simxr::DispatchTable table(s_functions, Extensions());
-	if (!table.CoversAdvertisedCommands())
+	static const simxr::DispatchTable s_table(s_functions, Extensions());
+	if (!s_table.CoversAdvertisedCommands())
 		return XR_ERROR_RUNTIME_FAILURE;
-	return table.Resolve(name, core ? &core->Extensions() : nullptr, *function);
+	return s_table.Resolve(name, core ? &core->Extensions() : nullptr, *function);
 }
