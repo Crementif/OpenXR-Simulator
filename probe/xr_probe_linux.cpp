@@ -165,6 +165,15 @@ static int runProbe()
     si.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
     XrSystemId system;
     XR(xrGetSystem(instance, &si, &system));
+    CHECK(xrGetInstanceProperties(instance, nullptr) == XR_ERROR_VALIDATION_FAILURE);
+    XrInstanceProperties invalidProperties{};
+    CHECK(xrGetInstanceProperties(instance, &invalidProperties) == XR_ERROR_VALIDATION_FAILURE);
+    CHECK(xrGetSystem(instance, nullptr, &system) == XR_ERROR_VALIDATION_FAILURE);
+    CHECK(xrGetSystem(instance, &si, nullptr) == XR_ERROR_VALIDATION_FAILURE);
+    XrSystemGetInfo invalidSystemInfo{};
+    CHECK(xrGetSystem(instance, &invalidSystemInfo, &system) == XR_ERROR_VALIDATION_FAILURE);
+    CHECK(xrResultToString(instance, XR_SUCCESS, nullptr) == XR_ERROR_VALIDATION_FAILURE);
+    CHECK(xrStructureTypeToString(instance, XR_TYPE_INSTANCE_PROPERTIES, nullptr) == XR_ERROR_VALIDATION_FAILURE);
     XR(xrEnumerateViewConfigurations(instance, system, 0, &count, nullptr));
     CHECK(count == (quadMode ? 2u : 1u));
     std::vector<XrViewConfigurationType> configurations(count);

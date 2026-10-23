@@ -89,6 +89,8 @@ FN(xrGetInstanceProperties)(XrInstance iHandle, XrInstanceProperties *p)
     std::lock_guard<std::recursive_mutex> apiLock(sim::Host().Mutex());
     if (!sim::valid(i))
         return XR_ERROR_HANDLE_INVALID;
+    if (!p || p->type != XR_TYPE_INSTANCE_PROPERTIES)
+        return XR_ERROR_VALIDATION_FAILURE;
     p->runtimeVersion = XR_MAKE_VERSION(1, 0, 0);
     std::strcpy(p->runtimeName, "OpenXR Simulator Linux Vulkan");
     return XR_SUCCESS;
@@ -99,6 +101,8 @@ FN(xrGetSystem)(XrInstance iHandle, const XrSystemGetInfo *info, XrSystemId *id)
     std::lock_guard<std::recursive_mutex> apiLock(sim::Host().Mutex());
     if (!sim::valid(i))
         return XR_ERROR_HANDLE_INVALID;
+    if (!info || !id || info->type != XR_TYPE_SYSTEM_GET_INFO)
+        return XR_ERROR_VALIDATION_FAILURE;
     if (info->formFactor != XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY)
         return XR_ERROR_FORM_FACTOR_UNSUPPORTED;
     *id = 1;
@@ -891,12 +895,16 @@ FN(xrConvertTimeToTimespecTimeKHR)(XrInstance iHandle, XrTime t, timespec *p)
 FN(xrResultToString)(XrInstance, XrResult r, char *p)
 {
     std::lock_guard<std::recursive_mutex> apiLock(sim::Host().Mutex());
+    if (!p)
+        return XR_ERROR_VALIDATION_FAILURE;
     std::snprintf(p, XR_MAX_RESULT_STRING_SIZE, "XrResult(%d)", r);
     return XR_SUCCESS;
 }
 FN(xrStructureTypeToString)(XrInstance, XrStructureType t, char *p)
 {
     std::lock_guard<std::recursive_mutex> apiLock(sim::Host().Mutex());
+    if (!p)
+        return XR_ERROR_VALIDATION_FAILURE;
     std::snprintf(p, XR_MAX_STRUCTURE_NAME_SIZE, "XrStructureType(%d)", t);
     return XR_SUCCESS;
 }
