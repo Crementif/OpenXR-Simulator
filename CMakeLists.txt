@@ -106,7 +106,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         src/platform/linux/ControlFd.cpp src/platform/linux/LegacyFileChannel.cpp
         src/platform/linux/LinuxRuntimeStatus.cpp)
 elseif(WIN32)
-    target_sources(simxr_control PRIVATE src/platform/windows/LocalControlServer.cpp src/platform/windows/LocalControlClient.cpp)
+    target_sources(simxr_control PRIVATE src/platform/windows/LocalControlServer.cpp src/platform/windows/LocalControlClient.cpp
+        src/platform/windows/WindowsControl.cpp)
     target_link_libraries(simxr_control PRIVATE advapi32)
 endif()
 add_library(simxr_recording STATIC src/automation/Recording.cpp src/automation/RecordedRig.cpp)
