@@ -10,7 +10,6 @@
 #include "runtime/Session.h"
 #include "simulation/GameBridge.h"
 
-#include <algorithm>
 #include <stdexcept>
 
 namespace simxr::control
@@ -24,7 +23,7 @@ static InspectionValue ReadDiagnostics(Session& session, const Message& request)
 	std::optional<FrameKey> frame;
 	if (request.Find(tag::FrameId))
 		frame = FrameKey{session.Snapshot().generation, FrameId{RequireRequestU64(request, tag::FrameId)}};
-	return InspectDiagnostics(session.History().Diagnostics(after, count, frame));
+	return InspectDiagnostics(session.History().Diagnostics(after, static_cast<std::size_t>(count), frame));
 }
 static InspectionValue ReadRecording(Session& session, const Message& request, Message& response)
 {
@@ -34,7 +33,8 @@ static InspectionValue ReadRecording(Session& session, const Message& request, M
 		throw ControlRequestError{ErrorCode::Invalid, "Recording pages contain at most 16 transactions"};
 	for (;;)
 	{
-		const auto page = session.Commands().Recorder().Snapshot(offset, count);
+		const auto page =
+			session.Commands().Recorder().Snapshot(static_cast<std::size_t>(offset), static_cast<std::size_t>(count));
 		InspectionValue document;
 		bool fits = false;
 		try
@@ -123,7 +123,7 @@ bool SimulationConnection::OwnsSequenceCapture(const SnapshotRecord& capture) co
 	return receipt.request.owner == CommandSource{*m_kind, m_connection.value} && receipt.reservation.id == capture.id;
 }
 Message SimulationConnection::Dispatch(const Message& request, const ControlSession& binding, Message response,
-	std::vector<SnapshotRecord>& held)
+									   std::vector<SnapshotRecord>& held)
 {
 	const auto& session = binding.session;
 	const auto opcode = static_cast<OpCode>(request.opcode);

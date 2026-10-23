@@ -1,11 +1,11 @@
 #include "control/ControlSessions.h"
+#include "Pch.h"
 #include "control/ControlRequestError.h"
 #include "runtime/Runtime.h"
+#include "runtime/Session.h"
 
-#include <algorithm>
 #include <limits>
 #include <stdexcept>
-#include <utility>
 
 namespace simxr::control
 {
@@ -40,19 +40,21 @@ void ControlSessions::Discover(Snapshot& snapshot)
 		throw std::logic_error("A request can discover sessions only once");
 	snapshot.m_sessions.reserve(Capacity);
 	snapshot.m_phase = Snapshot::Phase::Collecting;
-	for (const auto instance : m_runtime.Instances())
-		for (const auto handle : m_runtime.Sessions(instance))
-		{
-			if (snapshot.m_sessions.size() == Capacity)
-				throw ControlRequestError{ErrorCode::Capacity, "Session discovery capacity exceeded"};
-			if (auto session = m_runtime.FindSession(handle))
-				snapshot.m_sessions.push_back({{}, handle, session.Shared()});
-		}
-
 	std::vector<Registration> prepared;
-	prepared.reserve(Capacity);
 	{
+		// Keep concurrent discovery snapshots in publication order. Runtime
+		// enumeration only copies handles and retained session references.
 		std::lock_guard lock(m_mutex);
+		for (const auto instance : m_runtime.Instances())
+			for (const auto handle : m_runtime.Sessions(instance))
+			{
+				if (snapshot.m_sessions.size() == Capacity)
+					throw ControlRequestError{ErrorCode::Capacity, "Session discovery capacity exceeded"};
+				if (auto session = m_runtime.FindSession(handle))
+					snapshot.m_sessions.push_back({{}, handle, session.Shared()});
+			}
+
+		prepared.reserve(Capacity);
 		const auto sameOwner = [](const Registration& registered, const ControlSession& discovered)
 		{
 			return registered.handle == discovered.handle && !registered.session.owner_before(discovered.session) &&

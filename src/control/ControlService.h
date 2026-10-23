@@ -1,14 +1,21 @@
 #pragma once
 
 #include "control/ControlPacket.h"
+#include "control/ControlSessions.h"
+#include "control/RecordingControl.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <mutex>
+#include <optional>
+#include <utility>
+#include <vector>
 
 namespace simxr
 {
 class Runtime;
-}
+} // namespace simxr
 namespace simxr::control
 {
 class ImageInspectionProvider;
@@ -29,7 +36,31 @@ class ControlService
 	void Close() noexcept;
 
   private:
-	class State;
-	std::unique_ptr<State> m_state;
+	struct Client;
+	struct Publication;
+	struct HeldReaders;
+	std::uint64_t ServiceCapabilities(std::uint16_t minor) const;
+	std::uint64_t AdvertisedCapabilities(const Client& client, std::uint16_t minor) const;
+	std::shared_ptr<Client> Find(ConnectionId id);
+	const ControlSession& Resolve(Client& client, const Message& request, HeldReaders& held);
+	Message DispatchGame(Client& client, const Message& request);
+	Message DispatchWindow(Client& client, const Message& request, HeldReaders& held, Publication& publication,
+						   Message response);
+	Message DispatchFrame(Client& client, const Message& request, const ControlSession& binding, HeldReaders& held,
+						  Publication& publication, Message response);
+	Message DispatchDebugger(Client& client, const Message& request, const ControlSession& binding, HeldReaders& held,
+							 Message response);
+	Message Dispatch(Client& client, const Message& request, HeldReaders& held, Publication& publication,
+					 const ControlPacket& incoming, ControlPacket& outgoing);
+
+	Runtime& m_runtime;
+	const std::shared_ptr<ImageInspectionProvider> m_images;
+	const std::size_t m_capacity;
+	std::mutex m_mutex;
+	bool m_closed = false;
+	std::uint64_t m_nextConnection = 1;
+	ControlSessions m_sessions;
+	RecordingControl m_recordings;
+	std::vector<std::pair<ConnectionId, std::shared_ptr<Client>>> m_clients;
 };
 } // namespace simxr::control

@@ -1,9 +1,8 @@
 #include "control/ConnectionRequests.h"
+#include "Pch.h"
 
-#include <algorithm>
 #include <stdexcept>
 #include <type_traits>
-#include <utility>
 
 namespace simxr::control
 {

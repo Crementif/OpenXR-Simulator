@@ -2,9 +2,12 @@
 
 #include "control/ControlPacket.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <mutex>
 #include <optional>
+#include <vector>
 
 namespace simxr::control
 {

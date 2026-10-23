@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <future>
 #include <iostream>
 #include <new>
 #include <thread>
@@ -1086,6 +1087,66 @@ void DiscoveryFailurePreservesIdentityRegistry()
 #endif
 }
 
+void ConcurrentDiscoveryPublishesInCollectionOrder()
+{
+#ifndef SIMXR_TEST_TSAN_ALLOCATOR
+	Fixture fixture(false);
+	wire::ControlSessions directory(fixture.runtime);
+	wire::ControlSessions::Snapshot first;
+	directory.Discover(first);
+	const auto originalId = first.Ids().front();
+	wire::ControlSessions::Snapshot partial;
+	wire::ControlSessions::Snapshot concurrent;
+	Runtime::SessionRef added;
+	std::future<void> discovering;
+	std::promise<void> started;
+	auto entered = started.get_future();
+	bool overtook = false;
+	bool failed = false;
+	{
+		// Stop after collecting the old session set but before publishing it.
+		// Another discovery must not register a new session ahead of this one.
+		MatchingAllocationFailure failure(
+			sizeof(wire::ControlSession) * wire::ControlSessions::Capacity, 1,
+			[&]
+			{
+				Require(fixture.runtime.DestroySession(fixture.session) == XR_SUCCESS &&
+							fixture.runtime.CreateSession(fixture.instance, added, fixture.clock) == XR_SUCCESS,
+						"Replace a session during directory discovery");
+				discovering = std::async(std::launch::async,
+										 [&]
+										 {
+											 started.set_value();
+											 directory.Discover(concurrent);
+										 });
+				entered.get();
+				overtook = discovering.wait_for(100ms) == std::future_status::ready;
+			});
+		try
+		{
+			directory.Discover(partial);
+		}
+		catch (const std::bad_alloc&)
+		{
+			failed = allocationFailed;
+		}
+	}
+	if (discovering.valid())
+		discovering.get();
+	Require(failed && !overtook && concurrent.Sessions().size() == 1,
+			"Concurrent discovery published a newer session set ahead of an unfinished collection");
+	wire::ControlSessions::Snapshot recovered;
+	directory.Discover(recovered);
+	for (const auto& binding : concurrent.Sessions())
+	{
+		const auto& current = recovered.Resolve(binding.id, binding.session->Snapshot().generation);
+		Require(current.session == binding.session, "Concurrent discovery replaced a live session identity");
+		Require(binding.session == added.Shared() && binding.id > originalId,
+				"Replacement discovery reused the removed session identity");
+	}
+#endif
+}
+
 class Output final : public FrameOutput
 {
   public:
@@ -1703,6 +1764,7 @@ int main()
 		DestroyedLeaseCapacityRecovery();
 		DiscoveryFailureRetainsReadersUntilSettlement();
 		DiscoveryFailurePreservesIdentityRegistry();
+		ConcurrentDiscoveryPublishesInCollectionOrder();
 		AcknowledgeLastReaderReentry();
 		ImageOwnerPublicationAndDeferredRelease();
 		ImageWindowPublicationAndRelease();

@@ -1,9 +1,7 @@
 #include "control/ConnectionLeases.h"
+#include "Pch.h"
 #include "control/ControlRequestError.h"
 #include "runtime/Session.h"
-
-#include <algorithm>
-#include <utility>
 
 namespace simxr::control
 {

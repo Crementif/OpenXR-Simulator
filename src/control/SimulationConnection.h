@@ -29,7 +29,7 @@ class SimulationConnection
 	SimulationConnection(const SimulationConnection&) = delete;
 	SimulationConnection& operator=(const SimulationConnection&) = delete;
 	Message Dispatch(const Message& request, const ControlSession& binding, Message response,
-		std::vector<SnapshotRecord>& held);
+					 std::vector<SnapshotRecord>& held);
 	bool OwnsSequenceCapture(const SnapshotRecord& capture) const noexcept;
 
   private:
