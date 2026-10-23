@@ -1,11 +1,10 @@
 #include "Math.h"
+#include "Pch.h"
 
 #include <cmath>
 #include <limits>
 
 namespace simxr
-{
-namespace
 {
 struct Vector3d
 {
@@ -13,7 +12,7 @@ struct Vector3d
 };
 
 // Preserve intermediate range until the complete transform is narrowed to OpenXR floats.
-Vector3d RotateWide(XrQuaternionf orientation, Vector3d vector)
+static Vector3d RotateWide(XrQuaternionf orientation, Vector3d vector)
 {
 	const double x = orientation.x, y = orientation.y, z = orientation.z, w = orientation.w;
 	return {
@@ -22,7 +21,7 @@ Vector3d RotateWide(XrQuaternionf orientation, Vector3d vector)
 		2 * (x * z - w * y) * vector.x + 2 * (y * z + w * x) * vector.y + (w * w - x * x - y * y + z * z) * vector.z};
 }
 
-XrVector3f Narrow(Vector3d vector)
+static XrVector3f Narrow(Vector3d vector)
 {
 	const auto component = [](double value)
 	{
@@ -32,7 +31,6 @@ XrVector3f Narrow(Vector3d vector)
 	};
 	return {component(vector.x), component(vector.y), component(vector.z)};
 }
-} // namespace
 
 bool IsFinite(XrVector3f vector) noexcept
 {
