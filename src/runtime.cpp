@@ -10,6 +10,7 @@
 #define XR_USE_GRAPHICS_API_VULKAN
 
 #include <windows.h>
+#include <limits>
 #include <windowsx.h>
 #include <wrl/client.h>
 #include <d3d11.h>
@@ -5035,20 +5036,8 @@ static XrResult XRAPI_PTR xrGetInputSourceLocalizedName_runtime(XrSession handle
         return XR_ERROR_HANDLE_INVALID;
     if (!info || !count || (capacity && !out) || info->type != XR_TYPE_INPUT_SOURCE_LOCALIZED_NAME_GET_INFO)
         return XR_ERROR_VALIDATION_FAILURE;
-    auto& registry = rt::g_instance.core->Actions();
-    auto source = registry.PathString(info->sourcePath);
-    if (!source)
-        return XR_ERROR_PATH_INVALID;
-    XrPath user;
-    auto result = registry.StringToPath(source->starts_with("/user/hand/left/") ? "/user/hand/left" : "/user/hand/right", user);
-    if (XR_FAILED(result))
-        return result;
-    XrPath profile;
-    result = core->Actions().CurrentProfile(user, profile);
-    if (XR_FAILED(result))
-        return result;
     std::string name;
-    result = registry.LocalizedName(info->sourcePath, profile, info->whichComponents, name);
+    const auto result = core->Actions().LocalizedName(info->sourcePath, info->whichComponents, name);
     if (XR_FAILED(result))
         return result;
     *count = static_cast<uint32_t>(name.size() + 1);
@@ -5258,41 +5247,49 @@ static XrResult XRAPI_PTR xrRequestBodyTrackingFidelityMETA_runtime(XrBodyTracke
     return core->Body().RequestFidelityFB(tracker, fidelity);
 }
 
-// Time conversion functions for XR_KHR_win32_convert_performance_counter_time
-static XrResult XRAPI_PTR xrConvertWin32PerformanceCounterToTimeKHR_runtime(XrInstance instance,
-                                                                            const LARGE_INTEGER* performanceCounter,
-                                                                            XrTime* time) {
-    auto result = RequireExtension(instance, XR_KHR_WIN32_CONVERT_PERFORMANCE_COUNTER_TIME_EXTENSION_NAME);
-    if (XR_FAILED(result)) return result;
-
-    if (!performanceCounter || !time) return XR_ERROR_VALIDATION_FAILURE;
-    
-    LARGE_INTEGER freq;
-    QueryPerformanceFrequency(&freq);
-    
-    // Convert to nanoseconds
-    const long long secs = performanceCounter->QuadPart / freq.QuadPart;
-    const long long rem = performanceCounter->QuadPart % freq.QuadPart;
-    *time = secs * 1000000000LL + (rem * 1000000000LL) / freq.QuadPart;
-    return XR_SUCCESS;
+static bool ScalePositiveTime(std::int64_t value, std::int64_t numerator, std::int64_t denominator,
+							  std::int64_t& output)
+{
+	if (value <= 0 || numerator <= 0 || denominator <= 0)
+		return false;
+	const auto whole = static_cast<std::uint64_t>(value / denominator);
+	const auto remainder = static_cast<std::uint64_t>(value % denominator);
+	const auto scale = static_cast<std::uint64_t>(numerator);
+	const auto maximum = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+	if (whole > maximum / scale || remainder > std::numeric_limits<std::uint64_t>::max() / scale)
+		return false;
+	const auto fractional = remainder * scale / static_cast<std::uint64_t>(denominator);
+	const auto integral = whole * scale;
+	if (fractional > maximum - integral)
+		return false;
+	output = static_cast<std::int64_t>(integral + fractional);
+	return true;
 }
 
-static XrResult XRAPI_PTR xrConvertTimeToWin32PerformanceCounterKHR_runtime(XrInstance instance,
-                                                                             XrTime time,
-                                                                             LARGE_INTEGER* performanceCounter) {
-    auto result = RequireExtension(instance, XR_KHR_WIN32_CONVERT_PERFORMANCE_COUNTER_TIME_EXTENSION_NAME);
-    if (XR_FAILED(result)) return result;
+static XrResult XRAPI_PTR xrConvertWin32PerformanceCounterToTimeKHR_runtime(
+	XrInstance instance, const LARGE_INTEGER* performanceCounter, XrTime* time)
+{
+	const auto result = RequireExtension(instance, XR_KHR_WIN32_CONVERT_PERFORMANCE_COUNTER_TIME_EXTENSION_NAME);
+	if (XR_FAILED(result)) return result;
+	if (!performanceCounter || !time) return XR_ERROR_VALIDATION_FAILURE;
+	LARGE_INTEGER frequency{};
+	if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0) return XR_ERROR_RUNTIME_FAILURE;
+	return ScalePositiveTime(performanceCounter->QuadPart, 1000000000LL, frequency.QuadPart, *time)
+		? XR_SUCCESS : XR_ERROR_TIME_INVALID;
+}
 
-    if (!performanceCounter) return XR_ERROR_VALIDATION_FAILURE;
-    
-    LARGE_INTEGER freq;
-    QueryPerformanceFrequency(&freq);
-    
-    // Convert from nanoseconds  
-    const long long secs = time / 1000000000LL;
-    const long long rem = time % 1000000000LL;
-    performanceCounter->QuadPart = secs * freq.QuadPart + (rem * freq.QuadPart) / 1000000000LL;
-    return XR_SUCCESS;
+static XrResult XRAPI_PTR xrConvertTimeToWin32PerformanceCounterKHR_runtime(
+	XrInstance instance, XrTime time, LARGE_INTEGER* performanceCounter)
+{
+	const auto result = RequireExtension(instance, XR_KHR_WIN32_CONVERT_PERFORMANCE_COUNTER_TIME_EXTENSION_NAME);
+	if (XR_FAILED(result)) return result;
+	if (!performanceCounter) return XR_ERROR_VALIDATION_FAILURE;
+	LARGE_INTEGER frequency{};
+	if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0) return XR_ERROR_RUNTIME_FAILURE;
+	std::int64_t counter;
+	if (!ScalePositiveTime(time, frequency.QuadPart, 1000000000LL, counter)) return XR_ERROR_TIME_INVALID;
+	performanceCounter->QuadPart = counter;
+	return XR_SUCCESS;
 }
 
 // ----------------------------------------------

@@ -190,6 +190,7 @@ class ActionSyncState
 	XrResult SpaceSources(XrAction action, XrPath subaction, std::vector<ResolvedActionSource>& sources) const;
 	XrResult BoundSources(XrAction action, std::vector<XrPath>& paths) const;
 	XrResult CurrentProfile(XrPath userPath, XrPath& profile) const;
+	XrResult LocalizedName(XrPath source, XrInputSourceLocalizedNameFlags flags, std::string& name) const;
 	ActionSyncSnapshot Snapshot() const;
 	void SetFocused(bool focused);
 	void Reset();

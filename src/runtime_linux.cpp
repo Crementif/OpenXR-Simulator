@@ -710,20 +710,8 @@ FN(xrGetInputSourceLocalizedName)(XrSession handle, const XrInputSourceLocalized
         return XR_ERROR_HANDLE_INVALID;
     if (!info || !count || (capacity && !out) || info->type != XR_TYPE_INPUT_SOURCE_LOCALIZED_NAME_GET_INFO)
         return XR_ERROR_VALIDATION_FAILURE;
-    auto& registry = session->owner->core->Actions();
-    auto source = registry.PathString(info->sourcePath);
-    if (!source)
-        return XR_ERROR_PATH_INVALID;
-    XrPath user;
-    auto result = registry.StringToPath(source->starts_with("/user/hand/left/") ? "/user/hand/left" : "/user/hand/right", user);
-    if (XR_FAILED(result))
-        return result;
-    XrPath profile;
-    result = session->core->Actions().CurrentProfile(user, profile);
-    if (XR_FAILED(result))
-        return result;
     std::string name;
-    result = registry.LocalizedName(info->sourcePath, profile, info->whichComponents, name);
+    const auto result = session->core->Actions().LocalizedName(info->sourcePath, info->whichComponents, name);
     if (XR_FAILED(result))
         return result;
     *count = static_cast<uint32_t>(name.size() + 1);

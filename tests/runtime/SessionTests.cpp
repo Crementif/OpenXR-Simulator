@@ -1279,6 +1279,13 @@ void TestInteractionDevices()
 	const XrActiveActionSet active{set, XR_NULL_PATH};
 	const XrActionsSyncInfo sync{XR_TYPE_ACTIONS_SYNC_INFO, nullptr, 1, &active};
 	Require(session.SyncActions(sync) == XR_SUCCESS, "Device sync");
+	std::string localized;
+	Require(session.Actions().LocalizedName(path("/user/eyes_ext/input/gaze_ext/pose"),
+		XR_INPUT_SOURCE_LOCALIZED_NAME_USER_PATH_BIT, localized) == XR_SUCCESS && localized == "Eye Gaze",
+		"Gaze localization selected a controller profile");
+	Require(session.Actions().LocalizedName(path("/user/vive_tracker_htcx/role/waist/output/haptic"),
+		XR_INPUT_SOURCE_LOCALIZED_NAME_USER_PATH_BIT, localized) == XR_SUCCESS &&
+		localized == "/user/vive_tracker_htcx/role/waist", "Tracker localization selected a controller profile");
 	Require(session.Actions().CurrentProfile(waist, profile) == XR_SUCCESS && profile == suggest.interactionProfile,
 			"First synchronization did not select tracker profile");
 	const auto synchronizedEvents = instance.Events().Observe();

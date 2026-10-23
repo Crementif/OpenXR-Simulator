@@ -151,6 +151,33 @@ int main(int argc, char** argv) {
         2, &viewCount, vcv.data()), "view enumeration with unknown chained output");
     if (vcv[0].next != &unknown) fail("caller view chain replaced", XR_ERROR_RUNTIME_FAILURE);
     vcv[0].next = nullptr;
+    if (hasTimeConv)
+    {
+        PFN_xrConvertWin32PerformanceCounterToTimeKHR toTime = nullptr;
+        PFN_xrConvertTimeToWin32PerformanceCounterKHR toCounter = nullptr;
+        XRC(xrGetInstanceProcAddr(g_instance, "xrConvertWin32PerformanceCounterToTimeKHR",
+            reinterpret_cast<PFN_xrVoidFunction*>(&toTime)), "counter conversion procedure");
+        XRC(xrGetInstanceProcAddr(g_instance, "xrConvertTimeToWin32PerformanceCounterKHR",
+            reinterpret_cast<PFN_xrVoidFunction*>(&toCounter)), "time conversion procedure");
+        LARGE_INTEGER counter{}, frequency{};
+        QueryPerformanceCounter(&counter);
+        QueryPerformanceFrequency(&frequency);
+        XrTime time = 123;
+        XRC(toTime(g_instance, &counter, &time), "current counter conversion");
+        XRC(toCounter(g_instance, time, &counter), "current time conversion");
+        counter.QuadPart = -1;
+        time = 123;
+        expect(toTime(g_instance, &counter, &time), XR_ERROR_TIME_INVALID, "negative counter rejected");
+        if (time != 123) fail("invalid counter modified output", XR_ERROR_RUNTIME_FAILURE);
+        counter.QuadPart = 123;
+        expect(toCounter(g_instance, -1, &counter), XR_ERROR_TIME_INVALID, "negative time rejected");
+        if (counter.QuadPart != 123) fail("invalid time modified output", XR_ERROR_RUNTIME_FAILURE);
+        if (frequency.QuadPart < 1000000000LL)
+        {
+            counter.QuadPart = INT64_MAX;
+            expect(toTime(g_instance, &counter, &time), XR_ERROR_TIME_INVALID, "counter overflow rejected");
+        }
+    }
     if (queriesOnly)
     {
         XRC(xrDestroyInstance(g_instance), "query instance teardown");

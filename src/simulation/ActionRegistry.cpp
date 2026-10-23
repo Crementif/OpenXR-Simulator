@@ -1249,6 +1249,28 @@ XrResult ActionSyncState::CurrentProfile(XrPath userPath, XrPath& profile) const
 	return XR_SUCCESS;
 }
 
+XrResult ActionSyncState::LocalizedName(XrPath source, XrInputSourceLocalizedNameFlags flags, std::string& name) const
+{
+	const auto path = m_registry.PathString(source);
+	if (!path)
+		return XR_ERROR_PATH_INVALID;
+	auto component = path->rfind("/input/");
+	const auto outputComponent = path->rfind("/output/");
+	if (outputComponent != std::string::npos && (component == std::string::npos || outputComponent > component))
+		component = outputComponent;
+	if (component == std::string::npos)
+		return XR_ERROR_PATH_UNSUPPORTED;
+	XrPath user;
+	auto result = m_registry.StringToPath(std::string_view(*path).substr(0, component), user);
+	if (XR_FAILED(result))
+		return result;
+	XrPath profile;
+	result = CurrentProfile(user, profile);
+	if (XR_FAILED(result))
+		return result;
+	return m_registry.LocalizedName(source, profile, flags, name);
+}
+
 ActionSyncSnapshot ActionSyncState::Snapshot() const
 {
 	std::lock_guard lock(m_mutex);
