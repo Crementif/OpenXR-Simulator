@@ -1,18 +1,15 @@
 #include "control/LocalControlServer.h"
+#include "Pch.h"
 #include "control/ControlSchema.h"
 #include "control/ControlService.h"
 #include "platform/linux/ControlFd.h"
 
-#include <algorithm>
-#include <array>
 #include <atomic>
 #include <cerrno>
-#include <chrono>
 #include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <fcntl.h>
 #include <mutex>
 #include <poll.h>
 #include <stdexcept>
@@ -21,26 +18,13 @@
 #include <sys/un.h>
 #include <thread>
 #include <unistd.h>
-#include <utility>
-#include <vector>
 
 namespace simxr::control
 {
-namespace
-{
-struct Descriptor
-{
-	int value = -1;
-	~Descriptor()
-	{
-		if (value >= 0)
-			close(value);
-	}
-};
 using Clock = std::chrono::steady_clock;
-constexpr auto PacketTimeout = std::chrono::seconds(5);
+static constexpr auto s_packetTimeout = std::chrono::seconds(5);
 
-bool Ready(int socket, short events, const std::atomic<bool>& stopping, Clock::time_point deadline)
+static bool Ready(int socket, short events, const std::atomic<bool>& stopping, Clock::time_point deadline)
 {
 	while (!stopping.load())
 	{
@@ -60,20 +44,20 @@ bool Ready(int socket, short events, const std::atomic<bool>& stopping, Clock::t
 	return false;
 }
 
-struct ReceivedRights
+static bool Read(int socket, std::vector<std::byte>& bytes, std::size_t total, ControlPacket& packet,
+				 const std::atomic<bool>& stopping, Clock::time_point& deadline)
 {
-	std::array<int, MaxTransferHandles> values{};
-	std::size_t count = 0;
-	~ReceivedRights()
+	struct ReceivedRights
 	{
-		for (std::size_t index = 0; index < count; ++index)
-			if (values[index] >= 0)
-				close(values[index]);
-	}
-};
-bool Read(int socket, std::vector<std::byte>& bytes, std::size_t total, ControlPacket& packet,
-		  const std::atomic<bool>& stopping, Clock::time_point& deadline)
-{
+		std::array<int, MaxTransferHandles> values{};
+		std::size_t count = 0;
+		~ReceivedRights()
+		{
+			for (std::size_t index = 0; index < count; ++index)
+				if (values[index] >= 0)
+					close(values[index]);
+		}
+	};
 	auto offset = bytes.size();
 	bytes.resize(total);
 	while (offset < total)
@@ -141,11 +125,11 @@ bool Read(int socket, std::vector<std::byte>& bytes, std::size_t total, ControlP
 			packet.handles.push_back(OwnControlFd(std::exchange(rights.values[index], -1)));
 		offset += static_cast<std::size_t>(received);
 		if (deadline == Clock::time_point::max())
-			deadline = Clock::now() + PacketTimeout;
+			deadline = Clock::now() + s_packetTimeout;
 	}
 	return true;
 }
-bool Write(int socket, const ControlPacket& packet, const std::atomic<bool>& stopping)
+static bool Write(int socket, const ControlPacket& packet, const std::atomic<bool>& stopping)
 {
 	std::array<int, MaxTransferHandles> descriptors{};
 	if (packet.handles.size() > descriptors.size())
@@ -160,7 +144,7 @@ bool Write(int socket, const ControlPacket& packet, const std::atomic<bool>& sto
 	}
 	const auto fallback = packet.encoded ? std::vector<std::byte>{} : Encode(packet.message);
 	const std::span<const std::byte> bytes = packet.encoded ? std::span<const std::byte>{*packet.encoded} : fallback;
-	const auto deadline = Clock::now() + PacketTimeout;
+	const auto deadline = Clock::now() + s_packetTimeout;
 	std::size_t offset = 0;
 	bool transferred = false;
 	while (offset < bytes.size())
@@ -201,17 +185,24 @@ bool Write(int socket, const ControlPacket& packet, const std::atomic<bool>& sto
 	return true;
 }
 
-std::uint64_t Read64(std::span<const std::byte> bytes, std::size_t offset, std::size_t size)
+static std::uint64_t ReadHeaderInteger(std::span<const std::byte> bytes, std::size_t offset, std::size_t size)
 {
 	std::uint64_t value = 0;
 	for (std::size_t index = 0; index < size; ++index)
 		value |= std::uint64_t{std::to_integer<unsigned char>(bytes[offset + index])} << (index * 8);
 	return value;
 }
-} // namespace
-
 struct LocalControlServer::State
 {
+	struct Descriptor
+	{
+		int value = -1;
+		~Descriptor()
+		{
+			if (value >= 0)
+				close(value);
+		}
+	};
 	struct Worker
 	{
 		int socket = -1;
@@ -279,7 +270,8 @@ struct LocalControlServer::State
 		{
 			if (std::getenv("SIMXR_CONTROL_TRACE"))
 				std::fprintf(stderr, "SimXR control trace connection=%llu stage=%s opcode=%u request=%llu\n",
-					static_cast<unsigned long long>(connection.value), stage, opcode, static_cast<unsigned long long>(request));
+							 static_cast<unsigned long long>(connection.value), stage, opcode,
+							 static_cast<unsigned long long>(request));
 		};
 		try
 		{
@@ -297,13 +289,14 @@ struct LocalControlServer::State
 				if (decoded.error == DecodeError::UnsupportedVersion)
 				{
 					// A valid identifiable envelope can receive a structured version error.
-					if (Read64(bytes, 0, 4) != Magic || Read64(bytes, 10, 2) || Read64(bytes, 12, 4) ||
-						Read64(bytes, 28, 4) || !Read64(bytes, 16, 8))
+					if (ReadHeaderInteger(bytes, 0, 4) != Magic || ReadHeaderInteger(bytes, 10, 2) ||
+						ReadHeaderInteger(bytes, 12, 4) || ReadHeaderInteger(bytes, 28, 4) ||
+						!ReadHeaderInteger(bytes, 16, 8))
 						break;
 					Message response;
 					response.flags = 1;
-					response.opcode = static_cast<std::uint16_t>(Read64(bytes, 8, 2));
-					response.requestId = {Read64(bytes, 16, 8)};
+					response.opcode = static_cast<std::uint16_t>(ReadHeaderInteger(bytes, 8, 2));
+					response.requestId = {ReadHeaderInteger(bytes, 16, 8)};
 					response.fields.push_back(
 						Field::U32(tag::Error, static_cast<std::uint32_t>(ErrorCode::UnsupportedVersion), true));
 					Write(worker.socket, ControlPacket{std::move(response), {}, {}, {}}, stopping);
@@ -386,7 +379,11 @@ struct LocalControlServer::State
 				workers.push_back(std::move(worker));
 				try
 				{
-					raw->thread = std::thread([this, raw, id = *connection] { Serve(*raw, id); });
+					raw->thread = std::thread(
+						[this, raw, id = *connection]
+						{
+							Serve(*raw, id);
+						});
 				}
 				catch (...)
 				{
@@ -408,7 +405,11 @@ LocalControlServer::LocalControlServer(ControlService& service, std::string path
 	: m_state(std::make_unique<State>(service, std::move(path), maxClients))
 {
 	m_state->Bind();
-	m_state->acceptor = std::thread([state = m_state.get()] { state->Accept(); });
+	m_state->acceptor = std::thread(
+		[state = m_state.get()]
+		{
+			state->Accept();
+		});
 }
 LocalControlServer::~LocalControlServer()
 {
@@ -426,6 +427,8 @@ void LocalControlServer::Close() noexcept
 	shutdown(m_state->listener.value, SHUT_RDWR);
 	if (m_state->acceptor.joinable())
 		m_state->acceptor.join();
+	if (m_state->listener.value >= 0)
+		close(std::exchange(m_state->listener.value, -1));
 	for (auto& worker : m_state->workers)
 		shutdown(worker->socket, SHUT_RDWR);
 	for (auto& worker : m_state->workers)

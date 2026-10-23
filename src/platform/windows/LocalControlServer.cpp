@@ -1,18 +1,20 @@
 #include "control/LocalControlServer.h"
+#include "Pch.h"
 #include "control/ControlSchema.h"
 #include "control/ControlService.h"
 #include "platform/windows/WindowsControl.h"
 
+#include <atomic>
+#include <cstdio>
 #include <mutex>
+#include <stdexcept>
 #include <thread>
 
 namespace simxr::control
 {
 namespace native = windows;
-namespace
-{
-bool Read(native::Channel& pipe, std::vector<std::byte>& bytes, std::size_t total, HANDLE stop,
-		  native::Clock::time_point& deadline)
+static void Read(native::Channel& pipe, std::vector<std::byte>& bytes, std::size_t total, HANDLE stop,
+				 native::Clock::time_point& deadline)
 {
 	auto offset = bytes.size();
 	bytes.resize(total);
@@ -22,9 +24,8 @@ bool Read(native::Channel& pipe, std::vector<std::byte>& bytes, std::size_t tota
 		if (deadline == native::Clock::time_point::max())
 			deadline = native::Clock::now() + std::chrono::seconds(5);
 	}
-	return true;
 }
-void Write(native::Channel& pipe, const ControlPacket& packet, HANDLE stop)
+static void Write(native::Channel& pipe, const ControlPacket& packet, HANDLE stop)
 {
 	auto handles = pipe.Offer(packet);
 	const auto fallback = packet.encoded ? std::vector<std::byte>{} : Encode(packet.message);
@@ -50,14 +51,14 @@ void Write(native::Channel& pipe, const ControlPacket& packet, HANDLE stop)
 		pipe.AcknowledgeOffer();
 	}
 }
-std::uint64_t Number(std::span<const std::byte> bytes, std::size_t offset, std::size_t count)
+static std::uint64_t ReadHeaderInteger(std::span<const std::byte> bytes, std::size_t offset, std::size_t count)
 {
 	std::uint64_t result = 0;
 	for (std::size_t index = 0; index < count; ++index)
 		result |= std::uint64_t{std::to_integer<unsigned char>(bytes[offset + index])} << (index * 8);
 	return result;
 }
-} // namespace
+
 struct LocalControlServer::State
 {
 	struct Worker
@@ -118,13 +119,14 @@ struct LocalControlServer::State
 				auto decoded = Decode(bytes);
 				if (decoded.error == DecodeError::UnsupportedVersion)
 				{
-					if (Number(bytes, 0, 4) != Magic || Number(bytes, 10, 2) || Number(bytes, 12, 4) ||
-						Number(bytes, 28, 4) || !Number(bytes, 16, 8))
+					if (ReadHeaderInteger(bytes, 0, 4) != Magic || ReadHeaderInteger(bytes, 10, 2) ||
+						ReadHeaderInteger(bytes, 12, 4) || ReadHeaderInteger(bytes, 28, 4) ||
+						!ReadHeaderInteger(bytes, 16, 8))
 						break;
 					Message response;
 					response.flags = 1;
-					response.opcode = static_cast<std::uint16_t>(Number(bytes, 8, 2));
-					response.requestId = {Number(bytes, 16, 8)};
+					response.opcode = static_cast<std::uint16_t>(ReadHeaderInteger(bytes, 8, 2));
+					response.requestId = {ReadHeaderInteger(bytes, 16, 8)};
 					response.fields.push_back(
 						Field::U32(tag::Error, static_cast<std::uint32_t>(ErrorCode::UnsupportedVersion), true));
 					Write(*worker.pipe, {std::move(response), {}, {}, {}}, stopping.value);
@@ -221,7 +223,11 @@ struct LocalControlServer::State
 					workers.push_back(std::move(worker));
 					try
 					{
-						raw->thread = std::thread([this, raw, id = *connection] { Serve(*raw, id); });
+						raw->thread = std::thread(
+							[this, raw, id = *connection]
+							{
+								Serve(*raw, id);
+							});
 					}
 					catch (...)
 					{
@@ -258,7 +264,11 @@ LocalControlServer::LocalControlServer(ControlService& service, std::string path
 	: m_state(std::make_unique<State>(service, std::move(path), maxClients))
 {
 	m_state->listener = m_state->Create(true);
-	m_state->acceptor = std::thread([state = m_state.get()] { state->Accept(); });
+	m_state->acceptor = std::thread(
+		[state = m_state.get()]
+		{
+			state->Accept();
+		});
 }
 LocalControlServer::~LocalControlServer()
 {
