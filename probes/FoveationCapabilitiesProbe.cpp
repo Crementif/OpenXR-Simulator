@@ -1,6 +1,10 @@
 #include "VulkanProbeInstance.h"
+#include "Pch.h"
 
+#include <cstdio>
+#include <cstring>
 #include <span>
+#include <stdexcept>
 
 namespace
 {

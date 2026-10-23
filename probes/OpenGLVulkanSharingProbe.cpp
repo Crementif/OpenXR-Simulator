@@ -1,4 +1,6 @@
 #define GL_GLEXT_PROTOTYPES
+#include "Pch.h"
+
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GL/glcorearb.h>
@@ -7,7 +9,9 @@
 #include "VulkanProbeSupport.h"
 #include "VulkanProcessPeer.h"
 
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 namespace
 {

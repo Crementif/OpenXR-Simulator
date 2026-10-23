@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #ifndef _WIN32
 #include <fcntl.h>
 #endif

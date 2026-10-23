@@ -127,6 +127,7 @@ target_include_directories(simxr_app SYSTEM PRIVATE "${simxr_nanosvg_SOURCE_DIR}
 target_link_libraries(simxr_app PRIVATE simxr_vulkan_control)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(simxr_app PRIVATE src/app/render/ProofConsumer.cpp probes/CompanionFrameReceiver.cpp)
+    target_link_libraries(simxr_app PRIVATE simxr_probe_sharing)
     target_include_directories(simxr_app PRIVATE "${PROJECT_SOURCE_DIR}")
     target_compile_definitions(simxr_app PRIVATE SIMXR_COMPANION_PROOF)
 endif()
