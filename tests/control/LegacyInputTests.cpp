@@ -1,5 +1,7 @@
 #include "../TestSupport.h"
 #include "Math.h"
+#include "json.h"
+#include <limits>
 #include "control/legacy/LegacyInput.h"
 
 #include <cmath>
@@ -167,6 +169,14 @@ int main()
 {
 	try
 	{
+		for (const char* text : {R"({"value":1e300})", R"({"value":-1e300})", R"({"value":NaN})",
+								 R"({"value":Infinity})", R"({"value":2147483648})", R"({"value":-2147483649})"})
+			Require(json::Object(text).number("value", 17) == 17,
+					"Unrepresentable compatibility integer must preserve its default");
+		Require(json::Object(R"({"value":-2.75})").number("value", 17) == -2 &&
+				json::Object(R"({"value":2147483647})").number("value", 17) == (std::numeric_limits<int>::max)() &&
+				json::Object(R"({"value":-2147483648})").number("value", 17) == (std::numeric_limits<int>::min)(),
+				"Compatibility integers must retain truncation and exact boundaries");
 		TestInputOwnership();
 		TestOpticsAndInvalidValues();
 		TestSequencePlayback();

@@ -10,6 +10,8 @@
 
 #include <locale.h>
 #include <cstdlib>
+#include <cmath>
+#include <limits>
 #include <cstring>
 #include <string>
 #include <string_view>
@@ -176,7 +178,11 @@ public:
         return (float)number(key, (double)def);
     }
     int number(const char* key, int def) const {
-        return (int)number(key, (double)def);
+        const double value = std::trunc(number(key, static_cast<double>(def)));
+        if (!std::isfinite(value) || value < (std::numeric_limits<int>::min)() ||
+            value > (std::numeric_limits<int>::max)())
+            return def;
+        return static_cast<int>(value);
     }
 
     bool boolean(const char* key, bool def) const {
