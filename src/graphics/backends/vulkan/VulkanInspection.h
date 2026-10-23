@@ -6,6 +6,7 @@
 #include "graphics/backends/vulkan/VulkanExternal.h"
 
 #include <atomic>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -13,6 +14,7 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <thread>
 #include <vector>
 
 namespace simxr
@@ -109,8 +111,8 @@ class VulkanInspectionFrame final : public FrameOutput
 	// One retained source per draw; crop/slice coordinates address those images.
 	// All sources must belong to the same owned queue. Pending input returns
 	// empty; failed input, invalid bindings or exhausted capacity throw.
-	static std::shared_ptr<VulkanInspectionFrame> Compose(const CompositionPlan& plan,
-		std::span<const std::shared_ptr<const VulkanInspectionFrame>> sources);
+	static std::shared_ptr<VulkanInspectionFrame>
+	Compose(const CompositionPlan& plan, std::span<const std::shared_ptr<const VulkanInspectionFrame>> sources);
 	CompletionStatus PollCompletion() const noexcept override;
 	const VulkanImage& Image() const;
 	VkImageView View(std::uint32_t eye) const;
@@ -172,7 +174,26 @@ class VulkanInspection
 	bool CanShare() const noexcept;
 
   private:
-	class State;
-	std::unique_ptr<State> m_state;
+	std::shared_ptr<FrameReservation> Reserve(VulkanInspectionKind kind);
+	void Publish(const std::shared_ptr<VulkanInspectionTransfer::State>& job);
+	void CheckAdmission() const;
+	void Poll();
+	void Run() noexcept;
+
+	std::shared_ptr<VulkanInspectionQueue> m_queue;
+	const std::size_t m_capacity;
+	FramePool m_admissions;
+	// Optional history copies cannot consume live/explicit inspection admission.
+	FramePool m_historyAdmissions{3};
+	FramePool m_reprojectionAdmissions{32};
+	std::mutex m_lifecycle;
+	std::mutex m_polling;
+	std::mutex m_mutex;
+	std::condition_variable m_changed;
+	std::vector<std::shared_ptr<VulkanInspectionTransfer::State>> m_jobs;
+	bool m_closed = false;
+	bool m_stopping = false;
+	std::atomic<bool> m_workerStopped{false};
+	std::thread m_worker;
 };
 } // namespace simxr

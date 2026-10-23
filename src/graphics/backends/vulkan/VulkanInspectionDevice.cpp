@@ -1,27 +1,24 @@
 #include "graphics/backends/vulkan/VulkanInspectionDevice.h"
+#include "Pch.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
 
-#include <algorithm>
-#include <array>
 #include <cstdio>
 #include <cstring>
 
 namespace simxr
 {
-namespace
-{
-constexpr std::array<const char*, 2> ExternalExtensions{VulkanExternalMemoryExtension,
-														VulkanExternalSemaphoreExtension};
+static constexpr std::array<const char*, 2> s_externalExtensions{VulkanExternalMemoryExtension,
+																 VulkanExternalSemaphoreExtension};
 
-constexpr std::array<const char*, 3> DeliveryExtensions{VulkanExternalMemoryExtension, VulkanExternalSemaphoreExtension,
-														VulkanExternalFenceExtension};
+static constexpr std::array<const char*, 3> s_deliveryExtensions{
+	VulkanExternalMemoryExtension, VulkanExternalSemaphoreExtension, VulkanExternalFenceExtension};
 
-constexpr std::array<const char*, 3> TimelineExtensions{VulkanExternalMemoryExtension, VulkanExternalSemaphoreExtension,
-														VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME};
+static constexpr std::array<const char*, 3> s_timelineExtensions{
+	VulkanExternalMemoryExtension, VulkanExternalSemaphoreExtension, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME};
 
-VKAPI_ATTR VkBool32 VKAPI_CALL Validation(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
-										  VkDebugUtilsMessageTypeFlagsEXT,
-										  const VkDebugUtilsMessengerCallbackDataEXT* message, void* context)
+static VKAPI_ATTR VkBool32 VKAPI_CALL Validation(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+												 VkDebugUtilsMessageTypeFlagsEXT,
+												 const VkDebugUtilsMessengerCallbackDataEXT* message, void* context)
 {
 	if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
 		static_cast<VulkanInspectionValidation*>(context)->errors.fetch_add(1);
@@ -30,7 +27,44 @@ VKAPI_ATTR VkBool32 VKAPI_CALL Validation(VkDebugUtilsMessageSeverityFlagBitsEXT
 	return VK_FALSE;
 }
 
-} // namespace
+static std::vector<VkPhysicalDevice> InspectionAdapters(VkInstance instance)
+{
+	for (std::uint32_t attempt = 0; attempt < 4; ++attempt)
+	{
+		std::uint32_t count = 0;
+		CheckVulkan(vkEnumeratePhysicalDevices(instance, &count, nullptr), "Enumerate inspection adapters");
+		if (!count)
+			return {};
+		std::vector<VkPhysicalDevice> devices(count);
+		const auto result = vkEnumeratePhysicalDevices(instance, &count, devices.data());
+		if (result == VK_INCOMPLETE)
+			continue;
+		CheckVulkan(result, "Enumerate inspection adapters");
+		devices.resize(count);
+		return devices;
+	}
+	throw VulkanError(VK_INCOMPLETE, "Inspection adapter list did not stabilize");
+}
+
+static std::vector<VkExtensionProperties> InspectionExtensions(VkPhysicalDevice physical)
+{
+	for (std::uint32_t attempt = 0; attempt < 4; ++attempt)
+	{
+		std::uint32_t count = 0;
+		CheckVulkan(vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, nullptr),
+					"Enumerate owned inspection extensions");
+		if (!count)
+			return {};
+		std::vector<VkExtensionProperties> extensions(count);
+		const auto result = vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, extensions.data());
+		if (result == VK_INCOMPLETE)
+			continue;
+		CheckVulkan(result, "Enumerate owned inspection extensions");
+		extensions.resize(count);
+		return extensions;
+	}
+	throw VulkanError(VK_INCOMPLETE, "Inspection extension list did not stabilize");
+}
 
 struct VulkanInspectionDevice::Native
 {
@@ -56,7 +90,8 @@ struct VulkanInspectionDevice::Native
 };
 
 VulkanInspectionDevice::VulkanInspectionDevice(const VulkanExternalIdentity& identity,
-											   std::shared_ptr<VulkanInspectionValidation> validation, bool requireTimeline)
+											   std::shared_ptr<VulkanInspectionValidation> validation,
+											   bool requireTimeline)
 {
 	auto owner = std::make_shared<Native>();
 	owner->validation = std::move(validation);
@@ -95,11 +130,7 @@ VulkanInspectionDevice::VulkanInspectionDevice(const VulkanExternalIdentity& ide
 		CheckVulkan(make(owner->instance, &debug, nullptr, &owner->messenger),
 					"Create inspection validation messenger");
 	}
-	std::uint32_t count = 0;
-	CheckVulkan(vkEnumeratePhysicalDevices(owner->instance, &count, nullptr), "Enumerate inspection adapters");
-	std::vector<VkPhysicalDevice> devices(count);
-	CheckVulkan(vkEnumeratePhysicalDevices(owner->instance, &count, devices.data()), "Enumerate inspection adapters");
-	for (auto physical : devices)
+	for (const auto physical : InspectionAdapters(owner->instance))
 	{
 		VkPhysicalDeviceProperties properties;
 		vkGetPhysicalDeviceProperties(physical, &properties);
@@ -112,12 +143,7 @@ VulkanInspectionDevice::VulkanInspectionDevice(const VulkanExternalIdentity& ide
 		if (!std::equal(identity.deviceUuid.begin(), identity.deviceUuid.end(), id.deviceUUID) ||
 			!std::equal(identity.driverUuid.begin(), identity.driverUuid.end(), id.driverUUID))
 			continue;
-		std::uint32_t extensionCount = 0;
-		CheckVulkan(vkEnumerateDeviceExtensionProperties(physical, nullptr, &extensionCount, nullptr),
-					"Enumerate owned inspection extensions");
-		std::vector<VkExtensionProperties> extensions(extensionCount);
-		CheckVulkan(vkEnumerateDeviceExtensionProperties(physical, nullptr, &extensionCount, extensions.data()),
-					"Enumerate owned inspection extensions");
+		const auto extensions = InspectionExtensions(physical);
 		const auto fenceCaps = VulkanExternalDevice::QueryFence(physical, VK_API_VERSION_1_1);
 		const bool fences =
 			!requireTimeline && fenceCaps.CanImport() && fenceCaps.CanExport() &&
@@ -130,6 +156,7 @@ VulkanInspectionDevice::VulkanInspectionDevice(const VulkanExternalIdentity& ide
 		const bool timeline = !fences && timelineCaps.CanImportSemaphore() && timelineCaps.CanExportSemaphore();
 		if (requireTimeline && !timeline)
 			throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Required inspection timeline sharing unavailable");
+		std::uint32_t count = 0;
 		vkGetPhysicalDeviceQueueFamilyProperties(physical, &count, nullptr);
 		std::vector<VkQueueFamilyProperties> families(count);
 		vkGetPhysicalDeviceQueueFamilyProperties(physical, &count, families.data());
@@ -146,9 +173,9 @@ VulkanInspectionDevice::VulkanInspectionDevice(const VulkanExternalIdentity& ide
 			device.queueCreateInfoCount = 1;
 			device.pQueueCreateInfos = &queue;
 			device.enabledExtensionCount = fences || timeline ? 3 : 2;
-			device.ppEnabledExtensionNames = fences		? DeliveryExtensions.data()
-											 : timeline ? TimelineExtensions.data()
-														: ExternalExtensions.data();
+			device.ppEnabledExtensionNames = fences		? s_deliveryExtensions.data()
+											 : timeline ? s_timelineExtensions.data()
+														: s_externalExtensions.data();
 			VkPhysicalDeviceTimelineSemaphoreFeatures timelineFeature{
 				VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
 			timelineFeature.timelineSemaphore = timeline;
@@ -171,10 +198,10 @@ const std::shared_ptr<VulkanDevice>& VulkanInspectionDevice::Device() const noex
 std::span<const char* const> VulkanInspectionDevice::EnabledExtensions() const noexcept
 {
 	if (m_consumerFences)
-		return DeliveryExtensions;
+		return s_deliveryExtensions;
 	if (m_consumerTimeline)
-		return TimelineExtensions;
-	return ExternalExtensions;
+		return s_timelineExtensions;
+	return s_externalExtensions;
 }
 bool VulkanInspectionDevice::ConsumerFencesEnabled() const noexcept
 {

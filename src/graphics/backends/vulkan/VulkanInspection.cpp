@@ -1,32 +1,25 @@
-#include "graphics/SnapshotBudget.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
+#include "Pch.h"
+#include "graphics/SnapshotBudget.h"
 #include "graphics/backends/vulkan/VulkanBackend.h"
 #include "graphics/backends/vulkan/VulkanInspectionDevice.h"
 #include "graphics/backends/vulkan/VulkanInspectionWork.h"
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
 #include "graphics/backends/vulkan/VulkanSubmission.h"
 
-#include <algorithm>
-#include <array>
-#include <chrono>
-#include <condition_variable>
 #include <cstdio>
-#include <cstring>
 #include <limits>
-#include <thread>
-#include <utility>
+#include <stdexcept>
 
 namespace simxr
 {
-namespace
-{
-FramePool& DeliveryBudget()
+static FramePool& DeliveryBudget()
 {
 	// Includes abandoned readers/native blocks from every retired generation.
-	static FramePool budget{8};
-	return budget;
+	static FramePool s_budget{8};
+	return s_budget;
 }
-std::uint64_t Identity(std::atomic<std::uint64_t>& next)
+static std::uint64_t Identity(std::atomic<std::uint64_t>& next)
 {
 	auto value = next.load();
 	for (;;)
@@ -37,8 +30,7 @@ std::uint64_t Identity(std::atomic<std::uint64_t>& next)
 			return value;
 	}
 }
-std::atomic<std::uint64_t> NextPool{1};
-} // namespace
+static std::atomic<std::uint64_t> s_nextPool{1};
 
 class VulkanDeliveryNative
 {
@@ -268,16 +260,16 @@ class VulkanDeliveryRetirement
 		}
 	}
 };
-VulkanDeliveryRetirement& DeliveryRetirement()
+static VulkanDeliveryRetirement& DeliveryRetirement()
 {
 #ifdef _WIN32
 	// DLL process detach cannot join workers. Normal runtime teardown stops the
 	// worker explicitly; unproved native owners remain bounded until process exit.
-	static auto* retirement = new VulkanDeliveryRetirement;
-	return *retirement;
+	static auto* s_retirement = new VulkanDeliveryRetirement;
+	return *s_retirement;
 #else
-	static VulkanDeliveryRetirement retirement;
-	return retirement;
+	static VulkanDeliveryRetirement s_retirement;
+	return s_retirement;
 #endif
 }
 
@@ -353,7 +345,7 @@ class VulkanInspectionQueue
 			retired[index]->ReleaseSources();
 	}
 	std::shared_ptr<VulkanFrame> PrepareComposition(const CompositionPlan& plan,
-		std::span<const VulkanRetainedSource> sources)
+													std::span<const VulkanRetainedSource> sources)
 	{
 		std::lock_guard lock(m_mutex);
 		if (!m_compositor)
@@ -371,7 +363,7 @@ class VulkanInspectionQueue
 		std::lock_guard lock(m_mutex);
 		if (XR_FAILED(m_compositor->Submit(frame)))
 			throw VulkanError(m_device->lost.load() ? VK_ERROR_DEVICE_LOST : VK_ERROR_INITIALIZATION_FAILED,
-				"Submit retained composition");
+							  "Submit retained composition");
 	}
 	std::shared_ptr<VulkanInspectionWork> ImportCopy(std::shared_ptr<VulkanFrame> source)
 	{
@@ -397,7 +389,7 @@ class VulkanInspectionQueue
 		std::lock_guard lock(m_mutex);
 		if (!m_deliverySpec || !SameShape(*m_deliverySpec, spec))
 		{
-			m_generation = {Identity(NextPool)};
+			m_generation = {Identity(s_nextPool)};
 			m_deliverySpec = spec;
 		}
 		return {m_generation, {Identity(m_nextImage)}};
@@ -511,9 +503,8 @@ class VulkanInspectionFrame::Resources
 	{
 		// Construct the owner before any view acquisition. A later view failure
 		// destroys all earlier views while the owned device/image remain alive.
-		auto resources =
-			std::shared_ptr<Resources>(new Resources(
-				std::move(queue), std::move(image), std::move(budget), std::move(completion)));
+		auto resources = std::shared_ptr<Resources>(
+			new Resources(std::move(queue), std::move(image), std::move(budget), std::move(completion)));
 		resources->m_completed = std::move(completed);
 		resources->m_deliveryRetired = std::move(deliveryRetired);
 		if (resources->m_image->layers > resources->m_views.size())
@@ -713,172 +704,138 @@ class VulkanInspectionTransfer::State
 	std::shared_ptr<VulkanInspectionFrame> m_output;
 };
 
-class VulkanInspection::State
+std::shared_ptr<FrameReservation> VulkanInspection::Reserve(VulkanInspectionKind kind)
 {
-  public:
-	State(VulkanInspectionDevice device, std::size_t capacity)
-		: m_queue(std::make_shared<VulkanInspectionQueue>(std::move(device))),
-		  m_capacity((capacity ? capacity : SnapshotBudget::MaxCapacity) + 3 + 32),
-		  m_admissions([capacity] { return capacity ? capacity : SnapshotBudget::Capacity(); })
+	std::lock_guard lock(m_mutex);
+	CheckAdmission();
+	const auto& pool = kind == VulkanInspectionKind::History		? m_historyAdmissions
+					   : kind == VulkanInspectionKind::Reprojection ? m_reprojectionAdmissions
+																	: m_admissions;
+	auto admission = pool.Reserve();
+	if (!admission)
+		throw VulkanError(VK_ERROR_OUT_OF_POOL_MEMORY, "Inspection preparation capacity exhausted");
+	return admission;
+}
+void VulkanInspection::Publish(const std::shared_ptr<VulkanInspectionTransfer::State>& job)
+{
+	std::lock_guard lock(m_mutex);
+	CheckAdmission();
+	if (m_jobs.size() == m_capacity)
+		throw VulkanError(VK_ERROR_OUT_OF_POOL_MEMORY, "Inspection preparation capacity exhausted");
+	// The final admission check precedes one-shot semaphore export/import.
+	// Publication cannot allocate: the bounded list is fully reserved.
+	job->ImportReady(m_queue->External());
+	m_jobs.push_back(job);
+	m_changed.notify_all();
+}
+VkResult VulkanInspection::Drain(std::uint64_t timeout)
+{
+	const auto deadline =
+		std::chrono::steady_clock::now() + std::chrono::nanoseconds(std::min<std::uint64_t>(timeout, 5000000000ULL));
+	std::unique_lock lock(m_mutex);
+	for (;;)
 	{
-		m_jobs.reserve(m_capacity);
-		m_worker = std::thread(
-			[this]
-			{
-				Run();
-			});
+		if (m_workerStopped.load())
+		{
+			lock.unlock();
+			Poll();
+			lock.lock();
+		}
+		if (m_jobs.empty())
+			return m_queue->Device()->lost.load() ? VK_ERROR_DEVICE_LOST : VK_SUCCESS;
+		if (std::chrono::steady_clock::now() >= deadline)
+			return VK_TIMEOUT;
+		m_changed.wait_for(lock, std::chrono::milliseconds(1));
 	}
-	const std::shared_ptr<VulkanInspectionQueue>& Queue() const noexcept
-	{
-		return m_queue;
-	}
-	std::shared_ptr<FrameReservation> Reserve(VulkanInspectionKind kind)
+}
+VkResult VulkanInspection::Close(std::uint64_t timeout)
+{
+	std::lock_guard lifecycle(m_lifecycle);
 	{
 		std::lock_guard lock(m_mutex);
-		CheckAdmission();
-		const auto& pool = kind == VulkanInspectionKind::History		? m_historyAdmissions
-						   : kind == VulkanInspectionKind::Reprojection ? m_reprojectionAdmissions
-																		: m_admissions;
-		auto admission = pool.Reserve();
-		if (!admission)
-			throw VulkanError(VK_ERROR_OUT_OF_POOL_MEMORY, "Inspection preparation capacity exhausted");
-		return admission;
+		m_closed = true;
+		for (auto& job : m_jobs)
+			job->Cancel();
 	}
-	void Publish(const std::shared_ptr<VulkanInspectionTransfer::State>& job)
+	const auto result = Drain(timeout);
 	{
 		std::lock_guard lock(m_mutex);
-		CheckAdmission();
-		if (m_jobs.size() == m_capacity)
-			throw VulkanError(VK_ERROR_OUT_OF_POOL_MEMORY, "Inspection preparation capacity exhausted");
-		// The final admission check precedes one-shot semaphore export/import.
-		// Publication cannot allocate: the bounded list is fully reserved.
-		job->ImportReady(m_queue->External());
-		m_jobs.push_back(job);
-		m_changed.notify_all();
+		m_stopping = true;
 	}
-	VkResult Drain(std::uint64_t timeout)
+	m_changed.notify_all();
+	if (m_worker.joinable())
+		m_worker.join();
+	if (result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST)
 	{
-		const auto deadline = std::chrono::steady_clock::now() +
-							  std::chrono::nanoseconds(std::min<std::uint64_t>(timeout, 5000000000ULL));
+		std::lock_guard lock(m_mutex);
+		for (auto& job : m_jobs)
+			job->AbandonUnfinished();
+	}
+	return result;
+}
+
+void VulkanInspection::CheckAdmission() const
+{
+	if (m_closed)
+		throw VulkanError(VK_ERROR_INITIALIZATION_FAILED, "Inspection admission closed");
+}
+void VulkanInspection::Poll()
+{
+	std::lock_guard polling(m_polling);
+	std::array<std::shared_ptr<VulkanInspectionTransfer::State>, SnapshotBudget::MaxCapacity + 3 + 32> pending;
+	std::size_t count = 0;
+	{
+		std::lock_guard lock(m_mutex);
+		for (const auto& job : m_jobs)
+			pending.at(count++) = job;
+	}
+	for (std::size_t index = 0; index < count; ++index)
+		pending[index]->Advance(*m_queue);
+	std::array<std::shared_ptr<VulkanInspectionTransfer::State>, SnapshotBudget::MaxCapacity + 3 + 32> retired;
+	count = 0;
+	{
+		std::lock_guard lock(m_mutex);
+		for (auto& job : m_jobs)
+			if (job->Retired())
+				retired.at(count++) = std::move(job);
+		std::erase(m_jobs, nullptr);
+	}
+	m_queue->Collect();
+}
+void VulkanInspection::Run() noexcept
+{
+	for (;;)
+	{
+		try
+		{
+			Poll();
+		}
+		catch (...)
+		{
+			std::fputs("SimXR: inspection worker observation failed\n", stderr);
+		}
 		std::unique_lock lock(m_mutex);
-		for (;;)
+		if (m_stopping)
 		{
-			if (m_workerStopped.load())
-			{
-				lock.unlock();
-				Poll();
-				lock.lock();
-			}
-			if (m_jobs.empty())
-				return m_queue->Device()->lost.load() ? VK_ERROR_DEVICE_LOST : VK_SUCCESS;
-			if (std::chrono::steady_clock::now() >= deadline)
-				return VK_TIMEOUT;
-			m_changed.wait_for(lock, std::chrono::milliseconds(1));
+			m_workerStopped.store(true);
+			return;
+		}
+		m_changed.wait_for(lock, std::chrono::milliseconds(1));
+		if (m_stopping)
+		{
+			m_workerStopped.store(true);
+			return;
 		}
 	}
-	VkResult Close(std::uint64_t timeout)
-	{
-		std::lock_guard lifecycle(m_lifecycle);
-		{
-			std::lock_guard lock(m_mutex);
-			m_closed = true;
-			for (auto& job : m_jobs)
-				job->Cancel();
-		}
-		const auto result = Drain(timeout);
-		{
-			std::lock_guard lock(m_mutex);
-			m_stopping = true;
-		}
-		m_changed.notify_all();
-		if (m_worker.joinable())
-			m_worker.join();
-		if (result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST)
-		{
-			std::lock_guard lock(m_mutex);
-			for (auto& job : m_jobs)
-				job->AbandonUnfinished();
-		}
-		return result;
-	}
+}
 
-  private:
-	void CheckAdmission() const
-	{
-		if (m_closed)
-			throw VulkanError(VK_ERROR_INITIALIZATION_FAILED, "Inspection admission closed");
-	}
-	void Poll()
-	{
-		std::lock_guard polling(m_polling);
-		std::array<std::shared_ptr<VulkanInspectionTransfer::State>, SnapshotBudget::MaxCapacity + 3 + 32> pending;
-		std::size_t count = 0;
-		{
-			std::lock_guard lock(m_mutex);
-			for (const auto& job : m_jobs)
-				pending.at(count++) = job;
-		}
-		for (std::size_t index = 0; index < count; ++index)
-			pending[index]->Advance(*m_queue);
-		std::array<std::shared_ptr<VulkanInspectionTransfer::State>, SnapshotBudget::MaxCapacity + 3 + 32> retired;
-		count = 0;
-		{
-			std::lock_guard lock(m_mutex);
-			for (auto& job : m_jobs)
-				if (job->Retired())
-					retired.at(count++) = std::move(job);
-			std::erase(m_jobs, nullptr);
-		}
-		m_queue->Collect();
-	}
-	void Run() noexcept
-	{
-		for (;;)
-		{
-			try
-			{
-				Poll();
-			}
-			catch (...)
-			{
-				std::fputs("SimXR: inspection worker observation failed\n", stderr);
-			}
-			std::unique_lock lock(m_mutex);
-			if (m_stopping)
-			{
-				m_workerStopped.store(true);
-				return;
-			}
-			m_changed.wait_for(lock, std::chrono::milliseconds(1));
-			if (m_stopping)
-			{
-				m_workerStopped.store(true);
-				return;
-			}
-		}
-	}
-	std::shared_ptr<VulkanInspectionQueue> m_queue;
-	const std::size_t m_capacity;
-	FramePool m_admissions;
-	// Optional history copies cannot consume live/explicit inspection admission.
-	FramePool m_historyAdmissions{3};
-	FramePool m_reprojectionAdmissions{32};
-	std::mutex m_lifecycle;
-	std::mutex m_polling;
-	std::mutex m_mutex;
-	std::condition_variable m_changed;
-	std::vector<std::shared_ptr<VulkanInspectionTransfer::State>> m_jobs;
-	bool m_closed = false;
-	bool m_stopping = false;
-	std::atomic<bool> m_workerStopped{false};
-	std::thread m_worker;
-};
-
-VulkanInspectionFrame::VulkanInspectionFrame(std::shared_ptr<Resources> resources, std::span<const FrameView> views) : FrameOutput(views), m_resources(std::move(resources))
+VulkanInspectionFrame::VulkanInspectionFrame(std::shared_ptr<Resources> resources, std::span<const FrameView> views)
+	: FrameOutput(views), m_resources(std::move(resources))
 {
 }
-std::shared_ptr<VulkanInspectionFrame> VulkanInspectionFrame::Compose(const CompositionPlan& plan,
-	std::span<const std::shared_ptr<const VulkanInspectionFrame>> sources)
+std::shared_ptr<VulkanInspectionFrame>
+VulkanInspectionFrame::Compose(const CompositionPlan& plan,
+							   std::span<const std::shared_ptr<const VulkanInspectionFrame>> sources)
 {
 	if (sources.empty() || sources.size() != plan.draws.size() || !sources.front())
 		throw std::invalid_argument("Retained composition requires one source per draw");
@@ -901,7 +858,8 @@ std::shared_ptr<VulkanInspectionFrame> VulkanInspectionFrame::Compose(const Comp
 	auto frame = queue->PrepareComposition(plan, retained);
 	auto resources = Resources::Create(queue, frame->RetainImage(), frame->Reservation(), {}, frame,
 									   sources.front()->m_resources->DeliveryRetired());
-	auto output = std::shared_ptr<VulkanInspectionFrame>(new VulkanInspectionFrame(std::move(resources), frame->Views()));
+	auto output =
+		std::shared_ptr<VulkanInspectionFrame>(new VulkanInspectionFrame(std::move(resources), frame->Views()));
 	queue->SubmitComposition(frame);
 	return output;
 }
@@ -1064,19 +1022,27 @@ std::shared_ptr<VulkanInspectionFrame> VulkanInspectionTransfer::Output() const
 
 VulkanInspection::VulkanInspection(const VulkanExternalIdentity& identity, std::size_t capacity,
 								   std::shared_ptr<VulkanInspectionValidation> validation)
+	: m_capacity((capacity ? capacity : SnapshotBudget::MaxCapacity) + 3 + 32),
+	  m_admissions(
+		  [capacity]
+		  {
+			  return capacity ? capacity : SnapshotBudget::Capacity();
+		  })
 {
 	if (capacity > SnapshotBudget::MaxCapacity)
 		throw std::invalid_argument("Invalid inspection capacity");
 	DeliveryRetirement().Start();
-	m_state = std::make_unique<State>(VulkanInspectionDevice(identity, std::move(validation)), capacity);
+	m_queue = std::make_shared<VulkanInspectionQueue>(VulkanInspectionDevice(identity, std::move(validation)));
+	m_jobs.reserve(m_capacity);
+	m_worker = std::thread(&VulkanInspection::Run, this);
 }
 ImageCompletionKind VulkanInspection::CompletionKind() const noexcept
 {
-	return m_state->Queue()->CompletionKind();
+	return m_queue->CompletionKind();
 }
 bool VulkanInspection::CanShare() const noexcept
 {
-	return m_state->Queue()->CanShare();
+	return m_queue->CanShare();
 }
 VulkanInspection::~VulkanInspection()
 {
@@ -1091,7 +1057,7 @@ std::unique_ptr<VulkanInspectionTransfer> VulkanInspection::Prepare(std::shared_
 {
 	if (!source || !source->ExternalImage())
 		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Frame is not externally shareable");
-	auto admission = m_state->Reserve(kind);
+	auto admission = Reserve(kind);
 	if (!source->ClaimInspection())
 		throw VulkanError(VK_ERROR_TOO_MANY_OBJECTS, "Frame already has an inspection consumer");
 	struct Claim
@@ -1104,25 +1070,18 @@ std::unique_ptr<VulkanInspectionTransfer> VulkanInspection::Prepare(std::shared_
 				source->CancelInspection();
 		}
 	} claim{source};
-	auto work = m_state->Queue()->ImportCopy(source);
+	auto work = m_queue->ImportCopy(source);
 	work->Image()->retired = std::move(retired);
-	auto resources = VulkanInspectionFrame::Resources::Create(m_state->Queue(), work->Image(), source->Reservation(),
+	auto resources = VulkanInspectionFrame::Resources::Create(m_queue, work->Image(), source->Reservation(),
 															  std::move(completed), {}, std::move(deliveryRetired));
-	auto output = std::shared_ptr<VulkanInspectionFrame>(new VulkanInspectionFrame(std::move(resources), source->Views()));
+	auto output =
+		std::shared_ptr<VulkanInspectionFrame>(new VulkanInspectionFrame(std::move(resources), source->Views()));
 	auto job =
 		std::make_shared<VulkanInspectionTransfer::State>(std::move(admission), std::move(work), std::move(output));
 	auto transfer = std::unique_ptr<VulkanInspectionTransfer>(new VulkanInspectionTransfer(job));
 	claim.retained = true;
-	m_state->Publish(job);
+	Publish(job);
 	return transfer;
 }
 
-VkResult VulkanInspection::Drain(std::uint64_t timeout)
-{
-	return m_state->Drain(timeout);
-}
-VkResult VulkanInspection::Close(std::uint64_t timeout)
-{
-	return m_state ? m_state->Close(timeout) : VK_SUCCESS;
-}
 } // namespace simxr
