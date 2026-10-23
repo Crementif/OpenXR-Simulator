@@ -1,9 +1,8 @@
-#include "Pch.h"
 #include "graphics/backends/windows/WindowsVulkanImport.h"
+#include "Pch.h"
 
-#include <dxgi.h>
-#include <vulkan/vulkan_win32.h>
 #include <cstring>
+#include <vulkan/vulkan_win32.h>
 
 namespace simxr
 {
@@ -28,9 +27,11 @@ VkSemaphore WindowsVulkanImport::Ready() const noexcept
 }
 
 std::shared_ptr<WindowsVulkanImport> WindowsVulkanImport::Create(std::shared_ptr<VulkanDevice> device,
-	const WindowsSharedImage& source, std::shared_ptr<const FrameOutput> owner)
+																 const WindowsSharedImage& source,
+																 std::shared_ptr<const FrameOutput> owner)
 {
-	if (!device || !owner || !source.texture || !source.fence || !source.width || !source.height || !source.layers || !source.mipLevels)
+	if (!device || !owner || !source.texture || !source.fence || !source.width || !source.height || !source.layers ||
+		!source.mipLevels)
 		throw std::invalid_argument("Windows native import requires a device and frame");
 	const auto native = device->binding.device;
 	const auto memoryProperties = reinterpret_cast<PFN_vkGetMemoryWin32HandlePropertiesKHR>(
@@ -47,19 +48,35 @@ std::shared_ptr<WindowsVulkanImport> WindowsVulkanImport::Create(std::shared_ptr
 
 	const auto memoryType = source.handleType;
 	constexpr auto semaphoreType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_D3D12_FENCE_BIT;
-	VkPhysicalDeviceExternalImageFormatInfo externalFormat{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO};
+	VkPhysicalDeviceExternalImageFormatInfo externalFormat{
+		VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO};
 	externalFormat.handleType = memoryType;
 	VkPhysicalDeviceImageFormatInfo2 format{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2, &externalFormat};
 	switch (source.format)
 	{
-	case DXGI_FORMAT_R8G8B8A8_UNORM: format.format = VK_FORMAT_R8G8B8A8_UNORM; break;
-	case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB: format.format = VK_FORMAT_R8G8B8A8_SRGB; break;
-	case DXGI_FORMAT_B8G8R8A8_UNORM: format.format = VK_FORMAT_B8G8R8A8_UNORM; break;
-	case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB: format.format = VK_FORMAT_B8G8R8A8_SRGB; break;
-	case DXGI_FORMAT_R32G32B32A32_FLOAT: format.format = VK_FORMAT_R32G32B32A32_SFLOAT; break;
-	case DXGI_FORMAT_R16G16B16A16_FLOAT: format.format = VK_FORMAT_R16G16B16A16_SFLOAT; break;
-	case DXGI_FORMAT_R10G10B10A2_UNORM: format.format = VK_FORMAT_A2B10G10R10_UNORM_PACK32; break;
-	default: throw VulkanError(VK_ERROR_FORMAT_NOT_SUPPORTED, "Unsupported Windows native shared image format");
+	case DXGI_FORMAT_R8G8B8A8_UNORM:
+		format.format = VK_FORMAT_R8G8B8A8_UNORM;
+		break;
+	case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+		format.format = VK_FORMAT_R8G8B8A8_SRGB;
+		break;
+	case DXGI_FORMAT_B8G8R8A8_UNORM:
+		format.format = VK_FORMAT_B8G8R8A8_UNORM;
+		break;
+	case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+		format.format = VK_FORMAT_B8G8R8A8_SRGB;
+		break;
+	case DXGI_FORMAT_R32G32B32A32_FLOAT:
+		format.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+		break;
+	case DXGI_FORMAT_R16G16B16A16_FLOAT:
+		format.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+		break;
+	case DXGI_FORMAT_R10G10B10A2_UNORM:
+		format.format = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+		break;
+	default:
+		throw VulkanError(VK_ERROR_FORMAT_NOT_SUPPORTED, "Unsupported Windows native shared image format");
 	}
 	format.type = VK_IMAGE_TYPE_2D;
 	format.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -67,8 +84,9 @@ std::shared_ptr<WindowsVulkanImport> WindowsVulkanImport::Create(std::shared_ptr
 	VkExternalImageFormatProperties externalProperties{VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES};
 	VkImageFormatProperties2 supported{VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2, &externalProperties};
 	CheckVulkan(vkGetPhysicalDeviceImageFormatProperties2(device->binding.physicalDevice, &format, &supported),
-		"Query Windows native shared texture import");
-	if (!(externalProperties.externalMemoryProperties.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT) ||
+				"Query Windows native shared texture import");
+	if (!(externalProperties.externalMemoryProperties.externalMemoryFeatures &
+		  VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT) ||
 		source.width > supported.imageFormatProperties.maxExtent.width ||
 		source.height > supported.imageFormatProperties.maxExtent.height ||
 		source.layers > supported.imageFormatProperties.maxArrayLayers ||
@@ -76,10 +94,12 @@ std::shared_ptr<WindowsVulkanImport> WindowsVulkanImport::Create(std::shared_ptr
 		throw VulkanError(VK_ERROR_FORMAT_NOT_SUPPORTED, "Windows native shared texture import unsupported");
 	VkSemaphoreTypeCreateInfo type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
 	type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
-	VkPhysicalDeviceExternalSemaphoreInfo semaphoreInfo{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO, &type};
+	VkPhysicalDeviceExternalSemaphoreInfo semaphoreInfo{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO,
+														&type};
 	semaphoreInfo.handleType = semaphoreType;
 	VkExternalSemaphoreProperties semaphoreProperties{VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES};
-	vkGetPhysicalDeviceExternalSemaphoreProperties(device->binding.physicalDevice, &semaphoreInfo, &semaphoreProperties);
+	vkGetPhysicalDeviceExternalSemaphoreProperties(device->binding.physicalDevice, &semaphoreInfo,
+												   &semaphoreProperties);
 	if (!(semaphoreProperties.externalSemaphoreFeatures & VK_EXTERNAL_SEMAPHORE_FEATURE_IMPORTABLE_BIT))
 		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Windows native shared fence import unsupported");
 
@@ -106,7 +126,7 @@ std::shared_ptr<WindowsVulkanImport> WindowsVulkanImport::Create(std::shared_ptr
 	vkGetImageMemoryRequirements(native, image->image, &requirements);
 	VkMemoryWin32HandlePropertiesKHR handleProperties{VK_STRUCTURE_TYPE_MEMORY_WIN32_HANDLE_PROPERTIES_KHR};
 	CheckVulkan(memoryProperties(native, memoryType, source.texture, &handleProperties),
-		"Query Windows native shared memory types");
+				"Query Windows native shared memory types");
 	VkMemoryDedicatedAllocateInfo dedicated{VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO};
 	dedicated.image = image->image;
 	VkImportMemoryWin32HandleInfoKHR imported{VK_STRUCTURE_TYPE_IMPORT_MEMORY_WIN32_HANDLE_INFO_KHR, &dedicated};
@@ -115,12 +135,14 @@ std::shared_ptr<WindowsVulkanImport> WindowsVulkanImport::Create(std::shared_ptr
 	VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, &imported};
 	allocation.allocationSize = requirements.size;
 	allocation.memoryTypeIndex = device->MemoryType(requirements.memoryTypeBits & handleProperties.memoryTypeBits, 0);
-	CheckVulkan(vkAllocateMemory(native, &allocation, nullptr, &image->memory), "Import Windows native shared texture memory");
+	CheckVulkan(vkAllocateMemory(native, &allocation, nullptr, &image->memory),
+				"Import Windows native shared texture memory");
 	image->allocationSize = requirements.size;
 	CheckVulkan(vkBindImageMemory(native, image->image, image->memory, 0), "Bind Windows native shared texture memory");
 	result->m_image = std::move(image);
 	VkSemaphoreCreateInfo semaphore{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
-	CheckVulkan(vkCreateSemaphore(native, &semaphore, nullptr, &result->m_ready), "Create Windows native fence semaphore");
+	CheckVulkan(vkCreateSemaphore(native, &semaphore, nullptr, &result->m_ready),
+				"Create Windows native fence semaphore");
 	VkImportSemaphoreWin32HandleInfoKHR fence{VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_WIN32_HANDLE_INFO_KHR};
 	fence.semaphore = result->m_ready;
 	fence.handleType = semaphoreType;
@@ -128,4 +150,4 @@ std::shared_ptr<WindowsVulkanImport> WindowsVulkanImport::Create(std::shared_ptr
 	CheckVulkan(importSemaphore(native, &fence), "Import Windows native producer fence");
 	return result;
 }
-}
+} // namespace simxr

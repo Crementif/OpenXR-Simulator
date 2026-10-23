@@ -1,9 +1,10 @@
 #include "graphics/backends/d3d11/D3D11VulkanImport.h"
+#include "Pch.h"
 
 namespace simxr
 {
 std::shared_ptr<WindowsVulkanImport> ImportD3D11Frame(std::shared_ptr<VulkanDevice> device,
-	std::shared_ptr<D3D11Frame> frame)
+													  std::shared_ptr<D3D11Frame> frame)
 {
 	if (!frame)
 		throw std::invalid_argument("D3D11 import requires a frame");
@@ -17,9 +18,15 @@ std::shared_ptr<WindowsVulkanImport> ImportD3D11Frame(std::shared_ptr<VulkanDevi
 		throw VulkanError(VK_ERROR_INVALID_EXTERNAL_HANDLE, "Cannot identify D3D11 adapter");
 	D3D11_TEXTURE2D_DESC description{};
 	frame->Texture()->GetDesc(&description);
-	const WindowsSharedImage source{adapterDescription.AdapterLuid, frame->TextureHandle(), frame->FenceHandle(),
-		VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT, frame->Format(), description.Width, description.Height,
-		description.ArraySize, description.MipLevels};
+	const WindowsSharedImage source{adapterDescription.AdapterLuid,
+									frame->TextureHandle(),
+									frame->FenceHandle(),
+									VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT,
+									frame->Format(),
+									description.Width,
+									description.Height,
+									description.ArraySize,
+									description.MipLevels};
 	return WindowsVulkanImport::Create(std::move(device), source, std::move(frame));
 }
-}
+} // namespace simxr

@@ -2,6 +2,9 @@
 
 #include "graphics/FrameOutput.h"
 #include "graphics/backends/vulkan/VulkanResources.h"
+#include <cstdint>
+#include <memory>
+
 #include <dxgi.h>
 
 namespace simxr
@@ -21,7 +24,8 @@ class WindowsVulkanImport
 {
   public:
 	static std::shared_ptr<WindowsVulkanImport> Create(std::shared_ptr<VulkanDevice> device,
-		const WindowsSharedImage& source, std::shared_ptr<const FrameOutput> owner);
+													   const WindowsSharedImage& source,
+													   std::shared_ptr<const FrameOutput> owner);
 	~WindowsVulkanImport();
 	const std::shared_ptr<VulkanImage>& Image() const noexcept;
 	VkSemaphore Ready() const noexcept;
@@ -33,4 +37,4 @@ class WindowsVulkanImport
 	std::shared_ptr<VulkanImage> m_image;
 	VkSemaphore m_ready = VK_NULL_HANDLE;
 };
-}
+} // namespace simxr
