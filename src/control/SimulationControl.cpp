@@ -1,35 +1,30 @@
 #include "control/SimulationControl.h"
-
-#include <span>
-#include <string_view>
-#include <utility>
+#include "Pch.h"
 
 namespace simxr::control
 {
-namespace
-{
-InspectionValue Vector(const XrVector3f& vector)
+static InspectionValue Vector(const XrVector3f& vector)
 {
 	return InspectionValue::Array(
 		{InspectionValue::Float(vector.x), InspectionValue::Float(vector.y), InspectionValue::Float(vector.z)});
 }
-InspectionValue Orientation(const XrQuaternionf& orientation)
+static InspectionValue Orientation(const XrQuaternionf& orientation)
 {
 	return InspectionValue::Array({InspectionValue::Float(orientation.x), InspectionValue::Float(orientation.y),
 								   InspectionValue::Float(orientation.z), InspectionValue::Float(orientation.w)});
 }
-InspectionValue PoseValue(const PoseSample& sample)
+static InspectionValue PoseValue(const PoseSample& sample)
 {
 	return InspectionValue::Object({{"position", Vector(sample.pose.position)},
 									{"orientation", Orientation(sample.pose.orientation)},
 									{"flags", InspectionValue::Unsigned(sample.flags)}});
 }
-InspectionValue PoseValue(const XrPosef& pose)
+static InspectionValue PoseValue(const XrPosef& pose)
 {
 	return InspectionValue::Object(
 		{{"position", Vector(pose.position)}, {"orientation", Orientation(pose.orientation)}});
 }
-InspectionValue ReferenceSpaces(const ReferenceSpaceState& spaces)
+static InspectionValue ReferenceSpaces(const ReferenceSpaceState& spaces)
 {
 	return InspectionValue::Object(
 		{{"local", PoseValue(spaces.local)},
@@ -39,7 +34,7 @@ InspectionValue ReferenceSpaces(const ReferenceSpaceState& spaces)
 														InspectionValue::Float(spaces.stageBounds->height)})
 							  : InspectionValue::Null()}});
 }
-InspectionValue ControlValue(const ControllerControls& controls)
+static InspectionValue ControlValue(const ControllerControls& controls)
 {
 	return InspectionValue::Object({{"trigger", InspectionValue::Float(controls.trigger)},
 									{"grip", InspectionValue::Float(controls.grip)},
@@ -63,12 +58,12 @@ InspectionValue ControlValue(const ControllerControls& controls)
 									{"thumbrest_touch", InspectionValue::Boolean(controls.thumbrestTouch)},
 									{"connected", InspectionValue::Boolean(controls.connected)}});
 }
-InspectionValue SourceValue(CommandSource source)
+static InspectionValue SourceValue(CommandSource source)
 {
 	return InspectionValue::Object({{"kind", InspectionValue::Unsigned(static_cast<std::uint32_t>(source.kind))},
 									{"id", InspectionValue::Unsigned(source.id)}});
 }
-InspectionValue BodyValue(const BodyControls& body)
+static InspectionValue BodyValue(const BodyControls& body)
 {
 	std::vector<InspectionValue> controls, joints;
 	for (const auto& control : body.controls)
@@ -82,13 +77,13 @@ InspectionValue BodyValue(const BodyControls& body)
 										 {"tracked", InspectionValue::Boolean(joint->tracked)},
 										 {"pose", joint->pose ? PoseValue(*joint->pose) : InspectionValue::Null()}}));
 	return InspectionValue::Object({{"active", InspectionValue::Boolean(body.active)},
-		{"root_pose", body.rootPose ? PoseValue(*body.rootPose) : InspectionValue::Null()},
+									{"root_pose", body.rootPose ? PoseValue(*body.rootPose) : InspectionValue::Null()},
 									{"confidence", InspectionValue::Float(body.confidence)},
 									{"preset", InspectionValue::Unsigned(static_cast<std::uint32_t>(body.preset))},
 									{"controls", InspectionValue::Array(std::move(controls))},
 									{"joints", InspectionValue::Array(std::move(joints))}});
 }
-InspectionValue Configuration(const CommandConfiguration& configuration)
+static InspectionValue Configuration(const CommandConfiguration& configuration)
 {
 	std::vector<InspectionValue> controllers, trackers, outerFov;
 	for (const auto& fov : configuration.views.outerFov)
@@ -135,7 +130,7 @@ InspectionValue Configuration(const CommandConfiguration& configuration)
 								   {"shoulder_width", InspectionValue::Float(configuration.proportions.shoulderWidth)},
 								   {"hip_width", InspectionValue::Float(configuration.proportions.hipWidth)}})}});
 }
-InspectionValue EncodedCommand(const SimulationCommand& command)
+static InspectionValue EncodedCommand(const SimulationCommand& command)
 {
 	// The editable recording retains the exact canonical command TLV as hex.
 	// SDK and rigs decode this with the same public codec; no process-local handles.
@@ -152,7 +147,6 @@ InspectionValue EncodedCommand(const SimulationCommand& command)
 	return InspectionValue::Object(
 		{{"encoding", InspectionValue::Text("simxr-command-v1-hex")}, {"data", InspectionValue::Text(hex)}});
 }
-} // namespace
 
 const char* SimulationResultName(CommandResult result)
 {

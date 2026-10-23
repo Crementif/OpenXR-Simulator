@@ -1,11 +1,17 @@
 #include "control/RecordingControl.h"
+#include "Pch.h"
 #include "runtime/Session.h"
 
-#include <algorithm>
 #include <iterator>
 
 namespace simxr::control
 {
+static bool SameSession(const std::weak_ptr<Session>& owner, const std::shared_ptr<Session>& session)
+{
+	// Comparing owners must not briefly retain another session under the recording lock.
+	return !owner.owner_before(session) && !session.owner_before(owner);
+}
+
 RecordingControl::RecordingControl()
 {
 	m_owners.reserve(64);
@@ -24,7 +30,7 @@ ErrorCode RecordingControl::Start(ConnectionId connection, const std::shared_ptr
 	auto owner = std::find_if(m_owners.begin(), m_owners.end(),
 							  [&](const auto& owner)
 							  {
-								  return owner.session.lock() == session;
+								  return SameSession(owner.session, session);
 							  });
 	if (owner != m_owners.end() && owner->generation != generation)
 		owner->connection = {};
@@ -51,7 +57,7 @@ ErrorCode RecordingControl::Stop(ConnectionId connection, const std::shared_ptr<
 	const auto owner = std::find_if(m_owners.begin(), m_owners.end(),
 									[&](const auto& owner)
 									{
-										return owner.session.lock() == session;
+										return SameSession(owner.session, session);
 									});
 	if (owner != m_owners.end() && owner->generation == generation && owner->connection.value &&
 		owner->connection != connection)
@@ -68,7 +74,7 @@ void RecordingControl::Disconnect(ConnectionId connection, const std::shared_ptr
 		std::lock_guard lock(m_mutex);
 		for (auto& owner : m_owners)
 		{
-			if (owner.connection != connection || owner.session.lock() != session)
+			if (owner.connection != connection || !SameSession(owner.session, session))
 				continue;
 			session->Commands().Recorder().Stop();
 			owner.connection = {};

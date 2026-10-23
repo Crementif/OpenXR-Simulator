@@ -1,20 +1,16 @@
 #include "control/WireProtocol.h"
+#include "Pch.h"
 
-#include <algorithm>
-#include <array>
 #include <bit>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
-#include <utility>
 
 namespace simxr::control
 {
-namespace
-{
-constexpr std::size_t FieldHeaderSize = 8;
+static constexpr std::size_t s_fieldHeaderSize = 8;
 
-template <typename T> T Read(std::span<const std::byte> bytes, std::size_t offset = 0) noexcept
+template <typename T> static T Read(std::span<const std::byte> bytes, std::size_t offset = 0) noexcept
 {
 	std::uint64_t result = 0;
 	for (std::size_t index = 0; index < sizeof(T); ++index)
@@ -22,13 +18,13 @@ template <typename T> T Read(std::span<const std::byte> bytes, std::size_t offse
 	return static_cast<T>(result);
 }
 
-template <typename T> void Write(std::span<std::byte> bytes, std::size_t offset, T value) noexcept
+template <typename T> static void Write(std::span<std::byte> bytes, std::size_t offset, T value) noexcept
 {
 	for (std::size_t index = 0; index < sizeof(T); ++index)
 		bytes[offset + index] = std::byte{static_cast<unsigned char>(value >> (index * 8))};
 }
 
-bool ValidText(std::span<const std::byte> bytes) noexcept
+static bool ValidText(std::span<const std::byte> bytes) noexcept
 {
 	std::size_t offset = 0;
 	while (offset < bytes.size())
@@ -75,7 +71,7 @@ bool ValidText(std::span<const std::byte> bytes) noexcept
 	return true;
 }
 
-DecodeError CheckFields(std::span<const std::byte> payload, std::size_t& count) noexcept
+static DecodeError CheckFields(std::span<const std::byte> payload, std::size_t& count) noexcept
 {
 	if (payload.size() > MaxPayload)
 		return DecodeError::PayloadTooLarge;
@@ -86,7 +82,7 @@ DecodeError CheckFields(std::span<const std::byte> payload, std::size_t& count) 
 	{
 		if (count == MaxFields)
 			return DecodeError::TooManyFields;
-		if (payload.size() - offset < FieldHeaderSize)
+		if (payload.size() - offset < s_fieldHeaderSize)
 			return DecodeError::InvalidFieldLength;
 		const auto tag = Read<std::uint16_t>(payload, offset);
 		const auto flags = Read<std::uint16_t>(payload, offset + 2);
@@ -98,7 +94,7 @@ DecodeError CheckFields(std::span<const std::byte> payload, std::size_t& count) 
 		if (std::find(tags.begin(), tags.begin() + count, tag) != tags.begin() + count)
 			return DecodeError::DuplicateTag;
 		tags[count++] = tag;
-		offset += FieldHeaderSize;
+		offset += s_fieldHeaderSize;
 		if (length > payload.size() - offset)
 			return DecodeError::InvalidFieldLength;
 		offset += length;
@@ -106,13 +102,12 @@ DecodeError CheckFields(std::span<const std::byte> payload, std::size_t& count) 
 	return DecodeError::None;
 }
 
-template <typename T> Field Integer(std::uint16_t tag, T value, bool required)
+template <typename T> static Field Integer(std::uint16_t tag, T value, bool required)
 {
 	Field result{tag, required, std::vector<std::byte>(sizeof(T))};
 	Write<T>(result.value, 0, value);
 	return result;
 }
-} // namespace
 
 Field Field::U64(std::uint16_t tag, std::uint64_t value, bool required)
 {
@@ -144,7 +139,7 @@ Field Field::Text(std::uint16_t tag, std::string_view value, bool required)
 }
 Field Field::Bytes(std::uint16_t tag, std::span<const std::byte> value, bool required)
 {
-	if (value.size() > MaxPayload - FieldHeaderSize)
+	if (value.size() > MaxPayload - s_fieldHeaderSize)
 		throw std::length_error("Control field exceeds payload bound");
 	return Field{tag, required, {value.begin(), value.end()}};
 }
@@ -181,7 +176,11 @@ std::optional<std::string_view> Field::AsText() const noexcept
 }
 const Field* Message::Find(std::uint16_t tag) const noexcept
 {
-	const auto field = std::find_if(fields.begin(), fields.end(), [&](const auto& value) { return value.tag == tag; });
+	const auto field = std::find_if(fields.begin(), fields.end(),
+									[&](const auto& value)
+									{
+										return value.tag == tag;
+									});
 	return field == fields.end() ? nullptr : &*field;
 }
 std::optional<std::uint16_t> Message::ValidateFields(std::span<const std::uint16_t> knownTags) const noexcept
@@ -203,10 +202,10 @@ std::vector<std::byte> EncodeFields(std::span<const Field> fields)
 		if (!field.tag || std::find(tags.begin(), tags.begin() + count, field.tag) != tags.begin() + count)
 			throw std::invalid_argument("Control fields need distinct nonzero tags");
 		tags[count++] = field.tag;
-		if (field.value.size() > MaxPayload - FieldHeaderSize ||
-			size > MaxPayload - FieldHeaderSize - field.value.size())
+		if (field.value.size() > MaxPayload - s_fieldHeaderSize ||
+			size > MaxPayload - s_fieldHeaderSize - field.value.size())
 			throw std::length_error("Control payload exceeds bound");
-		size += FieldHeaderSize + field.value.size();
+		size += s_fieldHeaderSize + field.value.size();
 	}
 	std::vector<std::byte> result(size);
 	std::size_t offset = 0;
@@ -215,7 +214,7 @@ std::vector<std::byte> EncodeFields(std::span<const Field> fields)
 		Write<std::uint16_t>(result, offset, field.tag);
 		Write<std::uint16_t>(result, offset + 2, field.required ? 1 : 0);
 		Write<std::uint32_t>(result, offset + 4, static_cast<std::uint32_t>(field.value.size()));
-		offset += FieldHeaderSize;
+		offset += s_fieldHeaderSize;
 		if (!field.value.empty())
 			std::memcpy(result.data() + offset, field.value.data(), field.value.size());
 		offset += field.value.size();
@@ -257,7 +256,7 @@ FieldsResult DecodeFields(std::span<const std::byte> payload) noexcept
 			const auto tag = Read<std::uint16_t>(payload, offset);
 			const auto required = Read<std::uint16_t>(payload, offset + 2) != 0;
 			const auto length = Read<std::uint32_t>(payload, offset + 4);
-			offset += FieldHeaderSize;
+			offset += s_fieldHeaderSize;
 			const auto value = payload.subspan(offset, length);
 			result.push_back(Field{tag, required, {value.begin(), value.end()}});
 			offset += length;

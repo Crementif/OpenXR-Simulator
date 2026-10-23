@@ -1,27 +1,17 @@
-#include "graphics/SnapshotBudget.h"
 #include "control/DebugProtocol.h"
+#include "Pch.h"
 #include "control/ControlRequestError.h"
 #include "control/ControlSchema.h"
 #include "control/InspectionDocument.h"
 #include "control/SimulationControl.h"
+#include "graphics/SnapshotBudget.h"
 #include "runtime/Session.h"
 
-#include <array>
-#include <utility>
+#include <stdexcept>
 
 namespace simxr::control
 {
-namespace
-{
-std::uint64_t RequireU64(const Message& message, std::uint16_t name)
-{
-	const auto* field = message.Find(name);
-	const auto value = field ? field->AsU64() : std::nullopt;
-	if (!value)
-		throw ControlRequestError{ErrorCode::Invalid, "Missing or invalid uint64 field"};
-	return *value;
-}
-std::uint32_t ReadU32(const Message& message, std::uint16_t name, std::optional<std::uint32_t> fallback = {})
+static std::uint32_t ReadU32(const Message& message, std::uint16_t name, std::optional<std::uint32_t> fallback = {})
 {
 	const auto* field = message.Find(name);
 	if (!field && fallback)
@@ -31,25 +21,24 @@ std::uint32_t ReadU32(const Message& message, std::uint16_t name, std::optional<
 		throw ControlRequestError{ErrorCode::Invalid, "Missing or invalid uint32 field"};
 	return *value;
 }
-Field Nested(std::uint16_t name, std::vector<Field> fields)
+static Field Nested(std::uint16_t name, std::vector<Field> fields)
 {
 	return Field::Bytes(name, EncodeFields(fields));
 }
-Field EncodePrediction(std::uint16_t name, const FramePrediction& prediction)
+static Field EncodePrediction(std::uint16_t name, const FramePrediction& prediction)
 {
 	return Nested(name,
 				  {Field::U64(tag::FrameId, prediction.id.value), Field::U64(tag::Tick, prediction.displayTick.value),
 				   Field::I64(tag::Time, prediction.displayTime.value.count()),
 				   Field::I64(tag::Period, prediction.displayPeriod.count())});
 }
-Field EncodeCaptureIds(std::uint16_t name, const std::vector<CaptureId>& ids)
+static Field EncodeCaptureIds(std::uint16_t name, const std::vector<CaptureId>& ids)
 {
 	std::vector<Field> fields;
 	for (const auto id : ids)
 		fields.push_back(Field::U64(static_cast<std::uint16_t>(fields.size() + 1), id.value));
 	return Nested(name, std::move(fields));
 }
-} // namespace
 
 Field EncodeCaptureTarget(CaptureTarget target)
 {
@@ -125,9 +114,7 @@ CaptureTarget DecodeCaptureTarget(const Message& request)
 	}
 	throw ControlRequestError{ErrorCode::UnsupportedCommand, "Unsupported capture target"};
 }
-namespace
-{
-DebugCommand DecodeCommandKind(std::uint32_t kind)
+static DebugCommand DecodeCommandKind(std::uint32_t kind)
 {
 	switch (static_cast<CommandKind>(kind))
 	{
@@ -158,7 +145,7 @@ DebugCommand DecodeCommandKind(std::uint32_t kind)
 	}
 	throw ControlRequestError{ErrorCode::UnsupportedCommand, "Unsupported debug command"};
 }
-const char* Name(DebugPhase value)
+static const char* Name(DebugPhase value)
 {
 	switch (value)
 	{
@@ -177,7 +164,7 @@ const char* Name(DebugPhase value)
 	}
 	throw ControlRequestError{ErrorCode::Internal, "Unknown operation phase"};
 }
-const char* Name(DebugProgress value)
+static const char* Name(DebugProgress value)
 {
 	switch (value)
 	{
@@ -230,7 +217,7 @@ const char* Name(DebugProgress value)
 	}
 	throw ControlRequestError{ErrorCode::Internal, "Unknown operation progress"};
 }
-const char* Name(SnapshotPhase value)
+static const char* Name(SnapshotPhase value)
 {
 	switch (value)
 	{
@@ -259,7 +246,7 @@ const char* Name(SnapshotPhase value)
 	}
 	throw ControlRequestError{ErrorCode::Internal, "Unknown snapshot phase"};
 }
-const char* Name(FrameStage value)
+static const char* Name(FrameStage value)
 {
 	switch (value)
 	{
@@ -276,7 +263,7 @@ const char* Name(FrameStage value)
 	}
 	throw ControlRequestError{ErrorCode::Internal, "Unknown frame stage"};
 }
-const char* Name(FrameOutputDisposition value)
+static const char* Name(FrameOutputDisposition value)
 {
 	switch (value)
 	{
@@ -291,7 +278,7 @@ const char* Name(FrameOutputDisposition value)
 	}
 	throw ControlRequestError{ErrorCode::Internal, "Unknown frame output disposition"};
 }
-const char* Name(FrameDropReason value)
+static const char* Name(FrameDropReason value)
 {
 	switch (value)
 	{
@@ -304,7 +291,7 @@ const char* Name(FrameDropReason value)
 	}
 	throw ControlRequestError{ErrorCode::Internal, "Unknown frame drop reason"};
 }
-const char* Name(PresentationKind value)
+static const char* Name(PresentationKind value)
 {
 	switch (value)
 	{
@@ -319,7 +306,7 @@ const char* Name(PresentationKind value)
 	}
 	throw ControlRequestError{ErrorCode::Internal, "Unknown presentation kind"};
 }
-const char* Name(SnapshotAdmission value)
+static const char* Name(SnapshotAdmission value)
 {
 	switch (value)
 	{
@@ -339,7 +326,7 @@ const char* Name(SnapshotAdmission value)
 // The applied device input and action activity of one frame, so the companion
 // can draw input over time and cut takes from any range. Fields 1-5 are head and
 // hands, 6 body, 7 gaze and 8-11 the tracker slots; body overrides stay sparse.
-Field EncodeAppliedInput(const FrameSubmissionState& submission)
+static Field EncodeAppliedInput(const FrameSubmissionState& submission)
 {
 	const auto& applied = *submission.commands;
 	const auto& configuration = applied.configuration;
@@ -354,12 +341,13 @@ Field EncodeAppliedInput(const FrameSubmissionState& submission)
 	for (std::uint32_t slot = 0; slot < tracking.trackers.size(); ++slot)
 		fields.push_back(
 			EncodeSimulationCommand(SetTracker{slot, tracking.trackers[slot]}, static_cast<std::uint16_t>(8 + slot)));
-	fields.push_back(Nested(tag::InputContext, {
-		EncodeSimulationCommand(SetViewSettings{configuration.views}, 1),
-		EncodeSimulationCommand(SetBodyProportions{configuration.proportions}, 2),
-		EncodeSimulationCommand(SetControllerProfile{0, configuration.input.preferredProfiles[0]}, 3),
-		EncodeSimulationCommand(SetControllerProfile{1, configuration.input.preferredProfiles[1]}, 4),
-		EncodeSimulationCommand(SetReferenceSpaces{configuration.referenceSpaces}, 5)}));
+	fields.push_back(
+		Nested(tag::InputContext,
+			   {EncodeSimulationCommand(SetViewSettings{configuration.views}, 1),
+				EncodeSimulationCommand(SetBodyProportions{configuration.proportions}, 2),
+				EncodeSimulationCommand(SetControllerProfile{0, configuration.input.preferredProfiles[0]}, 3),
+				EncodeSimulationCommand(SetControllerProfile{1, configuration.input.preferredProfiles[1]}, 4),
+				EncodeSimulationCommand(SetReferenceSpaces{configuration.referenceSpaces}, 5)}));
 	fields.push_back(Field::U64(tag::Seed, applied.seed));
 	std::uint32_t scenarios = 0, owned = 0, active = 0;
 	for (std::size_t index = 0; index < applied.scenarios.size(); ++index)
@@ -377,7 +365,7 @@ Field EncodeAppliedInput(const FrameSubmissionState& submission)
 	fields.push_back(Field::U32(tag::ActiveActions, active));
 	return Nested(tag::AppliedInput, std::move(fields));
 }
-Field EncodeFrameMetadata(const FrameRecord& frame)
+static Field EncodeFrameMetadata(const FrameRecord& frame)
 {
 	std::vector<Field> fields{
 		Field::U64(tag::Generation, frame.key.generation.value), Field::U64(tag::FrameId, frame.key.frame.value),
@@ -403,7 +391,7 @@ Field EncodeFrameMetadata(const FrameRecord& frame)
 	}
 	return Nested(tag::Frame, std::move(fields));
 }
-ErrorCode AdmissionError(DebugAdmission value)
+static ErrorCode AdmissionError(DebugAdmission value)
 {
 	switch (value)
 	{
@@ -424,7 +412,6 @@ ErrorCode AdmissionError(DebugAdmission value)
 	}
 	return ErrorCode::Internal;
 }
-} // namespace
 Field EncodeFrameKey(std::uint16_t name, FrameKey key)
 {
 	return Nested(name, {Field::U64(tag::Generation, key.generation.value), Field::U64(tag::FrameId, key.frame.value)});
@@ -467,7 +454,7 @@ Field EncodeDisplayTick(std::uint16_t name, const PresentationTick& tick)
 DebugRequest DecodeDebugRequest(const Message& request)
 {
 	DebugRequest command;
-	command.id = {RequireU64(request, tag::CommandId)};
+	command.id = {RequireRequestU64(request, tag::CommandId)};
 	command.command = DecodeCommandKind(ReadU32(request, tag::CommandKind));
 	command.snapshotBudgetMiB = ReadU32(request, tag::SnapshotBudgetMiB, SnapshotBudget::DefaultMiB);
 	command.lookahead = ReadU32(request, tag::Lookahead, 1);
@@ -490,7 +477,7 @@ DebugRequest DecodeDebugRequest(const Message& request)
 	}
 	command.recordingCapacity = ReadU32(request, tag::Capacity, 2);
 	if (request.Find(tag::Length))
-		command.recordingFrames = RequireU64(request, tag::Length);
+		command.recordingFrames = RequireRequestU64(request, tag::Length);
 	if (const auto field = request.Find(tag::AdvanceDisplay))
 	{
 		const auto advance = field->AsBool();
@@ -498,13 +485,13 @@ DebugRequest DecodeDebugRequest(const Message& request)
 			throw ControlRequestError{ErrorCode::Invalid, "Invalid display advancement flag"};
 		command.advanceDisplay = *advance;
 	}
-	command.generation = {RequireU64(request, tag::Generation)};
+	command.generation = {RequireRequestU64(request, tag::Generation)};
 	if (!command.generation.value)
 		throw ControlRequestError{ErrorCode::Closed, "Session has not started"};
 	if (request.Find(tag::OperationId))
-		command.operation = {RequireU64(request, tag::OperationId)};
+		command.operation = {RequireRequestU64(request, tag::OperationId)};
 	if (request.Find(tag::CaptureId))
-		command.capture = {RequireU64(request, tag::CaptureId)};
+		command.capture = {RequireRequestU64(request, tag::CaptureId)};
 	return command;
 }
 std::optional<std::vector<std::string>> DecodeCompatibilityDeviations(const Message& status)
@@ -563,7 +550,7 @@ void EncodeDebuggerStatus(Message& response, const DebugControllerSnapshot& stat
 	response.fields.push_back(Nested(tag::Retention, {Field::U64(tag::Capacity, status.retention.capacity),
 													  Field::U64(tag::HeldSlots, status.retention.heldSlots),
 													  Field::U64(tag::Retiring, status.retention.retiring),
-		Field::U64(tag::Pinned, status.retention.pinned),
+													  Field::U64(tag::Pinned, status.retention.pinned),
 													  EncodeCaptureIds(tag::Captures, status.retention.captures)}));
 	std::vector<Field> presented{Field::U64(tag::LastSubmitted, display.lastSubmitted.value),
 								 Field::U64(tag::CoalescedClears, display.coalescedLiveClears)};
@@ -645,7 +632,10 @@ void EncodeFrameHistory(Message& response, const FrameHistorySnapshot& history, 
 	response.fields.push_back(Field::I64(tag::Time, history.origin.value.count()));
 	response.fields.push_back(Field::U64(tag::Capacity, history.capacity));
 	const auto oldest = std::find_if(history.frames.begin(), history.frames.end(),
-		[&](const auto& frame) { return frame->key.generation == history.generation; });
+									 [&](const auto& frame)
+									 {
+										 return frame->key.generation == history.generation;
+									 });
 	response.fields.push_back(Field::U64(tag::Offset, oldest == history.frames.end() ? 0 : (*oldest)->key.frame.value));
 	response.fields.push_back(Nested(tag::Frames, std::move(frames)));
 }

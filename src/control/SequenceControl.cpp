@@ -1,4 +1,5 @@
 #include "control/SequenceControl.h"
+#include "Pch.h"
 #include "control/ControlRequestError.h"
 #include "control/ControlSchema.h"
 #include "control/ControlSessions.h"
@@ -7,31 +8,27 @@
 #include "control/legacy/LegacyInput.h"
 #include "runtime/Session.h"
 
-#include <algorithm>
 #include <sstream>
 #include <stdexcept>
-#include <string_view>
 
 namespace simxr::control
 {
-namespace
+static InspectionValue Status(const PoseSequenceStatus& status)
 {
-InspectionValue Status(const PoseSequenceStatus& status)
-{
-	return InspectionValue::Object({
-		{"id", InspectionValue::Unsigned(status.id)}, {"active", InspectionValue::Boolean(status.active)},
-		{"loop", InspectionValue::Boolean(status.loop)},
-		{"result", InspectionValue::Text(SimulationResultName(status.result))},
-		{"origin", InspectionValue::Unsigned(status.origin.value)},
-		{"last_frame", InspectionValue::Unsigned(status.lastFrame.value)},
-		{"groups", InspectionValue::Unsigned(status.groups)}});
+	return InspectionValue::Object({{"id", InspectionValue::Unsigned(status.id)},
+									{"active", InspectionValue::Boolean(status.active)},
+									{"loop", InspectionValue::Boolean(status.loop)},
+									{"result", InspectionValue::Text(SimulationResultName(status.result))},
+									{"origin", InspectionValue::Unsigned(status.origin.value)},
+									{"last_frame", InspectionValue::Unsigned(status.lastFrame.value)},
+									{"groups", InspectionValue::Unsigned(status.groups)}});
 }
 struct AdmissionDescription
 {
 	const char* name;
 	XrResult result;
 };
-AdmissionDescription DescribeAdmission(SnapshotAdmission value)
+static AdmissionDescription DescribeAdmission(SnapshotAdmission value)
 {
 	switch (value)
 	{
@@ -48,7 +45,7 @@ AdmissionDescription DescribeAdmission(SnapshotAdmission value)
 	}
 	throw std::invalid_argument("Unknown sequence capture admission");
 }
-const char* PhaseName(SnapshotPhase value)
+static const char* PhaseName(SnapshotPhase value)
 {
 	switch (value)
 	{
@@ -77,7 +74,7 @@ const char* PhaseName(SnapshotPhase value)
 	}
 	throw std::invalid_argument("Unknown sequence capture phase");
 }
-}
+
 InspectionValue SequenceControl::Upload(const Message& request, const ControlSession& binding)
 {
 	const auto id = RequireRequestU64(request, tag::ProgramId);
@@ -95,7 +92,7 @@ InspectionValue SequenceControl::Upload(const Message& request, const ControlSes
 	{
 		if (id < m_program || offset)
 			throw ControlRequestError{ErrorCode::Conflict,
-				"New sequence uploads require an increasing program ID and offset zero"};
+									  "New sequence uploads require an increasing program ID and offset zero"};
 		std::string prepared(bytes);
 		prepared.reserve(static_cast<std::size_t>(total));
 		m_bytes.swap(prepared);
@@ -121,11 +118,12 @@ InspectionValue SequenceControl::Upload(const Message& request, const ControlSes
 			throw ControlRequestError{ErrorCode::Conflict, "Started sequence program is immutable"};
 	}
 	return InspectionValue::Object({{"program_id", InspectionValue::Unsigned(m_program)},
-		{"received", InspectionValue::Unsigned(m_bytes.size())}, {"total", InspectionValue::Unsigned(m_total)},
-		{"complete", InspectionValue::Boolean(m_bytes.size() == m_total)}});
+									{"received", InspectionValue::Unsigned(m_bytes.size())},
+									{"total", InspectionValue::Unsigned(m_total)},
+									{"complete", InspectionValue::Boolean(m_bytes.size() == m_total)}});
 }
 InspectionValue SequenceControl::Start(const Message& request, const ControlSession& binding, CommandSource source,
-	Message& response)
+									   Message& response)
 {
 	const auto id = RequireRequestU64(request, tag::ProgramId);
 	const auto loopField = request.Find(tag::Loop);
@@ -140,7 +138,7 @@ InspectionValue SequenceControl::Start(const Message& request, const ControlSess
 	{
 		if (m_loop != *loop || !status || status->id != *m_started)
 			throw ControlRequestError{ErrorCode::Conflict,
-				"Sequence start retry changed or its execution was replaced"};
+									  "Sequence start retry changed or its execution was replaced"};
 	}
 	else
 	{
@@ -160,7 +158,7 @@ InspectionValue SequenceControl::Start(const Message& request, const ControlSess
 		}
 		if (!status)
 			throw ControlRequestError{ErrorCode::Busy,
-				"Another source owns sequence playback or the session is closed"};
+									  "Another source owns sequence playback or the session is closed"};
 		m_started = status->id;
 		m_loop = *loop;
 	}
@@ -168,16 +166,17 @@ InspectionValue SequenceControl::Start(const Message& request, const ControlSess
 	return Status(*status);
 }
 InspectionValue SequenceControl::Read(const Message& request, const ControlSession& binding, CommandSource source,
-	std::vector<SnapshotRecord>& held)
+									  std::vector<SnapshotRecord>& held)
 {
 	auto status = binding.session->Commands().PoseSequenceStatusFor(source);
 	const auto id = request.Find(tag::SequenceId) ? RequireRequestU64(request, tag::SequenceId)
-		: status ? status->id : 0;
+					: status					  ? status->id
+												  : 0;
 	const auto after = request.Find(tag::Offset) ? RequireRequestU64(request, tag::Offset) : 0;
 	const auto count = request.Find(tag::Length) ? RequireRequestU64(request, tag::Length) : 32;
 	if (!id || !count || count > 64)
 		throw ControlRequestError{ErrorCode::Invalid,
-			"Sequence status requires an execution and a page size in [1,64]"};
+								  "Sequence status requires an execution and a page size in [1,64]"};
 	const auto history = binding.session->History().Snapshot();
 	if (history.generation.value != RequireRequestU64(request, tag::Generation))
 		throw ControlRequestError{ErrorCode::StaleGeneration, "Sequence history belongs to another run"};
@@ -226,10 +225,12 @@ InspectionValue SequenceControl::Read(const Message& request, const ControlSessi
 				}
 			}
 		}
-		captures.push_back(InspectionValue::Object({{"frame", InspectionValue::Unsigned(cursor)},
-			{"capture_id", InspectionValue::Unsigned(receipt.reservation.id.value)},
-			{"admission", InspectionValue::Text(admission.name)},
-			{"phase", InspectionValue::Text(phase)}, {"result", InspectionValue::Signed(result)}}));
+		captures.push_back(
+			InspectionValue::Object({{"frame", InspectionValue::Unsigned(cursor)},
+									 {"capture_id", InspectionValue::Unsigned(receipt.reservation.id.value)},
+									 {"admission", InspectionValue::Text(admission.name)},
+									 {"phase", InspectionValue::Text(phase)},
+									 {"result", InspectionValue::Signed(result)}}));
 	}
 	std::vector<InspectionValue> retained;
 	for (const auto captureId : binding.session->Captures().Snapshot().captures)
@@ -243,8 +244,9 @@ InspectionValue SequenceControl::Read(const Message& request, const ControlSessi
 			continue;
 		const auto& receipt = *capture.metadata->sequenceCapture;
 		if (receipt.request.owner == source && receipt.request.sequence == id && receipt.reservation.id == captureId)
-			retained.push_back(InspectionValue::Object({{"capture_id", InspectionValue::Unsigned(captureId.value)},
-				{"frame", InspectionValue::Unsigned(capture.metadata->key.frame.value)}}));
+			retained.push_back(
+				InspectionValue::Object({{"capture_id", InspectionValue::Unsigned(captureId.value)},
+										 {"frame", InspectionValue::Unsigned(capture.metadata->key.frame.value)}}));
 	}
 	const auto oldest = history.frames.empty() ? 0 : history.frames.front()->key.frame.value;
 	bool gap = false;
@@ -258,16 +260,18 @@ InspectionValue SequenceControl::Read(const Message& request, const ControlSessi
 			gap = history.evicted != 0;
 	}
 	return InspectionValue::Object({{"sequence_id", InspectionValue::Unsigned(id)},
-		{"status", status && status->id == id ? Status(*status) : InspectionValue::Null()},
-		{"current_sequence", InspectionValue::Unsigned(status ? status->id : 0)},
-		{"next_frame", InspectionValue::Unsigned(cursor)}, {"more", InspectionValue::Boolean(more)},
-		{"oldest_frame", InspectionValue::Unsigned(oldest)}, {"history_gap", InspectionValue::Boolean(gap)},
-		{"evicted_frames", InspectionValue::Unsigned(history.evicted)},
-		{"held_captures", InspectionValue::Array(std::move(retained))},
-		{"captures", InspectionValue::Array(std::move(captures))}});
+									{"status", status && status->id == id ? Status(*status) : InspectionValue::Null()},
+									{"current_sequence", InspectionValue::Unsigned(status ? status->id : 0)},
+									{"next_frame", InspectionValue::Unsigned(cursor)},
+									{"more", InspectionValue::Boolean(more)},
+									{"oldest_frame", InspectionValue::Unsigned(oldest)},
+									{"history_gap", InspectionValue::Boolean(gap)},
+									{"evicted_frames", InspectionValue::Unsigned(history.evicted)},
+									{"held_captures", InspectionValue::Array(std::move(retained))},
+									{"captures", InspectionValue::Array(std::move(captures))}});
 }
 InspectionValue SequenceControl::Dispatch(const Message& request, const ControlSession& binding, CommandSource source,
-	Message& response, std::vector<SnapshotRecord>& held)
+										  Message& response, std::vector<SnapshotRecord>& held)
 {
 	switch (static_cast<OpCode>(request.opcode))
 	{
@@ -282,7 +286,7 @@ InspectionValue SequenceControl::Dispatch(const Message& request, const ControlS
 		const auto status = binding.session->Commands().PoseSequenceStatusFor(source);
 		if (!status || status->id != RequireRequestU64(request, tag::SequenceId))
 			throw ControlRequestError{ErrorCode::Conflict,
-				"Sequence stop does not identify the current owned execution"};
+									  "Sequence stop does not identify the current owned execution"};
 		binding.session->StopPoseSequence(source);
 		return Status(*binding.session->Commands().PoseSequenceStatusFor(source));
 	}

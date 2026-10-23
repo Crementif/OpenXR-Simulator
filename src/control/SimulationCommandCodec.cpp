@@ -1,14 +1,13 @@
+#include "Pch.h"
 #include "control/ControlSchema.h"
 #include "control/SimulationControl.h"
 
-#include <array>
 #include <cmath>
+#include <initializer_list>
 #include <stdexcept>
-#include <utility>
+#include <variant>
 
 namespace simxr::control
-{
-namespace
 {
 enum class SimulationCommandKind : std::uint32_t
 {
@@ -31,20 +30,20 @@ struct CommandPayload
 	SimulationCommandKind kind;
 	std::vector<Field> fields;
 };
-template <class Value> Value RequireValue(std::optional<Value> value)
+template <class Value> static Value RequireValue(std::optional<Value> value)
 {
 	if (!value)
 		throw std::invalid_argument("Invalid command field value");
 	return *value;
 }
-const Field& RequireField(const Message& payload, std::uint16_t name)
+static const Field& RequireField(const Message& payload, std::uint16_t name)
 {
 	const auto* field = payload.Find(name);
 	if (!field)
 		throw std::invalid_argument("Missing command field");
 	return *field;
 }
-Message DecodePayload(const Field& field, std::initializer_list<std::uint16_t> known)
+static Message DecodePayload(const Field& field, std::initializer_list<std::uint16_t> known)
 {
 	auto decoded = DecodeFields(field.value);
 	if (decoded.error != DecodeError::None)
@@ -55,7 +54,7 @@ Message DecodePayload(const Field& field, std::initializer_list<std::uint16_t> k
 		throw std::invalid_argument("Unknown required command field");
 	return payload;
 }
-std::vector<Field> DecodeOrderedFields(const Field& field)
+static std::vector<Field> DecodeOrderedFields(const Field& field)
 {
 	auto decoded = DecodeFields(field.value);
 	if (decoded.error != DecodeError::None)
@@ -65,30 +64,30 @@ std::vector<Field> DecodeOrderedFields(const Field& field)
 			throw std::invalid_argument("Invalid command field index");
 	return std::move(decoded.fields);
 }
-std::uint64_t ReadU64(const Message& payload, std::uint16_t name)
+static std::uint64_t ReadU64(const Message& payload, std::uint16_t name)
 {
 	return RequireValue(RequireField(payload, name).AsU64());
 }
-std::uint32_t ReadU32(const Message& payload, std::uint16_t name)
+static std::uint32_t ReadU32(const Message& payload, std::uint16_t name)
 {
 	return RequireValue(RequireField(payload, name).AsU32());
 }
-bool ReadBoolean(const Message& payload, std::uint16_t name)
+static bool ReadBoolean(const Message& payload, std::uint16_t name)
 {
 	return RequireValue(RequireField(payload, name).AsBool());
 }
-float ReadFloat(const Field& field)
+static float ReadFloat(const Field& field)
 {
 	const auto value = RequireValue(field.AsF32());
 	if (!std::isfinite(value))
 		throw std::invalid_argument("Commands require finite values");
 	return value;
 }
-Field EncodeNested(std::uint16_t name, const std::vector<Field>& fields)
+static Field EncodeNested(std::uint16_t name, const std::vector<Field>& fields)
 {
 	return Field::Bytes(name, EncodeFields(fields), true);
 }
-Field EncodeFloats(std::uint16_t name, std::initializer_list<float> values)
+static Field EncodeFloats(std::uint16_t name, std::initializer_list<float> values)
 {
 	std::vector<Field> fields;
 	fields.reserve(values.size());
@@ -96,7 +95,7 @@ Field EncodeFloats(std::uint16_t name, std::initializer_list<float> values)
 		fields.push_back(Field::F32(static_cast<std::uint16_t>(fields.size() + 1), value, true));
 	return EncodeNested(name, fields);
 }
-template <std::size_t Count> std::array<float, Count> DecodeFloats(const Field& field)
+template <std::size_t Count> static std::array<float, Count> DecodeFloats(const Field& field)
 {
 	const auto fields = DecodeOrderedFields(field);
 	if (fields.size() != Count)
@@ -106,28 +105,28 @@ template <std::size_t Count> std::array<float, Count> DecodeFloats(const Field& 
 		values[index] = ReadFloat(fields[index]);
 	return values;
 }
-Field EncodePose(const XrPosef& pose, std::uint16_t fieldTag = tag::Pose)
+static Field EncodePose(const XrPosef& pose, std::uint16_t fieldTag = tag::Pose)
 {
 	return EncodeFloats(fieldTag, {pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w,
-									pose.position.x, pose.position.y, pose.position.z});
+								   pose.position.x, pose.position.y, pose.position.z});
 }
-XrPosef DecodePose(const Field& field)
+static XrPosef DecodePose(const Field& field)
 {
 	const auto values = DecodeFloats<7>(field);
 	return {{values[0], values[1], values[2], values[3]}, {values[4], values[5], values[6]}};
 }
-std::vector<Field> EncodePoseSample(const PoseSample& sample)
+static std::vector<Field> EncodePoseSample(const PoseSample& sample)
 {
 	return {EncodePose(sample.pose), Field::U64(tag::Usage, sample.flags, true)};
 }
-PoseSample DecodePoseSample(const Message& payload)
+static PoseSample DecodePoseSample(const Message& payload)
 {
 	PoseSample sample;
 	sample.pose = DecodePose(RequireField(payload, tag::Pose));
 	sample.flags = ReadU64(payload, tag::Usage);
 	return sample;
 }
-Field EncodeControllerControls(const ControllerControls& controls)
+static Field EncodeControllerControls(const ControllerControls& controls)
 {
 	std::vector<Field> fields;
 	const std::array values{controls.trigger, controls.grip,	   controls.gripForce,	controls.stick.x,
@@ -143,7 +142,7 @@ Field EncodeControllerControls(const ControllerControls& controls)
 		fields.push_back(Field::Bool(static_cast<std::uint16_t>(fields.size() + 1), value, true));
 	return EncodeNested(tag::Controls, fields);
 }
-ControllerControls DecodeControllerControls(const Field& field)
+static ControllerControls DecodeControllerControls(const Field& field)
 {
 	const auto fields = DecodeOrderedFields(field);
 	if (fields.size() != 21)
@@ -162,7 +161,7 @@ ControllerControls DecodeControllerControls(const Field& field)
 		*buttons[index] = RequireValue(fields[index + values.size()].AsBool());
 	return controls;
 }
-std::vector<Field> EncodeBodyControls(const BodyControls& body)
+static std::vector<Field> EncodeBodyControls(const BodyControls& body)
 {
 	std::vector<Field> controls;
 	for (const auto& control : body.controls)
@@ -191,7 +190,7 @@ std::vector<Field> EncodeBodyControls(const BodyControls& body)
 		result.push_back(EncodePose(*body.rootPose));
 	return result;
 }
-BodyControls DecodeBodyControls(const Message& payload)
+static BodyControls DecodeBodyControls(const Message& payload)
 {
 	BodyControls body;
 	body.active = ReadBoolean(payload, tag::Enabled);
@@ -229,45 +228,45 @@ BodyControls DecodeBodyControls(const Message& payload)
 	}
 	return body;
 }
-CommandPayload EncodeCommand(const TakeControl& command)
+static CommandPayload EncodeCommand(const TakeControl& command)
 {
 	return {SimulationCommandKind::TakeControl,
 			{Field::U32(tag::Channel, static_cast<std::uint32_t>(command.channel), true),
 			 Field::Bool(tag::TakeControl, command.replace, true)}};
 }
-CommandPayload EncodeCommand(const ReleaseControl& command)
+static CommandPayload EncodeCommand(const ReleaseControl& command)
 {
 	return {SimulationCommandKind::ReleaseControl,
 			{Field::U32(tag::Channel, static_cast<std::uint32_t>(command.channel), true)}};
 }
-CommandPayload EncodeCommand(const SetHeadPose& command)
+static CommandPayload EncodeCommand(const SetHeadPose& command)
 {
 	return {SimulationCommandKind::HeadPose, EncodePoseSample(command.value)};
 }
-CommandPayload EncodeCommand(const SetControllerPose& command)
+static CommandPayload EncodeCommand(const SetControllerPose& command)
 {
 	auto fields = EncodePoseSample(command.value.pose);
 	fields.push_back(Field::U32(tag::Layer, command.hand, true));
 	fields.push_back(Field::Bool(tag::Enabled, command.value.connected, true));
 	return {SimulationCommandKind::ControllerPose, std::move(fields)};
 }
-CommandPayload EncodeCommand(const SetControllerControls& command)
+static CommandPayload EncodeCommand(const SetControllerControls& command)
 {
 	return {SimulationCommandKind::ControllerControls,
 			{Field::U32(tag::Layer, command.hand, true), EncodeControllerControls(command.value)}};
 }
-CommandPayload EncodeCommand(const SetBodyControls& command)
+static CommandPayload EncodeCommand(const SetBodyControls& command)
 {
 	return {SimulationCommandKind::BodyControls, EncodeBodyControls(command.value)};
 }
-CommandPayload EncodeCommand(const SetGaze& command)
+static CommandPayload EncodeCommand(const SetGaze& command)
 {
 	return {SimulationCommandKind::Gaze,
 			{EncodeFloats(tag::Values, {command.value.yaw, command.value.pitch}),
 			 Field::Bool(tag::Enabled, command.value.available, true),
 			 Field::Bool(tag::Running, command.value.tracked, true)}};
 }
-CommandPayload EncodeCommand(const SetTracker& command)
+static CommandPayload EncodeCommand(const SetTracker& command)
 {
 	const auto& tracker = command.value;
 	std::vector<Field> fields{
@@ -282,7 +281,7 @@ CommandPayload EncodeCommand(const SetTracker& command)
 		fields.push_back(EncodePose(*tracker.poseOverride));
 	return {SimulationCommandKind::Tracker, std::move(fields)};
 }
-CommandPayload EncodeCommand(const SetViewSettings& command)
+static CommandPayload EncodeCommand(const SetViewSettings& command)
 {
 	const auto& settings = command.value;
 	return {SimulationCommandKind::ViewSettings,
@@ -295,23 +294,23 @@ CommandPayload EncodeCommand(const SetViewSettings& command)
 			 Field::U32(tag::Depth, settings.insetWidth, true),
 			 Field::U32(tag::ArrayLayers, settings.insetHeight, true)}};
 }
-CommandPayload EncodeCommand(const SetBodyProportions& command)
+static CommandPayload EncodeCommand(const SetBodyProportions& command)
 {
 	return {SimulationCommandKind::BodyProportions,
 			{EncodeFloats(tag::Values, {command.value.height, command.value.shoulderWidth, command.value.hipWidth})}};
 }
-CommandPayload EncodeCommand(const SetControllerProfile& command)
+static CommandPayload EncodeCommand(const SetControllerProfile& command)
 {
 	return {SimulationCommandKind::ControllerProfile,
 			{Field::U32(tag::Layer, command.hand, true), Field::Text(tag::Detail, command.path, true)}};
 }
-CommandPayload EncodeCommand(const SetScenario& command)
+static CommandPayload EncodeCommand(const SetScenario& command)
 {
 	return {SimulationCommandKind::Scenario,
 			{Field::U32(tag::Scenario, static_cast<std::uint32_t>(command.scenario), true),
 			 Field::Bool(tag::Enabled, command.enabled, true)}};
 }
-CommandPayload EncodeCommand(const SetReferenceSpaces& command)
+static CommandPayload EncodeCommand(const SetReferenceSpaces& command)
 {
 	const auto& local = command.value.local;
 	const auto& stage = command.value.stage;
@@ -324,7 +323,6 @@ CommandPayload EncodeCommand(const SetReferenceSpaces& command)
 			 Field::Bool(3, command.value.stageBounds.has_value(), true),
 			 EncodeFloats(4, {bounds.width, bounds.height})}};
 }
-} // namespace
 
 Field EncodeSimulationCommand(const SimulationCommand& command, std::uint16_t index)
 {
@@ -380,8 +378,8 @@ SimulationCommand DecodeSimulationCommand(const Field& field)
 	}
 	case SimulationCommandKind::Tracker:
 	{
-		const auto fields = DecodePayload(
-			payload, {tag::Layer, tag::Source, tag::Kind, tag::Enabled, tag::Running, tag::Channel, tag::Pose, tag::JointOffset});
+		const auto fields = DecodePayload(payload, {tag::Layer, tag::Source, tag::Kind, tag::Enabled, tag::Running,
+													tag::Channel, tag::Pose, tag::JointOffset});
 		TrackerDevice tracker;
 		tracker.identity = {ReadU64(fields, tag::Source)};
 		tracker.role = static_cast<TrackerRole>(ReadU32(fields, tag::Kind));
