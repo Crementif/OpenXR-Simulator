@@ -1,11 +1,11 @@
 <#
 .SYNOPSIS
-    Build and install the OpenXR Simulator runtime.
+    Build and install the OpenXR Simulator runtime and companion.
 
 .DESCRIPTION
-    Installs openxr_simulator.dll, a relocatable openxr_simulator.json and the
-    activate/deactivate scripts into the target folder, laid out the same way
-    MetaXRSimulator\ is. Only build output lands there, never source.
+    Installs the runtime, Vulkan companion, rig runner, relative manifest and
+    activate/deactivate scripts into the target folder. Only build output lands
+    there, never source.
 
     The dll and scripts are symlinked, so a rebuild is live in BetterVR without
     reinstalling. Creating symlinks needs Developer Mode (or an elevated shell);
@@ -30,23 +30,26 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$build = Join-Path $root 'build'
+$build = Join-Path $root 'out\build\windows-local'
+$output = Join-Path $build 'bin'
 
 $vsRoot = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 if (-not $vsRoot) { throw 'No Visual Studio installation with the C++ toolchain was found.' }
 
 $cmakeDir = Join-Path $vsRoot 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin'
 $ninjaDir = Join-Path $vsRoot 'Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja'
-if (Test-Path $cmakeDir) { $env:PATH = "$cmakeDir;$ninjaDir;$env:PATH" }
+if (Test-Path -LiteralPath $cmakeDir) { $env:PATH = "$cmakeDir;$ninjaDir;$env:PATH" }
 if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) { throw 'cmake was not found on PATH or in the Visual Studio installation.' }
 
 Import-Module (Join-Path $vsRoot 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
 Enter-VsDevShell -VsInstallPath $vsRoot -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
 
-if ($Clean -and (Test-Path $build)) { Remove-Item -Recurse -Force $build }
+if ($Clean -and (Test-Path -LiteralPath $build)) { Remove-Item -LiteralPath $build -Recurse -Force }
 
 Write-Host '==> Configuring' -ForegroundColor Cyan
-cmake -S $root -B $build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake -S $root -B $build -G Ninja -DCMAKE_BUILD_TYPE=Release `
+    -DSIMXR_BUILD_RUNTIME=ON -DSIMXR_BUILD_COMPANION=ON -DSIMXR_BUILD_AUTOMATION=ON `
+    "-DSIMXR_OUTPUT_DIRECTORY:PATH=$output"
 if ($LASTEXITCODE -ne 0) { throw "cmake configure failed ($LASTEXITCODE)" }
 
 Write-Host '==> Building' -ForegroundColor Cyan
@@ -55,16 +58,19 @@ if ($LASTEXITCODE -ne 0) { throw "cmake build failed ($LASTEXITCODE)" }
 ctest --test-dir $build --output-on-failure
 if ($LASTEXITCODE -ne 0) { throw "ctest failed ($LASTEXITCODE)" }
 
-if (-not (Test-Path $InstallTo)) { New-Item -ItemType Directory -Force $InstallTo | Out-Null }
-$InstallTo = (Resolve-Path $InstallTo).Path
+if (-not (Test-Path -LiteralPath $InstallTo)) { New-Item -ItemType Directory -Force $InstallTo | Out-Null }
+$InstallTo = (Resolve-Path -LiteralPath $InstallTo).Path
 
 $linked = 0
 $copied = 0
 function Install-Artifact {
     param([string]$Source, [string]$DestDir)
 
-    $source = (Resolve-Path $Source).Path
-    $dest = Join-Path $DestDir (Split-Path $Source -Leaf)
+    $source = (Resolve-Path -LiteralPath $Source).Path
+    $dest = Join-Path $DestDir (Split-Path $source -Leaf)
+    if ($source -eq [System.IO.Path]::GetFullPath($dest)) {
+        throw 'The installation folder must differ from the build output folder.'
+    }
 
     if (Test-Path -LiteralPath $dest) {
         try { Remove-Item -LiteralPath $dest -Force -ErrorAction Stop }
@@ -84,7 +90,9 @@ function Install-Artifact {
     $script:copied++
 }
 
-Install-Artifact (Join-Path $root 'bin\openxr_simulator.dll') $InstallTo
+foreach ($artifact in 'openxr_simulator.dll', 'simxr_companion.exe', 'simxr_runner.exe') {
+    Install-Artifact (Join-Path $output $artifact) $InstallTo
+}
 Install-Artifact (Join-Path $root 'activate_simulator.ps1') $InstallTo
 Install-Artifact (Join-Path $root 'deactivate_simulator.ps1') $InstallTo
 
@@ -93,7 +101,7 @@ $manifest = @{
     file_format_version = '1.0.0'
     runtime             = @{ library_path = '.\openxr_simulator.dll'; name = 'OpenXR Simulator' }
 } | ConvertTo-Json -Depth 3
-Set-Content -Path (Join-Path $InstallTo 'openxr_simulator.json') -Value $manifest -Encoding ascii
+Set-Content -LiteralPath (Join-Path $InstallTo 'openxr_simulator.json') -Value $manifest -Encoding ascii
 
 Write-Host ''
 if ($linked -gt 0 -and $copied -eq 0) {
@@ -107,6 +115,7 @@ if ($linked -gt 0 -and $copied -eq 0) {
     Write-Host "For developers) or an elevated shell; without it every build needs a reinstall." -ForegroundColor Yellow
 }
 Write-Host ''
+Write-Host "Start the companion: $(Join-Path $InstallTo 'simxr_companion.exe')"
 Write-Host 'Use it per-process (leaves the machine-wide runtime alone):'
 Write-Host "  `$env:XR_RUNTIME_JSON = '$(Join-Path $InstallTo 'openxr_simulator.json')'"
 Write-Host 'or machine-wide with .\activate_simulator.ps1 in that folder.'
