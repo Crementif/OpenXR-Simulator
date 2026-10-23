@@ -1,5 +1,5 @@
 #include "app/TimelinePanel.h"
-#include "app/RecordingController.h"
+#include "app/services/RecordingController.h"
 #include "app/services/Utf8Path.h"
 #include "app/widgets/Controls.h"
 #include "app/Theme.h"

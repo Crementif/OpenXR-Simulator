@@ -108,6 +108,14 @@ add_library(simxr_recording STATIC src/automation/Recording.cpp src/automation/R
 simxr_configure_target(simxr_recording)
 target_link_libraries(simxr_recording PUBLIC simxr_control)
 
+add_library(simxr_app_files STATIC)
+if(WIN32)
+    target_sources(simxr_app_files PRIVATE src/app/platform/windows/FileStorage.cpp)
+else()
+    target_sources(simxr_app_files PRIVATE src/app/platform/FileStorage.cpp)
+endif()
+simxr_configure_target(simxr_app_files)
+
 add_library(simxr_app_settings STATIC
     src/app/services/CompanionSettings.cpp
     src/app/services/PilotBindings.cpp
@@ -121,14 +129,9 @@ elseif(WIN32)
 else()
     target_sources(simxr_app_settings PRIVATE src/app/platform/ChildProcess.cpp)
 endif()
-if(WIN32)
-    target_sources(simxr_app_settings PRIVATE src/app/platform/windows/SettingsStorage.cpp)
-else()
-    target_sources(simxr_app_settings PRIVATE src/app/platform/SettingsStorage.cpp)
-endif()
 simxr_configure_target(simxr_app_settings)
 target_include_directories(simxr_app_settings PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(simxr_app_settings PUBLIC Threads::Threads)
+target_link_libraries(simxr_app_settings PUBLIC Threads::Threads PRIVATE simxr_app_files)
 if(WIN32)
     target_link_libraries(simxr_app_settings PRIVATE advapi32)
 endif()
@@ -156,9 +159,9 @@ endif()
 simxr_configure_target(simxr_connection)
 target_link_libraries(simxr_connection PUBLIC simxr_control)
 
-add_library(simxr_recording_controller STATIC src/app/RecordingController.cpp)
+add_library(simxr_recording_controller STATIC src/app/services/RecordingController.cpp)
 simxr_configure_target(simxr_recording_controller)
-target_link_libraries(simxr_recording_controller PUBLIC simxr_connection simxr_recording)
+target_link_libraries(simxr_recording_controller PUBLIC simxr_connection simxr_recording PRIVATE simxr_app_files)
 
 add_library(simxr_graphics STATIC
     src/graphics/ColorPixels.cpp

@@ -1,5 +1,5 @@
 #include "Pch.h"
-#include "app/platform/SettingsStorage.h"
+#include "app/platform/FileStorage.h"
 #include "app/services/CompanionSettings.h"
 
 #include <cerrno>
@@ -27,18 +27,18 @@ std::filesystem::path CompanionSettingsPath()
 		return Absolute(path) / ".config/OpenXR-Simulator/companion.settings";
 	throw std::runtime_error("No absolute companion configuration directory is available");
 }
-std::filesystem::path CreateSettingsTemporaryFile(const std::filesystem::path& destination)
+std::filesystem::path CreatePrivateTemporaryFile(const std::filesystem::path& destination)
 {
 	auto pattern = destination.native() + ".XXXXXX";
 	const int descriptor = ::mkstemp(pattern.data());
 	if (descriptor < 0)
-		throw std::system_error(errno, std::generic_category(), "Cannot create private companion settings temporary file");
+		throw std::system_error(errno, std::generic_category(), "Cannot create private temporary file");
 	const int closed = ::close(descriptor);
 	const int closeError = errno;
 	try
 	{
 		if (closed != 0)
-			throw std::system_error(closeError, std::generic_category(), "Cannot close companion settings temporary file");
+			throw std::system_error(closeError, std::generic_category(), "Cannot close temporary file");
 		return std::filesystem::path(pattern);
 	}
 	catch (...)
@@ -47,7 +47,7 @@ std::filesystem::path CreateSettingsTemporaryFile(const std::filesystem::path& d
 		throw;
 	}
 }
-void ReplaceSettingsFile(const std::filesystem::path& temporary, const std::filesystem::path& destination)
+void CommitTemporaryFile(const std::filesystem::path& temporary, const std::filesystem::path& destination)
 {
 	std::filesystem::rename(temporary, destination);
 }

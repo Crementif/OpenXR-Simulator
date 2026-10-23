@@ -1,6 +1,6 @@
 #include "app/Library.h"
 #include "app/services/CompanionSettings.h"
-#include "app/RecordingController.h"
+#include "app/services/RecordingController.h"
 #include "app/RuntimePanels.h"
 #include "app/Theme.h"
 #include "app/services/Utf8Path.h"

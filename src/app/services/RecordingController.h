@@ -2,11 +2,17 @@
 
 #include "automation/Recording.h"
 
+#include <condition_variable>
+#include <cstdint>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <string>
+#include <thread>
 
 namespace simxr::app
 {
+class WorkerConnection;
 struct RecordingTarget
 {
 	std::string endpoint;
@@ -44,7 +50,24 @@ class RecordingController
 	RecordingSnapshot Snapshot() const;
 
   private:
-	struct State;
-	std::unique_ptr<State> m_state;
+	struct Job
+	{
+		RecordingAction action;
+		RecordingTarget target;
+		std::uint64_t revision, offset;
+		std::string path;
+	};
+	static control::Message Read(WorkerConnection& connection, const Job& job, std::uint64_t offset);
+	static RecordingSnapshot Execute(WorkerConnection& connection, const Job& job);
+	void Run();
+	mutable std::mutex m_mutex;
+	std::condition_variable m_changed;
+	std::thread m_worker;
+	bool m_stopping = false;
+	std::uint64_t m_revision = 0;
+	RecordingTarget m_target;
+	std::optional<Job> m_pending;
+	RecordingSnapshot m_snapshot;
+	std::shared_ptr<WorkerConnection> m_current;
 };
 } // namespace simxr::app

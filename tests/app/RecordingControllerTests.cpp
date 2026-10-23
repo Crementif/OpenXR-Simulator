@@ -1,5 +1,5 @@
 #include "../TestSupport.h"
-#include "app/RecordingController.h"
+#include "app/services/RecordingController.h"
 #include "app/WorkerConnection.h"
 #include "control/ControlSchema.h"
 #include "control/ControlService.h"
@@ -184,7 +184,7 @@ void SaveAndReplay()
 	controller.SetTarget(host.Target());
 	const auto started = Request(controller, app::RecordingAction::Start);
 	Require(started.error.empty() && started.page && started.page->active, "Start recording failed");
-	const auto destination = host.path / "editable rig.luau";
+	const auto destination = host.path / u8"editable 日本語 rig.luau";
 	{
 		std::ofstream sentinel(destination);
 		sentinel << "keep existing destination";
@@ -231,6 +231,16 @@ void SaveAndReplay()
 		rejectedOpen = true;
 	}
 	Require(rejectedOpen, "Embedded NUL must not reopen a different recording");
+	const auto replacement = Request(controller, app::RecordingAction::Save, destination.string());
+	Require(replacement.error.empty(), "Recording must replace an existing saved file");
+	const auto failedDirectory = host.path / "failed-save";
+	std::filesystem::create_directory(failedDirectory);
+	const auto rejectedSave = Request(controller, app::RecordingAction::Save, failedDirectory.string());
+	Require(!rejectedSave.error.empty() && rejectedSave.savedPath == saved.savedPath &&
+		std::filesystem::is_empty(failedDirectory), "Failed save preserves the last successful recording");
+	for (const auto& entry : std::filesystem::directory_iterator(host.path))
+		Require(entry.path() == destination || entry.path() == failedDirectory ||
+			entry.path().filename() == "control.sock", "Failed save left a temporary recording file");
 	const auto script = Contents(destination);
 	Require(script.find("recorded frame +20") != std::string::npos &&
 				script.find("position = {20,") != std::string::npos,

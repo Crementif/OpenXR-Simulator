@@ -1,7 +1,7 @@
 #include "Pch.h"
 #include "app/services/CompanionSettings.h"
 #include "app/services/Utf8Path.h"
-#include "app/platform/SettingsStorage.h"
+#include "app/platform/FileStorage.h"
 
 #include <cmath>
 #include <fstream>
@@ -375,7 +375,7 @@ void SaveSettings(const std::filesystem::path& path, const CompanionSettings& se
 	if (bytes.size() > s_maxFile)
 		throw std::invalid_argument("Companion settings exceed the file budget");
 	std::filesystem::create_directories(path.parent_path());
-	const auto temporary = CreateSettingsTemporaryFile(path);
+	const auto temporary = CreatePrivateTemporaryFile(path);
 	try
 	{
 		std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
@@ -387,7 +387,7 @@ void SaveSettings(const std::filesystem::path& path, const CompanionSettings& se
 		output.close();
 		if (!output)
 			throw std::runtime_error("Cannot close companion settings temporary file");
-		ReplaceSettingsFile(temporary, path);
+		CommitTemporaryFile(temporary, path);
 	}
 	catch (...)
 	{

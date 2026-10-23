@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app/RecordingController.h"
+#include "app/services/RecordingController.h"
 
 #include <array>
 #include <chrono>

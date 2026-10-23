@@ -6,7 +6,7 @@
 #include "app/services/ProcessSupervisor.h"
 #include "app/PilotController.h"
 #include "app/RunningApps.h"
-#include "app/RecordingController.h"
+#include "app/services/RecordingController.h"
 #include "app/RecordingPanel.h"
 #include "app/RuntimeConnection.h"
 #include "app/RuntimePanels.h"

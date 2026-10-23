@@ -1,5 +1,5 @@
 #include "Pch.h"
-#include "app/platform/SettingsStorage.h"
+#include "app/platform/FileStorage.h"
 #include "app/services/CompanionSettings.h"
 #include "app/services/Utf8Path.h"
 #include "app/WindowsLaunch.h"
@@ -28,7 +28,7 @@ std::filesystem::path CompanionSettingsPath()
 		return Absolute(path) / ".config/OpenXR-Simulator/companion.settings";
 	throw std::runtime_error("No absolute companion configuration directory is available");
 }
-std::filesystem::path CreateSettingsTemporaryFile(const std::filesystem::path& destination)
+std::filesystem::path CreatePrivateTemporaryFile(const std::filesystem::path& destination)
 {
 	static std::atomic<std::uint64_t> s_sequence{0};
 	for (unsigned attempt = 0; attempt < 64; ++attempt)
@@ -42,22 +42,22 @@ std::filesystem::path CreateSettingsTemporaryFile(const std::filesystem::path& d
 		{
 			if (GetLastError() == ERROR_FILE_EXISTS || GetLastError() == ERROR_ALREADY_EXISTS)
 				continue;
-			throw windows::Error("Cannot create companion settings temporary file");
+			throw windows::Error("Cannot create temporary file");
 		}
 		if (!CloseHandle(file))
 		{
-			const auto failure = windows::Error("Cannot close companion settings temporary file");
+			const auto failure = windows::Error("Cannot close temporary file");
 			DeleteFileW(temporary.c_str());
 			throw failure;
 		}
 		return temporary;
 	}
-	throw std::runtime_error("Too many existing companion settings temporary files");
+	throw std::runtime_error("Too many existing temporary files");
 }
-void ReplaceSettingsFile(const std::filesystem::path& temporary, const std::filesystem::path& destination)
+void CommitTemporaryFile(const std::filesystem::path& temporary, const std::filesystem::path& destination)
 {
 	if (!MoveFileExW(temporary.c_str(), destination.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-		throw windows::Error("Cannot replace companion settings");
+		throw windows::Error("Cannot replace destination file");
 }
 bool CanExecuteFile(const std::filesystem::path&)
 {
