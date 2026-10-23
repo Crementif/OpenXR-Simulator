@@ -1,33 +1,29 @@
 #include "presentation/FrameHistory.h"
+#include "Pch.h"
 
-#include <algorithm>
 #include <atomic>
 #include <limits>
 #include <stdexcept>
-#include <utility>
 
 namespace simxr
 {
-namespace
+static SessionGeneration NextGeneration()
 {
-SessionGeneration NextGeneration()
-{
-	static std::atomic<std::uint64_t> next{1};
-	auto value = next.load();
+	static std::atomic<std::uint64_t> s_nextGeneration{1};
+	auto value = s_nextGeneration.load();
 	for (;;)
 	{
 		if (value == std::numeric_limits<std::uint64_t>::max())
 			throw std::overflow_error("Session generations exhausted");
-		if (next.compare_exchange_weak(value, value + 1))
+		if (s_nextGeneration.compare_exchange_weak(value, value + 1))
 			return {value};
 	}
 }
 
-bool Pending(FrameStage stage)
+static bool Pending(FrameStage stage)
 {
 	return stage == FrameStage::Issued || stage == FrameStage::Begun;
 }
-} // namespace
 
 FrameHistory::FrameHistory(std::size_t capacity, std::size_t diagnosticCapacity)
 	: m_capacity(capacity), m_diagnostics(std::make_shared<FrameDiagnosticsJournal>(diagnosticCapacity))
@@ -88,9 +84,9 @@ void FrameHistory::Issue(
 					}))
 		throw std::logic_error("Frame identity already issued");
 	if (sequenceCapture && (!sequenceCapture->request.sequence || !sequenceCapture->request.owner.id ||
-		sequenceCapture->request.frame != prediction.id ||
-		((sequenceCapture->reservation.result == SnapshotAdmission::Accepted) !=
-			(sequenceCapture->reservation.id.value != 0))))
+							sequenceCapture->request.frame != prediction.id ||
+							((sequenceCapture->reservation.result == SnapshotAdmission::Accepted) !=
+							 (sequenceCapture->reservation.id.value != 0))))
 		throw std::invalid_argument("Invalid sequence capture receipt");
 	auto record = std::make_shared<const FrameRecord>(
 		FrameRecord{key, prediction, FrameStage::Issued, {}, std::move(sequenceCapture)});
@@ -173,7 +169,9 @@ std::optional<Duration> FrameRecord::CpuFrameTime() const noexcept
 		if (event.kind == FrameTraceKind::Submitted)
 			end = event.hostTime;
 	}
-	if (!begin || !end || begin->count() < 0 || *end < *begin)
+	if (!begin || !end || *end < *begin)
+		return {};
+	if (begin->count() < 0 && end->count() > std::numeric_limits<Duration::rep>::max() + begin->count())
 		return {};
 	return *end - *begin;
 }
@@ -202,10 +200,19 @@ XrResult FrameHistory::Submit(FrameId frame, FrameSubmissionState state, const s
 		}
 	}
 	const auto submitted = Trace(FrameTraceKind::Submitted, record->key, record->submission->displayTime);
-	if (!m_diagnostics->ReadInto(*diagnostics, 0, 256, record->key))
+	const bool refreshed = m_diagnostics->ReadInto(*diagnostics, 0, 256, record->key);
+	const bool recorded = submitted.sequence && std::any_of(diagnostics->events.begin(), diagnostics->events.end(),
+															[&](const auto& event)
+															{
+																return event.sequence == submitted.sequence;
+															});
+	if (!refreshed || !recorded)
 	{
+		if (diagnostics->events.size() == 256)
+			diagnostics->events.pop_back();
 		diagnostics->events.push_back(submitted); // Reserved before native acceptance.
-		diagnostics->next = submitted.sequence + 1;
+		if (submitted.sequence)
+			diagnostics->next = std::max(diagnostics->next, submitted.sequence + 1);
 		diagnostics->truncated = true;
 	}
 	if (record->submission->outputDisposition == FrameOutputDisposition::Dropped)

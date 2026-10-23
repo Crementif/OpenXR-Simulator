@@ -4,12 +4,20 @@
 #include "presentation/FrameHistory.h"
 
 #include <array>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <mutex>
+#include <vector>
 
 namespace simxr
 {
 class FrameOutput;
-enum class ImageHistoryView { Composed, Quads };
+enum class ImageHistoryView
+{
+	Composed,
+	Quads
+};
 struct HistoricalImage
 {
 	std::shared_ptr<const FrameRecord> metadata;
@@ -41,6 +49,7 @@ struct ImageWindowSnapshot
 class FrameImageWindow
 {
 	friend class FrameImageHistory;
+
   public:
 	static constexpr std::size_t PostCount = 12;
 	static constexpr std::size_t Capacity = 22;
@@ -86,7 +95,8 @@ class FrameImageHistory
 	Retired Clear() noexcept;
 	Retired Append(HistoricalImage image) noexcept;
 	StartedWindow BeginWindow(ImageHistoryView view = ImageHistoryView::Composed);
-	ImageHistorySnapshot Snapshot(std::size_t count = Capacity, ImageHistoryView view = ImageHistoryView::Composed) const;
+	ImageHistorySnapshot Snapshot(std::size_t count = Capacity,
+								  ImageHistoryView view = ImageHistoryView::Composed) const;
 	HistoricalImage Find(FrameKey frame, ImageHistoryView view = ImageHistoryView::Composed) const;
 
   private:

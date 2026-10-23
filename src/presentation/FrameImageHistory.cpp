@@ -1,19 +1,20 @@
 #include "presentation/FrameImageHistory.h"
+#include "Pch.h"
 
-#include <algorithm>
 #include <stdexcept>
-#include <utility>
 
 namespace simxr
 {
-namespace
+static HistoricalImage SelectImage(const HistoricalImage& image, ImageHistoryView view)
 {
-HistoricalImage SelectImage(const HistoricalImage& image, ImageHistoryView view)
-{
-	return {image.metadata, view == ImageHistoryView::Quads ? image.quadOutput : image.output,
-		{}, image.quadBounds, image.quadVisible, view};
+	return {image.metadata,
+			view == ImageHistoryView::Quads ? image.quadOutput : image.output,
+			{},
+			image.quadBounds,
+			image.quadVisible,
+			view};
 }
-} // namespace
+
 FrameImageWindow::~FrameImageWindow()
 {
 	std::array<HistoricalImage, Capacity> retired;

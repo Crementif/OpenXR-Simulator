@@ -1,7 +1,7 @@
 #pragma once
 
-#include "graphics/LayerBuilder.h"
 #include "graphics/FrameGpuTiming.h"
+#include "graphics/LayerBuilder.h"
 #include "presentation/CaptureTypes.h"
 #include "presentation/FrameDiagnosticsJournal.h"
 #include "presentation/FrameTypes.h"
@@ -12,6 +12,7 @@
 #include "simulation/ViewConfiguration.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -102,13 +103,17 @@ class FrameHistory
 	FrameDiagnostics Diagnostics(std::uint64_t after = 0, std::size_t count = 128,
 								 std::optional<FrameKey> frame = {}) const;
 	// GPU observers retain only this bounded journal, never the session or its images.
-	std::shared_ptr<FrameDiagnosticsJournal> DiagnosticsJournal() const { return m_diagnostics; }
+	std::shared_ptr<FrameDiagnosticsJournal> DiagnosticsJournal() const
+	{
+		return m_diagnostics;
+	}
 	SessionGeneration StartGeneration(RuntimeTime origin = {});
 	// Reserve copied diagnostic ownership before committing issue. The callback
 	// must not reenter history. Failure rolls back insertion and eviction.
-	void Issue(const FramePrediction& prediction,
-			   const std::function<void(std::shared_ptr<const FrameRecord>, std::shared_ptr<const FrameRecord>)>&
-				   reserve = {}, std::optional<SequenceCaptureRecord> sequenceCapture = {});
+	void Issue(
+		const FramePrediction& prediction,
+		const std::function<void(std::shared_ptr<const FrameRecord>, std::shared_ptr<const FrameRecord>)>& reserve = {},
+		std::optional<SequenceCaptureRecord> sequenceCapture = {});
 	void Begin(FrameId frame, std::optional<FrameId> discarded = {});
 	// Allocates the immutable record before admission. The callback may submit
 	// native work at the permitted API boundary, but must not reenter this history.

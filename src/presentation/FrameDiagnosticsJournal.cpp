@@ -1,10 +1,8 @@
 #include "presentation/FrameDiagnosticsJournal.h"
+#include "Pch.h"
 
-#include <algorithm>
-#include <chrono>
 #include <limits>
 #include <stdexcept>
-#include <utility>
 
 namespace simxr
 {
@@ -88,7 +86,7 @@ FrameDiagnostics FrameDiagnosticsJournal::Read(std::uint64_t after, std::size_t 
 }
 
 bool FrameDiagnosticsJournal::ReadInto(FrameDiagnostics& snapshot, std::uint64_t after, std::size_t count,
-									  std::optional<FrameKey> frame) const noexcept
+									   std::optional<FrameKey> frame) const noexcept
 {
 	if (count > 256 || snapshot.events.capacity() < std::min(count, m_events.size()))
 		return false;
@@ -105,7 +103,7 @@ bool FrameDiagnosticsJournal::ReadInto(FrameDiagnostics& snapshot, std::uint64_t
 }
 
 void FrameDiagnosticsJournal::CopyLocked(FrameDiagnostics& snapshot, std::uint64_t after, std::size_t count,
-										std::optional<FrameKey> frame) const noexcept
+										 std::optional<FrameKey> frame) const noexcept
 {
 	snapshot.events.clear();
 	snapshot.truncated = false;

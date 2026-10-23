@@ -61,6 +61,18 @@ void MeasuredFrameTiming()
 	diagnostics->events = {begin, end};
 	diagnostics->events.back().hostTime = Duration{0};
 	Require(!frame.CpuFrameTime(), "CPU span accepted a backwards host clock");
+	diagnostics->events.front().hostTime = Duration{-6000000};
+	diagnostics->events.back().hostTime = Duration{-1000000};
+	Require(frame.CpuFrameTime() == Duration{5000000}, "CPU span rejected an ordered negative host epoch");
+	diagnostics->events.front().hostTime = Duration{-1000000};
+	diagnostics->events.back().hostTime = Duration{4000000};
+	Require(frame.CpuFrameTime() == Duration{5000000}, "CPU span rejected a representable interval across zero");
+	diagnostics->events.front().hostTime = Duration{std::numeric_limits<Duration::rep>::min()};
+	diagnostics->events.back().hostTime = Duration{-1};
+	Require(frame.CpuFrameTime() == Duration{std::numeric_limits<Duration::rep>::max()},
+			"CPU span rejected the largest representable interval");
+	diagnostics->events.back().hostTime = Duration{0};
+	Require(!frame.CpuFrameTime(), "CPU span overflowed an unrepresentable host interval");
 }
 
 void IndependentDiagnosticJournal()
@@ -303,6 +315,29 @@ void SubmissionObserverLifetime()
 	Require(observer->Trace(FrameTraceKind::ImageRetired, key, {Duration{100}}).sequence == 5 &&
 		observer->Read(0, 16, key).events.back().kind == FrameTraceKind::ImageRetired,
 		"Late native image retirement must not depend on a destroyed session/history");
+	FrameHistory crowded(2, 1024);
+	const auto crowdedObserver = crowded.DiagnosticsJournal();
+	const FrameKey crowdedKey{crowded.StartGeneration(), {1}};
+	const FramePrediction prediction{crowdedKey.frame, {1}, {Duration{100}}, Duration{10}};
+	crowded.Issue(prediction);
+	crowded.Begin(prediction.id);
+	FrameSubmissionState submission;
+	submission.displayTime = prediction.displayTime;
+	const auto result = crowded.Submit(prediction.id, std::move(submission),
+		[&]
+		{
+			for (std::size_t index = 0; index < 300; ++index)
+				crowdedObserver->Trace(FrameTraceKind::Validation, crowdedKey, prediction.displayTime);
+			failDiagnosticAllocation = true;
+			return XR_SUCCESS;
+		});
+	const bool allocationFree = std::exchange(failDiagnosticAllocation, false);
+	const auto record = crowded.Find(crowdedKey);
+	const auto& diagnostics = *record->submission->diagnostics;
+	Require(result == XR_SUCCESS && allocationFree && diagnostics.truncated && diagnostics.events.size() == 256 &&
+			diagnostics.events.back().kind == FrameTraceKind::Submitted &&
+			diagnostics.events.back().sequence == diagnostics.next - 1,
+			"Bounded CPU trace lost the accepted submission milestone or allocated after native acceptance");
 }
 
 void DiagnosticHistory()
