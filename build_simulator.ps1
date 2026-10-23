@@ -93,6 +93,11 @@ function Install-Artifact {
 foreach ($artifact in 'openxr_simulator.dll', 'simxr_companion.exe', 'simxr_runner.exe') {
     Install-Artifact (Join-Path $output $artifact) $InstallTo
 }
+$fonts = Join-Path $InstallTo 'fonts'
+$fontLicense = Join-Path $InstallTo 'share\licenses\simxr_companion'
+New-Item -ItemType Directory -Force $fonts, $fontLicense | Out-Null
+Install-Artifact (Join-Path $root 'resources\fonts\AdwaitaSans-Regular.ttf') $fonts
+Install-Artifact (Join-Path $root 'resources\fonts\ADWAITA-SANS-LICENSE.txt') $fontLicense
 Install-Artifact (Join-Path $root 'activate_simulator.ps1') $InstallTo
 Install-Artifact (Join-Path $root 'deactivate_simulator.ps1') $InstallTo
 
