@@ -41,6 +41,7 @@ class RecordingPanel
 	void Save();
 	RecordingController m_controller;
 	RecordingTarget m_target;
+	std::optional<RecordingTarget> m_popupTarget;
 	std::filesystem::path m_directory;
 	std::chrono::steady_clock::time_point m_nextRead{};
 	std::string m_error;

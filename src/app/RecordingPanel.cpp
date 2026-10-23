@@ -29,6 +29,10 @@ void RecordingPanel::SetTarget(RecordingTarget target)
 	m_target = std::move(target);
 	m_nextRead = {};
 	m_saving = false;
+	m_startRequested = m_stopRequested = m_discarded = false;
+	m_saved.reset();
+	m_popupTarget.reset();
+	m_error.clear();
 }
 RecordingSnapshot RecordingPanel::Snapshot() const
 {
@@ -82,7 +86,10 @@ void RecordingPanel::DrawPopovers(bool supported)
 	if (!state.busy && std::exchange(m_startRequested, false) && supported && !active)
 	{
 		if (state.page && state.page->total && state.savedPath.empty() && !m_discarded)
+		{
+			m_popupTarget = m_target;
 			ImGui::OpenPopup("Replace unsaved take?");
+		}
 		else
 			Start();
 	}
@@ -91,10 +98,17 @@ void RecordingPanel::DrawPopovers(bool supported)
 		const auto now = std::time(nullptr);
 		std::strftime(m_name.data(), m_name.size(), "Take %Y-%m-%d %H-%M-%S", std::localtime(&now));
 		m_error.clear();
+		m_popupTarget = m_target;
 		ImGui::OpenPopup("Save take");
 	}
 	if (ImGui::BeginPopup("Replace unsaved take?"))
 	{
+		if (m_popupTarget != m_target)
+		{
+			ImGui::CloseCurrentPopup();
+			ImGui::EndPopup();
+			return;
+		}
 		ImGui::TextUnformatted("The last take is not saved");
 		if (ImGui::Button("Record new take"))
 		{
@@ -108,6 +122,12 @@ void RecordingPanel::DrawPopovers(bool supported)
 	}
 	if (!ImGui::BeginPopup("Save take"))
 		return;
+	if (m_popupTarget != m_target)
+	{
+		ImGui::CloseCurrentPopup();
+		ImGui::EndPopup();
+		return;
+	}
 	const float unit = ImGui::GetFontSize() / 17;
 	ImGui::TextUnformatted("Save take");
 	if (state.page)

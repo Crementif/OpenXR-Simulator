@@ -5,6 +5,7 @@
 #include "app/ProcessSupervisor.h"
 #include "app/RunningApps.h"
 #include "app/RecordingController.h"
+#include "app/RecordingPanel.h"
 #include "app/RuntimeConnection.h"
 #include "app/RuntimePanels.h"
 #include "app/HistoryStore.h"
@@ -3783,6 +3784,22 @@ int main()
 					},
 					"Resize did not rebuild the swapchain");
 				test.CheckControls();
+			}
+			{
+				RecordingPanel recording;
+				recording.SetTarget({"retired-recording-target", 1, 1});
+				recording.RequestStart();
+				recording.SetTarget({"replacement-recording-target", 2, 1});
+				test.extraDraw = [&]
+				{
+					ImGui::Begin("Recording scope probe");
+					recording.DrawPopovers(true);
+					ImGui::End();
+				};
+				test.Frame();
+				const auto state = recording.Snapshot();
+				Require(!state.busy && state.error.empty(), "Stale recording click reached the replacement target");
+				test.extraDraw = {};
 			}
 			CheckTimelineCanvas(test);
 			test.CheckFocusLoss();

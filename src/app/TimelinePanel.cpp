@@ -36,7 +36,7 @@ const char* Phase(automation::RigPhase phase)
 template <typename T> void Bounded(std::vector<T>& values)
 {
 	if (values.size() > 128)
-		values.erase(values.begin());
+		values.erase(values.begin(), values.end() - 128);
 }
 RuntimeFrameRun RunOf(const RuntimeView& state)
 {
