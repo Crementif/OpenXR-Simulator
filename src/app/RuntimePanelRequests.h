@@ -29,7 +29,8 @@ class RuntimePanelRequests
 					   std::vector<std::shared_ptr<control::TransferHandle>> handles = {});
 	bool Has(PanelWork kind, std::uint64_t id = 0) const;
 	bool Pending() const noexcept;
-	void Release(control::OpCode code, std::uint16_t field, std::uint64_t id);
+	void Release(control::OpCode code, std::uint16_t field, std::uint64_t id,
+				 std::uint64_t session = 0, std::uint64_t generation = 0);
 	void FlushReleases();
 	std::string TakeError();
 
@@ -38,7 +39,7 @@ class RuntimePanelRequests
 	{
 		control::OpCode code = control::OpCode::ReleaseImage;
 		std::uint16_t field = 0;
-		std::uint64_t id = 0, epoch = 0;
+		std::uint64_t id = 0, epoch = 0, session = 0, generation = 0;
 	};
 	RuntimeConnection m_connection;
 	std::map<std::uint64_t, PanelTask> m_tasks;

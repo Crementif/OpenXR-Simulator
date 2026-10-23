@@ -397,6 +397,42 @@ void ActualConnectionAndDebugger()
 	Require(!debugger.Status().fields.empty(), "Reconnect status-reset regression requires an observed status");
 	requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId, reader);
 	requests.Send(wire::OpCode::Sessions, app::PanelWork::Sessions);
+	const auto retiredSession = debugger.Selected();
+	while (requests.Send(wire::OpCode::Sessions, app::PanelWork::Sessions))
+	{
+	}
+	debugger.ChooseSession({});
+	Require(!debugger.HasLease() && debugger.Relinquishing() && requests.Pending(),
+			"Full transport queue lost the deferred debugger release");
+	bool relinquished = false;
+	Eventually(
+		[&]
+		{
+			requests.FlushReleases();
+			for (const auto& reply : requests.Poll())
+				if (reply.response.packet.message.opcode == static_cast<std::uint16_t>(wire::OpCode::Relinquish))
+				{
+					Require(reply.task.session == retiredSession.id && reply.task.generation == retiredSession.generation &&
+							reply.response.error.empty() && app::panel::U32(reply.response.packet.message, tag::Error, 1) == 0,
+							"Deferred release lost the original session or failed to release its lease");
+					relinquished = true;
+				}
+			return relinquished && !debugger.Relinquishing();
+		},
+		"Debugger release did not recover after request capacity became available");
+	debugger.ChooseSession(retiredSession);
+	while (requests.Send(wire::OpCode::Sessions, app::PanelWork::Sessions))
+	{
+	}
+	debugger.Command(wire::CommandKind::Pause);
+	Eventually(
+		[&]
+		{
+			pump();
+			return debugger.HasLease() && !debugger.Operations().empty() &&
+				debugger.Operations().back().phase == "complete";
+		},
+		"Deferred command did not retry lease acquisition after queue pressure");
 	requests.Connect(server.Path());
 	Eventually(
 		[&]

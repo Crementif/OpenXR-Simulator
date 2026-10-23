@@ -60,7 +60,7 @@ std::vector<DebuggerCaptureEvent> DebuggerPanelController::TakeCaptures()
 }
 bool DebuggerPanelController::Pending() const
 {
-	return m_requests.Has(Work::Acquire) || m_requests.Has(Work::Command) ||
+	return m_deferred.has_value() || m_requests.Has(Work::Acquire) || m_requests.Has(Work::Command) ||
 		   std::any_of(m_operations.begin(), m_operations.end(),
 					   [](const auto& operation)
 					   {
@@ -82,11 +82,7 @@ void DebuggerPanelController::ResetEpoch()
 void DebuggerPanelController::Relinquish()
 {
 	if (m_lease)
-	{
-		auto fields = SessionFields();
-		fields.push_back(wire::Field::U64(tag::Lease, m_lease));
-		m_requests.Send(wire::OpCode::Relinquish, Work::Release, std::move(fields));
-	}
+		m_requests.Release(wire::OpCode::Relinquish, tag::Lease, m_lease, m_selected.id, m_selected.generation);
 	m_lease = 0;
 	m_manual = false;
 	m_deferred.reset();
@@ -116,7 +112,7 @@ void DebuggerPanelController::Command(wire::CommandKind kind, std::uint64_t capt
 	if (!m_lease)
 	{
 		m_deferred = DeferredCommand{kind, capture, raw, layer, view};
-		if (!m_requests.Has(Work::Acquire))
+		if (!Relinquishing() && !m_requests.Has(Work::Acquire))
 			m_requests.Send(wire::OpCode::Acquire, Work::Acquire, SessionFields());
 		return;
 	}
@@ -317,6 +313,8 @@ bool DebuggerPanelController::Handle(const PanelTask& task, const wire::Message&
 void DebuggerPanelController::Poll()
 {
 	const auto now = Clock::now();
+	if (m_deferred && !m_lease && !Relinquishing() && !m_requests.Has(Work::Acquire))
+		m_requests.Send(wire::OpCode::Acquire, Work::Acquire, SessionFields());
 	if (now >= m_nextSessions && !m_requests.Has(Work::Sessions))
 	{
 		m_requests.Send(wire::OpCode::Sessions, Work::Sessions);

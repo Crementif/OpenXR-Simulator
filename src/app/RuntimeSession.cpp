@@ -246,10 +246,8 @@ void RuntimeSession::Reply(const PanelReply& response)
 		if (task.kind == Work::Inspect)
 			m_requests.Release(wire::OpCode::ReleaseInspection, tag::InspectionId, U64(message, tag::InspectionId));
 		if (task.kind == Work::Acquire && U64(message, tag::Lease))
-			m_requests.Send(wire::OpCode::Relinquish, Work::Release,
-							{wire::Field::U64(tag::Session, task.session),
-							 wire::Field::U64(tag::Generation, task.generation),
-							 wire::Field::U64(tag::Lease, U64(message, tag::Lease))});
+			m_requests.Release(wire::OpCode::Relinquish, tag::Lease, U64(message, tag::Lease),
+							   task.session, task.generation);
 		return;
 	}
 	const auto error = U32(message, tag::Error, static_cast<std::uint32_t>(wire::ErrorCode::Internal));
