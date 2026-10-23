@@ -178,14 +178,18 @@ bool WorkspacePanels::Divider(const char* id, ShellRect strip, bool vertical, fl
 void WorkspacePanels::DrawShell(RuntimePanels& runtime)
 {
 	const auto* viewport = ImGui::GetMainViewport();
+	const auto origin = ImGui::GetStyle().WindowPadding;
 	ImGui::SetNextWindowPos(viewport->WorkPos);
 	ImGui::SetNextWindowSize(viewport->WorkSize);
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {0, 0});
 	ImGui::Begin("OpenXR Simulator", nullptr,
 				 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
 					 ImGuiWindowFlags_NoBringToFrontOnFocus);
-	const float scale = m_settings.scale, width = ImGui::GetContentRegionAvail().x;
-	const float height = ImGui::GetContentRegionAvail().y;
-	const auto origin = ImGui::GetCursorPos();
+	ImGui::PopStyleVar();
+	// Inset the main regions while letting the timeline reach the shell's left and bottom edges.
+	const float scale = m_settings.scale, width = ImGui::GetContentRegionAvail().x - origin.x * 2;
+	const float height = ImGui::GetContentRegionAvail().y - origin.y * 2;
+	ImGui::SetCursorPos(origin);
 	ImGui::BeginChild("Top bar", {width, 40 * scale}, 0, ImGuiWindowFlags_NoScrollbar);
 	DrawToolbar(runtime);
 	ImGui::EndChild();
@@ -265,9 +269,10 @@ void WorkspacePanels::DrawShell(RuntimePanels& runtime)
 	StoreCrop(runtime.PreviewCrop());
 	if (!focus)
 	{
-		ImGui::SetCursorPos({origin.x, top + previewHeight + gap});
+		const float timelineTop = top + previewHeight + gap;
+		ImGui::SetCursorPos({0, timelineTop});
 		ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::Surface);
-		ImGui::BeginChild("Timeline", {left, timelineSize}, 0,
+		ImGui::BeginChild("Timeline", {origin.x + left, viewport->WorkSize.y - timelineTop}, 0,
 						  m_settings.timelineFolded ? ImGuiWindowFlags_NoScrollbar : ImGuiWindowFlags_None);
 		const bool libraryOpen = m_shell.library;
 		if (m_timeline.Draw(runtime, m_shell, m_settings.timelineFolded))
@@ -306,8 +311,8 @@ void WorkspacePanels::DrawShell(RuntimePanels& runtime)
 		if (!overlay && Divider("Inspector divider", {origin.x + left - 3 * scale, top, 6 * scale, bodyHeight}, true,
 								m_settings.inspectorWidth, 280, compact ? 320 : 520, 340, inspectorFolded, 200))
 			FoldInspector();
-		if (Divider("Timeline divider", {origin.x, top + previewHeight, left, gap}, false, m_settings.timelineHeight,
-					56, height / scale * .5f, 132, m_settings.timelineFolded, 40))
+		if (Divider("Timeline divider", {0, top + previewHeight, origin.x + left, gap}, false,
+					m_settings.timelineHeight, 56, height / scale * .5f, 132, m_settings.timelineFolded, 40))
 			FoldTimeline();
 	}
 	const auto state = m_shell.session.state;

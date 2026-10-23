@@ -1011,8 +1011,34 @@ void CheckTimelineWorkflow(Interaction& test)
 void CheckShell()
 {
 	Interaction test;
+	test.live = true;
+	const auto checkTimeline = [&]
+	{
+		const auto* viewport = ImGui::GetMainViewport();
+		const auto* timeline = FindPanel("Timeline");
+		const auto* preview = FindPanel("GPU preview");
+		Require(timeline && preview, "Shell regions missing");
+		Require(std::abs(timeline->Pos.x - viewport->WorkPos.x) < 1 &&
+				std::abs(timeline->Pos.y + timeline->Size.y - viewport->WorkPos.y - viewport->WorkSize.y) < 1,
+				"Timeline has outer left or bottom margins");
+		Require(std::abs(timeline->Pos.x + timeline->Size.x - preview->Pos.x - preview->Size.x) < 1,
+				"Timeline does not align with the preview's right edge");
+		Require(!timeline->ScrollbarX && !timeline->ScrollbarY && timeline->ContentSize.x <= timeline->Size.x + 1,
+				"Timeline controls overflow their region");
+	};
+	const auto capture = [&](const char* name)
+	{
+		checkTimeline();
+		if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
+		{
+			std::filesystem::create_directories(directory);
+			test.renderer.RequestScreenshot(directory / name);
+			test.Frame();
+		}
+	};
 	for (int i = 0; i < 4; ++i)
 		test.Frame();
+	capture("shell-normal.bmp");
 	const auto preview = FindPanel("GPU preview");
 	const auto inspector = FindPanel("Inspector");
 	Require(preview && inspector && !preview->DockId && !inspector->DockId, "Shell still uses docks");
@@ -1040,6 +1066,17 @@ void CheckShell()
 	test.Frame();
 	test.Frame();
 	Require(std::abs(FindPanel("GPU preview")->Size.x - width) < 1, "Preview restore changed layout");
+	ImGui::ActivateItemByID(FindPanel("Timeline divider tab")->GetID("##Edge"));
+	for (int i = 0; i < 3; ++i)
+		test.Frame();
+	capture("shell-folded.bmp");
+	ImGui::ActivateItemByID(FindPanel("Timeline divider tab")->GetID("##Edge"));
+	test.Frame();
+	test.window.Resize(800, 720);
+	test.workspace.SetScale(1.5f);
+	for (int i = 0; i < 6; ++i)
+		test.Frame();
+	capture("shell-narrow-large.bmp");
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Shell generated validation errors");
 }
@@ -6233,6 +6270,12 @@ int main()
 			return 0;
 		}
 #endif
+		if (std::getenv("SIMXR_SHELL_QA"))
+		{
+			CheckShell();
+			std::cout << "PASS fixed shell, focus restore and timeline edges at normal, folded and narrow enlarged layouts\n";
+			return 0;
+		}
 		if (std::getenv("SIMXR_DEVICE_HEADER_QA"))
 		{
 			ConfigureObservedDevices();
