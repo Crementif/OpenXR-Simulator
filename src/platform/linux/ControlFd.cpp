@@ -1,21 +1,18 @@
 #include "platform/linux/ControlFd.h"
+#include "Pch.h"
 
 #include <cerrno>
 #include <fcntl.h>
-#include <limits>
 #include <stdexcept>
 #include <system_error>
 #include <unistd.h>
-#include <utility>
 
 namespace simxr::control
 {
-namespace
-{
-struct Descriptor
+struct ControlFdGuard
 {
 	int value;
-	~Descriptor()
+	~ControlFdGuard()
 	{
 		if (value >= 0)
 		{
@@ -25,7 +22,7 @@ struct Descriptor
 		}
 	}
 };
-void CloseOnExec(int fd)
+static void CloseOnExec(int fd)
 {
 	int flags;
 	do
@@ -42,13 +39,13 @@ void CloseOnExec(int fd)
 	if (result < 0)
 		throw std::system_error(errno, std::generic_category(), "Set control FD close-on-exec");
 }
-class OwnedFd final : public TransferHandle
+class OwnedControlFd final : public TransferHandle
 {
   public:
-	explicit OwnedFd(int fd) noexcept : m_fd(fd) {}
-	~OwnedFd() override
+	explicit OwnedControlFd(int fd) noexcept : m_fd(fd) {}
+	~OwnedControlFd() override
 	{
-		Descriptor cleanup{m_fd};
+		ControlFdGuard cleanup{m_fd};
 	}
 	TransferHandleKind Kind() const noexcept override
 	{
@@ -66,14 +63,13 @@ class OwnedFd final : public TransferHandle
   private:
 	const int m_fd;
 };
-} // namespace
 std::shared_ptr<TransferHandle> OwnControlFd(int fd)
 {
-	Descriptor pending{fd};
+	ControlFdGuard pending{fd};
 	if (fd < 0)
 		throw std::invalid_argument("Control FD must be a valid owned descriptor");
 	CloseOnExec(fd);
-	auto result = std::make_shared<OwnedFd>(fd);
+	auto result = std::make_shared<OwnedControlFd>(fd);
 	pending.value = -1;
 	return result;
 }

@@ -1,4 +1,5 @@
 #include "platform/linux/LinuxRuntimeStatus.h"
+#include "Pch.h"
 
 #include "control/legacy/LegacyFileChannel.h"
 #include "control/legacy/LegacyInput.h"
@@ -8,7 +9,6 @@
 #include <locale>
 #include <sstream>
 #include <stdexcept>
-#include <utility>
 
 namespace simxr
 {

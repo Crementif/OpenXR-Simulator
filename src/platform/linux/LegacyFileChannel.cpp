@@ -1,17 +1,14 @@
 #include "control/legacy/LegacyFileChannel.h"
+#include "Pch.h"
 #include "json.h"
 
-#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
-#include <limits>
 #include <linux/fs.h>
 #include <poll.h>
-#include <span>
 #include <sstream>
 #include <stdexcept>
-#include <string_view>
 #include <sys/eventfd.h>
 #include <sys/inotify.h>
 #include <sys/stat.h>
@@ -19,13 +16,10 @@
 #include <system_error>
 #include <type_traits>
 #include <unistd.h>
-#include <utility>
 
 namespace simxr
 {
-namespace
-{
-enum class CommandIndex : std::size_t
+enum class LegacyCommandIndex : std::size_t
 {
 	HeadPose,
 	Ipd,
@@ -36,32 +30,32 @@ enum class CommandIndex : std::size_t
 	Capture,
 	ProjectionDump
 };
-constexpr std::array CommandNames{
+static constexpr std::array s_commandNames{
 	"head_pose_command.json",		"ipd_command.json",		 "fov_command.json",		"controller_pose_command.json",
 	"controller_hold_command.json", "sequence_command.json", "screenshot_request.json", "projection_log_dump_request"};
-constexpr std::array OutputNames{"runtime_status.json", "frame_info.json", "projection_log.json"};
-constexpr std::size_t MaxCommandBytes = 64 * 1024;
-constexpr std::size_t MaxSequenceBytes = 16 * 1024 * 1024;
-constexpr std::size_t MaxDocumentBytes = 1024 * 1024;
-constexpr std::size_t MaxScreenshotBytes = 512 * 1024 * 1024;
-constexpr std::size_t MaxScreenshots = 4;
-constexpr std::size_t MaxLogMessages = 64;
+static constexpr std::array s_outputNames{"runtime_status.json", "frame_info.json", "projection_log.json"};
+static constexpr std::size_t s_maxCommandBytes = 64 * 1024;
+static constexpr std::size_t s_maxSequenceBytes = 16 * 1024 * 1024;
+static constexpr std::size_t s_maxDocumentBytes = 1024 * 1024;
+static constexpr std::size_t s_maxScreenshotBytes = 512 * 1024 * 1024;
+static constexpr std::size_t s_maxScreenshots = 4;
+static constexpr std::size_t s_maxLogMessages = 64;
 
-class FileDescriptor
+class LegacyFileDescriptor
 {
   public:
-	explicit FileDescriptor(int descriptor) : m_descriptor(descriptor)
+	explicit LegacyFileDescriptor(int descriptor) : m_descriptor(descriptor)
 	{
 		if (descriptor < 0)
 			throw std::system_error(errno, std::generic_category(), "Open legacy file descriptor");
 	}
-	~FileDescriptor()
+	~LegacyFileDescriptor()
 	{
 		if (m_descriptor >= 0)
 			close(m_descriptor);
 	}
-	FileDescriptor(const FileDescriptor&) = delete;
-	FileDescriptor& operator=(const FileDescriptor&) = delete;
+	LegacyFileDescriptor(const LegacyFileDescriptor&) = delete;
+	LegacyFileDescriptor& operator=(const LegacyFileDescriptor&) = delete;
 	int Get() const
 	{
 		return m_descriptor;
@@ -70,14 +64,14 @@ class FileDescriptor
 	{
 		const auto descriptor = std::exchange(m_descriptor, -1);
 		if (descriptor >= 0 && close(descriptor) != 0)
-			throw std::system_error(errno, std::generic_category(), "Close legacy output");
+			throw std::system_error(errno, std::generic_category(), "Close legacy file");
 	}
 
   private:
 	int m_descriptor;
 };
 
-struct FileIdentity
+struct LegacyFileIdentity
 {
 	std::uint64_t device = 0;
 	std::uint64_t inode = 0;
@@ -90,13 +84,13 @@ struct FileIdentity
 	}
 };
 
-std::optional<std::string> ReadRegularFile(const std::filesystem::path& path, std::size_t limit,
-										   FileIdentity* identity = nullptr)
+static std::optional<std::string> ReadRegularFile(const std::filesystem::path& path, std::size_t limit,
+												  LegacyFileIdentity* identity = nullptr)
 {
 	const auto descriptor = open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW);
 	if (descriptor < 0 && errno == ENOENT)
 		return {};
-	FileDescriptor file(descriptor);
+	LegacyFileDescriptor file(descriptor);
 	struct stat information{};
 	if (fstat(file.Get(), &information) != 0)
 		throw std::system_error(errno, std::generic_category(), "Inspect legacy command");
@@ -119,10 +113,11 @@ std::optional<std::string> ReadRegularFile(const std::filesystem::path& path, st
 			throw std::runtime_error("Legacy command changed while being read");
 		offset += static_cast<std::size_t>(count);
 	}
+	file.Close();
 	return text;
 }
 
-void WriteBytes(int descriptor, std::span<const std::byte> bytes)
+static void WriteBytes(int descriptor, std::span<const std::byte> bytes)
 {
 	while (!bytes.empty())
 	{
@@ -135,16 +130,16 @@ void WriteBytes(int descriptor, std::span<const std::byte> bytes)
 	}
 }
 
-class AtomicFile
+class LegacyAtomicFile
 {
   public:
-	explicit AtomicFile(std::filesystem::path destination)
+	explicit LegacyAtomicFile(std::filesystem::path destination)
 		: m_destination(std::move(destination)),
-		  m_temporary(m_destination.string() + ".tmp." + std::to_string(getpid())),
+		  m_temporary(std::filesystem::path(m_destination).concat(".tmp." + std::to_string(getpid()))),
 		  m_file(open(m_temporary.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW, 0644))
 	{
 	}
-	~AtomicFile()
+	~LegacyAtomicFile()
 	{
 		if (!m_committed)
 			unlink(m_temporary.c_str());
@@ -166,19 +161,18 @@ class AtomicFile
   private:
 	std::filesystem::path m_destination;
 	std::filesystem::path m_temporary;
-	FileDescriptor m_file;
+	LegacyFileDescriptor m_file;
 	bool m_committed = false;
 };
 
-void WriteAtomic(const std::filesystem::path& path, std::span<const std::byte> first,
-				 std::span<const std::byte> second = {})
+static void WriteAtomic(const std::filesystem::path& path, std::span<const std::byte> first,
+						std::span<const std::byte> second = {})
 {
-	AtomicFile file(path);
+	LegacyAtomicFile file(path);
 	file.Write(first);
 	file.Write(second);
 	file.Commit();
 }
-} // namespace
 
 class LegacyFileChannel::Notifications
 {
@@ -196,9 +190,9 @@ class LegacyFileChannel::Notifications
 		{
 		}
 	}
-	std::array<bool, CommandNames.size()> Wait()
+	std::array<bool, s_commandNames.size()> Wait()
 	{
-		std::array<bool, CommandNames.size()> changed{};
+		std::array<bool, s_commandNames.size()> changed{};
 		std::array<pollfd, 2> descriptors{{{m_events.Get(), POLLIN, 0}, {m_wake.Get(), POLLIN, 0}}};
 		int result;
 		do
@@ -232,8 +226,8 @@ class LegacyFileChannel::Notifications
 				else if (event.len && !(event.mask & IN_ISDIR))
 				{
 					const std::string_view name(event.name, strnlen(event.name, event.len));
-					for (std::size_t index = 0; index < CommandNames.size(); ++index)
-						if (name == CommandNames[index])
+					for (std::size_t index = 0; index < s_commandNames.size(); ++index)
+						if (name == s_commandNames[index])
 							changed[index] = true;
 				}
 				offset += sizeof(inotify_event) + event.len;
@@ -243,8 +237,8 @@ class LegacyFileChannel::Notifications
 	}
 
   private:
-	FileDescriptor m_events;
-	FileDescriptor m_wake;
+	LegacyFileDescriptor m_events;
+	LegacyFileDescriptor m_wake;
 };
 
 LegacyFileChannel::LegacyFileChannel(std::filesystem::path directory, std::filesystem::path initialSequence)
@@ -252,11 +246,11 @@ LegacyFileChannel::LegacyFileChannel(std::filesystem::path directory, std::files
 {
 	std::filesystem::create_directories(m_directory);
 	m_notifications = std::make_unique<Notifications>(m_directory);
-	m_screenshots.reserve(MaxScreenshots);
-	m_logs.reserve(MaxLogMessages);
+	m_screenshots.reserve(s_maxScreenshots);
+	m_logs.reserve(s_maxLogMessages);
 	if (!initialSequence.empty())
 	{
-		const auto text = ReadRegularFile(initialSequence, MaxSequenceBytes);
+		const auto text = ReadRegularFile(initialSequence, s_maxSequenceBytes);
 		std::istringstream stream(text.value_or(""));
 		m_commands.sequence = LegacyInput::ReadSequence(stream, false);
 	}
@@ -297,7 +291,7 @@ LegacyFileRequests LegacyFileChannel::TakeRequests()
 bool LegacyFileChannel::Publish(LegacyOutputFile file, std::string document)
 {
 	const auto index = static_cast<std::size_t>(file);
-	if (index >= m_outputs.size() || document.size() > MaxDocumentBytes)
+	if (index >= m_outputs.size() || document.size() > s_maxDocumentBytes)
 		return false;
 	std::optional<std::string> output(std::move(document));
 	{
@@ -313,13 +307,13 @@ bool LegacyFileChannel::Publish(LegacyOutputFile file, std::string document)
 bool LegacyFileChannel::SaveScreenshot(LegacyScreenshot& screenshot)
 {
 	const auto pixels = std::uint64_t{screenshot.width} * screenshot.height;
-	if (!pixels || pixels > MaxScreenshotBytes / 4 || pixels * 4 != screenshot.bgra.size() ||
-		screenshot.status.size() > MaxDocumentBytes)
+	if (!pixels || pixels > s_maxScreenshotBytes / 4 || pixels * 4 != screenshot.bgra.size() ||
+		screenshot.status.size() > s_maxDocumentBytes)
 		throw std::invalid_argument("Invalid legacy screenshot dimensions or byte count");
 	const auto expected = pixels * 4;
 	{
 		std::lock_guard lock(m_mutex);
-		if (m_stopping || m_screenshotCount == MaxScreenshots || expected > MaxScreenshotBytes - m_screenshotBytes)
+		if (m_stopping || m_screenshotCount == s_maxScreenshots || expected > s_maxScreenshotBytes - m_screenshotBytes)
 			return false;
 		m_screenshots.push_back(std::move(screenshot));
 		++m_screenshotCount;
@@ -337,7 +331,7 @@ bool LegacyFileChannel::Log(std::string message)
 		std::lock_guard lock(m_mutex);
 		if (m_stopping)
 			return false;
-		if (m_logs.size() == MaxLogMessages)
+		if (m_logs.size() == s_maxLogMessages)
 		{
 			++m_status.droppedLogs;
 			return false;
@@ -392,9 +386,9 @@ void LegacyFileChannel::RecordError(std::string_view detail) noexcept
 
 void LegacyFileChannel::ReadCommand(std::size_t index)
 {
-	const auto command = static_cast<CommandIndex>(index);
-	const auto path = m_directory / CommandNames[index];
-	const auto claimed = path.string() + ".pending." + std::to_string(getpid());
+	const auto command = static_cast<LegacyCommandIndex>(index);
+	const auto path = m_directory / s_commandNames[index];
+	const auto claimed = std::filesystem::path(path).concat(".pending." + std::to_string(getpid()));
 	bool staged = false;
 	{
 		std::lock_guard lock(m_mutex);
@@ -409,8 +403,8 @@ void LegacyFileChannel::ReadCommand(std::size_t index)
 	}
 	try
 	{
-		FileIdentity identity;
-		const auto text = ReadRegularFile(claimed, MaxCommandBytes, &identity);
+		LegacyFileIdentity identity;
+		const auto text = ReadRegularFile(claimed, s_maxCommandBytes, &identity);
 		if (!text)
 			return;
 		if (index < m_commands.input.size())
@@ -419,17 +413,17 @@ void LegacyFileChannel::ReadCommand(std::size_t index)
 			std::lock_guard lock(m_mutex);
 			m_commands.input[index].swap(document);
 		}
-		else if (command == CommandIndex::Sequence)
+		else if (command == LegacyCommandIndex::Sequence)
 		{
 			const json::Object document(text->c_str());
-			const auto sequence = ReadRegularFile(document.string("path"), MaxSequenceBytes);
+			const auto sequence = ReadRegularFile(document.string("path"), s_maxSequenceBytes);
 			std::istringstream stream(sequence.value_or(""));
 			std::optional<LegacyInput::Sequence> prepared(
 				LegacyInput::ReadSequence(stream, document.boolean("loop", false)));
 			std::lock_guard lock(m_mutex);
 			m_commands.sequence.swap(prepared);
 		}
-		else if (command == CommandIndex::Capture)
+		else if (command == LegacyCommandIndex::Capture)
 		{
 			const json::Object document(text->c_str());
 			std::optional<LegacyCaptureRequest> capture(
@@ -446,7 +440,7 @@ void LegacyFileChannel::ReadCommand(std::size_t index)
 			m_requests.projectionLog = true;
 		}
 		staged = true;
-		WriteFile((std::string(CommandNames[index]) + ".received").c_str(), identity.Receipt());
+		WriteFile((std::string(s_commandNames[index]) + ".received").c_str(), identity.Receipt());
 		std::filesystem::remove(claimed);
 	}
 	catch (const std::exception& error)
@@ -494,7 +488,8 @@ void LegacyFileChannel::AppendLog(const std::vector<std::string>& messages)
 	if (messages.empty())
 		return;
 	const auto path = m_directory / ("openxr_simulator." + std::to_string(getpid()) + ".log");
-	FileDescriptor file(open(path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK, 0644));
+	LegacyFileDescriptor file(
+		open(path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK, 0644));
 	struct stat information{};
 	if (fstat(file.Get(), &information) != 0 || !S_ISREG(information.st_mode))
 		throw std::runtime_error("Legacy log requires a regular file");
@@ -510,18 +505,18 @@ void LegacyFileChannel::Run() noexcept
 {
 	try
 	{
-		std::array<bool, CommandNames.size()> changed;
+		std::array<bool, s_commandNames.size()> changed;
 		changed.fill(true);
 		std::vector<LegacyScreenshot> screenshots;
 		std::vector<std::string> logs;
-		screenshots.reserve(MaxScreenshots);
-		logs.reserve(MaxLogMessages);
+		screenshots.reserve(s_maxScreenshots);
+		logs.reserve(s_maxLogMessages);
 		for (;;)
 		{
 			for (std::size_t index = 0; index < changed.size(); ++index)
 				if (changed[index])
 					ReadCommand(index);
-			std::array<std::optional<std::string>, OutputNames.size()> outputs;
+			std::array<std::optional<std::string>, s_outputNames.size()> outputs;
 			bool stopping;
 			{
 				std::lock_guard lock(m_mutex);
@@ -535,7 +530,7 @@ void LegacyFileChannel::Run() noexcept
 				{
 					try
 					{
-						WriteFile(OutputNames[index], *outputs[index]);
+						WriteFile(s_outputNames[index], *outputs[index]);
 					}
 					catch (const std::exception& error)
 					{
