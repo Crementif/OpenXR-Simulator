@@ -124,8 +124,8 @@ void TestScreenshotOwnershipAndPublication()
 				std::uint8_t(bitmap[59]) == 255 && std::uint8_t(bitmap[61]) == 9,
 			"Caller mutation changed retained image/alpha bytes");
 	const auto status = Read(directory.Path() / "screenshot_status.json");
-	Require(json::Object(status.c_str()).string("eye") == "left\"\n" &&
-		json::Object(status.c_str()).string("layer") == "projection\\", "Screenshot status did not escape request text");
+	Require(json::Object(status.c_str()).String("eye") == "left\"\n" &&
+		json::Object(status.c_str()).String("layer") == "projection\\", "Screenshot status did not escape request text");
 	Require(status.find("\"requestFrame\":42") != std::string::npos &&
 				status.find("\"capturedFrame\":43") != std::string::npos,
 			"Image completion status lost request/source identity");
@@ -187,7 +187,7 @@ void TestCaptureFailureAndQuadFrameIdentity()
 			return Read(directory.Path() / "screenshot_status.json").find("\"capturedFrame\":43") != std::string::npos;
 		},
 		"Delayed quad status was not published");
-	Require(json::Object(Read(directory.Path() / "screenshot_status.json").c_str()).string("eye") == "right\"\n",
+	Require(json::Object(Read(directory.Path() / "screenshot_status.json").c_str()).String("eye") == "right\"\n",
 		"Quad status did not escape request text");
 	capture.RequestScreenshot({"right", "quad"});
 	Require(!capture.SubmitQuad(true, 43) && !capture.FailScreenshot("old map failed", 43) &&
@@ -259,7 +259,7 @@ void TestNumericFailureAndClassicJson()
 	const auto commandPath = directory.Path() / "head_pose_command.json";
 	{
 		std::ofstream command(commandPath);
-		command << "{\"x\":1e300}";
+		command << "{\"x\":1e999}";
 	}
 	Eventually(
 		[&]
@@ -298,8 +298,8 @@ void TestNumericFailureAndClassicJson()
 	capture.Close();
 	files->Close();
 	const auto text = Read(directory.Path() / "runtime_status.json");
-	Require(json::Object(text.c_str()).string("format") == status.format &&
-		json::Object(text.c_str()).string("session_state") == status.state, "Runtime status did not escape text");
+	Require(json::Object(text.c_str()).String("format") == status.format &&
+		json::Object(text.c_str()).String("session_state") == status.state, "Runtime status did not escape text");
 	Require(text.find("\"yaw\":0.25") != std::string::npos && text.find("\"timestamp\":") != std::string::npos,
 			"Ambient locale or status preparation changed the legacy JSON contract");
 	Require(!files->WaitForImageCapacity(0), "Closed worker allowed a new capacity waiter");

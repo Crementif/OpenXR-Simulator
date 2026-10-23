@@ -21,6 +21,7 @@ add_library(simxr_openxr_headers INTERFACE)
 target_include_directories(simxr_openxr_headers INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
 add_library(simxr_core STATIC
+    src/Json.cpp
     src/Math.cpp
     src/platform/Clock.cpp
     src/graphics/SnapshotBudget.cpp
@@ -510,7 +511,7 @@ if(BUILD_TESTING)
     simxr_add_test(windows_legacy_channel_tests tests/control/WindowsLegacyChannelTests.cpp windows_legacy_channel)
     target_link_libraries(windows_legacy_channel_tests PRIVATE simxr_control)
     simxr_add_test(flicker_diagnostics_tests tests/diagnostics/FlickerDiagnosticsTests.cpp flicker_diagnostics)
-    target_link_libraries(flicker_diagnostics_tests PRIVATE simxr_diagnostics)
+    target_link_libraries(flicker_diagnostics_tests PRIVATE simxr_diagnostics simxr_core)
     simxr_add_test(legacy_capture_image_tests tests/control/LegacyCaptureImageTests.cpp legacy_capture_image)
     target_link_libraries(legacy_capture_image_tests PRIVATE simxr_control)
     simxr_add_test(legacy_input_tests tests/control/LegacyInputTests.cpp legacy_input)

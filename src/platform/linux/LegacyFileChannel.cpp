@@ -416,10 +416,10 @@ void LegacyFileChannel::ReadCommand(std::size_t index)
 		else if (command == LegacyCommandIndex::Sequence)
 		{
 			const json::Object document(text->c_str());
-			const auto sequence = ReadRegularFile(document.string("path"), s_maxSequenceBytes);
+			const auto sequence = ReadRegularFile(document.String("path"), s_maxSequenceBytes);
 			std::istringstream stream(sequence.value_or(""));
 			std::optional<LegacyInput::Sequence> prepared(
-				LegacyInput::ReadSequence(stream, document.boolean("loop", false)));
+				LegacyInput::ReadSequence(stream, document.Boolean("loop", false)));
 			std::lock_guard lock(m_mutex);
 			m_commands.sequence.swap(prepared);
 		}
@@ -427,7 +427,7 @@ void LegacyFileChannel::ReadCommand(std::size_t index)
 		{
 			const json::Object document(text->c_str());
 			std::optional<LegacyCaptureRequest> capture(
-				LegacyCaptureRequest{document.string("eye", "both"), document.string("layer", "projection")});
+				LegacyCaptureRequest{document.String("eye", "both"), document.String("layer", "projection")});
 			if ((capture->eye != "left" && capture->eye != "right" && capture->eye != "both") ||
 				(capture->layer != "projection" && capture->layer != "quad" && capture->layer != "all"))
 				throw std::invalid_argument("Invalid legacy capture eye or layer selection");

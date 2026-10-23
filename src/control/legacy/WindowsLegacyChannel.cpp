@@ -214,7 +214,7 @@ std::string ReadDocument(const std::filesystem::path& path)
 }
 double FiniteNumber(const json::Object& document, const char* field, double fallback)
 {
-	const auto value = document.number(field, fallback);
+	const auto value = document.Number(field, fallback);
 	if (!std::isfinite(value) || std::abs(value) > std::numeric_limits<float>::max())
 		throw std::invalid_argument("Compatibility command requires finite representable numeric fields");
 	return value;
@@ -224,7 +224,7 @@ HeadPoseCommand DecodeHeadPose(const std::string& text)
 {
 	HeadPoseCommand command;
 	json::Object document(text.c_str());
-	if (!document.valid())
+	if (!document.Valid())
 		return command;
 
 	command.valid = true;
@@ -233,7 +233,7 @@ HeadPoseCommand DecodeHeadPose(const std::string& text)
 	command.z = FiniteNumber(document, "z", 0.0f);
 	command.yaw = FiniteNumber(document, "yaw", 0.0f);
 	command.pitch = FiniteNumber(document, "pitch", 0.0f);
-	command.hasRoll = document.has("roll");
+	command.hasRoll = document.Has("roll");
 	if (command.hasRoll)
 		command.roll = FiniteNumber(document, "roll", 0.0f);
 	return command;
@@ -243,19 +243,19 @@ FovCommand DecodeFov(const std::string& text)
 {
 	FovCommand command;
 	json::Object document(text.c_str());
-	if (!document.valid())
+	if (!document.Valid())
 		return command;
 
 	command.valid = true;
-	if (document.has("clear"))
+	if (document.Has("clear"))
 	{
 		command.clear = true;
 		return command;
 	}
 	auto parseEye = [&](const char* eyeKey, int eyeIndex)
 	{
-		json::Object eye = document.object(eyeKey);
-		if (!eye.valid())
+		json::Object eye = document.Child(eyeKey);
+		if (!eye.Valid())
 			return;
 		command.angleLeft[eyeIndex] = FiniteNumber(eye, "aL", -1.0f);
 		command.angleRight[eyeIndex] = FiniteNumber(eye, "aR", 1.0f);
@@ -271,11 +271,11 @@ IpdCommand DecodeIpd(const std::string& text)
 {
 	IpdCommand command;
 	json::Object document(text.c_str());
-	if (!document.valid())
+	if (!document.Valid())
 		return command;
 
 	command.valid = true;
-	if (document.has("clear"))
+	if (document.Has("clear"))
 	{
 		command.clear = true;
 		return command;
@@ -288,7 +288,7 @@ IpdCommand DecodeIpd(const std::string& text)
 HeadsetProfileCommand DecodeHeadsetProfile(const std::string& text)
 {
 	HeadsetProfileCommand command;
-	std::string name = json::Object(text.c_str()).string("name");
+	std::string name = json::Object(text.c_str()).String("name");
 	if (name.empty())
 		return command;
 	std::size_t nameLength = std::min(name.size(), sizeof(command.name) - 1);
@@ -302,11 +302,11 @@ PoseSweepCommand DecodePoseSweep(const std::string& text)
 {
 	PoseSweepCommand command;
 	json::Object document(text.c_str());
-	if (!document.valid())
+	if (!document.Valid())
 		return command;
 
 	command.valid = true;
-	command.enabled = document.boolean("enabled", false);
+	command.enabled = document.Boolean("enabled", false);
 	command.yawAmpDeg = FiniteNumber(document, "yaw_amp_deg", 30.0f);
 	command.pitchAmpDeg = FiniteNumber(document, "pitch_amp_deg", 15.0f);
 	command.rollAmpDeg = FiniteNumber(document, "roll_amp_deg", 15.0f);
@@ -318,11 +318,11 @@ AnaglyphCommand DecodeAnaglyph(const std::string& text)
 {
 	AnaglyphCommand command;
 	json::Object document(text.c_str());
-	if (!document.valid())
+	if (!document.Valid())
 		return command;
 
 	command.valid = true;
-	command.enabled = document.boolean("enabled", false);
+	command.enabled = document.Boolean("enabled", false);
 	return command;
 }
 
@@ -330,7 +330,7 @@ ControllerPoseCommand DecodeControllerPose(const std::string& text)
 {
 	ControllerPoseCommand command;
 	json::Object document(text.c_str());
-	if (!document.valid())
+	if (!document.Valid())
 		return command;
 
 	command.valid = true;
@@ -359,11 +359,11 @@ ControllerHoldCommand DecodeControllerHold(const std::string& text)
 {
 	ControllerHoldCommand command;
 	json::Object document(text.c_str());
-	if (!document.valid())
+	if (!document.Valid())
 		return command;
 
 	command.valid = true;
-	command.clear = document.boolean("clear", FiniteNumber(document, "clear", 0.0f) != 0.0f);
+	command.clear = document.Boolean("clear", FiniteNumber(document, "clear", 0.0f) != 0.0f);
 	command.hand = static_cast<int>(std::clamp(FiniteNumber(document, "hand", -1),
 											   static_cast<double>(std::numeric_limits<int>::min()),
 											   static_cast<double>(std::numeric_limits<int>::max())));
@@ -385,11 +385,11 @@ WheelSweepCommand DecodeWheelSweep(const std::string& text)
 {
 	WheelSweepCommand command;
 	json::Object document(text.c_str());
-	if (!document.valid())
+	if (!document.Valid())
 		return command;
 
 	command.valid = true;
-	command.enabled = document.boolean("enabled", FiniteNumber(document, "enabled", 1.0f) != 0.0f);
+	command.enabled = document.Boolean("enabled", FiniteNumber(document, "enabled", 1.0f) != 0.0f);
 	command.hubX = FiniteNumber(document, "hubX", command.hubX);
 	command.hubY = FiniteNumber(document, "hubY", command.hubY);
 	command.hubZ = FiniteNumber(document, "hubZ", command.hubZ);
@@ -406,12 +406,12 @@ BurstCommand DecodeBurst(const std::string& text)
 {
 	BurstCommand command;
 	json::Object document(text.c_str());
-	if (!document.valid())
+	if (!document.Valid())
 		return command;
 	command.valid = true;
 	command.frames = static_cast<int>(std::clamp(FiniteNumber(document, "frames", 16), 1.0, 64.0));
-	json::Object pose = document.object("pose");
-	if (pose.valid())
+	json::Object pose = document.Child("pose");
+	if (pose.Valid())
 	{
 		command.pose.valid = true;
 		command.pose.x = FiniteNumber(pose, "x", 0.0f);
@@ -419,7 +419,7 @@ BurstCommand DecodeBurst(const std::string& text)
 		command.pose.z = FiniteNumber(pose, "z", 0.0f);
 		command.pose.yaw = FiniteNumber(pose, "yaw", 0.0f);
 		command.pose.pitch = FiniteNumber(pose, "pitch", 0.0f);
-		command.pose.hasRoll = pose.has("roll");
+		command.pose.hasRoll = pose.Has("roll");
 		if (command.pose.hasRoll)
 			command.pose.roll = FiniteNumber(pose, "roll", 0.0f);
 	}
@@ -656,7 +656,7 @@ void WindowsLegacyChannel::Stage(WindowsCommandFile command, const std::string& 
 	case WindowsCommandFile::Screenshot:
 	{
 		json::Object parsed(document.c_str());
-		ScreenshotRequest request{parsed.string("eye", "both"), parsed.string("layer", "projection")};
+		ScreenshotRequest request{parsed.String("eye", "both"), parsed.String("layer", "projection")};
 		std::lock_guard lock(m_mutex);
 		std::swap(m_requests.capture, request);
 		m_requests.screenshot = true;

@@ -1,8 +1,8 @@
 #include "../TestSupport.h"
 #include "Math.h"
+#include "control/legacy/LegacyInput.h"
 #include "json.h"
 #include <limits>
-#include "control/legacy/LegacyInput.h"
 
 #include <cmath>
 #include <iostream>
@@ -110,31 +110,41 @@ void TestSequencePlayback()
 void TestSequenceProgram()
 {
 	using namespace simxr;
-	std::istringstream input(R"({"frame":9007199254740993,"head":{"x":1}})" "\n"
-		R"({"frame":"9007199254740993","capture":true})" "\n"
-		R"({"frame":18446744073709551615,"right":{"trigger":0.5}})" "\n"
-		R"({"frame":18446744073709551616,"head":{"x":99}})" "\n"
-		R"({"frame":"","head":{"x":99}})" "\n");
+	std::istringstream input(R"({"frame":9007199254740993,"head":{"x":1}})"
+							 "\n"
+							 R"({"frame":"9007199254740993","capture":true})"
+							 "\n"
+							 R"({"frame":18446744073709551615,"right":{"trigger":0.5}})"
+							 "\n"
+							 R"({"frame":18446744073709551616,"head":{"x":99}})"
+							 "\n"
+							 R"({"frame":"","head":{"x":99}})"
+							 "\n");
 	auto program = LegacyInput::ReadSequence(input, false);
 	Require(program.Size() == 3 && program.Steps()[0].frame.value == 9007199254740993ULL &&
-		program.Steps()[1].capture && program.Steps()[2].frame.value == UINT64_MAX,
-		"Pose program lost exact frame identity, stable ordering or overflow validation");
+				program.Steps()[1].capture && program.Steps()[2].frame.value == UINT64_MAX,
+			"Pose program lost exact frame identity, stable ordering or overflow validation");
 	PoseSequencePlayback playback;
 	playback.Start(std::move(program), {0});
-	Require(playback.NextFrame() == FrameId{9007199254740993ULL} &&
-		playback.Advance({9007199254740992ULL}).empty(), "Pose step ran before its exact frame");
+	Require(playback.NextFrame() == FrameId{9007199254740993ULL} && playback.Advance({9007199254740992ULL}).empty(),
+			"Pose step ran before its exact frame");
 	const auto grouped = playback.Advance({9007199254740993ULL});
-	Require(grouped.size() == 2 && grouped[0].head && grouped[1].capture &&
-		playback.NextFrame() == FrameId{UINT64_MAX}, "Equal-frame steps were split or reordered");
+	Require(grouped.size() == 2 && grouped[0].head && grouped[1].capture && playback.NextFrame() == FrameId{UINT64_MAX},
+			"Equal-frame steps were split or reordered");
 	Require(playback.Advance({UINT64_MAX}).size() == 1 && playback.Complete() && !playback.NextFrame(),
-		"Last representable frame did not finish exactly once");
+			"Last representable frame did not finish exactly once");
 
-	std::istringstream loop(R"({"frame":1,"capture":true})" "\n" R"({"frame":3,"head":{"x":4}})" "\n");
+	std::istringstream loop(R"({"frame":1,"capture":true})"
+							"\n"
+							R"({"frame":3,"head":{"x":4}})"
+							"\n");
 	playback.Start(LegacyInput::ReadSequence(loop, true), {10});
 	Require(playback.NextFrame() == FrameId{11} && playback.Advance({13}).size() == 2 &&
-		playback.NextFrame() == FrameId{15}, "Loop cursor did not preserve its inclusive final frame");
+				playback.NextFrame() == FrameId{15},
+			"Loop cursor did not preserve its inclusive final frame");
 	Require(playback.Advance({25}).size() == 2 && playback.Advance({25}).empty() &&
-		playback.NextFrame() == FrameId{27} && !playback.Complete(), "Loop jump repeated a consumed step");
+				playback.NextFrame() == FrameId{27} && !playback.Complete(),
+			"Loop jump repeated a consumed step");
 	bool rejected = false;
 	try
 	{
@@ -163,6 +173,29 @@ void TestSequenceProgram()
 	Require(playback.Complete() && !playback.NextFrame(), "Empty replacement did not stop playback");
 }
 
+void TestReadFailure()
+{
+	class FailingBuffer final : public std::stringbuf
+	{
+	  public:
+		FailingBuffer() : std::stringbuf("{\"frame\":0,\"head\":{\"x\":1}}\n") {}
+		int_type underflow() override
+		{
+			throw std::runtime_error("Injected sequence read error");
+		}
+	} buffer;
+	std::istream input(&buffer);
+	bool rejected = false;
+	try
+	{
+		(void)simxr::LegacyInput::ReadSequence(input, false);
+	}
+	catch (const std::runtime_error&)
+	{
+		rejected = true;
+	}
+	Require(rejected && input.bad(), "Sequence read failure published a partial program");
+}
 } // namespace
 
 int main()
@@ -171,12 +204,21 @@ int main()
 	{
 		for (const char* text : {R"({"value":1e300})", R"({"value":-1e300})", R"({"value":NaN})",
 								 R"({"value":Infinity})", R"({"value":2147483648})", R"({"value":-2147483649})"})
-			Require(json::Object(text).number("value", 17) == 17,
+			Require(json::Object(text).Number("value", 17) == 17,
 					"Unrepresentable compatibility integer must preserve its default");
-		Require(json::Object(R"({"value":-2.75})").number("value", 17) == -2 &&
-				json::Object(R"({"value":2147483647})").number("value", 17) == (std::numeric_limits<int>::max)() &&
-				json::Object(R"({"value":-2147483648})").number("value", 17) == (std::numeric_limits<int>::min)(),
+		Require(json::Object(R"({"value":-2.75})").Number("value", 17) == -2 &&
+					json::Object(R"({"value":2147483647})").Number("value", 17) == (std::numeric_limits<int>::max)() &&
+					json::Object(R"({"value":-2147483648})").Number("value", 17) == (std::numeric_limits<int>::min)(),
 				"Compatibility integers must retain truncation and exact boundaries");
+		Require(json::Object(R"({"value":1e40})").Number("value", 0.25f) == 0.25f &&
+					json::Object(R"({"value":-1e40})").Number("value", 0.25f) == 0.25f &&
+					json::Object(R"({"value":1.25e-2})").Number("value", 0.0) == 0.0125,
+				"Compatibility decimals lost their value or overflowed a float");
+		Require(json::Object(R"({"value":"\u03bb\ud83d\ude00"})").String("value") == "\xce\xbb\xf0\x9f\x98\x80" &&
+					json::Object(R"({"value":"ok\ud800"})").String("value") == "ok" &&
+					json::Object(R"({"value":"ok\udc00"})").String("value") == "ok",
+				"Unicode escape decoding emitted an unpaired surrogate");
+		TestReadFailure();
 		TestInputOwnership();
 		TestOpticsAndInvalidValues();
 		TestSequencePlayback();

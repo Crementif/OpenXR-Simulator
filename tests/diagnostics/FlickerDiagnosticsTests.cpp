@@ -92,7 +92,7 @@ void ClassificationAndDrain()
 	Require(status.fileErrors == 0, "Accepted incident files finish successfully");
 	const auto incidentText = ReadJson(incident.lastDirectory / "incident.json");
 	const json::Object document(incidentText.c_str());
-	Require(document.string("reason") == "VISIBLE_TO_BLANK_FRAME" && document.number("triggerFrame", 0) == 6,
+	Require(document.String("reason") == "VISIBLE_TO_BLANK_FRAME" && document.Number("triggerFrame", 0) == 6,
 			"Incident metadata describes the trigger snapshot");
 	const auto image = incident.lastDirectory / "frame6_color_L.bmp";
 	std::ifstream bitmap(image, std::ios::binary);
@@ -102,8 +102,8 @@ void ClassificationAndDrain()
 	Require(bitmap.good() && pixel == std::array<uint8_t, 3>{0, 0, 0}, "Worker owns immutable sampled CPU pixels");
 	const auto finalText = ReadJson(directory.Path() / fs::path(u8"évidence") / "flicker_status.json");
 	const json::Object final(finalText.c_str());
-	Require(final.boolean("closed", false) && final.number("outstandingArtifacts", -1) == 0 &&
-				final.number("failedPaints", 0) == 1,
+	Require(final.Boolean("closed", false) && final.Number("outstandingArtifacts", -1) == 0 &&
+				final.Number("failedPaints", 0) == 1,
 			"Final status is published after the complete drain");
 	diagnostics.ObserveSubmission(99, 0, 0);
 	diagnostics.ObservePaint(0, false);
@@ -272,7 +272,7 @@ void ManualCaptureAndRecovery()
 	Require(!diagnostics.NeedsPixels(), "Close revokes pending readback demand");
 	const auto status = diagnostics.Status();
 	Require(!fs::exists(directory.Path() / "flicker_capture_request.json"), "Manual request is consumed");
-	Require(json::Object(ReadJson(status.preview.incidents.lastDirectory / "incident.json").c_str()).string("reason") ==
+	Require(json::Object(ReadJson(status.preview.incidents.lastDirectory / "incident.json").c_str()).String("reason") ==
 				"MANUAL_CAPTURE",
 			"Accepted manual artifact is drained on Close");
 
@@ -312,7 +312,7 @@ void ManualCaptureAndRecovery()
 	for (uint64_t frame = 2; frame < 20; ++frame)
 		failing.ObserveSubmission(frame, 0, 0);
 	failing.Close();
-	Require(json::Object(ReadJson(blocked / "flicker_status.json").c_str()).number("fileErrors", 0) > 0,
+	Require(json::Object(ReadJson(blocked / "flicker_status.json").c_str()).Number("fileErrors", 0) > 0,
 			"Worker recovers from an unusable output directory");
 	for (const auto& entry : fs::recursive_directory_iterator(directory.Path()))
 		Require(entry.path().filename().string().find(".tmp.") == std::string::npos,

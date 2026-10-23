@@ -1,49 +1,46 @@
-#include "LegacyInput.h"
+#include "control/legacy/LegacyInput.h"
+#include "Pch.h"
 
 #include "Math.h"
 #include "json.h"
 
-#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <istream>
 #include <limits>
 #include <stdexcept>
-#include <utility>
 
 namespace simxr
 {
-namespace
+static std::optional<float> ReadNumber(const json::Object& document, const char* name)
 {
-std::optional<float> ReadNumber(const json::Object& document, const char* name)
-{
-	if (!document.has(name))
+	if (!document.Has(name))
 		return {};
-	const float value = document.number(name, std::numeric_limits<float>::quiet_NaN());
+	const float value = document.Number(name, std::numeric_limits<float>::quiet_NaN());
 	return std::isfinite(value) ? std::optional{value} : std::nullopt;
 }
 
-float NumberOr(const json::Object& document, const char* name, float fallback)
+static float NumberOr(const json::Object& document, const char* name, float fallback)
 {
 	return ReadNumber(document, name).value_or(fallback);
 }
 
-std::optional<bool> ReadButton(const json::Object& document, const char* name)
+static std::optional<bool> ReadButton(const json::Object& document, const char* name)
 {
-	if (!document.has(name))
+	if (!document.Has(name))
 		return {};
-	const bool whenFalse = document.boolean(name, false);
-	if (whenFalse == document.boolean(name, true))
+	const bool whenFalse = document.Boolean(name, false);
+	if (whenFalse == document.Boolean(name, true))
 		return whenFalse;
 	const auto number = ReadNumber(document, name);
 	return number ? std::optional{*number != 0} : std::nullopt;
 }
 
-std::optional<std::uint64_t> SequenceFrame(const json::Object& document)
+static std::optional<std::uint64_t> SequenceFrame(const json::Object& document)
 {
-	if (!document.has("frame"))
+	if (!document.Has("frame"))
 		return 0;
-	auto text = document.raw("frame");
+	auto text = document.Raw("frame");
 	if (text.empty())
 		return {};
 	const bool quoted = text.size() >= 2 && text.front() == '"' && text.back() == '"';
@@ -58,19 +55,18 @@ std::optional<std::uint64_t> SequenceFrame(const json::Object& document)
 	if (quoted)
 		return {};
 	// Preserve legacy fractional/exponent inputs only where double conversion is exact enough.
-	const double value = document.number("frame", std::numeric_limits<double>::quiet_NaN());
+	const double value = document.Number("frame", std::numeric_limits<double>::quiet_NaN());
 	if (!std::isfinite(value) || value > 9007199254740991.0)
 		return {};
 	return static_cast<std::uint64_t>(std::max(0.0, value));
 }
 
-void ApplyPosition(XrVector3f& position, const std::array<std::optional<float>, 3>& update)
+static void ApplyPosition(XrVector3f& position, const std::array<std::optional<float>, 3>& update)
 {
 	position.x = update[0].value_or(position.x);
 	position.y = update[1].value_or(position.y);
 	position.z = update[2].value_or(position.z);
 }
-} // namespace
 
 LegacyInput::LegacyInput()
 {
@@ -90,7 +86,7 @@ LegacyInput::ControllerUpdate LegacyInput::DecodeController(const json::Object& 
 {
 	ControllerUpdate update;
 	update.position = {ReadNumber(document, "posX"), ReadNumber(document, "posY"), ReadNumber(document, "posZ")};
-	if (document.has("yaw") || document.has("pitch") || document.has("roll"))
+	if (document.Has("yaw") || document.Has("pitch") || document.Has("roll"))
 		update.orientation =
 			EulerAngles(NumberOr(document, "yaw", 0), NumberOr(document, "pitch", 0), NumberOr(document, "roll", 0));
 	update.trigger = ReadNumber(document, "trigger");
@@ -133,7 +129,7 @@ void LegacyInput::ApplyControllerHold(const json::Object& document)
 		if (selectedHand >= 0 && selectedHand != static_cast<int>(hand))
 			continue;
 		auto& controls = m_controllers[hand].controls;
-		if (document.boolean("clear", NumberOr(document, "clear", 0) != 0))
+		if (document.Boolean("clear", NumberOr(document, "clear", 0) != 0))
 			controls = {};
 		ControllerUpdate update;
 		update.trigger = ReadNumber(document, "trigger");
@@ -141,7 +137,7 @@ void LegacyInput::ApplyControllerHold(const json::Object& document)
 		update.stick = {ReadNumber(document, "stickX"), ReadNumber(document, "stickY")};
 		const auto heldButton = [&](const char* name, bool previous)
 		{
-			return document.boolean(name, NumberOr(document, name, previous ? 1.0f : 0.0f) >= 0.5f);
+			return document.Boolean(name, NumberOr(document, name, previous ? 1.0f : 0.0f) >= 0.5f);
 		};
 		update.primary = heldButton("primary", controls.primary);
 		update.secondary = heldButton("secondary", controls.secondary);
@@ -154,7 +150,7 @@ void LegacyInput::ApplyControllerHold(const json::Object& document)
 void LegacyInput::Apply(LegacyInputCommand command, const std::string& text)
 {
 	const json::Object document(text.c_str());
-	if (!document.valid())
+	if (!document.Valid())
 		return;
 	switch (command)
 	{
@@ -185,15 +181,15 @@ void LegacyInput::Apply(LegacyInputCommand command, const std::string& text)
 		break;
 	case LegacyInputCommand::Ipd:
 		m_views.ipd =
-			document.boolean("clear", false)
+			document.Boolean("clear", false)
 				? 0.064f
 				: std::clamp(NumberOr(document, "ipd_mm", NumberOr(document, "ipd", 0.064f) * 1000) / 1000, 0.0f, 0.2f);
 		break;
 	case LegacyInputCommand::Fov:
 		for (std::size_t eye = 0; eye < m_views.outerFov.size(); ++eye)
 		{
-			auto source = document.object(eye ? "right" : "left");
-			if (!source.valid())
+			auto source = document.Child(eye ? "right" : "left");
+			if (!source.Valid())
 				source = document;
 			auto& fov = m_views.outerFov[eye];
 			fov = {NumberOr(source, "aL", NumberOr(source, "angleLeft", fov.angleLeft)),
@@ -212,7 +208,7 @@ LegacyInput::Sequence LegacyInput::ReadSequence(std::istream& input, bool loop)
 	while (std::getline(input, line))
 	{
 		const json::Object document(line.c_str());
-		if (!document.valid())
+		if (!document.Valid())
 			continue;
 		const auto frame = SequenceFrame(document);
 		if (!frame)
@@ -221,18 +217,20 @@ LegacyInput::Sequence LegacyInput::ReadSequence(std::istream& input, bool loop)
 			throw std::length_error("Pose sequence exceeds its step limit");
 		PoseSequenceStep step;
 		step.frame = {*frame};
-		const auto head = document.object("head");
-		if (head.valid())
+		const auto head = document.Child("head");
+		if (head.Valid())
 			step.head = DecodeHead(head);
 		for (std::size_t hand = 0; hand < step.controllers.size(); ++hand)
 		{
-			const auto controller = document.object(hand ? "right" : "left");
-			if (controller.valid())
+			const auto controller = document.Child(hand ? "right" : "left");
+			if (controller.Valid())
 				step.controllers[hand] = DecodeController(controller);
 		}
-		step.capture = document.boolean("capture", false);
+		step.capture = document.Boolean("capture", false);
 		sequence.push_back(std::move(step));
 	}
+	if (input.bad() || (input.fail() && !input.eof()))
+		throw std::runtime_error("Cannot read complete pose sequence");
 	return {std::move(sequence), loop};
 }
 

@@ -80,7 +80,7 @@ void CheckCadenceAndGeneration()
 	status.Update(session, input, start, LinuxRuntimeStatus::FrameCounts{3, 2});
 	files.Flush();
 	const auto first = files.Read("frame_info.json");
-	Require(json::Object(first.c_str()).number("frame_count", -1) == 10,
+	Require(json::Object(first.c_str()).Number("frame_count", -1) == 10,
 			"First generation observation is published immediately");
 	session.lastSubmitted = {11};
 	status.Update(session, input, start + 10ms, LinuxRuntimeStatus::FrameCounts{2, 1});
@@ -93,22 +93,22 @@ void CheckCadenceAndGeneration()
 	files.Flush();
 	const auto measured = files.Read("frame_info.json");
 	const json::Object performance(measured.c_str());
-	Require(performance.number("frame_count", -1) == 12 && performance.number("fps", -1.0) == 100.0 &&
-				performance.number("predicted_display_time", -1) == 123456789,
+	Require(performance.Number("frame_count", -1) == 12 && performance.Number("fps", -1.0) == 100.0 &&
+				performance.Number("predicted_display_time", -1) == 123456789,
 			"Every accepted projection frame contributes to cadence even while status is throttled");
 	session = RunningSession(2, 1);
 	status.Update(session, input, start + 511ms, LinuxRuntimeStatus::FrameCounts{1, 1});
 	files.Flush();
 	const auto restarted = files.Read("frame_info.json");
 	const json::Object restartedFrame(restarted.c_str());
-	Require(restartedFrame.number("frame_count", -1) == 1 && restartedFrame.number("fps", -1.0) == 0,
+	Require(restartedFrame.Number("frame_count", -1) == 1 && restartedFrame.Number("fps", -1.0) == 0,
 			"Replacement session resets publication admission and previous frame samples");
 	session.running = false;
 	session.lastSubmitted = {2};
 	status.Update(session, input, start + 512ms);
 	files.Flush();
 	const auto idle = files.Read("runtime_status.json");
-	Require(json::Object(idle.c_str()).string("session_state") == "IDLE",
+	Require(json::Object(idle.c_str()).String("session_state") == "IDLE",
 			"Lifecycle status bypasses the running-session throttle");
 }
 
@@ -150,13 +150,13 @@ void CheckDeterministicAndInstanceLifetime()
 		files.Flush();
 		const auto document = files.Read("frame_info.json");
 		const json::Object frame(document.c_str());
-		Require(frame.number("frame_count", -1) == 2 && frame.number("layer_count", -1) == 4 &&
-					frame.number("projection_layers", -1) == 2 && frame.number("fps", -1.0) == 100.0,
+		Require(frame.Number("frame_count", -1) == 2 && frame.Number("layer_count", -1) == 4 &&
+					frame.Number("projection_layers", -1) == 2 && frame.Number("fps", -1.0) == 100.0,
 				"Deterministic status publishes every accepted frame with locale-independent numbers");
 		const auto runtime = files.Read("runtime_status.json");
 		const json::Object state(runtime.c_str());
-		Require(state.number("pid", -1) == 64 &&
-					state.object("head_tracking").object("position").number("x", -1.0) == 0.25,
+		Require(state.Number("pid", -1) == 64 &&
+					state.Child("head_tracking").Child("position").Number("x", -1.0) == 0.25,
 				"Runtime status preserves process and input values under a host locale");
 	}
 	LinuxRuntimeStatus replacement(files.Channel(), 65, ExecutionMode::RealTime);
@@ -164,8 +164,8 @@ void CheckDeterministicAndInstanceLifetime()
 	files.Flush();
 	const auto frame = files.Read("frame_info.json");
 	const auto runtime = files.Read("runtime_status.json");
-	Require(json::Object(frame.c_str()).number("fps", -1.0) == 0 &&
-				json::Object(runtime.c_str()).number("pid", -1) == 65,
+	Require(json::Object(frame.c_str()).Number("fps", -1.0) == 0 &&
+				json::Object(runtime.c_str()).Number("pid", -1) == 65,
 			"Replacement instance owns independent cadence and publication state");
 	files.Channel()->Close();
 	replacement.Update(session, input, now + 1s, LinuxRuntimeStatus::FrameCounts{1, 1});

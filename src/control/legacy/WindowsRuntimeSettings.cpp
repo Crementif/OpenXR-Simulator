@@ -181,7 +181,7 @@ void ApplySettingsJson(const char* text)
 
 	// Profile first: it resets FOV symmetry and IPD, so the saved values for
 	// those have to land after it.
-	const auto profile = object.string("headset_profile");
+	const auto profile = object.String("headset_profile");
 	if (!profile.empty())
 	{
 		SetHeadsetProfile(HeadsetProfileFromName(profile.c_str(), s_settings.headsetProfile));
@@ -190,22 +190,22 @@ void ApplySettingsJson(const char* text)
 	// A missing pair is an older settings file: keep the new performance default. 0x0 is
 	// the explicit "Headset Native" mode; positive custom values are accepted even when
 	// they are not one of the menu presets.
-	const bool hasRenderResolution = object.has("render_width") || object.has("render_height");
+	const bool hasRenderResolution = object.Has("render_width") || object.Has("render_height");
 	if (hasRenderResolution)
 	{
-		const int width = object.number("render_width", s_settings.renderWidth);
-		const int height = object.number("render_height", s_settings.renderHeight);
+		const int width = object.Number("render_width", s_settings.renderWidth);
+		const int height = object.Number("render_height", s_settings.renderHeight);
 		SetRenderResolution(width, height);
 	}
 
-	s_settings.useAsymmetricFov = object.boolean("asymmetric_fov", s_settings.useAsymmetricFov);
-	s_settings.fovDegrees = std::clamp(object.number("fov_degrees", s_settings.fovDegrees), 30, 170);
-	SetIpdMillimeters(object.number("ipd_mm", GetIpdMillimeters()));
+	s_settings.useAsymmetricFov = object.Boolean("asymmetric_fov", s_settings.useAsymmetricFov);
+	s_settings.fovDegrees = std::clamp(object.Number("fov_degrees", s_settings.fovDegrees), 30, 170);
+	SetIpdMillimeters(object.Number("ipd_mm", GetIpdMillimeters()));
 
-	SetMoveSpeed(object.number("move_speed", s_settings.moveSpeed));
-	s_settings.moveBoost = (std::max)(1.0f, (std::min)(50.0f, object.number("move_boost", s_settings.moveBoost)));
+	SetMoveSpeed(object.Number("move_speed", s_settings.moveSpeed));
+	s_settings.moveBoost = (std::max)(1.0f, (std::min)(50.0f, object.Number("move_boost", s_settings.moveBoost)));
 
-	s_settings.inputPolling = InputPollingFromName(object.string("input_polling").c_str(), s_settings.inputPolling);
+	s_settings.inputPolling = InputPollingFromName(object.String("input_polling").c_str(), s_settings.inputPolling);
 }
 
 void LoadSettings(const std::filesystem::path& dataDir)
