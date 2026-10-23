@@ -11,6 +11,12 @@
 #include "app/RecordingPanel.h"
 #include "app/services/RuntimeConnection.h"
 #include "app/RuntimePanels.h"
+#include "app/RuntimeSession.h"
+#include "app/widgets/HapticEvents.h"
+#include "runtime/Runtime.h"
+#include "runtime/SimulationExtensions.h"
+#include "control/LocalControlServer.h"
+#include "control/ControlService.h"
 #include "app/HistoryStore.h"
 #include "app/InputHistory.h"
 #include "app/TimelineCanvas.h"
@@ -3998,6 +4004,117 @@ void CaptureLayouts(const std::filesystem::path& directory)
 	Require(test.validation->errors.load() == 0, "Validation errors during layout capture");
 }
 
+#ifdef __linux__
+void CheckLiveHaptics()
+{
+	using namespace simxr;
+	using namespace std::chrono_literals;
+	std::atomic<std::uint32_t> delivered{0};
+	Interaction test;
+	SDL_VirtualJoystickDesc description{};
+	SDL_INIT_INTERFACE(&description);
+	description.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+	description.naxes = SDL_GAMEPAD_AXIS_COUNT;
+	description.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+	description.axis_mask = (1u << SDL_GAMEPAD_AXIS_COUNT) - 1;
+	description.button_mask = (1u << SDL_GAMEPAD_BUTTON_COUNT) - 1;
+	description.name = "SimXR isolated haptic QA";
+	description.userdata = &delivered;
+	description.Rumble = [](void* data, Uint16 left, Uint16 right)
+	{
+		static_cast<std::atomic<std::uint32_t>*>(data)->store((std::uint32_t(left) << 16) | right);
+		return true;
+	};
+	const auto joystick = SDL_AttachVirtualJoystick(&description);
+	Require(joystick != 0, "Attach haptic virtual gamepad");
+	struct Detach
+	{
+		SDL_JoystickID id;
+		~Detach() { if (id) SDL_DetachVirtualJoystick(id); }
+	} detach{joystick};
+	test.window.PollEvents();
+	test.window.ReadGamepad(GamepadBindings{});
+	Require(test.window.GamepadIdentity() == joystick, "Open isolated virtual gamepad");
+	ExtensionRegistry extensions{SimulationExtensions()};
+	Runtime engine{extensions};
+	Runtime::InstanceRef instance;
+	Runtime::SessionRef session;
+	XrInstanceCreateInfo create{XR_TYPE_INSTANCE_CREATE_INFO};
+	create.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
+	std::strcpy(create.applicationInfo.applicationName, "Live haptic QA");
+	Require(engine.CreateInstance(&create, instance) == XR_SUCCESS && engine.CreateSession(instance, session) == XR_SUCCESS,
+		"Create isolated live haptic runtime");
+	FrameSchedulerConfig configuration;
+	configuration.mode = ExecutionMode::Deterministic;
+	configuration.epoch = RuntimeTime{1s};
+	const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
+	Require(session->Ready(configuration.epoch) == XR_SUCCESS && session->Begin(begin, configuration) == XR_SUCCESS,
+		"Start isolated haptic session");
+	control::ControlService service{engine};
+	const auto endpoint = (std::filesystem::temp_directory_path() /
+		("simxr-haptics-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".sock")).string();
+	control::LocalControlServer server{service, endpoint};
+	RuntimeSession observed{test.renderer, endpoint};
+	const auto poll = [&]
+	{
+		observed.Poll(false);
+		test.window.PollEvents();
+		return observed.Haptics().Recent().events.size();
+	};
+	Eventually([&] { poll(); return observed.Haptics().Fresh(HapticFeedback::Clock::now()); }, "Live haptic observation never connected");
+	const std::array left{HapticDevice::LeftController}, right{HapticDevice::RightController};
+	const auto action = reinterpret_cast<XrAction>(1);
+	XrHapticVibration vibration{XR_TYPE_HAPTIC_VIBRATION, nullptr, XR_INFINITE_DURATION, 160, .25f};
+	Require(session->Haptics().Apply(left, action, XR_NULL_PATH, vibration, configuration.epoch, true) == XR_SUCCESS,
+		"Apply left application output");
+	vibration.amplitude = .75f;
+	Require(session->Haptics().Apply(right, action, XR_NULL_PATH, vibration, configuration.epoch, true) == XR_SUCCESS,
+		"Apply right application output");
+	Eventually([&] { return poll() == 2; }, "Both hands did not reach the live companion feed");
+	Require(test.window.Rumble(observed.Haptics().Motors(HapticFeedback::Clock::now(), true), observed.Haptics().Deadline()) &&
+		delivered.load() == ((16384u << 16) | 49151u), "Live hand amplitudes did not reach the SDL motors");
+	Eventually([&] { return delivered.load() == 0; }, "Watchdog must stop motors without SDL/UI event pumping");
+	test.extraDraw = [&]
+	{
+		ImGui::SetNextWindowPos({430, 180}, ImGuiCond_Always);
+		ImGui::SetNextWindowSize({370, 260}, ImGuiCond_Always);
+		ImGui::Begin("Live haptic output QA");
+		ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+		DrawHapticEvents(observed.Haptics(), 0, true);
+		ImGui::End();
+	};
+	for (int frame = 0; frame < 3; ++frame)
+		test.Frame();
+	if (const auto screenshot = std::getenv("SIMXR_HAPTICS_QA_SCREENSHOT"))
+		test.renderer.RequestScreenshot(screenshot);
+	test.Frame();
+	Require(session->Haptics().Stop(left, action, configuration.epoch, true) == XR_SUCCESS, "Stop left haptic output");
+	Eventually([&] { poll(); return observed.Haptics().Recent().events.front().status == HapticStatus::Stopped; },
+		"Live stop event did not reach companion");
+	Require(test.window.Rumble(observed.Haptics().Motors(HapticFeedback::Clock::now(), true), observed.Haptics().Deadline()) && delivered.load() == 49151,
+		"Stopping left output changed the right motor");
+	SDL_Event focus{};
+	focus.type = SDL_EVENT_WINDOW_FOCUS_LOST;
+	focus.window.windowID = SDL_GetWindowID(test.window.Native());
+	SDL_PushEvent(&focus);
+	test.window.PollEvents();
+	Require(delivered.load() == 0, "Window focus loss did not stop native rumble");
+	observed.Haptics().Motors(HapticFeedback::Clock::now(), false);
+	observed.Disconnect();
+	poll();
+	Require(test.window.Rumble({}), "Stop output before gamepad removal");
+	Require(test.window.Rumble({10000, 20000}), "Start output before unplug");
+	Require(SDL_DetachVirtualJoystick(joystick), "Detach haptic gamepad");
+	detach.id = 0;
+	test.window.PollEvents();
+	Require(!test.window.HasGamepad(), "Removed haptic gamepad remained selected");
+	test.extraDraw = {};
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Validation error in live haptic UI workflow");
+	std::cout << "PASS live runtime observation, hand motor mapping, independent stop, focus loss and haptic UI; zero validation errors\n";
+}
+#endif
+
 } // namespace
 
 int main()
@@ -4048,6 +4165,11 @@ int main()
 
 
 #ifdef __linux__
+		if (std::getenv("SIMXR_HAPTICS_QA"))
+		{
+			CheckLiveHaptics();
+			return 0;
+		}
 		if (std::getenv("SIMXR_DISCOVERY_FAILURE_QA"))
 		{
 			Interaction test;

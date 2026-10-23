@@ -8,7 +8,7 @@ namespace simxr::control
 {
 inline constexpr std::uint32_t Magic = 0x32525853;
 inline constexpr std::uint16_t ProtocolMajor = 1;
-inline constexpr std::uint16_t ProtocolMinor = 5;
+inline constexpr std::uint16_t ProtocolMinor = 6;
 inline constexpr std::size_t HeaderSize = 32;
 inline constexpr std::size_t MaxPayload = 1024 * 1024;
 inline constexpr std::size_t MaxFields = 256;
@@ -78,7 +78,8 @@ enum class OpCode : std::uint16_t
 	ReadSequence = 45,
 	StopSequence = 46,
 	ReleaseSequenceCapture = 47,
-	ReadFrameHistory = 48
+	ReadFrameHistory = 48,
+	ReadHaptics = 49
 };
 
 enum class ErrorCode : std::uint32_t

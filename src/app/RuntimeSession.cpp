@@ -10,8 +10,6 @@
 
 namespace simxr::app
 {
-namespace
-{
 namespace wire = control;
 namespace tag = wire::tag;
 using panel::Boolean;
@@ -20,7 +18,7 @@ using panel::Text;
 using panel::U32;
 using panel::U64;
 using Work = PanelWork;
-const char* ConnectionName(RuntimeConnectionState state)
+static const char* ConnectionName(RuntimeConnectionState state)
 {
 	switch (state)
 	{
@@ -35,12 +33,11 @@ const char* ConnectionName(RuntimeConnectionState state)
 	}
 	return "Unknown";
 }
-bool SameFrame(const PanelScope& scope, std::uint64_t frame, const HistoryFrame& history)
+static bool SameFrame(const PanelScope& scope, std::uint64_t frame, const HistoryFrame& history)
 {
 	return scope.epoch == history.epoch && scope.session == history.identity.session &&
 		   scope.generation == history.identity.run && frame == history.identity.frame;
 }
-} // namespace
 RuntimeSession::RuntimeSession(UiRenderer& renderer, const std::string& endpoint)
 	: m_debugger(m_requests), m_workspace(m_requests), m_preview(renderer, m_requests), m_exports(m_requests),
 	  m_endpoint(endpoint)
@@ -91,6 +88,9 @@ void RuntimeSession::ScopeChanged()
 	m_scopeChanged = true;
 	m_manualInput.SetTarget({});
 	m_observation = 0;
+	m_haptics.Reset();
+	m_hapticFailure.clear();
+	m_nextHaptics = {};
 	m_setup.reset();
 	m_input = {};
 	m_followOnResume = m_stepRequested = false;
@@ -131,6 +131,13 @@ void RuntimeSession::Poll(bool piloting)
 		const auto selected = m_debugger.Selected();
 		const auto now = Clock::now();
 		m_history.SetScope(m_debugger.Scope());
+		if (selected.id && selected.running && Supports(wire::Capability::LiveHaptics) &&
+			now >= m_nextHaptics && !m_requests.Has(Work::Haptics))
+		{
+			m_requests.Send(wire::OpCode::ReadHaptics, Work::Haptics, m_debugger.SessionFields());
+			m_hapticsRequested = now;
+			m_nextHaptics = now + std::chrono::milliseconds(33);
+		}
 		if (selected.id && now >= m_nextHistory && !m_requests.Has(Work::FrameHistory) &&
 			Supports(wire::Capability::FrameHistory))
 		{
@@ -257,6 +264,15 @@ void RuntimeSession::Reply(const PanelReply& response)
 	{
 		const auto failure =
 			!reply.error.empty() ? reply.error : Text(message, tag::Detail, "Runtime rejected the operation");
+		if (task.kind == Work::Haptics)
+		{
+			m_haptics.Motors(Clock::now(), false);
+			m_nextHaptics = Clock::now() + std::chrono::seconds(1);
+			if (failure != m_hapticFailure)
+				Notify("Live haptics unavailable", failure);
+			m_hapticFailure = failure;
+			return;
+		}
 		const auto previous = m_debugger.Scope();
 		m_debugger.Failed(task, static_cast<wire::ErrorCode>(error), failure);
 		if (previous != m_debugger.Scope())
@@ -272,6 +288,23 @@ void RuntimeSession::Reply(const PanelReply& response)
 		if (task.kind == Work::Share)
 			m_preview.ShareFailed(task.id);
 		m_exports.Failed(task, failure);
+		return;
+	}
+	if (task.kind == Work::Haptics)
+	{
+		try
+		{
+			m_haptics.Observe(wire::DecodeHaptics(message), m_hapticsRequested, Clock::now());
+			m_hapticFailure.clear();
+		}
+		catch (const std::exception& error)
+		{
+			m_haptics.Motors(Clock::now(), false);
+			m_nextHaptics = Clock::now() + std::chrono::seconds(1);
+			if (m_hapticFailure != error.what())
+				Notify("Live haptics unavailable", error.what());
+			m_hapticFailure = error.what();
+		}
 		return;
 	}
 	const auto previous = m_debugger.Scope();

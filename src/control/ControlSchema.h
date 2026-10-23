@@ -63,7 +63,7 @@ inline constexpr std::uint16_t Error = 1, Detail = 2, Session = 3, Generation = 
 							   ImageViews = 191, Pinned = 192, AdvanceDisplay = 193, SnapshotBudgetMiB = 194,
 							   SnapshotImageBytes = 195, Frames = 196, AppliedInput = 197, ActiveActions = 198,
 							   CompatibilityDeviations = 199, AdditionalTargets = 200, CpuFrameTime = 201,
-							   CompositorGpuTime = 202, JointOffset = 203, InputContext = 204, CompletionKind = 205;
+							   CompositorGpuTime = 202, JointOffset = 203, InputContext = 204, CompletionKind = 205, Haptics = 206;
 }
 
 enum class Capability : std::uint64_t
@@ -93,7 +93,8 @@ enum class Capability : std::uint64_t
 	PoseSequences = 1ULL << 22,
 	SnapshotPins = 1ULL << 23,
 	FrameHistory = 1ULL << 24,
-	RotationalReprojection = 1ULL << 25
+	RotationalReprojection = 1ULL << 25,
+	LiveHaptics = 1ULL << 26
 };
 
 // Wire values are explicit and independent of the core's enum representation.

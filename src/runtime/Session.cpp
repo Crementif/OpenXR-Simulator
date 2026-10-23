@@ -1,4 +1,5 @@
 #include "runtime/Session.h"
+#include "Pch.h"
 #include "runtime/SpaceQueries.h"
 
 #include <algorithm>
@@ -527,6 +528,15 @@ XrResult Session::StopHaptic(const XrHapticActionInfo* info)
 		return XR_ERROR_SESSION_LOST;
 	return m_interaction.StopHaptic(info, std::max(m_state.time, m_publication.Input().Snapshot().time),
 									m_state.state == XR_SESSION_STATE_FOCUSED);
+}
+
+std::optional<HapticSnapshot> Session::ObserveHaptics(SessionGeneration generation)
+{
+	std::lock_guard lock(m_mutex);
+	if (m_state.closed || m_state.generation != generation)
+		return {};
+	const auto time = std::max(m_state.time, m_publication.Input().Snapshot().time);
+	return HapticSnapshot{time, m_interaction.Haptics().Snapshot(time)};
 }
 
 SessionSnapshot Session::Snapshot() const

@@ -1,4 +1,5 @@
 #include "control/ControlService.h"
+#include "Pch.h"
 #include "control/ConnectionImages.h"
 #include "control/ConnectionImageWindows.h"
 #include "control/ConnectionLeases.h"
@@ -179,6 +180,8 @@ class ControlService::State
 		}
 		if (minor >= 5)
 			capabilities |= static_cast<std::uint64_t>(Capability::PoseSequences);
+		if (minor >= 6)
+			capabilities |= static_cast<std::uint64_t>(Capability::LiveHaptics);
 		return capabilities;
 	}
 	std::uint64_t AdvertisedCapabilities(const Client& client, std::uint16_t minor) const

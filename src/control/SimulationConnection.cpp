@@ -1,4 +1,6 @@
 #include "control/SimulationConnection.h"
+#include "Pch.h"
+#include "control/HapticObservation.h"
 #include "control/ControlRequestError.h"
 #include "control/ControlSchema.h"
 #include "control/ControlSessions.h"
@@ -13,9 +15,7 @@
 
 namespace simxr::control
 {
-namespace
-{
-InspectionValue ReadDiagnostics(Session& session, const Message& request)
+static InspectionValue ReadDiagnostics(Session& session, const Message& request)
 {
 	const auto after = request.Find(tag::Offset) ? RequireRequestU64(request, tag::Offset) : 0;
 	const auto count = request.Find(tag::Length) ? RequireRequestU64(request, tag::Length) : 128;
@@ -26,7 +26,7 @@ InspectionValue ReadDiagnostics(Session& session, const Message& request)
 		frame = FrameKey{session.Snapshot().generation, FrameId{RequireRequestU64(request, tag::FrameId)}};
 	return InspectDiagnostics(session.History().Diagnostics(after, count, frame));
 }
-InspectionValue ReadRecording(Session& session, const Message& request, Message& response)
+static InspectionValue ReadRecording(Session& session, const Message& request, Message& response)
 {
 	const auto offset = request.Find(tag::Offset) ? RequireRequestU64(request, tag::Offset) : 0;
 	auto count = request.Find(tag::Length) ? RequireRequestU64(request, tag::Length) : 16;
@@ -57,7 +57,6 @@ InspectionValue ReadRecording(Session& session, const Message& request, Message&
 		count /= 2;
 	}
 }
-} // namespace
 
 SimulationConnection::SimulationConnection(ConnectionId connection, RecordingControl& recordings, GameBridge& game)
 	: m_connection(connection), m_recordings(recordings), m_game(game)
@@ -131,6 +130,16 @@ Message SimulationConnection::Dispatch(const Message& request, const ControlSess
 
 	response.fields.push_back(Field::U64(tag::Session, binding.id.value));
 	response.fields.push_back(Field::U64(tag::Generation, session->Snapshot().generation.value));
+	if (opcode == OpCode::ReadHaptics)
+	{
+		const auto snapshot = session->ObserveHaptics({RequireRequestU64(request, tag::Generation)});
+		if (!snapshot)
+			throw ControlRequestError{ErrorCode::StaleGeneration, "Haptic session generation changed"};
+		response.fields.push_back(Field::I64(tag::Time, snapshot->time.value.count()));
+		response.fields.push_back(EncodeHaptics(snapshot->outputs));
+		response.fields.push_back(Field::Bool(tag::Overflow, snapshot->outputs.size() > MaxObservedHaptics));
+		return response;
+	}
 	auto& scheduler = session->Commands();
 	const bool trackerInteraction = session->Extensions().Contains(XR_HTCX_VIVE_TRACKER_INTERACTION_EXTENSION_NAME);
 	const auto source = RequestSource(request);

@@ -1,4 +1,5 @@
 #include "control/ControlSchema.h"
+#include "Pch.h"
 #include "control/ControlPacket.h"
 #include "control/ControlRequestError.h"
 
@@ -83,6 +84,7 @@ constexpr std::array Schemas{RequestSchema{OpCode::Hello, RequestDomain::Connect
 							 RequestSchema{OpCode::StopSequence, RequestDomain::Simulation, 5, sequence},
 							 RequestSchema{OpCode::ReleaseSequenceCapture, RequestDomain::Inspection, 5, sequenceCapture},
 							 RequestSchema{OpCode::SubmitSimulation, RequestDomain::Simulation, 4, simulation},
+							 RequestSchema{OpCode::ReadHaptics, RequestDomain::Simulation, 6, common},
 							 RequestSchema{OpCode::SimulationStatus, RequestDomain::Simulation, 4, simulationStatus},
 							 RequestSchema{OpCode::CancelSimulation, RequestDomain::Simulation, 4, simulationStatus},
 							 RequestSchema{OpCode::ReleaseControl, RequestDomain::Simulation, 4, recording},

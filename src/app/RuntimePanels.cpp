@@ -13,6 +13,8 @@
 #include "app/Theme.h"
 #include "app/Window.h"
 #include "app/widgets/Controls.h"
+#include "app/widgets/HapticEvents.h"
+#include "Pch.h"
 
 #include <algorithm>
 #include <array>
@@ -23,11 +25,8 @@
 
 namespace simxr::app
 {
-namespace
-{
 namespace wire = control;
 namespace tag = wire::tag;
-} // namespace
 class RuntimePanels::Impl
 {
   public:
@@ -39,6 +38,8 @@ class RuntimePanels::Impl
 	~Impl()
 	{
 		StopPilot();
+		if (m_window)
+			m_window->Rumble({});
 	}
 	void Poll()
 	{
@@ -66,6 +67,23 @@ class RuntimePanels::Impl
 			}
 			if (!input.error.empty())
 				StopPilot();
+		}
+		if (m_window)
+		{
+			if (m_gamepad != m_window->GamepadIdentity())
+			{
+				m_gamepad = m_window->GamepadIdentity();
+				m_rumbleFailed = false;
+				m_session.Haptics().Motors(HapticFeedback::Clock::now(), false);
+			}
+			const bool enabled = m_session.Connected() && m_session.Debugger().Selected().running &&
+				m_window->Focused() && m_window->HasGamepad();
+			const auto motors = m_session.Haptics().Motors(HapticFeedback::Clock::now(), enabled);
+			if (!m_window->Rumble(motors, m_session.Haptics().Deadline()) && !m_rumbleFailed)
+			{
+				m_rumbleFailed = true;
+				m_session.Notify("Gamepad rumble unavailable", "This gamepad could not accept vibration output.");
+			}
 		}
 		m_range.Poll();
 	}
@@ -161,6 +179,10 @@ class RuntimePanels::Impl
 		};
 		if (auto edit = m_devices.Draw(m_session.SupportsEdits(), &shell.selection, placement))
 			SubmitEdit(*edit);
+		if (const auto* device = std::get_if<DeviceSel>(&shell.selection);
+			device && (device->page == DevicePage::Left || device->page == DevicePage::Right))
+			DrawHapticEvents(m_session.Haptics(), device->page == DevicePage::Left ? 0 : 1,
+				m_session.Connected() && m_session.Supports(wire::Capability::LiveHaptics));
 		if (auto device = std::get_if<DeviceSel>(&shell.selection); device && device->page == DevicePage::Trackers)
 			device->slot = static_cast<unsigned>(m_devices.SelectedTracker());
 	}
@@ -253,6 +275,9 @@ class RuntimePanels::Impl
 	}
 	void FocusLost()
 	{
+		m_session.Haptics().Motors(HapticFeedback::Clock::now(), false);
+		if (m_window)
+			m_window->Rumble({});
 		m_pilot.Stop(m_window, m_session.ManualInput(), true, true);
 		m_devices.SetRigPiloting(false);
 		m_devices.ClearHeldInputs();
@@ -293,6 +318,8 @@ class RuntimePanels::Impl
 	};
 	RuntimeSession m_session;
 	Window* m_window = nullptr;
+	std::uint32_t m_gamepad = 0;
+	bool m_rumbleFailed = false;
 	RuntimeView m_view;
 	std::string m_lastNotice;
 	std::array<char, 256> m_endpointInput{};

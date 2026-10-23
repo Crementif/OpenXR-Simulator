@@ -5,6 +5,7 @@
 #include "app/ImageExportTask.h"
 #include "app/InspectionWorkspace.h"
 #include "app/services/ManualInputController.h"
+#include "app/services/HapticFeedback.h"
 #include "app/Notices.h"
 #include "app/PreviewImages.h"
 #include "app/RuntimeView.h"
@@ -137,6 +138,10 @@ class RuntimeSession
 	}
 	// True once after the observed device state changed.
 	bool TakeObservation();
+	HapticFeedback& Haptics() noexcept
+	{
+		return m_haptics;
+	}
 	bool AutoSelect() const noexcept
 	{
 		return m_autoSelect;
@@ -159,16 +164,17 @@ class RuntimeSession
 	FrameHistoryFeed m_history;
 	ManualInputController m_manualInput;
 	ManualInputSnapshot m_input;
+	HapticFeedback m_haptics;
 	TimeCursor m_time;
 	std::optional<SteppedFrame> m_stepped;
 	std::optional<ObservedSetup> m_setup;
 	std::vector<HistoryFrame> m_coverage;
 	std::vector<Notice> m_notices;
 	std::vector<std::string> m_endpoints;
-	std::string m_endpoint, m_failure, m_historyNotice;
+	std::string m_endpoint, m_failure, m_historyNotice, m_hapticFailure;
 	PanelScope m_budgetScope;
 	std::uint32_t m_budgetMiB = 0;
-	Clock::time_point m_nextHistory{}, m_nextPreview{}, m_nextCapture{};
+	Clock::time_point m_nextHistory{}, m_nextPreview{}, m_nextCapture{}, m_nextHaptics{}, m_hapticsRequested{};
 	std::uint64_t m_observation = 0, m_resumeAfter = 0;
 	bool m_autoSelect = true, m_followOnResume = false, m_stepRequested = false, m_scopeChanged = false,
 		 m_observationChanged = false;

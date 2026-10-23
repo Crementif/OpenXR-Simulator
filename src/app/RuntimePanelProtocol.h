@@ -33,7 +33,8 @@ enum class PanelWork
 	ExportRead,
 	Simulate,
 	SimulationStatus,
-	FrameHistory
+	FrameHistory,
+	Haptics
 };
 struct PanelSession
 {

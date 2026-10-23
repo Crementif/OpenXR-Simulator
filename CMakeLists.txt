@@ -76,6 +76,7 @@ add_library(simxr_control STATIC
     src/control/legacy/LegacyInput.cpp
     src/control/legacy/WindowsLegacyChannel.cpp
     src/control/legacy/WindowsLegacyCapture.cpp
+    src/control/HapticObservation.cpp
     src/control/WireProtocol.cpp
     src/control/InspectionDocument.cpp
     src/control/FrameInspection.cpp
@@ -154,6 +155,7 @@ add_library(simxr_connection STATIC
     src/app/HistoryStore.cpp
     src/app/InputHistory.cpp
     src/app/SpatialMath.cpp
+    src/app/services/HapticFeedback.cpp
     src/app/services/ManualInputController.cpp
     src/app/services/WorkerConnection.cpp
     src/app/services/RuntimePanelRequests.cpp
@@ -372,6 +374,8 @@ if(BUILD_TESTING)
     target_link_libraries(spatial_math_tests PRIVATE simxr_connection)
     simxr_add_test(simulation_edits_tests tests/app/SimulationEditsTests.cpp simulation_edits)
     target_link_libraries(simulation_edits_tests PRIVATE simxr_connection)
+    simxr_add_test(haptic_feedback_tests tests/app/HapticFeedbackTests.cpp haptic_feedback)
+    target_link_libraries(haptic_feedback_tests PRIVATE simxr_connection)
     simxr_add_test(runtime_panel_state_tests tests/app/RuntimePanelStateTests.cpp runtime_panel_state)
     target_link_libraries(runtime_panel_state_tests PRIVATE simxr_connection)
     simxr_add_test(runtime_connection_tests tests/app/RuntimeConnectionTests.cpp runtime_connection)

@@ -4,6 +4,7 @@
 #include "control/ConnectionRequests.h"
 #include "control/ControlRequestError.h"
 #include "control/ControlSchema.h"
+#include "control/HapticObservation.h"
 #include "control/ControlService.h"
 #include "control/ControlSessions.h"
 #include "control/SimulationControl.h"
@@ -288,6 +289,62 @@ struct Fixture
 	}
 };
 
+void LiveHaptics()
+{
+	Fixture f;
+	Client client(f.service);
+	client.Hello();
+	client.Discover();
+	const std::array devices{HapticDevice::LeftController, HapticDevice::RightController};
+	const auto action = reinterpret_cast<XrAction>(1);
+	XrHapticVibration vibration{XR_TYPE_HAPTIC_VIBRATION, nullptr, XR_INFINITE_DURATION, 120, .5f};
+	Require(f.session->Haptics().Apply(devices, action, XR_NULL_PATH, vibration, f.config.epoch, true) == XR_SUCCESS,
+		"Apply live haptic output before any frame submission");
+	const auto read = [&]
+	{
+		const auto response = client.Call(wire::OpCode::ReadHaptics, client.Common());
+		Require(Error(response) == wire::ErrorCode::Ok, "Read live haptics without debugger lease");
+		return wire::DecodeHaptics(response);
+	};
+	auto observed = read();
+	Require(observed.events.size() == 2 && observed.events[0].device == devices[0] &&
+		observed.events[1].device == devices[1] && observed.events[1].amplitude == .5f &&
+		!observed.events[1].end && observed.events[1].status == HapticStatus::Active && !observed.overflow,
+		"Live haptics preserve targets, parameters and infinite duration");
+	vibration.duration = 10;
+	Require(f.session->Haptics().Apply(std::span(devices).first(1), action, XR_NULL_PATH, vibration, f.config.epoch,
+		true) == XR_SUCCESS, "Replace left haptic output");
+	Require(f.session->Haptics().Stop(std::span(devices).last(1), action, f.config.epoch, true) == XR_SUCCESS,
+		"Stop right haptic output");
+	observed = read();
+	Require(observed.events.size() == 3 && observed.events[0].status == HapticStatus::Replaced &&
+		observed.events[1].status == HapticStatus::Stopped && observed.events[2].end == 110,
+		"Live observation retains stop and replacement events");
+	f.session->Haptics().LoseFocus(f.config.epoch);
+	Require(read().events.back().status == HapticStatus::FocusLost, "Focus loss retires live output");
+	for (int i = 0; i < 300; ++i)
+		Require(f.session->Haptics().Apply(std::span(devices).first(1), action, XR_NULL_PATH, vibration,
+			f.config.epoch, true) == XR_SUCCESS, "Fill bounded haptic history");
+	observed = read();
+	Require(observed.events.size() == wire::MaxObservedHaptics && observed.overflow &&
+		observed.events.back().status == HapticStatus::Active, "Bound live history while retaining latest output");
+	f.Restart();
+	Require(Error(client.Call(wire::OpCode::ReadHaptics, client.Common())) == wire::ErrorCode::StaleGeneration,
+		"Reject previous-run haptic reads");
+	client.Discover();
+	Require(read().events.empty(), "Session restart clears live haptic history");
+	Client old(f.service);
+	auto hello = old.Request(wire::OpCode::Hello);
+	hello.minor = 5;
+	const auto response = f.service.Handle(old.connection, hello);
+	Require(!(U64(response, wire::tag::Capabilities) & static_cast<std::uint64_t>(wire::Capability::LiveHaptics)),
+		"Older clients must not be offered live haptics");
+	auto request = old.Request(wire::OpCode::ReadHaptics, client.Common());
+	request.minor = 5;
+	Require(Error(f.service.Handle(old.connection, request)) == wire::ErrorCode::UnsupportedCommand,
+		"Older protocol rejects live haptic operation");
+}
+
 void ContinuousFrameHistory()
 {
 	Fixture f;
@@ -442,7 +499,8 @@ void NegotiationAndReplay()
 					 static_cast<std::uint64_t>(wire::Capability::FrameDiagnostics) |
 					 static_cast<std::uint64_t>(wire::Capability::ProjectionHistory) |
 					 static_cast<std::uint64_t>(wire::Capability::FrameHistory) |
-					 static_cast<std::uint64_t>(wire::Capability::PoseSequences)) &&
+					 static_cast<std::uint64_t>(wire::Capability::PoseSequences) |
+					 static_cast<std::uint64_t>(wire::Capability::LiveHaptics)) &&
 				response.Find(wire::tag::PayloadLimit)->AsU32() == wire::MaxPayload,
 			"Hello negotiation/capability limits changed");
 	Require(wire::Encode(f.service.Handle(client.connection, hello)) == wire::Encode(response),
@@ -507,7 +565,8 @@ void LegacyMinorNegotiation()
 	versionFour.minor = 4;
 	const auto negotiated = f.service.Handle(previous.connection, versionFour);
 	Require(Error(negotiated) == wire::ErrorCode::Ok && negotiated.minor == 4 &&
-		!(U64(negotiated, wire::tag::Capabilities) & static_cast<std::uint64_t>(wire::Capability::PoseSequences)) &&
+		!(U64(negotiated, wire::tag::Capabilities) & (static_cast<std::uint64_t>(wire::Capability::PoseSequences) |
+					 static_cast<std::uint64_t>(wire::Capability::LiveHaptics))) &&
 		Error(previous.Call(wire::OpCode::UploadSequence)) == wire::ErrorCode::UnsupportedCommand,
 		"Minor four advertised or admitted sequence control");
 }
@@ -1627,6 +1686,7 @@ int main()
 {
 	try
 	{
+		LiveHaptics();
 		ContinuousFrameHistory();
 		NegotiationAndReplay();
 		NegotiationPublicationRollback();

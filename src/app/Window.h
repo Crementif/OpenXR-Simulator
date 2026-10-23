@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/platform/GamepadFeedback.h"
 #include "app/services/PilotBindings.h"
 #include "simulation/InputState.h"
 #include <utility>
@@ -29,6 +30,10 @@ class Window
 	bool TakeFocusLost();
 	bool Focused() const;
 	GamepadSample ReadGamepad(const GamepadBindings& bindings);
+	bool Rumble(std::array<std::uint16_t, 2> motors,
+				std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::time_point::max());
+	bool HasGamepad() const noexcept;
+	std::uint32_t GamepadIdentity() const noexcept;
 	void Resize(int width, int height);
 	bool CapturePointer(bool enabled);
 	std::pair<float, float> TakePointerMotion();
@@ -36,6 +41,7 @@ class Window
   private:
 	SDL_Window* m_window = nullptr;
 	SDL_Gamepad* m_gamepad = nullptr;
+	GamepadFeedback m_feedback;
 	void OpenGamepad();
 	bool m_focusLost = false;
 	bool m_pointerCaptured = false;

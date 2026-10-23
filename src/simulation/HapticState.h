@@ -32,11 +32,11 @@ constexpr bool operator==(InputDeviceId identity, HapticDevice device)
 
 enum class HapticStatus
 {
-	Active,
-	Expired,
-	Stopped,
-	Replaced,
-	FocusLost
+	Active = 0,
+	Expired = 1,
+	Stopped = 2,
+	Replaced = 3,
+	FocusLost = 4
 };
 
 struct HapticOutput
@@ -51,6 +51,12 @@ struct HapticOutput
 	RuntimeTime start;
 	std::optional<RuntimeTime> end;
 	HapticStatus status = HapticStatus::Active;
+};
+
+struct HapticSnapshot
+{
+	RuntimeTime time;
+	std::vector<HapticOutput> outputs;
 };
 
 class HapticState

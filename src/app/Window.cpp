@@ -1,4 +1,5 @@
 #include "app/Window.h"
+#include "Pch.h"
 
 #include <SDL3/SDL.h>
 #include <algorithm>
@@ -29,6 +30,7 @@ Window::Window(bool hidden)
 
 Window::~Window()
 {
+	m_feedback.Attach(nullptr);
 	if (m_gamepad)
 		SDL_CloseGamepad(m_gamepad);
 	SDL_DestroyWindow(m_window);
@@ -66,6 +68,7 @@ bool Window::PollEvents()
 			OpenGamepad();
 		if (event.type == SDL_EVENT_GAMEPAD_REMOVED && m_gamepad && SDL_GetGamepadID(m_gamepad) == event.gdevice.which)
 		{
+			m_feedback.Attach(nullptr);
 			SDL_CloseGamepad(m_gamepad);
 			m_gamepad = nullptr;
 			OpenGamepad();
@@ -73,6 +76,7 @@ bool Window::PollEvents()
 		if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST && event.window.windowID == SDL_GetWindowID(m_window))
 		{
 			m_focusLost = true;
+			Rumble({});
 			CapturePointer(false);
 		}
 		if (event.type == SDL_EVENT_QUIT ||
@@ -95,6 +99,7 @@ void Window::OpenGamepad()
 	for (int index = 0; index < count && !m_gamepad; ++index)
 		m_gamepad = SDL_OpenGamepad(ids[index]);
 	SDL_free(ids);
+	m_feedback.Attach(m_gamepad);
 	if (m_gamepad && SDL_GamepadHasSensor(m_gamepad, SDL_SENSOR_GYRO))
 		SDL_SetGamepadSensorEnabled(m_gamepad, SDL_SENSOR_GYRO, true);
 }
@@ -135,6 +140,19 @@ GamepadSample Window::ReadGamepad(const GamepadBindings& bindings)
 	result.gyroActive = button(bindings.gyroHold) && SDL_GamepadHasSensor(m_gamepad, SDL_SENSOR_GYRO) &&
 						SDL_GetGamepadSensorData(m_gamepad, SDL_SENSOR_GYRO, result.gyro.data(), 3);
 	return result;
+}
+
+std::uint32_t Window::GamepadIdentity() const noexcept
+{
+	return m_gamepad ? SDL_GetGamepadID(m_gamepad) : 0;
+}
+bool Window::HasGamepad() const noexcept
+{
+	return m_gamepad != nullptr;
+}
+bool Window::Rumble(std::array<std::uint16_t, 2> motors, std::chrono::steady_clock::time_point deadline)
+{
+	return m_feedback.Rumble(motors, deadline);
 }
 
 bool Window::TakeFocusLost()

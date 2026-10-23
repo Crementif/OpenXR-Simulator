@@ -94,6 +94,7 @@ class Session
 	CaptureBoundaryResult CaptureBoundary(std::optional<FrameKey> after = {});
 	bool SupportsCapture(CaptureTarget target = {}) const;
 	HapticState& Haptics();
+	std::optional<HapticSnapshot> ObserveHaptics(SessionGeneration generation);
 	InputState& Input();
 	ActionSyncState& Actions();
 	TrackingSystem& Tracking();
