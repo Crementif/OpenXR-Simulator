@@ -13,9 +13,10 @@ void WorkspacePanels::DrawAppPicker(RuntimePanels& runtime, const RuntimeView& v
 	const auto state = m_shell.session.state;
 	const auto slash = view.endpoint.find_last_of("/\\");
 	const std::string label = !view.connected ? (m_profiles.Selected() >= 0 ? m_settings.activeProfile : "Open app")
-							  : view.endpoint == m_launchedEndpoint ? m_launchedName
-							  : view.endpoint == m_connectedEndpoint
-								  ? m_connectedName
+							  : view.endpoint == m_launchedEndpoint && !m_launchedName.empty()	 ? m_launchedName
+							  : view.endpoint == m_connectedEndpoint && !m_connectedName.empty() ? m_connectedName
+							  : !view.appName.empty()
+								  ? view.appName
 								  : view.endpoint.substr(slash == std::string::npos ? 0 : slash + 1);
 	const ImU32 dot = state == RunState::Running											 ? theme::Ok
 					  : state == RunState::Paused											 ? theme::Paused

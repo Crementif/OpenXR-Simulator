@@ -1,12 +1,12 @@
 #include "app/widgets/TimelinePanel.h"
 #include "Pch.h"
 #include "app/RuntimePanels.h"
-#include "app/widgets/Theme.h"
 #include "app/services/InputHistory.h"
 #include "app/services/PlayerRig.h"
 #include "app/services/RecordingController.h"
 #include "app/services/Utf8Path.h"
 #include "app/widgets/Controls.h"
+#include "app/widgets/Theme.h"
 #include <cstdio>
 #include <imgui.h>
 
@@ -166,10 +166,10 @@ void TimelinePanel::DrawMeter(const HistoryStore& history, const RuntimeView& st
 	const float sparkBottom = area.y + area.height - 3 * scale;
 	if (!oneRow && cpu >= 0 && sparkBottom - sparkTop >= font + 3 * scale)
 	{
-		char headroom[48];
-		std::snprintf(headroom, sizeof(headroom), "%+.1f ms spare", budget - cpu);
+		char cpuText[48];
+		std::snprintf(cpuText, sizeof(cpuText), "CPU span %.1f ms", cpu);
 		draw->PushClipRect(hoverMin, hoverMax, true);
-		draw->AddText({area.x, sparkTop}, theme::TextDim, headroom);
+		draw->AddText({area.x, sparkTop}, theme::TextDim, cpuText);
 		draw->PopClipRect();
 		sparkTop += font + 3 * scale;
 	}
@@ -195,16 +195,17 @@ void TimelinePanel::DrawMeter(const HistoryStore& history, const RuntimeView& st
 	if (ImGui::IsMouseHoveringRect(hoverMin, hoverMax) && ImGui::IsWindowHovered())
 	{
 		ImGui::BeginTooltip();
-		ImGui::Text("Last %zu display intervals (ms): min %.1f / avg %.1f / max %.1f", count, minimum, average,
+		ImGui::Text("Last %zu application intervals (ms): min %.1f / avg %.1f / max %.1f", count, minimum, average,
 					maximum);
+		ImGui::TextDisabled("Display period %.1f ms; %zu misses / 10 s", budget, missed);
 		char gpuText[32] = "unavailable";
 		if (gpu >= 0)
 			std::snprintf(gpuText, sizeof(gpuText), "%.2f ms", gpu);
 		if (cpu >= 0)
-			ImGui::TextDisabled("CPU %.1f ms / %+.1f ms spare; compositor GPU %s; %zu misses / 10 s", cpu, budget - cpu,
-								gpuText, missed);
+			ImGui::TextDisabled("CPU span %.1f ms; compositor GPU %s", cpu, gpuText);
 		else
-			ImGui::TextDisabled("%.1f ms budget; CPU/GPU timing unavailable; %zu misses / 10 s", budget, missed);
+			ImGui::TextDisabled("CPU span unavailable; compositor GPU %s", gpuText);
+		ImGui::TextDisabled("Application GPU time is unavailable");
 		ImGui::EndTooltip();
 	}
 }

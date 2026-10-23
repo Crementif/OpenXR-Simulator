@@ -1,11 +1,11 @@
 #include "app/pages/FramePage.h"
 #include "Pch.h"
-#include "app/widgets/Theme.h"
 #include "app/services/RuntimeSession.h"
 #include "app/services/SimulationEdits.h"
 #include "app/widgets/Controls.h"
 #include "app/widgets/DocumentTree.h"
 #include "app/widgets/PastInput.h"
+#include "app/widgets/Theme.h"
 #include "control/InspectionDocument.h"
 
 #include <exception>
@@ -372,13 +372,12 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 								  "display period");
 			if (frame.cpuMilliseconds >= 0)
 			{
-				ImGui::Text("CPU %.1f ms / %+.1f ms spare", frame.cpuMilliseconds,
-							frame.periodMilliseconds - frame.cpuMilliseconds);
+				ImGui::Text("CPU span %.1f ms", frame.cpuMilliseconds);
 				ImGui::SetItemTooltip(
 					"Host span from xrWaitFrame return to accepted xrEndFrame, including runtime submission");
 			}
 			else
-				ImGui::TextDisabled("CPU timing unavailable");
+				ImGui::TextDisabled("CPU span unavailable");
 			if (frame.compositorGpuMilliseconds >= 0)
 			{
 				ImGui::Text("Compositor GPU %.2f ms", frame.compositorGpuMilliseconds);
@@ -386,6 +385,7 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 			}
 			else
 				ImGui::TextDisabled("Compositor GPU timing unavailable");
+			ImGui::TextDisabled("Application GPU time is unavailable");
 			ImGui::Text("Run time %.3f s", frame.runSeconds);
 		}
 		if (!bytes.empty())

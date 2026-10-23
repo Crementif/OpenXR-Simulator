@@ -1015,7 +1015,10 @@ void CheckShell()
 // Opt-in walkthrough against a separately launched application, never the user's session.
 void PilotLiveRuntime(const char* endpoint)
 {
+	IgnoreRealPointer();
 	Interaction test;
+	Require(SDL_ShowWindow(test.window.Native()), "Show live application pilot window");
+	SDL_RaiseWindow(test.window.Native());
 	test.runtime.ConnectEndpoint(endpoint);
 	test.workspace.Select(DeviceSel{});
 	const auto frame = [&]
@@ -1042,9 +1045,9 @@ void PilotLiveRuntime(const char* endpoint)
 		[&]
 		{
 			frame();
-			return test.runtime.Snapshot().selectedReady;
+			return test.runtime.Snapshot().selectedReady && test.window.Focused();
 		},
-		"Application did not supply a live preview");
+		"Application did not supply a focused live preview");
 	const auto activate = [&](const char* window, const char* label)
 	{
 		auto* target = FindPanel(window);
@@ -1195,6 +1198,7 @@ void PilotLiveRuntime(const char* endpoint)
 		SDL_Event pointer{};
 		pointer.type = SDL_EVENT_MOUSE_MOTION;
 		pointer.motion.windowID = SDL_GetWindowID(test.window.Native());
+		pointer.motion.which = TestMouse;
 		pointer.motion.x = point.x;
 		pointer.motion.y = point.y;
 		SDL_PushEvent(&pointer);
@@ -1202,6 +1206,7 @@ void PilotLiveRuntime(const char* endpoint)
 		pointer = {};
 		pointer.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
 		pointer.button.windowID = SDL_GetWindowID(test.window.Native());
+		pointer.button.which = TestMouse;
 		pointer.button.button = button;
 		pointer.button.down = down;
 		SDL_PushEvent(&pointer);
@@ -1291,88 +1296,6 @@ void PilotLiveRuntime(const char* endpoint)
 			return !test.runtime.Snapshot().recordingBusy;
 		},
 		"Recording refresh did not finish");
-	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Stop recording"));
-	frame();
-	Eventually(
-		[&]
-		{
-			frame();
-			return !test.runtime.Snapshot().recording && !test.runtime.Snapshot().recordingBusy;
-		},
-		"Stop recording failed outside the recording workspace");
-	Require(test.runtime.Snapshot().recordedChanges > 0, "Real piloting produced no recorded input");
-	Require(!popups.empty() && popups.back().Window, "Stop did not open the save popover");
-	ImGui::ActivateItemByID(popups.back().Window->GetID("Save"));
-	std::string savedPath;
-	Eventually(
-		[&]
-		{
-			frame();
-			if (const auto take = std::get_if<TakeSel>(&test.workspace.State().selection))
-				savedPath = take->id;
-			return !savedPath.empty() && std::filesystem::exists(savedPath);
-		},
-		"Save take did not produce a persistent file");
-	Require(!OpenSavedRecording(savedPath).path.empty(), "Saved take cannot be reopened independently");
-	for (int i = 0; i < 4; ++i)
-		frame();
-	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
-	{
-		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "cemu-recording-saved.bmp");
-		frame();
-		frame();
-	}
-	activate("Inspector", "Play take");
-	Eventually(
-		[&]
-		{
-			frame();
-			return test.runtime.Snapshot().manual;
-		},
-		"Saved take did not enter replay");
-	activate("Inspector", "Stop take");
-	Eventually(
-		[&]
-		{
-			frame();
-			return !test.runtime.Snapshot().manual;
-		},
-		"Cancelling replay did not release frame control");
-	std::cout << "PASS Cemu record while piloting, global stop, save, independent reopen, replay and global cancel\n";
-
-	// Exercise the inspection context on the same isolated real application.
-	test.workspace.Select(FrameSel{});
-	activate("##Frame timeline", "Pause");
-	Eventually(
-		[&]
-		{
-			frame();
-			return test.runtime.Snapshot().manual && !test.runtime.Snapshot().operationPending;
-		},
-		"Application did not pause");
-	activate("##Frame timeline", "Step forward");
-	Eventually(
-		[&]
-		{
-			frame();
-			const auto state = test.runtime.Snapshot();
-			return !state.operationPending && state.selectedCapture && state.selectedReady && state.time.following;
-		},
-		"Step did not select its captured frame");
-	const auto retained = test.runtime.Snapshot().selectedCapture;
-	activate("##Frame timeline", "Step forward");
-	Eventually(
-		[&]
-		{
-			frame();
-			const auto state = test.runtime.Snapshot();
-			return !state.operationPending && state.selectedReady && state.selectedCapture != retained;
-		},
-		"Timeline next frame did not capture another snapshot");
-	activate("##Frame timeline", "Previous snapshot");
-	Require(test.runtime.Snapshot().selectedCapture == retained && test.runtime.Snapshot().manual,
-			"Timeline did not select the earlier snapshot while paused");
-
 	const auto captureContext = [&](const char* name)
 	{
 		if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
@@ -1380,61 +1303,172 @@ void PilotLiveRuntime(const char* endpoint)
 			test.renderer.RequestScreenshot(std::filesystem::path(directory) / name);
 			frame();
 			frame();
+			test.renderer.WaitIdle();
 		}
 	};
-	for (int i = 0; i < 6; ++i)
+	// The earlier focus-loss injection must be paired before editing the take name.
+	SDL_RaiseWindow(test.window.Native());
+	event = {};
+	event.type = SDL_EVENT_WINDOW_FOCUS_GAINED;
+	event.window.windowID = SDL_GetWindowID(test.window.Native());
+	Require(SDL_PushEvent(&event), "Restore pilot UI focus");
+	Eventually(
+		[&]
+		{
+			frame();
+			return test.window.Focused() && !ImGui::GetIO().AppFocusLost;
+		},
+		"Pilot UI did not regain focus");
+	const auto savePopover = FindPanel("Top bar")->GetID("Save take");
+	std::string savedPath;
+	try
+	{
+		activate("Timeline", "Stop recording");
+		Eventually(
+			[&]
+			{
+				frame();
+				const auto state = test.runtime.Snapshot();
+				return !state.recording && !state.recordingBusy &&
+					   ImGui::IsPopupOpen(savePopover, ImGuiPopupFlags_AnyPopupLevel);
+			},
+			"Stop recording did not finish and open the save popover");
+		const auto stopped = test.runtime.Snapshot();
+		Require(stopped.recordedChanges > 0 && !stopped.recordingOverflow,
+				"Piloting did not produce a complete recording");
 		frame();
-	ImGui::SetWindowFocus("Historical state");
-	for (int i = 0; i < 3; ++i)
+		auto* popup = ImGui::GetCurrentContext()->OpenPopupStack.back().Window;
+		Require(popup, "Save popover has no window");
+		const auto name = "R5 Cemu " + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+		const auto destination = CompanionSettingsPath().parent_path() / "recordings" / (name + ".luau");
+		Require(!std::filesystem::exists(destination), "Pilot take destination already exists");
+		ImGui::SetWindowFocus(popup->Name);
+		ImGui::ActivateItemByID(popup->GetID("##Take name"));
+		ImGui::GetCurrentContext()->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
 		frame();
-	captureContext("cemu-inspection-paused.bmp");
-	test.workspace.SetScale(1.5f);
-	for (int i = 0; i < 4; ++i)
+		Require(ImGui::GetActiveID() == popup->GetID("##Take name"), "Pilot take name did not activate");
+		auto& io = ImGui::GetIO();
+		io.AddKeyEvent(ImGuiMod_Ctrl, true);
+		io.AddKeyEvent(ImGuiKey_A, true);
 		frame();
-	captureContext("cemu-timeline-150.bmp");
-	activate("##Frame timeline", "Rig events");
-	captureContext("cemu-timeline-events.bmp");
-	SDL_Event escape{};
-	escape.type = SDL_EVENT_KEY_DOWN;
-	escape.key.windowID = SDL_GetWindowID(test.window.Native());
-	escape.key.key = SDLK_ESCAPE;
-	escape.key.scancode = SDL_SCANCODE_ESCAPE;
-	escape.key.down = true;
-	SDL_PushEvent(&escape);
-	frame();
-	escape.type = SDL_EVENT_KEY_UP;
-	escape.key.down = false;
-	SDL_PushEvent(&escape);
-	frame();
-	test.workspace.SetScale(1.0f);
-	for (int i = 0; i < 4; ++i)
+		io.AddKeyEvent(ImGuiKey_A, false);
+		io.AddKeyEvent(ImGuiMod_Ctrl, false);
+		io.AddInputCharactersUTF8(name.c_str());
 		frame();
-	activate("##Frame timeline", "Continue");
+		io.AddKeyEvent(ImGuiKey_Enter, true);
+		frame();
+		io.AddKeyEvent(ImGuiKey_Enter, false);
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+		for (;;)
+		{
+			frame();
+			if (const auto take = std::get_if<TakeSel>(&test.workspace.State().selection))
+				savedPath = take->id;
+			if (Utf8Path(savedPath) == destination && std::filesystem::exists(destination) &&
+				!test.runtime.Snapshot().recordingBusy)
+				break;
+			Require(std::chrono::steady_clock::now() < deadline, "Save take did not produce a persistent file");
+		}
+		Require(!OpenSavedRecording(savedPath).path.empty(), "Saved take cannot be reopened independently");
+	}
+	catch (...)
+	{
+		const auto state = test.runtime.Snapshot();
+		std::cout << "Pilot save: recording=" << state.recording << " busy=" << state.recordingBusy
+				  << " overflow=" << state.recordingOverflow << " changes=" << state.recordedChanges
+				  << " focused=" << test.window.Focused() << " appFocusLost=" << ImGui::GetIO().AppFocusLost
+				  << " popup=" << ImGui::IsPopupOpen(savePopover, ImGuiPopupFlags_AnyPopupLevel)
+				  << " path=" << savedPath << " error=" << state.error << '\n';
+		for (const auto& notice : test.runtime.TakeNotices())
+			std::cout << "Pilot notice: " << notice.title << " " << notice.detail << '\n';
+		captureContext("cemu-save-failed.bmp");
+		throw;
+	}
+	captureContext("cemu-recording-saved.bmp");
+	// The Library catalog loads the newly saved file independently.
+	Eventually(
+		[&]
+		{
+			auto* inspector = FindPanel("Inspector");
+			Require(inspector, "Saved take inspector is missing");
+			const auto play = inspector->GetID("Play take");
+			ImGui::SetFocusID(play, inspector);
+			frame();
+			const auto& context = *ImGui::GetCurrentContext();
+			return context.NavId == play && context.NavIdIsAlive && test.runtime.CanReplay();
+		},
+		"Saved take did not become ready in the Library");
+	activate("Inspector", "Play take");
+	Eventually(
+		[&]
+		{
+			frame();
+			return test.workspace.State().timeline.playing && test.runtime.Snapshot().manual;
+		},
+		"Saved take did not enter replay");
+	captureContext("cemu-recording-replay.bmp");
+	activate("Inspector", "Stop take");
 	Eventually(
 		[&]
 		{
 			frame();
 			const auto state = test.runtime.Snapshot();
-			return !state.operationPending && !state.manual && state.time.following;
+			return !test.workspace.State().timeline.playing && !state.manual && !state.operationPending;
 		},
-		"Continue did not resume and follow live output");
-	activate("##Frame timeline", "Previous snapshot");
-	activate("##Frame timeline", "Previous snapshot");
-	Require(test.runtime.Snapshot().selectedCapture == retained,
-			"Timeline did not return to the historical snapshot while running");
-	for (int i = 0; i < 6; ++i)
-		frame();
-	Require(!test.runtime.Snapshot().manual && !test.runtime.Snapshot().time.following,
-			"Inspecting a retained frame falsely paused the application");
-	captureContext("cemu-inspection-running.bmp");
+		"Cancelling replay did not release frame control");
+	const auto observation = input.Snapshot().observation;
+	input.Refresh();
+	Eventually(
+		[&]
+		{
+			frame();
+			return input.Snapshot().observation > observation;
+		},
+		"Stopped replay input observation did not arrive");
+	const auto released = ReadObservedSetup(input.Snapshot().state);
+	Require(std::none_of(released.owners.begin(), released.owners.end(),
+						 [](const auto& owner)
+						 {
+							 return owner && owner->kind == simxr::CommandSourceKind::Rig;
+						 }),
+			"Cancelled replay retained input ownership");
+	std::cout << "PASS Cemu record while piloting, global stop, save, independent reopen, replay and cancel release\n";
+
+	// Reuse the current retained-frame UI workflow, including exact-frame export.
+	SDL_SetEventFilter(nullptr, nullptr);
+	test.live = true;
 	test.runtime.SetLive(true);
+	CheckTimelineWorkflow(test);
+	test.workspace.Select(DeviceSel{DevicePage::Head});
 	frame();
-	Require(test.runtime.Snapshot().time.following && !test.runtime.Snapshot().manual,
-			"Showing live output changed the application pause state");
+	frame();
+	const auto timelineHeight = FindPanel("Timeline")->Size.y;
+	activate("Timeline divider tab", "##Edge");
+	frame();
+	frame();
+	Require(FindPanel("Timeline")->Size.y < timelineHeight * .6f, "Live application timeline did not fold");
+	captureContext("cemu-timeline-folded.bmp");
+	activate("Timeline divider tab", "##Edge");
+	frame();
+	frame();
+	Require(std::abs(FindPanel("Timeline")->Size.y - timelineHeight) < 1,
+		"Live application timeline did not restore its height");
+	const auto previewWidth = FindPanel("GPU preview")->Size.x;
+	activate("Inspector divider tab", "##Edge");
+	frame();
+	frame();
+	Require(!test.workspace.State().inspectorVisible && FindPanel("GPU preview")->Size.x > previewWidth + 100,
+		"Live application inspector did not fold");
+	captureContext("cemu-inspector-folded.bmp");
+	activate("Inspector divider tab", "##Edge");
+	frame();
+	frame();
+	Require(test.workspace.State().inspectorVisible &&
+		std::abs(FindPanel("GPU preview")->Size.x - previewWidth) < 1,
+		"Live application inspector did not restore its width");
 	test.renderer.WaitIdle();
-	Require(test.validation->errors.load() == 0, "Validation errors in frame inspection and thumbnail rendering");
-	std::cout << "PASS real application inspection: pause, next frame, captured image, continue and historical view "
-				 "while running\n";
+	Require(test.validation->errors.load() == 0, "Validation errors during real application shell folding");
+	std::cout << "PASS live application timeline and inspector fold and restore\n";
 }
 void CheckDocumentTreeIdentity()
 {
@@ -2231,13 +2265,15 @@ void CheckDebuggerWorkflow(const char* endpoint)
 			return state.inspectedFrame == exact.selectedFrame;
 		},
 		"Exact state inspection failed");
-	test.runtime.RequestExport((directory / "composed.ppm").string());
+	Require(test.runtime.RequestExport((directory / "composed.ppm").string()), "Composed export was not accepted");
 	wait(
-		[&](const auto& state)
+		[&](const auto&)
 		{
-			return !state.pending && std::filesystem::exists(directory / "composed.ppm");
+			return !test.runtime.ImageExport().Busy();
 		},
 		"Composed export failed");
+	Require(test.runtime.ImageExport().Succeeded(), test.runtime.ImageExport().Detail().c_str());
+	Require(std::filesystem::file_size(directory / "composed.ppm") > 100, "Composed export is empty");
 	test.renderer.RequestScreenshot(directory / "inspected.bmp");
 	test.Frame();
 	test.runtime.Command(simxr::control::CommandKind::StrictAdmission, 0, true, 0, 0);
@@ -2250,13 +2286,15 @@ void CheckDebuggerWorkflow(const char* endpoint)
 		"Selected layer view did not produce a retained image");
 	const auto raw = test.runtime.Snapshot();
 	Require(raw.selectedFrame == exact.selectedFrame + 1, "Strict step admitted more than one frame");
-	test.runtime.RequestExport((directory / "layer.ppm").string());
+	Require(test.runtime.RequestExport((directory / "layer.ppm").string()), "Layer export was not accepted");
 	wait(
-		[&](const auto& state)
+		[&](const auto&)
 		{
-			return !state.pending && std::filesystem::exists(directory / "layer.ppm");
+			return !test.runtime.ImageExport().Busy();
 		},
 		"Layer export failed");
+	Require(test.runtime.ImageExport().Succeeded(), test.runtime.ImageExport().Detail().c_str());
+	Require(std::filesystem::file_size(directory / "layer.ppm") > 100, "Layer export is empty");
 	test.workspace.Select(DeviceSel{DevicePage::Head});
 	test.Frame();
 	test.runtime.Step();
@@ -2817,6 +2855,27 @@ void CheckPreviewPilot(Interaction& test)
 			"Gamepad unplug left held input");
 	key(SDL_SCANCODE_R, false);
 	std::cout << "PASS native gamepad mapping and unplug releases held keyboard input and capture\n";
+	test.workspace.Select(DeviceSel{DevicePage::Head});
+	pump(4);
+	const auto headBeforeRecenter = observed().values.tracking.head.pose;
+	ImGui::ActivateItemByID(FindPanel("Inspector")->GetID("Recenter view"));
+	pump(2);
+	Eventually(
+		[&]
+		{
+			const auto state = observed();
+			const auto& local = state.values.referenceSpaces.local;
+			const auto& head = state.values.tracking.head.pose;
+			Require(std::abs(head.position.x - headBeforeRecenter.position.x) < .001f &&
+					std::abs(head.position.y - headBeforeRecenter.position.y) < .001f &&
+					std::abs(head.position.z - headBeforeRecenter.position.z) < .001f,
+					"Recenter moved the head");
+			return std::abs(local.position.x - head.position.x) < .001f &&
+				   std::abs(local.position.y - head.position.y) < .001f &&
+				   std::abs(local.position.z - head.position.z) < .001f;
+		},
+		"Head page recenter did not update the local reference space");
+	std::cout << "PASS Head page recenter updates reference space without moving the head\n";
 	Require(test.validation->errors.load() == 0, "Validation during preview piloting");
 	std::cout << "PASS native preview walk, look, reach, primary, trigger and Escape release\n";
 }
@@ -5676,6 +5735,10 @@ void CheckLiveHaptics()
 	const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
 	Require(session->Ready(configuration.epoch) == XR_SUCCESS && session->Begin(begin, configuration) == XR_SUCCESS,
 		"Start isolated haptic session");
+	FramePrediction firstFrame;
+	Require(session->WaitFrame(firstFrame) == XR_SUCCESS && session->BeginFrame() == XR_SUCCESS &&
+		session->EndFrame(firstFrame) == XR_SUCCESS,
+		"Publish the initial live haptic device configuration");
 	control::ControlService service{engine};
 	const auto endpoint = (std::filesystem::temp_directory_path() /
 		("simxr-haptics-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".sock")).string();
@@ -5726,6 +5789,49 @@ void CheckLiveHaptics()
 	test.PollEvents();
 	Require(delivered.load() == 0, "Window focus loss did not stop native rumble");
 	observed.Haptics().Motors(HapticFeedback::Clock::now(), false);
+	Eventually([&]
+		{
+			poll();
+			return observed.Setup() && observed.Setup()->frame == firstFrame.id.value &&
+				observed.Input().observation != 0;
+		},
+		"Live input observation did not become available");
+	const auto connected = observed.View();
+	Require(connected.sessionAvailable && connected.sessionRunning, "Failure fixture has no active session");
+	observed.TakeScopeChanged();
+	server.Close();
+	Eventually([&] { poll(); return observed.Epoch() != connected.epoch; },
+		"Failed transport did not retire its active epoch");
+	const auto disconnected = observed.View();
+	Require(!disconnected.connected && !disconnected.sessionAvailable && !disconnected.sessionRunning &&
+		!disconnected.session && !disconnected.generation && !disconnected.latestFrame && !disconnected.manual &&
+		!disconnected.operationPending && !disconnected.pending && !disconnected.error.empty(),
+		"Failed connection retained an active session or discarded its failure detail");
+	Require(!disconnected.selectedReady && !disconnected.selectedCapture && !disconnected.selectedFrame &&
+		!disconnected.selectedIdentity.frame && !disconnected.selectedReader && !disconnected.time.cursor.frame &&
+		!observed.Preview().Selected() && !observed.Setup() && !observed.Input().observation &&
+		observed.Haptics().Recent().events.empty() && observed.TakeScopeChanged(),
+		"Failed connection retained its selected preview, input, cursor or haptic state");
+	poll();
+	Require(observed.Epoch() == disconnected.epoch && !observed.TakeScopeChanged() &&
+		observed.View().error == disconnected.error,
+		"Failed connection repeatedly reset its scope or lost the saved diagnostic");
+	control::LocalControlServer restarted{service, endpoint};
+	observed.ConnectEndpoint(endpoint);
+	Eventually(
+		[&]
+		{
+			poll();
+			const auto state = observed.View();
+			return state.connected && state.sessionRunning && observed.Setup().has_value() &&
+				observed.Haptics().Fresh(HapticFeedback::Clock::now());
+		},
+		"Explicit reconnect did not observe the replacement endpoint");
+	const auto reconnected = observed.View();
+	Require(reconnected.epoch > disconnected.epoch && reconnected.session == connected.session &&
+		reconnected.generation == connected.generation && reconnected.error.empty(),
+		"Explicit reconnect reused the failed scope or preserved its failure");
+	std::cout << "PASS unexpected connection failure retires session/input/haptics and explicit reconnect uses a new epoch\n";
 	observed.Disconnect();
 	poll();
 	Require(test.window.Rumble({}), "Stop output before gamepad removal");
@@ -5794,6 +5900,11 @@ int main()
 
 
 #ifdef __linux__
+		if (const auto endpoint = std::getenv("SIMXR_UI_PILOT_ENDPOINT"))
+		{
+			PilotLiveRuntime(endpoint);
+			return 0;
+		}
 		if (std::getenv("SIMXR_HAPTICS_QA"))
 		{
 			CheckLiveHaptics();
@@ -5852,7 +5963,13 @@ int main()
 					return test.runtime.Snapshot().selectedReady;
 				},
 				"Existing isolated app did not supply a preview");
-			if (std::getenv("SIMXR_SPATIAL_QA"))
+			if (std::getenv("SIMXR_LAYOUT_QA"))
+			{
+				const auto directory = std::getenv("SIMXR_UI_QA_DIR");
+				Require(directory != nullptr, "Connected layout checks need an output directory");
+				CheckLayouts(test, directory);
+			}
+			else if (std::getenv("SIMXR_SPATIAL_QA"))
 				CheckSpatialEditing(test);
 			else
 				CheckPreviewPilot(test);
@@ -5998,8 +6115,6 @@ int main()
 		CheckSpatialWidgetLifecycle();
 		CheckDocumentTreeIdentity();
 		CheckCapturedRig();
-		if (const auto endpoint = std::getenv("SIMXR_UI_PILOT_ENDPOINT"))
-			PilotLiveRuntime(endpoint);
 		if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
 			CaptureLayouts(directory);
 		std::cout << "PASS fixed shell, rail selection and SDL input across three resizes\n";

@@ -60,7 +60,7 @@ struct SessionView
 	std::uint64_t lastOperation = 0, lastCapture = 0;
 	std::uint32_t selectedLayers = 0;
 	float fps = 0;
-	std::string phase, progress, endpoint;
+	std::string phase, progress, endpoint, appName;
 	// A failure stops the session (connection lost, protocol error); a notice does not.
 	std::string error, notice;
 };

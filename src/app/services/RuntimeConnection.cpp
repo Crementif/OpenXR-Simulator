@@ -2,6 +2,7 @@
 #include "Pch.h"
 #include "control/ControlSchema.h"
 #if defined(__linux__) || defined(_WIN32)
+#include "app/platform/RunningApps.h"
 #include "control/LocalControlClient.h"
 #endif
 
@@ -33,7 +34,7 @@ bool RuntimeConnection::Current(std::uint64_t epoch)
 	return !m_stopping && m_requested && m_snapshot.epoch == epoch;
 }
 void RuntimeConnection::ConnectionState(std::uint64_t epoch, RuntimeConnectionState state, std::string detail,
-										std::optional<control::ControlPacket> hello)
+										std::optional<control::ControlPacket> hello, std::string appName)
 {
 	control::ControlPacket previous;
 	std::lock_guard lock(m_mutex);
@@ -41,6 +42,7 @@ void RuntimeConnection::ConnectionState(std::uint64_t epoch, RuntimeConnectionSt
 		return;
 	m_snapshot.state = state;
 	m_snapshot.detail = std::move(detail);
+	m_snapshot.appName = std::move(appName);
 	if (hello)
 		previous = std::exchange(m_snapshot.hello, std::move(*hello));
 }
@@ -145,16 +147,29 @@ void RuntimeConnection::RunChecked()
 				continue;
 			try
 			{
-				client = std::make_unique<control::LocalControlClient>(std::move(path), m_configuration.retrySlice);
+				client = std::make_unique<control::LocalControlClient>(path, m_configuration.retrySlice);
 				control::ControlPacket hello;
 				hello.message.opcode = static_cast<std::uint16_t>(control::OpCode::Hello);
 				hello.message.fields = {control::Field::Text(control::tag::ClientName, "simxr companion")};
 				auto response = Exchange(*client, std::move(hello), activeEpoch);
 				const auto error = response.message.Find(control::tag::Error);
 				const bool accepted = error && error->AsU32() == static_cast<std::uint32_t>(control::ErrorCode::Ok);
-				ConnectionState(activeEpoch,
-								accepted ? RuntimeConnectionState::Connected : RuntimeConnectionState::Failed,
-								accepted ? "" : "Runtime rejected control protocol Hello", std::move(response));
+				std::string appName;
+				if (accepted)
+				{
+					try
+					{
+						if (auto app = ProbeRunningApp(path, m_configuration.retrySlice))
+							appName = std::move(app->name);
+					}
+					catch (const std::exception&)
+					{
+						// Process details are optional for an otherwise usable endpoint.
+					}
+				}
+				ConnectionState(
+					activeEpoch, accepted ? RuntimeConnectionState::Connected : RuntimeConnectionState::Failed,
+					accepted ? "" : "Runtime rejected control protocol Hello", std::move(response), std::move(appName));
 				if (!accepted)
 					client.reset();
 			}
@@ -221,6 +236,7 @@ std::uint64_t RuntimeConnection::Connect(std::string path)
 	hello = std::move(m_snapshot.hello);
 	m_snapshot.path = std::move(path);
 	m_snapshot.detail.clear();
+	m_snapshot.appName.clear();
 	m_snapshot.state = RuntimeConnectionState::Connecting;
 	m_snapshot.inFlight = false;
 	m_requested = true;
@@ -243,6 +259,7 @@ void RuntimeConnection::Disconnect(std::optional<std::uint64_t> expectedEpoch)
 	m_snapshot.state = RuntimeConnectionState::Disconnected;
 	m_snapshot.inFlight = false;
 	m_snapshot.detail.clear();
+	m_snapshot.appName.clear();
 	if (m_snapshot.epoch != std::numeric_limits<std::uint64_t>::max())
 		++m_snapshot.epoch;
 	m_changed.notify_all();
@@ -302,6 +319,7 @@ void RuntimeConnection::Close() noexcept
 		m_requested = false;
 		m_snapshot.state = RuntimeConnectionState::Disconnected;
 		m_snapshot.inFlight = false;
+		m_snapshot.appName.clear();
 		m_requests.swap(requests);
 		m_replies.swap(replies);
 		hello = std::move(m_snapshot.hello);

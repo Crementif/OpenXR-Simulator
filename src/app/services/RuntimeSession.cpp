@@ -84,6 +84,13 @@ void RuntimeSession::ChooseSession(PanelSession session)
 }
 void RuntimeSession::Poll(bool piloting)
 {
+	const auto connection = m_requests.Snapshot();
+	if (connection.state == RuntimeConnectionState::Failed)
+	{
+		m_failure = connection.detail.empty() ? "Runtime connection failed" : connection.detail;
+		// Retire the failed epoch, including replies queued before the transport failed.
+		m_requests.Disconnect();
+	}
 	if (m_requests.RefreshEpoch())
 	{
 		m_debugger.ResetEpoch();

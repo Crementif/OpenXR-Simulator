@@ -224,6 +224,7 @@ SessionView RuntimeSession::View() const
 	view.connected = connection.state == RuntimeConnectionState::Connected;
 	view.connectionState = ConnectionName(connection.state);
 	view.endpoint = connection.path;
+	view.appName = connection.appName;
 	view.sessionAvailable = selected.id != 0;
 	view.sessionRunning = selected.running;
 	view.epoch = m_requests.Epoch();
@@ -288,7 +289,7 @@ SessionView RuntimeSession::View() const
 		view.selectedIdentity = m_time.cursor;
 		view.selectedFrame = m_time.cursor.frame;
 	}
-	// Frames per second over the last half second of this run's display intervals.
+	// Frames per second over the latest application intervals in this run.
 	if (view.connected && selected.running && history.Size())
 	{
 		double milliseconds = 0;

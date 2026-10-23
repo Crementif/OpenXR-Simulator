@@ -45,7 +45,7 @@ struct RuntimeReply
 struct RuntimeConnectionSnapshot
 {
 	RuntimeConnectionState state = RuntimeConnectionState::Disconnected;
-	std::string path, detail;
+	std::string path, detail, appName;
 	std::uint64_t epoch = 0;
 	std::size_t queued = 0, ready = 0;
 	bool inFlight = false;
@@ -76,7 +76,7 @@ class RuntimeConnection
 	};
 	bool Current(std::uint64_t epoch);
 	void ConnectionState(std::uint64_t epoch, RuntimeConnectionState state, std::string detail,
-						 std::optional<control::ControlPacket> hello = {});
+						 std::optional<control::ControlPacket> hello = {}, std::string appName = {});
 	void Reply(RuntimeReply reply);
 	control::ControlPacket Exchange(control::LocalControlClient& client, control::ControlPacket packet,
 									std::uint64_t epoch);

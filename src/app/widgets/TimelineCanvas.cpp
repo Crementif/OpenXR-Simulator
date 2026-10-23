@@ -39,7 +39,7 @@ void TimelineCanvas::Begin(float headerWidth, float liveWidth, bool laneNames)
 	auto* draw = ImGui::GetWindowDrawList();
 	static constexpr const char* labels[]{"Frame time", "Images", "Input"};
 	static constexpr const char* tips[]{
-		"CPU frame span against the display period; falls back to display interval when timing is unavailable",
+		"CPU frame span against the display period; falls back to application interval when timing is unavailable",
 		"Kept preview coverage; snapshots can be pinned. Gaps have no saved image.",
 		"Applied hand inputs: left rises, right falls. Green marks actions read by the app."};
 	// Alternate lane shading and one quiet line under the ruler keep the rows apart.
@@ -379,7 +379,7 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 		if (result.hovered)
 		{
 			const auto& frame = history.At(*result.hovered);
-			ImGui::SetTooltip("Frame %llu / run %.3f s\nDisplay interval %.2f ms%s%s",
+			ImGui::SetTooltip("Frame %llu / run %.3f s\nApplication interval %.2f ms%s%s",
 							  static_cast<unsigned long long>(frame.identity.frame), frame.runSeconds,
 							  frame.frameMilliseconds,
 							  frame.flags & HistorySnapshot ? frame.flags & HistoryPinned ? " / pinned (click to unpin)"
