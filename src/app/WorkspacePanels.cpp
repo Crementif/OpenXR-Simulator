@@ -275,6 +275,8 @@ struct WorkspacePanels::Impl
 		};
 		const auto choice =
 			picker.Draw(settings, view, label, dot, tooltip, std::exchange(shell.openAppPicker, false), session);
+		if (!choice.discoveryError.empty())
+			notices.Push({"Application discovery failed", choice.discoveryError});
 		if (choice.connect)
 		{
 			// Only an explicit Connect attaches; the picker names the process first.

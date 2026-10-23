@@ -1,5 +1,6 @@
 #include "../TestSupport.h"
 #include "Math.h"
+#include "app/AppPicker.h"
 #include "app/DeviceControlPanel.h"
 #include "app/services/ManualInputController.h"
 #include "app/LaunchProfilesDialog.h"
@@ -4047,6 +4048,38 @@ int main()
 
 
 #ifdef __linux__
+		if (std::getenv("SIMXR_DISCOVERY_FAILURE_QA"))
+		{
+			Interaction test;
+			const auto notices = test.runtime.TakeNotices();
+			Require(std::any_of(notices.begin(), notices.end(), [](const auto& notice)
+			{
+				return notice.title == "Application discovery failed" && !notice.detail.empty();
+			}), "Discovery failure did not become a notice during startup");
+			AppPicker picker;
+			std::string failure;
+			bool open = true;
+			test.extraDraw = [&]
+			{
+				ImGui::Begin("Discovery failure fixture");
+				const auto choice = picker.Draw({}, {}, "Apps", 0, "", std::exchange(open, false), {});
+				if (!choice.discoveryError.empty())
+					failure = choice.discoveryError;
+				ImGui::End();
+			};
+			for (unsigned frame = 0; frame < 4; ++frame)
+				test.Frame();
+			Require(!failure.empty(), "Picker hid a discovery failure");
+			if (const auto path = std::getenv("SIMXR_DISCOVERY_QA_SCREENSHOT"))
+			{
+				test.renderer.RequestScreenshot(path);
+				test.Frame();
+			}
+			test.renderer.WaitIdle();
+			Require(test.validation->errors.load() == 0, "Discovery failure UI validation errors");
+			std::cout << "PASS startup notice and usable app picker after discovery failure\n";
+			return 0;
+		}
 		if (const auto endpoint = std::getenv("SIMXR_TIMELINE_ENDPOINT"))
 		{
 			Interaction test;

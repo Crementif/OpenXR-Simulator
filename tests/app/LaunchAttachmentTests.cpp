@@ -1,5 +1,6 @@
 #include "../TestSupport.h"
 #include "app/services/LaunchAttachment.h"
+#include "app/services/RuntimeEndpoints.h"
 #include "app/services/RuntimeConnection.h"
 #include "control/ControlService.h"
 #include "control/LocalControlServer.h"
@@ -201,6 +202,35 @@ void DiscoveryEpochOwnership()
 	}
 	Require(discovery.Snapshot().epoch == replacementEpoch, "Unstarted attachment changed discovery lifetime");
 }
+void DiscoveryFailures()
+{
+	Directory directory;
+	const char* prior = std::getenv("SIMXR_DATA_DIR");
+	const std::optional<std::string> original = prior ? std::optional<std::string>{prior} : std::nullopt;
+	const auto restore = [&]
+	{
+		if (original)
+			::setenv("SIMXR_DATA_DIR", original->c_str(), 1);
+		else
+			::unsetenv("SIMXR_DATA_DIR");
+	};
+	try
+	{
+		const auto invalid = directory.path / "not-a-directory";
+		std::ofstream(invalid) << "file";
+		Require(::setenv("SIMXR_DATA_DIR", invalid.c_str(), 1) == 0, "Set discovery fixture");
+		Reject([] { app::DiscoverRuntimeEndpoints(false); }, "Cannot discover runtime endpoints");
+		const auto missing = directory.path / "not-created";
+		Require(::setenv("SIMXR_DATA_DIR", missing.c_str(), 1) == 0, "Set missing discovery directory");
+		Require(app::DiscoverRuntimeEndpoints(false).empty(), "A fresh directory should have no runtimes");
+	}
+	catch (...)
+	{
+		restore();
+		throw;
+	}
+	restore();
+}
 } // namespace
 int main()
 {
@@ -209,6 +239,7 @@ int main()
 		FreshEndpointAndRunningSession();
 		ExistingEndpointAndChangedProcess();
 		DiscoveryEpochOwnership();
+		DiscoveryFailures();
 		std::cout << "PASS explicit launch attachment, exact endpoint/session and discovery epoch ownership\n";
 		return 0;
 	}

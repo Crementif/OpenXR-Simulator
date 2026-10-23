@@ -21,6 +21,7 @@ struct AppPickerChoice
 	std::optional<int> launchProfile;
 	std::optional<LaunchProfile> launchRecent;
 	std::optional<std::size_t> saveRecent;
+	std::string discoveryError;
 	bool addProfile = false, editProfiles = false, connectEndpoint = false, disconnect = false;
 };
 // The top bar's app control: icon, app name and run-state dot, flat until hovered.
@@ -33,7 +34,8 @@ class AppPicker
 						 ImU32 dot, const std::string& tooltip, bool open, const std::function<void()>& session);
 
   private:
-	void Refresh();
+	std::string Refresh();
+	bool m_discoveryFailed = false;
 	std::vector<RunningApp> m_running;
 	std::chrono::steady_clock::time_point m_nextScan;
 };

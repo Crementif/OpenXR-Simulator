@@ -1,6 +1,6 @@
 #include "../TestSupport.h"
 #include "app/RunningApps.h"
-#include "app/WindowsLaunch.h"
+#include "app/platform/windows/LaunchSupport.h"
 #include <algorithm>
 #include <iostream>
 

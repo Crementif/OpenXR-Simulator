@@ -1,9 +1,13 @@
 #include "app/RunningApps.h"
-#include "app/RuntimeEndpoints.h"
+#include "app/services/RuntimeEndpoints.h"
 
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#ifdef _WIN32
+#include "app/platform/windows/RuntimeEndpoints.h"
+#include "app/platform/windows/LaunchSupport.h"
+#endif
 #ifdef __linux__
 #include <cerrno>
 #include <cstring>

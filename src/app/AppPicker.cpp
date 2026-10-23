@@ -1,3 +1,4 @@
+#include "Pch.h"
 #include "app/AppPicker.h"
 #include "app/RuntimeView.h"
 #include "app/Theme.h"
@@ -52,10 +53,21 @@ void AlignRight(std::initializer_list<const char*> labels)
 	ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetContentRegionMax().x - width + style.ItemSpacing.x));
 }
 } // namespace
-void AppPicker::Refresh()
+std::string AppPicker::Refresh()
 {
-	m_running = DiscoverRunningApps();
 	m_nextScan = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+	try
+	{
+		m_running = DiscoverRunningApps();
+		m_discoveryFailed = false;
+		return {};
+	}
+	catch (const std::exception& error)
+	{
+		m_running.clear();
+		m_discoveryFailed = true;
+		return error.what();
+	}
 }
 AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const RuntimeView& view, const std::string& label,
 								ImU32 dot, const std::string& tooltip, bool open, const std::function<void()>& session)
@@ -82,7 +94,7 @@ AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const Runtime
 		ImGui::SetItemTooltip("%s", tooltip.c_str());
 	if (pressed || open)
 	{
-		Refresh();
+		choice.discoveryError = Refresh();
 		ImGui::OpenPopup("App picker");
 	}
 	ImGui::SetNextWindowPos({minimum.x, minimum.y + height + 2 * unit});
@@ -90,7 +102,7 @@ AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const Runtime
 	if (!ImGui::BeginPopup("App picker"))
 		return choice;
 	if (std::chrono::steady_clock::now() >= m_nextScan)
-		Refresh();
+		choice.discoveryError = Refresh();
 	if (view.connected && session)
 	{
 		SectionLabel("Session");
@@ -100,9 +112,9 @@ AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const Runtime
 	SectionLabel("Running");
 	ImGui::SameLine();
 	if (IconButton("Refresh", Icon::Refresh, "Look for running apps again"))
-		Refresh();
+		choice.discoveryError = Refresh();
 	if (m_running.empty())
-		ImGui::TextDisabled("No running apps found");
+		ImGui::TextDisabled("%s", m_discoveryFailed ? "Running apps unavailable" : "No running apps found");
 	for (const auto& app : m_running)
 	{
 		ImGui::PushID(app.endpoint.c_str());

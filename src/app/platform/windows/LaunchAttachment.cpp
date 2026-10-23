@@ -1,6 +1,8 @@
 #include "Pch.h"
 #include "app/services/LaunchAttachment.h"
-#include "app/RuntimeEndpoints.h"
+#include "app/services/RuntimeEndpoints.h"
+#include "app/platform/windows/RuntimeEndpoints.h"
+#include "app/platform/windows/LaunchSupport.h"
 
 #include <stdexcept>
 

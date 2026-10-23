@@ -108,13 +108,14 @@ add_library(simxr_recording STATIC src/automation/Recording.cpp src/automation/R
 simxr_configure_target(simxr_recording)
 target_link_libraries(simxr_recording PUBLIC simxr_control)
 
-add_library(simxr_app_files STATIC)
+add_library(simxr_app_platform STATIC)
 if(WIN32)
-    target_sources(simxr_app_files PRIVATE src/app/platform/windows/FileStorage.cpp)
+    target_sources(simxr_app_platform PRIVATE src/app/platform/windows/FileStorage.cpp
+        src/app/platform/windows/LaunchSupport.cpp src/app/platform/windows/RuntimeEndpoints.cpp)
 else()
-    target_sources(simxr_app_files PRIVATE src/app/platform/FileStorage.cpp)
+    target_sources(simxr_app_platform PRIVATE src/app/platform/FileStorage.cpp src/app/platform/RuntimeEndpoints.cpp)
 endif()
-simxr_configure_target(simxr_app_files)
+simxr_configure_target(simxr_app_platform)
 
 add_library(simxr_app_settings STATIC
     src/app/services/CompanionSettings.cpp
@@ -131,7 +132,7 @@ else()
 endif()
 simxr_configure_target(simxr_app_settings)
 target_include_directories(simxr_app_settings PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(simxr_app_settings PUBLIC Threads::Threads PRIVATE simxr_app_files)
+target_link_libraries(simxr_app_settings PUBLIC Threads::Threads PRIVATE simxr_app_platform)
 if(WIN32)
     target_link_libraries(simxr_app_settings PRIVATE advapi32)
 endif()
@@ -157,11 +158,11 @@ else()
     target_sources(simxr_connection PRIVATE src/app/platform/LaunchAttachment.cpp)
 endif()
 simxr_configure_target(simxr_connection)
-target_link_libraries(simxr_connection PUBLIC simxr_control)
+target_link_libraries(simxr_connection PUBLIC simxr_control PRIVATE simxr_app_platform)
 
 add_library(simxr_recording_controller STATIC src/app/services/RecordingController.cpp)
 simxr_configure_target(simxr_recording_controller)
-target_link_libraries(simxr_recording_controller PUBLIC simxr_connection simxr_recording PRIVATE simxr_app_files)
+target_link_libraries(simxr_recording_controller PUBLIC simxr_connection simxr_recording PRIVATE simxr_app_platform)
 
 add_library(simxr_graphics STATIC
     src/graphics/ColorPixels.cpp
@@ -333,6 +334,7 @@ if(BUILD_TESTING)
         endforeach()
         add_executable(windows_running_apps_tests tests/app/WindowsRunningAppsTests.cpp src/app/RunningApps.cpp)
         simxr_configure_target(windows_running_apps_tests)
+        target_link_libraries(windows_running_apps_tests PRIVATE simxr_app_platform)
         target_include_directories(windows_running_apps_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
         if(MINGW)
             target_link_options(windows_running_apps_tests PRIVATE -static)

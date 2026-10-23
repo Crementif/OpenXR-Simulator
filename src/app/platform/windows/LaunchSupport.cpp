@@ -1,19 +1,11 @@
-#pragma once
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
+#include "app/platform/windows/LaunchSupport.h"
+#include "Pch.h"
+
 #include <limits>
-#include <memory>
-#include <stdexcept>
-#include <string>
-#include <string_view>
-#include <utility>
-#include <windows.h>
 
 namespace simxr::app::windows
 {
-inline std::wstring Wide(std::string_view value)
+std::wstring Wide(std::string_view value)
 {
 	if (value.empty())
 		return {};
@@ -29,7 +21,7 @@ inline std::wstring Wide(std::string_view value)
 		throw std::invalid_argument("Cannot convert launch text to Unicode");
 	return result;
 }
-inline std::string Utf8(std::wstring_view value)
+std::string Utf8(std::wstring_view value)
 {
 	if (value.empty())
 		return {};
@@ -45,22 +37,34 @@ inline std::string Utf8(std::wstring_view value)
 		throw std::invalid_argument("Cannot convert launch text to UTF-8");
 	return result;
 }
-inline std::string Environment(const char* key)
+std::string Environment(const char* key)
 {
 	const auto name = Wide(key);
+	SetLastError(ERROR_SUCCESS);
 	const auto size = GetEnvironmentVariableW(name.c_str(), nullptr, 0);
 	if (!size)
+	{
+		const auto error = GetLastError();
+		if (error != ERROR_SUCCESS && error != ERROR_ENVVAR_NOT_FOUND)
+			throw Error("Cannot read launch environment", error);
 		return {};
+	}
 	std::wstring value(size, L'\0');
+	SetLastError(ERROR_SUCCESS);
 	const auto read = GetEnvironmentVariableW(name.c_str(), value.data(), size);
 	if (!read)
+	{
+		const auto error = GetLastError();
+		if (error != ERROR_SUCCESS && error != ERROR_ENVVAR_NOT_FOUND)
+			throw Error("Cannot read launch environment", error);
 		return {};
+	}
 	if (read >= size)
 		throw std::runtime_error("Environment changed while preparing launch");
 	value.resize(read);
 	return Utf8(value);
 }
-inline std::wstring Quote(std::wstring_view argument)
+std::wstring Quote(std::wstring_view argument)
 {
 	// Microsoft CRT argv parsing: double trailing backslashes and escape embedded quotes.
 	std::wstring result(1, L'"');
@@ -80,7 +84,7 @@ inline std::wstring Quote(std::wstring_view argument)
 	result.push_back(L'"');
 	return result;
 }
-inline std::runtime_error Error(const char* operation, DWORD code = GetLastError())
+std::runtime_error Error(const char* operation, DWORD code)
 {
 	wchar_t* buffer = nullptr;
 	const auto size =
@@ -90,34 +94,21 @@ inline std::runtime_error Error(const char* operation, DWORD code = GetLastError
 	const auto detail = size ? Utf8(std::wstring_view(message.get(), size)) : std::string{};
 	return std::runtime_error(std::string(operation) + " (Windows " + std::to_string(code) + "): " + detail);
 }
-class Handle
+Handle::Handle(HANDLE handle) : m_value(handle) {}
+Handle::~Handle()
 {
-	HANDLE value = nullptr;
-
-  public:
-	explicit Handle(HANDLE handle = nullptr) : value(handle) {}
-	~Handle()
+	if (m_value && m_value != INVALID_HANDLE_VALUE)
+		CloseHandle(m_value);
+}
+Handle::Handle(Handle&& other) noexcept : m_value(std::exchange(other.m_value, nullptr)) {}
+Handle& Handle::operator=(Handle&& other) noexcept
+{
+	if (this != &other)
 	{
-		if (value && value != INVALID_HANDLE_VALUE)
-			CloseHandle(value);
+		if (m_value && m_value != INVALID_HANDLE_VALUE)
+			CloseHandle(m_value);
+		m_value = std::exchange(other.m_value, nullptr);
 	}
-	Handle(const Handle&) = delete;
-	Handle& operator=(const Handle&) = delete;
-	Handle(Handle&& other) noexcept : value(std::exchange(other.value, nullptr)) {}
-	Handle& operator=(Handle&& other) noexcept
-	{
-		if (this != &other)
-		{
-			if (value && value != INVALID_HANDLE_VALUE)
-				CloseHandle(value);
-			value = std::exchange(other.value, nullptr);
-		}
-		return *this;
-	}
-	HANDLE Get() const
-	{
-		return value;
-	}
-};
+	return *this;
+}
 } // namespace simxr::app::windows
-#endif

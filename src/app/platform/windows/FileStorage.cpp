@@ -2,7 +2,7 @@
 #include "app/platform/FileStorage.h"
 #include "app/services/CompanionSettings.h"
 #include "app/services/Utf8Path.h"
-#include "app/WindowsLaunch.h"
+#include "app/platform/windows/LaunchSupport.h"
 
 #include <atomic>
 #include <stdexcept>

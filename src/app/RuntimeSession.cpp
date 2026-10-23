@@ -1,5 +1,6 @@
+#include "Pch.h"
 #include "app/RuntimeSession.h"
-#include "app/RuntimeEndpoints.h"
+#include "app/services/RuntimeEndpoints.h"
 #include "control/SimulationControl.h"
 #include "graphics/SnapshotBudget.h"
 
@@ -42,8 +43,9 @@ bool SameFrame(const PanelScope& scope, std::uint64_t frame, const HistoryFrame&
 } // namespace
 RuntimeSession::RuntimeSession(UiRenderer& renderer, const std::string& endpoint)
 	: m_debugger(m_requests), m_workspace(m_requests), m_preview(renderer, m_requests), m_exports(m_requests),
-	  m_endpoints(DiscoverRuntimeEndpoints()), m_endpoint(endpoint)
+	  m_endpoint(endpoint)
 {
+	RefreshEndpoints();
 	if (!endpoint.empty())
 		m_requests.Connect(endpoint);
 }
@@ -503,7 +505,14 @@ void RuntimeSession::Disconnect()
 }
 void RuntimeSession::RefreshEndpoints()
 {
-	m_endpoints = DiscoverRuntimeEndpoints();
+	try
+	{
+		m_endpoints = DiscoverRuntimeEndpoints();
+	}
+	catch (const std::exception& error)
+	{
+		Notify("Application discovery failed", error.what());
+	}
 }
 std::string RuntimeSession::Endpoint() const
 {

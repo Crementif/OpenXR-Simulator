@@ -2,8 +2,9 @@
 #include "app/services/CompanionSettings.h"
 #include "app/services/ProcessLauncher.h"
 #include "app/services/ProcessSupervisor.h"
-#include "app/RuntimeEndpoints.h"
-#include "app/WindowsLaunch.h"
+#include "app/services/RuntimeEndpoints.h"
+#include "app/platform/windows/RuntimeEndpoints.h"
+#include "app/platform/windows/LaunchSupport.h"
 
 #include <array>
 #include <chrono>
