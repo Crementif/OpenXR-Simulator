@@ -48,6 +48,7 @@ class OpenGLBackend final
 	OpenGLBackend(HDC applicationDevice, HGLRC applicationContext, std::shared_ptr<VulkanDevice> delivery,
 				  std::span<const char* const> extensions);
 	~OpenGLBackend();
+	// Validate application features before allocating the native delivery device.
 	static VulkanExternalIdentity Identity(HDC device, HGLRC context);
 	XrResult Prepare(const CompositionPlan& plan, std::span<const OpenGLCompositionSource> sources,
 					 std::shared_ptr<OpenGLFrame>& output, std::uint32_t outputLayers = 2);

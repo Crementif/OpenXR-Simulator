@@ -538,8 +538,8 @@ static XrResult XRAPI_PTR xrGetOpenGLGraphicsRequirementsKHR_runtime(XrInstance 
 	if (!requirements || requirements->type != XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR)
 		return XR_ERROR_VALIDATION_FAILURE;
 
-	// Canonical GLSL and direct-state-access image storage require OpenGL 4.5.
-	requirements->minApiVersionSupported = XR_MAKE_VERSION(4, 5, 0);
+	// Session admission checks application extensions; the private compositor uses 4.5.
+	requirements->minApiVersionSupported = XR_MAKE_VERSION(3, 3, 0);
 	requirements->maxApiVersionSupported = XR_MAKE_VERSION(4, 6, 0);
 	return XR_SUCCESS;
 }

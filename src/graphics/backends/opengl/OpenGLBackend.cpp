@@ -38,6 +38,73 @@ static void CheckGL(const windows::OpenGLLibrary& gl, const char* operation)
 		throw std::runtime_error(operation);
 }
 
+static void RequireApplicationCapabilities(const windows::OpenGLLibrary& gl, HDC device)
+{
+	GLint major = 0, minor = 0, count = 0;
+	gl.GetIntegerv(GL_MAJOR_VERSION, &major);
+	gl.GetIntegerv(GL_MINOR_VERSION, &minor);
+	gl.GetIntegerv(GL_NUM_EXTENSIONS, &count);
+	CheckGL(gl, "Cannot query application OpenGL capabilities");
+	if (major < 3 || (major == 3 && minor < 3))
+		throw std::runtime_error("Application OpenGL context must support version 3.3 or newer");
+	if (count < 0)
+		throw std::runtime_error("Invalid application OpenGL extension count");
+	const auto getString = Procedure<PFNGLGETSTRINGIPROC>(gl, "glGetStringi");
+	const auto supports = [&](std::string_view required)
+	{
+		for (GLint index = 0; index < count; ++index)
+		{
+			const auto extension = getString(GL_EXTENSIONS, index);
+			if (!extension)
+				throw std::runtime_error("Cannot query application OpenGL extension");
+			if (required == reinterpret_cast<const char*>(extension))
+				return true;
+		}
+		return false;
+	};
+	const auto require = [&](GLint coreMajor, GLint coreMinor, const char* extension)
+	{
+		if (major > coreMajor || (major == coreMajor && minor >= coreMinor) || supports(extension))
+			return;
+		throw std::runtime_error(std::string("Application OpenGL context requires ") + extension);
+	};
+	// Swapchains are allocated in the application context; shaders run in our 4.5 context.
+	require(4, 5, "GL_ARB_direct_state_access");
+	require(4, 2, "GL_ARB_texture_storage");
+	require(4, 3, "GL_ARB_texture_storage_multisample");
+	require(4, 2, "GL_ARB_internalformat_query");
+	require(4, 3, "GL_ARB_internalformat_query2");
+	if (!supports("GL_EXT_memory_object") && !supports("GL_EXT_semaphore"))
+		throw std::runtime_error(
+			"Application OpenGL context requires GL_EXT_memory_object or GL_EXT_semaphore for device identification");
+	CheckGL(gl, "Cannot query application OpenGL extensions");
+
+	const auto getWglExtensions = Procedure<PFNWGLGETEXTENSIONSSTRINGARBPROC>(gl, "wglGetExtensionsStringARB");
+	const auto extensions = getWglExtensions(device);
+	if (!extensions)
+		throw std::runtime_error("Cannot query application WGL extensions");
+	for (const std::string_view required :
+		 {"WGL_ARB_create_context", "WGL_ARB_create_context_profile", "WGL_ARB_pixel_format", "WGL_ARB_pbuffer"})
+	{
+		std::string_view remaining(extensions);
+		bool found = false;
+		while (!remaining.empty())
+		{
+			const auto end = remaining.find(' ');
+			if (remaining.substr(0, end) == required)
+			{
+				found = true;
+				break;
+			}
+			if (end == std::string_view::npos)
+				break;
+			remaining.remove_prefix(end + 1);
+		}
+		if (!found)
+			throw std::runtime_error(std::string("Application OpenGL context requires ") + std::string(required));
+	}
+}
+
 // A private share-group context keeps native cleanup independent of application
 // context lifetime and isolates every framebuffer, program and binding mutation.
 class OpenGLContext final
@@ -86,6 +153,7 @@ class OpenGLContext final
 		windows::OpenGLContextScope application(gl, applicationDevice, applicationContext);
 		if (!application.Current())
 			throw std::runtime_error("Cannot acquire application OpenGL context");
+		RequireApplicationCapabilities(gl, applicationDevice);
 		const auto create = Procedure<PFNWGLCREATECONTEXTATTRIBSARBPROC>(gl, "wglCreateContextAttribsARB");
 		m_releaseDevice = Procedure<PFNWGLRELEASEPBUFFERDCARBPROC>(gl, "wglReleasePbufferDCARB");
 		m_destroy = Procedure<PFNWGLDESTROYPBUFFERARBPROC>(gl, "wglDestroyPbufferARB");
@@ -365,11 +433,13 @@ VulkanExternalIdentity OpenGLBackend::Identity(HDC device, HGLRC context)
 	windows::OpenGLContextScope current(gl, device, context);
 	if (!current.Current())
 		throw std::runtime_error("Cannot identify application OpenGL context");
+	RequireApplicationCapabilities(gl, device);
 	const auto get = Procedure<PFNGLGETUNSIGNEDBYTEVEXTPROC>(gl, "glGetUnsignedBytevEXT");
 	const auto getIndexed = Procedure<PFNGLGETUNSIGNEDBYTEI_VEXTPROC>(gl, "glGetUnsignedBytei_vEXT");
 	VulkanExternalIdentity identity;
 	get(GL_DRIVER_UUID_EXT, identity.driverUuid.data());
 	getIndexed(GL_DEVICE_UUID_EXT, 0, identity.deviceUuid.data());
+	CheckGL(gl, "Cannot query application OpenGL device identity");
 	if (!current.Restore())
 		throw std::runtime_error("Cannot restore OpenGL context after device identification");
 	return identity;

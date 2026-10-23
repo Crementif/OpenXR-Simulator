@@ -1,3 +1,5 @@
+#include "Pch.h"
+
 #include "graphics/ColorPixels.h"
 #include "graphics/SwapchainAccess.h"
 #include "graphics/backends/opengl/OpenGLBackend.h"
@@ -5,6 +7,7 @@
 #include "graphics/backends/vulkan/VulkanInspection.h"
 #include "graphics/backends/vulkan/VulkanInspectionDevice.h"
 #include <GL/glext.h>
+#include <GL/wglext.h>
 #include <array>
 #include <bit>
 #include <cmath>
@@ -34,6 +37,29 @@ static HMODULE s_glLibrary = nullptr;
 static unsigned s_libraryReleases = 0;
 static MakeCurrentFunction s_makeCurrent = nullptr;
 static DeleteContextFunction s_deleteContext = nullptr;
+static decltype(&::wglGetProcAddress) s_getProcAddress = nullptr;
+static PFNGLGETSTRINGIPROC s_getString = nullptr;
+static HGLRC s_featureContext = nullptr;
+
+static const GLubyte* APIENTRY Extension(GLenum name, GLuint index)
+{
+	const auto value = s_getString(name, index);
+	if (value && wglGetCurrentContext() == s_featureContext &&
+		std::strcmp(reinterpret_cast<const char*>(value), "GL_ARB_direct_state_access") == 0)
+		return reinterpret_cast<const GLubyte*>("GL_SIMXR_hidden_extension");
+	return value;
+}
+
+static PROC WINAPI ResolveGl(LPCSTR name)
+{
+	const auto function = s_getProcAddress(name);
+	if (function && std::strcmp(name, "glGetStringi") == 0)
+	{
+		s_getString = std::bit_cast<PFNGLGETSTRINGIPROC>(function);
+		return std::bit_cast<PROC>(&Extension);
+	}
+	return function;
+}
 
 static BOOL WINAPI MakeCurrent(HDC device, HGLRC context)
 {
@@ -71,6 +97,11 @@ static FARPROC WINAPI Resolve(HMODULE module, LPCSTR name)
 	if (function && reinterpret_cast<std::uintptr_t>(name) > 0xffff && module == GetModuleHandleW(L"opengl32.dll"))
 	{
 		s_glLibrary = module;
+		if (std::strcmp(name, "wglGetProcAddress") == 0)
+		{
+			s_getProcAddress = std::bit_cast<decltype(&::wglGetProcAddress)>(function);
+			return std::bit_cast<FARPROC>(&ResolveGl);
+		}
 		if (std::strcmp(name, "wglMakeCurrent") == 0)
 		{
 			s_makeCurrent = std::bit_cast<MakeCurrentFunction>(function);
@@ -110,6 +141,8 @@ struct Application
 	HGLRC context = nullptr;
 	GLuint texture = 0;
 	GLuint depthTexture = 0;
+	GLuint sampleProgram = 0;
+	GLuint sampleVertexArray = 0;
 	Application()
 	{
 		window = CreateWindowExW(0, L"STATIC", L"OpenGL compositor fixture", WS_POPUP, 0, 0, 16, 16,
@@ -125,6 +158,33 @@ struct Application
 		Require(SetPixelFormat(device, ChoosePixelFormat(device, &format), &format), "Set application pixel format");
 		context = wglCreateContext(device);
 		Require(context && wglMakeCurrent(device, context), "Activate application context");
+		const auto procedure = wglGetProcAddress("wglCreateContextAttribsARB");
+		const auto address = std::bit_cast<std::uintptr_t>(procedure);
+		Require(address > 3 && address != UINTPTR_MAX, "Create versioned application context");
+		const auto create = std::bit_cast<PFNWGLCREATECONTEXTATTRIBSARBPROC>(procedure);
+		const int attributes[]{WGL_CONTEXT_MAJOR_VERSION_ARB,
+							   3,
+							   WGL_CONTEXT_MINOR_VERSION_ARB,
+							   3,
+							   WGL_CONTEXT_PROFILE_MASK_ARB,
+							   WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
+							   WGL_CONTEXT_FLAGS_ARB,
+							   WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB,
+							   0};
+		const auto compatible = create(device, nullptr, attributes);
+		Require(compatible && wglMakeCurrent(device, compatible), "Activate OpenGL 3.3 application context");
+		Require(wglDeleteContext(context), "Delete bootstrap context");
+		context = compatible;
+		GLint major = 0, minor = 0, profile = 0, flags = 0;
+		glGetIntegerv(GL_MAJOR_VERSION, &major);
+		glGetIntegerv(GL_MINOR_VERSION, &minor);
+		glGetIntegerv(GL_CONTEXT_PROFILE_MASK, &profile);
+		glGetIntegerv(GL_CONTEXT_FLAGS, &flags);
+		std::fprintf(stderr, "Application context: OpenGL %d.%d, profile=0x%x, flags=0x%x\n", major, minor,
+					 static_cast<unsigned>(profile), static_cast<unsigned>(flags));
+		Require(major == 3 && minor == 3 && profile == GL_CONTEXT_CORE_PROFILE_BIT &&
+					(flags & GL_CONTEXT_FLAG_FORWARD_COMPATIBLE_BIT),
+				"Fixture requires an actual OpenGL 3.3 forward-compatible core context");
 		glGenTextures(1, &depthTexture);
 		glGenTextures(1, &texture);
 		glBindTexture(GL_TEXTURE_2D, texture);
@@ -143,6 +203,11 @@ struct Application
 		if (context)
 		{
 			wglMakeCurrent(device, context);
+			if (sampleProgram)
+				std::bit_cast<PFNGLDELETEPROGRAMPROC>(wglGetProcAddress("glDeleteProgram"))(sampleProgram);
+			if (sampleVertexArray)
+				std::bit_cast<PFNGLDELETEVERTEXARRAYSPROC>(wglGetProcAddress("glDeleteVertexArrays"))(
+					1, &sampleVertexArray);
 			glDeleteTextures(1, &depthTexture);
 			glDeleteTextures(1, &texture);
 			wglMakeCurrent(nullptr, nullptr);
@@ -152,8 +217,91 @@ struct Application
 		if (window) DestroyWindow(window);
 	}
 };
+
+static void VerifyApplicationCapabilities(Application& app, const VulkanExternalIdentity& identity)
+{
+#ifdef SIMXR_TEST_WGL_FAILURE
+	Require(wglGetProcAddress("glCreateTextures") != nullptr, "DSA entry point exists before capability rejection");
+	struct RestoreFeature
+	{
+		~RestoreFeature()
+		{
+			s_featureContext = nullptr;
+		}
+	} restore;
+	s_featureContext = app.context;
+	Require(wglMakeCurrent(nullptr, nullptr), "Release context before rejected capability admission");
+	bool rejected = false;
+	try
+	{
+		OpenGLBackend::Identity(app.device, app.context);
+	}
+	catch (const std::runtime_error& error)
+	{
+		rejected = std::strcmp(error.what(), "Application OpenGL context requires GL_ARB_direct_state_access") == 0;
+	}
+	Require(rejected, "Missing application DSA extension passed admission through a non-null function pointer");
+	Require(!wglGetCurrentContext(), "Rejected capability admission did not restore the caller context");
+	s_featureContext = nullptr;
+	Require(OpenGLBackend::Identity(app.device, app.context) == identity && !wglGetCurrentContext(),
+			"Restored application capabilities did not admit the original device");
+	Require(wglMakeCurrent(app.device, app.context), "Restore application after capability admission");
+	std::puts("PASS: OpenGL 3.3 capability admission rejects an absent DSA extension despite callable entry points");
+#else
+	(void)app;
+	(void)identity;
+	std::puts("UNAVAILABLE: missing-extension admission injection requires the MinGW x64 linker wrapper");
+#endif
+}
+
 static void VerifyMultisample(Application& app, const VulkanInspectionDevice& device)
 {
+	const auto createShader = std::bit_cast<PFNGLCREATESHADERPROC>(wglGetProcAddress("glCreateShader"));
+	const auto shaderSource = std::bit_cast<PFNGLSHADERSOURCEPROC>(wglGetProcAddress("glShaderSource"));
+	const auto compileShader = std::bit_cast<PFNGLCOMPILESHADERPROC>(wglGetProcAddress("glCompileShader"));
+	const auto attachShader = std::bit_cast<PFNGLATTACHSHADERPROC>(wglGetProcAddress("glAttachShader"));
+	const auto deleteShader = std::bit_cast<PFNGLDELETESHADERPROC>(wglGetProcAddress("glDeleteShader"));
+	const auto getShader = std::bit_cast<PFNGLGETSHADERIVPROC>(wglGetProcAddress("glGetShaderiv"));
+	const auto useProgram = std::bit_cast<PFNGLUSEPROGRAMPROC>(wglGetProcAddress("glUseProgram"));
+	const auto bindVertexArray = std::bit_cast<PFNGLBINDVERTEXARRAYPROC>(wglGetProcAddress("glBindVertexArray"));
+	app.sampleProgram = std::bit_cast<PFNGLCREATEPROGRAMPROC>(wglGetProcAddress("glCreateProgram"))();
+	Require(app.sampleProgram != 0, "Create multisample source program");
+	const auto compile = [&](GLenum type, const char* source)
+	{
+		const auto shader = createShader(type);
+		Require(shader != 0, "Create multisample source shader");
+		attachShader(app.sampleProgram, shader);
+		shaderSource(shader, 1, &source, nullptr);
+		compileShader(shader);
+		GLint compiled = 0;
+		getShader(shader, GL_COMPILE_STATUS, &compiled);
+		deleteShader(shader);
+		Require(compiled == GL_TRUE, "Compile multisample source shader");
+	};
+	compile(GL_VERTEX_SHADER, "#version 330 core\n"
+							  "uniform float sourceDepth;\n"
+							  "void main() {\n"
+							  "  vec2 position[3] = vec2[3](vec2(-1,-1), vec2(3,-1), vec2(-1,3));\n"
+							  "  gl_Position = vec4(position[gl_VertexID], sourceDepth, 1);\n"
+							  "}\n");
+	compile(GL_FRAGMENT_SHADER, "#version 330 core\n"
+								"uniform vec4 sourceColor;\n"
+								"out vec4 color;\n"
+								"void main() { color = sourceColor; }\n");
+	std::bit_cast<PFNGLLINKPROGRAMPROC>(wglGetProcAddress("glLinkProgram"))(app.sampleProgram);
+	GLint linked = 0;
+	std::bit_cast<PFNGLGETPROGRAMIVPROC>(wglGetProcAddress("glGetProgramiv"))(app.sampleProgram, GL_LINK_STATUS,
+																			  &linked);
+	Require(linked == GL_TRUE, "Link multisample source program");
+	std::bit_cast<PFNGLGENVERTEXARRAYSPROC>(wglGetProcAddress("glGenVertexArrays"))(1, &app.sampleVertexArray);
+	bindVertexArray(app.sampleVertexArray);
+	useProgram(app.sampleProgram);
+	const auto location = std::bit_cast<PFNGLGETUNIFORMLOCATIONPROC>(wglGetProcAddress("glGetUniformLocation"));
+	const auto color = location(app.sampleProgram, "sourceColor");
+	const auto sourceDepth = location(app.sampleProgram, "sourceDepth");
+	const auto setColor = std::bit_cast<PFNGLUNIFORM4FPROC>(wglGetProcAddress("glUniform4f"));
+	const auto setDepth = std::bit_cast<PFNGLUNIFORM1FPROC>(wglGetProcAddress("glUniform1f"));
+	Require(color >= 0 && sourceDepth >= 0, "Find multisample source uniforms");
 	const auto createTexture = std::bit_cast<PFNGLCREATETEXTURESPROC>(wglGetProcAddress("glCreateTextures"));
 	const auto createFramebuffer = std::bit_cast<PFNGLCREATEFRAMEBUFFERSPROC>(wglGetProcAddress("glCreateFramebuffers"));
 	const auto attach = std::bit_cast<PFNGLNAMEDFRAMEBUFFERTEXTURELAYERPROC>(wglGetProcAddress("glNamedFramebufferTextureLayer"));
@@ -191,14 +339,9 @@ static void VerifyMultisample(Application& app, const VulkanInspectionDevice& de
 		for (int half = 0; half < 2; ++half)
 		{
 			glScissor(0, half * 4, 8, 4);
-			glColor4f(half ? 1.0f : 0.0f, 0, half ? 0.0f : 1.0f, 1);
-			const float z = half ? 0.5f : 0.0f;
-			glBegin(GL_TRIANGLE_STRIP);
-			glVertex3f(-1, -1, z);
-			glVertex3f(1, -1, z);
-			glVertex3f(-1, 1, z);
-			glVertex3f(1, 1, z);
-			glEnd();
+			setColor(color, half ? 1.0f : 0.0f, 0, half ? 0.0f : 1.0f, 1);
+			setDepth(sourceDepth, half ? 0.5f : 0.0f);
+			glDrawArrays(GL_TRIANGLES, 0, 3);
 		}
 		glDisable(GL_SCISSOR_TEST);
 		glDisable(GL_SAMPLE_MASK);
@@ -286,7 +429,10 @@ static void VerifyMultisample(Application& app, const VulkanInspectionDevice& de
 		glDeleteTextures(1, &texture);
 		std::bit_cast<PFNGLDELETEFRAMEBUFFERSPROC>(wglGetProcAddress("glDeleteFramebuffers"))(1, &framebuffer);
 	}
-	std::puts("PASS: OpenGL 4x MSAA color resolve, sample-zero depth, cropped arrays and retained full source after producer teardown");
+	useProgram(0);
+	bindVertexArray(0);
+	std::puts("PASS: OpenGL 3.3 core 4x MSAA color resolve, sample-zero depth, cropped arrays and retained full source "
+			  "after producer teardown");
 }
 
 static void VerifySubmissionFailures(const VulkanInspectionDevice& device)
@@ -442,6 +588,7 @@ int main()
 	{
 		Application app;
 		const auto identity = OpenGLBackend::Identity(app.device, app.context);
+		VerifyApplicationCapabilities(app, identity);
 		VulkanInspectionDevice device(identity, {}, true);
 		VulkanBackend delivery(device.Device(), 8, device.EnabledExtensions(), true);
 		VulkanInspection inspection(identity, 8);

@@ -1,5 +1,8 @@
 #include "platform/windows/OpenGLSwapchain.h"
+#include "Pch.h"
+
 #include <GL/glext.h>
+#include <GL/wglext.h>
 
 #include "../TestSupport.h"
 
@@ -66,7 +69,15 @@ class ContextFixture final
 		const auto create = Procedure<CreateContext>("wglCreateContextAttribsARB");
 		if (!create)
 			return;
-		const int attributes[]{0x2091, 4, 0x2092, 5, 0x9126, 2, 0};
+		const int attributes[]{WGL_CONTEXT_MAJOR_VERSION_ARB,
+							   3,
+							   WGL_CONTEXT_MINOR_VERSION_ARB,
+							   3,
+							   WGL_CONTEXT_PROFILE_MASK_ARB,
+							   WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
+							   WGL_CONTEXT_FLAGS_ARB,
+							   WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB,
+							   0};
 		const auto modern = create(m_device, nullptr, attributes);
 		if (!modern)
 			return;
@@ -138,6 +149,12 @@ void APIENTRY DebugMessage(GLenum, GLenum type, GLuint, GLenum, GLsizei, const G
 
 void Exercise(ContextFixture& fixture)
 {
+	const auto major = Integer(GL_MAJOR_VERSION), minor = Integer(GL_MINOR_VERSION);
+	const auto profile = Integer(GL_CONTEXT_PROFILE_MASK), flags = Integer(GL_CONTEXT_FLAGS);
+	std::cerr << "Application context: OpenGL " << major << '.' << minor << ", profile=" << profile
+			  << ", flags=" << flags << '\n';
+	Check(major == 3 && minor == 3 && profile == GL_CONTEXT_CORE_PROFILE_BIT &&
+		  (flags & GL_CONTEXT_FLAG_FORWARD_COMPATIBLE_BIT));
 	Procedure<PFNGLDEBUGMESSAGECALLBACKPROC>("glDebugMessageCallback")(DebugMessage, nullptr);
 	glEnable(GL_DEBUG_OUTPUT);
 	glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
@@ -329,10 +346,10 @@ int main()
 	ContextFixture fixture;
 	if (!fixture.Ready())
 	{
-		std::cout << "SKIP: OpenGL 4.5 WGL context unavailable\n";
+		std::cout << "SKIP: OpenGL 3.3 WGL context unavailable\n";
 		return 77;
 	}
 	Exercise(fixture);
-	std::cout << "PASS: OpenGL formats, mip arrays, exact maximum samples, binding preservation and context-close retry\n";
+	std::cout << "PASS: OpenGL 3.3 formats, mip arrays, exact maximum samples, binding preservation and context-close retry\n";
 	return 0;
 }
