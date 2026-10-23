@@ -3,10 +3,15 @@
 #include "app/platform/GamepadFeedback.h"
 #include "app/services/PilotBindings.h"
 #include "simulation/InputState.h"
+#include <array>
+#include <chrono>
+#include <cstdint>
+#include <functional>
 #include <utility>
 
 struct SDL_Window;
 struct SDL_Gamepad;
+union SDL_Event;
 
 namespace simxr::app
 {
@@ -26,7 +31,8 @@ class Window
 	Window& operator=(const Window&) = delete;
 	SDL_Window* Native() const;
 	std::pair<int, int> PixelSize() const;
-	bool PollEvents();
+	// Captured relative motion stays with the pilot; other events go to the UI owner.
+	bool PollEvents(const std::function<void(const SDL_Event&)>& processEvent = {});
 	bool TakeFocusLost();
 	bool Focused() const;
 	GamepadSample ReadGamepad(const GamepadBindings& bindings);
@@ -45,6 +51,8 @@ class Window
 	void OpenGamepad();
 	bool m_focusLost = false;
 	bool m_pointerCaptured = false;
+	bool m_pointerReleasePending = false;
+	bool m_gyroEnabled = false;
 	std::pair<float, float> m_pointerMotion{};
 };
 } // namespace simxr::app

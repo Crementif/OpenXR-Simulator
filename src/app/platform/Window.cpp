@@ -1,30 +1,35 @@
-#include "app/Window.h"
+#include "app/platform/Window.h"
 #include "Pch.h"
 
 #include <SDL3/SDL.h>
-#include <algorithm>
 #include <cmath>
-#include <imgui_impl_sdl3.h>
+#include <limits>
 #include <stdexcept>
-#include <string>
 
 namespace simxr::app
 {
 Window::Window(bool hidden)
 {
-	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD))
-		throw std::runtime_error(std::string("SDL video unavailable: ") + SDL_GetError());
-	const float scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
-	SDL_WindowFlags flags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
-	if (hidden)
-		flags |= SDL_WINDOW_HIDDEN;
-	m_window =
-		SDL_CreateWindow("OpenXR Simulator", static_cast<int>(1280 * scale), static_cast<int>(800 * scale), flags);
-	if (!m_window)
+	constexpr auto subsystems = SDL_INIT_VIDEO | SDL_INIT_GAMEPAD;
+	if (!SDL_InitSubSystem(subsystems))
+		throw std::runtime_error(std::string("SDL video/gamepad initialization failed: ") + SDL_GetError());
+	try
 	{
-		const auto error = std::string("SDL Vulkan window unavailable: ") + SDL_GetError();
-		SDL_Quit();
-		throw std::runtime_error(error);
+		const float scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+		if (!std::isfinite(scale) || scale <= 0 || scale > float(std::numeric_limits<int>::max() / 1280))
+			throw std::runtime_error("SDL display content scale is invalid");
+		SDL_WindowFlags flags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+		if (hidden)
+			flags |= SDL_WINDOW_HIDDEN;
+		m_window =
+			SDL_CreateWindow("OpenXR Simulator", static_cast<int>(1280 * scale), static_cast<int>(800 * scale), flags);
+		if (!m_window)
+			throw std::runtime_error(std::string("SDL Vulkan window unavailable: ") + SDL_GetError());
+	}
+	catch (...)
+	{
+		SDL_QuitSubSystem(subsystems);
+		throw;
 	}
 }
 
@@ -34,7 +39,7 @@ Window::~Window()
 	if (m_gamepad)
 		SDL_CloseGamepad(m_gamepad);
 	SDL_DestroyWindow(m_window);
-	SDL_Quit();
+	SDL_QuitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD);
 }
 
 SDL_Window* Window::Native() const
@@ -50,20 +55,21 @@ std::pair<int, int> Window::PixelSize() const
 	return {width, height};
 }
 
-bool Window::PollEvents()
+bool Window::PollEvents(const std::function<void(const SDL_Event&)>& processEvent)
 {
+	if (m_pointerReleasePending)
+		CapturePointer(false);
 	SDL_Event event;
 	bool running = true;
 	while (SDL_PollEvent(&event))
 	{
-		if (event.type == SDL_EVENT_MOUSE_MOTION && event.motion.windowID == SDL_GetWindowID(m_window) &&
-			m_pointerCaptured)
+		const bool capturedMotion = event.type == SDL_EVENT_MOUSE_MOTION &&
+									event.motion.windowID == SDL_GetWindowID(m_window) && m_pointerCaptured;
+		if (capturedMotion)
 		{
 			m_pointerMotion.first += event.motion.xrel;
 			m_pointerMotion.second += event.motion.yrel;
 		}
-		else
-			ImGui_ImplSDL3_ProcessEvent(&event);
 		if (event.type == SDL_EVENT_GAMEPAD_ADDED)
 			OpenGamepad();
 		if (event.type == SDL_EVENT_GAMEPAD_REMOVED && m_gamepad && SDL_GetGamepadID(m_gamepad) == event.gdevice.which)
@@ -82,6 +88,8 @@ bool Window::PollEvents()
 		if (event.type == SDL_EVENT_QUIT ||
 			(event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && event.window.windowID == SDL_GetWindowID(m_window)))
 			running = false;
+		if (!capturedMotion && processEvent)
+			processEvent(event);
 	}
 	return running;
 }
@@ -100,8 +108,8 @@ void Window::OpenGamepad()
 		m_gamepad = SDL_OpenGamepad(ids[index]);
 	SDL_free(ids);
 	m_feedback.Attach(m_gamepad);
-	if (m_gamepad && SDL_GamepadHasSensor(m_gamepad, SDL_SENSOR_GYRO))
-		SDL_SetGamepadSensorEnabled(m_gamepad, SDL_SENSOR_GYRO, true);
+	m_gyroEnabled = m_gamepad && SDL_GamepadHasSensor(m_gamepad, SDL_SENSOR_GYRO) &&
+					SDL_SetGamepadSensorEnabled(m_gamepad, SDL_SENSOR_GYRO, true);
 }
 GamepadSample Window::ReadGamepad(const GamepadBindings& bindings)
 {
@@ -137,7 +145,8 @@ GamepadSample Window::ReadGamepad(const GamepadBindings& bindings)
 		controls.thumbClick = button(bindings.stickClick[hand]);
 	}
 	result.dpad = {button("dpup"), button("dpdown"), button("dpleft"), button("dpright")};
-	result.gyroActive = button(bindings.gyroHold) && SDL_GamepadHasSensor(m_gamepad, SDL_SENSOR_GYRO) &&
+	result.gyroActive = m_gyroEnabled && button(bindings.gyroHold) &&
+						SDL_GamepadSensorEnabled(m_gamepad, SDL_SENSOR_GYRO) &&
 						SDL_GetGamepadSensorData(m_gamepad, SDL_SENSOR_GYRO, result.gyro.data(), 3);
 	return result;
 }
@@ -162,11 +171,15 @@ bool Window::TakeFocusLost()
 
 bool Window::CapturePointer(bool enabled)
 {
+	if (!enabled || m_pointerReleasePending)
+		m_pointerMotion = {};
+	m_pointerReleasePending = !enabled && m_pointerCaptured;
 	if (m_pointerCaptured == enabled)
 		return true;
 	if (!SDL_SetWindowRelativeMouseMode(m_window, enabled))
 		return false;
 	m_pointerCaptured = enabled;
+	m_pointerReleasePending = false;
 	m_pointerMotion = {};
 	return true;
 }

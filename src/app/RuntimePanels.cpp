@@ -11,7 +11,7 @@
 #include "app/RuntimeSession.h"
 #include "app/SpatialEditor.h"
 #include "app/Theme.h"
-#include "app/Window.h"
+#include "app/platform/Window.h"
 #include "app/widgets/Controls.h"
 #include "app/widgets/HapticEvents.h"
 #include "Pch.h"

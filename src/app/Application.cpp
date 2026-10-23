@@ -3,7 +3,7 @@
 #include "app/services/ProcessSupervisor.h"
 #include "app/RuntimePanels.h"
 #include "app/render/UiRenderer.h"
-#include "app/Window.h"
+#include "app/platform/Window.h"
 #include "app/WorkspacePanels.h"
 #ifdef SIMXR_COMPANION_PROOF
 #include "app/ProofConsumer.h"
@@ -57,7 +57,11 @@ int Application::Run()
 		bool running = true;
 		while (running)
 		{
-			running = window.PollEvents();
+			running = window.PollEvents(
+				[&](const SDL_Event& event)
+				{
+					renderer.ProcessEvent(event);
+				});
 			if (window.TakeFocusLost() && panels)
 				panels->FocusLost();
 			if (!running)

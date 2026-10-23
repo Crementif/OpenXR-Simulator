@@ -11,6 +11,8 @@
 #include <span>
 #include <string>
 
+union SDL_Event;
+
 namespace simxr::app
 {
 class Window;
@@ -27,6 +29,7 @@ class UiRenderer
 	~UiRenderer();
 	UiRenderer(const UiRenderer&) = delete;
 	UiRenderer& operator=(const UiRenderer&) = delete;
+	void ProcessEvent(const SDL_Event& event);
 	bool BeginFrame();
 	// transfers records GPU copies before the UI pass in the same submission.
 	bool Render(std::span<const VkSemaphore> readyWaits = {},

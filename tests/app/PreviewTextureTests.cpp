@@ -4,7 +4,7 @@
 #include "control/LocalControlServer.h"
 #include "graphics/SnapshotBudget.h"
 
-#include "app/Window.h"
+#include "app/platform/Window.h"
 #include "app/render/PreviewTexture.h"
 #include "app/render/UiRenderer.h"
 #include "control/backends/vulkan/VulkanControlHandle.h"

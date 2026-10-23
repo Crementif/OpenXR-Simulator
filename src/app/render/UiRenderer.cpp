@@ -1,6 +1,6 @@
 #include "app/render/UiRenderer.h"
 #include "Pch.h"
-#include "app/Window.h"
+#include "app/platform/Window.h"
 #include "app/render/UiRenderResources.h"
 #include <SDL3/SDL.h>
 #include <imgui.h>
@@ -17,6 +17,11 @@ void UiRenderer::CheckResult(VkResult result)
 {
 	if (result != VK_SUCCESS)
 		throw std::runtime_error("Companion Vulkan operation failed: " + std::to_string(result));
+}
+void UiRenderer::ProcessEvent(const SDL_Event& event)
+{
+	ImGui::SetCurrentContext(m_resources->context);
+	ImGui_ImplSDL3_ProcessEvent(&event);
 }
 bool UiRenderer::BeginFrame()
 {

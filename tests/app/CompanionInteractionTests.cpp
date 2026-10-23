@@ -24,7 +24,7 @@
 #include "app/SimulationEdits.h"
 #include "app/SpatialMath.h"
 #include "app/render/UiRenderer.h"
-#include "app/Window.h"
+#include "app/platform/Window.h"
 #include "app/services/Utf8Path.h"
 #include "app/WorkspacePanels.h"
 #include "control/ControlSchema.h"
@@ -132,12 +132,20 @@ class Interaction
 	bool live = false;
 	Interaction(bool launch = false) : workspace(processes, launch, ""), live(launch) {}
 
+	bool PollEvents()
+	{
+		return window.PollEvents(
+			[&](const SDL_Event& event)
+			{
+				renderer.ProcessEvent(event);
+			});
+	}
 	void Frame()
 	{
 		Eventually(
 			[&]
 			{
-				Require(window.PollEvents(), "Unexpected window closure");
+				Require(PollEvents(), "Unexpected window closure");
 				return renderer.BeginFrame();
 			},
 			"UI frame admission stalled");
@@ -217,7 +225,7 @@ class Interaction
 		event.type = SDL_EVENT_WINDOW_FOCUS_LOST;
 		event.window.windowID = SDL_GetWindowID(window.Native());
 		Require(SDL_PushEvent(&event), "Cannot enqueue focus loss");
-		Require(window.PollEvents() && window.TakeFocusLost(), "Focus loss was not delivered to the application");
+		Require(PollEvents() && window.TakeFocusLost(), "Focus loss was not delivered to the application");
 		Require(!window.TakeFocusLost(), "Focus loss must be consumed once");
 	}
 	void CheckControls()
@@ -561,7 +569,7 @@ void PilotLiveRuntime(const char* endpoint)
 		Eventually(
 			[&]
 			{
-				return test.window.PollEvents() && test.renderer.BeginFrame();
+				return test.PollEvents() && test.renderer.BeginFrame();
 			},
 			"Pilot UI stalled");
 		if (test.window.TakeFocusLost())
@@ -1004,7 +1012,7 @@ void ConfigureObservedDevices()
 		Eventually(
 			[&]
 			{
-				return test.window.PollEvents() && test.renderer.BeginFrame();
+				return test.PollEvents() && test.renderer.BeginFrame();
 			},
 			"Live field UI stalled");
 		ImGui::SetNextWindowPos({20, 20}, ImGuiCond_Always);
@@ -4080,7 +4088,7 @@ void CheckLiveHaptics()
 		SDL_JoystickID id;
 		~Detach() { if (id) SDL_DetachVirtualJoystick(id); }
 	} detach{joystick};
-	test.window.PollEvents();
+	test.PollEvents();
 	test.window.ReadGamepad(GamepadBindings{});
 	Require(test.window.GamepadIdentity() == joystick, "Open isolated virtual gamepad");
 	ExtensionRegistry extensions{SimulationExtensions()};
@@ -4106,7 +4114,7 @@ void CheckLiveHaptics()
 	const auto poll = [&]
 	{
 		observed.Poll(false);
-		test.window.PollEvents();
+		test.PollEvents();
 		return observed.Haptics().Recent().events.size();
 	};
 	Eventually([&] { poll(); return observed.Haptics().Fresh(HapticFeedback::Clock::now()); }, "Live haptic observation never connected");
@@ -4145,7 +4153,7 @@ void CheckLiveHaptics()
 	focus.type = SDL_EVENT_WINDOW_FOCUS_LOST;
 	focus.window.windowID = SDL_GetWindowID(test.window.Native());
 	SDL_PushEvent(&focus);
-	test.window.PollEvents();
+	test.PollEvents();
 	Require(delivered.load() == 0, "Window focus loss did not stop native rumble");
 	observed.Haptics().Motors(HapticFeedback::Clock::now(), false);
 	observed.Disconnect();
@@ -4154,7 +4162,7 @@ void CheckLiveHaptics()
 	Require(test.window.Rumble({10000, 20000}), "Start output before unplug");
 	Require(SDL_DetachVirtualJoystick(joystick), "Detach haptic gamepad");
 	detach.id = 0;
-	test.window.PollEvents();
+	test.PollEvents();
 	Require(!test.window.HasGamepad(), "Removed haptic gamepad remained selected");
 	test.extraDraw = {};
 	test.renderer.WaitIdle();

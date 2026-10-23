@@ -1,7 +1,7 @@
 #pragma once
 #include "app/services/PilotBindings.h"
 #include "app/PlayerRig.h"
-#include "app/Window.h"
+#include "app/platform/Window.h"
 #include <imgui.h>
 
 namespace simxr::app
