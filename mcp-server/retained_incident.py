@@ -113,15 +113,18 @@ class RetainedIncident:
                           'incidentDirectory': str(directory), 'framesAvailable': len(document['entries']),
                           'session': str(session.id), 'window': _json_result(document), 'manual': True}
                 (directory / 'incident.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
-                self.latest = result
                 committed = True
-                return result
             finally:
                 try:
                     client.release_image_window(window)
+                except BaseException:
+                    committed = False
+                    raise
                 finally:
                     if directory is not None and not committed:
                         shutil.rmtree(directory)
+            self.latest = result
+            return result
         except Exception as error:
             if self._binding.is_uncertain(error):
                 self._binding.invalidate(error)

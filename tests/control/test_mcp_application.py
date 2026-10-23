@@ -445,6 +445,47 @@ class ApplicationTests(unittest.TestCase):
         self.assertGreater(fallback_color[0], 250)
         self.assertLess(fallback_color[1], 5)
 
+    def test_retained_incident_publishes_only_after_window_release(self):
+        from retained_incident import RetainedIncident
+        from runtime_artifacts import CaptureFailed
+        from simxr_control import Capability, Session
+
+        for failed in (False, True):
+            with self.subTest(failed=failed), tempfile.TemporaryDirectory() as temporary:
+                session = Session(1, 1)
+                client = Mock()
+                client.sessions.return_value = [session]
+                client.status.return_value = {'capabilities': Capability.IMAGE_WINDOW | Capability.IMAGE_EXPORT}
+                client.begin_image_window.return_value = {'image_window_id': 9}
+                client.image_window.return_value = {'document': {
+                    'phase': 'complete', 'generation': 1, 'pre_count': 1, 'post_count': 12,
+                    'entries': [{'frame_id': frame, 'phase': 'clear'} for frame in range(1, 14)]}}
+                incident = RetainedIncident(temporary)
+                incident._binding = Mock(client=client, session=session)
+                incident._binding.connect.return_value = True
+                incident._binding.is_uncertain.return_value = False
+                previous = {'previous': True}
+                incident.latest = previous
+
+                def release(window):
+                    self.assertEqual(window, 9)
+                    self.assertIs(incident.latest, previous)
+                    if failed:
+                        raise RuntimeError('Window release failed')
+
+                client.release_image_window.side_effect = release
+                if failed:
+                    with self.assertRaisesRegex(CaptureFailed, 'Window release failed'):
+                        incident.capture(5, lambda seconds: None)
+                    self.assertIs(incident.latest, previous)
+                    self.assertFalse(list(Path(temporary).rglob('incident_*')))
+                else:
+                    result = incident.capture(5, lambda seconds: None)
+                    self.assertIs(incident.latest, result)
+                    self.assertTrue((Path(result['incidentDirectory']) / 'incident.json').is_file())
+                    self.assertEqual(result['framesAvailable'], 13)
+                client.release_image_window.assert_called_once_with(9)
+
     def test_status_and_incident_scope_never_reads_a_foreign_directory(self):
         (self.root / "flicker_status.json").write_text(
             json.dumps({"lastIncidentDirectory": str(self.root.parent)})
