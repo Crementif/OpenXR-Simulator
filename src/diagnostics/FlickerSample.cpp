@@ -1,16 +1,13 @@
 #include "diagnostics/FlickerSample.h"
+#include "Pch.h"
 
-#include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstring>
 #include <limits>
 
-namespace flicker::detail
+namespace flicker
 {
-namespace
-{
-uint8_t Luma(const uint8_t* bgra)
+static uint8_t Luma(const uint8_t* bgra)
 {
 	return static_cast<uint8_t>((19u * bgra[0] + 183u * bgra[1] + 54u * bgra[2]) >> 8);
 }
@@ -39,7 +36,6 @@ class EyeBrightness
 	uint64_t m_count = 0;
 	uint64_t m_brightCount = 0;
 };
-} // namespace
 
 bool ValidPixels(const uint8_t* bgra, uint32_t width, uint32_t height, uint32_t pitchBytes)
 {
@@ -167,4 +163,4 @@ float TemporalBetween(const Sample& first, const Sample& second)
 					  255.0;
 	return static_cast<float>(totalDelta / pixels);
 }
-} // namespace flicker::detail
+} // namespace flicker

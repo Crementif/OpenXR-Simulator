@@ -1,39 +1,30 @@
 #include "diagnostics/FlickerArtifacts.h"
+#include "Pch.h"
 
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <dlfcn.h>
-#include <unistd.h>
-#endif
+#include "diagnostics/platform/ArtifactFile.h"
 
-#include <algorithm>
-#include <array>
-#include <chrono>
-#include <cstdlib>
 #include <fstream>
 #include <iomanip>
+#include <limits>
+#include <locale>
 #include <sstream>
 #include <stdexcept>
 #include <type_traits>
-#include <utility>
 
-namespace flicker::detail
+namespace flicker
 {
-namespace
-{
-constexpr size_t MaxArtifactJobs = 128;
-constexpr size_t MaxArtifactSamples = 64;
-constexpr size_t MaxArtifactBytes = 16 * 1024 * 1024;
-constexpr size_t KeepRecentSessions = 5;
-constexpr size_t KeepRecentLogs = 10;
+static constexpr size_t s_maxArtifactJobs = 128;
+static constexpr size_t s_maxArtifactSamples = 64;
+static constexpr size_t s_maxArtifactBytes = 16 * 1024 * 1024;
+static constexpr size_t s_keepRecentSessions = 5;
+static constexpr size_t s_keepRecentLogs = 10;
 
-size_t PathBytes(const std::filesystem::path& path)
+static size_t PathBytes(const std::filesystem::path& path)
 {
 	return path.native().size() * sizeof(std::filesystem::path::value_type);
 }
 
-ArtifactCharge Charge(const Artifact& artifact)
+static ArtifactCharge Charge(const Artifact& artifact)
 {
 	return std::visit(
 		[](const auto& value) -> ArtifactCharge
@@ -58,14 +49,14 @@ ArtifactCharge Charge(const Artifact& artifact)
 		artifact);
 }
 
-uint64_t UnixTimeMs()
+static uint64_t UnixTimeMs()
 {
 	return static_cast<uint64_t>(
 		std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
 			.count());
 }
 
-std::string JsonEscape(std::string_view value)
+static std::string JsonEscape(std::string_view value)
 {
 	std::ostringstream escaped;
 	for (const unsigned char character : value)
@@ -97,7 +88,7 @@ std::string JsonEscape(std::string_view value)
 	return escaped.str();
 }
 
-std::string Utf8Path(const std::filesystem::path& path)
+static std::string Utf8Path(const std::filesystem::path& path)
 {
 	const auto utf8 = path.u8string();
 	return {reinterpret_cast<const char*>(utf8.data()), utf8.size()};
@@ -106,11 +97,12 @@ std::string Utf8Path(const std::filesystem::path& path)
 class AtomicFile
 {
   public:
-	explicit AtomicFile(const std::filesystem::path& path) : m_path(path), m_temporary(path)
+	explicit AtomicFile(const std::filesystem::path& path) : m_path(path)
 	{
-		m_temporary += ".tmp." + std::to_string(ProcessId());
-		std::filesystem::create_directories(path.parent_path());
+		if (!path.parent_path().empty())
+			std::filesystem::create_directories(path.parent_path());
 		m_output.exceptions(std::ios::badbit | std::ios::failbit);
+		m_temporary = CreateTemporaryArtifact(path);
 		try
 		{
 			m_output.open(m_temporary, std::ios::binary | std::ios::trunc);
@@ -135,18 +127,14 @@ class AtomicFile
 	}
 	void Write(const void* bytes, size_t size)
 	{
+		if (size > static_cast<size_t>(std::numeric_limits<std::streamsize>::max()))
+			throw std::length_error("Diagnostic write is too large");
 		m_output.write(static_cast<const char*>(bytes), static_cast<std::streamsize>(size));
 	}
 	void Commit()
 	{
 		m_output.close();
-#ifdef _WIN32
-		if (!MoveFileExW(m_temporary.c_str(), m_path.c_str(), MOVEFILE_REPLACE_EXISTING))
-			throw std::system_error(static_cast<int>(GetLastError()), std::system_category(),
-									"Publish diagnostic artifact");
-#else
-		std::filesystem::rename(m_temporary, m_path);
-#endif
+		CommitArtifact(m_temporary, m_path);
 		m_committed = true;
 	}
 
@@ -157,7 +145,7 @@ class AtomicFile
 	bool m_committed = false;
 };
 
-void WriteText(const std::filesystem::path& path, const std::string& contents)
+static void WriteText(const std::filesystem::path& path, const std::string& contents)
 {
 	AtomicFile file(path);
 	file.Write(contents.data(), contents.size());
@@ -187,7 +175,8 @@ struct BmpHeader
 #pragma pack(pop)
 static_assert(sizeof(BmpHeader) == 54);
 
-void WriteBmpRegion(const std::filesystem::path& path, const Sample& sample, uint32_t startX, uint32_t regionWidth)
+static void WriteBmpRegion(const std::filesystem::path& path, const Sample& sample, uint32_t startX,
+						   uint32_t regionWidth)
 {
 	const auto rowSize = (regionWidth * 3 + 3) & ~3u;
 	BmpHeader header;
@@ -210,7 +199,7 @@ void WriteBmpRegion(const std::filesystem::path& path, const Sample& sample, uin
 	file.Commit();
 }
 
-void SaveSample(const SampleArtifact& artifact)
+static void SaveSample(const SampleArtifact& artifact)
 {
 	const auto& sample = artifact.sample;
 	const auto prefix = "frame" + std::to_string(sample.frame);
@@ -220,8 +209,8 @@ void SaveSample(const SampleArtifact& artifact)
 	WriteBmpRegion(artifact.directory / (prefix + "_preview.bmp"), sample, 0, sample.width);
 }
 
-std::string BuildStatusJson(const PreviewStatistics& state, const DiagnosticsStatus* diagnostics,
-							std::optional<uint64_t> triggerFrame = {})
+static std::string BuildStatusJson(const PreviewStatistics& state, const DiagnosticsStatus* diagnostics,
+								   std::optional<uint64_t> triggerFrame = {})
 {
 	std::ostringstream json;
 	json.imbue(std::locale::classic());
@@ -276,8 +265,8 @@ std::string BuildStatusJson(const PreviewStatistics& state, const DiagnosticsSta
 	return json.str();
 }
 
-std::string BuildUiStatusJson(const UiStatistics& state, const DiagnosticsStatus* diagnostics,
-							  std::optional<uint64_t> triggerFrame = {})
+static std::string BuildUiStatusJson(const UiStatistics& state, const DiagnosticsStatus* diagnostics,
+									 std::optional<uint64_t> triggerFrame = {})
 {
 	std::ostringstream json;
 	json.imbue(std::locale::classic());
@@ -328,8 +317,6 @@ std::string BuildUiStatusJson(const UiStatistics& state, const DiagnosticsStatus
 	return json.str();
 }
 
-} // namespace
-
 void ArtifactQueue::Add(IncidentUpdate update, const PreviewMonitor& monitor)
 {
 	m_renderDocRequested |= update.anomaly;
@@ -350,8 +337,8 @@ void ArtifactQueue::Add(IncidentUpdate update, const UiMonitor& monitor)
 void ArtifactQueue::Admit(Artifact artifact)
 {
 	const auto charge = Charge(artifact);
-	if (m_outstanding >= MaxArtifactJobs || charge.bytes > MaxArtifactBytes - m_bytes ||
-		charge.samples > MaxArtifactSamples - m_samples)
+	if (m_outstanding >= s_maxArtifactJobs || charge.bytes > s_maxArtifactBytes - m_bytes ||
+		charge.samples > s_maxArtifactSamples - m_samples)
 	{
 		++m_dropped;
 		return;
@@ -401,15 +388,6 @@ uint64_t ArtifactQueue::Dropped() const
 bool ArtifactQueue::TakeRenderDocRequest()
 {
 	return std::exchange(m_renderDocRequested, false);
-}
-
-uint64_t ProcessId()
-{
-#ifdef _WIN32
-	return GetCurrentProcessId();
-#else
-	return static_cast<uint64_t>(getpid());
-#endif
 }
 
 void WriteArtifact(const Artifact& artifact)
@@ -472,155 +450,43 @@ void PruneArtifacts(const std::filesystem::path& directory, std::string_view act
 	using Entry = std::pair<std::filesystem::file_time_type, std::filesystem::path>;
 	for (const auto* rootName : {"flicker_incidents", "ui_flicker_incidents"})
 	{
+		const auto root = directory / rootName;
+		if (!std::filesystem::exists(root))
+			continue;
 		std::vector<Entry> sessions;
-		std::error_code error;
-		for (std::filesystem::directory_iterator entry(directory / rootName, error), end; !error && entry != end;
-			 entry.increment(error))
+		for (const auto& entry : std::filesystem::directory_iterator(root))
 		{
-			const auto name = Utf8Path(entry->path().filename());
-			if (entry->is_directory(error) && name.starts_with("session_") && name != activeSession)
-				sessions.emplace_back(entry->last_write_time(error), entry->path());
+			const auto name = Utf8Path(entry.path().filename());
+			if (name.starts_with("session_") && name != activeSession && entry.is_directory())
+				sessions.emplace_back(entry.last_write_time(), entry.path());
 		}
 		std::sort(sessions.begin(), sessions.end(),
 				  [](const auto& first, const auto& second)
 				  {
 					  return first.first > second.first;
 				  });
-		for (size_t index = KeepRecentSessions; index < sessions.size(); ++index)
+		for (size_t index = s_keepRecentSessions; index < sessions.size(); ++index)
 			std::filesystem::remove_all(sessions[index].second);
 	}
 
 	const auto ownLog = "openxr_simulator." + std::to_string(ProcessId()) + ".log";
+	if (!std::filesystem::exists(directory))
+		return;
 	std::vector<Entry> logs;
-	std::error_code error;
-	for (std::filesystem::directory_iterator entry(directory, error), end; !error && entry != end;
-		 entry.increment(error))
+	for (const auto& entry : std::filesystem::directory_iterator(directory))
 	{
-		const auto name = Utf8Path(entry->path().filename());
-		if (entry->is_regular_file(error) && name.starts_with("openxr_simulator.") && name.ends_with(".log") &&
-			name != ownLog)
-			logs.emplace_back(entry->last_write_time(error), entry->path());
+		const auto name = Utf8Path(entry.path().filename());
+		if (name.starts_with("openxr_simulator.") && name.ends_with(".log") && name != ownLog &&
+			entry.is_regular_file())
+			logs.emplace_back(entry.last_write_time(), entry.path());
 	}
 	std::sort(logs.begin(), logs.end(),
 			  [](const auto& first, const auto& second)
 			  {
 				  return first.first > second.first;
 			  });
-	for (size_t index = KeepRecentLogs; index < logs.size(); ++index)
+	for (size_t index = s_keepRecentLogs; index < logs.size(); ++index)
 		std::filesystem::remove(logs[index].second);
 }
 
-namespace
-{
-#ifdef _WIN32
-#define SIMXR_CAPTURE_CALL __cdecl
-#else
-#define SIMXR_CAPTURE_CALL
-#endif
-using RenderDocSetCapturePath = void(SIMXR_CAPTURE_CALL*)(const char*);
-using RenderDocTriggerCapture = void(SIMXR_CAPTURE_CALL*)(uint32_t);
-// RenderDoc's append-only 1.1.0 layout through TriggerMultiFrameCapture.
-struct RenderDocApi110
-{
-	void* getApiVersion;
-	void* setCaptureOptionU32;
-	void* setCaptureOptionF32;
-	void* getCaptureOptionU32;
-	void* getCaptureOptionF32;
-	void* setFocusToggleKeys;
-	void* setCaptureKeys;
-	void* getOverlayBits;
-	void* maskOverlayBits;
-	void* removeHooks;
-	void* unloadCrashHandler;
-	RenderDocSetCapturePath setCaptureFilePathTemplate;
-	void* getCaptureFilePathTemplate;
-	void* getNumCaptures;
-	void* getCapture;
-	void* triggerCapture;
-	void* isTargetControlConnected;
-	void* launchReplayUi;
-	void* setActiveWindow;
-	void* startFrameCapture;
-	void* isFrameCapturing;
-	void* endFrameCapture;
-	RenderDocTriggerCapture triggerMultiFrameCapture;
-};
-using RenderDocGetApi = int(SIMXR_CAPTURE_CALL*)(int, void**);
-#undef SIMXR_CAPTURE_CALL
-
-class CaptureModule
-{
-  public:
-	CaptureModule()
-	{
-#ifdef _WIN32
-		GetModuleHandleExW(0, L"renderdoc.dll", &m_module);
-#else
-		// Resolve an already injected API, then retain its actual module while calling it.
-		Dl_info information{};
-		if (const auto* symbol = dlsym(RTLD_DEFAULT, "RENDERDOC_GetAPI"); symbol && dladdr(symbol, &information))
-			m_module = dlopen(information.dli_fname, RTLD_NOW | RTLD_NOLOAD);
-#endif
-	}
-	CaptureModule(const CaptureModule&) = delete;
-	CaptureModule& operator=(const CaptureModule&) = delete;
-	~CaptureModule()
-	{
-		if (m_module)
-		{
-#ifdef _WIN32
-			FreeLibrary(m_module);
-#else
-			dlclose(m_module);
-#endif
-		}
-	}
-	RenderDocGetApi Entry() const
-	{
-		if (!m_module)
-			return nullptr;
-#ifdef _WIN32
-		return reinterpret_cast<RenderDocGetApi>(GetProcAddress(m_module, "RENDERDOC_GetAPI"));
-#else
-		return reinterpret_cast<RenderDocGetApi>(dlsym(m_module, "RENDERDOC_GetAPI"));
-#endif
-	}
-
-  private:
-#ifdef _WIN32
-	HMODULE m_module = nullptr;
-#else
-	void* m_module = nullptr;
-#endif
-};
-} // namespace
-
-RenderDocCapture::RenderDocCapture()
-{
-	if (const auto* enabled = std::getenv("BVR_RENDERDOC_AUTO_CAPTURE"))
-		m_enabled = enabled[0] != '\0' && enabled[0] != '0';
-	if (const auto* path = std::getenv("BVR_RENDERDOC_CAPTURE_TEMPLATE"))
-		m_captureTemplate = path;
-	if (const auto* frames = std::getenv("BVR_RENDERDOC_CAPTURE_FRAMES"))
-		m_frameCount = static_cast<uint32_t>(std::clamp(std::strtoul(frames, nullptr, 10), 1ul, 10ul));
-}
-
-RenderDocResult RenderDocCapture::Trigger(uint64_t frame)
-{
-	if (!m_enabled || (m_lastTriggerFrame && frame >= *m_lastTriggerFrame && frame - *m_lastTriggerFrame < 60))
-		return {};
-	CaptureModule module;
-	const auto getApi = module.Entry();
-	if (!getApi)
-		return {true, false};
-	RenderDocApi110* api = nullptr;
-	if (getApi(10100, reinterpret_cast<void**>(&api)) != 1 || !api || !api->triggerMultiFrameCapture)
-		return {true, false};
-	if (!m_captureTemplate.empty() && api->setCaptureFilePathTemplate)
-		api->setCaptureFilePathTemplate(m_captureTemplate.c_str());
-	api->triggerMultiFrameCapture(m_frameCount);
-	m_lastTriggerFrame = frame;
-	return {true, true};
-}
-} // namespace flicker::detail
+} // namespace flicker

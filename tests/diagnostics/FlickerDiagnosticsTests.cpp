@@ -1,6 +1,7 @@
 #include "../TestSupport.h"
 #include "diagnostics/FlickerArtifacts.h"
 #include "diagnostics/FlickerMonitors.h"
+#include "diagnostics/platform/ArtifactFile.h"
 #include "flicker_detector.h"
 #include "json.h"
 
@@ -15,7 +16,6 @@
 namespace
 {
 using namespace flicker;
-using namespace flicker::detail;
 namespace fs = std::filesystem;
 
 class Directory
@@ -141,11 +141,12 @@ void ProjectionAndUiSignals()
 	ui.Observe(nullptr, 0, 0, 0, 0, 10, info);
 	Require(ui.Snapshot().consecutiveMissingAfterProjection == 2, "Adjacent UI failures did not form a streak");
 	ui.Observe(nullptr, 0, 0, 0, 0, 11, {});
-	Require(ui.Snapshot().consecutiveMissingAfterProjection == 0, "A frame without UI did not end the missing-UI streak");
+	Require(ui.Snapshot().consecutiveMissingAfterProjection == 0,
+			"A frame without UI did not end the missing-UI streak");
 	ui.Observe(nullptr, 0, 0, 0, 0, 12, info);
 	Require(ui.Snapshot().consecutiveMissingAfterProjection == 1 &&
-		ui.Snapshot().maxConsecutiveMissingAfterProjection == 2 && ui.Snapshot().missingAfterProjection == 3,
-		"Separated UI failures inflated the consecutive maximum or lost the cumulative count");
+				ui.Snapshot().maxConsecutiveMissingAfterProjection == 2 && ui.Snapshot().missingAfterProjection == 3,
+			"Separated UI failures inflated the consecutive maximum or lost the cumulative count");
 	UiMonitor absent("absent");
 	absent.Capture();
 	Require(absent.NeedsPixels(), "Manual UI capture requests pixels before its first observed frame");
@@ -319,6 +320,68 @@ void ManualCaptureAndRecovery()
 				"Failed writes leave no temporary artifacts");
 }
 
+void ArtifactFilesAndPruning()
+{
+	Directory directory;
+	const auto destination = directory.Path() / "flicker_status.json";
+	auto oldTemporary = destination;
+	oldTemporary += ".tmp." + std::to_string(ProcessId());
+	{
+		std::ofstream output(oldTemporary);
+		output << "another writer";
+	}
+	WritePreviewStatus(directory.Path(), {});
+	Require(ReadJson(oldTemporary) == "another writer", "Status publication clobbered another writer's temporary file");
+	fs::remove(oldTemporary);
+	const auto first = CreateTemporaryArtifact(destination);
+	const auto second = CreateTemporaryArtifact(destination);
+	Require(first != second && fs::exists(first) && fs::exists(second),
+			"Concurrent artifact writers did not reserve distinct files");
+	{
+		std::ofstream output(first);
+		output << "first";
+	}
+	{
+		std::ofstream output(second);
+		output << "second";
+	}
+	CommitArtifact(second, destination);
+	Require(ReadJson(destination) == "second" && ReadJson(first) == "first",
+			"Publishing an artifact damaged another reserved write");
+	CommitArtifact(first, destination);
+	Require(ReadJson(destination) == "first" && !fs::exists(first) && !fs::exists(second),
+			"Atomic replacement did not consume only its own temporary file");
+
+	const auto blocked = directory.Path() / "flicker_incidents";
+	{
+		std::ofstream output(blocked);
+		output << "not a directory";
+	}
+	std::array<fs::path, 12> logs;
+	const auto now = fs::file_time_type::clock::now();
+	for (size_t index = 0; index < logs.size(); ++index)
+	{
+		logs[index] = directory.Path() / ("openxr_simulator.prune_" + std::to_string(index) + ".log");
+		std::ofstream(logs[index]).put('x');
+		fs::last_write_time(logs[index], now - std::chrono::seconds(index));
+	}
+	Diagnostics diagnostics(directory.Path());
+	Eventually(
+		[&]
+		{
+			return diagnostics.Status().fileErrors != 0;
+		},
+		"Prune enumeration failure was silently ignored");
+	diagnostics.Close();
+	for (const auto& log : logs)
+		Require(fs::exists(log), "Pruning continued after a failed artifact enumeration");
+	Require(!diagnostics.Status().lastError.empty(), "Prune failure omitted its diagnostic detail");
+	fs::remove(blocked);
+	PruneArtifacts(directory.Path(), "session_active");
+	for (size_t index = 0; index < logs.size(); ++index)
+		Require(fs::exists(logs[index]) == (index < 10), "Recovered pruning did not keep the ten newest logs");
+}
+
 void ConcurrentCloseAndIndependentLifetime()
 {
 	Directory directory;
@@ -356,6 +419,7 @@ int main()
 		BoundedArtifacts();
 		IncidentLimits();
 		ManualCaptureAndRecovery();
+		ArtifactFilesAndPruning();
 		ConcurrentCloseAndIndependentLifetime();
 		Require(!ValidPixels(reinterpret_cast<const uint8_t*>(1), UINT32_MAX, 2, 0),
 				"Pixel width overflow is rejected");

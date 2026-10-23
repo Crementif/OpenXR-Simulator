@@ -1,34 +1,24 @@
 #include "flicker_detector.h"
+#include "Pch.h"
 
-#include "diagnostics/FlickerArtifacts.h"
-#include "diagnostics/FlickerMonitors.h"
+#include "diagnostics/platform/ArtifactFile.h"
 
-#include <algorithm>
 #include <atomic>
-#include <chrono>
 #include <exception>
-#include <optional>
-#include <utility>
 
 namespace flicker
 {
-namespace
+static std::string RunName()
 {
-std::string RunName()
-{
-	static std::atomic<uint64_t> nextRun{0};
+	static std::atomic<uint64_t> s_nextRun{0};
 	const auto started = std::chrono::steady_clock::now().time_since_epoch().count();
-	return "session_" + std::to_string(detail::ProcessId()) + "_" + std::to_string(started) + "_" +
-		   std::to_string(nextRun.fetch_add(1, std::memory_order_relaxed));
+	return "session_" + std::to_string(ProcessId()) + "_" + std::to_string(started) + "_" +
+		   std::to_string(s_nextRun.fetch_add(1, std::memory_order_relaxed));
 }
-} // namespace
 
 Diagnostics::Diagnostics(std::filesystem::path directory)
-	: m_directory(std::move(directory)), m_runName(RunName()),
-	  m_preview(std::make_unique<detail::PreviewMonitor>(m_directory / "flicker_incidents" / m_runName)),
-	  m_ui(std::make_unique<detail::UiMonitor>(m_directory / "ui_flicker_incidents" / m_runName)),
-	  m_artifacts(std::make_unique<detail::ArtifactQueue>()), m_renderDoc(std::make_unique<detail::RenderDocCapture>()),
-	  m_worker(&Diagnostics::Run, this)
+	: m_directory(std::move(directory)), m_runName(RunName()), m_preview(m_directory / "flicker_incidents" / m_runName),
+	  m_ui(m_directory / "ui_flicker_incidents" / m_runName), m_worker(&Diagnostics::Run, this)
 {
 }
 
@@ -62,24 +52,24 @@ void Diagnostics::ObserveSubmission(uint64_t frame, uint32_t projectionLayers, u
 	ApplyObservation(
 		[&]
 		{
-			auto update = m_preview->Submission(frame, projectionLayers, totalLayers);
-			m_artifacts->Add(std::move(update), *m_preview);
+			auto update = m_preview.Submission(frame, projectionLayers, totalLayers);
+			m_artifacts.Add(std::move(update), m_preview);
 		});
 }
 
 void Diagnostics::ObservePreview(const uint8_t* bgra, uint32_t width, uint32_t height, uint32_t pitchBytes,
 								 uint64_t generation, uint64_t frame) noexcept
 {
-	if (!detail::ValidPixels(bgra, width, height, pitchBytes) || generation == 0)
+	if (!ValidPixels(bgra, width, height, pitchBytes) || generation == 0)
 		return;
 	ApplyObservation(
 		[&]
 		{
-			if (!m_preview->AcceptsGeneration(generation))
+			if (!m_preview.AcceptsGeneration(generation))
 				return;
-			auto sample = detail::Downsample(bgra, width, height, pitchBytes ? pitchBytes : width * 4, frame);
-			auto update = m_preview->Preview(std::move(sample), generation);
-			m_artifacts->Add(std::move(update), *m_preview);
+			auto sample = Downsample(bgra, width, height, pitchBytes ? pitchBytes : width * 4, frame);
+			auto update = m_preview.Preview(std::move(sample), generation);
+			m_artifacts.Add(std::move(update), m_preview);
 		});
 }
 
@@ -88,8 +78,8 @@ void Diagnostics::ObservePaint(uint64_t generation, bool paintedPreview) noexcep
 	ApplyObservation(
 		[&]
 		{
-			auto update = m_preview->Paint(generation, paintedPreview);
-			m_artifacts->Add(std::move(update), *m_preview);
+			auto update = m_preview.Paint(generation, paintedPreview);
+			m_artifacts.Add(std::move(update), m_preview);
 		});
 }
 
@@ -99,8 +89,8 @@ void Diagnostics::ObserveUi(const uint8_t* bgra, uint32_t width, uint32_t height
 	ApplyObservation(
 		[&]
 		{
-			auto update = m_ui->Observe(bgra, width, height, pitchBytes, generation, frame, info);
-			m_artifacts->Add(std::move(update), *m_ui);
+			auto update = m_ui.Observe(bgra, width, height, pitchBytes, generation, frame, info);
+			m_artifacts.Add(std::move(update), m_ui);
 		});
 }
 
@@ -111,14 +101,14 @@ DiagnosticsStatus Diagnostics::Snapshot() const
 	status.fileErrors = m_fileErrors;
 	status.observationErrors = m_observationErrors;
 	status.lastError = m_lastError;
-	status.outstandingArtifacts = m_artifacts->Outstanding();
-	status.outstandingBytes = m_artifacts->OutstandingBytes();
-	status.droppedArtifacts = m_artifacts->Dropped();
+	status.outstandingArtifacts = m_artifacts.Outstanding();
+	status.outstandingBytes = m_artifacts.OutstandingBytes();
+	status.droppedArtifacts = m_artifacts.Dropped();
 	status.renderDocTriggerAttempts = m_renderDocTriggerAttempts;
 	status.renderDocTriggerSuccesses = m_renderDocTriggerSuccesses;
 	status.lastRenderDocTriggerFrame = m_lastRenderDocTriggerFrame;
-	status.preview = m_preview->Snapshot();
-	status.ui = m_ui->Snapshot();
+	status.preview = m_preview.Snapshot();
+	status.ui = m_ui.Snapshot();
 	return status;
 }
 
@@ -131,7 +121,7 @@ DiagnosticsStatus Diagnostics::Status() const
 bool Diagnostics::NeedsPixels() const noexcept
 {
 	std::lock_guard lock(m_mutex);
-	return !m_closed && (m_preview->NeedsPixels() || m_ui->NeedsPixels());
+	return !m_closed && (m_preview.NeedsPixels() || m_ui.NeedsPixels());
 }
 
 void Diagnostics::RecordError(const char* message, ErrorKind kind) noexcept
@@ -158,7 +148,7 @@ void Diagnostics::Run() noexcept
 	bool pruned = false;
 	for (;;)
 	{
-		std::optional<detail::ArtifactJob> job;
+		std::optional<ArtifactJob> job;
 		std::optional<DiagnosticsStatus> status;
 		bool finished = false;
 		bool requestRenderDoc = false;
@@ -170,20 +160,20 @@ void Diagnostics::Run() noexcept
 				m_wake.wait_for(lock, std::chrono::milliseconds(250),
 								[this]
 								{
-									return m_closed || !m_artifacts->Empty();
+									return m_closed || !m_artifacts.Empty();
 								});
-				finished = m_closed && m_artifacts->Empty();
+				finished = m_closed && m_artifacts.Empty();
 				if (finished || Clock::now() - lastStatus >= std::chrono::milliseconds(250))
 				{
-					const bool previewDirty = m_preview->TakeDirty();
-					const bool uiDirty = m_ui->TakeDirty();
+					const bool previewDirty = m_preview.TakeDirty();
+					const bool uiDirty = m_ui.TakeDirty();
 					if (previewDirty || uiDirty || finished)
 						status = Snapshot();
 					lastStatus = Clock::now();
 				}
-				requestRenderDoc = m_artifacts->TakeRenderDocRequest();
-				renderDocFrame = m_preview->Frame();
-				job = m_artifacts->Take();
+				requestRenderDoc = m_artifacts.TakeRenderDocRequest();
+				renderDocFrame = m_preview.Frame();
+				job = m_artifacts.Take();
 			}
 			if (requestRenderDoc)
 			{
@@ -197,7 +187,7 @@ void Diagnostics::Run() noexcept
 			if (status)
 				FlushStatus(*status);
 			if (job)
-				detail::WriteArtifact(job->artifact);
+				WriteArtifact(job->artifact);
 		}
 		catch (const std::exception& error)
 		{
@@ -212,7 +202,7 @@ void Diagnostics::Run() noexcept
 			const auto charge = job->charge;
 			job.reset();
 			std::lock_guard lock(m_mutex);
-			m_artifacts->Complete(charge);
+			m_artifacts.Complete(charge);
 		}
 		if (finished)
 			return;
@@ -234,7 +224,7 @@ void Diagnostics::Run() noexcept
 			if (!pruned)
 			{
 				pruned = true;
-				detail::PruneArtifacts(m_directory, m_runName);
+				PruneArtifacts(m_directory, m_runName);
 			}
 		}
 		catch (const std::exception& error)
@@ -250,7 +240,7 @@ void Diagnostics::Run() noexcept
 
 void Diagnostics::TriggerCapture(uint64_t frame)
 {
-	const auto result = m_renderDoc->Trigger(frame);
+	const auto result = m_renderDoc.Trigger(frame);
 	std::lock_guard lock(m_mutex);
 	m_renderDocTriggerAttempts += result.attempted;
 	m_renderDocTriggerSuccesses += result.succeeded;
@@ -262,7 +252,7 @@ void Diagnostics::FlushStatus(const DiagnosticsStatus& status)
 {
 	try
 	{
-		detail::WritePreviewStatus(m_directory, status);
+		WritePreviewStatus(m_directory, status);
 	}
 	catch (const std::exception& error)
 	{
@@ -270,7 +260,7 @@ void Diagnostics::FlushStatus(const DiagnosticsStatus& status)
 	}
 	try
 	{
-		detail::WriteUiStatus(m_directory, status);
+		WriteUiStatus(m_directory, status);
 	}
 	catch (const std::exception& error)
 	{
@@ -280,9 +270,9 @@ void Diagnostics::FlushStatus(const DiagnosticsStatus& status)
 
 void Diagnostics::PollRequests()
 {
-	const bool previewRequested = detail::ConsumeRequest(m_directory / "flicker_capture_request.json");
-	const bool uiRequested = detail::ConsumeRequest(m_directory / "ui_flicker_capture_request.json");
-	const bool renderDocRequested = detail::ConsumeRequest(m_directory / "renderdoc_capture_request.json");
+	const bool previewRequested = ConsumeRequest(m_directory / "flicker_capture_request.json");
+	const bool uiRequested = ConsumeRequest(m_directory / "ui_flicker_capture_request.json");
+	const bool renderDocRequested = ConsumeRequest(m_directory / "renderdoc_capture_request.json");
 	uint64_t frame = 0;
 	{
 		std::lock_guard lock(m_mutex);
@@ -290,15 +280,15 @@ void Diagnostics::PollRequests()
 			return;
 		if (previewRequested)
 		{
-			auto update = m_preview->Capture();
-			m_artifacts->Add(std::move(update), *m_preview);
+			auto update = m_preview.Capture();
+			m_artifacts.Add(std::move(update), m_preview);
 		}
 		if (uiRequested)
 		{
-			auto update = m_ui->Capture();
-			m_artifacts->Add(std::move(update), *m_ui);
+			auto update = m_ui.Capture();
+			m_artifacts.Add(std::move(update), m_ui);
 		}
-		frame = m_preview->Frame();
+		frame = m_preview.Frame();
 	}
 	if (renderDocRequested)
 		TriggerCapture(frame);

@@ -4,7 +4,7 @@
 
 #include <variant>
 
-namespace flicker::detail
+namespace flicker
 {
 struct PreviewIncident
 {
@@ -54,29 +54,9 @@ class ArtifactQueue
 	bool m_renderDocRequested = false;
 };
 
-struct RenderDocResult
-{
-	bool attempted = false;
-	bool succeeded = false;
-};
-
-class RenderDocCapture
-{
-  public:
-	RenderDocCapture();
-	RenderDocResult Trigger(uint64_t frame);
-
-  private:
-	bool m_enabled = false;
-	std::string m_captureTemplate;
-	uint32_t m_frameCount = 3;
-	std::optional<uint64_t> m_lastTriggerFrame;
-};
-
-uint64_t ProcessId();
 void WriteArtifact(const Artifact& artifact);
 void WritePreviewStatus(const std::filesystem::path& directory, const DiagnosticsStatus& status);
 void WriteUiStatus(const std::filesystem::path& directory, const DiagnosticsStatus& status);
 void PruneArtifacts(const std::filesystem::path& directory, std::string_view activeSession);
 bool ConsumeRequest(const std::filesystem::path& path);
-} // namespace flicker::detail
+} // namespace flicker

@@ -1,25 +1,21 @@
 #include "diagnostics/FlickerMonitors.h"
+#include "Pch.h"
 
-#include <algorithm>
 #include <cmath>
-#include <utility>
 
-namespace flicker::detail
+namespace flicker
 {
-namespace
-{
-constexpr size_t HistoryFrames = 10;
-constexpr uint32_t PostIncidentFrames = 12;
-constexpr uint64_t IncidentCooldownFrames = 300;
-constexpr uint64_t MaxIncidentsPerSession = 40;
+static constexpr size_t s_historyFrames = 10;
+static constexpr uint32_t s_postIncidentFrames = 12;
+static constexpr uint64_t s_incidentCooldownFrames = 300;
+static constexpr uint64_t s_maxIncidentsPerSession = 40;
 
-void Remember(std::deque<Sample>& history, Sample sample)
+static void Remember(std::deque<Sample>& history, Sample sample)
 {
 	history.push_back(std::move(sample));
-	while (history.size() > HistoryFrames)
+	while (history.size() > s_historyFrames)
 		history.pop_front();
 }
-} // namespace
 
 IncidentCapture::IncidentCapture(std::filesystem::path sessionDirectory)
 	: m_sessionDirectory(std::move(sessionDirectory))
@@ -35,13 +31,13 @@ IncidentUpdate IncidentCapture::Begin(std::string_view reason, uint64_t frame, b
 	IncidentUpdate update;
 	update.anomaly = !manual;
 	const bool coolingDown = m_statistics.incidentCount != 0 && frame >= m_lastIncidentFrame &&
-							 frame - m_lastIncidentFrame < IncidentCooldownFrames;
+							 frame - m_lastIncidentFrame < s_incidentCooldownFrames;
 	if (!m_activeDirectory.empty())
 	{
 		m_manual |= manual;
 		return update;
 	}
-	if ((!manual && coolingDown) || m_statistics.incidentCount >= MaxIncidentsPerSession)
+	if ((!manual && coolingDown) || m_statistics.incidentCount >= s_maxIncidentsPerSession)
 		return update;
 
 	IncidentPacket packet;
@@ -52,7 +48,7 @@ IncidentUpdate IncidentCapture::Begin(std::string_view reason, uint64_t frame, b
 	m_statistics.lastDirectory = packet.directory;
 	m_lastIncidentFrame = frame;
 	++m_statistics.incidentCount;
-	m_postFramesRemaining = PostIncidentFrames;
+	m_postFramesRemaining = s_postIncidentFrames;
 	m_manual = manual;
 	m_lastProcessedFrame.reset();
 	if (!history.empty())
@@ -339,4 +335,4 @@ bool UiMonitor::TakeDirty()
 {
 	return std::exchange(m_dirty, false);
 }
-} // namespace flicker::detail
+} // namespace flicker

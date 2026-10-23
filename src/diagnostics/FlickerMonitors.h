@@ -6,7 +6,7 @@
 #include <optional>
 #include <string_view>
 
-namespace flicker::detail
+namespace flicker
 {
 struct IncidentPacket
 {
@@ -91,4 +91,4 @@ class UiMonitor
 	uint64_t m_lastGeneration = 0;
 	bool m_dirty = false;
 };
-} // namespace flicker::detail
+} // namespace flicker

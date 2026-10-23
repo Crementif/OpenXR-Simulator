@@ -303,6 +303,8 @@ add_library(simxr_diagnostics STATIC
     src/flicker_detector.cpp
     src/diagnostics/FlickerSample.cpp
     src/diagnostics/FlickerMonitors.cpp
+    src/diagnostics/platform/ArtifactFile.cpp
+    src/diagnostics/platform/RenderDocCapture.cpp
     src/diagnostics/FlickerArtifacts.cpp)
 simxr_configure_target(simxr_diagnostics)
 target_include_directories(simxr_diagnostics PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")

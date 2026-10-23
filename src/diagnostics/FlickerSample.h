@@ -1,10 +1,11 @@
 #pragma once
 
-#include "flicker_detector.h"
+#include "diagnostics/FlickerTypes.h"
 
+#include <memory>
 #include <vector>
 
-namespace flicker::detail
+namespace flicker
 {
 struct Sample
 {
@@ -21,4 +22,4 @@ Sample CropUi(const uint8_t* bgra, uint32_t width, uint32_t height, uint32_t pit
 			  uint64_t frame);
 void CalculateTemporal(Sample& current, const Sample& previous);
 float TemporalBetween(const Sample& first, const Sample& second);
-} // namespace flicker::detail
+} // namespace flicker
