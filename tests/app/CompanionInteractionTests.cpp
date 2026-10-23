@@ -2785,8 +2785,8 @@ simxr.resume())";
 	Eventually([&] { pump(1); return !test.runtime.Snapshot().manual; }, "Script did not finish and release the app");
 	pump(5);
 	ImGui::ActivateItemByID(inspector->GetID("Save JSON report"));
-	pump(2);
-	Require(std::filesystem::exists(directory / "scripts" / "pose_sweep.report.json"), "Script report was not saved");
+	Eventually([&] { pump(1); return std::filesystem::exists(directory / "scripts" / "pose_sweep.report.json"); },
+		"Script report was not saved");
 	screenshot("library-script.bmp");
 	Eventually([&]
 	{

@@ -11,7 +11,7 @@
 #include "app/services/Utf8Path.h"
 #ifdef SIMXR_COMPANION_AUTOMATION
 #include "app/pages/Library.h"
-#include "app/RigPanel.h"
+#include "app/services/RigController.h"
 #endif
 
 #include "app/DeviceRail.h"
@@ -88,7 +88,7 @@ struct WorkspacePanels::Impl
 	RuntimeConnection launchDiscovery;
 	std::unique_ptr<LaunchAttachment> attachment;
 #ifdef SIMXR_COMPANION_AUTOMATION
-	RigPanel rigs;
+	RigController rigs;
 	Library library;
 	// A replay waits until the companion has released its manual inputs and
 	// session control, or the script's pause and take_control would conflict.
@@ -914,22 +914,24 @@ struct WorkspacePanels::Impl
 			replay.reset();
 			notices.Push({"Replay target changed", "Select the intended session and replay again"});
 		}
+		const auto rigRuntime = runtime.Snapshot();
+		const RigTarget rigTarget{rigRuntime.endpoint, rigRuntime.session, rigRuntime.generation};
 		if (replay)
 		{
 			if (runtime.ReplayReady() || std::chrono::steady_clock::now() >= replay->deadline)
 			{
 				if (replay->script)
-					rigs.RunScript(runtime, replay->recording.path, *replay->script);
+					rigs.RunScript(rigTarget, replay->recording.path, *replay->script);
 				else
 				{
 					timeline.ReplayTake(replay->recording.path);
-					rigs.ReplayRecording(runtime, replay->recording.path, replay->recording.seed);
+					rigs.ReplayRecording(rigTarget, replay->recording.path, replay->recording.seed);
 				}
 				replay.reset();
 			}
 		}
 		runtime.SetReplayActive(rigs.IsActive());
-		timeline.ObserveRig(runtime.Snapshot(), rigs.RunId(), rigs.Snapshot(), rigs.MatchesTarget(runtime.Snapshot()));
+		timeline.ObserveRig(rigRuntime, rigs.RunId(), rigs.Snapshot(), rigs.MatchesTarget(rigTarget));
 		shell.timeline.playing = rigs.IsActive() && rigs.ReplayingTake();
 		shell.timeline.playbackPaused = rigs.Snapshot().phase == automation::RigPhase::Paused;
 #endif

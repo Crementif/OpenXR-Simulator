@@ -80,8 +80,28 @@ void Library::Refresh()
 		m_catalog->Refresh();
 	m_nextScan = std::chrono::steady_clock::now() + std::chrono::seconds(3);
 }
-void Library::Poll(Selection& selection)
+void Library::Poll(Selection& selection, RigController& rigs)
 {
+	if (auto report = rigs.TakeReportResult())
+	{
+		m_error.clear();
+		m_report.clear();
+		if (!report->error)
+			m_report = std::move(report->path);
+		else
+			try
+			{
+				std::rethrow_exception(report->error);
+			}
+			catch (const std::exception& error)
+			{
+				m_error = error.what();
+			}
+			catch (...)
+			{
+				m_error = "Cannot save rig report";
+			}
+	}
 	if (m_catalog)
 		if (auto result = m_catalog->TakeResult())
 		{
@@ -129,18 +149,18 @@ void Library::Play(const LibraryEntry& entry, RuntimePanels& runtime)
 	else
 		m_run = ScriptRun{entry.path, m_options};
 }
-std::optional<ScriptRun> Library::Draw(Selection& selection, RuntimePanels& runtime, RigPanel& rigs)
+std::optional<ScriptRun> Library::Draw(Selection& selection, RuntimePanels& runtime, RigController& rigs)
 {
-	Poll(selection);
+	Poll(selection, rigs);
 	if (const auto take = std::get_if<TakeSel>(&selection))
 		DrawTake(selection, std::string(take->id), runtime, rigs);
 	else if (const auto script = std::get_if<ScriptSel>(&selection))
 		DrawScript(selection, std::string(script->id), runtime, rigs);
 	return std::exchange(m_run, {});
 }
-std::optional<ScriptRun> Library::DrawBrowser(Selection& selection, RuntimePanels& runtime, RigPanel& rigs)
+std::optional<ScriptRun> Library::DrawBrowser(Selection& selection, RuntimePanels& runtime, RigController& rigs)
 {
-	Poll(selection);
+	Poll(selection, rigs);
 	const float unit = ImGui::GetFontSize() / 17;
 	ImGui::SetNextItemWidth(-ImGui::GetFrameHeight() - ImGui::GetStyle().ItemSpacing.x);
 	ImGui::InputTextWithHint("##Search library", "Search", m_search.data(), m_search.size());
@@ -272,7 +292,7 @@ bool Library::DrawHeader(Selection& selection, const std::string& path, Icon kin
 			ImGui::TextColored(theme::Vec(theme::Record), "%s", error->c_str());
 	return true;
 }
-void Library::DrawTake(Selection& selection, const std::string& path, RuntimePanels& runtime, RigPanel& rigs)
+void Library::DrawTake(Selection& selection, const std::string& path, RuntimePanels& runtime, RigController& rigs)
 {
 	if (!DrawHeader(selection, path, Icon::Record))
 		return;
@@ -326,7 +346,7 @@ void Library::DrawTake(Selection& selection, const std::string& path, RuntimePan
 	if (mine && !rigs.Error().empty())
 		ImGui::TextColored(theme::Vec(theme::Record), "%s", rigs.Error().c_str());
 }
-void Library::DrawScript(Selection& selection, const std::string& path, RuntimePanels& runtime, RigPanel& rigs)
+void Library::DrawScript(Selection& selection, const std::string& path, RuntimePanels& runtime, RigController& rigs)
 {
 	if (!DrawHeader(selection, path, Icon::Script))
 		return;
@@ -414,7 +434,7 @@ void Library::DrawScript(Selection& selection, const std::string& path, RuntimeP
 				ImGui::TextUnformatted(line.c_str());
 			ImGui::EndChild();
 		}
-		ImGui::BeginDisabled(active || state.phase == automation::RigPhase::Idle);
+		ImGui::BeginDisabled(active || state.phase == automation::RigPhase::Idle || rigs.ReportBusy());
 		const auto base = Utf8Path(path).replace_extension();
 		for (const auto& [label, junit, suffix] : {std::tuple{"Save JSON report", false, ".report.json"},
 												   std::tuple{"Save JUnit report", true, ".junit.xml"}})
@@ -425,10 +445,12 @@ void Library::DrawScript(Selection& selection, const std::string& path, RuntimeP
 			{
 				const auto target = PathText(base) + suffix;
 				m_error = rigs.SaveReport(target, junit);
-				m_report = m_error.empty() ? target : std::string{};
+				m_report.clear();
 			}
 		}
 		ImGui::EndDisabled();
+		if (rigs.ReportBusy())
+			ImGui::TextDisabled("Saving report…");
 		if (!m_report.empty())
 		{
 			ImGui::TextDisabled("Saved %s", PathText(Utf8Path(m_report).filename()).c_str());

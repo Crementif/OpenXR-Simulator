@@ -1,8 +1,8 @@
 #pragma once
 
-#include "app/RigPanel.h"
 #include "app/ShellState.h"
 #include "app/services/LibraryCatalog.h"
+#include "app/services/RigController.h"
 #include "app/widgets/Icons.h"
 
 #include <array>
@@ -30,15 +30,15 @@ class Library
 	void Refresh();
 	// The list: search, play buttons and opening a script by path. A click selects the entry's page;
 	// a script's play button returns its run.
-	std::optional<ScriptRun> DrawBrowser(Selection& selection, RuntimePanels& runtime, RigPanel& rigs);
+	std::optional<ScriptRun> DrawBrowser(Selection& selection, RuntimePanels& runtime, RigController& rigs);
 	// The selected take's or script's page.
-	std::optional<ScriptRun> Draw(Selection& selection, RuntimePanels& runtime, RigPanel& rigs);
+	std::optional<ScriptRun> Draw(Selection& selection, RuntimePanels& runtime, RigController& rigs);
 
   private:
-	void Poll(Selection& selection);
+	void Poll(Selection& selection, RigController& rigs);
 	const LibraryEntry* Find(const std::string& path) const;
-	void DrawTake(Selection& selection, const std::string& path, RuntimePanels& runtime, RigPanel& rigs);
-	void DrawScript(Selection& selection, const std::string& path, RuntimePanels& runtime, RigPanel& rigs);
+	void DrawTake(Selection& selection, const std::string& path, RuntimePanels& runtime, RigController& rigs);
+	void DrawScript(Selection& selection, const std::string& path, RuntimePanels& runtime, RigController& rigs);
 	// Name, rename, delete and close; false once the file is gone or the page closed.
 	bool DrawHeader(Selection& selection, const std::string& path, Icon kind);
 	void Play(const LibraryEntry& entry, RuntimePanels& runtime);
