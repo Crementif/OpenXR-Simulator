@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app/RuntimePanelProtocol.h"
+#include "app/services/RuntimePanelProtocol.h"
 #include "app/services/RuntimeConnection.h"
 
 #include <array>

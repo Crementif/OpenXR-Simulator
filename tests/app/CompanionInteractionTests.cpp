@@ -17,8 +17,8 @@
 #include "runtime/SimulationExtensions.h"
 #include "control/LocalControlServer.h"
 #include "control/ControlService.h"
-#include "app/HistoryStore.h"
-#include "app/InputHistory.h"
+#include "app/services/HistoryStore.h"
+#include "app/services/InputHistory.h"
 #include "app/TimelineCanvas.h"
 #include <functional>
 #include "app/SimulationEdits.h"
@@ -1954,8 +1954,10 @@ void DrivePilotPulses(Interaction& test, const std::function<void(int)>& onPulse
 		if (code == SDL_BUTTON_RIGHT && down)
 		{
 			const auto center = FindPanel("Image area")->InnerRect.GetCenter();
+			SDL_WarpMouseInWindow(test.window.Native(), center.x, center.y);
 			SDL_Event pointer{};
 			pointer.type = SDL_EVENT_MOUSE_MOTION;
+			pointer.motion.which = TestMouse;
 			pointer.motion.windowID = event.button.windowID;
 			pointer.motion.x = center.x;
 			pointer.motion.y = center.y;
@@ -2085,6 +2087,7 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 		motion.motion.windowID = SDL_GetWindowID(test.window.Native());
 		motion.motion.x = std::max(canvas.x, x) + tab / 2;
 		motion.motion.y = canvas.y + ruler + tab / 2;
+		SDL_WarpMouseInWindow(test.window.Native(), motion.motion.x, motion.motion.y);
 		Require(SDL_PushEvent(&motion), "Hover the take clip");
 		pump(2);
 		if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))

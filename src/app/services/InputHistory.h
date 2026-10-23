@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app/ShellState.h"
+#include "app/services/FrameIdentity.h"
 #include "automation/Recording.h"
 #include "simulation/CommandTypes.h"
 
@@ -19,6 +19,8 @@ struct InputSample
 {
 	FrameIdentity identity;
 	std::uint64_t epoch = 0, seed = 0;
+	// Only complete applied-device records can become a replayable take.
+	bool complete = false;
 	PoseSample head;
 	std::array<ControllerPose, 2> poses;
 	std::array<ControllerControls, 2> controls;
@@ -57,6 +59,7 @@ class InputHistory
   private:
 	std::vector<InputSample> m_samples;
 	std::uint64_t m_next = 1;
+	std::size_t m_size = 0;
 	std::shared_ptr<const BodyControls> m_body;
 	std::shared_ptr<const TrackerDevices> m_trackers;
 	std::shared_ptr<const std::vector<std::byte>> m_context;
@@ -64,7 +67,7 @@ class InputHistory
 
 // A take with the same structure the runtime recorder exports: the first sample
 // and its recorded views, proportions, profiles and spaces are its origin; later
-// samples become transactions where they change. Every sample must carry body,
-// gaze and trackers.
+// samples become transactions where they change. Every sample must carry all
+// device channels and complete configuration context.
 automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& samples);
 } // namespace simxr::app

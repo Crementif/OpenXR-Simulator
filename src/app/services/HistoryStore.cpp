@@ -1,13 +1,12 @@
-#include "app/HistoryStore.h"
-#include <algorithm>
+#include "app/services/HistoryStore.h"
+#include "Pch.h"
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 namespace simxr::app
 {
-namespace
-{
-HistoryBucket Merge(HistoryBucket a, HistoryBucket b) noexcept
+static HistoryBucket Merge(HistoryBucket a, HistoryBucket b) noexcept
 {
 	if (!a.count)
 		return b;
@@ -20,7 +19,6 @@ HistoryBucket Merge(HistoryBucket a, HistoryBucket b) noexcept
 			{std::max(a.hands[0], b.hands[0]), std::max(a.hands[1], b.hands[1])},
 			std::max(a.cpuMaximum, b.cpuMaximum)};
 }
-} // namespace
 HistoryStore::HistoryStore(std::size_t capacity)
 {
 	if (!capacity || capacity > 1000000)
@@ -33,6 +31,7 @@ HistoryStore::HistoryStore(std::size_t capacity)
 void HistoryStore::Clear() noexcept
 {
 	m_start = m_size = 0;
+	m_appended = 0;
 	m_segments.clear();
 	std::fill(m_buckets.begin(), m_buckets.end(), HistoryBucket{});
 }
@@ -50,7 +49,8 @@ void HistoryStore::Update(std::size_t physical) noexcept
 {
 	const auto& frame = m_frames[physical];
 	auto node = m_leaves + physical;
-	m_buckets[node] = {1, frame.frameMilliseconds, frame.frameMilliseconds, frame.flags, frame.hands, frame.cpuMilliseconds};
+	m_buckets[node] = {1,			frame.frameMilliseconds, frame.frameMilliseconds, frame.flags,
+					   frame.hands, frame.cpuMilliseconds};
 	while (node > 1)
 	{
 		node /= 2;
@@ -62,6 +62,8 @@ void HistoryStore::Append(const HistoryFrame& frame)
 	if (!std::isfinite(frame.seconds) || !std::isfinite(frame.frameMilliseconds) || frame.frameMilliseconds < 0 ||
 		(m_size && frame.seconds < At(m_size - 1).seconds))
 		throw std::invalid_argument("Frame history requires finite ordered times");
+	if (m_appended == std::numeric_limits<std::uint64_t>::max())
+		throw std::overflow_error("Frame history sequence exhausted");
 	const auto physical = Physical(m_size);
 	const auto& run = frame.identity;
 	if (m_segments.empty() || m_segments.back().end != m_appended || m_segments.back().epoch != frame.epoch ||
@@ -97,7 +99,8 @@ std::optional<std::size_t> HistoryStore::Find(FrameIdentity identity, std::uint6
 	{
 		if (segment->epoch != epoch || segment->session != identity.session || segment->run != identity.run)
 			continue;
-		auto first = std::max(segment->begin, oldest) - oldest, end = segment->end - oldest;
+		auto first = static_cast<std::size_t>(std::max(segment->begin, oldest) - oldest);
+		auto end = static_cast<std::size_t>(segment->end - oldest);
 		while (first < end)
 		{
 			const auto middle = first + (end - first) / 2;
@@ -116,7 +119,7 @@ std::optional<std::size_t> HistoryStore::Latest(FrameIdentity scope, std::uint64
 {
 	for (auto segment = m_segments.rbegin(); segment != m_segments.rend(); ++segment)
 		if (segment->epoch == epoch && segment->session == scope.session && segment->run == scope.run)
-			return segment->end - 1 - (m_appended - m_size);
+			return static_cast<std::size_t>(segment->end - 1 - (m_appended - m_size));
 	return {};
 }
 void HistoryStore::SetFlags(std::size_t index, std::uint32_t mask, bool enabled)

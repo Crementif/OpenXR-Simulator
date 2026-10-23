@@ -1,17 +1,15 @@
-#include "app/InputHistory.h"
+#include "app/services/InputHistory.h"
+#include "Pch.h"
 #include "control/SimulationControl.h"
 
-#include <algorithm>
 #include <cmath>
-#include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <tuple>
 
 namespace simxr::app
 {
-namespace
-{
-bool Same(const XrPosef& a, const XrPosef& b)
+static bool Same(const XrPosef& a, const XrPosef& b)
 {
 	const auto& p = a.position;
 	const auto& q = a.orientation;
@@ -20,15 +18,15 @@ bool Same(const XrPosef& a, const XrPosef& b)
 	return p.x == r.x && p.y == r.y && p.z == r.z && q.x == o.x && q.y == o.y && q.z == o.z && q.w == o.w;
 }
 // Sample times change every frame and are not input.
-bool Same(const PoseSample& a, const PoseSample& b)
+static bool Same(const PoseSample& a, const PoseSample& b)
 {
 	return a.flags == b.flags && Same(a.pose, b.pose);
 }
-bool Same(const ControllerPose& a, const ControllerPose& b)
+static bool Same(const ControllerPose& a, const ControllerPose& b)
 {
 	return a.connected == b.connected && Same(a.pose, b.pose);
 }
-bool Same(const ControllerControls& a, const ControllerControls& b)
+static bool Same(const ControllerControls& a, const ControllerControls& b)
 {
 	const auto values = [](const ControllerControls& c)
 	{
@@ -39,27 +37,28 @@ bool Same(const ControllerControls& a, const ControllerControls& b)
 	};
 	return values(a) == values(b);
 }
-template <typename T> bool Same(const std::array<T, 2>& a, const std::array<T, 2>& b)
+template <typename T> static bool Same(const std::array<T, 2>& a, const std::array<T, 2>& b)
 {
 	return Same(a[0], b[0]) && Same(a[1], b[1]);
 }
-bool Same(const XrVector3f& a, const XrVector3f& b)
+static bool Same(const XrVector3f& a, const XrVector3f& b)
 {
 	return a.x == b.x && a.y == b.y && a.z == b.z;
 }
-template <typename T, typename Equal> bool Same(const std::optional<T>& a, const std::optional<T>& b, Equal equal)
+template <typename T, typename Equal>
+static bool Same(const std::optional<T>& a, const std::optional<T>& b, Equal equal)
 {
 	return a.has_value() == b.has_value() && (!a || equal(*a, *b));
 }
-bool SamePose(const XrPosef& a, const XrPosef& b)
+static bool SamePose(const XrPosef& a, const XrPosef& b)
 {
 	return Same(a, b);
 }
-bool SameOffset(const XrVector3f& a, const XrVector3f& b)
+static bool SameOffset(const XrVector3f& a, const XrVector3f& b)
 {
 	return Same(a, b);
 }
-bool Same(const BodyControls& a, const BodyControls& b)
+static bool Same(const BodyControls& a, const BodyControls& b)
 {
 	if (a.active != b.active || a.confidence != b.confidence || a.preset != b.preset ||
 		!Same(a.rootPose, b.rootPose, SamePose))
@@ -77,13 +76,13 @@ bool Same(const BodyControls& a, const BodyControls& b)
 			return false;
 	return true;
 }
-bool Same(const TrackerDevice& a, const TrackerDevice& b)
+static bool Same(const TrackerDevice& a, const TrackerDevice& b)
 {
 	return a.identity == b.identity && a.role == b.role && a.connected == b.connected && a.tracked == b.tracked &&
 		   a.anchor == b.anchor && Same(a.poseOverride, b.poseOverride, SamePose) &&
 		   Same(a.jointOffset, b.jointOffset, SamePose);
 }
-bool Same(const TrackerDevices& a, const TrackerDevices& b)
+static bool Same(const TrackerDevices& a, const TrackerDevices& b)
 {
 	return std::equal(a.begin(), a.end(), b.begin(),
 					  [](const TrackerDevice& x, const TrackerDevice& y)
@@ -91,15 +90,15 @@ bool Same(const TrackerDevices& a, const TrackerDevices& b)
 						  return Same(x, y);
 					  });
 }
-bool Same(const GazeInput& a, const GazeInput& b)
+static bool Same(const GazeInput& a, const GazeInput& b)
 {
 	return a.yaw == b.yaw && a.pitch == b.pitch && a.available == b.available && a.tracked == b.tracked;
 }
-bool Same(const std::vector<std::byte>& a, const std::vector<std::byte>& b)
+static bool Same(const std::vector<std::byte>& a, const std::vector<std::byte>& b)
 {
 	return a == b;
 }
-std::vector<SimulationCommand> ContextCommands(const InputSample& sample)
+static std::vector<SimulationCommand> ContextCommands(const InputSample& sample)
 {
 	if (!sample.context)
 		throw std::invalid_argument("This run did not record its view/profile context");
@@ -107,20 +106,28 @@ std::vector<SimulationCommand> ContextCommands(const InputSample& sample)
 	if (fields.error != control::DecodeError::None || fields.fields.size() != 5)
 		throw std::invalid_argument("Invalid recorded input context");
 	std::vector<SimulationCommand> commands;
+	std::uint32_t seen = 0;
 	for (const auto& field : fields.fields)
 	{
 		auto command = control::DecodeSimulationCommand(field);
-		if (!std::holds_alternative<SetViewSettings>(command) &&
-			!std::holds_alternative<SetBodyProportions>(command) &&
-			!std::holds_alternative<SetControllerProfile>(command) &&
-			!std::holds_alternative<SetReferenceSpaces>(command))
-			throw std::invalid_argument("Unexpected recorded context command");
+		std::uint32_t bit = 0;
+		if (std::holds_alternative<SetViewSettings>(command))
+			bit = 1;
+		else if (std::holds_alternative<SetBodyProportions>(command))
+			bit = 2;
+		else if (const auto* profile = std::get_if<SetControllerProfile>(&command); profile && profile->hand < 2)
+			bit = 4u << profile->hand;
+		else if (std::holds_alternative<SetReferenceSpaces>(command))
+			bit = 16;
+		if (!bit || (seen & bit))
+			throw std::invalid_argument("Missing or duplicate recorded context command");
+		seen |= bit;
 		commands.push_back(std::move(command));
 	}
 	return commands;
 }
 // Keeps one block per run of equal values; 32k frames of a still body cost one copy.
-template <typename T> void Share(std::shared_ptr<const T>& value, std::shared_ptr<const T>& previous)
+template <typename T> static void Share(std::shared_ptr<const T>& value, std::shared_ptr<const T>& previous)
 {
 	if (!value)
 		return;
@@ -128,7 +135,6 @@ template <typename T> void Share(std::shared_ptr<const T>& value, std::shared_pt
 		value = previous;
 	previous = value;
 }
-} // namespace
 BodyControls BodyOf(const InputSample& sample)
 {
 	auto body = *sample.body;
@@ -144,33 +150,40 @@ float Intensity(const ControllerControls& controls)
 		value = 1;
 	return std::clamp(value, 0.f, 1.f);
 }
-InputHistory::InputHistory(std::size_t capacity) : m_samples(std::max<std::size_t>(capacity, 1))
-{
-}
+InputHistory::InputHistory(std::size_t capacity) : m_samples(std::max<std::size_t>(capacity, 1)) {}
 std::uint64_t InputHistory::Append(InputSample sample)
 {
+	if (m_next == std::numeric_limits<std::uint64_t>::max())
+		throw std::overflow_error("Input history sequence exhausted");
 	Share(sample.body, m_body);
 	Share(sample.trackers, m_trackers);
 	Share(sample.context, m_context);
 	const auto sequence = m_next++;
 	m_samples[sequence % m_samples.size()] = std::move(sample);
+	m_size = std::min(m_size + 1, m_samples.size());
 	return sequence;
 }
 const InputSample* InputHistory::Find(std::uint64_t sequence) const noexcept
 {
-	if (!sequence || sequence >= m_next || m_next - sequence > m_samples.size())
+	if (!sequence || sequence >= m_next || m_next - sequence > m_size)
 		return nullptr;
 	return &m_samples[sequence % m_samples.size()];
 }
 void InputHistory::Clear() noexcept
 {
 	// Sequence numbers keep rising so stale references never resolve.
-	m_next += m_samples.size();
+	m_size = 0;
+	std::fill(m_samples.begin(), m_samples.end(), InputSample{});
+	m_body.reset();
+	m_trackers.reset();
+	m_context.reset();
 }
 automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& samples)
 {
 	if (samples.size() < 2)
 		throw std::invalid_argument("Select at least two frames with input");
+	if (std::ranges::find(samples, nullptr) != samples.end())
+		throw std::invalid_argument("The range includes input that is no longer retained");
 	const auto& origin = *samples.front();
 	for (const auto* sample : samples)
 	{
@@ -179,8 +192,8 @@ automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& 
 			throw std::invalid_argument("The range spans more than one run");
 		if (!sample->context)
 			throw std::invalid_argument("This run did not record its view/profile context");
-		if (!sample->body || !sample->trackers || !sample->gaze)
-			throw std::invalid_argument("This run did not report body, gaze and tracker input; a take needs all of it");
+		if (!sample->complete || !sample->body || !sample->trackers || !sample->gaze)
+			throw std::invalid_argument("This range has incomplete device input; a take needs every device channel");
 	}
 	automation::InputRecording take;
 	take.version = 2;
@@ -212,8 +225,8 @@ automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& 
 			throw std::invalid_argument("The range is not in frame order");
 		if (b.identity.frame - a.identity.frame != 1)
 			throw std::invalid_argument("The range has missing input frames; select a continuous range");
-		if (a.scenarios != b.scenarios || !Same(a.head, b.head) || !Same(a.poses, b.poses) || !Same(a.controls, b.controls) ||
-			!Same(*a.gaze, *b.gaze) || !Same(a.bodyRoot, b.bodyRoot, SamePose) ||
+		if (a.scenarios != b.scenarios || !Same(a.head, b.head) || !Same(a.poses, b.poses) ||
+			!Same(a.controls, b.controls) || !Same(*a.gaze, *b.gaze) || !Same(a.bodyRoot, b.bodyRoot, SamePose) ||
 			(a.body != b.body && !Same(*a.body, *b.body)) ||
 			(a.trackers != b.trackers && !Same(*a.trackers, *b.trackers)) ||
 			(a.context != b.context && *a.context != *b.context))
@@ -252,7 +265,8 @@ automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& 
 				transaction.commands.push_back(std::move(command));
 		for (std::size_t index = 0; index < sample.scenarios.size(); ++index)
 			if (previous->scenarios[index] != sample.scenarios[index])
-				transaction.commands.push_back(SetScenario{static_cast<FailureScenario>(index), sample.scenarios[index]});
+				transaction.commands.push_back(
+					SetScenario{static_cast<FailureScenario>(index), sample.scenarios[index]});
 		if (transaction.commands.empty())
 			continue;
 		take.transactions.push_back(std::move(transaction));

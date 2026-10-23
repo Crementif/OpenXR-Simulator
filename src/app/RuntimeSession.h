@@ -1,7 +1,7 @@
 #pragma once
 
 #include "app/DebuggerPanelController.h"
-#include "app/FrameHistoryFeed.h"
+#include "app/services/FrameHistoryFeed.h"
 #include "app/ImageExportTask.h"
 #include "app/InspectionWorkspace.h"
 #include "app/services/ManualInputController.h"

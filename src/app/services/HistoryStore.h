@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app/ShellState.h"
+#include "app/services/FrameIdentity.h"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -86,10 +86,10 @@ class HistoryStore
 	struct Segment
 	{
 		std::uint64_t epoch = 0, session = 0, run = 0;
-		std::size_t begin = 0, end = 0;
+		std::uint64_t begin = 0, end = 0;
 	};
 	std::vector<Segment> m_segments;
-	std::size_t m_appended = 0;
+	std::uint64_t m_appended = 0;
 	std::vector<HistoryFrame> m_frames;
 	std::vector<HistoryBucket> m_buckets;
 	std::size_t m_start = 0, m_size = 0, m_leaves = 1;

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "app/services/FrameIdentity.h"
+
 #include <chrono>
 #include <cstdint>
 #include <optional>
@@ -17,11 +19,6 @@ enum class DevicePage
 	Body,
 	Gaze,
 	Trackers
-};
-struct FrameIdentity
-{
-	std::uint64_t session = 0, run = 0, frame = 0;
-	bool operator==(const FrameIdentity&) const = default;
 };
 struct DeviceSel
 {

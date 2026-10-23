@@ -90,6 +90,7 @@ void RuntimeSession::ScopeChanged()
 	m_observation = 0;
 	m_haptics.Reset();
 	m_hapticFailure.clear();
+	m_historyNotice.clear();
 	m_nextHaptics = {};
 	m_setup.reset();
 	m_input = {};
@@ -138,7 +139,7 @@ void RuntimeSession::Poll(bool piloting)
 			m_hapticsRequested = now;
 			m_nextHaptics = now + std::chrono::milliseconds(33);
 		}
-		if (selected.id && now >= m_nextHistory && !m_requests.Has(Work::FrameHistory) &&
+		if (selected.id && m_history.CanRead() && now >= m_nextHistory && !m_requests.Has(Work::FrameHistory) &&
 			Supports(wire::Capability::FrameHistory))
 		{
 			auto fields = m_debugger.SessionFields();

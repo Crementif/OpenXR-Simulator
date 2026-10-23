@@ -1,6 +1,6 @@
 #include "../TestSupport.h"
-#include "app/FrameHistoryFeed.h"
-#include "app/HistoryStore.h"
+#include "app/services/FrameHistoryFeed.h"
+#include "app/services/HistoryStore.h"
 #include "control/SimulationControl.h"
 #include <chrono>
 #include <iostream>
@@ -121,6 +121,21 @@ void RuntimeFeed()
 	const auto& recovered = feed.History().At(feed.History().Size() - 1);
 	Require(std::abs(recovered.seconds - previous - .1) < .000001 && (recovered.flags & HistoryGap),
 		"Rejected first frame changed the next run's timeline origin");
+	auto broken = page(4, 3, 1020000000);
+	for (auto& field : broken.fields)
+		if (field.tag == tag::Frames)
+			field.value = {std::byte{1}};
+	Require(!feed.Accept(broken).empty() && !feed.CanRead() && feed.After() == 2,
+		"Undecodable history list must stop polling without throwing or inventing a cursor");
+	Require(feed.Accept(broken).empty(), "Unreadable page repeated its notice");
+	feed.SetScope({4, 9, 4});
+	Require(feed.CanRead() && feed.Accept(page(4, 3, 1020000000)).empty(), "Reconnect did not resume history");
+	broken = page(4, 4, 1030000000);
+	for (auto& field : broken.fields)
+		if (field.tag == tag::Frames)
+			field.value = wire::EncodeFields(std::vector{wire::Field::Bytes(1, std::vector{std::byte{1}})});
+	Require(!feed.Accept(broken).empty() && !feed.CanRead() && feed.After() == 3,
+		"Undecodable record identity must stop polling without throwing from recovery");
 }
 // A walking player in T pose with a moving tracker: 32k frames keep one body
 // block, and a take cut from them carries body, gaze and tracker changes.
@@ -139,6 +154,13 @@ void AppliedInputFeed()
 		std::vector<wire::Field> applied{wire::EncodeSimulationCommand(SetHeadPose{tracking.head}, 1)};
 		if (reported)
 		{
+			for (std::uint32_t hand = 0; hand < 2; ++hand)
+			{
+				applied.push_back(wire::EncodeSimulationCommand(SetControllerPose{hand, tracking.controllers[hand]},
+					static_cast<std::uint16_t>(2 + hand)));
+				applied.push_back(wire::EncodeSimulationCommand(SetControllerControls{hand, {}},
+					static_cast<std::uint16_t>(4 + hand)));
+			}
 			applied.push_back(wire::EncodeSimulationCommand(SetBodyControls{tracking.body}, 6));
 			applied.push_back(wire::EncodeSimulationCommand(SetGaze{tracking.gaze}, 7));
 			for (std::uint32_t slot = 0; slot < 4; ++slot)
@@ -284,6 +306,37 @@ void AppliedInputFeed()
 	Require(refuses({&edges[0], &edges[2]}), "Take silently bridged missing input");
 	++edges[1].epoch;
 	Require(refuses({&edges[0], &edges[1]}), "Take mixed connection epochs");
+	Require(refuses({&edges[0], nullptr}), "Take dereferenced evicted input");
+	--edges[1].epoch;
+	edges[1].complete = false;
+	Require(refuses({&edges[0], &edges[1]}), "Take invented absent controller input");
+	edges[1].complete = true;
+	const std::vector<wire::Field> duplicateContext{
+		wire::EncodeSimulationCommand(SetViewSettings{}, 1),
+		wire::EncodeSimulationCommand(SetBodyProportions{}, 2),
+		wire::EncodeSimulationCommand(SetControllerProfile{0, "left"}, 3),
+		wire::EncodeSimulationCommand(SetControllerProfile{0, "left again"}, 4),
+		wire::EncodeSimulationCommand(SetReferenceSpaces{}, 5)};
+	edges[1].context = std::make_shared<const std::vector<std::byte>>(wire::EncodeFields(duplicateContext));
+	Require(refuses({&edges[0], &edges[1]}), "Take accepted duplicate left profile with no right profile");
+
+	auto partial = page(Frames + 1, 1, true);
+	auto partialFrames = wire::DecodeFields(partial.Find(tag::Frames)->value).fields;
+	auto partialFrame = wire::DecodeFields(partialFrames.front().value).fields;
+	for (auto& field : partialFrame)
+		if (field.tag == tag::AppliedInput)
+		{
+			auto input = wire::DecodeFields(field.value).fields;
+			std::erase_if(input, [](const auto& item) { return item.tag == 4; });
+			field.value = wire::EncodeFields(input);
+		}
+	partialFrames.front().value = wire::EncodeFields(partialFrame);
+	for (auto& field : partial.fields)
+		if (field.tag == tag::Frames)
+			field.value = wire::EncodeFields(partialFrames);
+	Require(feed.Accept(partial).empty(), "Partial input must remain inspectable");
+	const auto* incomplete = feed.Input().Find(feed.History().At(feed.History().Size() - 1).input);
+	Require(incomplete && !incomplete->complete, "Absent controller input was marked complete");
 
 	FrameHistoryFeed older;
 	older.SetScope({1, 9, 2});
@@ -301,6 +354,22 @@ void AppliedInputFeed()
 		refused = true;
 	}
 	Require(refused, "A take was cut from frames without body, gaze and trackers");
+}
+void ClearInput()
+{
+	InputHistory input(2);
+	InputSample sample;
+	sample.body = std::make_shared<const simxr::BodyControls>();
+	std::weak_ptr<const simxr::BodyControls> body = sample.body;
+	const auto first = input.Append(std::move(sample));
+	Require(input.Find(first) && !body.expired(), "Input history lost retained storage");
+	input.Clear();
+	Require(!input.Find(first) && body.expired(), "Clearing history retained its sample or shared body");
+	const auto second = input.Append({});
+	Require(second > first && !input.Find(first) && input.Find(second), "Clear reused a stale sample identity");
+	input.Append({});
+	input.Append({});
+	Require(!input.Find(second), "Wrapped input ring retained an overwritten sample");
 }
 void ThirtyMinutes()
 {
@@ -333,6 +402,7 @@ int main()
 		RingAndBuckets();
 		RuntimeFeed();
 		AppliedInputFeed();
+		ClearInput();
 		ThirtyMinutes();
 		std::cout << "PASS history wrap, min/max/flags aggregation, identity and binary hit-testing\n";
 	}

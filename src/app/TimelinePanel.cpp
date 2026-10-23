@@ -3,7 +3,7 @@
 #include "app/services/Utf8Path.h"
 #include "app/widgets/Controls.h"
 #include "app/Theme.h"
-#include "app/InputHistory.h"
+#include "app/services/InputHistory.h"
 #include "app/PlayerRig.h"
 #include <algorithm>
 #include <cstdio>

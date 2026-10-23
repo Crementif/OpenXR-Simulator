@@ -1,5 +1,7 @@
 #pragma once
-#include "app/HistoryStore.h"
+
+#include "app/ShellState.h"
+#include "app/services/HistoryStore.h"
 #include <array>
 #include <imgui.h>
 #include <optional>
