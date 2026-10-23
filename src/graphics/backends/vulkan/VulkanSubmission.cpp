@@ -183,6 +183,12 @@ void VulkanSubmission::ReleaseSources()
 	if (!NativeIdle())
 		return;
 	const auto native = m_resources->device->binding.device;
+	if (m_resources->pool)
+	{
+		vkDestroyCommandPool(native, m_resources->pool, nullptr);
+		m_resources->pool = VK_NULL_HANDLE;
+		m_resources->command = VK_NULL_HANDLE;
+	}
 	if (m_resources->descriptors)
 	{
 		vkDestroyDescriptorPool(native, m_resources->descriptors, nullptr);
