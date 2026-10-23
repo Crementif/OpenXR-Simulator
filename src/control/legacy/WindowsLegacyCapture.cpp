@@ -159,8 +159,11 @@ bool WindowsLegacyCapture::SubmitPixels(const std::uint8_t* pixels, std::uint32_
 	output.statusFilename = "screenshot_status.json";
 	std::ostringstream status;
 	status.imbue(std::locale::classic());
-	status << "{\"timestamp\":\"" << detail::LocalTimestamp() << "\",\"layer\":\"" << request.layer << "\",\"eye\":\""
-		   << request.eye << "\",\"requestFrame\":" << requestFrame << ",\"capturedFrame\":" << capturedFrame
+	status << "{\"timestamp\":\"" << detail::LocalTimestamp() << "\",\"layer\":";
+	WriteJsonString(status, request.layer);
+	status << ",\"eye\":";
+	WriteJsonString(status, request.eye);
+	status << ",\"requestFrame\":" << requestFrame << ",\"capturedFrame\":" << capturedFrame
 		   << ",\"width\":" << width << ",\"height\":" << height << '}';
 	output.status = status.str();
 	if (!m_files->PublishImages(output))
@@ -194,11 +197,13 @@ bool WindowsLegacyCapture::SubmitQuad(bool completeRequest, std::uint64_t captur
 		if (completeRequest)
 		{
 			output.statusFilename = "screenshot_status.json";
-			output.status = "{\"timestamp\":\"" + detail::LocalTimestamp() + "\",\"layer\":\"quad\",\"eye\":\"" +
-							m_request.eye + "\",\"requestFrame\":" + std::to_string(m_requestFrame) +
-							",\"capturedFrame\":" + std::to_string(capturedFrame) +
-							",\"width\":" + std::to_string(m_quad.width) +
-							",\"height\":" + std::to_string(m_quad.height) + "}";
+			std::ostringstream status;
+			status.imbue(std::locale::classic());
+			status << "{\"timestamp\":\"" << detail::LocalTimestamp() << "\",\"layer\":\"quad\",\"eye\":";
+			WriteJsonString(status, m_request.eye);
+			status << ",\"requestFrame\":" << m_requestFrame << ",\"capturedFrame\":" << capturedFrame
+				   << ",\"width\":" << m_quad.width << ",\"height\":" << m_quad.height << '}';
+			output.status = status.str();
 		}
 	}
 	if (!m_files->PublishImages(output))
@@ -386,9 +391,11 @@ void WindowsLegacyCapture::PublishStatus(FrameStatus status)
 	std::ostringstream output;
 	output.imbue(std::locale::classic());
 	output << "{\"timestamp\":\"" << detail::LocalTimestamp() << "\",\"frame_count\":" << status.frame
-		   << ",\"preview_width\":" << status.width << ",\"preview_height\":" << status.height << ",\"format\":\""
-		   << status.format << "\",\"session_state\":\"" << status.state
-		   << "\",\"target_fps\":90,\"frame_time_ms\":11.1,"
+		   << ",\"preview_width\":" << status.width << ",\"preview_height\":" << status.height << ",\"format\":";
+	WriteJsonString(output, status.format);
+	output << ",\"session_state\":";
+	WriteJsonString(output, status.state);
+	output << ",\"target_fps\":90,\"frame_time_ms\":11.1,"
 		   << "\"head_tracking\":{\"position\":{\"x\":" << status.x << ",\"y\":" << status.y << ",\"z\":" << status.z
 		   << "},\"yaw\":" << status.yaw << ",\"pitch\":" << status.pitch << ",\"roll\":" << status.roll << "}}";
 	m_files->Publish(WindowsDocument::RuntimeStatus, output.str());

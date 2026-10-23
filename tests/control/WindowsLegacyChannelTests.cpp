@@ -1,5 +1,6 @@
 #include "../TestSupport.h"
 #include "control/legacy/WindowsLegacyCapture.h"
+#include "json.h"
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -111,7 +112,7 @@ void TestScreenshotOwnershipAndPublication()
 	auto files = std::make_shared<WindowsLegacyChannel>(directory.Path());
 	WindowsLegacyCapture capture(files);
 	capture.SetFrame(42);
-	capture.RequestScreenshot({"left", "projection"});
+	capture.RequestScreenshot({"left\"\n", "projection\\"});
 	std::vector<std::uint8_t> rgba{255, 0, 0, 7, 0, 255, 0, 9, 0, 0, 0, 0};
 	Require(capture.SubmitPixels(rgba.data(), 2, 1, 12, false, 43), "Accept copied screenshot CPU bytes");
 	std::fill(rgba.begin(), rgba.end(), 0);
@@ -123,6 +124,8 @@ void TestScreenshotOwnershipAndPublication()
 				std::uint8_t(bitmap[59]) == 255 && std::uint8_t(bitmap[61]) == 9,
 			"Caller mutation changed retained image/alpha bytes");
 	const auto status = Read(directory.Path() / "screenshot_status.json");
+	Require(json::Object(status.c_str()).string("eye") == "left\"\n" &&
+		json::Object(status.c_str()).string("layer") == "projection\\", "Screenshot status did not escape request text");
 	Require(status.find("\"requestFrame\":42") != std::string::npos &&
 				status.find("\"capturedFrame\":43") != std::string::npos,
 			"Image completion status lost request/source identity");
@@ -173,7 +176,7 @@ void TestCaptureFailureAndQuadFrameIdentity()
 				failure.find("\"requestFrame\":41") != std::string::npos &&
 				!fs::exists(directory.Path() / "screenshot.bmp"),
 			"Failure reports its source request without composite pixels");
-	capture.RequestScreenshot({"right", "quad"});
+	capture.RequestScreenshot({"right\"\n", "quad"});
 	const std::array<std::uint8_t, 4> quad{255, 0, 0, 255};
 	capture.StoreQuad(quad.data(), 1, 1, 43);
 	capture.SetFrame(50);
@@ -184,6 +187,8 @@ void TestCaptureFailureAndQuadFrameIdentity()
 			return Read(directory.Path() / "screenshot_status.json").find("\"capturedFrame\":43") != std::string::npos;
 		},
 		"Delayed quad status was not published");
+	Require(json::Object(Read(directory.Path() / "screenshot_status.json").c_str()).string("eye") == "right\"\n",
+		"Quad status did not escape request text");
 	capture.RequestScreenshot({"right", "quad"});
 	Require(!capture.SubmitQuad(true, 43) && !capture.FailScreenshot("old map failed", 43) &&
 				!capture.SubmitPixels(quad.data(), 1, 1, 4, false, 43) && capture.ScreenshotRequested(),
@@ -287,10 +292,14 @@ void TestNumericFailureAndClassicJson()
 	WindowsLegacyCapture capture(files);
 	FrameStatus status;
 	status.yaw = .25f;
+	status.format = "format\"\\";
+	status.state = "state\n";
 	capture.PublishStatus(status);
 	capture.Close();
 	files->Close();
 	const auto text = Read(directory.Path() / "runtime_status.json");
+	Require(json::Object(text.c_str()).string("format") == status.format &&
+		json::Object(text.c_str()).string("session_state") == status.state, "Runtime status did not escape text");
 	Require(text.find("\"yaw\":0.25") != std::string::npos && text.find("\"timestamp\":") != std::string::npos,
 			"Ambient locale or status preparation changed the legacy JSON contract");
 	Require(!files->WaitForImageCapacity(0), "Closed worker allowed a new capacity waiter");
