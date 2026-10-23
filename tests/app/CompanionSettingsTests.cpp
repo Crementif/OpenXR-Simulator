@@ -107,6 +107,17 @@ void Persistence()
 			index % 2 ? "" : "literal value ; $()");
 	SaveSettings(file, settings);
 	Require(LoadSettings(file) == settings, "Every profile/layout/recent field round trips exactly");
+	{
+		auto precise = settings;
+		precise.gamepadBindings.deadzone = .9999f;
+		precise.crops.push_back({"default", .999998f, .500001f, 1.0f, .500002f});
+		SaveSettings(file, precise);
+		const auto restored = LoadSettings(file);
+		Require(restored.gamepadBindings.deadzone < 1 && restored.crops.back().x0 < restored.crops.back().x1 &&
+				restored.crops.back().y0 < restored.crops.back().y1,
+			"Fixed-point settings preserve valid deadzones and nonempty crops");
+		SaveSettings(file, settings);
+	}
 #ifdef __linux__
 	Require(PathProblem("/bin/sh", PathKind::Executable).empty() &&
 				PathProblem("/nonexistent/simxr-app", PathKind::Executable) == "File not found" &&

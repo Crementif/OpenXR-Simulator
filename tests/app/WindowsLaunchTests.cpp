@@ -107,6 +107,13 @@ void LaunchTests()
 	const auto settings = directory.path / L"config 日本語.settings";
 	Require(SetEnvironmentVariableW(L"SIMXR_COMPANION_SETTINGS", settings.c_str()), "Set Unicode settings path");
 	Require(CompanionSettingsPath() == settings, "Settings path preserves inherited Unicode");
+	CompanionSettings saved;
+	saved.endpoint = "Unicode path persistence";
+	SaveSettings(settings, saved);
+	Require(LoadSettings(settings) == saved, "Save settings through a Unicode destination");
+	saved.scale = 1.5f;
+	SaveSettings(settings, saved);
+	Require(LoadSettings(settings) == saved, "Replace settings through a Unicode destination");
 	Require(SetEnvironmentVariableW(L"SIMXR_LAUNCH_TEST", L"parent remains unchanged"), "Set parent sentinel");
 	const auto originalRuntime = windows::Environment("XR_RUNTIME_JSON");
 	LaunchProfile profile;

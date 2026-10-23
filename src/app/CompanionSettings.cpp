@@ -3,6 +3,7 @@
 #include "app/WindowsLaunch.h"
 #include "simulation/HeadsetProfiles.h"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -385,7 +386,7 @@ void SaveSettings(const std::filesystem::path& path, const CompanionSettings& se
 		for (const auto& binding : *bindings)
 			Put(bytes, binding);
 	Put(bytes, settings.gamepadBindings.gyroHold);
-	Put(bytes, static_cast<std::uint32_t>(std::lround(settings.gamepadBindings.deadzone * 1000)));
+	Put(bytes, static_cast<std::uint32_t>(std::min(999L, std::lround(settings.gamepadBindings.deadzone * 1000))));
 	Put(bytes, std::uint32_t{4});
 	Put(bytes, settings.snapshotBudgetMiB);
 	Put(bytes, std::uint32_t{5});
@@ -396,8 +397,13 @@ void SaveSettings(const std::filesystem::path& path, const CompanionSettings& se
 	for (const auto& crop : settings.crops)
 	{
 		Put(bytes, crop.profile);
-		for (const float value : {crop.x0, crop.y0, crop.x1, crop.y1})
-			Put(bytes, static_cast<std::uint32_t>(std::lround(value * 100000)));
+		// Keep valid intervals nonempty at the stored fixed-point precision.
+		const auto x0 = std::min(99999L, std::lround(crop.x0 * 100000));
+		const auto y0 = std::min(99999L, std::lround(crop.y0 * 100000));
+		const auto x1 = std::max(x0 + 1, std::lround(crop.x1 * 100000));
+		const auto y1 = std::max(y0 + 1, std::lround(crop.y1 * 100000));
+		for (const auto value : {x0, y0, x1, y1})
+			Put(bytes, static_cast<std::uint32_t>(value));
 	}
 	Put(bytes, std::uint32_t{6});
 	Put(bytes, static_cast<std::uint32_t>(settings.recent.size()));
@@ -420,8 +426,8 @@ void SaveSettings(const std::filesystem::path& path, const CompanionSettings& se
 	temporary = pattern;
 	::close(descriptor);
 #else
-	temporary =
-		path.string() + "." + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".tmp";
+	temporary = path;
+	temporary += "." + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".tmp";
 #endif
 	try
 	{
