@@ -5,7 +5,7 @@
 #include "runtime/HandleRegistry.h"
 #include "simulation/InputState.h"
 
-#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <mutex>

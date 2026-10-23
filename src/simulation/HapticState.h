@@ -3,12 +3,11 @@
 #include "Types.h"
 #include "simulation/InputState.h"
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
-#include <optional>
 #include <openxr/openxr.h>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -61,20 +60,20 @@ struct HapticSnapshot
 
 class HapticState
 {
-public:
+  public:
 	explicit HapticState(std::size_t historyCapacity = 256);
 	XrResult Apply(std::span<const HapticDevice> devices, XrAction action, XrPath subactionPath,
-		const XrHapticVibration& vibration, RuntimeTime time, bool focused);
+				   const XrHapticVibration& vibration, RuntimeTime time, bool focused);
 	XrResult Stop(std::span<const HapticDevice> devices, XrAction action, RuntimeTime time, bool focused);
 	XrResult Apply(std::span<const InputDeviceId> devices, XrAction action, XrPath subactionPath,
-		const XrHapticVibration& vibration, RuntimeTime time, bool focused);
+				   const XrHapticVibration& vibration, RuntimeTime time, bool focused);
 	XrResult Stop(std::span<const InputDeviceId> devices, XrAction action, RuntimeTime time, bool focused);
 	void LoseFocus(RuntimeTime time);
 	void RemoveAction(XrAction action, RuntimeTime time);
 	void Reset();
 	std::vector<HapticOutput> Snapshot(RuntimeTime time) const;
 
-private:
+  private:
 	void Retire(std::size_t index, HapticStatus status, RuntimeTime time);
 	void Expire(RuntimeTime time);
 	mutable std::mutex m_mutex;
@@ -83,4 +82,4 @@ private:
 	std::vector<HapticOutput> m_history;
 	std::uint64_t m_sequence = 0;
 };
-}
+} // namespace simxr

@@ -1,27 +1,24 @@
 #include "simulation/HapticState.h"
+#include "Pch.h"
 
-#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
 
 namespace simxr
 {
-namespace
-{
-bool ValidDevice(InputDeviceId device)
+static bool ValidDevice(InputDeviceId device)
 {
 	return (device.kind == InputDeviceKind::Controller && device.value < 2) ||
-		(device.kind == InputDeviceKind::Tracker && device.value != 0);
+		   (device.kind == InputDeviceKind::Tracker && device.value != 0);
 }
 
-std::vector<InputDeviceId> Controllers(std::span<const HapticDevice> devices)
+static std::vector<InputDeviceId> Controllers(std::span<const HapticDevice> devices)
 {
 	std::vector<InputDeviceId> result;
 	for (auto device : devices)
 		result.push_back(DeviceIdentity(device));
 	return result;
-}
 }
 
 HapticState::HapticState(std::size_t historyCapacity) : m_historyCapacity(historyCapacity)
@@ -32,7 +29,7 @@ HapticState::HapticState(std::size_t historyCapacity) : m_historyCapacity(histor
 }
 
 XrResult HapticState::Apply(std::span<const HapticDevice> devices, XrAction action, XrPath subactionPath,
-	const XrHapticVibration& vibration, RuntimeTime time, bool focused)
+							const XrHapticVibration& vibration, RuntimeTime time, bool focused)
 {
 	return Apply(Controllers(devices), action, subactionPath, vibration, time, focused);
 }
@@ -43,11 +40,10 @@ XrResult HapticState::Stop(std::span<const HapticDevice> devices, XrAction actio
 }
 
 XrResult HapticState::Apply(std::span<const InputDeviceId> devices, XrAction action, XrPath subactionPath,
-	const XrHapticVibration& vibration, RuntimeTime time, bool focused)
+							const XrHapticVibration& vibration, RuntimeTime time, bool focused)
 {
-	if (vibration.type != XR_TYPE_HAPTIC_VIBRATION ||
-		!std::isfinite(vibration.amplitude) || vibration.amplitude < 0 || vibration.amplitude > 1 ||
-		!std::isfinite(vibration.frequency) || vibration.frequency < 0 ||
+	if (vibration.type != XR_TYPE_HAPTIC_VIBRATION || !std::isfinite(vibration.amplitude) || vibration.amplitude < 0 ||
+		vibration.amplitude > 1 || !std::isfinite(vibration.frequency) || vibration.frequency < 0 ||
 		(vibration.duration < 0 && vibration.duration != XR_MIN_HAPTIC_DURATION) || time.value.count() < 0)
 		return XR_ERROR_VALIDATION_FAILURE;
 	std::vector<InputDeviceId> unique;
@@ -77,25 +73,34 @@ XrResult HapticState::Apply(std::span<const InputDeviceId> devices, XrAction act
 	Expire(time);
 	for (auto device : unique)
 	{
-		auto current = std::find_if(m_active.begin(), m_active.end(), [&](const auto& output) { return output.device == device; });
+		auto current = std::find_if(m_active.begin(), m_active.end(),
+									[&](const auto& output)
+									{
+										return output.device == device;
+									});
 		if (current != m_active.end())
 			Retire(static_cast<std::size_t>(current - m_active.begin()), HapticStatus::Replaced, time);
-		m_active.push_back(HapticOutput{++m_sequence, device, action, subactionPath,
-			vibration.amplitude, vibration.frequency, vibration.duration, time, end});
+		m_active.push_back(HapticOutput{++m_sequence, device, action, subactionPath, vibration.amplitude,
+										vibration.frequency, vibration.duration, time, end});
 	}
 	return XR_SUCCESS;
 }
 
 XrResult HapticState::Stop(std::span<const InputDeviceId> devices, XrAction action, RuntimeTime time, bool focused)
 {
-	if (time.value.count() < 0 || std::any_of(devices.begin(), devices.end(), [](auto device) { return !ValidDevice(device); }))
+	if (time.value.count() < 0 || std::any_of(devices.begin(), devices.end(),
+											  [](auto device)
+											  {
+												  return !ValidDevice(device);
+											  }))
 		return XR_ERROR_VALIDATION_FAILURE;
 	if (!focused)
 		return XR_SESSION_NOT_FOCUSED;
 	std::lock_guard lock(m_mutex);
 	Expire(time);
 	for (std::size_t index = m_active.size(); index-- > 0;)
-		if (m_active[index].action == action && std::find(devices.begin(), devices.end(), m_active[index].device) != devices.end())
+		if (m_active[index].action == action &&
+			std::find(devices.begin(), devices.end(), m_active[index].device) != devices.end())
 			Retire(index, HapticStatus::Stopped, time);
 	return XR_SUCCESS;
 }
@@ -154,7 +159,11 @@ std::vector<HapticOutput> HapticState::Snapshot(RuntimeTime time) const
 			value.status = HapticStatus::Expired;
 		result.push_back(value);
 	}
-	std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) { return a.sequence < b.sequence; });
+	std::sort(result.begin(), result.end(),
+			  [](const auto& a, const auto& b)
+			  {
+				  return a.sequence < b.sequence;
+			  });
 	return result;
 }
-}
+} // namespace simxr
