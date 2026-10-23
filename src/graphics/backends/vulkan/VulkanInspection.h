@@ -32,8 +32,8 @@ class VulkanInspectionTransfer;
 class VulkanInspectionQueue;
 class VulkanInspectionWork;
 
-// Initialize before the runtime/control worker graph so its bounded observer is
-// joined after those workers at process teardown. Creates no Vulkan resources.
+// Initialize storage before the runtime/control graph for teardown ordering.
+// Creates no Vulkan resources or worker; an inspection owner starts observation.
 void InitializeVulkanImageDelivery();
 // Stop before DLL unload, outside loader lock. A later inspection owner restarts it.
 void StopVulkanImageDelivery();

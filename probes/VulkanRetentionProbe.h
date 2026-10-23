@@ -2,6 +2,7 @@
 
 #include "graphics/Compositor.h"
 #include "graphics/RotationalSource.h"
+#include <memory>
 #include <vulkan/vulkan.h>
 
 namespace simxr

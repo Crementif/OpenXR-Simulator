@@ -1,4 +1,5 @@
 #include "VulkanImageDeliveryProbe.h"
+#include "Pch.h"
 #include "VulkanProbeInstance.h"
 #include "control/ControlSchema.h"
 #include "control/ImageInspection.h"
@@ -8,22 +9,18 @@
 #include "graphics/backends/vulkan/VulkanBackend.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
-#include "platform/linux/ControlFd.h"
 
-#include <array>
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <filesystem>
 #include <functional>
-#include <memory>
+#include <limits>
 #include <stdexcept>
 #include <thread>
-#include <utility>
 
-namespace
+namespace simxr::probe
 {
 struct SubmissionFault
 {
@@ -33,22 +30,21 @@ struct SubmissionFault
 	void (*beforeReturn)(void*) noexcept = nullptr;
 	void* context = nullptr;
 };
-thread_local SubmissionFault submissionFault;
-thread_local bool failRecording = false;
-} // namespace
+static thread_local SubmissionFault s_submissionFault;
+static thread_local bool s_failRecording = false;
 // GNU --wrap affects this probe and linked static-library call sites only.
 // Dynamic Vulkan loader/layer/driver calls keep their native symbol behavior.
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL __real_vkQueueSubmit(VkQueue, std::uint32_t, const VkSubmitInfo*, VkFence);
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL __wrap_vkQueueSubmit(VkQueue queue, std::uint32_t count,
 															   const VkSubmitInfo* submits, VkFence fence)
 {
-	if (submissionFault.queue != VK_NULL_HANDLE && submissionFault.queue == queue)
+	if (s_submissionFault.queue != VK_NULL_HANDLE && s_submissionFault.queue == queue)
 	{
-		submissionFault.queue = VK_NULL_HANDLE;
-		submissionFault.fired = true;
-		if (submissionFault.beforeReturn)
-			submissionFault.beforeReturn(submissionFault.context);
-		return submissionFault.result;
+		s_submissionFault.queue = VK_NULL_HANDLE;
+		s_submissionFault.fired = true;
+		if (s_submissionFault.beforeReturn)
+			s_submissionFault.beforeReturn(s_submissionFault.context);
+		return s_submissionFault.result;
 	}
 	return __real_vkQueueSubmit(queue, count, submits, fence);
 }
@@ -56,27 +52,33 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL __wrap_vkQueueSubmit(VkQueue queue, st
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL __real_vkEndCommandBuffer(VkCommandBuffer);
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL __wrap_vkEndCommandBuffer(VkCommandBuffer command)
 {
-	if (std::exchange(failRecording, false))
+	if (std::exchange(s_failRecording, false))
 		return VK_ERROR_OUT_OF_HOST_MEMORY;
 	return __real_vkEndCommandBuffer(command);
 }
 
-namespace simxr::probe
-{
-namespace
-{
-constexpr std::uint64_t Timeout = 5000000000ULL;
-constexpr std::array Extensions{VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
-								VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME};
+static constexpr std::uint64_t s_timeout = 5000000000ULL;
+static constexpr std::array s_extensions{VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
+										 VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
+										 VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME};
 using Palette = std::array<std::array<std::uint8_t, 4>, 2>;
-constexpr Palette Original{{{{255, 0, 0, 255}}, {{0, 255, 0, 255}}}};
-constexpr Palette Resized{{{{255, 255, 0, 255}}, {{0, 255, 255, 255}}}};
-void Require(bool value, const char* message)
+static constexpr Palette s_original{{{{255, 0, 0, 255}}, {{0, 255, 0, 255}}}};
+static constexpr Palette s_resized{{{{255, 255, 0, 255}}, {{0, 255, 255, 255}}}};
+static void Require(bool value, const char* message)
 {
 	if (!value)
 		throw std::runtime_error(message);
 }
-void VerifyPreservationOwnership()
+static void CheckSubmission(VkResult result, const char* operation)
+{
+	if (result != VK_SUCCESS && result != VK_ERROR_OUT_OF_HOST_MEMORY && result != VK_ERROR_OUT_OF_DEVICE_MEMORY)
+	{
+		std::fprintf(stderr, "FAIL: %s returned %d; preserving uncertain submitted owners\n", operation, result);
+		std::_Exit(1);
+	}
+	Check(result, operation);
+}
+static void VerifyPreservationOwnership()
 {
 	struct Observations
 	{
@@ -131,7 +133,7 @@ void VerifyPreservationOwnership()
 			  "chargedOwnerRetained=yes PASS");
 }
 
-void Await(const std::function<CompletionStatus()>& poll, const char* message)
+static void Await(const std::function<CompletionStatus()>& poll, const char* message)
 {
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 	for (;;)
@@ -144,7 +146,7 @@ void Await(const std::function<CompletionStatus()>& poll, const char* message)
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
 }
-template <class Exception, class Function> void Rejected(Function operation, const char* message)
+template <class Exception, class Function> static void Rejected(Function operation, const char* message)
 {
 	try
 	{
@@ -156,24 +158,26 @@ template <class Exception, class Function> void Rejected(Function operation, con
 	}
 	throw std::runtime_error(message);
 }
-class SubmissionFailure
+class DeliverySubmissionFailure
 {
   public:
-	SubmissionFailure(VkQueue queue, VkResult result, void (*beforeReturn)(void*) noexcept = nullptr,
-					  void* context = nullptr)
+	DeliverySubmissionFailure(VkQueue queue, VkResult result, void (*beforeReturn)(void*) noexcept = nullptr,
+							  void* context = nullptr)
 	{
-		submissionFault = {queue, result, false, beforeReturn, context};
+		s_submissionFault = {queue, result, false, beforeReturn, context};
 	}
-	~SubmissionFailure()
+	DeliverySubmissionFailure(const DeliverySubmissionFailure&) = delete;
+	DeliverySubmissionFailure& operator=(const DeliverySubmissionFailure&) = delete;
+	~DeliverySubmissionFailure()
 	{
-		submissionFault = {};
+		s_submissionFault = {};
 	}
 	bool Fired() const noexcept
 	{
-		return submissionFault.fired;
+		return s_submissionFault.fired;
 	}
 };
-std::shared_ptr<VulkanImageDelivery> ShareEventually(const std::shared_ptr<VulkanInspectionFrame>& frame)
+static std::shared_ptr<VulkanImageDelivery> ShareEventually(const std::shared_ptr<VulkanInspectionFrame>& frame)
 {
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 	for (;;)
@@ -191,7 +195,7 @@ std::shared_ptr<VulkanImageDelivery> ShareEventually(const std::shared_ptr<Vulka
 		}
 	}
 }
-void VerifyKnownSubmissionFailure(const std::shared_ptr<VulkanInspectionFrame>& source)
+static void VerifyKnownSubmissionFailure(const std::shared_ptr<VulkanInspectionFrame>& source)
 {
 	FramePool sourceBudget{1}, retainedBudget{1};
 	Require(source->PromoteCaptureBudget(sourceBudget), "Classify source before injected queue OOM");
@@ -204,7 +208,7 @@ void VerifyKnownSubmissionFailure(const std::shared_ptr<VulkanInspectionFrame>& 
 			bool fired = false;
 			VkResult result = VK_SUCCESS;
 			{
-				SubmissionFailure injection(source->Image().device->queue, expected);
+				DeliverySubmissionFailure injection(source->Image().device->queue, expected);
 				try
 				{
 					source->Share();
@@ -238,7 +242,7 @@ void VerifyKnownSubmissionFailure(const std::shared_ptr<VulkanInspectionFrame>& 
 			  "sourceBudget=recovered PASS");
 }
 
-void VerifyBackendKnownSubmissionFailure(const std::shared_ptr<VulkanDevice>& device)
+static void VerifyBackendKnownSubmissionFailure(const std::shared_ptr<VulkanDevice>& device)
 {
 	constexpr std::array errors{VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY};
 	for (const auto expected : errors)
@@ -251,7 +255,7 @@ void VerifyBackendKnownSubmissionFailure(const std::shared_ptr<VulkanDevice>& de
 			VkResult result = VK_SUCCESS;
 			bool fired = false;
 			{
-				SubmissionFailure injection(device->queue, expected);
+				DeliverySubmissionFailure injection(device->queue, expected);
 				try
 				{
 					backend.InitializeImage(image);
@@ -290,7 +294,7 @@ void VerifyBackendKnownSubmissionFailure(const std::shared_ptr<VulkanDevice>& de
 			XrResult result;
 			bool fired;
 			{
-				SubmissionFailure injection(device->queue, expected);
+				DeliverySubmissionFailure injection(device->queue, expected);
 				result = backend.Submit(frames);
 				fired = injection.Fired();
 			}
@@ -312,7 +316,7 @@ void VerifyBackendKnownSubmissionFailure(const std::shared_ptr<VulkanDevice>& de
 			  "output=Failed-not-Complete Wait=exactOOM Drain=idle heldOwners=honored PASS");
 }
 
-void VerifySubmissionPublicationBoundary(const std::shared_ptr<VulkanDevice>& owner)
+static void VerifySubmissionPublicationBoundary(const std::shared_ptr<VulkanDevice>& owner)
 {
 	VulkanBackend backend(owner->binding, 1);
 	CompositionPlan plan;
@@ -347,7 +351,7 @@ void VerifySubmissionPublicationBoundary(const std::shared_ptr<VulkanDevice>& ow
 	XrResult result;
 	bool fired;
 	{
-		SubmissionFailure injection(owner->queue, VK_ERROR_DEVICE_LOST, &Observation::BeforeReturn, &state);
+		DeliverySubmissionFailure injection(owner->queue, VK_ERROR_DEVICE_LOST, &Observation::BeforeReturn, &state);
 		result = backend.Submit(frame);
 		fired = injection.Fired();
 	}
@@ -366,17 +370,21 @@ void VerifySubmissionPublicationBoundary(const std::shared_ptr<VulkanDevice>& ow
 			  "afterReturn=Failed+Idle heldOwners=honored PASS");
 }
 
-struct NativeDevice
+struct DeliveryDevice
 {
-	std::shared_ptr<Instance> instance;
-	VkDevice native = VK_NULL_HANDLE;
-	~NativeDevice()
+	DeliveryDevice() = default;
+	DeliveryDevice(const DeliveryDevice&) = delete;
+	DeliveryDevice& operator=(const DeliveryDevice&) = delete;
+	std::shared_ptr<Instance> m_instance;
+	VkDevice m_native = VK_NULL_HANDLE;
+	~DeliveryDevice()
 	{
-		if (native)
-			vkDestroyDevice(native, nullptr);
+		if (m_native)
+			vkDestroyDevice(m_native, nullptr);
 	}
 };
-std::shared_ptr<VulkanDevice> ConsumerDevice(std::shared_ptr<Instance> instance, const VulkanExternalIdentity& identity)
+static std::shared_ptr<VulkanDevice> ConsumerDevice(std::shared_ptr<Instance> instance,
+													const VulkanExternalIdentity& identity)
 {
 	std::uint32_t count = 0;
 	Check(vkEnumeratePhysicalDevices(instance->handle, &count, nullptr), "enumerate delivery consumer adapters");
@@ -399,8 +407,8 @@ std::shared_ptr<VulkanDevice> ConsumerDevice(std::shared_ptr<Instance> instance,
 		for (std::uint32_t family = 0; family != count; ++family)
 			if (families[family].queueCount && (families[family].queueFlags & VK_QUEUE_GRAPHICS_BIT))
 			{
-				auto owner = std::make_shared<NativeDevice>();
-				owner->instance = std::move(instance);
+				auto owner = std::make_shared<DeliveryDevice>();
+				owner->m_instance = std::move(instance);
 				const float priority = 1;
 				VkDeviceQueueCreateInfo queue{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
 				queue.queueFamilyIndex = family;
@@ -409,19 +417,19 @@ std::shared_ptr<VulkanDevice> ConsumerDevice(std::shared_ptr<Instance> instance,
 				VkDeviceCreateInfo create{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
 				create.queueCreateInfoCount = 1;
 				create.pQueueCreateInfos = &queue;
-				create.enabledExtensionCount = Extensions.size();
-				create.ppEnabledExtensionNames = Extensions.data();
-				Check(vkCreateDevice(physical, &create, nullptr, &owner->native),
+				create.enabledExtensionCount = static_cast<std::uint32_t>(s_extensions.size());
+				create.ppEnabledExtensionNames = s_extensions.data();
+				Check(vkCreateDevice(physical, &create, nullptr, &owner->m_native),
 					  "create independent delivery consumer");
 				return std::make_shared<VulkanDevice>(
-					VulkanBinding{owner->instance->handle, physical, owner->native, family, 0}, owner);
+					VulkanBinding{owner->m_instance->handle, physical, owner->m_native, family, 0}, owner);
 			}
 	}
 	throw std::runtime_error("No consumer adapter matches both delivery UUIDs");
 }
 // External fences may not let validation infer command retirement. An ordinary
 // same-queue marker proves actual retirement independently for local cleanup.
-void SignalAndRetire(const std::shared_ptr<VulkanExternalFence>& external)
+static void SignalAndRetire(const std::shared_ptr<VulkanExternalFence>& external)
 {
 	const auto device = external->Device();
 	VkFence marker = VK_NULL_HANDLE;
@@ -432,10 +440,10 @@ void SignalAndRetire(const std::shared_ptr<VulkanExternalFence>& external)
 	if (first != VK_SUCCESS)
 	{
 		vkDestroyFence(device->binding.device, marker, nullptr);
-		Check(first, "submit consumer fence signal");
+		CheckSubmission(first, "submit consumer fence signal");
 	}
 	const auto second = vkQueueSubmit(device->queue, 1, &empty, marker);
-	if (second != VK_SUCCESS || vkWaitForFences(device->binding.device, 1, &marker, VK_TRUE, Timeout) != VK_SUCCESS)
+	if (second != VK_SUCCESS || vkWaitForFences(device->binding.device, 1, &marker, VK_TRUE, s_timeout) != VK_SUCCESS)
 	{
 		std::fputs("FAIL: consumer signal retirement unknown; preserving submitted native owners\n", stderr);
 		std::_Exit(1);
@@ -448,54 +456,55 @@ void SignalAndRetire(const std::shared_ptr<VulkanExternalFence>& external)
 		},
 		"External consumer fence failed to signal");
 }
-class ConsumerCopy
+class DeliveryConsumerCopy
 {
   public:
-	ConsumerCopy(std::shared_ptr<VulkanDevice> owner, std::shared_ptr<VulkanImageDelivery> source, bool readback,
-				 bool testRegistration = false)
-		: device(std::move(owner)), delivery(std::move(source)), external(device, Extensions, VK_API_VERSION_1_1)
+	DeliveryConsumerCopy(std::shared_ptr<VulkanDevice> owner, std::shared_ptr<VulkanImageDelivery> source,
+						 bool readback, bool testRegistration = false)
+		: m_device(std::move(owner)), m_delivery(std::move(source)),
+		  m_external(m_device, s_extensions, VK_API_VERSION_1_1)
 	{
 		try
 		{
-			completion = external.CreateExportableFence();
-			auto fenceFd = completion->ExportOnce();
+			m_completion = m_external.CreateExportableFence();
+			auto fenceFd = m_completion->ExportOnce();
 			if (testRegistration)
 			{
 				Rejected<std::logic_error>(
 					[&]
 					{
-						delivery->ExportHandles();
+						m_delivery->ExportHandles();
 					},
 					"Delivery exposed handles before registration");
-				auto wrong = external.Identity();
+				auto wrong = m_external.Identity();
 				wrong.deviceUuid[0] ^= 1;
 				const auto saved = fenceFd.Get();
 				Rejected<VulkanError>(
 					[&]
 					{
-						delivery->RegisterConsumer(wrong, fenceFd);
+						m_delivery->RegisterConsumer(wrong, fenceFd);
 					},
 					"Delivery accepted wrong consumer UUID");
 				Require(fenceFd.Get() == saved, "Wrong-identity registration consumed caller FD");
 			}
 			auto duplicate = fenceFd.Duplicate();
-			delivery->RegisterConsumer(external.Identity(), fenceFd);
+			m_delivery->RegisterConsumer(m_external.Identity(), fenceFd);
 			Require(!fenceFd, "Successful consumer registration did not consume caller FD");
 			Rejected<std::logic_error>(
 				[&]
 				{
-					delivery->RegisterConsumer(external.Identity(), duplicate);
+					m_delivery->RegisterConsumer(m_external.Identity(), duplicate);
 				},
 				"Duplicate consumer registration accepted");
 			Require(static_cast<bool>(duplicate), "Duplicate registration consumed caller FD");
-			auto handles = delivery->ExportHandles();
+			auto handles = m_delivery->ExportHandles();
 			{
-				auto retry = delivery->ExportHandles();
+				auto retry = m_delivery->ExportHandles();
 				Require(retry.memory && retry.ready && retry.memory.Get() != handles.memory.Get() &&
 							retry.ready.Get() != handles.ready.Get(),
 						"Same-consumer export retry did not duplicate FD ownership");
 			}
-			Initialize(delivery->Descriptor(), handles, readback);
+			Initialize(m_delivery->Descriptor(), handles, readback);
 		}
 		catch (...)
 		{
@@ -503,9 +512,10 @@ class ConsumerCopy
 			throw;
 		}
 	}
-	ConsumerCopy(std::shared_ptr<VulkanDevice> owner, const VulkanExternalImageDescriptor& descriptor,
-				 VulkanDeliveryHandles handles, std::shared_ptr<VulkanExternalFence> fence, bool readback)
-		: device(std::move(owner)), external(device, Extensions, VK_API_VERSION_1_1), completion(std::move(fence))
+	DeliveryConsumerCopy(std::shared_ptr<VulkanDevice> owner, const VulkanExternalImageDescriptor& descriptor,
+						 VulkanDeliveryHandles handles, std::shared_ptr<VulkanExternalFence> fence, bool readback)
+		: m_device(std::move(owner)), m_external(m_device, s_extensions, VK_API_VERSION_1_1),
+		  m_completion(std::move(fence))
 	{
 		try
 		{
@@ -519,29 +529,31 @@ class ConsumerCopy
 	}
 	// Explicit analysis of private storage produced by the production consumer.
 	// Normal headless/companion consumption never constructs this readback job.
-	ConsumerCopy(std::shared_ptr<VulkanDevice> owner, const VulkanImage& image)
-		: privateImage(owner, &image), device(std::move(owner)), external(device, Extensions, VK_API_VERSION_1_1)
+	DeliveryConsumerCopy(std::shared_ptr<VulkanDevice> owner, const VulkanImage& image)
+		: m_privateImage(owner, &image), m_device(std::move(owner)),
+		  m_external(m_device, s_extensions, VK_API_VERSION_1_1)
 	{
 		try
 		{
-			completion = external.CreateExportableFence();
+			m_completion = m_external.CreateExportableFence();
 			VkCommandPoolCreateInfo create{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-			create.queueFamilyIndex = device->binding.queueFamily;
-			Check(vkCreateCommandPool(device->binding.device, &create, nullptr, &pool),
+			create.queueFamilyIndex = m_device->binding.queueFamily;
+			Check(vkCreateCommandPool(m_device->binding.device, &create, nullptr, &m_pool),
 				  "create explicit private analysis pool");
 			VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-			allocate.commandPool = pool;
+			allocate.commandPool = m_pool;
 			allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 			allocate.commandBufferCount = 1;
-			Check(vkAllocateCommandBuffers(device->binding.device, &allocate, &command),
+			Check(vkAllocateCommandBuffers(m_device->binding.device, &allocate, &m_command),
 				  "allocate private analysis command");
 			VkFenceCreateInfo fence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-			Check(vkCreateFence(device->binding.device, &fence, nullptr, &retirement), "create private analysis fence");
+			Check(vkCreateFence(m_device->binding.device, &fence, nullptr, &m_retirement),
+				  "create private analysis fence");
 			VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
 			begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-			Check(vkBeginCommandBuffer(command, &begin), "begin private analysis");
+			Check(vkBeginCommandBuffer(m_command, &begin), "begin private analysis");
 			RecordReadback();
-			Check(vkEndCommandBuffer(command), "finish private analysis");
+			Check(vkEndCommandBuffer(m_command), "finish private analysis");
 		}
 		catch (...)
 		{
@@ -550,79 +562,84 @@ class ConsumerCopy
 		}
 	}
 
-	~ConsumerCopy()
+	DeliveryConsumerCopy(const DeliveryConsumerCopy&) = delete;
+	DeliveryConsumerCopy& operator=(const DeliveryConsumerCopy&) = delete;
+	~DeliveryConsumerCopy()
 	{
 		Cleanup();
 	}
 	void Submit()
 	{
-		const auto semaphore = ready ? ready->Get() : VK_NULL_HANDLE;
+		if (m_submitted)
+			throw std::logic_error("Consumer copy was already submitted");
+		const auto semaphore = m_ready ? m_ready->Get() : VK_NULL_HANDLE;
 		const VkPipelineStageFlags stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 		VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-		submit.waitSemaphoreCount = ready ? 1 : 0;
+		submit.waitSemaphoreCount = m_ready ? 1 : 0;
 		submit.pWaitSemaphores = &semaphore;
 		submit.pWaitDstStageMask = &stage;
 		submit.commandBufferCount = 1;
-		submit.pCommandBuffers = &command;
-		Check(vkQueueSubmit(device->queue, 1, &submit, completion->Get()), "submit actual delivery consumer copy");
-		submitted = true;
+		submit.pCommandBuffers = &m_command;
+		CheckSubmission(vkQueueSubmit(m_device->queue, 1, &submit, m_completion->Get()),
+						"submit actual delivery consumer copy");
+		m_submitted = true;
 		VkSubmitInfo marker{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-		Check(vkQueueSubmit(device->queue, 1, &marker, retirement), "submit consumer retirement marker");
-		markerSubmitted = true;
+		CheckSubmission(vkQueueSubmit(m_device->queue, 1, &marker, m_retirement), "submit consumer retirement marker");
+		m_markerSubmitted = true;
 	}
 	void Finish()
 	{
-		Require(submitted && markerSubmitted, "Consumer copy was not submitted");
-		if (vkWaitForFences(device->binding.device, 1, &retirement, VK_TRUE, Timeout) != VK_SUCCESS)
+		Require(m_submitted && m_markerSubmitted, "Consumer copy was not submitted");
+		if (vkWaitForFences(m_device->binding.device, 1, &m_retirement, VK_TRUE, s_timeout) != VK_SUCCESS)
 		{
 			std::fputs("FAIL: delivery consumer GPU retirement unknown; preserving all submitted owners\n", stderr);
 			std::_Exit(1);
 		}
-		complete = true;
+		m_complete = true;
 		Await(
 			[&]
 			{
-				return completion->PollCompletion();
+				return m_completion->PollCompletion();
 			},
 			"Consumer external fence did not match real copy completion");
-		if (delivery)
+		if (m_delivery)
 			Await(
 				[&]
 				{
-					return delivery->PollConsumerCompletion();
+					return m_delivery->PollConsumerCompletion();
 				},
 				"Producer did not independently observe consumer completion");
 	}
 	std::weak_ptr<VulkanImageDelivery> ReleaseDelivery()
 	{
-		std::weak_ptr<VulkanImageDelivery> released = delivery;
-		delivery.reset();
+		std::weak_ptr<VulkanImageDelivery> released = m_delivery;
+		m_delivery.reset();
 		return released;
 	}
 	CompletionStatus ConsumerCompletion() const noexcept
 	{
-		return completion->PollCompletion();
+		return m_completion->PollCompletion();
 	}
 	void Verify(const Palette& palette)
 	{
-		Require(complete && buffer != VK_NULL_HANDLE, "Pixel verification requires explicit completed readback");
+		Require(m_complete && m_buffer != VK_NULL_HANDLE, "Pixel verification requires explicit completed readback");
 		void* mapping = nullptr;
-		Check(vkMapMemory(device->binding.device, memory, 0, VK_WHOLE_SIZE, 0, &mapping),
+		Check(vkMapMemory(m_device->binding.device, m_memory, 0, VK_WHOLE_SIZE, 0, &mapping),
 			  "map explicit delivery analysis");
 		try
 		{
-			if (!coherent)
+			if (!m_coherent)
 			{
 				VkMappedMemoryRange invalidate{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};
-				invalidate.memory = memory;
+				invalidate.memory = m_memory;
 				invalidate.size = VK_WHOLE_SIZE;
-				Check(vkInvalidateMappedMemoryRanges(device->binding.device, 1, &invalidate),
+				Check(vkInvalidateMappedMemoryRanges(m_device->binding.device, 1, &invalidate),
 					  "invalidate delivery analysis memory");
 			}
 			const auto* bytes = static_cast<const std::uint8_t*>(mapping);
-			Require(privateImage->layers == 2 && privateImage->format == VK_FORMAT_R8G8B8A8_SRGB,
+			Require(m_privateImage->layers == 2 && m_privateImage->format == VK_FORMAT_R8G8B8A8_SRGB,
 					"Unexpected consumer palette image shape");
-			const auto pixels = static_cast<std::size_t>(privateImage->extent.width) * privateImage->extent.height;
+			const auto pixels = static_cast<std::size_t>(m_privateImage->extent.width) * m_privateImage->extent.height;
 			for (std::size_t eye = 0; eye < 2; ++eye)
 				for (std::size_t pixel = 0; pixel < pixels; ++pixel)
 					for (std::size_t channel = 0; channel < 4; ++channel)
@@ -631,27 +648,27 @@ class ConsumerCopy
 		}
 		catch (...)
 		{
-			vkUnmapMemory(device->binding.device, memory);
+			vkUnmapMemory(m_device->binding.device, m_memory);
 			throw;
 		}
-		vkUnmapMemory(device->binding.device, memory);
+		vkUnmapMemory(m_device->binding.device, m_memory);
 	}
 	void VerifyBytes(std::span<const std::byte> expected)
 	{
-		const auto size = static_cast<std::size_t>(privateImage->extent.width) * privateImage->extent.height *
-						  privateImage->layers * 4;
-		Require(complete && buffer && expected.size() == size, "Explicit GPU/CPU comparison shape differs");
+		const auto size = static_cast<std::size_t>(m_privateImage->extent.width) * m_privateImage->extent.height *
+						  m_privateImage->layers * 4;
+		Require(m_complete && m_buffer && expected.size() == size, "Explicit GPU/CPU comparison shape differs");
 		void* mapping = nullptr;
-		Check(vkMapMemory(device->binding.device, memory, 0, VK_WHOLE_SIZE, 0, &mapping),
+		Check(vkMapMemory(m_device->binding.device, m_memory, 0, VK_WHOLE_SIZE, 0, &mapping),
 			  "map transported image comparison");
 		try
 		{
-			if (!coherent)
+			if (!m_coherent)
 			{
 				VkMappedMemoryRange range{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};
-				range.memory = memory;
+				range.memory = m_memory;
 				range.size = VK_WHOLE_SIZE;
-				Check(vkInvalidateMappedMemoryRanges(device->binding.device, 1, &range),
+				Check(vkInvalidateMappedMemoryRanges(m_device->binding.device, 1, &range),
 					  "invalidate transported image comparison");
 			}
 			Require(std::memcmp(mapping, expected.data(), size) == 0,
@@ -659,136 +676,145 @@ class ConsumerCopy
 		}
 		catch (...)
 		{
-			vkUnmapMemory(device->binding.device, memory);
+			vkUnmapMemory(m_device->binding.device, m_memory);
 			throw;
 		}
-		vkUnmapMemory(device->binding.device, memory);
+		vkUnmapMemory(m_device->binding.device, m_memory);
 	}
 
-	std::shared_ptr<const VulkanImage> privateImage;
+	const VulkanImage& Image() const noexcept
+	{
+		return *m_privateImage;
+	}
 
   private:
 	void Initialize(const VulkanExternalImageDescriptor& descriptor, VulkanDeliveryHandles& handles, bool readback)
 	{
-		imported = external.ImportImage(descriptor, handles.memory);
-		ready = external.ImportSemaphore(descriptor.identity, handles.ready);
+		m_imported = m_external.ImportImage(descriptor, handles.memory);
+		m_ready = m_external.ImportSemaphore(descriptor.identity, handles.ready);
 		Require(!handles.memory && !handles.ready, "Consumer imports did not consume their FD ownership");
-		privateImage = VulkanImage::Create(
-			device, descriptor.image.format, {descriptor.image.extent.width, descriptor.image.extent.height},
+		m_privateImage = VulkanImage::Create(
+			m_device, descriptor.image.format, {descriptor.image.extent.width, descriptor.image.extent.height},
 			descriptor.image.arrayLayers, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
 		VkCommandPoolCreateInfo poolCreate{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-		poolCreate.queueFamilyIndex = device->binding.queueFamily;
-		Check(vkCreateCommandPool(device->binding.device, &poolCreate, nullptr, &pool),
+		poolCreate.queueFamilyIndex = m_device->binding.queueFamily;
+		Check(vkCreateCommandPool(m_device->binding.device, &poolCreate, nullptr, &m_pool),
 			  "create delivery consumer pool");
 		VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-		allocate.commandPool = pool;
+		allocate.commandPool = m_pool;
 		allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 		allocate.commandBufferCount = 1;
-		Check(vkAllocateCommandBuffers(device->binding.device, &allocate, &command), "allocate delivery copy command");
+		Check(vkAllocateCommandBuffers(m_device->binding.device, &allocate, &m_command),
+			  "allocate delivery copy command");
 		VkFenceCreateInfo marker{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-		Check(vkCreateFence(device->binding.device, &marker, nullptr, &retirement), "create delivery retirement fence");
+		Check(vkCreateFence(m_device->binding.device, &marker, nullptr, &m_retirement),
+			  "create delivery retirement fence");
 		VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
 		begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-		Check(vkBeginCommandBuffer(command, &begin), "begin delivery consumer copy");
+		Check(vkBeginCommandBuffer(m_command, &begin), "begin delivery consumer copy");
 		VkImageMemoryBarrier acquire{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
 		acquire.oldLayout = acquire.newLayout = VK_IMAGE_LAYOUT_GENERAL;
 		acquire.srcQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;
-		acquire.dstQueueFamilyIndex = device->binding.queueFamily;
+		acquire.dstQueueFamilyIndex = m_device->binding.queueFamily;
 		acquire.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-		acquire.image = imported->Image()->image;
+		acquire.image = m_imported->Image()->image;
 		acquire.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, descriptor.image.arrayLayers};
-		vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr,
-							 0, nullptr, 1, &acquire);
-		VulkanImageBarrier(command, *privateImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0,
+		vkCmdPipelineBarrier(m_command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0,
+							 nullptr, 0, nullptr, 1, &acquire);
+		VulkanImageBarrier(m_command, *m_privateImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0,
 						   VK_ACCESS_TRANSFER_WRITE_BIT);
 		VkImageCopy copy{};
 		copy.srcSubresource = copy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, descriptor.image.arrayLayers};
 		copy.extent = descriptor.image.extent;
-		vkCmdCopyImage(command, imported->Image()->image, VK_IMAGE_LAYOUT_GENERAL, privateImage->image,
+		vkCmdCopyImage(m_command, m_imported->Image()->image, VK_IMAGE_LAYOUT_GENERAL, m_privateImage->image,
 					   VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
 		auto release = acquire;
-		release.srcQueueFamilyIndex = device->binding.queueFamily;
+		release.srcQueueFamilyIndex = m_device->binding.queueFamily;
 		release.dstQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;
 		release.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
 		release.dstAccessMask = 0;
-		vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0,
+		vkCmdPipelineBarrier(m_command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0,
 							 nullptr, 0, nullptr, 1, &release);
 		if (readback)
 			RecordReadback();
-		Check(vkEndCommandBuffer(command), "finish delivery consumer copy");
+		Check(vkEndCommandBuffer(m_command), "finish delivery consumer copy");
 	}
 
 	void RecordReadback()
 	{
-		const auto size = static_cast<VkDeviceSize>(privateImage->extent.width) * privateImage->extent.height *
-						  privateImage->layers * 4;
+		const auto size = static_cast<VkDeviceSize>(m_privateImage->extent.width) * m_privateImage->extent.height *
+						  m_privateImage->layers * 4;
 		VkBufferCreateInfo create{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
 		create.size = size;
 		create.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-		Check(vkCreateBuffer(device->binding.device, &create, nullptr, &buffer),
+		Check(vkCreateBuffer(m_device->binding.device, &create, nullptr, &m_buffer),
 			  "create explicit delivery analysis buffer");
 		VkMemoryRequirements requirements;
-		vkGetBufferMemoryRequirements(device->binding.device, buffer, &requirements);
-		const auto type = device->MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+		vkGetBufferMemoryRequirements(m_device->binding.device, m_buffer, &requirements);
+		const auto type = m_device->MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
 		VkPhysicalDeviceMemoryProperties properties;
-		vkGetPhysicalDeviceMemoryProperties(device->binding.physicalDevice, &properties);
-		coherent = properties.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+		vkGetPhysicalDeviceMemoryProperties(m_device->binding.physicalDevice, &properties);
+		m_coherent = properties.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 		VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
 		allocation.allocationSize = requirements.size;
 		allocation.memoryTypeIndex = type;
-		Check(vkAllocateMemory(device->binding.device, &allocation, nullptr, &memory),
+		Check(vkAllocateMemory(m_device->binding.device, &allocation, nullptr, &m_memory),
 			  "allocate explicit delivery analysis memory");
-		Check(vkBindBufferMemory(device->binding.device, buffer, memory, 0), "bind explicit delivery analysis memory");
-		VulkanImageBarrier(command, *privateImage, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+		Check(vkBindBufferMemory(m_device->binding.device, m_buffer, m_memory, 0),
+			  "bind explicit delivery analysis memory");
+		VulkanImageBarrier(m_command, *m_privateImage, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
 						   VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
 		VkBufferImageCopy copy{};
-		copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, privateImage->layers};
-		copy.imageExtent = {privateImage->extent.width, privateImage->extent.height, 1};
-		vkCmdCopyImageToBuffer(command, privateImage->image, VK_IMAGE_LAYOUT_GENERAL, buffer, 1, &copy);
+		copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, m_privateImage->layers};
+		copy.imageExtent = {m_privateImage->extent.width, m_privateImage->extent.height, 1};
+		vkCmdCopyImageToBuffer(m_command, m_privateImage->image, VK_IMAGE_LAYOUT_GENERAL, m_buffer, 1, &copy);
 		VkBufferMemoryBarrier host{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
 		host.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 		host.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
 		host.srcQueueFamilyIndex = host.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-		host.buffer = buffer;
+		host.buffer = m_buffer;
 		host.size = VK_WHOLE_SIZE;
-		vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 0, nullptr, 1,
+		vkCmdPipelineBarrier(m_command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 0, nullptr, 1,
 							 &host, 0, nullptr);
 	}
 	void Cleanup() noexcept
 	{
-		if (submitted && !complete)
+		if (m_submitted && !m_complete)
 		{
-			const auto fence = markerSubmitted ? retirement : completion->Get();
-			if (vkWaitForFences(device->binding.device, 1, &fence, VK_TRUE, Timeout) != VK_SUCCESS)
+			const auto fence = m_markerSubmitted ? m_retirement : m_completion->Get();
+			if (vkWaitForFences(m_device->binding.device, 1, &fence, VK_TRUE, s_timeout) != VK_SUCCESS)
+			{
+				std::fputs("FAIL: delivery consumer GPU retirement unknown; preserving all submitted owners\n", stderr);
 				std::_Exit(1);
+			}
 		}
-		if (retirement)
-			vkDestroyFence(device->binding.device, retirement, nullptr);
-		if (pool)
-			vkDestroyCommandPool(device->binding.device, pool, nullptr);
-		if (buffer)
-			vkDestroyBuffer(device->binding.device, buffer, nullptr);
-		if (memory)
-			vkFreeMemory(device->binding.device, memory, nullptr);
-		retirement = VK_NULL_HANDLE;
-		pool = VK_NULL_HANDLE;
-		buffer = VK_NULL_HANDLE;
-		memory = VK_NULL_HANDLE;
+		if (m_retirement)
+			vkDestroyFence(m_device->binding.device, m_retirement, nullptr);
+		if (m_pool)
+			vkDestroyCommandPool(m_device->binding.device, m_pool, nullptr);
+		if (m_buffer)
+			vkDestroyBuffer(m_device->binding.device, m_buffer, nullptr);
+		if (m_memory)
+			vkFreeMemory(m_device->binding.device, m_memory, nullptr);
+		m_retirement = VK_NULL_HANDLE;
+		m_pool = VK_NULL_HANDLE;
+		m_buffer = VK_NULL_HANDLE;
+		m_memory = VK_NULL_HANDLE;
 	}
-	const std::shared_ptr<VulkanDevice> device;
-	std::shared_ptr<VulkanImageDelivery> delivery;
-	VulkanExternalDevice external;
-	std::shared_ptr<VulkanExternalImage> imported;
-	std::shared_ptr<VulkanExternalSemaphore> ready;
-	std::shared_ptr<VulkanExternalFence> completion;
-	VkCommandPool pool = VK_NULL_HANDLE;
-	VkCommandBuffer command = VK_NULL_HANDLE;
-	VkFence retirement = VK_NULL_HANDLE;
-	VkBuffer buffer = VK_NULL_HANDLE;
-	VkDeviceMemory memory = VK_NULL_HANDLE;
-	bool coherent = false, submitted = false, markerSubmitted = false, complete = false;
+	std::shared_ptr<const VulkanImage> m_privateImage;
+	const std::shared_ptr<VulkanDevice> m_device;
+	std::shared_ptr<VulkanImageDelivery> m_delivery;
+	VulkanExternalDevice m_external;
+	std::shared_ptr<VulkanExternalImage> m_imported;
+	std::shared_ptr<VulkanExternalSemaphore> m_ready;
+	std::shared_ptr<VulkanExternalFence> m_completion;
+	VkCommandPool m_pool = VK_NULL_HANDLE;
+	VkCommandBuffer m_command = VK_NULL_HANDLE;
+	VkFence m_retirement = VK_NULL_HANDLE;
+	VkBuffer m_buffer = VK_NULL_HANDLE;
+	VkDeviceMemory m_memory = VK_NULL_HANDLE;
+	bool m_coherent = false, m_submitted = false, m_markerSubmitted = false, m_complete = false;
 };
-} // namespace
 void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
 						 std::shared_ptr<VulkanInspectionFrame> resized, bool verifyPixels,
 						 const std::function<bool(SharedImageKey)>& retired)
@@ -851,11 +877,11 @@ void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
 	{
 		std::vector<std::unique_ptr<control::VulkanImageConsumer>> consumers(SnapshotBudget::Capacity());
 		for (auto& consumer : consumers)
-			consumer = std::make_unique<control::VulkanImageConsumer>(first, Extensions, VK_API_VERSION_1_1);
+			consumer = std::make_unique<control::VulkanImageConsumer>(first, s_extensions, VK_API_VERSION_1_1);
 		Rejected<VulkanError>(
 			[&]
 			{
-				control::VulkanImageConsumer excess(first, Extensions, VK_API_VERSION_1_1);
+				control::VulkanImageConsumer excess(first, s_extensions, VK_API_VERSION_1_1);
 			},
 			"Native consumer admission exceeded the shared snapshot budget");
 	}
@@ -865,8 +891,20 @@ void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
 	Require(first->binding.device != second->binding.device &&
 				first->binding.device != original->Image().device->binding.device,
 			"GPU delivery reused producer or another consumer logical device");
-	ConsumerCopy one(first, deliveries[0], verifyPixels, true);
-	ConsumerCopy two(second, deliveries[1], verifyPixels);
+	DeliveryConsumerCopy one(first, deliveries[0], verifyPixels, true);
+	DeliveryConsumerCopy two(second, deliveries[1], verifyPixels);
+	for (const auto expected : {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY})
+	{
+		DeliverySubmissionFailure injection(first->queue, expected);
+		Rejected<std::runtime_error>(
+			[&]
+			{
+				one.Submit();
+			},
+			"Consumer copy accepted injected queue OOM");
+		Require(injection.Fired() && one.ConsumerCompletion() == CompletionStatus::Pending,
+				"Rejected probe consumer copy invented GPU completion");
+	}
 	Require(deliveries[0]->PollConsumerCompletion() == CompletionStatus::Pending,
 			"Unsubmitted consumer falsely complete");
 	two.Submit();
@@ -877,15 +915,21 @@ void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
 			"One consumer completion changed another consumer or producer readiness");
 	one.Submit();
 	one.Finish();
-	ConsumerCopy newer(first, deliveries[2], verifyPixels);
+	Rejected<std::logic_error>(
+		[&]
+		{
+			one.Submit();
+		},
+		"Completed consumer copy accepted a second submission");
+	DeliveryConsumerCopy newer(first, deliveries[2], verifyPixels);
 	newer.Submit();
 	newer.Finish();
-	Require(one.privateImage->image != newer.privateImage->image && one.privateImage->extent.width == 32 &&
-				one.privateImage->extent.height == 24 && newer.privateImage->extent.width == 40 &&
-				newer.privateImage->extent.height == 30,
+	Require(one.Image().image != newer.Image().image && one.Image().extent.width == 32 &&
+				one.Image().extent.height == 24 && newer.Image().extent.width == 40 &&
+				newer.Image().extent.height == 30,
 			"Resized delivery mutated retained private consumer storage");
 	{
-		VulkanExternalDevice consumer(first, Extensions, VK_API_VERSION_1_1);
+		VulkanExternalDevice consumer(first, s_extensions, VK_API_VERSION_1_1);
 		auto completed = consumer.CreateExportableFence();
 		SignalAndRetire(completed);
 		auto fd = completed->ExportOnce();
@@ -922,7 +966,7 @@ void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
 		// Preparing SCM_RIGHTS does not prove any peer received the handles.
 		// A failed send must remain reclaimable after the producer fence even
 		// though its registered consumer fence never signals.
-		VulkanExternalDevice consumer(first, Extensions, VK_API_VERSION_1_1);
+		VulkanExternalDevice consumer(first, s_extensions, VK_API_VERSION_1_1);
 		auto pending = consumer.CreateExportableFence();
 		auto fd = pending->ExportOnce();
 		deliveries[7]->RegisterConsumer(consumer.Identity(), fd);
@@ -946,7 +990,7 @@ void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		}
 	}
-	ConsumerCopy waiting(first, replacement, verifyPixels);
+	DeliveryConsumerCopy waiting(first, replacement, verifyPixels);
 	Require(original->PromoteCaptureBudget(retainedBudget), "Move retained source image to its later budget");
 	// No producer/delivery PollCompletion, Share, XR or native submission below.
 	// Only the independent retirement observer can release the accepted copy's
@@ -1013,10 +1057,10 @@ void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
 		"Released delivery did not return independent budget");
 	if (verifyPixels)
 	{
-		one.Verify(Original);
-		two.Verify(Original);
-		newer.Verify(Resized);
-		waiting.Verify(Original);
+		one.Verify(s_original);
+		two.Verify(s_original);
+		newer.Verify(s_resized);
+		waiting.Verify(s_original);
 	}
 	std::printf("case=immutable-gpu-delivery consumers=2 independentCopies=yes producerAndConsumerCompletion=separate "
 				"capacity=8 abandonedConsumer=retainedUntilFence captureSourceBudget=returnedBeforeConsumer "
@@ -1026,7 +1070,7 @@ void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
 }
 
 void VerifyControlImage(const std::string& socket, std::uint64_t session, std::uint64_t generation,
-						std::uint64_t capture, const std::string& gate, bool verifyPixels)
+						std::uint64_t capture, const std::filesystem::path& gate, bool verifyPixels)
 {
 	namespace wire = simxr::control;
 	namespace tag = wire::tag;
@@ -1082,8 +1126,10 @@ void VerifyControlImage(const std::string& socket, std::uint64_t session, std::u
 		}
 		const auto sessions = call(wire::OpCode::Sessions);
 		const auto list = sessions.message.Find(tag::Sessions);
-		Require(list && wire::DecodeFields(list->value).fields.empty(),
-				"Application public session survived teardown gate");
+		Require(list != nullptr, "Session response omitted its list");
+		const auto decoded = wire::DecodeFields(list->value);
+		Require(decoded.error == wire::DecodeError::None && decoded.fields.empty(),
+				"Application public session survived teardown gate or returned an invalid list");
 		const auto info = call(wire::OpCode::ImageInfo, {wire::Field::U64(tag::ImageReaderId, image)});
 		Require(id(info, tag::Session) == session && id(info, tag::Generation) == generation,
 				"Historical GPU reader changed original identity");
@@ -1107,11 +1153,12 @@ void VerifyControlImage(const std::string& socket, std::uint64_t session, std::u
 		{
 			std::vector<std::unique_ptr<wire::VulkanImageConsumer>> bounded;
 			for (std::size_t index = 0; index < SnapshotBudget::Capacity(); ++index)
-				bounded.push_back(std::make_unique<wire::VulkanImageConsumer>(device, Extensions, VK_API_VERSION_1_1));
+				bounded.push_back(
+					std::make_unique<wire::VulkanImageConsumer>(device, s_extensions, VK_API_VERSION_1_1));
 			bool rejected = false;
 			try
 			{
-				wire::VulkanImageConsumer excess(device, Extensions, VK_API_VERSION_1_1);
+				wire::VulkanImageConsumer excess(device, s_extensions, VK_API_VERSION_1_1);
 			}
 			catch (const VulkanError& error)
 			{
@@ -1133,25 +1180,27 @@ void VerifyControlImage(const std::string& socket, std::uint64_t session, std::u
 		{
 			const auto expected = failure == ConsumerFailure::DeviceSubmission ? VK_ERROR_OUT_OF_DEVICE_MEMORY
 																			   : VK_ERROR_OUT_OF_HOST_MEMORY;
-			wire::VulkanImageConsumer rejected(device, Extensions, VK_API_VERSION_1_1);
+			wire::VulkanImageConsumer rejected(device, s_extensions, VK_API_VERSION_1_1);
 			const auto offered = call(wire::OpCode::ShareImage,
 									  {wire::Field::U64(tag::ImageReaderId, image),
 									   wire::Field::Bytes(tag::DeviceUuid, source.identity.device),
 									   wire::Field::Bytes(tag::DriverUuid, source.identity.driver),
 									   wire::Field::U32(tag::HandleCount, 1)},
 									  {rejected.ConsumerFence()});
-			const auto description = wire::DecodeImageDescription(*offered.message.Find(tag::ImageDescriptor));
+			const auto descriptor = offered.message.Find(tag::ImageDescriptor);
+			Require(descriptor != nullptr, "Rejected-copy delivery omitted its image description");
+			const auto description = wire::DecodeImageDescription(*descriptor);
 			if (failure == ConsumerFailure::Recording)
 			{
-				failRecording = true;
+				s_failRecording = true;
 				Rejected<VulkanError>(
 					[&]
 					{
 						rejected.Import(description, offered.handles);
 					},
 					"Consumer import ignored command recording failure");
-				Require(!failRecording, "Recording failure was not exercised");
-				SubmissionFailure injection(device->queue, expected);
+				Require(!s_failRecording, "Recording failure was not exercised");
+				DeliverySubmissionFailure injection(device->queue, expected);
 				Rejected<std::logic_error>(
 					[&]
 					{
@@ -1165,7 +1214,7 @@ void VerifyControlImage(const std::string& socket, std::uint64_t session, std::u
 				rejected.Import(description, offered.handles);
 				VkResult observed = VK_SUCCESS;
 				{
-					SubmissionFailure injection(device->queue, expected);
+					DeliverySubmissionFailure injection(device->queue, expected);
 					try
 					{
 						rejected.Submit();
@@ -1193,7 +1242,7 @@ void VerifyControlImage(const std::string& socket, std::uint64_t session, std::u
 					"Unused rejected consumer did not signal its real offered fence");
 			call(wire::OpCode::ReleaseDelivery, {wire::Field::U64(tag::DeliveryId, delivery)});
 		}
-		wire::VulkanImageConsumer consumer(device, Extensions, VK_API_VERSION_1_1);
+		wire::VulkanImageConsumer consumer(device, s_extensions, VK_API_VERSION_1_1);
 		const auto shared = call(
 			wire::OpCode::ShareImage,
 			{wire::Field::U64(tag::ImageReaderId, image), wire::Field::Bytes(tag::DeviceUuid, source.identity.device),
@@ -1271,6 +1320,7 @@ void VerifyControlImage(const std::string& socket, std::uint64_t session, std::u
 			const auto total = id(status, tag::TotalBytes);
 			Require(total == std::uint64_t{value.width} * value.height * value.arrayLayers * 4,
 					"Export description substituted another shape");
+			Require(total <= std::numeric_limits<std::size_t>::max(), "Explicit export exceeds addressable memory");
 			std::vector<std::byte> reference;
 			reference.reserve(static_cast<std::size_t>(total));
 			while (reference.size() < total)
@@ -1286,7 +1336,7 @@ void VerifyControlImage(const std::string& socket, std::uint64_t session, std::u
 						"Invalid explicit export chunk identity");
 				reference.insert(reference.end(), bytes->value.begin(), bytes->value.end());
 			}
-			ConsumerCopy explicitReadback(device, consumer.Image());
+			DeliveryConsumerCopy explicitReadback(device, consumer.Image());
 			explicitReadback.Submit();
 			explicitReadback.Finish();
 			explicitReadback.VerifyBytes(reference);

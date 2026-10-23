@@ -1,4 +1,5 @@
 #include "VulkanRetentionProbe.h"
+#include "Pch.h"
 #include "Math.h"
 #include "VulkanReprojectionProbe.h"
 #include "graphics/RotationalReprojection.h"
@@ -6,27 +7,26 @@
 #include "graphics/backends/vulkan/VulkanFrameSubmission.h"
 #include "runtime/Session.h"
 
-#include <algorithm>
-#include <chrono>
 #include <cstdio>
 #include <stdexcept>
 #include <thread>
 
 namespace simxr::probe
 {
-namespace
-{
-void Require(bool value, const char* message)
+static void Require(bool value, const char* message)
 {
 	if (!value)
 		throw std::runtime_error(message);
 }
-void Await(const GpuCompletion& output)
+static void Await(const GpuCompletion& output)
 {
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-	while (output.PollCompletion() != CompletionStatus::Complete)
+	for (;;)
 	{
-		Require(output.PollCompletion() != CompletionStatus::Failed && std::chrono::steady_clock::now() < deadline,
+		const auto status = output.PollCompletion();
+		if (status == CompletionStatus::Complete)
+			return;
+		Require(status != CompletionStatus::Failed && std::chrono::steady_clock::now() < deadline,
 				"Automatic retention failed or timed out");
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
@@ -39,36 +39,35 @@ struct SubmittedFrame
 	PoseSample head;
 };
 
-class Bindings final : public VulkanFrameBindings
+class RetentionBindings final : public VulkanFrameBindings
 {
   public:
-	explicit Bindings(std::shared_ptr<VulkanImage> image) : image(std::move(image)) {}
+	explicit RetentionBindings(std::shared_ptr<VulkanImage> image) : m_image(std::move(image)) {}
 	std::optional<SwapchainDescription> Describe(XrSwapchain swapchain) const override
 	{
-		if (swapchain != handle)
+		if (swapchain != m_handle)
 			return {};
-		return SwapchainDescription{image->extent.width, image->extent.height, image->layers, true};
+		return SwapchainDescription{m_image->extent.width, m_image->extent.height, m_image->layers, true};
 	}
 	std::shared_ptr<VulkanImage> ReleasedImage(XrSwapchain swapchain) const override
 	{
-		return swapchain == handle ? image : nullptr;
+		return swapchain == m_handle ? m_image : nullptr;
 	}
 	void MarkReleasedUsed(XrSwapchain swapchain,
 						  const std::shared_ptr<const GpuCompletion>& completion) const noexcept override
 	{
-		if (swapchain == handle)
-			used = completion;
+		if (swapchain == m_handle)
+			m_used = completion;
 	}
-	const XrSwapchain handle = reinterpret_cast<XrSwapchain>(201);
-	const std::shared_ptr<VulkanImage> image;
-	mutable std::shared_ptr<const GpuCompletion> used;
+	const XrSwapchain m_handle = reinterpret_cast<XrSwapchain>(201);
+	const std::shared_ptr<VulkanImage> m_image;
+	mutable std::shared_ptr<const GpuCompletion> m_used;
 };
-} // namespace
 
 RetainedSubmission RetainSubmittedLayers(VulkanBackend& backend, VulkanInspection& inspection,
 										 const std::shared_ptr<VulkanImage>& image)
 {
-	Bindings bindings(image);
+	RetentionBindings bindings(image);
 	const std::array extensions{XR_VARJO_QUAD_VIEWS_EXTENSION_NAME};
 	auto instance =
 		std::make_shared<Instance>(reinterpret_cast<XrInstance>(810), extensions, XR_MAKE_VERSION(1, 0, 27));
@@ -106,7 +105,7 @@ RetainedSubmission RetainSubmittedLayers(VulkanBackend& backend, VulkanInspectio
 							nullptr,
 							located.views[index].pose.pose,
 							located.views[index].fov,
-							{bindings.handle,
+							{bindings.m_handle,
 							 {{static_cast<std::int32_t>(2 + index), static_cast<std::int32_t>(3 + index)}, {4, 5}},
 							 index}};
 		const auto flags =
@@ -127,7 +126,7 @@ RetainedSubmission RetainSubmittedLayers(VulkanBackend& backend, VulkanInspectio
 		hud.pose = {{0, 0, 0, 1}, {-0.3f, 0.4f, -2}};
 		hud.size = {0.6f, 0.4f};
 		auto behind = world;
-		behind.subImage = {bindings.handle, {{0, 0}, {4, 5}}, 0};
+		behind.subImage = {bindings.m_handle, {{0, 0}, {4, 5}}, 0};
 		behind.pose = Compose(located.head.pose, {EulerAngles(3.14159265f, 0, 0), {0, 0, 2}});
 		const std::array layers{reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection),
 								reinterpret_cast<const XrCompositionLayerBaseHeader*>(&world),
@@ -144,13 +143,16 @@ RetainedSubmission RetainSubmittedLayers(VulkanBackend& backend, VulkanInspectio
 			VulkanFrameSubmission native(session, backend, &inspection, bindings, retain);
 			FrameSubmission submission(session, native);
 			const auto result = submission.Execute(end,
-				[&bindings](XrSwapchain swapchain) { return bindings.Describe(swapchain); });
+												   [&bindings](XrSwapchain swapchain)
+												   {
+													   return bindings.Describe(swapchain);
+												   });
 			if (XR_FAILED(result))
 				std::fprintf(stderr, "Automatic submission retain=%d result=%d\n", retain, result);
 			Require(result == XR_SUCCESS, "Production frame submission with optional retention failed");
 		}
-		Require(bindings.used != nullptr, "Retained application swapchain was not protected by batch completion");
-		Await(*bindings.used);
+		Require(bindings.m_used != nullptr, "Retained application swapchain was not protected by batch completion");
+		Await(*bindings.m_used);
 		const auto entries = session.Display().Retain();
 		auto found = std::find_if(entries.begin(), entries.end(),
 								  [&](const auto& entry)

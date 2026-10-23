@@ -148,10 +148,6 @@ class VulkanDeliveryNative
 class VulkanDeliveryRetirement
 {
   public:
-	VulkanDeliveryRetirement()
-	{
-		Start();
-	}
 	~VulkanDeliveryRetirement()
 	{
 		Stop();
