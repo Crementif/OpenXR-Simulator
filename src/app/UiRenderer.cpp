@@ -10,6 +10,7 @@
 #include <array>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -112,9 +113,19 @@ struct UiRenderer::Impl
 					consume.waitSemaphoreCount = 1;
 					consume.pWaitSemaphores = &frame.acquired;
 					consume.pWaitDstStageMask = &stage;
-					vkQueueSubmit(queue, 1, &consume, VK_NULL_HANDLE);
+					const auto consumed = vkQueueSubmit(queue, 1, &consume, VK_NULL_HANDLE);
+					if (consumed != VK_SUCCESS)
+					{
+						std::fprintf(stderr, "Companion shutdown could not retire acquisition: %d\n", consumed);
+						std::_Exit(1);
+					}
 				}
-			vkDeviceWaitIdle(device);
+			const auto idle = vkDeviceWaitIdle(device);
+			if (idle != VK_SUCCESS)
+			{
+				std::fprintf(stderr, "Companion shutdown completion remains unknown: %d\n", idle);
+				std::_Exit(1);
+			}
 		}
 		if (context)
 			ImGui::SetCurrentContext(context);
