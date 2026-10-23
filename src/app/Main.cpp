@@ -1,3 +1,4 @@
+#include "simxr/Version.h"
 #include "app/Application.h"
 
 #include <charconv>
@@ -11,6 +12,11 @@ int main(int argc, char** argv)
 	for (int index = 1; index < argc; ++index)
 	{
 		const std::string_view argument = argv[index];
+		if (argument == "--version")
+		{
+			std::printf("simxr_companion %s\n", simxr::Version);
+			return 0;
+		}
 		if (argument == "--help")
 		{
 			std::puts("Usage: simxr_companion [--connect SOCKET] [--hidden] [--validation] [--smoke-frames N] "

@@ -1,5 +1,6 @@
 #include "mcp_integration.h"
-#include "ui_enhancements.h"
+#include "control/legacy/WindowsRuntimeSettings.h"
+namespace settings = simxr::legacy::settings;
 
 #include <cstdio>
 #include <stdexcept>
@@ -39,16 +40,19 @@ int main(int argc, char** argv)
 												  : std::filesystem::path(L".") / L"OpenXR-Simulator";
 		const auto& directory = mcp::GetSimulatorDataDirectory();
 		Require(directory == expected, "Runtime data directory ignored environment precedence");
-		ui::LoadSettings(directory);
-		ui::g_uiState.previewFps = 30;
-		ui::SaveSettings();
-		Require(std::filesystem::exists(directory / L"settings.json"), "Settings did not use the native data path");
-		ui::g_uiState.previewFps = 90;
-		ui::LoadSettings(directory);
-		Require(ui::g_uiState.previewFps == 30, "Unicode settings did not reload");
+        std::filesystem::create_directories(directory);
+        FILE* file = nullptr;
+        Require(_wfopen_s(&file, (directory / L"settings.json").c_str(), L"wb") == 0 && file,
+                "Open Unicode settings path");
+        const char json[] = "{\"render_width\": 1500, \"render_height\": 1600}";
+        const bool written = fwrite(json, 1, sizeof(json) - 1, file) == sizeof(json) - 1;
+        const bool closed = fclose(file) == 0;
+        Require(written && closed, "Write compatibility settings fixture");
+        settings::LoadSettings(directory);
+        Require(settings::ReadState().renderWidth == 1500, "Unicode settings did not load");
 		std::filesystem::current_path(previous);
 		std::filesystem::remove_all(temporary);
-		std::puts("PASS Windows data directory precedence and Unicode settings round trip");
+		std::puts("PASS Windows data directory precedence and Unicode settings load");
 		return 0;
 	}
 	catch (const std::exception& error)

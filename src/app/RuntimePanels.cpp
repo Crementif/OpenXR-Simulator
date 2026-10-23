@@ -79,7 +79,6 @@ class RuntimePanels::Impl
 		view.recordedChanges = recording.page ? recording.page->total : 0;
 		view.rigExpanded = m_spatial.Expanded();
 		view.rotationBall = m_spatial.RotationBallRect();
-		view.reachMap = m_spatial.ReachMapRect();
 		view.markers = m_spatial.MarkerRects();
 		view.rigView = m_spatial.RigViewRect();
 		view.rigDevices = m_spatial.RigDevicePoints();
@@ -112,15 +111,18 @@ class RuntimePanels::Impl
 		m_session.Preview().BeginFrame();
 		return m_view;
 	}
+	void UndoChanges(std::size_t count)
+	{
+		if (m_pilot.Active() || m_spatial.Active() || !m_view.time.following || !m_session.Setup())
+			return;
+		if (auto undo = m_undo.Undo(*m_session.Setup(), m_session.Input().source, count))
+			m_session.SubmitEdit(*undo);
+	}
 	void DrawPreview(ShellState& shell)
 	{
 		const auto& io = ImGui::GetIO();
-		if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false) && !io.WantTextInput &&
-			!m_pilot.Active() && !m_spatial.Active() && m_view.time.following && m_session.Setup())
-		{
-			if (auto undo = m_undo.Undo(*m_session.Setup(), m_session.Input().source))
-				m_session.SubmitEdit(*undo);
-		}
+		if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false) && !io.WantTextInput)
+			UndoChanges(1);
 		if (!m_preview.Draw(shell, m_view))
 			StopPilot();
 	}
@@ -128,19 +130,11 @@ class RuntimePanels::Impl
 	{
 		if (!m_view.connected)
 		{
-			const auto available = ImGui::GetContentRegionAvail();
-			const auto origin = ImGui::GetCursorScreenPos();
-			const float unit = ImGui::GetFontSize() / 17;
-			const char* text = "No app connected";
-			const auto size = ImGui::CalcTextSize(text);
-			DrawIcon(ImGui::GetWindowDrawList(), Icon::Headset, {origin.x + available.x / 2, origin.y + 60 * unit},
-					 36 * unit, theme::TextDim);
-			ImGui::SetCursorScreenPos({origin.x + (available.x - size.x) / 2, origin.y + 90 * unit});
-			ImGui::TextDisabled("%s", text);
-			const float width = ImGui::CalcTextSize("Open app").x + ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x;
-			ImGui::SetCursorScreenPos({origin.x + (available.x - width) / 2, ImGui::GetCursorScreenPos().y + 4 * unit});
-			if (IconButton("Open app##Inspector", Icon::App, "Launch or connect an OpenXR app", false, "Open app"))
-				shell.openAppPicker = true;
+			// The page keeps its title, greyed; the preview's Open app is the one way in.
+			ImGui::BeginDisabled();
+			m_devices.DrawHeader(shell.selection);
+			ImGui::EndDisabled();
+			ImGui::TextDisabled("Values appear once an app connects");
 			return;
 		}
 		ImGui::BeginDisabled(!m_view.time.following || !m_session.SupportsEdits());
@@ -226,7 +220,7 @@ class RuntimePanels::Impl
 				m_session.ChooseSession(session);
 			ImGui::SetItemTooltip("Run %llu", static_cast<unsigned long long>(session.generation));
 		}
-		if (ImGui::CollapsingHeader("Advanced connection"))
+		if (Section("Advanced connection"))
 		{
 			ImGui::SetNextItemWidth(-1);
 			ImGui::InputText("##Endpoint", m_endpointInput.data(), m_endpointInput.size());
@@ -376,6 +370,11 @@ void RuntimePanels::DrawDevicePage(ShellState& shell)
 {
 	m_impl->DrawDevicePage(shell);
 }
+void RuntimePanels::DrawSessionMenu()
+{
+	if (auto edit = m_impl->m_devices.DrawSessionMenu())
+		m_impl->SubmitEdit(*edit);
+}
 void RuntimePanels::DrawRecordingPopovers()
 {
 	m_impl->m_recording.DrawPopovers(m_impl->CanRecord());
@@ -494,6 +493,14 @@ void RuntimePanels::CancelPending()
 void RuntimePanels::ReleaseInputs()
 {
 	m_impl->ReleaseInputs();
+}
+std::vector<UndoStack::Change> RuntimePanels::Changes() const
+{
+	return m_impl->m_undo.Changes();
+}
+void RuntimePanels::UndoChanges(std::size_t count)
+{
+	m_impl->UndoChanges(count);
 }
 void RuntimePanels::FocusLost()
 {

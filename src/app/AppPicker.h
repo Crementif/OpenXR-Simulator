@@ -3,7 +3,10 @@
 #include "app/CompanionSettings.h"
 #include "app/RunningApps.h"
 
+#include <imgui.h>
+
 #include <chrono>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -20,13 +23,14 @@ struct AppPickerChoice
 	std::optional<std::size_t> saveRecent;
 	bool addProfile = false, editProfiles = false, connectEndpoint = false, disconnect = false;
 };
-// The top bar's app button and its menu: runtimes running now, recent apps and
-// launch profiles.
+// The top bar's app control: icon, app name and run-state dot, flat until hovered.
+// Its menu holds the connected app's session actions, then runtimes running now,
+// recent apps and launch profiles.
 class AppPicker
 {
   public:
 	AppPickerChoice Draw(const CompanionSettings& settings, const RuntimeView& view, const std::string& label,
-						 bool open);
+						 ImU32 dot, const std::string& tooltip, bool open, const std::function<void()>& session);
 
   private:
 	void Refresh();

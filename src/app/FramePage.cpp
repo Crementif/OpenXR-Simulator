@@ -5,6 +5,7 @@
 #include "app/SimulationEdits.h"
 #include "app/SpatialEditor.h"
 #include "app/Theme.h"
+#include "app/widgets/Controls.h"
 #include "control/InspectionDocument.h"
 
 #include <algorithm>
@@ -94,18 +95,22 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 	const auto bytes = field ? std::span<const std::byte>{field->value} : std::span<const std::byte>{};
 	const auto documentEpoch = capture ? capture->scope.epoch : 0;
 	m_documents.Begin(documentEpoch);
-	ImGui::Text("Frame %llu", static_cast<unsigned long long>(identity.frame));
+	const std::string title = "Frame " + std::to_string(identity.frame);
+	PageTitle(Icon::Live, title.c_str());
 	if (selection.epoch != view.epoch || identity.session != view.session || identity.run != view.generation)
 	{
 		ImGui::SameLine();
+		ImGui::AlignTextToFramePadding();
 		ImGui::TextDisabled("earlier run");
 		ImGui::SetItemTooltip("This frame belongs to a run that has ended; its images may be gone");
 	}
+	if (PageClose())
+		shell.selection = std::monostate{};
 	// The header stays visible while the frame contents scroll.
 	ImGui::BeginChild("Frame details", {0, 0});
 	if (!bytes.empty())
 		m_spatial.DrawRig(shell.selection, {ImGui::GetContentRegionAvail().x / (ImGui::GetFontSize() / 16), 150});
-	ImGui::SeparatorText("Images");
+	SectionLabel("Images");
 	bool hasImage = false;
 	for (const auto& image : preview.Images())
 		if (matches(image.scope, image.frame) && image.ready && !image.released)
@@ -132,7 +137,7 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 									 : "Keeps this snapshot when history needs room");
 	}
 	if (const auto image = preview.Selected(); image && matches(image->scope, image->frame) && image->ready)
-		if (ImGui::CollapsingHeader("Export image"))
+		if (Section("Export image"))
 		{
 			const auto& description = image->description;
 			ImGui::TextDisabled("%u x %u, %u views", description.width, description.height, description.arrayLayers);
@@ -146,7 +151,7 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 			if (!m_session.Exports().Detail().empty())
 				ImGui::TextDisabled("%s", m_session.Exports().Detail().c_str());
 		}
-	ImGui::SeparatorText("Input at this frame");
+	SectionLabel("Input at this frame");
 	if (const auto index = m_session.History().Find(identity, selection.epoch))
 		if (const auto* sample = m_session.InputSamples().Find(m_session.History().At(*index).input))
 			DrawInputSummary(*sample);
@@ -174,7 +179,7 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 			ImGui::Text("A %s / B %s", InspectionScalar(controls, "primary").AsBool().value_or(false) ? "down" : "up",
 						InspectionScalar(controls, "secondary").AsBool().value_or(false) ? "down" : "up");
 		}
-		if (ImGui::CollapsingHeader("All input values"))
+		if (Section("All input values"))
 			m_documents.Draw(input);
 		const auto commands = InspectionMember(bytes, "applied_commands");
 		wire::Message commandNode;
@@ -194,25 +199,28 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 			else
 				workspace.RequestRevision(revisionId, documentEpoch);
 		}
-		if (ImGui::CollapsingHeader("Input owners and commands"))
+		if (Section("Input owners and commands"))
 			m_documents.Draw(commands);
 	}
 	else
 		ImGui::TextDisabled(capture ? "Loading frame details" : "Head and hand details not kept for this frame");
-	ImGui::SeparatorText("Actions");
+	SectionLabel("Actions");
 	if (!bytes.empty())
 	{
 		const auto actions = InspectionMember(bytes, "actions");
 		const auto entries = InspectionElements(InspectionMember(actions, "actions"));
 		const auto dictionaryId = InspectionScalar(actions, "dictionary").AsU64().value_or(0);
 		std::vector<std::vector<std::byte>> definitions;
-		if (const auto dictionary = workspace.Revision(dictionaryId))
+		if (documentEpoch == m_session.Epoch())
 		{
-			if (const auto document = dictionary->Find(tag::Document))
-				definitions = InspectionElements(InspectionMember(document->value, "actions"));
+			if (const auto dictionary = workspace.Revision(dictionaryId))
+			{
+				if (const auto document = dictionary->Find(tag::Document))
+					definitions = InspectionElements(InspectionMember(document->value, "actions"));
+			}
+			else if (dictionaryId)
+				workspace.RequestRevision(dictionaryId, documentEpoch);
 		}
-		else if (dictionaryId)
-			workspace.RequestRevision(dictionaryId, documentEpoch);
 		ImGui::Text("%zu actions", entries.size());
 		for (std::size_t index = 0; index < std::min<std::size_t>(8, entries.size()); ++index)
 		{
@@ -243,14 +251,14 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 			}
 			ImGui::PopID();
 		}
-		if (ImGui::CollapsingHeader("All actions and bindings"))
+		if (Section("All actions and bindings"))
 			m_documents.Draw(actions);
 	}
 	else
 		ImGui::TextDisabled("Actions not kept for this frame");
-	if (ImGui::CollapsingHeader("Layers") && !bytes.empty())
+	if (Section("Layers") && !bytes.empty())
 		m_documents.Draw(InspectionMember(bytes, "layers"));
-	if (ImGui::CollapsingHeader("Timing"))
+	if (Section("Timing"))
 	{
 		const auto& history = m_session.History();
 		if (const auto index = history.Find(identity, selection.epoch))
@@ -284,7 +292,7 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 			m_documents.Draw(InspectionMember(bytes, "frame_trace"));
 		}
 	}
-	if (ImGui::CollapsingHeader("Raw") && !bytes.empty())
+	if (Section("Raw") && !bytes.empty())
 	{
 		if (ImGui::Button("Open in window"))
 			m_documents.OpenWindow(bytes, documentEpoch);

@@ -5,6 +5,7 @@
 #include "app/Notices.h"
 #include "app/PreviewHistory.h"
 #include "app/RuntimeView.h"
+#include "app/SimulationEdits.h"
 #include "automation/Recording.h"
 #include "control/ControlSchema.h"
 
@@ -45,6 +46,8 @@ class RuntimePanels
 	void DrawRangePage(const RangeSel& range, ShellState& shell);
 	void DrawAdvancedPage();
 	void DrawDevicePage(ShellState& shell);
+	// Session scenarios as items of the menu being drawn.
+	void DrawSessionMenu();
 	// The Rec button's start-confirm and "Save take" popovers.
 	void DrawRecordingPopovers();
 	// A take the stop popover just saved.
@@ -75,6 +78,9 @@ class RuntimePanels
 	void ReleaseSelected();
 	void CancelPending();
 	void ReleaseInputs();
+	// Undoable pose edits, oldest first; UndoChanges(n) returns to before the newest n.
+	std::vector<UndoStack::Change> Changes() const;
+	void UndoChanges(std::size_t count);
 	void FocusLost();
 	std::string Endpoint() const;
 	const std::vector<std::string>& Endpoints() const;

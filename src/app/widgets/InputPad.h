@@ -13,7 +13,8 @@ namespace simxr::app
 bool TriggerBar(const char* id, const char* label, float& value, bool& latched, ImU32 color, float width);
 // Round button pressed while the mouse holds it.
 bool HoldButton(const char* id, const char* label, bool& pressed, bool& latched, ImU32 color);
-// Thumbstick: drag the knob; it springs back unless latched. Clicking the knob
-// without dragging presses the stick.
+// Thumbstick: an arrow pushes the stick fully that way while held, as for menu
+// navigation; dragging steers it freely. It springs back unless latched.
+// Clicking the knob without dragging presses the stick.
 bool StickPad(const char* id, float& x, float& y, bool& click, bool& latched, ImU32 color);
 } // namespace simxr::app

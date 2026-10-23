@@ -213,6 +213,38 @@ void AlignPausedDisplayBoundary()
 			"Alignment rewrote already begun frame target");
 }
 
+void PublicationContention()
+{
+	FrameScheduler scheduler;
+	FrameSchedulerConfig config;
+	config.mode = ExecutionMode::Unpaced;
+	scheduler.Start(config);
+	std::mutex publication;
+	std::unique_lock held(publication);
+	auto waiting = std::async(std::launch::async, [&]
+	{
+		std::unique_lock boundary(publication, std::defer_lock);
+		FramePrediction frame;
+		return scheduler.WaitFrame(frame, {}, &boundary);
+	});
+	Eventually([&] { return scheduler.Snapshot().waitPending; }, "Publication waiter not admitted");
+	// Pausing must remain possible while publication is blocked, and that pause
+	// must be rechecked before the candidate consumes an application frame.
+	scheduler.Pause();
+	held.unlock();
+	Require(waiting.wait_for(5ms) == std::future_status::timeout && !scheduler.Snapshot().waited,
+		"Publication contention bypassed a concurrent pause");
+	Eventually([&]
+	{
+		if (!publication.try_lock())
+			return false;
+		publication.unlock();
+		return true;
+	}, "Paused pacing retained the publication lock");
+	Require(scheduler.GrantPermits() == XR_SUCCESS && waiting.wait_for(1s) == std::future_status::ready &&
+		waiting.get() == XR_SUCCESS, "Publication waiter did not resume after a permit");
+}
+
 void PauseReservationBoundaryAndLimits()
 {
 	auto clock = std::make_shared<FakeClock>();
@@ -341,6 +373,7 @@ int main()
 	ManualAdmission();
 	PauseDuringPacingAndRebase();
 	AlignPausedDisplayBoundary();
+	PublicationContention();
 	PauseReservationBoundaryAndLimits();
 	static_assert(!std::is_convertible_v<FrameId, DisplayTick>);
 	static_assert(!std::is_convertible_v<RuntimeTime, SimulationTime>);

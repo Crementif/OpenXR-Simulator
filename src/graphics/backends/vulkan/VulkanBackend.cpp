@@ -291,12 +291,16 @@ VulkanBackend::VulkanBackend(const VulkanBinding& binding, std::size_t frameCapa
 	m_state->pipeline = CreatePipeline(m_state->device);
 }
 
-VulkanBackend::VulkanBackend(std::shared_ptr<VulkanDevice> device, std::size_t frameCapacity)
+VulkanBackend::VulkanBackend(std::shared_ptr<VulkanDevice> device, std::size_t frameCapacity,
+	std::span<const char* const> enabledExtensions, bool timelineEnabled)
 	: m_state(std::make_unique<State>(frameCapacity, 1))
 {
 	if (!device || !device->HasNativeOwner() || !frameCapacity)
 		throw std::invalid_argument("Independent composition requires an owned native device and capacity");
 	m_state->device = std::move(device);
+	if (!enabledExtensions.empty())
+		m_state->external = std::make_shared<VulkanExternalDevice>(m_state->device, enabledExtensions,
+			VK_API_VERSION_1_1, timelineEnabled);
 	m_state->pipeline = CreatePipeline(m_state->device);
 }
 
@@ -648,33 +652,14 @@ XrResult VulkanBackend::PrepareDepthCapture(const LayerDepthDescription& depth, 
 	if (image->format != VK_FORMAT_D32_SFLOAT && image->format != VK_FORMAT_D16_UNORM &&
 		image->format != VK_FORMAT_D24_UNORM_S8_UINT && image->format != VK_FORMAT_D32_SFLOAT_S8_UINT)
 		return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
-	if (!(image->usage & VK_IMAGE_USAGE_SAMPLED_BIT) ||
-		(linear && (!std::isfinite(depth.nearZ) || !std::isfinite(depth.farZ))))
+	if (!(image->usage & VK_IMAGE_USAGE_SAMPLED_BIT))
 		return XR_ERROR_FEATURE_UNSUPPORTED;
-	const auto& rectangle = depth.image.rectangle;
-	if (rectangle.offset.x < 0 || rectangle.offset.y < 0 || rectangle.extent.width <= 0 || rectangle.extent.height <= 0 ||
-		static_cast<std::uint64_t>(rectangle.offset.x) + rectangle.extent.width > image->extent.width ||
-		static_cast<std::uint64_t>(rectangle.offset.y) + rectangle.extent.height > image->extent.height)
-		return XR_ERROR_SWAPCHAIN_RECT_INVALID;
-	if (!std::isfinite(depth.minDepth) || !std::isfinite(depth.maxDepth) || depth.minDepth < 0 || depth.maxDepth > 1 ||
-		depth.minDepth >= depth.maxDepth || depth.nearZ <= 0 || depth.farZ <= 0 || depth.nearZ == depth.farZ ||
-		std::isnan(depth.nearZ) || std::isnan(depth.farZ))
-		return XR_ERROR_VALIDATION_FAILURE;
 	CompositionPlan plan;
-	plan.width = static_cast<std::uint32_t>(rectangle.extent.width);
-	plan.height = static_cast<std::uint32_t>(rectangle.extent.height);
-	CompositionDraw draw{depth.image, 0, {}};
-	draw.constants.imageRectangle = {static_cast<float>(rectangle.offset.x), static_cast<float>(rectangle.offset.y),
-		static_cast<float>(rectangle.extent.width), static_cast<float>(rectangle.extent.height)};
-	draw.constants.quadParameters = {depth.minDepth, depth.maxDepth, 0, 0};
-	if (linear)
-	{
-		const auto scale = std::max(depth.nearZ, depth.farZ);
-		draw.constants.quadParameters[2] = depth.nearZ / scale;
-		draw.constants.quadParameters[3] = depth.farZ / scale;
-	}
-	draw.constants.control = {2, linear ? 1U : 0U, image->samples != VK_SAMPLE_COUNT_1_BIT ? 1U : 0U, 0};
-	plan.draws.push_back(draw);
+	const auto prepared = PrepareDepthComposition(depth, linear,
+		{static_cast<std::int32_t>(image->extent.width), static_cast<std::int32_t>(image->extent.height)},
+		image->samples != VK_SAMPLE_COUNT_1_BIT, plan);
+	if (XR_FAILED(prepared))
+		return prepared;
 	return Prepare(plan, resolve, output, std::move(reservation), 1);
 }
 
@@ -797,6 +782,94 @@ XrResult VulkanBackend::PrepareImageCopy(const LayerImageDescription& descriptio
 	return XR_SUCCESS;
 }
 
+#ifdef _WIN32
+XrResult VulkanBackend::PrepareNativeCopy(std::shared_ptr<VulkanImage> source, VkSemaphore ready,
+	std::uint64_t readyValue, std::shared_ptr<const void> owner, std::span<const FrameView> views,
+	std::shared_ptr<VulkanFrame>& output, std::shared_ptr<FrameReservation> reservation)
+{
+	RetireCompleted();
+	if (m_state->closed || m_state->failed || m_state->device->lost.load())
+		return XR_ERROR_SESSION_LOST;
+	if (!m_state->external)
+		return XR_ERROR_FEATURE_UNSUPPORTED;
+	if (!source || source->device != m_state->device || !ready || !owner ||
+		(source->format != VK_FORMAT_R8G8B8A8_SRGB && source->format != VK_FORMAT_R8G8B8A8_UNORM &&
+		 source->format != VK_FORMAT_B8G8R8A8_SRGB && source->format != VK_FORMAT_B8G8R8A8_UNORM &&
+		 source->format != VK_FORMAT_R16G16B16A16_SFLOAT && source->format != VK_FORMAT_A2B10G10R10_UNORM_PACK32) ||
+		!source->layers || source->layers > 2 || !source->mipLevels ||
+		source->samples != VK_SAMPLE_COUNT_1_BIT || !(source->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
+		return XR_ERROR_VALIDATION_FAILURE;
+	if (m_state->submissions.size() >= 64)
+		return XR_ERROR_LIMIT_REACHED;
+	if (reservation && ((!m_state->reservations.Owns(reservation) && !m_state->liveReservations.Owns(reservation) &&
+		!m_state->historyReservations.Owns(reservation) && !m_state->reprojectionReservations.Owns(reservation)) ||
+		reservation->Consumed()))
+		return XR_ERROR_VALIDATION_FAILURE;
+	if (!reservation)
+		reservation = m_state->reservations.Reserve();
+	if (!reservation)
+		return XR_ERROR_LIMIT_REACHED;
+	auto job = std::shared_ptr<VulkanSubmission>(new VulkanSubmission(m_state->device));
+	auto frame = std::shared_ptr<VulkanFrame>(new VulkanFrame(job, views));
+	m_state->submissions.push_back(job);
+	auto& resources = *job->m_resources;
+	resources.sources.push_back(source);
+	resources.nativeSource = std::move(owner);
+	resources.nativeReady = ready;
+	resources.nativeReadyValue = readyValue;
+	VulkanExternalImageSpec spec;
+	spec.format = source->format;
+	spec.arrayLayers = source->layers;
+	spec.mipLevels = source->mipLevels;
+	spec.extent = {source->extent.width, source->extent.height, 1};
+	resources.external = m_state->external->CreateExportable(spec);
+	resources.output = resources.external->Image();
+	SnapshotBudget::ObserveImageBytes(resources.external->Descriptor().allocationSize);
+	m_state->images.push_back(resources.output);
+	resources.ready = m_state->external->CreateExportableSemaphore();
+	for (std::uint32_t eye = 0; eye < source->layers; ++eye)
+		resources.outputViews[eye] = View(*resources.output, eye);
+	VkImageMemoryBarrier acquire{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+	acquire.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+	acquire.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+	acquire.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+	acquire.srcQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;
+	acquire.dstQueueFamilyIndex = m_state->device->binding.queueFamily;
+	acquire.image = source->image;
+	acquire.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, source->mipLevels, 0, source->layers};
+	vkCmdPipelineBarrier(resources.command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+		0, 0, nullptr, 0, nullptr, 1, &acquire);
+	VulkanImageBarrier(resources.command, *resources.output, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+		0, VK_ACCESS_TRANSFER_WRITE_BIT);
+	for (std::uint32_t mip = 0; mip < source->mipLevels; ++mip)
+	{
+		VkImageCopy copy{};
+		copy.srcSubresource = copy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 0, source->layers};
+		copy.extent = {std::max(1u, spec.extent.width >> mip), std::max(1u, spec.extent.height >> mip), 1};
+		vkCmdCopyImage(resources.command, source->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			resources.output->image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+	}
+	// Imported frames are immutable and never returned to their producer for reuse.
+	VkImageMemoryBarrier release{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+	release.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	release.oldLayout = release.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+	release.srcQueueFamilyIndex = m_state->device->binding.queueFamily;
+	release.dstQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;
+	release.image = resources.output->image;
+	release.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, source->mipLevels, 0, source->layers};
+	vkCmdPipelineBarrier(resources.command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+		0, 0, nullptr, 0, nullptr, 1, &release);
+	CheckVulkan(vkEndCommandBuffer(resources.command), "End native compositor GPU copy");
+	if (!(m_state->reservations.Owns(reservation) ? m_state->reservations :
+		m_state->historyReservations.Owns(reservation) ? m_state->historyReservations :
+		m_state->reprojectionReservations.Owns(reservation) ? m_state->reprojectionReservations : m_state->liveReservations).Consume(reservation))
+		return XR_ERROR_CALL_ORDER_INVALID;
+	resources.reservation = std::move(reservation);
+	output = std::move(frame);
+	return XR_SUCCESS;
+}
+#endif
+
 XrResult VulkanBackend::Submit(const std::shared_ptr<VulkanFrame>& frame)
 {
 	return Submit(std::span<const std::shared_ptr<VulkanFrame>>(&frame, 1));
@@ -811,6 +884,13 @@ XrResult VulkanBackend::Submit(std::span<const std::shared_ptr<VulkanFrame>> fra
 	std::array<VkCommandBuffer, 64> commands{};
 	std::array<VkSemaphore, 64> signals{};
 	std::size_t signalCount = 0;
+#ifdef _WIN32
+	std::array<VkSemaphore, 64> waits{};
+	std::array<std::uint64_t, 64> waitValues{};
+	std::array<std::uint64_t, 64> signalValues{};
+	std::array<VkPipelineStageFlags, 64> waitStages{};
+	std::size_t waitCount = 0;
+#endif
 	for (std::size_t index = 0; index < frames.size(); ++index)
 	{
 		const auto& frame = frames[index];
@@ -823,6 +903,14 @@ XrResult VulkanBackend::Submit(std::span<const std::shared_ptr<VulkanFrame>> fra
 				return XR_ERROR_VALIDATION_FAILURE;
 		const auto& resources = *frame->m_submission->m_resources;
 		commands[index] = resources.command;
+#ifdef _WIN32
+		if (resources.nativeReady)
+		{
+			waits[waitCount] = resources.nativeReady;
+			waitValues[waitCount] = resources.nativeReadyValue;
+			waitStages[waitCount++] = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		}
+#endif
 		if (resources.ready)
 			signals[signalCount++] = resources.ready->Get();
 	}
@@ -842,6 +930,20 @@ XrResult VulkanBackend::Submit(std::span<const std::shared_ptr<VulkanFrame>> fra
 		}
 	}
 	VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+#ifdef _WIN32
+	VkTimelineSemaphoreSubmitInfo nativeWait{VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO};
+	if (waitCount)
+	{
+		nativeWait.waitSemaphoreValueCount = static_cast<std::uint32_t>(waitCount);
+		nativeWait.pWaitSemaphoreValues = waitValues.data();
+		nativeWait.signalSemaphoreValueCount = static_cast<std::uint32_t>(signalCount);
+		nativeWait.pSignalSemaphoreValues = signalValues.data();
+		submit.pNext = &nativeWait;
+		submit.waitSemaphoreCount = static_cast<std::uint32_t>(waitCount);
+		submit.pWaitSemaphores = waits.data();
+		submit.pWaitDstStageMask = waitStages.data();
+	}
+#endif
 	submit.commandBufferCount = static_cast<std::uint32_t>(frames.size());
 	submit.pCommandBuffers = commands.data();
 	submit.signalSemaphoreCount = static_cast<std::uint32_t>(signalCount);

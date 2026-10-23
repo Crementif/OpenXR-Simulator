@@ -19,7 +19,9 @@ std::vector<std::string> Lines(const char* text)
 {
 	std::vector<std::string> result;
 	std::string_view remaining(text);
-	while (!remaining.empty())
+	if (remaining.empty())
+		return result;
+	for (;;)
 	{
 		const auto end = remaining.find('\n');
 		result.emplace_back(remaining.substr(0, end));
@@ -34,17 +36,19 @@ std::vector<std::string> Lines(const char* text)
 std::string Join(const std::vector<std::string>& lines)
 {
 	std::string result;
-	for (const auto& line : lines)
+	for (std::size_t index = 0; index < lines.size(); ++index)
 	{
-		if (!result.empty())
+		if (index)
 			result += '\n';
-		result += line;
+		result += lines[index];
 	}
 	return result;
 }
-template <std::size_t N> void Copy(std::array<char, N>& buffer, const std::string& text)
+void Copy(std::vector<char>& buffer, const std::string& text)
 {
-	std::snprintf(buffer.data(), buffer.size(), "%s", text.c_str());
+	buffer.resize(std::max(buffer.size(), text.size() + 1024));
+	std::copy(text.begin(), text.end(), buffer.begin());
+	buffer[text.size()] = 0;
 }
 void Problem(const std::string& problem)
 {
@@ -82,10 +86,11 @@ class LaunchProfilesDialog::FileRequest
 	{
 		if (!m_shared)
 			return {};
-		std::lock_guard lock(m_shared->lock);
-		if (!m_shared->done)
+		const auto shared = m_shared;
+		std::lock_guard lock(shared->lock);
+		if (!shared->done)
 			return {};
-		auto path = std::move(m_shared->path);
+		auto path = std::move(shared->path);
 		m_shared.reset();
 		return path;
 	}
@@ -108,18 +113,22 @@ class LaunchProfilesDialog::FileRequest
 	std::shared_ptr<Shared> m_shared;
 };
 
-LaunchProfilesDialog::LaunchProfilesDialog() : m_file(std::make_unique<FileRequest>())
+LaunchProfilesDialog::LaunchProfilesDialog()
+	: m_name(128), m_executable(2048), m_workingDirectory(2048), m_manifest(2048), m_rig(2048),
+	  m_headset(256), m_arguments(16384), m_file(std::make_unique<FileRequest>())
 {
 }
 LaunchProfilesDialog::~LaunchProfilesDialog() = default;
 void LaunchProfilesDialog::Load(const LaunchProfile& profile)
 {
+	m_browsing.reset();
 	Copy(m_name, profile.name);
 	Copy(m_executable, profile.executable);
 	Copy(m_workingDirectory, profile.workingDirectory);
 	Copy(m_manifest, profile.runtimeManifest);
 	Copy(m_rig, profile.rig);
 	Copy(m_headset, profile.headsetProfile);
+	m_originalArguments = profile.arguments;
 	Copy(m_arguments, Join(profile.arguments));
 	m_environment.clear();
 	for (const auto& [key, value] : profile.environment)
@@ -157,7 +166,9 @@ LaunchProfile LaunchProfilesDialog::Profile() const
 	LaunchProfile profile;
 	profile.name = m_name.data();
 	profile.executable = m_executable.data();
-	profile.arguments = Lines(m_arguments.data());
+	// Newline-containing or empty arguments must survive edits to unrelated fields.
+	profile.arguments = m_arguments.data() == Join(m_originalArguments)
+		? m_originalArguments : Lines(m_arguments.data());
 	profile.workingDirectory = m_workingDirectory.data();
 	profile.runtimeManifest = m_manifest.data();
 	profile.headsetProfile = m_headset.data();
@@ -215,7 +226,7 @@ bool LaunchProfilesDialog::Store(CompanionSettings& settings)
 		m_selected = static_cast<int>(settings.profiles.size()) - 1;
 	return true;
 }
-bool LaunchProfilesDialog::PathField(const char* label, std::array<char, 2048>& buffer, PathKind kind, Browse browse,
+bool LaunchProfilesDialog::PathField(const char* label, std::vector<char>& buffer, PathKind kind, Browse browse,
 									 bool optional)
 {
 	ImGui::PushID(label);
@@ -354,7 +365,7 @@ bool LaunchProfilesDialog::DrawForm(CompanionSettings& settings, const LaunchSna
 	const auto environmentProblem = EnvironmentProblem();
 	Problem(environmentProblem);
 
-	if (ImGui::CollapsingHeader("Runtime and script"))
+	if (Section("Runtime and script"))
 	{
 		edited |= PathField("OpenXR runtime JSON", m_manifest, PathKind::File, Browse::Manifest, true);
 		Label("Headset profile");
@@ -362,7 +373,7 @@ bool LaunchProfilesDialog::DrawForm(CompanionSettings& settings, const LaunchSna
 		{
 			if (ImGui::Selectable("Runtime default", !m_headset[0]))
 			{
-				m_headset.fill(0);
+				std::fill(m_headset.begin(), m_headset.end(), 0);
 				edited = true;
 			}
 			for (const auto& profile : HeadsetProfiles())

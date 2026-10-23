@@ -67,6 +67,9 @@ class CommandIdentityBuilder
 		Add(value.active);
 		Add(value.confidence);
 		Add(value.preset);
+		Add(value.rootPose.has_value());
+		if (value.rootPose)
+			Add(*value.rootPose);
 		for (const auto& control : value.controls)
 		{
 			Add(control.tracked);

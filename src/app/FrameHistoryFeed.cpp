@@ -111,15 +111,16 @@ void FrameHistoryFeed::Append(const control::Message& message)
 			throw std::runtime_error("Frame history has invalid runtime timing");
 		const auto timestamp = *time->AsI64();
 		std::uint32_t flags = 0;
+		auto originTime = m_origin;
+		auto offset = m_offset;
 		if (m_newSegment)
 		{
 			const auto origin = message.Find(tag::Time);
-			m_origin = origin && origin->AsI64() ? *origin->AsI64() : timestamp;
-			m_previous = timestamp;
-			m_offset -= double((static_cast<long double>(timestamp) - m_origin) / 1000000000.L);
+			originTime = origin && origin->AsI64() ? *origin->AsI64() : timestamp;
+			offset -= double((static_cast<long double>(timestamp) - originTime) / 1000000000.L);
 			flags |= HistoryRunStart;
 		}
-		if ((m_after && id - m_after > 1) || timestamp < m_previous || std::exchange(m_skipped, false))
+		if ((m_after && id - m_after > 1) || (!m_newSegment && timestamp < m_previous) || m_skipped)
 			flags |= HistoryGap;
 		const auto submission = Nested(frame.Find(tag::Submission));
 		if (Text(submission, tag::OutputDisposition) == "dropped" || Text(frame, tag::Stage) == "discarded")
@@ -145,7 +146,7 @@ void FrameHistoryFeed::Append(const control::Message& message)
 			input = m_input.Append(std::move(sample));
 		}
 		const auto periodMilliseconds = static_cast<long double>(*period->AsI64()) / 1000000.L;
-		const auto elapsed = double((static_cast<long double>(timestamp) - m_origin) / 1000000000.L);
+		const auto elapsed = double((static_cast<long double>(timestamp) - originTime) / 1000000000.L);
 		const auto previousSeconds = m_history.Size() ? m_history.At(m_history.Size() - 1).seconds : m_offset;
 		const auto interval = !m_newSegment ? (static_cast<long double>(timestamp) - m_previous) / 1000000.L
 											: periodMilliseconds;
@@ -162,13 +163,16 @@ void FrameHistoryFeed::Append(const control::Message& message)
 		m_history.Append({{m_scope.session, m_scope.generation, id},
 						  m_scope.epoch,
 						  0,
-						  std::max(previousSeconds, m_offset + elapsed),
+						  std::max(previousSeconds, offset + elapsed),
 						  float(std::max(0.L, interval)),
 						  flags,
 						  elapsed,
 						  input,
 						  hands,
 						  float(periodMilliseconds), milliseconds(tag::CpuFrameTime), milliseconds(tag::CompositorGpuTime)});
+		m_origin = originTime;
+		m_offset = offset;
+		m_skipped = false;
 		m_previous = timestamp;
 		m_after = id;
 		m_newSegment = false;

@@ -106,18 +106,33 @@ XrResult VulkanReprojectionPreparation::Prepare(VulkanBackend& backend, VulkanIn
 {
 	if (!resolve)
 		return XR_ERROR_VALIDATION_FAILURE;
-	CompositionPlan checked;
-	const auto valid = PrepareRotationalComposition(
-		layers, target, head, head,
+	const auto result = Prepare(inspection, layers, target, head,
 		[&resolve](XrSwapchain source) -> std::optional<XrExtent2Di>
 		{
 			const auto image = resolve(source);
 			if (!image)
 				return {};
 			return XrExtent2Di{static_cast<std::int32_t>(image->extent.width),
-							   static_cast<std::int32_t>(image->extent.height)};
+				static_cast<std::int32_t>(image->extent.height)};
 		},
-		checked);
+		[&backend, &resolve](const LayerImageDescription& image, std::shared_ptr<VulkanFrame>& frame)
+		{
+			return backend.PrepareRetainedLayer(image, resolve, frame);
+		}, capacity, output, std::move(deliveryRetired));
+	if (result == XR_ERROR_SESSION_LOST)
+		backend.Device()->lost.store(true);
+	return result;
+}
+
+XrResult VulkanReprojectionPreparation::Prepare(VulkanInspection& inspection, const FrameLayers& layers,
+	const CompositionTarget& target, const PoseSample& head, const CompositionExtentResolver& extent,
+	const RetainImage& retainImage, std::size_t capacity,
+	std::unique_ptr<VulkanReprojectionPreparation>& output, std::function<void(SharedImageKey)> deliveryRetired)
+{
+	if (!extent || !retainImage)
+		return XR_ERROR_VALIDATION_FAILURE;
+	CompositionPlan checked;
+	const auto valid = PrepareRotationalComposition(layers, target, head, head, extent, checked);
 	if (XR_FAILED(valid))
 		return valid;
 	auto prepared = std::unique_ptr<VulkanReprojectionPreparation>(new VulkanReprojectionPreparation);
@@ -139,7 +154,7 @@ XrResult VulkanReprojectionPreparation::Prepare(VulkanBackend& backend, VulkanIn
 				if (prepared->m_frames.size() >= capacity)
 					return XR_ERROR_LIMIT_REACHED;
 				std::shared_ptr<VulkanFrame> frame;
-				const auto result = backend.PrepareRetainedLayer(description, resolve, frame);
+				const auto result = retainImage(description, frame);
 				if (XR_FAILED(result))
 					return result;
 				image.extent = {static_cast<std::int32_t>(frame->Image().extent.width),
@@ -184,8 +199,6 @@ XrResult VulkanReprojectionPreparation::Prepare(VulkanBackend& backend, VulkanIn
 	}
 	catch (const VulkanError& error)
 	{
-		if (error.Result() == VK_ERROR_DEVICE_LOST)
-			backend.Device()->lost.store(true);
 		return VulkanGraphicsFailure(error.Result());
 	}
 	if (prepared->m_frames.empty())

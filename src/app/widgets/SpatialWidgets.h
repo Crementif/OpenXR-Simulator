@@ -43,14 +43,6 @@ enum class OrbModel
 SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf& orientation, XrQuaternionf view,
 							  XrQuaternionf reference, bool enabled, OrbModel model, ImU32 color, float width,
 							  float size = 160);
-struct ReachMapState
-{
-	int hand = 1;
-	bool dragging = false, height = false;
-};
-SpatialEditResult ReachMap(const char* id, ReachMapState& state, XrPosef root, XrPosef head, float shoulderWidth,
-						   float armReach, std::array<XrPosef, 2>& hands, const std::array<bool, 2>& editable,
-						   float width);
 struct SpatialScene
 {
 	XrPosef root{};
@@ -69,6 +61,8 @@ struct RigViewState
 	// Yaw is relative to the way the player faces; 0 looks over the player's shoulder (Back).
 	float yaw = 0, pitch = -.2f, distance = 2.5f;
 	XrVector3f pan{};
+	// The device the camera orbits (a hand or tracker), or -1 for the player.
+	int focus = -1;
 	bool eye = false, expanded = false, orbiting = false, panning = false;
 	GizmoState gizmo;
 	int joint = -1;

@@ -500,7 +500,8 @@ void TestCaptureReservations()
 	using namespace simxr;
 	Instance instance(reinterpret_cast<XrInstance>(70), {}, XR_MAKE_VERSION(1, 0, 27));
 	Session session(reinterpret_cast<XrSession>(71), instance);
-	FramePool pool(1);
+	unsigned reclamations = 0;
+	FramePool pool(1, [&] { ++reclamations; });
 	Require(session.ConfigureCapturePool(pool) == XR_SUCCESS &&
 				session.ConfigureCapturePool(pool) == XR_ERROR_CALL_ORDER_INVALID,
 			"Capture pool configuration lifetime");
@@ -512,7 +513,11 @@ void TestCaptureReservations()
 			"Capture session begin failed");
 	Require(session.ReserveCapture().result == SnapshotAdmission::Invalid,
 			"Unpaused session reserved a strict capture");
+	Require(reclamations == 0, "Unpaused capture request reclaimed retained snapshots");
 	session.Scheduler().Pause();
+	const std::array duplicateTargets{CaptureTarget{}, CaptureTarget{}};
+	Require(session.ReserveCaptureBundle(duplicateTargets).result == SnapshotAdmission::Invalid && reclamations == 0,
+		"Duplicate capture targets reclaimed retained snapshots before rejection");
 	Require(session.Display().Pause(), "Capture display pause failed");
 	Require(session.ReserveCapture({CaptureKind::LayerView, 0, 0}).result == SnapshotAdmission::Unsupported,
 			"Unsupported raw source capture silently selected composed eyes");
@@ -609,8 +614,11 @@ void TestCaptureBoundary()
 	Instance instance(reinterpret_cast<XrInstance>(72), {}, XR_MAKE_VERSION(1, 0, 27));
 	Session session(reinterpret_cast<XrSession>(73), instance);
 	FramePool pool(2);
-	Require(!session.SupportsCapture() && session.ConfigureCapturePool(pool) == XR_SUCCESS && session.SupportsCapture(),
+	Require(!session.SupportsCapture() && session.ConfigureCapturePool(pool, false, {}, false, true) == XR_SUCCESS && session.SupportsCapture(),
 			"Actual native capture capability was not reported");
+	Require(session.SupportsCapture({CaptureKind::ProjectionLayers}) && session.SupportsCapture({CaptureKind::QuadLayers}) &&
+			!session.SupportsCapture({CaptureKind::LayerView}) && !session.SupportsCapture({CaptureKind::LayerDepth}),
+			"Filtered composition support incorrectly depends on or grants raw image capture");
 	FrameSchedulerConfig config;
 	config.mode = ExecutionMode::Deterministic;
 	config.period = Duration{10};

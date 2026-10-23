@@ -2,6 +2,7 @@
 #include "app/RuntimeSession.h"
 #include "app/CompanionSettings.h"
 #include "app/Utf8Path.h"
+#include "app/widgets/Controls.h"
 
 #include <chrono>
 #include <filesystem>
@@ -40,7 +41,7 @@ void RangeExportTask::Start(const RangeSel& range, std::size_t first, std::size_
 	m_metadata.clear();
 	m_images.clear();
 	m_queue.clear();
-	const auto prefix = std::filesystem::path(path).replace_extension().string();
+	const auto prefix = PathText(Utf8Path(path).replace_extension());
 	std::vector<std::uint64_t> images;
 	for (const auto& image : m_session.Preview().Images())
 		if (!image.live && image.ready && !image.released && image.reader && image.scope.epoch == range.epoch &&
@@ -62,7 +63,7 @@ void RangeExportTask::Start(const RangeSel& range, std::size_t first, std::size_
 	m_csv = std::async(std::launch::async,
 					   [frames = std::move(frames), path]
 					   {
-						   std::ofstream output(path);
+						   std::ofstream output(Utf8Path(path));
 						   output << "epoch,session,run,frame,run_seconds,display_interval_ms,snapshot,preview,"
 									 "dropped\n";
 						   for (const auto& frame : frames)
@@ -121,6 +122,8 @@ void RangePage::SaveTake(const RangeSel& range, std::size_t first, std::size_t l
 		for (auto index = first; index <= last; ++index)
 			if (const auto* sample = m_session.InputSamples().Find(history.At(index).input))
 				samples.push_back(sample);
+			else
+				throw std::runtime_error("Input is missing from this range; select frames with retained input");
 		const auto take = TakeFromInput(samples);
 		const auto script = automation::EditableRig(take);
 		const auto directory = CompanionSettingsPath().parent_path() / "recordings";
@@ -153,9 +156,11 @@ std::optional<automation::SavedRecording> RangePage::Draw(const RangeSel& range,
 {
 	const auto& history = m_session.History();
 	const auto first = history.Find(range.first, range.epoch), last = history.Find(range.last, range.epoch);
-	ImGui::SeparatorText("Range");
-	ImGui::Text("Frames %llu – %llu", static_cast<unsigned long long>(range.first.frame),
-				static_cast<unsigned long long>(range.last.frame));
+	const std::string title =
+		"Frames " + std::to_string(range.first.frame) + " \u2013 " + std::to_string(range.last.frame);
+	PageTitle(Icon::Crop, title.c_str());
+	if (PageClose())
+		shell.selection = std::monostate{};
 	if (!first || !last || *last < *first)
 	{
 		ImGui::TextDisabled("These frames are no longer in history");
@@ -170,7 +175,7 @@ std::optional<automation::SavedRecording> RangePage::Draw(const RangeSel& range,
 		shell.timeline.zoomToRange = true;
 	}
 
-	ImGui::SeparatorText("Take");
+	SectionLabel("Take");
 	const bool recorded = m_session.InputSamples().Find(history.At(*first).input) && m_session.InputSamples().Find(history.At(*last).input);
 	if (!m_take[0])
 	{
@@ -198,7 +203,7 @@ std::optional<automation::SavedRecording> RangePage::Draw(const RangeSel& range,
 	if (!m_takeStatus.empty())
 		ImGui::TextDisabled("%s", m_takeStatus.c_str());
 
-	ImGui::SeparatorText("Export");
+	SectionLabel("Export");
 	ImGui::SetNextItemWidth(-1);
 	ImGui::InputText("##Range export file", m_path.data(), m_path.size());
 	ImGui::BeginDisabled(m_export.Busy() || m_session.Exports().Busy());

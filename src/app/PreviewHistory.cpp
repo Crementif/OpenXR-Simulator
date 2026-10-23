@@ -26,10 +26,12 @@ constexpr std::uint64_t MaximumGap = 120;
 #if defined(__linux__) || defined(_WIN32)
 struct PreviewHistory::Resources
 {
+	std::unique_ptr<Resources> next;
 	std::shared_ptr<VulkanDevice> device;
 	VkFormat format = VK_FORMAT_UNDEFINED;
 	VkExtent2D extent{};
 	std::size_t capacity = 0;
+	std::uint64_t budget = 0;
 	std::vector<std::shared_ptr<VulkanImage>> chunks;
 	std::size_t initialized = 0;
 	std::shared_ptr<VulkanImage> display;
@@ -77,7 +79,7 @@ namespace
 struct Preserved
 {
 	std::mutex mutex;
-	std::vector<std::unique_ptr<PreviewHistory::Resources>> rings;
+	std::unique_ptr<PreviewHistory::Resources> rings;
 	std::uint64_t bytes = 0;
 };
 Preserved& PreservedRings()
@@ -89,6 +91,7 @@ Preserved& PreservedRings()
 #else
 struct PreviewHistory::Resources
 {
+	std::unique_ptr<Resources> next;
 	std::uint64_t Bytes() const
 	{
 		return 0;
@@ -98,36 +101,69 @@ struct PreviewHistory::Resources
 
 PreviewHistory::PreviewHistory(UiRenderer& renderer, std::uint64_t budget) : m_renderer(renderer), m_budget(budget)
 {
+#if defined(__linux__) || defined(_WIN32)
+	(void)PreservedRings();
+#endif
 }
 PreviewHistory::~PreviewHistory()
 {
 	Retire();
-}
-void PreviewHistory::Retire()
-{
 #if defined(__linux__) || defined(_WIN32)
-	if (!m_resources)
-		return;
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 	try
 	{
-		while (m_renderer.CompletedFrames() < m_resources->lastUse && std::chrono::steady_clock::now() < deadline)
-			std::this_thread::sleep_for(std::chrono::milliseconds(1));
-		if (m_renderer.CompletedFrames() >= m_resources->lastUse)
+		while (m_retired)
 		{
-			m_resources.reset();
-			return;
+			CollectRetired();
+			if (!m_retired || std::chrono::steady_clock::now() >= deadline)
+				break;
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		}
 	}
 	catch (const std::exception& error)
 	{
 		std::fprintf(stderr, "Preview history retirement: %s\n", error.what());
 	}
-	std::fputs("Preview history completion unknown; preserving its images\n", stderr);
-	auto& preserved = PreservedRings();
-	std::lock_guard lock(preserved.mutex);
-	preserved.bytes += m_resources->Bytes();
-	preserved.rings.push_back(std::move(m_resources));
+	if (m_retired)
+	{
+		std::fputs("Preview history completion unknown; preserving its images\n", stderr);
+		auto& preserved = PreservedRings();
+		std::lock_guard lock(preserved.mutex);
+		while (m_retired)
+		{
+			auto ring = std::move(m_retired);
+			m_retired = std::move(ring->next);
+			preserved.bytes += ring->Bytes();
+			ring->next = std::move(preserved.rings);
+			preserved.rings = std::move(ring);
+		}
+	}
+#endif
+}
+void PreviewHistory::Retire()
+{
+	if (m_resources)
+	{
+		m_resources->next = std::move(m_retired);
+		m_retired = std::move(m_resources);
+	}
+}
+void PreviewHistory::CollectRetired()
+{
+#if defined(__linux__) || defined(_WIN32)
+	if (!m_retired)
+		return;
+	const auto completed = m_renderer.CompletedFrames();
+	for (auto* link = &m_retired; *link;)
+	{
+		if ((*link)->lastUse <= completed)
+		{
+			auto retired = std::move(*link);
+			*link = std::move(retired->next);
+		}
+		else
+			link = &(*link)->next;
+	}
 #endif
 }
 bool PreviewHistory::Prepare(const control::ImageDescription& description)
@@ -140,6 +176,7 @@ bool PreviewHistory::Prepare(const control::ImageDescription& description)
 		m_resources->extent.height == extent.height)
 		return true;
 	Retire();
+	CollectRetired();
 	m_shots.clear();
 	m_lastUse.clear();
 	m_sampled.clear();
@@ -156,29 +193,31 @@ bool PreviewHistory::Prepare(const control::ImageDescription& description)
 		m_error = "Preview history needs a blittable, filterable preview format";
 		return false;
 	}
-	std::uint64_t preserved = PreviewTexture::PreservedBytes();
+	std::uint64_t preserved = PreviewTexture::PreservedBytes() + Bytes();
 	{
 		auto& rings = PreservedRings();
 		std::lock_guard lock(rings.mutex);
 		preserved += rings.bytes;
 	}
-	const std::uint64_t slot = std::uint64_t(extent.width) * extent.height * 4;
-	// The display image is one more slot.
 	const auto available = m_budget > preserved ? m_budget - preserved : 0;
-	const auto capacity = available / slot > 1 ? available / slot - 1 : 0;
-	if (!capacity)
-	{
-		m_error = "Preview history budget is used up by preserved images";
-		return false;
-	}
 	auto resources = std::make_unique<Resources>();
 	resources->device = std::make_shared<VulkanDevice>(
 		VulkanBinding{access.instance, access.physical, access.device, access.queueFamily, 0}, access.owner);
 	resources->format = format;
 	resources->extent = extent;
-	resources->capacity = static_cast<std::size_t>(std::min<std::uint64_t>(capacity, 16384));
+	resources->budget = available;
 	resources->display = VulkanImage::Create(resources->device, format, extent, 1,
-											 VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+											 VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 1,
+											 VK_SAMPLE_COUNT_1_BIT, available);
+	// Include format width and driver padding, not just the pixel count.
+	const auto slot = resources->display->allocationSize;
+	const auto capacity = (available - slot) / slot;
+	if (!capacity)
+	{
+		m_error = "Preview history budget cannot hold a preview";
+		return false;
+	}
+	resources->capacity = static_cast<std::size_t>(std::min<std::uint64_t>(capacity, 16384));
 	VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
 	view.image = resources->display->image;
 	view.viewType = VK_IMAGE_VIEW_TYPE_2D;
@@ -232,18 +271,39 @@ void PreviewHistory::Offer(PreviewTexture& source, std::uint32_t layer, FrameIde
 		if (!Prepare(source.Description()))
 			return;
 		auto& resources = *m_resources;
+		if (!resources.capacity)
+			return;
 		const auto completed = m_renderer.CompletedFrames();
 		const auto slot = m_next % resources.capacity;
 		if (m_lastUse[slot] > completed)
 			return;
 		if (slot / ChunkLayers >= resources.chunks.size())
 		{
-			const auto layers = static_cast<std::uint32_t>(
+			auto layers = static_cast<std::uint32_t>(
 				std::min<std::size_t>(ChunkLayers, resources.capacity - resources.chunks.size() * ChunkLayers));
-			resources.chunks.push_back(VulkanImage::Create(resources.device, resources.format, resources.extent,
-														   layers,
-														   VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-															   VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT));
+			for (;;)
+			{
+				try
+				{
+					resources.chunks.push_back(VulkanImage::Create(
+						resources.device, resources.format, resources.extent, layers,
+						VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+						1, VK_SAMPLE_COUNT_1_BIT, resources.budget - resources.Bytes()));
+					break;
+				}
+				catch (const std::length_error&)
+				{
+					if (--layers == 0)
+					{
+						resources.capacity = resources.chunks.size() * ChunkLayers;
+						if (!resources.capacity)
+							m_error = "Preview history budget cannot hold a preview";
+						return;
+					}
+				}
+			}
+			if (layers < ChunkLayers)
+				resources.capacity = (resources.chunks.size() - 1) * ChunkLayers + layers;
 		}
 		const auto image = source.UseForCopy();
 		if (!image)
@@ -428,6 +488,7 @@ void PreviewHistory::Submitted(std::uint64_t serial)
 }
 void PreviewHistory::BeginFrame()
 {
+	CollectRetired();
 	m_sampled.clear();
 	// Work offered for a frame that was never submitted is dropped with it.
 	if (m_copy)
@@ -437,6 +498,9 @@ void PreviewHistory::BeginFrame()
 }
 std::uint64_t PreviewHistory::Bytes() const noexcept
 {
-	return m_resources ? m_resources->Bytes() : 0;
+	std::uint64_t bytes = m_resources ? m_resources->Bytes() : 0;
+	for (const auto* ring = m_retired.get(); ring; ring = ring->next.get())
+		bytes += ring->Bytes();
+	return bytes;
 }
 } // namespace simxr::app

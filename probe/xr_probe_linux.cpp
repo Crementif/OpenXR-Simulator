@@ -160,7 +160,9 @@ static int runProbe()
     if (creationRollback) CHECK(!std::filesystem::exists(unselectedDirectory));
     XrInstanceProperties props{XR_TYPE_INSTANCE_PROPERTIES};
     XR(xrGetInstanceProperties(instance, &props));
-    std::printf("runtime: %s\n", props.runtimeName);
+    std::printf("runtime: %s %u.%u.%u\n", props.runtimeName,
+        XR_VERSION_MAJOR(props.runtimeVersion), XR_VERSION_MINOR(props.runtimeVersion),
+        XR_VERSION_PATCH(props.runtimeVersion));
     XrSystemGetInfo si{XR_TYPE_SYSTEM_GET_INFO};
     si.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
     XrSystemId system;
@@ -728,7 +730,7 @@ static int runProbe()
         else
             CHECK(std::strcmp(selected, "d32") == 0);
     }
-    const auto depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT |
+    const VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT |
         ((depthFormat == VK_FORMAT_D24_UNORM_S8_UINT || depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT) ?
             VK_IMAGE_ASPECT_STENCIL_BIT : 0);
     chain.format = depthFormat;

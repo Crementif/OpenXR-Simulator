@@ -15,7 +15,7 @@ class VulkanInspectionDevice
 {
   public:
 	VulkanInspectionDevice(const VulkanExternalIdentity& identity,
-						   std::shared_ptr<VulkanInspectionValidation> validation = {});
+						   std::shared_ptr<VulkanInspectionValidation> validation = {}, bool requireTimeline = false);
 	const std::shared_ptr<VulkanDevice>& Device() const noexcept;
 	std::span<const char* const> EnabledExtensions() const noexcept;
 	bool ConsumerFencesEnabled() const noexcept;

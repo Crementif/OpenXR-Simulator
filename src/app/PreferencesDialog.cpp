@@ -11,12 +11,25 @@ namespace simxr::app
 bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirty, std::uint64_t keptBytes,
 							 std::uint64_t keptBudget)
 {
+	const bool wasOpen = open;
+	if (!open)
+		m_capture = -1;
 	if (open)
 		ImGui::OpenPopup("Workspace settings");
 	ImGui::SetNextWindowSize({620, 500}, ImGuiCond_FirstUseEver);
 	ImGui::SetNextWindowSizeConstraints({400, 260}, ImGui::GetMainViewport()->WorkSize);
 	if (!ImGui::BeginPopupModal("Workspace settings", &open))
-		return false;
+	{
+		if (!open)
+			m_capture = -1;
+		return wasOpen && !open;
+	}
+	if (!open)
+	{
+		m_capture = -1;
+		ImGui::EndPopup();
+		return wasOpen;
+	}
 	if (ImGui::SliderFloat("UI scale", &settings.scale, 0.75f, 2.5f, "%.2f"))
 		dirty = true;
 	int budget = static_cast<int>(settings.snapshotBudgetMiB);
@@ -36,6 +49,13 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 		ImGui::TextUnformatted("Kept previews");
 		ImGui::SetItemTooltip("Downscaled copies of shown frames for looking back while the app runs");
 	}
+	if (ImGui::Button("Reset layout"))
+	{
+		ResetLayout(settings);
+		dirty = true;
+	}
+	ImGui::SetItemTooltip("Inspector width, timeline height and hidden panels back to defaults.\n"
+						  "Hide the timeline with Ctrl+T, the inspector with Ctrl+I; F11 shows only the image.");
 	if (ImGui::BeginTabBar("Preference pages"))
 	{
 		if (ImGui::BeginTabItem("Keyboard & mouse"))

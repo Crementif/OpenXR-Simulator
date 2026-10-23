@@ -56,7 +56,7 @@ struct VulkanInspectionDevice::Native
 };
 
 VulkanInspectionDevice::VulkanInspectionDevice(const VulkanExternalIdentity& identity,
-											   std::shared_ptr<VulkanInspectionValidation> validation)
+											   std::shared_ptr<VulkanInspectionValidation> validation, bool requireTimeline)
 {
 	auto owner = std::make_shared<Native>();
 	owner->validation = std::move(validation);
@@ -120,7 +120,7 @@ VulkanInspectionDevice::VulkanInspectionDevice(const VulkanExternalIdentity& ide
 					"Enumerate owned inspection extensions");
 		const auto fenceCaps = VulkanExternalDevice::QueryFence(physical, VK_API_VERSION_1_1);
 		const bool fences =
-			fenceCaps.CanImport() && fenceCaps.CanExport() &&
+			!requireTimeline && fenceCaps.CanImport() && fenceCaps.CanExport() &&
 			std::any_of(extensions.begin(), extensions.end(),
 						[](const auto& extension)
 						{
@@ -128,6 +128,8 @@ VulkanInspectionDevice::VulkanInspectionDevice(const VulkanExternalIdentity& ide
 						});
 		const auto timelineCaps = VulkanExternalDevice::QueryTimeline(physical, VK_API_VERSION_1_1);
 		const bool timeline = !fences && timelineCaps.CanImportSemaphore() && timelineCaps.CanExportSemaphore();
+		if (requireTimeline && !timeline)
+			throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Required inspection timeline sharing unavailable");
 		vkGetPhysicalDeviceQueueFamilyProperties(physical, &count, nullptr);
 		std::vector<VkQueueFamilyProperties> families(count);
 		vkGetPhysicalDeviceQueueFamilyProperties(physical, &count, families.data());

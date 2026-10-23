@@ -1,6 +1,7 @@
 #include "graphics/Compositor.h"
 #include "Math.h"
 
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 #include <utility>
@@ -69,6 +70,41 @@ bool EmptyImage(const LayerImageDescription& image)
 	return image.rectangle.extent.width == 0 || image.rectangle.extent.height == 0;
 }
 } // namespace
+
+XrResult PrepareDepthComposition(const LayerDepthDescription& depth, bool linear, XrExtent2Di extent,
+	bool multisampled, CompositionPlan& output)
+{
+	if (linear && (!std::isfinite(depth.nearZ) || !std::isfinite(depth.farZ)))
+		return XR_ERROR_FEATURE_UNSUPPORTED;
+	if (extent.width <= 0 || extent.height <= 0)
+		return XR_ERROR_SWAPCHAIN_RECT_INVALID;
+	const auto& rectangle = depth.image.rectangle;
+	if (rectangle.offset.x < 0 || rectangle.offset.y < 0 || rectangle.extent.width <= 0 || rectangle.extent.height <= 0 ||
+		static_cast<std::uint64_t>(rectangle.offset.x) + rectangle.extent.width > static_cast<std::uint32_t>(extent.width) ||
+		static_cast<std::uint64_t>(rectangle.offset.y) + rectangle.extent.height > static_cast<std::uint32_t>(extent.height))
+		return XR_ERROR_SWAPCHAIN_RECT_INVALID;
+	if (!std::isfinite(depth.minDepth) || !std::isfinite(depth.maxDepth) || depth.minDepth < 0 || depth.maxDepth > 1 ||
+		depth.minDepth >= depth.maxDepth || depth.nearZ <= 0 || depth.farZ <= 0 || depth.nearZ == depth.farZ ||
+		std::isnan(depth.nearZ) || std::isnan(depth.farZ))
+		return XR_ERROR_VALIDATION_FAILURE;
+	CompositionPlan plan;
+	plan.width = static_cast<std::uint32_t>(rectangle.extent.width);
+	plan.height = static_cast<std::uint32_t>(rectangle.extent.height);
+	CompositionDraw draw{depth.image, 0, {}};
+	draw.constants.imageRectangle = {static_cast<float>(rectangle.offset.x), static_cast<float>(rectangle.offset.y),
+		static_cast<float>(rectangle.extent.width), static_cast<float>(rectangle.extent.height)};
+	draw.constants.quadParameters = {depth.minDepth, depth.maxDepth, 0, 0};
+	if (linear)
+	{
+		const auto scale = std::max(depth.nearZ, depth.farZ);
+		draw.constants.quadParameters[2] = depth.nearZ / scale;
+		draw.constants.quadParameters[3] = depth.farZ / scale;
+	}
+	draw.constants.control = {2, linear ? 1U : 0U, multisampled ? 1U : 0U, 0};
+	plan.draws.push_back(draw);
+	output = std::move(plan);
+	return XR_SUCCESS;
+}
 
 XrResult PrepareComposition(const FrameLayers& frame, const CompositionTarget& target,
 							const CompositionExtentResolver& resolve, CompositionPlan& output)

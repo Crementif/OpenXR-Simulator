@@ -134,12 +134,12 @@ std::optional<ScriptRun> Library::Draw(Selection& selection, RuntimePanels& runt
 		DrawTake(selection, std::string(take->id), runtime, rigs);
 	else if (const auto script = std::get_if<ScriptSel>(&selection))
 		DrawScript(selection, std::string(script->id), runtime, rigs);
-	else
-		DrawList(selection, runtime, rigs);
 	return std::exchange(m_run, {});
 }
-void Library::DrawList(Selection& selection, RuntimePanels& runtime, RigPanel& rigs)
+std::optional<ScriptRun> Library::DrawBrowser(Selection& selection, RuntimePanels& runtime, RigPanel& rigs)
 {
+	if (std::chrono::steady_clock::now() >= m_nextScan)
+		Refresh();
 	const float unit = ImGui::GetFontSize() / 17;
 	ImGui::SetNextItemWidth(-ImGui::GetFrameHeight() - ImGui::GetStyle().ItemSpacing.x);
 	ImGui::InputTextWithHint("##Search library", "Search", m_search.data(), m_search.size());
@@ -207,23 +207,15 @@ void Library::DrawList(Selection& selection, RuntimePanels& runtime, RigPanel& r
 	ImGui::EndDisabled();
 	if (!m_error.empty())
 		ImGui::TextColored(theme::Vec(theme::Record), "%s", m_error.c_str());
+	return std::exchange(m_run, {});
 }
-bool Library::DrawHeader(Selection& selection, const std::string& path, const char* kind)
+bool Library::DrawHeader(Selection& selection, const std::string& path, Icon kind)
 {
-	if (IconButton("Back to library", Icon::ChevronLeft, "Browse saved takes and scripts"))
-	{
-		selection = LibrarySel{};
-		return false;
-	}
-	ImGui::SameLine();
-	ImGui::AlignTextToFramePadding();
 	const auto name = PathText(Utf8Path(path).stem());
-	ImGui::TextDisabled("%s", kind);
-	ImGui::SameLine();
-	ImGui::TextUnformatted(name.c_str());
+	PageTitle(kind, name.c_str());
 	ImGui::SetItemTooltip("%s", path.c_str());
 	const float button = ImGui::GetFrameHeight(), spacing = ImGui::GetStyle().ItemSpacing.x;
-	ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetContentRegionMax().x - button * 2 - spacing));
+	ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetContentRegionMax().x - button * 3 - spacing * 2));
 	if (IconButton("Rename entry", Icon::Rename, "Change this file name on disk"))
 	{
 		std::snprintf(m_rename.data(), m_rename.size(), "%s", name.c_str());
@@ -233,6 +225,11 @@ bool Library::DrawHeader(Selection& selection, const std::string& path, const ch
 	if (IconButton("Delete entry", Icon::Delete, "Delete this file from disk; asks for confirmation",
 				   false, nullptr, theme::Record))
 		ImGui::OpenPopup("Delete?");
+	if (PageClose())
+	{
+		selection = std::monostate{};
+		return false;
+	}
 	bool exists = true;
 	if (ImGui::BeginPopup("Rename"))
 	{
@@ -277,7 +274,7 @@ bool Library::DrawHeader(Selection& selection, const std::string& path, const ch
 				m_error = "Delete failed: " + error.message();
 			else
 			{
-				selection = LibrarySel{};
+				selection = std::monostate{};
 				Refresh();
 				exists = false;
 			}
@@ -294,7 +291,7 @@ bool Library::DrawHeader(Selection& selection, const std::string& path, const ch
 }
 void Library::DrawTake(Selection& selection, const std::string& path, RuntimePanels& runtime, RigPanel& rigs)
 {
-	if (!DrawHeader(selection, path, "Take"))
+	if (!DrawHeader(selection, path, Icon::Record))
 		return;
 	const auto* entry = Find(path);
 	if (!entry)
@@ -343,7 +340,7 @@ void Library::DrawTake(Selection& selection, const std::string& path, RuntimePan
 }
 void Library::DrawScript(Selection& selection, const std::string& path, RuntimePanels& runtime, RigPanel& rigs)
 {
-	if (!DrawHeader(selection, path, "Script"))
+	if (!DrawHeader(selection, path, Icon::Script))
 		return;
 	ImGui::Separator();
 	const float unit = ImGui::GetFontSize() / 17;
@@ -422,7 +419,7 @@ void Library::DrawScript(Selection& selection, const std::string& path, RuntimeP
 			if (!checkpoint.detail.empty())
 				ImGui::SetItemTooltip("%s", checkpoint.detail.c_str());
 		}
-		if (!state.output.empty() && ImGui::CollapsingHeader("Output"))
+		if (!state.output.empty() && Section("Output"))
 		{
 			ImGui::BeginChild("Script output", {0, 160 * unit}, ImGuiChildFlags_Borders);
 			for (const auto& line : state.output)

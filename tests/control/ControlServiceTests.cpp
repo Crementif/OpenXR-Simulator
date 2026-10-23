@@ -1117,7 +1117,7 @@ class ObservedImageProvider final : public wire::ImageInspectionProvider
 
 void ImageWindowPublicationAndRelease()
 {
-#if defined(__GNUC__)
+#ifndef SIMXR_TEST_TSAN_ALLOCATOR
 	bool exercisedPublicationRollback = false;
 	for (std::size_t skip = 0; skip < 24 && !exercisedPublicationRollback; ++skip)
 	{

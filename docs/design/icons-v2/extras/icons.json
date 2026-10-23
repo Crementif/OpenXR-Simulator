@@ -1,0 +1,578 @@
+[
+  {
+    "name": "Add",
+    "label": "Add",
+    "category": "Basics",
+    "use": "Add a device, field, keyframe or item",
+    "file": "svg/add.svg",
+    "body": "<path d=\"M12 5v14M5 12h14\"/>"
+  },
+  {
+    "name": "Remove",
+    "label": "Remove",
+    "category": "Basics",
+    "use": "Remove an item from a collection",
+    "file": "svg/remove.svg",
+    "body": "<path d=\"M5 12h14\"/>"
+  },
+  {
+    "name": "Check",
+    "label": "Check",
+    "category": "Basics",
+    "use": "Success, enabled or completed",
+    "file": "svg/check.svg",
+    "body": "<path d=\"m4 12 5 5L20 6\"/>"
+  },
+  {
+    "name": "Undo",
+    "label": "Undo",
+    "category": "Basics",
+    "use": "Undo the last edit",
+    "file": "svg/undo.svg",
+    "body": "<path d=\"M4 5v6h6M4 11l4-4a7 7 0 1 1-1 10\"/>"
+  },
+  {
+    "name": "Redo",
+    "label": "Redo",
+    "category": "Basics",
+    "use": "Redo an undone edit",
+    "file": "svg/redo.svg",
+    "body": "<g transform=\"translate(24 0) scale(-1 1)\"><path d=\"M4 5v6h6M4 11l4-4a7 7 0 1 1-1 10\"/></g>"
+  },
+  {
+    "name": "Lock",
+    "label": "Lock",
+    "category": "Basics",
+    "use": "Lock pose, selection or value",
+    "file": "svg/lock.svg",
+    "body": "<rect x=\"5\" y=\"10\" width=\"14\" height=\"11\" rx=\"2\"/><path d=\"M8 10V7a4 4 0 0 1 8 0v3\"/><path d=\"M12 14v3\"/>"
+  },
+  {
+    "name": "Unlock",
+    "label": "Unlock",
+    "category": "Basics",
+    "use": "Unlock pose, selection or value",
+    "file": "svg/unlock.svg",
+    "body": "<rect x=\"5\" y=\"10\" width=\"14\" height=\"11\" rx=\"2\"/><path d=\"M8 10V7a4 4 0 0 1 7.5-2\"/><path d=\"M12 14v3\"/>"
+  },
+  {
+    "name": "Link",
+    "label": "Link",
+    "category": "Basics",
+    "use": "Link devices or follow a parent",
+    "file": "svg/link.svg",
+    "body": "<path d=\"m10 8 3-3a4.2 4.2 0 0 1 6 6l-3 3M14 16l-3 3a4.2 4.2 0 0 1-6-6l3-3m1 5 6-6\"/>"
+  },
+  {
+    "name": "Unlink",
+    "label": "Unlink",
+    "category": "Basics",
+    "use": "Detach a parent relationship",
+    "file": "svg/unlink.svg",
+    "body": "<path d=\"m13 5 .5-.5a4.2 4.2 0 0 1 6 6l-.5.5M11 19l-.5.5a4.2 4.2 0 0 1-6-6l.5-.5M5 3v3H2m17 15v-3h3M8 8l8 8\"/>"
+  },
+  {
+    "name": "Folder",
+    "label": "Folder",
+    "category": "Files & presets",
+    "use": "Take library, script directory or asset folder",
+    "file": "svg/folder.svg",
+    "body": "<path d=\"M3 7V5a2 2 0 0 1 2-2h4l3 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z\"/>"
+  },
+  {
+    "name": "FolderOpen",
+    "label": "Folder Open",
+    "category": "Files & presets",
+    "use": "Browse a folder",
+    "file": "svg/folder-open.svg",
+    "body": "<path d=\"M3 19V5a2 2 0 0 1 2-2h4l3 3h6a2 2 0 0 1 2 2M3 20l3-10h16l-3 10Z\"/>"
+  },
+  {
+    "name": "Import",
+    "label": "Import",
+    "category": "Files & presets",
+    "use": "Import a take, rig or configuration",
+    "file": "svg/import.svg",
+    "body": "<path d=\"M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5M3 12h12m-4-4 4 4-4 4\"/>"
+  },
+  {
+    "name": "Save",
+    "label": "Save",
+    "category": "Files & presets",
+    "use": "Save a take or preset",
+    "file": "svg/save.svg",
+    "body": "<path d=\"M4 3h13l4 4v13a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1ZM7 3v6h9V3M7 21v-8h10v8\"/>"
+  },
+  {
+    "name": "Copy",
+    "label": "Copy",
+    "category": "Files & presets",
+    "use": "Duplicate a value or item",
+    "file": "svg/copy.svg",
+    "body": "<rect x=\"8\" y=\"8\" width=\"13\" height=\"13\" rx=\"2\"/><path d=\"M5 16H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h11a1 1 0 0 1 1 1v1\"/>"
+  },
+  {
+    "name": "Clipboard",
+    "label": "Clipboard",
+    "category": "Files & presets",
+    "use": "Paste copied settings or pose values",
+    "file": "svg/clipboard.svg",
+    "body": "<rect x=\"8\" y=\"2\" width=\"8\" height=\"4\" rx=\"1\"/><path d=\"M8 4H5a1 1 0 0 0-1 1v15a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V5a1 1 0 0 0-1-1h-3M8 11h8m-8 4h5\"/>"
+  },
+  {
+    "name": "Download",
+    "label": "Download",
+    "category": "Files & presets",
+    "use": "Download or retrieve an asset",
+    "file": "svg/download.svg",
+    "body": "<path d=\"M12 3v12m-4-4 4 4 4-4M4 16v5h16v-5\"/>"
+  },
+  {
+    "name": "Upload",
+    "label": "Upload",
+    "category": "Files & presets",
+    "use": "Upload or send an asset",
+    "file": "svg/upload.svg",
+    "body": "<path d=\"M12 15V3m-4 4 4-4 4 4M4 16v5h16v-5\"/>"
+  },
+  {
+    "name": "Preset",
+    "label": "Preset",
+    "category": "Files & presets",
+    "use": "Reusable rig or settings preset",
+    "file": "svg/preset.svg",
+    "body": "<rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\"/><path d=\"M8 6v12m8-12v12M6 10h4m4 4h4\"/><circle cx=\"8\" cy=\"10\" r=\"1.7\" fill=\"currentColor\" stroke=\"none\"/><circle cx=\"16\" cy=\"14\" r=\"1.7\" fill=\"currentColor\" stroke=\"none\"/>"
+  },
+  {
+    "name": "PanelLeft",
+    "label": "Panel Left",
+    "category": "Views & panels",
+    "use": "Show the device rail or left panel",
+    "file": "svg/panel-left.svg",
+    "body": "<rect x=\"3\" y=\"4\" width=\"18\" height=\"16\" rx=\"2\"/><path d=\"M9 4v16M6 8v8\"/>"
+  },
+  {
+    "name": "PanelRight",
+    "label": "Panel Right",
+    "category": "Views & panels",
+    "use": "Show the inspector or right panel",
+    "file": "svg/panel-right.svg",
+    "body": "<rect x=\"3\" y=\"4\" width=\"18\" height=\"16\" rx=\"2\"/><path d=\"M15 4v16M18 8v8\"/>"
+  },
+  {
+    "name": "PanelBottom",
+    "label": "Panel Bottom",
+    "category": "Views & panels",
+    "use": "Show timeline or bottom panel",
+    "file": "svg/panel-bottom.svg",
+    "body": "<rect x=\"3\" y=\"4\" width=\"18\" height=\"16\" rx=\"2\"/><path d=\"M3 14h18M8 17h8\"/>"
+  },
+  {
+    "name": "SplitView",
+    "label": "Split View",
+    "category": "Views & panels",
+    "use": "Compare two views side by side",
+    "file": "svg/split-view.svg",
+    "body": "<rect x=\"3\" y=\"4\" width=\"18\" height=\"16\" rx=\"2\"/><path d=\"M12 4v16m-5-8h1m8 0h1\"/>"
+  },
+  {
+    "name": "StereoView",
+    "label": "Stereo View",
+    "category": "Views & panels",
+    "use": "Display left and right eye images",
+    "file": "svg/stereo-view.svg",
+    "body": "<rect x=\"2\" y=\"5\" width=\"9\" height=\"14\" rx=\"2\"/><rect x=\"13\" y=\"5\" width=\"9\" height=\"14\" rx=\"2\"/><path d=\"m4 14 2-3 3 4m6-1 2-3 3 4\"/>"
+  },
+  {
+    "name": "FitView",
+    "label": "Fit View",
+    "category": "Views & panels",
+    "use": "Fit preview to available space",
+    "file": "svg/fit-view.svg",
+    "body": "<path d=\"M3 8V3h5m8 0h5v5m0 8v5h-5m-8 0H3v-5\"/><rect x=\"7\" y=\"8\" width=\"10\" height=\"8\" rx=\"1\"/>"
+  },
+  {
+    "name": "Fullscreen",
+    "label": "Fullscreen",
+    "category": "Views & panels",
+    "use": "Expand preview to full screen",
+    "file": "svg/fullscreen.svg",
+    "body": "<path d=\"M3 9V3h6m6 0h6v6m0 6v6h-6m-6 0H3v-6\"/>"
+  },
+  {
+    "name": "Minimize",
+    "label": "Minimize",
+    "category": "Views & panels",
+    "use": "Restore preview from full screen",
+    "file": "svg/minimize.svg",
+    "body": "<path d=\"M3 9h6V3m6 0v6h6m0 6h-6v6m-6 0v-6H3\"/>"
+  },
+  {
+    "name": "Screenshot",
+    "label": "Screenshot",
+    "category": "Views & panels",
+    "use": "Capture the current preview image",
+    "file": "svg/screenshot.svg",
+    "body": "<path d=\"M4 7h3l2-3h6l2 3h3a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1Z\"/><circle cx=\"12\" cy=\"13\" r=\"4\"/>"
+  },
+  {
+    "name": "Translate",
+    "label": "Translate",
+    "category": "Pose & space",
+    "use": "Move along position axes",
+    "file": "svg/translate.svg",
+    "body": "<path d=\"M12 2v20M2 12h20M9 5l3-3 3 3M9 19l3 3 3-3M5 9l-3 3 3 3m14-6 3 3-3 3\"/>"
+  },
+  {
+    "name": "Rotate",
+    "label": "Rotate",
+    "category": "Pose & space",
+    "use": "Rotate a selected device",
+    "file": "svg/rotate.svg",
+    "body": "<path d=\"M20 9a8 8 0 1 0 0 6M20 3v6h-6\"/><circle cx=\"12\" cy=\"12\" r=\"2\"/>"
+  },
+  {
+    "name": "Scale",
+    "label": "Scale",
+    "category": "Pose & space",
+    "use": "Change rig or room scale",
+    "file": "svg/scale.svg",
+    "body": "<rect x=\"3\" y=\"13\" width=\"8\" height=\"8\" rx=\"1\"/><path d=\"m11 13 10-10M14 3h7v7\"/><path d=\"M3 9V3h6\" stroke-dasharray=\"3 3\"/>"
+  },
+  {
+    "name": "ResetPose",
+    "label": "Reset Pose",
+    "category": "Pose & space",
+    "use": "Restore default device pose",
+    "file": "svg/reset-pose.svg",
+    "body": "<path d=\"M4 4v6h6M4 10a8 8 0 1 1 1 8\"/><path d=\"m12 8-3 4h2v5h2v-5h2Z\"/>"
+  },
+  {
+    "name": "Recenter",
+    "label": "Recenter",
+    "category": "Pose & space",
+    "use": "Center the user or tracking origin",
+    "file": "svg/recenter.svg",
+    "body": "<circle cx=\"12\" cy=\"12\" r=\"6\"/><circle cx=\"12\" cy=\"12\" r=\"1.8\" fill=\"currentColor\" stroke=\"none\"/><path d=\"M12 2v3m0 14v3M2 12h3m14 0h3\"/>"
+  },
+  {
+    "name": "Anchor",
+    "label": "Anchor",
+    "category": "Pose & space",
+    "use": "Choose or pin a spatial anchor",
+    "file": "svg/anchor.svg",
+    "body": "<circle cx=\"12\" cy=\"5\" r=\"2\"/><path d=\"M12 7v14M7 11h10M3 14v3l3-1m15-2v3l-3-1M3 17c2 0 4 4 9 4s7-4 9-4\"/>"
+  },
+  {
+    "name": "FloorHeight",
+    "label": "Floor Height",
+    "category": "Pose & space",
+    "use": "Adjust floor offset or standing height",
+    "file": "svg/floor-height.svg",
+    "body": "<path d=\"M3 21h18M12 3v14m-3-3 3 3 3-3M8 3h8M5 17v1m14-1v1\"/>"
+  },
+  {
+    "name": "Reach",
+    "label": "Reach",
+    "category": "Pose & space",
+    "use": "Change arm reach or controller distance",
+    "file": "svg/reach.svg",
+    "body": "<circle cx=\"6\" cy=\"6\" r=\"2\"/><path d=\"M6 8v6l5 6M6 11l7-4M13 7h8m-3-3 3 3-3 3\"/><path d=\"M3 21h18\" stroke-dasharray=\"2 3\"/>"
+  },
+  {
+    "name": "Snap",
+    "label": "Snap",
+    "category": "Pose & space",
+    "use": "Snap to grid, axis or angle",
+    "file": "svg/snap.svg",
+    "body": "<path d=\"M5 3v8a7 7 0 0 0 14 0V3h-4v8a3 3 0 0 1-6 0V3ZM5 7h4m6 0h4\"/><circle cx=\"5\" cy=\"21\" r=\"0.8\" fill=\"currentColor\" stroke=\"none\"/><circle cx=\"12\" cy=\"21\" r=\"0.8\" fill=\"currentColor\" stroke=\"none\"/><circle cx=\"19\" cy=\"21\" r=\"0.8\" fill=\"currentColor\" stroke=\"none\"/>"
+  },
+  {
+    "name": "TrackingGood",
+    "label": "Tracking Good",
+    "category": "Tracking & rendering",
+    "use": "Pose tracking available",
+    "file": "svg/tracking-good.svg",
+    "body": "<path d=\"M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5m-9-9 3 3 7-7\"/>"
+  },
+  {
+    "name": "TrackingLost",
+    "label": "Tracking Lost",
+    "category": "Tracking & rendering",
+    "use": "Pose tracking lost or unavailable",
+    "file": "svg/tracking-lost.svg",
+    "body": "<path d=\"M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M9 9l6 6m0-6-6 6\"/>"
+  },
+  {
+    "name": "Boundary",
+    "label": "Boundary",
+    "category": "Tracking & rendering",
+    "use": "Safety boundary or playspace bounds",
+    "file": "svg/boundary.svg",
+    "body": "<path d=\"m3 9 9-5 9 5v9l-9 4-9-4Z M3 9l9 5 9-5M12 14v8\" stroke-dasharray=\"3 2\"/><circle cx=\"12\" cy=\"10\" r=\"1.5\" fill=\"currentColor\" stroke=\"none\"/>"
+  },
+  {
+    "name": "RoomScale",
+    "label": "Room Scale",
+    "category": "Tracking & rendering",
+    "use": "Room-scale play area",
+    "file": "svg/room-scale.svg",
+    "body": "<path d=\"m3 7 9-4 9 4v12l-9 3-9-3ZM12 3v7M3 7v12l9-4 9 4\"/><path d=\"M9 13h6m-3-3v6\"/>"
+  },
+  {
+    "name": "Calibration",
+    "label": "Calibration",
+    "category": "Tracking & rendering",
+    "use": "Calibrate tracking or device alignment",
+    "file": "svg/calibration.svg",
+    "body": "<circle cx=\"12\" cy=\"12\" r=\"7\"/><path d=\"M12 2v4m0 12v4M2 12h4m12 0h4M9 12l2 2 4-4\"/>"
+  },
+  {
+    "name": "Reprojection",
+    "label": "Reprojection",
+    "category": "Tracking & rendering",
+    "use": "Rotational reprojection or synthesized frames",
+    "file": "svg/reprojection.svg",
+    "body": "<rect x=\"3\" y=\"4\" width=\"12\" height=\"9\" rx=\"1\"/><path d=\"M18 11h3v10H9v-5M17 3a5 5 0 0 1 4 5m-3-1 3 1 1-3M7 21a5 5 0 0 1-5-5m-1 3 1-3 3 1\"/>"
+  },
+  {
+    "name": "Foveation",
+    "label": "Foveation",
+    "category": "Tracking & rendering",
+    "use": "Foveated rendering or gaze focus region",
+    "file": "svg/foveation.svg",
+    "body": "<path d=\"M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12Z\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/><circle cx=\"12\" cy=\"12\" r=\"0.8\" fill=\"currentColor\" stroke=\"none\"/><path d=\"M4 3h2m12 0h2M4 21h2m12 0h2\"/>"
+  },
+  {
+    "name": "Passthrough",
+    "label": "Passthrough",
+    "category": "Tracking & rendering",
+    "use": "See the environment through the headset",
+    "file": "svg/passthrough.svg",
+    "body": "<path d=\"M3 9h18v10h-6l-2-3h-2l-2 3H3Z M5 6V3h14v3m-7-3v4\"/><path d=\"m7 12 2 2 3-3 5 3\"/>"
+  },
+  {
+    "name": "Depth",
+    "label": "Depth",
+    "category": "Tracking & rendering",
+    "use": "Inspect depth or distance layers",
+    "file": "svg/depth.svg",
+    "body": "<path d=\"m3 7 9-4 9 4-9 4ZM3 12l9 4 9-4M3 17l9 4 9-4\"/>"
+  },
+  {
+    "name": "Thumbstick",
+    "label": "Thumbstick",
+    "category": "Input & interaction",
+    "use": "Analog stick movement and click",
+    "file": "svg/thumbstick.svg",
+    "body": "<circle cx=\"12\" cy=\"8\" r=\"5\"/><path d=\"M9 12v5h6v-5M6 16c-2 .5-3 1.2-3 2 0 1.7 4 3 9 3s9-1.3 9-3c0-.8-1-1.5-3-2\"/>"
+  },
+  {
+    "name": "Trigger",
+    "label": "Trigger",
+    "category": "Input & interaction",
+    "use": "Index trigger actuation",
+    "file": "svg/trigger.svg",
+    "body": "<path d=\"M6 3h11v5c0 7-5 12-11 13v-5c4-1 6-4 6-8H6ZM6 7h6\"/>"
+  },
+  {
+    "name": "Grip",
+    "label": "Grip",
+    "category": "Input & interaction",
+    "use": "Squeeze or grip actuation",
+    "file": "svg/grip.svg",
+    "body": "<rect x=\"9\" y=\"3\" width=\"6\" height=\"18\" rx=\"3\"/><path d=\"M2 12h4m-2-2 2 2-2 2m18-2h-4m2-2-2 2 2 2\"/>"
+  },
+  {
+    "name": "HandTracking",
+    "label": "Hand Tracking",
+    "category": "Input & interaction",
+    "use": "Hand pose and finger tracking",
+    "file": "svg/hand-tracking.svg",
+    "body": "<path d=\"M7 12V6a1.5 1.5 0 0 1 3 0v5-7a1.5 1.5 0 0 1 3 0v7-6a1.5 1.5 0 0 1 3 0v7-4a1.5 1.5 0 0 1 3 0v7c0 4-2.5 7-6 7h-1c-2 0-3.5-1-4.5-2.5L3 13a1.5 1.5 0 0 1 2-2l2 1Z\"/>"
+  },
+  {
+    "name": "Haptics",
+    "label": "Haptics",
+    "category": "Input & interaction",
+    "use": "Vibration or haptic feedback",
+    "file": "svg/haptics.svg",
+    "body": "<rect x=\"8\" y=\"5\" width=\"8\" height=\"14\" rx=\"3\"/><path d=\"M5 7a10 10 0 0 0 0 10m14-10a10 10 0 0 1 0 10M3 4a18 18 0 0 0 0 16M21 4a18 18 0 0 1 0 16\"/>"
+  },
+  {
+    "name": "Keyboard",
+    "label": "Keyboard",
+    "category": "Input & interaction",
+    "use": "Keyboard bindings or keyboard pilot input",
+    "file": "svg/keyboard.svg",
+    "body": "<rect x=\"2\" y=\"5\" width=\"20\" height=\"14\" rx=\"2\"/><circle cx=\"6\" cy=\"9\" r=\"0.8\" fill=\"currentColor\" stroke=\"none\"/><circle cx=\"10\" cy=\"9\" r=\"0.8\" fill=\"currentColor\" stroke=\"none\"/><circle cx=\"14\" cy=\"9\" r=\"0.8\" fill=\"currentColor\" stroke=\"none\"/><circle cx=\"18\" cy=\"9\" r=\"0.8\" fill=\"currentColor\" stroke=\"none\"/><circle cx=\"6\" cy=\"12\" r=\"0.8\" fill=\"currentColor\" stroke=\"none\"/><circle cx=\"10\" cy=\"12\" r=\"0.8\" fill=\"currentColor\" stroke=\"none\"/><circle cx=\"14\" cy=\"12\" r=\"0.8\" fill=\"currentColor\" stroke=\"none\"/><circle cx=\"18\" cy=\"12\" r=\"0.8\" fill=\"currentColor\" stroke=\"none\"/><path d=\"M7 16h10\"/>"
+  },
+  {
+    "name": "Mouse",
+    "label": "Mouse",
+    "category": "Input & interaction",
+    "use": "Mouse look or pointer input",
+    "file": "svg/mouse.svg",
+    "body": "<rect x=\"6\" y=\"2\" width=\"12\" height=\"20\" rx=\"6\"/><path d=\"M6 10h12M12 3v7\"/><path d=\"M12 5v2\" stroke-width=\"2.5\"/>"
+  },
+  {
+    "name": "Bindings",
+    "label": "Bindings",
+    "category": "Input & interaction",
+    "use": "Map physical inputs to actions",
+    "file": "svg/bindings.svg",
+    "body": "<circle cx=\"5\" cy=\"5\" r=\"2\"/><circle cx=\"5\" cy=\"19\" r=\"2\"/><circle cx=\"19\" cy=\"12\" r=\"2\"/><path d=\"M7 5h2a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H7M12 12h5\"/>"
+  },
+  {
+    "name": "Touch",
+    "label": "Touch",
+    "category": "Input & interaction",
+    "use": "Capacitive contact without a press",
+    "file": "svg/touch.svg",
+    "body": "<path d=\"M10 21v-5l-4-4a1.5 1.5 0 0 1 2-2l2 2V7a2 2 0 0 1 4 0v5h2a3 3 0 0 1 3 3v3l-2 3\"/><path d=\"M6 6a6 6 0 0 1 12 0\" stroke-dasharray=\"2 3\"/>"
+  },
+  {
+    "name": "Timeline",
+    "label": "Timeline",
+    "category": "Recording & timeline",
+    "use": "Timeline overview and playhead",
+    "file": "svg/timeline.svg",
+    "body": "<path d=\"M3 6h18M3 18h18M9 4v16\"/><rect x=\"3\" y=\"9\" width=\"4\" height=\"6\" rx=\"1\"/><rect x=\"12\" y=\"9\" width=\"9\" height=\"6\" rx=\"1\"/>"
+  },
+  {
+    "name": "Take",
+    "label": "Take",
+    "category": "Recording & timeline",
+    "use": "Recorded input take or capture clip",
+    "file": "svg/take.svg",
+    "body": "<rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\"/><path d=\"M7 3v18M17 3v18M3 8h4m-4 8h4M17 8h4m-4 8h4\"/><circle cx=\"12\" cy=\"12\" r=\"2.5\" fill=\"currentColor\" stroke=\"none\"/>"
+  },
+  {
+    "name": "Loop",
+    "label": "Loop",
+    "category": "Recording & timeline",
+    "use": "Repeat a playback range",
+    "file": "svg/loop.svg",
+    "body": "<path d=\"M4 10V8a3 3 0 0 1 3-3h13m-3-3 3 3-3 3M20 14v2a3 3 0 0 1-3 3H4m3-3-3 3 3 3\"/>"
+  },
+  {
+    "name": "Marker",
+    "label": "Marker",
+    "category": "Recording & timeline",
+    "use": "Timeline bookmark or event marker",
+    "file": "svg/marker.svg",
+    "body": "<path d=\"M5 22V3h14l-3 4 3 4H5\"/>"
+  },
+  {
+    "name": "Trim",
+    "label": "Trim",
+    "category": "Recording & timeline",
+    "use": "Trim a selected capture range",
+    "file": "svg/trim.svg",
+    "body": "<path d=\"M5 3v18M2 6h3m-3 12h3M19 3v18m0-15h3m-3 12h3\"/><rect x=\"8\" y=\"8\" width=\"8\" height=\"8\" rx=\"1\"/>"
+  },
+  {
+    "name": "PlaybackSpeed",
+    "label": "Playback Speed",
+    "category": "Recording & timeline",
+    "use": "Playback rate or time scale",
+    "file": "svg/playback-speed.svg",
+    "body": "<path d=\"M3 18a10 10 0 1 1 18 0M12 3v2M5 7l1.5 1.5M19 7l-1.5 1.5M12 13l4-5\"/><circle cx=\"12\" cy=\"13\" r=\"1.5\"/><path d=\"m9 18 6 3-6 2Z\" fill=\"currentColor\" stroke=\"none\"/>"
+  },
+  {
+    "name": "History",
+    "label": "History",
+    "category": "Recording & timeline",
+    "use": "Inspect past frames or recent changes",
+    "file": "svg/history.svg",
+    "body": "<path d=\"M3 4v6h6M3 10a9 9 0 1 1 1 8M12 7v6l4 2\"/>"
+  },
+  {
+    "name": "CompareFrames",
+    "label": "Compare Frames",
+    "category": "Recording & timeline",
+    "use": "Compare a live frame with a past frame",
+    "file": "svg/compare-frames.svg",
+    "body": "<rect x=\"2\" y=\"3\" width=\"9\" height=\"13\" rx=\"1\"/><rect x=\"13\" y=\"3\" width=\"9\" height=\"13\" rx=\"1\"/><path d=\"M6 20h12m-10-2-2 2 2 2m8-4 2 2-2 2\"/>"
+  },
+  {
+    "name": "Keyframe",
+    "label": "Keyframe",
+    "category": "Recording & timeline",
+    "use": "Pose keyframe or animation waypoint",
+    "file": "svg/keyframe.svg",
+    "body": "<path d=\"m12 5 7 7-7 7-7-7ZM2 12h3m14 0h3\"/>"
+  },
+  {
+    "name": "Connection",
+    "label": "Connection",
+    "category": "Status & diagnostics",
+    "use": "Connected runtime or device transport",
+    "file": "svg/connection.svg",
+    "body": "<path d=\"M2 12h3m14 0h3M5 8h5v8H5ZM14 8h5v8h-5ZM10 10h4m-4 4h4\"/>"
+  },
+  {
+    "name": "Disconnect",
+    "label": "Disconnect",
+    "category": "Status & diagnostics",
+    "use": "Disconnected runtime or transport",
+    "file": "svg/disconnect.svg",
+    "body": "<path d=\"M2 12h2m16 0h2M4 8h4v8H4ZM16 8h4v8h-4ZM8 10h2m-2 4h2m4-4h2m-2 4h2\"/>"
+  },
+  {
+    "name": "Battery",
+    "label": "Battery",
+    "category": "Status & diagnostics",
+    "use": "Device battery level",
+    "file": "svg/battery.svg",
+    "body": "<rect x=\"2\" y=\"6\" width=\"18\" height=\"12\" rx=\"2\"/><path d=\"M22 10v4M6 10v4m4-4v4m4-4v4\"/>"
+  },
+  {
+    "name": "BatteryCharging",
+    "label": "Battery Charging",
+    "category": "Status & diagnostics",
+    "use": "Battery charging state",
+    "file": "svg/battery-charging.svg",
+    "body": "<path d=\"M8 6H4a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h3m9-12h2a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2M22 10v4m-9-12-5 11h5l-2 9 6-12h-5Z\"/>"
+  },
+  {
+    "name": "Performance",
+    "label": "Performance",
+    "category": "Status & diagnostics",
+    "use": "Performance or CPU/GPU activity",
+    "file": "svg/performance.svg",
+    "body": "<path d=\"M3 3v18h18M7 17v-5m5 5V8m5 9V4\"/>"
+  },
+  {
+    "name": "FrameTime",
+    "label": "Frame Time",
+    "category": "Status & diagnostics",
+    "use": "Frame-time trace and slow-frame spikes",
+    "file": "svg/frame-time.svg",
+    "body": "<path d=\"M3 3v18h18M5 15h3l2-5 3 8 3-13 2 10h3\"/>"
+  },
+  {
+    "name": "Memory",
+    "label": "Memory",
+    "category": "Status & diagnostics",
+    "use": "GPU or host memory usage",
+    "file": "svg/memory.svg",
+    "body": "<rect x=\"5\" y=\"5\" width=\"14\" height=\"14\" rx=\"2\"/><rect x=\"9\" y=\"9\" width=\"6\" height=\"6\" rx=\"1\"/><path d=\"M8 2v3m4-3v3m4-3v3M8 19v3m4-3v3m4-3v3M2 8h3m-3 4h3m-3 4h3m14-8h3m-3 4h3m-3 4h3\"/>"
+  },
+  {
+    "name": "Log",
+    "label": "Log",
+    "category": "Status & diagnostics",
+    "use": "Runtime log, diagnostic output or console",
+    "file": "svg/log.svg",
+    "body": "<rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\"/><path d=\"m6 8 3 3-3 3M12 15h5\"/>"
+  },
+  {
+    "name": "Bug",
+    "label": "Bug",
+    "category": "Status & diagnostics",
+    "use": "Validation issue or defect report",
+    "file": "svg/bug.svg",
+    "body": "<rect x=\"7\" y=\"8\" width=\"10\" height=\"12\" rx=\"5\"/><path d=\"M9 8V6a3 3 0 0 1 6 0v2M12 10v10M3 7l4 3m-5 4h5m-4 7 4-3M21 7l-4 3m5 4h-5m4 7-4-3M8 2l2 2m6-2-2 2\"/>"
+  }
+]

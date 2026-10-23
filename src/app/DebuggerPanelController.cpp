@@ -186,6 +186,8 @@ void DebuggerPanelController::InterruptSession()
 					  return session.id == m_selected.id && session.generation == m_selected.generation;
 				  });
 	m_selected = {};
+	m_status = {};
+	m_nextSessions = {};
 	m_manual = false;
 	m_lease = 0;
 	m_deferred.reset();
@@ -230,12 +232,15 @@ bool DebuggerPanelController::Handle(const PanelTask& task, const wire::Message&
 				{U64(session, tag::Session), U64(session, tag::Generation), Boolean(session, tag::Running)});
 		}
 		m_sessions = std::move(prepared);
-		if (std::none_of(m_sessions.begin(), m_sessions.end(),
-						 [&](const auto& session)
-						 {
-							 return session.id == m_selected.id && session.generation == m_selected.generation;
-						 }))
+		const auto selected = std::find_if(m_sessions.begin(), m_sessions.end(),
+			[&](const auto& session)
+			{
+				return session.id == m_selected.id && session.generation == m_selected.generation;
+			});
+		if (selected == m_sessions.end())
 			ChooseSession(m_sessions.empty() ? PanelSession{} : m_sessions.front());
+		else
+			m_selected.running = selected->running;
 		break;
 	}
 	case Work::Status:

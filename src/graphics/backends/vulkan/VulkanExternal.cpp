@@ -43,7 +43,8 @@ constexpr VkImageUsageFlags ImageUsages = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | 
 bool SupportedShape(const VulkanExternalImageSpec& image)
 {
 	return (image.format == VK_FORMAT_R8G8B8A8_SRGB || image.format == VK_FORMAT_R8G8B8A8_UNORM ||
-			image.format == VK_FORMAT_B8G8R8A8_SRGB || image.format == VK_FORMAT_B8G8R8A8_UNORM) &&
+			image.format == VK_FORMAT_B8G8R8A8_SRGB || image.format == VK_FORMAT_B8G8R8A8_UNORM ||
+			image.format == VK_FORMAT_R16G16B16A16_SFLOAT || image.format == VK_FORMAT_A2B10G10R10_UNORM_PACK32) &&
 		   image.extent.width && image.extent.height && image.extent.depth == 1 && image.arrayLayers >= 1 &&
 		   image.arrayLayers <= 2 && image.mipLevels >= 1 &&
 		   image.mipLevels <= std::bit_width(std::max(image.extent.width, image.extent.height)) &&

@@ -17,10 +17,15 @@ class TimelinePanel
   public:
 	// Folded draws one row: transport, LIVE and the frame rate. fold is set when
 	// the user asks to fold or unfold the timeline.
-	bool Draw(RuntimePanels& runtime, ShellState& shell, bool folded, bool& fold);
+	bool Draw(RuntimePanels& runtime, ShellState& shell, bool folded);
 	static float FoldedHeight(float scale)
 	{
 		return 36 * scale;
+	}
+	// Screen rectangle of the Library drawer below the transport; empty while it is closed.
+	ShellRect DrawerRect() const
+	{
+		return m_drawer;
 	}
 	void ObserveRig(const RuntimeView& runtime, std::uint64_t run, const automation::RigSnapshot& state,
 					bool matchesTarget);
@@ -82,6 +87,7 @@ class TimelinePanel
 	std::vector<TakeSource> m_takes;
 	std::optional<Ghost> m_ghost;
 	TimelineCanvas m_canvas;
+	ShellRect m_drawer;
 	bool m_tint = false;
 };
 } // namespace simxr::app

@@ -1,0 +1,5 @@
+#pragma once
+namespace simxr::shaders
+{
+inline constexpr char CompositorHlsl[] = R"simxr(@SIMXR_COMPOSITOR_HLSL@)simxr";
+}

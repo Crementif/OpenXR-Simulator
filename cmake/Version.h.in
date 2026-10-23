@@ -1,0 +1,9 @@
+#pragma once
+
+#include <openxr/openxr.h>
+
+namespace simxr
+{
+inline constexpr char Version[] = "@PROJECT_VERSION@";
+inline constexpr XrVersion RuntimeVersion = XR_MAKE_VERSION(@PROJECT_VERSION_MAJOR@, @PROJECT_VERSION_MINOR@, @PROJECT_VERSION_PATCH@);
+}

@@ -166,6 +166,15 @@ std::filesystem::path CompanionSettingsPath()
 #endif
 	throw std::runtime_error("No absolute companion configuration directory is available");
 }
+void ResetLayout(CompanionSettings& settings)
+{
+	const CompanionSettings defaults;
+	settings.inspectorWidth = defaults.inspectorWidth;
+	settings.timelineHeight = defaults.timelineHeight;
+	settings.timelineResized = false;
+	settings.inspectorFolded = false;
+	settings.timelineFolded = false;
+}
 void ValidateSettings(const CompanionSettings& settings)
 {
 	if (settings.snapshotBudgetMiB < SnapshotBudget::MinMiB || settings.snapshotBudgetMiB > SnapshotBudget::MaxMiB)

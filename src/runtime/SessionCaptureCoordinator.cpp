@@ -38,7 +38,7 @@ XrResult SessionCaptureCoordinator::Configure(FramePool&& pool, bool layerViews,
 	m_pool = std::move(pool);
 	m_layerViews = layerViews;
 	m_depthViews = layerViews && depthViews;
-	m_filteredComposition = layerViews && filteredComposition;
+	m_filteredComposition = filteredComposition;
 	m_promoter = std::move(promoter);
 	return XR_SUCCESS;
 }
@@ -118,7 +118,7 @@ void SessionCaptureCoordinator::Collect() const
 		pool->Collect();
 }
 
-void SessionCaptureCoordinator::ReclaimSnapshots(std::size_t producers)
+void SessionCaptureCoordinator::ReclaimSnapshots(std::size_t producers, std::size_t slots)
 {
 	Collect();
 	m_store.Poll();
@@ -127,7 +127,9 @@ void SessionCaptureCoordinator::ReclaimSnapshots(std::size_t producers)
 		std::lock_guard lock(m_mutex);
 		pool = m_pool;
 	}
-	while (m_store.Snapshot().heldSlots >= m_store.Capacity() ||
+	if (slots > m_store.Capacity() || (pool && producers > pool->Capacity()))
+		return;
+	while (m_store.Snapshot().heldSlots + slots > m_store.Capacity() ||
 		(pool && pool->InUse() + producers > pool->Capacity()))
 	{
 		if (!m_store.EvictOldest())
@@ -504,8 +506,9 @@ XrResult SessionCaptureCoordinator::Submission::Prepare(FrameKey frame)
 {
 	if (XR_FAILED(m_validation))
 		return m_validation;
-	if (m_outputs.size() > 1 && !m_owner.Supports({CaptureKind::LayerView}))
-		return XR_ERROR_FEATURE_UNSUPPORTED;
+	for (const auto& capture : m_outputs)
+		if (capture.target.IsAdditionalImage() && !m_owner.Supports(capture.target))
+			return XR_ERROR_FEATURE_UNSUPPORTED;
 	m_frame = frame;
 	m_requested = m_owner.m_store.RequestedTargets(frame);
 	return XR_SUCCESS;

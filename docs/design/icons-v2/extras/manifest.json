@@ -1,0 +1,513 @@
+{
+  "name": "OpenXR Simulator optional icons",
+  "grid": 24,
+  "strokeWidth": 1.75,
+  "color": "currentColor",
+  "status": "Asset proposals; no application enum assignments",
+  "icons": [
+    {
+      "name": "Add",
+      "label": "Add",
+      "category": "Basics",
+      "use": "Add a device, field, keyframe or item",
+      "file": "svg/add.svg"
+    },
+    {
+      "name": "Remove",
+      "label": "Remove",
+      "category": "Basics",
+      "use": "Remove an item from a collection",
+      "file": "svg/remove.svg"
+    },
+    {
+      "name": "Check",
+      "label": "Check",
+      "category": "Basics",
+      "use": "Success, enabled or completed",
+      "file": "svg/check.svg"
+    },
+    {
+      "name": "Undo",
+      "label": "Undo",
+      "category": "Basics",
+      "use": "Undo the last edit",
+      "file": "svg/undo.svg"
+    },
+    {
+      "name": "Redo",
+      "label": "Redo",
+      "category": "Basics",
+      "use": "Redo an undone edit",
+      "file": "svg/redo.svg"
+    },
+    {
+      "name": "Lock",
+      "label": "Lock",
+      "category": "Basics",
+      "use": "Lock pose, selection or value",
+      "file": "svg/lock.svg"
+    },
+    {
+      "name": "Unlock",
+      "label": "Unlock",
+      "category": "Basics",
+      "use": "Unlock pose, selection or value",
+      "file": "svg/unlock.svg"
+    },
+    {
+      "name": "Link",
+      "label": "Link",
+      "category": "Basics",
+      "use": "Link devices or follow a parent",
+      "file": "svg/link.svg"
+    },
+    {
+      "name": "Unlink",
+      "label": "Unlink",
+      "category": "Basics",
+      "use": "Detach a parent relationship",
+      "file": "svg/unlink.svg"
+    },
+    {
+      "name": "Folder",
+      "label": "Folder",
+      "category": "Files & presets",
+      "use": "Take library, script directory or asset folder",
+      "file": "svg/folder.svg"
+    },
+    {
+      "name": "FolderOpen",
+      "label": "Folder Open",
+      "category": "Files & presets",
+      "use": "Browse a folder",
+      "file": "svg/folder-open.svg"
+    },
+    {
+      "name": "Import",
+      "label": "Import",
+      "category": "Files & presets",
+      "use": "Import a take, rig or configuration",
+      "file": "svg/import.svg"
+    },
+    {
+      "name": "Save",
+      "label": "Save",
+      "category": "Files & presets",
+      "use": "Save a take or preset",
+      "file": "svg/save.svg"
+    },
+    {
+      "name": "Copy",
+      "label": "Copy",
+      "category": "Files & presets",
+      "use": "Duplicate a value or item",
+      "file": "svg/copy.svg"
+    },
+    {
+      "name": "Clipboard",
+      "label": "Clipboard",
+      "category": "Files & presets",
+      "use": "Paste copied settings or pose values",
+      "file": "svg/clipboard.svg"
+    },
+    {
+      "name": "Download",
+      "label": "Download",
+      "category": "Files & presets",
+      "use": "Download or retrieve an asset",
+      "file": "svg/download.svg"
+    },
+    {
+      "name": "Upload",
+      "label": "Upload",
+      "category": "Files & presets",
+      "use": "Upload or send an asset",
+      "file": "svg/upload.svg"
+    },
+    {
+      "name": "Preset",
+      "label": "Preset",
+      "category": "Files & presets",
+      "use": "Reusable rig or settings preset",
+      "file": "svg/preset.svg"
+    },
+    {
+      "name": "PanelLeft",
+      "label": "Panel Left",
+      "category": "Views & panels",
+      "use": "Show the device rail or left panel",
+      "file": "svg/panel-left.svg"
+    },
+    {
+      "name": "PanelRight",
+      "label": "Panel Right",
+      "category": "Views & panels",
+      "use": "Show the inspector or right panel",
+      "file": "svg/panel-right.svg"
+    },
+    {
+      "name": "PanelBottom",
+      "label": "Panel Bottom",
+      "category": "Views & panels",
+      "use": "Show timeline or bottom panel",
+      "file": "svg/panel-bottom.svg"
+    },
+    {
+      "name": "SplitView",
+      "label": "Split View",
+      "category": "Views & panels",
+      "use": "Compare two views side by side",
+      "file": "svg/split-view.svg"
+    },
+    {
+      "name": "StereoView",
+      "label": "Stereo View",
+      "category": "Views & panels",
+      "use": "Display left and right eye images",
+      "file": "svg/stereo-view.svg"
+    },
+    {
+      "name": "FitView",
+      "label": "Fit View",
+      "category": "Views & panels",
+      "use": "Fit preview to available space",
+      "file": "svg/fit-view.svg"
+    },
+    {
+      "name": "Fullscreen",
+      "label": "Fullscreen",
+      "category": "Views & panels",
+      "use": "Expand preview to full screen",
+      "file": "svg/fullscreen.svg"
+    },
+    {
+      "name": "Minimize",
+      "label": "Minimize",
+      "category": "Views & panels",
+      "use": "Restore preview from full screen",
+      "file": "svg/minimize.svg"
+    },
+    {
+      "name": "Screenshot",
+      "label": "Screenshot",
+      "category": "Views & panels",
+      "use": "Capture the current preview image",
+      "file": "svg/screenshot.svg"
+    },
+    {
+      "name": "Translate",
+      "label": "Translate",
+      "category": "Pose & space",
+      "use": "Move along position axes",
+      "file": "svg/translate.svg"
+    },
+    {
+      "name": "Rotate",
+      "label": "Rotate",
+      "category": "Pose & space",
+      "use": "Rotate a selected device",
+      "file": "svg/rotate.svg"
+    },
+    {
+      "name": "Scale",
+      "label": "Scale",
+      "category": "Pose & space",
+      "use": "Change rig or room scale",
+      "file": "svg/scale.svg"
+    },
+    {
+      "name": "ResetPose",
+      "label": "Reset Pose",
+      "category": "Pose & space",
+      "use": "Restore default device pose",
+      "file": "svg/reset-pose.svg"
+    },
+    {
+      "name": "Recenter",
+      "label": "Recenter",
+      "category": "Pose & space",
+      "use": "Center the user or tracking origin",
+      "file": "svg/recenter.svg"
+    },
+    {
+      "name": "Anchor",
+      "label": "Anchor",
+      "category": "Pose & space",
+      "use": "Choose or pin a spatial anchor",
+      "file": "svg/anchor.svg"
+    },
+    {
+      "name": "FloorHeight",
+      "label": "Floor Height",
+      "category": "Pose & space",
+      "use": "Adjust floor offset or standing height",
+      "file": "svg/floor-height.svg"
+    },
+    {
+      "name": "Reach",
+      "label": "Reach",
+      "category": "Pose & space",
+      "use": "Change arm reach or controller distance",
+      "file": "svg/reach.svg"
+    },
+    {
+      "name": "Snap",
+      "label": "Snap",
+      "category": "Pose & space",
+      "use": "Snap to grid, axis or angle",
+      "file": "svg/snap.svg"
+    },
+    {
+      "name": "TrackingGood",
+      "label": "Tracking Good",
+      "category": "Tracking & rendering",
+      "use": "Pose tracking available",
+      "file": "svg/tracking-good.svg"
+    },
+    {
+      "name": "TrackingLost",
+      "label": "Tracking Lost",
+      "category": "Tracking & rendering",
+      "use": "Pose tracking lost or unavailable",
+      "file": "svg/tracking-lost.svg"
+    },
+    {
+      "name": "Boundary",
+      "label": "Boundary",
+      "category": "Tracking & rendering",
+      "use": "Safety boundary or playspace bounds",
+      "file": "svg/boundary.svg"
+    },
+    {
+      "name": "RoomScale",
+      "label": "Room Scale",
+      "category": "Tracking & rendering",
+      "use": "Room-scale play area",
+      "file": "svg/room-scale.svg"
+    },
+    {
+      "name": "Calibration",
+      "label": "Calibration",
+      "category": "Tracking & rendering",
+      "use": "Calibrate tracking or device alignment",
+      "file": "svg/calibration.svg"
+    },
+    {
+      "name": "Reprojection",
+      "label": "Reprojection",
+      "category": "Tracking & rendering",
+      "use": "Rotational reprojection or synthesized frames",
+      "file": "svg/reprojection.svg"
+    },
+    {
+      "name": "Foveation",
+      "label": "Foveation",
+      "category": "Tracking & rendering",
+      "use": "Foveated rendering or gaze focus region",
+      "file": "svg/foveation.svg"
+    },
+    {
+      "name": "Passthrough",
+      "label": "Passthrough",
+      "category": "Tracking & rendering",
+      "use": "See the environment through the headset",
+      "file": "svg/passthrough.svg"
+    },
+    {
+      "name": "Depth",
+      "label": "Depth",
+      "category": "Tracking & rendering",
+      "use": "Inspect depth or distance layers",
+      "file": "svg/depth.svg"
+    },
+    {
+      "name": "Thumbstick",
+      "label": "Thumbstick",
+      "category": "Input & interaction",
+      "use": "Analog stick movement and click",
+      "file": "svg/thumbstick.svg"
+    },
+    {
+      "name": "Trigger",
+      "label": "Trigger",
+      "category": "Input & interaction",
+      "use": "Index trigger actuation",
+      "file": "svg/trigger.svg"
+    },
+    {
+      "name": "Grip",
+      "label": "Grip",
+      "category": "Input & interaction",
+      "use": "Squeeze or grip actuation",
+      "file": "svg/grip.svg"
+    },
+    {
+      "name": "HandTracking",
+      "label": "Hand Tracking",
+      "category": "Input & interaction",
+      "use": "Hand pose and finger tracking",
+      "file": "svg/hand-tracking.svg"
+    },
+    {
+      "name": "Haptics",
+      "label": "Haptics",
+      "category": "Input & interaction",
+      "use": "Vibration or haptic feedback",
+      "file": "svg/haptics.svg"
+    },
+    {
+      "name": "Keyboard",
+      "label": "Keyboard",
+      "category": "Input & interaction",
+      "use": "Keyboard bindings or keyboard pilot input",
+      "file": "svg/keyboard.svg"
+    },
+    {
+      "name": "Mouse",
+      "label": "Mouse",
+      "category": "Input & interaction",
+      "use": "Mouse look or pointer input",
+      "file": "svg/mouse.svg"
+    },
+    {
+      "name": "Bindings",
+      "label": "Bindings",
+      "category": "Input & interaction",
+      "use": "Map physical inputs to actions",
+      "file": "svg/bindings.svg"
+    },
+    {
+      "name": "Touch",
+      "label": "Touch",
+      "category": "Input & interaction",
+      "use": "Capacitive contact without a press",
+      "file": "svg/touch.svg"
+    },
+    {
+      "name": "Timeline",
+      "label": "Timeline",
+      "category": "Recording & timeline",
+      "use": "Timeline overview and playhead",
+      "file": "svg/timeline.svg"
+    },
+    {
+      "name": "Take",
+      "label": "Take",
+      "category": "Recording & timeline",
+      "use": "Recorded input take or capture clip",
+      "file": "svg/take.svg"
+    },
+    {
+      "name": "Loop",
+      "label": "Loop",
+      "category": "Recording & timeline",
+      "use": "Repeat a playback range",
+      "file": "svg/loop.svg"
+    },
+    {
+      "name": "Marker",
+      "label": "Marker",
+      "category": "Recording & timeline",
+      "use": "Timeline bookmark or event marker",
+      "file": "svg/marker.svg"
+    },
+    {
+      "name": "Trim",
+      "label": "Trim",
+      "category": "Recording & timeline",
+      "use": "Trim a selected capture range",
+      "file": "svg/trim.svg"
+    },
+    {
+      "name": "PlaybackSpeed",
+      "label": "Playback Speed",
+      "category": "Recording & timeline",
+      "use": "Playback rate or time scale",
+      "file": "svg/playback-speed.svg"
+    },
+    {
+      "name": "History",
+      "label": "History",
+      "category": "Recording & timeline",
+      "use": "Inspect past frames or recent changes",
+      "file": "svg/history.svg"
+    },
+    {
+      "name": "CompareFrames",
+      "label": "Compare Frames",
+      "category": "Recording & timeline",
+      "use": "Compare a live frame with a past frame",
+      "file": "svg/compare-frames.svg"
+    },
+    {
+      "name": "Keyframe",
+      "label": "Keyframe",
+      "category": "Recording & timeline",
+      "use": "Pose keyframe or animation waypoint",
+      "file": "svg/keyframe.svg"
+    },
+    {
+      "name": "Connection",
+      "label": "Connection",
+      "category": "Status & diagnostics",
+      "use": "Connected runtime or device transport",
+      "file": "svg/connection.svg"
+    },
+    {
+      "name": "Disconnect",
+      "label": "Disconnect",
+      "category": "Status & diagnostics",
+      "use": "Disconnected runtime or transport",
+      "file": "svg/disconnect.svg"
+    },
+    {
+      "name": "Battery",
+      "label": "Battery",
+      "category": "Status & diagnostics",
+      "use": "Device battery level",
+      "file": "svg/battery.svg"
+    },
+    {
+      "name": "BatteryCharging",
+      "label": "Battery Charging",
+      "category": "Status & diagnostics",
+      "use": "Battery charging state",
+      "file": "svg/battery-charging.svg"
+    },
+    {
+      "name": "Performance",
+      "label": "Performance",
+      "category": "Status & diagnostics",
+      "use": "Performance or CPU/GPU activity",
+      "file": "svg/performance.svg"
+    },
+    {
+      "name": "FrameTime",
+      "label": "Frame Time",
+      "category": "Status & diagnostics",
+      "use": "Frame-time trace and slow-frame spikes",
+      "file": "svg/frame-time.svg"
+    },
+    {
+      "name": "Memory",
+      "label": "Memory",
+      "category": "Status & diagnostics",
+      "use": "GPU or host memory usage",
+      "file": "svg/memory.svg"
+    },
+    {
+      "name": "Log",
+      "label": "Log",
+      "category": "Status & diagnostics",
+      "use": "Runtime log, diagnostic output or console",
+      "file": "svg/log.svg"
+    },
+    {
+      "name": "Bug",
+      "label": "Bug",
+      "category": "Status & diagnostics",
+      "use": "Validation issue or defect report",
+      "file": "svg/bug.svg"
+    }
+  ]
+}

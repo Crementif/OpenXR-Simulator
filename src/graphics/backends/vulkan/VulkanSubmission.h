@@ -50,6 +50,11 @@ class VulkanSubmission final : public GpuCompletion
 		std::shared_ptr<VulkanImage> output;
 		std::shared_ptr<VulkanExternalImage> external;
 		std::shared_ptr<VulkanExternalSemaphore> ready;
+#ifdef _WIN32
+		std::shared_ptr<const void> nativeSource;
+		VkSemaphore nativeReady = VK_NULL_HANDLE;
+		std::uint64_t nativeReadyValue = 0;
+#endif
 		std::array<VkImageView, 2> outputViews{};
 		std::array<VkFramebuffer, 2> framebuffers{};
 	};

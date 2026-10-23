@@ -2,6 +2,7 @@
 #include "app/Theme.h"
 #include "Math.h"
 #include <ImGuizmo.h>
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 
@@ -50,8 +51,18 @@ SpatialEditResult DrawPoseGizmo(const char* id, GizmoState& state, const FrameVi
 	auto matrix = PoseMatrix(pose);
 	if (!state.usingGizmo)
 		state.start = pose;
+	// ImGuizmo clips to its rect alone; a rect scrolled under the window's edge must still stay inside the window.
+	auto* draw = ImGui::GetWindowDrawList();
+	const int firstCommand = draw->CmdBuffer.Size;
+	const auto clipMinimum = draw->GetClipRectMin(), clipMaximum = draw->GetClipRectMax();
 	const bool changed = ImGuizmo::Manipulate(view.data(), projection.data(), operation,
 											  state.local ? ImGuizmo::LOCAL : ImGuizmo::WORLD, matrix.data());
+	for (int index = std::max(0, firstCommand - 1); index < draw->CmdBuffer.Size; ++index)
+	{
+		auto& clip = draw->CmdBuffer[index].ClipRect;
+		clip = {std::max(clip.x, clipMinimum.x), std::max(clip.y, clipMinimum.y), std::min(clip.z, clipMaximum.x),
+				std::min(clip.w, clipMaximum.y)};
+	}
 	const bool active = ImGuizmo::IsUsing();
 	const bool finished = state.usingGizmo && !active;
 	state.usingGizmo = active;

@@ -9,7 +9,7 @@
   },
   "generator_sha256": "17c8df3be7443bf33270e566843276a89d615049e431abcce1488bb8fa6c67c8",
   "source": "shaders/Compositor.hlsl",
-  "source_sha256": "f94dd5fe486c4ccaa8d9c6e3be40e962ab0a360f5ddb52f44a59675b50fe7a27",
+  "source_sha256": "27cbf93fbb75116d19c062ee34b2aec48d57f8b96a7e885be8fd691543946b00",
   "spirv_cross": {
     "sha256": "995ca28e73af04be5104a79267e47f37a925e0df6a7511bc3b92bea9f9f34af4"
   },

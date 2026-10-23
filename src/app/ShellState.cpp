@@ -18,7 +18,7 @@ SessionState DeriveRunState(const RuntimeView& snapshot, bool launching, const s
 		result.state = RunState::Launching;
 	else if (!snapshot.connected)
 		result.state = snapshot.epoch ? RunState::Disconnected : RunState::NotConnected;
-	else if (!snapshot.sessionAvailable)
+	else if (!snapshot.sessionAvailable || !snapshot.sessionRunning)
 		result.state = RunState::WaitingForSession;
 	else
 		result.state = snapshot.manual ? RunState::Paused : RunState::Running;

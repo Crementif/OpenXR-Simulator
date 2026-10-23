@@ -1,7 +1,7 @@
 function(simxr_configure_target target)
     target_compile_features(${target} PRIVATE cxx_std_20)
     set_target_properties(${target} PROPERTIES CXX_EXTENSIONS OFF POSITION_INDEPENDENT_CODE ON)
-    target_include_directories(${target} PRIVATE "${PROJECT_SOURCE_DIR}/src")
+    target_include_directories(${target} PRIVATE "${PROJECT_SOURCE_DIR}/src" "${PROJECT_BINARY_DIR}/generated")
     target_link_libraries(${target} PRIVATE simxr_openxr_headers)
     if(SIMXR_ENABLE_PCH)
         target_precompile_headers(${target} PRIVATE "${PROJECT_SOURCE_DIR}/src/Pch.h")

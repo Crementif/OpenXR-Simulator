@@ -3,6 +3,7 @@
 #include "app/PlayerRig.h"
 #include "app/ShellState.h"
 #include "app/SimulationEdits.h"
+#include "app/widgets/LiveField.h"
 
 #include <array>
 #include <functional>
@@ -38,16 +39,21 @@ class DeviceControlPanel
 	void ResetObservations();
 	void ObserveDelivery(bool pending, const std::string& error);
 	std::optional<SimulationEdit> DrawAdvanced();
+	// The session's failure scenarios as menu items: Unfocused, Hidden and a confirmed session loss.
+	std::optional<SimulationEdit> DrawSessionMenu();
 	// Page title with the page's Reset button (Reset all on Player).
 	std::optional<SimulationEdit> DrawHeader(const Selection& selection);
 
   private:
-	void Apply(std::vector<SimulationCommand> commands);
+	void Apply(std::vector<SimulationCommand> commands, std::string label = {});
 	void ApplyOwned(ControlChannel channel, SimulationCommand command);
 	void DrawOwnership();
 	void LoadObservedSettings();
 	void DrawOwner(ControlChannel channel);
-	bool DrawScenarioNotice(ControlChannel channel);
+	// A failure scenario of this channel is active; its fields are read only meanwhile.
+	bool ScenarioActive(ControlChannel channel) const;
+	// The page's Tracked / Lost / Off switch over its failure scenarios.
+	void DrawTracking(DevicePage page);
 	void ReloadRecoveredChannel(ControlChannel channel);
 	void DrawPlayer();
 	void DrawAnchor(std::size_t hand);
@@ -56,14 +62,13 @@ class DeviceControlPanel
 	void DrawHandPresets(std::size_t hand);
 	void DrawBodyPoses();
 	void ResetPage(DevicePage page);
-	void ApplyRig(std::vector<SimulationCommand> extra = {});
+	void ApplyRig(std::vector<SimulationCommand> extra = {}, std::string label = {});
 	void DrawController(const std::function<void()>& placement);
 	void DrawInputPad(std::uint32_t hand);
 	void DrawBody();
 	void DrawGaze();
 	void DrawTrackers();
 	void DrawViews();
-	void DrawScenarios();
 
 	PlayerRig& m_playerRig;
 	std::optional<CommandSource> m_manualSource;
@@ -75,19 +80,19 @@ class DeviceControlPanel
 	std::set<std::string> m_pendingFields, m_rejectedFields;
 	std::string m_deliveryError, m_fieldScope;
 	double m_rejectedUntil = 0;
-	// Marks a field edited, draws its live state and offers Reset to default (right-click, or
-	// double-click on a slider) when reset is given.
-	bool Field(const char* key, bool changed, bool continuous = false, const std::function<void()>& reset = {},
-			   bool slider = false);
+	// Marks a field edited and draws its live state; value adds reset, nudge and copy (FieldActions).
+	bool Field(const char* key, bool changed, bool continuous = false, const FieldValue& value = {});
+	// Pad inputs are momentary and show their own state: only a rejection is drawn on them.
+	bool InputField(const char* key, bool changed);
 	bool m_replaceOwner = false, m_exactAnchor = false;
+	// Per device page: the rotation shown as a quaternion instead of angles.
+	std::array<bool, 7> m_quaternionView{};
 	bool m_configurationLoaded = false;
 	std::optional<ObservedSetup> m_observed;
 	std::string m_observationError;
 	std::uint64_t m_loadedFrame = 0;
-	int m_setupSection = 0;
 	int m_selectedChannel = 0;
 	int m_controlHand = 0;
-	int m_selectedScenario = 0;
 	int m_selectedTracker = 0;
 	int m_trackerRole = 0;
 	TrackingState m_authoredTracking;

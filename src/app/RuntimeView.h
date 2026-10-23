@@ -40,7 +40,7 @@ struct RuntimeView
 	double historySeconds = 0;
 	// The loaded image (or capture) the preview currently shows.
 	FrameIdentity selectedIdentity;
-	ShellRect rotationBall, reachMap, rigView;
+	ShellRect rotationBall, rigView;
 	std::array<ShellRect, 7> markers{};
 	// Where each device sits in the rig view, as a zero-size rect (QA and hit tests).
 	std::array<ShellRect, 7> rigDevices{};

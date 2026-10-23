@@ -9,7 +9,9 @@ namespace simxr
 VulkanImage::VulkanImage(std::shared_ptr<VulkanDevice> owner) : device(std::move(owner)) {}
 
 std::shared_ptr<VulkanImage> VulkanImage::Create(std::shared_ptr<VulkanDevice> device, VkFormat format,
-												 VkExtent2D extent, std::uint32_t layers, VkImageUsageFlags usage, std::uint32_t mipLevels, VkSampleCountFlagBits samples)
+												 VkExtent2D extent, std::uint32_t layers, VkImageUsageFlags usage,
+												 std::uint32_t mipLevels, VkSampleCountFlagBits samples,
+												 VkDeviceSize allocationLimit)
 {
 	if (!device || !extent.width || !extent.height || !layers || !usage || !mipLevels ||
 		mipLevels > std::bit_width(std::max(extent.width, extent.height)) ||
@@ -44,6 +46,8 @@ std::shared_ptr<VulkanImage> VulkanImage::Create(std::shared_ptr<VulkanDevice> d
 				"Create private Vulkan image");
 	VkMemoryRequirements requirements;
 	vkGetImageMemoryRequirements(result->device->binding.device, result->image, &requirements);
+	if (requirements.size > allocationLimit)
+		throw std::length_error("Vulkan image allocation exceeds its budget");
 	VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
 	allocation.allocationSize = requirements.size;
 	result->allocationSize = requirements.size;

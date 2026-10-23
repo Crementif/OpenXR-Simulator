@@ -68,7 +68,11 @@ void PilotController::Stop(Window* window, ManualInputController& input, bool di
 		window->CapturePointer(false);
 	m_captured = m_starting = m_locked = m_gamepadActive = false;
 	if (discard)
+	{
 		input.DiscardUnsentPose();
+		m_poseEngaged = false;
+		m_handEdits = 0;
+	}
 	if (wasActive)
 	{
 		try
@@ -82,7 +86,7 @@ void PilotController::Stop(Window* window, ManualInputController& input, bool di
 				m_engaged[hand] |=
 					(owner && state.source && *owner == *state.source) || (forceButtons && state.editPending);
 			}
-			Submit(input, observed, !discard, {}, true);
+			Submit(input, observed, false, {}, true);
 		}
 		catch (const std::exception&)
 		{
@@ -427,7 +431,7 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 		hint = "Hold " + KeyName(PilotAction::Capture) + " over the image to pilot";
 	// Group widths, content only.
 	const float targetWidth = textWidth(preview.c_str()) + rowHeight * 1.5f;
-	float left = targetWidth + gap + textWidth(lock) + buttonPadding;
+	float left = targetWidth + gap + rowHeight + textWidth(lock) + style.FramePadding.x + gap + rowHeight;
 	const float handButton = textWidth("Buttons: Right") + buttonPadding;
 	const float bars = textWidth("Trigger") + textWidth("Grip") + 2 * (36 + 4) * scale + gap;
 	const float pills = textWidth("A") + textWidth("B") + textWidth("Menu") + 3 * 10 * scale + 8 * scale;
@@ -450,45 +454,44 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 	const float y = maximum.y - height - margin;
 	const auto saved = ImGui::GetCursorScreenPos();
 	bool hovered = false;
-	// Idle, only the content dims; each backing stays solid so markers under it do not show through.
+	// Idle, only the content dims; each flat backing stays mostly opaque so markers under it stay quiet.
 	ImGui::PushStyleVar(ImGuiStyleVar_Alpha, Active() || ImGui::GetTime() - m_lastInput < 3 ? 1.0f : .6f);
 	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, padding);
 	ImGui::PushStyleColor(ImGuiCol_ChildBg, 0);
 	const auto group = [&](const char* id, float x, float width, const auto& content)
 	{
 		ImGui::SetCursorScreenPos({x, y});
-		ImGui::BeginChild(id, {width + frame, height},
-						  ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
+		ImGui::BeginChild(id, {width + frame, height}, ImGuiChildFlags_AlwaysUseWindowPadding,
 						  ImGuiWindowFlags_NoScrollbar);
 		const auto corner = ImGui::GetWindowPos();
-		ImGui::GetWindowDrawList()->AddRectFilled(corner, {corner.x + width + frame, corner.y + height}, theme::Bg,
-												  style.ChildRounding);
+		ImGui::GetWindowDrawList()->AddRectFilled(corner, {corner.x + width + frame, corner.y + height},
+												  theme::Fade(theme::Bg, .78f), theme::Radius * scale);
 		content();
 		hovered |= ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
 		ImGui::EndChild();
 	};
 	const auto foldButton = [&]
 	{
-		if (IconButton("Fold HUD", m_hudFolded ? Icon::ChevronUp : Icon::ChevronDown,
-					   m_hudFolded ? "Show the pilot controls" : "Fold the pilot controls into a strip"))
-			m_hudFolded = !m_hudFolded;
+		if (IconButton("Fold HUD", Icon::ChevronDown, "Hide the pilot controls"))
+			m_hudFolded = true;
 	};
 	if (folded)
 	{
-		// The strip: target and hand as letters, lock state, and the way back open.
-		static constexpr const char* targetLetters[] = {"Player", "Head", "L", "R"};
-		const std::string strip = std::string{targetLetters[targetIndex]} + " · " + (m_hand ? "R" : "L") + " buttons" +
-								  (m_locked ? " · locked" : "");
-		const float width = textWidth(strip.c_str()) + gap + chevron;
-		group("HUD strip", (minimum.x + maximum.x - width - frame) / 2, width,
+		// Folded away to one button; while captured, the way out stays readable beside it.
+		const std::string release = KeyName(PilotAction::Escape) + " releases";
+		const float width = rowHeight + (m_captured ? gap + textWidth(release.c_str()) : 0);
+		group("HUD strip", minimum.x + margin, width,
 			  [&]
 			  {
-				  ImGui::AlignTextToFramePadding();
-				  ImGui::TextDisabled("%s", strip.c_str());
-				  ImGui::SetItemTooltip("Moving %s; buttons go to the %s hand", targetNames[targetIndex],
-										m_hand ? "right" : "left");
-				  ImGui::SameLine();
-				  foldButton();
+				  if (IconButton("Show HUD", Icon::Keyboard,
+								 m_hudFolded ? "Show the pilot controls" : "Widen the image to show the pilot controls"))
+					  m_hudFolded = false;
+				  if (m_captured)
+				  {
+					  ImGui::SameLine();
+					  ImGui::AlignTextToFramePadding();
+					  ImGui::TextDisabled("%s", release.c_str());
+				  }
 			  });
 	}
 	else
@@ -497,7 +500,12 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 			  [&]
 			  {
 				  ImGui::SetNextItemWidth(targetWidth);
-				  if (ImGui::BeginCombo("##Pilot target", preview.c_str()))
+				  // A small chevron like the other menus, instead of the combo's solid arrow box.
+				  const bool open = ImGui::BeginCombo("##Pilot target", preview.c_str(), ImGuiComboFlags_NoArrowButton);
+				  const auto box = ImGui::GetItemRectMax();
+				  DrawIcon(ImGui::GetWindowDrawList(), Icon::ChevronDown,
+						   {box.x - rowHeight / 2, box.y - rowHeight / 2}, rowHeight * .5f, theme::TextDim);
+				  if (open)
 				  {
 					  for (std::size_t index = 0; index < std::size(targetNames); ++index)
 					  {
@@ -509,10 +517,17 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 				  }
 				  ImGui::SetItemTooltip("What mouse look and walking keys move");
 				  ImGui::SameLine();
-				  if (ImGui::Button(lock))
+				  const auto lockTip = "Keep the pointer captured without holding " + KeyName(PilotAction::Capture);
+				  if (IconButton("Lock", m_locked ? Icon::Lock : Icon::Unlock, lockTip.c_str(), m_locked, lock))
 					  m_locked = !m_locked;
-				  ImGui::SetItemTooltip("Keep the pointer captured without holding %s",
-										KeyName(PilotAction::Capture).c_str());
+				  ImGui::SameLine();
+				  if (IconButton("Pilot keys", Icon::Keyboard, "Mouse, keyboard and gamepad bindings for piloting"))
+					  ImGui::OpenPopup("Piloting");
+				  if (ImGui::BeginPopup("Piloting"))
+				  {
+					  DrawHelp();
+					  ImGui::EndPopup();
+				  }
 			  });
 		const float middleWidth = middle + gap + chevron;
 		const float middleX =

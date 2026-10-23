@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -17,11 +18,6 @@ enum class DevicePage
 	Gaze,
 	Trackers
 };
-enum class SessionItem
-{
-	Headset,
-	Scenarios
-};
 struct FrameIdentity
 {
 	std::uint64_t session = 0, run = 0, frame = 0;
@@ -31,10 +27,6 @@ struct DeviceSel
 {
 	DevicePage page = DevicePage::Player;
 	std::uint32_t slot = 0;
-};
-struct SessionItemSel
-{
-	SessionItem item = SessionItem::Headset;
 };
 struct FrameSel
 {
@@ -54,14 +46,10 @@ struct ScriptSel
 {
 	std::string id;
 };
-struct LibrarySel
-{
-};
 struct AdvancedSel
 {
 };
-using Selection = std::variant<std::monostate, DeviceSel, SessionItemSel, FrameSel, RangeSel, TakeSel, ScriptSel,
-							   LibrarySel, AdvancedSel>;
+using Selection = std::variant<std::monostate, DeviceSel, FrameSel, RangeSel, TakeSel, ScriptSel, AdvancedSel>;
 // Which frame the app shows. Written only by RuntimeSession: following shows
 // the live edge (the paused frame while paused); otherwise the cursor frame.
 struct TimeCursor
@@ -88,6 +76,10 @@ struct TimelineWindow
 	// A take playing on the selected session. The transport's Pause then sets
 	// togglePlayback instead of pausing the app, and the shell pauses the take.
 	bool playing = false, playbackPaused = false, togglePlayback = false;
+	// The Stop on a running replay's band; the shell cancels the replay.
+	bool stopReplay = false;
+	// When the running recording started, for its elapsed time.
+	std::optional<std::chrono::steady_clock::time_point> recordingSince;
 };
 enum class RunState
 {
@@ -122,6 +114,8 @@ struct ShellState
 	TimelineWindow timeline;
 	ShellRect preview, inspector, timelineCanvas;
 	bool inspectorVisible = true;
+	// The Library drawer in the timeline's left column is open.
+	bool library = false;
 	// Set by an empty-state button; the top bar opens its app picker.
 	bool openAppPicker = false;
 };

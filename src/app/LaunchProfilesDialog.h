@@ -3,7 +3,6 @@
 #include "app/CompanionSettings.h"
 #include "app/LaunchTypes.h"
 
-#include <array>
 #include <memory>
 #include <optional>
 #include <string>
@@ -35,8 +34,8 @@ class LaunchProfilesDialog
   private:
 	struct Variable
 	{
-		std::array<char, 256> key{};
-		std::array<char, 4096> value{};
+		std::vector<char> key = std::vector<char>(256);
+		std::vector<char> value = std::vector<char>(4096);
 	};
 	enum class Browse
 	{
@@ -52,12 +51,13 @@ class LaunchProfilesDialog
 	bool Store(CompanionSettings& settings);
 	void DrawList(CompanionSettings& settings, bool& changed);
 	bool DrawForm(CompanionSettings& settings, const LaunchSnapshot& process, bool& changed);
-	bool PathField(const char* label, std::array<char, 2048>& buffer, PathKind kind, Browse browse, bool optional);
+	bool PathField(const char* label, std::vector<char>& buffer, PathKind kind, Browse browse, bool optional);
 	int m_selected = -1;
-	std::array<char, 128> m_name{};
-	std::array<char, 2048> m_executable{}, m_workingDirectory{}, m_manifest{}, m_rig{};
-	std::array<char, 256> m_headset{};
-	std::array<char, 16384> m_arguments{};
+	std::vector<char> m_name;
+	std::vector<char> m_executable, m_workingDirectory, m_manifest, m_rig;
+	std::vector<char> m_headset;
+	std::vector<char> m_arguments;
+	std::vector<std::string> m_originalArguments;
 	std::vector<Variable> m_environment;
 	std::optional<Browse> m_browsing;
 	std::unique_ptr<FileRequest> m_file;

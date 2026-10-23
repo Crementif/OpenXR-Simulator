@@ -1,6 +1,7 @@
 #include "Math.h"
 #include "app/Theme.h"
 #include "app/widgets/SpatialWidgets.h"
+#include "app/widgets/LiveField.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -64,21 +65,52 @@ void DrawModel(const OrbCanvas& canvas, OrbModel model, XrQuaternionf local, ImU
 	const auto ink = theme::Ink;
 	if (model == OrbModel::Controller)
 	{
-		const auto bottom = canvas.Point(view({0, -.28f, .38f})), top = canvas.Point(view({0, .04f, -.24f}));
-		const float thickness = .22f * canvas.radius;
-		draw->AddLine(bottom, top, ink, thickness + 3 * canvas.scale);
-		draw->AddLine(bottom, top, color, thickness);
-		draw->AddCircleFilled(bottom, thickness / 2, color);
-		draw->AddCircleFilled(top, thickness / 2, color);
-		std::array<ImVec2, 32> ring;
+		// Parts toward the viewer are brighter and thicker; the ring's far half is drawn behind the handle.
+		const auto tone = [&](float depth)
+		{
+			return theme::Mix(theme::Mix(ink, color, .35f), color, std::clamp(.55f + depth * .6f, 0.0f, 1.0f));
+		};
+		const auto bottom = view({0, -.28f, .38f}), top = view({0, .04f, -.24f});
+		std::array<XrVector3f, 32> ring;
 		for (std::size_t step = 0; step < ring.size(); ++step)
 		{
 			const float angle = step * 2 * std::numbers::pi_v<float> / ring.size();
 			const float c = std::cos(angle) * .32f, s = std::sin(angle) * .32f;
-			ring[step] = canvas.Point(view({c, .12f - .866f * s, -.45f - .5f * s}));
+			ring[step] = view({c, .12f - .866f * s, -.45f - .5f * s});
 		}
-		draw->AddPolyline(ring.data(), static_cast<int>(ring.size()), ink, ImDrawFlags_Closed, 8 * canvas.scale);
-		draw->AddPolyline(ring.data(), static_cast<int>(ring.size()), color, ImDrawFlags_Closed, 5 * canvas.scale);
+		const float handleDepth = (bottom.z + top.z) / 2;
+		const auto drawRing = [&](bool front)
+		{
+			for (const bool outline : {true, false})
+				for (std::size_t step = 0; step < ring.size(); ++step)
+				{
+					const auto& a = ring[step];
+					const auto& b = ring[(step + 1) % ring.size()];
+					const float depth = (a.z + b.z) / 2;
+					if ((depth >= handleDepth) != front)
+						continue;
+					const float width = (4 + 2.5f * depth) * canvas.scale;
+					draw->AddLine(canvas.Point(a), canvas.Point(b), outline ? ink : tone(depth),
+								  outline ? width + 3 * canvas.scale : width);
+				}
+		};
+		drawRing(false);
+		const auto a = canvas.Point(bottom), b = canvas.Point(top);
+		const float base = .11f * canvas.radius;
+		const float ra = base * (1 + .3f * bottom.z), rb = base * (1 + .3f * top.z);
+		const float length = std::max(.001f, std::hypot(b.x - a.x, b.y - a.y));
+		const ImVec2 across{-(b.y - a.y) / length, (b.x - a.x) / length};
+		for (const float grow : {1.5f * canvas.scale, 0.0f})
+		{
+			const auto fill = grow > 0 ? ink : tone(handleDepth);
+			draw->AddQuadFilled({a.x + across.x * (ra + grow), a.y + across.y * (ra + grow)},
+								{b.x + across.x * (rb + grow), b.y + across.y * (rb + grow)},
+								{b.x - across.x * (rb + grow), b.y - across.y * (rb + grow)},
+								{a.x - across.x * (ra + grow), a.y - across.y * (ra + grow)}, fill);
+			draw->AddCircleFilled(a, ra + grow, grow > 0 ? ink : tone(bottom.z));
+			draw->AddCircleFilled(b, rb + grow, grow > 0 ? ink : tone(top.z));
+		}
+		drawRing(true);
 		return;
 	}
 	if (model == OrbModel::Puck)
@@ -132,21 +164,29 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 	const float scale = ImGui::GetFontSize() / 16;
 	size *= scale;
 	ImGui::PushID(id);
+	// The ball centres over the angle fields below it.
+	ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (width - size) / 2));
 	const auto minimum = ImGui::GetCursorScreenPos();
 	const ImVec2 center{minimum.x + size / 2, minimum.y + size / 2};
 	const float radius = size * .46f;
 	ImGui::InvisibleButton("Orb", {size, size});
 	const bool hovered = ImGui::IsItemHovered();
+	// The wheel rolls the device here instead of scrolling the page.
+	if (hovered && enabled)
+		ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
 	const auto mouse = ImGui::GetIO().MousePos;
 	const XrVector2f point{(mouse.x - center.x) / radius, (center.y - mouse.y) / radius};
 	const float distance = std::sqrt(point.x * point.x + point.y * point.y);
 	auto* draw = ImGui::GetWindowDrawList();
 	for (int ring = 24; ring > 0; --ring)
 	{
-		// Shaded rings make the ball read as a sphere.
-		draw->AddCircleFilled(center, radius * ring / 24,
-							  theme::Mix(theme::SurfaceRaised, theme::Text, (24 - ring) * .006f), 64);
+		// Lit from the upper left: each smaller disc moves toward the light, so the ball reads as a sphere.
+		const float t = ring / 24.0f, shift = (1 - t) * radius * .32f;
+		draw->AddCircleFilled({center.x - shift, center.y - shift}, radius * t,
+							  theme::Mix(theme::Mix(theme::Ink, theme::SurfaceRaised, .75f), theme::Text, (1 - t) * .2f),
+							  64);
 	}
+	draw->AddCircle(center, radius, theme::Line, 64, scale);
 	const OrbCanvas canvas{draw, center, radius, scale};
 	const auto local = RelativePose({orientation, {}}, {view, {}}).orientation;
 	const auto referenceLocal = RelativePose({reference, {}}, {view, {}}).orientation;
@@ -172,9 +212,10 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 										(u.y * std::cos(angle) + w.y * std::sin(angle)) * .94f,
 										(u.z * std::cos(angle) + w.z * std::sin(angle)) * .94f};
 				const auto screen = canvas.Point(onRing);
-				if (step && (onRing.z >= 0) == front)
+				// The far half is dashed and faint so the near half reads as in front.
+				if (step && (onRing.z >= 0) == front && (front || active || step % 2))
 					draw->AddLine(previous, screen,
-								  front ? colors[ring] : theme::Fade(colors[ring], .3f),
+								  front ? colors[ring] : theme::Fade(colors[ring], .35f),
 								  (active ? 4.0f : front ? 2.5f : 1.5f) * scale);
 				if (front && onRing.z >= 0)
 				{
@@ -205,12 +246,22 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 			ImGui::SetTooltip("%s", hoveredRing == 0 ? "Drag to turn (yaw); Ctrl snaps to 15 degrees"
 							 : hoveredRing == 1 ? "Drag to tilt (pitch); Ctrl snaps to 15 degrees"
 												: "Drag to roll; Ctrl snaps to 15 degrees");
+		else if (distance <= 1)
+			ImGui::SetTooltip("Drag to rotate; the wheel rolls.\nDouble-click resets; Ctrl snaps.");
 	}
 	bool changed = false;
 	if (enabled && hovered && distance <= 1 && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
 	{
 		orientation = reference;
 		state.dragging = false;
+		ImGui::PopID();
+		return {true, true, false, true};
+	}
+	if (const float wheel = ImGui::GetIO().MouseWheel; enabled && hovered && wheel != 0 && !state.dragging)
+	{
+		// 5 degrees a notch about the device's own pointing axis, 15 with Ctrl.
+		const float step = (ImGui::GetIO().KeyCtrl ? 15 : 5) / s_degrees;
+		orientation = Multiply(orientation, AxisAngle({0, 0, 1}, wheel * step));
 		ImGui::PopID();
 		return {true, true, false, true};
 	}
@@ -270,9 +321,17 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 										ImGuiSliderFlags_AlwaysClamp);
 		fieldActive |= ImGui::IsItemActive();
 		fieldFinished |= ImGui::IsItemDeactivatedAfterEdit();
-		ImGui::SetItemTooltip("%s", index == 0	 ? "Turn left or right relative to what it follows"
-									: index == 1 ? "Tilt up or down"
-												 : "Roll around its pointing axis");
+		// Each angle resets to what the device follows on its own.
+		const float limit = index == 1 ? 89.9f : 180.0f;
+		if (FieldActions(labels[index].first, NumberValue(*value, 0, 1, -limit, limit, "%.1f")))
+		{
+			fieldEdited = true;
+			fieldFinished = true;
+		}
+		ImGui::SetItemTooltip("%s\nMiddle-click resets; Ctrl+wheel nudges.",
+							  index == 0   ? "Turn left or right relative to what it follows"
+							  : index == 1 ? "Tilt up or down"
+										   : "Roll around its pointing axis");
 	}
 	ImGui::EndDisabled();
 	if (fieldEdited)

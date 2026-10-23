@@ -71,6 +71,36 @@ int main()
 	Require(midpoint && std::isfinite(midpoint->head.pose.position.x) && midpoint->head.pose.position.x == 0,
 			"Finite tracking endpoints overflowed during interpolation");
 
+	TrackingSystem rooted(4);
+	TrackingState rootState;
+	rootState.body.rootPose = XrPosef{EulerAngles(0, 0, 0), {0, 0, 0}};
+	rooted.Publish({Duration{10}}, rootState);
+	rootState.body.rootPose = XrPosef{EulerAngles(1.0f, 0, 0), {2, 0, -2}};
+	rooted.Publish({Duration{20}}, rootState);
+	const auto rootMiddle = rooted.Sample({Duration{15}});
+	Require(rootMiddle && rootMiddle->input.body.rootPose, "Historical body root missing");
+	const auto& root = *rootMiddle->input.body.rootPose;
+	Require(std::abs(root.position.x - 1) < .00001f && std::abs(root.position.z + 1) < .00001f &&
+		std::abs(root.orientation.y - EulerAngles(.5f, 0, 0).y) < .00001f,
+		"Body root did not interpolate with the tracking sample");
+	rootState.body.rootPose = root;
+	const auto expectedBody = TrackingSystem::Evaluate({Duration{15}}, rootState, BodyModel{});
+	for (std::size_t joint = 0; joint < BodyJointCount; ++joint)
+	{
+		const auto& actual = rootMiddle->body.joints[joint].pose.position;
+		const auto& expected = expectedBody.body.joints[joint].pose.position;
+		Require(std::abs(actual.x - expected.x) < .00001f && std::abs(actual.z - expected.z) < .00001f,
+			"Historical body joints disagree with interpolated root");
+	}
+	rootState.body.rootPose.reset();
+	rooted.Publish({Duration{30}}, rootState);
+	Require(rooted.Sample({Duration{25}})->time == RuntimeTime{Duration{20}},
+		"Removing the explicit root changed an earlier sample");
+	rootState.body.rootPose = XrPosef{EulerAngles(0, 0, 0), {4, 0, 0}};
+	rooted.Publish({Duration{40}}, rootState);
+	Require(rooted.Sample({Duration{35}})->time == RuntimeTime{Duration{30}},
+		"Adding an explicit root changed an earlier sample");
+
 	std::atomic_bool failed = false;
 	std::thread reader([&] {
 		for (int count = 0; count < 100; ++count)

@@ -4,6 +4,7 @@
 #include "app/RuntimeEndpoints.h"
 #include "app/WindowsLaunch.h"
 
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -103,6 +104,8 @@ void LaunchTests()
 {
 	Directory directory;
 	ParentEnvironment restore(L"SIMXR_LAUNCH_TEST");
+	ParentEnvironment runtimeEnvironment(L"XR_RUNTIME_JSON");
+	SetEnvironmentVariableW(L"XR_RUNTIME_JSON", nullptr);
 	ParentEnvironment settingsPath(L"SIMXR_COMPANION_SETTINGS");
 	const auto settings = directory.path / L"config 日本語.settings";
 	Require(SetEnvironmentVariableW(L"SIMXR_COMPANION_SETTINGS", settings.c_str()), "Set Unicode settings path");
@@ -132,6 +135,26 @@ void LaunchTests()
 		profile.arguments.push_back(windows::Utf8(argument));
 	ProcessSupervisor processes;
 	ProcessLauncher launcher(processes);
+	HANDLE handle = nullptr;
+	Require(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &handle), "Inspect launcher integrity");
+	const windows::Handle token(handle);
+	alignas(TOKEN_MANDATORY_LABEL) std::array<std::byte, sizeof(TOKEN_MANDATORY_LABEL) + SECURITY_MAX_SID_SIZE> buffer{};
+	DWORD size = 0;
+	Require(GetTokenInformation(token.Get(), TokenIntegrityLevel, buffer.data(), static_cast<DWORD>(buffer.size()), &size),
+		"Read launcher integrity");
+	const auto* label = reinterpret_cast<const TOKEN_MANDATORY_LABEL*>(buffer.data());
+	const auto count = *GetSidSubAuthorityCount(label->Label.Sid);
+	Require(count, "Launcher token has integrity authority");
+	if (*GetSidSubAuthority(label->Label.Sid, count - 1) > SECURITY_MANDATORY_MEDIUM_RID)
+	{
+		Require(launcher.Launch(profile), "Admit elevated runtime selection for validation");
+		const auto rejected = Terminal(launcher);
+		Require(rejected.state == LaunchState::Failed && !rejected.process &&
+			rejected.detail.find("ignores runtime overrides") != std::string::npos,
+			"Reject ignored runtime override before starting the wrong application runtime");
+		profile.runtimeManifest.clear();
+	}
+	profile.environment.emplace_back("SIMXR_EXPECTED_RUNTIME", profile.runtimeManifest);
 	Require(launcher.Launch(profile), "Admit Windows launch");
 	const auto state = Terminal(launcher);
 	Require(state.state == LaunchState::Exited && state.exitCode == 37 && state.process,
@@ -192,7 +215,7 @@ int Child(int argc, wchar_t** argv)
 	Require(windows::Environment("SIMXR_SEED") == "987654321", "Seed environment");
 	Require(windows::Environment("WINEPREFIX") == "C:\\prefix 日本語\\", "Prefix environment");
 	Require(windows::Environment("SIMXR_HEADSET_PROFILE") == "quest3", "Headset environment");
-	Require(windows::Environment("XR_RUNTIME_JSON") == Utf8(std::filesystem::current_path() / L"runtime 日本語.json"),
+	Require(windows::Environment("XR_RUNTIME_JSON") == windows::Environment("SIMXR_EXPECTED_RUNTIME"),
 			"Unicode cwd and child-only runtime manifest");
 	return 37;
 }

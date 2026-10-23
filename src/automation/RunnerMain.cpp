@@ -1,3 +1,4 @@
+#include "simxr/Version.h"
 #include "automation/RigRunner.h"
 #include "control/ControlSchema.h"
 #if defined(__linux__) || defined(_WIN32)
@@ -49,6 +50,11 @@ int main(int argc, char** argv)
 		for (int i = 1; i < argc; ++i)
 		{
 			const std::string_view flag = argv[i];
+			if (flag == "--version")
+			{
+				std::printf("simxr_runner %s\n", simxr::Version);
+				return 0;
+			}
 			if (flag == "--help")
 			{
 				std::puts("Usage: simxr_runner --socket PATH --rig PATH [--session ID --generation ID] [--seed N] "

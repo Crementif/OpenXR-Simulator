@@ -1,7 +1,6 @@
 #include "app/RunningApps.h"
 #include "app/RuntimeEndpoints.h"
 
-#include <charconv>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -18,22 +17,6 @@ namespace simxr::app
 {
 namespace
 {
-// control.<pid>.sock on Linux, SimXR.Control.<pid> on Windows; zero when the
-// endpoint does not name a process.
-std::uint64_t EndpointProcess(const std::string& endpoint)
-{
-	auto name = std::filesystem::path(endpoint).filename().string();
-	if (name.ends_with(".sock"))
-		name.resize(name.size() - 5);
-	const auto dot = name.rfind('.');
-	if (dot == std::string::npos)
-		return 0;
-	std::uint64_t process = 0;
-	const auto* first = name.data() + dot + 1;
-	const auto* last = name.data() + name.size();
-	const auto [end, error] = std::from_chars(first, last, process);
-	return error == std::errc{} && end == last ? process : 0;
-}
 std::string BaseName(std::string_view path)
 {
 	const auto slash = path.find_last_of("/\\");
@@ -124,7 +107,7 @@ std::string Link(const std::string& path)
 	const auto target = std::filesystem::read_symlink(path, error);
 	return error ? std::string{} : target.string();
 }
-bool Answers(const std::string& endpoint, std::chrono::milliseconds timeout)
+bool Answers(const std::string& endpoint, std::chrono::milliseconds timeout, std::uint64_t& process)
 {
 	sockaddr_un address{};
 	address.sun_family = AF_UNIX;
@@ -143,8 +126,15 @@ bool Answers(const std::string& endpoint, std::chrono::milliseconds timeout)
 		pollfd wait{descriptor, POLLOUT, 0};
 		int error = 0;
 		socklen_t size = sizeof(error);
-		alive = ::poll(&wait, 1, static_cast<int>(timeout.count())) == 1 &&
+		alive = ::poll(&wait, 1, static_cast<int>(std::clamp<std::int64_t>(timeout.count(), 0, 2000))) == 1 &&
 				::getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &error, &size) == 0 && error == 0;
+	}
+	if (alive)
+	{
+		ucred peer{};
+		socklen_t size = sizeof(peer);
+		if (::getsockopt(descriptor, SOL_SOCKET, SO_PEERCRED, &peer, &size) == 0 && peer.pid > 0)
+			process = static_cast<std::uint64_t>(peer.pid);
 	}
 	::close(descriptor);
 	return alive;
@@ -196,17 +186,13 @@ std::vector<RunningApp> DiscoverRunningApps(std::chrono::milliseconds timeout)
 	for (auto& endpoint : DiscoverRuntimeEndpoints())
 	{
 		RunningApp app;
-		app.process = EndpointProcess(endpoint);
 #ifdef _WIN32
 		if (!ProbePipe(endpoint, timeout, app.process))
 			continue;
 		ProcessDetails(app);
 #endif
 #ifdef __linux__
-		std::error_code error;
-		if (app.process && !std::filesystem::exists("/proc/" + std::to_string(app.process), error))
-			continue;
-		if (!Answers(endpoint, timeout))
+		if (!Answers(endpoint, timeout, app.process))
 			continue;
 		if (app.process)
 		{

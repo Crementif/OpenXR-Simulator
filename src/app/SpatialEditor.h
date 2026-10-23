@@ -16,7 +16,7 @@ class SpatialEditor
 	void Reset();
 	// The rig view at the top of a device page.
 	void DrawRigView(Selection& selection);
-	// Rotation ball and reach map for the selected device, side by side when wide.
+	// Rotation ball for the selected device.
 	void DrawPlacement(Selection& selection);
 	void DrawRig(Selection& selection, ImVec2 size);
 	bool DrawPreview(Selection& selection, ImVec2 minimum, ImVec2 maximum, const FrameView& camera, unsigned eye);
@@ -24,10 +24,6 @@ class SpatialEditor
 	ShellRect RotationBallRect() const
 	{
 		return m_rotationBallRect;
-	}
-	ShellRect ReachMapRect() const
-	{
-		return m_reachMapRect;
 	}
 	const std::array<ShellRect, 7>& MarkerRects() const
 	{
@@ -70,11 +66,10 @@ class SpatialEditor
 	std::uint64_t m_observation = 0, m_historyIdentity = 0;
 	bool m_editable = false, m_lookingBack = false;
 	std::string m_error;
-	ShellRect m_rotationBallRect, m_reachMapRect;
+	ShellRect m_rotationBallRect;
 	std::array<ShellRect, 7> m_markerRects{};
 	RigViewState m_view;
 	std::array<ArcballState, 7> m_arcballs;
-	ReachMapState m_reach;
 	std::array<GizmoState, 4> m_previewGizmos;
 };
 } // namespace simxr::app

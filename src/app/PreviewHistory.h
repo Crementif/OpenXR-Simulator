@@ -66,9 +66,10 @@ class PreviewHistory
 	};
 	bool Prepare(const control::ImageDescription& description);
 	void Retire();
+	void CollectRetired();
 	UiRenderer& m_renderer;
 	std::uint64_t m_budget;
-	std::unique_ptr<Resources> m_resources;
+	std::unique_ptr<Resources> m_resources, m_retired;
 	std::vector<PreviewShot> m_shots;
 	std::vector<std::uint64_t> m_lastUse;
 	std::vector<std::size_t> m_sampled;

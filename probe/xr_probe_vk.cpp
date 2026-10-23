@@ -470,6 +470,17 @@ int main(int argc, char** argv)
     strcpy_s(asci.actionSetName, "gameplay_fps"); strcpy_s(asci.localizedActionSetName, "Gameplay");
     XRC(xrCreateActionSet(g_instance, &asci, &gameplaySet), "xrCreateActionSet(gameplay_fps)");
     XrAction gripPose{};
+	XrAction trigger{};
+	bool pressed = false, released = false;
+	{
+		XrActionCreateInfo action{XR_TYPE_ACTION_CREATE_INFO};
+		action.actionType = XR_ACTION_TYPE_FLOAT_INPUT;
+		strcpy_s(action.actionName, "trigger");
+		strcpy_s(action.localizedActionName, "Trigger");
+		action.countSubactionPaths = 1;
+		action.subactionPaths = &handPaths[1];
+		XRC(xrCreateAction(gameplaySet, &action, &trigger), "xrCreateAction(trigger)");
+	}
     {
         XrActionCreateInfo aci = { XR_TYPE_ACTION_CREATE_INFO };
         aci.actionType = XR_ACTION_TYPE_POSE_INPUT;
@@ -482,6 +493,7 @@ int main(int argc, char** argv)
         std::vector<XrActionSuggestedBinding> b = {
             { gripPose, P("/user/hand/left/input/grip/pose") },
             { gripPose, P("/user/hand/right/input/grip/pose") },
+			{ trigger, P("/user/hand/right/input/trigger/value") },
         };
         XrInteractionProfileSuggestedBinding sb = { XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
         sb.interactionProfile = P("/interaction_profiles/oculus/touch_controller");
@@ -668,6 +680,22 @@ int main(int argc, char** argv)
         asi.countActiveActionSets = 1; asi.activeActionSets = &aas;
         r = xrSyncActions(session, &asi);
         if (XR_FAILED(r) && r != XR_SESSION_NOT_FOCUSED) { fail("xrSyncActions", r); break; }
+		XrActionStateGetInfo getTrigger{XR_TYPE_ACTION_STATE_GET_INFO};
+		getTrigger.action = trigger;
+		getTrigger.subactionPath = handPaths[1];
+		XrActionStateFloat triggerState{XR_TYPE_ACTION_STATE_FLOAT};
+		r = xrGetActionStateFloat(session, &getTrigger, &triggerState);
+		if (XR_FAILED(r)) { fail("xrGetActionStateFloat", r); break; }
+		if (triggerState.isActive && triggerState.currentState > 0.5f && !pressed)
+		{
+			pressed = true;
+			std::puts("APP observed right trigger press");
+		}
+		if (triggerState.isActive && pressed && triggerState.currentState < 0.1f && !released)
+		{
+			released = true;
+			std::puts("APP observed right trigger release");
+		}
 
         XrViewLocateInfo vli = { XR_TYPE_VIEW_LOCATE_INFO };
         vli.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
@@ -902,6 +930,11 @@ int main(int argc, char** argv)
 		XRC_SOFT(xrDestroyInstance(g_instance), "xrDestroyInstance after retained inspection");
 	}
 
+	if (EnvOn("XR_PROBE_REQUIRE_INPUT") && (!pressed || !released))
+	{
+		std::puts("[FAIL] Application did not observe both trigger press and release");
+		++g_fail;
+	}
 	printf("\n================ %d failure(s), %d warning(s) ================\n", g_fail, g_warn);
     return g_fail ? 1 : 0;
 }

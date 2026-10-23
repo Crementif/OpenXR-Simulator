@@ -243,9 +243,8 @@ XrResult Session::WaitFrame(FramePrediction& prediction,
 	}
 	m_history.Trace(FrameTraceKind::WaitStarted, traceFrame, traceTime);
 	std::unique_lock publication(m_publicationMutex, std::defer_lock);
-	const auto prepareBoundary = [this, &boundary, &publication](const FramePrediction& candidate)
+	const auto prepareBoundary = [this, &boundary](const FramePrediction& candidate)
 	{
-		publication.lock();
 		if (!m_spaces.CanPublish(candidate.displayTime))
 			throw std::invalid_argument("Reference-space history exceeds the next frame boundary");
 		const auto reserveHistory = [this, &candidate](const AppliedCommandSnapshot& applied)
@@ -261,7 +260,7 @@ XrResult Session::WaitFrame(FramePrediction& prediction,
 		};
 		boundary->Reserve(candidate, reserveHistory);
 	};
-	auto result = m_scheduler.WaitFrame(prediction, prepareBoundary);
+	auto result = m_scheduler.WaitFrame(prediction, prepareBoundary, &publication);
 	if (XR_FAILED(result))
 	{
 		m_history.Trace(FrameTraceKind::WaitReturned, traceFrame, traceTime, result);
@@ -384,8 +383,6 @@ XrResult Session::EndFrame(FramePrediction& prediction, const XrFrameEndInfo* in
 	std::lock_guard lock(m_mutex);
 	if (!m_state.running)
 		return XR_ERROR_SESSION_NOT_RUNNING;
-	if (!captures.empty() && !m_captures.Supports({CaptureKind::LayerView}))
-		return XR_ERROR_FEATURE_UNSUPPORTED;
 	const auto pending = m_scheduler.Snapshot().begun;
 	if (!pending)
 		return XR_ERROR_CALL_ORDER_INVALID;
@@ -623,20 +620,25 @@ CaptureReservation Session::ReserveCapture(CaptureTarget target)
 
 CaptureBoundaryResult Session::ReserveCaptureBundle(std::span<const CaptureTarget> targets)
 {
+	if (targets.empty() || targets.size() > 8)
+		return {SnapshotAdmission::Invalid, {}};
+	for (std::size_t index = 0; index < targets.size(); ++index)
+		if (std::find(targets.begin(), targets.begin() + index, targets[index]) != targets.begin() + index)
+			return {SnapshotAdmission::Invalid, {}};
 	{
 		std::lock_guard lock(m_mutex);
 		if (!m_state.running || m_state.closed)
 			return {SnapshotAdmission::Closed, {}};
+		if (!m_scheduler.Snapshot().paused)
+			return {SnapshotAdmission::Invalid, {}};
 		for (const auto target : targets)
 			if (!m_captures.Supports(target))
 				return {SnapshotAdmission::Unsupported, {}};
 	}
-	if (targets.empty() || targets.size() > 8)
-		return {SnapshotAdmission::Invalid, {}};
 	std::size_t producers = 0;
 	for (const auto target : targets)
 		producers += target.IsAdditionalImage() ? 2 : 1;
-	m_captures.ReclaimSnapshots(producers);
+	m_captures.ReclaimSnapshots(producers, targets.size());
 	std::lock_guard lock(m_mutex);
 	if (!m_state.running || m_state.closed)
 		return {SnapshotAdmission::Closed, {}};

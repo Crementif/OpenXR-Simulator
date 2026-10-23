@@ -54,7 +54,8 @@ bool Continuous(const TrackingSnapshot& a, const TrackingSnapshot& b)
 	if (a.body.skeletonRevision != b.body.skeletonRevision || a.input.focused != b.input.focused ||
 		a.head.flags != b.head.flags || a.input.gaze.available != b.input.gaze.available ||
 		a.input.gaze.tracked != b.input.gaze.tracked || a.input.body.active != b.input.body.active ||
-		a.input.body.preset != b.input.body.preset)
+		a.input.body.preset != b.input.body.preset ||
+		a.input.body.rootPose.has_value() != b.input.body.rootPose.has_value())
 		return false;
 	for (std::size_t index = 0; index < a.controllers.size(); ++index)
 		if (a.controllers[index].connected != b.controllers[index].connected ||
@@ -137,6 +138,8 @@ std::optional<TrackingSnapshot> PoseHistory::Sample(RuntimeTime time) const
 				Interpolate(*input.trackers[index].jointOffset, *right->input.trackers[index].jointOffset, fraction);
 	input.gaze.yaw = InterpolateAngle(input.gaze.yaw, right->input.gaze.yaw, fraction);
 	input.gaze.pitch = InterpolateAngle(input.gaze.pitch, right->input.gaze.pitch, fraction);
+	if (input.body.rootPose)
+		input.body.rootPose = Interpolate(*input.body.rootPose, *right->input.body.rootPose, fraction);
 	input.body.confidence += (right->input.body.confidence - input.body.confidence) * fraction;
 	for (std::size_t index = 0; index < input.body.controls.size(); ++index)
 		if (input.body.controls[index].offset)

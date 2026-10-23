@@ -192,7 +192,8 @@ XrResult FrameScheduler::Resume(HostTime anchor, DisplayTick boundary)
 }
 
 XrResult FrameScheduler::WaitFrame(FramePrediction& prediction,
-								   const std::function<void(const FramePrediction&)>& reserve)
+								   const std::function<void(const FramePrediction&)>& reserve,
+								   std::unique_lock<std::mutex>* publication)
 {
 	std::unique_lock lock(m_mutex);
 	if (!m_state.running)
@@ -236,6 +237,19 @@ XrResult FrameScheduler::WaitFrame(FramePrediction& prediction,
 				if (m_policyRevision != policy)
 					continue;
 			}
+			if (publication)
+			{
+				lock.unlock();
+				publication->lock();
+				lock.lock();
+				if (m_revision != revision)
+					return XR_ERROR_SESSION_NOT_RUNNING;
+				if (m_policyRevision != policy || (m_state.paused && !m_state.permits))
+				{
+					publication->unlock();
+					continue;
+				}
+			}
 			if (m_nextFrame == std::numeric_limits<std::uint64_t>::max() ||
 				admission.value > std::numeric_limits<std::uint64_t>::max() - m_state.cadence)
 				throw std::overflow_error("Frame identities exhausted");
@@ -256,12 +270,16 @@ XrResult FrameScheduler::WaitFrame(FramePrediction& prediction,
 	}
 	catch (const std::bad_alloc&)
 	{
+		if (!lock.owns_lock())
+			lock.lock();
 		if (m_revision == revision)
 			m_state.waitPending = false;
 		return XR_ERROR_OUT_OF_MEMORY;
 	}
 	catch (...)
 	{
+		if (!lock.owns_lock())
+			lock.lock();
 		if (m_revision == revision)
 			m_state.waitPending = false;
 		return XR_ERROR_RUNTIME_FAILURE;

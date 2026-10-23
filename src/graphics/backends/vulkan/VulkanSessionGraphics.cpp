@@ -211,16 +211,12 @@ XrResult VulkanSessionGraphics::EndFrame(const XrFrameEndInfo& info)
 {
 	if (m_closing)
 		return XR_ERROR_SESSION_LOST;
-	if (!m_session->Snapshot().running)
-		return XR_ERROR_SESSION_NOT_RUNNING;
-	const auto begun = m_session->Scheduler().Snapshot().begun;
-	if (!begun)
-		return XR_ERROR_CALL_ORDER_INVALID;
 	const FrameBindings bindings(*this);
-	VulkanFrameSubmission submission(*m_session, *m_backend, m_inspection.get(), bindings,
-									 {m_session->Snapshot().generation, begun->id},
-									 m_session->Display().Policy() == PresentationPolicy::Rotational);
-	const auto result = submission.Execute(info);
+	VulkanFrameSubmission backend(*m_session, *m_backend, m_inspection.get(), bindings,
+		m_session->Display().Policy() == PresentationPolicy::Rotational);
+	FrameSubmission submission(*m_session, backend);
+	const auto result = submission.Execute(info,
+		[&bindings](XrSwapchain swapchain) { return bindings.Describe(swapchain); });
 	if (XR_SUCCEEDED(result) && m_observer)
 		m_observer->Observe(info, submission.Composition(), bindings);
 	return result;

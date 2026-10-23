@@ -23,7 +23,11 @@ cbuffer LayerBuffer : register(b2)
 {
     LayerConstants layer;
 };
+#ifdef SIMXR_DEPTH_MS
+Texture2DMS<float4> sourceTexture : register(t0);
+#else
 Texture2D<float4> sourceTexture : register(t0);
+#endif
 SamplerState sourceSampler : register(s1);
 #endif
 

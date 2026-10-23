@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
-project(OpenXR-Simulator VERSION 1.0.0 LANGUAGES CXX)
+project(OpenXR-Simulator VERSION 2.0.0 LANGUAGES CXX)
+
+configure_file(cmake/Version.h.in "${PROJECT_BINARY_DIR}/generated/simxr/Version.h" @ONLY)
 
 include(CTest)
 include(cmake/SimxrTargets.cmake)
@@ -21,8 +23,6 @@ target_include_directories(simxr_openxr_headers INTERFACE "${CMAKE_CURRENT_SOURC
 add_library(simxr_core STATIC
     src/Math.cpp
     src/platform/Clock.cpp
-    src/platform/windows/PreviewFrameSchedule.cpp
-    src/platform/windows/PreviewCapturePixels.cpp
     src/graphics/SnapshotBudget.cpp
     src/graphics/FramePool.cpp
     src/simulation/ActionRegistry.cpp
@@ -119,6 +119,9 @@ endif()
 simxr_configure_target(simxr_app_settings)
 target_include_directories(simxr_app_settings PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(simxr_app_settings PUBLIC Threads::Threads)
+if(WIN32)
+    target_link_libraries(simxr_app_settings PRIVATE advapi32)
+endif()
 
 add_library(simxr_connection STATIC
     src/app/RuntimeConnection.cpp
@@ -148,12 +151,34 @@ add_library(simxr_graphics STATIC
     src/graphics/SwapchainWaits.cpp
     src/graphics/LayerBuilder.cpp
     src/graphics/Compositor.cpp
+    src/graphics/FrameSubmission.cpp
+    src/graphics/SessionComposition.cpp
     src/graphics/RotationalReprojection.cpp
-    src/graphics/PreviewGeometry.cpp)
+    src/graphics/CompositionBounds.cpp)
 simxr_configure_target(simxr_graphics)
 target_link_libraries(simxr_graphics PUBLIC simxr_core)
 target_compile_features(simxr_graphics PUBLIC cxx_std_20)
 target_link_libraries(simxr_control PUBLIC simxr_graphics)
+
+if(WIN32)
+    file(READ "${PROJECT_SOURCE_DIR}/shaders/Compositor.hlsl" SIMXR_COMPOSITOR_HLSL)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/shaders/Compositor.hlsl")
+    configure_file(cmake/CompositorHlsl.h.in generated/CompositorHlsl.h @ONLY)
+    target_sources(simxr_core PRIVATE src/control/legacy/WindowsRuntimeSettings.cpp)
+    add_library(simxr_d3d11 STATIC src/graphics/backends/d3d11/D3D11Backend.cpp)
+    simxr_configure_target(simxr_d3d11)
+    target_include_directories(simxr_d3d11 PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_link_libraries(simxr_d3d11 PUBLIC simxr_graphics d3d11 d3dcompiler)
+    add_library(simxr_d3d12 STATIC src/graphics/backends/d3d12/D3D12Backend.cpp)
+    simxr_configure_target(simxr_d3d12)
+    target_include_directories(simxr_d3d12 PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_link_libraries(simxr_d3d12 PUBLIC simxr_graphics d3d12 d3dcompiler)
+
+    if(BUILD_TESTING)
+        simxr_add_test(d3d11_compositor_tests tests/graphics/D3D11CompositorTests.cpp d3d11_compositor)
+        target_link_libraries(d3d11_compositor_tests PRIVATE simxr_d3d11 simxr_d3d12)
+    endif()
+endif()
 
 if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES OR SIMXR_BUILD_COMPANION)
     find_path(SIMXR_VULKAN_INCLUDE_DIR vulkan/vulkan.h
@@ -188,6 +213,35 @@ if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES OR SIMXR_BUILD_COMPANION)
     simxr_configure_target(simxr_vulkan)
     target_include_directories(simxr_vulkan PUBLIC "${SIMXR_VULKAN_INCLUDE_DIR}" PRIVATE "${PROJECT_SOURCE_DIR}")
     target_link_libraries(simxr_vulkan PUBLIC simxr_graphics simxr_vulkan_loader)
+    if(WIN32)
+        file(READ "${PROJECT_SOURCE_DIR}/shaders/generated/Compositor.vertex.glsl" SIMXR_COMPOSITOR_VERTEX_GLSL)
+        file(READ "${PROJECT_SOURCE_DIR}/shaders/generated/Compositor.pixel.glsl" SIMXR_COMPOSITOR_PIXEL_GLSL)
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+            "${PROJECT_SOURCE_DIR}/shaders/generated/Compositor.vertex.glsl"
+            "${PROJECT_SOURCE_DIR}/shaders/generated/Compositor.pixel.glsl")
+        configure_file(cmake/CompositorGlsl.h.in generated/CompositorGlsl.h @ONLY)
+        add_library(simxr_opengl STATIC src/graphics/backends/opengl/OpenGLBackend.cpp)
+        simxr_configure_target(simxr_opengl)
+        target_include_directories(simxr_opengl PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+        target_link_libraries(simxr_opengl PUBLIC simxr_vulkan opengl32 gdi32 user32)
+        if(BUILD_TESTING)
+            simxr_add_test(opengl_compositor_tests tests/graphics/OpenGLCompositorTests.cpp opengl_compositor)
+            target_link_libraries(opengl_compositor_tests PRIVATE simxr_opengl)
+        endif()
+        target_sources(simxr_vulkan PRIVATE src/graphics/backends/windows/WindowsVulkanImport.cpp)
+        target_sources(simxr_d3d12 PRIVATE src/graphics/backends/d3d12/D3D12VulkanImport.cpp)
+        target_link_libraries(simxr_d3d12 PUBLIC simxr_vulkan)
+        target_sources(simxr_d3d11 PRIVATE src/graphics/backends/d3d11/D3D11VulkanImport.cpp)
+        target_link_libraries(simxr_d3d11 PUBLIC simxr_vulkan)
+        add_library(simxr_windows_graphics STATIC src/graphics/backends/windows/WindowsSessionGraphics.cpp)
+        simxr_configure_target(simxr_windows_graphics)
+        target_link_libraries(simxr_windows_graphics PUBLIC simxr_d3d11 simxr_d3d12 simxr_opengl)
+        if(TARGET d3d11_compositor_tests)
+            target_link_libraries(d3d11_compositor_tests PRIVATE simxr_windows_graphics)
+            target_compile_definitions(d3d11_compositor_tests PRIVATE SIMXR_TEST_D3D11_VULKAN)
+            add_test(NAME d3d12_compositor COMMAND d3d11_compositor_tests --d3d12)
+        endif()
+    endif()
     add_library(simxr_vulkan_control STATIC src/control/backends/vulkan/VulkanImageInspection.cpp
         src/control/backends/vulkan/VulkanControlHandle.cpp
         src/control/backends/vulkan/VulkanImageConsumer.cpp
@@ -209,12 +263,8 @@ target_link_libraries(simxr_diagnostics PUBLIC Threads::Threads ${CMAKE_DL_LIBS}
 if(SIMXR_BUILD_RUNTIME)
     if(WIN32)
         set(SIMXR_RUNTIME_SOURCE src/runtime.cpp)
-        list(APPEND SIMXR_RUNTIME_SOURCE src/platform/windows/WindowsClock.cpp src/platform/windows/D3D11Preview.cpp
-            src/platform/windows/OpenGLPreviewReadback.cpp
-            src/platform/windows/OpenGLSwapchain.cpp
-            src/platform/windows/D3D11PreviewContext.cpp
-            src/platform/windows/D3D12Preview.cpp
-            src/platform/windows/D3D12PreviewPipelines.cpp)
+        list(APPEND SIMXR_RUNTIME_SOURCE src/platform/windows/WindowsClock.cpp
+            src/platform/windows/OpenGLSwapchain.cpp)
     else()
         set(SIMXR_RUNTIME_SOURCE src/runtime_linux.cpp src/platform/linux/LinuxRuntime.cpp)
     endif()
@@ -224,7 +274,7 @@ if(SIMXR_BUILD_RUNTIME)
     target_include_directories(openxr_simulator PRIVATE "${SIMXR_VULKAN_INCLUDE_DIR}")
     target_link_libraries(openxr_simulator PRIVATE simxr_core simxr_graphics simxr_control simxr_diagnostics Threads::Threads ${CMAKE_DL_LIBS})
     if(WIN32)
-        target_link_libraries(openxr_simulator PRIVATE d3d11 d3d12 dxgi d3dcompiler opengl32 dwmapi msimg32 uxtheme)
+        target_link_libraries(openxr_simulator PRIVATE simxr_windows_graphics d3d11 d3d12 dxgi d3dcompiler opengl32)
         target_link_libraries(openxr_simulator PRIVATE simxr_vulkan simxr_vulkan_control)
     else()
         find_library(SIMXR_VULKAN_LIBRARY NAMES vulkan libvulkan.so.1 REQUIRED)
@@ -383,13 +433,9 @@ if(BUILD_TESTING)
     target_link_libraries(rotational_reprojection_tests PRIVATE simxr_graphics)
     simxr_add_test(compositor_tests tests/graphics/CompositorTests.cpp compositor)
     target_link_libraries(compositor_tests PRIVATE simxr_graphics)
-    simxr_add_test(preview_geometry_tests tests/graphics/PreviewGeometryTests.cpp preview_geometry)
-    target_link_libraries(preview_geometry_tests PRIVATE simxr_graphics)
     simxr_add_test(swapchain_access_tests tests/graphics/SwapchainAccessTests.cpp swapchain_access)
     target_link_libraries(swapchain_access_tests PRIVATE simxr_graphics)
     set_tests_properties(swapchain_access PROPERTIES TIMEOUT 15)
-    simxr_add_test(preview_frame_schedule_tests tests/graphics/PreviewFrameScheduleTests.cpp preview_frame_schedule)
-    target_link_libraries(preview_frame_schedule_tests PRIVATE simxr_core)
     simxr_add_test(swapchain_tests tests/graphics/SwapchainTests.cpp swapchain)
     target_link_libraries(swapchain_tests PRIVATE simxr_graphics)
     simxr_add_test(event_queue_tests tests/runtime/EventQueueTests.cpp event_queue)
@@ -441,14 +487,12 @@ if(BUILD_TESTING)
         target_sources(opengl_swapchain_tests PRIVATE src/platform/windows/OpenGLSwapchain.cpp)
         target_link_libraries(opengl_swapchain_tests PRIVATE simxr_core opengl32 user32 gdi32)
         set_tests_properties(opengl_swapchain PROPERTIES SKIP_RETURN_CODE 77)
-        simxr_add_test(d3d11_preview_context_tests tests/graphics/D3D11PreviewContextTests.cpp d3d11_preview_context)
-        target_sources(d3d11_preview_context_tests PRIVATE src/platform/windows/D3D11PreviewContext.cpp)
-        target_link_libraries(d3d11_preview_context_tests PRIVATE d3d11 d3dcompiler)
-        set_tests_properties(d3d11_preview_context PROPERTIES SKIP_RETURN_CODE 77)
         simxr_add_test(windows_control_transport_tests tests/control/WindowsControlTransportTests.cpp windows_control_transport)
         target_link_libraries(windows_control_transport_tests PRIVATE simxr_control)
         simxr_add_test(ui_resolution_tests tests/ui_resolution_tests.cpp ui_resolution)
         simxr_add_test(ui_input_polling_tests tests/ui_input_polling_tests.cpp ui_input_polling)
+        target_link_libraries(ui_resolution_tests PRIVATE simxr_core)
+        target_link_libraries(ui_input_polling_tests PRIVATE simxr_core)
         simxr_add_test(mcp_command_tests tests/mcp_command_tests.cpp mcp_commands)
     endif()
 endif()
@@ -560,6 +604,20 @@ if(SIMXR_BUILD_PROBES)
     endif()
     if(SIMXR_OPENXR_LOADER_TARGET)
         if(WIN32)
+            add_executable(xr_probe_d3d11 probe/xr_probe_windows.cpp)
+            simxr_configure_target(xr_probe_d3d11)
+            simxr_set_output_directory(xr_probe_d3d11)
+            target_link_libraries(xr_probe_d3d11 PRIVATE ${SIMXR_OPENXR_LOADER_TARGET} d3d11 dxgi)
+            add_executable(xr_probe_d3d12 probe/xr_probe_windows.cpp)
+            simxr_configure_target(xr_probe_d3d12)
+            simxr_set_output_directory(xr_probe_d3d12)
+            target_compile_definitions(xr_probe_d3d12 PRIVATE SIMXR_PROBE_D3D12)
+            target_link_libraries(xr_probe_d3d12 PRIVATE ${SIMXR_OPENXR_LOADER_TARGET} d3d12 dxgi)
+            add_executable(xr_probe_opengl probe/xr_probe_windows.cpp)
+            simxr_configure_target(xr_probe_opengl)
+            simxr_set_output_directory(xr_probe_opengl)
+            target_compile_definitions(xr_probe_opengl PRIVATE SIMXR_PROBE_OPENGL)
+            target_link_libraries(xr_probe_opengl PRIVATE ${SIMXR_OPENXR_LOADER_TARGET} opengl32 gdi32 user32)
             add_executable(xr_probe probe/xr_probe.cpp)
             simxr_configure_target(xr_probe)
             simxr_set_output_directory(xr_probe)
@@ -812,3 +870,5 @@ if(TARGET openxr_simulator AND NOT WIN32 AND BUILD_TESTING AND Python3_Interpret
         "${PROJECT_SOURCE_DIR}/tests/control/test_game_example.py" "$<TARGET_FILE:openxr_simulator>")
     set_tests_properties(native_game_example PROPERTIES TIMEOUT 20)
 endif()
+
+include(cmake/SimxrPackage.cmake)

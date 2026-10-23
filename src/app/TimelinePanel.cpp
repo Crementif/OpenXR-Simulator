@@ -196,8 +196,10 @@ void TimelinePanel::DrawMeter(const HistoryStore& history, const RuntimeView& st
 	if (!oneRow && cpu >= 0 && sparkBottom - sparkTop >= font + 3 * scale)
 	{
 		char headroom[48];
-		std::snprintf(headroom, sizeof(headroom), "CPU %+.1f ms spare", budget - cpu);
-		draw->AddText({area.x, sparkTop}, color, headroom);
+		std::snprintf(headroom, sizeof(headroom), "%+.1f ms spare", budget - cpu);
+		draw->PushClipRect(hoverMin, hoverMax, true);
+		draw->AddText({area.x, sparkTop}, theme::TextDim, headroom);
+		draw->PopClipRect();
 		sparkTop += font + 3 * scale;
 	}
 	if (!oneRow && sparkBottom - sparkTop >= 10 * scale)
@@ -245,15 +247,16 @@ void TimelinePanel::DrawLegend()
 		ImGui::SameLine(ImGui::GetFontSize() * 7);
 		ImGui::TextDisabled("%s", meaning);
 	};
-	ImGui::SeparatorText("Lanes");
+	SectionLabel("Lanes");
 	row("Frame time", "One bar per frame; dashed line is the frame budget");
 	row("", "Amber ran long, red missed its display time");
 	row("paused", "The app was frozen; it only advanced when stepped");
 	row("Images", "Kept images; diamonds are snapshots, filled when pinned");
 	row("Input", "Left hand rises, right hand falls; shading is script or replay");
-	row("Recording", "Recordings and replays; double-click opens the Library");
-	row("Events", "Connects, pauses and script output");
-	ImGui::SeparatorText("Mouse and keys");
+	row("Red band", "Recorded; the tab plays a saved take or opens the Library");
+	row("Blue band", "A replay or script drove these frames");
+	row("Ruler dots", "Connects, pauses and script output; triangles are markers");
+	SectionLabel("Mouse and keys");
 	row("Wheel", "Zoom around the pointer");
 	row("Middle drag", "Pan");
 	row("Click", "Show that frame");
@@ -325,7 +328,7 @@ void TimelinePanel::Observe(const RuntimeView& state)
 	}
 	m_previous = state;
 }
-bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded, bool& fold)
+bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 {
 	const auto state = runtime.Snapshot();
 	const auto& history = runtime.History();
@@ -387,26 +390,38 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded,
 				choose(*index);
 	};
 
-	// Left column: transport, then the lane names the canvas draws below it.
+	// Left column: transport, then the lane names the canvas draws below it, or the Library.
 	const auto& style = ImGui::GetStyle();
-	const float button = ImGui::GetFrameHeight();
-	// Icon buttons with a word are one frame height wide plus the word.
-	const auto buttonWidth = [&](const char* label)
-	{
-		return button + ImGui::CalcTextSize(label).x + style.FramePadding.x;
-	};
-	const bool transportWords = ImGui::GetContentRegionAvail().x >= 720 * ImGui::GetFontSize() / 16;
-	const float transport = (transportWords ? buttonWidth("Continue") : button) +
-		button * 4 + style.ItemSpacing.x * 4;
-	const float header = std::max(transport, ImGui::CalcTextSize("Frame time").x) + style.ItemSpacing.x * 2;
-	const float liveWidth = std::max(buttonWidth("Go live"), ImGui::CalcTextSize("LIVE \u00b7 paused").x + button) +
-							button * 2 + style.ItemSpacing.x * 4 +
+	const float button = ImGui::GetFrameHeight(), scale = ImGui::GetFontSize() / 16;
+	// Recording shows its elapsed time on the record button; room for it is kept so the lanes do not shift.
+	const float clock = ImGui::CalcTextSize("00:00").x + style.FramePadding.x;
+	const float transport = button * 6 + clock + style.ItemSpacing.x * 5;
+	const bool drawer = shell.library && !folded;
+	const float timelineWidth = ImGui::GetContentRegionAvail().x;
+	const float header = drawer ? std::clamp(timelineWidth * .32f, 260 * scale, 380 * scale)
+								: std::max(transport, ImGui::CalcTextSize("Frame time").x) + style.ItemSpacing.x * 2;
+	const float liveWidth = std::max(ImGui::CalcTextSize("Go live").x + button + style.FramePadding.x,
+									 ImGui::CalcTextSize("LIVE \u00b7 000000").x + 14 * scale) +
+							button + style.ItemSpacing.x * 3 +
 							(folded ? ImGui::CalcTextSize("000 fps").x + style.ItemSpacing.x : 0);
+	std::string roles;
+	if (const auto index = history.Nearest(cursor))
+		if (const auto* sample = runtime.InputSamples().Find(history.At(*index).input); sample && sample->trackers)
+			for (const auto& tracker : *sample->trackers)
+				if (tracker.connected)
+				{
+					roles += roles.empty() ? "Trackers: " : ", ";
+					roles += TrackerRoleName(tracker.role);
+				}
+	m_canvas.SetInputDetail(std::move(roles));
 	m_canvas.SetTint(m_tint);
 	if (history.Size())
 		m_canvas.SetBudget(history.At(history.Size() - 1).periodMilliseconds);
-	m_canvas.Begin(header, liveWidth);
+	m_canvas.Begin(header, liveWidth, !drawer);
 	const auto cell = m_canvas.TransportRect();
+	m_drawer = drawer && !m_canvas.Compact()
+				   ? ShellRect{cell.x, cell.y + cell.height, cell.width, m_canvas.Bounds().height - cell.height}
+				   : ShellRect{};
 	ImGui::SetCursorScreenPos(
 		{cell.x + style.ItemSpacing.x, cell.y + std::max(0.f, (cell.height - button) / 2)});
 	const char* why = !state.sessionAvailable ? "Connect an app first"
@@ -420,8 +435,7 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded,
 					   : why	? why
 					   : held	? "Let the app run again (F8)"
 								: "Freeze the app on its current frame (F6)";
-	if (held ? IconButton("Continue", Icon::Play, pauseTip, false, transportWords ? "Continue" : nullptr)
-			 : IconButton("Pause", Icon::Pause, pauseTip, false, transportWords ? "Pause" : nullptr))
+	if (held ? IconButton("Continue", Icon::Play, pauseTip) : IconButton("Pause", Icon::Pause, pauseTip))
 	{
 		if (take)
 			shell.timeline.togglePlayback = true;
@@ -470,17 +484,42 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded,
 	ImGui::SameLine();
 	const bool canStep = shift || !atEdge || (state.manual && !why) || !state.time.following;
 	ImGui::BeginDisabled(!canStep);
-	const char* forwardTip = shift			  ? "Next marker (Shift+.)"
-							 : !atEdge		  ? "Next frame (.)"
-							 : state.manual	  ? "Let the app make one more frame (. or F7)"
-											  : "Pause first to step the app (F6)";
-	if (IconButton("Step forward", Icon::StepForward, forwardTip))
+	const std::string forwardTip = std::string{shift		  ? "Next marker (Shift+.)"
+											   : !atEdge	  ? "Next frame (.)"
+											   : state.manual ? "Let the app make one more frame (. or F7)"
+															  : "Pause first to step the app (F6)"} +
+								   "\nRight-click for advanced stepping";
+	if (IconButton("Step forward", Icon::StepForward, forwardTip.c_str()))
 		stepForward();
 	ImGui::EndDisabled();
+	// Right-click offers the rarer stepping tools, even while stepping itself is unavailable.
+	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && ImGui::IsMouseReleased(ImGuiMouseButton_Right))
+		ImGui::OpenPopup("Step options");
+	if (ImGui::BeginPopup("Step options"))
+	{
+		if (ImGui::MenuItem("Advanced stepping"))
+		{
+			shell.selection = AdvancedSel{};
+			inspect = true;
+		}
+		if (ImGui::MenuItem("Cancel pending", "Shift+F7"))
+			runtime.CancelPending();
+		ImGui::EndPopup();
+	}
 	ImGui::SameLine();
+	const float recordX = ImGui::GetCursorPosX();
 	ImGui::BeginDisabled(!state.sessionAvailable);
+	char elapsed[16] = "";
+	if (state.recording && shell.timeline.recordingSince)
+	{
+		const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() -
+																			  *shell.timeline.recordingSince)
+								 .count();
+		std::snprintf(elapsed, sizeof(elapsed), "%lld:%02lld", static_cast<long long>(seconds / 60),
+					  static_cast<long long>(seconds % 60));
+	}
 	if (state.recording ? IconButton("Stop recording", Icon::Stop, "Stop recording and save the take (Ctrl+R)",
-									 false, nullptr, theme::Record)
+									 false, elapsed, theme::Record)
 						: IconButton("Rec", Icon::Record, "Record inputs (Ctrl+R)", false, nullptr, theme::Record))
 	{
 		if (state.recording)
@@ -489,6 +528,9 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded,
 			runtime.StartRecording();
 	}
 	ImGui::EndDisabled();
+	ImGui::SameLine(recordX + button + clock + style.ItemSpacing.x);
+	if (IconButton("Library", Icon::Library, "Saved takes and scripts (Ctrl+L)", shell.library))
+		shell.library = !shell.library;
 	ImGui::SameLine();
 	if (IconButton("Timeline help", Icon::Help, "What the lanes, marks and keys mean"))
 		ImGui::OpenPopup("Timeline legend");
@@ -509,31 +551,41 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded,
 	ImGui::SetCursorScreenPos({live.x + style.ItemSpacing.x, rowY});
 	if (!state.time.following && state.sessionAvailable)
 	{
-		if (IconButton("Go live", Icon::Live, "Jump to the newest frame (End)", false, "Go live"))
+		if (IconButton("Go live", Icon::Live, "Jump to the newest frame (End)", false, roomy ? "Go live" : nullptr))
 			goLive();
 	}
 	else if (state.sessionAvailable)
-		StateChip("Live state", state.manual ? theme::Paused : theme::Ok, state.manual ? "LIVE \u00b7 paused" : "LIVE",
-				  state.manual ? "Showing the paused frame; stepping shows each new frame"
-							   : "Showing the newest frame as the app makes it");
+	{
+		// Paused or running is the app control's dot; this says the view follows the newest frame, and which.
+		const auto position = ImGui::GetCursorScreenPos();
+		auto* draw = ImGui::GetWindowDrawList();
+		const float radius = 3.5f * scale;
+		draw->AddCircleFilled({position.x + radius, position.y + button / 2}, radius, theme::Ok);
+		ImGui::SetCursorScreenPos({position.x + radius * 2 + 6 * scale, position.y});
+		ImGui::AlignTextToFramePadding();
+		ImGui::TextUnformatted("LIVE");
+		if (roomy)
+		{
+			ImGui::SameLine(0, ImGui::CalcTextSize(" ").x);
+			ImGui::TextDisabled("\u00b7 %llu", static_cast<unsigned long long>(state.latestFrame));
+		}
+		ImGui::SetItemTooltip(state.manual ? "Showing the paused frame; stepping shows each new frame"
+										   : "Showing the newest frame as the app makes it");
+	}
 	if (folded && roomy)
 	{
 		ImGui::SameLine();
 		const auto position = ImGui::GetCursorScreenPos();
 		DrawMeter(history, state, {position.x, live.y, ImGui::CalcTextSize("000 fps").x, live.height}, true);
 	}
-	ImGui::SetCursorScreenPos({live.x + live.width - button * (roomy ? 2 : 1) - style.ItemSpacing.x * 2, rowY});
 	if (roomy)
 	{
+		ImGui::SetCursorScreenPos({live.x + live.width - button - style.ItemSpacing.x, rowY});
 		if (IconButton("Slow frames", Icon::Gauge,
 					   m_tint ? "Stop highlighting missed frames" : "Highlight frames that missed their display time",
 					   m_tint))
 			m_tint = !m_tint;
-		ImGui::SameLine();
 	}
-	if (IconButton("Fold timeline", folded ? Icon::ChevronUp : Icon::ChevronDown,
-				   folded ? "Show the timeline (Ctrl+T)" : "Hide the timeline (Ctrl+T)"))
-		fold = true;
 	if (!folded && roomy)
 	{
 		const auto bounds = m_canvas.Bounds();
@@ -568,18 +620,6 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded,
 	const auto gesture = m_canvas.Draw(history, runtime.KeptPreviews(),
 		 runtime.PreviewCrop().value_or(ImVec4{0, 0, 1, 1}), state.time.following,
 		 state.time.following ? std::optional<double>{} : cursor, selectedRange);
-	if (const auto index = history.Nearest(state.time.following ? state.historySeconds : cursor))
-		if (const auto* sample = runtime.InputSamples().Find(history.At(*index).input); sample && sample->trackers)
-		{
-			std::string roles;
-			for (const auto& tracker : *sample->trackers)
-				if (tracker.connected)
-				{
-					roles += roles.empty() ? "Trackers: " : ", ";
-					roles += TrackerRoleName(tracker.role);
-				}
-			m_canvas.DrawInputLabel(roles.c_str());
-		}
 	shell.timelineCanvas = m_canvas.Bounds();
 	std::tie(shell.timeline.first, shell.timeline.last) = m_canvas.VisibleRange();
 	if (gesture.stopFollowing)
@@ -649,17 +689,25 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded,
 	for (const auto& event : m_events)
 		m_canvas.DrawEvent(event.axisSeconds, event.seconds, event.text.c_str(), event.failed,
 						   event.run == RuntimeFrameRun{});
-	const auto clip = [&](double first, double last, bool replay, const std::string& take = {})
+	const auto clip = [&](double first, double last, bool replay, const std::string& take = {}, bool running = false)
 	{
 		const auto name = take.empty() ? std::string(replay ? (shell.timeline.playing ? "Take" : "Script") : "Recording")
 									   : PathText(Utf8Path(take).stem());
-		const auto hit = m_canvas.DrawClip(first, last, name.c_str(), replay, !take.empty() && runtime.CanReplay());
+		const auto hit = m_canvas.DrawClip(first, last, name.c_str(), replay, !take.empty() && runtime.CanReplay(),
+										   running);
 		if (hit == ClipHit::Play)
 			Play(runtime, take);
+		else if (hit == ClipHit::Stop)
+			shell.timeline.stopReplay = true;
 		else if (hit == ClipHit::Opened)
 		{
-			shell.selection = LibrarySel{};
-			inspect = true;
+			if (take.empty())
+				shell.library = true;
+			else
+			{
+				shell.selection = TakeSel{take};
+				inspect = true;
+			}
 		}
 		else if (hit == ClipHit::Clicked && history.Size())
 			if (const auto a = history.Nearest(first), b = history.Nearest(last); a && b)
@@ -676,7 +724,8 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded,
 			if (const auto a = history.Find(take.first, take.epoch), b = history.Find(take.last, take.epoch); a && b)
 				clip(history.At(*a).seconds, history.At(*b).seconds, false, take.path);
 	if (m_scriptBegin)
-		clip(*m_scriptBegin, state.historySeconds, true);
+		clip(*m_scriptBegin, state.historySeconds, true, {},
+			 m_phase == automation::RigPhase::Running || m_phase == automation::RigPhase::Paused);
 	if (m_recordingBegin)
 		clip(*m_recordingBegin, state.historySeconds, false);
 	return inspect;

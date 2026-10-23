@@ -1,0 +1,34 @@
+OpenXR Simulator @PROJECT_VERSION@
+
+This is a development qualification package. Native Windows and the remaining
+hardware/application acceptance rows are not yet release-qualified.
+
+Extract the entire archive into a new directory. Keep bin/openxr_simulator.json
+beside its runtime library; its relative path allows moving the package.
+
+Launch bin/simxr_companion and create a launch profile with the application's
+executable and this package's bin/openxr_simulator.json. Runtime selection affects
+that child process only when the OpenXR loader permits environment overrides.
+Run Windows applications without elevation: elevated loaders ignore XR_RUNTIME_JSON.
+For command-line launch, set XR_RUNTIME_JSON to the
+absolute manifest path in the application's environment. No system registration
+is needed. On Linux, bin/launch-linux.py also launches and attaches the companion.
+
+The host needs its graphics driver and Vulkan loader. Linux additionally needs
+the usual C/C++ runtime and desktop window-system libraries. This archive does
+not install or replace drivers. Windows requires a Vulkan-capable driver even
+when the application uses Direct3D or OpenGL.
+
+bin/simxr_companion --version
+bin/simxr_runner --version
+
+Python 3.10+ SDK: install share/simxr/sdk/python into a virtual environment with
+pip, or put that directory on PYTHONPATH. Examples are in share/simxr/examples;
+Luau rigs are also in share/simxr/rigs. The C game bridge header is in include.
+See share/doc/simxr for runner and control protocol instructions. Optional loader
+probes are in bin when built with SIMXR_BUILD_PROBES.
+
+To uninstall, close this package's processes and delete the extracted directory.
+Remove any XR_RUNTIME_JSON setting you added to your own launch scripts. User
+settings and recordings are outside the package and are preserved. Extraction
+and launch never change the machine's default OpenXR runtime.

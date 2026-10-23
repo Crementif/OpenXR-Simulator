@@ -62,7 +62,8 @@ class SimulationTests(unittest.TestCase):
         spec.loader.exec_module(adapter)
         with tempfile.TemporaryDirectory(prefix='simxr-commands-') as directory:
             path, marker = Path(directory) / 'control.sock', Path(directory) / 'start'
-            process = subprocess.Popen([HOST, str(path), str(marker)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            finish = Path(directory) / 'finish'
+            process = subprocess.Popen([HOST, str(path), str(marker), str(finish)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             try:
                 wait_for(path.exists, process)
                 with Client(path) as client:
@@ -151,6 +152,7 @@ class SimulationTests(unittest.TestCase):
                     self.assertTrue(all(owner is None for owner in state['owners']))
                     resume = client.submit(lease, CommandKind.RESUME)
                     self.assertEqual(client.wait(session, resume['operation_id'])['phase'], 'complete')
+                finish.touch()
                 output = process.communicate(timeout=5)[0]
                 self.assertEqual(process.returncode, 0, output)
             finally:

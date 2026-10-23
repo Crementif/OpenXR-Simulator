@@ -106,6 +106,21 @@ void RuntimeFeed()
 	Require(feed.Accept(page(3, 3, 3000)).empty() && feed.History().Size() == 4 &&
 				(feed.History().At(3).flags & HistoryGap),
 			"Frame after a skipped page lacks its gap");
+	feed.SetScope({3, 9, 4});
+	auto invalid = page(4, 1, 1000000000);
+	auto frames = wire::DecodeFields(invalid.Find(tag::Frames)->value).fields;
+	auto frame = wire::DecodeFields(frames.front().value).fields;
+	frame.push_back(wire::Field::Bytes(tag::AppliedInput, std::vector<std::byte>{std::byte{1}}));
+	frames.front().value = wire::EncodeFields(frame);
+	for (auto& field : invalid.fields)
+		if (field.tag == tag::Frames)
+			field.value = wire::EncodeFields(frames);
+	Require(!feed.Accept(invalid).empty(), "Malformed first-frame input was accepted");
+	const auto previous = feed.History().At(feed.History().Size() - 1).seconds;
+	Require(feed.Accept(page(4, 2, 1010000000)).empty(), "Valid frame after malformed input rejected");
+	const auto& recovered = feed.History().At(feed.History().Size() - 1);
+	Require(std::abs(recovered.seconds - previous - .1) < .000001 && (recovered.flags & HistoryGap),
+		"Rejected first frame changed the next run's timeline origin");
 }
 // A walking player in T pose with a moving tracker: 32k frames keep one body
 // block, and a take cut from them carries body, gaze and tracker changes.
@@ -225,6 +240,50 @@ void AppliedInputFeed()
 				gaze |= value->value.yaw == .25f && transaction.frame.value == 200;
 		}
 	Require(tpose && tracker && gaze, "Cut take lacks body, tracker or gaze changes");
+
+	// Conversion must retain scenario and button edges, including at the size boundary.
+	std::vector<InputSample> edges(1026, *range.front());
+	std::vector<const InputSample*> edgeRange;
+	for (std::size_t index = 0; index < edges.size(); ++index)
+	{
+		edges[index].identity.frame = 1000 + index;
+		edges[index].controls[0].primary = (index % 2) != 0;
+		edgeRange.push_back(&edges[index]);
+	}
+	const auto refuses = [](const std::vector<const InputSample*>& input)
+	{
+		try
+		{
+			TakeFromInput(input);
+		}
+		catch (const std::invalid_argument&)
+		{
+			return true;
+		}
+		return false;
+	};
+	Require(refuses(edgeRange), "Long take silently thinned button edges");
+	edgeRange.pop_back();
+	const auto boundary = TakeFromInput(edgeRange);
+	Require(boundary.transactions.size() == 1024, "Take lost a transition at the transaction limit");
+	for (std::size_t index = 0; index < boundary.transactions.size(); ++index)
+	{
+		const auto& transaction = boundary.transactions[index];
+		Require(transaction.frame.value == 1001 + index && transaction.commands.size() == 1 &&
+			std::get<SetControllerControls>(transaction.commands.front()).value.primary == ((index % 2) == 0),
+			"Take changed a button edge or its frame");
+	}
+	edges[1].controls = edges[0].controls;
+	edges[2].controls = edges[0].controls;
+	edges[1].scenarios[static_cast<std::size_t>(FailureScenario::HeadUntracked)] = true;
+	const auto scenarios = TakeFromInput({&edges[0], &edges[1], &edges[2]});
+	Require(scenarios.transactions.size() == 2 &&
+		std::get<SetScenario>(scenarios.transactions[0].commands.front()).enabled &&
+		!std::get<SetScenario>(scenarios.transactions[1].commands.front()).enabled,
+		"Take omitted scenario activation or recovery");
+	Require(refuses({&edges[0], &edges[2]}), "Take silently bridged missing input");
+	++edges[1].epoch;
+	Require(refuses({&edges[0], &edges[1]}), "Take mixed connection epochs");
 
 	FrameHistoryFeed older;
 	older.SetScope({1, 9, 2});

@@ -1,0 +1,165 @@
+{
+  "name": "OpenXR Simulator icons v2",
+  "grid": 24,
+  "strokeWidth": 1.75,
+  "color": "currentColor",
+  "icons": [
+    {
+      "enum": "Player",
+      "file": "svg/player.svg"
+    },
+    {
+      "enum": "Head",
+      "file": "svg/head.svg"
+    },
+    {
+      "enum": "HandLeft",
+      "file": "svg/hand-left.svg"
+    },
+    {
+      "enum": "HandRight",
+      "file": "svg/hand-right.svg"
+    },
+    {
+      "enum": "Body",
+      "file": "svg/body.svg"
+    },
+    {
+      "enum": "Eye",
+      "file": "svg/eye.svg"
+    },
+    {
+      "enum": "Tracker",
+      "file": "svg/tracker.svg"
+    },
+    {
+      "enum": "Headset",
+      "file": "svg/headset.svg"
+    },
+    {
+      "enum": "Scenarios",
+      "file": "svg/scenarios.svg"
+    },
+    {
+      "enum": "Library",
+      "file": "svg/library.svg"
+    },
+    {
+      "enum": "Play",
+      "file": "svg/play.svg"
+    },
+    {
+      "enum": "Pause",
+      "file": "svg/pause.svg"
+    },
+    {
+      "enum": "StepForward",
+      "file": "svg/step-forward.svg"
+    },
+    {
+      "enum": "StepBack",
+      "file": "svg/step-back.svg"
+    },
+    {
+      "enum": "Record",
+      "file": "svg/record.svg"
+    },
+    {
+      "enum": "Stop",
+      "file": "svg/stop.svg"
+    },
+    {
+      "enum": "Live",
+      "file": "svg/live.svg"
+    },
+    {
+      "enum": "Gauge",
+      "file": "svg/gauge.svg"
+    },
+    {
+      "enum": "ChevronLeft",
+      "file": "svg/chevron-left.svg"
+    },
+    {
+      "enum": "ChevronRight",
+      "file": "svg/chevron-right.svg"
+    },
+    {
+      "enum": "ChevronUp",
+      "file": "svg/chevron-up.svg"
+    },
+    {
+      "enum": "ChevronDown",
+      "file": "svg/chevron-down.svg"
+    },
+    {
+      "enum": "More",
+      "file": "svg/more.svg"
+    },
+    {
+      "enum": "Close",
+      "file": "svg/close.svg"
+    },
+    {
+      "enum": "App",
+      "file": "svg/app.svg"
+    },
+    {
+      "enum": "Settings",
+      "file": "svg/settings.svg"
+    },
+    {
+      "enum": "Help",
+      "file": "svg/help.svg"
+    },
+    {
+      "enum": "Globe",
+      "file": "svg/globe.svg"
+    },
+    {
+      "enum": "Axes",
+      "file": "svg/axes.svg"
+    },
+    {
+      "enum": "Refresh",
+      "file": "svg/refresh.svg"
+    },
+    {
+      "enum": "Pin",
+      "file": "svg/pin.svg"
+    },
+    {
+      "enum": "Export",
+      "file": "svg/export.svg"
+    },
+    {
+      "enum": "Warning",
+      "file": "svg/warning.svg"
+    },
+    {
+      "enum": "Rename",
+      "file": "svg/rename.svg"
+    },
+    {
+      "enum": "Delete",
+      "file": "svg/delete.svg"
+    },
+    {
+      "enum": "Script",
+      "file": "svg/script.svg"
+    },
+    {
+      "enum": "Focus",
+      "file": "svg/focus.svg"
+    },
+    {
+      "enum": "Crop",
+      "file": "svg/crop.svg"
+    },
+    {
+      "enum": "Zoom",
+      "file": "svg/zoom.svg"
+    }
+  ],
+  "referenceSourceSHA256": "4f8fc36eef0042cb773726ae758aae6878c9cef8949ad8c6e06cde83ede5a9c1"
+}

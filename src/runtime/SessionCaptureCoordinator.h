@@ -50,7 +50,7 @@ class SessionCaptureCoordinator
 	bool Supports(CaptureTarget target = {}) const;
 	// May release completed native owners. Call outside Session/caller locks.
 	void Collect() const;
-	void ReclaimSnapshots(std::size_t producers = 1);
+	void ReclaimSnapshots(std::size_t producers, std::size_t slots);
 	CaptureBoundaryResult ReserveBundle(std::span<const CaptureTarget> targets);
 	SequenceCapture PrepareSequenceCapture(const std::optional<SequenceCaptureIntent>& request);
 	std::pair<XrResult, std::shared_ptr<FrameReservation>> PrepareProducer(FrameKey frame, CaptureTarget target);

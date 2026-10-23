@@ -1,6 +1,6 @@
 #pragma once
 
-#include "graphics/Compositor.h"
+#include "graphics/FrameSubmission.h"
 #include "graphics/RotationalSource.h"
 #include "graphics/SharedImageTypes.h"
 #include "presentation/SnapshotStore.h"
@@ -32,19 +32,24 @@ class VulkanFrameBindings
 								  const std::shared_ptr<const GpuCompletion>& completion) const noexcept = 0;
 };
 
-// Caller serializes queue access and released-image selection through Execute.
+// Caller serializes queue access and released-image selection through submission.
 // Dependencies outlive this synchronous scope; prepared work keeps its own
 // source readers after submission. No GPU waits occur.
-class VulkanFrameSubmission final
+class VulkanFrameSubmission final : public FrameSubmissionBackend
 {
   public:
 	VulkanFrameSubmission(Session& session, VulkanBackend& backend, VulkanInspection* inspection,
-						  const VulkanFrameBindings& bindings, FrameKey key, bool retainLayers = false);
+						  const VulkanFrameBindings& bindings, bool retainLayers = false);
 	~VulkanFrameSubmission();
 	VulkanFrameSubmission(const VulkanFrameSubmission&) = delete;
 	VulkanFrameSubmission& operator=(const VulkanFrameSubmission&) = delete;
-	XrResult Execute(const XrFrameEndInfo& info);
-	const CompositionPlan& Composition() const noexcept;
+	FramePool LiveReservations() const override;
+	FramePool HistoryReservations() const override;
+	XrResult Prepare(FrameKey key, const SessionComposition& composition,
+		std::shared_ptr<FrameReservation> reservation, std::span<const FrameCaptureRequest> captures,
+		PreparedFrameSubmission& output) override;
+	XrResult Submit() override;
+	bool Submitted() const noexcept override;
 
   private:
 	struct Capture
@@ -55,26 +60,20 @@ class VulkanFrameSubmission final
 		std::unique_ptr<VulkanInspectionTransfer> transfer;
 	};
 
-	XrResult PrepareLayers(const XrFrameEndInfo& info);
-	XrResult PrepareOutputs();
+	XrResult PrepareOutputs(std::shared_ptr<FrameReservation> reservation, std::span<const FrameCaptureRequest> captures);
 	XrResult PrepareReprojection();
-	XrResult PrepareCaptures();
-	XrResult PrepareQuadHistory();
-	XrResult PrepareFilteredCapture(CaptureTarget target);
+	XrResult PrepareCaptures(std::span<const FrameCaptureRequest> requests);
 	XrResult PrepareCapture(const LayerImageDescription& image, const LayerDepthDescription* depth, Capture& capture,
 							std::shared_ptr<FrameReservation> reservation);
 	std::unique_ptr<VulkanInspectionTransfer> PrepareInspection(std::shared_ptr<VulkanFrame> source,
 		CaptureTarget target, VulkanInspectionKind kind);
 	std::function<void(SharedImageKey)> DeliveryRetirementObserver() const;
-	XrResult Submit();
-	void DropLiveOutput();
-	void AbandonUnsubmitted(const std::shared_ptr<VulkanFrame>& producer, CaptureTarget target = {});
 
 	Session& m_session;
 	VulkanBackend& m_backend;
 	VulkanInspection* const m_inspection;
 	const VulkanFrameBindings& m_bindings;
-	const FrameKey m_key;
+	FrameKey m_key{};
 	const bool m_retainLayers;
 	CompositionTarget m_target{};
 	PoseSample m_head;
@@ -88,7 +87,5 @@ class VulkanFrameSubmission final
 	std::vector<Capture> m_captures;
 	std::vector<CaptureOutput> m_captureOutputs;
 	std::vector<std::shared_ptr<VulkanFrame>> m_batch;
-	bool m_live = true;
-	bool m_executed = false;
 };
 } // namespace simxr

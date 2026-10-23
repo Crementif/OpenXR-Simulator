@@ -194,6 +194,10 @@ void VulkanSubmission::ReleaseSources()
 	m_resources->sourceViews.clear();
 	m_resources->sources.clear();
 	m_resources->sourceBudgets.clear();
+#ifdef _WIN32
+	m_resources->nativeSource.reset();
+	m_resources->nativeReady = VK_NULL_HANDLE;
+#endif
 }
 
 std::shared_ptr<VulkanImage> VulkanFrame::RetainImage() const

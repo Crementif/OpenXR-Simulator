@@ -2,7 +2,9 @@
 #include "Math.h"
 #include "app/DeviceControlPanel.h"
 #include "app/ManualInputController.h"
+#include "app/LaunchProfilesDialog.h"
 #include "app/ProcessSupervisor.h"
+#include "app/PilotController.h"
 #include "app/RunningApps.h"
 #include "app/RecordingController.h"
 #include "app/RecordingPanel.h"
@@ -16,11 +18,13 @@
 #include "app/SpatialMath.h"
 #include "app/UiRenderer.h"
 #include "app/Window.h"
+#include "app/Utf8Path.h"
 #include "app/WorkspacePanels.h"
 #include "control/ControlSchema.h"
 #include "control/SimulationControl.h"
 #include "simulation/CommandScheduler.h"
 #include "simulation/TrackingSystem.h"
+#include "graphics/backends/vulkan/VulkanResources.h"
 #include <cmath>
 #include <thread>
 
@@ -92,6 +96,17 @@ ImGuiWindow* FindPanel(const char* name)
 		if (std::string_view(window->Name).find(pattern) != std::string_view::npos)
 			return window;
 	return nullptr;
+}
+// Picks a camera from the rig view's menu: opens it, then activates the entry.
+template <typename Pump>
+void ChooseRigView(ImGuiID rig, const char* view, Pump pump)
+{
+	ImGui::ActivateItemByID(ImHashStr("##View", 0, rig));
+	pump(2);
+	const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+	Require(!popups.empty() && popups.back().Window, "Rig view menu did not open");
+	ImGui::ActivateItemByID(popups.back().Window->GetID(view));
+	pump(2);
 }
 class Interaction
 {
@@ -205,7 +220,7 @@ class Interaction
 		const auto before = clicks;
 		Click(buttonCenter);
 		Require(clicks == before + 1, "Other controls stopped responding after selection");
-		workspace.Select(LibrarySel{});
+		workspace.ShowLibrary(true);
 		Frame();
 		Click(inputCenter);
 		const auto length = std::char_traits<char>::length(input);
@@ -231,7 +246,8 @@ void CheckTimelineCanvas(Interaction& test)
 	TimelineCanvas canvas;
 	canvas.Fit();
 	TimelineGesture selected;
-	ImVec2 point;
+	ImVec2 point, clipPoint;
+	int plays = 0;
 	test.extraDraw = [&]
 	{
 		ImGui::SetNextWindowPos({30, 170}, ImGuiCond_Always);
@@ -244,6 +260,12 @@ void CheckTimelineCanvas(Interaction& test)
 		const auto drawStarted = std::chrono::steady_clock::now();
 		canvas.Begin(labels, 0);
 		const auto gesture = canvas.Draw(populated ? history : emptyHistory, test.runtime.KeptPreviews(), {0, 0, 1, 1}, false);
+		const auto bounds = canvas.Bounds();
+		const auto range = canvas.VisibleRange();
+		clipPoint = {bounds.x + float((200 - range.first) / (range.second - range.first)) * bounds.width + 5,
+			bounds.y + canvas.TransportRect().height + 5};
+		if (canvas.DrawClip(200, 250, "Saved take", false, true) == ClipHit::Play)
+			++plays;
 		canvasSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - drawStarted).count();
 		if (gesture.first || gesture.marker)
 			selected = gesture;
@@ -254,6 +276,36 @@ void CheckTimelineCanvas(Interaction& test)
 	test.Click(point);
 	Require(selected.first && !selected.last && *selected.first > 26000 && *selected.first < 28000,
 			"Canvas click did not hit-test ten-minute history");
+	test.Click(clipPoint);
+	Require(plays == 1, "Clip play click did not activate");
+	SDL_Event drag{};
+	drag.type = SDL_EVENT_MOUSE_MOTION;
+	drag.motion.windowID = SDL_GetWindowID(test.window.Native());
+	drag.motion.x = point.x;
+	drag.motion.y = point.y;
+	SDL_PushEvent(&drag);
+	test.Frame();
+	drag = {};
+	drag.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+	drag.button.windowID = SDL_GetWindowID(test.window.Native());
+	drag.button.button = SDL_BUTTON_LEFT;
+	drag.button.down = true;
+	SDL_PushEvent(&drag);
+	test.Frame();
+	drag = {};
+	drag.type = SDL_EVENT_MOUSE_MOTION;
+	drag.motion.windowID = SDL_GetWindowID(test.window.Native());
+	drag.motion.x = clipPoint.x;
+	drag.motion.y = clipPoint.y;
+	SDL_PushEvent(&drag);
+	test.Frame();
+	drag = {};
+	drag.type = SDL_EVENT_MOUSE_BUTTON_UP;
+	drag.button.windowID = SDL_GetWindowID(test.window.Native());
+	drag.button.button = SDL_BUTTON_LEFT;
+	SDL_PushEvent(&drag);
+	test.Frame();
+	Require(plays == 1, "Range drag release activated clip playback");
 	SDL_Event key{};
 	key.type = SDL_EVENT_KEY_DOWN;
 	key.key.windowID = SDL_GetWindowID(test.window.Native());
@@ -350,7 +402,13 @@ void CheckTimelineWorkflow(Interaction& test)
 	const auto bounds = test.workspace.State().timelineCanvas;
 	ImGui::GetIO().AddMousePosEvent(bounds.x + bounds.width - 1, bounds.y + 2);
 	test.Frame();
-	ImGui::GetIO().AddMouseWheelEvent(0, 8);
+	// Keep the first stepped snapshot visible even when validation makes steps slow.
+	const auto& beforeZoom = test.workspace.State();
+	const auto latestIndex = *test.runtime.History().Find(newest.selectedIdentity, newest.selectedEpoch);
+	const double snapshotSpan = test.runtime.History().At(latestIndex).seconds - test.runtime.History().At(index).seconds;
+	const double wantedSpan = std::max(.2, snapshotSpan * 1.5);
+	const double visibleSpan = beforeZoom.timeline.last - beforeZoom.timeline.first;
+	ImGui::GetIO().AddMouseWheelEvent(0, static_cast<float>(std::log(visibleSpan / wantedSpan) / std::log(1.5)));
 	test.Frame();
 	test.Frame();
 	const auto& shell = test.workspace.State();
@@ -414,14 +472,14 @@ void CheckTimelineWorkflow(Interaction& test)
 	}
 	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
 	{
-		const auto destination = std::filesystem::path(directory)/"range.csv";
+		const auto destination = std::filesystem::path(directory) / Utf8Path("range-\u65e5\u672c\u8a9e.csv");
 		ImGui::ActivateItemByID(inspector->GetID("##Range export file"));
 		ImGui::GetCurrentContext()->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
 		test.Frame();
 		io.AddKeyEvent(ImGuiMod_Ctrl, true); io.AddKeyEvent(ImGuiKey_A, true);
 		test.Frame();
 		io.AddKeyEvent(ImGuiKey_A, false); io.AddKeyEvent(ImGuiMod_Ctrl, false);
-		io.AddInputCharactersUTF8(destination.string().c_str());
+		io.AddInputCharactersUTF8(PathText(destination).c_str());
 		test.Frame();
 		io.AddKeyEvent(ImGuiKey_Enter, true); test.Frame();
 		io.AddKeyEvent(ImGuiKey_Enter, false); test.Frame();
@@ -431,7 +489,7 @@ void CheckTimelineWorkflow(Interaction& test)
 		{
 			std::size_t images = 0;
 			for (const auto& file : std::filesystem::directory_iterator(directory))
-				if (file.path().filename().string().starts_with("range-frame-") && file.path().extension()==".ppm" && file.file_size()>100) ++images;
+				if (PathText(file.path().filename()).starts_with("range-\u65e5\u672c\u8a9e-frame-") && file.path().extension()==".ppm" && file.file_size()>100) ++images;
 			return !state.pending && std::filesystem::exists(destination) && images>=3;
 		}, "Range export did not save metadata and three snapshots");
 	}
@@ -459,22 +517,19 @@ void CheckShell()
 	const auto inspector = FindPanel("Inspector");
 	Require(preview && inspector && !preview->DockId && !inspector->DockId, "Shell still uses docks");
 	Require(preview->Pos.x + preview->Size.x <= inspector->Pos.x + 1, "Inspector overlaps the wide preview");
-	static constexpr const char* tabs[]{"Player", "Head", "Left", "Right", "Body", "Gaze", "Trackers", "Headset",
-										"Scenarios"};
-	for (int index = 0; index < 9; ++index)
+	static constexpr const char* tabs[]{"Player", "Head", "Left", "Right", "Body", "Gaze", "Trackers"};
+	// Player is open at start, and clicking the open tab folds the inspector; it comes last.
+	for (const int index : {1, 2, 3, 4, 5, 6, 0})
 	{
-		auto* rail = FindPanel("Device rail");
-		Require(rail != nullptr, "Rail missing");
-		ImGui::ActivateItemByID(rail->GetID(tabs[index]));
+		auto* strip = FindPanel("Device tabs");
+		Require(strip != nullptr, "Device tabs missing");
+		ImGui::ActivateItemByID(strip->GetID(tabs[index]));
 		test.Frame();
 		test.Frame();
 		const auto& selection = test.workspace.State().selection;
-		if (index < 7)
-			Require(std::holds_alternative<DeviceSel>(selection) &&
-						static_cast<int>(std::get<DeviceSel>(selection).page) == index,
-					("Rail device selection failed at " + std::to_string(index)).c_str());
-		else
-			Require(std::holds_alternative<SessionItemSel>(selection), "Session selection failed");
+		Require(std::holds_alternative<DeviceSel>(selection) &&
+					static_cast<int>(std::get<DeviceSel>(selection).page) == index,
+				("Device tab selection failed at " + std::to_string(index)).c_str());
 	}
 	const auto width = preview->Size.x;
 	test.workspace.SetPreviewExpanded(true);
@@ -530,7 +585,7 @@ void PilotLiveRuntime(const char* endpoint)
 		frame();
 	};
 	Require(std::getenv("SIMXR_COMPANION_SETTINGS"), "Isolated recording checks need a dedicated settings path");
-	test.workspace.Select(LibrarySel{});
+	test.workspace.ShowLibrary(true);
 	for (int i = 0; i < 4; ++i)
 		frame();
 	Eventually(
@@ -540,7 +595,7 @@ void PilotLiveRuntime(const char* endpoint)
 			return !test.runtime.Snapshot().recordingBusy;
 		},
 		"Initial recording read did not finish");
-	activate("##Workspace toolbar", "Rec");
+	activate("Timeline", "Rec");
 	frame();
 	const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
 	if (!popups.empty() && popups.back().Window &&
@@ -666,7 +721,6 @@ void PilotLiveRuntime(const char* endpoint)
 		frame();
 		frame();
 	}
-	auto* rail = FindPanel("Device rail");
 	const auto click = [&](ImVec2 point, Uint8 button, bool down)
 	{
 		SDL_Event pointer{};
@@ -684,9 +738,8 @@ void PilotLiveRuntime(const char* endpoint)
 		SDL_PushEvent(&pointer);
 		frame();
 	};
-	const ImVec2 handTab{rail->Pos.x + 12, rail->Pos.y + 2 * (28 + ImGui::GetStyle().ItemSpacing.y) + 10};
-	click(handTab, SDL_BUTTON_LEFT, true);
-	click(handTab, SDL_BUTTON_LEFT, false);
+	ImGui::ActivateItemByID(FindPanel("Device tabs")->GetID("Left"));
+	frame();
 	const auto handBefore = observe(simxr::ControlChannel::LeftPose);
 	click(center, SDL_BUTTON_RIGHT, true);
 	Eventually(
@@ -769,7 +822,8 @@ void PilotLiveRuntime(const char* endpoint)
 			return !test.runtime.Snapshot().recordingBusy;
 		},
 		"Recording refresh did not finish");
-	activate("##Workspace toolbar", "Stop recording");
+	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Stop recording"));
+	frame();
 	Eventually(
 		[&]
 		{
@@ -807,10 +861,7 @@ void PilotLiveRuntime(const char* endpoint)
 			return test.runtime.Snapshot().manual;
 		},
 		"Saved take did not enter replay");
-	test.workspace.Select(DeviceSel{});
-	for (int i = 0; i < 3; ++i)
-		frame();
-	activate("##Workspace toolbar", "Cancel replay");
+	activate("Inspector", "Stop take");
 	Eventually(
 		[&]
 		{
@@ -939,7 +990,7 @@ void ConfigureObservedDevices()
 		panel.ObserveState(state);
 	};
 	observe(1);
-	Selection selection = SessionItemSel{SessionItem::Headset};
+	Selection selection = DeviceSel{DevicePage::Head};
 	std::optional<SimulationEdit> edit;
 	const auto frame = [&]
 	{
@@ -969,6 +1020,16 @@ void ConfigureObservedDevices()
 		frame();
 		Require(edit && std::holds_alternative<ManualTransaction>(*edit),
 				(std::string("Live field did not submit: ") + label).c_str());
+		return std::get<ManualTransaction>(*edit);
+	};
+	// A page's Tracked / Lost / Off switch.
+	const auto tracking = [&](const char* label)
+	{
+		ImGui::SetWindowFocus(window->Name);
+		ImGui::ActivateItemByID(ImHashStr(label, 0, window->GetID("Tracking")));
+		frame();
+		Require(edit && std::holds_alternative<ManualTransaction>(*edit),
+				(std::string("Tracking switch did not submit: ") + label).c_str());
 		return std::get<ManualTransaction>(*edit);
 	};
 	const auto typeValue = [&](const char* label, const char* value)
@@ -1023,9 +1084,9 @@ void ConfigureObservedDevices()
 	Require(std::get<simxr::SetTracker>(transaction.commands.back()).value.identity ==
 				initial.tracking.trackers[0].identity,
 			"Live tracker edit changed identity");
-	selection = SessionItemSel{SessionItem::Scenarios};
+	selection = DeviceSel{DevicePage::Head};
 	frame();
-	transaction = activate("Activate scenario");
+	transaction = tracking("Lost");
 	simxr::CommandTransaction command;
 	command.id = 1;
 	command.source = {simxr::CommandSourceKind::Manual, 77};
@@ -1035,8 +1096,9 @@ void ConfigureObservedDevices()
 	observe(2);
 	panel.ObserveDelivery(false, {});
 	frame();
-	transaction = activate("Restore normal behavior");
-	Require(!std::get<simxr::SetScenario>(transaction.commands.back()).enabled,
+	transaction = tracking("Tracked");
+	Require(!std::get<simxr::SetScenario>(transaction.commands[1]).enabled &&
+				!std::get<simxr::SetScenario>(transaction.commands.back()).enabled,
 			"Scenario recovery did not clear failure");
 	command.id = 2;
 	command.target.frame = simxr::FrameId{3};
@@ -1047,18 +1109,63 @@ void ConfigureObservedDevices()
 	frame();
 	panel.ResetObservations();
 	frame();
-	ImGui::ActivateItemByID(window->GetID("Activate scenario"));
+	ImGui::ActivateItemByID(ImHashStr("Lost", 0, window->GetID("Tracking")));
 	frame();
 	Require(!edit, "Disconnected field submitted stale settings");
 	initial.views.ipd = .061f;
 	scheduler.Start(0, initial);
 	observe(1);
 	frame();
-	selection = SessionItemSel{SessionItem::Headset};
+	selection = DeviceSel{DevicePage::Head};
 	frame();
 	transaction = typeValue("##IPD", "0.063");
 	Require(std::abs(std::get<simxr::SetViewSettings>(transaction.commands.back()).value.ipd - .063f) < .0001f,
 			"Reconnected field did not send the new value");
+	// Ctrl+wheel nudges the field under the pointer by its step; middle-click puts it back to its default.
+	{
+		auto& g = *ImGui::GetCurrentContext();
+		const auto id = window->GetID("##IPD");
+		ImGui::SetFocusID(id, window);
+		frame();
+		Require(g.NavId == id && g.NavIdIsAlive, "IPD field not laid out");
+		const auto center = ImGui::WindowRectRelToAbs(window, window->NavRectRel[0]).GetCenter();
+		ImGui::ClearActiveID();
+		g.NavId = 0;
+		SDL_Event event{};
+		event.type = SDL_EVENT_MOUSE_MOTION;
+		event.motion.windowID = SDL_GetWindowID(test.window.Native());
+		event.motion.x = center.x;
+		event.motion.y = center.y;
+		Require(SDL_PushEvent(&event), "Push field pointer");
+		frame();
+		auto& io = ImGui::GetIO();
+		io.AddKeyEvent(ImGuiMod_Ctrl, true);
+		io.AddMouseWheelEvent(0, -1);
+		frame();
+		const auto nudged = edit;
+		io.AddKeyEvent(ImGuiMod_Ctrl, false);
+		frame();
+		Require(nudged && std::holds_alternative<ManualTransaction>(*nudged), "Ctrl+wheel did not edit the field");
+		const auto nudgedIpd = std::get<simxr::SetViewSettings>(std::get<ManualTransaction>(*nudged).commands.back());
+		Require(std::abs(nudgedIpd.value.ipd - .062f) < .0001f, "Ctrl+wheel did not take off one step");
+		for (const bool down : {true, false})
+		{
+			event = {};
+			event.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+			event.button.windowID = SDL_GetWindowID(test.window.Native());
+			event.button.button = SDL_BUTTON_MIDDLE;
+			event.button.down = down;
+			Require(SDL_PushEvent(&event), "Push field middle click");
+			frame();
+			if (down)
+			{
+				Require(edit && std::holds_alternative<ManualTransaction>(*edit), "Middle-click did not reset");
+				const auto reset = std::get<simxr::SetViewSettings>(std::get<ManualTransaction>(*edit).commands.back());
+				Require(std::abs(reset.value.ipd - simxr::ViewSettings{}.ipd) < .0001f,
+						"Middle-click did not restore the default IPD");
+			}
+		}
+	}
 	selection = DeviceSel{DevicePage::Head};
 	frame();
 	transaction = activate("Reset page");
@@ -1069,7 +1176,8 @@ void ConfigureObservedDevices()
 	Require(keptDisconnected, "Resetting Head reconnected the left controller");
 	test.renderer.WaitIdle();
 	Require(!test.validation->errors.load(), "Live fields generated validation errors");
-	std::cout << "PASS live configuration: immediate changes, preserved configuration, scenario recovery, reconnect\n";
+	std::cout << "PASS live configuration: immediate changes, preserved configuration, scenario recovery, reconnect, "
+				 "middle-click reset, Ctrl+wheel nudge\n";
 }
 
 #ifdef __linux__
@@ -1460,6 +1568,17 @@ void CheckPreviewPilot(Interaction& test)
 	SDL_WarpMouseInWindow(test.window.Native(), center.x, center.y);
 	pump(3);
 	const auto before = observed();
+	{
+		PlayerRig stale;
+		stale.Reset(before);
+		stale.position.x += 5;
+		PilotController idle(stale);
+		idle.Stop(nullptr, observer, false, true);
+		Eventually([&] { pump(1); return !observer.Snapshot().editPending; }, "Idle release did not settle");
+		const auto after = observed();
+		Require(std::abs(after.values.tracking.head.pose.position.x - before.values.tracking.head.pose.position.x) < .001f,
+			"Releasing buttons without a pose gesture submitted the stale rig pose");
+	}
 	button(SDL_BUTTON_RIGHT, true);
 	Eventually(
 		[&]
@@ -1672,39 +1791,7 @@ void CheckSpatialEditing(Interaction& test)
 	auto before = observe();
 	PlayerRig rig;
 	rig.Reset(before);
-	auto hand = RelativePose(before.values.tracking.controllers[1].pose.pose, rig.Root());
-	ShellRect reach;
-	ImVec2 center;
-	float pixels = 0;
-	// Scrolls the inspector so the whole reach map is visible; ImGui scrolls a clipped item into view on click.
-	const auto locateReach = [&]
-	{
-		reach = test.runtime.Snapshot().reachMap;
-		Require(reach.width > 100 && reach.height > 100, "Reach map not laid out");
-		if (auto* scrolled = FindPanel("Inspector"); scrolled && reach.y + reach.height > scrolled->InnerRect.Max.y)
-		{
-			ImGui::SetScrollY(scrolled, scrolled->Scroll.y + reach.y + reach.height - scrolled->InnerRect.Max.y + 4);
-			pump(4);
-			reach = test.runtime.Snapshot().reachMap;
-		}
-		center = {reach.x + (reach.width - 28) / 2, reach.y + reach.height / 2};
-		pixels = std::min(reach.height * .44f, (reach.width - 32) * .45f) / .9f;
-	};
-	locateReach();
-	drag({center.x + hand.position.x * pixels, center.y + hand.position.z * pixels},
-		 {center.x + hand.position.x * pixels, center.y - .30f * pixels});
-	auto after = observe();
-	hand = RelativePose(after.values.tracking.controllers[1].pose.pose, rig.Root());
-	std::cout << "Spatial QA reach rect=" << reach.x << "," << reach.y << "," << reach.width << "," << reach.height
-			  << " applied=" << hand.position.x << "," << hand.position.y << "," << hand.position.z << "\n";
-	if (std::abs(hand.position.z + .30f) >= .015f)
-		if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
-		{
-			test.renderer.RequestScreenshot((std::filesystem::path(directory) / "spatial-failure.bmp").string());
-			pump(1);
-			test.renderer.WaitIdle();
-		}
-	Require(std::abs(hand.position.z + .30f) < .015f, "Reach map did not place the right hand 30 cm forward");
+	auto after = before;
 	const auto ball = test.runtime.Snapshot().rotationBall;
 	Require(ball.width > 100, "Rotation ball missing");
 	const ImVec2 resetPoint{ball.x + ball.width * .65f, ball.y + ball.height * .60f};
@@ -1716,8 +1803,7 @@ void CheckSpatialEditing(Interaction& test)
 	after = observe();
 	const auto inspector = FindPanel("Inspector");
 	Require(inspector, "Spatial inspector missing");
-	ImGui::ActivateItemByID(ImHashStr("Top", 0, inspector->GetID("Rig view")));
-	pump(2);
+	ChooseRigView(inspector->GetID("Rig view"), "Top", pump);
 	// The rig camera orbits relative to the player's facing.
 	const auto facing = Rotate(rig.Root().orientation, {0, 0, -1});
 	const auto view = EulerAngles(std::atan2(-facing.x, -facing.z), -1.56f, 0);
@@ -1732,16 +1818,37 @@ void CheckSpatialEditing(Interaction& test)
 	after = observe();
 	Require(Rotate(after.values.tracking.controllers[1].pose.pose.orientation, {0, 0, -1}).y > .99f,
 			"Rotation ball did not point the hand up");
-	std::cout << "PASS spatial reach 30 cm and arcball pointing up through native observed state\n";
-	hand = RelativePose(after.values.tracking.controllers[1].pose.pose, rig.Root());
-	locateReach();
-	drag({center.x + hand.position.x * pixels, center.y + hand.position.z * pixels},
-		 {center.x + 8 * pixels, center.y - .3f * pixels});
+	std::cout << "PASS arcball pointing up through native observed state\n";
+	// Type a far-away X, relative to the body, into the hand's position field to put it off screen.
+	ImGui::SetScrollY(inspector, inspector->ScrollMax.y);
+	pump(2);
+	ImGui::ActivateItemByID(inspector->GetID("Position & rotation"));
+	pump(2);
+	ImGui::SetScrollY(inspector, inspector->ScrollMax.y);
+	pump(2);
+	ImGui::ActivateItemByID(inspector->GetID("World##Relative"));
+	pump(2);
+	ImGui::ActivateItemByID(inspector->GetID("##X"));
+	ImGui::GetCurrentContext()->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
+	pump(1);
+	auto& io = ImGui::GetIO();
+	io.AddKeyEvent(ImGuiMod_Ctrl, true);
+	io.AddKeyEvent(ImGuiKey_A, true);
+	pump(1);
+	io.AddKeyEvent(ImGuiKey_A, false);
+	io.AddKeyEvent(ImGuiMod_Ctrl, false);
+	pump(1);
+	io.AddInputCharactersUTF8("8");
+	pump(1);
+	io.AddKeyEvent(ImGuiKey_Enter, true);
+	pump(1);
+	io.AddKeyEvent(ImGuiKey_Enter, false);
+	pump(4);
+	ImGui::ActivateItemByID(inspector->GetID("Body##Relative"));
+	pump(2);
 	after = observe();
-	std::cout << "Spatial QA off-screen reach rect=" << reach.x << "," << reach.y << " from=" << hand.position.x << ","
-			  << hand.position.z
-			  << " applied=" << RelativePose(after.values.tracking.controllers[1].pose.pose, rig.Root()).position.x
-			  << "\n";
+	std::cout << "Spatial QA off-screen applied="
+			  << RelativePose(after.values.tracking.controllers[1].pose.pose, rig.Root()).position.x << "\n";
 	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
 	{
 		test.renderer.RequestScreenshot((std::filesystem::path(directory) / "spatial-offscreen.bmp").string());
@@ -1758,9 +1865,12 @@ void CheckSpatialEditing(Interaction& test)
 	pointer(arrow, 0);
 	pump(8);
 	after = observe();
-	hand = RelativePose(after.values.tracking.controllers[1].pose.pose, rig.Root());
+	const auto hand = RelativePose(after.values.tracking.controllers[1].pose.pose, rig.Root());
 	Require(std::abs(hand.position.x - .2f) < .015f && std::abs(hand.position.z + .55f) < .015f,
-			"One-click off-screen recovery did not apply Forward");
+			("One-click off-screen recovery did not apply Forward: hand at " + std::to_string(hand.position.x) +
+			 ", " + std::to_string(hand.position.z) + "; arrow at " + std::to_string(arrow.x) + ", " +
+			 std::to_string(arrow.y))
+				.c_str());
 	std::cout << "PASS one-click off-screen recovery\n";
 	const auto gizmoState = test.runtime.Snapshot();
 	const auto world = after.values.tracking.controllers[1].pose.pose;
@@ -1787,7 +1897,7 @@ void CheckSpatialEditing(Interaction& test)
 	}
 	const auto imageArea = FindPanel("Image area");
 	Require(imageArea, "Expanded rig view missing");
-	ImGui::ActivateItemByID(ImHashStr("Restore", 0, imageArea->GetID("Rig view")));
+	ImGui::ActivateItemByID(ImHashStr("Expand", 0, imageArea->GetID("Rig view")));
 	pump(3);
 	Require(!test.runtime.Snapshot().rigExpanded, "Rig view did not restore the image");
 	std::cout << "PASS expanded rig view and picture-in-picture restore\n";
@@ -1957,15 +2067,17 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 		const auto& shell = test.workspace.State();
 		const auto canvas = shell.timelineCanvas;
 		const float ruler = ImGui::GetFrameHeight() + 2 * ImGui::GetFontSize() / 16;
-		const float lane = (canvas.height - ruler) / 5;
+		// The Play button leads the clip's name tab at the top-left of its band.
+		const float lane = (canvas.height - ruler) / 3;
+		const float tab = std::min(ImGui::GetFontSize() * (1 + 4.0f / 16), lane);
 		const float x = canvas.x + float((first.seconds - shell.timeline.first) /
 			(shell.timeline.last - shell.timeline.first)) * canvas.width;
 		SDL_Event motion{};
 		motion.type = SDL_EVENT_MOUSE_MOTION;
 		motion.motion.which = TestMouse;
 		motion.motion.windowID = SDL_GetWindowID(test.window.Native());
-		motion.motion.x = std::max(canvas.x, x) + 2 + (lane - 4) / 2;
-		motion.motion.y = canvas.y + ruler + 3.5f * lane;
+		motion.motion.x = std::max(canvas.x, x) + tab / 2;
+		motion.motion.y = canvas.y + ruler + tab / 2;
 		Require(SDL_PushEvent(&motion), "Hover the take clip");
 		pump(2);
 		if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
@@ -2025,8 +2137,6 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 				std::cout << "notice: " << notice.title << " " << notice.detail << '\n';
 			if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
 			{
-				ImGui::ActivateItemByID(FindPanel("Top bar")->GetID("Replay details"));
-				pump(2);
 				test.renderer.RequestScreenshot((std::filesystem::path(qa) / "take-failed.bmp").string());
 				pump(1);
 				test.renderer.WaitIdle();
@@ -2145,8 +2255,8 @@ void CheckLayouts(Interaction& test, const std::filesystem::path& qa)
 		int width, height;
 		float scale;
 	};
-	const std::array<Selection, 4> pages{DeviceSel{DevicePage::Player}, DeviceSel{DevicePage::Right},
-										 SessionItemSel{SessionItem::Headset}, LibrarySel{}};
+	const std::array<Selection, 3> pages{DeviceSel{DevicePage::Player}, DeviceSel{DevicePage::Right},
+										 DeviceSel{DevicePage::Head}};
 	for (const auto size : {Size{1280, 720, 1}, Size{1280, 720, 1.5f}, Size{1920, 1080, 1}, Size{1920, 1080, 1.5f},
 							Size{1024, 640, 1.5f}})
 	{
@@ -2159,7 +2269,7 @@ void CheckLayouts(Interaction& test, const std::filesystem::path& qa)
 			pump(6);
 			const auto& shell = test.workspace.State();
 			Require(shell.inspectorVisible, "Selecting a page did not show the inspector");
-			for (const char* name : {"Top bar", "Device rail", "Inspector", "Timeline", "GPU preview"})
+			for (const char* name : {"Top bar", overlay ? "Device rail" : "Device tabs", "Inspector", "Timeline", "GPU preview"})
 			{
 				const auto* window = FindPanel(name);
 				Require(window && !window->ScrollbarX, "Shell region has horizontal scrolling");
@@ -2214,7 +2324,7 @@ void CheckLayouts(Interaction& test, const std::filesystem::path& qa)
 	// Switching eyes, including to Both and back (D12: Both aborted on a style pop).
 	for (const char* eye : {"Both", "Right", "Both", "Left"})
 	{
-		ImGui::ActivateItemByID(FindPanel("GPU preview")->GetID("View"));
+		ImGui::ActivateItemByID(FindPanel("Image controls")->GetID("View"));
 		pump(2);
 		const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
 		Require(!popups.empty() && popups.back().Window, "Image view popover did not open");
@@ -2294,7 +2404,9 @@ void CheckShell(Interaction& test, const char* qa)
 			Require(preview && area, "Preview image missing during the width sweep");
 			const auto* timeline = FindPanel("Timeline");
 			Require(timeline && timeline->ContentSize.x <= timeline->Size.x + 1,
-					"Timeline transport overflows during the width sweep");
+					("Timeline transport overflows at width " + std::to_string(width) + ", scale " +
+					 std::to_string(scale))
+						.c_str());
 			Require(area->ContentSize.x <= area->Size.x + 1 && area->Pos.x + area->Size.x <= preview->Pos.x + preview->Size.x + 1,
 					("Image overflows its region at width " + std::to_string(width)).c_str());
 			if (width == 640 || width == 1040)
@@ -2305,27 +2417,28 @@ void CheckShell(Interaction& test, const char* qa)
 	pump(4);
 	// Folding the timeline leaves one row; folding the inspector widens the preview.
 	const float timelineHeight = FindPanel("Timeline")->Size.y;
-	activate("Timeline", "Fold timeline");
+	activate("Timeline divider tab", "##Edge");
 	pump(2);
 	Require(FindPanel("Timeline")->Size.y < timelineHeight * .6f, "Timeline did not fold");
 	screenshot("timeline-folded.bmp");
-	activate("Timeline", "Fold timeline");
+	activate("Timeline divider tab", "##Edge");
 	pump(2);
 	Require(std::abs(FindPanel("Timeline")->Size.y - timelineHeight) < 1, "Timeline did not unfold");
 	const float previewWidth = FindPanel("GPU preview")->Size.x;
-	activate("Device rail", "Fold inspector");
+	activate("Inspector divider tab", "##Edge");
 	pump(2);
 	Require(!shell.inspectorVisible && FindPanel("GPU preview")->Size.x > previewWidth + 100, "Inspector did not fold");
 	activate("Device rail", "Head");
 	pump(2);
 	Require(shell.inspectorVisible, "Clicking the open tab did not unfold the inspector");
-	// Library toggles back to the page that was open.
-	activate("Top bar", "Library");
-	Require(std::holds_alternative<LibrarySel>(shell.selection), "Library did not open");
-	activate("Top bar", "Library");
-	Require(std::holds_alternative<DeviceSel>(shell.selection) &&
+	// The Library drawer opens in the timeline and leaves the page alone.
+	activate("Timeline", "Library");
+	Require(shell.library && FindPanel("Library") && FindPanel("Library")->Active, "Library did not open");
+	screenshot("library-drawer.bmp");
+	activate("Timeline", "Library");
+	Require(!shell.library && std::holds_alternative<DeviceSel>(shell.selection) &&
 				std::get<DeviceSel>(shell.selection).page == DevicePage::Head,
-			"Library did not return to the previous page");
+			"Library did not close or changed the page");
 	// Focus shows one way back.
 	activate("Top bar", "Focus");
 	pump(2);
@@ -2335,7 +2448,7 @@ void CheckShell(Interaction& test, const char* qa)
 	pump(2);
 	Require(std::abs(FindPanel("GPU preview")->Size.x - previewWidth) < 1, "Exit focus did not restore the layout");
 	// Pin a crop by dragging over the image, then step frames: it stays.
-	activate("GPU preview", "View");
+	activate("Image controls", "View");
 	const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
 	Require(!popups.empty() && popups.back().Window, "Image view popover did not open");
 	ImGui::ActivateItemByID(popups.back().Window->GetID("Pick region"));
@@ -2441,11 +2554,10 @@ void CheckIdConflicts(Interaction& test, bool frameOnly)
 	};
 	test.window.Resize(1280, 800);
 	test.workspace.SetScale(1);
-	const std::array<Selection, 10> pages{DeviceSel{DevicePage::Player},	DeviceSel{DevicePage::Head},
-										  DeviceSel{DevicePage::Left},		DeviceSel{DevicePage::Right},
-										  DeviceSel{DevicePage::Body},		DeviceSel{DevicePage::Gaze},
-										  DeviceSel{DevicePage::Trackers},	SessionItemSel{SessionItem::Headset},
-										  SessionItemSel{SessionItem::Scenarios}, LibrarySel{}};
+	const std::array<Selection, 7> pages{DeviceSel{DevicePage::Player}, DeviceSel{DevicePage::Head},
+										 DeviceSel{DevicePage::Left},	DeviceSel{DevicePage::Right},
+										 DeviceSel{DevicePage::Body},	DeviceSel{DevicePage::Gaze},
+										 DeviceSel{DevicePage::Trackers}};
 	// Conflicts hide inside sections that start closed, so open every section a page may have.
 	const auto openSections = [&]
 	{
@@ -2590,7 +2702,7 @@ void CheckLibrary(Interaction& test, const std::filesystem::path& directory)
 	Eventually([&] { pump(1); return test.runtime.Snapshot().recording; }, "Rec did not start recording");
 	DrivePilotPulses(test);
 	Require(test.runtime.Snapshot().recordedChanges > 0, "Piloting recorded no input");
-	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Fold timeline"));
+	ImGui::ActivateItemByID(FindPanel("Timeline divider tab")->GetID("##Edge"));
 	pump(3);
 	screenshot("timeline-recording-folded.bmp");
 	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Stop recording"));
@@ -2610,14 +2722,14 @@ void CheckLibrary(Interaction& test, const std::filesystem::path& directory)
 			"Saved take is not in the isolated recordings folder");
 	pump(3);
 	screenshot("library-take.bmp");
-	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Fold timeline"));
+	ImGui::ActivateItemByID(FindPanel("Timeline divider tab")->GetID("##Edge"));
 	pump(3);
 	ImGui::ActivateItemByID(FindPanel("Inspector")->GetID("Play take"));
 	Eventually([&] { pump(1); return test.runtime.Snapshot().manual; }, "Library replay did not drive the app");
 	pump(10);
 	screenshot("library-replay.bmp");
-	ImGui::ActivateItemByID(FindPanel("Top bar")->GetID("Cancel replay"));
-	Eventually([&] { pump(1); return !test.runtime.Snapshot().manual; }, "Cancel replay did not release the app");
+	ImGui::ActivateItemByID(FindPanel("Inspector")->GetID("Stop take"));
+	Eventually([&] { pump(1); return !test.runtime.Snapshot().manual; }, "Stop take did not release the app");
 	std::cout << "PASS Rec, stop popover, Library replay and cancel\n";
 
 	// A script from the Library: run, pause, step, resume, finish and report.
@@ -2645,10 +2757,9 @@ for sample = 0, 15 do
 end
 simxr.release_inputs()
 simxr.resume())";
-	test.workspace.Select(LibrarySel{});
+	test.workspace.ShowLibrary(true);
 	pump(3);
-	ImGui::ActivateItemByID(FindPanel("Top bar")->GetID("Dismiss replay status"));
-	ImGui::ActivateItemByID(FindPanel("Inspector")->GetID("Refresh library"));
+	ImGui::ActivateItemByID(FindPanel("Library")->GetID("Refresh library"));
 	pump(3);
 	screenshot("library-list.bmp");
 	test.workspace.Select(ScriptSel{script.string()});
@@ -2799,6 +2910,11 @@ void CheckInputPad(Interaction& test)
 	move(primary.GetCenter());
 	button(SDL_BUTTON_LEFT, true);
 	settle([](const auto& c) { return c.primary; }, "Primary hold did not press");
+	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
+	{
+		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "input-pad-hold.bmp").string());
+		pump(1);
+	}
 	button(SDL_BUTTON_LEFT, false);
 	settle([](const auto& c) { return !c.primary; }, "Primary did not release");
 	move(secondary.GetCenter());
@@ -2815,6 +2931,18 @@ void CheckInputPad(Interaction& test)
 	settle([](const auto& c) { return !c.menu; }, "Menu did not release");
 	std::cout << "PASS pad grip, face buttons and menu\n";
 
+	// An arrow pushes the stick fully that way while held, for menu navigation.
+	move({stick.Min.x + stick.GetWidth() * .12f, stick.GetCenter().y});
+	button(SDL_BUTTON_LEFT, true);
+	settle([](const auto& c) { return c.stick.x < -.99f && c.stick.y == 0 && !c.thumbClick; },
+		   "Stick left arrow did not push fully left");
+	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
+	{
+		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "input-pad-arrow.bmp").string());
+		pump(1);
+	}
+	button(SDL_BUTTON_LEFT, false);
+	settle([](const auto& c) { return c.stick.x == 0 && c.stick.y == 0; }, "Stick arrow did not release");
 	move(stick.GetCenter());
 	button(SDL_BUTTON_LEFT, true);
 	settle([](const auto& c) { return c.thumbClick; }, "Stick click did not press");
@@ -2843,6 +2971,103 @@ void CheckInputPad(Interaction& test)
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Validation errors on the input pad");
 	std::cout << "PASS pad stick drag, click, spring-back and latch\n";
+}
+
+// Screenshots of the reworked surfaces: rig view orbiting a hand and through the eye,
+// the recording band, the folded HUD, the dividers and the single paused indicator.
+void CapturePolish(Interaction& test, const std::filesystem::path& qa)
+{
+	const auto pump = [&](int count)
+	{
+		for (int index = 0; index < count; ++index)
+		{
+			test.Frame();
+			SDL_Delay(10);
+		}
+	};
+	const auto screenshot = [&](const char* name)
+	{
+		test.renderer.RequestScreenshot((qa / name).string());
+		pump(2);
+	};
+	const auto activate = [&](const char* window, const char* label)
+	{
+		auto* target = FindPanel(window);
+		Require(target != nullptr, (std::string("Window missing: ") + window).c_str());
+		ImGui::ActivateItemByID(target->GetID(label));
+		pump(3);
+	};
+	test.window.Resize(1600, 900);
+	test.workspace.SetScale(1);
+	test.workspace.Select(DeviceSel{DevicePage::Right});
+	pump(8);
+	screenshot("polish-hand.bmp");
+	const auto rig = FindPanel("Inspector")->GetID("Rig view");
+	ChooseRigView(rig, "Eye", pump);
+	pump(2);
+	screenshot("polish-eye.bmp");
+	ChooseRigView(rig, "Back", pump);
+	// Position & rotation and the presets sit at the bottom of the hand page.
+	const auto inspector = FindPanel("Inspector");
+	ImGui::SetScrollY(inspector, inspector->ScrollMax.y);
+	pump(2);
+	ImGui::ActivateItemByID(inspector->GetID("Position & rotation"));
+	pump(2);
+	ImGui::SetScrollY(inspector, inspector->ScrollMax.y);
+	pump(2);
+	ImGui::ActivateItemByID(ImHashStr("Quaternion", 0, inspector->GetID("Rotation form")));
+	pump(3);
+	screenshot("polish-quaternion.bmp");
+	ImGui::ActivateItemByID(ImHashStr("Angles", 0, inspector->GetID("Rotation form")));
+	pump(2);
+	// A hand preset is one undoable change; the history names it and undoes it.
+	const auto before = test.runtime.Changes().size();
+	ImGui::ActivateItemByID(ImHashStr("Forward", 0, inspector->GetID("Hand presets")));
+	Eventually([&] { pump(1); return test.runtime.Changes().size() == before + 1; }, "Hand preset left no history");
+	Require(test.runtime.Changes().back().label == "Right hand: Forward",
+			("History named the hand preset " + test.runtime.Changes().back().label).c_str());
+	activate("Top bar", "History");
+	const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+	Require(!popups.empty() && popups.back().Window, "History did not open");
+	screenshot("polish-history.bmp");
+	ImGui::ActivateItemByID(ImHashStr(test.runtime.Changes().back().label.c_str(), 0,
+									  popups.back().Window->GetID(static_cast<int>(before))));
+	Eventually([&] { pump(1); return test.runtime.Changes().size() == before; }, "History did not undo the change");
+	test.workspace.Select(DeviceSel{DevicePage::Player});
+	pump(2);
+	ImGui::SetScrollY(FindPanel("Inspector"), 0);
+	pump(2);
+	screenshot("polish-player.bmp");
+	test.workspace.Select(DeviceSel{DevicePage::Right});
+	pump(2);
+	activate("HUD hand", "Fold HUD");
+	Require(FindPanel("HUD strip") != nullptr, "Folded HUD shows no way back");
+	screenshot("polish-hud-folded.bmp");
+	activate("HUD strip", "Show HUD");
+	activate("Timeline", "Rec");
+	Eventually([&] { pump(1); return test.runtime.Snapshot().recording; }, "Rec did not start recording");
+	pump(90);
+	screenshot("polish-recording.bmp");
+	activate("Timeline", "Pause");
+	Eventually([&] { pump(1); return test.runtime.Snapshot().manual; }, "Pause did not pause");
+	screenshot("polish-paused.bmp");
+	activate("Inspector divider tab", "##Edge");
+	activate("Timeline divider tab", "##Edge");
+	Require(!test.workspace.State().inspectorVisible, "Inspector divider tab did not fold the inspector");
+	screenshot("polish-folded.bmp");
+	activate("Inspector divider tab", "##Edge");
+	activate("Timeline divider tab", "##Edge");
+	Require(test.workspace.State().inspectorVisible, "Inspector divider tab did not unfold the inspector");
+	activate("Timeline", "Continue");
+	// Focus hides the timeline; its button carries the recording's time instead.
+	activate("Top bar", "Focus");
+	screenshot("polish-focus-recording.bmp");
+	activate("Top bar", "Focus");
+	activate("Timeline", "Stop recording");
+	Eventually([&] { pump(1); return !test.runtime.Snapshot().recording; }, "Stop recording did not stop");
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Validation errors during the polish capture");
+	std::cout << "PASS polish capture\n";
 }
 
 // D9: while the app runs, look back a few seconds and see the kept preview.
@@ -2876,11 +3101,39 @@ void CheckMeasuredTiming(Interaction& test)
 
 void CheckPreviewHistory(Interaction& test)
 {
+	const auto access = test.renderer.DeviceAccess();
+	auto device = std::make_shared<simxr::VulkanDevice>(
+		simxr::VulkanBinding{access.instance, access.physical, access.device, access.queueFamily, 0}, access.owner);
+	for (const auto format : {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R32G32B32A32_SFLOAT})
+	{
+		constexpr auto usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+		auto image = simxr::VulkanImage::Create(device, format, {63, 37}, 1, usage);
+		const auto bytes = image->allocationSize;
+		image.reset();
+		bool rejected = false;
+		try
+		{
+			image = simxr::VulkanImage::Create(device, format, {63, 37}, 1, usage, 1, VK_SAMPLE_COUNT_1_BIT, bytes - 1);
+		}
+		catch (const std::length_error&)
+		{
+			rejected = true;
+		}
+		Require(rejected, "Image memory allocation exceeded its byte budget");
+		image = simxr::VulkanImage::Create(device, format, {63, 37}, 1, usage, 1, VK_SAMPLE_COUNT_1_BIT, bytes);
+		Require(image->allocationSize == bytes, "Exact image allocation budget was not honored");
+	}
 	const auto& history = test.runtime.History();
 	const auto& kept = test.runtime.KeptPreviews();
 	const auto started = std::chrono::steady_clock::now();
-	while (std::chrono::steady_clock::now() - started < std::chrono::seconds(6))
+	while (std::chrono::steady_clock::now() - started < std::chrono::seconds(12))
+	{
 		test.Frame();
+		const auto count = std::count_if(kept.Shots().begin(), kept.Shots().end(),
+			[](const auto& shot) { return shot.frame.frame != 0; });
+		if (count >= 40 && std::chrono::steady_clock::now() - started >= std::chrono::seconds(6))
+			break;
+	}
 	Require(kept.Error().empty(), kept.Error().c_str());
 	std::size_t shots = 0;
 	for (const auto& shot : kept.Shots())
@@ -2927,6 +3180,27 @@ void CheckPreviewHistory(Interaction& test)
 	test.runtime.SetLive(true);
 	for (int frame = 0; frame < 4; ++frame)
 		test.Frame();
+	const auto target = test.runtime.Snapshot();
+	ManualInputController input;
+	input.SetTarget({target.endpoint, target.session, target.generation});
+	Eventually([&] { test.Frame(); return input.Snapshot().observation != 0; }, "History resize control unavailable");
+	const auto original = ReadObservedSetup(input.Snapshot().state).values.views;
+	for (const auto size : {ImVec2{512, 256}, ImVec2{512, 384},
+		ImVec2{float(original.outerWidth), float(original.outerHeight)}})
+	{
+		auto views = original;
+		views.outerWidth = static_cast<std::uint32_t>(size.x);
+		views.outerHeight = static_cast<std::uint32_t>(size.y);
+		ManualTransaction edit;
+		edit.commands = {simxr::TakeControl{simxr::ControlChannel::Views, false}, simxr::SetViewSettings{views}};
+		Require(input.Submit(edit), "Preview resize refused");
+		Eventually([&]
+		{
+			test.Frame();
+			Require(kept.Bytes() <= kept.Budget(), "Retiring preview rings exceeded the budget");
+			return !input.Snapshot().editPending && std::abs(kept.Aspect() - size.y / size.x) < .002f;
+		}, "Preview history did not adopt the resized output");
+	}
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Validation errors with preview history");
 	test.runtime.PreviewCrop().reset();
@@ -3101,6 +3375,14 @@ void CheckAppPicker(const char* executable)
 	Require(running.size() == 1 && running.front().endpoint == endpoint && running.front().process == std::uint64_t(probe) &&
 				running.front().name == "xr_probe_linux" && running.front().started,
 			"Running did not list exactly the orphan app with its PID and start time");
+	const auto alias = std::filesystem::path(endpoint).parent_path() / "control.18446744073709551615.sock";
+	std::filesystem::create_symlink(endpoint, alias);
+	const auto aliased = DiscoverRunningApps();
+	std::filesystem::remove(alias);
+	const auto foundAlias = std::find_if(aliased.begin(), aliased.end(),
+		[&](const auto& app) { return app.endpoint == alias.string(); });
+	Require(foundAlias != aliased.end() && foundAlias->process == std::uint64_t(probe) &&
+		foundAlias->name == "xr_probe_linux", "Discovery trusted the socket filename instead of its peer");
 	auto picker = openPicker();
 	pump(10);
 	Require(!test.runtime.Snapshot().connected, "Discovery attached to a running app");
@@ -3487,9 +3769,9 @@ void CheckSoak(Interaction& test, const std::filesystem::path& directory)
 			{
 			case 0:
 			{
-				static constexpr const char* pages[]{"Player", "Head", "Left", "Right", "Body", "Gaze",
-					"Trackers", "Headset", "Scenarios", "Library"};
-				activate("Device rail", pages[random() % std::size(pages)]);
+				static constexpr const char* pages[]{"Player", "Head", "Left", "Right", "Body", "Gaze", "Trackers"};
+				const auto* tabs = FindPanel("Device tabs");
+				activate(tabs && tabs->Active ? "Device tabs" : "Device rail", pages[random() % std::size(pages)]);
 				break;
 			}
 			case 1:
@@ -3503,7 +3785,7 @@ void CheckSoak(Interaction& test, const std::filesystem::path& directory)
 				break;
 			case 4:
 			{
-				activate("GPU preview", "View");
+				activate("Image controls", "View");
 				const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
 				if (!popups.empty() && popups.back().Window)
 				{
@@ -3524,19 +3806,19 @@ void CheckSoak(Interaction& test, const std::filesystem::path& directory)
 				activate("Timeline", random() % 2 ? "Step back" : "Step forward");
 				break;
 			case 7:
-				activate("Top bar", test.runtime.Snapshot().recording ? "Stop recording" : "Rec");
+				activate("Timeline", test.runtime.Snapshot().recording ? "Stop recording" : "Rec");
 				break;
 			case 8:
-				activate("Top bar", "Library");
+				activate("Timeline", "Library");
 				break;
 			case 9:
 				activate("Top bar", "Focus");
 				break;
 			case 10:
-				activate("Timeline", "Fold timeline");
+				activate("Timeline divider tab", "##Edge");
 				break;
 			case 11:
-				activate("Device rail", "Fold inspector");
+				activate("Inspector divider tab", "##Edge");
 				break;
 			case 12:
 			{
@@ -3640,6 +3922,8 @@ void CheckToolbarLaunch(const char* executable)
 		CheckTimelineWorkflow(test);
 	if (std::getenv("SIMXR_PAD_QA"))
 		CheckInputPad(test);
+	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"); qa && std::getenv("SIMXR_POLISH_QA"))
+		CapturePolish(test, qa);
 	if (std::getenv("SIMXR_TIMING_QA"))
 		CheckMeasuredTiming(test);
 	if (std::getenv("SIMXR_HISTORY_QA"))
@@ -3688,17 +3972,14 @@ void CaptureLayouts(const std::filesystem::path& directory)
 		{
 			test.window.Resize(static_cast<int>(size.x), static_cast<int>(size.y));
 			test.workspace.SetScale(scale);
-			for (int page = 0; page < 10; ++page)
+			for (int page = 0; page < 8; ++page)
 			{
-				if (page < 7)
-					test.workspace.Select(DeviceSel{static_cast<DevicePage>(page)});
-				else if (page < 9)
-					test.workspace.Select(SessionItemSel{static_cast<SessionItem>(page - 7)});
-				else
-					test.workspace.Select(LibrarySel{});
+				test.workspace.ShowLibrary(page == 7);
+				test.workspace.Select(DeviceSel{static_cast<DevicePage>(page % 7)});
 				for (int frame = 0; frame < 4; ++frame)
 					test.Frame();
-				for (const char* name : {"Top bar", "Device rail", "Inspector", "Timeline", "GPU preview"})
+				const bool overlay = size.x / scale < 800;
+				for (const char* name : {"Top bar", overlay ? "Device rail" : "Device tabs", "Inspector", "Timeline", "GPU preview"})
 				{
 					const auto* window = FindPanel(name);
 					Require(window && !window->ScrollbarX, "Shell region has horizontal scrolling");
@@ -3722,6 +4003,48 @@ int main()
 {
 	try
 	{
+		{
+			RuntimeView view;
+			view.connected = view.sessionAvailable = true;
+			Require(DeriveRunState(view, false, {}).state == RunState::WaitingForSession,
+				"A session that has not started was labeled running");
+			view.sessionRunning = true;
+			Require(DeriveRunState(view, false, {}).state == RunState::Running,
+				"A started session was not labeled running");
+			view.manual = true;
+			Require(DeriveRunState(view, false, {}).state == RunState::Paused,
+				"A paused session was not labeled paused");
+			view.sessionRunning = false;
+			Require(DeriveRunState(view, false, {}).state == RunState::WaitingForSession,
+				"A stopped session retained its paused state");
+		}
+		{
+			simxr::app::LaunchProfile source;
+			source.name = std::string(200, 'n');
+			source.executable = "/" + std::string(3000, 'x');
+			source.workingDirectory = source.runtimeManifest = source.rig = source.executable;
+			source.headsetProfile = std::string(300, 'h');
+			source.arguments = {"", "first", "", "line one\nline two", std::string(18000, 'a'), ""};
+			source.environment = {{std::string(300, 'K'), std::string(5000, 'v')}, {"EMPTY", ""}};
+			simxr::app::CompanionSettings settings;
+			settings.profiles.push_back(source);
+			simxr::app::LaunchProfilesDialog editor;
+			editor.Edit(settings, 0);
+			const auto check = [&](const auto& actual)
+			{
+				Require(actual.name == source.name && actual.executable == source.executable &&
+					actual.arguments == source.arguments && actual.environment == source.environment &&
+					actual.workingDirectory == source.workingDirectory && actual.runtimeManifest == source.runtimeManifest &&
+					actual.rig == source.rig && actual.headsetProfile == source.headsetProfile,
+					"Launch editor truncated stored fields or changed argument boundaries");
+			};
+			check(editor.Profile());
+			source.headsetProfile.clear(); // Saving requires a known headset profile or the default.
+			settings.profiles.clear();
+			Require(editor.Create(settings, source), "Long launch profile could not be saved");
+			check(settings.profiles.front());
+		}
+
 
 #ifdef __linux__
 		if (const auto endpoint = std::getenv("SIMXR_TIMELINE_ENDPOINT"))
@@ -3779,11 +4102,10 @@ int main()
 			validation = test.validation;
 			for (unsigned frame = 0; frame < 4; ++frame)
 				test.Frame();
-			test.SelectWorkspace(LibrarySel{});
+			test.workspace.ShowLibrary(true);
 			test.CheckControls();
 			test.SelectWorkspace(DeviceSel{});
 			test.SelectWorkspace(FrameSel{});
-			test.SelectWorkspace(LibrarySel{});
 			for (const auto size : {ImVec2{800, 600}, ImVec2{1024, 700}, ImVec2{900, 640}})
 			{
 				const auto rebuilds = test.renderer.RebuildCount();

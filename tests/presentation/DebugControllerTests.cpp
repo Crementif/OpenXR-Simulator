@@ -999,6 +999,24 @@ void BundleReservationRollback()
 	Require(fixture.session->Scheduler().Snapshot().permits == 0, "Failed bundle admitted work");
 	const auto accepted = fixture.session->ReserveCapture();
 	Require(accepted.result == SnapshotAdmission::Accepted, "Rollback did not restore capacity");
+
+	Fixture room(8, true, true);
+	room.session->Captures().SetCapacity(3);
+	std::array<CaptureId, 2> previous;
+	for (auto& id : previous)
+	{
+		const auto frame = room.Issue();
+		room.Submit(frame);
+		const auto pinned = room.session->Captures().Pin(
+			room.session->History().Find({room.session->Snapshot().generation, frame.id}));
+		Require(pinned.result == SnapshotAdmission::Accepted, "Retain cleared frame before bundle");
+		id = pinned.id;
+	}
+	room.session->Scheduler().Pause();
+	const auto bundle = room.session->ReserveCaptureBundle(targets);
+	Require(bundle.result == SnapshotAdmission::Accepted && bundle.captures.size() == 2 &&
+		!room.session->Captures().Read(previous[0]) && room.session->Captures().Read(previous[1]),
+		"Bundle reclamation did not make room for all snapshot slots");
 }
 } // namespace
 

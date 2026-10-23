@@ -141,8 +141,10 @@ RetainedSubmission RetainSubmittedLayers(VulkanBackend& backend, VulkanInspectio
 								 layers.data()};
 		const FrameKey key{session.Snapshot().generation, prediction.id};
 		{
-			VulkanFrameSubmission submission(session, backend, &inspection, bindings, key, retain);
-			const auto result = submission.Execute(end);
+			VulkanFrameSubmission native(session, backend, &inspection, bindings, retain);
+			FrameSubmission submission(session, native);
+			const auto result = submission.Execute(end,
+				[&bindings](XrSwapchain swapchain) { return bindings.Describe(swapchain); });
 			if (XR_FAILED(result))
 				std::fprintf(stderr, "Automatic submission retain=%d result=%d\n", retain, result);
 			Require(result == XR_SUCCESS, "Production frame submission with optional retention failed");

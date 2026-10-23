@@ -26,6 +26,21 @@ void* operator new(std::size_t size)
 		return memory;
 	throw std::bad_alloc{};
 }
+void* operator new(std::size_t size, const std::nothrow_t&) noexcept
+{
+	try
+	{
+		return ::operator new(size);
+	}
+	catch (const std::bad_alloc&)
+	{
+		return nullptr;
+	}
+}
+void operator delete(void* memory, const std::nothrow_t&) noexcept
+{
+	::operator delete(memory);
+}
 [[gnu::noinline]] void operator delete(void* memory) noexcept
 {
 	std::free(memory);
@@ -789,6 +804,10 @@ void BodyViewsScenariosRecording()
 				 TakeControl{ControlChannel::Head}, SetScenario{FailureScenario::HeadUntracked, true},
 				 TakeControl{ControlChannel::LeftPose}, SetScenario{FailureScenario::LeftDisconnected, true}});
 	scheduler.Submit(first);
+	auto movedRoot = first;
+	std::get<SetBodyControls>(movedRoot.commands[1]).value.rootPose = XrPosef{{0, 0, 0, 1}, {2, 0, 0}};
+	Require(scheduler.Submit(movedRoot).result == CommandResult::Conflict,
+		"Changed body root reused an existing command identity");
 	const auto applied = Tick(scheduler, 1);
 	Require(applied->outcomes[0].result == CommandResult::Applied &&
 				applied->configuration.tracking.head.pose.position.x == 6,

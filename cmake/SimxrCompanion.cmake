@@ -23,7 +23,12 @@ FetchContent_Declare(simxr_imguizmo
     URL_HASH SHA256=d625a9f3207f15b7a5b7706269747676f17b7e4df00f898ced9480e5063d493a
     SOURCE_SUBDIR simxr-source-only
     DOWNLOAD_EXTRACT_TIMESTAMP FALSE)
-FetchContent_MakeAvailable(simxr_sdl simxr_imgui simxr_imguizmo)
+FetchContent_Declare(simxr_nanosvg
+    URL https://codeload.github.com/memononen/nanosvg/tar.gz/239e102ec2c691f2902e20ace2ed36ee4a35cfe6
+    URL_HASH SHA256=2bc68bdb518d7800252042e5cad50a0ab321596f0cbf49ef2a752926329063d2
+    SOURCE_SUBDIR simxr-source-only
+    DOWNLOAD_EXTRACT_TIMESTAMP FALSE)
+FetchContent_MakeAvailable(simxr_sdl simxr_imgui simxr_imguizmo simxr_nanosvg)
 find_path(SIMXR_VULKAN_INCLUDE_DIR vulkan/vulkan.h HINTS "$ENV{VULKAN_SDK}/include" REQUIRED)
 find_library(SIMXR_VULKAN_LIBRARY NAMES vulkan vulkan-1 libvulkan.so.1 HINTS "$ENV{VULKAN_SDK}/lib" REQUIRED)
 
@@ -48,9 +53,22 @@ target_sources(simxr_app PRIVATE src/app/RecordingPanel.cpp src/app/TimelinePane
     src/app/AdvancedSteppingPage.cpp src/app/PreviewPanel.cpp src/app/PreferencesDialog.cpp src/app/LaunchProfilesDialog.cpp
     src/app/PilotController.cpp src/app/SpatialEditor.cpp src/app/widgets/LiveField.cpp
     src/app/widgets/SpatialWidgets.cpp src/app/widgets/RotationOrb.cpp
-    src/app/widgets/ReachMap.cpp src/app/widgets/InputPad.cpp src/app/widgets/RigView.cpp)
+    src/app/widgets/InputPad.cpp src/app/widgets/RigView.cpp)
 target_sources(simxr_app PRIVATE src/app/PastInput.cpp src/app/AppPicker.cpp src/app/RunningApps.cpp)
 target_link_libraries(simxr_app PUBLIC simxr_imgui simxr_connection simxr_app_settings simxr_recording_controller)
+# The icon SVGs are compiled in as {file stem, source} pairs; Icons.cpp parses them once.
+file(GLOB simxr_icon_files CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/resources/icons/*.svg")
+list(SORT simxr_icon_files)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${simxr_icon_files})
+set(simxr_icon_sources "")
+foreach(icon_file IN LISTS simxr_icon_files)
+    get_filename_component(icon_name "${icon_file}" NAME_WE)
+    file(READ "${icon_file}" icon_svg)
+    string(APPEND simxr_icon_sources "{\"${icon_name}\", R\"svg(${icon_svg})svg\"},\n")
+endforeach()
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/IconSources.inc" CONTENT "${simxr_icon_sources}" @ONLY)
+target_include_directories(simxr_app PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_include_directories(simxr_app SYSTEM PRIVATE "${simxr_nanosvg_SOURCE_DIR}/src")
 target_link_libraries(simxr_app PRIVATE simxr_vulkan_control)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(simxr_app PRIVATE src/app/ProofConsumer.cpp probes/CompanionFrameReceiver.cpp)
@@ -68,11 +86,11 @@ simxr_set_output_directory(simxr_companion)
 target_link_libraries(simxr_companion PRIVATE simxr_app)
 foreach(font_directory IN ITEMS "${SIMXR_OUTPUT_DIRECTORY}/fonts" "${CMAKE_CURRENT_BINARY_DIR}/fonts")
     file(MAKE_DIRECTORY "${font_directory}")
-    configure_file("${PROJECT_SOURCE_DIR}/resources/fonts/LiberationSans-Regular.ttf"
-        "${font_directory}/LiberationSans-Regular.ttf" COPYONLY)
+    configure_file("${PROJECT_SOURCE_DIR}/resources/fonts/AdwaitaSans-Regular.ttf"
+        "${font_directory}/AdwaitaSans-Regular.ttf" COPYONLY)
 endforeach()
-install(FILES "${PROJECT_SOURCE_DIR}/resources/fonts/LiberationSans-Regular.ttf" DESTINATION bin/fonts)
-install(FILES "${PROJECT_SOURCE_DIR}/resources/fonts/LIBERATION-LICENSE.txt"
+install(FILES "${PROJECT_SOURCE_DIR}/resources/fonts/AdwaitaSans-Regular.ttf" DESTINATION bin/fonts)
+install(FILES "${PROJECT_SOURCE_DIR}/resources/fonts/ADWAITA-SANS-LICENSE.txt"
     DESTINATION share/licenses/simxr_companion)
 if(BUILD_TESTING)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -126,3 +144,4 @@ install(FILES ${simxr_sdl_SOURCE_DIR}/LICENSE.txt DESTINATION share/licenses/sim
 install(FILES ${simxr_imgui_SOURCE_DIR}/LICENSE.txt DESTINATION share/licenses/simxr_companion RENAME ImGui.txt)
 
 install(FILES ${simxr_imguizmo_SOURCE_DIR}/LICENSE DESTINATION share/licenses/simxr_companion RENAME ImGuizmo.txt)
+install(FILES ${simxr_nanosvg_SOURCE_DIR}/LICENSE.txt DESTINATION share/licenses/simxr_companion RENAME NanoSVG.txt)

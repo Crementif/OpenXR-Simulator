@@ -30,7 +30,8 @@ class VulkanBackend
 						   std::uint32_t instanceApiVersion = VK_API_VERSION_1_0, std::size_t liveCapacity = 3);
 	// The supplied device must retain its native owner. Queue serialization is
 	// still the caller's responsibility, including other operations on that queue.
-	explicit VulkanBackend(std::shared_ptr<VulkanDevice> device, std::size_t frameCapacity = 3);
+	explicit VulkanBackend(std::shared_ptr<VulkanDevice> device, std::size_t frameCapacity = 3,
+		std::span<const char* const> enabledExtensions = {}, bool timelineEnabled = false);
 	~VulkanBackend();
 	VulkanBackend(const VulkanBackend&) = delete;
 	VulkanBackend& operator=(const VulkanBackend&) = delete;
@@ -44,6 +45,14 @@ class VulkanBackend
 	XrResult Prepare(const CompositionPlan& plan, const VulkanImageResolver& resolve,
 					 std::shared_ptr<VulkanFrame>& output, std::shared_ptr<FrameReservation> reservation = {},
 					 std::uint32_t outputLayers = 2);
+#ifdef _WIN32
+	// Copies a native API's completed composition or raw image into companion storage.
+	// The imported owner must retain the image and D3D fence semaphore together.
+	// readyValue zero denotes a binary native semaphore; nonzero is a timeline value.
+	XrResult PrepareNativeCopy(std::shared_ptr<VulkanImage> source, VkSemaphore ready,
+		std::uint64_t readyValue, std::shared_ptr<const void> owner, std::span<const FrameView> views,
+		std::shared_ptr<VulkanFrame>& output, std::shared_ptr<FrameReservation> reservation = {});
+#endif
 	// One completed GENERAL-layout source per draw, with its retained budget.
 	XrResult PrepareRetained(const CompositionPlan& plan, std::span<const VulkanRetainedSource> sources,
 		std::shared_ptr<VulkanFrame>& output);

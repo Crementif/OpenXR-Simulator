@@ -30,6 +30,22 @@ wire::Field Frame(std::uint64_t id)
 {
 	return wire::Field::Bytes(tag::Frame, wire::EncodeFields(app::PanelFields{wire::Field::U64(tag::FrameId, id)}));
 }
+void SessionRunningUpdates()
+{
+	app::RuntimePanelRequests requests;
+	app::DebuggerPanelController debugger(requests);
+	debugger.ChooseSession({11, 5, false});
+	const auto scope = debugger.Scope();
+	for (const bool running : {true, false, true})
+	{
+		debugger.Handle({app::PanelWork::Sessions}, Message({wire::Field::Bytes(tag::Sessions,
+			wire::EncodeFields(app::PanelFields{wire::Field::Bytes(1, wire::EncodeFields(app::PanelFields{
+				wire::Field::U64(tag::Session, 11), wire::Field::U64(tag::Generation, 5),
+				wire::Field::Bool(tag::Running, running)}))}))}));
+		Require(debugger.Selected().running == running && debugger.Scope() == scope,
+			"Session discovery failed to refresh running state within the same scope");
+	}
+}
 void ScopedInspectionReaders()
 {
 	app::RuntimePanelRequests requests;
@@ -454,6 +470,7 @@ int main()
 {
 	try
 	{
+		SessionRunningUpdates();
 		ScopedInspectionReaders();
 		FileWorkerAndChunkValidation();
 #if defined(__linux__)

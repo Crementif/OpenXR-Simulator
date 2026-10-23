@@ -1,0 +1,1927 @@
+{
+  "version": 4,
+  "viewBox": [
+    0,
+    0,
+    320,
+    400
+  ],
+  "families": 11,
+  "artwork": "Original reference-guided illustrations, revision 4; front/upper view with detached rear-input indicators. Exact pictured variants are documented in hardware-references.js.",
+  "models": [
+    {
+      "id": "frame",
+      "name": "Steam Frame",
+      "brand": "Valve",
+      "subtitle": "Split gamepad \u00b7 dual-stage controls",
+      "hand": "left",
+      "shape": "frame",
+      "profile": "/interaction_profiles/valve/frame_controller_valve",
+      "source": "https://partner.steamgames.com/doc/steamhardware/steamframe/input",
+      "file": "svg/frame-left.svg",
+      "controls": [
+        {
+          "key": "thumbstick",
+          "label": "Thumbstick",
+          "kind": "pad",
+          "x": 175,
+          "y": 129,
+          "r": 20,
+          "touch": true,
+          "click": true,
+          "path": "/input/thumbstick"
+        },
+        {
+          "key": "view",
+          "label": "View",
+          "kind": "button",
+          "x": 154,
+          "y": 75,
+          "r": 9,
+          "touch": true,
+          "click": true,
+          "path": "/input/view/click"
+        },
+        {
+          "key": "system",
+          "label": "System",
+          "kind": "button",
+          "x": 130,
+          "y": 149,
+          "r": 9,
+          "touch": true,
+          "click": true,
+          "path": "/input/system/click"
+        },
+        {
+          "key": "dpad_up",
+          "label": "Dpad Up",
+          "kind": "button",
+          "x": 114.12566719800475,
+          "y": 89.27346044578026,
+          "r": 12,
+          "touch": true,
+          "click": true,
+          "path": "/input/dpad_up/click"
+        },
+        {
+          "key": "dpad_right",
+          "label": "Dpad Right",
+          "kind": "button",
+          "x": 128.72653955421976,
+          "y": 110.12566719800475,
+          "r": 12,
+          "touch": true,
+          "click": true,
+          "path": "/input/dpad_right/click"
+        },
+        {
+          "key": "dpad_down",
+          "label": "Dpad Down",
+          "kind": "button",
+          "x": 107.87433280199525,
+          "y": 124.72653955421974,
+          "r": 12,
+          "touch": true,
+          "click": true,
+          "path": "/input/dpad_down/click"
+        },
+        {
+          "key": "dpad_left",
+          "label": "Dpad Left",
+          "kind": "button",
+          "x": 93.27346044578024,
+          "y": 103.87433280199527,
+          "r": 12,
+          "touch": true,
+          "click": true,
+          "path": "/input/dpad_left/click"
+        },
+        {
+          "key": "bumper",
+          "label": "Bumper",
+          "kind": "button",
+          "x": 280,
+          "y": 107,
+          "r": 24,
+          "touch": true,
+          "click": true,
+          "path": "/input/bumper/click"
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger",
+          "kind": "analog",
+          "x": 280,
+          "y": 203,
+          "r": 24,
+          "touch": true,
+          "click": true,
+          "path": "/input/trigger/value"
+        },
+        {
+          "key": "squeeze",
+          "label": "Grip",
+          "kind": "analog",
+          "x": 280,
+          "y": 299,
+          "r": 24,
+          "touch": true,
+          "click": true,
+          "path": "/input/squeeze/value"
+        }
+      ]
+    },
+    {
+      "id": "frame",
+      "name": "Steam Frame",
+      "brand": "Valve",
+      "subtitle": "Split gamepad \u00b7 dual-stage controls",
+      "hand": "right",
+      "shape": "frame",
+      "profile": "/interaction_profiles/valve/frame_controller_valve",
+      "source": "https://partner.steamgames.com/doc/steamhardware/steamframe/input",
+      "file": "svg/frame-right.svg",
+      "controls": [
+        {
+          "key": "thumbstick",
+          "label": "Thumbstick",
+          "kind": "pad",
+          "x": 145,
+          "y": 129,
+          "r": 20,
+          "touch": true,
+          "click": true,
+          "path": "/input/thumbstick"
+        },
+        {
+          "key": "menu",
+          "label": "Menu",
+          "kind": "button",
+          "x": 166,
+          "y": 75,
+          "r": 9,
+          "touch": true,
+          "click": true,
+          "path": "/input/menu/click"
+        },
+        {
+          "key": "system",
+          "label": "System",
+          "kind": "button",
+          "x": 190,
+          "y": 149,
+          "r": 9,
+          "touch": true,
+          "click": true,
+          "path": "/input/system/click"
+        },
+        {
+          "key": "y",
+          "label": "Y",
+          "kind": "button",
+          "x": 204.70068462432832,
+          "y": 84.28865269276804,
+          "r": 10,
+          "touch": true,
+          "click": true,
+          "path": "/input/y/click"
+        },
+        {
+          "key": "b",
+          "label": "B",
+          "kind": "button",
+          "x": 226.71134730723196,
+          "y": 99.70068462432832,
+          "r": 10,
+          "touch": true,
+          "click": true,
+          "path": "/input/b/click"
+        },
+        {
+          "key": "a",
+          "label": "A",
+          "kind": "button",
+          "x": 211.29931537567168,
+          "y": 121.71134730723196,
+          "r": 10,
+          "touch": true,
+          "click": true,
+          "path": "/input/a/click"
+        },
+        {
+          "key": "x",
+          "label": "X",
+          "kind": "button",
+          "x": 189.28865269276804,
+          "y": 106.29931537567168,
+          "r": 10,
+          "touch": true,
+          "click": true,
+          "path": "/input/x/click"
+        },
+        {
+          "key": "bumper",
+          "label": "Bumper",
+          "kind": "button",
+          "x": 40,
+          "y": 107,
+          "r": 24,
+          "touch": true,
+          "click": true,
+          "path": "/input/bumper/click"
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger",
+          "kind": "analog",
+          "x": 40,
+          "y": 203,
+          "r": 24,
+          "touch": true,
+          "click": true,
+          "path": "/input/trigger/value"
+        },
+        {
+          "key": "squeeze",
+          "label": "Grip",
+          "kind": "analog",
+          "x": 40,
+          "y": 299,
+          "r": 24,
+          "touch": true,
+          "click": true,
+          "path": "/input/squeeze/value"
+        }
+      ]
+    },
+    {
+      "id": "quest",
+      "name": "Quest Touch Plus / Pro",
+      "brand": "Meta",
+      "subtitle": "Touch Plus geometry \u00b7 shared Pro input layout",
+      "hand": "left",
+      "shape": "touch",
+      "profile": "/interaction_profiles/meta/touch_controller_plus",
+      "source": "https://developers.meta.com/vr/documentation/native/pc/native-touch-plus-controllers/",
+      "file": "svg/quest-left.svg",
+      "controls": [
+        {
+          "key": "thumbstick",
+          "label": "Thumbstick",
+          "kind": "pad",
+          "x": 118.08,
+          "y": 101.56,
+          "r": 18.0,
+          "touch": true,
+          "click": true,
+          "path": "/input/thumbstick"
+        },
+        {
+          "key": "x",
+          "label": "X",
+          "kind": "button",
+          "x": 162.96,
+          "y": 135.88,
+          "r": 11.7,
+          "touch": true,
+          "click": true,
+          "path": "/input/x/click"
+        },
+        {
+          "key": "y",
+          "label": "Y",
+          "kind": "button",
+          "x": 179.68,
+          "y": 104.2,
+          "r": 11.7,
+          "touch": true,
+          "click": true,
+          "path": "/input/y/click"
+        },
+        {
+          "key": "menu",
+          "label": "Menu",
+          "kind": "button",
+          "x": 126.88,
+          "y": 141.16,
+          "r": 8.1,
+          "touch": false,
+          "click": true,
+          "path": "/input/menu/click"
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger",
+          "kind": "analog",
+          "x": 280,
+          "y": 216,
+          "r": 24,
+          "touch": true,
+          "click": true,
+          "path": "/input/trigger/value"
+        },
+        {
+          "key": "squeeze",
+          "label": "Grip",
+          "kind": "analog",
+          "x": 280,
+          "y": 302,
+          "r": 24,
+          "touch": true,
+          "click": true,
+          "path": "/input/squeeze/value"
+        }
+      ]
+    },
+    {
+      "id": "quest",
+      "name": "Quest Touch Plus / Pro",
+      "brand": "Meta",
+      "subtitle": "Touch Plus geometry \u00b7 shared Pro input layout",
+      "hand": "right",
+      "shape": "touch",
+      "profile": "/interaction_profiles/meta/touch_controller_plus",
+      "source": "https://developers.meta.com/vr/documentation/native/pc/native-touch-plus-controllers/",
+      "file": "svg/quest-right.svg",
+      "controls": [
+        {
+          "key": "thumbstick",
+          "label": "Thumbstick",
+          "kind": "pad",
+          "x": 201.92,
+          "y": 101.56,
+          "r": 18.0,
+          "touch": true,
+          "click": true,
+          "path": "/input/thumbstick"
+        },
+        {
+          "key": "a",
+          "label": "A",
+          "kind": "button",
+          "x": 157.04,
+          "y": 135.88,
+          "r": 11.7,
+          "touch": true,
+          "click": true,
+          "path": "/input/a/click"
+        },
+        {
+          "key": "b",
+          "label": "B",
+          "kind": "button",
+          "x": 140.32,
+          "y": 104.2,
+          "r": 11.7,
+          "touch": true,
+          "click": true,
+          "path": "/input/b/click"
+        },
+        {
+          "key": "system",
+          "label": "System",
+          "kind": "button",
+          "x": 193.12,
+          "y": 141.16,
+          "r": 8.1,
+          "touch": false,
+          "click": true,
+          "path": "/input/system/click"
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger",
+          "kind": "analog",
+          "x": 40,
+          "y": 216,
+          "r": 24,
+          "touch": true,
+          "click": true,
+          "path": "/input/trigger/value"
+        },
+        {
+          "key": "squeeze",
+          "label": "Grip",
+          "kind": "analog",
+          "x": 40,
+          "y": 302,
+          "r": 24,
+          "touch": true,
+          "click": true,
+          "path": "/input/squeeze/value"
+        }
+      ]
+    },
+    {
+      "id": "quest-ring",
+      "name": "Quest / Rift S Touch",
+      "brand": "Meta / Oculus",
+      "subtitle": "Quest 2 geometry \u00b7 shared ringed Touch inputs",
+      "hand": "left",
+      "shape": "touch-ring",
+      "profile": "/interaction_profiles/oculus/touch_controller",
+      "source": "https://developers.meta.com/vr/documentation/native/pc/native-touch-plus-controllers/",
+      "file": "svg/quest-ring-left.svg",
+      "controls": [
+        {
+          "key": "thumbstick",
+          "label": "Thumbstick",
+          "kind": "pad",
+          "x": 118.08,
+          "y": 148.32,
+          "r": 18.0,
+          "touch": true,
+          "click": true,
+          "path": "/input/thumbstick"
+        },
+        {
+          "key": "x",
+          "label": "X",
+          "kind": "button",
+          "x": 162.96,
+          "y": 177.492,
+          "r": 10.8,
+          "touch": true,
+          "click": true,
+          "path": "/input/x/click"
+        },
+        {
+          "key": "y",
+          "label": "Y",
+          "kind": "button",
+          "x": 179.68,
+          "y": 150.564,
+          "r": 10.8,
+          "touch": true,
+          "click": true,
+          "path": "/input/y/click"
+        },
+        {
+          "key": "menu",
+          "label": "Menu",
+          "kind": "button",
+          "x": 126.88,
+          "y": 181.98,
+          "r": 8.1,
+          "touch": false,
+          "click": true,
+          "path": "/input/menu/click"
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger",
+          "kind": "analog",
+          "x": 280,
+          "y": 216,
+          "r": 24,
+          "touch": true,
+          "click": true,
+          "path": "/input/trigger/value"
+        },
+        {
+          "key": "squeeze",
+          "label": "Grip",
+          "kind": "analog",
+          "x": 280,
+          "y": 302,
+          "r": 24,
+          "touch": true,
+          "click": true,
+          "path": "/input/squeeze/value"
+        }
+      ]
+    },
+    {
+      "id": "quest-ring",
+      "name": "Quest / Rift S Touch",
+      "brand": "Meta / Oculus",
+      "subtitle": "Quest 2 geometry \u00b7 shared ringed Touch inputs",
+      "hand": "right",
+      "shape": "touch-ring",
+      "profile": "/interaction_profiles/oculus/touch_controller",
+      "source": "https://developers.meta.com/vr/documentation/native/pc/native-touch-plus-controllers/",
+      "file": "svg/quest-ring-right.svg",
+      "controls": [
+        {
+          "key": "thumbstick",
+          "label": "Thumbstick",
+          "kind": "pad",
+          "x": 201.92,
+          "y": 148.32,
+          "r": 18.0,
+          "touch": true,
+          "click": true,
+          "path": "/input/thumbstick"
+        },
+        {
+          "key": "a",
+          "label": "A",
+          "kind": "button",
+          "x": 157.04,
+          "y": 177.492,
+          "r": 10.8,
+          "touch": true,
+          "click": true,
+          "path": "/input/a/click"
+        },
+        {
+          "key": "b",
+          "label": "B",
+          "kind": "button",
+          "x": 140.32,
+          "y": 150.564,
+          "r": 10.8,
+          "touch": true,
+          "click": true,
+          "path": "/input/b/click"
+        },
+        {
+          "key": "system",
+          "label": "System",
+          "kind": "button",
+          "x": 193.12,
+          "y": 181.98,
+          "r": 8.1,
+          "touch": false,
+          "click": true,
+          "path": "/input/system/click"
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger",
+          "kind": "analog",
+          "x": 40,
+          "y": 216,
+          "r": 24,
+          "touch": true,
+          "click": true,
+          "path": "/input/trigger/value"
+        },
+        {
+          "key": "squeeze",
+          "label": "Grip",
+          "kind": "analog",
+          "x": 40,
+          "y": 302,
+          "r": 24,
+          "touch": true,
+          "click": true,
+          "path": "/input/squeeze/value"
+        }
+      ]
+    },
+    {
+      "id": "index",
+      "name": "Index",
+      "brand": "Valve",
+      "subtitle": "Knuckles strap \u00b7 force-sensitive grip",
+      "hand": "left",
+      "shape": "index",
+      "profile": "/interaction_profiles/valve/index_controller",
+      "source": "https://www.valvesoftware.com/en/index/controllers",
+      "file": "svg/index-left.svg",
+      "controls": [
+        {
+          "key": "thumbstick",
+          "label": "Thumbstick",
+          "kind": "pad",
+          "x": 137.04,
+          "y": 104.56,
+          "r": 15.3,
+          "touch": true,
+          "click": true,
+          "path": "/input/thumbstick"
+        },
+        {
+          "key": "trackpad",
+          "label": "Trackpad",
+          "kind": "pad",
+          "x": 166.28,
+          "y": 94.24,
+          "r": 9.0,
+          "touch": true,
+          "click": false,
+          "path": "/input/trackpad"
+        },
+        {
+          "key": "a",
+          "label": "A",
+          "kind": "button",
+          "x": 186.92,
+          "y": 123.48,
+          "r": 9.0,
+          "touch": true,
+          "click": true,
+          "path": "/input/a/click"
+        },
+        {
+          "key": "b",
+          "label": "B",
+          "kind": "button",
+          "x": 197.24,
+          "y": 103.7,
+          "r": 9.0,
+          "touch": true,
+          "click": true,
+          "path": "/input/b/click"
+        },
+        {
+          "key": "system",
+          "label": "System",
+          "kind": "button",
+          "x": 172.3,
+          "y": 138.1,
+          "r": 6.3,
+          "touch": false,
+          "click": true,
+          "path": "/input/system/click"
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger",
+          "kind": "analog",
+          "x": 280,
+          "y": 210,
+          "r": 24,
+          "touch": true,
+          "click": true,
+          "path": "/input/trigger/value"
+        },
+        {
+          "key": "squeeze",
+          "label": "Grip",
+          "kind": "analog",
+          "x": 280,
+          "y": 306,
+          "r": 24,
+          "touch": true,
+          "click": true,
+          "path": "/input/squeeze/value"
+        }
+      ]
+    },
+    {
+      "id": "index",
+      "name": "Index",
+      "brand": "Valve",
+      "subtitle": "Knuckles strap \u00b7 force-sensitive grip",
+      "hand": "right",
+      "shape": "index",
+      "profile": "/interaction_profiles/valve/index_controller",
+      "source": "https://www.valvesoftware.com/en/index/controllers",
+      "file": "svg/index-right.svg",
+      "controls": [
+        {
+          "key": "thumbstick",
+          "label": "Thumbstick",
+          "kind": "pad",
+          "x": 182.96,
+          "y": 104.56,
+          "r": 15.3,
+          "touch": true,
+          "click": true,
+          "path": "/input/thumbstick"
+        },
+        {
+          "key": "trackpad",
+          "label": "Trackpad",
+          "kind": "pad",
+          "x": 153.72,
+          "y": 94.24,
+          "r": 9.0,
+          "touch": true,
+          "click": false,
+          "path": "/input/trackpad"
+        },
+        {
+          "key": "a",
+          "label": "A",
+          "kind": "button",
+          "x": 133.08,
+          "y": 123.48,
+          "r": 9.0,
+          "touch": true,
+          "click": true,
+          "path": "/input/a/click"
+        },
+        {
+          "key": "b",
+          "label": "B",
+          "kind": "button",
+          "x": 122.76,
+          "y": 103.7,
+          "r": 9.0,
+          "touch": true,
+          "click": true,
+          "path": "/input/b/click"
+        },
+        {
+          "key": "system",
+          "label": "System",
+          "kind": "button",
+          "x": 147.7,
+          "y": 138.1,
+          "r": 6.3,
+          "touch": false,
+          "click": true,
+          "path": "/input/system/click"
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger",
+          "kind": "analog",
+          "x": 40,
+          "y": 210,
+          "r": 24,
+          "touch": true,
+          "click": true,
+          "path": "/input/trigger/value"
+        },
+        {
+          "key": "squeeze",
+          "label": "Grip",
+          "kind": "analog",
+          "x": 40,
+          "y": 306,
+          "r": 24,
+          "touch": true,
+          "click": true,
+          "path": "/input/squeeze/value"
+        }
+      ]
+    },
+    {
+      "id": "vive",
+      "name": "Vive Wand",
+      "brand": "HTC",
+      "subtitle": "Vive / Vive Pro \u00b7 trackpad",
+      "hand": "left",
+      "shape": "wand",
+      "profile": "/interaction_profiles/htc/vive_controller",
+      "source": "https://www.vive.com/us/support/vive-pro-hmd/category_howto/about-the-controllers.html",
+      "file": "svg/vive-left.svg",
+      "controls": [
+        {
+          "key": "menu",
+          "label": "Menu",
+          "kind": "button",
+          "x": 141,
+          "y": 140,
+          "r": 11,
+          "touch": false,
+          "click": true,
+          "path": "/input/menu/click"
+        },
+        {
+          "key": "trackpad",
+          "label": "Trackpad",
+          "kind": "pad",
+          "x": 141,
+          "y": 196,
+          "r": 30,
+          "touch": true,
+          "click": true,
+          "path": "/input/trackpad"
+        },
+        {
+          "key": "system",
+          "label": "System",
+          "kind": "button",
+          "x": 141,
+          "y": 255,
+          "r": 10,
+          "touch": false,
+          "click": true,
+          "path": "/input/system/click"
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger",
+          "kind": "analog",
+          "x": 280,
+          "y": 179,
+          "r": 24,
+          "touch": false,
+          "click": true,
+          "path": "/input/trigger/value"
+        },
+        {
+          "key": "squeeze",
+          "label": "Grip",
+          "kind": "button",
+          "x": 280,
+          "y": 295,
+          "r": 24,
+          "touch": false,
+          "click": true,
+          "path": "/input/squeeze/click"
+        }
+      ]
+    },
+    {
+      "id": "vive",
+      "name": "Vive Wand",
+      "brand": "HTC",
+      "subtitle": "Vive / Vive Pro \u00b7 trackpad",
+      "hand": "right",
+      "shape": "wand",
+      "profile": "/interaction_profiles/htc/vive_controller",
+      "source": "https://www.vive.com/us/support/vive-pro-hmd/category_howto/about-the-controllers.html",
+      "file": "svg/vive-right.svg",
+      "controls": [
+        {
+          "key": "menu",
+          "label": "Menu",
+          "kind": "button",
+          "x": 179,
+          "y": 140,
+          "r": 11,
+          "touch": false,
+          "click": true,
+          "path": "/input/menu/click"
+        },
+        {
+          "key": "trackpad",
+          "label": "Trackpad",
+          "kind": "pad",
+          "x": 179,
+          "y": 196,
+          "r": 30,
+          "touch": true,
+          "click": true,
+          "path": "/input/trackpad"
+        },
+        {
+          "key": "system",
+          "label": "System",
+          "kind": "button",
+          "x": 179,
+          "y": 255,
+          "r": 10,
+          "touch": false,
+          "click": true,
+          "path": "/input/system/click"
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger",
+          "kind": "analog",
+          "x": 40,
+          "y": 179,
+          "r": 24,
+          "touch": false,
+          "click": true,
+          "path": "/input/trigger/value"
+        },
+        {
+          "key": "squeeze",
+          "label": "Grip",
+          "kind": "button",
+          "x": 40,
+          "y": 295,
+          "r": 24,
+          "touch": false,
+          "click": true,
+          "path": "/input/squeeze/click"
+        }
+      ]
+    },
+    {
+      "id": "focus",
+      "name": "Vive Focus / XR",
+      "brand": "HTC",
+      "subtitle": "XR Series geometry \u00b7 broad upper halo",
+      "hand": "left",
+      "shape": "focus",
+      "profile": null,
+      "source": "https://www.vive.com/us/support/vive-xr/category_howto/about-the-controllers.html",
+      "file": "svg/focus-left.svg",
+      "controls": [
+        {
+          "key": "thumbstick",
+          "label": "Thumbstick",
+          "kind": "pad",
+          "x": 113.5,
+          "y": 126.7,
+          "r": 18.4,
+          "touch": false,
+          "click": true,
+          "path": "/input/thumbstick"
+        },
+        {
+          "key": "x",
+          "label": "X",
+          "kind": "button",
+          "x": 160.3,
+          "y": 158.2,
+          "r": 11.96,
+          "touch": false,
+          "click": true,
+          "path": "/input/x/click"
+        },
+        {
+          "key": "y",
+          "label": "Y",
+          "kind": "button",
+          "x": 175.6,
+          "y": 135.7,
+          "r": 11.96,
+          "touch": false,
+          "click": true,
+          "path": "/input/y/click"
+        },
+        {
+          "key": "menu",
+          "label": "Menu",
+          "kind": "button",
+          "x": 114.4,
+          "y": 169.0,
+          "r": 8.28,
+          "touch": false,
+          "click": true,
+          "path": null
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger",
+          "kind": "analog",
+          "x": 280,
+          "y": 226,
+          "r": 24,
+          "touch": false,
+          "click": true,
+          "path": "/input/trigger/value"
+        },
+        {
+          "key": "squeeze",
+          "label": "Grip",
+          "kind": "analog",
+          "x": 280,
+          "y": 317,
+          "r": 24,
+          "touch": false,
+          "click": true,
+          "path": "/input/squeeze/value"
+        }
+      ]
+    },
+    {
+      "id": "focus",
+      "name": "Vive Focus / XR",
+      "brand": "HTC",
+      "subtitle": "XR Series geometry \u00b7 broad upper halo",
+      "hand": "right",
+      "shape": "focus",
+      "profile": null,
+      "source": "https://www.vive.com/us/support/vive-xr/category_howto/about-the-controllers.html",
+      "file": "svg/focus-right.svg",
+      "controls": [
+        {
+          "key": "thumbstick",
+          "label": "Thumbstick",
+          "kind": "pad",
+          "x": 206.5,
+          "y": 126.7,
+          "r": 18.4,
+          "touch": false,
+          "click": true,
+          "path": "/input/thumbstick"
+        },
+        {
+          "key": "a",
+          "label": "A",
+          "kind": "button",
+          "x": 159.7,
+          "y": 158.2,
+          "r": 11.96,
+          "touch": false,
+          "click": true,
+          "path": "/input/a/click"
+        },
+        {
+          "key": "b",
+          "label": "B",
+          "kind": "button",
+          "x": 144.4,
+          "y": 135.7,
+          "r": 11.96,
+          "touch": false,
+          "click": true,
+          "path": "/input/b/click"
+        },
+        {
+          "key": "system",
+          "label": "System",
+          "kind": "button",
+          "x": 205.6,
+          "y": 169.0,
+          "r": 8.28,
+          "touch": false,
+          "click": true,
+          "path": null
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger",
+          "kind": "analog",
+          "x": 40,
+          "y": 226,
+          "r": 24,
+          "touch": false,
+          "click": true,
+          "path": "/input/trigger/value"
+        },
+        {
+          "key": "squeeze",
+          "label": "Grip",
+          "kind": "analog",
+          "x": 40,
+          "y": 317,
+          "r": 24,
+          "touch": false,
+          "click": true,
+          "path": "/input/squeeze/value"
+        }
+      ]
+    },
+    {
+      "id": "pico",
+      "name": "Pico 4",
+      "brand": "Pico",
+      "subtitle": "Swept tracking ring",
+      "hand": "left",
+      "shape": "pico",
+      "profile": null,
+      "source": "https://developer.picoxr.com/document/unity/input-mapping/",
+      "file": "svg/pico-left.svg",
+      "controls": [
+        {
+          "key": "thumbstick",
+          "label": "Thumbstick",
+          "kind": "pad",
+          "x": 149.5,
+          "y": 92.7,
+          "r": 17.48,
+          "touch": true,
+          "click": true,
+          "path": "/input/thumbstick"
+        },
+        {
+          "key": "x",
+          "label": "X",
+          "kind": "button",
+          "x": 173.8,
+          "y": 132.3,
+          "r": 11.04,
+          "touch": false,
+          "click": true,
+          "path": "/input/x/click"
+        },
+        {
+          "key": "y",
+          "label": "Y",
+          "kind": "button",
+          "x": 192.7,
+          "y": 101.7,
+          "r": 11.04,
+          "touch": false,
+          "click": true,
+          "path": "/input/y/click"
+        },
+        {
+          "key": "menu",
+          "label": "Menu",
+          "kind": "button",
+          "x": 124.3,
+          "y": 126.0,
+          "r": 8.28,
+          "touch": false,
+          "click": true,
+          "path": null
+        },
+        {
+          "key": "system",
+          "label": "System",
+          "kind": "button",
+          "x": 145.9,
+          "y": 144.0,
+          "r": 8.28,
+          "touch": false,
+          "click": true,
+          "path": null
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger",
+          "kind": "analog",
+          "x": 280,
+          "y": 218,
+          "r": 24,
+          "touch": false,
+          "click": true,
+          "path": "/input/trigger/value"
+        },
+        {
+          "key": "squeeze",
+          "label": "Grip",
+          "kind": "analog",
+          "x": 280,
+          "y": 308,
+          "r": 24,
+          "touch": false,
+          "click": true,
+          "path": "/input/squeeze/value"
+        }
+      ]
+    },
+    {
+      "id": "pico",
+      "name": "Pico 4",
+      "brand": "Pico",
+      "subtitle": "Swept tracking ring",
+      "hand": "right",
+      "shape": "pico",
+      "profile": null,
+      "source": "https://developer.picoxr.com/document/unity/input-mapping/",
+      "file": "svg/pico-right.svg",
+      "controls": [
+        {
+          "key": "thumbstick",
+          "label": "Thumbstick",
+          "kind": "pad",
+          "x": 170.5,
+          "y": 92.7,
+          "r": 17.48,
+          "touch": true,
+          "click": true,
+          "path": "/input/thumbstick"
+        },
+        {
+          "key": "a",
+          "label": "A",
+          "kind": "button",
+          "x": 146.2,
+          "y": 132.3,
+          "r": 11.04,
+          "touch": false,
+          "click": true,
+          "path": "/input/a/click"
+        },
+        {
+          "key": "b",
+          "label": "B",
+          "kind": "button",
+          "x": 127.3,
+          "y": 101.7,
+          "r": 11.04,
+          "touch": false,
+          "click": true,
+          "path": "/input/b/click"
+        },
+        {
+          "key": "capture",
+          "label": "Capture",
+          "kind": "button",
+          "x": 195.7,
+          "y": 126.0,
+          "r": 8.28,
+          "touch": false,
+          "click": true,
+          "path": null
+        },
+        {
+          "key": "system",
+          "label": "System",
+          "kind": "button",
+          "x": 174.1,
+          "y": 144.0,
+          "r": 8.28,
+          "touch": false,
+          "click": true,
+          "path": null
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger",
+          "kind": "analog",
+          "x": 40,
+          "y": 218,
+          "r": 24,
+          "touch": false,
+          "click": true,
+          "path": "/input/trigger/value"
+        },
+        {
+          "key": "squeeze",
+          "label": "Grip",
+          "kind": "analog",
+          "x": 40,
+          "y": 308,
+          "r": 24,
+          "touch": false,
+          "click": true,
+          "path": "/input/squeeze/value"
+        }
+      ]
+    },
+    {
+      "id": "pico-ultra",
+      "name": "Pico 4 Ultra",
+      "brand": "Pico",
+      "subtitle": "Ringless \u00b7 white thumb deck \u00b7 contoured grip",
+      "hand": "left",
+      "shape": "ultra",
+      "profile": null,
+      "source": "https://www.picoxr.com/games/products/pico4-ultra",
+      "file": "svg/pico-ultra-left.svg",
+      "controls": [
+        {
+          "key": "thumbstick",
+          "label": "Thumbstick",
+          "kind": "pad",
+          "x": 114.4,
+          "y": 102.8,
+          "r": 17.48,
+          "touch": true,
+          "click": true,
+          "path": "/input/thumbstick"
+        },
+        {
+          "key": "x",
+          "label": "X",
+          "kind": "button",
+          "x": 163.9,
+          "y": 138.8,
+          "r": 11.04,
+          "touch": false,
+          "click": true,
+          "path": "/input/x/click"
+        },
+        {
+          "key": "y",
+          "label": "Y",
+          "kind": "button",
+          "x": 181.0,
+          "y": 111.8,
+          "r": 11.04,
+          "touch": false,
+          "click": true,
+          "path": "/input/y/click"
+        },
+        {
+          "key": "menu",
+          "label": "Menu",
+          "kind": "button",
+          "x": 108.1,
+          "y": 140.6,
+          "r": 8.28,
+          "touch": false,
+          "click": true,
+          "path": null
+        },
+        {
+          "key": "system",
+          "label": "System",
+          "kind": "button",
+          "x": 135.1,
+          "y": 154.1,
+          "r": 8.28,
+          "touch": false,
+          "click": true,
+          "path": null
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger",
+          "kind": "analog",
+          "x": 280,
+          "y": 216,
+          "r": 24,
+          "touch": false,
+          "click": true,
+          "path": "/input/trigger/value"
+        },
+        {
+          "key": "squeeze",
+          "label": "Grip",
+          "kind": "analog",
+          "x": 280,
+          "y": 302,
+          "r": 24,
+          "touch": false,
+          "click": true,
+          "path": "/input/squeeze/value"
+        }
+      ]
+    },
+    {
+      "id": "pico-ultra",
+      "name": "Pico 4 Ultra",
+      "brand": "Pico",
+      "subtitle": "Ringless \u00b7 white thumb deck \u00b7 contoured grip",
+      "hand": "right",
+      "shape": "ultra",
+      "profile": null,
+      "source": "https://www.picoxr.com/games/products/pico4-ultra",
+      "file": "svg/pico-ultra-right.svg",
+      "controls": [
+        {
+          "key": "thumbstick",
+          "label": "Thumbstick",
+          "kind": "pad",
+          "x": 205.6,
+          "y": 102.8,
+          "r": 17.48,
+          "touch": true,
+          "click": true,
+          "path": "/input/thumbstick"
+        },
+        {
+          "key": "a",
+          "label": "A",
+          "kind": "button",
+          "x": 156.1,
+          "y": 138.8,
+          "r": 11.04,
+          "touch": false,
+          "click": true,
+          "path": "/input/a/click"
+        },
+        {
+          "key": "b",
+          "label": "B",
+          "kind": "button",
+          "x": 139.0,
+          "y": 111.8,
+          "r": 11.04,
+          "touch": false,
+          "click": true,
+          "path": "/input/b/click"
+        },
+        {
+          "key": "capture",
+          "label": "Capture",
+          "kind": "button",
+          "x": 211.9,
+          "y": 140.6,
+          "r": 8.28,
+          "touch": false,
+          "click": true,
+          "path": null
+        },
+        {
+          "key": "system",
+          "label": "System",
+          "kind": "button",
+          "x": 184.9,
+          "y": 154.1,
+          "r": 8.28,
+          "touch": false,
+          "click": true,
+          "path": null
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger",
+          "kind": "analog",
+          "x": 40,
+          "y": 216,
+          "r": 24,
+          "touch": false,
+          "click": true,
+          "path": "/input/trigger/value"
+        },
+        {
+          "key": "squeeze",
+          "label": "Grip",
+          "kind": "analog",
+          "x": 40,
+          "y": 302,
+          "r": 24,
+          "touch": false,
+          "click": true,
+          "path": "/input/squeeze/value"
+        }
+      ]
+    },
+    {
+      "id": "wmr",
+      "name": "Mixed Reality",
+      "brand": "Microsoft ecosystem",
+      "subtitle": "WMR reference \u00b7 stick + trackpad",
+      "hand": "left",
+      "shape": "wmr",
+      "profile": "/interaction_profiles/microsoft/motion_controller",
+      "source": "https://learn.microsoft.com/en-us/windows/mixed-reality/design/motion-controllers",
+      "file": "svg/wmr-left.svg",
+      "controls": [
+        {
+          "key": "thumbstick",
+          "label": "Thumbstick",
+          "kind": "pad",
+          "x": 109,
+          "y": 142,
+          "r": 20,
+          "touch": false,
+          "click": true,
+          "path": "/input/thumbstick"
+        },
+        {
+          "key": "trackpad",
+          "label": "Trackpad",
+          "kind": "pad",
+          "x": 170,
+          "y": 165,
+          "r": 30,
+          "touch": true,
+          "click": true,
+          "path": "/input/trackpad"
+        },
+        {
+          "key": "menu",
+          "label": "Menu",
+          "kind": "button",
+          "x": 112,
+          "y": 187,
+          "r": 9,
+          "touch": false,
+          "click": true,
+          "path": "/input/menu/click"
+        },
+        {
+          "key": "system",
+          "label": "System",
+          "kind": "button",
+          "x": 141,
+          "y": 242,
+          "r": 11,
+          "touch": false,
+          "click": true,
+          "path": "/input/system/click"
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger",
+          "kind": "analog",
+          "x": 280,
+          "y": 223,
+          "r": 24,
+          "touch": false,
+          "click": true,
+          "path": "/input/trigger/value"
+        },
+        {
+          "key": "squeeze",
+          "label": "Grip",
+          "kind": "button",
+          "x": 280,
+          "y": 319,
+          "r": 24,
+          "touch": false,
+          "click": true,
+          "path": "/input/squeeze/click"
+        }
+      ]
+    },
+    {
+      "id": "wmr",
+      "name": "Mixed Reality",
+      "brand": "Microsoft ecosystem",
+      "subtitle": "WMR reference \u00b7 stick + trackpad",
+      "hand": "right",
+      "shape": "wmr",
+      "profile": "/interaction_profiles/microsoft/motion_controller",
+      "source": "https://learn.microsoft.com/en-us/windows/mixed-reality/design/motion-controllers",
+      "file": "svg/wmr-right.svg",
+      "controls": [
+        {
+          "key": "thumbstick",
+          "label": "Thumbstick",
+          "kind": "pad",
+          "x": 211,
+          "y": 142,
+          "r": 20,
+          "touch": false,
+          "click": true,
+          "path": "/input/thumbstick"
+        },
+        {
+          "key": "trackpad",
+          "label": "Trackpad",
+          "kind": "pad",
+          "x": 150,
+          "y": 165,
+          "r": 30,
+          "touch": true,
+          "click": true,
+          "path": "/input/trackpad"
+        },
+        {
+          "key": "menu",
+          "label": "Menu",
+          "kind": "button",
+          "x": 208,
+          "y": 187,
+          "r": 9,
+          "touch": false,
+          "click": true,
+          "path": "/input/menu/click"
+        },
+        {
+          "key": "system",
+          "label": "System",
+          "kind": "button",
+          "x": 179,
+          "y": 242,
+          "r": 11,
+          "touch": false,
+          "click": true,
+          "path": "/input/system/click"
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger",
+          "kind": "analog",
+          "x": 40,
+          "y": 223,
+          "r": 24,
+          "touch": false,
+          "click": true,
+          "path": "/input/trigger/value"
+        },
+        {
+          "key": "squeeze",
+          "label": "Grip",
+          "kind": "button",
+          "x": 40,
+          "y": 319,
+          "r": 24,
+          "touch": false,
+          "click": true,
+          "path": "/input/squeeze/click"
+        }
+      ]
+    },
+    {
+      "id": "g2",
+      "name": "Reverb G2",
+      "brand": "HP",
+      "subtitle": "Face buttons \u00b7 analog grip",
+      "hand": "left",
+      "shape": "g2",
+      "profile": "/interaction_profiles/hp/mixed_reality_controller",
+      "source": "https://learn.microsoft.com/en-us/windows/mixed-reality/develop/unity/unity-reverb-g2-controllers",
+      "file": "svg/g2-left.svg",
+      "controls": [
+        {
+          "key": "thumbstick",
+          "label": "Thumbstick",
+          "kind": "pad",
+          "x": 124.08,
+          "y": 153.85,
+          "r": 18.48,
+          "touch": false,
+          "click": true,
+          "path": "/input/thumbstick"
+        },
+        {
+          "key": "x",
+          "label": "X",
+          "kind": "button",
+          "x": 162.26,
+          "y": 180.41,
+          "r": 11.44,
+          "touch": false,
+          "click": true,
+          "path": "/input/x/click"
+        },
+        {
+          "key": "y",
+          "label": "Y",
+          "kind": "button",
+          "x": 175.54,
+          "y": 152.19,
+          "r": 11.44,
+          "touch": false,
+          "click": true,
+          "path": "/input/y/click"
+        },
+        {
+          "key": "menu",
+          "label": "Menu",
+          "kind": "button",
+          "x": 111.63,
+          "y": 185.39,
+          "r": 7.04,
+          "touch": false,
+          "click": true,
+          "path": null
+        },
+        {
+          "key": "system",
+          "label": "System",
+          "kind": "button",
+          "x": 134.04,
+          "y": 192.03,
+          "r": 7.04,
+          "touch": false,
+          "click": true,
+          "path": null
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger",
+          "kind": "analog",
+          "x": 280,
+          "y": 223,
+          "r": 24,
+          "touch": false,
+          "click": true,
+          "path": "/input/trigger/value"
+        },
+        {
+          "key": "squeeze",
+          "label": "Grip",
+          "kind": "analog",
+          "x": 280,
+          "y": 319,
+          "r": 24,
+          "touch": false,
+          "click": true,
+          "path": "/input/squeeze/value"
+        }
+      ]
+    },
+    {
+      "id": "g2",
+      "name": "Reverb G2",
+      "brand": "HP",
+      "subtitle": "Face buttons \u00b7 analog grip",
+      "hand": "right",
+      "shape": "g2",
+      "profile": "/interaction_profiles/hp/mixed_reality_controller",
+      "source": "https://learn.microsoft.com/en-us/windows/mixed-reality/develop/unity/unity-reverb-g2-controllers",
+      "file": "svg/g2-right.svg",
+      "controls": [
+        {
+          "key": "thumbstick",
+          "label": "Thumbstick",
+          "kind": "pad",
+          "x": 195.92,
+          "y": 153.85,
+          "r": 18.48,
+          "touch": false,
+          "click": true,
+          "path": "/input/thumbstick"
+        },
+        {
+          "key": "a",
+          "label": "A",
+          "kind": "button",
+          "x": 157.74,
+          "y": 180.41,
+          "r": 11.44,
+          "touch": false,
+          "click": true,
+          "path": "/input/a/click"
+        },
+        {
+          "key": "b",
+          "label": "B",
+          "kind": "button",
+          "x": 144.46,
+          "y": 152.19,
+          "r": 11.44,
+          "touch": false,
+          "click": true,
+          "path": "/input/b/click"
+        },
+        {
+          "key": "menu",
+          "label": "Menu",
+          "kind": "button",
+          "x": 208.37,
+          "y": 185.39,
+          "r": 7.04,
+          "touch": false,
+          "click": true,
+          "path": null
+        },
+        {
+          "key": "system",
+          "label": "System",
+          "kind": "button",
+          "x": 185.96,
+          "y": 192.03,
+          "r": 7.04,
+          "touch": false,
+          "click": true,
+          "path": null
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger",
+          "kind": "analog",
+          "x": 40,
+          "y": 223,
+          "r": 24,
+          "touch": false,
+          "click": true,
+          "path": "/input/trigger/value"
+        },
+        {
+          "key": "squeeze",
+          "label": "Grip",
+          "kind": "analog",
+          "x": 40,
+          "y": 319,
+          "r": 24,
+          "touch": false,
+          "click": true,
+          "path": "/input/squeeze/value"
+        }
+      ]
+    },
+    {
+      "id": "sense",
+      "name": "PS VR2 Sense",
+      "brand": "Sony",
+      "subtitle": "White orbital ring \u00b7 split face buttons",
+      "hand": "left",
+      "shape": "sense",
+      "profile": null,
+      "source": "https://www.playstation.com/en-us/support/hardware/ps-vr-2-sense-controller/",
+      "file": "svg/sense-left.svg",
+      "controls": [
+        {
+          "key": "thumbstick",
+          "label": "Thumbstick",
+          "kind": "pad",
+          "x": 170.44,
+          "y": 96.72,
+          "r": 14.4,
+          "touch": true,
+          "click": true,
+          "path": "/input/thumbstick"
+        },
+        {
+          "key": "square",
+          "label": "Square",
+          "kind": "button",
+          "x": 195.64,
+          "y": 119.4,
+          "r": 8.1,
+          "touch": true,
+          "click": true,
+          "path": "/input/square/click"
+        },
+        {
+          "key": "triangle",
+          "label": "Triangle",
+          "kind": "button",
+          "x": 204.88,
+          "y": 98.4,
+          "r": 8.1,
+          "touch": true,
+          "click": true,
+          "path": "/input/triangle/click"
+        },
+        {
+          "key": "create",
+          "label": "Create",
+          "kind": "button",
+          "x": 142.72,
+          "y": 87.48,
+          "r": 6.3,
+          "touch": false,
+          "click": true,
+          "path": null
+        },
+        {
+          "key": "system",
+          "label": "System",
+          "kind": "button",
+          "x": 170.44,
+          "y": 128.64,
+          "r": 9.0,
+          "touch": false,
+          "click": true,
+          "path": null
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger",
+          "kind": "analog",
+          "x": 280,
+          "y": 201,
+          "r": 24,
+          "touch": true,
+          "click": true,
+          "path": "/input/trigger/value"
+        },
+        {
+          "key": "squeeze",
+          "label": "Grip",
+          "kind": "button",
+          "x": 280,
+          "y": 315,
+          "r": 24,
+          "touch": true,
+          "click": true,
+          "path": "/input/squeeze/click"
+        }
+      ]
+    },
+    {
+      "id": "sense",
+      "name": "PS VR2 Sense",
+      "brand": "Sony",
+      "subtitle": "White orbital ring \u00b7 split face buttons",
+      "hand": "right",
+      "shape": "sense",
+      "profile": null,
+      "source": "https://www.playstation.com/en-us/support/hardware/ps-vr-2-sense-controller/",
+      "file": "svg/sense-right.svg",
+      "controls": [
+        {
+          "key": "thumbstick",
+          "label": "Thumbstick",
+          "kind": "pad",
+          "x": 149.56,
+          "y": 96.72,
+          "r": 14.4,
+          "touch": true,
+          "click": true,
+          "path": "/input/thumbstick"
+        },
+        {
+          "key": "cross",
+          "label": "Cross",
+          "kind": "button",
+          "x": 124.36,
+          "y": 119.4,
+          "r": 8.1,
+          "touch": true,
+          "click": true,
+          "path": "/input/cross/click"
+        },
+        {
+          "key": "circle",
+          "label": "Circle",
+          "kind": "button",
+          "x": 115.12,
+          "y": 98.4,
+          "r": 8.1,
+          "touch": true,
+          "click": true,
+          "path": "/input/circle/click"
+        },
+        {
+          "key": "options",
+          "label": "Options",
+          "kind": "button",
+          "x": 177.28,
+          "y": 87.48,
+          "r": 6.3,
+          "touch": false,
+          "click": true,
+          "path": null
+        },
+        {
+          "key": "system",
+          "label": "System",
+          "kind": "button",
+          "x": 149.56,
+          "y": 128.64,
+          "r": 9.0,
+          "touch": false,
+          "click": true,
+          "path": null
+        },
+        {
+          "key": "trigger",
+          "label": "Trigger",
+          "kind": "analog",
+          "x": 40,
+          "y": 201,
+          "r": 24,
+          "touch": true,
+          "click": true,
+          "path": "/input/trigger/value"
+        },
+        {
+          "key": "squeeze",
+          "label": "Grip",
+          "kind": "button",
+          "x": 40,
+          "y": 315,
+          "r": 24,
+          "touch": true,
+          "click": true,
+          "path": "/input/squeeze/click"
+        }
+      ]
+    }
+  ]
+}

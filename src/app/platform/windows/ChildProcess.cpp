@@ -1,6 +1,7 @@
 #include "app/ChildProcess.h"
 #include "app/WindowsLaunch.h"
 
+#include <array>
 #include <cwchar>
 #include <map>
 
@@ -8,6 +9,25 @@ namespace simxr::app
 {
 namespace
 {
+void RequireRuntimeOverride()
+{
+	HANDLE handle = nullptr;
+	if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &handle))
+		throw windows::Error("Cannot inspect runtime selection permissions");
+	const windows::Handle token(handle);
+	alignas(TOKEN_MANDATORY_LABEL) std::array<std::byte, sizeof(TOKEN_MANDATORY_LABEL) + SECURITY_MAX_SID_SIZE> buffer{};
+	DWORD size = 0;
+	if (!GetTokenInformation(token.Get(), TokenIntegrityLevel, buffer.data(), static_cast<DWORD>(buffer.size()), &size))
+		throw windows::Error("Cannot inspect runtime selection integrity");
+	const auto* label = reinterpret_cast<const TOKEN_MANDATORY_LABEL*>(buffer.data());
+	const auto count = *GetSidSubAuthorityCount(label->Label.Sid);
+	if (!count)
+		throw std::runtime_error("Cannot determine runtime selection integrity");
+	if (*GetSidSubAuthority(label->Label.Sid, count - 1) > SECURITY_MANDATORY_MEDIUM_RID)
+		throw std::runtime_error("The OpenXR loader ignores runtime overrides in elevated processes. "
+			"Run the companion without elevation. Under Wine/Proton, configure the prefix runtime "
+			"explicitly and clear the profile runtime override; this launch has been cancelled.");
+}
 struct EnvironmentOrder
 {
 	bool operator()(const std::wstring& left, const std::wstring& right) const
@@ -40,6 +60,9 @@ class ChildEnvironment
 			environment[L"SIMXR_HEADSET_PROFILE"] = windows::Wide(profile.headsetProfile);
 		if (!profile.runtimeManifest.empty())
 			environment[L"XR_RUNTIME_JSON"] = windows::Wide(profile.runtimeManifest);
+		const auto runtime = environment.find(L"XR_RUNTIME_JSON");
+		if (runtime != environment.end() && !runtime->second.empty())
+			RequireRuntimeOverride();
 		for (const auto& [key, value] : environment)
 		{
 			m_block.insert(m_block.end(), key.begin(), key.end());

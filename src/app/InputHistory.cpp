@@ -175,7 +175,7 @@ automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& 
 	for (const auto* sample : samples)
 	{
 		if (sample->identity.session != origin.identity.session || sample->identity.run != origin.identity.run ||
-			sample->seed != origin.seed)
+			sample->seed != origin.seed || sample->epoch != origin.epoch)
 			throw std::invalid_argument("The range spans more than one run");
 		if (!sample->context)
 			throw std::invalid_argument("This run did not record its view/profile context");
@@ -202,8 +202,7 @@ automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& 
 	for (auto& command : ContextCommands(origin))
 		initial.push_back(std::move(command));
 
-	// Frames whose input changed; a long range keeps an even subset so the take
-	// stays within the recorder's 1024-transaction limit.
+	// Keep every input transition; thinning a take can drop a button press or release.
 	std::vector<std::size_t> changed;
 	for (std::size_t index = 1; index < samples.size(); ++index)
 	{
@@ -211,21 +210,21 @@ automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& 
 		const auto& b = *samples[index];
 		if (b.identity.frame <= a.identity.frame)
 			throw std::invalid_argument("The range is not in frame order");
-		if (!Same(a.head, b.head) || !Same(a.poses, b.poses) || !Same(a.controls, b.controls) ||
+		if (b.identity.frame - a.identity.frame != 1)
+			throw std::invalid_argument("The range has missing input frames; select a continuous range");
+		if (a.scenarios != b.scenarios || !Same(a.head, b.head) || !Same(a.poses, b.poses) || !Same(a.controls, b.controls) ||
 			!Same(*a.gaze, *b.gaze) || !Same(a.bodyRoot, b.bodyRoot, SamePose) ||
 			(a.body != b.body && !Same(*a.body, *b.body)) ||
 			(a.trackers != b.trackers && !Same(*a.trackers, *b.trackers)) ||
 			(a.context != b.context && *a.context != *b.context))
 			changed.push_back(index);
 	}
-	// One transaction is kept for the end of the range.
-	constexpr std::size_t Limit = 1023;
-	const auto stride = (changed.size() + Limit - 1) / Limit;
+	const auto tail = changed.empty() || changed.back() != samples.size() - 1 ? 1u : 0u;
+	if (changed.size() + tail > 1024)
+		throw std::invalid_argument("The take exceeds 1024 input changes; select a shorter range");
 	const InputSample* previous = &origin;
 	for (std::size_t position = 0; position < changed.size(); ++position)
 	{
-		if (stride > 1 && position % stride != stride - 1 && position + 1 != changed.size())
-			continue;
 		const auto& sample = *samples[changed[position]];
 		automation::RecordedTransaction transaction;
 		transaction.id = take.transactions.size() + 1;
@@ -251,6 +250,9 @@ automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& 
 		if (previous->context != sample.context && *previous->context != *sample.context)
 			for (auto& command : ContextCommands(sample))
 				transaction.commands.push_back(std::move(command));
+		for (std::size_t index = 0; index < sample.scenarios.size(); ++index)
+			if (previous->scenarios[index] != sample.scenarios[index])
+				transaction.commands.push_back(SetScenario{static_cast<FailureScenario>(index), sample.scenarios[index]});
 		if (transaction.commands.empty())
 			continue;
 		take.transactions.push_back(std::move(transaction));

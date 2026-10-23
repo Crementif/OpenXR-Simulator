@@ -58,7 +58,10 @@ class FrameScheduler
 	XrResult Resume(HostTime anchor, DisplayTick boundary);
 	// The reservation must not reenter the scheduler, acquire a session lock,
 	// wait for GPU work, or perform transport operations. Prepare resources first.
-	XrResult WaitFrame(FramePrediction& prediction, const std::function<void(const FramePrediction&)>& reserve = {});
+	// An optional deferred publication lock is acquired after pacing, outside the
+	// scheduler mutex, and remains owned on return for the caller's publication.
+	XrResult WaitFrame(FramePrediction& prediction, const std::function<void(const FramePrediction&)>& reserve = {},
+		std::unique_lock<std::mutex>* publication = nullptr);
 	XrResult BeginFrame();
 	XrResult EndFrame(FramePrediction& prediction);
 	FramePipelineState Snapshot() const;

@@ -1,6 +1,7 @@
 #define XR_USE_TIMESPEC
 #define XR_USE_GRAPHICS_API_VULKAN
 #include "Math.h"
+#include "simxr/Version.h"
 #include "control/backends/vulkan/VulkanImageInspection.h"
 #include "control/legacy/backends/vulkan/VulkanLegacyCapture.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
@@ -91,7 +92,7 @@ FN(xrGetInstanceProperties)(XrInstance iHandle, XrInstanceProperties *p)
         return XR_ERROR_HANDLE_INVALID;
     if (!p || p->type != XR_TYPE_INSTANCE_PROPERTIES)
         return XR_ERROR_VALIDATION_FAILURE;
-    p->runtimeVersion = XR_MAKE_VERSION(1, 0, 0);
+    p->runtimeVersion = simxr::RuntimeVersion;
     std::strcpy(p->runtimeName, "OpenXR Simulator Linux Vulkan");
     return XR_SUCCESS;
 }

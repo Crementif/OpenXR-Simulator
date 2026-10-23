@@ -255,12 +255,18 @@ void RuntimeSession::Reply(const PanelReply& response)
 	{
 		const auto failure =
 			!reply.error.empty() ? reply.error : Text(message, tag::Detail, "Runtime rejected the operation");
-		if (!(task.kind == Work::Preview && (error == static_cast<std::uint32_t>(wire::ErrorCode::Busy) ||
-											 error == static_cast<std::uint32_t>(wire::ErrorCode::UnsupportedCommand))))
-			Notify(task.kind == Work::Preview ? "Preview image unavailable" : "Runtime refused a request", failure);
+		const auto previous = m_debugger.Scope();
 		m_debugger.Failed(task, static_cast<wire::ErrorCode>(error), failure);
-		m_workspace.SetScope(m_debugger.Scope(), false);
-		m_preview.SetScope(m_debugger.Scope());
+		if (previous != m_debugger.Scope())
+			ScopeChanged();
+		else
+		{
+			if (!(task.kind == Work::Preview && (error == static_cast<std::uint32_t>(wire::ErrorCode::Busy) ||
+												 error == static_cast<std::uint32_t>(wire::ErrorCode::UnsupportedCommand))))
+				Notify(task.kind == Work::Preview ? "Preview image unavailable" : "Runtime refused a request", failure);
+			m_workspace.SetScope(m_debugger.Scope(), false);
+			m_preview.SetScope(m_debugger.Scope());
+		}
 		if (task.kind == Work::Share)
 			m_preview.ShareFailed(task.id);
 		m_exports.Failed(task, failure);
@@ -635,14 +641,15 @@ RuntimeView RuntimeSession::View() const
 		view.selectedFrame = m_time.cursor.frame;
 	}
 	// Frames per second over the last half second of this run's display intervals.
-	if (history.Size() && history.At(history.Size() - 1).identity.run == selected.generation)
+	if (view.connected && selected.running && history.Size())
 	{
 		double milliseconds = 0;
 		std::size_t frames = 0;
 		for (auto index = history.Size(); index-- > 0 && frames < 45;)
 		{
 			const auto& frame = history.At(index);
-			if (frame.identity.run != selected.generation || frame.flags & HistoryRunStart)
+			if (frame.epoch != view.epoch || frame.identity.session != selected.id ||
+				frame.identity.run != selected.generation || frame.flags & HistoryRunStart)
 				break;
 			milliseconds += frame.frameMilliseconds;
 			++frames;
