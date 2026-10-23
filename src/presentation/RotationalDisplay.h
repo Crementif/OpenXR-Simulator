@@ -3,6 +3,8 @@
 #include "presentation/PresentationController.h"
 
 #include <chrono>
+#include <memory>
+#include <optional>
 
 namespace simxr
 {

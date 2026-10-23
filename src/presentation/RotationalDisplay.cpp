@@ -1,21 +1,20 @@
 #include "presentation/RotationalDisplay.h"
+#include "Pch.h"
+
 #include "Math.h"
 
 #include <new>
-#include <utility>
 
 namespace simxr
 {
-namespace
-{
-bool SameOrientation(const PoseSample& left, const PoseSample& right)
+static bool SameOrientation(const PoseSample& left, const PoseSample& right)
 {
 	const auto& a = left.pose.orientation;
 	const auto& b = right.pose.orientation;
 	return (a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w) ||
 		   (a.x == -b.x && a.y == -b.y && a.z == -b.z && a.w == -b.w);
 }
-} // namespace
+
 void RotationalDisplay::Reset() noexcept
 {
 	m_source.reset();

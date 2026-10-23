@@ -406,6 +406,52 @@ void Reservation()
 			"Capacity rejection consumed frame state");
 	Require(controller.Advance({Duration{100}})->source == FrameKey{{1}, {1}}, "Committed frame was not published");
 }
+void MetadataReplacementReleasesOutsideLock()
+{
+	for (const bool mailbox : {false, true})
+		for (const bool fail : {false, true})
+		{
+			PresentationController controller(1);
+			controller.Start({1}, {{Duration{100}}, Duration{10}});
+			unsigned releases = 0;
+			auto submission = Submission(1, 100);
+			submission.metadata = std::shared_ptr<const FrameRecord>(new FrameRecord{},
+																	 [&](const FrameRecord* record)
+																	 {
+																		 controller.Snapshot();
+																		 ++releases;
+																		 delete record;
+																	 });
+			const auto replacement = std::make_shared<const FrameRecord>();
+			const auto commit = [&]() -> std::shared_ptr<const FrameRecord>
+			{
+				if (fail)
+					throw std::bad_alloc{};
+				return replacement;
+			};
+			bool failed = false;
+			PresentationAdmission admitted = PresentationAdmission::Closed;
+			try
+			{
+				admitted = mailbox ? controller.SubmitLiveClearWithMetadata(std::move(submission), commit)
+								   : controller.SubmitWithMetadata(std::move(submission), commit);
+			}
+			catch (const std::bad_alloc&)
+			{
+				failed = true;
+			}
+			Require(releases == 1 && failed == fail, "Metadata replacement lost the caller's last reader");
+			const auto retained = controller.Retain();
+			if (fail)
+				Require(retained.empty() && controller.Snapshot().lastSubmitted == FrameId{},
+						"Failed metadata replacement published or consumed the frame");
+			else
+				Require(admitted == PresentationAdmission::Accepted && retained.size() == 1 &&
+							retained.front().metadata == replacement,
+						"Accepted metadata replacement did not retain the committed reader");
+		}
+}
+
 void LiveClearMailbox()
 {
 	PresentationController controller(1);
@@ -517,6 +563,7 @@ int main()
 	PhaseAndConcurrency();
 	FailedQueueAllocationReleasesOutsideLock();
 	Reservation();
+	MetadataReplacementReleasesOutsideLock();
 	LiveClearMailbox();
 	std::cout << "Portable presentation selection tests passed; no hardware display exercised\n";
 }

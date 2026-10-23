@@ -1,16 +1,16 @@
 #include "presentation/PresentationController.h"
+#include "Pch.h"
 #include "presentation/FrameHistory.h"
 
-#include <algorithm>
 #include <cstdio>
 #include <limits>
 #include <stdexcept>
 #include <type_traits>
-#include <utility>
 
 namespace simxr
 {
-PresentationController::PresentationController(std::size_t capacity, FrameHistory* history, CompletionObserver completed)
+PresentationController::PresentationController(std::size_t capacity, FrameHistory* history,
+											   CompletionObserver completed)
 	: m_capacity(capacity), m_history(history), m_completed(std::move(completed))
 {
 	if (!capacity)
@@ -62,6 +62,7 @@ PresentationController::SubmitWithMetadata(PresentationSubmission submission,
 										   const std::function<std::shared_ptr<const FrameRecord>()>& commit)
 {
 	PresentationSubmission cancelled;
+	std::shared_ptr<const FrameRecord> replacedMetadata;
 	std::lock_guard lock(m_mutex);
 	if (!m_running)
 		return PresentationAdmission::Closed;
@@ -80,7 +81,11 @@ PresentationController::SubmitWithMetadata(PresentationSubmission submission,
 	try
 	{
 		if (commit)
-			m_entries.back().submission.metadata = commit();
+		{
+			auto metadata = commit();
+			replacedMetadata = std::move(m_entries.back().submission.metadata);
+			m_entries.back().submission.metadata = std::move(metadata);
+		}
 	}
 	catch (...)
 	{
@@ -97,6 +102,7 @@ PresentationController::SubmitLiveClearWithMetadata(PresentationSubmission submi
 													const std::function<std::shared_ptr<const FrameRecord>()>& commit)
 {
 	std::optional<PresentationSubmission> replaced;
+	std::shared_ptr<const FrameRecord> replacedMetadata;
 	std::lock_guard lock(m_mutex);
 	if (!m_running)
 		return PresentationAdmission::Closed;
@@ -106,7 +112,11 @@ PresentationController::SubmitLiveClearWithMetadata(PresentationSubmission submi
 		submission.key.frame <= m_lastSubmitted || submission.targetTime.value.count() <= 0)
 		return PresentationAdmission::Invalid;
 	if (commit)
-		submission.metadata = commit();
+	{
+		auto metadata = commit();
+		replacedMetadata = std::move(submission.metadata);
+		submission.metadata = std::move(metadata);
+	}
 	if (m_liveClear)
 	{
 		replaced = std::move(m_liveClear);
@@ -158,8 +168,11 @@ std::optional<PresentationTick> PresentationController::Advance(RuntimeTime now,
 		const Observation* selected = nullptr;
 		for (const auto& value : observed)
 		{
-			auto entry = std::find_if(m_entries.begin(), m_entries.end(), [&](const auto& candidate)
-									  { return candidate.submission.key == value.submission.key; });
+			auto entry = std::find_if(m_entries.begin(), m_entries.end(),
+									  [&](const auto& candidate)
+									  {
+										  return candidate.submission.key == value.submission.key;
+									  });
 			const bool liveClear = m_liveClear && m_liveClear->key == value.submission.key;
 			if ((!liveClear && (entry == m_entries.end() || entry->retiring)) ||
 				value.status != CompletionStatus::Complete || value.submission.targetTime > time ||
@@ -212,15 +225,18 @@ std::optional<PresentationTick> PresentationController::Advance(RuntimeTime now,
 		m_displayOutput = next.output;
 		for (auto entry = m_entries.begin(); entry != m_entries.end();)
 		{
-			auto value = std::find_if(observed.begin(), observed.end(), [&](const auto& candidate)
-									  { return candidate.submission.key == entry->submission.key; });
+			auto value = std::find_if(observed.begin(), observed.end(),
+									  [&](const auto& candidate)
+									  {
+										  return candidate.submission.key == entry->submission.key;
+									  });
 			if (value == observed.end())
 			{
 				++entry;
 				continue;
 			}
-			if (!entry->completionReported && value->status == CompletionStatus::Complete &&
-				entry->submission.output && entry->submission.metadata)
+			if (!entry->completionReported && value->status == CompletionStatus::Complete && entry->submission.output &&
+				entry->submission.metadata)
 			{
 				entry->completionReported = true;
 				value->reportCompletion = true;
@@ -245,15 +261,15 @@ std::optional<PresentationTick> PresentationController::Advance(RuntimeTime now,
 		if (m_history)
 		{
 			const auto kind = next.kind == PresentationKind::NewFrame ? FrameTraceKind::DisplaySelected
-				: next.kind == PresentationKind::Repeat ? FrameTraceKind::DisplayRepeated
-				: next.kind == PresentationKind::Clear ? FrameTraceKind::DisplayCleared
-				: FrameTraceKind::DisplayEmpty;
+							  : next.kind == PresentationKind::Repeat ? FrameTraceKind::DisplayRepeated
+							  : next.kind == PresentationKind::Clear  ? FrameTraceKind::DisplayCleared
+																	  : FrameTraceKind::DisplayEmpty;
 			char detail[96];
 			std::snprintf(detail, sizeof(detail), "skipped_ticks=%llu; content=%s",
-				static_cast<unsigned long long>(next.skippedTicks),
-				m_current ? (m_current->output ? "image" : "clear") : "empty");
+						  static_cast<unsigned long long>(next.skippedTicks),
+						  m_current ? (m_current->output ? "image" : "clear") : "empty");
 			m_history->Trace(kind, next.source.value_or(FrameKey{m_generation, {}}), next.time, XR_SUCCESS,
-				FrameDiagnosticCategory::Timing, next.tick.value, detail);
+							 FrameDiagnosticCategory::Timing, next.tick.value, detail);
 		}
 	}
 	if (m_completed)
@@ -304,8 +320,11 @@ std::size_t PresentationController::PollRetired()
 																	  value.status != CompletionStatus::Pending;
 														   });
 				  });
-	return static_cast<std::size_t>(
-		std::count_if(m_entries.begin(), m_entries.end(), [](const auto& entry) { return entry.retiring; }));
+	return static_cast<std::size_t>(std::count_if(m_entries.begin(), m_entries.end(),
+												  [](const auto& entry)
+												  {
+													  return entry.retiring;
+												  }));
 }
 
 PresentationSnapshot PresentationController::Snapshot() const
@@ -339,7 +358,10 @@ std::vector<PresentationSubmission> PresentationController::Retain() const
 				retained.push_back(entry.submission);
 	}
 	std::sort(retained.begin(), retained.end(),
-			  [](const auto& left, const auto& right) { return left.key < right.key; });
+			  [](const auto& left, const auto& right)
+			  {
+				  return left.key < right.key;
+			  });
 	return retained;
 }
 } // namespace simxr

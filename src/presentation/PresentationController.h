@@ -4,6 +4,7 @@
 #include "presentation/DisplayTimeline.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <memory>

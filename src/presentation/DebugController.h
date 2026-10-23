@@ -6,6 +6,7 @@
 
 #include <compare>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <memory>

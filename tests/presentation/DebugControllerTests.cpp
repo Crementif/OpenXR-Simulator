@@ -145,6 +145,36 @@ DebugOperation Status(DebugController& controller, DebugOperationId operation)
 	Require(status.has_value(), "Missing operation status");
 	return *status;
 }
+void CommandCopyAllocationRecovery()
+{
+	Fixture fixture(8, true, true);
+	DebugController controller(fixture.session, fixture.clock, ManualConfig());
+	const auto lease = controller.Acquire()->id;
+	DebugRequest request{{1}, DebugCommand::Step};
+	request.additionalTargets.push_back({CaptureKind::LayerView, 0, 0});
+	DebugSubmission rejected{};
+	debugAllocationCountdown = 0;
+	try
+	{
+		rejected = controller.Submit(lease, request);
+	}
+	catch (...)
+	{
+		debugAllocationCountdown = -1;
+		throw;
+	}
+	debugAllocationCountdown = -1;
+	const auto state = controller.Snapshot();
+	Require(rejected.result == DebugAdmission::Capacity && !rejected.operation.value && !state.commands &&
+				!state.pipeline.permits && state.retention.captures.empty() && !state.retention.heldSlots &&
+				fixture.pool.InUse() == 0,
+			"Request copy allocation failure leaked an operation, permit or capture reservation");
+	const auto retried = controller.Submit(lease, request);
+	Require(retried.result == DebugAdmission::Accepted && retried.operation == DebugOperationId{1} &&
+				Status(controller, retried.operation).request == request,
+			"Request copy allocation failure consumed identity or changed the bundled retry");
+}
+
 void DisplayStepAllocationRecovery()
 {
 	unsigned failures = 0;
@@ -1037,6 +1067,7 @@ int main()
 		}
 	};
 	run("Bundle reservation rollback", BundleReservationRollback);
+	run("Command copy allocation recovery", CommandCopyAllocationRecovery);
 	run("Display step allocation recovery", DisplayStepAllocationRecovery);
 	run("Realtime recording budget and lease recovery", RealtimeRecordingBudget);
 	run("Idempotence and reclamation", IdempotenceAndReclamation);
