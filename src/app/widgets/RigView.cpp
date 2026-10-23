@@ -25,6 +25,29 @@ static float Yaw(XrQuaternionf q)
 	const auto forward = Rotate(q, {0, 0, -1});
 	return std::atan2(-forward.x, -forward.z);
 }
+SpatialScene SpatialScene::FromTracking(const TrackingSnapshot& tracking)
+{
+	SpatialScene scene;
+	scene.root = tracking.body.joints[static_cast<std::size_t>(BodyJoint::Root)].pose;
+	scene.devices[0] = tracking.head.pose;
+	scene.available[0] = (tracking.head.flags & ValidPoseFlags) == ValidPoseFlags;
+	for (std::size_t hand = 0; hand < 2; ++hand)
+	{
+		scene.devices[hand + 1] = tracking.controllers[hand].pose.pose;
+		scene.available[hand + 1] = tracking.controllers[hand].connected &&
+									(tracking.controllers[hand].pose.flags & ValidPoseFlags) == ValidPoseFlags;
+	}
+	for (std::size_t slot = 0; slot < 4; ++slot)
+	{
+		scene.devices[slot + 3] = tracking.trackers[slot].pose.pose;
+		scene.available[slot + 3] = tracking.trackers[slot].device.connected &&
+									(tracking.trackers[slot].pose.flags & ValidPoseFlags) == ValidPoseFlags;
+	}
+	scene.body = tracking.body;
+	if ((tracking.gaze.flags & ValidPoseFlags) == ValidPoseFlags)
+		scene.gaze = tracking.gaze.pose;
+	return scene;
+}
 FrameView RigCamera(const RigViewState& state, const SpatialScene& scene, float aspect, float header)
 {
 	if (state.eye && scene.eye)

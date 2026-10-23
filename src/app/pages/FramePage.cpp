@@ -1,28 +1,24 @@
-#include "app/FramePage.h"
-#include "app/DocumentTree.h"
-#include "app/PastInput.h"
+#include "app/pages/FramePage.h"
+#include "Pch.h"
+#include "app/Theme.h"
 #include "app/services/RuntimeSession.h"
 #include "app/services/SimulationEdits.h"
-#include "app/widgets/SpatialEditor.h"
-#include "app/Theme.h"
 #include "app/widgets/Controls.h"
+#include "app/widgets/DocumentTree.h"
+#include "app/widgets/PastInput.h"
 #include "control/InspectionDocument.h"
 
-#include <algorithm>
+#include <exception>
 #include <imgui.h>
-#include <string>
-#include <vector>
 
 namespace simxr::app
-{
-namespace
 {
 namespace wire = control;
 namespace tag = wire::tag;
 using panel::Boolean;
 using panel::Text;
 using panel::U64;
-std::vector<std::byte> InspectionMember(std::span<const std::byte> bytes, std::string_view name)
+static std::vector<std::byte> InspectionMember(std::span<const std::byte> bytes, std::string_view name)
 {
 	wire::Message node;
 	node.fields = wire::DecodeFields(bytes).fields;
@@ -38,13 +34,13 @@ std::vector<std::byte> InspectionMember(std::span<const std::byte> bytes, std::s
 	}
 	return {};
 }
-wire::Field InspectionScalar(std::span<const std::byte> bytes, std::string_view member)
+static wire::Field InspectionScalar(std::span<const std::byte> bytes, std::string_view member)
 {
 	wire::Message node;
 	node.fields = wire::DecodeFields(InspectionMember(bytes, member)).fields;
 	return node.Find(3) ? *node.Find(3) : wire::Field{};
 }
-std::vector<std::vector<std::byte>> InspectionElements(std::span<const std::byte> bytes)
+static std::vector<std::vector<std::byte>> InspectionElements(std::span<const std::byte> bytes)
 {
 	wire::Message node;
 	node.fields = wire::DecodeFields(bytes).fields;
@@ -55,7 +51,7 @@ std::vector<std::vector<std::byte>> InspectionElements(std::span<const std::byte
 				elements.push_back(item.value);
 	return elements;
 }
-const char* OwnerName(const CommandSource& source)
+static const char* OwnerName(const CommandSource& source)
 {
 	switch (source.kind)
 	{
@@ -69,13 +65,100 @@ const char* OwnerName(const CommandSource& source)
 		return "MCP";
 	}
 }
-} // namespace
-FramePage::FramePage(RuntimeSession& session, SpatialEditor& spatial, DocumentTree& documents)
-	: m_session(session), m_spatial(spatial), m_documents(documents)
+FramePage::FramePage(RuntimeSession& session, DocumentTree& documents) : m_session(session), m_documents(documents) {}
+void FramePage::Prepare(const Selection& selection, const RuntimeView& view)
 {
+	const auto selected = std::get_if<FrameSel>(&selection);
+	m_active = selected != nullptr;
+	const auto frame = selected && selected->identity.frame ? *selected : FrameSel{view.time.cursor, view.time.epoch};
+	const auto capture = m_session.Workspace().Selected();
+	const bool matching = selected && capture && capture->scope.epoch == frame.epoch &&
+						  capture->scope.session == frame.identity.session &&
+						  capture->scope.generation == frame.identity.run && capture->frame == frame.identity.frame;
+	const auto document = matching ? capture->document.Find(tag::Document) : nullptr;
+	if (!document || document->value.empty())
+	{
+		m_scene.reset();
+		m_capture = m_inspection = 0;
+		m_invalidPose = false;
+		m_rigView.points = {};
+		m_rigView.minimum = m_rigView.size = {};
+		m_rigView.orbiting = m_rigView.panning = false;
+		if (!selected)
+			m_rigView.expanded = false;
+		return;
+	}
+	if (m_capture != capture->local || m_inspection != capture->inspection)
+	{
+		m_scene.reset();
+		m_capture = capture->local;
+		m_inspection = capture->inspection;
+		m_rigView.orbiting = m_rigView.panning = false;
+		m_invalidPose = false;
+		try
+		{
+			if (const auto tracking = ReadInspectionTracking(capture->document))
+				m_scene = SpatialScene::FromTracking(*tracking);
+		}
+		catch (const std::exception&)
+		{
+			m_invalidPose = true;
+		}
+	}
+	if (m_scene)
+	{
+		m_scene->eye.reset();
+		for (const auto& image : m_session.Preview().Images())
+			if (image.scope == capture->scope && image.frame == capture->frame && !image.description.views.empty())
+			{
+				m_scene->eye = image.description.views.front();
+				break;
+			}
+	}
+	else
+	{
+		m_rigView.points = {};
+		m_rigView.minimum = m_rigView.size = {};
+		m_rigView.orbiting = m_rigView.panning = false;
+	}
+}
+void FramePage::DrawRig(ImVec2 size)
+{
+	if (m_rigView.drawnFrame != ImGui::GetFrameCount() - 1)
+		m_rigView.orbiting = m_rigView.panning = false;
+	if (m_scene)
+	{
+		auto scene = *m_scene;
+		RigView("Recorded rig", m_rigView, scene, m_device, {}, size);
+	}
+	else
+	{
+		m_rigView.points = {};
+		m_rigView.minimum = m_rigView.size = {};
+		ImGui::TextDisabled("%s", m_invalidPose ? "Invalid recorded pose" : "Pose not recorded for this frame");
+	}
+}
+void FramePage::DrawExpanded(ImVec2 size)
+{
+	const float scale = ImGui::GetFontSize() / 16;
+	DrawRig({size.x / scale, size.y / scale});
+	if (!m_scene && ImGui::Button("Back to image##Recorded rig unavailable"))
+		m_rigView.expanded = false;
+}
+ShellRect FramePage::RigViewRect() const
+{
+	return {m_rigView.minimum.x, m_rigView.minimum.y, m_rigView.size.x, m_rigView.size.y};
+}
+std::array<ShellRect, 7> FramePage::RigDevicePoints() const
+{
+	std::array<ShellRect, 7> result{};
+	for (std::size_t device = 0; device < result.size(); ++device)
+		result[device] = {m_rigView.points[device].x, m_rigView.points[device].y, 0, 0};
+	return result;
 }
 void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 {
+	Prepare(shell.selection, view);
 	// The page shows exactly the selected frame; an empty FrameSel means the time cursor.
 	auto selection = std::get<FrameSel>(shell.selection);
 	if (!selection.identity.frame)
@@ -105,18 +188,21 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 		ImGui::SetItemTooltip("This frame belongs to a run that has ended; its images may be gone");
 	}
 	if (PageClose())
+	{
 		shell.selection = std::monostate{};
+		return;
+	}
 	// The header stays visible while the frame contents scroll.
 	ImGui::BeginChild("Frame details", {0, 0});
-	if (!bytes.empty())
-		m_spatial.DrawRig(shell.selection, {ImGui::GetContentRegionAvail().x / (ImGui::GetFontSize() / 16), 150});
+	if (!Expanded())
+		DrawRig({ImGui::GetContentRegionAvail().x / (ImGui::GetFontSize() / 16), 150});
 	SectionLabel("Images");
 	bool hasImage = false;
 	for (const auto& image : preview.Images())
 		if (matches(image.scope, image.frame) && image.ready && !image.released)
 		{
 			hasImage = true;
-			ImGui::PushID(static_cast<int>(image.id));
+			ImGui::PushID(std::to_string(image.id).c_str());
 			ImGui::Text("%s / %u x %u", image.live ? "Preview" : "Snapshot", image.description.width,
 						image.description.height);
 			preview.DrawImage(image.id, std::min(ImGui::GetContentRegionAvail().x, ImGui::GetFontSize() * 8), 0);
@@ -127,7 +213,8 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 		}
 	if (!hasImage)
 		ImGui::TextDisabled("No image kept for this frame");
-	if (capture && !capture->released && capture->scope == m_session.Debugger().Scope())
+	if (capture && !capture->released && capture->scope == m_session.Debugger().Scope() &&
+		m_session.Supports(wire::Capability::SnapshotPins))
 	{
 		const bool pinned = Boolean(capture->metadata, tag::Pinned);
 		if (ImGui::SmallButton(pinned ? "Unpin snapshot" : "Pin snapshot"))
@@ -157,16 +244,19 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 			DrawInputSummary(*sample);
 	if (!bytes.empty())
 	{
-		if (const auto tracking = ReadInspectionTracking(capture->document))
+		if (m_scene)
 		{
-			const auto pose = [](const char* name, const PoseSample& value)
+			const auto pose = [&](const char* name, std::size_t device)
 			{
-				const auto& p = value.pose.position;
-				ImGui::Text("%s  %.2f, %.2f, %.2f m", name, p.x, p.y, p.z);
+				const auto& p = m_scene->devices[device].position;
+				if (m_scene->available[device])
+					ImGui::Text("%s  %.2f, %.2f, %.2f m", name, p.x, p.y, p.z);
+				else
+					ImGui::TextDisabled("%s pose unavailable", name);
 			};
-			pose("Head", tracking->head);
-			pose("Left", tracking->controllers[0].pose);
-			pose("Right", tracking->controllers[1].pose);
+			pose("Head", 0);
+			pose("Left", 1);
+			pose("Right", 2);
 		}
 		const auto input = InspectionMember(bytes, "input");
 		const auto controllers = InspectionElements(InspectionMember(input, "controllers"));
@@ -180,7 +270,7 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 						InspectionScalar(controls, "secondary").AsBool().value_or(false) ? "down" : "up");
 		}
 		if (Section("All input values"))
-			m_documents.Draw(input);
+			m_documents.Draw("Input", input);
 		const auto commands = InspectionMember(bytes, "applied_commands");
 		wire::Message commandNode;
 		commandNode.fields = wire::DecodeFields(commands).fields;
@@ -189,18 +279,25 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 		{
 			if (const auto revision = workspace.Revision(revisionId, documentEpoch))
 			{
-				const auto setup = ReadObservedSetup(*revision);
-				for (const auto& [label, channel] : {std::pair{"Head", ControlChannel::Head},
-													{"Left", ControlChannel::LeftControls},
-													{"Right", ControlChannel::RightControls}})
-					if (const auto& owner = setup.owners[static_cast<std::size_t>(channel)])
-						ImGui::Text("%s driven by %s", label, OwnerName(*owner));
+				try
+				{
+					const auto setup = ReadObservedSetup(*revision);
+					for (const auto& [label, channel] : {std::pair{"Head", ControlChannel::Head},
+														 {"Left", ControlChannel::LeftControls},
+														 {"Right", ControlChannel::RightControls}})
+						if (const auto& owner = setup.owners[static_cast<std::size_t>(channel)])
+							ImGui::Text("%s driven by %s", label, OwnerName(*owner));
+				}
+				catch (const std::exception&)
+				{
+					ImGui::TextDisabled("Input owners unavailable");
+				}
 			}
 			else
 				workspace.RequestRevision(revisionId, documentEpoch);
 		}
 		if (Section("Input owners and commands"))
-			m_documents.Draw(commands);
+			m_documents.Draw("Commands", commands);
 	}
 	else
 		ImGui::TextDisabled(capture ? "Loading frame details" : "Head and hand details not kept for this frame");
@@ -236,28 +333,32 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 					break;
 				}
 			ImGui::PushID(static_cast<int>(index));
-			if (ImGui::TreeNode(name.c_str()))
+			if (ImGui::TreeNode("##Action", "%s", name.c_str()))
 			{
-				for (const auto& value : InspectionElements(InspectionMember(action, "values")))
+				const auto values = InspectionElements(InspectionMember(action, "values"));
+				for (std::size_t valueIndex = 0; valueIndex < values.size(); ++valueIndex)
 				{
+					ImGui::PushID(static_cast<int>(valueIndex));
+					const auto& value = values[valueIndex];
 					ImGui::Text("%s / bool %s / %.3f",
 								InspectionScalar(value, "active").AsBool().value_or(false) ? "Active" : "Inactive",
 								InspectionScalar(value, "boolean").AsBool().value_or(false) ? "true" : "false",
 								InspectionScalar(value, "scalar").AsF32().value_or(0));
-					m_documents.Draw(value);
+					m_documents.Draw("Value", value);
+					ImGui::PopID();
 				}
-				m_documents.Draw(InspectionMember(action, "bindings"));
+				m_documents.Draw("bindings", InspectionMember(action, "bindings"));
 				ImGui::TreePop();
 			}
 			ImGui::PopID();
 		}
 		if (Section("All actions and bindings"))
-			m_documents.Draw(actions);
+			m_documents.Draw("Actions", actions);
 	}
 	else
 		ImGui::TextDisabled("Actions not kept for this frame");
 	if (Section("Layers") && !bytes.empty())
-		m_documents.Draw(InspectionMember(bytes, "layers"));
+		m_documents.Draw("layers", InspectionMember(bytes, "layers"));
 	if (Section("Timing"))
 	{
 		const auto& history = m_session.History();
@@ -272,8 +373,9 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 			if (frame.cpuMilliseconds >= 0)
 			{
 				ImGui::Text("CPU %.1f ms / %+.1f ms spare", frame.cpuMilliseconds,
-					frame.periodMilliseconds - frame.cpuMilliseconds);
-				ImGui::SetItemTooltip("Host span from xrWaitFrame return to accepted xrEndFrame, including runtime submission");
+							frame.periodMilliseconds - frame.cpuMilliseconds);
+				ImGui::SetItemTooltip(
+					"Host span from xrWaitFrame return to accepted xrEndFrame, including runtime submission");
 			}
 			else
 				ImGui::TextDisabled("CPU timing unavailable");
@@ -288,15 +390,15 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 		}
 		if (!bytes.empty())
 		{
-			m_documents.Draw(InspectionMember(bytes, "prediction"));
-			m_documents.Draw(InspectionMember(bytes, "frame_trace"));
+			m_documents.Draw("prediction", InspectionMember(bytes, "prediction"));
+			m_documents.Draw("frame_trace", InspectionMember(bytes, "frame_trace"));
 		}
 	}
 	if (Section("Raw") && !bytes.empty())
 	{
 		if (ImGui::Button("Open in window"))
 			m_documents.OpenWindow(bytes, documentEpoch);
-		m_documents.Draw(bytes);
+		m_documents.Draw("Raw", bytes);
 	}
 	ImGui::EndChild();
 }

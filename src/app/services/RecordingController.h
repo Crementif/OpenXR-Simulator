@@ -4,6 +4,7 @@
 
 #include <condition_variable>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -36,6 +37,10 @@ struct RecordingSnapshot
 };
 // Read the metadata of an editable recording without executing its script.
 automation::SavedRecording OpenSavedRecording(const std::string& path);
+// Writes an editable take through a private temporary file. Existing recording
+// saves replace their destination; a new range take can require a fresh name.
+void SaveRecording(const std::filesystem::path& destination, const automation::InputRecording& recording,
+				   bool replace = true);
 
 // One joined worker owns recording control, transport and explicit persistence.
 class RecordingController

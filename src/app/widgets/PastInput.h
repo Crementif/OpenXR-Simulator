@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/services/InputHistory.h"
+#include <cstddef>
 
 namespace simxr::app
 {

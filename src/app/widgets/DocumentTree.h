@@ -14,12 +14,10 @@ class RuntimeSession;
 class DocumentTree
 {
   public:
-	explicit DocumentTree(RuntimeSession& session) : m_session(session)
-	{
-	}
+	explicit DocumentTree(RuntimeSession& session) : m_session(session) {}
 	// Starts a drawing pass for documents of one connection epoch.
 	void Begin(std::uint64_t documentEpoch);
-	void Draw(std::span<const std::byte> bytes);
+	void Draw(const char* id, std::span<const std::byte> bytes);
 	void OpenWindow(std::span<const std::byte> bytes, std::uint64_t documentEpoch);
 	void DrawWindow();
 

@@ -1,19 +1,18 @@
-#include "app/PastInput.h"
-#include "app/services/PlayerRig.h"
+#include "app/widgets/PastInput.h"
+#include "Pch.h"
 #include "app/Theme.h"
+#include "app/services/PlayerRig.h"
 
-#include <algorithm>
 #include <cstdio>
 #include <imgui.h>
+#include <iomanip>
 #include <numbers>
-#include <string>
+#include <sstream>
 
 namespace simxr::app
 {
-namespace
-{
-constexpr float Degrees = 180 / std::numbers::pi_v<float>;
-const char* PresetName(BodyPreset preset)
+static constexpr float s_degrees = 180 / std::numbers::pi_v<float>;
+static const char* PresetName(BodyPreset preset)
 {
 	switch (preset)
 	{
@@ -26,26 +25,28 @@ const char* PresetName(BodyPreset preset)
 	}
 	return "Unknown";
 }
-std::string Position(const XrVector3f& value)
+static std::string Position(const XrVector3f& value)
 {
-	char text[64];
-	std::snprintf(text, sizeof(text), "%.2f, %.2f, %.2f m", value.x, value.y, value.z);
-	return text;
+	std::ostringstream text;
+	text << std::fixed << std::setprecision(2) << value.x << ", " << value.y << ", " << value.z << " m";
+	return text.str();
 }
-std::string Tracking(bool connected, bool tracked)
+static const char* Tracking(bool connected, bool tracked)
 {
 	return !connected ? "Disconnected" : tracked ? "Tracked" : "Not tracked";
 }
 // Dimmed key/value rows: the recorded values of a past frame are not editable.
-class Rows
+class PastInputRows
 {
   public:
-	explicit Rows(const char* id) : m_open(ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingStretchProp))
+	explicit PastInputRows(const char* id) : m_open(ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingStretchProp))
 	{
 		if (m_open)
 			ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 6);
 	}
-	~Rows()
+	PastInputRows(const PastInputRows&) = delete;
+	PastInputRows& operator=(const PastInputRows&) = delete;
+	~PastInputRows()
 	{
 		if (m_open)
 			ImGui::EndTable();
@@ -64,7 +65,7 @@ class Rows
   private:
 	bool m_open;
 };
-std::string Placement(const TrackerDevice& tracker)
+static std::string Placement(const TrackerDevice& tracker)
 {
 	if (tracker.jointOffset)
 		return "Joint offset " + Position(tracker.jointOffset->position);
@@ -72,11 +73,10 @@ std::string Placement(const TrackerDevice& tracker)
 		return Position(tracker.poseOverride->position);
 	return tracker.anchor ? "On the body" : "Default";
 }
-void Missing(const char* what)
+static void Missing(const char* what)
 {
 	ImGui::TextDisabled("%s not recorded for this frame", what);
 }
-} // namespace
 void DrawPastBody(const InputSample& sample)
 {
 	if (!sample.body)
@@ -85,7 +85,7 @@ void DrawPastBody(const InputSample& sample)
 		return;
 	}
 	const auto& body = *sample.body;
-	Rows rows("Past body");
+	PastInputRows rows("Past body");
 	rows.Row("Active", body.active ? "Yes" : "No");
 	rows.Row("Pose", PresetName(body.preset));
 	char confidence[16];
@@ -93,13 +93,13 @@ void DrawPastBody(const InputSample& sample)
 	rows.Row("Confidence", confidence);
 	if (sample.bodyRoot)
 		rows.Row("Root", Position(sample.bodyRoot->position));
-	static constexpr const char* controls[] = {"Hips", "Chest", "Head", "Left foot", "Right foot"};
+	static constexpr const char* s_controls[] = {"Hips", "Chest", "Head", "Left foot", "Right foot"};
 	for (std::size_t index = 0; index < body.controls.size(); ++index)
 	{
 		const auto& control = body.controls[index];
 		if (control.offset || !control.tracked)
-			rows.Row(controls[index], (control.offset ? Position(*control.offset) + " " : std::string{}) +
-										  (control.tracked ? "" : "not tracked"));
+			rows.Row(s_controls[index], (control.offset ? Position(*control.offset) + " " : std::string{}) +
+											(control.tracked ? "" : "not tracked"));
 	}
 	const auto joints = std::count_if(body.joints.begin(), body.joints.end(),
 									  [](const auto& joint)
@@ -117,11 +117,11 @@ void DrawPastGaze(const InputSample& sample)
 		return;
 	}
 	const auto& gaze = *sample.gaze;
-	Rows rows("Past gaze");
+	PastInputRows rows("Past gaze");
 	char angle[32];
-	std::snprintf(angle, sizeof(angle), "%.1f°", gaze.yaw * Degrees);
+	std::snprintf(angle, sizeof(angle), "%.1f°", gaze.yaw * s_degrees);
 	rows.Row("Yaw", angle);
-	std::snprintf(angle, sizeof(angle), "%.1f°", gaze.pitch * Degrees);
+	std::snprintf(angle, sizeof(angle), "%.1f°", gaze.pitch * s_degrees);
 	rows.Row("Pitch", angle);
 	rows.Row("State", !gaze.available ? "Unavailable" : gaze.tracked ? "Tracked" : "Not tracked");
 }
@@ -143,7 +143,7 @@ void DrawPastTrackers(const InputSample& sample, std::size_t selected)
 		ImGui::TableNextColumn();
 		ImGui::TextDisabled("%s", TrackerRoleName(tracker.role));
 		ImGui::TableNextColumn();
-		ImGui::TextDisabled("%s", Tracking(tracker.connected, tracker.tracked).c_str());
+		ImGui::TextDisabled("%s", Tracking(tracker.connected, tracker.tracked));
 		ImGui::TableNextColumn();
 		ImGui::TextDisabled("%s", Placement(tracker).c_str());
 	}
@@ -154,8 +154,10 @@ void DrawInputSummary(const InputSample& sample)
 	if (sample.body)
 		ImGui::Text("Body  %s%s", PresetName(sample.body->preset), sample.body->active ? "" : " (inactive)");
 	if (sample.gaze)
-		ImGui::Text("Gaze  %.1f°, %.1f°%s", sample.gaze->yaw * Degrees, sample.gaze->pitch * Degrees,
-					!sample.gaze->available ? " (unavailable)" : !sample.gaze->tracked ? " (not tracked)" : "");
+		ImGui::Text("Gaze  %.1f°, %.1f°%s", sample.gaze->yaw * s_degrees, sample.gaze->pitch * s_degrees,
+					!sample.gaze->available ? " (unavailable)"
+					: !sample.gaze->tracked ? " (not tracked)"
+											: "");
 	if (sample.trackers)
 		for (const auto& tracker : *sample.trackers)
 			if (tracker.connected)

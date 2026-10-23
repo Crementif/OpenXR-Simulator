@@ -1,26 +1,25 @@
-#include "app/DocumentTree.h"
+#include "app/widgets/DocumentTree.h"
+#include "Pch.h"
 #include "app/services/RuntimeSession.h"
 #include "control/InspectionDocument.h"
 
 #include <imgui.h>
-#include <string>
 
 namespace simxr::app
 {
-namespace
-{
 namespace wire = control;
 namespace tag = wire::tag;
-constexpr std::uint32_t MaximumNodes = 2048;
-} // namespace
+static constexpr std::uint32_t s_maximumNodes = 2048;
 void DocumentTree::Begin(std::uint64_t documentEpoch)
 {
 	m_nodesDrawn = 0;
 	m_documentEpoch = documentEpoch;
 }
-void DocumentTree::Draw(std::span<const std::byte> bytes)
+void DocumentTree::Draw(const char* id, std::span<const std::byte> bytes)
 {
+	ImGui::PushID(id);
 	Node(bytes, 0);
+	ImGui::PopID();
 }
 void DocumentTree::OpenWindow(std::span<const std::byte> bytes, std::uint64_t documentEpoch)
 {
@@ -36,7 +35,7 @@ void DocumentTree::DrawWindow()
 	if (ImGui::Begin("Raw metadata", &m_windowOpen))
 	{
 		Begin(m_windowEpoch);
-		Draw(m_windowDocument);
+		Draw("Document", m_windowDocument);
 	}
 	ImGui::End();
 }
@@ -44,10 +43,10 @@ void DocumentTree::Node(std::span<const std::byte> bytes, unsigned depth)
 {
 	if (bytes.empty())
 		return;
-	if (depth > 20 || ++m_nodesDrawn > MaximumNodes)
+	if (depth > 20 || ++m_nodesDrawn > s_maximumNodes)
 	{
-		if (m_nodesDrawn == MaximumNodes + 1)
-			ImGui::TextDisabled("Showing first %u fields \u00b7 collapse some to see more", MaximumNodes);
+		if (m_nodesDrawn == s_maximumNodes + 1)
+			ImGui::TextDisabled("Showing first %u fields \u00b7 collapse some to see more", s_maximumNodes);
 		return;
 	}
 	auto decoded = wire::DecodeFields(bytes);
@@ -64,18 +63,36 @@ void DocumentTree::Node(std::span<const std::byte> bytes, unsigned depth)
 	if (!data)
 		return;
 	const auto label = name.empty() ? "state" : name.c_str();
-	ImGui::PushID(static_cast<int>(m_nodesDrawn));
 	if (type == wire::InspectionType::Object || type == wire::InspectionType::Array)
 	{
-		if (ImGui::TreeNode(label))
+		if (ImGui::TreeNode("##Node", "%s", label))
 		{
 			const auto entries = wire::DecodeFields(data->value);
+			if (entries.error != wire::DecodeError::None)
+				ImGui::TextDisabled("Invalid inspection fields");
 			for (const auto& child : entries.fields)
+			{
+				ImGui::PushID(static_cast<int>(child.tag));
 				if (type == wire::InspectionType::Object)
 					Node(child.value, depth + 1);
 				else
-					for (const auto& item : wire::DecodeFields(child.value).fields)
+				{
+					const auto page = wire::DecodeFields(child.value);
+					if (page.error != wire::DecodeError::None)
+						ImGui::TextDisabled("Invalid inspection page");
+					for (const auto& item : page.fields)
+					{
+						ImGui::PushID(static_cast<int>(item.tag));
 						Node(item.value, depth + 1);
+						ImGui::PopID();
+						if (m_nodesDrawn > s_maximumNodes)
+							break;
+					}
+				}
+				ImGui::PopID();
+				if (m_nodesDrawn > s_maximumNodes)
+					break;
+			}
 			ImGui::TreePop();
 		}
 	}
@@ -107,6 +124,5 @@ void DocumentTree::Node(std::span<const std::byte> bytes, unsigned depth)
 		ImGui::Text("%s: %s", label, data->AsBool().value_or(false) ? "true" : "false");
 	else
 		ImGui::Text("%s: unavailable", label);
-	ImGui::PopID();
 }
 } // namespace simxr::app

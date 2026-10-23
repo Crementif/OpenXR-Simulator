@@ -1,10 +1,10 @@
 #include "app/RuntimePanels.h"
 #include "Pch.h"
-#include "app/PastInput.h"
 #include "app/Theme.h"
 #include "app/platform/Window.h"
 #include "app/widgets/Controls.h"
 #include "app/widgets/HapticEvents.h"
+#include "app/widgets/PastInput.h"
 #include <imgui.h>
 
 namespace simxr::app
@@ -68,11 +68,19 @@ RuntimeView RuntimePanels::Build() const
 	view.recordingBusy = recording.busy;
 	view.recordedChanges = recording.page ? recording.page->total : 0;
 	view.operationPending |= m_replayPreparation.has_value();
-	view.rigExpanded = m_spatial.Expanded();
-	view.rotationBall = m_spatial.RotationBallRect();
-	view.markers = m_spatial.MarkerRects();
-	view.rigView = m_spatial.RigViewRect();
-	view.rigDevices = m_spatial.RigDevicePoints();
+	view.rigExpanded = m_frame.Active() ? m_frame.Expanded() : m_spatial.Expanded();
+	if (m_frame.Active())
+	{
+		view.rigView = m_frame.RigViewRect();
+		view.rigDevices = m_frame.RigDevicePoints();
+	}
+	else
+	{
+		view.rotationBall = m_spatial.RotationBallRect();
+		view.markers = m_spatial.MarkerRects();
+		view.rigView = m_spatial.RigViewRect();
+		view.rigDevices = m_spatial.RigDevicePoints();
+	}
 	if (view.notice.empty())
 		view.notice = m_lastNotice;
 	return view;
@@ -120,6 +128,7 @@ void RuntimePanels::UndoChanges(std::size_t count)
 }
 void RuntimePanels::DrawPreview(ShellState& shell)
 {
+	m_frame.Prepare(shell.selection, m_view);
 	const auto& io = ImGui::GetIO();
 	if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false) && !io.WantTextInput)
 		UndoChanges(1);

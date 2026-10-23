@@ -2,6 +2,7 @@
 #include "Math.h"
 #include "app/AppPicker.h"
 #include "app/pages/DeviceControlPanel.h"
+#include "app/pages/FramePage.h"
 #include "app/services/PlayerRig.h"
 #include "app/services/ManualInputController.h"
 #include "app/LaunchProfilesDialog.h"
@@ -15,6 +16,7 @@
 #include "app/services/RuntimeSession.h"
 #include "app/widgets/HapticEvents.h"
 #include "app/widgets/SpatialEditor.h"
+#include "app/widgets/DocumentTree.h"
 #include "control/FrameInspection.h"
 #include "runtime/Runtime.h"
 #include "runtime/SimulationExtensions.h"
@@ -56,6 +58,7 @@ extern char** environ;
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <iostream>
+#include <locale>
 #include <optional>
 #include <random>
 #include <set>
@@ -446,14 +449,26 @@ void CheckTimelineWorkflow(Interaction& test)
 		"Canvas did not select earlier image and inputs/actions");
 	Require(std::holds_alternative<FrameSel>(test.workspace.State().selection),
 			"Canvas selection did not open Frame page");
-	const auto* details = FindPanel("Frame details");
+	auto* details = FindPanel("Frame details");
 	Require(details != nullptr, "Merged Frame page absent");
 	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
 	{
 		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "timeline-paused.bmp");
 		test.Frame();
 		test.Frame();
-		ImGui::SetScrollY(const_cast<ImGuiWindow*>(details), 410);
+		ImGui::ActivateItemByID(ImHashStr("Expand", 0, details->GetID("Recorded rig")));
+		test.Frame();
+		test.Frame();
+		Require(test.runtime.Snapshot().rigExpanded, "Recorded rig did not expand into the preview");
+		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "frame-rig-expanded.bmp");
+		test.Frame();
+		auto* imageArea = FindPanel("Image area");
+		Require(imageArea, "Expanded recorded rig image area missing");
+		ImGui::ActivateItemByID(ImHashStr("Expand", 0, imageArea->GetID("Recorded rig")));
+		test.Frame();
+		test.Frame();
+		Require(!test.runtime.Snapshot().rigExpanded, "Recorded rig did not restore the captured image");
+		ImGui::SetScrollY(details, 410);
 		test.Frame();
 		test.Frame();
 		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "frame-input-actions.bmp");
@@ -464,12 +479,13 @@ void CheckTimelineWorkflow(Interaction& test)
 	const auto beforeRange = test.workspace.State();
 	const auto rectangle = beforeRange.timelineCanvas;
 	const float rangeStart = x - 1, rangeEnd = rectangle.x + rectangle.width - 1;
+	const float rangeY = rectangle.y + ImGui::GetFrameHeight() / 2;
 	auto& io = ImGui::GetIO();
-	io.AddMousePosEvent(rangeStart, rectangle.y + 2);
+	io.AddMousePosEvent(rangeStart, rangeY);
 	test.Frame();
 	io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
 	test.Frame();
-	io.AddMousePosEvent(rangeEnd, rectangle.y + 2);
+	io.AddMousePosEvent(rangeEnd, rangeY);
 	test.Frame();
 	io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
 	test.Frame();
@@ -490,26 +506,70 @@ void CheckTimelineWorkflow(Interaction& test)
 	}
 	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
 	{
+		const auto setPath = [&](const std::filesystem::path& destination)
+		{
+			ImGui::ActivateItemByID(inspector->GetID("##Range export file"));
+			ImGui::GetCurrentContext()->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
+			test.Frame();
+			io.AddKeyEvent(ImGuiMod_Ctrl, true);
+			io.AddKeyEvent(ImGuiKey_A, true);
+			test.Frame();
+			io.AddKeyEvent(ImGuiKey_A, false);
+			io.AddKeyEvent(ImGuiMod_Ctrl, false);
+			io.AddInputCharactersUTF8(PathText(destination).c_str());
+			test.Frame();
+			io.AddKeyEvent(ImGuiKey_Enter, true);
+			test.Frame();
+			io.AddKeyEvent(ImGuiKey_Enter, false);
+			test.Frame();
+		};
+		const auto invalid = std::filesystem::path(directory) / "range-missing-directory" / "frames.csv";
+		Require(!std::filesystem::exists(invalid.parent_path()), "Invalid range export fixture already exists");
+		setPath(invalid);
+		ImGui::ActivateItemByID(inspector->GetID("Export frames"));
+		test.Frame();
+		struct CommaNumbers final : std::numpunct<char>
+		{
+			char do_decimal_point() const override
+			{
+				return ',';
+			}
+		};
+		struct RestoreLocale
+		{
+			std::locale previous;
+			~RestoreLocale()
+			{
+				std::locale::global(previous);
+			}
+		} restoreLocale{std::locale()};
+		std::locale::global(std::locale(std::locale::classic(), new CommaNumbers));
 		const auto destination = std::filesystem::path(directory) / Utf8Path("range-\u65e5\u672c\u8a9e.csv");
-		ImGui::ActivateItemByID(inspector->GetID("##Range export file"));
-		ImGui::GetCurrentContext()->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
-		test.Frame();
-		io.AddKeyEvent(ImGuiMod_Ctrl, true); io.AddKeyEvent(ImGuiKey_A, true);
-		test.Frame();
-		io.AddKeyEvent(ImGuiKey_A, false); io.AddKeyEvent(ImGuiMod_Ctrl, false);
-		io.AddInputCharactersUTF8(PathText(destination).c_str());
-		test.Frame();
-		io.AddKeyEvent(ImGuiKey_Enter, true); test.Frame();
-		io.AddKeyEvent(ImGuiKey_Enter, false); test.Frame();
+		setPath(destination);
 		ImGui::ActivateItemByID(inspector->GetID("Export frames"));
 		test.Frame();
 		await([&](const auto& state)
 		{
 			std::size_t images = 0;
 			for (const auto& file : std::filesystem::directory_iterator(directory))
-				if (PathText(file.path().filename()).starts_with("range-\u65e5\u672c\u8a9e-frame-") && file.path().extension()==".ppm" && file.file_size()>100) ++images;
-			return !state.pending && std::filesystem::exists(destination) && images>=3;
-		}, "Range export did not save metadata and three snapshots");
+				if (PathText(file.path().filename()).starts_with("range-\u65e5\u672c\u8a9e-frame-") &&
+					file.path().extension() == ".ppm" && file.file_size() > 100)
+					++images;
+			const bool metadataReady = std::filesystem::exists(destination);
+			if (!metadataReady)
+				ImGui::ActivateItemByID(inspector->GetID("Export frames"));
+			return !state.pending && metadataReady && images >= 3;
+		}, "Range export did not recover from the invalid destination and save three snapshots");
+		Require(!std::filesystem::exists(invalid), "Failed range export reported a saved destination");
+		std::ifstream metadata(destination);
+		std::string row;
+		std::size_t rows = 0;
+		while (std::getline(metadata, row))
+		{
+			Require(std::count(row.begin(), row.end(), ',') == 8, "Range CSV used the UI numeric locale");
+			++rows;
+		}
+		Require(metadata.eof() && rows > 3, "Range metadata was incomplete after export recovery");
 	}
 	activate("Continue");
 	await(
@@ -985,6 +1045,144 @@ void PilotLiveRuntime(const char* endpoint)
 	std::cout << "PASS real application inspection: pause, next frame, captured image, continue and historical view "
 				 "while running\n";
 }
+void CheckDocumentTreeIdentity()
+{
+	using simxr::control::InspectionValue;
+	Interaction test;
+	RuntimeSession session{test.renderer, ""};
+	DocumentTree tree{session};
+	const auto document = InspectionValue::Object({
+		{"Earlier", InspectionValue::Object({{"One", InspectionValue::Unsigned(1)}})},
+		{"Later", InspectionValue::Object({{"Two", InspectionValue::Unsigned(2)},
+			{"Three", InspectionValue::Unsigned(3)}})}}).Encode("Root");
+	ImVec2 origin;
+	float height = 0, row = 0;
+	const auto frame = [&]
+	{
+		Eventually([&] { return test.PollEvents() && test.renderer.BeginFrame(); }, "Document tree fixture stalled");
+		ImGui::SetNextWindowPos({20, 20}, ImGuiCond_Always);
+		ImGui::SetNextWindowSize({440, 650}, ImGuiCond_Always);
+		ImGui::Begin("Document identity");
+		origin = ImGui::GetCursorScreenPos();
+		row = ImGui::GetTextLineHeightWithSpacing();
+		tree.Begin(1);
+		ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+		tree.Draw("Captured state", document);
+		height = ImGui::GetCursorScreenPos().y - origin.y;
+		ImGui::End();
+		Require(test.renderer.Render(), "Document tree fixture did not render");
+	};
+	for (int count = 0; count < 3; ++count)
+		frame();
+	auto* window = FindPanel("Document identity");
+	Require(window, "Document tree fixture window missing");
+	ImGui::SetWindowFocus(window->Name);
+	const auto clickRow = [&](int index)
+	{
+		auto& io = ImGui::GetIO();
+		io.AddMousePosEvent(origin.x + ImGui::GetStyle().IndentSpacing + 5, origin.y + row * (index + .5f));
+		frame();
+		io.AddMouseButtonEvent(0, true);
+		frame();
+		io.AddMouseButtonEvent(0, false);
+		frame();
+		frame();
+	};
+	const float collapsed = height;
+	clickRow(2);
+	const float laterOpen = height;
+	Require(std::abs(laterOpen - collapsed - 2 * row) < 1, "Later inspection branch did not open");
+	clickRow(1);
+	Require(std::abs(height - laterOpen - row) < 1,
+		"Expanding an earlier inspection branch changed the later branch's fold state");
+	clickRow(1);
+	Require(std::abs(height - laterOpen) < 1,
+		"Collapsing an earlier inspection branch changed the later branch's fold state");
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Document tree validation errors");
+	std::cout << "PASS inspection tree sibling identity across expansion and collapse\n";
+}
+
+void CheckCapturedRig()
+{
+	using namespace simxr;
+	Interaction test;
+	RuntimeSession session{test.renderer, ""};
+	DocumentTree documents{session};
+	FramePage page{session, documents};
+	RuntimeView view;
+	view.epoch = view.session = view.generation = 1;
+	view.time = {true, {1, 1, 1}, 1};
+	ShellState shell;
+	shell.selection = FrameSel{{1, 1, 1}, 1};
+	auto& workspace = session.Workspace();
+	workspace.SetScope({1, 1, 1});
+	Require(workspace.Add(1, 1) && workspace.Select(1), "Recorded rig fixture could not select its capture");
+	FrameRecord record;
+	record.key = {{1}, {1}};
+	record.stage = FrameStage::Submitted;
+	record.submission.emplace();
+	record.submission->tracking = TrackingSystem::Evaluate(RuntimeTime{Duration{200}}, TrackingState{}, BodyModel{});
+	control::InspectionStore store;
+	control::Message document;
+	document.fields = {control::Field::U64(control::tag::InspectionId, 1),
+		control::Field::Bytes(control::tag::Document, control::InspectFrame(store, {1}, record)->document)};
+	workspace.Handle({PanelWork::Inspect, 1}, document);
+	ImVec2 expandedSize;
+	const auto frame = [&]
+	{
+		Eventually([&] { return test.PollEvents() && test.renderer.BeginFrame(); }, "Captured rig fixture stalled");
+		page.Prepare(shell.selection, view);
+		ImGui::SetNextWindowPos({20, 20}, ImGuiCond_Always);
+		ImGui::SetNextWindowSize({440, 650}, ImGuiCond_Always);
+		ImGui::Begin("Captured rig");
+		if (page.Expanded())
+			page.DrawExpanded(expandedSize);
+		else
+			page.Draw(shell, view);
+		ImGui::End();
+		Require(test.renderer.Render(), "Captured rig fixture did not render");
+	};
+	const auto localRight = [&]
+	{
+		const auto point = page.RigDevicePoints()[2];
+		const auto area = page.RigViewRect();
+		return ImVec2{point.x - area.x, point.y - area.y};
+	};
+	for (int count = 0; count < 3; ++count)
+		frame();
+	const auto initialArea = page.RigViewRect();
+	const auto captured = localRight();
+	Require(initialArea.width > 0 && captured.x > 0 && captured.y > 0,
+		"Captured rig did not display recorded hand geometry while following live output");
+	view.time.cursor.frame = 2;
+	frame();
+	Require(std::hypot(localRight().x - captured.x, localRight().y - captured.y) < .01f,
+		"The live cursor changed the selected frame's recorded pose");
+	expandedSize = {initialArea.width, initialArea.height};
+	page.SetExpanded(true);
+	frame();
+	Require(std::hypot(localRight().x - captured.x, localRight().y - captured.y) < .01f,
+		"Expanding a captured rig changed its recorded pose source");
+	Require(std::holds_alternative<FrameSel>(shell.selection) && workspace.Selected()->document.Find(control::tag::Document)->value ==
+		document.Find(control::tag::Document)->value, "Viewing a recorded rig changed its capture");
+	shell.selection = FrameSel{{1, 1, 2}, 1};
+	frame();
+	Require(page.Active() && page.RigViewRect().width == 0 && page.RigDevicePoints()[2].x == 0,
+		"Missing selected-frame metadata reused another capture's rig geometry");
+	auto* window = FindPanel("Captured rig");
+	Require(window, "Captured rig fixture window missing");
+	ImGui::ActivateItemByID(window->GetID("Back to image##Recorded rig unavailable"));
+	frame();
+	Require(!page.Expanded(), "Unavailable recorded rig could not return to the image");
+	shell.selection = DeviceSel{DevicePage::Head};
+	page.Prepare(shell.selection, view);
+	Require(!page.Active() && !page.Expanded(), "Leaving Frame retained the recorded view context");
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Captured rig validation errors");
+	std::cout << "PASS captured rig identity, read-only page and expanded view, and missing metadata retirement\n";
+}
+
 void CheckSpatialWidgetLifecycle()
 {
 	using namespace simxr;
@@ -2590,6 +2788,26 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 		if (entry.path().extension() == ".luau")
 			take = entry.path();
 	Require(!take.empty(), "Save as take wrote no file");
+	const auto readTake = [&]
+	{
+		std::ifstream input(take, std::ios::binary);
+		Require(input.good(), "Could not read the saved range take");
+		return std::string(std::istreambuf_iterator<char>(input), {});
+	};
+	const auto savedTake = readTake();
+	{
+		std::ofstream existing(take, std::ios::binary | std::ios::app);
+		existing << "\n-- existing range take marker\n";
+		existing.close();
+		Require(existing.good(), "Could not mark the existing range take");
+	}
+	const auto existingTake = readTake();
+	ImGui::ActivateItemByID(inspector->GetID("Save as take"));
+	pump(2);
+	Require(readTake() == existingTake, "Save as take replaced an existing file without the Replace action");
+	ImGui::ActivateItemByID(inspector->GetID("Replace take"));
+	pump(2);
+	Require(readTake() == savedTake, "Replace take did not commit the selected range over the existing file");
 	std::cout << "PASS saved " << history.Size() - begin << " frames as " << take.filename() << '\n';
 
 	const auto replayFrom = history.Size();
@@ -4917,6 +5135,8 @@ int main()
 		CheckShell();
 		ConfigureObservedDevices();
 		CheckSpatialWidgetLifecycle();
+		CheckDocumentTreeIdentity();
+		CheckCapturedRig();
 		if (const auto endpoint = std::getenv("SIMXR_UI_PILOT_ENDPOINT"))
 			PilotLiveRuntime(endpoint);
 		if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))

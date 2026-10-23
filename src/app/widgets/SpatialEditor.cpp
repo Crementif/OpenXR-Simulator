@@ -45,29 +45,6 @@ ControlChannel SpatialEditor::DeviceChannel(int device)
 		   : device == 2 ? ControlChannel::RightPose
 						 : ControlChannel::Trackers;
 }
-static SpatialScene SceneFromTracking(const TrackingSnapshot& tracking)
-{
-	SpatialScene scene;
-	scene.root = tracking.body.joints[static_cast<std::size_t>(BodyJoint::Root)].pose;
-	scene.devices[0] = tracking.head.pose;
-	scene.available[0] = (tracking.head.flags & ValidPoseFlags) == ValidPoseFlags;
-	for (std::size_t hand = 0; hand < 2; ++hand)
-	{
-		scene.devices[hand + 1] = tracking.controllers[hand].pose.pose;
-		scene.available[hand + 1] = tracking.controllers[hand].connected &&
-									(tracking.controllers[hand].pose.flags & ValidPoseFlags) == ValidPoseFlags;
-	}
-	for (std::size_t slot = 0; slot < 4; ++slot)
-	{
-		scene.devices[slot + 3] = tracking.trackers[slot].pose.pose;
-		scene.available[slot + 3] = tracking.trackers[slot].device.connected &&
-									(tracking.trackers[slot].pose.flags & ValidPoseFlags) == ValidPoseFlags;
-	}
-	scene.body = tracking.body;
-	if ((tracking.gaze.flags & ValidPoseFlags) == ValidPoseFlags)
-		scene.gaze = tracking.gaze.pose;
-	return scene;
-}
 SpatialEditor::SpatialEditor(PlayerRig& rig, ManualInputController& input, UndoStack& undo)
 	: m_rig(rig), m_input(input), m_undo(undo)
 {
@@ -170,7 +147,7 @@ void SpatialEditor::SetContext(bool editable, bool lookingBack, std::span<const 
 		try
 		{
 			if (const auto tracking = ReadInspectionTracking(*historical))
-				m_historical = SceneFromTracking(*tracking);
+				m_historical = SpatialScene::FromTracking(*tracking);
 		}
 		catch (const std::exception& error)
 		{
@@ -208,7 +185,7 @@ SpatialScene SpatialEditor::LiveScene() const
 		tracking.trackers[slot].jointOffset.reset();
 		tracking.trackers[slot].poseOverride = m_rig.Tracker(slot);
 	}
-	auto scene = SceneFromTracking(
+	auto scene = SpatialScene::FromTracking(
 		TrackingSystem::Evaluate(RuntimeTime{Duration{1}}, tracking, BodyModel{m_observed->values.proportions}));
 	scene.root = m_rig.Root();
 	scene.eye = m_lookingBack ? std::nullopt : m_eye;

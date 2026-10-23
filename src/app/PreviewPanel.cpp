@@ -1,12 +1,13 @@
 #include "app/PreviewPanel.h"
 #include "Pch.h"
-#include "app/pages/DeviceControlPanel.h"
-#include "app/widgets/PilotController.h"
-#include "app/services/RuntimeSession.h"
-#include "app/widgets/SpatialEditor.h"
 #include "app/Theme.h"
+#include "app/pages/DeviceControlPanel.h"
+#include "app/pages/FramePage.h"
 #include "app/platform/Window.h"
+#include "app/services/RuntimeSession.h"
 #include "app/widgets/Controls.h"
+#include "app/widgets/PilotController.h"
+#include "app/widgets/SpatialEditor.h"
 
 #include <algorithm>
 #include <cmath>
@@ -29,9 +30,9 @@ std::string ImageLabel(const PreviewImageSummary& image)
 	return "Captured image";
 }
 } // namespace
-PreviewPanel::PreviewPanel(RuntimeSession& session, PilotController& pilot, SpatialEditor& spatial,
+PreviewPanel::PreviewPanel(RuntimeSession& session, PilotController& pilot, SpatialEditor& spatial, FramePage& frame,
 						   DeviceControlPanel& devices, Window* window)
-	: m_session(session), m_pilot(pilot), m_spatial(spatial), m_devices(devices), m_window(window)
+	: m_session(session), m_pilot(pilot), m_spatial(spatial), m_frame(frame), m_devices(devices), m_window(window)
 {
 }
 bool PreviewPanel::Draw(ShellState& shell, const RuntimeView& view, bool inputAvailable, bool automaticGamepad)
@@ -47,7 +48,9 @@ bool PreviewPanel::Draw(ShellState& shell, const RuntimeView& view, bool inputAv
 			DrawImage(shell, view, pilotArea, inputAvailable, automaticGamepad);
 			DrawCorner(*image, live);
 		}
-		else if (m_spatial.Expanded())
+		else if (std::holds_alternative<FrameSel>(shell.selection) && m_frame.Expanded())
+			m_frame.DrawExpanded(ImGui::GetContentRegionAvail());
+		else if (!std::holds_alternative<FrameSel>(shell.selection) && m_spatial.Expanded())
 			m_spatial.DrawExpanded(shell.selection, ImGui::GetContentRegionAvail());
 		else if (!DrawKept(view))
 			DrawEmpty(shell, view);
@@ -122,8 +125,8 @@ void PreviewPanel::DrawEmpty(ShellState& shell, const RuntimeView& view)
 	const float angle = static_cast<float>(ImGui::GetTime()) * 6;
 	draw->PathArcTo({center.x, center.y - 24 * unit}, 10 * unit, angle, angle + 4.4f);
 	draw->PathStroke(theme::TextDim, ImDrawFlags_None, 2 * unit);
-	line(view.sessionAvailable ? "Waiting for first frame\u2026" : "Waiting for the app to start XR\u2026",
-		 center.y, theme::TextDim);
+	line(view.sessionAvailable ? "Waiting for first frame\u2026" : "Waiting for the app to start XR\u2026", center.y,
+		 theme::TextDim);
 }
 void PreviewPanel::DrawCorner(const PreviewImageSummary& image, bool live)
 {
@@ -131,8 +134,8 @@ void PreviewPanel::DrawCorner(const PreviewImageSummary& image, bool live)
 	const float scale = ImGui::GetFontSize() / 16, margin = 8 * scale;
 	const ImVec2 padding{4 * scale, 4 * scale};
 	const auto origin = ImGui::GetWindowPos();
-	ImGui::SetCursorScreenPos({origin.x + ImGui::GetWindowWidth() - m_cornerWidth - padding.x * 2 - margin,
-							   origin.y + margin});
+	ImGui::SetCursorScreenPos(
+		{origin.x + ImGui::GetWindowWidth() - m_cornerWidth - padding.x * 2 - margin, origin.y + margin});
 	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, padding);
 	ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::Fade(theme::Bg, .72f));
 	ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, theme::Radius);
@@ -180,11 +183,15 @@ void PreviewPanel::DrawImage(ShellState& shell, const RuntimeView& view, bool& p
 	if (m_slice >= static_cast<int>(image->slices))
 		m_slice = 0;
 	ImGui::BeginChild("Image area", {0, 0}, 0, ImGuiWindowFlags_NoScrollWithMouse);
-	if (m_spatial.Expanded())
+	const bool recorded = std::holds_alternative<FrameSel>(shell.selection);
+	if (recorded ? m_frame.Expanded() : m_spatial.Expanded())
 	{
 		const auto minimum = ImGui::GetCursorScreenPos();
 		const auto available = ImGui::GetContentRegionAvail();
-		m_spatial.DrawExpanded(shell.selection, available);
+		if (recorded)
+			m_frame.DrawExpanded(available);
+		else
+			m_spatial.DrawExpanded(shell.selection, available);
 		const auto after = ImGui::GetCursorScreenPos();
 		const float width = available.x * .25f;
 		const float height = width * image->description.height / image->description.width;
@@ -194,12 +201,17 @@ void PreviewPanel::DrawImage(ShellState& shell, const RuntimeView& view, bool& p
 		if (ImGui::IsItemHovered())
 			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 		ImGui::SetItemTooltip("Back to the app's image");
-		if (ImGui::IsItemClicked())
-			m_spatial.SetExpanded(false);
+		bool close = ImGui::IsItemClicked();
 		ImGui::SetCursorScreenPos(
 			{minimum.x + available.x - width - 8, minimum.y + available.y - height - 16 - ImGui::GetFrameHeight()});
-		if (IconButton("Back to image", Icon::Close, "Show the app's image again", false, "Back to image"))
-			m_spatial.SetExpanded(false);
+		close |= IconButton("Back to image", Icon::Close, "Show the app's image again", false, "Back to image");
+		if (close)
+		{
+			if (recorded)
+				m_frame.SetExpanded(false);
+			else
+				m_spatial.SetExpanded(false);
+		}
 		ImGui::SetCursorScreenPos({after.x, after.y - ImGui::GetStyle().ItemSpacing.y});
 		ImGui::Dummy({0, 0});
 		ImGui::EndChild();
@@ -225,7 +237,8 @@ void PreviewPanel::DrawImage(ShellState& shell, const RuntimeView& view, bool& p
 	// A pinned crop always fits the region it shows.
 	const auto crop = m_crop.value_or(ImVec4{0, 0, 1, 1});
 	const bool fit = m_fit || m_crop;
-	const float shownWidth = description.width * (crop.z - crop.x), shownHeight = description.height * (crop.w - crop.y);
+	const float shownWidth = description.width * (crop.z - crop.x),
+				shownHeight = description.height * (crop.w - crop.y);
 	float width = shownWidth * m_zoom;
 	if (fit)
 		width = std::max(16.0f, std::min((available.x - spacing * (slices - 1)) / slices,
@@ -267,8 +280,8 @@ void PreviewPanel::DrawImage(ShellState& shell, const RuntimeView& view, bool& p
 		ImGui::BeginDisabled(!inputAvailable);
 		const bool hudHovered = m_pilot.DrawHud(imageMin, imageMax, input);
 		ImGui::EndDisabled();
-		const bool overImage = !hudHovered && !overlayHovered && !m_cornerHovered &&
-							   ImGui::IsMouseHoveringRect(imageMin, imageMax);
+		const bool overImage =
+			!hudHovered && !overlayHovered && !m_cornerHovered && ImGui::IsMouseHoveringRect(imageMin, imageMax);
 		m_pilot.Update(*m_window, input, pilotArea, overImage, automaticGamepad);
 		m_devices.SetRigPiloting(m_pilot.Active() || m_spatial.Active() || m_devices.Active());
 		if (!m_pilot.Error().empty() && m_pilot.Error() != m_pilotError)
@@ -279,7 +292,8 @@ void PreviewPanel::DrawImage(ShellState& shell, const RuntimeView& view, bool& p
 }
 void PreviewPanel::DrawViewButton(const PreviewImageSummary& image)
 {
-	const auto zoom = m_fit && !m_crop ? std::string{"Fit"} : std::to_string(static_cast<int>(m_zoom * 100 + .5f)) + "%";
+	const auto zoom =
+		m_fit && !m_crop ? std::string{"Fit"} : std::to_string(static_cast<int>(m_zoom * 100 + .5f)) + "%";
 	if (IconButton("View", Icon::Zoom, "Eye, zoom and crop. Wheel zooms, middle-drag pans.", false, zoom.c_str()))
 		ImGui::OpenPopup("Image view");
 	if (!ImGui::BeginPopup("Image view"))

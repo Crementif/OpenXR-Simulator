@@ -1,8 +1,8 @@
-#include "Pch.h"
 #include "app/services/RecordingController.h"
+#include "Pch.h"
+#include "app/platform/FileStorage.h"
 #include "app/services/Utf8Path.h"
 #include "app/services/WorkerConnection.h"
-#include "app/platform/FileStorage.h"
 #include "control/ControlSchema.h"
 
 #include <charconv>
@@ -39,6 +39,33 @@ wire::Message RecordingController::Read(WorkerConnection& connection, const Job&
 	CheckRecordingResponse(response);
 	return response;
 }
+void SaveRecording(const std::filesystem::path& destination, const automation::InputRecording& recording, bool replace)
+{
+	const auto script = automation::EditableRig(recording);
+	const auto temporary = CreatePrivateTemporaryFile(destination);
+	try
+	{
+		std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+		if (!output)
+			throw std::runtime_error("Cannot open recording temporary file");
+		output.write(script.data(), static_cast<std::streamsize>(script.size()));
+		if (!output)
+			throw std::runtime_error("Cannot write recording temporary file");
+		output.close();
+		if (!output)
+			throw std::runtime_error("Cannot close recording temporary file");
+		if (replace)
+			CommitTemporaryFile(temporary, destination);
+		else
+			RenameFileWithoutReplacing(temporary, destination);
+	}
+	catch (...)
+	{
+		std::error_code ignored;
+		std::filesystem::remove(temporary, ignored);
+		throw;
+	}
+}
 RecordingSnapshot RecordingController::Execute(WorkerConnection& connection, const Job& job)
 {
 	RecordingSnapshot result;
@@ -47,31 +74,10 @@ RecordingSnapshot RecordingController::Execute(WorkerConnection& connection, con
 		automation::RecordingCollection collection;
 		while (!collection.Complete())
 			collection.Append(automation::DecodeRecordingPage(Read(connection, job, collection.Offset())));
-		const auto script = automation::EditableRig(collection.Recording());
 		result.savedSeed = collection.Recording().seed;
 		result.savedPath = job.path;
 		result.page = std::make_shared<const automation::InputRecording>(collection.Recording());
-		const auto destination = Utf8Path(job.path);
-		const auto temporary = CreatePrivateTemporaryFile(destination);
-		try
-		{
-			std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-			if (!output)
-				throw std::runtime_error("Cannot open recording temporary file");
-			output.write(script.data(), static_cast<std::streamsize>(script.size()));
-			if (!output)
-				throw std::runtime_error("Cannot write recording temporary file");
-			output.close();
-			if (!output)
-				throw std::runtime_error("Cannot close recording temporary file");
-			CommitTemporaryFile(temporary, destination);
-		}
-		catch (...)
-		{
-			std::error_code ignored;
-			std::filesystem::remove(temporary, ignored);
-			throw;
-		}
+		SaveRecording(Utf8Path(job.path), collection.Recording());
 		return result;
 	}
 	wire::Message response;
@@ -126,9 +132,9 @@ void RecordingController::Run()
 		try
 		{
 			if (!connection)
-				connection = std::make_shared<WorkerConnection>(
-					job->target.endpoint, "simxr_companion_recording",
-					static_cast<std::uint64_t>(wire::Capability::CommandRecording));
+				connection =
+					std::make_shared<WorkerConnection>(job->target.endpoint, "simxr_companion_recording",
+													   static_cast<std::uint64_t>(wire::Capability::CommandRecording));
 			{
 				std::lock_guard lock(m_mutex);
 				if (m_stopping || job->revision != m_revision)
@@ -208,9 +214,8 @@ bool RecordingController::Request(RecordingAction action, std::uint64_t offset, 
 		std::lock_guard lock(m_mutex);
 		if (m_stopping || m_snapshot.busy || m_target.endpoint.empty() || !m_target.session || !m_target.generation)
 			return false;
-		if (offset > 1024 ||
-			(action == RecordingAction::Save &&
-			 (path.empty() || path.size() > 2048 || path.find('\0') != std::string::npos)))
+		if (offset > 1024 || (action == RecordingAction::Save &&
+							  (path.empty() || path.size() > 2048 || path.find('\0') != std::string::npos)))
 			throw std::invalid_argument("Invalid recording page or destination");
 		Job job{action, m_target, m_revision, offset, std::move(path)};
 		if (!m_worker.joinable())

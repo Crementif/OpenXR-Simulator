@@ -1,4 +1,4 @@
-#include "app/AdvancedSteppingPage.h"
+#include "app/pages/AdvancedSteppingPage.h"
 #include "Pch.h"
 #include "app/pages/DeviceControlPanel.h"
 #include "app/services/RuntimeSession.h"
@@ -89,8 +89,8 @@ void AdvancedSteppingPage::Draw()
 	for (const auto& capture : workspace.Captures())
 	{
 		const auto label = "Capture " + std::to_string(capture.id) + " / frame " + std::to_string(capture.frame) +
-						   " / " + capture.phase + (capture.released ? " (released)" : "");
-		ImGui::PushID(static_cast<int>(capture.local));
+						   " / " + capture.phase + (capture.released ? " (released)" : "") + "###Capture";
+		ImGui::PushID(std::to_string(capture.local).c_str());
 		if (ImGui::Selectable(label.c_str(), capture.local == selectedRecord))
 			m_session.SelectFrame(capture.local);
 		ImGui::PopID();
@@ -99,8 +99,8 @@ void AdvancedSteppingPage::Draw()
 	for (const auto& image : preview.Images())
 	{
 		const auto label = "Frame " + std::to_string(image.frame) +
-						   (image.live ? " / live" : " / capture " + std::to_string(image.capture));
-		ImGui::PushID(static_cast<int>(image.id));
+						   (image.live ? " / live" : " / capture " + std::to_string(image.capture)) + "###Image";
+		ImGui::PushID(std::to_string(image.id).c_str());
 		if (ImGui::Selectable(label.c_str(), image.id == preview.SelectedId()))
 			m_session.SelectImage(image.id);
 		ImGui::PopID();

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "app/render/PreviewImages.h"
 #include "app/RuntimeView.h"
+#include "app/render/PreviewImages.h"
 
 #include <imgui.h>
 #include <optional>
@@ -10,6 +10,7 @@
 namespace simxr::app
 {
 class DeviceControlPanel;
+class FramePage;
 class PilotController;
 class RuntimeSession;
 class SpatialEditor;
@@ -19,8 +20,8 @@ class Window;
 class PreviewPanel
 {
   public:
-	PreviewPanel(RuntimeSession& session, PilotController& pilot, SpatialEditor& spatial, DeviceControlPanel& devices,
-				 Window* window);
+	PreviewPanel(RuntimeSession& session, PilotController& pilot, SpatialEditor& spatial, FramePage& frame,
+				 DeviceControlPanel& devices, Window* window);
 	// Returns whether the image may be piloted this frame.
 	bool Draw(ShellState& shell, const RuntimeView& view, bool inputAvailable, bool automaticGamepad);
 	// The pinned region (x0, y0, x1, y1, normalized), shown instead of the whole
@@ -45,6 +46,7 @@ class PreviewPanel
 	RuntimeSession& m_session;
 	PilotController& m_pilot;
 	SpatialEditor& m_spatial;
+	FramePage& m_frame;
 	DeviceControlPanel& m_devices;
 	Window* m_window;
 	float m_zoom = 1;

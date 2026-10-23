@@ -50,6 +50,7 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 							  float size = 160);
 struct SpatialScene
 {
+	static SpatialScene FromTracking(const TrackingSnapshot& tracking);
 	XrPosef root{};
 	std::array<XrPosef, 7> devices{};
 	std::array<bool, 7> available{};

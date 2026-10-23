@@ -1,17 +1,17 @@
 #pragma once
 
-#include "app/AdvancedSteppingPage.h"
-#include "app/DocumentTree.h"
-#include "app/FramePage.h"
 #include "app/PreviewPanel.h"
-#include "app/RangePage.h"
 #include "app/RecordingPanel.h"
 #include "app/dialogs/ConnectionDialog.h"
+#include "app/pages/AdvancedSteppingPage.h"
 #include "app/pages/DeviceControlPanel.h"
+#include "app/pages/FramePage.h"
+#include "app/pages/RangePage.h"
 #include "app/services/PilotBindings.h"
 #include "app/services/PlayerRig.h"
 #include "app/services/RuntimeSession.h"
 #include "app/services/UndoStack.h"
+#include "app/widgets/DocumentTree.h"
 #include "app/widgets/PilotController.h"
 #include "app/widgets/SpatialEditor.h"
 
@@ -156,9 +156,9 @@ class RuntimePanels
 	UndoStack m_undo;
 	SpatialEditor m_spatial{m_playerRig, m_session.ManualInput(), m_undo};
 	DocumentTree m_documents{m_session};
-	FramePage m_frame{m_session, m_spatial, m_documents};
+	FramePage m_frame{m_session, m_documents};
 	RangePage m_range{m_session};
 	AdvancedSteppingPage m_advanced{m_session, m_devices};
-	PreviewPanel m_preview{m_session, m_pilot, m_spatial, m_devices, m_window};
+	PreviewPanel m_preview{m_session, m_pilot, m_spatial, m_frame, m_devices, m_window};
 };
 } // namespace simxr::app
