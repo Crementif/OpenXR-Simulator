@@ -300,7 +300,11 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 			m_documents.Draw("Commands", commands);
 	}
 	else
-		ImGui::TextDisabled(capture ? "Loading frame details" : "Head and hand details not kept for this frame");
+		ImGui::TextDisabled(capture && !capture->released && capture->scope.epoch == view.epoch &&
+									capture->scope.session == view.session &&
+									capture->scope.generation == view.generation
+								? "Loading frame details"
+								: "Head and hand details not kept for this frame");
 	SectionLabel("Actions");
 	if (!bytes.empty())
 	{
