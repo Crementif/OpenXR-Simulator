@@ -109,6 +109,13 @@ add_library(simxr_app STATIC
     src/app/widgets/TimelineCanvas.cpp
     src/app/widgets/TimelinePanel.cpp)
 simxr_configure_target(simxr_app)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND SDL_X11)
+    find_package(X11 QUIET)
+    if(X11_FOUND)
+        target_compile_definitions(simxr_app PRIVATE SIMXR_X11_WINDOW=1)
+        target_include_directories(simxr_app PRIVATE ${X11_INCLUDE_DIR})
+    endif()
+endif()
 target_include_directories(simxr_app PRIVATE "${PROJECT_SOURCE_DIR}/shaders/generated")
 target_link_libraries(simxr_app PUBLIC simxr_imgui simxr_connection simxr_app_settings simxr_recording_controller)
 # The icon SVGs are compiled in as {file stem, source} pairs; Icons.cpp parses them once.

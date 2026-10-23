@@ -6,8 +6,43 @@
 #include <limits>
 #include <stdexcept>
 
+#if defined(SIMXR_X11_WINDOW)
+#include <X11/Xlib.h>
+#endif
+
 namespace simxr::app
 {
+static void ShowInitialWindow(SDL_Window* window)
+{
+#if defined(SIMXR_X11_WINDOW)
+	if (std::string_view(SDL_GetCurrentVideoDriver()) == "x11")
+	{
+		const auto properties = SDL_GetWindowProperties(window);
+		auto* display =
+			static_cast<Display*>(SDL_GetPointerProperty(properties, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr));
+		const auto nativeWindow = SDL_GetNumberProperty(properties, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
+		if (!display || nativeWindow <= 0 ||
+			static_cast<std::uint64_t>(nativeWindow) > std::numeric_limits<unsigned long>::max())
+			throw std::runtime_error("SDL X11 window handles unavailable");
+		std::unique_ptr<SDL_SharedObject, decltype(&SDL_UnloadObject)> x11(SDL_LoadObject("libX11.so.6"),
+																		   SDL_UnloadObject);
+		if (!x11)
+			throw std::runtime_error(SDL_GetError());
+		const auto map = reinterpret_cast<decltype(&XMapRaised)>(SDL_LoadFunction(x11.get(), "XMapRaised"));
+		const auto flush = reinterpret_cast<decltype(&XFlush)>(SDL_LoadFunction(x11.get(), "XFlush"));
+		if (!map || !flush)
+			throw std::runtime_error(SDL_GetError());
+		// KWin can defer mapping while outputs are powered off. SDL_ShowWindow
+		// waits indefinitely there; let SDL consume the eventual MapNotify normally.
+		map(display, static_cast<unsigned long>(nativeWindow));
+		flush(display);
+		return;
+	}
+#endif
+	if (!SDL_ShowWindow(window))
+		throw std::runtime_error(SDL_GetError());
+}
+
 Window::Window(bool hidden)
 {
 	constexpr auto subsystems = SDL_INIT_VIDEO | SDL_INIT_GAMEPAD;
@@ -18,16 +53,19 @@ Window::Window(bool hidden)
 		const float scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
 		if (!std::isfinite(scale) || scale <= 0 || scale > float(std::numeric_limits<int>::max() / 1280))
 			throw std::runtime_error("SDL display content scale is invalid");
-		SDL_WindowFlags flags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
-		if (hidden)
-			flags |= SDL_WINDOW_HIDDEN;
+		const SDL_WindowFlags flags =
+			SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN;
 		m_window =
 			SDL_CreateWindow("OpenXR Simulator", static_cast<int>(1280 * scale), static_cast<int>(800 * scale), flags);
 		if (!m_window)
 			throw std::runtime_error(std::string("SDL Vulkan window unavailable: ") + SDL_GetError());
+		if (!hidden)
+			ShowInitialWindow(m_window);
 	}
 	catch (...)
 	{
+		SDL_DestroyWindow(m_window);
+		m_window = nullptr;
 		SDL_QuitSubSystem(subsystems);
 		throw;
 	}
