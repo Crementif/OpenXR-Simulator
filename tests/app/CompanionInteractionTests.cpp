@@ -2788,9 +2788,55 @@ simxr.resume())";
 	pump(2);
 	Require(std::filesystem::exists(directory / "scripts" / "pose_sweep.report.json"), "Script report was not saved");
 	screenshot("library-script.bmp");
+	Eventually([&]
+	{
+		ImGui::ActivateItemByID(inspector->GetID("Rename entry"));
+		pump(1);
+		return ImGui::IsPopupOpen(inspector->GetID("Rename"), ImGuiPopupFlags_AnyPopupLevel);
+	}, "Library rename popup did not open");
+	auto* rename = ImGui::GetCurrentContext()->OpenPopupStack.back().Window;
+	Require(rename, "Library rename popup is missing");
+	ImGui::ActivateItemByID(rename->GetID("##New name"));
+	ImGui::GetCurrentContext()->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
+	pump(1);
+	auto& io = ImGui::GetIO();
+	io.AddKeyEvent(ImGuiMod_Ctrl, true);
+	io.AddKeyEvent(ImGuiKey_A, true);
+	pump(1);
+	io.AddKeyEvent(ImGuiKey_A, false);
+	io.AddKeyEvent(ImGuiMod_Ctrl, false);
+	io.AddInputCharactersUTF8("pose-étude");
+	pump(1);
+	ImGui::ActivateItemByID(rename->GetID("Rename"));
+	pump(1);
+	const auto renamed = directory / "scripts" / Utf8Path("pose-étude.luau");
+	Eventually([&]
+	{
+		pump(1);
+		const auto selected = std::get_if<ScriptSel>(&test.workspace.State().selection);
+		return selected && selected->id == PathText(renamed);
+	}, "Library selection did not follow the completed rename");
+	Require(std::filesystem::exists(renamed) && !std::filesystem::exists(script), "Library rename did not change the file");
+	screenshot("library-renamed.bmp");
+	Eventually([&]
+	{
+		ImGui::ActivateItemByID(inspector->GetID("Delete entry"));
+		pump(1);
+		return ImGui::IsPopupOpen(inspector->GetID("Delete?"), ImGuiPopupFlags_AnyPopupLevel);
+	}, "Library delete popup did not open");
+	auto* remove = ImGui::GetCurrentContext()->OpenPopupStack.back().Window;
+	Require(remove, "Library delete popup is missing");
+	ImGui::ActivateItemByID(remove->GetID("Delete"));
+	pump(1);
+	Eventually([&]
+	{
+		pump(1);
+		return !std::filesystem::exists(renamed) &&
+			std::holds_alternative<DeviceSel>(test.workspace.State().selection);
+	}, "Library deletion did not retire the file and return to the device page");
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Validation errors in the Library flow");
-	std::cout << "PASS Library script run, pause, step, resume and report\n";
+	std::cout << "PASS Library script run, pause, step, resume, report, Unicode rename and delete\n";
 }
 
 // D10: every hand input is operable with the mouse alone, through real SDL events.

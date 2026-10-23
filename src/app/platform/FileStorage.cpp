@@ -4,6 +4,9 @@
 
 #include <cerrno>
 #include <cstdlib>
+#include <fcntl.h>
+#include <linux/fs.h>
+#include <sys/syscall.h>
 #include <stdexcept>
 #include <system_error>
 #include <unistd.h>
@@ -54,5 +57,10 @@ void CommitTemporaryFile(const std::filesystem::path& temporary, const std::file
 bool CanExecuteFile(const std::filesystem::path& path)
 {
 	return ::access(path.c_str(), X_OK) == 0;
+}
+void RenameFileWithoutReplacing(const std::filesystem::path& source, const std::filesystem::path& destination)
+{
+	if (::syscall(SYS_renameat2, AT_FDCWD, source.c_str(), AT_FDCWD, destination.c_str(), RENAME_NOREPLACE) != 0)
+		throw std::system_error(errno, std::generic_category(), "Cannot rename file without replacing another file");
 }
 }

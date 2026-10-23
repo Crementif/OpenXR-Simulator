@@ -1,39 +1,35 @@
-#include "app/Library.h"
-#include "app/services/CompanionSettings.h"
-#include "app/services/RecordingController.h"
+#include "app/pages/Library.h"
+#include "Pch.h"
 #include "app/RuntimePanels.h"
 #include "app/Theme.h"
+#include "app/services/CompanionSettings.h"
 #include "app/services/Utf8Path.h"
 #include "app/widgets/Controls.h"
 
-#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <imgui.h>
 #include <tuple>
-#include <utility>
 
 namespace simxr::app
 {
-namespace
-{
-bool Contains(const std::string& text, const char* search)
+static bool Contains(const std::string& text, const char* search)
 {
 	const std::string_view needle = search;
-	return std::ranges::search(text, needle,
-							   [](char a, char b)
-							   {
-								   return std::tolower(static_cast<unsigned char>(a)) ==
-										  std::tolower(static_cast<unsigned char>(b));
-							   })
-		.begin() != text.end() ||
+	return std::ranges::search(
+			   text, needle,
+			   [](char a, char b)
+			   {
+				   return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+			   }).begin() != text.end() ||
 		   needle.empty();
 }
-std::string Age(std::filesystem::file_time_type modified)
+static std::string Age(std::filesystem::file_time_type modified)
 {
-	const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(std::filesystem::file_time_type::clock::now() -
-																		  modified)
-							 .count();
+	const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+		std::filesystem::file_time_type::clock::now().time_since_epoch());
+	const auto saved = std::chrono::duration_cast<std::chrono::seconds>(modified.time_since_epoch());
+	const auto seconds = (now - saved).count();
 	char text[32];
 	if (seconds < 60)
 		return "now";
@@ -45,7 +41,7 @@ std::string Age(std::filesystem::file_time_type modified)
 		std::snprintf(text, sizeof(text), "%lld d", static_cast<long long>(seconds / 86400));
 	return text;
 }
-const char* PhaseName(automation::RigPhase phase)
+static const char* PhaseName(automation::RigPhase phase)
 {
 	switch (phase)
 	{
@@ -64,7 +60,6 @@ const char* PhaseName(automation::RigPhase phase)
 	}
 	return "Unknown";
 }
-} // namespace
 Library::Library()
 {
 	try
@@ -72,6 +67,7 @@ Library::Library()
 		const auto root = CompanionSettingsPath().parent_path();
 		m_takes = root / "recordings";
 		m_scripts = root / "scripts";
+		m_catalog.emplace(root);
 	}
 	catch (const std::exception& error)
 	{
@@ -80,45 +76,52 @@ Library::Library()
 }
 void Library::Refresh()
 {
-	m_entries.clear();
-	for (const auto& directory : {m_takes, m_scripts})
-	{
-		std::error_code error;
-		if (directory.empty() || !std::filesystem::exists(directory, error))
-			continue;
-		for (std::filesystem::directory_iterator it(directory, error), end; !error && it != end; it.increment(error))
-		{
-			if (!it->is_regular_file(error) || it->path().extension() != ".luau")
-				continue;
-			Entry entry{PathText(it->path()), PathText(it->path().stem())};
-			entry.modified = it->last_write_time(error);
-			entry.bytes = it->file_size(error);
-			try
-			{
-				entry.seed = OpenSavedRecording(entry.path).seed;
-				entry.take = true;
-			}
-			catch (const std::exception&)
-			{
-			}
-			m_entries.push_back(std::move(entry));
-			if (m_entries.size() >= 512)
-				break;
-		}
-	}
-	std::ranges::sort(m_entries,
-					  [](const Entry& a, const Entry& b)
-					  {
-						  return a.modified > b.modified;
-					  });
+	if (m_catalog)
+		m_catalog->Refresh();
 	m_nextScan = std::chrono::steady_clock::now() + std::chrono::seconds(3);
 }
-const Library::Entry* Library::Find(const std::string& path) const
+void Library::Poll(Selection& selection)
 {
-	const auto found = std::ranges::find(m_entries, path, &Entry::path);
+	if (m_catalog)
+		if (auto result = m_catalog->TakeResult())
+		{
+			if (result->entries)
+			{
+				m_entries = std::move(*result->entries);
+				m_limited = result->limited;
+			}
+			if (result->changed)
+			{
+				if (auto take = std::get_if<TakeSel>(&selection); take && take->id == result->path)
+					selection = result->action == LibraryAction::Delete ? Selection{} : TakeSel{result->renamed};
+				else if (auto script = std::get_if<ScriptSel>(&selection); script && script->id == result->path)
+					selection = result->action == LibraryAction::Delete ? Selection{} : ScriptSel{result->renamed};
+			}
+			auto& detail = result->action == LibraryAction::Scan ? m_scanError : m_error;
+			detail.clear();
+			if (result->error)
+				try
+				{
+					std::rethrow_exception(result->error);
+				}
+				catch (const std::exception& error)
+				{
+					detail = error.what();
+				}
+				catch (...)
+				{
+					detail = "Library file operation failed";
+				}
+		}
+	if (std::chrono::steady_clock::now() >= m_nextScan)
+		Refresh();
+}
+const LibraryEntry* Library::Find(const std::string& path) const
+{
+	const auto found = std::ranges::find(m_entries, path, &LibraryEntry::path);
 	return found == m_entries.end() ? nullptr : &*found;
 }
-void Library::Play(const Entry& entry, RuntimePanels& runtime)
+void Library::Play(const LibraryEntry& entry, RuntimePanels& runtime)
 {
 	m_error.clear();
 	if (entry.take)
@@ -128,8 +131,7 @@ void Library::Play(const Entry& entry, RuntimePanels& runtime)
 }
 std::optional<ScriptRun> Library::Draw(Selection& selection, RuntimePanels& runtime, RigPanel& rigs)
 {
-	if (std::chrono::steady_clock::now() >= m_nextScan)
-		Refresh();
+	Poll(selection);
 	if (const auto take = std::get_if<TakeSel>(&selection))
 		DrawTake(selection, std::string(take->id), runtime, rigs);
 	else if (const auto script = std::get_if<ScriptSel>(&selection))
@@ -138,8 +140,7 @@ std::optional<ScriptRun> Library::Draw(Selection& selection, RuntimePanels& runt
 }
 std::optional<ScriptRun> Library::DrawBrowser(Selection& selection, RuntimePanels& runtime, RigPanel& rigs)
 {
-	if (std::chrono::steady_clock::now() >= m_nextScan)
-		Refresh();
+	Poll(selection);
 	const float unit = ImGui::GetFontSize() / 17;
 	ImGui::SetNextItemWidth(-ImGui::GetFrameHeight() - ImGui::GetStyle().ItemSpacing.x);
 	ImGui::InputTextWithHint("##Search library", "Search", m_search.data(), m_search.size());
@@ -147,6 +148,10 @@ std::optional<ScriptRun> Library::DrawBrowser(Selection& selection, RuntimePanel
 	if (IconButton("Refresh library", Icon::Refresh, "Rescan takes and scripts"))
 		Refresh();
 	const bool idle = runtime.CanReplay() && !rigs.IsActive() && !rigs.WaitingForLaunch();
+	if (m_catalog && m_catalog->Busy())
+		ImGui::TextDisabled("Updating library…");
+	if (m_limited)
+		ImGui::TextDisabled("Showing 512 entries; open other scripts by path.");
 	if (m_entries.empty())
 	{
 		ImGui::TextDisabled("No takes or scripts");
@@ -174,23 +179,23 @@ std::optional<ScriptRun> Library::DrawBrowser(Selection& selection, RuntimePanel
 					 entry.take ? theme::Record : theme::TextDim);
 			ImGui::SetCursorScreenPos({position.x + icon + 4 * unit, position.y});
 			ImGui::AlignTextToFramePadding();
-			if (ImGui::Selectable(entry.name.c_str(), false, ImGuiSelectableFlags_SpanAllColumns |
-																 ImGuiSelectableFlags_AllowOverlap))
+			if (ImGui::Selectable(entry.name.c_str(), false,
+								  ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap))
 			{
 				if (entry.take)
 					selection = TakeSel{entry.path};
 				else
 					selection = ScriptSel{entry.path};
 			}
-			ImGui::SetItemTooltip("%s", entry.path.c_str());
+			ImGui::SetItemTooltip("%s%s%s", entry.path.c_str(), entry.error.empty() ? "" : "\n", entry.error.c_str());
 			ImGui::TableNextColumn();
 			ImGui::AlignTextToFramePadding();
 			ImGui::TextDisabled("%s", Age(entry.modified).c_str());
 			ImGui::TableNextColumn();
-			ImGui::BeginDisabled(!idle);
+			ImGui::BeginDisabled(!idle || !entry.error.empty());
 			if (IconButton("Play entry", Icon::Play,
 						   entry.take ? "Restore recorded inputs on the selected app; not game state"
-								  : "Run this script on the selected app"))
+									  : "Run this script on the selected app"))
 				Play(entry, runtime);
 			ImGui::EndDisabled();
 			ImGui::PopID();
@@ -205,8 +210,9 @@ std::optional<ScriptRun> Library::DrawBrowser(Selection& selection, RuntimePanel
 	if (ImGui::Button("Open"))
 		selection = ScriptSel{m_open.data()};
 	ImGui::EndDisabled();
-	if (!m_error.empty())
-		ImGui::TextColored(theme::Vec(theme::Record), "%s", m_error.c_str());
+	for (const auto* error : {&m_error, &m_scanError})
+		if (!error->empty())
+			ImGui::TextColored(theme::Vec(theme::Record), "%s", error->c_str());
 	return std::exchange(m_run, {});
 }
 bool Library::DrawHeader(Selection& selection, const std::string& path, Icon kind)
@@ -216,49 +222,35 @@ bool Library::DrawHeader(Selection& selection, const std::string& path, Icon kin
 	ImGui::SetItemTooltip("%s", path.c_str());
 	const float button = ImGui::GetFrameHeight(), spacing = ImGui::GetStyle().ItemSpacing.x;
 	ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetContentRegionMax().x - button * 3 - spacing * 2));
+	ImGui::BeginDisabled(!m_catalog || m_catalog->Busy());
 	if (IconButton("Rename entry", Icon::Rename, "Change this file name on disk"))
 	{
 		std::snprintf(m_rename.data(), m_rename.size(), "%s", name.c_str());
 		ImGui::OpenPopup("Rename");
 	}
 	ImGui::SameLine();
-	if (IconButton("Delete entry", Icon::Delete, "Delete this file from disk; asks for confirmation",
-				   false, nullptr, theme::Record))
+	if (IconButton("Delete entry", Icon::Delete, "Delete this file from disk; asks for confirmation", false, nullptr,
+				   theme::Record))
 		ImGui::OpenPopup("Delete?");
+	ImGui::EndDisabled();
 	if (PageClose())
 	{
 		selection = std::monostate{};
 		return false;
 	}
-	bool exists = true;
 	if (ImGui::BeginPopup("Rename"))
 	{
 		if (ImGui::IsWindowAppearing())
 			ImGui::SetKeyboardFocusHere();
-		const bool entered = ImGui::InputText("##New name", m_rename.data(), m_rename.size(),
-											 ImGuiInputTextFlags_EnterReturnsTrue);
+		const bool entered =
+			ImGui::InputText("##New name", m_rename.data(), m_rename.size(), ImGuiInputTextFlags_EnterReturnsTrue);
 		const std::string next = m_rename.data();
-		const auto target = Utf8Path(path).parent_path() / Utf8Path(next + ".luau");
-		std::error_code error;
-		const bool valid = !next.empty() && next != "." && next != ".." &&
-						   next.find_first_of("/\\:") == std::string::npos && !std::filesystem::exists(target, error);
-		ImGui::BeginDisabled(!valid);
-		if (ImGui::Button("Rename") || (entered && valid))
+		const bool valid = LibraryCatalog::ValidName(next);
+		ImGui::BeginDisabled(!valid || !m_catalog || m_catalog->Busy());
+		if (ImGui::Button("Rename") || (entered && valid && m_catalog && !m_catalog->Busy()))
 		{
-			std::filesystem::rename(Utf8Path(path), target, error);
-			if (error)
-				m_error = "Rename failed: " + error.message();
-			else
-			{
-				m_error.clear();
-				if (std::holds_alternative<TakeSel>(selection))
-					selection = TakeSel{PathText(target)};
-				else
-					selection = ScriptSel{PathText(target)};
-				Refresh();
-				exists = false;
-			}
-			ImGui::CloseCurrentPopup();
+			if (m_catalog->Rename(path, next))
+				ImGui::CloseCurrentPopup();
 		}
 		ImGui::EndDisabled();
 		ImGui::EndPopup();
@@ -266,28 +258,19 @@ bool Library::DrawHeader(Selection& selection, const std::string& path, Icon kin
 	if (ImGui::BeginPopup("Delete?"))
 	{
 		ImGui::Text("Delete %s?", name.c_str());
-		if (ImGui::Button("Delete"))
-		{
-			std::error_code error;
-			std::filesystem::remove(Utf8Path(path), error);
-			if (error)
-				m_error = "Delete failed: " + error.message();
-			else
-			{
-				selection = std::monostate{};
-				Refresh();
-				exists = false;
-			}
+		ImGui::BeginDisabled(!m_catalog || m_catalog->Busy());
+		if (ImGui::Button("Delete") && m_catalog->Delete(path))
 			ImGui::CloseCurrentPopup();
-		}
+		ImGui::EndDisabled();
 		ImGui::SameLine();
 		if (ImGui::Button("Keep"))
 			ImGui::CloseCurrentPopup();
 		ImGui::EndPopup();
 	}
-	if (!m_error.empty())
-		ImGui::TextColored(theme::Vec(theme::Record), "%s", m_error.c_str());
-	return exists;
+	for (const auto* error : {&m_error, &m_scanError})
+		if (!error->empty())
+			ImGui::TextColored(theme::Vec(theme::Record), "%s", error->c_str());
+	return true;
 }
 void Library::DrawTake(Selection& selection, const std::string& path, RuntimePanels& runtime, RigPanel& rigs)
 {
@@ -296,7 +279,12 @@ void Library::DrawTake(Selection& selection, const std::string& path, RuntimePan
 	const auto* entry = Find(path);
 	if (!entry)
 	{
-		ImGui::TextDisabled("Take not found");
+		ImGui::TextDisabled(m_catalog && m_catalog->Busy() ? "Loading take…" : "Take not found");
+		return;
+	}
+	if (!entry->error.empty())
+	{
+		ImGui::TextColored(theme::Vec(theme::Record), "%s", entry->error.c_str());
 		return;
 	}
 	ImGui::Separator();
@@ -332,7 +320,7 @@ void Library::DrawTake(Selection& selection, const std::string& path, RuntimePan
 		};
 		row("Seed", std::to_string(entry->seed));
 		row("Saved", Age(entry->modified) == "now" ? "just now" : Age(entry->modified) + " ago");
-		row("Size", std::to_string((entry->bytes + 1023) / 1024) + " KiB");
+		row("Size", std::to_string(entry->bytes / 1024 + (entry->bytes % 1024 != 0)) + " KiB");
 		ImGui::EndTable();
 	}
 	if (mine && !rigs.Error().empty())

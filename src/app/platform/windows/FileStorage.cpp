@@ -63,4 +63,9 @@ bool CanExecuteFile(const std::filesystem::path&)
 {
 	return true;
 }
+void RenameFileWithoutReplacing(const std::filesystem::path& source, const std::filesystem::path& destination)
+{
+	if (!MoveFileExW(source.c_str(), destination.c_str(), MOVEFILE_WRITE_THROUGH))
+		throw windows::Error("Cannot rename file without replacing another file");
+}
 }

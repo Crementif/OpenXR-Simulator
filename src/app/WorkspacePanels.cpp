@@ -10,7 +10,7 @@
 #include "app/TimelinePanel.h"
 #include "app/services/Utf8Path.h"
 #ifdef SIMXR_COMPANION_AUTOMATION
-#include "app/Library.h"
+#include "app/pages/Library.h"
 #include "app/RigPanel.h"
 #endif
 
