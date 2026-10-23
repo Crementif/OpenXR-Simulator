@@ -60,6 +60,7 @@ class OpCode(IntEnum):
     READ_SEQUENCE = 45
     STOP_SEQUENCE = 46
     RELEASE_SEQUENCE_CAPTURE = 47
+    READ_FRAME_HISTORY = 48
 
 
 class ErrorCode(IntEnum):
@@ -103,6 +104,8 @@ class Capability(IntFlag):
     IMAGE_WINDOW = 1 << 20
     QUAD_IMAGE_HISTORY = 1 << 21
     POSE_SEQUENCES = 1 << 22
+    SNAPSHOT_PINS = 1 << 23
+    FRAME_HISTORY = 1 << 24
     ROTATIONAL_REPROJECTION = 1 << 25
 
 
@@ -116,6 +119,9 @@ class CommandKind(IntEnum):
     RELEASE = 7
     START_IMAGE_RECORDING = 8
     STOP_IMAGE_RECORDING = 9
+    PIN_SNAPSHOT = 10
+    UNPIN_SNAPSHOT = 11
+    CONFIGURE_SNAPSHOTS = 12
 
 
 class TargetKind(IntEnum):
@@ -217,6 +223,14 @@ class Tag(IntEnum):
     REPROJECTION_SUBMISSION_TIME = 188
     REPROJECTION_COMPLETION_LATENCY = 189
     DISPLAY_HEAD = 190
+    IMAGE_VIEWS = 191
+    PINNED = 192
+    ADVANCE_DISPLAY = 193
+    SNAPSHOT_BUDGET_MIB = 194
+    SNAPSHOT_IMAGE_BYTES = 195
+    FRAMES = 196
+    APPLIED_INPUT = 197
+    ACTIVE_ACTIONS = 198
     IMAGE_READER_ID = 105
     DELIVERY_ID = 106
     POOL_GENERATION = 107
@@ -428,18 +442,39 @@ class Message:
 
 _TEXT = {Tag.PRESENTATION_POLICY, Tag.DETAIL, Tag.CLIENT_NAME, Tag.PHASE, Tag.PROGRESS, Tag.STAGE, Tag.OUTPUT_DISPOSITION, Tag.DROP_REASON, Tag.KIND,
          Tag.RETENTION_RESULT, Tag.REVISION_KIND, Tag.PRODUCER_PHASE, Tag.CONSUMER_PHASE}
-_BOOL = {Tag.REPROJECTED, Tag.RUNNING, Tag.CLOSED, Tag.MANUAL, Tag.DUPLICATE, Tag.WAIT_PENDING, Tag.PAUSED, Tag.IMAGE_AVAILABLE, Tag.RELEASED, Tag.DEDICATED, Tag.END, Tag.TAKE_CONTROL, Tag.ENABLED, Tag.OVERFLOW, Tag.RECORDING, Tag.RESCHEDULED, Tag.LOOP}
-_U32 = {Tag.ERROR, Tag.MINOR, Tag.PAYLOAD_LIMIT, Tag.LOOKAHEAD, Tag.COMMAND_KIND, Tag.CAPTURE_KIND,
+_BOOL = {Tag.ADVANCE_DISPLAY, Tag.REPROJECTED, Tag.RUNNING, Tag.CLOSED, Tag.MANUAL, Tag.DUPLICATE, Tag.WAIT_PENDING, Tag.PAUSED, Tag.IMAGE_AVAILABLE, Tag.RELEASED, Tag.DEDICATED, Tag.END, Tag.TAKE_CONTROL, Tag.ENABLED, Tag.OVERFLOW, Tag.RECORDING, Tag.RESCHEDULED, Tag.LOOP}
+_U32 = {Tag.SNAPSHOT_BUDGET_MIB, Tag.OWNERSHIP, Tag.ACTIVE_ACTIONS, Tag.ERROR, Tag.MINOR, Tag.PAYLOAD_LIMIT, Tag.LOOKAHEAD, Tag.COMMAND_KIND, Tag.CAPTURE_KIND,
         Tag.LAYER, Tag.VIEW, Tag.LAYER_COUNT, Tag.PERMITS, Tag.FORMAT, Tag.WIDTH, Tag.HEIGHT,
         Tag.DEPTH, Tag.ARRAY_LAYERS, Tag.MIP_LEVELS, Tag.SAMPLES, Tag.USAGE, Tag.TILING, Tag.IMAGE_TYPE,
         Tag.IMAGE_FLAGS, Tag.MEMORY_TYPE_INDEX, Tag.PRODUCER_QUEUE_FAMILY, Tag.LAYOUT, Tag.HANDLE_KIND, Tag.HANDLE_COUNT, Tag.COMPLETION_KIND, Tag.LATE_POLICY, Tag.SOURCE_KIND, Tag.CHANNEL, Tag.SCENARIO, Tag.GAME_KIND}
 _I64 = {Tag.CPU_FRAME_TIME, Tag.COMPOSITOR_GPU_TIME, Tag.REPROJECTION_RESULT, Tag.REPROJECTION_SUBMISSION_TIME, Tag.REPROJECTION_COMPLETION_LATENCY, Tag.STATE, Tag.RESULT, Tag.TIME, Tag.PERIOD, Tag.LEASE_REMAINING, Tag.APPLY_TIME, Tag.APPLIED_TIME}
 _NESTED = {Tag.IMAGE_RECORDING, Tag.PIPELINE, Tag.RETENTION, Tag.PRESENTATION, Tag.TARGET, Tag.FRAME, Tag.DISPLAY,
            Tag.PREDICTION, Tag.SUBMISSION, Tag.WAITED, Tag.BEGUN, Tag.SOURCE, Tag.IMAGE_DESCRIPTOR}
-_LIST = {Tag.SESSIONS, Tag.CAPTURES, Tag.DIAGNOSTICS, Tag.OUTSTANDING}
+_LIST = {Tag.FRAMES, Tag.SESSIONS, Tag.CAPTURES, Tag.DIAGNOSTICS, Tag.OUTSTANDING}
 
 
-def to_dict(fields):
+def _ordered_fields(payload):
+    fields = decode_fields(payload)
+    if tuple(fields) != tuple(range(1, len(fields) + 1)):
+        raise ProtocolError('Noncontiguous list entry tags')
+    return tuple(fields.values())
+
+
+def _decode_commands(fields):
+    from .commands import decode_command, encode_command
+    commands = []
+    try:
+        for field in fields:
+            command = decode_command({'encoding': 'simxr-command-v1-hex', 'data': field.value.hex()})
+            if encode_command(command).value != field.value:
+                raise ProtocolError('Applied command contains unsupported fields')
+            commands.append(command)
+    except (KeyError, TypeError, ValueError, IndexError, OverflowError) as error:
+        raise ProtocolError('Invalid applied input command') from error
+    return commands
+
+
+def to_dict(fields, *, context=None):
     """Decode known optional records and skip unknown optional fields."""
     result = {}
     for field in fields:
@@ -449,7 +484,26 @@ def to_dict(fields):
             if field.required:
                 raise ProtocolError(f'Unsupported required response field {field.tag}')
             continue
-        if tag in (Tag.DEVICE_UUID, Tag.DRIVER_UUID):
+        if tag == Tag.PINNED:
+            value = field.as_u64() if context == Tag.RETENTION else field.as_bool()
+        elif tag == Tag.APPLIED_INPUT:
+            entries = decode_fields(field.value)
+            commands = [entry for identity, entry in entries.items() if 1 <= identity <= 11]
+            value = to_dict(entry for identity, entry in entries.items() if identity > 11)
+            value['commands'] = _decode_commands(commands)
+        elif tag == Tag.INPUT_CONTEXT:
+            value = _decode_commands(decode_fields(field.value).values())
+        elif tag == Tag.IMAGE_VIEWS:
+            value = []
+            for entry in _ordered_fields(field.value):
+                components = _ordered_fields(entry.value)
+                if len(components) != 11:
+                    raise ProtocolError('Image view requires pose and FOV components')
+                numbers = [component.as_f32() for component in components]
+                if not all(math.isfinite(number) for number in numbers):
+                    raise ProtocolError('Image view components must be finite')
+                value.append({'orientation': numbers[:4], 'position': numbers[4:7], 'fov': numbers[7:]})
+        elif tag in (Tag.DEVICE_UUID, Tag.DRIVER_UUID):
             if len(field.value) != 16:
                 raise ProtocolError('External device and driver UUIDs must contain exactly 16 bytes')
             value = field.value
@@ -475,7 +529,7 @@ def to_dict(fields):
         elif tag in _I64:
             value = field.as_i64()
         elif tag in _NESTED:
-            value = to_dict(decode_fields(field.value).values())
+            value = to_dict(decode_fields(field.value).values(), context=tag)
         elif tag in _LIST:
             entries = decode_fields(field.value)
             if tuple(entries) != tuple(range(1, len(entries) + 1)):

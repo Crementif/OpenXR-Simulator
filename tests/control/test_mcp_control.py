@@ -86,6 +86,9 @@ class FakeClient:
     def retain_image(self, session, capture, **selection):
         return {**self._call('retain_image', session, capture, **selection), 'image_reader_id': 2**63 + 3}
 
+    def frame_history(self, session, **selection):
+        return {**self._call('frame_history', session, **selection), 'frames': [{'frame_id': 2**63 + 8}]}
+
     def image_history(self, session, **selection):
         return self._call('image_history', session, **selection)
 
@@ -223,6 +226,26 @@ class AdapterTests(unittest.TestCase):
         definition = next(item for item in adapter.TOOL_DEFINITIONS if item['name'] == 'debug_retain_image')
         self.assertNotIn('default', definition['inputSchema']['properties']['target'])
         self.assertNotIn('target', definition['inputSchema']['required'])
+
+    def test_frame_history_and_snapshot_commands(self):
+        result = self.tools.call('debug_frame_history', {**self.common, 'after': str(2**63), 'count': 2})
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['frames'][0]['frame_id'], str(2**63 + 8))
+        self.assertEqual(self.created[0].calls[-1][2], {'after': 2**63, 'count': 2})
+        result = self.tools.call('debug_step', {**self.leased, 'command_id': '19', 'advance_display': True})
+        self.assertTrue(result['ok'], result)
+        self.assertIs(self.created[0].calls[-1][2]['advance_display'], True)
+        invalid = self.tools.call('debug_step', {**self.leased, 'command_id': '19', 'advance_display': 1})
+        self.assertEqual(invalid['error'], 'invalid_arguments')
+        for name, kind, extra, expected in (
+                ('debug_pin_snapshot', CommandKind.PIN_SNAPSHOT, {'capture': '17'}, {'capture': 17}),
+                ('debug_unpin_snapshot', CommandKind.UNPIN_SNAPSHOT, {'capture': '17'}, {'capture': 17}),
+                ('debug_configure_snapshots', CommandKind.CONFIGURE_SNAPSHOTS, {'budget_mib': 512}, {'snapshot_budget_mib': 512})):
+            result = self.tools.call(name, {**self.leased, 'command_id': '20', **extra})
+            self.assertTrue(result['ok'], result)
+            call = self.created[0].calls[-1]
+            self.assertEqual(call[1][1], kind)
+            self.assertEqual(call[2], {'command_id': 20, **expected})
 
     def test_forwarding_and_metadata_only(self):
         commands = [('debug_pause', CommandKind.PAUSE), ('debug_step', CommandKind.STEP),

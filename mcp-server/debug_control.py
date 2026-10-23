@@ -70,9 +70,9 @@ TOOL_DEFINITIONS = [
     _tool('debug_relinquish', 'Relinquish the lease and request asynchronous recovery.', _LEASE),
     _tool('debug_pause', 'Admit an asynchronous pause. Poll the operation to learn whether its boundary settled.', _COMMAND),
     _tool('debug_step', 'Inspect the next submitted frame. Reserve capture before any bounded lookahead admission.',
-          {**_COMMAND, **_TARGET}, list(_COMMAND)),
+          {**_COMMAND, **_TARGET, 'advance_display': {'type': 'boolean', 'default': False}}, list(_COMMAND)),
     _tool('debug_strict_admission', 'Reserve one exact future capture and grant one application-frame admission.',
-          {**_COMMAND, **_TARGET}, list(_COMMAND)),
+          {**_COMMAND, **_TARGET, 'advance_display': {'type': 'boolean', 'default': False}}, list(_COMMAND)),
     _tool('debug_start_image_recording', 'Reserve a bounded real-time image stream without changing pacing. Status reports capture IDs and explicit overrun; releasing a consumed capture replenishes its slot.',
           {**_COMMAND, **{key: value for key, value in _TARGET.items() if key != 'lookahead'},
            'capacity': {'type': 'integer', 'minimum': 1, 'maximum': 4, 'default': 2},
@@ -84,6 +84,12 @@ TOOL_DEFINITIONS = [
           {**_COMMAND, 'operation': _ID}),
     _tool('debug_release', 'Release one logical capture. Existing GPU/readers retain safe resource ownership.',
           {**_COMMAND, 'capture': _ID}),
+    _tool('debug_pin_snapshot', 'Pin an existing exact capture against automatic snapshot eviction.',
+          {**_COMMAND, 'capture': _ID}),
+    _tool('debug_unpin_snapshot', 'Allow an existing pinned capture to be evicted again.',
+          {**_COMMAND, 'capture': _ID}),
+    _tool('debug_configure_snapshots', 'Configure the process-wide snapshot image budget in MiB.',
+          {**_COMMAND, 'budget_mib': {'type': 'integer', 'minimum': 128, 'maximum': 8192}}),
     _tool('debug_operation', 'Poll an admitted operation; polling never issues another admission.',
           {**_SESSION, 'operation': _ID}),
     _tool('debug_capture', 'Read exact capture CPU metadata only. Use separate explicit image-export tools for pixels.',
@@ -98,6 +104,9 @@ TOOL_DEFINITIONS = [
           {**_SESSION, 'capture': _ID,
            'target': {key: value for key, value in _TARGET['target'].items() if key != 'default'},
            'layer': _TARGET['layer'], 'view': _TARGET['view']}, [*_SESSION, 'capture']),
+    _tool('debug_frame_history', 'Read submitted CPU frames and applied inputs without admission or image retention. Continue from the last returned frame_id; offset identifies the oldest retained frame.',
+          {**_SESSION, 'after': _GENERATION,
+           'count': {'type': 'integer', 'minimum': 1, 'maximum': 128}}, list(_SESSION)),
     _tool('debug_image_history', 'Read bounded GPU history with exact frame identities and explicit missing/evicted images.',
           {**_SESSION, 'count': {'type': 'integer', 'minimum': 1, 'maximum': 10, 'default': 10},
            'target': _HISTORY_TARGET}, list(_SESSION)),
@@ -165,7 +174,9 @@ _SCHEMAS = {tool['name']: tool['inputSchema'] for tool in TOOL_DEFINITIONS}
 _COMMAND_NAMES = {'debug_pause': 'PAUSE', 'debug_step': 'STEP', 'debug_strict_admission': 'STRICT_ADMISSION',
                   'debug_display_step': 'DISPLAY_STEP', 'debug_resume': 'RESUME', 'debug_cancel': 'CANCEL',
                   'debug_release': 'RELEASE', 'debug_start_image_recording': 'START_IMAGE_RECORDING',
-                  'debug_stop_image_recording': 'STOP_IMAGE_RECORDING'}
+                  'debug_stop_image_recording': 'STOP_IMAGE_RECORDING',
+                  'debug_pin_snapshot': 'PIN_SNAPSHOT', 'debug_unpin_snapshot': 'UNPIN_SNAPSHOT',
+                  'debug_configure_snapshots': 'CONFIGURE_SNAPSHOTS'}
 
 
 def _validate(name, args):
@@ -200,6 +211,9 @@ def _validate(name, args):
         if kind == 'integer':
             if type(value) is not int or not rule['minimum'] <= value <= rule['maximum']:
                 raise ValueError(f'{key} must be an integer in [{rule["minimum"]}, {rule["maximum"]}]')
+        elif kind == 'boolean':
+            if type(value) is not bool:
+                raise ValueError(f'{key} must be boolean')
         elif kind == 'number':
             if type(value) not in (int, float) or value <= 0 or value > rule['maximum'] or not math.isfinite(value):
                 raise ValueError(f'{key} must be finite, positive and at most {rule["maximum"]}')
@@ -430,6 +444,8 @@ class DebugTools:
                         selection = dict(target=sdk.TargetKind[args['target'].upper()],
                                          layer=args.get('layer', 0), view=args.get('view', 0))
                     record = client.retain_image(session, args['capture'], **selection)
+                elif name == 'debug_frame_history':
+                    record = client.frame_history(session, after=args.get('after', 0), count=args.get('count', 128))
                 elif name == 'debug_image_history':
                     record = client.image_history(session, count=args.get('count', 10),
                                                   target=sdk.TargetKind[args.get('target', 'composed_eyes').upper()])
@@ -454,12 +470,16 @@ class DebugTools:
                         if name in ('debug_step', 'debug_strict_admission'):
                             extra.update(target=target, layer=args.get('layer', 0), view=args.get('view', 0),
                                          lookahead=args.get('lookahead', 1))
+                        if name in ('debug_step', 'debug_strict_admission') and 'advance_display' in args:
+                            extra['advance_display'] = args['advance_display']
                         if name == 'debug_start_image_recording':
                             extra.update(target=target, layer=args.get('layer', 0), view=args.get('view', 0),
                                          recording_capacity=args.get('capacity', 2), recording_frames=args.get('frames', 0))
                         if name == 'debug_cancel':
                             extra['operation'] = args['operation']
-                        if name == 'debug_release':
+                        if name == 'debug_configure_snapshots':
+                            extra['snapshot_budget_mib'] = args['budget_mib']
+                        if name in ('debug_release', 'debug_pin_snapshot', 'debug_unpin_snapshot'):
                             extra['capture'] = args['capture']
                         record = client.submit(lease, getattr(sdk.CommandKind, _COMMAND_NAMES[name]), **extra)
             result = {**record, 'ok': True, 'connection': identity}

@@ -91,7 +91,8 @@ class Client:
         return self.request(OpCode.RELINQUISH, self._lease(lease))
 
     def submit(self, lease, command, *, command_id=None, lookahead=1, target=TargetKind.COMPOSED_EYES,
-               layer=0, view=0, operation=None, capture=None, recording_capacity=2, recording_frames=0, additional_targets=()):
+               layer=0, view=0, operation=None, capture=None, recording_capacity=2, recording_frames=0, additional_targets=(),
+               advance_display=False, snapshot_budget_mib=None):
         if command_id is None:
             with self._lock:
                 command_id = self._next_command
@@ -111,6 +112,14 @@ class Client:
         if command == CommandKind.START_IMAGE_RECORDING:
             fields.append(Field.u32(Tag.CAPACITY, recording_capacity, True))
             fields.append(Field.u64(Tag.LENGTH, recording_frames, True))
+        if type(advance_display) is not bool:
+            raise ProtocolError('Display advancement must be boolean')
+        if advance_display:
+            fields.append(Field.boolean(Tag.ADVANCE_DISPLAY, True))
+        if snapshot_budget_mib is not None:
+            if type(snapshot_budget_mib) is not int or not 128 <= snapshot_budget_mib <= 8192:
+                raise ProtocolError('Snapshot budget must be in [128,8192] MiB')
+            fields.append(Field.u32(Tag.SNAPSHOT_BUDGET_MIB, snapshot_budget_mib))
         if operation is not None:
             fields.append(Field.u64(Tag.OPERATION_ID, operation))
         if capture is not None:
@@ -361,6 +370,17 @@ class Client:
                 raise TimeoutError(f'Simulation transaction {transaction} remains unfinished')
             time.sleep(interval)
 
+
+    def frame_history(self, session, *, after=0, count=128):
+        """Read submitted CPU frame metadata and applied inputs without a lease.
+
+        Continue from the last returned frame_id. The response offset identifies
+        the oldest retained frame, allowing callers to detect history gaps.
+        """
+        if type(after) is not int or not 0 <= after < 2**64 or type(count) is not int or not 1 <= count <= 128:
+            raise ProtocolError('Frame history requires a uint64 cursor and count in [1,128]')
+        return self.request(OpCode.READ_FRAME_HISTORY, self._session(session) + [
+            Field.u64(Tag.OFFSET, after), Field.u64(Tag.LENGTH, count)])
 
     def projection_history(self, session, *, count=64):
         """Read bounded submitted projection metadata without a lease or GPU capture."""

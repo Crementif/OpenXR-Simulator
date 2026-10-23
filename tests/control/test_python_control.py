@@ -99,6 +99,15 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaises(ProtocolError):
             client.wait_simulation(Session(1, 1), 1)
 
+    def test_image_view_metadata_decoding(self):
+        values = [0, 0, 0, 1, 1, 2, 3, -.5, .5, .75, -.75]
+        view = Field.nested(1, [Field.f32(index, value, True) for index, value in enumerate(values, 1)], True)
+        descriptor = Field.nested(Tag.IMAGE_DESCRIPTOR, [Field.nested(Tag.IMAGE_VIEWS, [view])])
+        decoded = to_dict([descriptor])['image_descriptor']['image_views'][0]
+        self.assertEqual(decoded, {'orientation': values[:4], 'position': values[4:7], 'fov': values[7:]})
+        with self.assertRaises(ProtocolError):
+            to_dict([Field.nested(Tag.IMAGE_VIEWS, [Field.nested(1, [Field.f32(1, 0)])])])
+
     def test_exact_width_and_nested_records(self):
         message = Message(OpCode.STATUS, 2**64 - 1,
                           (Field.u64(Tag.SESSION, 2**64 - 1), Field.i64(Tag.TIME, -2**63),
@@ -321,6 +330,25 @@ class EndpointTests(unittest.TestCase):
                             client.revision(revision_id)
                         self.assertEqual(released_revision.exception.code, ErrorCode.NOT_FOUND)
                         retained.append(ready['capture_id'])
+                    history = client.frame_history(session, count=2)
+                    self.assertEqual([frame['frame_id'] for frame in history['frames']], [1, 2])
+                    following = client.frame_history(session, after=2, count=2)
+                    self.assertEqual([frame['frame_id'] for frame in following['frames']], [3, 4])
+                    applied = following['frames'][-1]['applied_input']
+                    self.assertEqual(len(applied['commands']), 11)
+                    self.assertEqual(applied['commands'][0]['kind'], 'head_pose')
+                    self.assertEqual(applied['input_context'][-1]['kind'], 'reference_spaces')
+                    self.assertIsInstance(applied['ownership'], int)
+                    self.assertEqual(client.frame_history(session, after=4)['frames'], [])
+                    for kind, expected in ((CommandKind.PIN_SNAPSHOT, True), (CommandKind.UNPIN_SNAPSHOT, False)):
+                        operation = client.submit(lease, kind, capture=retained[0])['operation_id']
+                        self.assertEqual(client.wait(session, operation)['phase'], 'complete')
+                        self.assertIs(client.capture(session, retained[0])['pinned'], expected)
+                        self.assertEqual(client.status(session)['retention']['pinned'], int(expected))
+                    budget = client.status(session)['snapshot_budget_mib']
+                    operation = client.submit(lease, CommandKind.CONFIGURE_SNAPSHOTS,
+                                              snapshot_budget_mib=budget)['operation_id']
+                    self.assertEqual(client.wait(session, operation)['phase'], 'complete')
                     # Status/polling and duplicate commands did not issue frame five.
                     self.assertEqual(client.status(session)['pipeline']['permits'], 0)
                     for capture in retained:
