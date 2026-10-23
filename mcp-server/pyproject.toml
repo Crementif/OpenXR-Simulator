@@ -6,6 +6,8 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "mcp>=1.0.0,<2",
+    "Pillow>=10.0.0",
+    "numpy>=1.24.0",
 ]
 
 [project.scripts]
@@ -18,4 +20,6 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 only-include = ["openxr_simulator_mcp.py", "debug_control.py", "legacy_control.py", "stereo_consistency.py",
                 "mcp_application.py", "runtime_artifacts.py", "runtime_diagnostics.py", "artifact_workflows.py",
-                "file_commands.py", "image_analysis.py", "tool_catalog.py", "tool_results.py"]
+                "file_commands.py", "image_analysis.py", "tool_catalog.py", "tool_results.py",
+                "pose_sequence.py", "projection_history.py", "retained_image.py",
+                "retained_screenshot.py", "retained_incident.py"]

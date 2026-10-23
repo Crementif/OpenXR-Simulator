@@ -207,24 +207,28 @@ class PoseSequenceControl:
         if error is not None:
             entry['error'] = str(error)
             self._run['capture_incomplete'] = True
-        if png is not None:
-            if len(png) > self.MAX_DISK:
-                raise CapturePersistenceError('Sequence image exceeds its disk budget')
-            path = self._output / f"sequence-{entry['sequence_id']}-frame-{entry['frame']}.png"
-            self._write(path, png)
-            entry.update(path=str(path), bytes=len(png))
-            self._bytes += len(png)
-            self._run['captures_saved'] += 1
-        self._records.append(entry)
-        while len(self._records) > self.MAX_RESULTS or self._bytes > self.MAX_DISK:
-            old = self._records.popleft()
+        incoming = len(png) if png is not None else 0
+        if incoming > self.MAX_DISK:
+            raise CapturePersistenceError('Sequence image exceeds its disk budget')
+        # Retire owned files before admitting another write. A failed deletion
+        # must leave its record and byte charge available for later cleanup.
+        while len(self._records) >= self.MAX_RESULTS or self._bytes + incoming > self.MAX_DISK:
+            old = self._records[0]
             if 'path' in old:
                 try:
                     Path(old['path']).unlink(missing_ok=True)
                 except OSError as error:
                     raise CapturePersistenceError(str(error)) from error
                 self._bytes -= old['bytes']
+            self._records.popleft()
             self._evicted += 1
+        if png is not None:
+            path = self._output / f"sequence-{entry['sequence_id']}-frame-{entry['frame']}.png"
+            self._write(path, png)
+            entry.update(path=str(path), bytes=incoming)
+            self._bytes += incoming
+            self._run['captures_saved'] += 1
+        self._records.append(entry)
         self._manifest()
 
     def _poll(self):

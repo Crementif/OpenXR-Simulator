@@ -55,7 +55,7 @@ def _eye(arguments):
 def _fov(arguments):
     if arguments.get("clear"):
         return FileEdit.prepare(
-            "fov_command.json", {"clear": True}, "FOV reverted to symmetric default."
+            "fov_command.json", {"clear": True}, "FOV reset to symmetric default queued."
         )
     left = _eye(arguments.get("left_eye"))
     right = _eye(arguments.get("right_eye"))
@@ -66,20 +66,20 @@ def _fov(arguments):
     return FileEdit.prepare(
         "fov_command.json",
         {"left": left, "right": right},
-        f"Per-eye asymmetric FOV applied. left={left} right={right}",
+        f"Per-eye asymmetric FOV command queued. left={left} right={right}",
     )
 
 
 def _ipd(arguments):
     if arguments.get("clear"):
         return FileEdit.prepare(
-            "ipd_command.json", {"clear": True}, "IPD reverted to 64 mm."
+            "ipd_command.json", {"clear": True}, "IPD reset to 64 mm queued."
         )
     millimeters = float(arguments.get("ipd_mm", 64))
     if not 0 <= millimeters <= 200:
         return TextResult("ipd_mm must be in [0, 200]")
     return FileEdit.prepare(
-        "ipd_command.json", {"ipd_mm": millimeters}, f"IPD set to {millimeters:.1f} mm"
+        "ipd_command.json", {"ipd_mm": millimeters}, f"IPD command queued: {millimeters:.1f} mm"
     )
 
 
@@ -88,7 +88,7 @@ def _profile(arguments):
     return FileEdit.prepare(
         "headset_profile_command.json",
         {"name": name},
-        f"Headset profile applied: {name}",
+        f"Headset profile command queued: {name}",
     )
 
 
@@ -97,7 +97,7 @@ def _anaglyph(arguments):
     return FileEdit.prepare(
         "anaglyph_command.json",
         {"enabled": enabled},
-        f"Anaglyph preview {'enabled' if enabled else 'disabled'}.",
+        f"Anaglyph preview command queued: {'enabled' if enabled else 'disabled'}.",
     )
 
 
@@ -115,7 +115,7 @@ def _pose_sweep(arguments):
         },
     }
     reply = (
-        "Pose sweep "
+        "Pose sweep command queued: "
         + ("enabled" if payload["enabled"] else "disabled")
         + f" — yaw=±{payload['yaw_amp_deg']}° pitch=±{payload['pitch_amp_deg']}°"
         f" roll=±{payload['roll_amp_deg']}° freq={payload['freq_hz']}Hz"
@@ -130,7 +130,7 @@ def _wheel_sweep(arguments):
         return FileEdit.prepare(
             "wheel_sweep_command.json",
             payload,
-            "Wheel sweep stopped; controllers handed back.",
+            "Wheel sweep stop and controller release queued.",
         )
     fields = (
         ("hubX", "hub_x", 0),
@@ -151,7 +151,7 @@ def _wheel_sweep(arguments):
     )
     period = 1 / payload["freqHz"] if payload["freqHz"] else 0
     reply = (
-        f"Wheel sweep running: +/-{payload['amplitudeDeg']:.0f} deg over a {period:.2f}s period, "
+        f"Wheel sweep command queued: +/-{payload['amplitudeDeg']:.0f} deg over a {period:.2f}s period, "
         f"rim radius {payload['radius']:.3f} m raked {payload['tiltDeg']:.0f} deg, "
         f"hub ({payload['hubX']:.2f}, {payload['hubY']:.2f}, {payload['hubZ']:.2f}) head-local, "
         f"grip held at {payload['grip']:.2f}."

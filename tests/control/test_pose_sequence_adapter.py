@@ -202,6 +202,31 @@ class SequenceAdapterTests(unittest.TestCase):
         self.assertEqual(manifest['recent_captures'][0]['frame'], '4')
         self.assertEqual(list(owner._output.glob('*.tmp')), [])
 
+    def test_failed_eviction_preserves_ownership_and_prevents_next_write(self):
+        self.start()
+        owner = self.control._sequence
+        owner.MAX_DISK = 10
+        with self.control._lock:
+            owner._record({'frame': 1, 'capture_id': 1, 'phase': 'ready'}, png=b'png123')
+            old = dict(owner._records[0])
+            unlink = Path.unlink
+
+            def fail_owned(path, *args, **kwargs):
+                if str(path) == old['path']:
+                    raise PermissionError('Cannot remove owned image')
+                return unlink(path, *args, **kwargs)
+
+            with patch.object(Path, 'unlink', fail_owned):
+                with self.assertRaisesRegex(CapturePersistenceError, 'Cannot remove'):
+                    owner._record({'frame': 2, 'capture_id': 2, 'phase': 'ready'}, png=b'png456')
+            self.assertEqual(list(owner._records), [old])
+            self.assertEqual(owner._bytes, 6)
+            self.assertEqual(list(owner._output.glob('*.png')), [Path(old['path'])])
+            owner._record({'frame': 3, 'capture_id': 3, 'phase': 'ready'}, png=b'png789')
+            self.assertFalse(Path(old['path']).exists())
+            self.assertEqual(owner._bytes, 6)
+            self.assertEqual(len(list(owner._output.glob('*.png'))), 1)
+
     def test_capture_failure_records_once_and_releases_independent_reader(self):
         self.start()
         self.endpoint.held[27] = {'frame': 9, 'phase': 'ready'}
