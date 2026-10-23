@@ -152,7 +152,9 @@ void InspectionWorkspace::ReleaseSelected()
 void InspectionWorkspace::InspectSelected()
 {
 	const auto capture = Selected();
-	if (!capture || capture->released || capture->scope != m_scope)
+	if (!capture || capture->released || capture->scope != m_scope ||
+		!Nested(capture->metadata.Find(tag::Frame)).Find(tag::Submission) ||
+		m_requests.Has(PanelWork::Inspect, capture->id))
 		return;
 	m_requests.Send(wire::OpCode::InspectFrame, PanelWork::Inspect,
 					{wire::Field::U64(tag::Session, m_scope.session, true),
@@ -172,6 +174,8 @@ bool InspectionWorkspace::Handle(const PanelTask& task, const wire::Message& mes
 			capture->metadata = std::move(metadata);
 			capture->phase = std::move(phase);
 			capture->frame = Frame(message);
+			if (capture->local == m_selectedLocal && !capture->document.Find(tag::Document))
+				InspectSelected();
 		}
 		break;
 	case PanelWork::Inspect:

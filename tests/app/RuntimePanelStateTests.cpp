@@ -609,6 +609,79 @@ void ActualConnectionAndDebugger()
 			return debugger.Selected().id != 0;
 		},
 		"Debugger owner did not discover actual core session");
+	{
+		class PendingOutput final : public simxr::FrameOutput
+		{
+		  public:
+			std::atomic<bool> complete{false};
+			std::shared_ptr<simxr::FrameReservation> slot;
+			simxr::CompletionStatus PollCompletion() const noexcept override
+			{
+				return complete ? simxr::CompletionStatus::Complete : simxr::CompletionStatus::Pending;
+			}
+		};
+		app::InspectionWorkspace workspace(requests);
+		workspace.SetScope(debugger.Scope());
+		const auto reserved = fixture.session->ReserveCapture();
+		Require(reserved.result == simxr::SnapshotAdmission::Accepted &&
+				fixture.session->Scheduler().GrantPermits() == XR_SUCCESS, "Reserve pending CPU inspection");
+		simxr::FramePrediction prediction;
+		Require(fixture.session->WaitFrame(prediction) == XR_SUCCESS && fixture.session->BeginFrame() == XR_SUCCESS,
+				"Begin pending CPU inspection frame");
+		Require(workspace.Add(reserved.id.value, prediction.id.value) && workspace.Select(reserved.id.value),
+				"Select pending CPU inspection");
+		workspace.InspectSelected();
+		Require(!requests.Has(app::PanelWork::Inspect), "Inspection was requested before capture metadata arrived");
+		unsigned inspections = 0;
+		const auto poll = [&]
+		{
+			for (auto& reply : requests.Poll())
+			{
+				const auto& message = reply.response.packet.message;
+				Require(reply.response.error.empty() && app::panel::U32(message, tag::Error) == 0,
+						"Pending CPU inspection issued an unavailable read");
+				inspections += reply.task.kind == app::PanelWork::Inspect;
+				if (!workspace.Handle(reply.task, message))
+					debugger.Handle(reply.task, message);
+			}
+		};
+		const auto refresh = [&]
+		{
+			auto fields = debugger.SessionFields();
+			fields.push_back(wire::Field::U64(tag::CaptureId, reserved.id.value));
+			Require(requests.Send(wire::OpCode::Capture, app::PanelWork::Capture, std::move(fields), reserved.id.value),
+					"Request pending capture metadata");
+			Eventually([&] { poll(); return !requests.Has(app::PanelWork::Capture); }, "Capture metadata did not arrive");
+		};
+		refresh();
+		workspace.InspectSelected();
+		Require(!requests.Has(app::PanelWork::Inspect) && !inspections && workspace.Selected()->phase == "begun",
+				"A begun frame was mistaken for submitted CPU metadata");
+		auto output = std::make_shared<PendingOutput>();
+		output->slot = fixture.session->Captures().ProducerReservation(
+			{fixture.session->Snapshot().generation, prediction.id});
+		Require(fixture.pool.Consume(output->slot), "Consume pending inspection output reservation");
+		auto metadata = std::make_shared<const simxr::FrameLayers>(prediction.displayTime, XR_ENVIRONMENT_BLEND_MODE_OPAQUE,
+			std::vector<simxr::LayerDescription>{simxr::QuadLayerDescription{}});
+		const XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO, nullptr, prediction.displayTime.value.count(),
+			XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1, nullptr};
+		Require(fixture.session->EndFrame(prediction, &end, std::move(metadata), output) == XR_SUCCESS,
+				"Submit pending CPU inspection frame");
+		refresh();
+		Eventually([&] { poll(); return workspace.Selected()->document.Find(tag::Document) != nullptr; },
+			"Submitted capture did not automatically load CPU details");
+		Require(inspections == 1 && workspace.Selected()->phase == "gpu_pending" && !output->complete,
+				"CPU details waited for GPU completion or were requested more than once");
+		workspace.InspectSelected();
+		workspace.InspectSelected();
+		Eventually([&] { poll(); return !requests.Has(app::PanelWork::Inspect); },
+			"Manual CPU refresh did not finish");
+		Require(inspections == 2, "Repeated refresh queued duplicate CPU inspections");
+		workspace.ReleaseSelected();
+		output->complete = true;
+		fixture.session->Captures().Poll();
+		std::cout << "PASS deferred CPU inspection follows submission before GPU readiness and deduplicates refresh\n";
+	}
 	for (const bool malformed : {false, true})
 	{
 		debugger.Command(wire::CommandKind::Pause);
