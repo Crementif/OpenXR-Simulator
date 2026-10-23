@@ -1,75 +1,64 @@
-#include "graphics/SnapshotBudget.h"
 #include "control/ConnectionImages.h"
+#include "Pch.h"
+#include "graphics/SnapshotBudget.h"
 #include "control/DebugProtocol.h"
 #include "control/ControlSchema.h"
 
-#include <algorithm>
 #include <limits>
-#include <utility>
 
 namespace simxr::control
 {
-namespace
+template <class Resource> ConnectionImages::ImageTable<Resource>::ImageTable()
 {
-template <class Resource> struct ImageEntry
+	m_entries.reserve(SnapshotBudget::Capacity());
+}
+template <class Resource> void ConnectionImages::ImageTable<Resource>::CheckCapacity() const
 {
-	std::uint64_t id = 0, reader = 0;
-	ImageSource source;
-	std::shared_ptr<Resource> value;
-};
-template <class Resource> class ImageTable
+	if (m_entries.size() >= SnapshotBudget::Capacity() || m_next == std::numeric_limits<std::uint64_t>::max())
+		throw RequestFailure{ErrorCode::Capacity, "Connection image resource capacity exhausted"};
+}
+template <class Resource>
+auto ConnectionImages::ImageTable<Resource>::Find(std::uint64_t id) const -> std::shared_ptr<const ImageEntry<Resource>>
 {
-  public:
-	ImageTable()
-	{
-		m_entries.reserve(SnapshotBudget::Capacity());
-	}
-	void CheckCapacity() const
-	{
-		if (m_entries.size() >= SnapshotBudget::Capacity() || m_next == std::numeric_limits<std::uint64_t>::max())
-			throw ConnectionImages::RequestFailure{ErrorCode::Capacity, "Connection image resource capacity exhausted"};
-	}
-	std::shared_ptr<const ImageEntry<Resource>> Find(std::uint64_t id) const
-	{
-		for (const auto& entry : m_entries)
-			if (entry->id == id)
-				return entry;
-		return {};
-	}
-	std::shared_ptr<const ImageEntry<Resource>> Find(const ImageSource& source) const
-	{
-		for (const auto& entry : m_entries)
-			if (entry->source == source)
-				return entry;
-		return {};
-	}
-	std::shared_ptr<const ImageEntry<Resource>> Add(std::shared_ptr<Resource> value, ImageSource source,
-													std::uint64_t reader = 0)
-	{
-		CheckCapacity();
-		auto entry =
-			std::make_shared<ImageEntry<Resource>>(ImageEntry<Resource>{m_next, reader, source, std::move(value)});
-		m_entries.push_back(entry);
-		++m_next;
-		return entry;
-	}
-	std::shared_ptr<const ImageEntry<Resource>> Release(std::uint64_t id) noexcept
-	{
-		for (auto iterator = m_entries.begin(); iterator != m_entries.end(); ++iterator)
-			if ((*iterator)->id == id)
-			{
-				auto entry = std::move(*iterator);
-				m_entries.erase(iterator);
-				return entry;
-			}
-		return {};
-	}
+	for (const auto& entry : m_entries)
+		if (entry->id == id)
+			return entry;
+	return {};
+}
+template <class Resource>
+auto ConnectionImages::ImageTable<Resource>::Find(const ImageSource& source) const
+	-> std::shared_ptr<const ImageEntry<Resource>>
+{
+	for (const auto& entry : m_entries)
+		if (entry->source == source)
+			return entry;
+	return {};
+}
+template <class Resource>
+auto ConnectionImages::ImageTable<Resource>::Add(std::shared_ptr<Resource> value, ImageSource source,
+												 std::uint64_t reader) -> std::shared_ptr<const ImageEntry<Resource>>
+{
+	CheckCapacity();
+	auto entry = std::make_shared<ImageEntry<Resource>>(ImageEntry<Resource>{m_next, reader, source, std::move(value)});
+	m_entries.push_back(entry);
+	++m_next;
+	return entry;
+}
+template <class Resource>
+auto ConnectionImages::ImageTable<Resource>::Release(std::uint64_t id) noexcept
+	-> std::shared_ptr<const ImageEntry<Resource>>
+{
+	for (auto iterator = m_entries.begin(); iterator != m_entries.end(); ++iterator)
+		if ((*iterator)->id == id)
+		{
+			auto entry = std::move(*iterator);
+			m_entries.erase(iterator);
+			return entry;
+		}
+	return {};
+}
 
-  private:
-	std::vector<std::shared_ptr<ImageEntry<Resource>>> m_entries;
-	std::uint64_t m_next = 1;
-};
-Message Response(const Message& request, ErrorCode error = ErrorCode::Ok, const char* detail = nullptr)
+static Message Response(const Message& request, ErrorCode error = ErrorCode::Ok, const char* detail = nullptr)
 {
 	Message response;
 	response.opcode = request.opcode;
@@ -81,7 +70,7 @@ Message Response(const Message& request, ErrorCode error = ErrorCode::Ok, const 
 		response.fields.push_back(Field::Text(tag::Detail, detail));
 	return response;
 }
-std::uint64_t U64(const Message& message, std::uint16_t name)
+static std::uint64_t U64(const Message& message, std::uint16_t name)
 {
 	const auto* field = message.Find(name);
 	const auto value = field ? field->AsU64() : std::nullopt;
@@ -89,7 +78,7 @@ std::uint64_t U64(const Message& message, std::uint16_t name)
 		throw ConnectionImages::RequestFailure{ErrorCode::Invalid, "Missing or invalid uint64 field"};
 	return *value;
 }
-std::uint32_t U32(const Message& message, std::uint16_t name, std::optional<std::uint32_t> fallback = {})
+static std::uint32_t U32(const Message& message, std::uint16_t name, std::optional<std::uint32_t> fallback = {})
 {
 	const auto* field = message.Find(name);
 	if (!field && fallback)
@@ -99,15 +88,15 @@ std::uint32_t U32(const Message& message, std::uint16_t name, std::optional<std:
 		throw ConnectionImages::RequestFailure{ErrorCode::Invalid, "Missing or invalid uint32 field"};
 	return *value;
 }
-Field Nested(std::uint16_t name, std::vector<Field> fields)
+static Field Nested(std::uint16_t name, std::vector<Field> fields)
 {
 	return Field::Bytes(name, EncodeFields(fields));
 }
-Field Key(std::uint16_t name, FrameKey key)
+static Field Key(std::uint16_t name, FrameKey key)
 {
 	return Nested(name, {Field::U64(tag::Generation, key.generation.value), Field::U64(tag::FrameId, key.frame.value)});
 }
-const char* CompletionName(CompletionStatus status)
+static const char* CompletionName(CompletionStatus status)
 {
 	switch (status)
 	{
@@ -120,12 +109,12 @@ const char* CompletionName(CompletionStatus status)
 	}
 	return "failed";
 }
-std::uint64_t ImageMask(ImageCapabilities capabilities, bool handles)
+static std::uint64_t ImageMask(ImageCapabilities capabilities, bool handles)
 {
 	return (capabilities.imageExport ? static_cast<std::uint64_t>(Capability::ImageExport) : 0) |
 		   (capabilities.gpuPreview && handles ? static_cast<std::uint64_t>(Capability::GpuPreview) : 0);
 }
-void Source(Message& response, const ImageSource& source, bool session = true)
+static void Source(Message& response, const ImageSource& source, bool session = true)
 {
 	if (session)
 	{
@@ -138,7 +127,7 @@ void Source(Message& response, const ImageSource& source, bool session = true)
 	if (source.imageTick)
 		response.fields.push_back(Field::U64(tag::ImageTick, source.imageTick->value));
 }
-ImageDeviceIdentity DeviceIdentity(const Message& message)
+static ImageDeviceIdentity DeviceIdentity(const Message& message)
 {
 	const auto device = message.Find(tag::DeviceUuid), driver = message.Find(tag::DriverUuid);
 	if (!device || !driver || device->value.size() != 16 || driver->value.size() != 16)
@@ -149,16 +138,7 @@ ImageDeviceIdentity DeviceIdentity(const Message& message)
 	std::copy(driver->value.begin(), driver->value.end(), identity.driver.begin());
 	return identity;
 }
-} // namespace
-
-struct ConnectionImages::State
-{
-	ImageTable<ImageReader> images;
-	ImageTable<ImageDelivery> deliveries;
-	ImageTable<ImageExport> exports;
-};
-
-ConnectionImages::ConnectionImages() : m_state(std::make_unique<State>()) {}
+ConnectionImages::ConnectionImages() = default;
 ConnectionImages::~ConnectionImages() = default;
 
 ConnectionImages::Publication::Publication(ConnectionImages& owner, RetiredResource& retired)
@@ -184,11 +164,11 @@ std::shared_ptr<const void> ConnectionImages::Release(ResourceKind kind, std::ui
 	switch (kind)
 	{
 	case ResourceKind::Reader:
-		return m_state->images.Release(id);
+		return m_images.Release(id);
 	case ResourceKind::Delivery:
-		return m_state->deliveries.Release(id);
+		return m_deliveries.Release(id);
 	case ResourceKind::Export:
-		return m_state->exports.Release(id);
+		return m_exports.Release(id);
 	}
 	return {};
 }
@@ -197,10 +177,10 @@ void ConnectionImages::Retain(Message& response, ImageSource source, std::shared
 							  const ImageInspectionProvider& provider, bool nativeHandles, Publication& publication,
 							  bool includeSession)
 {
-	auto entry = m_state->images.Find(source);
+	auto entry = m_images.Find(source);
 	if (!entry)
 	{
-		m_state->images.CheckCapacity();
+		m_images.CheckCapacity();
 		auto reader = provider.Retain(std::move(output));
 		if (!reader)
 		{
@@ -209,7 +189,9 @@ void ConnectionImages::Retain(Message& response, ImageSource source, std::shared
 									 : "Capture backend cannot retain this image";
 			throw RequestFailure{ErrorCode::UnsupportedCommand, detail};
 		}
-		entry = m_state->images.Add(std::move(reader), source);
+		// Entry allocation can fail before publication has a table ID to detach.
+		publication.m_retired.m_value = reader;
+		entry = m_images.Add(std::move(reader), source);
 		publication.Track(ResourceKind::Reader, entry->id);
 	}
 	Source(response, source, includeSession);
@@ -255,7 +237,7 @@ Message ConnectionImages::Dispatch(const ControlPacket& incoming, ControlPacket&
 	}
 	if (operation == OpCode::ImageInfo || operation == OpCode::ShareImage || operation == OpCode::StartExport)
 	{
-		const auto image = m_state->images.Find(U64(request, tag::ImageReaderId));
+		const auto image = m_images.Find(U64(request, tag::ImageReaderId));
 		if (!image)
 			throw RequestFailure{ErrorCode::NotFound, "Image reader is absent or released"};
 		Source(response, image->source);
@@ -279,11 +261,12 @@ Message ConnectionImages::Dispatch(const ControlPacket& incoming, ControlPacket&
 			const auto kind = completion ? completion->AsU32() : std::optional<std::uint32_t>{0};
 			if (!kind || *kind != static_cast<std::uint32_t>(image->value->Description().completionKind))
 				throw RequestFailure{ErrorCode::Invalid, "Consumer completion kind does not match this image"};
-			m_state->deliveries.CheckCapacity();
+			m_deliveries.CheckCapacity();
 			auto delivery = image->value->Share(DeviceIdentity(request), incoming.handles.front());
 			if (!delivery)
 				throw RequestFailure{ErrorCode::Internal, "Image provider returned no delivery"};
-			const auto entry = m_state->deliveries.Add(std::move(delivery), image->source, image->id);
+			publication.m_retired.m_value = delivery;
+			const auto entry = m_deliveries.Add(std::move(delivery), image->source, image->id);
 			publication.Track(ResourceKind::Delivery, entry->id);
 			outgoing.handles = entry->value->PrepareHandles();
 			if (outgoing.handles.size() != 2 || !outgoing.handles[0] || !outgoing.handles[1])
@@ -303,12 +286,13 @@ Message ConnectionImages::Dispatch(const ControlPacket& incoming, ControlPacket&
 		}
 		if (!image->value->Capabilities().imageExport)
 			throw RequestFailure{ErrorCode::UnsupportedCommand, "Image export unavailable for this image"};
-		m_state->exports.CheckCapacity();
+		m_exports.CheckCapacity();
 		const auto layer = request.Find(tag::Layer) ? std::optional{U32(request, tag::Layer)} : std::nullopt;
 		auto readback = image->value->Export(layer);
 		if (!readback)
 			throw RequestFailure{ErrorCode::Internal, "Image provider returned no export"};
-		const auto entry = m_state->exports.Add(std::move(readback), image->source, image->id);
+		publication.m_retired.m_value = readback;
+		const auto entry = m_exports.Add(std::move(readback), image->source, image->id);
 		publication.Track(ResourceKind::Export, entry->id);
 		response.fields.push_back(Field::U64(tag::ExportId, entry->id));
 		response.fields.push_back(EncodeImageDescription(entry->value->Description()));
@@ -318,7 +302,7 @@ Message ConnectionImages::Dispatch(const ControlPacket& incoming, ControlPacket&
 	}
 	if (operation == OpCode::DeliveryInfo)
 	{
-		const auto entry = m_state->deliveries.Find(U64(request, tag::DeliveryId));
+		const auto entry = m_deliveries.Find(U64(request, tag::DeliveryId));
 		if (!entry)
 			throw RequestFailure{ErrorCode::NotFound, "Delivery is absent or released"};
 		Source(response, entry->source);
@@ -332,7 +316,7 @@ Message ConnectionImages::Dispatch(const ControlPacket& incoming, ControlPacket&
 		response.fields.push_back(Field::Text(tag::ConsumerPhase, CompletionName(entry->value->ConsumerCompletion())));
 		return response;
 	}
-	const auto entry = m_state->exports.Find(U64(request, tag::ExportId));
+	const auto entry = m_exports.Find(U64(request, tag::ExportId));
 	if (!entry)
 		throw RequestFailure{ErrorCode::NotFound, "Export is absent or released"};
 	Source(response, entry->source);

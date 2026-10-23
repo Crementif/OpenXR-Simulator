@@ -1,29 +1,26 @@
 #include "control/backends/vulkan/VulkanImageConsumer.h"
+#include "Pch.h"
 #include "control/backends/vulkan/VulkanControlHandle.h"
 #include "graphics/FramePool.h"
 #include "graphics/SnapshotBudget.h"
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
 
-#include <algorithm>
-#include <array>
-#include <chrono>
 #include <cstdio>
+#include <stdexcept>
 #include <thread>
 
 namespace simxr::control
 {
-namespace
+static FramePool& ConsumerBudget()
 {
-FramePool& ConsumerBudget()
-{
-	static FramePool budget{SnapshotBudget::Capacity};
-	return budget;
+	static FramePool s_budget{SnapshotBudget::Capacity};
+	return s_budget;
 }
-bool Rejected(VkResult result)
+static bool Rejected(VkResult result)
 {
 	return result == VK_ERROR_OUT_OF_HOST_MEMORY || result == VK_ERROR_OUT_OF_DEVICE_MEMORY;
 }
-VulkanExternalImageDescriptor NativeDescription(const ImageDescription& value)
+static VulkanExternalImageDescriptor NativeDescription(const ImageDescription& value)
 {
 	constexpr auto allowed = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
 							 VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
@@ -56,10 +53,11 @@ VulkanExternalImageDescriptor NativeDescription(const ImageDescription& value)
 	result.producerLayout = VK_IMAGE_LAYOUT_GENERAL;
 	return result;
 }
-} // namespace
+// Pending native submissions preserve this entire dependent resource owner.
 struct VulkanImageConsumer::State
 {
-	VulkanNativePreservation<State, SnapshotBudget::MaxCapacity>::Reservation preservation{"Native consumer preservation budget exhausted"};
+	VulkanNativePreservation<State, SnapshotBudget::MaxCapacity>::Reservation preservation{
+		"Native consumer preservation budget exhausted"};
 	std::shared_ptr<FrameReservation> slot;
 	std::shared_ptr<VulkanDevice> device;
 	VulkanExternalDevice external;

@@ -4,6 +4,9 @@
 #include "presentation/FrameHistory.h"
 #include "presentation/FrameImageHistory.h"
 
+#include <cstddef>
+#include <memory>
+
 namespace simxr::control
 {
 InspectionValue InspectDiagnostics(const FrameDiagnostics& diagnostics);

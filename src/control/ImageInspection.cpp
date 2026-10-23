@@ -1,14 +1,11 @@
 #include "control/ImageInspection.h"
+#include "Pch.h"
 #include "Math.h"
 #include "control/ControlSchema.h"
+
 #include <cmath>
 #include <numbers>
-
-#include <algorithm>
-#include <array>
 #include <stdexcept>
-#include <utility>
-#include <vector>
 
 namespace simxr::control
 {

@@ -1,19 +1,15 @@
 #include "control/InspectionDocument.h"
+#include "Pch.h"
 
-#include <algorithm>
-#include <array>
 #include <limits>
 #include <stdexcept>
 
 namespace simxr::control
 {
-namespace
-{
-InspectionValue Scalar(InspectionType type, Field field)
+static InspectionValue Scalar(InspectionType type, Field field)
 {
 	return {type, std::move(field.value)};
 }
-} // namespace
 InspectionValue InspectionValue::Null()
 {
 	return {};
@@ -199,6 +195,8 @@ InspectionStore::Retain(ControlSessionId session, FrameKey frame, std::vector<Fe
 			if (knownRevisions.size() + addedRevisions.size() >= m_revisionCapacity ||
 				nextRevision == std::numeric_limits<std::uint64_t>::max())
 				throw std::length_error("Inspection revision capacity exceeded");
+			if (usedBytes > m_byteCapacity || feature.bytes.size() > m_byteCapacity - usedBytes)
+				throw std::length_error("Inspection byte capacity exceeded");
 			selectedRevision =
 				std::make_shared<const FeatureRevision>(FeatureRevision{nextRevision++, std::move(feature)});
 			usedBytes += selectedRevision->document.bytes.size();

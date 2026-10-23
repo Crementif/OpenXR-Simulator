@@ -3,6 +3,7 @@
 #include "control/ImageInspection.h"
 #include "graphics/backends/vulkan/VulkanExternal.h"
 
+#include <cstdint>
 #include <memory>
 #include <span>
 #include <vector>

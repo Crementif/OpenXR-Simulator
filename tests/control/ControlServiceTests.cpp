@@ -38,6 +38,7 @@ namespace
 thread_local std::size_t failAllocationSize = 0;
 thread_local int skipMatchingAllocations = 0;
 thread_local bool allocationFailed = false;
+thread_local bool failNextAllocation = false;
 thread_local std::function<void()> onAllocationFailure;
 struct MatchingAllocationFailure
 {
@@ -57,6 +58,11 @@ struct MatchingAllocationFailure
 } // namespace
 void* operator new(std::size_t size)
 {
+	if (std::exchange(failNextAllocation, false))
+	{
+		allocationFailed = true;
+		throw std::bad_alloc{};
+	}
 	if (size == failAllocationSize && failAllocationSize != 0 && skipMatchingAllocations-- == 0)
 	{
 		failAllocationSize = 0;
@@ -1168,6 +1174,7 @@ struct ImageOwnerObservations
 	std::size_t retains = 0;
 	std::size_t destroyed = 0;
 	bool rejectDescription = false;
+	std::function<void()> onRetained;
 	std::function<void()> onDestroyed;
 };
 
@@ -1228,7 +1235,10 @@ class ObservedImageProvider final : public wire::ImageInspectionProvider
 	std::shared_ptr<wire::ImageReader> Retain(std::shared_ptr<const FrameOutput> output) const override
 	{
 		++m_observations.retains;
-		return std::make_shared<ObservedImageReader>(m_observations, std::move(output));
+		auto reader = std::make_shared<ObservedImageReader>(m_observations, std::move(output));
+		if (m_observations.onRetained)
+			m_observations.onRetained();
+		return reader;
 	}
 
   private:
@@ -1672,6 +1682,20 @@ void ImagePublicationRollbackReentry()
 	const auto rejected = client.Call(wire::OpCode::RetainPreview, client.Common());
 	Require(Error(rejected) == wire::ErrorCode::Capacity && observations.destroyed == 1 && reentered,
 			"Publication rollback destroyed its last reader while the connection request gate was closed");
+#ifndef SIMXR_TEST_TSAN_ALLOCATOR
+	reentered = false;
+	allocationFailed = false;
+	observations.onRetained = []
+	{
+		// The provider has returned its reader; the table entry is the next allocation.
+		failNextAllocation = true;
+	};
+	const auto entryRejected = client.Call(wire::OpCode::RetainPreview, client.Common());
+	observations.onRetained = {};
+	Require(allocationFailed && Error(entryRejected) == wire::ErrorCode::Capacity && observations.destroyed == 2 &&
+				reentered,
+			"Entry allocation failure destroyed its new reader before request admission reopened");
+#endif
 	observations.onDestroyed = {};
 }
 

@@ -1,20 +1,15 @@
-#include "Pch.h"
 #include "control/backends/vulkan/VulkanImageInspection.h"
+#include "Pch.h"
 #include "graphics/ColorPixels.h"
 #include "control/backends/vulkan/VulkanControlHandle.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
 
-#include <algorithm>
-#include <array>
-#include <cstdio>
 #include <mutex>
-#include <utility>
+#include <stdexcept>
 
 namespace simxr::control
 {
-namespace
-{
-template <class Function> auto Translate(Function&& function)
+template <class Function> static auto Translate(Function&& function)
 {
 	try
 	{
@@ -51,7 +46,7 @@ template <class Function> auto Translate(Function&& function)
 		throw ImageInspectionError(code, error.what());
 	}
 }
-ImageDeviceIdentity Identity(const VulkanExternalIdentity& value)
+static ImageDeviceIdentity Identity(const VulkanExternalIdentity& value)
 {
 	ImageDeviceIdentity result;
 	std::transform(value.deviceUuid.begin(), value.deviceUuid.end(), result.device.begin(),
@@ -66,7 +61,7 @@ ImageDeviceIdentity Identity(const VulkanExternalIdentity& value)
 				   });
 	return result;
 }
-VulkanExternalIdentity Identity(const ImageDeviceIdentity& value)
+static VulkanExternalIdentity Identity(const ImageDeviceIdentity& value)
 {
 	VulkanExternalIdentity result;
 	std::transform(value.device.begin(), value.device.end(), result.deviceUuid.begin(),
@@ -81,7 +76,7 @@ VulkanExternalIdentity Identity(const ImageDeviceIdentity& value)
 				   });
 	return result;
 }
-ImageDescription Describe(const VulkanExternalImageDescriptor& value)
+static ImageDescription Describe(const VulkanExternalImageDescriptor& value)
 {
 	ImageDescription result;
 	result.identity = Identity(value.identity);
@@ -105,7 +100,7 @@ ImageDescription Describe(const VulkanExternalImageDescriptor& value)
 	result.layout = value.producerLayout;
 	return result;
 }
-ImageDescription Describe(const VulkanInspectionFrame& frame)
+static ImageDescription Describe(const VulkanInspectionFrame& frame)
 {
 	const auto& image = frame.Image();
 	VkPhysicalDeviceIDProperties identity{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
@@ -127,21 +122,21 @@ ImageDescription Describe(const VulkanInspectionFrame& frame)
 	result.completionKind = frame.CompletionKind();
 	return result;
 }
-struct ExportCharge;
-struct ExportBudgetState
+struct VulkanExportCharge;
+struct VulkanExportBudget
 {
 	std::mutex mutex;
 	std::uint64_t bytes = 0;
 	std::size_t count = 0;
-	std::array<std::weak_ptr<ExportCharge>, 8> charges;
+	std::array<std::weak_ptr<VulkanExportCharge>, 8> charges;
 };
-struct ExportCharge
+struct VulkanExportCharge
 {
-	std::shared_ptr<ExportBudgetState> state;
+	std::shared_ptr<VulkanExportBudget> state;
 	std::function<void()> collect;
 	std::uint64_t bytes = 0;
 	bool charged = false;
-	~ExportCharge()
+	~VulkanExportCharge()
 	{
 		if (charged)
 		{
@@ -151,16 +146,16 @@ struct ExportCharge
 		}
 	}
 };
-const std::shared_ptr<ExportBudgetState>& ExportBudget()
+static const std::shared_ptr<VulkanExportBudget>& ExportBudget()
 {
-	static const auto state = std::make_shared<ExportBudgetState>();
-	return state;
+	static const auto s_state = std::make_shared<VulkanExportBudget>();
+	return s_state;
 }
-std::shared_ptr<const void> ReserveExport(std::uint64_t bytes, std::function<void()> collect)
+static std::shared_ptr<const void> ReserveExport(std::uint64_t bytes, std::function<void()> collect)
 {
 	constexpr std::uint64_t limit = 512ULL * 1024 * 1024;
 	auto state = ExportBudget();
-	std::array<std::shared_ptr<ExportCharge>, 8> observed;
+	std::array<std::shared_ptr<VulkanExportCharge>, 8> observed;
 	{
 		std::lock_guard lock(state->mutex);
 		for (std::size_t index = 0; index < observed.size(); ++index)
@@ -179,7 +174,7 @@ std::shared_ptr<const void> ReserveExport(std::uint64_t bytes, std::function<voi
 			{
 			}
 	observed.fill({});
-	auto charge = std::make_shared<ExportCharge>();
+	auto charge = std::make_shared<VulkanExportCharge>();
 	charge->state = state;
 	charge->collect = std::move(collect);
 	charge->bytes = bytes;
@@ -198,10 +193,10 @@ std::shared_ptr<const void> ReserveExport(std::uint64_t bytes, std::function<voi
 		}
 	throw ImageInspectionError(ErrorCode::Capacity, "Native export retirement capacity exhausted");
 }
-class Delivery final : public ImageDelivery
+class VulkanControlDelivery final : public ImageDelivery
 {
   public:
-	explicit Delivery(std::shared_ptr<VulkanImageDelivery> native, std::vector<FrameView> views)
+	explicit VulkanControlDelivery(std::shared_ptr<VulkanImageDelivery> native, std::vector<FrameView> views)
 		: m_native(std::move(native)), m_views(std::move(views))
 	{
 	}
@@ -246,11 +241,11 @@ class Delivery final : public ImageDelivery
 	const std::shared_ptr<VulkanImageDelivery> m_native;
 	const std::vector<FrameView> m_views;
 };
-class Export final : public ImageExport
+class VulkanImageExport final : public ImageExport
 {
   public:
-	Export(std::shared_ptr<VulkanImageReadback> native, ImageDescription description, std::uint64_t bytes)
-		: m_native(std::move(native)), m_description(description), m_bytes(bytes)
+	VulkanImageExport(std::shared_ptr<VulkanImageReadback> native, ImageDescription description, std::uint64_t bytes)
+		: m_native(std::move(native)), m_description(std::move(description)), m_bytes(bytes)
 	{
 	}
 	ImageDescription Description() const override
@@ -280,10 +275,10 @@ class Export final : public ImageExport
 	const ImageDescription m_description;
 	const std::uint64_t m_bytes;
 };
-class Reader final : public ImageReader
+class VulkanImageReader final : public ImageReader
 {
   public:
-	explicit Reader(std::shared_ptr<const VulkanInspectionFrame> frame)
+	explicit VulkanImageReader(std::shared_ptr<const VulkanInspectionFrame> frame)
 		: m_frame(std::move(frame)), m_description(Describe(*m_frame))
 	{
 	}
@@ -309,7 +304,7 @@ class Reader final : public ImageReader
 				auto fd = DuplicateVulkanControlHandle(consumer);
 				auto delivery = m_frame->Share();
 				delivery->RegisterConsumer(Identity(identity), fd);
-				return std::make_shared<Delivery>(std::move(delivery), m_description.views);
+				return std::make_shared<VulkanControlDelivery>(std::move(delivery), m_description.views);
 			});
 	}
 	std::shared_ptr<ImageExport> Export(std::optional<std::uint32_t> layer) const override
@@ -321,18 +316,24 @@ class Reader final : public ImageReader
 				if (layer && *layer >= description.arrayLayers)
 					throw std::invalid_argument("Invalid export array slice");
 				if (layer)
+				{
 					description.arrayLayers = 1;
+					if (!description.views.empty())
+						description.views = {description.views.at(*layer)};
+				}
 				const auto pixelBytes = ColorPixelBytes(description.format);
 				if (!pixelBytes)
-					throw ImageInspectionError(ErrorCode::UnsupportedCommand, "Unsupported explicit color export format");
+					throw ImageInspectionError(ErrorCode::UnsupportedCommand,
+											   "Unsupported explicit color export format");
 				constexpr std::uint64_t limit = 512ULL * 1024 * 1024;
 				if (!description.width || !description.height || !description.arrayLayers ||
 					description.width > limit / pixelBytes / description.height / description.arrayLayers)
 					throw ImageInspectionError(ErrorCode::Capacity, "Image exceeds explicit export byte limit");
-				const auto bytes = std::uint64_t{description.width} * description.height * description.arrayLayers * pixelBytes;
+				const auto bytes =
+					std::uint64_t{description.width} * description.height * description.arrayLayers * pixelBytes;
 				auto charge = ReserveExport(bytes, m_frame->Collector());
 				auto native = m_frame->Export(layer, std::move(charge));
-				return std::make_shared<simxr::control::Export>(std::move(native), description, bytes);
+				return std::make_shared<VulkanImageExport>(std::move(native), std::move(description), bytes);
 			});
 	}
 
@@ -340,10 +341,10 @@ class Reader final : public ImageReader
 	const std::shared_ptr<const VulkanInspectionFrame> m_frame;
 	const ImageDescription m_description;
 };
-class Provider final : public ImageInspectionProvider
+class VulkanImageInspectionProvider final : public ImageInspectionProvider
 {
   public:
-	explicit Provider(ImageCapabilityQuery query) : m_query(std::move(query)) {}
+	explicit VulkanImageInspectionProvider(ImageCapabilityQuery query) : m_query(std::move(query)) {}
 	ImageCapabilities Capabilities(XrSession session) const noexcept override
 	{
 		try
@@ -361,16 +362,15 @@ class Provider final : public ImageInspectionProvider
 		if (!frame)
 			throw ImageInspectionError(ErrorCode::UnsupportedCommand,
 									   "This output has no owned Vulkan inspection image");
-		return std::make_shared<Reader>(frame);
+		return std::make_shared<VulkanImageReader>(frame);
 	}
 
   private:
 	const ImageCapabilityQuery m_query;
 };
-} // namespace
 std::shared_ptr<ImageInspectionProvider> CreateVulkanImageInspectionProvider(ImageCapabilityQuery query)
 {
 	(void)ExportBudget();
-	return std::make_shared<Provider>(std::move(query));
+	return std::make_shared<VulkanImageInspectionProvider>(std::move(query));
 }
 } // namespace simxr::control

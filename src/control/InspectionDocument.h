@@ -3,10 +3,15 @@
 #include "control/WireProtocol.h"
 #include "presentation/FrameTypes.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
+#include <span>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 namespace simxr::control
 {

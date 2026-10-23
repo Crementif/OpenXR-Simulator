@@ -1,20 +1,15 @@
 #include "control/FrameInspection.h"
+#include "Pch.h"
 #include "control/SimulationControl.h"
 #include "graphics/FrameOutput.h"
 #include "simulation/BodyModel.h"
 
-#include <algorithm>
-#include <array>
 #include <stdexcept>
-#include <string>
-#include <utility>
-#include <vector>
+#include <variant>
 
 namespace simxr::control
 {
-namespace
-{
-template <class Range, class Function> InspectionValue InspectArray(const Range& range, Function function)
+template <class Range, class Function> static InspectionValue InspectArray(const Range& range, Function function)
 {
 	if (range.size() > MaxFields * MaxFields)
 		throw std::length_error("Inspection array capacity exceeded");
@@ -24,17 +19,17 @@ template <class Range, class Function> InspectionValue InspectArray(const Range&
 		values.push_back(function(value));
 	return InspectionValue::Array(std::move(values));
 }
-InspectionValue InspectVector(XrVector2f value)
+static InspectionValue InspectVector(XrVector2f value)
 {
 	return InspectionValue::Object({{"x", InspectionValue::Float(value.x)}, {"y", InspectionValue::Float(value.y)}});
 }
-InspectionValue InspectVector(XrVector3f value)
+static InspectionValue InspectVector(XrVector3f value)
 {
 	return InspectionValue::Object({{"x", InspectionValue::Float(value.x)},
 									{"y", InspectionValue::Float(value.y)},
 									{"z", InspectionValue::Float(value.z)}});
 }
-InspectionValue InspectPose(const XrPosef& value)
+static InspectionValue InspectPose(const XrPosef& value)
 {
 	return InspectionValue::Object(
 		{{"orientation", InspectionValue::Object({{"x", InspectionValue::Float(value.orientation.x)},
@@ -43,7 +38,7 @@ InspectionValue InspectPose(const XrPosef& value)
 												  {"w", InspectionValue::Float(value.orientation.w)}})},
 		 {"position", InspectVector(value.position)}});
 }
-InspectionValue InspectPoseSample(const PoseSample& value)
+static InspectionValue InspectPoseSample(const PoseSample& value)
 {
 	return InspectionValue::Object(
 		{{"pose", InspectPose(value.pose)},
@@ -53,14 +48,14 @@ InspectionValue InspectPoseSample(const PoseSample& value)
 									  ? InspectionValue::Signed(value.eyeGazeSampleTime->value.count())
 									  : InspectionValue::Null()}});
 }
-InspectionValue InspectFov(const XrFovf& value)
+static InspectionValue InspectFov(const XrFovf& value)
 {
 	return InspectionValue::Object({{"left", InspectionValue::Float(value.angleLeft)},
 									{"right", InspectionValue::Float(value.angleRight)},
 									{"up", InspectionValue::Float(value.angleUp)},
 									{"down", InspectionValue::Float(value.angleDown)}});
 }
-InspectionValue InspectDevice(InputDeviceId value)
+static InspectionValue InspectDevice(InputDeviceId value)
 {
 	const char* kind;
 	switch (value.kind)
@@ -80,7 +75,7 @@ InspectionValue InspectDevice(InputDeviceId value)
 	return InspectionValue::Object(
 		{{"kind", InspectionValue::Text(kind)}, {"id", InspectionValue::Unsigned(value.value)}});
 }
-InspectionValue InspectControls(const ControllerControls& value)
+static InspectionValue InspectControls(const ControllerControls& value)
 {
 	return InspectionValue::Object({{"trigger", InspectionValue::Float(value.trigger)},
 									{"grip", InspectionValue::Float(value.grip)},
@@ -102,7 +97,7 @@ InspectionValue InspectControls(const ControllerControls& value)
 									{"thumbrest_touch", InspectionValue::Boolean(value.thumbrestTouch)},
 									{"connected", InspectionValue::Boolean(value.connected)}});
 }
-InspectionValue InspectInput(const InputSnapshot& value)
+static InspectionValue InspectInput(const InputSnapshot& value)
 {
 	return InspectionValue::Object(
 		{{"revision", InspectionValue::Unsigned(value.revision)},
@@ -129,7 +124,7 @@ InspectionValue InspectInput(const InputSnapshot& value)
 										   {"controls", InspectControls(device.controls)}});
 								  })}});
 }
-const char* JointName(BodyJoint joint)
+static const char* JointName(BodyJoint joint)
 {
 	switch (joint)
 	{
@@ -305,13 +300,13 @@ const char* JointName(BodyJoint joint)
 		throw std::invalid_argument("Unknown body joint");
 	}
 }
-InspectionValue InspectProportions(const BodyProportions& value)
+static InspectionValue InspectProportions(const BodyProportions& value)
 {
 	return InspectionValue::Object({{"height", InspectionValue::Float(value.height)},
 									{"shoulder_width", InspectionValue::Float(value.shoulderWidth)},
 									{"hip_width", InspectionValue::Float(value.hipWidth)}});
 }
-InspectionValue InspectSkeleton(const TrackingSnapshot& value)
+static InspectionValue InspectSkeleton(const TrackingSnapshot& value)
 {
 	return InspectionValue::Object(
 		{{"schema", InspectionValue::Unsigned(1)},
@@ -327,7 +322,7 @@ InspectionValue InspectSkeleton(const TrackingSnapshot& value)
 										  {"bind_pose", InspectPose(joint.bindPose)}});
 								 })}});
 }
-InspectionValue InspectTracker(const TrackerDevice& device)
+static InspectionValue InspectTracker(const TrackerDevice& device)
 {
 	return InspectionValue::Object(
 		{{"id", InspectionValue::Unsigned(device.identity.value)},
@@ -338,7 +333,7 @@ InspectionValue InspectTracker(const TrackerDevice& device)
 		 {"joint_offset", device.jointOffset ? InspectPose(*device.jointOffset) : InspectionValue::Null()},
 		 {"pose_override", device.poseOverride ? InspectPose(*device.poseOverride) : InspectionValue::Null()}});
 }
-InspectionValue InspectBodyInput(const BodyControls& value)
+static InspectionValue InspectBodyInput(const BodyControls& value)
 {
 	const char* preset;
 	switch (value.preset)
@@ -369,20 +364,21 @@ InspectionValue InspectBodyInput(const BodyControls& value)
 				InspectionValue::Object({{"joint", InspectionValue::Text(JointName(static_cast<BodyJoint>(index)))},
 										 {"tracked", InspectionValue::Boolean(joint->tracked)},
 										 {"pose", joint->pose ? InspectPose(*joint->pose) : InspectionValue::Null()}}));
-	return InspectionValue::Object({{"active", InspectionValue::Boolean(value.active)},
-									{"confidence", InspectionValue::Float(value.confidence)},
-									{"preset", InspectionValue::Text(preset)},
-									{"root_pose", value.rootPose ? InspectPose(*value.rootPose) : InspectionValue::Null()},
-									{"controls", InspectionValue::Array(std::move(controls))},
-									{"joint_overrides", InspectionValue::Array(std::move(joints))}});
+	return InspectionValue::Object(
+		{{"active", InspectionValue::Boolean(value.active)},
+		 {"confidence", InspectionValue::Float(value.confidence)},
+		 {"preset", InspectionValue::Text(preset)},
+		 {"root_pose", value.rootPose ? InspectPose(*value.rootPose) : InspectionValue::Null()},
+		 {"controls", InspectionValue::Array(std::move(controls))},
+		 {"joint_overrides", InspectionValue::Array(std::move(joints))}});
 }
-InspectionValue InspectTrackedController(const ControllerPose& controller)
+static InspectionValue InspectTrackedController(const ControllerPose& controller)
 {
 	return InspectionValue::Object({{"connected", InspectionValue::Boolean(controller.connected)},
 									{"sample", InspectPoseSample(controller.pose)}});
 }
 
-InspectionValue InspectTrackingInput(const TrackingState& input)
+static InspectionValue InspectTrackingInput(const TrackingState& input)
 {
 	const auto gaze = InspectionValue::Object({{"yaw", InspectionValue::Float(input.gaze.yaw)},
 											   {"pitch", InspectionValue::Float(input.gaze.pitch)},
@@ -396,7 +392,7 @@ InspectionValue InspectTrackingInput(const TrackingState& input)
 									{"trackers", InspectArray(input.trackers, InspectTracker)}});
 }
 
-InspectionValue InspectTrackedBody(const BodySample& body, std::uint64_t skeleton)
+static InspectionValue InspectTrackedBody(const BodySample& body, std::uint64_t skeleton)
 {
 	std::vector<InspectionValue> joints;
 	joints.reserve(body.joints.size());
@@ -411,13 +407,13 @@ InspectionValue InspectTrackedBody(const BodySample& body, std::uint64_t skeleto
 									{"joints", InspectionValue::Array(std::move(joints))}});
 }
 
-InspectionValue InspectTrackedDevice(const TrackerSample& tracker)
+static InspectionValue InspectTrackedDevice(const TrackerSample& tracker)
 {
 	return InspectionValue::Object(
 		{{"device", InspectTracker(tracker.device)}, {"sample", InspectPoseSample(tracker.pose)}});
 }
 
-InspectionValue InspectTracking(const TrackingSnapshot& tracking, std::uint64_t skeleton)
+static InspectionValue InspectTracking(const TrackingSnapshot& tracking, std::uint64_t skeleton)
 {
 	return InspectionValue::Object({{"time", InspectionValue::Signed(tracking.time.value.count())},
 									{"head", InspectPoseSample(tracking.head)},
@@ -428,7 +424,7 @@ InspectionValue InspectTracking(const TrackingSnapshot& tracking, std::uint64_t 
 									{"input", InspectTrackingInput(tracking.input)},
 									{"proportions", InspectProportions(tracking.proportions)}});
 }
-InspectionValue InspectViews(const ViewSettings& value, ViewLayout layout)
+static InspectionValue InspectViews(const ViewSettings& value, ViewLayout layout)
 {
 	return InspectionValue::Object(
 		{{"schema", InspectionValue::Unsigned(1)},
@@ -544,7 +540,7 @@ class ActionDictionaryEncoder
   private:
 	const ActionInspectionDictionary* m_dictionary;
 };
-const char* InactiveReasonName(InactiveReason value)
+static const char* InactiveReasonName(InactiveReason value)
 {
 	switch (value)
 	{
@@ -567,8 +563,8 @@ const char* InactiveReasonName(InactiveReason value)
 	}
 	throw std::invalid_argument("Unknown inactive reason");
 }
-InspectionValue InspectActionValue(XrPath path, const ActionStateValue& state,
-								   const ActionDictionaryEncoder& dictionary)
+static InspectionValue InspectActionValue(XrPath path, const ActionStateValue& state,
+										  const ActionDictionaryEncoder& dictionary)
 {
 	return InspectionValue::Object(
 		{{"subaction_path", dictionary.InspectPath(path)},
@@ -581,7 +577,8 @@ InspectionValue InspectActionValue(XrPath path, const ActionStateValue& state,
 		 {"inactive_reason", InspectionValue::Text(InactiveReasonName(state.inactiveReason))}});
 }
 
-InspectionValue InspectActionSource(const ResolvedActionSource& source, const ActionDictionaryEncoder& dictionary)
+static InspectionValue InspectActionSource(const ResolvedActionSource& source,
+										   const ActionDictionaryEncoder& dictionary)
 {
 	return InspectionValue::Object({{"device", InspectDevice(source.device)},
 									{"binding", dictionary.InspectBinding(source.binding)},
@@ -593,7 +590,7 @@ InspectionValue InspectActionSource(const ResolvedActionSource& source, const Ac
 									{"active", InspectionValue::Boolean(source.active)}});
 }
 
-InspectionValue InspectActionSnapshot(const ActionSnapshot& action, const ActionDictionaryEncoder& dictionary)
+static InspectionValue InspectActionSnapshot(const ActionSnapshot& action, const ActionDictionaryEncoder& dictionary)
 {
 	std::vector<std::pair<XrPath, ActionStateValue>> values(action.values.begin(), action.values.end());
 	std::sort(values.begin(), values.end(),
@@ -620,8 +617,8 @@ InspectionValue InspectActionSnapshot(const ActionSnapshot& action, const Action
 								   })}});
 }
 
-InspectionValue InspectActions(const ActionSyncSnapshot& actions, const ActionDictionaryEncoder& dictionary,
-							   std::optional<std::uint64_t> revision)
+static InspectionValue InspectActions(const ActionSyncSnapshot& actions, const ActionDictionaryEncoder& dictionary,
+									  std::optional<std::uint64_t> revision)
 {
 	if (!revision)
 		return InspectionValue::Object({{"available", InspectionValue::Boolean(false)},
@@ -661,7 +658,7 @@ InspectionValue InspectActions(const ActionSyncSnapshot& actions, const ActionDi
 									  return InspectActionSnapshot(action, dictionary);
 								  })}});
 }
-const char* HapticStatusName(HapticStatus value)
+static const char* HapticStatusName(HapticStatus value)
 {
 	switch (value)
 	{
@@ -678,7 +675,7 @@ const char* HapticStatusName(HapticStatus value)
 	}
 	throw std::invalid_argument("Unknown haptic status");
 }
-InspectionValue InspectHaptics(const std::vector<HapticOutput>& value, const ActionDictionaryEncoder& dictionary)
+static InspectionValue InspectHaptics(const std::vector<HapticOutput>& value, const ActionDictionaryEncoder& dictionary)
 {
 	return InspectArray(
 		value,
@@ -697,10 +694,13 @@ InspectionValue InspectHaptics(const std::vector<HapticOutput>& value, const Act
 				 {"status", InspectionValue::Text(HapticStatusName(haptic.status))}});
 		});
 }
-class LayerEncoder
+class FrameLayerEncoder
 {
   public:
-	InspectionValue Projection(const ProjectionLayerDescription& layer) { return Layer(layer); }
+	InspectionValue Projection(const ProjectionLayerDescription& layer)
+	{
+		return Layer(layer);
+	}
 	InspectionValue InspectLayers(const FrameLayers& value)
 	{
 		return InspectionValue::Object({{"identity_scope", InspectionValue::Text("frame")},
@@ -744,8 +744,9 @@ class LayerEncoder
 	}
 	InspectionValue Space(const LayerSpaceDescription& value)
 	{
-		const auto referenceType = value.referenceType == XR_REFERENCE_SPACE_TYPE_MAX_ENUM ?
-			InspectionValue::Null() : InspectionValue::Signed(value.referenceType);
+		const auto referenceType = value.referenceType == XR_REFERENCE_SPACE_TYPE_MAX_ENUM
+									   ? InspectionValue::Null()
+									   : InspectionValue::Signed(value.referenceType);
 		return InspectionValue::Object({{"source", Identity(m_spaces, value.source)},
 										{"flags", InspectionValue::Unsigned(value.flags)},
 										{"world_pose", InspectPoseSample(value.worldPose)},
@@ -797,7 +798,7 @@ class LayerEncoder
 	std::vector<XrSwapchain> m_sources;
 	std::vector<XrSpace> m_spaces;
 };
-const char* FrameStageName(FrameStage value)
+static const char* FrameStageName(FrameStage value)
 {
 	switch (value)
 	{
@@ -814,7 +815,7 @@ const char* FrameStageName(FrameStage value)
 	}
 	throw std::invalid_argument("Unknown frame stage");
 }
-const char* OutputDispositionName(FrameOutputDisposition value)
+static const char* OutputDispositionName(FrameOutputDisposition value)
 {
 	switch (value)
 	{
@@ -829,7 +830,7 @@ const char* OutputDispositionName(FrameOutputDisposition value)
 	}
 	throw std::invalid_argument("Unknown output disposition");
 }
-const char* DropReasonName(FrameDropReason value)
+static const char* DropReasonName(FrameDropReason value)
 {
 	switch (value)
 	{
@@ -842,7 +843,7 @@ const char* DropReasonName(FrameDropReason value)
 	}
 	throw std::invalid_argument("Unknown drop reason");
 }
-InspectionValue InspectPrediction(const FramePrediction& prediction)
+static InspectionValue InspectPrediction(const FramePrediction& prediction)
 {
 	return InspectionValue::Object({{"frame_id", InspectionValue::Unsigned(prediction.id.value)},
 									{"tick", InspectionValue::Unsigned(prediction.displayTick.value)},
@@ -850,7 +851,7 @@ InspectionValue InspectPrediction(const FramePrediction& prediction)
 									{"period", InspectionValue::Signed(prediction.displayPeriod.count())}});
 }
 
-InspectionValue InspectSubmissionSummary(const FrameSubmissionState& submission)
+static InspectionValue InspectSubmissionSummary(const FrameSubmissionState& submission)
 {
 	return InspectionValue::Object(
 		{{"display_time", InspectionValue::Signed(submission.displayTime.value.count())},
@@ -860,18 +861,17 @@ InspectionValue InspectSubmissionSummary(const FrameSubmissionState& submission)
 		 {"drop_reason", InspectionValue::Text(DropReasonName(submission.dropReason))}});
 }
 
-InspectionValue InspectViewQuery(const ViewQuerySnapshot& query)
+static InspectionValue InspectViewQuery(const ViewQuerySnapshot& query)
 {
-	return InspectionValue::Object(
-		{{"correlation", InspectionValue::Text("last_successful_query_at_submission_time")},
-		 {"display_time", InspectionValue::Signed(query.displayTime.value.count())},
-		 {"sample_time", InspectionValue::Signed(query.sampleTime.value.count())},
-		 {"foveated_requested", InspectionValue::Boolean(query.foveatedRequested)},
-		 {"gaze_active", InspectionValue::Boolean(query.gazeActive)},
-		 {"fovs", InspectArray(query.fieldsOfView, InspectFov)}});
+	return InspectionValue::Object({{"correlation", InspectionValue::Text("last_successful_query_at_submission_time")},
+									{"display_time", InspectionValue::Signed(query.displayTime.value.count())},
+									{"sample_time", InspectionValue::Signed(query.sampleTime.value.count())},
+									{"foveated_requested", InspectionValue::Boolean(query.foveatedRequested)},
+									{"gaze_active", InspectionValue::Boolean(query.gazeActive)},
+									{"fovs", InspectArray(query.fieldsOfView, InspectFov)}});
 }
 
-InspectionValue InspectAvailability(const FrameSubmissionState& submission)
+static InspectionValue InspectAvailability(const FrameSubmissionState& submission)
 {
 	const auto diagnosticAvailability = submission.diagnostics ? "recorded_at_submission" : "not_recorded";
 	return InspectionValue::Object(
@@ -885,16 +885,15 @@ InspectionValue InspectAvailability(const FrameSubmissionState& submission)
 		 {"validation_events", InspectionValue::Text(diagnosticAvailability)},
 		 {"frame_trace", InspectionValue::Text(diagnosticAvailability)}});
 }
-} // namespace
 InspectionValue InspectDiagnostics(const FrameDiagnostics& diagnostics)
 {
-	static constexpr std::array kinds{"wait_started",	  "wait_returned",	  "issued",			  "begun",
-									  "submitted",		  "discarded",		  "cancelled",		  "native_submitted",
-									  "gpu_complete",	  "gpu_failed",		  "display_selected", "display_repeated",
-									  "display_cleared",  "capture_ready",	  "capture_failed",	  "preview_dropped",
-									  "commands_applied", "command_rejected", "api_error",		  "validation",
-									  "display_empty", "image_retired"};
-	static constexpr std::array categories{"timing", "performance", "api_error", "validation", "command"};
+	static constexpr std::array s_kinds{"wait_started",		"wait_returned",	"issued",			"begun",
+										"submitted",		"discarded",		"cancelled",		"native_submitted",
+										"gpu_complete",		"gpu_failed",		"display_selected", "display_repeated",
+										"display_cleared",	"capture_ready",	"capture_failed",	"preview_dropped",
+										"commands_applied", "command_rejected", "api_error",		"validation",
+										"display_empty",	"image_retired"};
+	static constexpr std::array s_categories{"timing", "performance", "api_error", "validation", "command"};
 	return InspectionValue::Object(
 		{{"capacity", InspectionValue::Unsigned(diagnostics.capacity)},
 		 {"dropped", InspectionValue::Unsigned(diagnostics.dropped)},
@@ -912,34 +911,51 @@ InspectionValue InspectDiagnostics(const FrameDiagnostics& diagnostics)
 					   {"frame_id", InspectionValue::Unsigned(event.frame.frame.value)},
 					   {"time", InspectionValue::Signed(event.time.value.count())},
 					   {"host_time", InspectionValue::Signed(event.hostTime.count())},
-					   {"kind", InspectionValue::Text(kinds.at(static_cast<std::size_t>(event.kind)))},
-					   {"category", InspectionValue::Text(categories.at(static_cast<std::size_t>(event.category)))},
+					   {"kind", InspectionValue::Text(s_kinds.at(static_cast<std::size_t>(event.kind)))},
+					   {"category", InspectionValue::Text(s_categories.at(static_cast<std::size_t>(event.category)))},
 					   {"detail", InspectionValue::Text(std::string_view{event.detail.data(), event.detailLength})},
 					   {"detail_truncated", InspectionValue::Boolean(event.detailTruncated)},
 					   {"result", InspectionValue::Signed(event.result)},
 					   {"related", InspectionValue::Unsigned(event.related)}});
 			  })}});
 }
-namespace
-{
-InspectionValue InspectHistoricalImage(const HistoricalImage& image)
+static InspectionValue InspectHistoricalImage(const HistoricalImage& image)
 {
 	const auto& frame = *image.metadata;
-	const auto completion = image.output ? image.output->PollCompletion() : CompletionStatus::Failed;
-	const auto phase = image.output ? (completion == CompletionStatus::Complete ? "ready"
-		: completion == CompletionStatus::Pending ? "pending" : "failed")
-		: ((image.view == ImageHistoryView::Quads && !image.quadVisible) ||
-			(frame.submission && !frame.submission->layerCount)) ? "clear" : "unavailable";
+	const char* phase = "unavailable";
+	if (image.output)
+	{
+		switch (image.output->PollCompletion())
+		{
+		case CompletionStatus::Complete:
+			phase = "ready";
+			break;
+		case CompletionStatus::Pending:
+			phase = "pending";
+			break;
+		case CompletionStatus::Failed:
+			phase = "failed";
+			break;
+		}
+	}
+	else if ((image.view == ImageHistoryView::Quads && !image.quadVisible) ||
+			 (frame.submission && !frame.submission->layerCount))
+		phase = "clear";
 	return InspectionValue::Object(
-		{{"frame_id", InspectionValue::Unsigned(frame.key.frame.value)}, {"phase", InspectionValue::Text(phase)},
-		 {"quad_rectangles", image.view == ImageHistoryView::Quads ? InspectArray(image.quadBounds, [](const auto& rectangle)
-			{
-				return InspectionValue::Object({{"x", InspectionValue::Signed(rectangle.offset.x)},
-					{"y", InspectionValue::Signed(rectangle.offset.y)}, {"width", InspectionValue::Signed(rectangle.extent.width)},
-					{"height", InspectionValue::Signed(rectangle.extent.height)}});
-			}) : InspectionValue::Null()}});
+		{{"frame_id", InspectionValue::Unsigned(frame.key.frame.value)},
+		 {"phase", InspectionValue::Text(phase)},
+		 {"quad_rectangles", image.view == ImageHistoryView::Quads
+								 ? InspectArray(image.quadBounds,
+												[](const auto& rectangle)
+												{
+													return InspectionValue::Object(
+														{{"x", InspectionValue::Signed(rectangle.offset.x)},
+														 {"y", InspectionValue::Signed(rectangle.offset.y)},
+														 {"width", InspectionValue::Signed(rectangle.extent.width)},
+														 {"height", InspectionValue::Signed(rectangle.extent.height)}});
+												})
+								 : InspectionValue::Null()}});
 }
-} // namespace
 InspectionValue InspectImageHistory(const ImageHistorySnapshot& history)
 {
 	return InspectionValue::Object(
@@ -952,8 +968,11 @@ InspectionValue InspectImageHistory(const ImageHistorySnapshot& history)
 }
 InspectionValue InspectImageWindow(const ImageWindowSnapshot& window)
 {
-	const auto phase = window.interrupted ? "interrupted" :
-		window.postCount == FrameImageWindow::PostCount ? "complete" : "collecting";
+	const char* phase = "collecting";
+	if (window.interrupted)
+		phase = "interrupted";
+	else if (window.postCount == FrameImageWindow::PostCount)
+		phase = "complete";
 	return InspectionValue::Object(
 		{{"generation", InspectionValue::Unsigned(window.generation.value)},
 		 {"target", InspectionValue::Text(window.view == ImageHistoryView::Quads ? "quad_layers" : "composed_eyes")},
@@ -979,7 +998,7 @@ InspectionValue InspectProjectionHistory(const FrameHistorySnapshot& history, st
 			continue;
 		const auto& submission = *(*frame)->submission;
 		const auto& layers = submission.layers->layers;
-		LayerEncoder encoder;
+		FrameLayerEncoder encoder;
 		for (std::size_t index = layers.size(); index > 0; --index)
 		{
 			const auto* projection = std::get_if<ProjectionLayerDescription>(&layers[index - 1]);
@@ -997,12 +1016,11 @@ InspectionValue InspectProjectionHistory(const FrameHistorySnapshot& history, st
 		}
 	}
 	std::reverse(entries.begin(), entries.end());
-	return InspectionValue::Object(
-		{{"generation", InspectionValue::Unsigned(history.generation.value)},
-		 {"capacity", InspectionValue::Unsigned(history.capacity)},
-		 {"evicted_frames", InspectionValue::Unsigned(history.evicted)},
-		 {"omitted_entries", InspectionValue::Unsigned(available - entries.size())},
-		 {"entries", InspectionValue::Array(std::move(entries))}});
+	return InspectionValue::Object({{"generation", InspectionValue::Unsigned(history.generation.value)},
+									{"capacity", InspectionValue::Unsigned(history.capacity)},
+									{"evicted_frames", InspectionValue::Unsigned(history.evicted)},
+									{"omitted_entries", InspectionValue::Unsigned(available - entries.size())},
+									{"entries", InspectionValue::Array(std::move(entries))}});
 }
 
 std::shared_ptr<const InspectionRecord> InspectFrame(InspectionStore& store, ControlSessionId session,
@@ -1040,7 +1058,7 @@ std::shared_ptr<const InspectionRecord> InspectFrame(InspectionStore& store, Con
 		session, frame.key, std::move(features),
 		[&](std::span<const std::uint64_t> revisions)
 		{
-			LayerEncoder layers;
+			FrameLayerEncoder layers;
 			return InspectionValue::Object(
 					   {{"schema", InspectionValue::Unsigned(1)},
 						{"session", InspectionValue::Unsigned(session.value)},

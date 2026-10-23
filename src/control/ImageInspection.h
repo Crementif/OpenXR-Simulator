@@ -5,12 +5,15 @@
 #include "graphics/SharedImageTypes.h"
 
 #include <array>
+#include <compare>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <openxr/openxr.h>
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <vector>
 
 namespace simxr::control
 {

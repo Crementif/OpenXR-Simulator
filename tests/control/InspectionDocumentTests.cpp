@@ -103,6 +103,19 @@ void CatalogTransactionsAndReaders()
 	third.reset();
 	store.Release(3);
 	Capacity([&] { store.Retain({1}, {{1}, {4}}, {}, [](auto) { return std::vector<std::byte>(65); }); });
+	bool serializedOversizedFeatures = false;
+	Capacity(
+		[&]
+		{
+			store.Retain({1}, {{1}, {4}}, {{"oversized", std::vector<std::byte>(65)}},
+						 [&](auto)
+						 {
+							 serializedOversizedFeatures = true;
+							 return std::vector<std::byte>{};
+						 });
+		});
+	Require(!serializedOversizedFeatures && !store.Read(4) && !store.ReadRevision(3),
+			"Over-budget feature preparation reached serialization or published an identity");
 	auto fourth = store.Retain({1}, {{1}, {4}}, {}, serialize);
 	Require(fourth->id == 4, "Byte capacity failure consumed inspection ID");
 }

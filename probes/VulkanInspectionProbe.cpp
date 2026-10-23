@@ -367,6 +367,39 @@ void Verify(const VulkanInspectionFrame& frame, std::uint32_t width, std::uint32
 				layers);
 }
 
+void VerifyControlLayer(const std::shared_ptr<VulkanInspectionFrame>& frame, const EyeColors& expected,
+						std::uint32_t layer)
+{
+	const auto provider = control::CreateVulkanImageInspectionProvider();
+	const auto reader = provider->Retain(frame);
+	const auto original = reader->Description();
+	Require(original.arrayLayers == 2 && original.views.size() == 2,
+			"Control slice fixture must retain stereo view metadata");
+	const auto exported = reader->Export(layer);
+	const auto description = control::DecodeImageDescription(control::EncodeImageDescription(exported->Description()));
+	Require(description.arrayLayers == 1 && description.views.size() == 1 && description.width == original.width &&
+				description.height == original.height,
+			"Single-layer export retained incompatible stereo metadata");
+	const auto components = [](const FrameView& view)
+	{
+		return std::array{view.pose.orientation.x, view.pose.orientation.y, view.pose.orientation.z,
+						  view.pose.orientation.w, view.pose.position.x,	view.pose.position.y,
+						  view.pose.position.z,	   view.fov.angleLeft,		view.fov.angleRight,
+						  view.fov.angleUp,		   view.fov.angleDown};
+	};
+	Require(components(description.views.front()) == components(original.views.at(layer)),
+			"Single-layer export changed its selected view metadata");
+	AwaitComplete(*exported);
+	const auto bytes = exported->Read();
+	Require(bytes.size() == static_cast<std::size_t>(description.width) * description.height * 4 &&
+				exported->ByteSize() == bytes.size(),
+			"Control slice export byte count changed");
+	for (std::size_t offset = 0; offset < bytes.size(); ++offset)
+		Require(std::to_integer<std::uint8_t>(bytes[offset]) == expected[layer][offset % 4],
+				"Control slice export contains pixels from another eye");
+	std::puts("case=control-layer-export selectedView=exact metadataRoundTrip=yes pixels=exact PASS");
+}
+
 std::shared_ptr<VulkanFrame> Producer(VulkanBackend& backend, const std::shared_ptr<VulkanImage>& source)
 {
 	const auto layers = Layers(reinterpret_cast<XrSwapchain>(201));
@@ -1274,6 +1307,7 @@ bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validat
 		Verify(*sequenceImage, 32, 24, Original);
 		Verify(*retained, 32, 24, Original);
 		Verify(*retained, 32, 24, Original, 1);
+		VerifyControlLayer(retained, Original, 1);
 		Verify(*resized, 40, 30, Reused);
 		VerifyRaw(rawRetention);
 		VerifyRaw(srgbRawRetention);

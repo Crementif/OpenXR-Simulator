@@ -3,6 +3,9 @@
 #include "control/ProtocolTypes.h"
 #include "presentation/FrameImageHistory.h"
 
+#include <cstdint>
+#include <memory>
+
 namespace simxr::control
 {
 struct ImageWindowReader
@@ -17,6 +20,7 @@ class ConnectionImageWindows
 	std::uint64_t Store(ControlSessionId session, std::shared_ptr<FrameImageWindow> window);
 	ImageWindowReader Read(std::uint64_t id) const;
 	ImageWindowReader Release(std::uint64_t id) noexcept;
+
   private:
 	std::uint64_t m_next = 1, m_id = 0;
 	ImageWindowReader m_reader;

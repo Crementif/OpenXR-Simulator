@@ -1,7 +1,6 @@
 #include "control/ConnectionImageWindows.h"
+#include "Pch.h"
 #include "control/ControlRequestError.h"
-
-#include <utility>
 
 namespace simxr::control
 {

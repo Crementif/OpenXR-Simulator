@@ -1,8 +1,10 @@
 #include "control/backends/vulkan/VulkanControlHandle.h"
+#include "Pch.h"
 
+#include <bit>
 #include <limits>
+#include <stdexcept>
 #include <system_error>
-#include <utility>
 #ifndef _WIN32
 #include <cerrno>
 #include <fcntl.h>
@@ -10,12 +12,10 @@
 
 namespace simxr::control
 {
-namespace
-{
-class NativeTransfer final : public TransferHandle
+class VulkanControlHandle final : public TransferHandle
 {
   public:
-	explicit NativeTransfer(VulkanExternalHandle handle) : m_handle(std::move(handle)) {}
+	explicit VulkanControlHandle(VulkanExternalHandle handle) : m_handle(std::move(handle)) {}
 	TransferHandleKind Kind() const noexcept override
 	{
 		return VulkanTransferKind;
@@ -23,7 +23,7 @@ class NativeTransfer final : public TransferHandle
 	std::intptr_t Value() const noexcept override
 	{
 #ifdef _WIN32
-		return reinterpret_cast<std::intptr_t>(m_handle.Get());
+		return std::bit_cast<std::intptr_t>(m_handle.Get());
 #else
 		return m_handle.Get();
 #endif
@@ -36,10 +36,9 @@ class NativeTransfer final : public TransferHandle
   private:
 	VulkanExternalHandle m_handle;
 };
-} // namespace
 std::shared_ptr<TransferHandle> OwnVulkanControlHandle(VulkanExternalHandle handle)
 {
-	return std::make_shared<NativeTransfer>(std::move(handle));
+	return std::make_shared<VulkanControlHandle>(std::move(handle));
 }
 VulkanExternalHandle DuplicateVulkanControlHandle(const std::shared_ptr<TransferHandle>& handle)
 {
@@ -49,9 +48,10 @@ VulkanExternalHandle DuplicateVulkanControlHandle(const std::shared_ptr<Transfer
 	if (handle->Value() <= 0)
 		throw std::invalid_argument("Invalid Windows Vulkan transfer handle");
 	HANDLE copy = nullptr;
-	if (!DuplicateHandle(GetCurrentProcess(), reinterpret_cast<HANDLE>(handle->Value()), GetCurrentProcess(), &copy, 0,
+	if (!DuplicateHandle(GetCurrentProcess(), std::bit_cast<HANDLE>(handle->Value()), GetCurrentProcess(), &copy, 0,
 						 FALSE, DUPLICATE_SAME_ACCESS))
-		throw std::system_error(GetLastError(), std::system_category(), "Duplicate Vulkan transfer handle");
+		throw std::system_error(static_cast<int>(GetLastError()), std::system_category(),
+								"Duplicate Vulkan transfer handle");
 #else
 	if (handle->Value() < 0 || handle->Value() > std::numeric_limits<int>::max())
 		throw std::invalid_argument("Invalid Vulkan transfer descriptor");

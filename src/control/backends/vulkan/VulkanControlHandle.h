@@ -3,6 +3,8 @@
 #include "control/ControlPacket.h"
 #include "graphics/backends/vulkan/VulkanExternal.h"
 
+#include <memory>
+
 namespace simxr::control
 {
 #ifdef _WIN32

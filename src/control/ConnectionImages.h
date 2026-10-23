@@ -3,8 +3,11 @@
 #include "control/ImageInspection.h"
 #include "presentation/SnapshotStore.h"
 
+#include <compare>
+#include <cstdint>
 #include <memory>
 #include <optional>
+#include <vector>
 
 namespace simxr::control
 {
@@ -22,7 +25,6 @@ struct ImageSource
 // a held connection mutex: provider calls and last-reader destruction can reenter.
 class ConnectionImages
 {
-	struct State;
 	enum class ResourceKind
 	{
 		Reader,
@@ -82,6 +84,29 @@ class ConnectionImages
 
   private:
 	std::shared_ptr<const void> Release(ResourceKind kind, std::uint64_t id) noexcept;
-	std::unique_ptr<State> m_state;
+	template <class Resource> struct ImageEntry
+	{
+		std::uint64_t id = 0, reader = 0;
+		ImageSource source;
+		std::shared_ptr<Resource> value;
+	};
+	template <class Resource> class ImageTable
+	{
+	  public:
+		ImageTable();
+		void CheckCapacity() const;
+		std::shared_ptr<const ImageEntry<Resource>> Find(std::uint64_t id) const;
+		std::shared_ptr<const ImageEntry<Resource>> Find(const ImageSource& source) const;
+		std::shared_ptr<const ImageEntry<Resource>> Add(std::shared_ptr<Resource> value, ImageSource source,
+														std::uint64_t reader = 0);
+		std::shared_ptr<const ImageEntry<Resource>> Release(std::uint64_t id) noexcept;
+
+	  private:
+		std::vector<std::shared_ptr<ImageEntry<Resource>>> m_entries;
+		std::uint64_t m_next = 1;
+	};
+	ImageTable<ImageReader> m_images;
+	ImageTable<ImageDelivery> m_deliveries;
+	ImageTable<ImageExport> m_exports;
 };
 } // namespace simxr::control
