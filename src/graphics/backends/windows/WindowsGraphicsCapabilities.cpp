@@ -27,13 +27,8 @@ std::span<const std::int64_t> Direct3DSwapchainFormats()
 	return s_formats;
 }
 
-XrResult Direct3DMaxSampleCount(bool d3d11, bool d3d12, std::uint32_t& output)
+static XrResult FindAdapter(ComPtr<IDXGIAdapter1>& output, DXGI_ADAPTER_DESC1& description)
 {
-	if (!d3d11 && !d3d12)
-	{
-		output = 1;
-		return XR_SUCCESS;
-	}
 	ComPtr<IDXGIFactory1> factory;
 	if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))))
 		return XR_ERROR_RUNTIME_FAILURE;
@@ -45,13 +40,41 @@ XrResult Direct3DMaxSampleCount(bool d3d11, bool d3d12, std::uint32_t& output)
 			return XR_ERROR_SYSTEM_INVALID;
 		if (FAILED(enumerated))
 			return XR_ERROR_RUNTIME_FAILURE;
-		DXGI_ADAPTER_DESC1 description{};
-		if (FAILED(adapter->GetDesc1(&description)))
+		DXGI_ADAPTER_DESC1 candidate{};
+		if (FAILED(adapter->GetDesc1(&candidate)))
 			return XR_ERROR_RUNTIME_FAILURE;
-		if (!(description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE))
-			break;
+		if (!(candidate.Flags & DXGI_ADAPTER_FLAG_SOFTWARE))
+		{
+			output = std::move(adapter);
+			description = candidate;
+			return XR_SUCCESS;
+		}
 		adapter.Reset();
 	}
+}
+
+XrResult Direct3DAdapterLuid(LUID& output)
+{
+	ComPtr<IDXGIAdapter1> adapter;
+	DXGI_ADAPTER_DESC1 description{};
+	const auto result = FindAdapter(adapter, description);
+	if (XR_SUCCEEDED(result))
+		output = description.AdapterLuid;
+	return result;
+}
+
+XrResult Direct3DMaxSampleCount(bool d3d11, bool d3d12, std::uint32_t& output)
+{
+	if (!d3d11 && !d3d12)
+	{
+		output = 1;
+		return XR_SUCCESS;
+	}
+	ComPtr<IDXGIAdapter1> adapter;
+	DXGI_ADAPTER_DESC1 description{};
+	const auto result = FindAdapter(adapter, description);
+	if (XR_FAILED(result))
+		return result;
 	ComPtr<ID3D11Device> device11;
 	ComPtr<ID3D12Device> device12;
 	const D3D_FEATURE_LEVEL level = D3D_FEATURE_LEVEL_11_0;

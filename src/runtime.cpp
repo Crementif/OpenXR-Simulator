@@ -12,7 +12,6 @@
 #include <d3d11.h>
 #include <d3d12.h>
 #include <dxgi.h>
-#include <dxgi1_6.h>
 #include <windows.h>
 #include <wrl/client.h>
 
@@ -37,6 +36,7 @@
 #include "graphics/backends/vulkan/VulkanSwapchain.h"
 #include "graphics/backends/windows/WindowsGraphicsCapabilities.h"
 #include "graphics/backends/windows/WindowsSessionGraphics.h"
+#include "platform/windows/Direct3DSwapchain.h"
 #include "platform/windows/OpenGLSwapchain.h"
 #include "platform/windows/WindowsClock.h"
 #include "platform/windows/WindowsRuntimeInput.h"
@@ -54,7 +54,6 @@
 #include "runtime/SpaceQueries.h"
 #include "runtime/validation/LayerValidation.h"
 #include "runtime/validation/StructureChain.h"
-#include <bit>
 #include <charconv>
 #include <cstdarg>
 #include <cstdio>
@@ -112,48 +111,6 @@ static void Logf(const char* fmt, ...)
 	va_end(ap);
 	Log(buf);
 }
-static DXGI_FORMAT ToTypeless(DXGI_FORMAT format)
-{
-	switch (format)
-	{
-	// R8G8B8A8 family
-	case DXGI_FORMAT_R8G8B8A8_UNORM:
-	case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
-	case DXGI_FORMAT_R8G8B8A8_UINT:
-	case DXGI_FORMAT_R8G8B8A8_SINT:
-	case DXGI_FORMAT_R8G8B8A8_SNORM:
-		return DXGI_FORMAT_R8G8B8A8_TYPELESS;
-
-	// B8G8R8A8 family
-	case DXGI_FORMAT_B8G8R8A8_UNORM:
-	case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
-		return DXGI_FORMAT_B8G8R8A8_TYPELESS;
-
-	// R16G16B16A16 family
-	case DXGI_FORMAT_R16G16B16A16_FLOAT:
-	case DXGI_FORMAT_R16G16B16A16_UNORM:
-	case DXGI_FORMAT_R16G16B16A16_UINT:
-	case DXGI_FORMAT_R16G16B16A16_SNORM:
-	case DXGI_FORMAT_R16G16B16A16_SINT:
-		return DXGI_FORMAT_R16G16B16A16_TYPELESS;
-
-	// R32G32B32A32 family
-	case DXGI_FORMAT_R32G32B32A32_FLOAT:
-	case DXGI_FORMAT_R32G32B32A32_UINT:
-	case DXGI_FORMAT_R32G32B32A32_SINT:
-		return DXGI_FORMAT_R32G32B32A32_TYPELESS;
-
-	// R10G10B10A2 family
-	case DXGI_FORMAT_R10G10B10A2_UNORM:
-	case DXGI_FORMAT_R10G10B10A2_UINT:
-		return DXGI_FORMAT_R10G10B10A2_TYPELESS;
-
-	// Already typeless or depth formats - return as-is
-	default:
-		return format;
-	}
-}
-
 // Runtime state
 namespace rt
 {
@@ -175,8 +132,8 @@ using InstanceRef = simxr::HandleRef<XrInstance, Instance>;
 
 struct Swapchain
 {
-	XrSwapchain handle{(XrSwapchain)1};
-	DXGI_FORMAT format{DXGI_FORMAT_R8G8B8A8_UNORM};
+	XrSwapchain handle{XR_NULL_HANDLE};
+	std::int64_t format = 0;
 	uint32_t width{0}, height{0}, arraySize{2};
 	uint32_t mipCount{1};
 	uint32_t sampleCount{1};
@@ -187,14 +144,9 @@ struct Swapchain
 		D3D12,
 		OpenGL
 	} backend{Backend::D3D11};
-	std::vector<ComPtr<ID3D11Texture2D>> images;  // D3D11 path
-	std::vector<ComPtr<ID3D12Resource>> images12; // D3D12 path
-	// State the app is required to release images in, per XR_KHR_D3D12_enable:
-	// RENDER_TARGET for colour, DEPTH_WRITE for depth.
-	D3D12_RESOURCE_STATES releaseState12{D3D12_RESOURCE_STATE_COMMON};
+	std::unique_ptr<simxr::windows::Direct3DSwapchain> d3dImages;
 	std::unique_ptr<simxr::windows::OpenGLSwapchain> glImages;
 	std::shared_ptr<simxr::SwapchainAccess> access;
-	uint32_t imageCount{3};
 };
 
 struct Session
@@ -547,144 +499,38 @@ xrNegotiateLoaderRuntimeInterface(const XrNegotiateLoaderInfo* loaderInfo, XrNeg
 	}
 }
 
-// xrGetD3D12GraphicsRequirementsKHR (XR_KHR_D3D12_enable)
-static XrResult XRAPI_PTR xrGetD3D12GraphicsRequirementsKHR_runtime(XrInstance instance, XrSystemId systemId,
-																	XrGraphicsRequirementsD3D12KHR* req)
+static XrResult XRAPI_PTR xrGetD3D12GraphicsRequirementsKHR_runtime(XrInstance instance, XrSystemId system,
+																	XrGraphicsRequirementsD3D12KHR* requirements)
 {
-	auto result = RequireGraphicsExtension(instance, systemId, XR_KHR_D3D12_ENABLE_EXTENSION_NAME);
+	const auto result = RequireGraphicsExtension(instance, system, XR_KHR_D3D12_ENABLE_EXTENSION_NAME);
 	if (XR_FAILED(result))
 		return result;
-	if (!req || req->type != XR_TYPE_GRAPHICS_REQUIREMENTS_D3D12_KHR)
+	if (!requirements || requirements->type != XR_TYPE_GRAPHICS_REQUIREMENTS_D3D12_KHR)
 		return XR_ERROR_VALIDATION_FAILURE;
-
-	Logf("[SimXR] xrGetD3D12GraphicsRequirementsKHR called: instance=%p, systemId=%llu, req=%p", instance,
-		 (unsigned long long)systemId, req);
-	if (!req)
-		return XR_ERROR_VALIDATION_FAILURE;
-
-	req->type = XR_TYPE_GRAPHICS_REQUIREMENTS_D3D12_KHR;
-
-	req->adapterLuid = {};
-	Microsoft::WRL::ComPtr<IDXGIFactory1> f;
-	HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(f.GetAddressOf()));
-	if (FAILED(hr))
-		return XR_ERROR_RUNTIME_FAILURE;
-
-	for (UINT i = 0;; ++i)
-	{
-		Microsoft::WRL::ComPtr<IDXGIAdapter1> a;
-		const auto enumerated = f->EnumAdapters1(i, a.GetAddressOf());
-		if (enumerated == DXGI_ERROR_NOT_FOUND)
-			break;
-		if (FAILED(enumerated))
-			return XR_ERROR_RUNTIME_FAILURE;
-		DXGI_ADAPTER_DESC1 d{};
-		if (FAILED(a->GetDesc1(&d)))
-			return XR_ERROR_RUNTIME_FAILURE;
-		if (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
-			continue;
-		req->adapterLuid = d.AdapterLuid;
-		break;
-	}
-	req->minFeatureLevel = D3D_FEATURE_LEVEL_11_0;
-	Log("[SimXR] xrGetD3D12GraphicsRequirementsKHR: SUCCESS");
+	LUID adapter{};
+	const auto found = simxr::windows::Direct3DAdapterLuid(adapter);
+	if (XR_FAILED(found))
+		return found;
+	requirements->adapterLuid = adapter;
+	requirements->minFeatureLevel = D3D_FEATURE_LEVEL_11_0;
 	return XR_SUCCESS;
 }
-// xrGetD3D11GraphicsRequirementsKHR (XR_KHR_D3D11_enable)
-static XrResult XRAPI_PTR xrGetD3D11GraphicsRequirementsKHR_runtime(XrInstance instance, XrSystemId systemId,
-																	XrGraphicsRequirementsD3D11KHR* req)
+
+static XrResult XRAPI_PTR xrGetD3D11GraphicsRequirementsKHR_runtime(XrInstance instance, XrSystemId system,
+																	XrGraphicsRequirementsD3D11KHR* requirements)
 {
-	auto result = RequireGraphicsExtension(instance, systemId, XR_KHR_D3D11_ENABLE_EXTENSION_NAME);
+	const auto result = RequireGraphicsExtension(instance, system, XR_KHR_D3D11_ENABLE_EXTENSION_NAME);
 	if (XR_FAILED(result))
 		return result;
-	if (!req || req->type != XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR)
+	if (!requirements || requirements->type != XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR)
 		return XR_ERROR_VALIDATION_FAILURE;
-
-	Logf("[SimXR] xrGetD3D11GraphicsRequirementsKHR called: instance=%p, systemId=%llu, req=%p", instance,
-		 (unsigned long long)systemId, req);
-	if (!req)
-	{
-		Log("[SimXR] xrGetD3D11GraphicsRequirementsKHR: ERROR - null req");
-		return XR_ERROR_VALIDATION_FAILURE;
-	}
-
-	Logf("[SimXR] xrGetD3D11GraphicsRequirementsKHR: req struct size = %zu, expected = %zu", sizeof(*req),
-		 sizeof(XrGraphicsRequirementsD3D11KHR));
-
-	req->type = XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR;
-
-	req->adapterLuid = {};
-	Microsoft::WRL::ComPtr<IDXGIFactory1> f;
-	HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(f.GetAddressOf()));
-	if (FAILED(hr))
-	{
-		Logf("[SimXR] CreateDXGIFactory1 failed: 0x%08X", static_cast<unsigned>(hr));
-		return XR_ERROR_RUNTIME_FAILURE;
-	}
-
-	Microsoft::WRL::ComPtr<IDXGIAdapter1> bestAdapter;
-	DXGI_ADAPTER_DESC1 bestDesc{};
-	bool foundHardware = false;
-
-	// Find the best hardware adapter
-	for (UINT i = 0;; ++i)
-	{
-		Microsoft::WRL::ComPtr<IDXGIAdapter1> adapt;
-		const auto enumerated = f->EnumAdapters1(i, adapt.GetAddressOf());
-		if (enumerated == DXGI_ERROR_NOT_FOUND)
-			break;
-		if (FAILED(enumerated))
-			return XR_ERROR_RUNTIME_FAILURE;
-		DXGI_ADAPTER_DESC1 d{};
-		if (FAILED(adapt->GetDesc1(&d)))
-			return XR_ERROR_RUNTIME_FAILURE;
-
-		// Skip software adapters
-		if (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
-			continue;
-
-		// Use the first hardware adapter we find
-		if (!foundHardware)
-		{
-			bestAdapter = adapt;
-			bestDesc = d;
-			foundHardware = true;
-
-			char description[512]{};
-			if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, d.Description, -1, description,
-									static_cast<int>(sizeof(description)), nullptr, nullptr))
-				Logf("[SimXR] Found hardware adapter: %s", description);
-			else
-				Log("[SimXR] Hardware adapter name is unavailable");
-			Logf("[SimXR]   LUID: High=%ld, Low=%lu", (long)d.AdapterLuid.HighPart,
-				 (unsigned long)d.AdapterLuid.LowPart);
-			Logf("[SimXR]   Dedicated Video Memory: %llu MB",
-				 (unsigned long long)(d.DedicatedVideoMemory / (1024 * 1024)));
-		}
-	}
-
-	if (foundHardware)
-	{
-		req->adapterLuid = bestDesc.AdapterLuid;
-		req->minFeatureLevel = D3D_FEATURE_LEVEL_11_0;
-
-		Logf("[SimXR] xrGetD3D11GraphicsRequirementsKHR: Returning:");
-		Logf("[SimXR]   type = %d (expected %d)", req->type, XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR);
-		Logf("[SimXR]   next = %p", req->next);
-		Logf("[SimXR]   adapterLuid.HighPart = %ld (0x%08X)", (long)req->adapterLuid.HighPart,
-			 (unsigned)req->adapterLuid.HighPart);
-		Logf("[SimXR]   adapterLuid.LowPart = %lu (0x%08X)", (unsigned long)req->adapterLuid.LowPart,
-			 (unsigned)req->adapterLuid.LowPart);
-		Logf("[SimXR]   minFeatureLevel = 0x%X (D3D_FEATURE_LEVEL_11_0 = 0x%X)", req->minFeatureLevel,
-			 D3D_FEATURE_LEVEL_11_0);
-
-		Log("[SimXR] xrGetD3D11GraphicsRequirementsKHR: SUCCESS - Returning XR_SUCCESS");
-		return XR_SUCCESS;
-	}
-
-	// No hardware adapter found, this is an error for VR
-	Log("[SimXR] xrGetD3D11GraphicsRequirementsKHR: ERROR - No hardware graphics adapter found");
-	return XR_ERROR_SYSTEM_INVALID;
+	LUID adapter{};
+	const auto found = simxr::windows::Direct3DAdapterLuid(adapter);
+	if (XR_FAILED(found))
+		return found;
+	requirements->adapterLuid = adapter;
+	requirements->minFeatureLevel = D3D_FEATURE_LEVEL_11_0;
+	return XR_SUCCESS;
 }
 
 // xrGetOpenGLGraphicsRequirementsKHR (XR_KHR_opengl_enable)
@@ -1298,10 +1144,11 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
 				ComPtr<IDXGIAdapter> adapter;
 				if (SUCCEEDED(dxgiDevice->GetAdapter(&adapter)))
 				{
-					DXGI_ADAPTER_DESC desc;
-					adapter->GetDesc(&desc);
-					Logf("[SimXR] xrCreateSession: App D3D11 device LUID=%llu/%llu",
-						 (unsigned long long)desc.AdapterLuid.HighPart, (unsigned long long)desc.AdapterLuid.LowPart);
+					DXGI_ADAPTER_DESC desc{};
+					if (SUCCEEDED(adapter->GetDesc(&desc)))
+						Logf("[SimXR] xrCreateSession: App D3D11 device LUID=%ld/%lu",
+							 static_cast<long>(desc.AdapterLuid.HighPart),
+							 static_cast<unsigned long>(desc.AdapterLuid.LowPart));
 				}
 			}
 
@@ -1499,307 +1346,58 @@ static XrResult XRAPI_PTR xrEnumerateSwapchainFormats_runtime(XrSession session,
 	return XR_SUCCESS;
 }
 
-static XrResult XRAPI_PTR xrCreateSwapchain_runtime(XrSession session, const XrSwapchainCreateInfo* ci, XrSwapchain* sc)
+static XrResult XRAPI_PTR xrCreateSwapchain_runtime(XrSession session, const XrSwapchainCreateInfo* info,
+													XrSwapchain* output)
 {
 	const auto native = rt::RetainNativeSession(session);
 	if (!native)
 		return XR_ERROR_HANDLE_INVALID;
 	std::lock_guard lock(native->graphicsMutex);
-	if (native->vulkan)
-	{
-		if (!ci || !sc)
-			return XR_ERROR_VALIDATION_FAILURE;
-		return native->vulkan->CreateSwapchain(*ci, *sc);
-	}
-	Log("[SimXR] ============================================");
-	Logf("[SimXR] xrCreateSwapchain called: format=%lld, size=%ux%u, arraySize=%u, mipCount=%u, sampleCount=%u, "
-		 "usageFlags=0x%llX",
-		 static_cast<long long>(ci ? ci->format : -1), ci ? ci->width : 0, ci ? ci->height : 0, ci ? ci->arraySize : 0,
-		 ci ? ci->mipCount : 0, ci ? ci->sampleCount : 0, static_cast<unsigned long long>(ci ? ci->usageFlags : 0));
-
-	// Log specific usage flags
-	if (ci && ci->usageFlags)
-	{
-		if (ci->usageFlags & XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT)
-			Log("[SimXR]   - COLOR_ATTACHMENT");
-		if (ci->usageFlags & XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)
-			Log("[SimXR]   - DEPTH_STENCIL_ATTACHMENT");
-		if (ci->usageFlags & XR_SWAPCHAIN_USAGE_UNORDERED_ACCESS_BIT)
-			Log("[SimXR]   - UNORDERED_ACCESS");
-		if (ci->usageFlags & XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT)
-			Log("[SimXR]   - TRANSFER_SRC");
-		if (ci->usageFlags & XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT)
-			Log("[SimXR]   - TRANSFER_DST");
-		if (ci->usageFlags & XR_SWAPCHAIN_USAGE_SAMPLED_BIT)
-			Log("[SimXR]   - SAMPLED");
-		if (ci->usageFlags & XR_SWAPCHAIN_USAGE_MUTABLE_FORMAT_BIT)
-			Log("[SimXR]   - MUTABLE_FORMAT");
-	}
-
-	Log("[SimXR] ============================================");
-	if (!ci || !sc)
+	if (!info || !output)
 		return XR_ERROR_VALIDATION_FAILURE;
+	if (native->vulkan)
+		return native->vulkan->CreateSwapchain(*info, *output);
 	if (native->nativeClosing)
 		return XR_ERROR_SESSION_LOST;
-	if (ci->type != XR_TYPE_SWAPCHAIN_CREATE_INFO || !ci->width || !ci->height || !ci->arraySize || !ci->sampleCount ||
-		!ci->mipCount || !ci->usageFlags || (ci->faceCount != 1 && ci->faceCount != 6))
-		return XR_ERROR_VALIDATION_FAILURE;
-	if (!native->usesOpenGL)
-	{
-		constexpr XrSwapchainUsageFlags supportedUsage =
-			XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-			XR_SWAPCHAIN_USAGE_UNORDERED_ACCESS_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT |
-			XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT |
-			XR_SWAPCHAIN_USAGE_MUTABLE_FORMAT_BIT;
-		if ((ci->createFlags & ~XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) || (ci->usageFlags & ~supportedUsage) ||
-			ci->faceCount != 1)
-			return XR_ERROR_FEATURE_UNSUPPORTED;
-		if (!std::has_single_bit(ci->sampleCount) || ci->sampleCount > 32 ||
-			(ci->sampleCount != 1 && ci->mipCount != 1) ||
-			ci->mipCount > static_cast<uint32_t>(std::bit_width(std::max(ci->width, ci->height))) ||
-			ci->arraySize > 2048)
-			return XR_ERROR_VALIDATION_FAILURE;
-	}
-	rt::Swapchain chain{};
-	chain.handle = simxr::AllocateHandle<XrSwapchain>();
-	chain.format = (DXGI_FORMAT)ci->format; // Store the original requested format
-	chain.width = ci->width;
-	chain.height = ci->height;
-	chain.arraySize = ci->arraySize;
-	// Create textures on appropriate backend
-	if (native->usesD3D12)
-	{
-		chain.backend = rt::Swapchain::Backend::D3D12;
-		chain.imageCount = (ci->createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) ? 1 : 3;
-		for (uint32_t i = 0; i < chain.imageCount; ++i)
-		{
-			D3D12_RESOURCE_DESC rd = {};
-			rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-			rd.Alignment = 0;
-			rd.Width = chain.width;
-			rd.Height = chain.height;
-			rd.DepthOrArraySize = (UINT)chain.arraySize;
-			rd.MipLevels = ci->mipCount;
-			chain.mipCount = rd.MipLevels;
-			rd.Format = chain.format;
-			rd.SampleDesc.Count = ci->sampleCount;
-			rd.SampleDesc.Quality = 0;
-			rd.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-			rd.Flags = D3D12_RESOURCE_FLAG_NONE;
-			bool isDepth = (chain.format == DXGI_FORMAT_D32_FLOAT || chain.format == DXGI_FORMAT_D32_FLOAT_S8X24_UINT ||
-							chain.format == DXGI_FORMAT_D24_UNORM_S8_UINT || chain.format == DXGI_FORMAT_D16_UNORM);
-			if (isDepth)
-			{
-				// Depth textures need ALLOW_DEPTH_STENCIL to be usable as DSV
-				rd.Flags |= D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
-				// Use typeless format so UEVR can create typed views
-				switch (chain.format)
-				{
-				case DXGI_FORMAT_D32_FLOAT_S8X24_UINT:
-					rd.Format = DXGI_FORMAT_R32G8X24_TYPELESS;
-					break;
-				case DXGI_FORMAT_D32_FLOAT:
-					rd.Format = DXGI_FORMAT_R32_TYPELESS;
-					break;
-				case DXGI_FORMAT_D24_UNORM_S8_UINT:
-					rd.Format = DXGI_FORMAT_R24G8_TYPELESS;
-					break;
-				case DXGI_FORMAT_D16_UNORM:
-					rd.Format = DXGI_FORMAT_R16_TYPELESS;
-					break;
-				default:
-					break;
-				}
-			}
-			else
-			{
-				if (ci->usageFlags & XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT)
-					rd.Flags |= D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
-				if (ci->usageFlags & XR_SWAPCHAIN_USAGE_UNORDERED_ACCESS_BIT)
-					rd.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
-				// Use typeless format for mutable format swapchains so UEVR can create
-				// both sRGB and non-sRGB views of the same texture
-				if (ci->usageFlags & XR_SWAPCHAIN_USAGE_MUTABLE_FORMAT_BIT)
-				{
-					rd.Format = ToTypeless(chain.format);
-				}
-			}
-			D3D12_HEAP_PROPERTIES hp = {};
-			hp.Type = D3D12_HEAP_TYPE_DEFAULT;
-			D3D12_RESOURCE_STATES init = D3D12_RESOURCE_STATE_COMMON;
-			if (rd.Flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET)
-				init = D3D12_RESOURCE_STATE_RENDER_TARGET;
-			else if (rd.Flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)
-				init = D3D12_RESOURCE_STATE_DEPTH_WRITE;
 
-			// Provide optimized clear value for render targets and depth buffers
-			D3D12_CLEAR_VALUE clearValue = {};
-			D3D12_CLEAR_VALUE* pClearValue = nullptr;
-			if (rd.Flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET)
-			{
-				clearValue.Format = chain.format;
-				clearValue.Color[0] = 0.0f;
-				clearValue.Color[1] = 0.0f;
-				clearValue.Color[2] = 0.0f;
-				clearValue.Color[3] = 1.0f;
-				pClearValue = &clearValue;
-			}
-			else if (rd.Flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)
-			{
-				clearValue.Format = chain.format;
-				clearValue.DepthStencil.Depth = 1.0f;
-				clearValue.DepthStencil.Stencil = 0;
-				pClearValue = &clearValue;
-			}
-
-			ComPtr<ID3D12Resource> res;
-			HRESULT hr = native->d3d12Device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, init, pClearValue,
-																	  IID_PPV_ARGS(res.GetAddressOf()));
-			if (FAILED(hr))
-			{
-				Logf("[SimXR] CreateCommittedResource(D3D12)[%u] FAILED: 0x%08X", i, (unsigned)hr);
-				return XR_ERROR_RUNTIME_FAILURE;
-			}
-			chain.images12.push_back(res);
-			chain.releaseState12 = init;
-		}
-		chain.access = std::make_shared<simxr::SwapchainAccess>(
-			chain.imageCount, (ci->createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) != 0);
-		native->swapchains.emplace(chain.handle, std::move(chain));
-		*sc = chain.handle;
-		Logf("[SimXR] xrCreateSwapchain(D3D12): sc=%p fmt=%d %ux%u array=%u samples=%u", *sc, (int)ci->format,
-			 ci->width, ci->height, ci->arraySize, ci->sampleCount);
-		return XR_SUCCESS;
-	}
+	rt::Swapchain chain;
+	XrResult result;
+	std::uint32_t imageCount;
 	if (native->usesOpenGL)
 	{
-		const bool staticImage = (ci->createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) != 0;
 		chain.backend = rt::Swapchain::Backend::OpenGL;
-		chain.sampleCount = ci->sampleCount;
-		chain.imageCount = staticImage ? 1 : 3;
-		chain.mipCount = ci->mipCount;
-		chain.access = std::make_shared<simxr::SwapchainAccess>(chain.imageCount, staticImage);
-		const auto result = simxr::windows::OpenGLSwapchain::Create(native->glDC, native->glRC, *ci, chain.glImages);
+		result = simxr::windows::OpenGLSwapchain::Create(native->glDC, native->glRC, *info, chain.glImages);
 		if (XR_FAILED(result))
 			return result;
-		const auto handle = chain.handle;
-		native->swapchains.emplace(handle, std::move(chain));
-		*sc = handle;
-		Logf("[SimXR] xrCreateSwapchain(OpenGL): sc=%p fmt=%lld %ux%u array=%u", handle,
-			 static_cast<long long>(ci->format), ci->width, ci->height, ci->arraySize);
-		return XR_SUCCESS;
-	}
-	// D3D11 path
-	D3D11_TEXTURE2D_DESC td{};
-
-	// Determine if this is a depth format
-	bool isDepthFormat = (chain.format == DXGI_FORMAT_D32_FLOAT || chain.format == DXGI_FORMAT_D32_FLOAT_S8X24_UINT ||
-						  chain.format == DXGI_FORMAT_D24_UNORM_S8_UINT || chain.format == DXGI_FORMAT_D16_UNORM);
-
-	// For depth formats that need to be sampled, we must use typeless format
-	bool needsTypelessDepth = isDepthFormat && (ci->usageFlags & XR_SWAPCHAIN_USAGE_SAMPLED_BIT);
-
-	// Convert depth format to typeless when sampling is needed
-	auto ToTypelessDepth = [](DXGI_FORMAT fmt) -> DXGI_FORMAT
-	{
-		switch (fmt)
-		{
-		case DXGI_FORMAT_D32_FLOAT:
-			return DXGI_FORMAT_R32_TYPELESS;
-		case DXGI_FORMAT_D32_FLOAT_S8X24_UINT:
-			return DXGI_FORMAT_R32G8X24_TYPELESS;
-		case DXGI_FORMAT_D24_UNORM_S8_UINT:
-			return DXGI_FORMAT_R24G8_TYPELESS;
-		case DXGI_FORMAT_D16_UNORM:
-			return DXGI_FORMAT_R16_TYPELESS;
-		default:
-			return fmt;
-		}
-	};
-
-	// Use typeless format for color textures to allow both UNORM and SRGB views
-	// Use typeless format for depth textures when sampling is needed
-	if (isDepthFormat)
-	{
-		td.Format = needsTypelessDepth ? ToTypelessDepth(chain.format) : chain.format;
+		imageCount = static_cast<std::uint32_t>(chain.glImages->Images().size());
 	}
 	else
 	{
-		td.Format = ToTypeless(chain.format);
-	}
-
-	td.Width = chain.width;
-	td.Height = chain.height;
-	td.ArraySize = chain.arraySize;
-	td.MipLevels = ci->mipCount;
-	chain.mipCount = td.MipLevels;
-	td.SampleDesc.Count = ci->sampleCount;
-	td.SampleDesc.Quality = 0; // Must be 0 for non-MSAA
-	// Set bind flags based on format type
-
-	if (isDepthFormat)
-	{
-		td.BindFlags = D3D11_BIND_DEPTH_STENCIL;
-		// Typeless depth formats can also be shader resources
-		if (needsTypelessDepth)
+		if (native->usesD3D12)
 		{
-			td.BindFlags |= D3D11_BIND_SHADER_RESOURCE;
+			chain.backend = rt::Swapchain::Backend::D3D12;
+			result = simxr::windows::Direct3DSwapchain::Create(native->d3d12Device.Get(), *info, chain.d3dImages);
 		}
+		else
+			result = simxr::windows::Direct3DSwapchain::Create(native->d3d11Device.Get(), *info, chain.d3dImages);
+		if (XR_FAILED(result))
+			return result;
+		imageCount = chain.d3dImages->ImageCount();
 	}
-	else
-	{
-		td.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
-
-		// Add unordered access if requested
-		if (ci->usageFlags & XR_SWAPCHAIN_USAGE_UNORDERED_ACCESS_BIT)
-		{
-			td.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
-		}
-	}
-
-	td.Usage = D3D11_USAGE_DEFAULT;
-	td.CPUAccessFlags = 0;
-
-	// Set MiscFlags based on what Unity might need
-	td.MiscFlags = 0;
-
-	// Log the texture description for debugging
-	Logf("[SimXR] Creating swapchain textures: Format=%d, %ux%u, Array=%u, Mips=%u, Samples=%u", td.Format, td.Width,
-		 td.Height, td.ArraySize, td.MipLevels, td.SampleDesc.Count);
-	chain.imageCount = (ci->createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) ? 1 : 3;
-	for (uint32_t i = 0; i < chain.imageCount; ++i)
-	{
-		ComPtr<ID3D11Texture2D> tex;
-		HRESULT hr = native->d3d11Device->CreateTexture2D(&td, nullptr, tex.GetAddressOf());
-		if (FAILED(hr))
-		{
-			Logf("[SimXR] CreateTexture2D[%u] FAILED: hr=0x%08X", i, (unsigned)hr);
-			Logf("[SimXR]   Format=%d, Size=%ux%u, Array=%u, Mips=%u, Samples=%u, BindFlags=0x%X", td.Format, td.Width,
-				 td.Height, td.ArraySize, td.MipLevels, td.SampleDesc.Count, td.BindFlags);
-
-			// Try to provide more specific error info
-			if (hr == E_INVALIDARG)
-			{
-				Log("[SimXR]   ERROR: E_INVALIDARG - Invalid texture parameters");
-				// Check common issues
-				if (td.ArraySize == 0)
-					Log("[SimXR]   - ArraySize is 0");
-				if (td.Width == 0 || td.Height == 0)
-					Log("[SimXR]   - Invalid dimensions");
-				if (td.MipLevels == 0)
-					Log("[SimXR]   - MipLevels is 0");
-			}
-			return XR_ERROR_RUNTIME_FAILURE;
-		}
-		Logf("[SimXR] Created swapchain texture[%u]: %p", i, tex.Get());
-		chain.images.push_back(std::move(tex));
-	}
+	chain.handle = simxr::AllocateHandle<XrSwapchain>();
+	chain.format = info->format;
+	chain.width = info->width;
+	chain.height = info->height;
+	chain.arraySize = info->arraySize;
+	chain.mipCount = info->mipCount;
+	chain.sampleCount = info->sampleCount;
 	chain.access = std::make_shared<simxr::SwapchainAccess>(
-		chain.imageCount, (ci->createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) != 0);
-	native->swapchains.emplace(chain.handle, std::move(chain));
-	*sc = chain.handle;
-	Logf("[SimXR] xrCreateSwapchain: sc=%p fmt=%d %ux%u array=%u samples=%u", *sc, (int)ci->format, ci->width,
-		 ci->height, ci->arraySize, ci->sampleCount);
+		imageCount, (info->createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) != 0);
+	const auto handle = chain.handle;
+	native->swapchains.emplace(handle, std::move(chain));
+	*output = handle;
+	Logf("[SimXR] xrCreateSwapchain: sc=%p format=%lld %ux%u array=%u samples=%u", handle,
+		 static_cast<long long>(info->format), info->width, info->height, info->arraySize, info->sampleCount);
 	return XR_SUCCESS;
 }
 
@@ -1818,66 +1416,23 @@ static XrResult XRAPI_PTR xrEnumerateSwapchainImages_runtime(XrSwapchain sc, uin
 	auto it = native->swapchains.find(sc);
 	if (it == native->swapchains.end())
 		return XR_ERROR_HANDLE_INVALID;
-	if (it->second.backend == rt::Swapchain::Backend::D3D12)
-	{
-		const uint32_t n = (uint32_t)it->second.images12.size();
-		if (!count || (capacity && !images))
-			return XR_ERROR_VALIDATION_FAILURE;
-		*count = n;
-		if (!capacity)
-			return XR_SUCCESS;
-		if (capacity < n)
-			return XR_ERROR_SIZE_INSUFFICIENT;
-		auto* output = reinterpret_cast<XrSwapchainImageD3D12KHR*>(images);
-		for (uint32_t index = 0; index < n; ++index)
-			if (output[index].type != XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR)
-				return XR_ERROR_VALIDATION_FAILURE;
-		for (uint32_t index = 0; index < n; ++index)
-			output[index].texture = it->second.images12[index].Get();
-		Logf("[SimXR] xrEnumerateSwapchainImages(D3D12): sc=%p count=%u", sc, n);
+	if (it->second.d3dImages)
+		return it->second.d3dImages->EnumerateImages(capacity, count, images);
+	if (!count || (capacity && !images))
+		return XR_ERROR_VALIDATION_FAILURE;
+	const auto textures = it->second.glImages->Images();
+	*count = static_cast<std::uint32_t>(textures.size());
+	if (!capacity)
 		return XR_SUCCESS;
-	}
-	else if (it->second.backend == rt::Swapchain::Backend::OpenGL)
-	{
-		if (!count)
+	if (capacity < textures.size())
+		return XR_ERROR_SIZE_INSUFFICIENT;
+	auto* output = reinterpret_cast<XrSwapchainImageOpenGLKHR*>(images);
+	for (std::size_t image = 0; image < textures.size(); ++image)
+		if (output[image].type != XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR)
 			return XR_ERROR_VALIDATION_FAILURE;
-		const auto textures = it->second.glImages->Images();
-		*count = static_cast<std::uint32_t>(textures.size());
-		if (capacity == 0)
-			return XR_SUCCESS;
-		if (!images)
-			return XR_ERROR_VALIDATION_FAILURE;
-		if (capacity < textures.size())
-			return XR_ERROR_SIZE_INSUFFICIENT;
-		auto* output = reinterpret_cast<XrSwapchainImageOpenGLKHR*>(images);
-		for (std::size_t image = 0; image < textures.size(); ++image)
-		{
-			if (output[image].type != XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR)
-				return XR_ERROR_VALIDATION_FAILURE;
-		}
-		for (std::size_t image = 0; image < textures.size(); ++image)
-			output[image].image = textures[image];
-		return XR_SUCCESS;
-	}
-	else
-	{
-		const uint32_t n = (uint32_t)it->second.images.size();
-		if (!count || (capacity && !images))
-			return XR_ERROR_VALIDATION_FAILURE;
-		*count = n;
-		if (!capacity)
-			return XR_SUCCESS;
-		if (capacity < n)
-			return XR_ERROR_SIZE_INSUFFICIENT;
-		auto* output = reinterpret_cast<XrSwapchainImageD3D11KHR*>(images);
-		for (uint32_t index = 0; index < n; ++index)
-			if (output[index].type != XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR)
-				return XR_ERROR_VALIDATION_FAILURE;
-		for (uint32_t index = 0; index < n; ++index)
-			output[index].texture = it->second.images[index].Get();
-		Logf("[SimXR] xrEnumerateSwapchainImages(D3D11): sc=%p count=%u", sc, n);
-		return XR_SUCCESS;
-	}
+	for (std::size_t image = 0; image < textures.size(); ++image)
+		output[image].image = textures[image];
+	return XR_SUCCESS;
 }
 
 static XrResult XRAPI_PTR xrAcquireSwapchainImage_runtime(XrSwapchain sc, const XrSwapchainImageAcquireInfo* info,
@@ -1913,8 +1468,8 @@ static XrResult XRAPI_PTR xrAcquireSwapchainImage_runtime(XrSwapchain sc, const 
 	// since Log() is deliberately expensive (see its comment).
 	if (acquireCount <= 4 || (s_logVerbose && acquireCount % 60 == 1))
 	{
-		Logf("[SimXR] xrAcquireSwapchainImage: sc=%p idx=%u (format=%d, %ux%u)", sc, i, (int)ch.format, ch.width,
-			 ch.height);
+		Logf("[SimXR] xrAcquireSwapchainImage: sc=%p idx=%u (format=%lld, %ux%u)", sc, i,
+			 static_cast<long long>(ch.format), ch.width, ch.height);
 	}
 	return XR_SUCCESS;
 }
@@ -2186,16 +1741,10 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
 															  chain.sampleCount};
 					}
 					if (chain.backend == rt::Swapchain::Backend::D3D12)
-					{
-						if (*image >= chain.images12.size())
-							return {};
-						return simxr::D3D12CompositionSource{
-							chain.images12[*image].Get(), static_cast<DXGI_FORMAT>(chain.format), chain.releaseState12};
-					}
-					if (*image >= chain.images.size())
-						return {};
-					return simxr::D3D11CompositionSource{chain.images[*image].Get(),
-														 static_cast<DXGI_FORMAT>(chain.format)};
+						return simxr::D3D12CompositionSource{chain.d3dImages->Image12(*image),
+															 chain.d3dImages->Format(),
+															 chain.d3dImages->ReleaseState12()};
+					return simxr::D3D11CompositionSource{chain.d3dImages->Image11(*image), chain.d3dImages->Format()};
 				},
 				[&sources](XrSwapchain handle, const std::shared_ptr<const simxr::GpuCompletion>& completion)
 				{

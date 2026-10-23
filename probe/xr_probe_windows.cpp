@@ -423,6 +423,19 @@ int main(int argc, char** argv)
 				if (xrCreateSwapchain(session, &invalid, &rejected) != XR_ERROR_VALIDATION_FAILURE || rejected)
 					throw std::runtime_error("Malformed swapchain description was accepted");
 			}
+#ifndef SIMXR_PROBE_OPENGL
+			const std::array<std::int64_t, 3> unsupportedFormats{
+				swapchainInfo.format + (std::int64_t{1} << 32),
+				swapchainInfo.format - (std::int64_t{1} << 32), DXGI_FORMAT_R8_UNORM};
+			for (const auto format : unsupportedFormats)
+			{
+				auto invalid = swapchainInfo;
+				invalid.format = format;
+				XrSwapchain rejected = XR_NULL_HANDLE;
+				if (xrCreateSwapchain(session, &invalid, &rejected) != XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED || rejected)
+					throw std::runtime_error("Unadvertised or narrowed Direct3D format was accepted");
+			}
+#endif
 			XrSwapchain swapchain;
 			std::uint32_t count = 0;
 #ifdef SIMXR_PROBE_OPENGL

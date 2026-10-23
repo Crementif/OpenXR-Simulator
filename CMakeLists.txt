@@ -332,7 +332,8 @@ target_link_libraries(simxr_diagnostics PUBLIC Threads::Threads ${CMAKE_DL_LIBS}
 if(SIMXR_BUILD_RUNTIME)
     if(WIN32)
         set(SIMXR_RUNTIME_SOURCE src/runtime.cpp)
-        list(APPEND SIMXR_RUNTIME_SOURCE src/platform/windows/OpenGLSwapchain.cpp)
+        list(APPEND SIMXR_RUNTIME_SOURCE src/platform/windows/OpenGLSwapchain.cpp
+            src/platform/windows/Direct3DSwapchain.cpp)
     else()
         set(SIMXR_RUNTIME_SOURCE src/runtime_linux.cpp src/platform/linux/LinuxRuntime.cpp)
     endif()
