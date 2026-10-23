@@ -85,7 +85,6 @@ void SpatialEditor::Reset()
 	m_eye.reset();
 	m_observation = m_historyIdentity = 0;
 	m_arcballs = {};
-	m_reach = {};
 	m_previewGizmos = {};
 	m_view.gizmo = {};
 	m_editable = false;
@@ -124,7 +123,7 @@ void SpatialEditor::SetContext(bool editable, bool lookingBack, std::span<const 
 	m_editable = editable;
 	m_lookingBack = lookingBack;
 	m_markerRects = {};
-	m_rotationBallRect = m_reachMapRect = {};
+	m_rotationBallRect = {};
 	// Some displayed frames carry no view metadata; keep the last eye so the head glyph does not flicker.
 	if (!eyes.empty())
 		m_eye = eyes.front();
@@ -148,7 +147,7 @@ void SpatialEditor::SetContext(bool editable, bool lookingBack, std::span<const 
 }
 bool SpatialEditor::Active() const
 {
-	return m_view.gizmo.usingGizmo || m_reach.dragging ||
+	return m_view.gizmo.usingGizmo ||
 		   std::any_of(m_arcballs.begin(), m_arcballs.end(),
 					   [](const auto& state)
 					   {
@@ -262,20 +261,14 @@ void SpatialEditor::DrawRigView(Selection& selection)
 }
 void SpatialEditor::DrawPlacement(Selection& selection)
 {
-	const auto devicePage = std::get_if<DeviceSel>(&selection);
-	if (!devicePage || !m_observed || m_lookingBack)
+	if (!std::holds_alternative<DeviceSel>(selection) || !m_observed || m_lookingBack)
 		return;
-	const auto page = devicePage->page;
 	const float scale = ImGui::GetFontSize() / 16;
 	auto scene = LiveScene();
 	const auto editable = EditableDevices(scene);
 	const int selected = SelectedDevice(selection);
-	const bool reach = page == DevicePage::Player || page == DevicePage::Left || page == DevicePage::Right;
-	const bool sideBySide = selected >= 0 && reach && ImGui::GetContentRegionAvail().x / scale >= 340;
 	if (selected >= 0)
 	{
-		if (sideBySide)
-			ImGui::BeginGroup();
 		ImGui::SeparatorText("Rotation");
 		XrQuaternionf reference = m_rig.Root().orientation;
 		if (selected == 1 || selected == 2)
@@ -289,39 +282,13 @@ void SpatialEditor::DrawPlacement(Selection& selection)
 		auto pose = scene.devices[selected];
 		const auto rotationMinimum = ImGui::GetCursorScreenPos();
 		m_rotationBallRect = {rotationMinimum.x, rotationMinimum.y, 160 * scale, 160 * scale};
-		const float column = sideBySide ? ImGui::GetContentRegionAvail().x / 2 - ImGui::GetStyle().ItemSpacing.x
-										: ImGui::GetContentRegionAvail().x;
+		const float column = ImGui::GetContentRegionAvail().x;
 		const auto model = selected == 0 ? OrbModel::Headset : selected < 3 ? OrbModel::Controller : OrbModel::Puck;
 		const auto result = RotationOrb("Rotation ball", m_arcballs[selected], pose.orientation, camera.pose.orientation,
 										reference, editable[selected], model, DeviceColor(selected), column);
 		ApplyResult(result, selected, pose);
 		if (!editable[selected])
 			ImGui::TextDisabled("Read only");
-		if (sideBySide)
-		{
-			ImGui::EndGroup();
-			ImGui::SameLine();
-		}
-	}
-	if (reach)
-	{
-		if (sideBySide)
-			ImGui::BeginGroup();
-		ImGui::SeparatorText("Reach");
-		if (!m_reach.dragging && (selected == 1 || selected == 2))
-			m_reach.hand = selected - 1;
-		std::array<XrPosef, 2> hands{m_rig.Hand(0), m_rig.Hand(1)};
-		const auto reachMinimum = ImGui::GetCursorScreenPos();
-		m_reachMapRect = {reachMinimum.x, reachMinimum.y, ImGui::GetContentRegionAvail().x, 160 * scale};
-		const auto result =
-			ReachMap("Reach map", m_reach, m_rig.Root(), m_rig.Head(), m_observed->values.proportions.shoulderWidth,
-					 m_observed->values.proportions.height * .44f, hands, {editable[1], editable[2]},
-					 ImGui::GetContentRegionAvail().x / scale);
-		ApplyResult(result, m_reach.hand + 1, hands[m_reach.hand]);
-		if (result.active && (page == DevicePage::Left || page == DevicePage::Right))
-			SelectDevice(selection, m_reach.hand + 1);
-		if (sideBySide)
-			ImGui::EndGroup();
 	}
 	if (!m_error.empty() && ImGui::IsWindowHovered())
 		ImGui::SetTooltip("%s", m_error.c_str());

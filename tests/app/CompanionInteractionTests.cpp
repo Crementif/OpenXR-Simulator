@@ -92,6 +92,17 @@ ImGuiWindow* FindPanel(const char* name)
 			return window;
 	return nullptr;
 }
+// Picks a camera from the rig view's menu: opens it, then activates the entry.
+template <typename Pump>
+void ChooseRigView(ImGuiID rig, const char* view, Pump pump)
+{
+	ImGui::ActivateItemByID(ImHashStr("##View", 0, rig));
+	pump(2);
+	const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+	Require(!popups.empty() && popups.back().Window, "Rig view menu did not open");
+	ImGui::ActivateItemByID(popups.back().Window->GetID(view));
+	pump(2);
+}
 class Interaction
 {
   public:
@@ -539,7 +550,7 @@ void PilotLiveRuntime(const char* endpoint)
 			return !test.runtime.Snapshot().recordingBusy;
 		},
 		"Initial recording read did not finish");
-	activate("##Workspace toolbar", "Rec");
+	activate("Timeline", "Rec");
 	frame();
 	const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
 	if (!popups.empty() && popups.back().Window &&
@@ -768,7 +779,9 @@ void PilotLiveRuntime(const char* endpoint)
 			return !test.runtime.Snapshot().recordingBusy;
 		},
 		"Recording refresh did not finish");
-	activate("##Workspace toolbar", "Stop recording");
+	// The top bar's REC chip stops the recording.
+	ImGui::ActivateItemByID(ImHashStr("##Action", 0, FindPanel("##Workspace toolbar")->GetID("Recording")));
+	frame();
 	Eventually(
 		[&]
 		{
@@ -1054,9 +1067,55 @@ void ConfigureObservedDevices()
 	transaction = typeValue("##IPD", "0.063");
 	Require(std::abs(std::get<simxr::SetViewSettings>(transaction.commands.back()).value.ipd - .063f) < .0001f,
 			"Reconnected field did not send the new value");
+	// Ctrl+wheel nudges the field under the pointer by its step; middle-click puts it back to its default.
+	{
+		auto& g = *ImGui::GetCurrentContext();
+		const auto id = window->GetID("##IPD");
+		ImGui::SetFocusID(id, window);
+		frame();
+		Require(g.NavId == id && g.NavIdIsAlive, "IPD field not laid out");
+		const auto center = ImGui::WindowRectRelToAbs(window, window->NavRectRel[0]).GetCenter();
+		ImGui::ClearActiveID();
+		g.NavId = 0;
+		SDL_Event event{};
+		event.type = SDL_EVENT_MOUSE_MOTION;
+		event.motion.windowID = SDL_GetWindowID(test.window.Native());
+		event.motion.x = center.x;
+		event.motion.y = center.y;
+		Require(SDL_PushEvent(&event), "Push field pointer");
+		frame();
+		auto& io = ImGui::GetIO();
+		io.AddKeyEvent(ImGuiMod_Ctrl, true);
+		io.AddMouseWheelEvent(0, -1);
+		frame();
+		const auto nudged = edit;
+		io.AddKeyEvent(ImGuiMod_Ctrl, false);
+		frame();
+		Require(nudged && std::holds_alternative<ManualTransaction>(*nudged), "Ctrl+wheel did not edit the field");
+		const auto nudgedIpd = std::get<simxr::SetViewSettings>(std::get<ManualTransaction>(*nudged).commands.back());
+		Require(std::abs(nudgedIpd.value.ipd - .062f) < .0001f, "Ctrl+wheel did not take off one step");
+		for (const bool down : {true, false})
+		{
+			event = {};
+			event.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+			event.button.windowID = SDL_GetWindowID(test.window.Native());
+			event.button.button = SDL_BUTTON_MIDDLE;
+			event.button.down = down;
+			Require(SDL_PushEvent(&event), "Push field middle click");
+			frame();
+			if (down)
+			{
+				Require(edit && std::holds_alternative<ManualTransaction>(*edit), "Middle-click did not reset");
+				const auto reset = std::get<simxr::SetViewSettings>(std::get<ManualTransaction>(*edit).commands.back());
+				Require(std::abs(reset.value.ipd - simxr::ViewSettings{}.ipd) < .0001f,
+						"Middle-click did not restore the default IPD");
+			}
+		}
+	}
 	test.renderer.WaitIdle();
 	Require(!test.validation->errors.load(), "Live fields generated validation errors");
-	std::cout << "PASS live configuration: immediate changes, preserved configuration, scenario recovery, reconnect\n";
+	std::cout << "PASS live configuration: immediate changes, preserved configuration, scenario recovery, reconnect, "
+				 "middle-click reset, Ctrl+wheel nudge\n";
 }
 
 #ifdef __linux__
@@ -1659,39 +1718,7 @@ void CheckSpatialEditing(Interaction& test)
 	auto before = observe();
 	PlayerRig rig;
 	rig.Reset(before);
-	auto hand = RelativePose(before.values.tracking.controllers[1].pose.pose, rig.Root());
-	ShellRect reach;
-	ImVec2 center;
-	float pixels = 0;
-	// Scrolls the inspector so the whole reach map is visible; ImGui scrolls a clipped item into view on click.
-	const auto locateReach = [&]
-	{
-		reach = test.runtime.Snapshot().reachMap;
-		Require(reach.width > 100 && reach.height > 100, "Reach map not laid out");
-		if (auto* scrolled = FindPanel("Inspector"); scrolled && reach.y + reach.height > scrolled->InnerRect.Max.y)
-		{
-			ImGui::SetScrollY(scrolled, scrolled->Scroll.y + reach.y + reach.height - scrolled->InnerRect.Max.y + 4);
-			pump(4);
-			reach = test.runtime.Snapshot().reachMap;
-		}
-		center = {reach.x + (reach.width - 28) / 2, reach.y + reach.height / 2};
-		pixels = std::min(reach.height * .44f, (reach.width - 32) * .45f) / .9f;
-	};
-	locateReach();
-	drag({center.x + hand.position.x * pixels, center.y + hand.position.z * pixels},
-		 {center.x + hand.position.x * pixels, center.y - .30f * pixels});
-	auto after = observe();
-	hand = RelativePose(after.values.tracking.controllers[1].pose.pose, rig.Root());
-	std::cout << "Spatial QA reach rect=" << reach.x << "," << reach.y << "," << reach.width << "," << reach.height
-			  << " applied=" << hand.position.x << "," << hand.position.y << "," << hand.position.z << "\n";
-	if (std::abs(hand.position.z + .30f) >= .015f)
-		if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
-		{
-			test.renderer.RequestScreenshot((std::filesystem::path(directory) / "spatial-failure.bmp").string());
-			pump(1);
-			test.renderer.WaitIdle();
-		}
-	Require(std::abs(hand.position.z + .30f) < .015f, "Reach map did not place the right hand 30 cm forward");
+	auto after = before;
 	const auto ball = test.runtime.Snapshot().rotationBall;
 	Require(ball.width > 100, "Rotation ball missing");
 	const ImVec2 resetPoint{ball.x + ball.width * .65f, ball.y + ball.height * .60f};
@@ -1703,8 +1730,7 @@ void CheckSpatialEditing(Interaction& test)
 	after = observe();
 	const auto inspector = FindPanel("Inspector");
 	Require(inspector, "Spatial inspector missing");
-	ImGui::ActivateItemByID(ImHashStr("Top", 0, inspector->GetID("Rig view")));
-	pump(2);
+	ChooseRigView(inspector->GetID("Rig view"), "Top", pump);
 	// The rig camera orbits relative to the player's facing.
 	const auto facing = Rotate(rig.Root().orientation, {0, 0, -1});
 	const auto view = EulerAngles(std::atan2(-facing.x, -facing.z), -1.56f, 0);
@@ -1719,16 +1745,37 @@ void CheckSpatialEditing(Interaction& test)
 	after = observe();
 	Require(Rotate(after.values.tracking.controllers[1].pose.pose.orientation, {0, 0, -1}).y > .99f,
 			"Rotation ball did not point the hand up");
-	std::cout << "PASS spatial reach 30 cm and arcball pointing up through native observed state\n";
-	hand = RelativePose(after.values.tracking.controllers[1].pose.pose, rig.Root());
-	locateReach();
-	drag({center.x + hand.position.x * pixels, center.y + hand.position.z * pixels},
-		 {center.x + 8 * pixels, center.y - .3f * pixels});
+	std::cout << "PASS arcball pointing up through native observed state\n";
+	// Type a far-away X, relative to the body, into the hand's position field to put it off screen.
+	ImGui::SetScrollY(inspector, inspector->ScrollMax.y);
+	pump(2);
+	ImGui::ActivateItemByID(inspector->GetID("Position & rotation"));
+	pump(2);
+	ImGui::SetScrollY(inspector, inspector->ScrollMax.y);
+	pump(2);
+	ImGui::ActivateItemByID(inspector->GetID("World##Relative"));
+	pump(2);
+	ImGui::ActivateItemByID(inspector->GetID("##X"));
+	ImGui::GetCurrentContext()->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
+	pump(1);
+	auto& io = ImGui::GetIO();
+	io.AddKeyEvent(ImGuiMod_Ctrl, true);
+	io.AddKeyEvent(ImGuiKey_A, true);
+	pump(1);
+	io.AddKeyEvent(ImGuiKey_A, false);
+	io.AddKeyEvent(ImGuiMod_Ctrl, false);
+	pump(1);
+	io.AddInputCharactersUTF8("8");
+	pump(1);
+	io.AddKeyEvent(ImGuiKey_Enter, true);
+	pump(1);
+	io.AddKeyEvent(ImGuiKey_Enter, false);
+	pump(4);
+	ImGui::ActivateItemByID(inspector->GetID("Body##Relative"));
+	pump(2);
 	after = observe();
-	std::cout << "Spatial QA off-screen reach rect=" << reach.x << "," << reach.y << " from=" << hand.position.x << ","
-			  << hand.position.z
-			  << " applied=" << RelativePose(after.values.tracking.controllers[1].pose.pose, rig.Root()).position.x
-			  << "\n";
+	std::cout << "Spatial QA off-screen applied="
+			  << RelativePose(after.values.tracking.controllers[1].pose.pose, rig.Root()).position.x << "\n";
 	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
 	{
 		test.renderer.RequestScreenshot((std::filesystem::path(directory) / "spatial-offscreen.bmp").string());
@@ -1745,9 +1792,12 @@ void CheckSpatialEditing(Interaction& test)
 	pointer(arrow, 0);
 	pump(8);
 	after = observe();
-	hand = RelativePose(after.values.tracking.controllers[1].pose.pose, rig.Root());
+	const auto hand = RelativePose(after.values.tracking.controllers[1].pose.pose, rig.Root());
 	Require(std::abs(hand.position.x - .2f) < .015f && std::abs(hand.position.z + .55f) < .015f,
-			"One-click off-screen recovery did not apply Forward");
+			("One-click off-screen recovery did not apply Forward: hand at " + std::to_string(hand.position.x) +
+			 ", " + std::to_string(hand.position.z) + "; arrow at " + std::to_string(arrow.x) + ", " +
+			 std::to_string(arrow.y))
+				.c_str());
 	std::cout << "PASS one-click off-screen recovery\n";
 	const auto gizmoState = test.runtime.Snapshot();
 	const auto world = after.values.tracking.controllers[1].pose.pose;
@@ -1774,7 +1824,7 @@ void CheckSpatialEditing(Interaction& test)
 	}
 	const auto imageArea = FindPanel("Image area");
 	Require(imageArea, "Expanded rig view missing");
-	ImGui::ActivateItemByID(ImHashStr("Restore", 0, imageArea->GetID("Rig view")));
+	ImGui::ActivateItemByID(ImHashStr("Expand", 0, imageArea->GetID("Rig view")));
 	pump(3);
 	Require(!test.runtime.Snapshot().rigExpanded, "Rig view did not restore the image");
 	std::cout << "PASS expanded rig view and picture-in-picture restore\n";
@@ -2881,10 +2931,42 @@ void CapturePolish(Interaction& test, const std::filesystem::path& qa)
 	pump(8);
 	screenshot("polish-hand.bmp");
 	const auto rig = FindPanel("Inspector")->GetID("Rig view");
-	ImGui::ActivateItemByID(ImHashStr("Eye", 0, rig));
-	pump(4);
+	ChooseRigView(rig, "Eye", pump);
+	pump(2);
 	screenshot("polish-eye.bmp");
-	ImGui::ActivateItemByID(ImHashStr("Back", 0, rig));
+	ChooseRigView(rig, "Back", pump);
+	// Position & rotation and the presets sit at the bottom of the hand page.
+	const auto inspector = FindPanel("Inspector");
+	ImGui::SetScrollY(inspector, inspector->ScrollMax.y);
+	pump(2);
+	ImGui::ActivateItemByID(inspector->GetID("Position & rotation"));
+	pump(2);
+	ImGui::SetScrollY(inspector, inspector->ScrollMax.y);
+	pump(2);
+	ImGui::ActivateItemByID(ImHashStr("Quaternion", 0, inspector->GetID("Rotation form")));
+	pump(3);
+	screenshot("polish-quaternion.bmp");
+	ImGui::ActivateItemByID(ImHashStr("Angles", 0, inspector->GetID("Rotation form")));
+	pump(2);
+	// A hand preset is one undoable change; the history names it and undoes it.
+	const auto before = test.runtime.Changes().size();
+	ImGui::ActivateItemByID(ImHashStr("Forward", 0, inspector->GetID("Hand presets")));
+	Eventually([&] { pump(1); return test.runtime.Changes().size() == before + 1; }, "Hand preset left no history");
+	Require(test.runtime.Changes().back().label == "Right hand: Forward",
+			("History named the hand preset " + test.runtime.Changes().back().label).c_str());
+	activate("Top bar", "History");
+	const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+	Require(!popups.empty() && popups.back().Window, "History did not open");
+	screenshot("polish-history.bmp");
+	ImGui::ActivateItemByID(ImHashStr(test.runtime.Changes().back().label.c_str(), 0,
+									  popups.back().Window->GetID(static_cast<int>(before))));
+	Eventually([&] { pump(1); return test.runtime.Changes().size() == before; }, "History did not undo the change");
+	test.workspace.Select(DeviceSel{DevicePage::Player});
+	pump(2);
+	ImGui::SetScrollY(FindPanel("Inspector"), 0);
+	pump(2);
+	screenshot("polish-player.bmp");
+	test.workspace.Select(DeviceSel{DevicePage::Right});
 	pump(2);
 	activate("HUD hand", "Fold HUD");
 	Require(FindPanel("HUD strip") != nullptr, "Folded HUD shows no way back");
@@ -2905,6 +2987,9 @@ void CapturePolish(Interaction& test, const std::filesystem::path& qa)
 	activate("Timeline divider tab", "##Edge");
 	Require(test.workspace.State().inspectorVisible, "Inspector divider tab did not unfold the inspector");
 	activate("Timeline", "Continue");
+	// The top bar's REC chip is the only Stop there now.
+	ImGui::ActivateItemByID(ImHashStr("##Action", 0, FindPanel("Top bar")->GetID("Recording")));
+	Eventually([&] { pump(1); return !test.runtime.Snapshot().recording; }, "The REC chip did not stop recording");
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Validation errors during the polish capture");
 	std::cout << "PASS polish capture\n";
@@ -3589,7 +3674,7 @@ void CheckSoak(Interaction& test, const std::filesystem::path& directory)
 				activate("Timeline", random() % 2 ? "Step back" : "Step forward");
 				break;
 			case 7:
-				activate("Top bar", test.runtime.Snapshot().recording ? "Stop recording" : "Rec");
+				activate("Timeline", test.runtime.Snapshot().recording ? "Stop recording" : "Rec");
 				break;
 			case 8:
 				activate("Device rail", "Library");

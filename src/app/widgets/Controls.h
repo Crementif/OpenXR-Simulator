@@ -3,6 +3,7 @@
 #include "app/widgets/Icons.h"
 
 #include <imgui.h>
+#include <span>
 
 namespace simxr::app
 {
@@ -10,6 +11,10 @@ namespace simxr::app
 // stable across label changes; the tooltip is required (§8.2).
 bool IconButton(const char* id, Icon icon, const char* tooltip, bool toggled = false, const char* label = nullptr,
 				ImU32 tint = 0);
+// Joined buttons of equal width across width; the selected one (or none, -1) is accented.
+// Each label is its button's id in the current ID scope. Returns the clicked index, or -1.
+int Segmented(std::span<const char* const> labels, int selected, float width,
+			  std::span<const char* const> tooltips = {});
 // A rounded pill: coloured dot, label and an optional action button inside the
 // pill. Returns true when the action was pressed.
 bool StateChip(const char* id, ImU32 dot, const char* label, const char* tooltip = nullptr,

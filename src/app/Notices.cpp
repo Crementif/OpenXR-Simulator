@@ -9,7 +9,7 @@ namespace simxr::app
 namespace
 {
 constexpr auto Lifetime = std::chrono::seconds(6);
-constexpr std::size_t MaximumShown = 3;
+constexpr std::size_t MaximumShown = 3, MaximumLogged = 50;
 } // namespace
 void Notices::Push(Notice notice)
 {
@@ -18,7 +18,12 @@ void Notices::Push(Notice notice)
 				  {
 					  return entry.notice.title == notice.title;
 				  });
-	m_entries.push_back({std::move(notice), std::chrono::steady_clock::now()});
+	const auto now = std::chrono::steady_clock::now();
+	if (m_log.size() == MaximumLogged)
+		m_log.erase(m_log.begin());
+	m_log.push_back({notice.title, notice.detail, now});
+	m_unseen = true;
+	m_entries.push_back({std::move(notice), now});
 	if (m_entries.size() > MaximumShown)
 		m_entries.erase(m_entries.begin());
 }

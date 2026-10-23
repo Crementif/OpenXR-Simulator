@@ -53,7 +53,7 @@ target_sources(simxr_app PRIVATE src/app/RecordingPanel.cpp src/app/TimelinePane
     src/app/AdvancedSteppingPage.cpp src/app/PreviewPanel.cpp src/app/PreferencesDialog.cpp src/app/LaunchProfilesDialog.cpp
     src/app/PilotController.cpp src/app/SpatialEditor.cpp src/app/widgets/LiveField.cpp
     src/app/widgets/SpatialWidgets.cpp src/app/widgets/RotationOrb.cpp
-    src/app/widgets/ReachMap.cpp src/app/widgets/InputPad.cpp src/app/widgets/RigView.cpp)
+    src/app/widgets/InputPad.cpp src/app/widgets/RigView.cpp)
 target_sources(simxr_app PRIVATE src/app/PastInput.cpp src/app/AppPicker.cpp src/app/RunningApps.cpp)
 target_link_libraries(simxr_app PUBLIC simxr_imgui simxr_connection simxr_app_settings simxr_recording_controller)
 # The icon SVGs are compiled in as {file stem, source} pairs; Icons.cpp parses them once.

@@ -54,7 +54,7 @@ struct CompanionSettings
 	PilotBindings pilotBindings = DefaultPilotBindings();
 	GamepadBindings gamepadBindings;
 	float inspectorWidth = 340, timelineHeight = 132;
-	bool railCollapsed = false, timelineResized = false;
+	bool railCollapsed = true, timelineResized = false;
 	bool inspectorFolded = false, timelineFolded = false, hudFolded = false;
 	std::vector<PreviewCrop> crops;
 	std::string endpoint;

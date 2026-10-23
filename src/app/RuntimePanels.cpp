@@ -79,7 +79,6 @@ class RuntimePanels::Impl
 		view.recordedChanges = recording.page ? recording.page->total : 0;
 		view.rigExpanded = m_spatial.Expanded();
 		view.rotationBall = m_spatial.RotationBallRect();
-		view.reachMap = m_spatial.ReachMapRect();
 		view.markers = m_spatial.MarkerRects();
 		view.rigView = m_spatial.RigViewRect();
 		view.rigDevices = m_spatial.RigDevicePoints();
@@ -112,15 +111,18 @@ class RuntimePanels::Impl
 		m_session.Preview().BeginFrame();
 		return m_view;
 	}
+	void UndoChanges(std::size_t count)
+	{
+		if (m_pilot.Active() || m_spatial.Active() || !m_view.time.following || !m_session.Setup())
+			return;
+		if (auto undo = m_undo.Undo(*m_session.Setup(), m_session.Input().source, count))
+			m_session.SubmitEdit(*undo);
+	}
 	void DrawPreview(ShellState& shell)
 	{
 		const auto& io = ImGui::GetIO();
-		if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false) && !io.WantTextInput &&
-			!m_pilot.Active() && !m_spatial.Active() && m_view.time.following && m_session.Setup())
-		{
-			if (auto undo = m_undo.Undo(*m_session.Setup(), m_session.Input().source))
-				m_session.SubmitEdit(*undo);
-		}
+		if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false) && !io.WantTextInput)
+			UndoChanges(1);
 		if (!m_preview.Draw(shell, m_view))
 			StopPilot();
 	}
@@ -492,6 +494,14 @@ void RuntimePanels::CancelPending()
 void RuntimePanels::ReleaseInputs()
 {
 	m_impl->ReleaseInputs();
+}
+std::vector<UndoStack::Change> RuntimePanels::Changes() const
+{
+	return m_impl->m_undo.Changes();
+}
+void RuntimePanels::UndoChanges(std::size_t count)
+{
+	m_impl->UndoChanges(count);
 }
 void RuntimePanels::FocusLost()
 {

@@ -1,10 +1,12 @@
 #include "Math.h"
 #include "app/Theme.h"
+#include "app/widgets/Controls.h"
 #include "app/widgets/SpatialWidgets.h"
 #include <ImGuizmo.h>
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <string_view>
 
 namespace simxr::app
 {
@@ -74,27 +76,51 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 		state.pan = {};
 		state.distance = DefaultDistance(state.focus);
 	};
+	// One view menu at the top left and Expand at the top right keep the view itself clear.
+	constexpr float Pi = std::numbers::pi_v<float>;
+	const auto near = [](float a, float b)
+	{
+		return std::abs(a - b) < .01f;
+	};
+	const char* current = state.eye								  ? "Eye"
+						  : near(state.pitch, -1.56f) && near(state.yaw, 0) ? "Top"
+						  : near(state.pitch, -.1f) && near(state.yaw, Pi / 2) ? "Side"
+						  : near(state.pitch, s_defaultView.pitch) && near(state.yaw, 0) ? "Back"
+																					  : "Free";
+	const float height = ImGui::GetFrameHeight(), padding = ImGui::GetStyle().FramePadding.x;
+	const float textWidth = ImGui::CalcTextSize(current).x;
 	ImGui::SetCursorScreenPos({minimum.x + 5 * scale, minimum.y + 5 * scale});
-	if (ImGui::SmallButton("Top"))
-		view(0, -1.56f);
-	ImGui::SetItemTooltip("Look down on the player");
-	ImGui::SameLine();
-	if (ImGui::SmallButton("Side"))
-		view(std::numbers::pi_v<float> / 2, -.1f);
-	ImGui::SetItemTooltip("Look from the player's right");
-	ImGui::SameLine();
-	if (ImGui::SmallButton("Back"))
-		view(0, s_defaultView.pitch);
-	ImGui::SetItemTooltip("Behind the player; also double-click the view");
-	ImGui::SameLine();
-	ImGui::BeginDisabled(!scene.eye);
-	if (ImGui::SmallButton("Eye"))
-		state.eye = true;
-	ImGui::EndDisabled();
-	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-		ImGui::SetTooltip("%s", scene.eye ? "Through the app's left eye" : "The displayed image has no eye metadata.");
-	ImGui::SameLine();
-	if (ImGui::SmallButton(state.expanded ? "Restore" : "Expand"))
+	if (ImGui::Button("##View", {textWidth + padding * 2 + height * .6f, height}))
+		ImGui::OpenPopup("Rig views");
+	ImGui::SetItemTooltip("Camera view; double-click the view for Back");
+	{
+		auto* header = ImGui::GetWindowDrawList();
+		const auto button = ImGui::GetItemRectMin();
+		header->AddText({button.x + padding, button.y + (height - ImGui::GetFontSize()) / 2}, theme::Text, current);
+		DrawIcon(header, Icon::ChevronDown, {button.x + padding + textWidth + height * .35f, button.y + height / 2},
+				 height * .5f, theme::TextDim);
+	}
+	if (ImGui::BeginPopup("Rig views"))
+	{
+		if (ImGui::MenuItem("Back", nullptr, current == std::string_view("Back")))
+			view(0, s_defaultView.pitch);
+		ImGui::SetItemTooltip("Behind the player");
+		if (ImGui::MenuItem("Top", nullptr, current == std::string_view("Top")))
+			view(0, -1.56f);
+		ImGui::SetItemTooltip("Look down on the player");
+		if (ImGui::MenuItem("Side", nullptr, current == std::string_view("Side")))
+			view(Pi / 2, -.1f);
+		ImGui::SetItemTooltip("Look from the player's right");
+		if (ImGui::MenuItem("Eye", nullptr, state.eye, scene.eye.has_value()))
+			state.eye = true;
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+			ImGui::SetTooltip("%s",
+							  scene.eye ? "Through the app's left eye" : "The displayed image has no eye metadata.");
+		ImGui::EndPopup();
+	}
+	ImGui::SetCursorScreenPos({maximum.x - height - 5 * scale, minimum.y + 5 * scale});
+	if (IconButton("Expand", Icon::Fullscreen,
+				   state.expanded ? "Back to the inspector" : "Show the rig in the image area", state.expanded))
 		state.expanded = !state.expanded;
 	ImGui::SetCursorScreenPos({minimum.x + 5 * scale, maximum.y - ImGui::GetFrameHeight() - 4 * scale});
 	if (ImGui::SmallButton("?##Rig help"))
@@ -104,7 +130,7 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 	{
 		ImGui::TextUnformatted("Placing devices");
 		ImGui::TextDisabled("Drag empty space to orbit; middle-drag pans; wheel zooms.");
-		ImGui::TextDisabled("Top / Side / Back reset the camera; double-click is Back.");
+		ImGui::TextDisabled("The view menu resets the camera; double-click is Back.");
 		ImGui::TextDisabled("Select a device, then drag its handles. Ctrl snaps.");
 		ImGui::TextDisabled("Ctrl+Z undoes. Camera moves never change devices.");
 		ImGui::EndPopup();

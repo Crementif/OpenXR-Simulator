@@ -215,6 +215,38 @@ void RapidUndo()
 	Require(Applied(*undo.Undo(original, std::nullopt)).head.pose.position.x == 0,
 			"Edit after undo reused a stale authored state");
 }
+// The history popover names each undo step and can undo several at once.
+void HistoryUndo()
+{
+	ObservedSetup original;
+	UndoStack undo;
+	ManualTransaction head;
+	PoseSample moved;
+	moved.pose.position.x = 1;
+	head.commands.emplace_back(SetHeadPose{moved});
+	undo.Record(original, head);
+	ManualTransaction hand;
+	auto controller = original.values.tracking.controllers[1];
+	controller.pose.pose.position.z -= .3f;
+	hand.commands.emplace_back(SetControllerPose{1, controller});
+	undo.Record(original, hand);
+	ManualTransaction height;
+	BodyProportions taller;
+	taller.height = 1.8f;
+	height.commands.emplace_back(SetBodyProportions{taller});
+	undo.Record(original, height);
+	const auto changes = undo.Changes();
+	Require(changes.size() == 3 && changes[0].label == "Head moved" && changes[1].label == "Right hand moved" &&
+				changes[2].label == "Height 1.70 \u2192 1.80 m",
+			"History did not name each change");
+	const auto restore = undo.Undo(original, std::nullopt, 2);
+	Require(restore.has_value(), "Undo to a history entry produced nothing");
+	const auto state = Applied(*restore);
+	Require(state.head.pose.position.x == 1, "Undoing two steps also undid the step before them");
+	SamePose(state.controllers[1].pose.pose, original.values.tracking.controllers[1].pose.pose);
+	Require(undo.Changes().size() == 1 && undo.Changes()[0].label == "Head moved",
+			"Undo to an entry kept the undone changes");
+}
 void Undo()
 {
 	ObservedSetup before;
@@ -258,6 +290,7 @@ int main()
 		JointOffsetsFollowBody();
 		Undo();
 		RapidUndo();
+		HistoryUndo();
 		std::cout << "PASS Player rig composition, inverse, anchors, body poses, undo and atomic ownership\n";
 	}
 	catch (const std::exception& error)

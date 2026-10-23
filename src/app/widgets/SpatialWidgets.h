@@ -43,14 +43,6 @@ enum class OrbModel
 SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf& orientation, XrQuaternionf view,
 							  XrQuaternionf reference, bool enabled, OrbModel model, ImU32 color, float width,
 							  float size = 160);
-struct ReachMapState
-{
-	int hand = 1;
-	bool dragging = false, height = false;
-};
-SpatialEditResult ReachMap(const char* id, ReachMapState& state, XrPosef root, XrPosef head, float shoulderWidth,
-						   float armReach, std::array<XrPosef, 2>& hands, const std::array<bool, 2>& editable,
-						   float width);
 struct SpatialScene
 {
 	XrPosef root{};

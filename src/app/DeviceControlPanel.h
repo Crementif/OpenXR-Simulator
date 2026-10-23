@@ -3,6 +3,7 @@
 #include "app/PlayerRig.h"
 #include "app/ShellState.h"
 #include "app/SimulationEdits.h"
+#include "app/widgets/LiveField.h"
 
 #include <array>
 #include <functional>
@@ -42,7 +43,7 @@ class DeviceControlPanel
 	std::optional<SimulationEdit> DrawHeader(const Selection& selection);
 
   private:
-	void Apply(std::vector<SimulationCommand> commands);
+	void Apply(std::vector<SimulationCommand> commands, std::string label = {});
 	void ApplyOwned(ControlChannel channel, SimulationCommand command);
 	void DrawOwnership();
 	void LoadObservedSettings();
@@ -56,7 +57,7 @@ class DeviceControlPanel
 	void DrawHandPresets(std::size_t hand);
 	void DrawBodyPoses();
 	void ResetPage(DevicePage page);
-	void ApplyRig(std::vector<SimulationCommand> extra = {});
+	void ApplyRig(std::vector<SimulationCommand> extra = {}, std::string label = {});
 	void DrawController(const std::function<void()>& placement);
 	void DrawInputPad(std::uint32_t hand);
 	void DrawBody();
@@ -75,13 +76,13 @@ class DeviceControlPanel
 	std::set<std::string> m_pendingFields, m_rejectedFields;
 	std::string m_deliveryError, m_fieldScope;
 	double m_rejectedUntil = 0;
-	// Marks a field edited, draws its live state and offers Reset to default (right-click, or
-	// double-click on a slider) when reset is given.
-	bool Field(const char* key, bool changed, bool continuous = false, const std::function<void()>& reset = {},
-			   bool slider = false);
+	// Marks a field edited and draws its live state; value adds reset, nudge and copy (FieldActions).
+	bool Field(const char* key, bool changed, bool continuous = false, const FieldValue& value = {});
 	// Pad inputs are momentary and show their own state: only a rejection is drawn on them.
 	bool InputField(const char* key, bool changed);
 	bool m_replaceOwner = false, m_exactAnchor = false;
+	// Per device page: the rotation shown as a quaternion instead of angles.
+	std::array<bool, 7> m_quaternionView{};
 	bool m_configurationLoaded = false;
 	std::optional<ObservedSetup> m_observed;
 	std::string m_observationError;

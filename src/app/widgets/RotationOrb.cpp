@@ -1,6 +1,7 @@
 #include "Math.h"
 #include "app/Theme.h"
 #include "app/widgets/SpatialWidgets.h"
+#include "app/widgets/LiveField.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -168,6 +169,9 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 	const float radius = size * .46f;
 	ImGui::InvisibleButton("Orb", {size, size});
 	const bool hovered = ImGui::IsItemHovered();
+	// The wheel rolls the device here instead of scrolling the page.
+	if (hovered && enabled)
+		ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
 	const auto mouse = ImGui::GetIO().MousePos;
 	const XrVector2f point{(mouse.x - center.x) / radius, (center.y - mouse.y) / radius};
 	const float distance = std::sqrt(point.x * point.x + point.y * point.y);
@@ -240,12 +244,22 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 			ImGui::SetTooltip("%s", hoveredRing == 0 ? "Drag to turn (yaw); Ctrl snaps to 15 degrees"
 							 : hoveredRing == 1 ? "Drag to tilt (pitch); Ctrl snaps to 15 degrees"
 												: "Drag to roll; Ctrl snaps to 15 degrees");
+		else if (distance <= 1)
+			ImGui::SetTooltip("Drag to rotate; the wheel rolls.\nDouble-click resets; Ctrl snaps.");
 	}
 	bool changed = false;
 	if (enabled && hovered && distance <= 1 && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
 	{
 		orientation = reference;
 		state.dragging = false;
+		ImGui::PopID();
+		return {true, true, false, true};
+	}
+	if (const float wheel = ImGui::GetIO().MouseWheel; enabled && hovered && wheel != 0 && !state.dragging)
+	{
+		// 5 degrees a notch about the device's own pointing axis, 15 with Ctrl.
+		const float step = (ImGui::GetIO().KeyCtrl ? 15 : 5) / s_degrees;
+		orientation = Multiply(orientation, AxisAngle({0, 0, 1}, wheel * step));
 		ImGui::PopID();
 		return {true, true, false, true};
 	}
@@ -305,9 +319,17 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 										ImGuiSliderFlags_AlwaysClamp);
 		fieldActive |= ImGui::IsItemActive();
 		fieldFinished |= ImGui::IsItemDeactivatedAfterEdit();
-		ImGui::SetItemTooltip("%s", index == 0	 ? "Turn left or right relative to what it follows"
-									: index == 1 ? "Tilt up or down"
-												 : "Roll around its pointing axis");
+		// Each angle resets to what the device follows on its own.
+		const float limit = index == 1 ? 89.9f : 180.0f;
+		if (FieldActions(labels[index].first, NumberValue(*value, 0, 1, -limit, limit, "%.1f")))
+		{
+			fieldEdited = true;
+			fieldFinished = true;
+		}
+		ImGui::SetItemTooltip("%s\nMiddle-click resets; Ctrl+wheel nudges.",
+							  index == 0   ? "Turn left or right relative to what it follows"
+							  : index == 1 ? "Tilt up or down"
+										   : "Roll around its pointing axis");
 	}
 	ImGui::EndDisabled();
 	if (fieldEdited)

@@ -3,6 +3,9 @@
 #include "control/ControlPacket.h"
 #include "simulation/CommandTypes.h"
 
+#include <chrono>
+#include <string>
+
 namespace simxr::app
 {
 struct ManualTransaction
@@ -13,6 +16,8 @@ struct ManualTransaction
 	bool releaseEdge = false;
 	CommandLatePolicy latePolicy = CommandLatePolicy::RescheduleNext;
 	std::vector<SimulationCommand> commands;
+	// Names the edit in History, such as a preset; empty describes it from the poses it changes.
+	std::string label;
 };
 struct ReleaseManualInputs
 {
@@ -36,6 +41,12 @@ struct ObservedSetup
 class UndoStack
 {
   public:
+	// One undoable edit group, named after what it changed (e.g. "Right hand moved").
+	struct Change
+	{
+		std::string label;
+		std::chrono::steady_clock::time_point time;
+	};
 	// Call for each submitted edit with the state observed before it. Input-only edits are not recorded.
 	void Record(const ObservedSetup& before, const ManualTransaction& edit);
 	// Refresh only from an observation with no pending local edit.
@@ -45,15 +56,22 @@ class UndoStack
 		return m_entries.empty();
 	}
 	void Clear();
-	// Restores the newest entry on the channels this source may drive.
-	std::optional<ManualTransaction> Undo(const ObservedSetup& current, std::optional<CommandSource> source);
+	// Restores the state before the newest steps groups on the channels this source may drive.
+	std::optional<ManualTransaction> Undo(const ObservedSetup& current, std::optional<CommandSource> source,
+										  std::size_t steps = 1);
+	// The undoable groups, oldest first.
+	std::vector<Change> Changes() const;
 
   private:
 	struct Entry
 	{
 		TrackingState tracking;
 		BodyProportions proportions;
+		// When the edit group after this state started, and its name if the edit gave one.
+		std::chrono::steady_clock::time_point time;
+		std::string label;
 	};
+	static std::string Describe(const Entry& before, const Entry& after);
 	std::vector<Entry> m_entries;
 	std::optional<Entry> m_authored;
 	bool m_open = false;

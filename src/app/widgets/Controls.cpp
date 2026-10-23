@@ -33,6 +33,45 @@ bool IconButton(const char* id, Icon icon, const char* tooltip, bool toggled, co
 		ImGui::SetItemTooltip("%s", tooltip);
 	return pressed;
 }
+int Segmented(std::span<const char* const> labels, int selected, float width, std::span<const char* const> tooltips)
+{
+	const int count = static_cast<int>(labels.size());
+	const float height = ImGui::GetFrameHeight(), radius = theme::Radius * ImGui::GetFontSize() / 17;
+	const auto origin = ImGui::GetCursorScreenPos();
+	auto* draw = ImGui::GetWindowDrawList();
+	// GetColorU32 applies the disabled alpha.
+	draw->AddRectFilled(origin, {origin.x + width, origin.y + height}, ImGui::GetColorU32(theme::SurfaceRaised), radius);
+	int clicked = -1;
+	for (int index = 0; index < count; ++index)
+	{
+		const float left = origin.x + width * index / count, right = origin.x + width * (index + 1) / count;
+		ImGui::SetCursorScreenPos({left, origin.y});
+		if (ImGui::InvisibleButton(labels[index], {right - left, height}, ImGuiButtonFlags_EnableNav))
+			clicked = index;
+		const bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
+		const auto corners = count == 1			 ? ImDrawFlags_RoundCornersAll
+							 : index == 0		 ? ImDrawFlags_RoundCornersLeft
+							 : index == count - 1 ? ImDrawFlags_RoundCornersRight
+												  : ImDrawFlags_RoundCornersNone;
+		if (index == selected || hovered)
+			draw->AddRectFilled({left, origin.y}, {right, origin.y + height},
+								ImGui::GetColorU32(index == selected ? theme::Accent
+												   : theme::Mix(theme::SurfaceRaised, theme::Text, held ? .16f : .08f)),
+								radius, corners);
+		else if (index && index - 1 != selected)
+			draw->AddLine({left, origin.y + height * .25f}, {left, origin.y + height * .75f},
+						  ImGui::GetColorU32(theme::Line));
+		const char* end = ImGui::FindRenderedTextEnd(labels[index]);
+		const auto text = ImGui::CalcTextSize(labels[index], end);
+		draw->AddText({(left + right - text.x) / 2, origin.y + (height - text.y) / 2}, ImGui::GetColorU32(theme::Text),
+					  labels[index], end);
+		if (index < static_cast<int>(tooltips.size()) && tooltips[index])
+			ImGui::SetItemTooltip("%s", tooltips[index]);
+	}
+	ImGui::SetCursorScreenPos(origin);
+	ImGui::Dummy({width, height});
+	return clicked;
+}
 bool StateChip(const char* id, ImU32 dot, const char* label, const char* tooltip, const Icon* action,
 			   const char* actionTooltip)
 {

@@ -288,6 +288,88 @@ struct WorkspacePanels::Impl
 		if (choice.disconnect)
 			runtime.Disconnect();
 	}
+	// Recent pose edits (click one to undo back to before it) and notices whose toasts are gone.
+	void DrawHistory(RuntimePanels& runtime)
+	{
+		const bool unseen = notices.Unseen();
+		if (IconButton("History", Icon::History, "Recent changes and notices", ImGui::IsPopupOpen("History")))
+		{
+			ImGui::OpenPopup("History");
+			notices.MarkSeen();
+		}
+		if (unseen)
+		{
+			// A dot while a notice arrived that the history has not shown yet.
+			const auto corner = ImGui::GetItemRectMax();
+			const float radius = ImGui::GetFrameHeight() * .12f;
+			ImGui::GetWindowDrawList()->AddCircleFilled(
+				{corner.x - radius * 1.6f, ImGui::GetItemRectMin().y + radius * 1.6f}, radius, theme::Warn);
+		}
+		const float scale = settings.scale;
+		ImGui::SetNextWindowSize({300 * scale, 0});
+		if (!ImGui::BeginPopup("History"))
+			return;
+		const auto now = std::chrono::steady_clock::now();
+		const auto ago = [&](std::chrono::steady_clock::time_point time)
+		{
+			const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(now - time).count();
+			char text[24];
+			if (seconds < 5)
+				return std::string("now");
+			if (seconds < 60)
+				std::snprintf(text, sizeof(text), "%lld s", static_cast<long long>(seconds));
+			else if (seconds < 3600)
+				std::snprintf(text, sizeof(text), "%lld min", static_cast<long long>(seconds / 60));
+			else
+				std::snprintf(text, sizeof(text), "%lld h", static_cast<long long>(seconds / 3600));
+			return std::string(text);
+		};
+		const auto time = [&](const std::string& text)
+		{
+			ImGui::SameLine(ImGui::GetContentRegionMax().x - ImGui::CalcTextSize(text.c_str()).x);
+			ImGui::TextDisabled("%s", text.c_str());
+		};
+		constexpr std::size_t shown = 12;
+		ImGui::SeparatorText("Changes");
+		const auto changes = runtime.Changes();
+		if (changes.empty())
+			ImGui::TextDisabled("No changes yet");
+		for (std::size_t index = changes.size(); index-- > 0 && changes.size() - index <= shown;)
+		{
+			const std::size_t steps = changes.size() - index;
+			ImGui::PushID(static_cast<int>(index));
+			if (ImGui::Selectable(changes[index].label.c_str()))
+				runtime.UndoChanges(steps);
+			if (steps == 1)
+				ImGui::SetItemTooltip("Undo this change (Ctrl+Z)");
+			else
+				ImGui::SetItemTooltip("Undo this and the %zu later changes", steps - 1);
+			time(ago(changes[index].time));
+			ImGui::PopID();
+		}
+		ImGui::SeparatorText("Notices");
+		const auto& logged = notices.Log();
+		if (logged.empty())
+			ImGui::TextDisabled("No notices");
+		for (std::size_t index = logged.size(); index-- > 0 && logged.size() - index <= shown;)
+		{
+			const auto& entry = logged[index];
+			ImGui::PushID(static_cast<int>(index));
+			ImGui::TextColored(theme::Vec(theme::Warn), "!");
+			ImGui::SameLine();
+			ImGui::TextUnformatted(entry.title.c_str());
+			if (!entry.detail.empty() && ImGui::BeginItemTooltip())
+			{
+				ImGui::PushTextWrapPos(ImGui::GetFontSize() * 30);
+				ImGui::TextUnformatted(entry.detail.c_str());
+				ImGui::PopTextWrapPos();
+				ImGui::EndTooltip();
+			}
+			time(ago(entry.time));
+			ImGui::PopID();
+		}
+		ImGui::EndPopup();
+	}
 	void DrawToolbar(RuntimePanels& runtime)
 	{
 		const auto& snapshot = runtime.View();
@@ -326,8 +408,11 @@ struct WorkspacePanels::Impl
 			std::snprintf(label, sizeof(label), "REC %lld:%02lld", static_cast<long long>(seconds / 60),
 						  static_cast<long long>(seconds % 60));
 			ImGui::SameLine();
-			StateChip("Recording", theme::Record, label,
-					  (std::to_string(snapshot.recordedChanges) + " input changes recorded").c_str());
+			const Icon stop = Icon::Stop;
+			if (StateChip("Recording", theme::Record, label,
+						  (std::to_string(snapshot.recordedChanges) + " input changes recorded").c_str(), &stop,
+						  "Stop recording (Ctrl+R)"))
+				runtime.StopRecording();
 		}
 		else
 			recordingSince.reset();
@@ -341,15 +426,7 @@ struct WorkspacePanels::Impl
 		const float right = ImGui::GetContentRegionMax().x;
 		const float button = ImGui::GetFrameHeight(), spacing = ImGui::GetStyle().ItemSpacing.x;
 		ImGui::SameLine(std::max(ImGui::GetCursorPosX(), right - button * 3 - spacing * 2));
-		if (snapshot.recording ? IconButton("Stop recording", Icon::Stop, "Stop recording (Ctrl+R)", false, nullptr,
-										   theme::Record)
-							   : IconButton("Rec", Icon::Record, "Record inputs (Ctrl+R)", false, nullptr, theme::Record))
-		{
-			if (snapshot.recording)
-				runtime.StopRecording();
-			else
-				runtime.StartRecording();
-		}
+		DrawHistory(runtime);
 		ImGui::SameLine();
 		if (IconButton("Focus", Icon::Focus, previewExpanded ? "Exit focus (F11)" : "Focus: only the image (F11)",
 					   previewExpanded))
@@ -389,7 +466,7 @@ struct WorkspacePanels::Impl
 				settings.inspectorWidth = 340;
 				settings.timelineHeight = 132;
 				settings.timelineResized = false;
-				settings.railCollapsed = false;
+				settings.railCollapsed = true;
 				settings.inspectorFolded = false;
 				settings.timelineFolded = false;
 				dirty = true;
@@ -708,7 +785,11 @@ struct WorkspacePanels::Impl
 		{
 			ImGui::SetCursorPos({shell.inspector.x, shell.inspector.y});
 			ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::Surface);
-			ImGui::BeginChild("Inspector", {shell.inspector.width, shell.inspector.height});
+			// Pages keep a margin from the rail and the window edge.
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {12 * scale, 8 * scale});
+			ImGui::BeginChild("Inspector", {shell.inspector.width, shell.inspector.height},
+							  ImGuiChildFlags_AlwaysUseWindowPadding);
+			ImGui::PopStyleVar();
 			DrawInspector(runtime);
 			ImGui::EndChild();
 			ImGui::PopStyleColor();
