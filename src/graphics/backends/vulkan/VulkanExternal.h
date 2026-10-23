@@ -67,9 +67,9 @@ struct VulkanExternalIdentity
 	bool operator==(const VulkanExternalIdentity&) const = default;
 };
 
-// Native transfers preserve RGBA8/BGRA8 UNORM/sRGB, one or two slices, optimal
-// 2D tiling, complete mip chains, one sample and no image-create flags. Creation fields
-// remain explicit in transport metadata; unsupported variants are rejected.
+// Native transfers preserve RGBA8/BGRA8 UNORM/sRGB, packed 10-bit UNORM and RGBA
+// 16/32-bit float, with one or two slices, optimal 2D tiling, valid mip levels,
+// one sample and no image-create flags. Transport metadata retains creation fields.
 struct VulkanExternalImageSpec
 {
 	VkFormat format = VK_FORMAT_R8G8B8A8_SRGB;
@@ -232,15 +232,15 @@ class VulkanExternalDevice
 	// Imports duplicate the supplied native handle for Vulkan. Every failure preserves the
 	// original; only complete helper success resets the caller's handle ownership.
 	std::shared_ptr<VulkanExternalImage> ImportImage(const VulkanExternalImageDescriptor& descriptor,
-													 VulkanExternalHandle& fd) const;
+													 VulkanExternalHandle& handle) const;
 	std::shared_ptr<VulkanExternalSemaphore> CreateExportableSemaphore() const;
 	std::shared_ptr<VulkanExternalSemaphore> ImportSemaphore(const VulkanExternalIdentity& identity,
-															 VulkanExternalHandle& fd) const;
+															 VulkanExternalHandle& handle) const;
 
 	bool FenceCommandsEnabled() const noexcept;
 	std::shared_ptr<VulkanExternalFence> CreateExportableFence() const;
 	std::shared_ptr<VulkanExternalFence> ImportFence(const VulkanExternalIdentity& identity,
-													 VulkanExternalHandle& fd) const;
+													 VulkanExternalHandle& handle) const;
 
   private:
 	std::shared_ptr<VulkanExternalSemaphore> CreateSemaphore(bool timeline) const;
