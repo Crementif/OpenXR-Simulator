@@ -1,12 +1,12 @@
 #include "runtime/SpaceQueries.h"
-#include "runtime/validation/StructureChain.h"
+#include "Pch.h"
 #include "Math.h"
-
-#include <array>
+#include "runtime/validation/StructureChain.h"
 
 namespace simxr
 {
-XrResult LocateSpace(SpaceSystem& spaces, XrSpace space, XrSpace base, XrTime time, XrSpaceLocation* location, const EnabledExtensions* enabled)
+XrResult LocateSpace(SpaceSystem& spaces, XrSpace space, XrSpace base, XrTime time, XrSpaceLocation* location,
+					 const EnabledExtensions* enabled)
 {
 	if (!location || location->type != XR_TYPE_SPACE_LOCATION)
 		return XR_ERROR_VALIDATION_FAILURE;
@@ -30,17 +30,18 @@ XrResult LocateSpace(SpaceSystem& spaces, XrSpace space, XrSpace base, XrTime ti
 		velocity->angularVelocity = sample.angularVelocity;
 	}
 	if (gazeEnabled)
-		if (auto gaze = const_cast<XrEyeGazeSampleTimeEXT*>(chain.Find<XrEyeGazeSampleTimeEXT>(XR_TYPE_EYE_GAZE_SAMPLE_TIME_EXT)))
+		if (auto gaze = const_cast<XrEyeGazeSampleTimeEXT*>(
+				chain.Find<XrEyeGazeSampleTimeEXT>(XR_TYPE_EYE_GAZE_SAMPLE_TIME_EXT)))
 			gaze->time = sample.pose.eyeGazeSampleTime.value_or(RuntimeTime{}).value.count();
 	return XR_SUCCESS;
 }
 
 XrResult LocateViews(SpaceSystem& spaces, const ViewConfiguration& configuration, const TrackingSnapshot& snapshot,
-	const XrViewLocateInfo& info, XrViewState* state, std::uint32_t capacity, std::uint32_t* count, XrView* views,
-	const EnabledExtensions* enabled, ViewQuerySnapshot* query)
+					 const XrViewLocateInfo& info, XrViewState* state, std::uint32_t capacity, std::uint32_t* count,
+					 XrView* views, const EnabledExtensions* enabled, ViewQuerySnapshot* query)
 {
-	if (info.type != XR_TYPE_VIEW_LOCATE_INFO || !state || state->type != XR_TYPE_VIEW_STATE ||
-		!count || (capacity && !views))
+	if (info.type != XR_TYPE_VIEW_LOCATE_INFO || !state || state->type != XR_TYPE_VIEW_STATE || !count ||
+		(capacity && !views))
 		return XR_ERROR_VALIDATION_FAILURE;
 	const bool foveationEnabled = enabled && enabled->Contains(XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME);
 	const std::array known{XR_TYPE_VIEW_LOCATE_FOVEATED_RENDERING_VARJO};
@@ -96,4 +97,4 @@ XrResult LocateViews(SpaceSystem& spaces, const ViewConfiguration& configuration
 	}
 	return XR_SUCCESS;
 }
-}
+} // namespace simxr

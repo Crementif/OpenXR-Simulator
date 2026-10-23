@@ -1,4 +1,5 @@
 #include "simulation/LegacyControllerMotion.h"
+#include "Pch.h"
 #include "Math.h"
 
 #include <cmath>
@@ -8,9 +9,7 @@
 
 namespace simxr::legacy
 {
-namespace
-{
-template <typename T> void Merge(std::optional<T>& current, const ControllerOverrideEdit<T>& edit)
+template <typename T> static void Merge(std::optional<T>& current, const ControllerOverrideEdit<T>& edit)
 {
 	switch (edit.change)
 	{
@@ -24,13 +23,13 @@ template <typename T> void Merge(std::optional<T>& current, const ControllerOver
 		break;
 	}
 }
-float Coordinate(double value)
+static float Coordinate(double value)
 {
 	if (std::abs(value) > std::numeric_limits<float>::max())
 		return std::copysign(std::numeric_limits<float>::infinity(), value);
 	return static_cast<float>(value);
 }
-} // namespace
+
 LegacyControllerMotion::LegacyControllerMotion()
 {
 	m_controllers[0].local = {{-0.2f, -0.3f, -0.4f}, 0, std::numbers::pi_v<float> / 2, 0};

@@ -4,6 +4,7 @@
 #include "simulation/ActionRegistry.h"
 #include "simulation/TrackingTypes.h"
 
+#include <cstdint>
 #include <mutex>
 #include <vector>
 
@@ -19,7 +20,7 @@ struct TrackerPathState
 
 class TrackerInteraction
 {
-public:
+  public:
 	TrackerInteraction(ActionRegistry& registry, const EnabledExtensions& enabled, EventQueue& events);
 	void BeginSession();
 	XrResult Publish(const TrackingSnapshot& snapshot, std::vector<XrPath>* changedPaths = nullptr);
@@ -28,7 +29,7 @@ public:
 	PoseSample Pose(const TrackingSnapshot& snapshot, TrackerIdentity identity) const;
 	std::vector<TrackerPathState> Paths() const;
 
-private:
+  private:
 	ActionRegistry& m_registry;
 	EventQueue& m_events;
 	const bool m_enabled;
@@ -36,4 +37,4 @@ private:
 	RuntimeTime m_time;
 	std::vector<TrackerPathState> m_paths;
 };
-}
+} // namespace simxr

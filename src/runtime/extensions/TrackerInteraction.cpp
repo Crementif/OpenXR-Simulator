@@ -1,9 +1,8 @@
 #include "runtime/extensions/TrackerInteraction.h"
+#include "Pch.h"
 #include "runtime/validation/StructureChain.h"
 #include "simulation/BodyModel.h"
 
-#include <algorithm>
-#include <array>
 #include <stdexcept>
 #include <tuple>
 

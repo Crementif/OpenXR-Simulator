@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <mutex>
 #include <optional>
+#include <string_view>
 
 namespace simxr
 {
@@ -29,9 +30,9 @@ struct BodyTrackerState
 
 class BodyTracking
 {
-public:
+  public:
 	BodyTracking(XrSession owner, const TrackingSystem& tracking, const SpaceSystem& spaces,
-		const EnabledExtensions& enabled, const BodyTrackingCapabilities& capabilities = {});
+				 const EnabledExtensions& enabled, const BodyTrackingCapabilities& capabilities = {});
 	XrResult CreateFB(const XrBodyTrackerCreateInfoFB* info, XrBodyTrackerFB* output);
 	XrResult CreateBD(const XrBodyTrackerCreateInfoBD* info, XrBodyTrackerBD* output);
 	XrResult DestroyFB(XrBodyTrackerFB tracker);
@@ -48,7 +49,7 @@ public:
 	BodyTrackingCapabilities Capabilities() const;
 	void Clear();
 
-private:
+  private:
 	struct Query
 	{
 		TrackingSnapshot snapshot;
@@ -80,4 +81,4 @@ private:
 	HandleRegistry<XrBodyTrackerFB, TrackerFB, XrSession> m_fb;
 	HandleRegistry<XrBodyTrackerBD, TrackerBD, XrSession> m_bd;
 };
-}
+} // namespace simxr

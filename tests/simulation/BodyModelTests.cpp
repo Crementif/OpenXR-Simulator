@@ -4,16 +4,36 @@
 
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <set>
 
-namespace
-{
-void FiniteBodyOutput()
+static void FiniteBodyOutput()
 {
 	using namespace simxr;
 	BodyModel model;
 	PoseSample head{IdentityPose(), TrackedPoseFlags};
 	head.pose.position.y = 1.7f;
+	const float tiny = std::numeric_limits<float>::min() / 20;
+	BodyModel tinyModel({tiny, 0.4f, 0.3f});
+	const auto scaled = tinyModel.Evaluate(head, {}, {Duration{1}});
+	for (const auto& joint : scaled.joints)
+		Require(IsFinite(joint.pose.position), "Finite body geometry overflowed its height ratio");
+	Require(std::abs(scaled.joints[static_cast<std::size_t>(BodyJoint::Hips)].pose.position.y - 1.7f * 0.53f) <
+				0.00001f,
+			"Small body proportions lost their relative hip height");
+	Require(scaled.joints[static_cast<std::size_t>(BodyJoint::LeftFootAnkle)].pose.position.y == 0.08f,
+			"Height scaling changed the fixed foot height");
+	tinyModel.SetProportions({tiny / 16, 0.4f, 0.3f});
+	bool rejected = false;
+	try
+	{
+		(void)tinyModel.Evaluate(head, {}, {Duration{2}});
+	}
+	catch (const std::invalid_argument&)
+	{
+		rejected = true;
+	}
+	Require(rejected, "Unrepresentable scaled body position was accepted");
 	BodyControls controls;
 	controls.controls[static_cast<std::size_t>(BodyControl::Hips)].offset = XrVector3f{-2e38f, 1, 0};
 	controls.controls[static_cast<std::size_t>(BodyControl::Chest)].offset = XrVector3f{2e38f, 1, 0};
@@ -26,7 +46,7 @@ void FiniteBodyOutput()
 	head.pose.position.x = 2e38f;
 	controls.joints[static_cast<std::size_t>(BodyJoint::Head)] =
 		BodyJointOverride{XrPosef{{0, 0, 0, 1}, {2e38f, 1.7f, 0}}, true};
-	bool rejected = false;
+	rejected = false;
 	try
 	{
 		(void)model.Evaluate(head, controls, {Duration{2}});
@@ -37,7 +57,6 @@ void FiniteBodyOutput()
 	}
 	Require(rejected, "Unrepresentable generated body position was accepted");
 }
-} // namespace
 
 int main()
 {

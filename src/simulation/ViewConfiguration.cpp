@@ -1,17 +1,14 @@
 #include "simulation/ViewConfiguration.h"
+#include "Pch.h"
 #include "Math.h"
 
-#include <algorithm>
 #include <cmath>
 #include <numbers>
 #include <stdexcept>
-#include <utility>
 
 namespace simxr
 {
-namespace
-{
-std::pair<float, float> InsetRange(float center, float minimum, float maximum, double halfAngle)
+static std::pair<float, float> InsetRange(float center, float minimum, float maximum, double halfAngle)
 {
 	const auto clamped = std::clamp(static_cast<double>(center), static_cast<double>(minimum) + halfAngle,
 									static_cast<double>(maximum) - halfAngle);
@@ -25,13 +22,15 @@ std::pair<float, float> InsetRange(float center, float minimum, float maximum, d
 	}
 	return {lower, upper};
 }
-} // namespace
 
-ViewConfiguration::ViewConfiguration(ViewLayout layout, const ViewSettings& settings) : m_layout(layout), m_settings(settings)
+ViewConfiguration::ViewConfiguration(ViewLayout layout, const ViewSettings& settings)
+	: m_layout(layout), m_settings(settings)
 {
-	if ((layout != ViewLayout::Stereo && layout != ViewLayout::StereoWithInset) ||
-		!std::isfinite(settings.ipd) || settings.ipd < 0 || !settings.outerWidth || !settings.outerHeight ||
-		(layout == ViewLayout::StereoWithInset && (!std::isfinite(settings.insetHalfAngle) || settings.insetHalfAngle <= 0 || !settings.insetWidth || !settings.insetHeight)))
+	if ((layout != ViewLayout::Stereo && layout != ViewLayout::StereoWithInset) || !std::isfinite(settings.ipd) ||
+		settings.ipd < 0 || !settings.outerWidth || !settings.outerHeight ||
+		(layout == ViewLayout::StereoWithInset &&
+		 (!std::isfinite(settings.insetHalfAngle) || settings.insetHalfAngle <= 0 || !settings.insetWidth ||
+		  !settings.insetHeight)))
 		throw std::invalid_argument("Invalid view settings");
 	for (const auto& fov : settings.outerFov)
 	{
@@ -50,7 +49,7 @@ ViewConfiguration::ViewConfiguration(ViewLayout layout, const ViewSettings& sett
 std::vector<ViewDescription> ViewConfiguration::Describe() const
 {
 	std::vector<ViewDescription> views{{0, ViewRole::Outer, m_settings.outerWidth, m_settings.outerHeight},
-		{1, ViewRole::Outer, m_settings.outerWidth, m_settings.outerHeight}};
+									   {1, ViewRole::Outer, m_settings.outerWidth, m_settings.outerHeight}};
 	if (m_layout == ViewLayout::StereoWithInset)
 	{
 		views.push_back({0, ViewRole::Inset, m_settings.insetWidth, m_settings.insetHeight});
@@ -65,7 +64,7 @@ LocatedViews ViewConfiguration::Locate(const TrackingSnapshot& snapshot, bool fo
 	result.time = snapshot.time;
 	result.head = snapshot.head;
 	result.gazeActive = foveated && m_layout == ViewLayout::StereoWithInset &&
-		(snapshot.gaze.flags & TrackedPoseFlags) == TrackedPoseFlags;
+						(snapshot.gaze.flags & TrackedPoseFlags) == TrackedPoseFlags;
 	float horizontal = 0;
 	float vertical = 0;
 	if (result.gazeActive)
@@ -82,7 +81,8 @@ LocatedViews ViewConfiguration::Locate(const TrackingSnapshot& snapshot, bool fo
 			eye.flags &= ~(XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_POSITION_TRACKED_BIT);
 		if (m_settings.ipd != 0 && !(eye.flags & XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT))
 			eye.flags &= ~XR_SPACE_LOCATION_POSITION_TRACKED_BIT;
-		eye.pose = Compose(snapshot.head.pose, {{0, 0, 0, 1}, {(description.eye == 0 ? -0.5f : 0.5f) * m_settings.ipd, 0, 0}});
+		eye.pose =
+			Compose(snapshot.head.pose, {{0, 0, 0, 1}, {(description.eye == 0 ? -0.5f : 0.5f) * m_settings.ipd, 0, 0}});
 		eye.flags = FinitePoseFlags(eye.pose, eye.flags);
 		auto fov = m_settings.outerFov[description.eye];
 		if (description.role == ViewRole::Inset)
@@ -105,4 +105,4 @@ std::uint32_t ViewConfiguration::EyeCount() const
 {
 	return 2;
 }
-}
+} // namespace simxr

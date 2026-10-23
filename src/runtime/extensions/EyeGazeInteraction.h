@@ -8,14 +8,14 @@ namespace simxr
 {
 class EyeGazeInteraction
 {
-public:
+  public:
 	explicit EyeGazeInteraction(const EnabledExtensions& enabled, bool supported = true);
 	bool Supports() const;
 	void ContributeInput(const TrackingSnapshot& snapshot, InputSnapshot& input) const;
 	PoseSample Pose(const TrackingSnapshot& snapshot) const;
 
-private:
+  private:
 	const bool m_enabled;
 	const bool m_supported;
 };
-}
+} // namespace simxr

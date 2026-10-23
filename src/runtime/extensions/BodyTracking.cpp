@@ -1,32 +1,27 @@
 #include "runtime/extensions/BodyTracking.h"
-#include "runtime/validation/StructureChain.h"
+#include "Pch.h"
 #include "Math.h"
+#include "runtime/validation/StructureChain.h"
 
-#include <algorithm>
-#include <array>
 #include <cmath>
 #include <limits>
-#include <memory>
 #include <stdexcept>
 
 namespace simxr
 {
-namespace
-{
-bool Has(XrSpaceLocationFlags flags, XrSpaceLocationFlags bits)
+static bool Has(XrSpaceLocationFlags flags, XrSpaceLocationFlags bits)
 {
 	return (flags & bits) == bits;
 }
 
-std::size_t Index(BodyJoint joint)
+static std::size_t Index(BodyJoint joint)
 {
 	return static_cast<std::size_t>(joint);
 }
-}
 
 BodyTracking::BodyTracking(XrSession owner, const TrackingSystem& tracking, const SpaceSystem& spaces,
-	const EnabledExtensions& enabled, const BodyTrackingCapabilities& capabilities) :
-	m_owner(owner), m_tracking(tracking), m_spaces(spaces), m_enabled(enabled), m_capabilities(capabilities)
+						   const EnabledExtensions& enabled, const BodyTrackingCapabilities& capabilities)
+	: m_owner(owner), m_tracking(tracking), m_spaces(spaces), m_enabled(enabled), m_capabilities(capabilities)
 {
 	if (owner == XR_NULL_HANDLE)
 		throw std::invalid_argument("Missing body tracking owner");
@@ -34,22 +29,24 @@ BodyTracking::BodyTracking(XrSession owner, const TrackingSystem& tracking, cons
 
 bool BodyTracking::Enabled(std::string_view extension) const
 {
-	return m_enabled.Contains(extension) && (extension == XR_BD_BODY_TRACKING_EXTENSION_NAME ||
-		m_enabled.Contains(XR_FB_BODY_TRACKING_EXTENSION_NAME));
+	return m_enabled.Contains(extension) &&
+		   (extension == XR_BD_BODY_TRACKING_EXTENSION_NAME || m_enabled.Contains(XR_FB_BODY_TRACKING_EXTENSION_NAME));
 }
 
 XrResult BodyTracking::CreateFB(const XrBodyTrackerCreateInfoFB* info, XrBodyTrackerFB* output)
 {
 	if (!Enabled(XR_FB_BODY_TRACKING_EXTENSION_NAME))
 		return XR_ERROR_FUNCTION_UNSUPPORTED;
-	if (!info || info->type != XR_TYPE_BODY_TRACKER_CREATE_INFO_FB || !output || XR_FAILED(StructureChain(info->next).Validate({})))
+	if (!info || info->type != XR_TYPE_BODY_TRACKER_CREATE_INFO_FB || !output ||
+		XR_FAILED(StructureChain(info->next).Validate({})))
 		return XR_ERROR_VALIDATION_FAILURE;
 	if (!m_capabilities.fb)
 		return XR_ERROR_FEATURE_UNSUPPORTED;
 	BodyJointSet jointSet;
 	if (info->bodyJointSet == XR_BODY_JOINT_SET_DEFAULT_FB)
 		jointSet = BodyJointSet::UpperBodyFB;
-	else if (info->bodyJointSet == XR_BODY_JOINT_SET_FULL_BODY_META && Enabled(XR_META_BODY_TRACKING_FULL_BODY_EXTENSION_NAME))
+	else if (info->bodyJointSet == XR_BODY_JOINT_SET_FULL_BODY_META &&
+			 Enabled(XR_META_BODY_TRACKING_FULL_BODY_EXTENSION_NAME))
 	{
 		if (!m_capabilities.fullBodyMETA)
 			return XR_ERROR_FEATURE_UNSUPPORTED;
@@ -67,7 +64,8 @@ XrResult BodyTracking::CreateBD(const XrBodyTrackerCreateInfoBD* info, XrBodyTra
 {
 	if (!Enabled(XR_BD_BODY_TRACKING_EXTENSION_NAME))
 		return XR_ERROR_FUNCTION_UNSUPPORTED;
-	if (!info || info->type != XR_TYPE_BODY_TRACKER_CREATE_INFO_BD || !output || XR_FAILED(StructureChain(info->next).Validate({})))
+	if (!info || info->type != XR_TYPE_BODY_TRACKER_CREATE_INFO_BD || !output ||
+		XR_FAILED(StructureChain(info->next).Validate({})))
 		return XR_ERROR_VALIDATION_FAILURE;
 	if (!m_capabilities.bd)
 		return XR_ERROR_FEATURE_UNSUPPORTED;
@@ -117,10 +115,14 @@ TrackingSnapshot BodyTracking::Calibrated(TrackingSnapshot snapshot, const std::
 	if (!height)
 		return snapshot;
 	auto proportions = snapshot.proportions;
-	float scale = *height / proportions.height;
+	const double scale = static_cast<double>(*height) / proportions.height;
+	const double shoulderWidth = proportions.shoulderWidth * scale;
+	const double hipWidth = proportions.hipWidth * scale;
+	if (shoulderWidth > std::numeric_limits<float>::max() || hipWidth > std::numeric_limits<float>::max())
+		throw std::invalid_argument("Calibrated body proportions are not representable");
 	proportions.height = *height;
-	proportions.shoulderWidth *= scale;
-	proportions.hipWidth *= scale;
+	proportions.shoulderWidth = static_cast<float>(shoulderWidth);
+	proportions.hipWidth = static_cast<float>(hipWidth);
 	BodyModel model(proportions);
 	auto result = TrackingSystem::Evaluate(snapshot.time, snapshot.input, model);
 	result.body.skeletonRevision = snapshot.body.skeletonRevision;
@@ -133,17 +135,18 @@ PoseSample BodyTracking::InBase(const PoseSample& joint, const PoseSample& base)
 	for (auto bit : {XR_SPACE_LOCATION_ORIENTATION_VALID_BIT, XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT})
 		if (Has(joint.flags, bit) && Has(base.flags, bit))
 			result.flags |= bit;
-	if (Has(joint.flags, XR_SPACE_LOCATION_POSITION_VALID_BIT) && Has(base.flags,
-		XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
+	if (Has(joint.flags, XR_SPACE_LOCATION_POSITION_VALID_BIT) &&
+		Has(base.flags, XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
 		result.flags |= XR_SPACE_LOCATION_POSITION_VALID_BIT;
-	if (Has(joint.flags, XR_SPACE_LOCATION_POSITION_TRACKED_BIT) && Has(base.flags,
-		XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT))
+	if (Has(joint.flags, XR_SPACE_LOCATION_POSITION_TRACKED_BIT) &&
+		Has(base.flags, XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT))
 		result.flags |= XR_SPACE_LOCATION_POSITION_TRACKED_BIT;
 	result.flags = FinitePoseFlags(result.pose, result.flags);
 	return result;
 }
 
-XrResult BodyTracking::LocateFB(XrBodyTrackerFB handle, const XrBodyJointsLocateInfoFB* info, XrBodyJointLocationsFB* locations)
+XrResult BodyTracking::LocateFB(XrBodyTrackerFB handle, const XrBodyJointsLocateInfoFB* info,
+								XrBodyJointLocationsFB* locations)
 {
 	if (!Enabled(XR_FB_BODY_TRACKING_EXTENSION_NAME))
 		return XR_ERROR_FUNCTION_UNSUPPORTED;
@@ -151,8 +154,9 @@ XrResult BodyTracking::LocateFB(XrBodyTrackerFB handle, const XrBodyJointsLocate
 	if (!tracker)
 		return XR_ERROR_HANDLE_INVALID;
 	auto mapping = BodyModel::JointMap(tracker->jointSet);
-	if (!info || info->type != XR_TYPE_BODY_JOINTS_LOCATE_INFO_FB || !locations || locations->type != XR_TYPE_BODY_JOINT_LOCATIONS_FB ||
-		locations->jointCount != mapping.size() || !locations->jointLocations || XR_FAILED(StructureChain(info->next).Validate({})))
+	if (!info || info->type != XR_TYPE_BODY_JOINTS_LOCATE_INFO_FB || !locations ||
+		locations->type != XR_TYPE_BODY_JOINT_LOCATIONS_FB || locations->jointCount != mapping.size() ||
+		!locations->jointLocations || XR_FAILED(StructureChain(info->next).Validate({})))
 		return XR_ERROR_VALIDATION_FAILURE;
 	std::array<XrStructureType, 2> known{};
 	std::size_t knownCount = 0;
@@ -192,15 +196,19 @@ XrResult BodyTracking::LocateFB(XrBodyTrackerFB handle, const XrBodyJointsLocate
 		locations->jointLocations[index] = {active ? pose.flags : 0, pose.pose};
 	}
 	if (Enabled(XR_META_BODY_TRACKING_CALIBRATION_EXTENSION_NAME))
-		if (auto status = const_cast<XrBodyTrackingCalibrationStatusMETA*>(chain.Find<XrBodyTrackingCalibrationStatusMETA>(XR_TYPE_BODY_TRACKING_CALIBRATION_STATUS_META)))
-			status->status = query ? XR_BODY_TRACKING_CALIBRATION_STATE_VALID_META : XR_BODY_TRACKING_CALIBRATION_STATE_INVALID_META;
+		if (auto status = const_cast<XrBodyTrackingCalibrationStatusMETA*>(
+				chain.Find<XrBodyTrackingCalibrationStatusMETA>(XR_TYPE_BODY_TRACKING_CALIBRATION_STATUS_META)))
+			status->status =
+				query ? XR_BODY_TRACKING_CALIBRATION_STATE_VALID_META : XR_BODY_TRACKING_CALIBRATION_STATE_INVALID_META;
 	if (Enabled(XR_META_BODY_TRACKING_FIDELITY_EXTENSION_NAME))
-		if (auto status = const_cast<XrBodyTrackingFidelityStatusMETA*>(chain.Find<XrBodyTrackingFidelityStatusMETA>(XR_TYPE_BODY_TRACKING_FIDELITY_STATUS_META)))
+		if (auto status = const_cast<XrBodyTrackingFidelityStatusMETA*>(
+				chain.Find<XrBodyTrackingFidelityStatusMETA>(XR_TYPE_BODY_TRACKING_FIDELITY_STATUS_META)))
 			status->fidelity = tracker->state.actualFidelity;
 	return XR_SUCCESS;
 }
 
-XrResult BodyTracking::LocateBD(XrBodyTrackerBD handle, const XrBodyJointsLocateInfoBD* info, XrBodyJointLocationsBD* locations)
+XrResult BodyTracking::LocateBD(XrBodyTrackerBD handle, const XrBodyJointsLocateInfoBD* info,
+								XrBodyJointLocationsBD* locations)
 {
 	if (!Enabled(XR_BD_BODY_TRACKING_EXTENSION_NAME))
 		return XR_ERROR_FUNCTION_UNSUPPORTED;
@@ -208,9 +216,10 @@ XrResult BodyTracking::LocateBD(XrBodyTrackerBD handle, const XrBodyJointsLocate
 	if (!tracker)
 		return XR_ERROR_HANDLE_INVALID;
 	auto mapping = BodyModel::JointMap(tracker->jointSet);
-	if (!info || info->type != XR_TYPE_BODY_JOINTS_LOCATE_INFO_BD || !locations || locations->type != XR_TYPE_BODY_JOINT_LOCATIONS_BD ||
-		locations->jointLocationCount != mapping.size() || !locations->jointLocations ||
-		XR_FAILED(StructureChain(info->next).Validate({})) || XR_FAILED(StructureChain(locations->next).Validate({})))
+	if (!info || info->type != XR_TYPE_BODY_JOINTS_LOCATE_INFO_BD || !locations ||
+		locations->type != XR_TYPE_BODY_JOINT_LOCATIONS_BD || locations->jointLocationCount != mapping.size() ||
+		!locations->jointLocations || XR_FAILED(StructureChain(info->next).Validate({})) ||
+		XR_FAILED(StructureChain(locations->next).Validate({})))
 		return XR_ERROR_VALIDATION_FAILURE;
 	std::optional<Query> query;
 	auto result = QueryAt(info->baseSpace, info->time, query);
@@ -243,8 +252,10 @@ XrResult BodyTracking::SkeletonFB(XrBodyTrackerFB handle, XrBodySkeletonFB* skel
 	if (!query)
 	{
 		auto latest = m_tracking.Sample({Duration{std::numeric_limits<Duration::rep>::max()}});
-		TrackingSnapshot snapshot = latest ? Calibrated(std::move(*latest), tracker->state.heightOverride) :
-			Calibrated(TrackingSystem::Evaluate({Duration{1}}, TrackingState{}, BodyModel{}), tracker->state.heightOverride);
+		TrackingSnapshot snapshot =
+			latest ? Calibrated(std::move(*latest), tracker->state.heightOverride)
+				   : Calibrated(TrackingSystem::Evaluate({Duration{1}}, TrackingState{}, BodyModel{}),
+								tracker->state.heightOverride);
 		query = Query{std::move(snapshot), {IdentityPose(), TrackedPoseFlags}, {Duration{1}}};
 	}
 	if (!Has(query->base.flags, ValidPoseFlags))
@@ -263,8 +274,11 @@ XrResult BodyTracking::SkeletonFB(XrBodyTrackerFB handle, XrBodySkeletonFB* skel
 		auto parent = body.skeleton[Index(joint)].parent;
 		while (parent && std::find(mapping.begin(), mapping.end(), *parent) == mapping.end())
 			parent = body.skeleton[Index(*parent)].parent;
-		auto parentIndex = parent ? static_cast<std::int32_t>(std::find(mapping.begin(), mapping.end(), *parent) - mapping.begin()) :
-			(tracker->jointSet == BodyJointSet::FullBodyMETA ? static_cast<std::int32_t>(XR_FULL_BODY_JOINT_NONE_META) : static_cast<std::int32_t>(XR_BODY_JOINT_NONE_FB));
+		auto parentIndex =
+			parent ? static_cast<std::int32_t>(std::find(mapping.begin(), mapping.end(), *parent) - mapping.begin())
+				   : (tracker->jointSet == BodyJointSet::FullBodyMETA
+						  ? static_cast<std::int32_t>(XR_FULL_BODY_JOINT_NONE_META)
+						  : static_cast<std::int32_t>(XR_BODY_JOINT_NONE_FB));
 		const auto pose = RelativePose(body.joints[Index(joint)].pose, query->base.pose);
 		if (!NormalizedPose(pose))
 			return XR_ERROR_RUNTIME_FAILURE;
@@ -281,8 +295,8 @@ XrResult BodyTracking::SuggestCalibrationFB(XrBodyTrackerFB handle, const XrBody
 	auto tracker = m_fb.Find(handle, m_owner);
 	if (!tracker)
 		return XR_ERROR_HANDLE_INVALID;
-	if (!info || info->type != XR_TYPE_BODY_TRACKING_CALIBRATION_INFO_META ||
-		!std::isfinite(info->bodyHeight) || info->bodyHeight <= 0.5f || info->bodyHeight >= 3 || XR_FAILED(StructureChain(info->next).Validate({})))
+	if (!info || info->type != XR_TYPE_BODY_TRACKING_CALIBRATION_INFO_META || !std::isfinite(info->bodyHeight) ||
+		info->bodyHeight <= 0.5f || info->bodyHeight >= 3 || XR_FAILED(StructureChain(info->next).Validate({})))
 		return XR_ERROR_VALIDATION_FAILURE;
 	if (!m_capabilities.calibrationMETA)
 		return XR_ERROR_FEATURE_UNSUPPORTED;
@@ -354,4 +368,4 @@ void BodyTracking::Clear()
 	auto retiredFB = m_fb.RetireAll();
 	auto retiredBD = m_bd.RetireAll();
 }
-}
+} // namespace simxr

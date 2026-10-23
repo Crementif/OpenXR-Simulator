@@ -66,9 +66,73 @@ void FiniteBodyQueries()
 }
 } // namespace
 
+static void FiniteBodyCalibration()
+{
+	using namespace simxr;
+	const std::array extensions{XR_FB_BODY_TRACKING_EXTENSION_NAME, XR_META_BODY_TRACKING_CALIBRATION_EXTENSION_NAME};
+	const EnabledExtensions enabled(extensions);
+	constexpr float tiny = std::numeric_limits<float>::min() / 16;
+	TrackingSystem tracking;
+	tracking.SetBodyProportions({tiny, tiny / 2, tiny / 4});
+	TrackingState input;
+	const RuntimeTime time{Duration{1000000}};
+	tracking.Publish(time, input);
+	const auto session = reinterpret_cast<XrSession>(803);
+	SpaceSystem spaces(session, tracking);
+	XrSpace base{};
+	Require(spaces.CreateReferenceSpace(XR_REFERENCE_SPACE_TYPE_STAGE, IdentityPose(), base) == XR_SUCCESS,
+			"Create calibration base");
+	BodyTracking bodies(session, tracking, spaces, enabled);
+	XrBodyTrackerCreateInfoFB create{XR_TYPE_BODY_TRACKER_CREATE_INFO_FB, nullptr, XR_BODY_JOINT_SET_DEFAULT_FB};
+	XrBodyTrackerFB tracker{};
+	Require(bodies.CreateFB(&create, &tracker) == XR_SUCCESS, "Create finite calibration tracker");
+	XrBodyTrackingCalibrationInfoMETA calibration{XR_TYPE_BODY_TRACKING_CALIBRATION_INFO_META, nullptr, 1.8f};
+	Require(bodies.SuggestCalibrationFB(tracker, &calibration) == XR_SUCCESS, "Calibrate tiny body model");
+	std::array<XrBodySkeletonJointFB, XR_BODY_JOINT_COUNT_FB> skeletonJoints{};
+	XrBodySkeletonFB skeleton{XR_TYPE_BODY_SKELETON_FB, nullptr, XR_BODY_JOINT_COUNT_FB, skeletonJoints.data()};
+	Require(bodies.SkeletonFB(tracker, &skeleton) == XR_SUCCESS &&
+				Near(skeletonJoints[XR_BODY_JOINT_LEFT_SHOULDER_FB].pose.position.x, -0.45f),
+			"Representable calibration overflowed while preparing skeleton");
+	std::array<XrBodyJointLocationFB, XR_BODY_JOINT_COUNT_FB> joints{};
+	XrBodyJointLocationsFB locations{XR_TYPE_BODY_JOINT_LOCATIONS_FB, nullptr,		XR_FALSE, 0,
+									 XR_BODY_JOINT_COUNT_FB,		  joints.data()};
+	XrBodyJointsLocateInfoFB locate{XR_TYPE_BODY_JOINTS_LOCATE_INFO_FB, nullptr, base, time.value.count()};
+	Require(bodies.LocateFB(tracker, &locate, &locations) == XR_SUCCESS && locations.isActive,
+			"Representable calibration overflowed while locating joints");
+	const auto expected = TrackingSystem::Evaluate(time, input, BodyModel({1.8f, 0.9f, 0.45f}));
+	const auto& shoulder = joints[XR_BODY_JOINT_LEFT_SHOULDER_FB];
+	Require(shoulder.locationFlags == TrackedPoseFlags &&
+				Near(shoulder.pose.position.x,
+					 expected.body.joints[static_cast<std::size_t>(BodyJoint::LeftShoulder)].pose.position.x),
+			"Calibrated shoulder width changed");
+	const auto revision = bodies.SnapshotFB(tracker)->skeletonRevision;
+	tracking.SetBodyProportions({tiny, 1, 1});
+	locate.time += 1000000;
+	tracking.Publish({Duration{locate.time}}, input);
+	locations.time = 73;
+	locations.skeletonChangedCount = 41;
+	joints.front().locationFlags = 99;
+	bool rejected = false;
+	try
+	{
+		bodies.LocateFB(tracker, &locate, &locations);
+	}
+	catch (const std::invalid_argument&)
+	{
+		rejected = true;
+	}
+	Require(rejected && locations.time == 73 && locations.skeletonChangedCount == 41 &&
+				joints.front().locationFlags == 99 && bodies.SnapshotFB(tracker)->skeletonRevision == revision,
+			"Unrepresentable calibration mutated tracker or output");
+	Require(bodies.SkeletonFB(tracker, &skeleton) == XR_SUCCESS &&
+				Near(skeletonJoints[XR_BODY_JOINT_LEFT_SHOULDER_FB].pose.position.x, -0.45f),
+			"Rejected calibration replaced retained skeleton query");
+}
+
 int main()
 {
 	FiniteBodyQueries();
+	FiniteBodyCalibration();
 	using namespace simxr;
 	const std::array extensions{XR_FB_BODY_TRACKING_EXTENSION_NAME, XR_META_BODY_TRACKING_FULL_BODY_EXTENSION_NAME,
 		XR_BD_BODY_TRACKING_EXTENSION_NAME, XR_META_BODY_TRACKING_CALIBRATION_EXTENSION_NAME, XR_META_BODY_TRACKING_FIDELITY_EXTENSION_NAME};

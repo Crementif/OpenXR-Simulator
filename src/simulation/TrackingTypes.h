@@ -10,8 +10,10 @@
 
 namespace simxr
 {
-inline constexpr XrSpaceLocationFlags ValidPoseFlags = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
-inline constexpr XrSpaceLocationFlags TrackedPoseFlags = ValidPoseFlags | XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT;
+inline constexpr XrSpaceLocationFlags ValidPoseFlags =
+	XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+inline constexpr XrSpaceLocationFlags TrackedPoseFlags =
+	ValidPoseFlags | XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT;
 
 struct PoseSample
 {
@@ -254,15 +256,16 @@ struct TrackerSample
 struct TrackingState
 {
 	PoseSample head{{{0, 0, 0, 1}, {0, 1.7f, 0}}, TrackedPoseFlags};
-	std::array<ControllerPose, 2> controllers{{
-		{{{{0.70710678f, 0, 0, 0.70710678f}, {-0.2f, 1.4f, -0.4f}}, TrackedPoseFlags}, true},
-		{{{{0.70710678f, 0, 0, 0.70710678f}, {0.2f, 1.4f, -0.4f}}, TrackedPoseFlags}, true}}};
+	std::array<ControllerPose, 2> controllers{
+		{{{{{0.70710678f, 0, 0, 0.70710678f}, {-0.2f, 1.4f, -0.4f}}, TrackedPoseFlags}, true},
+		 {{{{0.70710678f, 0, 0, 0.70710678f}, {0.2f, 1.4f, -0.4f}}, TrackedPoseFlags}, true}}};
 	GazeInput gaze;
 	BodyControls body;
 	bool focused = true;
-	std::array<TrackerDevice, 4> trackers{{
-		{{1}, TrackerRole::Waist, true, true, BodyJoint::Hips}, {{2}, TrackerRole::Chest, true, true, BodyJoint::Chest},
-		{{3}, TrackerRole::LeftFoot, true, true, BodyJoint::LeftFootAnkle}, {{4}, TrackerRole::RightFoot, true, true, BodyJoint::RightFootAnkle}}};
+	std::array<TrackerDevice, 4> trackers{{{{1}, TrackerRole::Waist, true, true, BodyJoint::Hips},
+										   {{2}, TrackerRole::Chest, true, true, BodyJoint::Chest},
+										   {{3}, TrackerRole::LeftFoot, true, true, BodyJoint::LeftFootAnkle},
+										   {{4}, TrackerRole::RightFoot, true, true, BodyJoint::RightFootAnkle}}};
 };
 
 struct TrackingSnapshot
@@ -276,4 +279,4 @@ struct TrackingSnapshot
 	TrackingState input;
 	BodyProportions proportions;
 };
-}
+} // namespace simxr

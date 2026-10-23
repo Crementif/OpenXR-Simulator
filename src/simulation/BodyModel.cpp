@@ -1,7 +1,7 @@
 #include "simulation/BodyModel.h"
+#include "Pch.h"
 #include "Math.h"
 
-#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <limits>
@@ -9,14 +9,12 @@
 
 namespace simxr
 {
-namespace
-{
-constexpr std::size_t Index(BodyJoint joint)
+static constexpr std::size_t Index(BodyJoint joint)
 {
 	return static_cast<std::size_t>(joint);
 }
 
-const std::array<BodyJoint, XR_BODY_JOINT_COUNT_FB> s_jointsFB = []
+static const std::array<BodyJoint, XR_BODY_JOINT_COUNT_FB> s_jointsFB = []
 {
 	std::array<BodyJoint, XR_BODY_JOINT_COUNT_FB> result{};
 	result[XR_BODY_JOINT_ROOT_FB] = BodyJoint::Root;
@@ -92,7 +90,7 @@ const std::array<BodyJoint, XR_BODY_JOINT_COUNT_FB> s_jointsFB = []
 	return result;
 }();
 
-const std::array<BodyJoint, XR_FULL_BODY_JOINT_COUNT_META> s_jointsMETA = []
+static const std::array<BodyJoint, XR_FULL_BODY_JOINT_COUNT_META> s_jointsMETA = []
 {
 	std::array<BodyJoint, XR_FULL_BODY_JOINT_COUNT_META> result{};
 	result[XR_FULL_BODY_JOINT_ROOT_META] = BodyJoint::Root;
@@ -182,7 +180,7 @@ const std::array<BodyJoint, XR_FULL_BODY_JOINT_COUNT_META> s_jointsMETA = []
 	return result;
 }();
 
-const std::array<BodyJoint, XR_BODY_JOINT_COUNT_BD> s_jointsBD = []
+static const std::array<BodyJoint, XR_BODY_JOINT_COUNT_BD> s_jointsBD = []
 {
 	std::array<BodyJoint, XR_BODY_JOINT_COUNT_BD> result{};
 	result[XR_BODY_JOINT_PELVIS_BD] = BodyJoint::Hips;
@@ -212,15 +210,21 @@ const std::array<BodyJoint, XR_BODY_JOINT_COUNT_BD> s_jointsBD = []
 	return result;
 }();
 
-XrVector3f Difference(XrVector3f a, XrVector3f b)
+static XrVector3f Difference(XrVector3f a, XrVector3f b)
 {
 	return {a.x - b.x, a.y - b.y, a.z - b.z};
 }
 
-XrVector3f Blend(XrVector3f a, XrVector3f b, float weight)
+static XrVector3f Blend(XrVector3f a, XrVector3f b, float weight)
 {
 	return {std::lerp(a.x, b.x, weight), std::lerp(a.y, b.y, weight), std::lerp(a.z, b.z, weight)};
 }
+
+static float Coordinate(double value)
+{
+	if (std::abs(value) > std::numeric_limits<float>::max())
+		return std::copysign(std::numeric_limits<float>::infinity(), value);
+	return static_cast<float>(value);
 }
 
 BodyModel::BodyModel(const BodyProportions& proportions)
@@ -231,8 +235,8 @@ BodyModel::BodyModel(const BodyProportions& proportions)
 void BodyModel::SetProportions(const BodyProportions& proportions)
 {
 	if (!std::isfinite(proportions.height) || !std::isfinite(proportions.shoulderWidth) ||
-		!std::isfinite(proportions.hipWidth) || proportions.height <= 0 ||
-		proportions.shoulderWidth <= 0 || proportions.hipWidth <= 0)
+		!std::isfinite(proportions.hipWidth) || proportions.height <= 0 || proportions.shoulderWidth <= 0 ||
+		proportions.hipWidth <= 0)
 		throw std::invalid_argument("Invalid body proportions");
 	if (m_revision != 0 && proportions == m_proportions)
 		return;
@@ -262,10 +266,14 @@ std::span<const BodyJoint> BodyModel::JointMap(BodyJointSet set)
 {
 	switch (set)
 	{
-	case BodyJointSet::UpperBodyFB: return s_jointsFB;
-	case BodyJointSet::FullBodyMETA: return s_jointsMETA;
-	case BodyJointSet::WithoutArmsBD: return std::span(s_jointsBD).first(XR_BODY_JOINT_WITHOUT_ARM_COUNT_BD);
-	case BodyJointSet::FullBodyBD: return s_jointsBD;
+	case BodyJointSet::UpperBodyFB:
+		return s_jointsFB;
+	case BodyJointSet::FullBodyMETA:
+		return s_jointsMETA;
+	case BodyJointSet::WithoutArmsBD:
+		return std::span(s_jointsBD).first(XR_BODY_JOINT_WITHOUT_ARM_COUNT_BD);
+	case BodyJointSet::FullBodyBD:
+		return s_jointsBD;
 	}
 	throw std::invalid_argument("Unknown body joint set");
 }
@@ -274,24 +282,42 @@ BodyJoint BodyModel::TrackerJoint(TrackerRole role)
 {
 	switch (role)
 	{
-	case TrackerRole::Waist: return BodyJoint::Hips;
-	case TrackerRole::Chest: return BodyJoint::Chest;
-	case TrackerRole::LeftFoot: return BodyJoint::LeftFootAnkle;
-	case TrackerRole::RightFoot: return BodyJoint::RightFootAnkle;
-	case TrackerRole::Unassigned: return BodyJoint::Hips;
-	case TrackerRole::HandheldObject: return BodyJoint::RightHandPalm;
-	case TrackerRole::LeftShoulder: return BodyJoint::LeftShoulder;
-	case TrackerRole::RightShoulder: return BodyJoint::RightShoulder;
-	case TrackerRole::LeftElbow: return BodyJoint::LeftArmLower;
-	case TrackerRole::RightElbow: return BodyJoint::RightArmLower;
-	case TrackerRole::LeftKnee: return BodyJoint::LeftLowerLeg;
-	case TrackerRole::RightKnee: return BodyJoint::RightLowerLeg;
-	case TrackerRole::LeftWrist: return BodyJoint::LeftHandWrist;
-	case TrackerRole::RightWrist: return BodyJoint::RightHandWrist;
-	case TrackerRole::LeftAnkle: return BodyJoint::LeftFootAnkle;
-	case TrackerRole::RightAnkle: return BodyJoint::RightFootAnkle;
-	case TrackerRole::Camera: return BodyJoint::Head;
-	case TrackerRole::Keyboard: return BodyJoint::Hips;
+	case TrackerRole::Waist:
+		return BodyJoint::Hips;
+	case TrackerRole::Chest:
+		return BodyJoint::Chest;
+	case TrackerRole::LeftFoot:
+		return BodyJoint::LeftFootAnkle;
+	case TrackerRole::RightFoot:
+		return BodyJoint::RightFootAnkle;
+	case TrackerRole::Unassigned:
+		return BodyJoint::Hips;
+	case TrackerRole::HandheldObject:
+		return BodyJoint::RightHandPalm;
+	case TrackerRole::LeftShoulder:
+		return BodyJoint::LeftShoulder;
+	case TrackerRole::RightShoulder:
+		return BodyJoint::RightShoulder;
+	case TrackerRole::LeftElbow:
+		return BodyJoint::LeftArmLower;
+	case TrackerRole::RightElbow:
+		return BodyJoint::RightArmLower;
+	case TrackerRole::LeftKnee:
+		return BodyJoint::LeftLowerLeg;
+	case TrackerRole::RightKnee:
+		return BodyJoint::RightLowerLeg;
+	case TrackerRole::LeftWrist:
+		return BodyJoint::LeftHandWrist;
+	case TrackerRole::RightWrist:
+		return BodyJoint::RightHandWrist;
+	case TrackerRole::LeftAnkle:
+		return BodyJoint::LeftFootAnkle;
+	case TrackerRole::RightAnkle:
+		return BodyJoint::RightFootAnkle;
+	case TrackerRole::Camera:
+		return BodyJoint::Head;
+	case TrackerRole::Keyboard:
+		return BodyJoint::Hips;
 	}
 	throw std::invalid_argument("Unknown tracker role");
 }
@@ -300,24 +326,42 @@ std::string_view BodyModel::TrackerRolePath(TrackerRole role)
 {
 	switch (role)
 	{
-	case TrackerRole::Waist: return "/user/vive_tracker_htcx/role/waist";
-	case TrackerRole::Chest: return "/user/vive_tracker_htcx/role/chest";
-	case TrackerRole::LeftFoot: return "/user/vive_tracker_htcx/role/left_foot";
-	case TrackerRole::RightFoot: return "/user/vive_tracker_htcx/role/right_foot";
-	case TrackerRole::Unassigned: return {};
-	case TrackerRole::HandheldObject: return "/user/vive_tracker_htcx/role/handheld_object";
-	case TrackerRole::LeftShoulder: return "/user/vive_tracker_htcx/role/left_shoulder";
-	case TrackerRole::RightShoulder: return "/user/vive_tracker_htcx/role/right_shoulder";
-	case TrackerRole::LeftElbow: return "/user/vive_tracker_htcx/role/left_elbow";
-	case TrackerRole::RightElbow: return "/user/vive_tracker_htcx/role/right_elbow";
-	case TrackerRole::LeftKnee: return "/user/vive_tracker_htcx/role/left_knee";
-	case TrackerRole::RightKnee: return "/user/vive_tracker_htcx/role/right_knee";
-	case TrackerRole::LeftWrist: return "/user/vive_tracker_htcx/role/left_wrist";
-	case TrackerRole::RightWrist: return "/user/vive_tracker_htcx/role/right_wrist";
-	case TrackerRole::LeftAnkle: return "/user/vive_tracker_htcx/role/left_ankle";
-	case TrackerRole::RightAnkle: return "/user/vive_tracker_htcx/role/right_ankle";
-	case TrackerRole::Camera: return "/user/vive_tracker_htcx/role/camera";
-	case TrackerRole::Keyboard: return "/user/vive_tracker_htcx/role/keyboard";
+	case TrackerRole::Waist:
+		return "/user/vive_tracker_htcx/role/waist";
+	case TrackerRole::Chest:
+		return "/user/vive_tracker_htcx/role/chest";
+	case TrackerRole::LeftFoot:
+		return "/user/vive_tracker_htcx/role/left_foot";
+	case TrackerRole::RightFoot:
+		return "/user/vive_tracker_htcx/role/right_foot";
+	case TrackerRole::Unassigned:
+		return {};
+	case TrackerRole::HandheldObject:
+		return "/user/vive_tracker_htcx/role/handheld_object";
+	case TrackerRole::LeftShoulder:
+		return "/user/vive_tracker_htcx/role/left_shoulder";
+	case TrackerRole::RightShoulder:
+		return "/user/vive_tracker_htcx/role/right_shoulder";
+	case TrackerRole::LeftElbow:
+		return "/user/vive_tracker_htcx/role/left_elbow";
+	case TrackerRole::RightElbow:
+		return "/user/vive_tracker_htcx/role/right_elbow";
+	case TrackerRole::LeftKnee:
+		return "/user/vive_tracker_htcx/role/left_knee";
+	case TrackerRole::RightKnee:
+		return "/user/vive_tracker_htcx/role/right_knee";
+	case TrackerRole::LeftWrist:
+		return "/user/vive_tracker_htcx/role/left_wrist";
+	case TrackerRole::RightWrist:
+		return "/user/vive_tracker_htcx/role/right_wrist";
+	case TrackerRole::LeftAnkle:
+		return "/user/vive_tracker_htcx/role/left_ankle";
+	case TrackerRole::RightAnkle:
+		return "/user/vive_tracker_htcx/role/right_ankle";
+	case TrackerRole::Camera:
+		return "/user/vive_tracker_htcx/role/camera";
+	case TrackerRole::Keyboard:
+		return "/user/vive_tracker_htcx/role/keyboard";
 	}
 	throw std::invalid_argument("Unknown tracker role");
 }
@@ -328,7 +372,7 @@ std::string BodyModel::TrackerPersistentPath(TrackerIdentity identity)
 		throw std::invalid_argument("Missing persistent tracker identity");
 	char path[80]{};
 	std::snprintf(path, sizeof(path), "/user/vive_tracker_htcx/serial/simxr_%016llx",
-		static_cast<unsigned long long>(identity.value));
+				  static_cast<unsigned long long>(identity.value));
 	return path;
 }
 
@@ -356,30 +400,54 @@ void BodyModel::Rebuild()
 	set(BodyJoint::LeftHandWristTwist, BodyJoint::LeftArmLower, {-1 * (shoulder + 0.14f), height * 0.56f, -0.065f});
 	set(BodyJoint::LeftHandWrist, BodyJoint::LeftHandWristTwist, {-1 * (shoulder + 0.145f), height * 0.54f, -0.07f});
 	set(BodyJoint::LeftHandPalm, BodyJoint::LeftHandWrist, {-1 * (shoulder + 0.15f), height * 0.51f, -0.07f});
-	set(BodyJoint::LeftHandThumbMetacarpal, BodyJoint::LeftHandPalm, {-1 * (shoulder + 0.12f + 0 * 0.015f), height * 0.51f - (0 + 1) * 0.019f, -0.09f - 0 * 0.008f});
-	set(BodyJoint::LeftHandThumbProximal, BodyJoint::LeftHandThumbMetacarpal, {-1 * (shoulder + 0.12f + 0 * 0.015f), height * 0.51f - (1 + 1) * 0.019f, -0.09f - 0 * 0.008f});
-	set(BodyJoint::LeftHandThumbDistal, BodyJoint::LeftHandThumbProximal, {-1 * (shoulder + 0.12f + 0 * 0.015f), height * 0.51f - (2 + 1) * 0.019f, -0.09f - 0 * 0.008f});
-	set(BodyJoint::LeftHandThumbTip, BodyJoint::LeftHandThumbDistal, {-1 * (shoulder + 0.12f + 0 * 0.015f), height * 0.51f - (3 + 1) * 0.019f, -0.09f - 0 * 0.008f});
-	set(BodyJoint::LeftHandIndexMetacarpal, BodyJoint::LeftHandPalm, {-1 * (shoulder + 0.12f + 1 * 0.015f), height * 0.51f - (0 + 1) * 0.019f, -0.09f - 1 * 0.008f});
-	set(BodyJoint::LeftHandIndexProximal, BodyJoint::LeftHandIndexMetacarpal, {-1 * (shoulder + 0.12f + 1 * 0.015f), height * 0.51f - (1 + 1) * 0.019f, -0.09f - 1 * 0.008f});
-	set(BodyJoint::LeftHandIndexIntermediate, BodyJoint::LeftHandIndexProximal, {-1 * (shoulder + 0.12f + 1 * 0.015f), height * 0.51f - (2 + 1) * 0.019f, -0.09f - 1 * 0.008f});
-	set(BodyJoint::LeftHandIndexDistal, BodyJoint::LeftHandIndexIntermediate, {-1 * (shoulder + 0.12f + 1 * 0.015f), height * 0.51f - (3 + 1) * 0.019f, -0.09f - 1 * 0.008f});
-	set(BodyJoint::LeftHandIndexTip, BodyJoint::LeftHandIndexDistal, {-1 * (shoulder + 0.12f + 1 * 0.015f), height * 0.51f - (4 + 1) * 0.019f, -0.09f - 1 * 0.008f});
-	set(BodyJoint::LeftHandMiddleMetacarpal, BodyJoint::LeftHandPalm, {-1 * (shoulder + 0.12f + 2 * 0.015f), height * 0.51f - (0 + 1) * 0.019f, -0.09f - 2 * 0.008f});
-	set(BodyJoint::LeftHandMiddleProximal, BodyJoint::LeftHandMiddleMetacarpal, {-1 * (shoulder + 0.12f + 2 * 0.015f), height * 0.51f - (1 + 1) * 0.019f, -0.09f - 2 * 0.008f});
-	set(BodyJoint::LeftHandMiddleIntermediate, BodyJoint::LeftHandMiddleProximal, {-1 * (shoulder + 0.12f + 2 * 0.015f), height * 0.51f - (2 + 1) * 0.019f, -0.09f - 2 * 0.008f});
-	set(BodyJoint::LeftHandMiddleDistal, BodyJoint::LeftHandMiddleIntermediate, {-1 * (shoulder + 0.12f + 2 * 0.015f), height * 0.51f - (3 + 1) * 0.019f, -0.09f - 2 * 0.008f});
-	set(BodyJoint::LeftHandMiddleTip, BodyJoint::LeftHandMiddleDistal, {-1 * (shoulder + 0.12f + 2 * 0.015f), height * 0.51f - (4 + 1) * 0.019f, -0.09f - 2 * 0.008f});
-	set(BodyJoint::LeftHandRingMetacarpal, BodyJoint::LeftHandPalm, {-1 * (shoulder + 0.12f + 3 * 0.015f), height * 0.51f - (0 + 1) * 0.019f, -0.09f - 3 * 0.008f});
-	set(BodyJoint::LeftHandRingProximal, BodyJoint::LeftHandRingMetacarpal, {-1 * (shoulder + 0.12f + 3 * 0.015f), height * 0.51f - (1 + 1) * 0.019f, -0.09f - 3 * 0.008f});
-	set(BodyJoint::LeftHandRingIntermediate, BodyJoint::LeftHandRingProximal, {-1 * (shoulder + 0.12f + 3 * 0.015f), height * 0.51f - (2 + 1) * 0.019f, -0.09f - 3 * 0.008f});
-	set(BodyJoint::LeftHandRingDistal, BodyJoint::LeftHandRingIntermediate, {-1 * (shoulder + 0.12f + 3 * 0.015f), height * 0.51f - (3 + 1) * 0.019f, -0.09f - 3 * 0.008f});
-	set(BodyJoint::LeftHandRingTip, BodyJoint::LeftHandRingDistal, {-1 * (shoulder + 0.12f + 3 * 0.015f), height * 0.51f - (4 + 1) * 0.019f, -0.09f - 3 * 0.008f});
-	set(BodyJoint::LeftHandLittleMetacarpal, BodyJoint::LeftHandPalm, {-1 * (shoulder + 0.12f + 4 * 0.015f), height * 0.51f - (0 + 1) * 0.019f, -0.09f - 4 * 0.008f});
-	set(BodyJoint::LeftHandLittleProximal, BodyJoint::LeftHandLittleMetacarpal, {-1 * (shoulder + 0.12f + 4 * 0.015f), height * 0.51f - (1 + 1) * 0.019f, -0.09f - 4 * 0.008f});
-	set(BodyJoint::LeftHandLittleIntermediate, BodyJoint::LeftHandLittleProximal, {-1 * (shoulder + 0.12f + 4 * 0.015f), height * 0.51f - (2 + 1) * 0.019f, -0.09f - 4 * 0.008f});
-	set(BodyJoint::LeftHandLittleDistal, BodyJoint::LeftHandLittleIntermediate, {-1 * (shoulder + 0.12f + 4 * 0.015f), height * 0.51f - (3 + 1) * 0.019f, -0.09f - 4 * 0.008f});
-	set(BodyJoint::LeftHandLittleTip, BodyJoint::LeftHandLittleDistal, {-1 * (shoulder + 0.12f + 4 * 0.015f), height * 0.51f - (4 + 1) * 0.019f, -0.09f - 4 * 0.008f});
+	set(BodyJoint::LeftHandThumbMetacarpal, BodyJoint::LeftHandPalm,
+		{-1 * (shoulder + 0.12f + 0 * 0.015f), height * 0.51f - (0 + 1) * 0.019f, -0.09f - 0 * 0.008f});
+	set(BodyJoint::LeftHandThumbProximal, BodyJoint::LeftHandThumbMetacarpal,
+		{-1 * (shoulder + 0.12f + 0 * 0.015f), height * 0.51f - (1 + 1) * 0.019f, -0.09f - 0 * 0.008f});
+	set(BodyJoint::LeftHandThumbDistal, BodyJoint::LeftHandThumbProximal,
+		{-1 * (shoulder + 0.12f + 0 * 0.015f), height * 0.51f - (2 + 1) * 0.019f, -0.09f - 0 * 0.008f});
+	set(BodyJoint::LeftHandThumbTip, BodyJoint::LeftHandThumbDistal,
+		{-1 * (shoulder + 0.12f + 0 * 0.015f), height * 0.51f - (3 + 1) * 0.019f, -0.09f - 0 * 0.008f});
+	set(BodyJoint::LeftHandIndexMetacarpal, BodyJoint::LeftHandPalm,
+		{-1 * (shoulder + 0.12f + 1 * 0.015f), height * 0.51f - (0 + 1) * 0.019f, -0.09f - 1 * 0.008f});
+	set(BodyJoint::LeftHandIndexProximal, BodyJoint::LeftHandIndexMetacarpal,
+		{-1 * (shoulder + 0.12f + 1 * 0.015f), height * 0.51f - (1 + 1) * 0.019f, -0.09f - 1 * 0.008f});
+	set(BodyJoint::LeftHandIndexIntermediate, BodyJoint::LeftHandIndexProximal,
+		{-1 * (shoulder + 0.12f + 1 * 0.015f), height * 0.51f - (2 + 1) * 0.019f, -0.09f - 1 * 0.008f});
+	set(BodyJoint::LeftHandIndexDistal, BodyJoint::LeftHandIndexIntermediate,
+		{-1 * (shoulder + 0.12f + 1 * 0.015f), height * 0.51f - (3 + 1) * 0.019f, -0.09f - 1 * 0.008f});
+	set(BodyJoint::LeftHandIndexTip, BodyJoint::LeftHandIndexDistal,
+		{-1 * (shoulder + 0.12f + 1 * 0.015f), height * 0.51f - (4 + 1) * 0.019f, -0.09f - 1 * 0.008f});
+	set(BodyJoint::LeftHandMiddleMetacarpal, BodyJoint::LeftHandPalm,
+		{-1 * (shoulder + 0.12f + 2 * 0.015f), height * 0.51f - (0 + 1) * 0.019f, -0.09f - 2 * 0.008f});
+	set(BodyJoint::LeftHandMiddleProximal, BodyJoint::LeftHandMiddleMetacarpal,
+		{-1 * (shoulder + 0.12f + 2 * 0.015f), height * 0.51f - (1 + 1) * 0.019f, -0.09f - 2 * 0.008f});
+	set(BodyJoint::LeftHandMiddleIntermediate, BodyJoint::LeftHandMiddleProximal,
+		{-1 * (shoulder + 0.12f + 2 * 0.015f), height * 0.51f - (2 + 1) * 0.019f, -0.09f - 2 * 0.008f});
+	set(BodyJoint::LeftHandMiddleDistal, BodyJoint::LeftHandMiddleIntermediate,
+		{-1 * (shoulder + 0.12f + 2 * 0.015f), height * 0.51f - (3 + 1) * 0.019f, -0.09f - 2 * 0.008f});
+	set(BodyJoint::LeftHandMiddleTip, BodyJoint::LeftHandMiddleDistal,
+		{-1 * (shoulder + 0.12f + 2 * 0.015f), height * 0.51f - (4 + 1) * 0.019f, -0.09f - 2 * 0.008f});
+	set(BodyJoint::LeftHandRingMetacarpal, BodyJoint::LeftHandPalm,
+		{-1 * (shoulder + 0.12f + 3 * 0.015f), height * 0.51f - (0 + 1) * 0.019f, -0.09f - 3 * 0.008f});
+	set(BodyJoint::LeftHandRingProximal, BodyJoint::LeftHandRingMetacarpal,
+		{-1 * (shoulder + 0.12f + 3 * 0.015f), height * 0.51f - (1 + 1) * 0.019f, -0.09f - 3 * 0.008f});
+	set(BodyJoint::LeftHandRingIntermediate, BodyJoint::LeftHandRingProximal,
+		{-1 * (shoulder + 0.12f + 3 * 0.015f), height * 0.51f - (2 + 1) * 0.019f, -0.09f - 3 * 0.008f});
+	set(BodyJoint::LeftHandRingDistal, BodyJoint::LeftHandRingIntermediate,
+		{-1 * (shoulder + 0.12f + 3 * 0.015f), height * 0.51f - (3 + 1) * 0.019f, -0.09f - 3 * 0.008f});
+	set(BodyJoint::LeftHandRingTip, BodyJoint::LeftHandRingDistal,
+		{-1 * (shoulder + 0.12f + 3 * 0.015f), height * 0.51f - (4 + 1) * 0.019f, -0.09f - 3 * 0.008f});
+	set(BodyJoint::LeftHandLittleMetacarpal, BodyJoint::LeftHandPalm,
+		{-1 * (shoulder + 0.12f + 4 * 0.015f), height * 0.51f - (0 + 1) * 0.019f, -0.09f - 4 * 0.008f});
+	set(BodyJoint::LeftHandLittleProximal, BodyJoint::LeftHandLittleMetacarpal,
+		{-1 * (shoulder + 0.12f + 4 * 0.015f), height * 0.51f - (1 + 1) * 0.019f, -0.09f - 4 * 0.008f});
+	set(BodyJoint::LeftHandLittleIntermediate, BodyJoint::LeftHandLittleProximal,
+		{-1 * (shoulder + 0.12f + 4 * 0.015f), height * 0.51f - (2 + 1) * 0.019f, -0.09f - 4 * 0.008f});
+	set(BodyJoint::LeftHandLittleDistal, BodyJoint::LeftHandLittleIntermediate,
+		{-1 * (shoulder + 0.12f + 4 * 0.015f), height * 0.51f - (3 + 1) * 0.019f, -0.09f - 4 * 0.008f});
+	set(BodyJoint::LeftHandLittleTip, BodyJoint::LeftHandLittleDistal,
+		{-1 * (shoulder + 0.12f + 4 * 0.015f), height * 0.51f - (4 + 1) * 0.019f, -0.09f - 4 * 0.008f});
 	set(BodyJoint::LeftUpperLeg, BodyJoint::Hips, {-1 * hip, height * 0.51f, 0.04f});
 	set(BodyJoint::LeftLowerLeg, BodyJoint::LeftUpperLeg, {-1 * hip, height * 0.28f, 0.01f});
 	set(BodyJoint::LeftFootAnkleTwist, BodyJoint::LeftLowerLeg, {-1 * hip, 0.12f, 0.02f});
@@ -394,30 +462,54 @@ void BodyModel::Rebuild()
 	set(BodyJoint::RightHandWristTwist, BodyJoint::RightArmLower, {1 * (shoulder + 0.14f), height * 0.56f, -0.065f});
 	set(BodyJoint::RightHandWrist, BodyJoint::RightHandWristTwist, {1 * (shoulder + 0.145f), height * 0.54f, -0.07f});
 	set(BodyJoint::RightHandPalm, BodyJoint::RightHandWrist, {1 * (shoulder + 0.15f), height * 0.51f, -0.07f});
-	set(BodyJoint::RightHandThumbMetacarpal, BodyJoint::RightHandPalm, {1 * (shoulder + 0.12f + 0 * 0.015f), height * 0.51f - (0 + 1) * 0.019f, -0.09f - 0 * 0.008f});
-	set(BodyJoint::RightHandThumbProximal, BodyJoint::RightHandThumbMetacarpal, {1 * (shoulder + 0.12f + 0 * 0.015f), height * 0.51f - (1 + 1) * 0.019f, -0.09f - 0 * 0.008f});
-	set(BodyJoint::RightHandThumbDistal, BodyJoint::RightHandThumbProximal, {1 * (shoulder + 0.12f + 0 * 0.015f), height * 0.51f - (2 + 1) * 0.019f, -0.09f - 0 * 0.008f});
-	set(BodyJoint::RightHandThumbTip, BodyJoint::RightHandThumbDistal, {1 * (shoulder + 0.12f + 0 * 0.015f), height * 0.51f - (3 + 1) * 0.019f, -0.09f - 0 * 0.008f});
-	set(BodyJoint::RightHandIndexMetacarpal, BodyJoint::RightHandPalm, {1 * (shoulder + 0.12f + 1 * 0.015f), height * 0.51f - (0 + 1) * 0.019f, -0.09f - 1 * 0.008f});
-	set(BodyJoint::RightHandIndexProximal, BodyJoint::RightHandIndexMetacarpal, {1 * (shoulder + 0.12f + 1 * 0.015f), height * 0.51f - (1 + 1) * 0.019f, -0.09f - 1 * 0.008f});
-	set(BodyJoint::RightHandIndexIntermediate, BodyJoint::RightHandIndexProximal, {1 * (shoulder + 0.12f + 1 * 0.015f), height * 0.51f - (2 + 1) * 0.019f, -0.09f - 1 * 0.008f});
-	set(BodyJoint::RightHandIndexDistal, BodyJoint::RightHandIndexIntermediate, {1 * (shoulder + 0.12f + 1 * 0.015f), height * 0.51f - (3 + 1) * 0.019f, -0.09f - 1 * 0.008f});
-	set(BodyJoint::RightHandIndexTip, BodyJoint::RightHandIndexDistal, {1 * (shoulder + 0.12f + 1 * 0.015f), height * 0.51f - (4 + 1) * 0.019f, -0.09f - 1 * 0.008f});
-	set(BodyJoint::RightHandMiddleMetacarpal, BodyJoint::RightHandPalm, {1 * (shoulder + 0.12f + 2 * 0.015f), height * 0.51f - (0 + 1) * 0.019f, -0.09f - 2 * 0.008f});
-	set(BodyJoint::RightHandMiddleProximal, BodyJoint::RightHandMiddleMetacarpal, {1 * (shoulder + 0.12f + 2 * 0.015f), height * 0.51f - (1 + 1) * 0.019f, -0.09f - 2 * 0.008f});
-	set(BodyJoint::RightHandMiddleIntermediate, BodyJoint::RightHandMiddleProximal, {1 * (shoulder + 0.12f + 2 * 0.015f), height * 0.51f - (2 + 1) * 0.019f, -0.09f - 2 * 0.008f});
-	set(BodyJoint::RightHandMiddleDistal, BodyJoint::RightHandMiddleIntermediate, {1 * (shoulder + 0.12f + 2 * 0.015f), height * 0.51f - (3 + 1) * 0.019f, -0.09f - 2 * 0.008f});
-	set(BodyJoint::RightHandMiddleTip, BodyJoint::RightHandMiddleDistal, {1 * (shoulder + 0.12f + 2 * 0.015f), height * 0.51f - (4 + 1) * 0.019f, -0.09f - 2 * 0.008f});
-	set(BodyJoint::RightHandRingMetacarpal, BodyJoint::RightHandPalm, {1 * (shoulder + 0.12f + 3 * 0.015f), height * 0.51f - (0 + 1) * 0.019f, -0.09f - 3 * 0.008f});
-	set(BodyJoint::RightHandRingProximal, BodyJoint::RightHandRingMetacarpal, {1 * (shoulder + 0.12f + 3 * 0.015f), height * 0.51f - (1 + 1) * 0.019f, -0.09f - 3 * 0.008f});
-	set(BodyJoint::RightHandRingIntermediate, BodyJoint::RightHandRingProximal, {1 * (shoulder + 0.12f + 3 * 0.015f), height * 0.51f - (2 + 1) * 0.019f, -0.09f - 3 * 0.008f});
-	set(BodyJoint::RightHandRingDistal, BodyJoint::RightHandRingIntermediate, {1 * (shoulder + 0.12f + 3 * 0.015f), height * 0.51f - (3 + 1) * 0.019f, -0.09f - 3 * 0.008f});
-	set(BodyJoint::RightHandRingTip, BodyJoint::RightHandRingDistal, {1 * (shoulder + 0.12f + 3 * 0.015f), height * 0.51f - (4 + 1) * 0.019f, -0.09f - 3 * 0.008f});
-	set(BodyJoint::RightHandLittleMetacarpal, BodyJoint::RightHandPalm, {1 * (shoulder + 0.12f + 4 * 0.015f), height * 0.51f - (0 + 1) * 0.019f, -0.09f - 4 * 0.008f});
-	set(BodyJoint::RightHandLittleProximal, BodyJoint::RightHandLittleMetacarpal, {1 * (shoulder + 0.12f + 4 * 0.015f), height * 0.51f - (1 + 1) * 0.019f, -0.09f - 4 * 0.008f});
-	set(BodyJoint::RightHandLittleIntermediate, BodyJoint::RightHandLittleProximal, {1 * (shoulder + 0.12f + 4 * 0.015f), height * 0.51f - (2 + 1) * 0.019f, -0.09f - 4 * 0.008f});
-	set(BodyJoint::RightHandLittleDistal, BodyJoint::RightHandLittleIntermediate, {1 * (shoulder + 0.12f + 4 * 0.015f), height * 0.51f - (3 + 1) * 0.019f, -0.09f - 4 * 0.008f});
-	set(BodyJoint::RightHandLittleTip, BodyJoint::RightHandLittleDistal, {1 * (shoulder + 0.12f + 4 * 0.015f), height * 0.51f - (4 + 1) * 0.019f, -0.09f - 4 * 0.008f});
+	set(BodyJoint::RightHandThumbMetacarpal, BodyJoint::RightHandPalm,
+		{1 * (shoulder + 0.12f + 0 * 0.015f), height * 0.51f - (0 + 1) * 0.019f, -0.09f - 0 * 0.008f});
+	set(BodyJoint::RightHandThumbProximal, BodyJoint::RightHandThumbMetacarpal,
+		{1 * (shoulder + 0.12f + 0 * 0.015f), height * 0.51f - (1 + 1) * 0.019f, -0.09f - 0 * 0.008f});
+	set(BodyJoint::RightHandThumbDistal, BodyJoint::RightHandThumbProximal,
+		{1 * (shoulder + 0.12f + 0 * 0.015f), height * 0.51f - (2 + 1) * 0.019f, -0.09f - 0 * 0.008f});
+	set(BodyJoint::RightHandThumbTip, BodyJoint::RightHandThumbDistal,
+		{1 * (shoulder + 0.12f + 0 * 0.015f), height * 0.51f - (3 + 1) * 0.019f, -0.09f - 0 * 0.008f});
+	set(BodyJoint::RightHandIndexMetacarpal, BodyJoint::RightHandPalm,
+		{1 * (shoulder + 0.12f + 1 * 0.015f), height * 0.51f - (0 + 1) * 0.019f, -0.09f - 1 * 0.008f});
+	set(BodyJoint::RightHandIndexProximal, BodyJoint::RightHandIndexMetacarpal,
+		{1 * (shoulder + 0.12f + 1 * 0.015f), height * 0.51f - (1 + 1) * 0.019f, -0.09f - 1 * 0.008f});
+	set(BodyJoint::RightHandIndexIntermediate, BodyJoint::RightHandIndexProximal,
+		{1 * (shoulder + 0.12f + 1 * 0.015f), height * 0.51f - (2 + 1) * 0.019f, -0.09f - 1 * 0.008f});
+	set(BodyJoint::RightHandIndexDistal, BodyJoint::RightHandIndexIntermediate,
+		{1 * (shoulder + 0.12f + 1 * 0.015f), height * 0.51f - (3 + 1) * 0.019f, -0.09f - 1 * 0.008f});
+	set(BodyJoint::RightHandIndexTip, BodyJoint::RightHandIndexDistal,
+		{1 * (shoulder + 0.12f + 1 * 0.015f), height * 0.51f - (4 + 1) * 0.019f, -0.09f - 1 * 0.008f});
+	set(BodyJoint::RightHandMiddleMetacarpal, BodyJoint::RightHandPalm,
+		{1 * (shoulder + 0.12f + 2 * 0.015f), height * 0.51f - (0 + 1) * 0.019f, -0.09f - 2 * 0.008f});
+	set(BodyJoint::RightHandMiddleProximal, BodyJoint::RightHandMiddleMetacarpal,
+		{1 * (shoulder + 0.12f + 2 * 0.015f), height * 0.51f - (1 + 1) * 0.019f, -0.09f - 2 * 0.008f});
+	set(BodyJoint::RightHandMiddleIntermediate, BodyJoint::RightHandMiddleProximal,
+		{1 * (shoulder + 0.12f + 2 * 0.015f), height * 0.51f - (2 + 1) * 0.019f, -0.09f - 2 * 0.008f});
+	set(BodyJoint::RightHandMiddleDistal, BodyJoint::RightHandMiddleIntermediate,
+		{1 * (shoulder + 0.12f + 2 * 0.015f), height * 0.51f - (3 + 1) * 0.019f, -0.09f - 2 * 0.008f});
+	set(BodyJoint::RightHandMiddleTip, BodyJoint::RightHandMiddleDistal,
+		{1 * (shoulder + 0.12f + 2 * 0.015f), height * 0.51f - (4 + 1) * 0.019f, -0.09f - 2 * 0.008f});
+	set(BodyJoint::RightHandRingMetacarpal, BodyJoint::RightHandPalm,
+		{1 * (shoulder + 0.12f + 3 * 0.015f), height * 0.51f - (0 + 1) * 0.019f, -0.09f - 3 * 0.008f});
+	set(BodyJoint::RightHandRingProximal, BodyJoint::RightHandRingMetacarpal,
+		{1 * (shoulder + 0.12f + 3 * 0.015f), height * 0.51f - (1 + 1) * 0.019f, -0.09f - 3 * 0.008f});
+	set(BodyJoint::RightHandRingIntermediate, BodyJoint::RightHandRingProximal,
+		{1 * (shoulder + 0.12f + 3 * 0.015f), height * 0.51f - (2 + 1) * 0.019f, -0.09f - 3 * 0.008f});
+	set(BodyJoint::RightHandRingDistal, BodyJoint::RightHandRingIntermediate,
+		{1 * (shoulder + 0.12f + 3 * 0.015f), height * 0.51f - (3 + 1) * 0.019f, -0.09f - 3 * 0.008f});
+	set(BodyJoint::RightHandRingTip, BodyJoint::RightHandRingDistal,
+		{1 * (shoulder + 0.12f + 3 * 0.015f), height * 0.51f - (4 + 1) * 0.019f, -0.09f - 3 * 0.008f});
+	set(BodyJoint::RightHandLittleMetacarpal, BodyJoint::RightHandPalm,
+		{1 * (shoulder + 0.12f + 4 * 0.015f), height * 0.51f - (0 + 1) * 0.019f, -0.09f - 4 * 0.008f});
+	set(BodyJoint::RightHandLittleProximal, BodyJoint::RightHandLittleMetacarpal,
+		{1 * (shoulder + 0.12f + 4 * 0.015f), height * 0.51f - (1 + 1) * 0.019f, -0.09f - 4 * 0.008f});
+	set(BodyJoint::RightHandLittleIntermediate, BodyJoint::RightHandLittleProximal,
+		{1 * (shoulder + 0.12f + 4 * 0.015f), height * 0.51f - (2 + 1) * 0.019f, -0.09f - 4 * 0.008f});
+	set(BodyJoint::RightHandLittleDistal, BodyJoint::RightHandLittleIntermediate,
+		{1 * (shoulder + 0.12f + 4 * 0.015f), height * 0.51f - (3 + 1) * 0.019f, -0.09f - 4 * 0.008f});
+	set(BodyJoint::RightHandLittleTip, BodyJoint::RightHandLittleDistal,
+		{1 * (shoulder + 0.12f + 4 * 0.015f), height * 0.51f - (4 + 1) * 0.019f, -0.09f - 4 * 0.008f});
 	set(BodyJoint::RightUpperLeg, BodyJoint::Hips, {1 * hip, height * 0.51f, 0.04f});
 	set(BodyJoint::RightLowerLeg, BodyJoint::RightUpperLeg, {1 * hip, height * 0.28f, 0.01f});
 	set(BodyJoint::RightFootAnkleTwist, BodyJoint::RightLowerLeg, {1 * hip, 0.12f, 0.02f});
@@ -427,18 +519,22 @@ void BodyModel::Rebuild()
 	set(BodyJoint::RightFootBall, BodyJoint::RightFootTransverse, {1 * hip, 0.025f, -0.13f});
 }
 
-BodySample BodyModel::Evaluate(const PoseSample& inputHead, const BodyControls& controls, RuntimeTime time, bool focused) const
+BodySample BodyModel::Evaluate(const PoseSample& inputHead, const BodyControls& controls, RuntimeTime time,
+							   bool focused) const
 {
 	if (!std::isfinite(controls.confidence) || controls.confidence < 0 || controls.confidence > 1 ||
-		(controls.preset != BodyPreset::Standing && controls.preset != BodyPreset::TPose && controls.preset != BodyPreset::Seated))
+		(controls.preset != BodyPreset::Standing && controls.preset != BodyPreset::TPose &&
+		 controls.preset != BodyPreset::Seated))
 		throw std::invalid_argument("Invalid body controls");
 	auto head = inputHead;
 	auto& headOrientation = head.pose.orientation;
-	float headLength = std::sqrt(headOrientation.x * headOrientation.x + headOrientation.y * headOrientation.y + headOrientation.z * headOrientation.z + headOrientation.w * headOrientation.w);
+	float headLength = std::sqrt(headOrientation.x * headOrientation.x + headOrientation.y * headOrientation.y +
+								 headOrientation.z * headOrientation.z + headOrientation.w * headOrientation.w);
 	if (time.value.count() <= 0 || !IsFinite(head.pose.position) || !std::isfinite(headLength) ||
 		std::abs(headLength - 1) > 0.01f)
 		throw std::invalid_argument("Invalid body head pose or time");
-	headOrientation = {headOrientation.x / headLength, headOrientation.y / headLength, headOrientation.z / headLength, headOrientation.w / headLength};
+	headOrientation = {headOrientation.x / headLength, headOrientation.y / headLength, headOrientation.z / headLength,
+					   headOrientation.w / headLength};
 	for (const auto& override : controls.joints)
 	{
 		if (!override || !override->pose)
@@ -462,13 +558,17 @@ BodySample BodyModel::Evaluate(const PoseSample& inputHead, const BodyControls& 
 	if (controls.rootPose)
 	{
 		const auto normalized = NormalizedPose(*controls.rootPose);
-		if (!normalized) throw std::invalid_argument("Invalid body root pose");
+		if (!normalized)
+			throw std::invalid_argument("Invalid body root pose");
 		root = *normalized;
 	}
-	const float headHeight = head.pose.position.y - root.position.y;
-	std::array<XrVector3f, 5> defaults{{
-		{0, headHeight * 0.53f, 0.05f}, {0, headHeight * 0.76f, 0.04f},
-		{0, headHeight, 0}, {-m_proportions.hipWidth / 2, 0.08f, 0.02f}, {m_proportions.hipWidth / 2, 0.08f, 0.02f}}};
+	const double headHeight = static_cast<double>(head.pose.position.y) - root.position.y;
+	const double heightScale = headHeight / m_proportions.height;
+	std::array<XrVector3f, 5> defaults{{{0, Coordinate(headHeight * 0.53f), 0.05f},
+										{0, Coordinate(headHeight * 0.76f), 0.04f},
+										{0, Coordinate(headHeight), 0},
+										{-m_proportions.hipWidth / 2, 0.08f, 0.02f},
+										{m_proportions.hipWidth / 2, 0.08f, 0.02f}}};
 	std::array<XrVector3f, 5> shifts{};
 	for (std::size_t index = 0; index < shifts.size(); ++index)
 	{
@@ -481,21 +581,26 @@ BodySample BodyModel::Evaluate(const PoseSample& inputHead, const BodyControls& 
 	{
 		auto name = joint.joint;
 		auto position = joint.bindPose.position;
-		position.y *= headHeight / m_proportions.height;
+		double jointHeight = position.y * heightScale;
 		std::size_t control = static_cast<std::size_t>(BodyControl::Chest);
-		bool leftLeg = name == BodyJoint::LeftUpperLeg || name == BodyJoint::LeftLowerLeg || name == BodyJoint::LeftFootAnkleTwist ||
-			name == BodyJoint::LeftFootAnkle || name == BodyJoint::LeftFootSubtalar || name == BodyJoint::LeftFootTransverse || name == BodyJoint::LeftFootBall;
-		bool rightLeg = name == BodyJoint::RightUpperLeg || name == BodyJoint::RightLowerLeg || name == BodyJoint::RightFootAnkleTwist ||
-			name == BodyJoint::RightFootAnkle || name == BodyJoint::RightFootSubtalar || name == BodyJoint::RightFootTransverse || name == BodyJoint::RightFootBall;
+		bool leftLeg = name == BodyJoint::LeftUpperLeg || name == BodyJoint::LeftLowerLeg ||
+					   name == BodyJoint::LeftFootAnkleTwist || name == BodyJoint::LeftFootAnkle ||
+					   name == BodyJoint::LeftFootSubtalar || name == BodyJoint::LeftFootTransverse ||
+					   name == BodyJoint::LeftFootBall;
+		bool rightLeg = name == BodyJoint::RightUpperLeg || name == BodyJoint::RightLowerLeg ||
+						name == BodyJoint::RightFootAnkleTwist || name == BodyJoint::RightFootAnkle ||
+						name == BodyJoint::RightFootSubtalar || name == BodyJoint::RightFootTransverse ||
+						name == BodyJoint::RightFootBall;
 		XrVector3f shift;
 		if (leftLeg || rightLeg)
 		{
 			control = static_cast<std::size_t>(leftLeg ? BodyControl::LeftFoot : BodyControl::RightFoot);
-			float weight = (name == BodyJoint::LeftUpperLeg || name == BodyJoint::RightUpperLeg) ? 0.1f :
-				((name == BodyJoint::LeftLowerLeg || name == BodyJoint::RightLowerLeg) ? 0.5f : 1.0f);
+			float weight = (name == BodyJoint::LeftUpperLeg || name == BodyJoint::RightUpperLeg)
+							   ? 0.1f
+							   : ((name == BodyJoint::LeftLowerLeg || name == BodyJoint::RightLowerLeg) ? 0.5f : 1.0f);
 			shift = Blend(shifts[0], shifts[control], weight);
 			if (weight == 1)
-				position.y = joint.bindPose.position.y;
+				jointHeight = joint.bindPose.position.y;
 			if (weight == 0.1f)
 				control = static_cast<std::size_t>(BodyControl::Hips);
 			if (controls.preset == BodyPreset::Seated)
@@ -519,14 +624,15 @@ BodySample BodyModel::Evaluate(const PoseSample& inputHead, const BodyControls& 
 			if (controls.preset == BodyPreset::TPose && std::abs(position.x) > 0.01f)
 			{
 				float shoulder = m_proportions.shoulderWidth / 2;
-				float distance = std::hypot(std::abs(position.x) - shoulder, position.y - headHeight * 0.82f);
-				position.x = std::copysign(shoulder + distance, position.x);
-				position.y = headHeight * 0.82f;
+				double distance = std::hypot(std::abs(position.x) - shoulder, jointHeight - headHeight * 0.82f);
+				position.x = Coordinate(std::copysign(shoulder + distance, position.x));
+				jointHeight = headHeight * 0.82f;
 			}
 		}
-		if (controls.preset == BodyPreset::Seated && !leftLeg && !rightLeg && name != BodyJoint::Head && name != BodyJoint::Neck)
-			position.y -= name == BodyJoint::Hips ? 0.18f : 0.08f;
-		position = {position.x + shift.x, position.y + shift.y, position.z + shift.z};
+		if (controls.preset == BodyPreset::Seated && !leftLeg && !rightLeg && name != BodyJoint::Head &&
+			name != BodyJoint::Neck)
+			jointHeight -= name == BodyJoint::Hips ? 0.18f : 0.08f;
+		position = {position.x + shift.x, Coordinate(jointHeight + shift.y), position.z + shift.z};
 		if (name == BodyJoint::Root)
 			position.y = 0;
 		auto& location = sample.joints[Index(name)];
@@ -538,12 +644,14 @@ BodySample BodyModel::Evaluate(const PoseSample& inputHead, const BodyControls& 
 			if (controls.rootPose)
 			{
 				const auto offset = Rotate(root.orientation, shifts[2]);
-				location.pose.position = {head.pose.position.x + offset.x, head.pose.position.y + offset.y, head.pose.position.z + offset.z};
+				location.pose.position = {head.pose.position.x + offset.x, head.pose.position.y + offset.y,
+										  head.pose.position.z + offset.z};
 			}
 		}
 		location.flags = sample.active ? ValidPoseFlags : 0;
 		if (sample.active && controls.controls[control].tracked)
-			location.flags |= head.flags & (XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT | XR_SPACE_LOCATION_POSITION_TRACKED_BIT);
+			location.flags |=
+				head.flags & (XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT | XR_SPACE_LOCATION_POSITION_TRACKED_BIT);
 		if (const auto& override = controls.joints[Index(name)])
 		{
 			if (override->pose)
@@ -562,4 +670,4 @@ BodySample BodyModel::Evaluate(const PoseSample& inputHead, const BodyControls& 
 	}
 	return sample;
 }
-}
+} // namespace simxr

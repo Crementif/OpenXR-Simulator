@@ -1,46 +1,44 @@
 #include "runtime/SimulationExtensions.h"
+#include "Pch.h"
 #include "runtime/validation/StructureChain.h"
-
-#include <array>
-#include <vector>
 
 namespace simxr
 {
 std::span<const ExtensionDefinition> SimulationExtensions(SimulationExtensionCapabilities capabilities)
 {
-	static constexpr std::array<std::string_view, 1> trackerCommands{"xrEnumerateViveTrackerPathsHTCX"};
-	static constexpr std::array<std::string_view, 4> fbCommands{"xrCreateBodyTrackerFB", "xrDestroyBodyTrackerFB",
-																"xrLocateBodyJointsFB", "xrGetBodySkeletonFB"};
-	static constexpr std::array<std::string_view, 3> bdCommands{"xrCreateBodyTrackerBD", "xrDestroyBodyTrackerBD",
-																"xrLocateBodyJointsBD"};
-	static constexpr std::array<std::string_view, 2> calibrationCommands{"xrSuggestBodyTrackingCalibrationOverrideMETA",
-																		 "xrResetBodyTrackingCalibrationMETA"};
-	static constexpr std::array<std::string_view, 1> fidelityCommands{"xrRequestBodyTrackingFidelityMETA"};
-	static constexpr std::array fbDependency{ExtensionDependency{XR_FB_BODY_TRACKING_EXTENSION_NAME}};
-	static constexpr std::array coreDependency{ExtensionDependency{{}, XR_MAKE_VERSION(1, 0, 0)}};
-	static constexpr std::array dependsFB{DependencyClause{fbDependency}};
-	static constexpr std::array dependsFidelity{DependencyClause{fbDependency}, DependencyClause{coreDependency}};
-	static constexpr std::array quadDependency{ExtensionDependency{XR_VARJO_QUAD_VIEWS_EXTENSION_NAME}};
-	static constexpr std::array dependsQuad{DependencyClause{quadDependency}};
-	static const std::array definitions{
+	static constexpr std::array<std::string_view, 1> s_trackerCommands{"xrEnumerateViveTrackerPathsHTCX"};
+	static constexpr std::array<std::string_view, 4> s_fbCommands{"xrCreateBodyTrackerFB", "xrDestroyBodyTrackerFB",
+																  "xrLocateBodyJointsFB", "xrGetBodySkeletonFB"};
+	static constexpr std::array<std::string_view, 3> s_bdCommands{"xrCreateBodyTrackerBD", "xrDestroyBodyTrackerBD",
+																  "xrLocateBodyJointsBD"};
+	static constexpr std::array<std::string_view, 2> s_calibrationCommands{
+		"xrSuggestBodyTrackingCalibrationOverrideMETA", "xrResetBodyTrackingCalibrationMETA"};
+	static constexpr std::array<std::string_view, 1> s_fidelityCommands{"xrRequestBodyTrackingFidelityMETA"};
+	static constexpr std::array s_fbDependency{ExtensionDependency{XR_FB_BODY_TRACKING_EXTENSION_NAME}};
+	static constexpr std::array s_coreDependency{ExtensionDependency{{}, XR_MAKE_VERSION(1, 0, 0)}};
+	static constexpr std::array s_dependsFB{DependencyClause{s_fbDependency}};
+	static constexpr std::array s_dependsFidelity{DependencyClause{s_fbDependency}, DependencyClause{s_coreDependency}};
+	static constexpr std::array s_quadDependency{ExtensionDependency{XR_VARJO_QUAD_VIEWS_EXTENSION_NAME}};
+	static constexpr std::array s_dependsQuad{DependencyClause{s_quadDependency}};
+	static const std::array s_definitions{
 		ExtensionDefinition{XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME, XR_EXT_eye_gaze_interaction_SPEC_VERSION, {}},
 		ExtensionDefinition{XR_HTCX_VIVE_TRACKER_INTERACTION_EXTENSION_NAME,
-							XR_HTCX_vive_tracker_interaction_SPEC_VERSION, trackerCommands},
-		ExtensionDefinition{XR_FB_BODY_TRACKING_EXTENSION_NAME, XR_FB_body_tracking_SPEC_VERSION, fbCommands},
+							XR_HTCX_vive_tracker_interaction_SPEC_VERSION, s_trackerCommands},
+		ExtensionDefinition{XR_FB_BODY_TRACKING_EXTENSION_NAME, XR_FB_body_tracking_SPEC_VERSION, s_fbCommands},
 		ExtensionDefinition{XR_META_BODY_TRACKING_FULL_BODY_EXTENSION_NAME,
 							XR_META_body_tracking_full_body_SPEC_VERSION,
 							{},
-							dependsFB},
-		ExtensionDefinition{XR_BD_BODY_TRACKING_EXTENSION_NAME, XR_BD_body_tracking_SPEC_VERSION, bdCommands},
+							s_dependsFB},
+		ExtensionDefinition{XR_BD_BODY_TRACKING_EXTENSION_NAME, XR_BD_body_tracking_SPEC_VERSION, s_bdCommands},
 		ExtensionDefinition{XR_META_BODY_TRACKING_CALIBRATION_EXTENSION_NAME,
-							XR_META_body_tracking_calibration_SPEC_VERSION, calibrationCommands, dependsFB},
+							XR_META_body_tracking_calibration_SPEC_VERSION, s_calibrationCommands, s_dependsFB},
 		ExtensionDefinition{XR_META_BODY_TRACKING_FIDELITY_EXTENSION_NAME, XR_META_body_tracking_fidelity_SPEC_VERSION,
-							fidelityCommands, dependsFidelity},
+							s_fidelityCommands, s_dependsFidelity},
 		ExtensionDefinition{XR_VARJO_QUAD_VIEWS_EXTENSION_NAME, XR_VARJO_quad_views_SPEC_VERSION, {}},
-		ExtensionDefinition{XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME, XR_VARJO_foveated_rendering_SPEC_VERSION,
-							{}, dependsQuad}};
-	const auto additional = capabilities.quadViews ? (capabilities.foveatedRendering ? 2 : 1) : 0;
-	return std::span{definitions}.first(definitions.size() - 2 + additional);
+		ExtensionDefinition{
+			XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME, XR_VARJO_foveated_rendering_SPEC_VERSION, {}, s_dependsQuad}};
+	const std::size_t additional = capabilities.quadViews ? (capabilities.foveatedRendering ? 2 : 1) : 0;
+	return std::span{s_definitions}.first(s_definitions.size() - 2 + additional);
 }
 
 XrResult FillSimulationProperties(const EnabledExtensions& enabled, XrSystemProperties* properties,
@@ -48,26 +46,28 @@ XrResult FillSimulationProperties(const EnabledExtensions& enabled, XrSystemProp
 {
 	if (!properties || properties->type != XR_TYPE_SYSTEM_PROPERTIES)
 		return XR_ERROR_VALIDATION_FAILURE;
-	std::vector<XrStructureType> known;
+	std::array<XrStructureType, 7> known{};
+	std::size_t knownCount = 0;
 	if (enabled.Contains(XR_FB_BODY_TRACKING_EXTENSION_NAME))
-		known.push_back(XR_TYPE_SYSTEM_BODY_TRACKING_PROPERTIES_FB);
+		known[knownCount++] = XR_TYPE_SYSTEM_BODY_TRACKING_PROPERTIES_FB;
 	if (enabled.Contains(XR_BD_BODY_TRACKING_EXTENSION_NAME))
-		known.push_back(XR_TYPE_SYSTEM_BODY_TRACKING_PROPERTIES_BD);
+		known[knownCount++] = XR_TYPE_SYSTEM_BODY_TRACKING_PROPERTIES_BD;
 	if (enabled.Contains(XR_META_BODY_TRACKING_FULL_BODY_EXTENSION_NAME))
-		known.push_back(XR_TYPE_SYSTEM_PROPERTIES_BODY_TRACKING_FULL_BODY_META);
+		known[knownCount++] = XR_TYPE_SYSTEM_PROPERTIES_BODY_TRACKING_FULL_BODY_META;
 	if (enabled.Contains(XR_META_BODY_TRACKING_CALIBRATION_EXTENSION_NAME))
-		known.push_back(XR_TYPE_SYSTEM_PROPERTIES_BODY_TRACKING_CALIBRATION_META);
+		known[knownCount++] = XR_TYPE_SYSTEM_PROPERTIES_BODY_TRACKING_CALIBRATION_META;
 	if (enabled.Contains(XR_META_BODY_TRACKING_FIDELITY_EXTENSION_NAME))
-		known.push_back(XR_TYPE_SYSTEM_PROPERTIES_BODY_TRACKING_FIDELITY_META);
+		known[knownCount++] = XR_TYPE_SYSTEM_PROPERTIES_BODY_TRACKING_FIDELITY_META;
 	if (enabled.Contains(XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME))
-		known.push_back(XR_TYPE_SYSTEM_EYE_GAZE_INTERACTION_PROPERTIES_EXT);
+		known[knownCount++] = XR_TYPE_SYSTEM_EYE_GAZE_INTERACTION_PROPERTIES_EXT;
 	if (enabled.Contains(XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME))
-		known.push_back(XR_TYPE_SYSTEM_FOVEATED_RENDERING_PROPERTIES_VARJO);
+		known[knownCount++] = XR_TYPE_SYSTEM_FOVEATED_RENDERING_PROPERTIES_VARJO;
 	StructureChain chain(properties->next);
-	auto result = chain.Validate(known);
+	const auto knownTypes = std::span(known).first(knownCount);
+	auto result = chain.Validate(knownTypes);
 	if (XR_FAILED(result))
 		return result;
-	for (auto type : known)
+	for (auto type : knownTypes)
 	{
 		switch (type)
 		{
