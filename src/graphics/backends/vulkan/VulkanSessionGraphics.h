@@ -7,6 +7,7 @@
 #include "runtime/HandleRegistry.h"
 
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>

@@ -1,5 +1,5 @@
-#include "Pch.h"
 #include "graphics/backends/vulkan/VulkanInstanceGraphics.h"
+#include "Pch.h"
 #include "graphics/backends/vulkan/VulkanSwapchain.h"
 
 #define XR_USE_GRAPHICS_API_VULKAN
@@ -8,18 +8,11 @@
 #include "graphics/backends/vulkan/VulkanExternal.h"
 #include "runtime/validation/StructureChain.h"
 
-#include <algorithm>
-#include <array>
 #include <cstring>
-#include <span>
-#include <string_view>
-#include <utility>
 
 namespace simxr
 {
-namespace
-{
-XrResult WriteExtensions(std::string_view names, std::uint32_t capacity, std::uint32_t* count, char* output)
+static XrResult WriteExtensions(std::string_view names, std::uint32_t capacity, std::uint32_t* count, char* output)
 {
 	if (!count || (capacity && !output))
 		return XR_ERROR_VALIDATION_FAILURE;
@@ -33,7 +26,7 @@ XrResult WriteExtensions(std::string_view names, std::uint32_t capacity, std::ui
 	return XR_SUCCESS;
 }
 
-VkPhysicalDevice SelectPhysicalDevice(VkInstance instance)
+static VkPhysicalDevice SelectPhysicalDevice(VkInstance instance)
 {
 	for (std::uint32_t attempt = 0; attempt < 4; ++attempt)
 	{
@@ -61,10 +54,10 @@ VkPhysicalDevice SelectPhysicalDevice(VkInstance instance)
 	throw VulkanError(VK_INCOMPLETE, "Vulkan physical device list did not stabilize");
 }
 
-class ProbeInstance final
+class VulkanProbeInstance final
 {
   public:
-	ProbeInstance()
+	VulkanProbeInstance()
 	{
 		VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
 		application.apiVersion = VK_API_VERSION_1_1;
@@ -72,12 +65,12 @@ class ProbeInstance final
 		creation.pApplicationInfo = &application;
 		CheckVulkan(vkCreateInstance(&creation, nullptr, &m_instance), "Create Vulkan capability query instance");
 	}
-	~ProbeInstance()
+	~VulkanProbeInstance()
 	{
 		vkDestroyInstance(m_instance, nullptr);
 	}
-	ProbeInstance(const ProbeInstance&) = delete;
-	ProbeInstance& operator=(const ProbeInstance&) = delete;
+	VulkanProbeInstance(const VulkanProbeInstance&) = delete;
+	VulkanProbeInstance& operator=(const VulkanProbeInstance&) = delete;
 	VkPhysicalDevice PhysicalDevice() const
 	{
 		const auto selected = SelectPhysicalDevice(m_instance);
@@ -90,7 +83,7 @@ class ProbeInstance final
 	VkInstance m_instance = VK_NULL_HANDLE;
 };
 
-bool ValidNames(std::uint32_t count, const char* const* names)
+static bool ValidNames(std::uint32_t count, const char* const* names)
 {
 	if (!count)
 		return true;
@@ -103,8 +96,6 @@ bool ValidNames(std::uint32_t count, const char* const* names)
 						   return name && *name;
 					   });
 }
-} // namespace
-
 
 std::vector<const char*> VulkanSharingExtensions(VkPhysicalDevice physicalDevice)
 {
@@ -139,17 +130,20 @@ XrResult VulkanInstanceGraphics::MaxSampleCount(std::uint32_t& output)
 	{
 		try
 		{
-			const ProbeInstance probe;
+			const VulkanProbeInstance probe;
 			const auto physical = probe.PhysicalDevice();
 			VkSampleCountFlags common = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT |
-				VK_SAMPLE_COUNT_8_BIT | VK_SAMPLE_COUNT_16_BIT | VK_SAMPLE_COUNT_32_BIT | VK_SAMPLE_COUNT_64_BIT;
+										VK_SAMPLE_COUNT_8_BIT | VK_SAMPLE_COUNT_16_BIT | VK_SAMPLE_COUNT_32_BIT |
+										VK_SAMPLE_COUNT_64_BIT;
 			for (const auto format : VulkanSwapchain::ColorFormats())
 			{
 				VkImageFormatProperties supported{};
-				CheckVulkan(vkGetPhysicalDeviceImageFormatProperties(physical, static_cast<VkFormat>(format),
-					VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-					VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-					0, &supported), "Query swapchain sample counts");
+				CheckVulkan(vkGetPhysicalDeviceImageFormatProperties(
+								physical, static_cast<VkFormat>(format), VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
+								VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+									VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+								0, &supported),
+							"Query swapchain sample counts");
 				common &= supported.sampleCounts;
 			}
 			std::uint32_t maximum = 1;
@@ -186,7 +180,7 @@ XrResult VulkanInstanceGraphics::DeviceExtensions(XrSystemId system, std::uint32
 	{
 		try
 		{
-			const ProbeInstance probe;
+			const VulkanProbeInstance probe;
 			std::string names;
 			for (const auto* name : VulkanSharingExtensions(probe.PhysicalDevice()))
 			{

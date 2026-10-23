@@ -2,6 +2,9 @@
 
 #include "graphics/backends/vulkan/VulkanReadbackBatch.h"
 #include "presentation/FrameTypes.h"
+
+#include <cstdint>
+#include <memory>
 #include <optional>
 
 namespace simxr

@@ -1,4 +1,5 @@
 #include "graphics/backends/vulkan/VulkanSessionGraphics.h"
+#include "Pch.h"
 
 #include "control/legacy/LegacyFileChannel.h"
 #include "graphics/backends/vulkan/VulkanFrameObserver.h"
@@ -8,17 +9,12 @@
 #include "graphics/backends/vulkan/VulkanSwapchain.h"
 #include "runtime/Session.h"
 
-#include <algorithm>
 #include <stdexcept>
-#include <string>
-#include <utility>
 
 namespace simxr
 {
-namespace
-{
-SnapshotAdmission PromoteInspectionCapture(const std::shared_ptr<const FrameOutput>& output, const FramePool& pool,
-										   std::shared_ptr<FrameReservation> reservation)
+static SnapshotAdmission PromoteInspectionCapture(const std::shared_ptr<const FrameOutput>& output,
+												  const FramePool& pool, std::shared_ptr<FrameReservation> reservation)
 {
 	const auto frame = std::dynamic_pointer_cast<const VulkanInspectionFrame>(output);
 	if (!frame)
@@ -27,7 +23,6 @@ SnapshotAdmission PromoteInspectionCapture(const std::shared_ptr<const FrameOutp
 		return SnapshotAdmission::Accepted;
 	return SnapshotAdmission::Capacity;
 }
-} // namespace
 
 class VulkanSessionGraphics::FrameBindings final : public VulkanCaptureBindings, public VulkanFrameBindings
 {
@@ -213,10 +208,13 @@ XrResult VulkanSessionGraphics::EndFrame(const XrFrameEndInfo& info)
 		return XR_ERROR_SESSION_LOST;
 	const FrameBindings bindings(*this);
 	VulkanFrameSubmission backend(*m_session, *m_backend, m_inspection.get(), bindings,
-		m_session->Display().Policy() == PresentationPolicy::Rotational);
+								  m_session->Display().Policy() == PresentationPolicy::Rotational);
 	FrameSubmission submission(*m_session, backend);
 	const auto result = submission.Execute(info,
-		[&bindings](XrSwapchain swapchain) { return bindings.Describe(swapchain); });
+										   [&bindings](XrSwapchain swapchain)
+										   {
+											   return bindings.Describe(swapchain);
+										   });
 	if (XR_SUCCEEDED(result) && m_observer)
 		m_observer->Observe(info, submission.Composition(), bindings);
 	return result;
