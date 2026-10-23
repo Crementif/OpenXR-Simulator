@@ -10,6 +10,12 @@
 
 namespace simxr::control
 {
+// No connection or request was admitted; a later connection attempt is safe.
+class ControlConnectTimeout : public std::runtime_error
+{
+  public:
+	using std::runtime_error::runtime_error;
+};
 class ControlExchangeTimeout : public std::runtime_error
 {
   public:

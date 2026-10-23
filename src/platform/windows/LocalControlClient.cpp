@@ -54,7 +54,7 @@ struct LocalControlClient::State
 			if (error != ERROR_PIPE_BUSY && error != ERROR_FILE_NOT_FOUND)
 				throw native::Error("Open local control pipe failed", error);
 			if (native::Clock::now() >= deadline)
-				throw native::Error("Connect local control pipe timed out", error);
+				throw ControlConnectTimeout(native::Error("Connect local control pipe timed out", error).what());
 			if (error == ERROR_PIPE_BUSY)
 				WaitNamedPipeW(wide.c_str(), 10);
 			else

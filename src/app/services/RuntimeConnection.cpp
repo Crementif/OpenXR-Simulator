@@ -154,7 +154,26 @@ void RuntimeConnection::RunChecked()
 				continue;
 			try
 			{
-				client = std::make_unique<control::LocalControlClient>(path, m_configuration.retrySlice);
+				const auto connectDeadline = Clock::now() + m_configuration.exchangeDeadline;
+				for (;;)
+				{
+					if (!Current(activeEpoch))
+						throw std::runtime_error("Runtime connection changed");
+					const auto remaining = std::chrono::ceil<std::chrono::milliseconds>(connectDeadline - Clock::now());
+					if (remaining <= std::chrono::milliseconds::zero())
+						throw std::runtime_error("Connect local control pipe timed out");
+					try
+					{
+						client = std::make_unique<control::LocalControlClient>(
+							path, std::min(m_configuration.retrySlice, remaining));
+						break;
+					}
+					catch (const control::ControlConnectTimeout&)
+					{
+						if (Clock::now() >= connectDeadline)
+							throw;
+					}
+				}
 				control::ControlPacket hello;
 				hello.message.opcode = static_cast<std::uint16_t>(control::OpCode::Hello);
 				hello.message.fields = {control::Field::Text(control::tag::ClientName, "simxr companion")};

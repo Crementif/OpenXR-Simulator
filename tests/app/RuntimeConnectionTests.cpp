@@ -1,9 +1,17 @@
 #include "../TestSupport.h"
+#include "Pch.h"
 #include "app/services/RuntimeConnection.h"
 
 #include <chrono>
 #include <iostream>
 #include <thread>
+
+#if defined(_WIN32)
+#include "control/ControlService.h"
+#include "control/LocalControlServer.h"
+#include "platform/windows/WindowsControl.h"
+#include "runtime/Runtime.h"
+#endif
 
 #if defined(__linux__)
 #include "../control/FakeImageInspection.h"
@@ -15,7 +23,7 @@
 #include <mutex>
 #endif
 
-namespace
+namespace simxr::test
 {
 using namespace simxr;
 using namespace std::chrono_literals;
@@ -53,12 +61,21 @@ struct Gate
 		std::unique_lock lock(mutex);
 		entered = true;
 		changed.notify_all();
-		changed.wait(lock, [&] { return released; });
+		changed.wait(lock,
+					 [&]
+					 {
+						 return released;
+					 });
 	}
 	void Await()
 	{
 		std::unique_lock lock(mutex);
-		Require(changed.wait_for(lock, 3s, [&] { return entered; }), "Blocked provider was not entered");
+		Require(changed.wait_for(lock, 3s,
+								 [&]
+								 {
+									 return entered;
+								 }),
+				"Blocked provider was not entered");
 	}
 	void Release()
 	{
@@ -231,7 +248,12 @@ void ConnectionAndHandles()
 	last.handles.push_back(wire::OwnControlFd(::open("/dev/null", O_RDONLY | O_CLOEXEC)));
 	last.exposure = stop;
 	Require(connection.Submit(std::move(last)) != 0, "Submit worker callback stop fixture");
-	Eventually([&] { return stop->stopped.load(); }, "Worker-origin stop deadlocked on self join");
+	Eventually(
+		[&]
+		{
+			return stop->stopped.load();
+		},
+		"Worker-origin stop deadlocked on self join");
 	connection.Close(); // External owner still joins; no worker is detached.
 	std::array<std::byte, 96> bytes{};
 	Require(::pread(static_cast<int>(shared.packet.handles[0]->Value()), bytes.data(), bytes.size(), 0) == 96 &&
@@ -268,7 +290,12 @@ void BoundedQueueAndExactRetry()
 	std::this_thread::sleep_for(80ms); // Several Retry slices, one server dispatch.
 	Require(fixture.state->retains == 1, "Timeout retry admitted another RPC");
 	gate->Release();
-	Eventually([&] { return connection.Snapshot().ready == 1; }, "Blocked response did not finish");
+	Eventually(
+		[&]
+		{
+			return connection.Snapshot().ready == 1;
+		},
+		"Blocked response did not finish");
 	std::this_thread::sleep_for(30ms);
 	Require(connection.Snapshot().queued == 2 && !connection.Snapshot().inFlight &&
 				connection.Submit(Packet(wire::OpCode::Sessions)) == 0,
@@ -359,8 +386,12 @@ void ResponsiveShutdownAndDeadline()
 		if (deadline)
 		{
 			const auto queued = connection.Submit(Packet(wire::OpCode::Sessions));
-			Eventually([&] { return connection.Snapshot().ready == 2; },
-					   "Overall exchange deadline did not terminate bounded work");
+			Eventually(
+				[&]
+				{
+					return connection.Snapshot().ready == 2;
+				},
+				"Overall exchange deadline did not terminate bounded work");
 			auto replies = connection.Poll();
 			Require(replies.size() == 2 && replies[0].ticket == ticket && replies[0].timedOut &&
 						!replies[0].error.empty() && replies[1].ticket == queued && !replies[1].error.empty() &&
@@ -369,8 +400,8 @@ void ResponsiveShutdownAndDeadline()
 						connection.Snapshot().hello.message.Find(wire::tag::Error)->AsU32() == 0,
 					"Deadline discarded diagnostic/Hello or silently resubmitted queued work");
 			Require(replies[0].error == "Control request 3 (opcode " +
-										  std::to_string(static_cast<std::uint16_t>(wire::OpCode::RetainImage)) +
-										  ") exceeded the 60 ms exchange deadline; connection closed" &&
+											std::to_string(static_cast<std::uint16_t>(wire::OpCode::RetainImage)) +
+											") exceeded the 60 ms exchange deadline; connection closed" &&
 						connection.Snapshot().detail == replies[0].error,
 					"Deadline omitted the stalled request identity, opcode or overall deadline");
 		}
@@ -437,8 +468,12 @@ void ExplicitFailures()
 {
 	app::RuntimeConnection connection;
 	const auto epoch = connection.Connect("/tmp/nonexistent-simxr-async-endpoint/socket");
-	Eventually([&] { return connection.Snapshot().state == app::RuntimeConnectionState::Failed; },
-			   "Missing endpoint did not report connection failure");
+	Eventually(
+		[&]
+		{
+			return connection.Snapshot().state == app::RuntimeConnectionState::Failed;
+		},
+		"Missing endpoint did not report connection failure");
 	Require(connection.Snapshot().epoch == epoch && !connection.Snapshot().detail.empty(),
 			"Connection failure lost its epoch/detail");
 	connection.Disconnect();
@@ -446,9 +481,70 @@ void ExplicitFailures()
 			"Disconnect did not clear failed connection");
 }
 #endif
-} // namespace
+#if defined(_WIN32)
+void BusyPipeAttachment()
+{
+	using namespace wire::windows;
+	const auto path = std::string(R"(\\.\pipe\SimXR.Control.)") + std::to_string(GetCurrentProcessId()) + ".busy";
+	const auto wide = PipePath(path);
+	Handle occupied(
+		CreateNamedPipeW(wide.c_str(), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_WAIT, 1, 65536, 65536, 0, nullptr));
+	Require(occupied.value != INVALID_HANDLE_VALUE, "Create occupied attachment pipe");
+	Handle blocker(CreateFileW(wide.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr));
+	Require(blocker.value != INVALID_HANDLE_VALUE, "Occupy attachment pipe");
+	ExtensionRegistry extensions({});
+	Runtime runtime(extensions);
+	wire::ControlService service(runtime);
+	app::RuntimeConnection connection;
+	const auto epoch = connection.Connect(path);
+	std::this_thread::sleep_for(200ms);
+	Require(connection.Snapshot().state == app::RuntimeConnectionState::Connecting,
+			"Busy pipe failed attachment after one retry slice instead of the connection deadline");
+	blocker.Close();
+	occupied.Close();
+	wire::LocalControlServer server(service, path);
+	Eventually(
+		[&]
+		{
+			return connection.Snapshot().state == app::RuntimeConnectionState::Connected;
+		},
+		"Attachment did not recover when the pipe became available");
+	Require(connection.Snapshot().epoch == epoch, "Pipe retry changed the requested attachment epoch");
+	connection.Close();
+
+	server.Close();
+	occupied = Handle(
+		CreateNamedPipeW(wide.c_str(), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_WAIT, 1, 65536, 65536, 0, nullptr));
+	Require(occupied.value != INVALID_HANDLE_VALUE, "Recreate occupied attachment pipe");
+	blocker = Handle(CreateFileW(wide.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr));
+	Require(blocker.value != INVALID_HANDLE_VALUE, "Occupy deadline fixture pipe");
+	app::RuntimeConnectionConfig config;
+	config.exchangeDeadline = 250ms;
+	app::RuntimeConnection expired(config);
+	const auto start = std::chrono::steady_clock::now();
+	expired.Connect(path);
+	Eventually(
+		[&]
+		{
+			return expired.Snapshot().state == app::RuntimeConnectionState::Failed;
+		},
+		"Busy pipe did not respect the connection deadline");
+	const auto elapsed = std::chrono::steady_clock::now() - start;
+	Require(elapsed >= config.exchangeDeadline && elapsed < 1s && !expired.Snapshot().detail.empty(),
+			"Busy pipe deadline failed too early, too late, or without an error");
+	app::RuntimeConnection cancelled;
+	cancelled.Connect(path);
+	std::this_thread::sleep_for(100ms);
+	const auto closing = std::chrono::steady_clock::now();
+	cancelled.Close();
+	Require(std::chrono::steady_clock::now() - closing < 500ms,
+			"Closing a busy attachment waited for the full connection deadline");
+}
+#endif
+} // namespace simxr::test
 int main()
 {
+	using namespace simxr::test;
 	try
 	{
 #if defined(__linux__)
@@ -458,11 +554,17 @@ int main()
 		ResponsiveShutdownAndDeadline();
 		InvalidBounds();
 		ExplicitFailures();
+#elif defined(_WIN32)
+		BusyPipeAttachment();
 #else
 		app::RuntimeConnection connection;
 		connection.Connect("unsupported");
-		Eventually([&] { return connection.Snapshot().state == app::RuntimeConnectionState::Failed; },
-				   "Unsupported transport did not fail explicitly");
+		Eventually(
+			[&]
+			{
+				return connection.Snapshot().state == app::RuntimeConnectionState::Failed;
+			},
+			"Unsupported transport did not fail explicitly");
 #endif
 		std::cout << "PASS async runtime connection CPU transport, bounded ownership and epochs\n";
 		return 0;
