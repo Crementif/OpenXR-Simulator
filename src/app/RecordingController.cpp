@@ -12,6 +12,9 @@
 #include <stdexcept>
 #include <thread>
 #include <utility>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace simxr::app
 {
@@ -93,7 +96,13 @@ class RecordingController::State
 				output.close();
 				if (!output)
 					throw std::runtime_error("Cannot write recording destination");
+#ifdef _WIN32
+				if (!MoveFileExW(temporary.c_str(), Utf8Path(job.path).c_str(),
+								 MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+					throw std::runtime_error("Cannot replace recording destination");
+#else
 				std::filesystem::rename(temporary, Utf8Path(job.path));
+#endif
 			}
 			catch (...)
 			{
@@ -233,7 +242,9 @@ bool RecordingController::State::Request(RecordingAction action, std::uint64_t o
 		std::lock_guard lock(m_mutex);
 		if (m_stopping || m_snapshot.busy || m_target.endpoint.empty() || !m_target.session || !m_target.generation)
 			return false;
-		if (offset > 1024 || (action == RecordingAction::Save && (path.empty() || path.size() > 2048)))
+		if (offset > 1024 ||
+			(action == RecordingAction::Save &&
+			 (path.empty() || path.size() > 2048 || path.find('\0') != std::string::npos)))
 			throw std::invalid_argument("Invalid recording page or destination");
 		Job job{action, m_target, m_revision, offset, std::move(path)};
 		if (!m_worker.joinable())
@@ -256,6 +267,8 @@ RecordingSnapshot RecordingController::State::Snapshot() const
 }
 automation::SavedRecording OpenSavedRecording(const std::string& path)
 {
+	if (path.empty() || path.find('\0') != std::string::npos)
+		throw std::invalid_argument("Invalid recording path");
 	std::error_code error;
 	const auto size = std::filesystem::file_size(Utf8Path(path), error);
 	if (error || size == 0 || size > control::MaxPayload)

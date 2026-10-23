@@ -205,10 +205,32 @@ void SaveAndReplay()
 	const auto badDestination =
 		Request(controller, app::RecordingAction::Save, (host.path / "missing" / "rig").string());
 	Require(!badDestination.error.empty() && badDestination.savedPath.empty(), "Failed write reported a saved file");
+	const auto truncatedPath = destination.string() + std::string("\0unexpected", 11);
+	bool rejected = false;
+	try
+	{
+		controller.Request(app::RecordingAction::Save, 0, truncatedPath);
+	}
+	catch (const std::invalid_argument&)
+	{
+		rejected = true;
+	}
+	Require(rejected && !controller.Snapshot().busy && Contents(destination) == "keep existing destination",
+			"Embedded NUL must not redirect a recording save to a truncated path");
 	const auto saved = Request(controller, app::RecordingAction::Save, destination.string());
 	Require(saved.error.empty() && saved.savedPath == destination.string() && saved.page &&
 				saved.page->transactions.size() == 21,
 			"Save did not collect beyond its first page");
+	bool rejectedOpen = false;
+	try
+	{
+		(void)app::OpenSavedRecording(truncatedPath);
+	}
+	catch (const std::invalid_argument&)
+	{
+		rejectedOpen = true;
+	}
+	Require(rejectedOpen, "Embedded NUL must not reopen a different recording");
 	const auto script = Contents(destination);
 	Require(script.find("recorded frame +20") != std::string::npos &&
 				script.find("position = {20,") != std::string::npos,
