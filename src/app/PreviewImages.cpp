@@ -211,6 +211,12 @@ void PreviewImages::Retained(const wire::Message& message, bool preview)
 {
 	if (preview && !Boolean(message, tag::ImageAvailable))
 	{
+		if (m_pending && m_pending->live)
+		{
+			m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId,
+							   U64(m_pending->message, tag::ImageReaderId));
+			m_pending.reset();
+		}
 		for (auto& image : m_images)
 			if (image->live)
 				image->release = true;
@@ -237,10 +243,20 @@ void PreviewImages::Retained(const wire::Message& message, bool preview)
 		}
 	if (m_images.size() >= SnapshotBudget::Capacity())
 	{
+		std::optional<PendingImage> prepared;
+		try
+		{
+			prepared.emplace(PendingImage{message, preview});
+		}
+		catch (...)
+		{
+			m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId, reader);
+			throw;
+		}
 		if (m_pending)
 			m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId,
 							   U64(m_pending->message, tag::ImageReaderId));
-		m_pending = PendingImage{message, preview};
+		m_pending = std::move(prepared);
 		return;
 	}
 #if defined(__linux__) || defined(_WIN32)

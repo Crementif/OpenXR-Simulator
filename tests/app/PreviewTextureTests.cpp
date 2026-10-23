@@ -103,6 +103,13 @@ void DisplayImageIdentity(app::UiRenderer& renderer)
 	retained(106, {});
 	Require(images.Images().size() == 3 && !images.Images().back().imageTick && images.ReadyCount() == 0,
 			"Legacy preview identity was duplicated or pending images were marked ready");
+	const auto previousBudget = SnapshotBudget::MiB();
+	SnapshotBudget::Configure(192);
+	Require(SnapshotBudget::Capacity() == 3, "Three-image cache pressure fixture changed");
+	retained(107, 8);
+	wire::Message unavailable;
+	unavailable.fields = {wire::Field::Bool(wire::tag::ImageAvailable, false)};
+	images.Retained(unavailable, true);
 	unsigned rejected = 0;
 	Eventually(
 		[&]
@@ -120,6 +127,7 @@ void DisplayImageIdentity(app::UiRenderer& renderer)
 			return rejected == 3 && images.Images().empty();
 		},
 		"Rejected image offers failed to retire their native fences");
+	SnapshotBudget::Configure(previousBudget);
 	requests.Close();
 }
 void BoundAndRollback(const app::VulkanDeviceAccess& access)
