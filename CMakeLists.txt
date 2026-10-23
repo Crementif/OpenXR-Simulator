@@ -108,7 +108,11 @@ add_library(simxr_recording STATIC src/automation/Recording.cpp src/automation/R
 simxr_configure_target(simxr_recording)
 target_link_libraries(simxr_recording PUBLIC simxr_control)
 
-add_library(simxr_app_settings STATIC src/app/CompanionSettings.cpp src/app/ProcessLauncher.cpp src/app/ProcessSupervisor.cpp)
+add_library(simxr_app_settings STATIC
+    src/app/CompanionSettings.cpp
+    src/app/services/LaunchTypes.cpp
+    src/app/services/ProcessLauncher.cpp
+    src/app/services/ProcessSupervisor.cpp)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(simxr_app_settings PRIVATE src/app/platform/linux/ChildProcess.cpp)
 elseif(WIN32)
@@ -125,7 +129,7 @@ endif()
 
 add_library(simxr_connection STATIC
     src/app/RuntimeConnection.cpp
-    src/app/LaunchAttachment.cpp
+    src/app/services/LaunchAttachment.cpp
     src/app/SimulationEdits.cpp
     src/app/PlayerRig.cpp
     src/app/FrameHistoryFeed.cpp
@@ -138,6 +142,11 @@ add_library(simxr_connection STATIC
     src/app/DebuggerPanelController.cpp
     src/app/InspectionWorkspace.cpp
     src/app/ImageExportTask.cpp)
+if(WIN32)
+    target_sources(simxr_connection PRIVATE src/app/platform/windows/LaunchAttachment.cpp)
+else()
+    target_sources(simxr_connection PRIVATE src/app/platform/LaunchAttachment.cpp)
+endif()
 simxr_configure_target(simxr_connection)
 target_link_libraries(simxr_connection PUBLIC simxr_control)
 

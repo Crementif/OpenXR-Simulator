@@ -1,6 +1,6 @@
 #include "../TestSupport.h"
-#include "app/ProcessLauncher.h"
-#include "app/ProcessSupervisor.h"
+#include "app/services/ProcessLauncher.h"
+#include "app/services/ProcessSupervisor.h"
 
 #include <cerrno>
 #include <csignal>

@@ -1,7 +1,7 @@
+#include "Pch.h"
 #include "app/CompanionSettings.h"
 #include "app/Utf8Path.h"
 #include "app/WindowsLaunch.h"
-#include "simulation/HeadsetProfiles.h"
 
 #include <algorithm>
 #include <array>
@@ -77,29 +77,6 @@ struct Reader
 		return count;
 	}
 };
-void ValidateProfile(const LaunchProfile& profile)
-{
-	TextValid(profile.name);
-	TextValid(profile.executable);
-	TextValid(profile.workingDirectory);
-	TextValid(profile.runtimeManifest);
-	TextValid(profile.headsetProfile);
-	TextValid(profile.rig);
-	if (!profile.headsetProfile.empty() && !FindHeadsetProfile(profile.headsetProfile))
-		throw std::invalid_argument("Unknown headset profile");
-	if (profile.arguments.size() > 256 || profile.environment.size() > MaxLaunchEnvironment)
-		throw std::invalid_argument("Launch profile exceeds its bounds");
-	for (const auto& argument : profile.arguments)
-		TextValid(argument);
-	std::set<std::string> keys;
-	for (const auto& [key, value] : profile.environment)
-	{
-		TextValid(key);
-		TextValid(value);
-		if (key.empty() || key.find('=') != std::string::npos || !keys.insert(key).second)
-			throw std::invalid_argument("Invalid or duplicate environment key");
-	}
-}
 void PutProfile(std::string& bytes, const LaunchProfile& profile)
 {
 	Put(bytes, profile.name);
@@ -214,14 +191,14 @@ void ValidateSettings(const CompanionSettings& settings)
 	std::set<std::string> names;
 	for (const auto& profile : settings.profiles)
 	{
-		ValidateProfile(profile);
+		ValidateLaunchProfile(profile);
 		if (profile.name.empty() || !names.insert(profile.name).second)
 			throw std::invalid_argument("Invalid or duplicate launch profile");
 	}
 	if (settings.recent.size() > MaxRecentApps)
 		throw std::invalid_argument("Too many recent apps");
 	for (const auto& recent : settings.recent)
-		ValidateProfile(recent.launch);
+		ValidateLaunchProfile(recent.launch);
 	names.clear();
 	for (const auto& layout : settings.layouts)
 	{
@@ -252,7 +229,7 @@ std::string PathProblem(const std::string& path, PathKind kind)
 }
 void RememberRecentApp(CompanionSettings& settings, LaunchProfile launch, std::int64_t lastUsed)
 {
-	ValidateProfile(launch);
+	ValidateLaunchProfile(launch);
 	std::erase_if(settings.recent,
 				  [&](const RecentApp& recent)
 				  {

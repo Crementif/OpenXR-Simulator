@@ -1,7 +1,7 @@
 #pragma once
 
 #include "app/CompanionSettings.h"
-#include "app/LaunchTypes.h"
+#include "app/services/LaunchTypes.h"
 #include "automation/RigRunner.h"
 
 #include <cstdint>

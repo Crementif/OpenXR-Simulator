@@ -1,48 +1,13 @@
-#include "app/LaunchAttachment.h"
+#include "Pch.h"
+#include "app/services/LaunchAttachment.h"
 #include "app/RuntimeConnection.h"
-#include "app/RuntimeEndpoints.h"
 #include "control/ControlSchema.h"
 
-#include <cstdlib>
-#include <cstring>
 #include <stdexcept>
-#include <string_view>
 
 namespace simxr::app
 {
-namespace
-{
-std::string Environment(const LaunchProfile& profile, const char* name)
-{
-	for (auto entry = profile.environment.rbegin(); entry != profile.environment.rend(); ++entry)
-	{
-#ifdef _WIN32
-		if (_stricmp(entry->first.c_str(), name) == 0)
-#else
-		if (entry->first == name)
-#endif
-			return entry->second;
-	}
-#ifdef _WIN32
-	return windows::Environment(name);
-#else
-	const auto value = std::getenv(name);
-	return value ? value : "";
-#endif
-}
-#ifndef _WIN32
-std::filesystem::path DataDirectory(const LaunchProfile& profile)
-{
-	if (const auto directory = Environment(profile, "SIMXR_DATA_DIR"); !directory.empty())
-		return directory;
-	if (const auto directory = Environment(profile, "XDG_DATA_HOME"); !directory.empty())
-		return std::filesystem::path(directory) / "OpenXR-Simulator";
-	if (const auto home = Environment(profile, "HOME"); !home.empty())
-		return std::filesystem::path(home) / ".local/share/OpenXR-Simulator";
-	throw std::runtime_error("Launch attachment needs an explicit absolute SIMXR_DATA_DIR or HOME");
-}
-#endif
-std::optional<LaunchedSession> UniqueSession(const control::Message& message, const std::string& endpoint)
+static std::optional<LaunchedSession> UniqueSession(const control::Message& message, const std::string& endpoint)
 {
 	const auto* error = message.Find(control::tag::Error);
 	if (!error || error->AsU32() != static_cast<std::uint32_t>(control::ErrorCode::Ok))
@@ -76,37 +41,11 @@ std::optional<LaunchedSession> UniqueSession(const control::Message& message, co
 	}
 	return selected;
 }
-} // namespace
 
 LaunchAttachment::LaunchAttachment(RuntimeConnection& discovery, const LaunchProfile& profile)
-	: m_discovery(discovery), m_customEndpoint(Environment(profile, "SIMXR_CONTROL_SOCKET")),
-	  m_deadline(std::chrono::steady_clock::now() + std::chrono::seconds{30})
+	: m_discovery(discovery), m_deadline(std::chrono::steady_clock::now() + std::chrono::seconds{30})
 {
-#ifdef _WIN32
-	for (const auto& endpoint : DiscoverRuntimeEndpoints(false))
-		m_previous.insert(endpoint);
-	if (!m_customEndpoint.empty())
-	{
-		(void)LocalPipePath(m_customEndpoint);
-		if (RuntimeEndpointExists(m_customEndpoint))
-			throw std::runtime_error("Launch attachment requires a new local control endpoint");
-	}
-#else
-	m_directory = DataDirectory(profile);
-	if (!m_directory.is_absolute())
-		throw std::runtime_error("The launched runtime data directory must be absolute");
-	std::error_code error;
-	for (std::filesystem::directory_iterator entry(m_directory, error), end; !error && entry != end;
-		 entry.increment(error))
-	{
-		if (m_previous.size() == 4096)
-			throw std::runtime_error("Too many existing launch endpoints");
-		m_previous.insert(entry->path().string());
-	}
-	if (!m_customEndpoint.empty() &&
-		(!std::filesystem::path(m_customEndpoint).is_absolute() || std::filesystem::exists(m_customEndpoint)))
-		throw std::runtime_error("Launch attachment requires a new absolute local control endpoint");
-#endif
+	Initialize(profile);
 }
 LaunchAttachment::~LaunchAttachment()
 {
@@ -128,25 +67,6 @@ void LaunchAttachment::Observe(const LaunchSnapshot& process)
 	m_process = process.process;
 	if (std::holds_alternative<WaitingForProcess>(m_state))
 		m_state = WaitingForEndpoint{process.process};
-}
-std::string LaunchAttachment::ExpectedEndpoint(std::uint64_t process) const
-{
-	if (!m_customEndpoint.empty())
-		return m_customEndpoint;
-#ifdef _WIN32
-	return std::string(R"(\\.\pipe\SimXR.Control.)") + std::to_string(process);
-#else
-	return (m_directory / ("control." + std::to_string(process) + ".sock")).string();
-#endif
-}
-bool LaunchAttachment::EndpointExists(const std::string& endpoint) const
-{
-#ifdef _WIN32
-	return RuntimeEndpointExists(endpoint);
-#else
-	std::error_code error;
-	return std::filesystem::is_socket(endpoint, error);
-#endif
 }
 std::optional<LaunchedSession> LaunchAttachment::Poll()
 {

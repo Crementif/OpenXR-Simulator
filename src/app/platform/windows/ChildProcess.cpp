@@ -1,15 +1,13 @@
-#include "app/ChildProcess.h"
+#include "Pch.h"
+#include "app/platform/ChildProcess.h"
 #include "app/WindowsLaunch.h"
 
-#include <array>
 #include <cwchar>
 #include <map>
 
 namespace simxr::app
 {
-namespace
-{
-void RequireRuntimeOverride()
+static void RequireRuntimeOverride()
 {
 	HANDLE handle = nullptr;
 	if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &handle))
@@ -82,13 +80,14 @@ class ChildEnvironment
   private:
 	std::vector<wchar_t> m_block;
 };
-} // namespace
 struct ChildProcess::State
 {
 	windows::Handle handle;
 	DWORD identity = 0;
 };
-ChildProcess::ChildProcess() : m_state(std::make_unique<State>()) {}
+ChildProcess::ChildProcess() : m_state(std::make_unique<State>())
+{
+}
 ChildProcess::~ChildProcess() = default;
 std::unique_ptr<ChildProcess> ChildProcess::Launch(const LaunchProfile& profile)
 {

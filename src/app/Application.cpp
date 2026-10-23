@@ -1,5 +1,5 @@
 #include "app/Application.h"
-#include "app/ProcessSupervisor.h"
+#include "app/services/ProcessSupervisor.h"
 #include "app/RuntimePanels.h"
 #include "app/UiRenderer.h"
 #include "app/Window.h"

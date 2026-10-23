@@ -1,5 +1,6 @@
 #pragma once
 #include "app/PilotBindings.h"
+#include "app/services/LaunchTypes.h"
 #include "graphics/SnapshotBudget.h"
 
 #include <cstdint>
@@ -10,20 +11,6 @@
 
 namespace simxr::app
 {
-inline constexpr std::size_t MaxLaunchEnvironment = 1024;
-
-struct LaunchProfile
-{
-	std::string name;
-	std::string executable;
-	std::vector<std::string> arguments;
-	std::string workingDirectory;
-	std::string runtimeManifest;
-	std::vector<std::pair<std::string, std::string>> environment;
-	std::string headsetProfile;
-	std::string rig;
-	bool operator==(const LaunchProfile&) const = default;
-};
 // An app launched or connected from this companion. The profile's name is a
 // display name; it need not be unique.
 struct RecentApp

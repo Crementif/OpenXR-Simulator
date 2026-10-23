@@ -1,7 +1,7 @@
 #include "app/RigPanel.h"
 #include "app/Theme.h"
 #include "app/widgets/Controls.h"
-#include "app/LaunchAttachment.h"
+#include "app/services/LaunchAttachment.h"
 #include "app/RuntimePanels.h"
 #include "app/Utf8Path.h"
 #include "app/WorkerConnection.h"

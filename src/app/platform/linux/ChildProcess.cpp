@@ -1,4 +1,5 @@
-#include "app/ChildProcess.h"
+#include "Pch.h"
+#include "app/platform/ChildProcess.h"
 
 #include <cerrno>
 #include <cstring>
@@ -12,8 +13,6 @@
 extern char** environ;
 
 namespace simxr::app
-{
-namespace
 {
 class ChildEnvironment
 {
@@ -83,13 +82,14 @@ class SpawnActions
   private:
 	posix_spawn_file_actions_t m_actions;
 };
-} // namespace
 struct ChildProcess::State
 {
 	pid_t process = 0;
 	std::optional<int> exitCode;
 };
-ChildProcess::ChildProcess() : m_state(std::make_unique<State>()) {}
+ChildProcess::ChildProcess() : m_state(std::make_unique<State>())
+{
+}
 ChildProcess::~ChildProcess() = default;
 std::unique_ptr<ChildProcess> ChildProcess::Launch(const LaunchProfile& profile)
 {

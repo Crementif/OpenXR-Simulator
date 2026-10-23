@@ -3,7 +3,7 @@
 #include "app/DeviceControlPanel.h"
 #include "app/ManualInputController.h"
 #include "app/LaunchProfilesDialog.h"
-#include "app/ProcessSupervisor.h"
+#include "app/services/ProcessSupervisor.h"
 #include "app/PilotController.h"
 #include "app/RunningApps.h"
 #include "app/RecordingController.h"

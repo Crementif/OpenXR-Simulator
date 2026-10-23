@@ -1,13 +1,14 @@
 #pragma once
 
-#include "app/CompanionSettings.h"
-#include "app/LaunchTypes.h"
+#include "app/services/LaunchTypes.h"
 
 #include <memory>
+#include <mutex>
 
 namespace simxr::app
 {
 class ProcessSupervisor;
+class LaunchObservation;
 class ProcessLauncher
 {
   public:
@@ -20,7 +21,8 @@ class ProcessLauncher
 	LaunchSnapshot Snapshot() const;
 
   private:
-	struct Impl;
-	std::unique_ptr<Impl> m_impl;
+	ProcessSupervisor& m_supervisor;
+	mutable std::mutex m_mutex;
+	std::shared_ptr<LaunchObservation> m_observation;
 };
 } // namespace simxr::app

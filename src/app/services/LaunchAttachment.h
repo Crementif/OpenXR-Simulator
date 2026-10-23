@@ -1,7 +1,6 @@
 #pragma once
 
-#include "app/CompanionSettings.h"
-#include "app/LaunchTypes.h"
+#include "app/services/LaunchTypes.h"
 
 #include <chrono>
 #include <cstdint>
@@ -61,6 +60,7 @@ class LaunchAttachment
 	std::chrono::steady_clock::time_point m_deadline;
 	std::variant<WaitingForProcess, WaitingForEndpoint, Connecting, WaitingForSession, Complete> m_state;
 	std::optional<std::uint64_t> m_process;
+	void Initialize(const LaunchProfile& profile);
 	std::string ExpectedEndpoint(std::uint64_t process) const;
 	bool EndpointExists(const std::string& endpoint) const;
 };

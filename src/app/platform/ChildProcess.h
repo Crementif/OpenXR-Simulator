@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app/CompanionSettings.h"
+#include "app/services/LaunchTypes.h"
 
 #include <cstdint>
 #include <memory>

@@ -1,5 +1,5 @@
 #include "../TestSupport.h"
-#include "app/LaunchAttachment.h"
+#include "app/services/LaunchAttachment.h"
 #include "app/RuntimeConnection.h"
 #include "control/ControlService.h"
 #include "control/LocalControlServer.h"
@@ -147,6 +147,14 @@ void ExistingEndpointAndChangedProcess()
 			},
 			"pre-existing endpoint");
 	}
+	auto invalidDirectory = directory.Profile();
+	invalidDirectory.environment.front().second = directory.Endpoint();
+	Reject(
+		[&]
+		{
+			app::LaunchAttachment invalid{discovery, invalidDirectory};
+		},
+		"Cannot enumerate launch endpoints");
 	auto custom = directory.Profile();
 	custom.environment.back().second = directory.Endpoint();
 	Reject(
