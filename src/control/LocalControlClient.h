@@ -31,6 +31,7 @@ class LocalControlClient
 	ControlPacket Request(ControlPacket request);
 	ControlPacket Retry();
 	std::optional<RequestId> Pending() const;
+	// Interrupts an active exchange, discards its pending state, and prevents reuse.
 	void Close() noexcept;
 
   private:

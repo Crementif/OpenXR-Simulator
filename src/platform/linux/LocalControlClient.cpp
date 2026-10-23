@@ -1,48 +1,24 @@
 #include "control/LocalControlClient.h"
+#include "Pch.h"
 #include "control/ControlSchema.h"
 #include "platform/linux/ControlFd.h"
 
-#include <algorithm>
-#include <array>
 #include <cerrno>
 #include <climits>
 #include <cstring>
-#include <limits>
 #include <mutex>
 #include <poll.h>
+#include <sys/eventfd.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <system_error>
 #include <unistd.h>
-#include <utility>
 
 namespace simxr::control
 {
-namespace
-{
 using Clock = std::chrono::steady_clock;
-struct Descriptor
-{
-	int value = -1;
-	~Descriptor()
-	{
-		if (value >= 0)
-			::close(value);
-	}
-};
-struct Rights
-{
-	std::array<int, MaxTransferHandles> values{};
-	std::size_t count = 0;
-	~Rights()
-	{
-		for (std::size_t index = 0; index < count; ++index)
-			if (values[index] >= 0)
-				::close(values[index]);
-	}
-};
-void Ready(int socket, short events, Clock::time_point deadline, RequestId request)
+static void Ready(int socket, int stopping, short events, Clock::time_point deadline, RequestId request)
 {
 	for (;;)
 	{
@@ -50,21 +26,25 @@ void Ready(int socket, short events, Clock::time_point deadline, RequestId reque
 		if (remaining <= Clock::duration::zero())
 			throw ControlExchangeTimeout{request};
 		const auto milliseconds = std::chrono::ceil<std::chrono::milliseconds>(remaining).count();
-		pollfd item{socket, events, 0};
-		const auto result = ::poll(&item, 1, static_cast<int>(std::min<std::int64_t>(milliseconds, INT_MAX)));
+		std::array<pollfd, 2> items{{{socket, events, 0}, {stopping, POLLIN, 0}}};
+		const auto result =
+			::poll(items.data(), items.size(), static_cast<int>(std::min<std::int64_t>(milliseconds, INT_MAX)));
 		if (result < 0 && errno == EINTR)
 			continue;
-		if (result < 0 || item.revents & (POLLERR | POLLNVAL))
+		if (result < 0)
+			throw std::system_error(errno, std::generic_category(), "Control socket polling failed");
+		if (items[1].revents)
+			throw std::runtime_error("Control connection is closed");
+		if (items[0].revents & (POLLERR | POLLNVAL))
 			throw std::runtime_error("Control socket polling failed");
 		if (!result)
 			throw ControlExchangeTimeout{request};
-		if (item.revents & events)
+		if (items[0].revents & events)
 			return;
-		if (item.revents & POLLHUP)
+		if (items[0].revents & POLLHUP)
 			throw std::runtime_error("Control peer disconnected");
 	}
 }
-} // namespace
 ControlExchangeTimeout::ControlExchangeTimeout(RequestId request)
 	: std::runtime_error("Control exchange is unfinished; Retry or Close explicitly"), m_request(request)
 {
@@ -76,6 +56,26 @@ RequestId ControlExchangeTimeout::Request() const noexcept
 
 struct LocalControlClient::State
 {
+	struct Descriptor
+	{
+		int value = -1;
+		~Descriptor()
+		{
+			if (value >= 0)
+				::close(value);
+		}
+	};
+	struct Rights
+	{
+		std::array<int, MaxTransferHandles> values{};
+		std::size_t count = 0;
+		~Rights()
+		{
+			for (std::size_t index = 0; index < count; ++index)
+				if (values[index] >= 0)
+					::close(values[index]);
+		}
+	};
 	struct Exchange
 	{
 		ControlPacket outgoing, incoming;
@@ -85,6 +85,7 @@ struct LocalControlClient::State
 	};
 	mutable std::mutex mutex;
 	Descriptor socket;
+	Descriptor stopping;
 	std::chrono::milliseconds timeout;
 	std::uint64_t next = 1;
 	std::unique_ptr<Exchange> pending;
@@ -97,6 +98,9 @@ struct LocalControlClient::State
 		if (::lstat(path.c_str(), &info) != 0 || !S_ISSOCK(info.st_mode) || info.st_uid != ::geteuid() ||
 			info.st_mode & 0077)
 			throw std::runtime_error("Control endpoint must be a private socket owned by this user");
+		stopping.value = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+		if (stopping.value < 0)
+			throw std::system_error(errno, std::generic_category(), "Create control stop event failed");
 		socket.value = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
 		if (socket.value < 0)
 			throw std::runtime_error("Create local control socket failed");
@@ -107,7 +111,7 @@ struct LocalControlClient::State
 		{
 			if (errno != EINPROGRESS && errno != EAGAIN)
 				throw std::runtime_error("Connect local control socket failed");
-			Ready(socket.value, POLLOUT, Clock::now() + timeout, {});
+			Ready(socket.value, stopping.value, POLLOUT, Clock::now() + timeout, {});
 			int error = 0;
 			socklen_t size = sizeof(error);
 			if (::getsockopt(socket.value, SOL_SOCKET, SO_ERROR, &error, &size) != 0 || error)
@@ -129,7 +133,7 @@ struct LocalControlClient::State
 		auto& exchange = *pending;
 		while (exchange.sent < exchange.encoded.size())
 		{
-			Ready(socket.value, POLLOUT, deadline, exchange.outgoing.message.requestId);
+			Ready(socket.value, stopping.value, POLLOUT, deadline, exchange.outgoing.message.requestId);
 			ssize_t sent;
 			if (!exchange.handlesSent && !exchange.outgoing.handles.empty())
 			{
@@ -172,7 +176,7 @@ struct LocalControlClient::State
 		auto& exchange = *pending;
 		while (exchange.offset < exchange.received.size())
 		{
-			Ready(socket.value, POLLIN, deadline, exchange.outgoing.message.requestId);
+			Ready(socket.value, stopping.value, POLLIN, deadline, exchange.outgoing.message.requestId);
 			alignas(cmsghdr) std::array<std::byte, CMSG_SPACE(sizeof(int) * MaxTransferHandles)> control{};
 			iovec data{exchange.received.data() + exchange.offset, exchange.received.size() - exchange.offset};
 			msghdr message{};
@@ -272,12 +276,13 @@ LocalControlClient::~LocalControlClient()
 ControlPacket LocalControlClient::Request(ControlPacket request)
 {
 	std::unique_ptr<State::Exchange> retired;
+	std::unique_ptr<State::Exchange> exchange;
 	std::unique_lock lock(m_state->mutex);
 	if (m_state->socket.value < 0)
 		throw std::runtime_error("Control connection is closed");
 	if (m_state->pending)
 		throw std::logic_error("Control exchange unfinished; Retry or Close explicitly");
-	auto exchange = std::make_unique<State::Exchange>();
+	exchange = std::make_unique<State::Exchange>();
 	if (request.message.flags)
 		throw std::invalid_argument("Expected a control request");
 	if (request.handles.size() > MaxTransferHandles)
@@ -295,7 +300,8 @@ ControlPacket LocalControlClient::Request(ControlPacket request)
 			throw std::invalid_argument("Request handle count mismatch");
 	}
 	else if (!request.handles.empty())
-		request.message.fields.push_back(Field::U32(tag::HandleCount, request.handles.size(), true));
+		request.message.fields.push_back(
+			Field::U32(tag::HandleCount, static_cast<std::uint32_t>(request.handles.size()), true));
 	if (!request.message.requestId.value)
 	{
 		if (!m_state->next)
@@ -356,6 +362,9 @@ std::optional<RequestId> LocalControlClient::Pending() const
 }
 void LocalControlClient::Close() noexcept
 {
+	while (::eventfd_write(m_state->stopping.value, 1) < 0 && errno == EINTR)
+	{
+	}
 	std::unique_ptr<State::Exchange> retired;
 	std::lock_guard lock(m_state->mutex);
 	retired = m_state->Close();

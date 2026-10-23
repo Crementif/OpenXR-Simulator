@@ -1,8 +1,8 @@
 #include "control/LocalControlClient.h"
+#include "Pch.h"
 #include "control/ControlSchema.h"
 #include "platform/windows/WindowsControl.h"
 
-#include <limits>
 #include <mutex>
 
 namespace simxr::control
@@ -21,6 +21,7 @@ struct LocalControlClient::State
 	struct Exchange
 	{
 		Message outgoing;
+		std::shared_ptr<PacketExposure> exposure;
 		std::vector<std::byte> encoded, received;
 		std::size_t sent = 0, offset = 0;
 		std::vector<std::byte> offered, incoming;
@@ -81,7 +82,7 @@ struct LocalControlClient::State
 			if (!pending->offered.empty())
 			{
 				if (pending->offeredSent < pending->offered.size())
-					pipe->PublishOffer();
+					pipe->PublishOffer(pending->exposure);
 				while (pending->offeredSent < pending->offered.size())
 					pending->offeredSent +=
 						pipe->Transfer(true, std::span<std::byte>{pending->offered}.subspan(pending->offeredSent),
@@ -160,6 +161,7 @@ LocalControlClient::~LocalControlClient()
 ControlPacket LocalControlClient::Request(ControlPacket request)
 {
 	std::unique_ptr<State::Exchange> retired;
+	std::unique_ptr<State::Exchange> exchange;
 	std::unique_lock lock(m_state->mutex);
 	if (!m_state->pipe || WaitForSingleObject(m_state->stopping.value, 0) == WAIT_OBJECT_0)
 		throw std::runtime_error("Control connection is closed");
@@ -170,8 +172,9 @@ ControlPacket LocalControlClient::Request(ControlPacket request)
 	if (!request.handles.empty() &&
 		(request.handles.size() != 1 || request.message.opcode != static_cast<std::uint16_t>(OpCode::ShareImage)))
 		throw std::invalid_argument("Only ShareImage transfers a consumer handle");
-	auto exchange = std::make_unique<State::Exchange>();
+	exchange = std::make_unique<State::Exchange>();
 	exchange->offered = m_state->pipe->Offer(request);
+	exchange->exposure = std::move(request.exposure);
 	if (!request.message.requestId.value)
 	{
 		if (!m_state->next)

@@ -222,6 +222,14 @@ int HandleChild(const std::string& path, bool abandon)
 	channel.AcknowledgeOffer();
 	return 0;
 }
+struct TransferExposure final : wire::PacketExposure
+{
+	bool transferred = false;
+	void MarkTransferred() noexcept override
+	{
+		transferred = true;
+	}
+};
 void NativeHandlesAcrossProcesses(bool abandon = false)
 {
 	wchar_t executable[32768]{};
@@ -249,6 +257,8 @@ void NativeHandlesAcrossProcesses(bool abandon = false)
 		auto packet = Request(wire::OpCode::ShareImage);
 		packet.message.fields.push_back(wire::Field::U32(wire::tag::HandleCount, 1));
 		packet.handles.push_back(native::DuplicateTransfer(GetCurrentProcess(), event.value));
+		auto exposure = std::make_shared<TransferExposure>();
+		packet.exposure = exposure;
 		if (abandon)
 		{
 			try
@@ -259,6 +269,7 @@ void NativeHandlesAcrossProcesses(bool abandon = false)
 			{
 			}
 			Require(client.Pending().has_value(), "Unacknowledged request stays pending");
+			Require(exposure->transferred, "Timed-out native handle offer reports possible peer exposure");
 			client.Close();
 			Require(WaitForSingleObject(event.value, 5000) == WAIT_OBJECT_0,
 					"Closed sender preserves advertised handles until the delayed peer duplicates them");
@@ -268,6 +279,7 @@ void NativeHandlesAcrossProcesses(bool abandon = false)
 			return;
 		}
 		auto response = Finish(client, std::move(packet));
+		Require(exposure->transferred, "Acknowledged native handle offer reports peer exposure");
 		Require(WaitForSingleObject(event.value, 0) == WAIT_OBJECT_0 && response.handles.size() == 2,
 				"Other process used the incoming consumer handle and returned two owned handles");
 		Require(WaitForSingleObject(child.value, 5000) == WAIT_OBJECT_0, "Handle peer completed acknowledgement");

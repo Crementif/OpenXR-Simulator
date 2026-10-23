@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <future>
 #include <iostream>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -291,6 +292,53 @@ void MalformedResponseClosesRights()
 		Require(readers() == 1, "Malformed native response leaked installed descriptors");
 	}
 }
+void InterruptClientClose()
+{
+	Directory directory;
+	const auto path = (directory.path / "control.sock").string();
+	auto listener = wire::OwnControlFd(::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0));
+	sockaddr_un address{};
+	address.sun_family = AF_UNIX;
+	std::strcpy(address.sun_path, path.c_str());
+	Require(::bind(static_cast<int>(listener->Value()), reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0 &&
+				::chmod(path.c_str(), 0600) == 0 && ::listen(static_cast<int>(listener->Value()), 1) == 0,
+			"Bind interruptible client fixture");
+	wire::LocalControlClient client{path, 30s};
+	auto peer = wire::OwnControlFd(::accept4(static_cast<int>(listener->Value()), nullptr, nullptr, SOCK_CLOEXEC));
+	auto waiting = std::async(std::launch::async,
+							  [&]
+							  {
+								  try
+								  {
+									  client.Request(Request(wire::OpCode::Hello));
+									  return false;
+								  }
+								  catch (const std::exception&)
+								  {
+									  return true;
+								  }
+							  });
+	pollfd admitted{static_cast<int>(peer->Value()), POLLIN, 0};
+	Require(::poll(&admitted, 1, 3000) == 1 && (admitted.revents & POLLIN), "Client admits the request before close");
+	std::array<std::byte, wire::HeaderSize> header{};
+	Require(::recv(static_cast<int>(peer->Value()), header.data(), header.size(), MSG_WAITALL) ==
+				static_cast<ssize_t>(header.size()),
+			"Read client request before withholding response");
+	const auto start = std::chrono::steady_clock::now();
+	client.Close();
+	Require(std::chrono::steady_clock::now() - start < 1500ms && waiting.get() && !client.Pending(),
+			"Close interrupts a long pending socket exchange and releases its state");
+	bool rejected = false;
+	try
+	{
+		client.Request(Request(wire::OpCode::Hello));
+	}
+	catch (const std::runtime_error&)
+	{
+		rejected = true;
+	}
+	Require(rejected, "Closed client cannot admit another exchange");
+}
 void ActualEndpoint()
 {
 	Directory directory;
@@ -313,6 +361,7 @@ int main()
 	{
 		TimeoutAndPartialRights();
 		MalformedResponseClosesRights();
+		InterruptClientClose();
 		ActualEndpoint();
 		std::cout << "PASS native local client retry, ancillary ownership and real endpoint\n";
 		return 0;
