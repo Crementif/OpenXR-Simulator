@@ -89,7 +89,7 @@ struct ParentEnvironment
 void DiscoveryTests()
 {
 	const auto endpoint =
-		std::string(R"(\\.\pipe\SimXR.Control.)") + std::to_string(GetCurrentProcessId()) + ".LaunchFixture";
+		std::string(R"(\\.\pipe\SimXR.Control.)") + std::to_string(GetCurrentProcessId());
 	const auto path = LocalPipePath(endpoint);
 	const windows::Handle pipe(CreateNamedPipeW(
 		path.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
@@ -99,6 +99,11 @@ void DiscoveryTests()
 	const auto endpoints = DiscoverRuntimeEndpoints(false);
 	Require(std::find(endpoints.begin(), endpoints.end(), endpoint) != endpoints.end(),
 			"Runtime discovery must include actual native pipe paths");
+	const windows::Handle client(CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+		OPEN_EXISTING, 0, nullptr));
+	Require(client.Get() != INVALID_HANDLE_VALUE, "Discovery must not consume the pipe connection");
+	Require(RuntimeEndpointExists(endpoint), "Busy runtime endpoints still exist");
+	Require(!RuntimeEndpointExists(endpoint + ".Absent"), "Missing runtime endpoint must not exist");
 }
 void LaunchTests()
 {

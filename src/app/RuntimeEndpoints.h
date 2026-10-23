@@ -6,6 +6,9 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#include <tlhelp32.h>
+#endif
 
 namespace simxr::app
 {
@@ -27,7 +30,24 @@ inline bool RuntimeEndpointExists(const std::string& endpoint)
 	WIN32_FIND_DATAW found{};
 	const auto search = FindFirstFileW(path.c_str(), &found);
 	if (search == INVALID_HANDLE_VALUE)
-		return false;
+	{
+		const auto error = GetLastError();
+		if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND)
+			return false;
+		if (error == ERROR_ACCESS_DENIED)
+			return true;
+		if (error != ERROR_NOT_SUPPORTED)
+			throw std::runtime_error("Cannot inspect local runtime endpoint: " + std::to_string(error));
+		// Wine cannot enumerate pipes. Availability queries do not consume a connection.
+		if (WaitNamedPipeW(path.c_str(), 1))
+			return true;
+		const auto waitError = GetLastError();
+		if (waitError == ERROR_FILE_NOT_FOUND || waitError == ERROR_PATH_NOT_FOUND)
+			return false;
+		if (waitError == ERROR_SEM_TIMEOUT || waitError == ERROR_PIPE_BUSY || waitError == ERROR_ACCESS_DENIED)
+			return true;
+		throw std::runtime_error("Cannot inspect local runtime endpoint: " + std::to_string(waitError));
+	}
 	const std::unique_ptr<void, decltype(&FindClose)> searchOwner(search, FindClose);
 	return true;
 }
@@ -55,6 +75,26 @@ inline std::vector<std::string> DiscoverRuntimeEndpoints(bool includeExplicit = 
 				throw std::runtime_error("Too many local runtime endpoints");
 			}
 		} while (FindNextFileW(search, &found));
+	}
+	else if (GetLastError() == ERROR_NOT_SUPPORTED)
+	{
+		// Default endpoints contain the runtime PID; custom names remain explicitly addressable.
+		const windows::Handle processes(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0));
+		if (processes.Get() == INVALID_HANDLE_VALUE)
+			throw std::runtime_error("Cannot discover runtime processes");
+		PROCESSENTRY32W process{};
+		process.dwSize = sizeof(process);
+		if (Process32FirstW(processes.Get(), &process))
+		{
+			do
+			{
+				const auto endpoint = std::string(R"(\\.\pipe\SimXR.Control.)") + std::to_string(process.th32ProcessID);
+				if (RuntimeEndpointExists(endpoint))
+					result.push_back(endpoint);
+			} while (Process32NextW(processes.Get(), &process));
+		}
+		if (GetLastError() != ERROR_NO_MORE_FILES)
+			throw std::runtime_error("Cannot enumerate runtime processes");
 	}
 #else
 	if (includeExplicit)
