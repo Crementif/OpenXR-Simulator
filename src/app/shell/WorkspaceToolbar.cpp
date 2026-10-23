@@ -12,7 +12,7 @@ void WorkspacePanels::DrawAppPicker(RuntimePanels& runtime, const RuntimeView& v
 {
 	const auto state = m_shell.session.state;
 	const auto slash = view.endpoint.find_last_of("/\\");
-	const std::string label = !view.connected ? (m_profiles.Selected() >= 0 ? m_settings.activeProfile : "Open app")
+	const std::string label = !view.connected ? (m_profiles.Selected() >= 0 ? m_settings.activeProfile : "Apps")
 							  : view.endpoint == m_launchedEndpoint && !m_launchedName.empty()	 ? m_launchedName
 							  : view.endpoint == m_connectedEndpoint && !m_connectedName.empty() ? m_connectedName
 							  : !view.appName.empty()
@@ -24,9 +24,9 @@ void WorkspacePanels::DrawAppPicker(RuntimePanels& runtime, const RuntimeView& v
 					  : state == RunState::Launching || state == RunState::WaitingForSession ? theme::Warn
 					  : state == RunState::Disconnected										 ? theme::TextDim
 																							 : 0;
-	std::string tooltip = RunStateLabel(state);
+	std::string tooltip = std::string(RunStateLabel(state)) + " \u00b7 " + label;
 	if (view.connected)
-		tooltip += " \u00b7 " + label + "\n" + view.endpoint;
+		tooltip += "\n" + view.endpoint;
 	tooltip += "\nLaunch, connect or switch apps";
 	const auto session = [&]
 	{
@@ -94,10 +94,14 @@ void WorkspacePanels::DrawAppPicker(RuntimePanels& runtime, const RuntimeView& v
 		runtime.Disconnect();
 }
 
-void WorkspacePanels::DrawHistory(RuntimePanels& runtime)
+void WorkspacePanels::DrawHistory(RuntimePanels& runtime, bool labelled)
 {
 	const bool unseen = m_notices.Unseen();
-	if (IconButton("History", Icon::History, "Recent changes and notices", ImGui::IsPopupOpen("History")))
+	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{});
+	const bool pressed = IconButton("History", Icon::History, "Recent changes and notices",
+									ImGui::IsPopupOpen("History"), labelled ? "History" : nullptr);
+	ImGui::PopStyleColor();
+	if (pressed)
 	{
 		ImGui::OpenPopup("History");
 		m_notices.MarkSeen();
@@ -205,29 +209,40 @@ void WorkspacePanels::DrawToolbar(RuntimePanels& runtime)
 	const float right = ImGui::GetContentRegionMax().x;
 	const auto& style = ImGui::GetStyle();
 	const float button = ImGui::GetFrameHeight();
+	const bool labelled = ImGui::GetMainViewport()->Size.x / m_settings.scale >= 800;
+	const std::string focusLabel = labelled ? (elapsed.empty() ? "Focus" : "Focus \u00b7 " + elapsed) : elapsed;
 	const float focus =
-		elapsed.empty() ? button : button + ImGui::CalcTextSize(elapsed.c_str()).x + style.FramePadding.x;
-	const float reserved = button * 2 + focus + style.ItemSpacing.x * 3 +
-						   (m_shell.session.state == RunState::Failed ? button + style.ItemSpacing.x : 0);
+		focusLabel.empty() ? button : button + ImGui::CalcTextSize(focusLabel.c_str()).x + style.FramePadding.x;
+	const float history = labelled ? button + ImGui::CalcTextSize("History").x + style.FramePadding.x : button;
+	const float settings = labelled ? button + ImGui::CalcTextSize("Settings").x + style.FramePadding.x : button;
+	const float actions = history + focus + settings + style.ItemSpacing.x * 2;
+	const float reserved =
+		actions + style.ItemSpacing.x + (m_shell.session.state == RunState::Failed ? button + style.ItemSpacing.x : 0);
+	ImGui::SetCursorPosY(std::max(0.0f, (ImGui::GetWindowHeight() - button) / 2));
 	DrawAppPicker(runtime, snapshot, std::max(1.f, ImGui::GetContentRegionAvail().x - reserved));
 	if (m_shell.session.state == RunState::Failed && !m_shell.session.error.empty())
 	{
 		ImGui::SameLine();
+		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{});
 		if (IconButton("Run error", Icon::Warning, "Show the connection or launch error", false, nullptr,
 					   theme::Record))
 			m_showError = true;
+		ImGui::PopStyleColor();
 	}
-	ImGui::SameLine(std::max(ImGui::GetCursorPosX(), right - button * 2 - focus - style.ItemSpacing.x * 2));
-	DrawHistory(runtime);
+	ImGui::SameLine(std::max(ImGui::GetCursorPosX(), right - actions));
+	DrawHistory(runtime, labelled);
 	ImGui::SameLine();
 	const std::string focusTip = std::string(m_previewExpanded ? "Exit focus (F11)" : "Focus: only the image (F11)") +
 								 (elapsed.empty() ? "" : "\nRecording " + elapsed + "; Ctrl+R stops");
+	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{});
 	if (IconButton("Focus", Icon::Focus, focusTip.c_str(), m_previewExpanded,
-				   elapsed.empty() ? nullptr : elapsed.c_str(), elapsed.empty() ? 0 : theme::Record))
+				   focusLabel.empty() ? nullptr : focusLabel.c_str(), elapsed.empty() ? 0 : theme::Record))
 		m_previewExpanded = !m_previewExpanded;
 	ImGui::SameLine();
-	if (IconButton("Settings", Icon::Settings, "Preferences: scale, snapshots, keys and layout", m_showSettings))
+	if (IconButton("Settings", Icon::Settings, "Preferences: scale, snapshots, keys and layout", m_showSettings,
+				   labelled ? "Settings" : nullptr))
 		m_showSettings = true;
+	ImGui::PopStyleColor();
 	runtime.DrawRecordingPopovers();
 	if (!ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive() &&
 		!ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))

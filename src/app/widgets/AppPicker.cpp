@@ -8,7 +8,7 @@
 #include <cfloat>
 #include <ctime>
 #include <exception>
-#include <imgui.h>
+#include <imgui_internal.h>
 #include <initializer_list>
 
 namespace simxr::app
@@ -104,10 +104,10 @@ AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const Runtime
 		draw->AddRectFilled(minimum, {minimum.x + size.x, minimum.y + size.y},
 							theme::Mix(theme::Bg, theme::Text, shown ? .1f : .06f), theme::Radius * unit);
 	DrawIcon(draw, Icon::App, {minimum.x + height / 2, minimum.y + height / 2}, height * .6f, theme::TextDim);
-	draw->PushClipRect({minimum.x + height, minimum.y},
-					   {minimum.x + std::max(height, dotX - 4 * unit), minimum.y + height}, true);
-	draw->AddText({minimum.x + height, minimum.y + (height - text.y) / 2}, theme::Text, label.c_str());
-	draw->PopClipRect();
+	const float textRight = minimum.x + std::max(height, dotX - 4 * unit);
+	ImGui::RenderTextEllipsis(draw, {minimum.x + height, minimum.y + (height - text.y) / 2},
+							  {textRight, minimum.y + height}, textRight, label.data(), label.data() + label.size(),
+							  &text);
 	if (dot)
 		draw->AddCircleFilled({minimum.x + dotX + 4 * unit, minimum.y + height / 2}, 4 * unit, dot);
 	DrawIcon(draw, Icon::ChevronDown, {minimum.x + chevronX + 7 * unit, minimum.y + height / 2}, 12 * unit,

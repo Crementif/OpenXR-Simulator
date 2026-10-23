@@ -17,10 +17,10 @@ bool IconButton(const char* id, Icon icon, const char* tooltip, bool toggled, co
 	const bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
 	const ImVec2 maximum{minimum.x + size.x, minimum.y + size.y};
 	auto* draw = ImGui::GetWindowDrawList();
-	const auto background = held	  ? theme::Mix(theme::SurfaceRaised, theme::Accent, .55f)
-							: toggled ? theme::Mix(theme::SurfaceRaised, theme::Accent, .4f)
-							: hovered ? theme::Mix(theme::SurfaceRaised, theme::Text, .1f)
-									  : theme::SurfaceRaised;
+	const auto background = held	  ? theme::Vec(theme::Mix(theme::SurfaceRaised, theme::Accent, .55f))
+							: toggled ? theme::Vec(theme::Mix(theme::SurfaceRaised, theme::Accent, .4f))
+							: hovered ? theme::Vec(theme::Mix(theme::SurfaceRaised, theme::Text, .1f))
+									  : ImGui::GetStyle().Colors[ImGuiCol_Button];
 	draw->AddRectFilled(minimum, maximum, ImGui::GetColorU32(background), theme::Radius * ImGui::GetFontSize() / 17);
 	DrawIcon(draw, icon, {minimum.x + height / 2, minimum.y + height / 2}, height * .6f,
 			 ImGui::GetColorU32(tint ? tint : theme::Text));

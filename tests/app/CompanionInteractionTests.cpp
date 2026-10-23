@@ -1010,7 +1010,7 @@ void CheckTimelineWorkflow(Interaction& test)
 
 void CheckShell()
 {
-	Interaction test;
+	Interaction test{std::getenv("SIMXR_SHELL_QA_APP_NAME") != nullptr};
 	test.live = true;
 	const auto checkTimeline = [&]
 	{
@@ -1026,6 +1026,25 @@ void CheckShell()
 		Require(!timeline->ScrollbarX && !timeline->ScrollbarY && timeline->ContentSize.x <= timeline->Size.x + 1,
 				"Timeline controls overflow their region");
 	};
+	const auto checkToolbar = [&]
+	{
+		auto* toolbar = FindPanel("Top bar");
+		Require(toolbar && !toolbar->ScrollbarX && !toolbar->ScrollbarY &&
+				toolbar->ContentSize.x <= toolbar->Size.x + 1 && toolbar->ContentSize.y <= toolbar->Size.y + 1,
+				"Top-bar controls overflow their region");
+		for (const char* action : {"History", "Settings", "##App picker"})
+		{
+			ImGui::ActivateItemByID(toolbar->GetID(action));
+			test.Frame();
+			test.Frame();
+			Require(!ImGui::GetCurrentContext()->OpenPopupStack.empty(), "Top-bar action did not open its popup");
+			ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape, true);
+			test.Frame();
+			ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape, false);
+			test.Frame();
+			Require(ImGui::GetCurrentContext()->OpenPopupStack.empty(), "Top-bar popup did not close on Escape");
+		}
+	};
 	const auto capture = [&](const char* name)
 	{
 		checkTimeline();
@@ -1038,6 +1057,7 @@ void CheckShell()
 	};
 	for (int i = 0; i < 4; ++i)
 		test.Frame();
+	checkToolbar();
 	capture("shell-normal.bmp");
 	const auto preview = FindPanel("GPU preview");
 	const auto inspector = FindPanel("Inspector");
@@ -1058,11 +1078,11 @@ void CheckShell()
 				("Device tab selection failed at " + std::to_string(index)).c_str());
 	}
 	const auto width = preview->Size.x;
-	test.workspace.SetPreviewExpanded(true);
+	ImGui::ActivateItemByID(FindPanel("Top bar")->GetID("Focus"));
 	test.Frame();
 	test.Frame();
 	Require(FindPanel("GPU preview")->Size.x > width, "Full preview did not expand");
-	test.workspace.SetPreviewExpanded(false);
+	ImGui::ActivateItemByID(FindPanel("Top bar")->GetID("Focus"));
 	test.Frame();
 	test.Frame();
 	Require(std::abs(FindPanel("GPU preview")->Size.x - width) < 1, "Preview restore changed layout");
@@ -1076,6 +1096,7 @@ void CheckShell()
 	test.workspace.SetScale(1.5f);
 	for (int i = 0; i < 6; ++i)
 		test.Frame();
+	checkToolbar();
 	capture("shell-narrow-large.bmp");
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Shell generated validation errors");
@@ -6272,8 +6293,17 @@ int main()
 #endif
 		if (std::getenv("SIMXR_SHELL_QA"))
 		{
+			if (const auto name = std::getenv("SIMXR_SHELL_QA_APP_NAME"))
+			{
+				const auto path = QaDirectory("SIMXR_COMPANION_SETTINGS");
+				Require(!path.empty() && !std::filesystem::exists(path), "Named shell QA needs a new private settings file");
+				CompanionSettings settings;
+				settings.profiles.push_back({name, "missing-qa-app"});
+				settings.activeProfile = name;
+				SaveSettings(path, settings);
+			}
 			CheckShell();
-			std::cout << "PASS fixed shell, focus restore and timeline edges at normal, folded and narrow enlarged layouts\n";
+			std::cout << "PASS fixed shell, toolbar actions, focus restore and timeline edges at normal, folded and narrow enlarged layouts\n";
 			return 0;
 		}
 		if (std::getenv("SIMXR_DEVICE_HEADER_QA"))
