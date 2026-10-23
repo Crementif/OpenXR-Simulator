@@ -1075,9 +1075,11 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
 				return XR_ERROR_GRAPHICS_DEVICE_INVALID;
 			}
 		}
-		const auto time = simxr::RuntimeTime{
-			std::chrono::duration_cast<simxr::Duration>(simxr::SteadyClock{}.Now().time_since_epoch())};
-		result = creation.core->Ready(time);
+		XrTime time;
+		result = simxr::ReadPerformanceTime(time);
+		if (XR_FAILED(result))
+			return result;
+		result = creation.core->Ready({simxr::Duration{time}});
 		if (XR_FAILED(result))
 			return result;
 		const auto attached = rt::State().sessions.Attach(creation.core, std::move(creation.native));
@@ -1606,16 +1608,22 @@ static XrResult XRAPI_PTR xrEndSession_runtime(XrSession handle)
 	auto core = rt::RetainSession(handle);
 	if (!core)
 		return XR_ERROR_HANDLE_INVALID;
-	auto result = core->End({simxr::SteadyClock{}.Now().time_since_epoch()});
-	return result;
+	XrTime time;
+	const auto result = simxr::ReadPerformanceTime(time);
+	if (XR_FAILED(result))
+		return result;
+	return core->End({simxr::Duration{time}});
 }
 static XrResult XRAPI_PTR xrRequestExitSession_runtime(XrSession handle)
 {
 	auto core = rt::RetainSession(handle);
 	if (!core)
 		return XR_ERROR_HANDLE_INVALID;
-	auto result = core->RequestExit({simxr::SteadyClock{}.Now().time_since_epoch()});
-	return result;
+	XrTime time;
+	const auto result = simxr::ReadPerformanceTime(time);
+	if (XR_FAILED(result))
+		return result;
+	return core->RequestExit({simxr::Duration{time}});
 }
 static XrResult XRAPI_PTR xrWaitFrame_runtime(XrSession session, const XrFrameWaitInfo* info, XrFrameState* s)
 {

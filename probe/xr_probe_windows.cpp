@@ -333,6 +333,9 @@ static int Run(std::span<const std::string> arguments)
 	{
 		const auto limit = EnvironmentCount("XR_PROBE_FRAMES", 120, 2);
 		const auto sessions = EnvironmentCount("XR_PROBE_SESSIONS", 1, 1);
+		if (EnvOn("SIMXR_DETERMINISTIC"))
+			throw std::runtime_error(
+				"Native loader timestamp checks require ordinary QPC time, not deterministic mode");
 		XrInstanceCreateInfo create{XR_TYPE_INSTANCE_CREATE_INFO};
 		std::strcpy(create.applicationInfo.applicationName, "Native companion probe");
 		create.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 27);
@@ -366,7 +369,7 @@ static int Run(std::span<const std::string> arguments)
 		const std::uint32_t viewCount = quadViews ? 4 : 2;
 		const auto viewType =
 			quadViews ? XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO : XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
-		std::vector<const char*> extensions{extension};
+		std::vector<const char*> extensions{extension, XR_KHR_WIN32_CONVERT_PERFORMANCE_COUNTER_TIME_EXTENSION_NAME};
 		if (quadViews)
 			extensions.push_back(XR_VARJO_QUAD_VIEWS_EXTENSION_NAME);
 		if (foveated)
@@ -375,6 +378,19 @@ static int Run(std::span<const std::string> arguments)
 		create.enabledExtensionNames = extensions.data();
 		XrInstance instance;
 		Check(xrCreateInstance(&create, &instance), "Create instance");
+		PFN_xrConvertWin32PerformanceCounterToTimeKHR convertTime = nullptr;
+		Check(xrGetInstanceProcAddr(instance, "xrConvertWin32PerformanceCounterToTimeKHR",
+									reinterpret_cast<PFN_xrVoidFunction*>(&convertTime)),
+			  "Get performance-counter conversion");
+		const auto readTime = [&]
+		{
+			LARGE_INTEGER counter{};
+			if (!QueryPerformanceCounter(&counter))
+				throw std::runtime_error("Read performance counter");
+			XrTime time = 0;
+			Check(convertTime(instance, &counter, &time), "Convert performance counter");
+			return time;
+		};
 		if (!runtimeModule.empty())
 			RequireRuntimeModule(runtimeModule, true);
 		char resultName[XR_MAX_RESULT_STRING_SIZE]{};
@@ -551,6 +567,24 @@ static int Run(std::span<const std::string> arguments)
 			for (unsigned cycle = 0; cycle < sessions; ++cycle)
 			{
 				XrSession session = XR_NULL_HANDLE;
+				std::array<std::pair<XrTime, XrTime>, 4> transitionTimes{};
+				std::size_t nextState = 0;
+				const auto checkStateEvent = [&](const XrEventDataSessionStateChanged& changed)
+				{
+					static constexpr std::array s_expected{
+						std::pair{XR_SESSION_STATE_IDLE, 0},		 std::pair{XR_SESSION_STATE_READY, 0},
+						std::pair{XR_SESSION_STATE_SYNCHRONIZED, 1}, std::pair{XR_SESSION_STATE_VISIBLE, 1},
+						std::pair{XR_SESSION_STATE_FOCUSED, 1},		 std::pair{XR_SESSION_STATE_STOPPING, 2},
+						std::pair{XR_SESSION_STATE_IDLE, 3},		 std::pair{XR_SESSION_STATE_EXITING, 3}};
+					if (nextState >= s_expected.size() || changed.session != session ||
+						changed.state != s_expected[nextState].first)
+						throw std::runtime_error("Unexpected session-state event sequence");
+					const auto [before, after] = transitionTimes[s_expected[nextState].second];
+					if (before <= 0 || after < before || changed.time < before || changed.time > after)
+						throw std::runtime_error("Session-state event timestamp is outside its converted QPC bracket");
+					++nextState;
+				};
+				transitionTimes[0].first = readTime();
 #ifdef SIMXR_PROBE_OPENGL
 				auto missingBinding = sessionInfo;
 				missingBinding.next = nullptr;
@@ -579,6 +613,7 @@ static int Run(std::span<const std::string> arguments)
 					throw std::runtime_error("Concurrent session creation corrupted admission or failed output");
 				session = accepted.second;
 #endif
+				transitionTimes[0].second = readTime();
 
 				XrSessionActionSetsAttachInfo attach{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
 				attach.countActionSets = 1;
@@ -683,11 +718,14 @@ static int Run(std::span<const std::string> arguments)
 						if (event.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED)
 						{
 							const auto& changed = reinterpret_cast<const XrEventDataSessionStateChanged&>(event);
+							checkStateEvent(changed);
 							if (changed.state == XR_SESSION_STATE_READY)
 							{
 								XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO};
 								begin.primaryViewConfigurationType = viewType;
+								transitionTimes[1].first = readTime();
 								Check(xrBeginSession(session, &begin), "Begin session");
+								transitionTimes[1].second = readTime();
 								running = true;
 							}
 						}
@@ -814,8 +852,26 @@ static int Run(std::span<const std::string> arguments)
 					Check(xrEndFrame(session, &end), "End frame");
 					++frames;
 				}
+				if (nextState != 5)
+					throw std::runtime_error("Missing startup session-state events");
+				transitionTimes[2].first = readTime();
 				Check(xrRequestExitSession(session), "Request exit");
+				transitionTimes[2].second = readTime();
+				transitionTimes[3].first = readTime();
 				Check(xrEndSession(session), "End session");
+				transitionTimes[3].second = readTime();
+				XrEventDataBuffer event{XR_TYPE_EVENT_DATA_BUFFER};
+				XrResult pollResult;
+				while ((pollResult = xrPollEvent(instance, &event)) == XR_SUCCESS)
+				{
+					if (event.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED)
+						checkStateEvent(reinterpret_cast<const XrEventDataSessionStateChanged&>(event));
+					event = {XR_TYPE_EVENT_DATA_BUFFER};
+				}
+				Check(pollResult, "Poll shutdown session events");
+				if (nextState != 8)
+					throw std::runtime_error("Missing shutdown session-state events");
+				std::puts("PASS all session-state event timestamps match their converted QPC transition brackets");
 				Check(xrDestroySwapchain(swapchain), "Destroy swapchain");
 				Check(xrDestroySpace(space), "Destroy space");
 				if (combinedEye)
