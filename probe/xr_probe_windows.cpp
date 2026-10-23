@@ -111,9 +111,18 @@ struct D3D12Application
 		CheckGpu(commands->Reset(allocator.Get(), nullptr));
 		D3D12_RENDER_TARGET_VIEW_DESC view{};
 		view.Format = texture->GetDesc().Format;
-		view.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2DARRAY;
-		view.Texture2DArray.FirstArraySlice = layer;
-		view.Texture2DArray.ArraySize = 1;
+		if (texture->GetDesc().SampleDesc.Count > 1)
+		{
+			view.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2DMSARRAY;
+			view.Texture2DMSArray.FirstArraySlice = layer;
+			view.Texture2DMSArray.ArraySize = 1;
+		}
+		else
+		{
+			view.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2DARRAY;
+			view.Texture2DArray.FirstArraySlice = layer;
+			view.Texture2DArray.ArraySize = 1;
+		}
 		const auto target = targets->GetCPUDescriptorHandleForHeapStart();
 		device->CreateRenderTargetView(texture, &view, target);
 		commands->ClearRenderTargetView(target, color, 0, nullptr);
@@ -145,6 +154,7 @@ int main(int argc, char** argv)
 #endif
 		bool quadViews = std::getenv("XR_PROBE_QUAD") != nullptr;
 		bool foveated = std::getenv("XR_PROBE_FOVEATED") != nullptr;
+		bool multisampled = false;
 		for (int index = 1; index < argc; ++index)
 		{
 			const std::string_view argument(argv[index]);
@@ -152,6 +162,8 @@ int main(int argc, char** argv)
 				quadViews = true;
 			else if (argument == "--foveated")
 				foveated = true;
+			else if (argument == "--msaa")
+				multisampled = true;
 			else
 				throw std::runtime_error("Unknown probe argument: " + std::string(argument));
 		}
@@ -201,6 +213,16 @@ int main(int argc, char** argv)
 			throw std::runtime_error("Undersized view enumeration mutated output");
 		Check(xrEnumerateViewConfigurationViews(instance, system, viewType, viewCount, &recommendedCount,
 			recommended.data()), "Enumerate views");
+		const auto maximumSamples = recommended.front().maxSwapchainSampleCount;
+		for (const auto& view : recommended)
+		{
+			if (view.recommendedSwapchainSampleCount != 1 || !maximumSamples ||
+				view.maxSwapchainSampleCount != maximumSamples)
+				throw std::runtime_error("Invalid sample count recommendation");
+		}
+		if (multisampled && maximumSamples == 1)
+			throw std::runtime_error("MSAA requested but unavailable");
+		std::printf("Runtime maximum samples: %u\n", maximumSamples);
 		if (quadViews && (!recommended[2].recommendedImageRectWidth || !recommended[2].recommendedImageRectHeight ||
 			recommended[2].recommendedImageRectWidth >= recommended[0].recommendedImageRectWidth))
 			throw std::runtime_error("Incorrect inset dimensions");
@@ -342,7 +364,7 @@ int main(int argc, char** argv)
 #else
 			swapchainInfo.format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
 #endif
-			swapchainInfo.sampleCount = 1;
+			swapchainInfo.sampleCount = multisampled ? maximumSamples : 1;
 			swapchainInfo.width = 256;
 			swapchainInfo.height = 256;
 			swapchainInfo.faceCount = swapchainInfo.mipCount = 1;
@@ -474,9 +496,18 @@ int main(int argc, char** argv)
 #else
 					D3D11_RENDER_TARGET_VIEW_DESC targetInfo{};
 					targetInfo.Format = static_cast<DXGI_FORMAT>(swapchainInfo.format);
-					targetInfo.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
-					targetInfo.Texture2DArray.FirstArraySlice = eye;
-					targetInfo.Texture2DArray.ArraySize = 1;
+					if (multisampled)
+					{
+						targetInfo.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DMSARRAY;
+						targetInfo.Texture2DMSArray.FirstArraySlice = eye;
+						targetInfo.Texture2DMSArray.ArraySize = 1;
+					}
+					else
+					{
+						targetInfo.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
+						targetInfo.Texture2DArray.FirstArraySlice = eye;
+						targetInfo.Texture2DArray.ArraySize = 1;
+					}
 					ComPtr<ID3D11RenderTargetView> target;
 					CheckGpu(device->CreateRenderTargetView(images[index].texture, &targetInfo, &target));
 					context->ClearRenderTargetView(target.Get(), color);

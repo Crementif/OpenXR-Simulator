@@ -362,6 +362,30 @@ int main(int argc, char** argv)
         }
     }
 
+	VkSampleCountFlags commonSamples = 127;
+	for (const auto format : {VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_UNORM,
+		VK_FORMAT_B8G8R8A8_SRGB, VK_FORMAT_B8G8R8A8_UNORM})
+	{
+		VkImageFormatProperties supported{};
+		VKC(vkGetPhysicalDeviceImageFormatProperties(physicalDevice, format, VK_IMAGE_TYPE_2D,
+			VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+			VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, 0, &supported), "Query sample support");
+		commonSamples &= supported.sampleCounts;
+	}
+	uint32_t maximumSamples = 1;
+	while (commonSamples >>= 1)
+		maximumSamples <<= 1;
+	for (const auto& view : vcv)
+	{
+		if (view.recommendedSwapchainSampleCount != 1 || view.maxSwapchainSampleCount != maximumSamples)
+		{
+			std::printf("  [FAIL] runtime maximum samples %u differs from device support %u\n",
+				view.maxSwapchainSampleCount, maximumSamples);
+			return 1;
+		}
+	}
+	std::printf("       maximum swapchain samples %u matches device support\n", maximumSamples);
+
     // ---- VkDevice ----------------------------------------------------------------------
     step("VkDevice (graphics queue + timeline semaphores)");
     uint32_t famCount = 0;

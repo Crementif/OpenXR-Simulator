@@ -38,6 +38,7 @@
 #include "graphics/backends/vulkan/VulkanInstanceGraphics.h"
 #include "graphics/backends/vulkan/VulkanSessionGraphics.h"
 #include "graphics/backends/windows/WindowsSessionGraphics.h"
+#include "graphics/backends/windows/WindowsGraphicsCapabilities.h"
 #include "graphics/backends/vulkan/VulkanSwapchain.h"
 #include "platform/windows/OpenGLSwapchain.h"
 #include "platform/windows/WindowsClock.h"
@@ -1112,6 +1113,33 @@ static XrResult XRAPI_PTR xrEnumerateViewConfigurations_runtime(
 	return XR_SUCCESS;
 }
 
+static XrResult GetMaxSwapchainSampleCount(const simxr::EnabledExtensions& extensions, uint32_t& output)
+{
+	output = 1;
+	// OpenGL allocation and retention currently accept only single-sample images.
+	if (extensions.Contains(XR_KHR_OPENGL_ENABLE_EXTENSION_NAME))
+		return XR_SUCCESS;
+	const bool d3d11 = extensions.Contains(XR_KHR_D3D11_ENABLE_EXTENSION_NAME);
+	const bool d3d12 = extensions.Contains(XR_KHR_D3D12_ENABLE_EXTENSION_NAME);
+	if (d3d11 || d3d12)
+	{
+		const auto result = simxr::windows::Direct3DMaxSampleCount(d3d11, d3d12, output);
+		if (XR_FAILED(result))
+			return result;
+	}
+	if (extensions.Contains(XR_KHR_VULKAN_ENABLE_EXTENSION_NAME) ||
+		extensions.Contains(XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME))
+	{
+		simxr::VulkanInstanceGraphics graphics;
+		uint32_t vulkanSamples = 1;
+		const auto result = graphics.MaxSampleCount(vulkanSamples);
+		if (XR_FAILED(result))
+			return result;
+		output = d3d11 || d3d12 ? std::min(output, vulkanSamples) : vulkanSamples;
+	}
+	return XR_SUCCESS;
+}
+
 static XrResult XRAPI_PTR xrEnumerateViewConfigurationViews_runtime(
 	XrInstance instance, XrSystemId system, XrViewConfigurationType viewType,
 	uint32_t capacity, uint32_t* count, XrViewConfigurationView* views)
@@ -1144,6 +1172,10 @@ static XrResult XRAPI_PTR xrEnumerateViewConfigurationViews_runtime(
 				return XR_ERROR_VALIDATION_FAILURE;
 		}
 	}
+	uint32_t maxSamples = 1;
+	const auto samplesResult = GetMaxSwapchainSampleCount(core->Extensions(), maxSamples);
+	if (XR_FAILED(samplesResult))
+		return samplesResult;
 	simxr::ViewSettings viewSettings;
 	settings::GetRenderResolution(viewSettings.outerWidth, viewSettings.outerHeight);
 	for (uint32_t index = 0; index < *count; ++index)
@@ -1153,7 +1185,7 @@ static XrResult XRAPI_PTR xrEnumerateViewConfigurationViews_runtime(
 		views[index].recommendedSwapchainSampleCount = 1;
 		views[index].maxImageRectWidth = settings::kMaxRenderExtent;
 		views[index].maxImageRectHeight = settings::kMaxRenderExtent;
-		views[index].maxSwapchainSampleCount = 1;
+		views[index].maxSwapchainSampleCount = maxSamples;
 	}
 	return XR_SUCCESS;
 }
@@ -1497,21 +1529,8 @@ static XrResult XRAPI_PTR xrEnumerateSwapchainFormats_runtime(XrSession session,
 		return XR_SUCCESS;
 	}
 
-    // D3D11/D3D12 path - return DXGI formats
-    const int64_t supportedFormats[] = {
-        DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,  // Unity often prefers sRGB
-        DXGI_FORMAT_R8G8B8A8_UNORM,
-        DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,  // UEVR uses this
-        DXGI_FORMAT_B8G8R8A8_UNORM,
-        DXGI_FORMAT_R16G16B16A16_FLOAT,   // HDR format
-        DXGI_FORMAT_R32G32B32A32_FLOAT,   // High precision
-        DXGI_FORMAT_R10G10B10A2_UNORM,    // HDR10 format
-        DXGI_FORMAT_D32_FLOAT_S8X24_UINT, // UEVR's preferred depth format
-        DXGI_FORMAT_D32_FLOAT,            // Depth buffer
-        DXGI_FORMAT_D24_UNORM_S8_UINT,    // Depth + stencil
-        DXGI_FORMAT_D16_UNORM             // 16-bit depth
-    };
-    const uint32_t formatCount = sizeof(supportedFormats) / sizeof(supportedFormats[0]);
+	const auto supportedFormats = simxr::windows::Direct3DSwapchainFormats();
+	const auto formatCount = static_cast<uint32_t>(supportedFormats.size());
 
 	if (!session || session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
 	if (!count || (capacity && !formats)) return XR_ERROR_VALIDATION_FAILURE;
