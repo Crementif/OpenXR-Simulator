@@ -11,9 +11,7 @@
 #endif
 
 #include <algorithm>
-#include <array>
 #include <chrono>
-#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -29,6 +27,8 @@ namespace wire = control;
 #ifdef SIMXR_COMPANION_AUTOMATION
 std::string LoadScript(const std::filesystem::path& path)
 {
+	if (path.native().find(std::filesystem::path::value_type{}) != std::filesystem::path::string_type::npos)
+		throw std::invalid_argument("Rig script path contains a NUL character");
 	std::error_code error;
 	const auto size = std::filesystem::file_size(path, error);
 	if (error || !size || size > wire::MaxPayload)
@@ -67,7 +67,7 @@ bool Active(automation::RigPhase phase)
 } // namespace
 struct RigPanel::Impl
 {
-	std::array<char, 2048> script{}, report{};
+	std::string script;
 	std::uint64_t seed = 0;
 	int deadlineSeconds = 30, memoryMiB = 64;
 	std::string error;
@@ -85,10 +85,6 @@ struct RigPanel::Impl
 	};
 	std::unique_ptr<Launch> launch;
 #endif
-	Impl()
-	{
-		std::snprintf(report.data(), report.size(), "%s", "rig-report.json");
-	}
 	~Impl()
 	{
 #ifdef SIMXR_COMPANION_AUTOMATION
@@ -119,6 +115,7 @@ struct RigPanel::Impl
 			{
 				return connection->Exchange(opcode, std::move(fields));
 			});
+		auto scriptPath = name;
 		automation::RigOptions options;
 		options.session = {session};
 		options.generation = generation;
@@ -128,19 +125,24 @@ struct RigPanel::Impl
 		options.deadline = std::chrono::seconds(std::clamp(deadlineSeconds, 1, 3600));
 		options.memoryLimit = static_cast<std::size_t>(std::clamp(memoryMiB, 1, 512)) * 1024 * 1024;
 		runner->Start(std::move(options));
+		script = std::move(scriptPath);
 		++runId;
 		boundEndpoint = endpoint;
 		boundSession = session;
 		boundGeneration = generation;
 		error.clear();
 	}
-	void Save(bool junit)
+	void Save(const std::string& path, bool junit)
 	{
+		if (path.empty() || path.find('\0') != std::string::npos)
+			throw std::invalid_argument("Rig report destination is empty or contains a NUL character");
 		if (!runner)
 			throw std::runtime_error("No rig report is available");
 		const auto bytes = junit ? runner->JunitReport() : runner->JsonReport();
-		std::ofstream output(Utf8Path(report.data()), std::ios::binary | std::ios::trunc);
-		if (!output.write(bytes.data(), static_cast<std::streamsize>(bytes.size())) || !output.flush())
+		std::ofstream output(Utf8Path(path), std::ios::binary | std::ios::trunc);
+		output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+		output.close();
+		if (!output)
 			throw std::runtime_error("Cannot write rig report destination");
 	}
 	void Attach(const LaunchedSession& session)
@@ -195,7 +197,6 @@ void RigPanel::RunScript(RuntimePanels& runtime, const std::string& path, const 
 		m_impl->memoryMiB = options.memoryMiB;
 		m_impl->recordingReplay = false;
 		m_impl->Start(current.endpoint, current.session, current.generation, LoadScript(Utf8Path(path)), path);
-		std::snprintf(m_impl->script.data(), m_impl->script.size(), "%s", path.c_str());
 	}
 	catch (const std::exception& failure)
 	{
@@ -237,7 +238,7 @@ void RigPanel::Cancel()
 }
 std::string RigPanel::Script() const
 {
-	return m_impl->script.data();
+	return m_impl->script;
 }
 bool RigPanel::ReplayingTake() const
 {
@@ -260,8 +261,7 @@ std::string RigPanel::SaveReport(const std::string& path, bool junit)
 #ifdef SIMXR_COMPANION_AUTOMATION
 	try
 	{
-		std::snprintf(m_impl->report.data(), m_impl->report.size(), "%s", path.c_str());
-		m_impl->Save(junit);
+		m_impl->Save(path, junit);
 		return {};
 	}
 	catch (const std::exception& failure)
@@ -351,11 +351,8 @@ void RigPanel::ReplayRecording(RuntimePanels& runtime, const std::string& path, 
 	{
 		const auto selected = runtime.Snapshot();
 		auto source = LoadScript(Utf8Path(path));
-		if (path.size() >= m_impl->script.size())
-			throw std::invalid_argument("Recorded rig path exceeds the path editor's capacity");
 		m_impl->seed = seed;
 		m_impl->Start(runtime.Endpoint(), selected.session, selected.generation, std::move(source), path);
-		std::snprintf(m_impl->script.data(), m_impl->script.size(), "%s", path.c_str());
 	}
 	catch (const std::exception& error)
 	{
