@@ -44,16 +44,17 @@ target_compile_features(simxr_imgui PRIVATE cxx_std_20)
 target_include_directories(simxr_imgui SYSTEM PUBLIC ${simxr_imguizmo_SOURCE_DIR}/src ${simxr_imgui_SOURCE_DIR} ${simxr_imgui_SOURCE_DIR}/backends "${SIMXR_VULKAN_INCLUDE_DIR}")
 target_link_libraries(simxr_imgui PUBLIC SDL3::SDL3-static "${SIMXR_VULKAN_LIBRARY}")
 
-add_library(simxr_app STATIC src/app/Application.cpp src/app/platform/Window.cpp src/app/render/UiRenderer.cpp src/app/render/UiRenderResources.cpp src/app/render/UiRendererDevice.cpp src/app/render/UiRendererSwapchain.cpp src/app/render/UiScreenshot.cpp src/app/RuntimePanels.cpp src/app/render/PreviewTexture.cpp src/app/render/PreviewImages.cpp src/app/render/PreviewHistory.cpp src/app/WorkspacePanels.cpp)
+add_library(simxr_app STATIC src/app/Application.cpp src/app/platform/Window.cpp src/app/render/UiRenderer.cpp src/app/render/UiRenderResources.cpp src/app/render/UiRendererDevice.cpp src/app/render/UiRendererSwapchain.cpp src/app/render/UiScreenshot.cpp src/app/RuntimePanels.cpp src/app/render/PreviewTexture.cpp src/app/render/PreviewImages.cpp src/app/render/PreviewHistory.cpp src/app/WorkspacePanels.cpp
+    src/app/shell/WorkspaceToolbar.cpp src/app/shell/WorkspaceLayout.cpp src/app/shell/WorkspacePages.cpp)
 target_sources(simxr_app PRIVATE src/app/pages/DeviceControlPanel.cpp src/app/pages/DeviceOwnership.cpp
     src/app/pages/DevicePoseControls.cpp src/app/pages/DeviceInputControls.cpp src/app/pages/DeviceTrackingControls.cpp)
 simxr_configure_target(simxr_app)
 target_include_directories(simxr_app PRIVATE "${PROJECT_SOURCE_DIR}/shaders/generated")
-target_sources(simxr_app PRIVATE src/app/widgets/RecordingPanel.cpp src/app/widgets/TimelinePanel.cpp src/app/widgets/TimelineCanvas.cpp src/app/ShellState.cpp
-    src/app/Theme.cpp src/app/widgets/Icons.cpp src/app/widgets/Controls.cpp src/app/DeviceRail.cpp
+target_sources(simxr_app PRIVATE src/app/widgets/RecordingPanel.cpp src/app/widgets/TimelinePanel.cpp src/app/widgets/TimelineCanvas.cpp src/app/services/ShellState.cpp
+    src/app/widgets/Theme.cpp src/app/widgets/Icons.cpp src/app/widgets/Controls.cpp src/app/widgets/DeviceRail.cpp
     src/app/services/RuntimeSession.cpp src/app/services/RuntimeSessionReplies.cpp src/app/services/RuntimeSessionFrames.cpp
     src/app/dialogs/ConnectionDialog.cpp src/app/widgets/Notices.cpp src/app/widgets/DocumentTree.cpp src/app/pages/FramePage.cpp src/app/pages/RangePage.cpp src/app/services/RangeExportTask.cpp
-    src/app/pages/AdvancedSteppingPage.cpp src/app/PreviewPanel.cpp src/app/dialogs/PreferencesDialog.cpp src/app/dialogs/LaunchProfilesDialog.cpp
+    src/app/pages/AdvancedSteppingPage.cpp src/app/widgets/PreviewPanel.cpp src/app/dialogs/PreferencesDialog.cpp src/app/dialogs/LaunchProfilesDialog.cpp
     src/app/widgets/PilotController.cpp src/app/widgets/PilotHud.cpp src/app/widgets/SpatialEditor.cpp src/app/widgets/SpatialPreview.cpp src/app/widgets/LiveField.cpp
     src/app/widgets/SpatialWidgets.cpp src/app/widgets/RotationOrb.cpp
     src/app/widgets/InputPad.cpp src/app/widgets/RigView.cpp src/app/widgets/HapticEvents.cpp src/app/platform/GamepadFeedback.cpp)
@@ -81,7 +82,7 @@ endif()
 if(SIMXR_BUILD_AUTOMATION)
     target_sources(simxr_app PRIVATE src/app/pages/Library.cpp)
     target_link_libraries(simxr_app PUBLIC simxr_rig_controller)
-    target_compile_definitions(simxr_app PRIVATE SIMXR_COMPANION_AUTOMATION)
+    target_compile_definitions(simxr_app PUBLIC SIMXR_COMPANION_AUTOMATION)
 endif()
 add_executable(simxr_companion src/app/Main.cpp)
 simxr_configure_target(simxr_companion)

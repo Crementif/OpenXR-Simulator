@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app/ShellState.h"
+#include "app/services/ShellState.h"
 #include "app/services/HistoryStore.h"
 #include <array>
 #include <cstddef>

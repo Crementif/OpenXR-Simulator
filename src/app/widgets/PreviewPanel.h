@@ -1,22 +1,24 @@
 #pragma once
 
-#include "app/RuntimeView.h"
 #include "app/render/PreviewImages.h"
 
 #include <imgui.h>
 #include <optional>
 #include <string>
 
+struct ImGuiWindow;
+
 namespace simxr::app
 {
+struct RuntimeView;
+struct ShellState;
 class DeviceControlPanel;
 class FramePage;
 class PilotController;
 class RuntimeSession;
 class SpatialEditor;
 class Window;
-// The preview region: state header, image with zoom and pan, device overlays
-// and the pilot HUD.
+// Preview navigation, device overlays and the pilot HUD.
 class PreviewPanel
 {
   public:
@@ -24,6 +26,7 @@ class PreviewPanel
 				 DeviceControlPanel& devices, Window* window);
 	// Returns whether the image may be piloted this frame.
 	bool Draw(ShellState& shell, const RuntimeView& view, bool inputAvailable, bool automaticGamepad);
+	void CancelInteraction();
 	// The pinned region (x0, y0, x1, y1, normalized), shown instead of the whole
 	// image across frames; the shell keeps one per launch profile.
 	std::optional<ImVec4>& Crop()
@@ -32,16 +35,27 @@ class PreviewPanel
 	}
 
   private:
-	void DrawImage(ShellState& shell, const RuntimeView& view, bool& pilotArea, bool inputAvailable,
-				   bool automaticGamepad);
+	struct ImageArea
+	{
+		// Borrowed only until this Draw call finishes.
+		ImGuiWindow* window;
+		ImVec2 minimum, maximum;
+		float eyeWidth;
+		int eyes;
+		bool hovered;
+	};
+	std::optional<ImageArea> DrawImage(ShellState& shell, const RuntimeView& view, bool inputAvailable);
+	void UpdateImage(const ImageArea& area, const PreviewImageSummary& image, bool cornerHovered, bool pilotArea,
+					 bool automaticGamepad);
 	// Eye, zoom, crop and gizmo space, floating in the preview's top right corner.
-	void DrawCorner(const PreviewImageSummary& image, bool live);
+	bool DrawCorner(const PreviewImageSummary& image, bool live, bool imageVisible);
 	// The single view button: eye, zoom and crop live in its popover.
-	void DrawViewButton(const PreviewImageSummary& image);
+	void DrawViewButton(const PreviewImageSummary& image, bool imageVisible, bool compact);
 	// Picking a crop: drag a rectangle over one eye's image.
-	void PickCrop(ImVec2 imageMin, float eyeWidth, float height, int eyes);
+	void PickCrop(const ImageArea& area, bool hovered);
+	bool SameGestureTarget(const PreviewImageSummary& image) const;
 	void DrawEmpty(ShellState& shell, const RuntimeView& view);
-	// A downscaled image kept while running, for a past frame without an exact one.
+	// A downscaled copy of the selected historical frame.
 	bool DrawKept(const RuntimeView& view);
 	RuntimeSession& m_session;
 	PilotController& m_pilot;
@@ -51,13 +65,14 @@ class PreviewPanel
 	Window* m_window;
 	float m_zoom = 1;
 	ImVec2 m_previousImageSize{};
-	// The corner controls' width and hover last frame, to place them and keep the wheel and pilot off them.
-	float m_cornerWidth = 0;
-	bool m_cornerHovered = false;
+	int m_lastDraw = -1;
 	int m_slice = 0;
 	bool m_fit = true, m_panning = false, m_picking = false;
 	std::optional<ImVec4> m_crop;
 	std::optional<ImVec2> m_pickStart;
+	std::optional<PreviewImageSummary> m_gestureImage;
+	ImVec4 m_gestureCrop{}, m_pickBounds{};
+	int m_gestureSlice = 0;
 	std::string m_pilotError;
 };
 } // namespace simxr::app

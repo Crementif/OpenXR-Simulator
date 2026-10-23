@@ -1,32 +1,24 @@
 #include "app/widgets/Icons.h"
+#include "Pch.h"
 
-#include <algorithm>
-#include <array>
 #include <cmath>
-#include <memory>
-#include <string>
-#include <string_view>
-#include <utility>
-#include <vector>
 
 #define NANOSVG_IMPLEMENTATION
 #include <nanosvg.h>
 
 namespace simxr::app
 {
-namespace
-{
-constexpr std::pair<std::string_view, std::string_view> s_sources[]{
+static constexpr std::pair<std::string_view, std::string_view> s_sources[]{
 #include "IconSources.inc"
 };
 // SVG file stem per Icon, in enum order.
-constexpr std::array<std::string_view, 45> s_files{
-	"play",		 "pause",		 "step-forward", "chevron-left", "chevron-right", "record",	  "stop",	  "library",
-	"more",		 "settings",	 "help",		 "globe",		 "axes",		  "app",	  "refresh",  "close",
-	"player",	 "head",		 "hand-left",	 "hand-right",	 "body",		  "eye",	  "tracker",  "headset",
-	"scenarios", "pin",			 "export",		 "live",		 "warning",		  "rename",	  "delete",	  "script",
-	"step-back", "chevron-up",	 "chevron-down", "focus",		 "crop",		  "zoom",	  "gauge",	  "lock",
-	"unlock",	 "reset-pose",	 "keyboard",	 "history",		  "fullscreen"};
+static constexpr std::array<std::string_view, 45> s_files{
+	"play",		 "pause",	   "step-forward", "chevron-left", "chevron-right", "record", "stop",	 "library",
+	"more",		 "settings",   "help",		   "globe",		   "axes",			"app",	  "refresh", "close",
+	"player",	 "head",	   "hand-left",	   "hand-right",   "body",			"eye",	  "tracker", "headset",
+	"scenarios", "pin",		   "export",	   "live",		   "warning",		"rename", "delete",	 "script",
+	"step-back", "chevron-up", "chevron-down", "focus",		   "crop",			"zoom",	  "gauge",	 "lock",
+	"unlock",	 "reset-pose", "keyboard",	   "history",	   "fullscreen"};
 static_assert(s_files.size() == static_cast<std::size_t>(Icon::Fullscreen) + 1, "Every icon needs a file");
 
 // One path of an icon in its 24-unit grid, centred on the origin.
@@ -38,7 +30,7 @@ struct IconPath
 	bool closed = false;
 };
 
-void AppendCubic(const float* curve, std::vector<ImVec2>& points)
+static void AppendCubic(const float* curve, std::vector<ImVec2>& points)
 {
 	const auto distance = [&](int a, int b)
 	{
@@ -56,7 +48,7 @@ void AppendCubic(const float* curve, std::vector<ImVec2>& points)
 	}
 }
 // Repeated points make zero-length segments that ImGui cannot join or fill.
-void RemoveRepeats(IconPath& path)
+static void RemoveRepeats(IconPath& path)
 {
 	const auto same = [](ImVec2 a, ImVec2 b)
 	{
@@ -67,7 +59,7 @@ void RemoveRepeats(IconPath& path)
 		path.points.pop_back();
 }
 // ImGui's anti-aliased fill expects clockwise points on screen.
-void MakeClockwise(std::vector<ImVec2>& points)
+static void MakeClockwise(std::vector<ImVec2>& points)
 {
 	float area = 0;
 	for (std::size_t index = 0; index < points.size(); ++index)
@@ -79,7 +71,7 @@ void MakeClockwise(std::vector<ImVec2>& points)
 	if (area < 0)
 		std::reverse(points.begin(), points.end());
 }
-std::vector<IconPath> Parse(std::string_view source)
+static std::vector<IconPath> Parse(std::string_view source)
 {
 	std::string text(source);
 	std::vector<IconPath> paths;
@@ -117,7 +109,7 @@ std::vector<IconPath> Parse(std::string_view source)
 	}
 	return paths;
 }
-const std::vector<IconPath>& Paths(Icon icon)
+static const std::vector<IconPath>& Paths(Icon icon)
 {
 	static const auto s_paths = []
 	{
@@ -130,29 +122,30 @@ const std::vector<IconPath>& Paths(Icon icon)
 	}();
 	return s_paths[static_cast<std::size_t>(icon)];
 }
-} // namespace
 void DrawIcon(ImDrawList* draw, Icon icon, ImVec2 center, float size, ImU32 color)
 {
 	const float unit = size / 24;
-	static std::vector<ImVec2> s_mapped;
+	const auto map = [&](ImVec2 point)
+	{
+		return ImVec2{center.x + point.x * unit, center.y + point.y * unit};
+	};
 	for (const auto& path : Paths(icon))
 	{
-		s_mapped.clear();
+		draw->PathClear();
 		for (const auto& point : path.points)
-			s_mapped.push_back({center.x + point.x * unit, center.y + point.y * unit});
-		const int count = static_cast<int>(s_mapped.size());
+			draw->PathLineTo(map(point));
 		if (!path.stroke)
 		{
-			draw->AddConcavePolyFilled(s_mapped.data(), count, color);
+			draw->PathFillConcave(color);
 			continue;
 		}
 		const float width = std::max(1.0f, path.stroke * unit);
-		draw->AddPolyline(s_mapped.data(), count, color, path.closed ? ImDrawFlags_Closed : ImDrawFlags_None, width);
+		draw->PathStroke(color, path.closed ? ImDrawFlags_Closed : ImDrawFlags_None, width);
 		// Round caps, as the SVGs specify.
 		if (!path.closed)
 		{
-			draw->AddCircleFilled(s_mapped.front(), width / 2, color);
-			draw->AddCircleFilled(s_mapped.back(), width / 2, color);
+			draw->AddCircleFilled(map(path.points.front()), width / 2, color);
+			draw->AddCircleFilled(map(path.points.back()), width / 2, color);
 		}
 	}
 }

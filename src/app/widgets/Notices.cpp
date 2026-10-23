@@ -1,6 +1,6 @@
 #include "app/widgets/Notices.h"
 #include "Pch.h"
-#include "app/Theme.h"
+#include "app/widgets/Theme.h"
 #include "app/widgets/Controls.h"
 
 #include <exception>

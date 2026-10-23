@@ -1,6 +1,6 @@
 #include "app/widgets/RecordingPanel.h"
 #include "Pch.h"
-#include "app/Theme.h"
+#include "app/widgets/Theme.h"
 #include "app/services/CompanionSettings.h"
 #include "app/services/Utf8Path.h"
 

@@ -1,5 +1,5 @@
 #include "Pch.h"
-#include "app/Theme.h"
+#include "app/widgets/Theme.h"
 #include "app/pages/DeviceControlPanel.h"
 #include "app/services/PlayerRig.h"
 #include "app/widgets/Controls.h"

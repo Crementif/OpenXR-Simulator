@@ -1,9 +1,8 @@
 #include "app/widgets/Controls.h"
-#include "app/Theme.h"
+#include "Pch.h"
+#include "app/widgets/Theme.h"
 
-#include <algorithm>
-#include <cctype>
-#include <string>
+#include <cfloat>
 #include <imgui_internal.h>
 
 namespace simxr::app
@@ -16,21 +15,18 @@ bool IconButton(const char* id, Icon icon, const char* tooltip, bool toggled, co
 	const auto minimum = ImGui::GetCursorScreenPos();
 	const bool pressed = ImGui::InvisibleButton(id, size, ImGuiButtonFlags_EnableNav);
 	const bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
-	const bool disabled = ImGui::GetItemFlags() & ImGuiItemFlags_Disabled;
 	const ImVec2 maximum{minimum.x + size.x, minimum.y + size.y};
 	auto* draw = ImGui::GetWindowDrawList();
-	const auto background = held		 ? theme::Mix(theme::SurfaceRaised, theme::Accent, .55f)
+	const auto background = held	  ? theme::Mix(theme::SurfaceRaised, theme::Accent, .55f)
 							: toggled ? theme::Mix(theme::SurfaceRaised, theme::Accent, .4f)
 							: hovered ? theme::Mix(theme::SurfaceRaised, theme::Text, .1f)
 									  : theme::SurfaceRaised;
-	draw->AddRectFilled(minimum, maximum, background, theme::Radius * ImGui::GetFontSize() / 17);
-	auto color = tint ? tint : theme::Text;
-	if (disabled)
-		color = theme::Fade(color, .4f);
-	DrawIcon(draw, icon, {minimum.x + height / 2, minimum.y + height / 2}, height * .6f, color);
+	draw->AddRectFilled(minimum, maximum, ImGui::GetColorU32(background), theme::Radius * ImGui::GetFontSize() / 17);
+	DrawIcon(draw, icon, {minimum.x + height / 2, minimum.y + height / 2}, height * .6f,
+			 ImGui::GetColorU32(tint ? tint : theme::Text));
 	if (label)
 		draw->AddText({minimum.x + height - padding / 2, minimum.y + (height - ImGui::GetFontSize()) / 2},
-					  disabled ? theme::TextDim : theme::Text, label, ImGui::FindRenderedTextEnd(label));
+					  ImGui::GetColorU32(theme::Text), label, ImGui::FindRenderedTextEnd(label));
 	if (tooltip)
 		ImGui::SetItemTooltip("%s", tooltip);
 	return pressed;
@@ -42,7 +38,8 @@ int Segmented(std::span<const char* const> labels, int selected, float width, st
 	const auto origin = ImGui::GetCursorScreenPos();
 	auto* draw = ImGui::GetWindowDrawList();
 	// GetColorU32 applies the disabled alpha.
-	draw->AddRectFilled(origin, {origin.x + width, origin.y + height}, ImGui::GetColorU32(theme::SurfaceRaised), radius);
+	draw->AddRectFilled(origin, {origin.x + width, origin.y + height}, ImGui::GetColorU32(theme::SurfaceRaised),
+						radius);
 	int clicked = -1;
 	for (int index = 0; index < count; ++index)
 	{
@@ -51,14 +48,15 @@ int Segmented(std::span<const char* const> labels, int selected, float width, st
 		if (ImGui::InvisibleButton(labels[index], {right - left, height}, ImGuiButtonFlags_EnableNav))
 			clicked = index;
 		const bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
-		const auto corners = count == 1			 ? ImDrawFlags_RoundCornersAll
-							 : index == 0		 ? ImDrawFlags_RoundCornersLeft
+		const auto corners = count == 1			  ? ImDrawFlags_RoundCornersAll
+							 : index == 0		  ? ImDrawFlags_RoundCornersLeft
 							 : index == count - 1 ? ImDrawFlags_RoundCornersRight
 												  : ImDrawFlags_RoundCornersNone;
 		if (index == selected || hovered)
 			draw->AddRectFilled({left, origin.y}, {right, origin.y + height},
 								ImGui::GetColorU32(index == selected ? theme::Accent
-												   : theme::Mix(theme::SurfaceRaised, theme::Text, held ? .16f : .08f)),
+																	 : theme::Mix(theme::SurfaceRaised, theme::Text,
+																				  held ? .16f : .08f)),
 								radius, corners);
 		else if (index && index - 1 != selected)
 			draw->AddLine({left, origin.y + height * .25f}, {left, origin.y + height * .75f},
@@ -80,7 +78,7 @@ void PageTitle(Icon icon, const char* title)
 	const float textX = height + ImGui::GetStyle().ItemSpacing.x / 2;
 	const auto origin = ImGui::GetCursorScreenPos();
 	auto* draw = ImGui::GetWindowDrawList();
-	DrawIcon(draw, icon, {origin.x + height / 2, origin.y + height / 2}, height * .7f, theme::Text);
+	DrawIcon(draw, icon, {origin.x + height / 2, origin.y + height / 2}, height * .7f, ImGui::GetColorU32(theme::Text));
 	draw->AddText(ImGui::GetFont(), size, {origin.x + textX, origin.y + (height - size) / 2},
 				  ImGui::GetColorU32(theme::Text), title);
 	ImGui::Dummy({textX + ImGui::CalcTextSize(title).x * 1.12f, height});
@@ -90,22 +88,20 @@ bool PageClose()
 	ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetContentRegionMax().x - ImGui::GetFrameHeight()));
 	return IconButton("Close page", Icon::Close, "Back to the device page (Esc)");
 }
-namespace
-{
-std::string Capitals(const char* label)
+static std::string Capitals(const char* label)
 {
 	std::string text = label;
 	for (auto& character : text)
-		character = static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
+		if (character >= 'a' && character <= 'z')
+			character = static_cast<char>(character - 'a' + 'A');
 	return text;
 }
 // Room above a section, except at the top of its window.
-void SectionGap()
+static void SectionGap()
 {
 	if (ImGui::GetCursorPosY() > ImGui::GetCursorStartPos().y + 1)
 		ImGui::Dummy({0, ImGui::GetFontSize() * .3f});
 }
-} // namespace
 void FieldLabel(const char* label)
 {
 	ImGui::AlignTextToFramePadding();
@@ -129,7 +125,8 @@ bool Section(const char* label, ImGuiTreeNodeFlags flags)
 	ImGui::PushStyleColor(ImGuiCol_Text, theme::TextDim);
 	ImGui::PushStyleColor(ImGuiCol_HeaderHovered, theme::Fade(theme::Text, .05f));
 	ImGui::PushStyleColor(ImGuiCol_HeaderActive, theme::Fade(theme::Text, .08f));
-	flags |= ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_NoAutoOpenOnLog;
+	flags |=
+		ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_NoAutoOpenOnLog;
 	const bool open = ImGui::TreeNodeEx(label, flags, "%s", Capitals(label).c_str());
 	ImGui::PopStyleColor(3);
 	ImGui::PopFont();
@@ -145,10 +142,11 @@ bool StateChip(const char* id, ImU32 dot, const char* label, const char* tooltip
 	const float width = 22 * unit + textSize.x + (action ? actionWidth + 4 * unit : 10 * unit);
 	const auto minimum = ImGui::GetCursorScreenPos();
 	auto* draw = ImGui::GetWindowDrawList();
-	draw->AddRectFilled(minimum, {minimum.x + width, minimum.y + height}, theme::SurfaceRaised,
+	draw->AddRectFilled(minimum, {minimum.x + width, minimum.y + height}, ImGui::GetColorU32(theme::SurfaceRaised),
 						theme::ChipRadius * unit);
-	draw->AddCircleFilled({minimum.x + 12 * unit, minimum.y + height / 2}, 4 * unit, dot);
-	draw->AddText({minimum.x + 22 * unit, minimum.y + (height - textSize.y) / 2}, theme::Text, label);
+	draw->AddCircleFilled({minimum.x + 12 * unit, minimum.y + height / 2}, 4 * unit, ImGui::GetColorU32(dot));
+	draw->AddText({minimum.x + 22 * unit, minimum.y + (height - textSize.y) / 2}, ImGui::GetColorU32(theme::Text),
+				  label);
 	ImGui::InvisibleButton("##Chip", {width - actionWidth - (action ? 4 * unit : 0), height});
 	if (tooltip)
 		ImGui::SetItemTooltip("%s", tooltip);
@@ -162,8 +160,9 @@ bool StateChip(const char* id, ImU32 dot, const char* label, const char* tooltip
 		pressed = ImGui::InvisibleButton("##Action", {side, side}, ImGuiButtonFlags_EnableNav);
 		const auto center = ImVec2{start.x + side / 2, minimum.y + 2 * unit + side / 2};
 		if (ImGui::IsItemHovered())
-			draw->AddCircleFilled(center, side / 2, theme::Mix(theme::SurfaceRaised, theme::Text, .15f));
-		DrawIcon(draw, *action, center, side * .55f, theme::Text);
+			draw->AddCircleFilled(center, side / 2,
+								  ImGui::GetColorU32(theme::Mix(theme::SurfaceRaised, theme::Text, .15f)));
+		DrawIcon(draw, *action, center, side * .55f, ImGui::GetColorU32(theme::Text));
 		if (actionTooltip)
 			ImGui::SetItemTooltip("%s", actionTooltip);
 		ImGui::SameLine(0, 4 * unit);
@@ -172,15 +171,13 @@ bool StateChip(const char* id, ImU32 dot, const char* label, const char* tooltip
 	ImGui::PopID();
 	return pressed;
 }
-namespace
-{
-ImU32 IconColor(const RailStatus& status, bool selected)
+static ImU32 IconColor(const RailStatus& status, bool selected)
 {
 	if (status.tint)
-		return selected ? status.tint : theme::Fade(status.tint, .7f);
-	return selected ? theme::Text : theme::TextDim;
+		return ImGui::GetColorU32(selected ? status.tint : theme::Fade(status.tint, .7f));
+	return ImGui::GetColorU32(selected ? theme::Text : theme::TextDim);
 }
-void TabTooltip(const char* label, const RailStatus& status)
+static void TabTooltip(const char* label, const RailStatus& status)
 {
 	ImGui::BeginTooltip();
 	ImGui::TextUnformatted(label);
@@ -192,7 +189,6 @@ void TabTooltip(const char* label, const RailStatus& status)
 		ImGui::TextDisabled(status.pilotKey ? "Pilot with %s" : "%s", status.key);
 	ImGui::EndTooltip();
 }
-} // namespace
 bool RailItem(const char* label, Icon icon, bool selected, const RailStatus& status, float height)
 {
 	const float unit = ImGui::GetFontSize() / 17;
@@ -212,24 +208,25 @@ bool RailItem(const char* label, Icon icon, bool selected, const RailStatus& sta
 	{
 		const auto window = ImGui::GetWindowPos(), size = ImGui::GetWindowSize();
 		draw->PushClipRect(window, {window.x + size.x, window.y + size.y});
-		draw->AddRectFilled(minimum, {maximum.x + join, maximum.y}, theme::Surface, theme::Radius * unit,
-							ImDrawFlags_RoundCornersLeft);
+		draw->AddRectFilled(minimum, {maximum.x + join, maximum.y}, ImGui::GetColorU32(theme::Surface),
+							theme::Radius * unit, ImDrawFlags_RoundCornersLeft);
 		draw->PopClipRect();
-		draw->AddRectFilled(minimum, {minimum.x + 3 * unit, maximum.y}, theme::Accent, 1.5f * unit);
+		draw->AddRectFilled(minimum, {minimum.x + 3 * unit, maximum.y}, ImGui::GetColorU32(theme::Accent), 1.5f * unit);
 	}
 	else if (hovered)
-		draw->AddRectFilled(minimum, maximum, theme::Mix(theme::Bg, theme::Text, .07f), theme::Radius * unit);
+		draw->AddRectFilled(minimum, maximum, ImGui::GetColorU32(theme::Mix(theme::Bg, theme::Text, .07f)),
+							theme::Radius * unit);
 	const float iconSize = 18 * unit, iconX = minimum.x + 8 * unit + iconSize / 2;
 	DrawIcon(draw, icon, {iconX, minimum.y + height / 2}, iconSize, IconColor(status, selected));
 	if (status.dot)
 		draw->AddCircleFilled({iconX + iconSize / 2, minimum.y + height / 2 + iconSize / 2 - 2 * unit}, 3.5f * unit,
-							  status.dot);
+							  ImGui::GetColorU32(status.dot));
 	const float textX = iconX + iconSize / 2 + 8 * unit;
 	// An icon-only rail names the row in its tooltip.
 	const bool named = !status.iconOnly;
 	if (named)
-		draw->AddText({textX, minimum.y + (height - ImGui::GetFontSize()) / 2}, selected ? theme::Text : theme::TextDim,
-					  label);
+		draw->AddText({textX, minimum.y + (height - ImGui::GetFontSize()) / 2},
+					  ImGui::GetColorU32(selected ? theme::Text : theme::TextDim), label);
 	float right = maximum.x - 6 * unit;
 	const float textEnd = textX + ImGui::CalcTextSize(label).x + 6 * unit;
 	for (const auto& [text, color] : {std::pair{status.key, theme::TextDim}, {status.badge, status.badgeColor}})
@@ -239,7 +236,7 @@ bool RailItem(const char* label, Icon icon, bool selected, const RailStatus& sta
 		const auto size = ImGui::CalcTextSize(text);
 		if (!named || right - size.x < textEnd)
 			break;
-		draw->AddText({right - size.x, minimum.y + (height - size.y) / 2}, color, text);
+		draw->AddText({right - size.x, minimum.y + (height - size.y) / 2}, ImGui::GetColorU32(color), text);
 		right -= size.x + 8 * unit;
 	}
 	if (hovered && (status.dotTooltip || status.key || !named))
@@ -258,7 +255,7 @@ bool DeviceTab(const char* label, Icon icon, bool selected, const RailStatus& st
 	const ImVec2 maximum{minimum.x + size.x, minimum.y + size.y};
 	if (hovered && !selected)
 		draw->AddRectFilled({minimum.x + 2 * unit, minimum.y + 4 * unit}, {maximum.x - 2 * unit, maximum.y - 5 * unit},
-							theme::Mix(theme::Surface, theme::Text, .06f), theme::Radius * unit);
+							ImGui::GetColorU32(theme::Mix(theme::Surface, theme::Text, .06f)), theme::Radius * unit);
 	const float iconSize = 18 * unit;
 	const auto text = ImGui::CalcTextSize(label);
 	const float content = named ? iconSize + 6 * unit + text.x : iconSize;
@@ -269,20 +266,20 @@ bool DeviceTab(const char* label, Icon icon, bool selected, const RailStatus& st
 	if (status.dot)
 	{
 		const ImVec2 dot{iconX + iconSize / 2 - unit, centerY + iconSize / 2 - 2 * unit};
-		draw->AddCircleFilled(dot, 5 * unit, theme::Surface);
-		draw->AddCircleFilled(dot, 3.5f * unit, status.dot);
+		draw->AddCircleFilled(dot, 5 * unit, ImGui::GetColorU32(theme::Surface));
+		draw->AddCircleFilled(dot, 3.5f * unit, ImGui::GetColorU32(status.dot));
 	}
 	if (status.badge)
 	{
 		const ImVec2 badge{iconX + iconSize / 2 - unit, centerY - iconSize / 2 + 2 * unit};
-		draw->AddCircleFilled(badge, 5 * unit, theme::Surface);
-		draw->AddCircleFilled(badge, 3.5f * unit, status.badgeColor);
+		draw->AddCircleFilled(badge, 5 * unit, ImGui::GetColorU32(theme::Surface));
+		draw->AddCircleFilled(badge, 3.5f * unit, ImGui::GetColorU32(status.badgeColor));
 	}
 	if (named)
-		draw->AddText({iconX + iconSize / 2 + 6 * unit, centerY - text.y / 2}, theme::Text, label);
+		draw->AddText({iconX + iconSize / 2 + 6 * unit, centerY - text.y / 2}, ImGui::GetColorU32(theme::Text), label);
 	if (selected)
 		draw->AddRectFilled({minimum.x + 6 * unit, maximum.y - 3 * unit}, {maximum.x - 6 * unit, maximum.y - unit},
-							theme::Accent, unit);
+							ImGui::GetColorU32(theme::Accent), unit);
 	if (hovered)
 		TabTooltip(label, status);
 	return pressed;

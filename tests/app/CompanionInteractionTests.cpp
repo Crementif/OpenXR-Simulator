@@ -1,6 +1,8 @@
 #include "../TestSupport.h"
 #include "Math.h"
 #include "app/widgets/AppPicker.h"
+#include "app/widgets/DeviceRail.h"
+#include "app/widgets/Theme.h"
 #include "app/pages/DeviceControlPanel.h"
 #include "app/pages/FramePage.h"
 #include "app/services/PlayerRig.h"
@@ -2103,6 +2105,71 @@ void ConfigureObservedDevices()
 		Require(!edit, "Unsupported device reset submitted edits to unrelated channels");
 	}
 	std::cout << "PASS device field ownership, tracker selection/reset and numeric gesture retirement\n";
+	// The authored poses stay tracked while failure scenarios change what the runtime exposes.
+	RuntimeView statusView;
+	statusView.connected = true;
+	auto& statusSetup = statusView.setup.emplace();
+	statusSetup.values.tracking.head.flags = simxr::TrackedPoseFlags;
+	for (auto& controller : statusSetup.values.tracking.controllers)
+	{
+		controller.connected = true;
+		controller.pose.flags = simxr::TrackedPoseFlags;
+	}
+	statusSetup.values.tracking.body.active = true;
+	statusSetup.values.tracking.gaze.available = statusSetup.values.tracking.gaze.tracked = true;
+	statusSetup.values.tracking.trackers[0].connected = statusSetup.values.tracking.trackers[0].tracked = true;
+	CompanionSettings statusSettings;
+	std::array<ImU32, 7> dotColors{};
+	test.extraDraw = [&]
+	{
+		ImGui::SetNextWindowPos({20, 20}, ImGuiCond_Always);
+		ImGui::SetNextWindowSize({560, 100}, ImGuiCond_Always);
+		ImGui::Begin("Observed device status");
+		const auto origin = ImGui::GetCursorScreenPos();
+		const float width = ImGui::GetContentRegionAvail().x / dotColors.size();
+		const float unit = ImGui::GetFontSize() / 17;
+		DrawDeviceTabs(FrameSel{}, statusView, statusSettings);
+		const auto& vertices = ImGui::GetWindowDrawList()->VtxBuffer;
+		dotColors.fill(0);
+		for (std::size_t index = 1; index < dotColors.size(); ++index)
+		{
+			const ImVec2 dot{origin.x + width * (index + .5f) + 8 * unit,
+							 origin.y + DeviceTabsHeight() / 2 + 6 * unit};
+			// The solid dot is drawn after its icon and backing ring.
+			for (int vertex = vertices.Size - 1; vertex >= 0; --vertex)
+			{
+				const auto& point = vertices[vertex];
+				const float dx = point.pos.x - dot.x, dy = point.pos.y - dot.y;
+				if ((point.col & IM_COL32_A_MASK) == IM_COL32_A_MASK && dx * dx + dy * dy < 16 * unit * unit)
+				{
+					dotColors[index] = point.col;
+					break;
+				}
+			}
+		}
+		ImGui::End();
+	};
+	for (const auto failure : {simxr::FailureScenario::HeadUntracked, simxr::FailureScenario::BodyUntracked,
+							   simxr::FailureScenario::GazeUntracked})
+		statusSetup.scenarios[static_cast<std::size_t>(failure)] = true;
+	test.Frame();
+	test.Frame();
+	for (const auto page : {DevicePage::Head, DevicePage::Body, DevicePage::Gaze})
+		Require(dotColors[static_cast<std::size_t>(page)] == theme::Warn,
+				"Lost scenario did not change the device status dot");
+	for (const auto failure : {simxr::FailureScenario::HeadUnavailable, simxr::FailureScenario::LeftDisconnected,
+							   simxr::FailureScenario::RightDisconnected, simxr::FailureScenario::BodyUnavailable,
+							   simxr::FailureScenario::GazeUnavailable, simxr::FailureScenario::TrackersDisconnected})
+		statusSetup.scenarios[static_cast<std::size_t>(failure)] = true;
+	test.Frame();
+	for (std::size_t index = 1; index < dotColors.size(); ++index)
+		Require(dotColors[index] == theme::TextDim, "Off scenario did not override the device status dot");
+	statusSetup.scenarios.fill(false);
+	test.Frame();
+	for (std::size_t index = 1; index < dotColors.size(); ++index)
+		Require(dotColors[index] == theme::Ok, "Scenario recovery did not restore the tracked device status dot");
+	test.extraDraw = {};
+	std::cout << "PASS device status dots follow Lost/Off scenarios and recovery\n";
 	test.renderer.WaitIdle();
 	Require(!test.validation->errors.load(), "Live fields generated validation errors");
 	std::cout << "PASS live configuration: immediate changes, preserved configuration, scenario recovery, reconnect, "
@@ -3584,30 +3651,149 @@ void CheckShell(Interaction& test, const char* qa)
 	activate("Top bar", "Focus");
 	pump(2);
 	Require(FindPanel("Focus exit") && FindPanel("GPU preview")->Size.x > previewWidth + 100, "Focus did not expand");
+	Require(!FindPanel("Focus exit")->Rect().Overlaps(FindPanel("Image controls")->Rect()),
+			"Exit focus covers the image controls");
 	screenshot("focus.bmp");
 	activate("Focus exit", "Exit focus");
 	pump(2);
 	Require(std::abs(FindPanel("GPU preview")->Size.x - previewWidth) < 1, "Exit focus did not restore the layout");
 	// Pin a crop by dragging over the image, then step frames: it stays.
-	activate("Image controls", "View");
-	const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
-	Require(!popups.empty() && popups.back().Window, "Image view popover did not open");
-	ImGui::ActivateItemByID(popups.back().Window->GetID("Pick region"));
-	pump(3);
+	Require(SDL_ShowWindow(test.window.Native()), "Show preview interaction window");
+	SDL_RaiseWindow(test.window.Native());
+	Eventually(
+		[&]
+		{
+			pump(1);
+			return test.window.Focused();
+		},
+		"Preview interaction window did not receive focus");
+	const auto checkControls = [&]
+	{
+		const auto* controls = FindPanel("Image controls");
+		const auto* preview = FindPanel("GPU preview");
+		Require(controls && controls->Active && preview && controls->Pos.x >= preview->Pos.x &&
+					controls->Pos.y >= preview->Pos.y &&
+					controls->Pos.x + controls->Size.x <= preview->Pos.x + preview->Size.x + 1 &&
+					controls->Pos.y + controls->Size.y <= preview->Pos.y + preview->Size.y + 1,
+				"Preview corner controls escape the preview");
+		Require(!controls->ScrollbarX && !controls->ScrollbarY &&
+					controls->ContentSize.x + controls->WindowPadding.x * 2 <= controls->Size.x + 1 &&
+					controls->ContentSize.y + controls->WindowPadding.y * 2 <= controls->Size.y + 1 &&
+					controls->DC.CursorMaxPos.x <= controls->InnerClipRect.Max.x + 1 &&
+					controls->DC.CursorMaxPos.y <= controls->InnerClipRect.Max.y + 1 &&
+					controls->InnerClipRect.GetHeight() >= ImGui::GetFrameHeight(),
+				"Preview corner clips its controls or leaves the primary row incomplete");
+	};
+	checkControls();
+	const auto chooseView = [&](const char* choice)
+	{
+		activate("Image controls", "View");
+		const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+		Require(!popups.empty() && popups.back().Window, "Image view popover did not open");
+		ImGui::ActivateItemByID(popups.back().Window->GetID(choice));
+		pump(3);
+		ImGui::ClosePopupsExceptModals();
+		pump(2);
+	};
+	chooseView("2:1");
+	pointer(FindPanel("Image area")->InnerRect.GetCenter(), std::nullopt);
+	const auto controlPoint = FindPanel("Image controls")->InnerRect.GetCenter();
+	SDL_Event motion{};
+	motion.type = SDL_EVENT_MOUSE_MOTION;
+	motion.motion.windowID = SDL_GetWindowID(test.window.Native());
+	motion.motion.which = TestMouse;
+	motion.motion.x = controlPoint.x;
+	motion.motion.y = controlPoint.y;
+	Require(SDL_PushEvent(&motion), "Move onto preview controls in the capture frame");
+	const auto rightButton = [&](bool down)
+	{
+		SDL_Event event{};
+		event.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+		event.button.windowID = SDL_GetWindowID(test.window.Native());
+		event.button.which = TestMouse;
+		event.button.button = SDL_BUTTON_RIGHT;
+		event.button.down = down;
+		event.button.x = controlPoint.x;
+		event.button.y = controlPoint.y;
+		Require(SDL_PushEvent(&event), "Push preview control capture gesture");
+	};
+	rightButton(true);
+	bool capturedBehindControls = false;
+	for (int frame = 0; frame < 12; ++frame)
+	{
+		pump(1);
+		capturedBehindControls |= SDL_GetWindowRelativeMouseMode(test.window.Native());
+	}
+	rightButton(false);
+	pump(2);
+	Require(!capturedBehindControls, "Moving onto preview controls started piloting behind them");
+	chooseView("Fit");
+	const auto pickRegion = [&]
+	{
+		activate("Image controls", "View");
+		const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+		Require(!popups.empty() && popups.back().Window, "Image view popover did not open");
+		ImGui::ActivateItemByID(popups.back().Window->GetID("Pick region"));
+		pump(3);
+	};
 	const auto* area = FindPanel("Image area");
 	const ImVec2 corner{area->Pos.x + area->Size.x * .3f, area->Pos.y + area->Size.y * .3f};
+	const ImVec2 end{corner.x + area->Size.x * .2f, corner.y + area->Size.y * .2f};
+	pickRegion();
 	pointer(corner, true);
-	pointer({corner.x + area->Size.x * .2f, corner.y + area->Size.y * .2f}, std::nullopt);
-	pointer({corner.x + area->Size.x * .2f, corner.y + area->Size.y * .2f}, false);
+	test.runtime.FocusLost();
+	pointer(end, false);
+	Require(!test.runtime.PreviewCrop(), "Focus loss allowed the old crop drag to commit");
+	pickRegion();
+	pointer(corner, true);
+	const ImVec4 replacement{.1f, .2f, .8f, .9f};
+	test.runtime.PreviewCrop() = replacement;
+	pointer(end, false);
+	const auto unchanged = test.runtime.PreviewCrop();
+	Require(unchanged && unchanged->x == replacement.x && unchanged->y == replacement.y &&
+				unchanged->z == replacement.z && unchanged->w == replacement.w,
+			"Changing the crop target allowed an old drag to overwrite it");
+	test.runtime.PreviewCrop().reset();
+	pump(3);
+	pickRegion();
+	pointer(corner, true);
+	test.runtime.CancelPreviewInteraction();
+	pointer(end, false);
+	Require(!test.runtime.PreviewCrop(), "Retiring the preview gesture allowed its old drag to commit");
+	pickRegion();
+	pointer(corner, true);
+	pointer(end, std::nullopt);
+	pointer(end, false);
 	pump(3);
 	Require(test.runtime.PreviewCrop().has_value(), "Dragging over the image did not pin a crop");
+	checkControls();
+	screenshot("crop-live.bmp");
+	test.window.Resize(640, 480);
+	test.workspace.SetScale(2.5f);
+	pump(4);
+	checkControls();
+	screenshot("crop-enlarged.bmp");
+	test.window.Resize(1280, 800);
+	test.workspace.SetScale(1);
+	pump(4);
 	activate("Timeline", "Pause");
-	Eventually([&] { pump(1); return test.runtime.Snapshot().manual && !test.runtime.Snapshot().operationPending; },
-			   "Shell check did not pause");
+	Eventually(
+		[&]
+		{
+			pump(1);
+			return test.runtime.Snapshot().manual && !test.runtime.Snapshot().operationPending;
+		},
+		"Shell check did not pause");
 	for (int step = 0; step < 5; ++step)
 	{
 		activate("Timeline", "Step forward");
-		Eventually([&] { pump(1); return !test.runtime.Snapshot().operationPending; }, "Step did not finish");
+		Eventually(
+			[&]
+			{
+				pump(1);
+				return !test.runtime.Snapshot().operationPending;
+			},
+			"Step did not finish");
 	}
 	Require(test.runtime.PreviewCrop().has_value(), "Stepping cleared the crop");
 	screenshot("crop.bmp");
@@ -3937,6 +4123,45 @@ simxr.resume())";
 	ImGui::ActivateItemByID(FindPanel("Library")->GetID("Refresh library"));
 	pump(3);
 	screenshot("library-list.bmp");
+	// Changing the entry within one page kind must reopen the narrow inspector.
+	const auto otherTake = directory / "recordings" / "Other library take.luau";
+	const auto otherScript = directory / "scripts" / "other_library_script.luau";
+	Require(std::filesystem::copy_file(existingPath, otherTake) && std::filesystem::copy_file(script, otherScript),
+			"Could not prepare same-kind Library selections");
+	int oldWidth = 0, oldHeight = 0;
+	Require(SDL_GetWindowSize(test.window.Native(), &oldWidth, &oldHeight), "Could not read Library window size");
+	const float oldScale = ImGui::GetStyle().FontScaleMain;
+	test.workspace.SetScale(1);
+	const auto reopenEntry = [&](Selection before, Selection after, const std::filesystem::path& entry)
+	{
+		test.window.Resize(1280, oldHeight);
+		test.workspace.Select(std::move(before));
+		pump(3);
+		test.window.Resize(720, oldHeight);
+		pump(4);
+		Require(!test.workspace.State().inspectorVisible, "Narrowing the Library did not close the inspector");
+		ImGui::ActivateItemByID(FindPanel("Library")->GetID("Refresh library"));
+		pump(1);
+		const auto entryPath = PathText(entry), name = PathText(entry.stem());
+		Eventually([&]
+		{
+			auto* browser = FindPanel("Library");
+			Require(browser && browser->Active, "Library browser is not visible");
+			const auto row = ImHashStr(entryPath.c_str(), 0, browser->GetID("Library entries"));
+			ImGui::ActivateItemByID(ImHashStr(name.c_str(), 0, row));
+			pump(1);
+			return test.workspace.State().selection == after;
+		}, "Library entry did not become the selected page");
+		pump(2);
+		Require(test.workspace.State().inspectorVisible,
+				"Selecting another Library entry of the same kind left the inspector closed");
+	};
+	reopenEntry(TakeSel{path}, TakeSel{PathText(otherTake)}, otherTake);
+	reopenEntry(ScriptSel{PathText(script)}, ScriptSel{PathText(otherScript)}, otherScript);
+	test.window.Resize(oldWidth, oldHeight);
+	test.workspace.SetScale(oldScale);
+	pump(3);
+	std::cout << "PASS same-kind Library take/script selection reopens the narrow inspector\n";
 	test.workspace.Select(ScriptSel{script.string()});
 	pump(3);
 	auto* inspector = FindPanel("Inspector");
@@ -4398,7 +4623,10 @@ void CheckPreviewHistory(Interaction& test)
 	{
 		test.Frame();
 		const auto count = std::count_if(kept.Shots().begin(), kept.Shots().end(),
-			[](const auto& shot) { return shot.frame.frame != 0; });
+										 [](const auto& shot)
+										 {
+											 return shot.frame.frame != 0;
+										 });
 		if (count >= 40 && std::chrono::steady_clock::now() - started >= std::chrono::seconds(6))
 			break;
 	}
@@ -4424,22 +4652,62 @@ void CheckPreviewHistory(Interaction& test)
 	{
 		if (command.ElemCount != 6)
 			continue;
-		const auto& a = timeline->DrawList->VtxBuffer[command.VtxOffset +
-			timeline->DrawList->IdxBuffer[command.IdxOffset]];
-		const auto& b = timeline->DrawList->VtxBuffer[command.VtxOffset +
-			timeline->DrawList->IdxBuffer[command.IdxOffset + 2]];
+		const auto& a =
+			timeline->DrawList->VtxBuffer[command.VtxOffset + timeline->DrawList->IdxBuffer[command.IdxOffset]];
+		const auto& b =
+			timeline->DrawList->VtxBuffer[command.VtxOffset + timeline->DrawList->IdxBuffer[command.IdxOffset + 2]];
 		if (std::abs(a.uv.x - crop.x) < .001f && std::abs(a.uv.y - crop.y) < .001f &&
 			std::abs(b.uv.x - crop.z) < .001f && std::abs(b.uv.y - crop.w) < .001f)
 			thumbnails.insert(command.GetTexID());
 	}
 	Require(thumbnails.size() >= 2, "Images lane did not draw distinct retained images with the pinned crop");
 	const auto index = history.LowerBound(history.At(history.Size() - 1).seconds - 3);
-	test.runtime.LookAt(index);
+	const auto nearby = kept.Nearest(history.At(index).identity, history.At(index).epoch);
+	Require(nearby.has_value(), "No kept preview three seconds back");
+	const auto exact = history.Find(nearby->frame, nearby->epoch);
+	Require(exact.has_value(), "Kept preview's frame is missing from history");
+	const auto displayedPreview = [&]
+	{
+		const auto* preview = FindPanel("GPU preview");
+		Require(preview != nullptr, "Historical preview panel missing");
+		for (const auto& command : preview->DrawList->CmdBuffer)
+		{
+			if (command.ElemCount != 6)
+				continue;
+			const auto& first =
+				preview->DrawList->VtxBuffer[command.VtxOffset + preview->DrawList->IdxBuffer[command.IdxOffset]];
+			const auto& last =
+				preview->DrawList->VtxBuffer[command.VtxOffset + preview->DrawList->IdxBuffer[command.IdxOffset + 2]];
+			if (std::abs(first.uv.x - crop.x) < .001f && std::abs(first.uv.y - crop.y) < .001f &&
+				std::abs(last.uv.x - crop.z) < .001f && std::abs(last.uv.y - crop.w) < .001f)
+				return true;
+		}
+		return false;
+	};
+	test.runtime.LookAt(*exact);
 	for (int frame = 0; frame < 4; ++frame)
 		test.Frame();
-	const auto& frame = history.At(index);
-	Require(kept.Nearest(frame.identity, frame.epoch).has_value(), "No kept preview three seconds back");
+	Require(displayedPreview(), "Exact retained preview was not shown");
 	Require(!test.runtime.Snapshot().time.following, "Looking back still follows");
+	std::optional<std::size_t> gap;
+	for (std::size_t candidate = *exact + 1; candidate < history.Size(); ++candidate)
+	{
+		const auto& frame = history.At(candidate);
+		const auto shot = kept.Nearest(frame.identity, frame.epoch);
+		if (shot && shot->frame != frame.identity)
+		{
+			gap = candidate;
+			break;
+		}
+	}
+	Require(gap.has_value(), "Preview history fixture has no unsampled frame");
+	test.runtime.LookAt(*gap);
+	for (int frame = 0; frame < 4; ++frame)
+		test.Frame();
+	Require(!displayedPreview(), "An unsampled historical frame displayed a neighbouring preview");
+	test.runtime.LookAt(*exact);
+	for (int frame = 0; frame < 4; ++frame)
+		test.Frame();
 	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
 	{
 		test.renderer.RequestScreenshot(std::filesystem::path(qa) / "preview-history.bmp");
@@ -4695,6 +4963,53 @@ void CheckAppPicker(const char* executable)
 			"Save as profile did not store the recent app");
 	Require(saved.profiles.back().environment == environment, "Save as profile changed the recent environment");
 	closeEditor();
+	{
+		struct RestoreSettings
+		{
+			std::filesystem::path path, backup;
+			bool moved = false;
+			~RestoreSettings()
+			{
+				if (!moved)
+					return;
+				std::error_code error;
+				std::filesystem::remove(path, error);
+				std::filesystem::rename(backup, path, error);
+			}
+		} restore{settingsPath, directory / "companion.settings.before-failure"};
+		std::filesystem::rename(restore.path, restore.backup);
+		restore.moved = true;
+		Require(std::filesystem::create_directory(settingsPath), "Could not block the settings file commit");
+		picker = openPicker();
+		ImGui::ActivateItemByID(ImHashStr("Save as profile", 0, ImHashData(&first, sizeof(first), picker)));
+		pump(4);
+		const auto* editor = ImGui::FindWindowByName("Launch profiles");
+		Require(editor && editor->Active, "Failing Save as profile did not open its editor");
+		const auto run = test.workspace.State().session.state;
+		Require(test.runtime.Snapshot().connected &&
+					(run == RunState::Running || run == RunState::WaitingForSession || run == RunState::Paused),
+				"Settings save failure changed the connected workspace into a failed run");
+		const auto* errorDetails = ImGui::FindWindowByName("Error details");
+		Require(!errorDetails || !errorDetails->Active, "Settings save failure opened the launch-error modal");
+		Require(std::filesystem::is_directory(settingsPath), "Settings failure fixture did not preserve its blocked path");
+		const auto layoutPath = settingsPath.parent_path() / "companion-v2.ini";
+		std::filesystem::remove(layoutPath);
+		bool finishFailed = false;
+		try
+		{
+			test.workspace.Finish();
+		}
+		catch (const std::exception&)
+		{
+			finishFailed = true;
+		}
+		Require(finishFailed && std::filesystem::is_regular_file(layoutPath),
+				"Settings failure prevented independent layout persistence at shutdown");
+		closeEditor();
+	}
+	Require(LoadSettings(settingsPath).profiles.size() == saved.profiles.size(),
+			"Settings failure fixture did not restore the previous settings file");
+	std::cout << "PASS settings commit failure preserves the connected run and reports no launch-error modal\n";
 
 	AppPicker namedPicker;
 	CompanionSettings namedSettings;

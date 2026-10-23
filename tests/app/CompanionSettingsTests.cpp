@@ -80,6 +80,28 @@ void Persistence()
 	Directory directory;
 	const auto file = directory.path / u8"nested 日本語/companion.settings";
 	Require(LoadSettings(file) == CompanionSettings{}, "Missing config has defaults");
+	const auto layoutFile = directory.path / u8"window 配置/詳細.ini";
+	const std::string layout = "[Window][詳細##日本語]\r\nPos=12,34\r\nSize=560,320\r\n";
+	Require(LoadWindowLayout(layoutFile).empty(), "Missing window layout is empty");
+	SaveWindowLayout(layoutFile, layout);
+	Require(LoadWindowLayout(layoutFile) == layout, "Window layout preserves Unicode paths and exact text");
+	Reject([&]
+	{
+		SaveWindowLayout(layoutFile, std::string(8 * 1024 * 1024 + 1, 'x'));
+	});
+	Reject([&]
+	{
+		SaveWindowLayout(layoutFile, std::string("before\0after", 12));
+	});
+	Require(LoadWindowLayout(layoutFile) == layout, "Rejected window layout save preserves the original");
+	SaveWindowLayout(layoutFile, {});
+	Require(LoadWindowLayout(layoutFile).empty(), "Empty window layout replaces previous text");
+	SaveWindowLayout(layoutFile, layout);
+	std::filesystem::resize_file(layoutFile, 8 * 1024 * 1024 + 1);
+	Reject([&]
+	{
+		LoadWindowLayout(layoutFile);
+	});
 	CompanionSettings settings;
 	settings.scale = 1.375f;
 	settings.snapshotBudgetMiB = 2048;
@@ -168,6 +190,14 @@ void Persistence()
 			{
 				SaveSettings(destination, settings);
 			});
+		Reject([&]
+		{
+			SaveWindowLayout(destination, layout);
+		});
+		Reject([&]
+		{
+			LoadWindowLayout(destination);
+		});
 		Require(std::filesystem::is_directory(destination) && std::filesystem::is_empty(destination),
 			"Failed replacement preserves the destination");
 		std::size_t entries = 0;

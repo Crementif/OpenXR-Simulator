@@ -1,9 +1,9 @@
 #include "app/widgets/AppPicker.h"
 #include "Pch.h"
 #include "app/RuntimeView.h"
-#include "app/Theme.h"
 #include "app/services/CompanionSettings.h"
 #include "app/widgets/Controls.h"
+#include "app/widgets/Theme.h"
 
 #include <cfloat>
 #include <ctime>
@@ -86,13 +86,16 @@ std::string AppPicker::Refresh()
 	}
 }
 AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const RuntimeView& view, const std::string& label,
-								ImU32 dot, const std::string& tooltip, bool open, const std::function<void()>& session)
+								ImU32 dot, const std::string& tooltip, bool open, const std::function<void()>& session,
+								float maximumWidth)
 {
 	AppPickerChoice choice;
 	const float height = ImGui::GetFrameHeight(), unit = ImGui::GetFontSize() / 17;
 	const auto text = ImGui::CalcTextSize(label.c_str());
-	const float dotX = height + text.x + 8 * unit, chevronX = dotX + (dot ? 14 * unit : 0);
-	const ImVec2 size{chevronX + 18 * unit, height};
+	const float extra = (dot ? 14 * unit : 0) + 18 * unit;
+	const float fullWidth = height + text.x + 8 * unit + extra;
+	const ImVec2 size{maximumWidth > 0 ? std::min(fullWidth, maximumWidth) : fullWidth, height};
+	const float dotX = size.x - extra, chevronX = size.x - 18 * unit;
 	const auto minimum = ImGui::GetCursorScreenPos();
 	const bool pressed = ImGui::InvisibleButton("##App picker", size, ImGuiButtonFlags_EnableNav);
 	const bool hovered = ImGui::IsItemHovered(), shown = ImGui::IsPopupOpen("App picker");
@@ -101,7 +104,10 @@ AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const Runtime
 		draw->AddRectFilled(minimum, {minimum.x + size.x, minimum.y + size.y},
 							theme::Mix(theme::Bg, theme::Text, shown ? .1f : .06f), theme::Radius * unit);
 	DrawIcon(draw, Icon::App, {minimum.x + height / 2, minimum.y + height / 2}, height * .6f, theme::TextDim);
+	draw->PushClipRect({minimum.x + height, minimum.y},
+					   {minimum.x + std::max(height, dotX - 4 * unit), minimum.y + height}, true);
 	draw->AddText({minimum.x + height, minimum.y + (height - text.y) / 2}, theme::Text, label.c_str());
+	draw->PopClipRect();
 	if (dot)
 		draw->AddCircleFilled({minimum.x + dotX + 4 * unit, minimum.y + height / 2}, 4 * unit, dot);
 	DrawIcon(draw, Icon::ChevronDown, {minimum.x + chevronX + 7 * unit, minimum.y + height / 2}, 12 * unit,
@@ -116,9 +122,8 @@ AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const Runtime
 	ImGui::SetNextWindowPos({minimum.x, minimum.y + height + 2 * unit});
 	const auto* viewport = ImGui::GetWindowViewport();
 	const float availableWidth = std::max(1.0f, viewport->WorkSize.x - ImGui::GetStyle().DisplaySafeAreaPadding.x * 2);
-	const float maximumWidth = std::min(ImGui::GetFontSize() * 40, availableWidth);
-	ImGui::SetNextWindowSizeConstraints({std::min(ImGui::GetFontSize() * 24, maximumWidth), 0},
-										{maximumWidth, FLT_MAX});
+	const float popupWidth = std::min(ImGui::GetFontSize() * 40, availableWidth);
+	ImGui::SetNextWindowSizeConstraints({std::min(ImGui::GetFontSize() * 24, popupWidth), 0}, {popupWidth, FLT_MAX});
 	if (!ImGui::BeginPopup("App picker"))
 		return choice;
 	if (view.connected && session)

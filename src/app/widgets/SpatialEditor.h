@@ -1,6 +1,6 @@
 #pragma once
 #include "app/services/UndoStack.h"
-#include "app/ShellState.h"
+#include "app/services/ShellState.h"
 #include "app/services/SimulationEdits.h"
 #include "app/widgets/SpatialWidgets.h"
 #include <array>

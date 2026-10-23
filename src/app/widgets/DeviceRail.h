@@ -1,7 +1,7 @@
 #pragma once
 
-#include "app/services/CompanionSettings.h"
 #include "app/RuntimeView.h"
+#include "app/services/CompanionSettings.h"
 
 #include <optional>
 

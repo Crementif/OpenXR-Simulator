@@ -31,7 +31,8 @@ class AppPicker
 {
   public:
 	AppPickerChoice Draw(const CompanionSettings& settings, const RuntimeView& view, const std::string& label,
-						 ImU32 dot, const std::string& tooltip, bool open, const std::function<void()>& session);
+						 ImU32 dot, const std::string& tooltip, bool open, const std::function<void()>& session,
+						 float maximumWidth = 0);
 
   private:
 	std::string Refresh();

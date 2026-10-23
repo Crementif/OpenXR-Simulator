@@ -36,7 +36,10 @@ inline constexpr float ChipRadius = 12;
 constexpr ImU32 Fade(ImU32 color, float opacity)
 {
 	const auto alpha = static_cast<float>((color >> IM_COL32_A_SHIFT) & 0xFF) * opacity;
-	return (color & ~IM_COL32_A_MASK) | (static_cast<ImU32>(alpha < 0 ? 0 : alpha > 255 ? 255 : alpha) << IM_COL32_A_SHIFT);
+	return (color & ~IM_COL32_A_MASK) | (static_cast<ImU32>(alpha < 0	  ? 0
+															: alpha > 255 ? 255
+																		  : alpha)
+										 << IM_COL32_A_SHIFT);
 }
 // Linear blend between two colours, t in 0..1.
 ImU32 Mix(ImU32 from, ImU32 to, float t);

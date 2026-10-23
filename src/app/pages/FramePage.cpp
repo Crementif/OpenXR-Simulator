@@ -1,6 +1,6 @@
 #include "app/pages/FramePage.h"
 #include "Pch.h"
-#include "app/Theme.h"
+#include "app/widgets/Theme.h"
 #include "app/services/RuntimeSession.h"
 #include "app/services/SimulationEdits.h"
 #include "app/widgets/Controls.h"

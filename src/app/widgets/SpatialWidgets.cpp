@@ -1,7 +1,7 @@
 #include "app/widgets/SpatialWidgets.h"
 #include "Math.h"
 #include "Pch.h"
-#include "app/Theme.h"
+#include "app/widgets/Theme.h"
 #include <ImGuizmo.h>
 #include <cmath>
 #include <numbers>

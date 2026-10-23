@@ -1,7 +1,7 @@
-#include "Pch.h"
 #include "app/services/CompanionSettings.h"
-#include "app/services/Utf8Path.h"
+#include "Pch.h"
 #include "app/platform/FileStorage.h"
+#include "app/services/Utf8Path.h"
 
 #include <cmath>
 #include <fstream>
@@ -34,9 +34,7 @@ static void Put(std::string& bytes, const std::string& text)
 class SettingsReader
 {
   public:
-	explicit SettingsReader(std::string_view bytes) : m_bytes(bytes)
-	{
-	}
+	explicit SettingsReader(std::string_view bytes) : m_bytes(bytes) {}
 	bool Empty() const noexcept
 	{
 		return m_bytes.empty();
@@ -387,6 +385,64 @@ void SaveSettings(const std::filesystem::path& path, const CompanionSettings& se
 		output.close();
 		if (!output)
 			throw std::runtime_error("Cannot close companion settings temporary file");
+		CommitTemporaryFile(temporary, path);
+	}
+	catch (...)
+	{
+		std::error_code ignored;
+		std::filesystem::remove(temporary, ignored);
+		throw;
+	}
+}
+std::string LoadWindowLayout(const std::filesystem::path& path)
+{
+	std::error_code error;
+	const bool exists = std::filesystem::exists(path, error);
+	if (error)
+		throw std::runtime_error("Cannot inspect window layout: " + error.message());
+	if (!exists)
+		return {};
+	const auto size = std::filesystem::file_size(path, error);
+	if (error)
+		throw std::runtime_error("Cannot read window layout size: " + error.message());
+	if (size > s_maxFile)
+		throw std::runtime_error("Window layout exceeds 8 MiB");
+	std::ifstream input(path, std::ios::binary);
+	if (!input)
+		throw std::runtime_error("Cannot open window layout");
+	std::string text(static_cast<std::size_t>(size), '\0');
+	if (!input.read(text.data(), static_cast<std::streamsize>(text.size())))
+		throw std::runtime_error("Cannot read window layout");
+	if (input.peek() != std::char_traits<char>::eof() || input.bad())
+		throw std::runtime_error("Cannot read complete window layout");
+	input.clear();
+	input.close();
+	if (!input)
+		throw std::runtime_error("Cannot close window layout");
+	if (text.find('\0') != std::string::npos)
+		throw std::runtime_error("Window layout contains NUL");
+	return text;
+}
+void SaveWindowLayout(const std::filesystem::path& path, std::string_view text)
+{
+	if (!path.is_absolute())
+		throw std::invalid_argument("Window layout destination must be absolute");
+	if (text.size() > s_maxFile || text.find('\0') != std::string_view::npos)
+		throw std::invalid_argument("Window layout exceeds 8 MiB or contains NUL");
+	std::filesystem::create_directories(path.parent_path());
+	const auto temporary = CreatePrivateTemporaryFile(path);
+	try
+	{
+		std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+		if (!output)
+			throw std::runtime_error("Cannot open window layout temporary file");
+		if (!text.empty())
+			output.write(text.data(), static_cast<std::streamsize>(text.size()));
+		if (!output)
+			throw std::runtime_error("Cannot write window layout");
+		output.close();
+		if (!output)
+			throw std::runtime_error("Cannot close window layout temporary file");
 		CommitTemporaryFile(temporary, path);
 	}
 	catch (...)

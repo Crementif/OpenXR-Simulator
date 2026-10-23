@@ -1,7 +1,7 @@
 #include "app/widgets/TimelinePanel.h"
 #include "Pch.h"
 #include "app/RuntimePanels.h"
-#include "app/Theme.h"
+#include "app/widgets/Theme.h"
 #include "app/services/InputHistory.h"
 #include "app/services/PlayerRig.h"
 #include "app/services/RecordingController.h"

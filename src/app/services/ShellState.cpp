@@ -1,9 +1,10 @@
-#include "app/ShellState.h"
-#include "app/RuntimeView.h"
+#include "app/services/ShellState.h"
+#include "Pch.h"
+#include "app/services/SessionView.h"
 
 namespace simxr::app
 {
-SessionState DeriveRunState(const RuntimeView& snapshot, bool launching, const std::string& error)
+SessionState DeriveRunState(const SessionView& snapshot, bool launching, const std::string& launchError)
 {
 	SessionState result;
 	result.endpoint = snapshot.endpoint;
@@ -11,7 +12,7 @@ SessionState DeriveRunState(const RuntimeView& snapshot, bool launching, const s
 	result.generation = snapshot.generation;
 	result.run = snapshot.generation;
 	result.fps = snapshot.fps;
-	result.error = error.empty() ? snapshot.error : error;
+	result.error = launchError.empty() ? snapshot.error : launchError;
 	if (!result.error.empty())
 		result.state = RunState::Failed;
 	else if (launching)

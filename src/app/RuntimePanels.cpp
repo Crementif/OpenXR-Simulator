@@ -1,10 +1,10 @@
 #include "app/RuntimePanels.h"
 #include "Pch.h"
-#include "app/Theme.h"
 #include "app/platform/Window.h"
 #include "app/widgets/Controls.h"
 #include "app/widgets/HapticEvents.h"
 #include "app/widgets/PastInput.h"
+#include "app/widgets/Theme.h"
 #include <imgui.h>
 
 namespace simxr::app
@@ -16,6 +16,7 @@ void RuntimePanels::Poll()
 	if (m_session.TakeScopeChanged())
 	{
 		StopPilot();
+		m_preview.CancelInteraction();
 		m_devices.ClearHeldInputs();
 		m_devices.ResetObservations();
 		m_spatial.Reset();
@@ -137,7 +138,9 @@ void RuntimePanels::DrawPreview(ShellState& shell)
 {
 	m_frame.Prepare(shell.selection, m_view);
 	const auto& io = ImGui::GetIO();
-	if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false) && !io.WantTextInput)
+	if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false) && !io.WantTextInput &&
+		!ImGui::IsAnyItemActive() &&
+		!ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
 		UndoChanges(1);
 	if (!m_preview.Draw(shell, m_view, !m_replayPreparation, !m_replayActive))
 		StopPilot();
@@ -226,6 +229,7 @@ void RuntimePanels::StopPilot()
 }
 void RuntimePanels::FocusLost()
 {
+	m_preview.CancelInteraction();
 	m_spatial.Cancel();
 	m_undo.FinishGesture();
 	m_session.Haptics().Motors(HapticFeedback::Clock::now(), false);
@@ -234,6 +238,10 @@ void RuntimePanels::FocusLost()
 	m_pilot.Stop(m_window, m_session.ManualInput(), true, true);
 	m_devices.SetRigPiloting(false);
 	m_devices.ClearHeldInputs();
+}
+void RuntimePanels::CancelPreviewInteraction()
+{
+	m_preview.CancelInteraction();
 }
 bool RuntimePanels::ReleaseInputs()
 {

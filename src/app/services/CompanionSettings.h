@@ -1,11 +1,12 @@
 #pragma once
-#include "app/services/PilotBindings.h"
 #include "app/services/LaunchTypes.h"
+#include "app/services/PilotBindings.h"
 #include "graphics/SnapshotBudget.h"
 
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -63,6 +64,10 @@ void ResetLayout(CompanionSettings& settings);
 void RememberRecentApp(CompanionSettings& settings, LaunchProfile launch, std::int64_t lastUsed);
 CompanionSettings LoadSettings(const std::filesystem::path& path);
 void SaveSettings(const std::filesystem::path& path, const CompanionSettings& settings);
+// Window layout text is bounded to 8 MiB and cannot contain NUL. A missing
+// file loads as empty; other I/O failures throw. Saves require an absolute path.
+std::string LoadWindowLayout(const std::filesystem::path& path);
+void SaveWindowLayout(const std::filesystem::path& path, std::string_view text);
 enum class PathKind
 {
 	Executable,

@@ -1,7 +1,5 @@
 #pragma once
 
-#include "app/PreviewPanel.h"
-#include "app/widgets/RecordingPanel.h"
 #include "app/dialogs/ConnectionDialog.h"
 #include "app/pages/AdvancedSteppingPage.h"
 #include "app/pages/DeviceControlPanel.h"
@@ -13,6 +11,8 @@
 #include "app/services/UndoStack.h"
 #include "app/widgets/DocumentTree.h"
 #include "app/widgets/PilotController.h"
+#include "app/widgets/PreviewPanel.h"
+#include "app/widgets/RecordingPanel.h"
 #include "app/widgets/SpatialEditor.h"
 
 #include "app/RuntimeView.h"
@@ -98,6 +98,7 @@ class RuntimePanels
 	std::vector<UndoStack::Change> Changes() const;
 	void UndoChanges(std::size_t count);
 	void FocusLost();
+	void CancelPreviewInteraction();
 	std::string Endpoint() const;
 	const std::vector<std::string>& Endpoints() const;
 	void RefreshEndpoints();

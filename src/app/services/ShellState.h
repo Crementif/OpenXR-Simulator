@@ -24,27 +24,33 @@ struct DeviceSel
 {
 	DevicePage page = DevicePage::Player;
 	std::uint32_t slot = 0;
+	bool operator==(const DeviceSel&) const = default;
 };
 struct FrameSel
 {
 	FrameIdentity identity;
 	std::uint64_t epoch = 0;
+	bool operator==(const FrameSel&) const = default;
 };
 struct RangeSel
 {
 	FrameIdentity first, last;
 	std::uint64_t epoch = 0;
+	bool operator==(const RangeSel&) const = default;
 };
 struct TakeSel
 {
 	std::string id;
+	bool operator==(const TakeSel&) const = default;
 };
 struct ScriptSel
 {
 	std::string id;
+	bool operator==(const ScriptSel&) const = default;
 };
 struct AdvancedSel
 {
+	bool operator==(const AdvancedSel&) const = default;
 };
 using Selection = std::variant<std::monostate, DeviceSel, FrameSel, RangeSel, TakeSel, ScriptSel, AdvancedSel>;
 // Where a take cut from history came from, so its replay can show the source.
@@ -85,8 +91,8 @@ struct SessionState
 	std::uint64_t session = 0, generation = 0, run = 0;
 	float fps = 0;
 };
-struct RuntimeView;
-SessionState DeriveRunState(const RuntimeView& view, bool launching, const std::string& launchError);
+struct SessionView;
+SessionState DeriveRunState(const SessionView& view, bool launching, const std::string& launchError);
 const char* RunStateLabel(RunState state);
 struct ShellRect
 {
