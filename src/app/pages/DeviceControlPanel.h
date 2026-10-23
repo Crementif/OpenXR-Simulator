@@ -1,18 +1,22 @@
 #pragma once
 
-#include "app/services/PlayerRig.h"
 #include "app/ShellState.h"
 #include "app/services/SimulationEdits.h"
 #include "app/widgets/LiveField.h"
 
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <set>
 #include <string>
+#include <vector>
 
 namespace simxr::app
 {
+class PlayerRig;
+
 // Owns authored values only. Observed runtime state never rewrites an edit in progress.
 class DeviceControlPanel
 {
@@ -22,6 +26,8 @@ class DeviceControlPanel
 	std::optional<SimulationEdit> Draw(bool supported, const Selection* selection = nullptr,
 									   const std::function<void()>& placement = {});
 	void ClearHeldInputs();
+	bool Active() const;
+	void CancelEditing();
 	std::optional<SimulationEdit> EndInputFrame();
 	int SelectedTracker() const
 	{
@@ -31,7 +37,6 @@ class DeviceControlPanel
 	{
 		m_rigPiloting = piloting;
 	}
-	ManualTransaction PlayerEdit(bool includeWorld = false) const;
 	void SetManualSource(std::optional<CommandSource> source)
 	{
 		m_manualSource = source;
@@ -46,11 +51,15 @@ class DeviceControlPanel
 	std::optional<SimulationEdit> DrawHeader(const Selection& selection);
 
   private:
+	void SelectDevice(const DeviceSel& device);
+	bool CanControl(ControlChannel channel) const;
+	bool CanReset(DevicePage page) const;
+	ManualTransaction PlayerEdit(bool includeWorld = false) const;
 	void Apply(std::vector<SimulationCommand> commands, std::string label = {});
 	void ApplyOwned(ControlChannel channel, SimulationCommand command);
 	void DrawOwnership();
 	void LoadObservedSettings();
-	void DrawOwner(ControlChannel channel);
+	void DrawOwner(ControlChannel channel, bool takeover = true);
 	// A failure scenario of this channel is active; its fields are read only meanwhile.
 	bool ScenarioActive(ControlChannel channel) const;
 	// The page's Tracked / Lost / Off switch over its failure scenarios.
@@ -64,7 +73,7 @@ class DeviceControlPanel
 	void DrawBodyPoses();
 	void ResetPage(DevicePage page);
 	void ApplyRig(std::vector<SimulationCommand> extra = {}, std::string label = {});
-	void DrawController(const std::function<void()>& placement);
+	void DrawController(std::uint32_t hand, const std::function<void()>& placement);
 	void DrawInputPad(std::uint32_t hand);
 	void DrawBody();
 	void DrawGaze();
@@ -91,11 +100,11 @@ class DeviceControlPanel
 	bool m_configurationLoaded = false;
 	std::optional<ObservedSetup> m_observed;
 	std::string m_observationError;
-	std::uint64_t m_loadedFrame = 0;
+	std::optional<DeviceSel> m_selection;
+	unsigned m_activeField = 0;
+	int m_fieldFrame = -1;
 	int m_selectedChannel = 0;
-	int m_controlHand = 0;
 	int m_selectedTracker = 0;
-	int m_trackerRole = 0;
 	TrackingState m_authoredTracking;
 	std::array<ControllerControls, 2> m_authoredControls;
 	struct PadInputs

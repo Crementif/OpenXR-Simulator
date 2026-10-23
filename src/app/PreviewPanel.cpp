@@ -1,5 +1,6 @@
 #include "app/PreviewPanel.h"
-#include "app/DeviceControlPanel.h"
+#include "Pch.h"
+#include "app/pages/DeviceControlPanel.h"
 #include "app/widgets/PilotController.h"
 #include "app/RuntimeSession.h"
 #include "app/widgets/SpatialEditor.h"
@@ -266,7 +267,7 @@ void PreviewPanel::DrawImage(ShellState& shell, const RuntimeView& view, bool& p
 		const bool overImage = !hudHovered && !overlayHovered && !m_cornerHovered &&
 							   ImGui::IsMouseHoveringRect(imageMin, imageMax);
 		m_pilot.Update(*m_window, input, pilotArea, overImage);
-		m_devices.SetRigPiloting(m_pilot.Active() || m_spatial.Active());
+		m_devices.SetRigPiloting(m_pilot.Active() || m_spatial.Active() || m_devices.Active());
 		if (!m_pilot.Error().empty() && m_pilot.Error() != m_pilotError)
 			m_session.Notify("Piloting stopped", m_pilot.Error());
 		m_pilotError = m_pilot.Error();

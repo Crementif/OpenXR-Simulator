@@ -1,6 +1,8 @@
 #include "app/RuntimePanels.h"
+#include "Pch.h"
 #include "app/AdvancedSteppingPage.h"
-#include "app/DeviceControlPanel.h"
+#include "app/pages/DeviceControlPanel.h"
+#include "app/services/PlayerRig.h"
 #include "app/DocumentTree.h"
 #include "app/FramePage.h"
 #include "app/PastInput.h"
@@ -56,10 +58,10 @@ class RuntimePanels::Impl
 		if (m_session.Connected())
 		{
 			const auto& input = m_session.Input();
-			m_spatial.Observe(input, m_pilot.Active());
 			m_devices.ObserveDelivery(input.editPending, input.error);
+			m_spatial.Observe(input, m_pilot.Active() || m_devices.Active());
 			m_devices.SetManualSource(input.source);
-			m_devices.SetRigPiloting(m_pilot.Active() || m_spatial.Active());
+			m_devices.SetRigPiloting(m_pilot.Active() || m_spatial.Active() || m_devices.Active());
 			if (m_session.TakeObservation())
 			{
 				m_devices.ObserveState(input.state);
@@ -170,7 +172,7 @@ class RuntimePanels::Impl
 			SubmitEdit(*edit);
 		ImGui::EndDisabled();
 		m_spatial.DrawRigView(shell.selection);
-		m_devices.SetRigPiloting(m_pilot.Active() || m_spatial.Active());
+		m_devices.SetRigPiloting(m_pilot.Active() || m_spatial.Active() || m_devices.Active());
 		if (!m_view.time.following)
 		{
 			// Looking back: the rig above shows the recorded poses; live controls stay hidden.
@@ -411,8 +413,11 @@ void RuntimePanels::DrawDevicePage(ShellState& shell)
 }
 void RuntimePanels::DrawSessionMenu()
 {
+	ImGui::BeginDisabled(!m_impl->m_view.connected || !m_impl->m_view.time.following ||
+						 !m_impl->m_session.SupportsEdits());
 	if (auto edit = m_impl->m_devices.DrawSessionMenu())
 		m_impl->SubmitEdit(*edit);
+	ImGui::EndDisabled();
 }
 void RuntimePanels::DrawRecordingPopovers()
 {

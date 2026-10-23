@@ -1,16 +1,13 @@
 #include "app/AdvancedSteppingPage.h"
-#include "app/DeviceControlPanel.h"
+#include "Pch.h"
+#include "app/pages/DeviceControlPanel.h"
 #include "app/RuntimeSession.h"
 #include "app/widgets/Controls.h"
 #include "control/DebugProtocol.h"
 
-#include <algorithm>
 #include <imgui.h>
-#include <string>
 
 namespace simxr::app
-{
-namespace
 {
 namespace wire = control;
 namespace tag = wire::tag;
@@ -19,7 +16,6 @@ using panel::Nested;
 using panel::Text;
 using panel::U32;
 using panel::U64;
-} // namespace
 void AdvancedSteppingPage::Draw()
 {
 	auto& debugger = m_session.Debugger();
@@ -27,8 +23,10 @@ void AdvancedSteppingPage::Draw()
 	auto& preview = m_session.Preview();
 	const auto selected = debugger.Selected();
 	const auto& status = debugger.Status();
+	ImGui::BeginDisabled(!m_session.Connected() || !m_session.Time().following || !m_session.SupportsEdits());
 	if (auto edit = m_devices.DrawAdvanced())
 		m_session.SubmitEdit(*edit);
+	ImGui::EndDisabled();
 	ImGui::BeginDisabled(!selected.id || !m_session.Connected());
 	if (ImGui::Button("Cancel pending operation"))
 		m_session.CancelPending();

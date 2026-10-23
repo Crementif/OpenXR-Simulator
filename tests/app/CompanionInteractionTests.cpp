@@ -1,7 +1,8 @@
 #include "../TestSupport.h"
 #include "Math.h"
 #include "app/AppPicker.h"
-#include "app/DeviceControlPanel.h"
+#include "app/pages/DeviceControlPanel.h"
+#include "app/services/PlayerRig.h"
 #include "app/services/ManualInputController.h"
 #include "app/LaunchProfilesDialog.h"
 #include "app/services/ProcessSupervisor.h"
@@ -1106,6 +1107,7 @@ void ConfigureObservedDevices()
 	Selection selection = DeviceSel{DevicePage::Head};
 	std::optional<SimulationEdit> edit;
 	bool supported = true;
+	bool advanced = false;
 	const auto frame = [&]
 	{
 		Eventually(
@@ -1117,11 +1119,21 @@ void ConfigureObservedDevices()
 		ImGui::SetNextWindowPos({20, 20}, ImGuiCond_Always);
 		ImGui::SetNextWindowSize({400, 650}, ImGuiCond_Always);
 		ImGui::Begin("Configuration workflow");
-		const auto headerEdit = panel.DrawHeader(selection);
-		edit = panel.Draw(supported, &selection);
-		if (headerEdit)
-			edit = headerEdit;
+		if (advanced)
+			edit = panel.DrawAdvanced();
+		else
+		{
+			const auto headerEdit = panel.DrawHeader(selection);
+			edit = panel.Draw(supported, &selection);
+			if (headerEdit)
+				edit = headerEdit;
+		}
 		ImGui::End();
+		if (auto release = panel.EndInputFrame())
+		{
+			Require(!edit, "Configuration fixture produced concurrent edits");
+			edit = std::move(release);
+		}
 		Require(test.renderer.Render(), "Live field frame did not render");
 	};
 	for (int i = 0; i < 3; ++i)
@@ -1146,7 +1158,7 @@ void ConfigureObservedDevices()
 				(std::string("Tracking switch did not submit: ") + label).c_str());
 		return std::get<ManualTransaction>(*edit);
 	};
-	const auto typeValue = [&](const char* label, const char* value)
+	const auto beginValue = [&](const char* label, const char* value)
 	{
 		ImGui::SetWindowFocus(window->Name);
 		ImGui::ActivateItemByID(window->GetID(label));
@@ -1161,13 +1173,18 @@ void ConfigureObservedDevices()
 		frame();
 		io.AddInputCharactersUTF8(value);
 		frame();
-		const auto changed = edit;
+		Require(edit && std::holds_alternative<ManualTransaction>(*edit), "Typing did not submit a live value");
+		return std::get<ManualTransaction>(*edit);
+	};
+	const auto typeValue = [&](const char* label, const char* value)
+	{
+		const auto changed = beginValue(label, value);
+		auto& io = ImGui::GetIO();
 		io.AddKeyEvent(ImGuiKey_Enter, true);
 		frame();
 		io.AddKeyEvent(ImGuiKey_Enter, false);
 		frame();
-		Require(changed && std::holds_alternative<ManualTransaction>(*changed), "Typing did not submit a live value");
-		return std::get<ManualTransaction>(*changed);
+		return changed;
 	};
 	auto transaction = typeValue("##IPD", "0.075");
 	const auto views = std::get<simxr::SetViewSettings>(transaction.commands.back()).value;
@@ -1206,7 +1223,8 @@ void ConfigureObservedDevices()
 	command.source = {simxr::CommandSourceKind::Manual, 77};
 	command.target.frame = simxr::FrameId{2};
 	command.commands = transaction.commands;
-	scheduler.Submit(command);
+	Require(scheduler.Submit(command).result == simxr::CommandResult::Queued, "Tracking failure fixture was not admitted");
+	panel.SetManualSource(command.source);
 	observe(2);
 	panel.ObserveDelivery(false, {});
 	frame();
@@ -1217,7 +1235,7 @@ void ConfigureObservedDevices()
 	command.id = 2;
 	command.target.frame = simxr::FrameId{3};
 	command.commands = transaction.commands;
-	scheduler.Submit(command);
+	Require(scheduler.Submit(command).result == simxr::CommandResult::Queued, "Tracking recovery fixture was not admitted");
 	observe(3);
 	panel.ObserveDelivery(false, {});
 	frame();
@@ -1327,6 +1345,177 @@ void ConfigureObservedDevices()
 				std::get<simxr::TakeControl>(takeover.commands.front()).replace,
 			"Input pad takeover changed input before ownership acknowledgement");
 	std::cout << "PASS passive/disabled input-pad observation and explicit ownership takeover\n";
+	// Selecting a tracker outside its own chips must update both its fields and its header action.
+	initial.tracking.trackers[0].role = simxr::TrackerRole::Camera;
+	initial.tracking.trackers[1].role = simxr::TrackerRole::Keyboard;
+	initial.tracking.trackers[0].jointOffset = XrPosef{{0, 0, 0, 1}, {2, 0, 0}};
+	initial.tracking.trackers[1].jointOffset = XrPosef{{0, 0, 0, 1}, {3, 0, 0}};
+	scheduler.Start(0, initial);
+	panel.ResetObservations();
+	observe(1);
+	selection = DeviceSel{DevicePage::Trackers, 0};
+	window->StateStorage.SetInt(window->GetID("Role"), 1);
+	frame();
+	selection = DeviceSel{DevicePage::Trackers, 1};
+	transaction = activate("Tracked");
+	const auto selectedTracker = std::get<simxr::SetTracker>(transaction.commands.back());
+	Require(selectedTracker.index == 1 && selectedTracker.value.role == simxr::TrackerRole::Keyboard &&
+				!selectedTracker.value.tracked,
+			"External tracker selection reused the previous slot's role");
+	panel.ObserveDelivery(false, {});
+	selection = DeviceSel{DevicePage::Trackers, 0};
+	frame();
+	Require(std::abs(rig.TrackerAt(0).offset.position.x - 2) < .0001f &&
+				std::abs(rig.TrackerAt(1).offset.position.x - 3) < .0001f,
+			"Tracker reset fixture lost its distinct offsets");
+	selection = DeviceSel{DevicePage::Trackers, 1};
+	transaction = activate("Reset page");
+	Require(std::abs(rig.TrackerAt(0).offset.position.x - 2) < .0001f &&
+				std::abs(rig.TrackerAt(1).offset.position.x) < .0001f,
+			"Tracker header reset used the previously selected slot");
+	// Advanced replacement is an explicit ownership action, not permission for ordinary fields to steal channels.
+	scheduler.Start(0, initial);
+	panel.ResetObservations();
+	observe(1);
+	panel.SetManualSource(simxr::CommandSource{simxr::CommandSourceKind::Manual, 77});
+	command.id = 1;
+	command.source = {simxr::CommandSourceKind::Rig, 51};
+	command.target.frame = simxr::FrameId{2};
+	const simxr::ControlChannel ownedChannels[] = {simxr::ControlChannel::Head, simxr::ControlChannel::Gaze,
+													 simxr::ControlChannel::Trackers, simxr::ControlChannel::Views};
+	command.commands.clear();
+	for (const auto channel : ownedChannels)
+		command.commands.emplace_back(simxr::TakeControl{channel, true});
+	Require(scheduler.Submit(command).result == simxr::CommandResult::Queued, "Page owner fixture was not admitted");
+	observe(2);
+	for (const auto channel : ownedChannels)
+		Require(scheduler.Snapshot().applied->owners[static_cast<std::size_t>(channel)] == command.source,
+				"Page owner fixture did not acquire its channel");
+	advanced = true;
+	frame();
+	ImGui::ActivateItemByID(window->GetID("Replace owner"));
+	frame();
+	Require(!edit, "Changing the Advanced replacement option submitted an edit");
+	transaction = activate("Take control");
+	Require(transaction.commands.size() == 1 && std::get<simxr::TakeControl>(transaction.commands.front()).replace,
+			"Advanced replacement fixture did not enable explicit takeover");
+	advanced = false;
+	panel.ObserveDelivery(false, {});
+	const auto blockedAction = [&](const char* label, bool numeric = false)
+	{
+		ImGui::ActivateItemByID(window->GetID(label));
+		if (numeric)
+			ImGui::GetCurrentContext()->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
+		frame();
+		Require(!edit && !panel.Active(),
+				(std::string("Other-owned field accepted an ordinary edit: ") + label).c_str());
+	};
+	selection = DeviceSel{DevicePage::Gaze};
+	frame();
+	blockedAction("Gaze tracked");
+	blockedAction("Reset page");
+	selection = DeviceSel{DevicePage::Head};
+	frame();
+	blockedAction("##X", true);
+	blockedAction("##IPD", true);
+	blockedAction("Reset page");
+	selection = DeviceSel{DevicePage::Trackers, 1};
+	frame();
+	blockedAction("Tracked");
+	blockedAction("Snap to body");
+	blockedAction("Reset page");
+	// Finishing an editable field must not replace the explicit takeover clicked earlier in that frame.
+	command.id = 2;
+	command.target.frame = simxr::FrameId{3};
+	command.commands = {simxr::ReleaseControl{simxr::ControlChannel::Views}};
+	Require(scheduler.Submit(command).result == simxr::CommandResult::Queued, "View release fixture was not admitted");
+	observe(3);
+	Require(!scheduler.Snapshot().applied->owners[static_cast<std::size_t>(simxr::ControlChannel::Views)],
+			"View release fixture retained its owner");
+	selection = DeviceSel{DevicePage::Head};
+	frame();
+	beginValue("##IPD", "0.069");
+	Require(panel.Active(), "Takeover fixture did not retain its numeric edit");
+	ImGui::ActivateItemByID(ImHashStr("Take over", 0, window->GetID(static_cast<int>(simxr::ControlChannel::Head))));
+	frame();
+	Require(edit && std::holds_alternative<ManualTransaction>(*edit), "Head takeover did not submit");
+	transaction = std::get<ManualTransaction>(*edit);
+	Require(transaction.commands.size() == 1 && std::holds_alternative<simxr::TakeControl>(transaction.commands.front()) &&
+				std::get<simxr::TakeControl>(transaction.commands.front()).channel == simxr::ControlChannel::Head &&
+				std::get<simxr::TakeControl>(transaction.commands.front()).replace,
+			"Numeric field finalization replaced the explicit Head takeover");
+	// A numeric field loses its gesture when editing is disabled or a different device reuses its ImGui ID.
+	scheduler.Start(0, initial);
+	panel.ResetObservations();
+	observe(1);
+	selection = DeviceSel{DevicePage::Head};
+	frame();
+	beginValue("##IPD", "0.068");
+	Require(panel.Active(), "Numeric field fixture did not retain its active edit");
+	supported = false;
+	frame();
+	Require(!edit && !panel.Active(), "Disabled numeric field submitted a stale final value");
+	supported = true;
+	panel.ObserveDelivery(false, {});
+	selection = DeviceSel{DevicePage::Gaze};
+	frame();
+	beginValue("##Yaw", "30");
+	Require(panel.Active(), "Gaze field fixture did not retain its active edit");
+	selection = DeviceSel{DevicePage::Head};
+	frame();
+	Require(!edit && !panel.Active(), "Device selection transferred a numeric edit to the matching field ID");
+	frame();
+	Require(!edit, "Retired numeric field submitted a delayed final value");
+	// Older runtimes can edit basic devices without body overrides or tracker attachments.
+	auto limitedDocument = simxr::control::SimulationState(scheduler.Snapshot()).Encode();
+	const auto omitExtensions = [&](auto&& self, std::vector<std::byte>& encoded) -> void
+	{
+		auto node = simxr::control::DecodeFields(encoded).fields;
+		const auto type = static_cast<simxr::control::InspectionType>(*node[1].AsU32());
+		if (type == simxr::control::InspectionType::Object)
+		{
+			auto children = simxr::control::DecodeFields(node[2].value).fields;
+			std::erase_if(children, [](const auto& child)
+			{
+				const auto fields = simxr::control::DecodeFields(child.value).fields;
+				const auto name = fields.front().AsText();
+				return name == "joints" || name == "pose_override";
+			});
+			for (auto& child : children)
+				self(self, child.value);
+			node[2].value = simxr::control::EncodeFields(children);
+		}
+		else if (type == simxr::control::InspectionType::Array)
+		{
+			auto pages = simxr::control::DecodeFields(node[2].value).fields;
+			for (auto& page : pages)
+			{
+				auto children = simxr::control::DecodeFields(page.value).fields;
+				for (auto& child : children)
+					self(self, child.value);
+				page.value = simxr::control::EncodeFields(children);
+			}
+			node[2].value = simxr::control::EncodeFields(pages);
+		}
+		encoded = simxr::control::EncodeFields(node);
+	};
+	omitExtensions(omitExtensions, limitedDocument);
+	simxr::control::Message limitedState;
+	limitedState.fields.push_back(simxr::control::Field::Bytes(simxr::control::tag::Document, limitedDocument));
+	const auto limitedSetup = ReadObservedSetup(limitedState);
+	Require(!limitedSetup.bodyOverridesAvailable && !limitedSetup.trackerAttachmentsAvailable,
+			"Limited runtime fixture still advertised optional device editing");
+	panel.ResetObservations();
+	panel.ObserveState(limitedState);
+	for (const auto page : {DevicePage::Body, DevicePage::Trackers})
+	{
+		selection = DeviceSel{page};
+		frame();
+		ImGui::ActivateItemByID(window->GetID("Reset page"));
+		frame();
+		Require(!edit, "Unsupported device reset submitted edits to unrelated channels");
+	}
+	std::cout << "PASS device field ownership, tracker selection/reset and numeric gesture retirement\n";
 	test.renderer.WaitIdle();
 	Require(!test.validation->errors.load(), "Live fields generated validation errors");
 	std::cout << "PASS live configuration: immediate changes, preserved configuration, scenario recovery, reconnect, "
@@ -3114,6 +3303,7 @@ simxr.resume())";
 // D10: every hand input is operable with the mouse alone, through real SDL events.
 void CheckInputPad(Interaction& test)
 {
+	IgnoreRealPointer();
 	const auto target = test.runtime.Snapshot();
 	ManualInputController observer;
 	observer.SetTarget({target.endpoint, target.session, target.generation});
@@ -3138,6 +3328,7 @@ void CheckInputPad(Interaction& test)
 			"Pad observation stalled");
 		return ReadObservedSetup(observer.Snapshot().state).values.input.controllers[1];
 	};
+	ImVec2 pointerPosition;
 	const auto settle = [&](const auto& ready, const char* failure)
 	{
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
@@ -3147,21 +3338,39 @@ void CheckInputPad(Interaction& test)
 			if (ready(controls))
 				return;
 			if (std::chrono::steady_clock::now() >= deadline)
+			{
+				const auto& g = *ImGui::GetCurrentContext();
+				const auto& io = ImGui::GetIO();
+				std::cout << "Input pad failure: " << failure << " focus=" << test.window.Focused()
+					<< " keyboardFocus=" << (SDL_GetKeyboardFocus() == test.window.Native())
+					<< " mouseFocus=" << (SDL_GetMouseFocus() == test.window.Native())
+					<< " appFocusLost=" << io.AppFocusLost
+					<< " requested=" << pointerPosition.x << ',' << pointerPosition.y
+					<< " mouse=" << io.MousePos.x << ',' << io.MousePos.y
+					<< " leftDown=" << io.MouseDown[ImGuiMouseButton_Left]
+					<< " rightDown=" << io.MouseDown[ImGuiMouseButton_Right]
+					<< " active=" << g.ActiveId << " activeButton=" << g.ActiveIdMouseButton
+					<< " hovered=" << (g.HoveredWindow ? g.HoveredWindow->Name : "none")
+					<< " trigger=" << controls.trigger << " grip=" << controls.grip << '\n';
 				if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
 				{
 					test.renderer.RequestScreenshot(std::filesystem::path(qa) / "input-pad-failure.bmp");
 					pump(2);
 					test.renderer.WaitIdle();
 				}
+			}
 			Require(std::chrono::steady_clock::now() < deadline, failure);
 		}
 	};
 	const auto window = SDL_GetWindowID(test.window.Native());
 	const auto move = [&](ImVec2 at)
 	{
+		pointerPosition = at;
+		SDL_WarpMouseInWindow(test.window.Native(), at.x, at.y);
 		SDL_Event event{};
 		event.type = SDL_EVENT_MOUSE_MOTION;
 		event.motion.windowID = window;
+		event.motion.which = TestMouse;
 		event.motion.x = at.x;
 		event.motion.y = at.y;
 		Require(SDL_PushEvent(&event), "Push pad motion");
@@ -3172,8 +3381,11 @@ void CheckInputPad(Interaction& test)
 		SDL_Event event{};
 		event.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
 		event.button.windowID = window;
+		event.button.which = TestMouse;
 		event.button.button = code;
 		event.button.down = down;
+		event.button.x = pointerPosition.x;
+		event.button.y = pointerPosition.y;
 		Require(SDL_PushEvent(&event), "Push pad button");
 		pump(2);
 	};
@@ -3204,7 +3416,12 @@ void CheckInputPad(Interaction& test)
 		throw std::runtime_error(std::string("Input pad item not found: ") + name);
 	};
 	Require(SDL_ShowWindow(test.window.Native()), "Show pad window");
+	Require(SDL_RaiseWindow(test.window.Native()), "Raise pad window");
+	int width = 0, height = 0;
+	Require(SDL_GetWindowSize(test.window.Native(), &width, &height), "Read pad window size");
+	SDL_WarpMouseInWindow(test.window.Native(), width / 2.0f, height / 2.0f);
 	test.workspace.Select(DeviceSel{DevicePage::Right});
+	Eventually([&] { pump(1); return test.window.Focused(); }, "Pad window did not receive native focus");
 	pump(4);
 	const auto trigger = rect("Trigger"), grip = rect("Grip"), primary = rect("Primary"),
 			   secondary = rect("Secondary"), menu = rect("Menu"), stick = rect("Stick");
@@ -3316,6 +3533,7 @@ void CheckInputPad(Interaction& test)
 	}
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Validation errors on the input pad");
+	SDL_SetEventFilter(nullptr, nullptr);
 	std::cout << "PASS pad stick drag, click, spring-back and latch\n";
 }
 
