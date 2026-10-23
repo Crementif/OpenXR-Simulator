@@ -1,42 +1,56 @@
+#include "Pch.h"
 #include "app/ImageExportTask.h"
+#include "graphics/ColorPixels.h"
 #include "app/Utf8Path.h"
 #include "control/ImageInspection.h"
 
-#include <algorithm>
-#include <array>
-#include <cstdio>
-#include <utility>
+#include <cmath>
+#include <fstream>
+#include <locale>
 
 namespace simxr::app
 {
 namespace wire = control;
 namespace tag = wire::tag;
 using namespace panel;
-namespace
+static std::byte DisplayByte(float value, bool linear)
 {
-bool WritePpm(std::FILE* file, const ImageExportMetadata& image, std::span<const std::byte> rgba) noexcept
+	if (!(value > 0))
+		return std::byte{0};
+	if (value >= 1)
+		return std::byte{255};
+	if (linear)
+		value = value <= 0.0031308f ? value * 12.92f : 1.055f * std::pow(value, 1.0f / 2.4f) - 0.055f;
+	return static_cast<std::byte>(std::lround(value * 255.0f));
+}
+
+static void WritePpm(std::ostream& file, const ImageExportMetadata& image, std::span<const std::byte> bytes)
 {
 	const auto height = static_cast<std::uint64_t>(image.height) * image.slices;
-	if (std::fprintf(file, "P6\n# session=%llu generation=%llu frame=%llu capture=%llu\n"
-		"# target=%u layer=%u view=%u slices=%u slice_height=%u format=%u alpha=omitted\n%u %llu\n255\n",
-		static_cast<unsigned long long>(image.session), static_cast<unsigned long long>(image.generation),
-		static_cast<unsigned long long>(image.frame), static_cast<unsigned long long>(image.capture),
-		image.target, image.layer, image.view, image.slices, image.height, image.format, image.width,
-		static_cast<unsigned long long>(height)) < 0)
-		return false;
+	file << "P6\n# session=" << image.session << " generation=" << image.generation << " frame=" << image.frame
+		<< " capture=" << image.capture << "\n# target=" << image.target << " layer=" << image.layer
+		<< " view=" << image.view << " slices=" << image.slices << " slice_height=" << image.height
+		<< " format=" << image.format << " alpha=omitted\n";
+	const auto pixelBytes = ColorPixelBytes(image.format);
+	const bool linear = pixelBytes > 4 || image.format == static_cast<uint32_t>(ColorFormat::Rgb10A2Unorm);
+	if (linear)
+		file << "# conversion=linear-clamped-srgb\n";
+	file << image.width << ' ' << height << "\n255\n";
 	std::array<std::byte, 12288> rgb;
-	for (std::size_t offset = 0; offset < rgba.size();)
+	for (std::size_t offset = 0; offset < bytes.size();)
 	{
-		const auto pixels = std::min(rgb.size() / 3, (rgba.size() - offset) / 4);
+		const auto pixels = std::min(rgb.size() / 3, (bytes.size() - offset) / pixelBytes);
 		for (std::size_t pixel = 0; pixel < pixels; ++pixel)
-			std::copy_n(rgba.data() + offset + pixel * 4, 3, rgb.data() + pixel * 3);
-		if (std::fwrite(rgb.data(), 3, pixels, file) != pixels)
-			return false;
-		offset += pixels * 4;
+		{
+			const auto color = DecodeColorPixel(image.format, bytes.subspan(offset + pixel * pixelBytes, pixelBytes));
+			for (std::size_t channel = 0; channel < 3; ++channel)
+				rgb[pixel * 3 + channel] = DisplayByte(color[channel], linear);
+		}
+		file.write(reinterpret_cast<const char*>(rgb.data()), static_cast<std::streamsize>(pixels * 3));
+		offset += pixels * pixelBytes;
 	}
-	return true;
 }
-} // namespace
+
 ImageExportWriter::ImageExportWriter()
 	: m_worker(
 		  [this]
@@ -63,13 +77,13 @@ bool ImageExportWriter::Save(std::string path, std::vector<std::byte> bytes, Ima
 	const bool ppm = destination.extension() == ".ppm";
 	if (ppm)
 	{
+		const auto pixelBytes = ColorPixelBytes(metadata.format);
 		// Division avoids overflow from untrusted dimensions before any file is opened.
 		if (!metadata.width || !metadata.height || !metadata.slices || !metadata.session ||
-			!metadata.generation || !metadata.frame || bytes.size() % 4 ||
-			bytes.size() / 4 / metadata.width / metadata.height != metadata.slices ||
-			static_cast<std::uint64_t>(metadata.width) * metadata.height * metadata.slices != bytes.size() / 4 ||
-			(metadata.format != 37 && metadata.format != 43))
-			throw std::invalid_argument("PPM export requires an exact RGBA8 image and frame identity");
+			!metadata.generation || !metadata.frame || !pixelBytes || bytes.size() % pixelBytes ||
+			bytes.size() / pixelBytes / metadata.width / metadata.height != metadata.slices ||
+			static_cast<std::uint64_t>(metadata.width) * metadata.height * metadata.slices != bytes.size() / pixelBytes)
+			throw std::invalid_argument("PPM export requires a supported color image, exact dimensions and frame identity");
 	}
 	else if (destination.extension() != ".rgba")
 		throw std::invalid_argument("Use .ppm for a viewable image or .rgba for exact bytes");
@@ -109,21 +123,27 @@ void ImageExportWriter::Run() noexcept
 			job = std::move(m_job);
 			m_job.reset();
 		}
-		// Every result owns the already-allocated destination string. Native file
-		// operations and publication therefore need no worker-thread allocation.
 		auto status = ImageExportWriteResult::Status::OpenFailed;
-#ifdef _WIN32
-		auto file = ::_wfopen(job->destination.c_str(), L"wb");
-#else
-		auto file = std::fopen(job->destination.c_str(), "wb");
-#endif
-		if (file)
+		try
 		{
-			const bool written = job->ppm ? WritePpm(file, job->metadata, job->bytes)
-				: std::fwrite(job->bytes.data(), 1, job->bytes.size(), file) == job->bytes.size();
-			const auto closed = std::fclose(file);
-			status = written && !closed ? ImageExportWriteResult::Status::Saved
-															 : ImageExportWriteResult::Status::WriteFailed;
+			std::ofstream file(job->destination, std::ios::binary | std::ios::trunc);
+			if (file.is_open())
+			{
+				status = ImageExportWriteResult::Status::WriteFailed;
+				file.imbue(std::locale::classic());
+				if (job->ppm)
+					WritePpm(file, job->metadata, job->bytes);
+				else
+					file.write(reinterpret_cast<const char*>(job->bytes.data()),
+						static_cast<std::streamsize>(job->bytes.size()));
+				file.close();
+				if (file)
+					status = ImageExportWriteResult::Status::Saved;
+			}
+		}
+		catch (...)
+		{
+			// Preserve the open/write failure and publish it through the joined worker.
 		}
 		std::lock_guard lock(m_mutex);
 		m_result.emplace(ImageExportWriteResult{status, std::move(job->path)});
@@ -254,7 +274,7 @@ void ImageExportTask::Poll()
 		case ImageExportWriteResult::Status::Saved:
 			m_succeeded = true;
 			m_detail = (Utf8Path(result->path).extension() == ".ppm" ? "Saved viewable image with frame identity to "
-				: "Saved exact RGBA bytes to ") + result->path;
+				: "Saved exact image bytes to ") + result->path;
 			break;
 		case ImageExportWriteResult::Status::OpenFailed:
 			m_detail = "Cannot open image export destination";

@@ -1,3 +1,4 @@
+#include "Pch.h"
 #define XR_USE_GRAPHICS_API_VULKAN
 #include "graphics/backends/vulkan/VulkanSwapchain.h"
 #include <openxr/openxr_platform.h>
@@ -71,10 +72,16 @@ VulkanSwapchain::VulkanSwapchain(XrSwapchainCreateInfo description)
 
 std::span<const std::int64_t> VulkanSwapchain::Formats()
 {
-	static constexpr std::array<std::int64_t, 8> s_formats{
+	static constexpr std::array<std::int64_t, 11> s_formats{
 		VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_UNORM,	  VK_FORMAT_B8G8R8A8_SRGB, VK_FORMAT_B8G8R8A8_UNORM,
+		VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R32G32B32A32_SFLOAT, VK_FORMAT_A2B10G10R10_UNORM_PACK32,
 		VK_FORMAT_D32_SFLOAT,	 VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D16_UNORM, VK_FORMAT_D32_SFLOAT_S8_UINT};
 	return s_formats;
+}
+
+std::span<const std::int64_t> VulkanSwapchain::ColorFormats()
+{
+	return Formats().first(7);
 }
 
 XrResult VulkanSwapchain::Create(VulkanBackend& backend, const XrSwapchainCreateInfo& description,

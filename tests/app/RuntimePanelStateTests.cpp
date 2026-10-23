@@ -3,6 +3,7 @@
 #include "app/ImageExportTask.h"
 #include "app/InspectionWorkspace.h"
 #include "graphics/SnapshotBudget.h"
+#include "graphics/ColorPixels.h"
 #include "app/Utf8Path.h"
 
 #include <filesystem>
@@ -174,6 +175,49 @@ void FileWorkerAndChunkValidation()
 			std::equal(header.begin(), header.end(), reinterpret_cast<const char*>(ppm.data())) &&
 			std::equal(expected.begin(), expected.begin() + 3, ppm.begin() + header.size()),
 			"Viewable export lost exact RGB, dimensions or frame/target identity");
+		struct ColorCase
+		{
+			uint32_t format;
+			std::vector<std::byte> bytes;
+			std::array<std::byte, 3> rgb;
+		};
+		const std::array colorCases{
+			ColorCase{44, {std::byte{0x31}, std::byte{255}, std::byte{0}, std::byte{128}},
+				{std::byte{0}, std::byte{255}, std::byte{0x31}}},
+			ColorCase{97, {std::byte{0}, std::byte{0xb8}, std::byte{0}, std::byte{0x38},
+				std::byte{0}, std::byte{0x40}, std::byte{0}, std::byte{0x34}},
+				{std::byte{0}, std::byte{188}, std::byte{255}}},
+			ColorCase{109, {std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0xbf},
+				std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0x3f},
+				std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0x40},
+				std::byte{0}, std::byte{0}, std::byte{0x80}, std::byte{0x3e}},
+				{std::byte{0}, std::byte{188}, std::byte{255}}},
+			ColorCase{64, {std::byte{0}, std::byte{0}, std::byte{0xf8}, std::byte{0x7f}},
+				{std::byte{0}, std::byte{188}, std::byte{255}}}};
+		for (const auto& color : colorCases)
+		{
+			auto image = metadata;
+			image.format = color.format;
+			const auto destination = directory / (std::to_string(color.format) + ".ppm");
+			Require(simxr::ColorPixelBytes(color.format) == color.bytes.size(), "Export pixel stride mismatch");
+			if (color.format == 97 || color.format == 109)
+				Require(simxr::DecodeColorPixel(color.format, color.bytes) == std::array{-0.5f, 0.5f, 2.0f, 0.25f},
+					"Float decode clamped HDR values or lost alpha");
+			Require(writer.Save(PathString(destination), color.bytes, image), "Admit HDR/BGRA PPM");
+			Eventually([&] { result = writer.TakeResult(); return result.has_value(); }, "HDR/BGRA write did not settle");
+			const auto output = Read(destination);
+			Require(result->status == app::ImageExportWriteResult::Status::Saved && output.size() > 3 &&
+				std::equal(color.rgb.begin(), color.rgb.end(), output.end() - 3), "HDR/BGRA display conversion mismatch");
+		}
+		if (std::filesystem::exists("/dev/full"))
+		{
+			const auto full = directory / "full.rgba";
+			std::filesystem::create_symlink("/dev/full", full);
+			Require(writer.Save(PathString(full), expected), "Admit failing write");
+			Eventually([&] { result = writer.TakeResult(); return result.has_value(); }, "Write failure did not settle");
+			Require(result->status == app::ImageExportWriteResult::Status::WriteFailed, "Write/close failure reported success");
+		}
+
 		bool rejected = false;
 		try
 		{
@@ -405,7 +449,7 @@ void ActualConnectionAndDebugger()
 					debugger.Handle(reply.task, reply.response.packet.message);
 			}
 			exporter.Poll();
-			return !exporter.Busy() && exporter.Detail().starts_with("Saved exact RGBA bytes");
+			return !exporter.Busy() && exporter.Detail().starts_with("Saved exact image bytes");
 		},
 		"Export owner did not finish exact endpoint bytes");
 	Require(Read(destination) == wire::test::Pixels() && fixture.state->reads == 1 && fixture.state->shares == 0,

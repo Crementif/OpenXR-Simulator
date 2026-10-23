@@ -656,6 +656,7 @@ static int runProbe()
     const bool srgb = std::getenv("SIMXR_PROBE_SRGB") != nullptr;
     chain.format = bgra ? (srgb ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_B8G8R8A8_UNORM)
                         : (srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM);
+    if (std::getenv("SIMXR_PROBE_HDR32")) chain.format = VK_FORMAT_R32G32B32A32_SFLOAT;
     chain.sampleCount = chain.faceCount = chain.mipCount = 1;
     const uint32_t mipLevels = std::getenv("SIMXR_PROBE_MIPS") ? 4 : 1;
     chain.mipCount = mipLevels;
@@ -665,7 +666,8 @@ static int runProbe()
     chain.arraySize = activeViewCount;
     VkSampleCountFlags commonSamples = 127;
     for (const auto format : {VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_UNORM,
-                             VK_FORMAT_B8G8R8A8_SRGB, VK_FORMAT_B8G8R8A8_UNORM})
+                             VK_FORMAT_B8G8R8A8_SRGB, VK_FORMAT_B8G8R8A8_UNORM,
+                             VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R32G32B32A32_SFLOAT, VK_FORMAT_A2B10G10R10_UNORM_PACK32})
     {
         VkImageFormatProperties supported{};
         VK(vkGetPhysicalDeviceImageFormatProperties(physical, format, VK_IMAGE_TYPE_2D,
@@ -704,6 +706,27 @@ static int runProbe()
     unsupported.mipCount = 8;
     CHECK(xrCreateSwapchain(session, &unsupported, &rejectedSwapchain) == XR_ERROR_VALIDATION_FAILURE &&
           rejectedSwapchain == XR_NULL_HANDLE);
+    uint32_t formatCount = 0;
+    XR(xrEnumerateSwapchainFormats(session, 0, &formatCount, nullptr));
+    std::vector<int64_t> advertisedFormats(formatCount);
+    XR(xrEnumerateSwapchainFormats(session, formatCount, &formatCount, advertisedFormats.data()));
+    for (const auto format : {VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R32G32B32A32_SFLOAT,
+                             VK_FORMAT_A2B10G10R10_UNORM_PACK32})
+    {
+        CHECK(std::find(advertisedFormats.begin(), advertisedFormats.end(), format) != advertisedFormats.end());
+        auto hdr = chain;
+        hdr.format = format;
+        XrSwapchain hdrSwapchain = XR_NULL_HANDLE;
+        XR(xrCreateSwapchain(session, &hdr, &hdrSwapchain));
+        uint32_t imageCount = 0;
+        XR(xrEnumerateSwapchainImages(hdrSwapchain, 0, &imageCount, nullptr));
+        CHECK(imageCount == 3);
+        std::vector<XrSwapchainImageVulkanKHR> hdrImages(imageCount, {XR_TYPE_SWAPCHAIN_IMAGE_VULKAN_KHR});
+        XR(xrEnumerateSwapchainImages(hdrSwapchain, imageCount, &imageCount,
+            reinterpret_cast<XrSwapchainImageBaseHeader*>(hdrImages.data())));
+        for (const auto& image : hdrImages) CHECK(image.image != VK_NULL_HANDLE);
+        XR(xrDestroySwapchain(hdrSwapchain));
+    }
     XrSwapchain swapchain;
     XR(xrCreateSwapchain(session, &chain, &swapchain));
     XR(xrEnumerateSwapchainImages(swapchain, 0, &count, nullptr));

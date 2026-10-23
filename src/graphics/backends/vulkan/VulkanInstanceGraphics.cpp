@@ -1,4 +1,6 @@
+#include "Pch.h"
 #include "graphics/backends/vulkan/VulkanInstanceGraphics.h"
+#include "graphics/backends/vulkan/VulkanSwapchain.h"
 
 #define XR_USE_GRAPHICS_API_VULKAN
 #include <openxr/openxr_platform.h>
@@ -141,11 +143,10 @@ XrResult VulkanInstanceGraphics::MaxSampleCount(std::uint32_t& output)
 			const auto physical = probe.PhysicalDevice();
 			VkSampleCountFlags common = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT |
 				VK_SAMPLE_COUNT_8_BIT | VK_SAMPLE_COUNT_16_BIT | VK_SAMPLE_COUNT_32_BIT | VK_SAMPLE_COUNT_64_BIT;
-			for (const auto format : {VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_UNORM,
-				VK_FORMAT_B8G8R8A8_SRGB, VK_FORMAT_B8G8R8A8_UNORM})
+			for (const auto format : VulkanSwapchain::ColorFormats())
 			{
 				VkImageFormatProperties supported{};
-				CheckVulkan(vkGetPhysicalDeviceImageFormatProperties(physical, format,
+				CheckVulkan(vkGetPhysicalDeviceImageFormatProperties(physical, static_cast<VkFormat>(format),
 					VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
 					VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
 					0, &supported), "Query swapchain sample counts");

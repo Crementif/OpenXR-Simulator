@@ -349,15 +349,12 @@ XrResult OpenGLBackend::PrepareCapture(const LayerImageDescription& image, OpenG
 	case GL_RGBA8: description.format = VK_FORMAT_R8G8B8A8_UNORM; break;
 	case GL_SRGB8_ALPHA8: description.format = VK_FORMAT_R8G8B8A8_SRGB; break;
 	case GL_RGBA16F:
-		if (!retainMipChain) return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
 		description.format = VK_FORMAT_R16G16B16A16_SFLOAT;
 		break;
 	case GL_RGBA32F:
-		if (!retainMipChain) return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
 		description.format = VK_FORMAT_R32G32B32A32_SFLOAT;
 		break;
 	case GL_RGB10_A2:
-		if (!retainMipChain) return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
 		description.format = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
 		break;
 	default: return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;

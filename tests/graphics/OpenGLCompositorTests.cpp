@@ -1,3 +1,4 @@
+#include "graphics/ColorPixels.h"
 #include "graphics/backends/opengl/OpenGLBackend.h"
 #include "graphics/backends/vulkan/VulkanBackend.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
@@ -85,11 +86,12 @@ int main()
 		plan.draws.push_back(draw);
 		std::array sources{OpenGLCompositionSource{app.texture, 0x8058, 8, 8},
 			OpenGLCompositionSource{app.texture, 0x8058, 8, 8}};
-		for (int scenario = 0; scenario < 13; ++scenario)
+		for (int scenario = 0; scenario < 16; ++scenario)
 		{
 			sources[0].texture = sources[1].texture = app.texture;
-			const bool mipChain = scenario >= 8;
-			const bool raw = scenario == 1 || mipChain;
+			const bool mipChain = scenario >= 8 && scenario < 13;
+			const bool hdrRaw = scenario >= 13;
+			const bool raw = scenario == 1 || mipChain || hdrRaw;
 			const bool depthCase = scenario >= 2 && scenario < 8;
 			const bool linear = depthCase && scenario % 2 != 0;
 			std::shared_ptr<OpenGLFrame> frame;
@@ -98,12 +100,13 @@ int main()
 				LayerImageDescription image{};
 				image.rectangle = {{2, 1}, {4, 6}};
 				auto source = sources.front();
-				if (mipChain)
+				if (mipChain || hdrRaw)
 				{
 					if (!backend)
 						backend = std::make_unique<OpenGLBackend>(app.device, app.context, device.Device(), device.EnabledExtensions());
-					source.format = std::array<GLenum, 5>{GL_RGBA8, GL_SRGB8_ALPHA8, GL_RGBA16F, GL_RGB10_A2, GL_RGBA32F}[scenario - 8];
-					source.mipLevels = 4;
+					source.format = hdrRaw ? std::array<GLenum, 3>{GL_RGBA16F, GL_RGBA32F, GL_RGB10_A2}[scenario - 13] :
+						std::array<GLenum, 5>{GL_RGBA8, GL_SRGB8_ALPHA8, GL_RGBA16F, GL_RGB10_A2, GL_RGBA32F}[scenario - 8];
+					source.mipLevels = hdrRaw ? 1 : 4;
 					for (std::uint32_t mip = 0; mip < source.mipLevels; ++mip)
 					{
 						const auto size = 8u >> mip;
@@ -112,6 +115,13 @@ int main()
 						{
 							values[pixel * 4 + (mip == 3 ? 1 : 0)] = 0.5f;
 							values[pixel * 4 + 3] = 1;
+							if (hdrRaw)
+							{
+								values[pixel * 4] = -0.5f;
+								values[pixel * 4 + 1] = 0.5f;
+								values[pixel * 4 + 2] = 2.0f;
+								values[pixel * 4 + 3] = 0.25f;
+							}
 						}
 						glTexImage2D(GL_TEXTURE_2D, mip, source.format, size, size, 0, GL_RGBA, GL_FLOAT, values.data());
 					}
@@ -196,7 +206,23 @@ int main()
 			const std::uint32_t width = mipChain ? 1 : raw || depthCase ? 4 : 8,
 				height = mipChain ? 1 : raw || depthCase ? 6 : 8, layers = mipChain ? 2 : raw || depthCase ? 1 : 2;
 			Require(pixels && pixels->width == width && pixels->height == height && pixels->layers == layers, "OpenGL output shape mismatch");
-			for (std::size_t eye = 0; eye < layers; ++eye)
+			if (hdrRaw)
+			{
+				const auto format = std::array<std::uint32_t, 3>{97, 109, 64}[scenario - 13];
+				const auto stride = ColorPixelBytes(format);
+				Require(pixels->format == format && pixels->rgba.size() == width * height * stride, "OpenGL HDR raw format/size mismatch");
+				const auto bytes = std::as_bytes(std::span(pixels->rgba));
+				const std::array expected = scenario == 15 ? std::array{0.0f, 512.0f / 1023, 1.0f, 1.0f / 3} :
+					std::array{-0.5f, 0.5f, 2.0f, 0.25f};
+				for (std::size_t offset = 0; offset < bytes.size(); offset += stride)
+				{
+					const auto color = DecodeColorPixel(format, bytes.subspan(offset, stride));
+					for (std::size_t channel = 0; channel < 4; ++channel)
+						Require(std::abs(color[channel] - expected[channel]) <= (scenario == 15 && channel < 3 ? 1.0f / 1023 : 0.0001f),
+							"OpenGL HDR range/alpha changed");
+				}
+			}
+			for (std::size_t eye = 0; !hdrRaw && eye < layers; ++eye)
 			{
 				for (std::size_t y : {mipChain ? 0u : 1u, mipChain ? 0u : height - 2})
 				{
@@ -228,7 +254,7 @@ int main()
 			CheckVulkan(delivery.Drain(5000000000ULL), "Drain OpenGL delivery");
 			CheckVulkan(inspection.Drain(), "Drain OpenGL inspection");
 		}
-		std::puts("PASS: canonical GLSL, cropped raw/depth arrays, normalized/linear depth, retained RGBA/sRGB/float16/float32/RGB10 mip chains after producer teardown and GPU handoff");
+		std::puts("PASS: canonical GLSL, exact float16/float32/RGB10 raw captures, cropped raw/depth arrays, normalized/linear depth, retained RGBA/sRGB/float16/float32/RGB10 mip chains after producer teardown and GPU handoff");
 		return 0;
 	}
 	catch (const std::exception& error)

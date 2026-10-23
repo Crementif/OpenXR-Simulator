@@ -1,4 +1,6 @@
+#include "Pch.h"
 #include "graphics/backends/vulkan/VulkanInspectionWork.h"
+#include "graphics/ColorPixels.h"
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
 #include "graphics/backends/vulkan/VulkanSubmission.h"
 
@@ -286,15 +288,17 @@ VulkanInspectionWork::Readback(std::shared_ptr<VulkanDevice> deviceOwner, std::s
 							   std::optional<std::uint32_t> layer, std::shared_ptr<const void> retirementOwner)
 {
 	const auto& image = *source;
-	if (image.format != VK_FORMAT_R8G8B8A8_UNORM && image.format != VK_FORMAT_R8G8B8A8_SRGB &&
-		image.format != VK_FORMAT_B8G8R8A8_UNORM && image.format != VK_FORMAT_B8G8R8A8_SRGB)
-		throw VulkanError(VK_ERROR_FORMAT_NOT_SUPPORTED, "Explicit pixel export requires an RGBA8/BGRA8 image");
+	const auto pixelBytes = ColorPixelBytes(image.format);
+	if (!pixelBytes)
+		throw VulkanError(VK_ERROR_FORMAT_NOT_SUPPORTED, "Unsupported explicit color export format");
 	if (layer && *layer >= image.layers)
 		throw std::invalid_argument("Invalid inspection export layer");
 	const auto layers = layer ? 1U : image.layers;
-	const std::uint64_t bytes = static_cast<std::uint64_t>(image.extent.width) * image.extent.height * layers * 4;
-	if (!bytes || bytes > 512ULL * 1024 * 1024 || bytes > std::numeric_limits<std::size_t>::max())
+	constexpr std::uint64_t limit = 512ULL * 1024 * 1024;
+	if (!image.extent.width || !image.extent.height || !layers ||
+		image.extent.width > limit / pixelBytes / image.extent.height / layers)
 		throw VulkanError(VK_ERROR_OUT_OF_HOST_MEMORY, "Inspection export exceeds bounded byte capacity");
+	const auto bytes = std::uint64_t{image.extent.width} * image.extent.height * layers * pixelBytes;
 	auto work =
 		std::shared_ptr<VulkanInspectionWork>(new VulkanInspectionWork(std::move(deviceOwner), std::move(admission)));
 	work->m_native->retirementOwner = std::move(retirementOwner);

@@ -67,7 +67,7 @@ def record_frames(client, session, directory, count, *, mode, target=TargetKind.
 
     mode is explicit: 'controlled' admits only with persistence capacity;
     'realtime' leaves pacing unchanged and fails on reserved-stream overrun. The directory
-    must be new. Frames contain RGBA bytes, exact CPU/image metadata and immutable
+    must be new. Frames contain source-format bytes, exact CPU/image metadata and immutable
     feature revisions; frames.jsonl indexes fully written frames. Explicit image
     export is the only readback. Cancellation raises InterruptedError after cleanup.
     Real-time recording uses reserved runtime captures, never live-preview polling.
@@ -219,7 +219,10 @@ def record_frames(client, session, directory, count, *, mode, target=TargetKind.
                         frame_cleanup.callback(client.release_image, reader)
                         metadata['image'] = client.image_info(reader)
                         descriptor = metadata['image']['image_descriptor']
-                        expected = descriptor['width'] * descriptor['height'] * 4
+                        pixel_bytes = {37: 4, 43: 4, 44: 4, 50: 4, 64: 4, 97: 8, 109: 16}.get(descriptor['format'])
+                        if pixel_bytes is None:
+                            raise RuntimeError('Unsupported frame export color format')
+                        expected = descriptor['width'] * descriptor['height'] * pixel_bytes
                         if expected * descriptor['array_layers'] > max_frame_bytes:
                             raise RuntimeError('Frame exceeds the configured persistence byte budget')
                         for slice_index in range(descriptor['array_layers']):

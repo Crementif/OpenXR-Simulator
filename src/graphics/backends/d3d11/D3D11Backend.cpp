@@ -209,8 +209,8 @@ HRESULT D3D11Backend::PrepareCapture(const LayerImageDescription& image, D3D11Co
 	const auto format = source.format == DXGI_FORMAT_UNKNOWN ? description.Format : source.format;
 	if (format != DXGI_FORMAT_R8G8B8A8_UNORM && format != DXGI_FORMAT_R8G8B8A8_UNORM_SRGB &&
 		format != DXGI_FORMAT_B8G8R8A8_UNORM && format != DXGI_FORMAT_B8G8R8A8_UNORM_SRGB &&
-		(!retainMipChain || (format != DXGI_FORMAT_R16G16B16A16_FLOAT && format != DXGI_FORMAT_R10G10B10A2_UNORM &&
-		 format != DXGI_FORMAT_R32G32B32A32_FLOAT)))
+		(format != DXGI_FORMAT_R16G16B16A16_FLOAT && format != DXGI_FORMAT_R10G10B10A2_UNORM &&
+		 format != DXGI_FORMAT_R32G32B32A32_FLOAT))
 		return DXGI_ERROR_UNSUPPORTED;
 	if (!CompatibleFormat(description.Format, format))
 		return E_INVALIDARG;

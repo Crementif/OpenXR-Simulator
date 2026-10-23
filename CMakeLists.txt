@@ -146,6 +146,7 @@ simxr_configure_target(simxr_recording_controller)
 target_link_libraries(simxr_recording_controller PUBLIC simxr_connection simxr_recording)
 
 add_library(simxr_graphics STATIC
+    src/graphics/ColorPixels.cpp
     src/graphics/Swapchain.cpp
     src/graphics/SwapchainAccess.cpp
     src/graphics/SwapchainWaits.cpp

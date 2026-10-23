@@ -9,16 +9,18 @@ import threading
 import time
 
 from test_native_quad import require, wait_file
-from simxr_control import Client, record_frames
+from simxr_control import Client, TargetKind, record_frames
 import simxr_control.frame_recording as recording
 
 
-def run(probe, cancelled, failed=False, mode='controlled', overrun=False):
+def run(probe, cancelled, failed=False, mode='controlled', overrun=False, hdr=False):
     with tempfile.TemporaryDirectory(prefix='sx-record-') as temporary:
         data = Path(temporary)
         environment = dict(os.environ, SIMXR_DATA_DIR=temporary, SIMXR_PROBE_CONTROL='1',
                            SIMXR_PROBE_RETAIN_CONTROL='1', SIMXR_PROBE_GPU_INSPECTION='1',
                            SIMXR_PROBE_FRAMES='8')
+        if hdr:
+            environment['SIMXR_PROBE_HDR32'] = '1'
         if mode == 'realtime':
             environment['SIMXR_PROBE_RECORDING'] = '1'
         environment.pop('SIMXR_CONTROL_SOCKET', None)
@@ -49,7 +51,8 @@ def run(probe, cancelled, failed=False, mode='controlled', overrun=False):
                     try:
                         with Client(path) as client:
                             results.append(record_frames(client, session, data / 'frames', 8 if overrun else 4,
-                                                         mode=mode, buffers=1, cancel=cancel))
+                                                         mode=mode, buffers=1, cancel=cancel,
+                                                         target=TargetKind.LAYER_VIEW if hdr else TargetKind.COMPOSED_EYES))
                     except BaseException as error:
                         errors.append(error)
 
@@ -116,9 +119,10 @@ def run(probe, cancelled, failed=False, mode='controlled', overrun=False):
                             metadata['frame']['frame_id'] == entry['frame_id'], 'Recording mixed image/state identities')
                     require(metadata['revisions'], 'Recording lost immutable feature definitions')
                     descriptor = metadata['image']['image_descriptor']
+                    require(descriptor['format'] == (109 if hdr else 43), descriptor)
                     for layer in range(entry['images']):
                         pixels = data / 'frames' / f'frame-{entry["frame_id"]:020d}-{layer}.rgba'
-                        require(pixels.stat().st_size == descriptor['width'] * descriptor['height'] * 4,
+                        require(pixels.stat().st_size == descriptor['width'] * descriptor['height'] * (16 if hdr else 4),
                                 'Incomplete recorded image')
                 wait_file(data / 'control.destroyed', host)
                 (data / 'control.retained.continue').touch()
@@ -141,6 +145,10 @@ def run(probe, cancelled, failed=False, mode='controlled', overrun=False):
 
 
 if __name__ == '__main__':
+    if '--hdr' in sys.argv:
+        run(sys.argv[1], False, hdr=True)
+        sys.exit(0)
+    run(sys.argv[1], False, hdr=True)
     run(sys.argv[1], False)
     run(sys.argv[1], True)
     run(sys.argv[1], False, True)

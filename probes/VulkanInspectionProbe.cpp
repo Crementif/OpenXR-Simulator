@@ -1,3 +1,6 @@
+#include "Pch.h"
+#include "graphics/ColorPixels.h"
+#include "control/backends/vulkan/VulkanImageInspection.h"
 #include "Math.h"
 #include "VulkanImageDeliveryProbe.h"
 #include "VulkanProbeInstance.h"
@@ -538,9 +541,12 @@ using RawColor = std::array<std::uint8_t, 4>;
 constexpr std::array<RawColor, 4> RawColors{
 	{{{64, 128, 192, 77}}, {{17, 45, 93, 125}}, {{111, 37, 201, 222}}, {{33, 199, 78, 159}}}};
 
+constexpr std::array<float, 4> HdrColor{-0.5f, 0.5f, 2.0f, 0.25f};
+
 void PaintRaw(Device& device, VulkanBackend& backend, const VulkanImage& image)
 {
-	auto patch = backend.CreateImage(VK_FORMAT_R8G8B8A8_UNORM, {4, 5}, 1, SourceUsage);
+	const bool hdr = ColorPixelBytes(image.format) > 4 || image.format == VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+	auto patch = backend.CreateImage(hdr ? image.format : VK_FORMAT_R8G8B8A8_UNORM, {4, 5}, 1, SourceUsage);
 	Check(backend.InitializeImage(patch)->Wait(Timeout), "initialize raw source patch");
 	Commands work(device);
 	VulkanImageBarrier(work.command, image, image.ApplicationLayout(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -557,7 +563,7 @@ void PaintRaw(Device& device, VulkanBackend& backend, const VulkanImage& image)
 	{
 		VkClearColorValue color{};
 		for (std::uint32_t channel = 0; channel < 4; ++channel)
-			color.float32[channel] = static_cast<float>(RawColors[layer][channel]) / 255;
+			color.float32[channel] = hdr ? HdrColor[channel] : static_cast<float>(RawColors[layer][channel]) / 255;
 		vkCmdClearColorImage(work.command, patch->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &color, 1, &slice);
 		VulkanImageBarrier(work.command, *patch, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 						   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
@@ -734,11 +740,36 @@ void VerifyRaw(const RawRetention& retained)
 		AwaitComplete(*ticket);
 		auto pixels = ticket->Pixels();
 		Require(pixels && pixels->format == retained.frames[index]->Image().format && pixels->width == 4 &&
-					pixels->height == 5 && pixels->layers == 1 && pixels->rgba.size() == 4 * 5 * 4,
+					pixels->height == 5 && pixels->layers == 1 && pixels->rgba.size() == 4 * 5 * ColorPixelBytes(pixels->format),
 				"Delayed raw export shape/format mismatch");
 		const auto& expected = RawColors[std::min<std::size_t>(index, 3)];
-		for (std::size_t offset = 0; offset < pixels->rgba.size(); ++offset)
-			Require(pixels->rgba[offset] == expected[offset % 4], "Raw crop/slice/format/alpha bytes changed");
+		const auto stride = ColorPixelBytes(pixels->format);
+		const bool packed = pixels->format == VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+		const auto bytes = std::as_bytes(std::span(pixels->rgba));
+		if (stride > 4 || packed)
+		{
+			for (std::size_t offset = 0; offset < bytes.size(); offset += stride)
+			{
+				const auto color = DecodeColorPixel(pixels->format, bytes.subspan(offset, stride));
+				for (std::size_t channel = 0; channel < 4; ++channel)
+				{
+					const float levels = channel == 3 ? 3.0f : 1023.0f;
+					const float value = packed ? std::round(std::clamp(HdrColor[channel], 0.0f, 1.0f) * levels) / levels : HdrColor[channel];
+					Require(std::abs(color[channel] - value) <= (packed && channel < 3 ? 1.0f / 1023 : 0.0001f),
+						"HDR crop/slice/range/alpha changed");
+				}
+			}
+			auto provider = control::CreateVulkanImageInspectionProvider();
+			auto reader = provider->Retain(retained.frames[index]);
+			auto exported = reader->Export(std::nullopt);
+			Require(exported->ByteSize() == bytes.size() && exported->Description().format == pixels->format,
+				"Control HDR export size/format mismatch");
+			AwaitComplete(*exported);
+			Require(std::ranges::equal(exported->Read(), bytes), "Control HDR export changed exact source bytes");
+		}
+		else
+			for (std::size_t offset = 0; offset < pixels->rgba.size(); ++offset)
+				Require(pixels->rgba[offset] == expected[offset % 4], "Raw crop/slice/format/alpha bytes changed");
 		Require(retained.readers[index].output.get() == retained.frames[index].get() &&
 					retained.readers[index].phase == SnapshotPhase::Ready,
 				"Raw metadata reader changed after native application parent teardown");
@@ -1065,6 +1096,7 @@ bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validat
 	std::optional<SnapshotRecord> retainedCpuReader, sequenceRetention;
 	RawRetention rawRetention, srgbRawRetention;
 	std::array<RawRetention, 2> bgraRetention;
+	std::array<RawRetention, 3> hdrRetention;
 	std::vector<simxr::probe::RetainedSubmission> automatic;
 	std::vector<SnapshotRecord> liveRetention;
 	{
@@ -1099,6 +1131,9 @@ bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validat
 		srgbRawRetention = CaptureRaw(device, binding, validation, VK_FORMAT_R8G8B8A8_SRGB);
 		bgraRetention[0] = CaptureRaw(device, binding, validation, VK_FORMAT_B8G8R8A8_UNORM);
 		bgraRetention[1] = CaptureRaw(device, binding, validation, VK_FORMAT_B8G8R8A8_SRGB);
+		hdrRetention[0] = CaptureRaw(device, binding, validation, VK_FORMAT_R16G16B16A16_SFLOAT);
+		hdrRetention[1] = CaptureRaw(device, binding, validation, VK_FORMAT_R32G32B32A32_SFLOAT);
+		hdrRetention[2] = CaptureRaw(device, binding, validation, VK_FORMAT_A2B10G10R10_UNORM_PACK32);
 		{
 			VulkanBackend disabled(binding, 1);
 			Require(!disabled.Sharing(), "Unconfigured logical sharing became enabled");
@@ -1244,6 +1279,8 @@ bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validat
 		VerifyRaw(srgbRawRetention);
 		for (const auto& bgra : bgraRetention)
 			VerifyRaw(bgra);
+		for (const auto& hdr : hdrRetention)
+			VerifyRaw(hdr);
 		for (const auto& snapshot : liveRetention)
 		{
 			const auto image = std::dynamic_pointer_cast<const VulkanInspectionFrame>(snapshot.output);
@@ -1253,6 +1290,7 @@ bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validat
 		}
 	}
 	bgraRetention = {};
+	hdrRetention = {};
 	rawRetention.readers.clear();
 	srgbRawRetention.readers.clear();
 	for (auto& retained : automatic)

@@ -1,4 +1,6 @@
+#include "Pch.h"
 #include "control/backends/vulkan/VulkanImageInspection.h"
+#include "graphics/ColorPixels.h"
 #include "control/backends/vulkan/VulkanControlHandle.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
 
@@ -320,11 +322,14 @@ class Reader final : public ImageReader
 					throw std::invalid_argument("Invalid export array slice");
 				if (layer)
 					description.arrayLayers = 1;
+				const auto pixelBytes = ColorPixelBytes(description.format);
+				if (!pixelBytes)
+					throw ImageInspectionError(ErrorCode::UnsupportedCommand, "Unsupported explicit color export format");
 				constexpr std::uint64_t limit = 512ULL * 1024 * 1024;
 				if (!description.width || !description.height || !description.arrayLayers ||
-					description.width > limit / 4 / description.height / description.arrayLayers)
+					description.width > limit / pixelBytes / description.height / description.arrayLayers)
 					throw ImageInspectionError(ErrorCode::Capacity, "Image exceeds explicit export byte limit");
-				const auto bytes = std::uint64_t{description.width} * description.height * description.arrayLayers * 4;
+				const auto bytes = std::uint64_t{description.width} * description.height * description.arrayLayers * pixelBytes;
 				auto charge = ReserveExport(bytes, m_frame->Collector());
 				auto native = m_frame->Export(layer, std::move(charge));
 				return std::make_shared<simxr::control::Export>(std::move(native), description, bytes);

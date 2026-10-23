@@ -1,4 +1,5 @@
 #include "Pch.h"
+#include "graphics/ColorPixels.h"
 #include "graphics/SnapshotBudget.h"
 #include "graphics/backends/vulkan/VulkanBackend.h"
 #include "shaders/generated/CompositorSpirv.h"
@@ -701,8 +702,7 @@ XrResult VulkanBackend::PrepareImageCopy(const LayerImageDescription& descriptio
 	if (!image || image->device != m_state->device || description.arraySlice >= image->layers ||
 		image->Aspect() != VK_IMAGE_ASPECT_COLOR_BIT || !(image->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
 		return XR_ERROR_LAYER_INVALID;
-	if (!retained && image->format != VK_FORMAT_R8G8B8A8_SRGB && image->format != VK_FORMAT_R8G8B8A8_UNORM &&
-		image->format != VK_FORMAT_B8G8R8A8_SRGB && image->format != VK_FORMAT_B8G8R8A8_UNORM)
+	if (!ColorPixelBytes(image->format))
 		return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
 	const auto& rectangle = description.rectangle;
 	if (rectangle.offset.x < 0 || rectangle.offset.y < 0 || rectangle.extent.width <= 0 ||

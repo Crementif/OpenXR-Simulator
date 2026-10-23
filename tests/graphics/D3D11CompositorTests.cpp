@@ -1,3 +1,4 @@
+#include "graphics/ColorPixels.h"
 #include "graphics/backends/d3d11/D3D11Backend.h"
 
 #ifdef SIMXR_TEST_D3D11_VULKAN
@@ -30,7 +31,11 @@ constexpr ColorSourceCase ColorSources[]{
 	{1, DXGI_FORMAT_R8G8B8A8_TYPELESS, DXGI_FORMAT_R8G8B8A8_UNORM},
 	{4, DXGI_FORMAT_R8G8B8A8_TYPELESS, DXGI_FORMAT_R8G8B8A8_UNORM},
 	{1, DXGI_FORMAT_R32G32B32A32_TYPELESS, DXGI_FORMAT_R32G32B32A32_FLOAT},
-	{1, DXGI_FORMAT_R32G32B32A32_FLOAT, DXGI_FORMAT_R32G32B32A32_FLOAT}};
+	{1, DXGI_FORMAT_R32G32B32A32_FLOAT, DXGI_FORMAT_R32G32B32A32_FLOAT},
+	{1, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT},
+	{4, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT},
+	{1, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R10G10B10A2_UNORM},
+	{4, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R10G10B10A2_UNORM}};
 
 void Check(HRESULT result)
 {
@@ -128,18 +133,14 @@ void VerifyVulkan(const std::shared_ptr<Frame>& source, bool mipChain = false,
 		if (format == DXGI_FORMAT_R16G16B16A16_FLOAT || format == DXGI_FORMAT_R10G10B10A2_UNORM ||
 			format == DXGI_FORMAT_R32G32B32A32_FLOAT)
 		{
-			bool rejected = false;
-			try
-			{
-				retained->Export();
-			}
-			catch (const VulkanError& error)
-			{
-				rejected = error.Result() == VK_ERROR_FORMAT_NOT_SUPPORTED;
-			}
-			if (!rejected)
-				throw std::runtime_error("HDR input was allowed into an RGBA8 readback buffer");
+			auto raw = retained->Export();
+			std::shared_ptr<const VulkanImagePixels> pixels;
+			while (!(pixels = raw->Pixels()) && std::chrono::steady_clock::now() < deadline)
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			if (!pixels || pixels->rgba.size() != 8 * 8 * ColorPixelBytes(pixels->format))
+				throw std::runtime_error("HDR mip export lost its format-dependent byte size");
 		}
+
 		CompositionPlan plan{1, 1, {}, {}};
 		CompositionDraw draw{};
 		draw.constants.eyeTangents = draw.constants.sourceTangents = {-1, 1, 1, -1};
@@ -176,9 +177,11 @@ void VerifyVulkan(const std::shared_ptr<Frame>& source, bool mipChain = false,
 					throw std::runtime_error("Native depth normalization pixels mismatch");
 			continue;
 		}
-		if (pixels->rgba[offset] != (!mipChain && layers == 2 && eye == 0 ? 255 : 0) ||
-			pixels->rgba[offset + 1] != (!mipChain && (layers == 1 || eye == 1) ? 255 : 0) ||
-			pixels->rgba[offset + 2] != (mipChain ? 255 : 0))
+		const auto color = DecodeColorPixel(pixels->format,
+			std::as_bytes(std::span(pixels->rgba)).subspan(offset / 4 * ColorPixelBytes(pixels->format)));
+		if (color[0] != (!mipChain && layers == 2 && eye == 0 ? 1.0f : 0.0f) ||
+			color[1] != (!mipChain && (layers == 1 || eye == 1) ? 1.0f : 0.0f) ||
+			color[2] != (mipChain ? 1.0f : 0.0f))
 			throw std::runtime_error("D3D11 Vulkan exported pixels mismatch");
 	}
 	CheckVulkan(backend.Drain(5000000000ULL), "Drain D3D11 import queue");
@@ -490,12 +493,6 @@ void VerifyD3D12()
 		image.arraySlice = 1;
 		image.rectangle = {{2, 1}, {4, 3}};
 		std::shared_ptr<D3D12Frame> capture;
-		if (viewFormat == DXGI_FORMAT_R32G32B32A32_FLOAT)
-		{
-			if (backend->PrepareCapture(image, sources.front(), capture) != DXGI_ERROR_UNSUPPORTED || capture)
-				throw std::runtime_error("Unsupported raw float32 capture was accepted");
-			continue;
-		}
 		Check(backend->PrepareCapture(image, sources.front(), capture));
 		Check(backend->Submit(capture));
 		VerifyVulkan(capture, false, {4, 3}, 1);
@@ -728,7 +725,14 @@ int main(int argc, char**)
 			}
 #ifdef SIMXR_TEST_D3D11_VULKAN
 			VerifyVulkan(frame);
-			if (viewFormat == DXGI_FORMAT_R32G32B32A32_FLOAT)
+			LayerImageDescription image{};
+			image.arraySlice = 1;
+			image.rectangle = {{2, 1}, {4, 3}};
+			std::shared_ptr<D3D11Frame> raw;
+			Check(backend.PrepareCapture(image, sources.front(), raw));
+			Check(backend.Submit(raw));
+			VerifyVulkan(raw, false, {4, 3}, 1);
+			if (viewFormat != DXGI_FORMAT_R8G8B8A8_UNORM)
 				continue;
 			VerifySessionCaptures(device.Get(), source.Get(), DXGI_FORMAT_UNKNOWN);
 			for (const auto depthFormat : {DXGI_FORMAT_D16_UNORM, DXGI_FORMAT_D24_UNORM_S8_UINT,

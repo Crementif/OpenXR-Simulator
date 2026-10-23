@@ -20,6 +20,7 @@ class VulkanSwapchain
 {
   public:
 	static std::span<const std::int64_t> Formats();
+	static std::span<const std::int64_t> ColorFormats();
 	static XrResult Create(VulkanBackend& backend, const XrSwapchainCreateInfo& description,
 						   std::unique_ptr<VulkanSwapchain>& output);
 	XrResult EnumerateImages(std::uint32_t capacity, std::uint32_t* count, XrSwapchainImageBaseHeader* images) const;
