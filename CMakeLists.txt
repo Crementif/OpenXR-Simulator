@@ -35,6 +35,7 @@ add_library(simxr_core STATIC
     src/runtime/extensions/EyeGazeInteraction.cpp
     src/runtime/extensions/TrackerInteraction.cpp
     src/runtime/EventQueue.cpp
+    src/runtime/HandleRegistry.cpp
     src/runtime/Instance.cpp
     src/runtime/Runtime.cpp
     src/runtime/Session.cpp

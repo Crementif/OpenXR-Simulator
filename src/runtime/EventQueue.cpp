@@ -1,38 +1,35 @@
 #include "runtime/EventQueue.h"
+#include "Pch.h"
 
-#include <algorithm>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <type_traits>
-#include <utility>
 
 namespace simxr
 {
-namespace
-{
-template <class Event> void WriteEvent(const Event& event, XrEventDataBuffer& output)
+template <class Event> static void WriteEvent(const Event& event, XrEventDataBuffer& output)
 {
 	static_assert(std::is_trivially_copyable_v<Event>);
 	static_assert(sizeof(Event) <= sizeof(output));
 	std::memcpy(&output, &event, sizeof(event));
 }
 
-void EncodeEvent(const SessionStateEvent& value, XrEventDataBuffer& output)
+static void EncodeEvent(const SessionStateEvent& value, XrEventDataBuffer& output)
 {
 	WriteEvent(XrEventDataSessionStateChanged{XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED, nullptr, value.session,
 											  value.state, value.time.value.count()},
 			   output);
 }
 
-void EncodeEvent(const InteractionProfileEvent& value, XrEventDataBuffer& output)
+static void EncodeEvent(const InteractionProfileEvent& value, XrEventDataBuffer& output)
 {
 	WriteEvent(
 		XrEventDataInteractionProfileChanged{XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED, nullptr, value.session},
 		output);
 }
 
-void EncodeEvent(const ReferenceSpaceEvent& value, XrEventDataBuffer& output)
+static void EncodeEvent(const ReferenceSpaceEvent& value, XrEventDataBuffer& output)
 {
 	WriteEvent(
 		XrEventDataReferenceSpaceChangePending{XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING, nullptr,
@@ -41,14 +38,14 @@ void EncodeEvent(const ReferenceSpaceEvent& value, XrEventDataBuffer& output)
 		output);
 }
 
-void EncodeEvent(const InstanceLossEvent& value, XrEventDataBuffer& output)
+static void EncodeEvent(const InstanceLossEvent& value, XrEventDataBuffer& output)
 {
 	WriteEvent(
 		XrEventDataInstanceLossPending{XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING, nullptr, value.lossTime.value.count()},
 		output);
 }
 
-void EncodeEvent(const TrackerConnectedEvent& value, XrEventDataBuffer& output)
+static void EncodeEvent(const TrackerConnectedEvent& value, XrEventDataBuffer& output)
 {
 	struct TrackerConnectedPayload
 	{
@@ -64,7 +61,6 @@ void EncodeEvent(const TrackerConnectedEvent& value, XrEventDataBuffer& output)
 		{XR_TYPE_VIVE_TRACKER_PATHS_HTCX, nullptr, value.persistentPath, value.rolePath}};
 	WriteEvent(payload, output);
 }
-} // namespace
 
 EventQueue::EventQueue(std::size_t capacity) : m_capacity(capacity)
 {
