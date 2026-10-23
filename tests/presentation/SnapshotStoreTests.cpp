@@ -449,15 +449,15 @@ void EvictionAndPins()
 		if (store.Snapshot().heldSlots == store.Capacity())
 			Require(store.EvictOldest(), "Evict oldest unpinned snapshot");
 		Require(store.Pin(Frame({1}, frame, 0).submitted).result == SnapshotAdmission::Accepted,
-			"200 snapshots exhausted retention");
+				"200 snapshots exhausted retention");
 		Require(store.Read(pinned.id)->pinned && store.Read(displayed.id).has_value(),
-			"Evicted pinned or actively read snapshot");
+				"Evicted pinned or actively read snapshot");
 	}
 	Require(store.EvictOldest() && !store.EvictOldest(), "Eviction did not protect all remaining readers");
 	reader.reset();
 	Require(store.EvictOldest() && !store.Read(displayed.id), "Released reader still blocks eviction");
 	Require(!store.EvictOldest() && store.SetPinned(pinned.id, false) && store.EvictOldest(),
-		"Unpin did not restore capacity");
+			"Unpin did not restore capacity");
 	const auto busy = store.Reserve();
 	Require(!store.EvictOldest(), "Unsubmitted reservation was evicted");
 	store.Release(busy.id);
@@ -471,6 +471,35 @@ void EvictionAndPins()
 	Require(!store.EvictOldest(), "External image reader was evicted");
 	output.reset();
 	Require(store.EvictOldest() && destroyed, "Eviction did not release through reentrant retirement");
+	const auto displayCapture = store.Reserve({CaptureKind::VirtualDisplay});
+	const auto displayFrame = Frame({1}, 205);
+	bool displayDestroyed = false;
+	auto displayOutput = std::make_shared<Output>();
+	displayOutput->store = &store;
+	displayOutput->destroyed = &displayDestroyed;
+	displayOutput->id = displayCapture.id;
+	std::weak_ptr<Output> displayLifetime = displayOutput;
+	PresentationTick tick{
+		{205}, {Duration{2150}}, PresentationKind::NewFrame, displayFrame.submitted->key, displayOutput};
+	Require(displayCapture.result == SnapshotAdmission::Accepted &&
+				store.PublishDisplay(displayCapture.id, tick, displayFrame.submitted),
+			"Publish display snapshot for eviction");
+	tick.output.reset();
+	displayOutput.reset();
+	Require(!store.EvictOldest() && !displayDestroyed &&
+				store.Read(displayCapture.id)->phase == SnapshotPhase::GpuPending,
+			"Display snapshot was evicted before GPU completion");
+	displayLifetime.lock()->status.store(CompletionStatus::Complete);
+	store.Poll();
+	auto displayReader = store.Read(displayCapture.id);
+	Require(displayReader && displayReader->phase == SnapshotPhase::Ready && !store.EvictOldest(),
+			"Held display snapshot did not block eviction");
+	auto imageReader = displayReader->display->output;
+	displayReader.reset();
+	Require(!store.EvictOldest() && !displayDestroyed, "Held display image did not block eviction");
+	imageReader.reset();
+	Require(store.EvictOldest() && !store.Read(displayCapture.id) && displayDestroyed && displayLifetime.expired(),
+			"Display snapshot's internal image reference prevented completed eviction");
 	FramePool pool(3);
 	auto a = pool.Reserve(), b = pool.Reserve();
 	pool.SetCapacity(1);

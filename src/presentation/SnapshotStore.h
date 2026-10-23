@@ -33,13 +33,22 @@ struct CaptureTarget
 	CaptureKind kind = CaptureKind::ComposedEyes;
 	std::uint32_t layer = 0;
 	std::uint32_t view = 0;
-	bool IsDepth() const { return kind == CaptureKind::LayerDepth || kind == CaptureKind::LayerDepthLinear; }
-	bool IsLayerImage() const { return kind == CaptureKind::LayerView || IsDepth(); }
+	bool IsDepth() const
+	{
+		return kind == CaptureKind::LayerDepth || kind == CaptureKind::LayerDepthLinear;
+	}
+	bool IsLayerImage() const
+	{
+		return kind == CaptureKind::LayerView || IsDepth();
+	}
 	bool IsFilteredComposition() const
 	{
 		return kind == CaptureKind::ProjectionLayers || kind == CaptureKind::QuadLayers;
 	}
-	bool IsAdditionalImage() const { return IsLayerImage() || IsFilteredComposition(); }
+	bool IsAdditionalImage() const
+	{
+		return IsLayerImage() || IsFilteredComposition();
+	}
 	auto operator<=>(const CaptureTarget&) const = default;
 };
 
