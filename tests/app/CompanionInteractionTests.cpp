@@ -2356,7 +2356,8 @@ void CheckDebuggerWorkflow(const char* endpoint)
 			   << " operation=" << state.lastOperation << " selected_capture=" << state.selectedCapture
 			   << " last_capture=" << state.lastCapture << " image_capture=" << state.selectedImageCapture
 			   << " selected_frame=" << state.selectedFrame << " ready=" << state.selectedReady
-			   << " slices=" << state.selectedLayers << "\nnotice=" << state.notice << '\n';
+			   << " slices=" << state.selectedLayers << "\nerror=" << state.error << "\nphase=" << state.phase
+			   << "\nprogress=" << state.progress << "\nnotice=" << state.notice << '\n';
 		output.flush();
 		try
 		{
@@ -2441,7 +2442,10 @@ void CheckDebuggerWorkflow(const char* endpoint)
 					std::find(captures.begin(), captures.end(), identity) == captures.end())
 					captures.push_back(identity);
 			};
-			query("status", wire::OpCode::Status, sessionFields());
+			if (state.session)
+				query("status", wire::OpCode::Status, sessionFields());
+			else
+				query("sessions", wire::OpCode::Sessions, {});
 			if (state.lastOperation)
 			{
 				auto fields = sessionFields();
