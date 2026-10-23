@@ -12,6 +12,7 @@ install(FILES "${PROJECT_SOURCE_DIR}/docs/BUILDING.md" "${PROJECT_SOURCE_DIR}/do
 if(UNIX)
     install(PROGRAMS "${PROJECT_SOURCE_DIR}/scripts/launch-linux.py" DESTINATION bin)
 endif()
+install(PROGRAMS "${PROJECT_SOURCE_DIR}/scripts/prepare-proton-prefix.py" DESTINATION bin)
 foreach(probe xr_probe_linux xr_probe_d3d11 xr_probe_d3d12 xr_probe_opengl xr_probe_vk)
     if(TARGET ${probe})
         install(TARGETS ${probe} RUNTIME DESTINATION bin)

@@ -1,5 +1,5 @@
-#include "Pch.h"
 #include "app/services/LaunchTypes.h"
+#include "Pch.h"
 #include "simulation/HeadsetProfiles.h"
 
 #include <set>
@@ -20,6 +20,9 @@ void ValidateLaunchProfile(const LaunchProfile& profile)
 	validateText(profile.runtimeManifest);
 	validateText(profile.headsetProfile);
 	validateText(profile.rig);
+	validateText(profile.privateProtonPrefix);
+	if (!profile.privateProtonPrefix.empty() && profile.runtimeManifest.empty())
+		throw std::invalid_argument("Private Proton prefix requires a runtime manifest");
 	if (!profile.headsetProfile.empty() && !FindHeadsetProfile(profile.headsetProfile))
 		throw std::invalid_argument("Unknown headset profile");
 	if (profile.arguments.size() > 256 || profile.environment.size() > MaxLaunchEnvironment)
@@ -35,4 +38,4 @@ void ValidateLaunchProfile(const LaunchProfile& profile)
 			throw std::invalid_argument("Invalid or duplicate environment key");
 	}
 }
-}
+} // namespace simxr::app

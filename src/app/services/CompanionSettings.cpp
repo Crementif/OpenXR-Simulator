@@ -301,6 +301,19 @@ CompanionSettings LoadSettings(const std::filesystem::path& path)
 		}
 	}
 	if (!reader.Empty())
+	{
+		if (reader.Number() != 7)
+			throw std::runtime_error("Unknown private Proton settings version");
+		if (reader.Count(32) != result.profiles.size())
+			throw std::runtime_error("Private Proton profile count mismatch");
+		for (auto& profile : result.profiles)
+			profile.privateProtonPrefix = reader.Text();
+		if (reader.Count(MaxRecentApps) != result.recent.size())
+			throw std::runtime_error("Private Proton recent app count mismatch");
+		for (auto& recent : result.recent)
+			recent.launch.privateProtonPrefix = reader.Text();
+	}
+	if (!reader.Empty())
 		throw std::runtime_error("Unexpected trailing companion settings data");
 	ValidateSettings(result);
 	return result;
@@ -370,6 +383,13 @@ void SaveSettings(const std::filesystem::path& path, const CompanionSettings& se
 		Put(bytes, static_cast<std::uint32_t>(lastUsed));
 		Put(bytes, static_cast<std::uint32_t>(lastUsed >> 32));
 	}
+	Put(bytes, std::uint32_t{7});
+	Put(bytes, static_cast<std::uint32_t>(settings.profiles.size()));
+	for (const auto& profile : settings.profiles)
+		Put(bytes, profile.privateProtonPrefix);
+	Put(bytes, static_cast<std::uint32_t>(settings.recent.size()));
+	for (const auto& recent : settings.recent)
+		Put(bytes, recent.launch.privateProtonPrefix);
 	if (bytes.size() > s_maxFile)
 		throw std::invalid_argument("Companion settings exceed the file budget");
 	std::filesystem::create_directories(path.parent_path());

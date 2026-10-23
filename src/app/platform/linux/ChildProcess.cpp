@@ -1,5 +1,5 @@
-#include "Pch.h"
 #include "app/platform/ChildProcess.h"
+#include "Pch.h"
 
 #include <cerrno>
 #include <cstring>
@@ -87,12 +87,13 @@ struct ChildProcess::State
 	pid_t process = 0;
 	std::optional<int> exitCode;
 };
-ChildProcess::ChildProcess() : m_state(std::make_unique<State>())
-{
-}
+ChildProcess::ChildProcess() : m_state(std::make_unique<State>()) {}
 ChildProcess::~ChildProcess() = default;
 std::unique_ptr<ChildProcess> ChildProcess::Launch(const LaunchProfile& profile)
 {
+	if (!profile.privateProtonPrefix.empty())
+		throw std::invalid_argument(
+			"Private Proton registration requires the Windows companion running in the selected prefix");
 	if (!profile.runtimeManifest.empty())
 	{
 		auto manifest = std::filesystem::path(profile.runtimeManifest);

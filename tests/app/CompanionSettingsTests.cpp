@@ -119,7 +119,12 @@ void Persistence()
 								 "/runtime.json",
 								 {{"WINEPREFIX", "/prefix"}, {"VALUE", "a=b\nc"}},
 								 "quest3",
-								 "rig.lua"});
+								 "rig.lua",
+								 "Z:\\隔離\\named prefix\\pfx"});
+	auto secondProfile = settings.profiles.front();
+	secondProfile.name = "Other profile";
+	secondProfile.privateProtonPrefix = "Z:\\別の prefix\\pfx";
+	settings.profiles.push_back(std::move(secondProfile));
 	settings.layouts.push_back({"Wide", "[Window][GPU preview]\nPos=1,2\nSize=300,200\n"});
 	for (std::int64_t index = 0; index < 10; ++index)
 		RememberRecentApp(settings, {"App", "/games/app" + std::to_string(index % 9), {"--level", "1"}, "/games"},
@@ -127,12 +132,83 @@ void Persistence()
 	Require(settings.recent.size() == MaxRecentApps && settings.recent.front().lastUsed == 1'700'000'000'009 &&
 				settings.recent.front().launch.executable == "/games/app0",
 			"Recent apps keep the newest distinct entries first");
+	settings.recent.front().launch.runtimeManifest = "Z:\\runtime 日本語\\openxr_simulator.json";
+	settings.recent.front().launch.privateProtonPrefix = "Z:\\最近\\first\\pfx";
+	settings.recent.back().launch.runtimeManifest = "Z:\\other runtime\\openxr_simulator.json";
+	settings.recent.back().launch.privateProtonPrefix = "Z:\\最近\\last\\pfx";
 	SaveSettings(file, settings);
 	for (int index = 0; index < 80; ++index)
 		settings.recent.front().launch.environment.emplace_back("CUSTOM_" + std::to_string(index),
 			index % 2 ? "" : "literal value ; $()");
 	SaveSettings(file, settings);
 	Require(LoadSettings(file) == settings, "Every profile/layout/recent field round trips exactly");
+	{
+		std::ifstream input(file, std::ios::binary);
+		const std::string complete((std::istreambuf_iterator<char>(input)), {});
+		Require(!input.bad(), "Read serialized settings fixture");
+		input.close();
+		Require(!input.fail(), "Close serialized settings fixture");
+		std::string extension;
+		const auto number = [&](std::uint32_t value)
+		{
+			for (unsigned shift = 0; shift < 32; shift += 8)
+				extension.push_back(static_cast<char>(value >> shift));
+		};
+		const auto prefix = [&](const std::string& value)
+		{
+			number(static_cast<std::uint32_t>(value.size()));
+			extension += value;
+		};
+		number(7);
+		number(static_cast<std::uint32_t>(settings.profiles.size()));
+		for (const auto& profile : settings.profiles)
+			prefix(profile.privateProtonPrefix);
+		const auto recentCount = extension.size();
+		number(static_cast<std::uint32_t>(settings.recent.size()));
+		for (const auto& recent : settings.recent)
+			prefix(recent.launch.privateProtonPrefix);
+		Require(complete.ends_with(extension), "Private prefix settings use the version-7 trailing table");
+		const auto extensionStart = complete.size() - extension.size();
+		const auto replace = [&](std::string_view bytes)
+		{
+			std::ofstream output(file, std::ios::binary | std::ios::trunc);
+			output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+			output.close();
+			Require(output.good(), "Write settings migration fixture");
+		};
+		replace(std::string_view(complete).substr(0, extensionStart));
+		auto previous = settings;
+		for (auto& profile : previous.profiles)
+			profile.privateProtonPrefix.clear();
+		for (auto& recent : previous.recent)
+			recent.launch.privateProtonPrefix.clear();
+		Require(LoadSettings(file) == previous,
+				"Version-6 settings retain data and default every private prefix to empty");
+		for (const auto offset : {std::size_t{4}, recentCount})
+		{
+			auto corrupt = complete;
+			corrupt[extensionStart + offset] = 0;
+			replace(corrupt);
+			Reject(
+				[&]
+				{
+					LoadSettings(file);
+				});
+		}
+		replace(std::string_view(complete).substr(0, extensionStart + 6));
+		Reject(
+			[&]
+			{
+				LoadSettings(file);
+			});
+		replace(std::string_view(complete).substr(0, complete.size() - 1));
+		Reject(
+			[&]
+			{
+				LoadSettings(file);
+			});
+		replace(complete);
+	}
 	{
 		auto precise = settings;
 		precise.gamepadBindings.deadzone = .9999f;
@@ -157,6 +233,22 @@ void Persistence()
 	Require(::stat(file.c_str(), &info) == 0 && (info.st_mode & 0777) == 0600, "Settings file remains private");
 #endif
 	auto invalid = settings;
+	invalid.profiles.front().runtimeManifest.clear();
+	Reject(
+		[&]
+		{
+			SaveSettings(file, invalid);
+		});
+	invalid = settings;
+	invalid.recent.front().launch.runtimeManifest.clear();
+	Reject(
+		[&]
+		{
+			SaveSettings(file, invalid);
+		});
+	Require(LoadSettings(file) == settings,
+			"Private prefixes without a runtime manifest cannot replace saved settings");
+	invalid = settings;
 	invalid.profiles.push_back(settings.profiles.front());
 	Reject(
 		[&]
@@ -262,6 +354,18 @@ void Launch(const std::filesystem::path& executable)
 			"Child cwd, manifest, environment and literal argv applied");
 	Require((std::getenv("XR_RUNTIME_JSON") ? std::getenv("XR_RUNTIME_JSON") : "") == before,
 			"Parent runtime selection unchanged");
+	profile.privateProtonPrefix = (directory.path / "pfx").string();
+	Require(launcher.Launch(profile), "Admit unsupported private-prefix launch for validation");
+	Eventually(
+		[&]
+		{
+			state = launcher.Snapshot();
+			return state.state == LaunchState::Failed || state.state == LaunchState::Exited;
+		},
+		"Unsupported private-prefix launch did not settle");
+	Require(state.state == LaunchState::Failed && !state.process && state.detail.find("Proton") != std::string::npos,
+			"Linux private-prefix launch must reject before spawning a child");
+	profile.privateProtonPrefix.clear();
 	const auto validManifest = profile.runtimeManifest;
 	profile.runtimeManifest = (directory.path / "missing-runtime.json").string();
 	Require(launcher.Launch(profile), "Admit missing runtime launch");

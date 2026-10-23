@@ -198,6 +198,8 @@ class Interaction
 		if (live)
 		{
 			workspace.Draw(runtime);
+			if (extraDraw)
+				extraDraw();
 			const auto transfers = [&](VkCommandBuffer command)
 			{
 				runtime.RecordTransfers(command);
@@ -5604,29 +5606,43 @@ void CheckSoak(Interaction& test, const std::filesystem::path& directory)
 	std::cout << "PASS soak seed=" << seed << " seconds=" << duration.count() << " actions=" << actions << std::endl;
 }
 
+#endif
+
 void CheckToolbarLaunch(const char* executable)
 {
-	const auto directoryValue = std::getenv("SIMXR_LAUNCH_QA_DIRECTORY");
-	Require(directoryValue != nullptr, "Launch QA requires a new private directory");
-	const std::filesystem::path directory(directoryValue);
+	const auto directory = QaDirectory("SIMXR_LAUNCH_QA_DIRECTORY");
 	Require(directory.is_absolute() && std::filesystem::create_directory(directory),
 			"Launch QA directory must be new and absolute");
 	const auto settingsPath = directory / "companion.settings";
+#ifdef _WIN32
+	Require(SetEnvironmentVariableW(L"SIMXR_COMPANION_SETTINGS", settingsPath.c_str()), "Set isolated settings path");
+#else
 	Require(::setenv("SIMXR_COMPANION_SETTINGS", settingsPath.c_str(), 1) == 0, "Set isolated settings path");
+#endif
 	CompanionSettings settings;
 	LaunchProfile profile;
 	profile.name = "Isolated launch QA";
 	profile.executable = executable;
+#ifdef _WIN32
+	profile.runtimeManifest = windows::Environment("SIMXR_LAUNCH_QA_MANIFEST");
+	profile.privateProtonPrefix = windows::Environment("SIMXR_PRIVATE_PROTON_TEST_PREFIX");
+	profile.workingDirectory = windows::Environment("SIMXR_LAUNCH_QA_CWD");
+	const auto argumentsText = windows::Environment("SIMXR_LAUNCH_QA_ARGUMENTS");
+	const auto arguments = argumentsText.c_str();
+#else
 	profile.runtimeManifest = std::getenv("XR_RUNTIME_JSON") ? std::getenv("XR_RUNTIME_JSON") : "";
 	if (const auto cwd = std::getenv("SIMXR_LAUNCH_QA_CWD"))
 		profile.workingDirectory = cwd;
-	if (const auto arguments = std::getenv("SIMXR_LAUNCH_QA_ARGUMENTS"))
+	const auto arguments = std::getenv("SIMXR_LAUNCH_QA_ARGUMENTS");
+#endif
+	if (arguments)
 	{
 		std::istringstream lines(arguments);
 		for (std::string argument; std::getline(lines, argument);)
 			profile.arguments.push_back(argument);
 	}
-	profile.environment = {{"SIMXR_DATA_DIR", directory.string()}, {"SIMXR_CONTROL_SOCKET", ""}};
+	profile.environment = {{"SIMXR_DATA_DIR", PathText(directory)}, {"SIMXR_CONTROL_SOCKET", ""}};
+#ifdef __linux__
 	if (std::getenv("SIMXR_SOAK_QA"))
 	{
 		Require(std::filesystem::path(executable).filename() == "xr_probe_linux", "Soak requires the isolated probe");
@@ -5635,12 +5651,43 @@ void CheckToolbarLaunch(const char* executable)
 		profile.environment.emplace_back("SIMXR_PROBE_FRAMES", "120000");
 		profile.environment.emplace_back("SIMXR_VULKAN_VALIDATION", "1");
 	}
+#endif
 	settings.profiles.push_back(profile);
 	settings.activeProfile = profile.name;
 	SaveSettings(settingsPath, settings);
 	Interaction test(true);
 	for (unsigned frame = 0; frame < 4; ++frame)
 		test.Frame();
+	if (!profile.privateProtonPrefix.empty())
+	{
+		LaunchProfilesDialog editor;
+		editor.Edit(settings, 0);
+		bool open = true, changed = false;
+		test.extraDraw = [&] { editor.Draw(settings, {}, open, changed); };
+		for (unsigned frame = 0; frame < 3; ++frame)
+			test.Frame();
+		auto* form = FindPanel("Profile form");
+		Require(form, "Private Proton launch form missing");
+		ImGui::ActivateItemByID(ImHashStr("Runtime and script", 0, ImHashStr("1", 0, form->ID)));
+		for (unsigned frame = 0; frame < 3; ++frame)
+			test.Frame();
+		ImGui::SetScrollY(form, form->ScrollMax.y);
+		for (unsigned frame = 0; frame < 3; ++frame)
+			test.Frame();
+		Require(editor.Profile() == profile && !form->ScrollbarX,
+			"Private Proton launch form lost configuration or overflows horizontally");
+		test.renderer.RequestScreenshot(directory / "private-prefix-profile.bmp");
+		test.Frame();
+		ImGui::ClosePopupToLevel(0, true);
+		test.extraDraw = {};
+		test.Frame();
+		if (std::getenv("SIMXR_LAUNCH_FORM_ONLY"))
+		{
+			test.renderer.WaitIdle();
+			std::cout << "PASS private-prefix launch profile layout; no application launched\n";
+			return;
+		}
+	}
 	test.renderer.RequestScreenshot(directory / "before-launch.bmp");
 	test.Frame();
 	const auto* toolbar = FindPanel("##Workspace toolbar");
@@ -5662,8 +5709,13 @@ void CheckToolbarLaunch(const char* executable)
 	const auto state = test.runtime.Snapshot();
 	Require(state.connected && state.sessionAvailable && state.selectedLayers == 2,
 			"Launched stereo session not selected");
+#ifdef _WIN32
+	Require(state.endpoint.starts_with(R"(\\.\pipe\SimXR.Control.)"), "Launch selected a nonlocal endpoint");
+#else
 	Require(std::filesystem::path(state.endpoint).parent_path() == directory, "Launch selected unrelated endpoint");
+#endif
 	std::ofstream(directory / "attached.endpoint") << state.endpoint;
+#ifdef __linux__
 	if (std::getenv("SIMXR_SOAK_QA"))
 		CheckSoak(test, directory);
 	if (std::getenv("SIMXR_TIMELINE_QA"))
@@ -5698,6 +5750,7 @@ void CheckToolbarLaunch(const char* executable)
 		CheckBodyRig(test);
 	if (std::getenv("SIMXR_RETENTION_QA"))
 		CheckSnapshotRetention(test);
+#endif
 	Eventually([&] { test.Frame(); return test.runtime.History().Size() > 0; },
 		"Launched runtime did not populate timeline history");
 	Require(test.runtime.Snapshot().error.empty(), "Launched runtime reported a control error");
@@ -5707,8 +5760,6 @@ void CheckToolbarLaunch(const char* executable)
 	Require(test.validation->errors.load() == 0, "Validation errors in launched preview");
 	std::cout << "PASS toolbar launched and attached stereo runtime " << state.endpoint << '\n';
 }
-
-#endif
 
 void CaptureLayouts(const std::filesystem::path& directory)
 {
@@ -5929,6 +5980,7 @@ int main()
 			source.name = std::string(200, 'n');
 			source.executable = "/" + std::string(3000, 'x');
 			source.workingDirectory = source.runtimeManifest = source.rig = source.executable;
+			source.privateProtonPrefix = "Z:\\private 日本語\\pfx";
 			source.headsetProfile = std::string(300, 'h');
 			source.arguments = {"", "first", "", "line one\nline two", std::string(18000, 'a'), ""};
 			source.environment = {{std::string(300, 'K'), std::string(5000, 'v')}, {"EMPTY", ""}};
@@ -5941,7 +5993,8 @@ int main()
 				Require(actual.name == source.name && actual.executable == source.executable &&
 					actual.arguments == source.arguments && actual.environment == source.environment &&
 					actual.workingDirectory == source.workingDirectory && actual.runtimeManifest == source.runtimeManifest &&
-					actual.rig == source.rig && actual.headsetProfile == source.headsetProfile,
+					actual.rig == source.rig && actual.headsetProfile == source.headsetProfile &&
+					actual.privateProtonPrefix == source.privateProtonPrefix,
 					"Launch editor truncated stored fields or changed argument boundaries");
 			};
 			check(editor.Profile());
@@ -6055,12 +6108,18 @@ int main()
 			CheckAppPicker(executable);
 			return 0;
 		}
-		if (const auto executable = std::getenv("SIMXR_LAUNCH_QA_EXECUTABLE"))
+#endif
+#ifdef _WIN32
+		const auto launchExecutable = windows::Environment("SIMXR_LAUNCH_QA_EXECUTABLE");
+		const auto executable = launchExecutable.c_str();
+#else
+		const auto executable = std::getenv("SIMXR_LAUNCH_QA_EXECUTABLE");
+#endif
+		if (executable && *executable)
 		{
 			CheckToolbarLaunch(executable);
 			return 0;
 		}
-#endif
 		auto validation = std::make_shared<ValidationLog>();
 		{
 			Interaction test;

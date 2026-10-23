@@ -1,7 +1,7 @@
 #include "app/dialogs/LaunchProfilesDialog.h"
 #include "Pch.h"
-#include "app/widgets/Theme.h"
 #include "app/widgets/Controls.h"
+#include "app/widgets/Theme.h"
 #include "simulation/HeadsetProfiles.h"
 
 #include <SDL3/SDL_dialog.h>
@@ -115,8 +115,8 @@ struct LaunchProfilesDialog::FileResult
 };
 
 LaunchProfilesDialog::LaunchProfilesDialog()
-	: m_name(128), m_executable(2048), m_workingDirectory(2048), m_manifest(2048), m_rig(2048), m_headset(256),
-	  m_arguments(16384)
+	: m_name(128), m_executable(2048), m_workingDirectory(2048), m_manifest(2048), m_rig(2048),
+	  m_privateProtonPrefix(2048), m_headset(256), m_arguments(16384)
 {
 }
 void LaunchProfilesDialog::BrowsePath(Browse browse, bool folder, const char* start)
@@ -147,9 +147,10 @@ bool LaunchProfilesDialog::TakePath()
 		m_browseProblem = file->error.empty() ? "Cannot open file dialog" : file->error;
 	if (file->failed || file->path.empty())
 		return false;
-	auto& target = *browse == Browse::Executable		 ? m_executable
-				   : *browse == Browse::WorkingDirectory ? m_workingDirectory
-														 : m_manifest;
+	auto& target = *browse == Browse::Executable			? m_executable
+				   : *browse == Browse::WorkingDirectory	? m_workingDirectory
+				   : *browse == Browse::PrivateProtonPrefix ? m_privateProtonPrefix
+															: m_manifest;
 	Copy(target, file->path);
 	return true;
 }
@@ -163,6 +164,7 @@ void LaunchProfilesDialog::Load(const LaunchProfile& profile)
 	Copy(m_executable, profile.executable);
 	Copy(m_workingDirectory, profile.workingDirectory);
 	Copy(m_manifest, profile.runtimeManifest);
+	Copy(m_privateProtonPrefix, profile.privateProtonPrefix);
 	Copy(m_rig, profile.rig);
 	Copy(m_headset, profile.headsetProfile);
 	m_originalArguments = profile.arguments;
@@ -224,6 +226,7 @@ LaunchProfile LaunchProfilesDialog::Profile() const
 		m_arguments.data() == Join(m_originalArguments) ? m_originalArguments : Lines(m_arguments.data());
 	profile.workingDirectory = m_workingDirectory.data();
 	profile.runtimeManifest = m_manifest.data();
+	profile.privateProtonPrefix = m_privateProtonPrefix.data();
 	profile.headsetProfile = m_headset.data();
 	profile.rig = m_rig.data();
 	for (const auto& variable : m_environment)
@@ -331,7 +334,9 @@ void LaunchProfilesDialog::DrawList(CompanionSettings& settings, bool& changed)
 	if (ImGui::BeginPopup("Launch help"))
 	{
 		ImGui::TextUnformatted("Launching an app");
-		ImGui::TextDisabled("The runtime JSON and environment apply only to the launched app.");
+		ImGui::TextDisabled("Runtime selection is per app unless a private Proton prefix is selected.");
+		ImGui::TextDisabled(
+			"An explicit private Proton prefix keeps its selected runtime for all apps in that prefix.");
 		ImGui::TextDisabled("Arguments are passed as they are, without a shell.");
 		ImGui::TextDisabled("A script runs only after the new app exposes one running session.");
 		ImGui::TextDisabled("Closing the companion leaves the launched app running.");
@@ -424,6 +429,10 @@ bool LaunchProfilesDialog::DrawForm(CompanionSettings& settings, const LaunchSna
 	if (Section("Runtime and script"))
 	{
 		edited |= PathField("OpenXR runtime JSON", m_manifest, PathKind::File, Browse::Manifest, true);
+		edited |= PathField("Private Proton prefix (optional)", m_privateProtonPrefix, PathKind::Folder,
+							Browse::PrivateProtonPrefix, true);
+		ImGui::TextWrapped("For Proton, select the pfx folder prepared by prepare-proton-prefix.py. "
+						   "Launch registers this runtime for that private prefix.");
 		Label("Headset profile");
 		if (ImGui::BeginCombo("##Headset profile", m_headset[0] ? m_headset.data() : "Runtime default"))
 		{
@@ -465,7 +474,8 @@ bool LaunchProfilesDialog::DrawForm(CompanionSettings& settings, const LaunchSna
 	const bool valid = nameProblem.empty() && environmentProblem.empty() && profileProblem.empty() &&
 					   CheckPath(m_executable.data(), PathKind::Executable).empty() &&
 					   (!m_workingDirectory[0] || CheckPath(m_workingDirectory.data(), PathKind::Folder).empty()) &&
-					   (!m_manifest[0] || CheckPath(m_manifest.data(), PathKind::File).empty());
+					   (!m_manifest[0] || CheckPath(m_manifest.data(), PathKind::File).empty()) &&
+					   (!m_privateProtonPrefix[0] || CheckPath(m_privateProtonPrefix.data(), PathKind::Folder).empty());
 	const bool running = process.state == LaunchState::Starting || process.state == LaunchState::Running;
 	ImGui::BeginDisabled(!valid || running);
 	const bool launch = ImGui::Button("Test launch");

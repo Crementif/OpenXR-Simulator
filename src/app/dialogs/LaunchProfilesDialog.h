@@ -43,7 +43,8 @@ class LaunchProfilesDialog
 	{
 		Executable,
 		WorkingDirectory,
-		Manifest
+		Manifest,
+		PrivateProtonPrefix
 	};
 	struct FileResult;
 	void Load(const LaunchProfile& profile);
@@ -61,7 +62,7 @@ class LaunchProfilesDialog
 	std::uint64_t m_form = 0;
 	std::string m_storedName, m_problem, m_browseProblem;
 	std::vector<char> m_name;
-	std::vector<char> m_executable, m_workingDirectory, m_manifest, m_rig;
+	std::vector<char> m_executable, m_workingDirectory, m_manifest, m_rig, m_privateProtonPrefix;
 	std::vector<char> m_headset;
 	std::vector<char> m_arguments;
 	std::vector<std::string> m_originalArguments;

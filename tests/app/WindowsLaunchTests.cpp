@@ -8,6 +8,7 @@
 
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -88,6 +89,129 @@ struct ParentEnvironment
 		SetEnvironmentVariableW(name.c_str(), exists ? value.c_str() : nullptr);
 	}
 };
+struct RuntimeRegistration
+{
+	bool exists = false;
+	DWORD type = 0;
+	std::vector<std::byte> bytes;
+	bool operator==(const RuntimeRegistration&) const = default;
+};
+RuntimeRegistration ReadRuntimeRegistration(HKEY root)
+{
+	constexpr auto flags = RRF_RT_ANY | RRF_NOEXPAND | RRF_SUBKEY_WOW6464KEY;
+	constexpr auto key = L"SOFTWARE\\Khronos\\OpenXR\\1";
+	RuntimeRegistration result;
+	DWORD size = 0;
+	auto status = RegGetValueW(root, key, L"ActiveRuntime", flags, &result.type, nullptr, &size);
+	if (status == ERROR_FILE_NOT_FOUND || status == ERROR_PATH_NOT_FOUND)
+		return result;
+	Require(status == ERROR_SUCCESS, "Read runtime registration size");
+	result.exists = true;
+	result.bytes.resize(size);
+	status = RegGetValueW(root, key, L"ActiveRuntime", flags, &result.type, result.bytes.data(), &size);
+	Require(status == ERROR_SUCCESS && size == result.bytes.size(), "Read unchanged runtime registration");
+	return result;
+}
+RuntimeRegistration ManifestRegistration(const std::filesystem::path& path)
+{
+	const auto canonical = std::filesystem::canonical(path).native();
+	const auto* begin = reinterpret_cast<const std::byte*>(canonical.c_str());
+	return {true, REG_SZ, {begin, begin + (canonical.size() + 1) * sizeof(wchar_t)}};
+}
+void PrivatePrefixTests()
+{
+	Directory directory;
+	const auto invalidManifest = directory.path / L"invalid runtime 日本語.json";
+	{
+		std::ofstream output(invalidManifest, std::ios::binary);
+		output << "{}";
+		output.close();
+		Require(output.good(), "Write invalid runtime fixture");
+	}
+	const auto unowned = directory.path / L"unowned" / L"pfx";
+	std::filesystem::create_directories(unowned);
+	LaunchProfile profile;
+	profile.name = "Private prefix launch";
+	profile.executable = Utf8(Executable());
+	profile.workingDirectory = Utf8(directory.path);
+	profile.arguments = {"--private-prefix-child"};
+	profile.runtimeManifest = Utf8(invalidManifest);
+	profile.privateProtonPrefix = Utf8(unowned);
+	ProcessSupervisor processes;
+	ProcessLauncher launcher(processes);
+	const auto reject = [&](const LaunchProfile& requested, const char* reason)
+	{
+		const auto machine = ReadRuntimeRegistration(HKEY_LOCAL_MACHINE);
+		const auto user = ReadRuntimeRegistration(HKEY_CURRENT_USER);
+		Require(launcher.Launch(requested), "Admit private-prefix launch for validation");
+		const auto state = Terminal(launcher);
+		Require(ReadRuntimeRegistration(HKEY_LOCAL_MACHINE) == machine &&
+					ReadRuntimeRegistration(HKEY_CURRENT_USER) == user,
+				"Rejected private-prefix launch must preserve both runtime registrations");
+		Require(state.state == LaunchState::Failed && !state.process,
+				"Rejected private-prefix launch must not spawn a child");
+		if (state.detail.find(reason) == std::string::npos)
+			throw std::runtime_error("Unexpected private-prefix refusal: " + state.detail);
+	};
+	const auto ntdll = GetModuleHandleW(L"ntdll.dll");
+	const bool wine = ntdll && GetProcAddress(ntdll, "wine_get_version");
+	reject(profile, wine ? "ownership marker is missing" : "only inside Wine/Proton");
+
+	const auto selected = windows::Environment("SIMXR_PRIVATE_PROTON_TEST_PREFIX");
+	const auto other = windows::Environment("SIMXR_PRIVATE_PROTON_TEST_OTHER_PREFIX");
+	const auto manifest = windows::Environment("SIMXR_PRIVATE_PROTON_TEST_MANIFEST");
+	if (selected.empty() && other.empty() && manifest.empty())
+	{
+		std::cout << "Private Proton prefix qualification NOT EXERCISED: supply SIMXR_PRIVATE_PROTON_TEST_PREFIX, "
+					 "SIMXR_PRIVATE_PROTON_TEST_OTHER_PREFIX and SIMXR_PRIVATE_PROTON_TEST_MANIFEST\n";
+		return;
+	}
+	Require(wine && !selected.empty() && !other.empty() && !manifest.empty(),
+			"Private-prefix qualification needs Wine and all three provisioned fixture paths");
+	for (const auto& text : {selected, other})
+	{
+		const std::filesystem::path prefix(windows::Wide(text));
+		Require(std::filesystem::is_regular_file(prefix / L".simxr-private-proton") &&
+					std::filesystem::is_regular_file(prefix.parent_path() / L".simxr-private-proton"),
+				"Private-prefix fixture must already have both provisioner ownership markers");
+	}
+	profile.runtimeManifest = manifest;
+	profile.privateProtonPrefix = other;
+	reject(profile, "not the companion's current prefix");
+	profile.privateProtonPrefix = selected;
+	profile.runtimeManifest = Utf8(invalidManifest);
+	reject(profile, "requires the generated simulator runtime manifest");
+	profile.runtimeManifest = manifest;
+	for (const auto* variable : {"wineprefix", "Steam_Compat_Data_Path"})
+	{
+		profile.environment = {{variable, other}};
+		reject(profile, "cannot override");
+	}
+	profile.environment.clear();
+	const auto executable = profile.executable;
+	profile.executable = Utf8(directory.path / L"missing.exe");
+	reject(profile, "executable");
+	profile.executable = executable;
+	profile.workingDirectory = Utf8(directory.path / L"missing directory");
+	reject(profile, "directory");
+	profile.workingDirectory = Utf8(directory.path);
+
+	ParentEnvironment runtimeEnvironment(L"XR_RUNTIME_JSON");
+	Require(SetEnvironmentVariableW(L"XR_RUNTIME_JSON", L"parent runtime must remain unchanged"),
+			"Set parent runtime sentinel");
+	profile.environment = {{"XR_RUNTIME_JSON", "ignored child override"}, {"SIMXR_EXPECTED_PRIVATE_RUNTIME", manifest}};
+	const auto user = ReadRuntimeRegistration(HKEY_CURRENT_USER);
+	Require(launcher.Launch(profile), "Admit explicitly provisioned private-prefix launch");
+	const auto state = Terminal(launcher);
+	Require(state.state == LaunchState::Exited && state.exitCode == 41 && state.process,
+			"Private-prefix child must observe selected registration with no runtime environment override");
+	Require(ReadRuntimeRegistration(HKEY_LOCAL_MACHINE) == ManifestRegistration(windows::Wide(manifest)),
+			"Private-prefix launch registers the canonical generated manifest");
+	Require(ReadRuntimeRegistration(HKEY_CURRENT_USER) == user &&
+				windows::Environment("XR_RUNTIME_JSON") == "parent runtime must remain unchanged",
+			"Private-prefix launch preserves user registration and parent environment");
+	std::cout << "Private Proton prefix refusals and child runtime selection passed\n";
+}
 void DiscoveryTests()
 {
 	const auto endpoint =
@@ -233,6 +357,15 @@ int wmain(int argc, wchar_t** argv)
 	{
 		if (argc > 1 && std::wstring_view(argv[1]) == L"--literal-child")
 			return Child(argc, argv);
+		if (argc == 2 && std::wstring_view(argv[1]) == L"--private-prefix-child")
+		{
+			const auto manifest = windows::Environment("SIMXR_EXPECTED_PRIVATE_RUNTIME");
+			Require(!manifest.empty() && windows::Environment("XR_RUNTIME_JSON").empty(),
+					"Private-prefix child must use registration without an inherited runtime override");
+			Require(ReadRuntimeRegistration(HKEY_LOCAL_MACHINE) == ManifestRegistration(windows::Wide(manifest)),
+					"Private-prefix child observes the selected generated runtime manifest");
+			return 41;
+		}
 		if (argc == 2 && std::wstring_view(argv[1]) == L"--surviving-child")
 		{
 			Sleep(1500);
@@ -240,6 +373,7 @@ int wmain(int argc, wchar_t** argv)
 			return 0;
 		}
 		LaunchTests();
+		PrivatePrefixTests();
 		DiscoveryTests();
 		bool rejected = false;
 		try

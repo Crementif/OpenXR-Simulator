@@ -20,6 +20,7 @@ struct LaunchProfile
 	std::vector<std::pair<std::string, std::string>> environment;
 	std::string headsetProfile;
 	std::string rig;
+	std::string privateProtonPrefix;
 	bool operator==(const LaunchProfile&) const = default;
 };
 void ValidateLaunchProfile(const LaunchProfile& profile);
