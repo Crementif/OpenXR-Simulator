@@ -53,6 +53,9 @@ def main():
                     if status['phase'] != 'complete':
                         raise RuntimeError(status)
                     descriptor = image['image_descriptor']
+                    channels = {37: (0, 1, 2), 43: (0, 1, 2), 44: (2, 1, 0), 50: (2, 1, 0)}.get(descriptor['format'])
+                    if channels is None:
+                        raise RuntimeError('PPM export requires an RGBA8 or BGRA8 color image')
                     width, height = descriptor['width'], descriptor['height']
                     expected = width * height * 4
                     if not 0 < expected <= 128 * 1024 * 1024 or status['total_bytes'] != expected:
@@ -67,10 +70,10 @@ def main():
                             raise RuntimeError('Incomplete export')
                         pixels.extend(chunk['bytes'])
                     rgb = bytearray(width * height * 3)
-                    for channel in range(3):
-                        rgb[channel::3] = pixels[channel::4]
+                    for channel, source in enumerate(channels):
+                        rgb[channel::3] = pixels[source::4]
                     (args.output / 'image.ppm').write_bytes(f'P6\n{width} {height}\n255\n'.encode() + rgb)
-                    (args.output / 'metadata.json').write_text(json.dumps(metadata, indent=2, default=json_value) + '\n')
+                    (args.output / 'metadata.json').write_text(json.dumps(metadata, indent=2, default=json_value) + '\n', encoding='utf-8')
                 finally:
                     client.release_export(ticket)
             finally:

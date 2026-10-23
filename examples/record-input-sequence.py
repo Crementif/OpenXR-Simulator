@@ -55,9 +55,9 @@ def main():
                 client.release_control(session)
         recording = collect_recording(client, session)
         script = to_luau(recording)
-        with args.output.open('x') as stream:
+        with args.output.open('x', encoding='utf-8', newline='\n') as stream:
             stream.write(script)
-        with args.output.with_suffix('.json').open('x') as stream:
+        with args.output.with_suffix('.json').open('x', encoding='utf-8', newline='\n') as stream:
             json.dump({'recording': recording, 'applied': outcomes}, stream, indent=2)
             stream.write('\n')
         print(f'Saved {args.output}; seed={recording["seed"]}; transactions={recording["total"]}')

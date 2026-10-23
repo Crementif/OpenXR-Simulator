@@ -2,6 +2,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import runpy
 import struct
 import subprocess
 import sys
@@ -9,7 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'sdk/python'))
 from simxr_control import (Client, CommandKind, ControlError, ControlTimeout, ErrorCode,
@@ -20,11 +21,40 @@ HOST = None
 
 
 class FrameRecordingTests(unittest.TestCase):
+    def test_retained_image_example_preserves_color_order(self):
+        main = runpy.run_path(str(Path(__file__).resolve().parents[2] / 'examples/inspect-retained-image.py'))['main']
+        for format, pixels in ((37, b'\x11\x22\x33\xff'), (44, b'\x33\x22\x11\xff'), (64, b'1234')):
+            with self.subTest(format=format), tempfile.TemporaryDirectory() as temporary:
+                client = MagicMock()
+                client.__enter__.return_value = client
+                client.sessions.return_value = [Session(1, 1)]
+                client.retain_image.return_value = {'image_reader_id': 1}
+                client.image_info.return_value = {'capture_id': 9, 'frame': {'frame_id': 17},
+                                                  'image_descriptor': {'width': 1, 'height': 1, 'format': format}}
+                client.inspect.return_value = {'inspection_id': 2, 'document': {}}
+                client.start_export.return_value = {'export_id': 3}
+                client.export_info.return_value = {'phase': 'complete', 'total_bytes': 4}
+                client.read_export.return_value = {'offset': 0, 'bytes': pixels}
+                directory = Path(temporary) / 'export'
+                with patch.dict(main.__globals__, Client=lambda *args, **kwargs: client), \
+                        patch.object(sys, 'argv', ['inspect-retained-image', 'endpoint', '9', str(directory)]), \
+                        patch('builtins.print'):
+                    if format == 64:
+                        with self.assertRaisesRegex(RuntimeError, 'RGBA8 or BGRA8'):
+                            main()
+                        self.assertFalse((directory / 'image.ppm').exists())
+                    else:
+                        main()
+                        self.assertEqual((directory / 'image.ppm').read_bytes(), b'P6\n1 1\n255\n\x11\x22\x33')
+                client.release_export.assert_called_once_with(3)
+                client.release_inspection.assert_called_once_with(2)
+                client.release_image.assert_called_once_with(1)
+
     def test_recording_cleanup_and_export_bounds(self):
         from simxr_control import record_frames
         from simxr_control.protocol import Capability
 
-        for failure in (None, 'stop', 'reader', 'chunk'):
+        for failure in (None, 'stop', 'reader', 'chunk', 'read_timeout'):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
                 client = Mock()
                 client.status.return_value = {
@@ -43,22 +73,30 @@ class FrameRecordingTests(unittest.TestCase):
                                                'frame': {'frame_id': 1}, 'image_available': True}
                 client.inspect.return_value = {'inspection_id': 2, 'document': {'frame_id': 1}}
                 client.retain_image.return_value = {'image_reader_id': 3}
-                client.image_info.return_value = {'image_descriptor': {'width': 1, 'height': 1, 'array_layers': 1}}
+                client.image_info.return_value = {'image_descriptor': {'width': 1, 'height': 1, 'array_layers': 1, 'format': 37}}
                 client.start_export.return_value = {'export_id': 4}
                 client.export_info.return_value = {'phase': 'complete', 'total_bytes': 4}
                 client.read_export.return_value = {'offset': 0, 'bytes': b'12345' if failure == 'chunk' else b'1234'}
                 if failure == 'reader':
                     client.release_image.side_effect = RuntimeError('reader release failed')
+                clock = [0.0]
+                if failure == 'read_timeout':
+                    def slow_read(*_):
+                        clock[0] += 16
+                        return {'offset': 0, 'bytes': b'1'}
+                    client.read_export.side_effect = slow_read
                 directory = Path(temporary) / 'frames'
-                if failure:
-                    with self.assertRaises(RuntimeError):
-                        record_frames(client, Session(1, 1), directory, 1, mode='realtime', max_frame_bytes=4)
-                else:
-                    result = record_frames(client, Session(1, 1), directory, 1, mode='realtime', max_frame_bytes=4)
-                    self.assertEqual(result['phase'], 'complete')
+                with patch('simxr_control.frame_recording.time.monotonic', side_effect=lambda: clock[0]):
+                    if failure:
+                        expected_error = TimeoutError if failure == 'read_timeout' else RuntimeError
+                        with self.assertRaises(expected_error):
+                            record_frames(client, Session(1, 1), directory, 1, mode='realtime', max_frame_bytes=4)
+                    else:
+                        result = record_frames(client, Session(1, 1), directory, 1, mode='realtime', max_frame_bytes=4)
+                        self.assertEqual(result['phase'], 'complete')
                 summary = json.loads((directory / 'recording.json').read_text())
                 self.assertEqual(summary['phase'], 'failed' if failure else 'complete')
-                self.assertEqual(summary['persisted'], 0 if failure == 'chunk' else 1)
+                self.assertEqual(summary['persisted'], 0 if failure in ('chunk', 'read_timeout') else 1)
                 if failure:
                     self.assertIn('error', summary)
                 client.release_export.assert_called_once_with(4)
@@ -66,7 +104,7 @@ class FrameRecordingTests(unittest.TestCase):
                 client.release_inspection.assert_called_once_with(2)
                 self.assertTrue(any(call.args[1] == CommandKind.RELEASE for call in client.submit.call_args_list))
                 client.relinquish.assert_called_once_with('lease')
-                if failure == 'chunk':
+                if failure in ('chunk', 'read_timeout'):
                     self.assertFalse(list(directory.glob('*.rgba')))
                 else:
                     self.assertEqual(next(directory.glob('*.rgba')).read_bytes(), b'1234')
@@ -139,6 +177,89 @@ class ProtocolTests(unittest.TestCase):
                 Field(Tag.DETAIL, value).as_text()
         future = Message(1, 1, minor=100)
         self.assertEqual(Message.decode(future.encode()).minor, 100)
+
+    def test_close_interrupts_an_unfinished_exchange(self):
+        with tempfile.TemporaryDirectory(prefix='simxr-sdk-close-') as temporary:
+            path = str(Path(temporary) / 'control.sock')
+            listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            listener.bind(path)
+            os.chmod(path, 0o600)
+            listener.listen(1)
+            waiting, finish, closed = threading.Event(), threading.Event(), threading.Event()
+            errors, request_errors = [], []
+
+            def read(connection):
+                packet = bytearray()
+                expected = HEADER.size
+                while len(packet) < expected:
+                    chunk = connection.recv(expected - len(packet))
+                    if not chunk:
+                        raise ConnectionError('Fixture peer closed before its request')
+                    packet.extend(chunk)
+                    if len(packet) == HEADER.size:
+                        expected = Message.size(packet)
+                return Message.decode(packet)
+
+            def serve():
+                try:
+                    with listener.accept()[0] as connection:
+                        connection.settimeout(3)
+                        hello = read(connection)
+                        connection.sendall(Message(hello.opcode, hello.request_id,
+                                                   (Field.u32(Tag.ERROR, 0),), flags=1).encode())
+                        request = read(connection)
+                        reply = Message(request.opcode, request.request_id,
+                                        (Field.u32(Tag.ERROR, 0),), flags=1).encode()
+                        connection.sendall(reply[:HEADER.size + 2])
+                        waiting.set()
+                        finish.wait(3)
+                except BaseException as error:
+                    errors.append(error)
+
+            server = threading.Thread(target=serve)
+            server.start()
+            client = None
+            request = closer = None
+            try:
+                client = Client(path, timeout=5)
+
+                def exchange():
+                    try:
+                        client.request(OpCode.SESSIONS)
+                    except BaseException as error:
+                        request_errors.append(error)
+
+                def close():
+                    try:
+                        client.close()
+                    finally:
+                        closed.set()
+
+                request = threading.Thread(target=exchange)
+                request.start()
+                self.assertTrue(waiting.wait(1), 'Fixture never reached the partial response')
+                closer = threading.Thread(target=close)
+                closer.start()
+                self.assertTrue(closed.wait(1), 'Close waited for the exchange timeout instead of interrupting IO')
+                request.join(1)
+                self.assertFalse(request.is_alive())
+                self.assertEqual(len(request_errors), 1)
+                self.assertIsInstance(request_errors[0], (ConnectionError, OSError))
+                self.assertNotIsInstance(request_errors[0], ControlTimeout)
+                with self.assertRaises(ConnectionError):
+                    client.request(OpCode.SESSIONS)
+            finally:
+                finish.set()
+                listener.close()
+                server.join(4)
+                if request is not None:
+                    request.join(4)
+                if closer is not None:
+                    closer.join(4)
+                if client is not None:
+                    client.close()
+            self.assertFalse(server.is_alive())
+            self.assertEqual(errors, [])
 
     def test_partial_timeout_preserves_single_exchange(self):
         with tempfile.TemporaryDirectory(prefix='simxr-sdk-') as temporary:

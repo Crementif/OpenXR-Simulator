@@ -20,8 +20,8 @@ def _write_frame(directory, metadata, images):
     stem = f'frame-{frame:020d}'
     for layer, pixels in enumerate(images):
         (directory / f'{stem}-{layer}.rgba').write_bytes(pixels)
-    (directory / f'{stem}.json').write_text(json.dumps(metadata, indent=2, default=_json) + '\n')
-    with (directory / 'frames.jsonl').open('a') as index:
+    (directory / f'{stem}.json').write_text(json.dumps(metadata, indent=2, default=_json) + '\n', encoding='utf-8')
+    with (directory / 'frames.jsonl').open('a', encoding='utf-8') as index:
         index.write(json.dumps({'frame_id': frame, 'metadata': f'{stem}.json', 'images': len(images)}) + '\n')
 
 
@@ -242,6 +242,8 @@ def record_frames(client, session, directory, count, *, mode, target=TargetKind.
                                 pixels = bytearray()
                                 while len(pixels) < expected:
                                     pulse()
+                                    if time.monotonic() >= deadline:
+                                        raise TimeoutError('Explicit frame read did not complete')
                                     chunk = client.read_export(ticket, len(pixels), 64000)
                                     if (chunk['offset'] != len(pixels) or not chunk['bytes']
                                             or len(chunk['bytes']) > expected - len(pixels)):
@@ -280,5 +282,5 @@ def record_frames(client, session, directory, count, *, mode, target=TargetKind.
         raise
     finally:
         summary.update(persisted=writer.written, first_frame=first, last_frame=last)
-        (directory / 'recording.json').write_text(json.dumps(summary, indent=2) + '\n')
+        (directory / 'recording.json').write_text(json.dumps(summary, indent=2) + '\n', encoding='utf-8')
     return summary

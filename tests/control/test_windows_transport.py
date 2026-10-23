@@ -3,9 +3,10 @@ import ctypes
 from pathlib import Path
 import socket
 import sys
+import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'sdk/python'))
 from simxr_control import windows_transport as transport
@@ -133,6 +134,30 @@ class WindowsOwnershipTests(unittest.TestCase):
                 transport._validate(path)
 
 
+class WindowsDiscoveryTests(unittest.TestCase):
+    def test_enumeration_distinguishes_end_from_native_failure(self):
+        for error in (18, 5):
+            with self.subTest(error=error):
+                kernel = Mock()
+
+                def first(_, data):
+                    data._obj.name = 'SimXR.Control.model'
+                    return 9
+
+                kernel.FindFirstFileW.side_effect = first
+                kernel.FindNextFileW.return_value = False
+                with patch.object(transport, '_api', return_value=(kernel, object())), \
+                        patch.object(ctypes, 'get_last_error', return_value=error, create=True), \
+                        patch.object(ctypes, 'WinError', side_effect=lambda code: OSError(code, 'native failure'), create=True):
+                    if error == 18:
+                        self.assertEqual(transport.discover(), [r'\\.\pipe\SimXR.Control.model'])
+                    else:
+                        with self.assertRaises(OSError) as raised:
+                            transport.discover()
+                        self.assertEqual(raised.exception.errno, error)
+                kernel.FindClose.assert_called_once_with(9)
+
+
 class FramedPipe:
     def __init__(self):
         self.sent, self.reply = bytearray(), bytearray()
@@ -170,6 +195,59 @@ class FramedPipe:
 
 
 class WindowsSdkWireTests(unittest.TestCase):
+    def test_packet_close_interrupts_pending_pipe_read(self):
+        class BlockedPipe(FramedPipe):
+            def __init__(self):
+                super().__init__()
+                self.waiting = threading.Event()
+                self.stopping = threading.Event()
+
+            def recvmsg(self, count):
+                if self.opcodes[-1] == OpCode.SESSIONS:
+                    self.waiting.set()
+                    self.stopping.wait(3)
+                    raise ConnectionError('Control pipe is closing')
+                return super().recvmsg(count)
+
+            def shutdown(self, *_):
+                self.stopping.set()
+                super().shutdown()
+
+        pipe = BlockedPipe()
+        errors, closed = [], threading.Event()
+        with patch.object(packets.os, 'name', 'nt'), patch.object(transport, 'NamedPipeSocket', return_value=pipe):
+            client = sdk.Client(r'\\.\pipe\SimXR.Control.model', timeout=5)
+
+            def exchange():
+                try:
+                    client.request(OpCode.SESSIONS)
+                except BaseException as error:
+                    errors.append(error)
+
+            def close():
+                try:
+                    client.close()
+                finally:
+                    closed.set()
+
+            request = threading.Thread(target=exchange)
+            closer = threading.Thread(target=close)
+            try:
+                request.start()
+                self.assertTrue(pipe.waiting.wait(1))
+                closer.start()
+                self.assertTrue(closed.wait(1), 'Packet lock prevented pipe cancellation')
+            finally:
+                pipe.stopping.set()
+                request.join(4)
+                if closer.ident is not None:
+                    closer.join(4)
+                client.close()
+            self.assertFalse(request.is_alive())
+            self.assertEqual(len(errors), 1)
+            self.assertIsInstance(errors[0], ConnectionError)
+            self.assertTrue(pipe.closed)
+
     def test_client_uses_pipe_framing_without_unix_stat_or_fd_duplication(self):
         pipe = FramedPipe()
         with patch.object(packets.os, 'name', 'nt'), patch.object(transport, 'NamedPipeSocket', return_value=pipe), \

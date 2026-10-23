@@ -232,6 +232,7 @@ class PacketConnection:
         self._next_request = 1
         self._pending = None
         self._closed = False
+        self._closing = threading.Event()
         if os.name == 'nt':
             from .windows_transport import NamedPipeSocket
             self._socket = NamedPipeSocket()
@@ -250,10 +251,17 @@ class PacketConnection:
             raise
 
     def close(self):
+        self._closing.set()
+        # Wake native IO before waiting for the exchange to release its owners.
+        try:
+            self._socket.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
         with self._lock:
             self._close()
 
     def _close(self):
+        self._closing.set()
         if not self._closed:
             self._closed = True
             try:
@@ -267,7 +275,7 @@ class PacketConnection:
 
     def request(self, opcode, fields=(), *, handles=()):
         with self._lock:
-            if self._closed:
+            if self._closed or self._closing.is_set():
                 raise ConnectionError('Control connection closed')
             if self._pending is not None:
                 raise ControlTimeout(self._pending.request.request_id)
@@ -287,7 +295,7 @@ class PacketConnection:
 
     def retry(self):
         with self._lock:
-            if self._closed or self._pending is None:
+            if self._closed or self._closing.is_set() or self._pending is None:
                 raise ValueError('No unfinished exchange')
             return self._complete()
 

@@ -105,7 +105,12 @@ def discover():
                 result.append(candidate)
             except ValueError:
                 pass
-            if len(result) == 64 or not kernel.FindNextFileW(search, ctypes.byref(found)):
+            if len(result) == 64:
+                break
+            if not kernel.FindNextFileW(search, ctypes.byref(found)):
+                error = ctypes.get_last_error()
+                if error != 18:  # ERROR_NO_MORE_FILES
+                    raise ctypes.WinError(error)
                 break
     finally:
         kernel.FindClose(search)
