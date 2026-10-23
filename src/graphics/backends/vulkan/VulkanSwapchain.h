@@ -4,7 +4,11 @@
 #include "graphics/backends/vulkan/VulkanBackend.h"
 #include "graphics/backends/vulkan/VulkanReadbackBatch.h"
 
+#include <cstdint>
+#include <memory>
+#include <optional>
 #include <span>
+#include <vector>
 
 namespace simxr
 {

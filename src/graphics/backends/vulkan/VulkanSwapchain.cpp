@@ -1,23 +1,21 @@
-#include "Pch.h"
-#define XR_USE_GRAPHICS_API_VULKAN
 #include "graphics/backends/vulkan/VulkanSwapchain.h"
+
+#include "Pch.h"
+
+#define XR_USE_GRAPHICS_API_VULKAN
 #include <openxr/openxr_platform.h>
 
-#include <algorithm>
-#include <array>
 #include <bit>
 
 namespace simxr
 {
-namespace
-{
-bool DepthFormat(VkFormat format)
+static bool DepthFormat(VkFormat format)
 {
 	return format == VK_FORMAT_D32_SFLOAT || format == VK_FORMAT_D24_UNORM_S8_UINT || format == VK_FORMAT_D16_UNORM ||
 		   format == VK_FORMAT_D32_SFLOAT_S8_UINT;
 }
 
-XrResult ValidateDescription(const XrSwapchainCreateInfo& description, const VulkanDevice& device)
+static XrResult ValidateDescription(const XrSwapchainCreateInfo& description, const VulkanDevice& device)
 {
 	if (description.type != XR_TYPE_SWAPCHAIN_CREATE_INFO || !description.width || !description.height ||
 		!description.arraySize || !description.sampleCount || !description.mipCount || !description.usageFlags ||
@@ -28,8 +26,7 @@ XrResult ValidateDescription(const XrSwapchainCreateInfo& description, const Vul
 		XR_SWAPCHAIN_USAGE_UNORDERED_ACCESS_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT |
 		XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
 	if ((description.createFlags & ~XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) ||
-		(description.usageFlags & ~SupportedUsage) ||
-		description.faceCount != 1)
+		(description.usageFlags & ~SupportedUsage) || description.faceCount != 1)
 		return XR_ERROR_FEATURE_UNSUPPORTED;
 	if (!std::has_single_bit(description.sampleCount) || description.sampleCount > 64 ||
 		(description.sampleCount != 1 && description.mipCount != 1))
@@ -39,7 +36,8 @@ XrResult ValidateDescription(const XrSwapchainCreateInfo& description, const Vul
 	if (description.width > properties.limits.maxImageDimension2D ||
 		description.height > properties.limits.maxImageDimension2D ||
 		description.arraySize > properties.limits.maxImageArrayLayers ||
-		description.mipCount > std::bit_width(std::max(description.width, description.height)))
+		description.mipCount >
+			static_cast<std::uint32_t>(std::bit_width(std::max(description.width, description.height))))
 		return XR_ERROR_VALIDATION_FAILURE;
 	const auto formats = VulkanSwapchain::Formats();
 	if (std::find(formats.begin(), formats.end(), description.format) == formats.end())
@@ -47,7 +45,7 @@ XrResult ValidateDescription(const XrSwapchainCreateInfo& description, const Vul
 	return XR_SUCCESS;
 }
 
-VkImageUsageFlags ImageUsage(const XrSwapchainCreateInfo& description)
+static VkImageUsageFlags ImageUsage(const XrSwapchainCreateInfo& description)
 {
 	VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 	if (description.usageFlags & XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT)
@@ -61,7 +59,6 @@ VkImageUsageFlags ImageUsage(const XrSwapchainCreateInfo& description)
 		usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
 	return usage;
 }
-} // namespace
 
 VulkanSwapchain::VulkanSwapchain(XrSwapchainCreateInfo description)
 	: m_description(description), m_images(description.createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT ? 1 : 3),
@@ -72,10 +69,17 @@ VulkanSwapchain::VulkanSwapchain(XrSwapchainCreateInfo description)
 
 std::span<const std::int64_t> VulkanSwapchain::Formats()
 {
-	static constexpr std::array<std::int64_t, 11> s_formats{
-		VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_UNORM,	  VK_FORMAT_B8G8R8A8_SRGB, VK_FORMAT_B8G8R8A8_UNORM,
-		VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R32G32B32A32_SFLOAT, VK_FORMAT_A2B10G10R10_UNORM_PACK32,
-		VK_FORMAT_D32_SFLOAT,	 VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D16_UNORM, VK_FORMAT_D32_SFLOAT_S8_UINT};
+	static constexpr std::array<std::int64_t, 11> s_formats{VK_FORMAT_R8G8B8A8_SRGB,
+															VK_FORMAT_R8G8B8A8_UNORM,
+															VK_FORMAT_B8G8R8A8_SRGB,
+															VK_FORMAT_B8G8R8A8_UNORM,
+															VK_FORMAT_R16G16B16A16_SFLOAT,
+															VK_FORMAT_R32G32B32A32_SFLOAT,
+															VK_FORMAT_A2B10G10R10_UNORM_PACK32,
+															VK_FORMAT_D32_SFLOAT,
+															VK_FORMAT_D24_UNORM_S8_UINT,
+															VK_FORMAT_D16_UNORM,
+															VK_FORMAT_D32_SFLOAT_S8_UINT};
 	return s_formats;
 }
 
@@ -97,19 +101,18 @@ XrResult VulkanSwapchain::Create(VulkanBackend& backend, const XrSwapchainCreate
 	if (DepthFormat(static_cast<VkFormat>(description.format)) && !(usage & VK_IMAGE_USAGE_SAMPLED_BIT))
 	{
 		VkImageFormatProperties properties{};
-		if (vkGetPhysicalDeviceImageFormatProperties(backend.Device()->binding.physicalDevice,
-			static_cast<VkFormat>(description.format), VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
-			usage | VK_IMAGE_USAGE_SAMPLED_BIT, 0, &properties) == VK_SUCCESS &&
+		if (vkGetPhysicalDeviceImageFormatProperties(
+				backend.Device()->binding.physicalDevice, static_cast<VkFormat>(description.format), VK_IMAGE_TYPE_2D,
+				VK_IMAGE_TILING_OPTIMAL, usage | VK_IMAGE_USAGE_SAMPLED_BIT, 0, &properties) == VK_SUCCESS &&
 			description.width <= properties.maxExtent.width && description.height <= properties.maxExtent.height &&
 			description.arraySize <= properties.maxArrayLayers && description.mipCount <= properties.maxMipLevels &&
 			(properties.sampleCounts & description.sampleCount))
 			usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
 	}
 	for (auto& image : prepared->m_images)
-		image.resource =
-			backend.CreateImage(static_cast<VkFormat>(description.format), {description.width, description.height},
-								description.arraySize, usage, description.mipCount,
-								static_cast<VkSampleCountFlagBits>(description.sampleCount));
+		image.resource = backend.CreateImage(
+			static_cast<VkFormat>(description.format), {description.width, description.height}, description.arraySize,
+			usage, description.mipCount, static_cast<VkSampleCountFlagBits>(description.sampleCount));
 	output = std::move(prepared);
 	return XR_SUCCESS;
 }

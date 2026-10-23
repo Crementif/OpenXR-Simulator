@@ -1,8 +1,8 @@
 #include "graphics/backends/vulkan/VulkanResources.h"
 
-#include <algorithm>
+#include "Pch.h"
+
 #include <bit>
-#include <utility>
 
 namespace simxr
 {
@@ -14,7 +14,7 @@ std::shared_ptr<VulkanImage> VulkanImage::Create(std::shared_ptr<VulkanDevice> d
 												 VkDeviceSize allocationLimit)
 {
 	if (!device || !extent.width || !extent.height || !layers || !usage || !mipLevels ||
-		mipLevels > std::bit_width(std::max(extent.width, extent.height)) ||
+		mipLevels > static_cast<std::uint32_t>(std::bit_width(std::max(extent.width, extent.height))) ||
 		!std::has_single_bit(static_cast<std::uint32_t>(samples)) ||
 		(samples != VK_SAMPLE_COUNT_1_BIT && mipLevels != 1))
 		throw std::invalid_argument("Vulkan image requires device, extent, layers and usage");
@@ -23,8 +23,7 @@ std::shared_ptr<VulkanImage> VulkanImage::Create(std::shared_ptr<VulkanDevice> d
 														 VK_IMAGE_TILING_OPTIMAL, usage, 0, &supported),
 				"Query Vulkan image format and usage");
 	if (extent.width > supported.maxExtent.width || extent.height > supported.maxExtent.height ||
-		layers > supported.maxArrayLayers || mipLevels > supported.maxMipLevels ||
-		!(supported.sampleCounts & samples))
+		layers > supported.maxArrayLayers || mipLevels > supported.maxMipLevels || !(supported.sampleCounts & samples))
 		throw VulkanError(VK_ERROR_FORMAT_NOT_SUPPORTED, "Vulkan image extent or layers unsupported");
 	auto result = std::shared_ptr<VulkanImage>(new VulkanImage(std::move(device)));
 	result->format = format;

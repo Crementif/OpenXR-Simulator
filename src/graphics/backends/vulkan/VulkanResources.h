@@ -2,6 +2,7 @@
 
 #include "graphics/backends/vulkan/VulkanDevice.h"
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 
