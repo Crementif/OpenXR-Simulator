@@ -678,10 +678,17 @@ inline void SaveSettings() {
     std::string json = SerializeSettings();
     if (json == g_lastSettingsJson) return;
 
+    auto temporary = g_settingsPath;
+    temporary += L".tmp." + std::to_wstring(GetCurrentProcessId());
     FILE* f = nullptr;
-    if (_wfopen_s(&f, g_settingsPath.c_str(), L"w") != 0 || !f) return;
-    fwrite(json.data(), 1, json.size(), f);
-    fclose(f);
+    if (_wfopen_s(&f, temporary.c_str(), L"wb") != 0 || !f) return;
+    const bool written = fwrite(json.data(), 1, json.size(), f) == json.size();
+    const bool closed = fclose(f) == 0;
+    if (!written || !closed ||
+        !MoveFileExW(temporary.c_str(), g_settingsPath.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        DeleteFileW(temporary.c_str());
+        return;
+    }
     g_lastSettingsJson = std::move(json);
 }
 
@@ -757,6 +764,7 @@ inline void LoadSettings(const std::filesystem::path& dataDir) {
     }
 
     g_settingsPath = std::move(path);
+    g_lastSettingsJson.clear();
 }
 
 // Dark mode colors

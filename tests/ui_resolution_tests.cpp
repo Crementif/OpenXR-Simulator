@@ -124,6 +124,30 @@ int main() {
     Check(width == 1280 && MatchesFovAspect(width, height) && ui::g_uiState.fitToWindow,
           "older settings migrate to the performance resolution and fit mode");
 
+    const auto settingsDirectory = std::filesystem::temp_directory_path() /
+        (L"simxr-settings-" + std::to_wstring(GetCurrentProcessId()));
+    std::filesystem::create_directory(settingsDirectory);
+    ui::LoadSettings(settingsDirectory);
+    ui::SaveSettings();
+    const auto saved = ui::g_lastSettingsJson;
+    auto temporary = ui::g_settingsPath;
+    temporary += L".tmp." + std::to_wstring(GetCurrentProcessId());
+    std::filesystem::create_directory(temporary);
+    ui::g_uiState.showStats = !ui::g_uiState.showStats;
+    ui::SaveSettings();
+    Check(!saved.empty() && ui::g_lastSettingsJson == saved,
+          "failed settings save preserves the successful-save cache");
+    std::filesystem::remove(temporary);
+    ui::SaveSettings();
+    Check(ui::g_lastSettingsJson == ui::SerializeSettings() && ui::g_lastSettingsJson != saved,
+          "failed settings save can retry and replace the previous destination");
+    const auto expectedStats = ui::g_uiState.showStats;
+    ui::g_uiState.showStats = !expectedStats;
+    ui::LoadSettings(settingsDirectory);
+    Check(ui::g_uiState.showStats == expectedStats, "replacement settings can be reloaded");
+    ui::g_settingsPath.clear();
+    std::filesystem::remove_all(settingsDirectory);
+
     if (failures != 0) return 1;
     std::puts("ui_resolution_tests: PASS");
     return 0;
