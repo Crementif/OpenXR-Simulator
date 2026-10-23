@@ -151,13 +151,13 @@ void RuntimePanels::DrawDevicePage(ShellState& shell)
 	{
 		// The page keeps its title, greyed; the preview's Open app is the one way in.
 		ImGui::BeginDisabled();
-		m_devices.DrawHeader(shell.selection);
+		m_devices.DrawHeader(shell.selection, false);
 		ImGui::EndDisabled();
 		ImGui::TextDisabled("Values appear once an app connects");
 		return;
 	}
 	ImGui::BeginDisabled(m_replayPreparation.has_value() || !m_view.time.following || !m_session.SupportsEdits());
-	if (auto edit = m_devices.DrawHeader(shell.selection))
+	if (auto edit = m_devices.DrawHeader(shell.selection, m_view.time.following))
 		SubmitEdit(*edit);
 	ImGui::EndDisabled();
 	m_spatial.DrawRigView(shell.selection);

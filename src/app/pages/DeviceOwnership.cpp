@@ -1,7 +1,7 @@
 #include "Pch.h"
-#include "app/widgets/Theme.h"
 #include "app/pages/DeviceControlPanel.h"
 #include "app/widgets/Controls.h"
+#include "app/widgets/Theme.h"
 #include <imgui.h>
 
 namespace simxr::app
@@ -67,7 +67,7 @@ void DeviceControlPanel::DrawOwnership()
 		m_edit = ReleaseManualInputs{};
 	ImGui::TextUnformatted("Channel ownership");
 }
-void DeviceControlPanel::DrawTracking(DevicePage page)
+void DeviceControlPanel::DrawTracking(DevicePage page, float titleWidth)
 {
 	// A device's failure scenarios as one switch: lost tracking, or the device gone.
 	std::optional<FailureScenario> lost, off;
@@ -113,10 +113,27 @@ void DeviceControlPanel::DrawTracking(DevicePage page)
 	const int last = static_cast<int>(labels.size()) - 1;
 	const int current = active(off) ? last : active(lost) ? 1 : 0;
 	const auto channel = ScenarioInputChannel(*off);
-	ImGui::BeginDisabled(!CanControl(channel));
+	float labelWidth = 0;
+	for (const auto* label : labels)
+		labelWidth = std::max(labelWidth, ImGui::CalcTextSize(label).x);
+	const auto& style = ImGui::GetStyle();
+	const float width = (labelWidth + style.FramePadding.x * 2) * labels.size();
+	const float available = ImGui::GetContentRegionAvail().x;
+	if (titleWidth + width + ImGui::GetFrameHeight() + style.ItemSpacing.x * 2 <= available)
+		ImGui::SameLine(ImGui::GetCursorPosX() + available - ImGui::GetFrameHeight() - style.ItemSpacing.x - width);
+	ImGui::BeginDisabled(!m_configurationLoaded || !CanControl(channel));
 	ImGui::PushID("Tracking");
-	FieldLabel(lost ? "Tracking" : "Connection");
-	const int choice = Segmented(labels, current, ImGui::GetContentRegionAvail().x, tips);
+	int choice = -1;
+	if (width <= available)
+		choice = Segmented(labels, current, width, tips);
+	else
+	{
+		ImGui::SetNextItemWidth(available);
+		int selected = current;
+		if (ImGui::Combo("##State", &selected, labels.data(), static_cast<int>(labels.size())))
+			choice = selected;
+		ImGui::SetItemTooltip("%s", tips[current]);
+	}
 	ImGui::PopID();
 	ImGui::EndDisabled();
 	if (choice < 0 || choice == current || !CanControl(channel))

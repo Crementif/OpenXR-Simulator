@@ -1761,8 +1761,9 @@ void ConfigureObservedDevices()
 	Selection selection = DeviceSel{DevicePage::Head};
 	std::optional<SimulationEdit> edit;
 	bool supported = true;
-	bool advanced = false;
-	const auto frame = [&]
+	bool advanced = false, showState = true;
+	ImVec2 panelSize{400, 650};
+	const auto frame = [&](bool headerOnly = false)
 	{
 		Eventually(
 			[&]
@@ -1770,15 +1771,16 @@ void ConfigureObservedDevices()
 				return test.PollEvents() && test.renderer.BeginFrame();
 			},
 			"Live field UI stalled");
+		test.workspace.BeginFrame(test.runtime);
 		ImGui::SetNextWindowPos({20, 20}, ImGuiCond_Always);
-		ImGui::SetNextWindowSize({400, 650}, ImGuiCond_Always);
+		ImGui::SetNextWindowSize(panelSize, ImGuiCond_Always);
 		ImGui::Begin("Configuration workflow");
 		if (advanced)
 			edit = panel.DrawAdvanced();
 		else
 		{
-			const auto headerEdit = panel.DrawHeader(selection);
-			edit = panel.Draw(supported, &selection);
+			const auto headerEdit = panel.DrawHeader(selection, showState);
+			edit = headerOnly ? std::optional<SimulationEdit>{} : panel.Draw(supported, &selection);
 			if (headerEdit)
 				edit = headerEdit;
 		}
@@ -1807,7 +1809,7 @@ void ConfigureObservedDevices()
 	{
 		ImGui::SetWindowFocus(window->Name);
 		ImGui::ActivateItemByID(ImHashStr(label, 0, window->GetID("Tracking")));
-		frame();
+		frame(true);
 		Require(edit && std::holds_alternative<ManualTransaction>(*edit),
 				(std::string("Tracking switch did not submit: ") + label).c_str());
 		return std::get<ManualTransaction>(*edit);
@@ -1893,6 +1895,33 @@ void ConfigureObservedDevices()
 	observe(3);
 	panel.ObserveDelivery(false, {});
 	frame();
+	showState = false;
+	frame(true);
+	ImGui::ActivateItemByID(ImHashStr("Lost", 0, window->GetID("Tracking")));
+	frame(true);
+	Require(!edit, "Historical header exposed live state controls");
+	showState = true;
+	if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
+	{
+		for (const auto page : {DevicePage::Head, DevicePage::Left, DevicePage::Body, DevicePage::Gaze,
+							   DevicePage::Trackers})
+		{
+			selection = DeviceSel{page};
+			frame();
+			test.renderer.RequestScreenshot(directory / ("header-" + std::to_string(static_cast<int>(page)) + ".bmp"));
+			frame();
+		}
+		selection = DeviceSel{DevicePage::Gaze};
+		panelSize.x = 300;
+		test.workspace.SetScale(1.5f);
+		frame();
+		frame();
+		test.renderer.RequestScreenshot(directory / "header-narrow-large.bmp");
+		frame();
+		test.workspace.SetScale(1);
+		panelSize.x = 400;
+	}
+	selection = DeviceSel{DevicePage::Head};
 	panel.ResetObservations();
 	frame();
 	ImGui::ActivateItemByID(ImHashStr("Lost", 0, window->GetID("Tracking")));
@@ -6204,6 +6233,11 @@ int main()
 			return 0;
 		}
 #endif
+		if (std::getenv("SIMXR_DEVICE_HEADER_QA"))
+		{
+			ConfigureObservedDevices();
+			return 0;
+		}
 		if (const auto endpoint = std::getenv("SIMXR_TIMELINE_ENDPOINT"))
 		{
 			Interaction test;

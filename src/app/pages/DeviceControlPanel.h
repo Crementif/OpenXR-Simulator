@@ -47,8 +47,8 @@ class DeviceControlPanel
 	std::optional<SimulationEdit> DrawAdvanced();
 	// The session's failure scenarios as menu items: Unfocused, Hidden and a confirmed session loss.
 	std::optional<SimulationEdit> DrawSessionMenu();
-	// Page title with the page's Reset button (Reset all on Player).
-	std::optional<SimulationEdit> DrawHeader(const Selection& selection);
+	// Live state and Reset controls; historical pages omit live state.
+	std::optional<SimulationEdit> DrawHeader(const Selection& selection, bool showState = true);
 
   private:
 	void SelectDevice(const DeviceSel& device);
@@ -63,7 +63,7 @@ class DeviceControlPanel
 	// A failure scenario of this channel is active; its fields are read only meanwhile.
 	bool ScenarioActive(ControlChannel channel) const;
 	// The page's Tracked / Lost / Off switch over its failure scenarios.
-	void DrawTracking(DevicePage page);
+	void DrawTracking(DevicePage page, float titleWidth);
 	void ReloadRecoveredChannel(ControlChannel channel);
 	void DrawPlayer();
 	void DrawAnchor(std::size_t hand);

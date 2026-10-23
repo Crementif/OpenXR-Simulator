@@ -1,8 +1,8 @@
 #include "app/pages/DeviceControlPanel.h"
 #include "Pch.h"
-#include "app/widgets/Theme.h"
 #include "app/services/PlayerRig.h"
 #include "app/widgets/Controls.h"
+#include "app/widgets/Theme.h"
 #include <exception>
 #include <imgui_internal.h>
 #include <stdexcept>
@@ -107,7 +107,6 @@ std::optional<SimulationEdit> DeviceControlPanel::Draw(bool supported, const Sel
 		}
 		if (device)
 		{
-			DrawTracking(device->page);
 			switch (device->page)
 			{
 			case DevicePage::Player:
@@ -176,7 +175,7 @@ bool DeviceControlPanel::InputField(const char* key, bool changed)
 																								: std::string{});
 	return changed;
 }
-std::optional<SimulationEdit> DeviceControlPanel::DrawHeader(const Selection& selection)
+std::optional<SimulationEdit> DeviceControlPanel::DrawHeader(const Selection& selection, bool showState)
 {
 	m_edit.reset();
 	m_continuousEdit = false;
@@ -192,6 +191,7 @@ std::optional<SimulationEdit> DeviceControlPanel::DrawHeader(const Selection& se
 	const bool ready = m_configurationLoaded && m_playerRig.Ready() && CanReset(page);
 	const float right = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
 	PageTitle(icons[static_cast<int>(page)], titles[static_cast<int>(page)]);
+	const float titleWidth = ImGui::GetItemRectSize().x;
 	if (page == DevicePage::Player)
 	{
 		const float width = ImGui::CalcTextSize("Reset all").x + ImGui::GetStyle().FramePadding.x * 2;
@@ -211,6 +211,8 @@ std::optional<SimulationEdit> DeviceControlPanel::DrawHeader(const Selection& se
 		if (IconButton("Reset page", Icon::ResetPose, tip.c_str()))
 			ResetPage(page);
 		ImGui::EndDisabled();
+		if (showState)
+			DrawTracking(page, titleWidth);
 	}
 	ImGui::Dummy({0, ImGui::GetStyle().ItemSpacing.y / 2});
 	return std::exchange(m_edit, {});
