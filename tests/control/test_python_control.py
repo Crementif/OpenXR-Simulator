@@ -73,6 +73,20 @@ class FrameRecordingTests(unittest.TestCase):
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_explicit_game_id_advances_automatic_ids(self):
+        client = object.__new__(Client)
+        client._lock = threading.Lock()
+        identities = []
+        client.request = lambda opcode, fields: identities.append(to_dict(fields)['command_id'])
+        client.game_command(None, 1, 2, command_id=1)
+        client.game_command(None, 1, 2)
+        client.game_command(None, 1, 2, command_id=1)
+        client.game_command(None, 1, 2)
+        self.assertEqual(identities, [1, 2, 1, 3])
+        for identity in (0, -1, True, 2**64):
+            with self.assertRaises(ProtocolError):
+                client.game_command(None, 1, 2, command_id=identity)
+
     def test_unknown_phase_never_becomes_terminal_success(self):
         client = object.__new__(Client)
         client.operation = lambda *args: {'phase': 'future_pending_phase'}

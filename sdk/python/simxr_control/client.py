@@ -382,10 +382,12 @@ class Client:
         return self.request(OpCode.GAME_STATUS, self._session(session) if session is not None else [])
 
     def game_command(self, session, game, kind, payload='', *, command_id=None):
-        if command_id is None:
-            with self._lock:
+        with self._lock:
+            if command_id is None:
                 command_id = getattr(self, '_next_game_command', 1)
-                self._next_game_command = command_id + 1
+            if type(command_id) is not int or not 0 < command_id < 2**64:
+                raise ProtocolError('A positive uint64 game command ID is required')
+            self._next_game_command = max(getattr(self, '_next_game_command', 1), command_id + 1)
         return self.request(OpCode.SUBMIT_GAME, (self._session(session) if session is not None else []) + [Field.u64(Tag.GAME_ID, game, True),
             Field.u64(Tag.COMMAND_ID, command_id, True), Field.u32(Tag.GAME_KIND, kind, True), Field.text(Tag.DETAIL, payload, True)])
 

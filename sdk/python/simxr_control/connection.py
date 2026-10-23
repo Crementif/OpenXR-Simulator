@@ -181,9 +181,10 @@ class PendingExchange:
                 raise ProtocolError('Windows control response contains unsupported native handles')
             return chunk
         size = array.array('i').itemsize
+        descriptors = []
+        adopted = 0
         chunk, ancillary, flags, _ = transport.recvmsg(
             count, socket.CMSG_SPACE(MAX_TRANSFER_HANDLES * size), getattr(socket, 'MSG_CMSG_CLOEXEC', 0))
-        descriptors = []
         malformed = bool(flags & ~getattr(socket, 'MSG_CMSG_CLOEXEC', 0))
         try:
             for level, kind, payload in ancillary:
@@ -196,20 +197,29 @@ class PendingExchange:
                 malformed |= bool(len(payload) % size)
             if malformed or len(self._incoming_handles) + len(descriptors) > MAX_TRANSFER_HANDLES:
                 raise ProtocolError('Malformed, truncated, or excessive ancillary handles')
-            for index, fd in enumerate(descriptors):
+            for fd in descriptors:
                 if fd < 0:
                     raise ProtocolError('Invalid received native descriptor')
                 os.set_inheritable(fd, False)
                 self._incoming_handles._append(fd)
-                descriptors[index] = -1
+                adopted += 1
             return chunk
         finally:
-            for fd in descriptors:
-                if fd >= 0:
-                    try:
-                        os.close(fd)
-                    except OSError:
-                        pass
+            # The original ancillary bytes still own every unadopted FD, even
+            # if constructing the decoded descriptor list failed partway.
+            for level, kind, payload in ancillary:
+                if level != socket.SOL_SOCKET or kind != socket.SCM_RIGHTS:
+                    continue
+                values = memoryview(payload)[:len(payload) - len(payload) % size].cast('i')
+                for fd in values:
+                    if adopted:
+                        adopted -= 1
+                    elif fd >= 0:
+                        try:
+                            os.close(fd)
+                        except OSError:
+                            pass
+
 
 
 class PacketConnection:

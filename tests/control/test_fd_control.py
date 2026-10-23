@@ -193,6 +193,48 @@ class FdTests(unittest.TestCase):
             os.close(read)
             os.close(write)
 
+    def test_receive_allocation_failure_closes_unadopted_rights(self):
+        from unittest.mock import patch
+        from simxr_control.connection import PendingExchange
+        import simxr_control.connection as connection_module
+
+        for failure in ('decode', 'adopt'):
+            with self.subTest(failure=failure), ExitStack() as resources:
+                read, write = os.pipe()
+                resources.callback(os.close, read)
+                resources.callback(os.close, write)
+                descriptors = [os.dup(read), os.dup(read)]
+                ancillary = [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array('i', descriptors).tobytes())]
+
+                class FakeSocket:
+                    def recvmsg(self, *_):
+                        return b'x', ancillary, 0, None
+
+                exchange = PendingExchange(OpCode.SHARE_IMAGE, 1, (), ())
+                resources.callback(exchange.close)
+                if failure == 'decode':
+                    # itemsize succeeds, then allocation after recvmsg fails.
+                    fault = patch.object(connection_module.array, 'array',
+                                         side_effect=[array.array('i'), MemoryError('decode')])
+                else:
+                    append = exchange._incoming_handles._append
+                    calls = 0
+
+                    def fail_second(fd):
+                        nonlocal calls
+                        calls += 1
+                        if calls == 2:
+                            raise MemoryError('adopt')
+                        append(fd)
+
+                    fault = patch.object(exchange._incoming_handles, '_append', side_effect=fail_second)
+                with fault, self.assertRaises(MemoryError):
+                    exchange._receive(FakeSocket(), 1)
+                exchange.close()
+                for fd in descriptors:
+                    with self.assertRaises(OSError):
+                        os.fstat(fd)
+
     def test_receive_fragmented_rights_survive_timeout_and_connection(self):
         with ExitStack() as resources:
             pipes = [os.pipe() for _ in range(3)]

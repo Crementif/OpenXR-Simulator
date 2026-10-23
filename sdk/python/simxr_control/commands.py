@@ -114,7 +114,7 @@ def _encode_command(command, index=1):
                    for i, name in enumerate(_CONTROL_BOOLS)]
         f = [Field.u32(Tag.LAYER, _uint(command.get('hand', 0), 1), True), Field.nested(Tag.CONTROLS, values, True)]
     elif kind == 'body':
-        allow('active', 'confidence', 'preset', 'controls', 'joints')
+        allow('active', 'confidence', 'preset', 'controls', 'joints', 'root_pose')
         controls = command.get('controls', [{} for _ in range(5)])
         if not isinstance(controls, list) or len(controls) != 5:
             raise ProtocolError('Body controls requires five entries')
@@ -141,6 +141,11 @@ def _encode_command(command, index=1):
              Field.f32(Tag.VALUES, command.get('confidence', 1.0), True),
              Field.u32(Tag.KIND, _uint(command.get('preset', 0), 2), True),
              Field.nested(Tag.CONTROLS, encoded_controls, True), Field.nested(Tag.PROPORTIONS, joints, True)]
+        if command.get('root_pose') is not None:
+            root = command['root_pose']
+            if not isinstance(root, dict) or set(root) - {'position', 'orientation'}:
+                raise ProtocolError('Invalid body root pose')
+            f.append(_pose(root))
     elif kind == 'gaze':
         allow('yaw', 'pitch', 'available', 'tracked')
         f = [_floats(Tag.VALUES, [command.get('yaw', 0), command.get('pitch', 0)], 2),
@@ -222,6 +227,9 @@ def decode_command(record):
         c.update({name: controls[i + 9].as_bool() for i, name in enumerate(_CONTROL_BOOLS)})
     elif kind == 'body':
         c.update(active=f[Tag.ENABLED].as_bool(), confidence=f[Tag.VALUES].as_f32(), preset=f[Tag.KIND].as_u32(), controls=[], joints=[])
+        if Tag.POSE in f:
+            values = floats(Tag.POSE)
+            c['root_pose'] = {'orientation': values[:4], 'position': values[4:]}
         for field in decode_fields(f[Tag.CONTROLS].value).values():
             control = decode_fields(field.value)
             value = {'tracked': control[Tag.ENABLED].as_bool()}

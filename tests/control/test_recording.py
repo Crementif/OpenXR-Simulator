@@ -137,7 +137,9 @@ class RecordingTests(unittest.TestCase):
             {'kind': 'controller_pose', 'hand': 1, 'position': [-1, 2, -3], 'connected': False},
             {'kind': 'controller_controls', 'hand': 1, 'trigger': .75, 'trackpad_force': .25,
              'primary': True, 'thumbrest_touch': True, 'connected': False},
+            {'kind': 'body'},
             {'kind': 'body', 'preset': 1, 'active': False, 'confidence': .25,
+             'root_pose': {'position': [3, 2, 1], 'orientation': [0, 1, 0, 0]},
              'controls': [{'tracked': False, 'offset': [1, 2, 3]}] + [{} for _ in range(4)],
              'joints': [{'joint': 83, 'tracked': False, 'position': [4, 5, 6]}]},
             {'kind': 'gaze', 'yaw': .25, 'pitch': -.5, 'available': False, 'tracked': False},
@@ -158,6 +160,8 @@ class RecordingTests(unittest.TestCase):
             decoded = decode_command(canonical)
             self.assertEqual(encode_command(decoded).value.hex(), canonical['data'])
             self.assertIn(implementation._luau(decoded), script)
+            if command['kind'] == 'body':
+                self.assertEqual(decoded.get('root_pose'), command.get('root_pose'))
         self.assertIn(f'["identity"] = "{U64_MAX}"', script)
         self.assertIn('測試', script)
         self.assertNotIn('simxr-command-v1-hex', script)
