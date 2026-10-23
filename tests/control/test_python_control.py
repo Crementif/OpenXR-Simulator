@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 import socket
@@ -8,6 +9,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'sdk/python'))
 from simxr_control import (Client, CommandKind, ControlError, ControlTimeout, ErrorCode,
@@ -15,6 +17,59 @@ from simxr_control import (Client, CommandKind, ControlError, ControlTimeout, Er
 from simxr_control.protocol import Field, HEADER, Message, OpCode, Tag, decode_fields, encode_fields, to_dict
 
 HOST = None
+
+
+class FrameRecordingTests(unittest.TestCase):
+    def test_recording_cleanup_and_export_bounds(self):
+        from simxr_control import record_frames
+        from simxr_control.protocol import Capability
+
+        for failure in (None, 'stop', 'reader', 'chunk'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
+                client = Mock()
+                client.status.return_value = {
+                    'manual': False, 'capabilities': Capability.IMAGE_EXPORT | Capability.IMAGE_RECORDING,
+                    'image_recording': {'phase': 'recording', 'captures': [1]}}
+                client.acquire.return_value = 'lease'
+
+                def submit(lease, kind, **arguments):
+                    if failure == 'stop' and kind == CommandKind.STOP_IMAGE_RECORDING:
+                        raise RuntimeError('stop failed')
+                    return {'operation_id': 1}
+
+                client.submit.side_effect = submit
+                client.operation.return_value = {'phase': 'complete', 'command_id': 1, 'capture_id': 1}
+                client.capture.return_value = {'phase': 'ready', 'capture_id': 1,
+                                               'frame': {'frame_id': 1}, 'image_available': True}
+                client.inspect.return_value = {'inspection_id': 2, 'document': {'frame_id': 1}}
+                client.retain_image.return_value = {'image_reader_id': 3}
+                client.image_info.return_value = {'image_descriptor': {'width': 1, 'height': 1, 'array_layers': 1}}
+                client.start_export.return_value = {'export_id': 4}
+                client.export_info.return_value = {'phase': 'complete', 'total_bytes': 4}
+                client.read_export.return_value = {'offset': 0, 'bytes': b'12345' if failure == 'chunk' else b'1234'}
+                if failure == 'reader':
+                    client.release_image.side_effect = RuntimeError('reader release failed')
+                directory = Path(temporary) / 'frames'
+                if failure:
+                    with self.assertRaises(RuntimeError):
+                        record_frames(client, Session(1, 1), directory, 1, mode='realtime', max_frame_bytes=4)
+                else:
+                    result = record_frames(client, Session(1, 1), directory, 1, mode='realtime', max_frame_bytes=4)
+                    self.assertEqual(result['phase'], 'complete')
+                summary = json.loads((directory / 'recording.json').read_text())
+                self.assertEqual(summary['phase'], 'failed' if failure else 'complete')
+                self.assertEqual(summary['persisted'], 0 if failure == 'chunk' else 1)
+                if failure:
+                    self.assertIn('error', summary)
+                client.release_export.assert_called_once_with(4)
+                client.release_image.assert_called_once_with(3)
+                client.release_inspection.assert_called_once_with(2)
+                self.assertTrue(any(call.args[1] == CommandKind.RELEASE for call in client.submit.call_args_list))
+                client.relinquish.assert_called_once_with('lease')
+                if failure == 'chunk':
+                    self.assertFalse(list(directory.glob('*.rgba')))
+                else:
+                    self.assertEqual(next(directory.glob('*.rgba')).read_bytes(), b'1234')
 
 
 class ProtocolTests(unittest.TestCase):

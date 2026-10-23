@@ -1,4 +1,5 @@
 """Bounded image recording through exact-frame admission and reserved streams."""
+from contextlib import ExitStack
 import json
 from pathlib import Path
 import queue
@@ -130,139 +131,143 @@ def record_frames(client, session, directory, count, *, mode, target=TargetKind.
         return value
 
     try:
-        lease = client.acquire(session)
-        if mode == 'controlled':
-            paused = command(CommandKind.PAUSE)
-            for capture in paused.get('captures', []):
-                release(capture)
-            client.acknowledge(lease, paused['command_id'])
-        else:
-            started = command(CommandKind.START_IMAGE_RECORDING, target=target, layer=layer, view=view,
-                              recording_capacity=buffers, recording_frames=count)
-            client.acknowledge(lease, started['command_id'])
-        for _ in range(count):
-            while not writer.slots.acquire(timeout=.05):
-                pulse()
-                if mode == 'realtime':
-                    stream()
-            handed_off = False
-            capture_id = reader = inspection_id = None
-            try:
-                pulse()
-                if mode == 'controlled':
-                    admitted = command(CommandKind.STRICT_ADMISSION, target=target, layer=layer, view=view)
-                    capture_id = admitted['capture_id']
-                else:
-                    deadline = time.monotonic() + timeout
-                    while capture_id is None:
-                        pulse()
-                        state = stream()
-                        candidates = [client.capture(session, identity) for identity in state['captures']]
-                        candidates = [entry for entry in candidates if entry.get('frame') and
-                                      (last is None or entry['frame']['frame_id'] > last)]
-                        if candidates:
-                            capture_id = min(candidates, key=lambda entry: entry['frame']['frame_id'])['capture_id']
-                            break
-                        if state['phase'] != 'recording' or time.monotonic() >= deadline:
-                            raise RuntimeError(f'Real-time stream ended before the requested frame: {state}')
-                        time.sleep(.01)
-                deadline = time.monotonic() + timeout
-                while True:
-                    pulse()
-                    capture = client.capture(session, capture_id)
-                    if capture['phase'] in ('ready', 'clear'):
-                        break
-                    if capture['phase'] in ('unavailable', 'cancelled', 'failed', 'released', 'discarded', 'empty'):
-                        raise RuntimeError(capture)
-                    if time.monotonic() >= deadline:
-                        raise TimeoutError('Captured image did not become ready')
-                    time.sleep(.01)
-                frame = capture['frame']['frame_id']
-                if last is not None and frame != last + 1:
-                    raise RuntimeError(f'Nonconsecutive recording: expected {last + 1}, received {frame}')
-                if first is None:
-                    first = frame
-                last = frame
-                inspection = client.inspect(session, capture_id)
-                inspection_id = inspection['inspection_id']
-                revisions = {}
-
-                def collect(value):
-                    if isinstance(value, dict):
-                        if 'revision_id' in value:
-                            identity = value['revision_id']
-                            if str(identity) not in revisions:
-                                revisions[str(identity)] = client.revision(identity)
-                        for child in value.values():
-                            collect(child)
-                    elif isinstance(value, list):
-                        for child in value:
-                            collect(child)
-
-                collect(inspection['document'])
-                metadata = {'capture': capture, 'frame': inspection['document'], 'revisions': revisions}
-                images = []
-                if capture['image_available']:
-                    reader = client.retain_image(session, capture_id)['image_reader_id']
-                    metadata['image'] = client.image_info(reader)
-                    descriptor = metadata['image']['image_descriptor']
-                    expected = descriptor['width'] * descriptor['height'] * 4
-                    if expected * descriptor['array_layers'] > max_frame_bytes:
-                        raise RuntimeError('Frame exceeds the configured persistence byte budget')
-                    for slice_index in range(descriptor['array_layers']):
-                        ticket = client.start_export(reader, layer=slice_index)['export_id']
-                        try:
-                            deadline = time.monotonic() + timeout
-                            while True:
-                                pulse()
-                                exported = client.export_info(ticket)
-                                if exported['phase'] != 'pending':
-                                    break
-                                if time.monotonic() >= deadline:
-                                    raise TimeoutError('Explicit frame export did not complete')
-                                time.sleep(.01)
-                            if exported['phase'] != 'complete' or exported['total_bytes'] != expected:
-                                raise RuntimeError(exported)
-                            pixels = bytearray()
-                            while len(pixels) < expected:
-                                pulse()
-                                chunk = client.read_export(ticket, len(pixels), 64000)
-                                if chunk['offset'] != len(pixels) or not chunk['bytes']:
-                                    raise RuntimeError('Incomplete frame export')
-                                pixels.extend(chunk['bytes'])
-                            images.append(pixels)
-                            pixels = None
-                        finally:
-                            client.release_export(ticket)
-                writer.items.put((metadata, images))
-                metadata = images = None
-                handed_off = True
-            finally:
-                if not handed_off:
-                    writer.slots.release()
-                if reader is not None:
-                    client.release_image(reader)
-                if inspection_id is not None:
-                    client.release_inspection(inspection_id)
-                if capture_id is not None:
-                    release(capture_id)
-            # Retire old display readers while remaining paused. Their terminal
-            # operation holds an image until acknowledged independently of capture.
+        with ExitStack() as cleanup:
+            cleanup.callback(writer.close)
+            lease = client.acquire(session)
+            # Relinquishment resumes admission and retires lease-owned captures.
+            cleanup.callback(client.relinquish, lease)
+            cleanup.callback(lambda: client.submit(lease, CommandKind.CANCEL, operation=outstanding)
+                             if outstanding is not None else None)
+            if mode == 'realtime':
+                cleanup.callback(client.submit, lease, CommandKind.STOP_IMAGE_RECORDING)
             if mode == 'controlled':
-                for _ in range(16):
-                    displayed = command(CommandKind.DISPLAY_STEP)
-                    selected = client.capture(session, displayed['capture_id'])
-                    release(displayed['capture_id'])
-                    client.acknowledge(lease, displayed['command_id'])
-                    if (selected.get('frame') or {}).get('frame_id') == frame:
-                        break
-                else:
-                    raise RuntimeError('Paused display failed to reach the recorded frame')
-        while writer.written < count:
-            pulse()
-            time.sleep(.01)
-        if mode == 'realtime':
-            stream()
+                paused = command(CommandKind.PAUSE)
+                for capture in paused.get('captures', []):
+                    release(capture)
+                client.acknowledge(lease, paused['command_id'])
+            else:
+                started = command(CommandKind.START_IMAGE_RECORDING, target=target, layer=layer, view=view,
+                                  recording_capacity=buffers, recording_frames=count)
+                client.acknowledge(lease, started['command_id'])
+            for _ in range(count):
+                while not writer.slots.acquire(timeout=.05):
+                    pulse()
+                    if mode == 'realtime':
+                        stream()
+                handed_off = False
+                capture_id = reader = inspection_id = None
+                with ExitStack() as frame_cleanup:
+                    frame_cleanup.callback(lambda: None if handed_off else writer.slots.release())
+                    pulse()
+                    if mode == 'controlled':
+                        admitted = command(CommandKind.STRICT_ADMISSION, target=target, layer=layer, view=view)
+                        capture_id = admitted['capture_id']
+                    else:
+                        deadline = time.monotonic() + timeout
+                        while capture_id is None:
+                            pulse()
+                            state = stream()
+                            candidates = [client.capture(session, identity) for identity in state['captures']]
+                            candidates = [entry for entry in candidates if entry.get('frame') and
+                                          (last is None or entry['frame']['frame_id'] > last)]
+                            if candidates:
+                                capture_id = min(candidates, key=lambda entry: entry['frame']['frame_id'])['capture_id']
+                                break
+                            if state['phase'] != 'recording' or time.monotonic() >= deadline:
+                                raise RuntimeError(f'Real-time stream ended before the requested frame: {state}')
+                            time.sleep(.01)
+                    frame_cleanup.callback(release, capture_id)
+                    deadline = time.monotonic() + timeout
+                    while True:
+                        pulse()
+                        capture = client.capture(session, capture_id)
+                        if capture['phase'] in ('ready', 'clear'):
+                            break
+                        if capture['phase'] in ('unavailable', 'cancelled', 'failed', 'released', 'discarded', 'empty'):
+                            raise RuntimeError(capture)
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError('Captured image did not become ready')
+                        time.sleep(.01)
+                    frame = capture['frame']['frame_id']
+                    if last is not None and frame != last + 1:
+                        raise RuntimeError(f'Nonconsecutive recording: expected {last + 1}, received {frame}')
+                    if first is None:
+                        first = frame
+                    last = frame
+                    inspection = client.inspect(session, capture_id)
+                    inspection_id = inspection['inspection_id']
+                    frame_cleanup.callback(client.release_inspection, inspection_id)
+                    revisions = {}
+
+                    def collect(value):
+                        if isinstance(value, dict):
+                            if 'revision_id' in value:
+                                identity = value['revision_id']
+                                if str(identity) not in revisions:
+                                    revisions[str(identity)] = client.revision(identity)
+                            for child in value.values():
+                                collect(child)
+                        elif isinstance(value, list):
+                            for child in value:
+                                collect(child)
+
+                    collect(inspection['document'])
+                    metadata = {'capture': capture, 'frame': inspection['document'], 'revisions': revisions}
+                    images = []
+                    if capture['image_available']:
+                        reader = client.retain_image(session, capture_id)['image_reader_id']
+                        frame_cleanup.callback(client.release_image, reader)
+                        metadata['image'] = client.image_info(reader)
+                        descriptor = metadata['image']['image_descriptor']
+                        expected = descriptor['width'] * descriptor['height'] * 4
+                        if expected * descriptor['array_layers'] > max_frame_bytes:
+                            raise RuntimeError('Frame exceeds the configured persistence byte budget')
+                        for slice_index in range(descriptor['array_layers']):
+                            ticket = client.start_export(reader, layer=slice_index)['export_id']
+                            try:
+                                deadline = time.monotonic() + timeout
+                                while True:
+                                    pulse()
+                                    exported = client.export_info(ticket)
+                                    if exported['phase'] != 'pending':
+                                        break
+                                    if time.monotonic() >= deadline:
+                                        raise TimeoutError('Explicit frame export did not complete')
+                                    time.sleep(.01)
+                                if exported['phase'] != 'complete' or exported['total_bytes'] != expected:
+                                    raise RuntimeError(exported)
+                                pixels = bytearray()
+                                while len(pixels) < expected:
+                                    pulse()
+                                    chunk = client.read_export(ticket, len(pixels), 64000)
+                                    if (chunk['offset'] != len(pixels) or not chunk['bytes']
+                                            or len(chunk['bytes']) > expected - len(pixels)):
+                                        raise RuntimeError('Invalid frame export chunk')
+                                    pixels.extend(chunk['bytes'])
+                                images.append(pixels)
+                                pixels = None
+                            finally:
+                                client.release_export(ticket)
+                    writer.items.put((metadata, images))
+                    metadata = images = None
+                    handed_off = True
+                # Retire old display readers while remaining paused. Their terminal
+                # operation holds an image until acknowledged independently of capture.
+                if mode == 'controlled':
+                    for _ in range(16):
+                        displayed = command(CommandKind.DISPLAY_STEP)
+                        selected = client.capture(session, displayed['capture_id'])
+                        release(displayed['capture_id'])
+                        client.acknowledge(lease, displayed['command_id'])
+                        if (selected.get('frame') or {}).get('frame_id') == frame:
+                            break
+                    else:
+                        raise RuntimeError('Paused display failed to reach the recorded frame')
+            while writer.written < count:
+                pulse()
+                time.sleep(.01)
+            if mode == 'realtime':
+                stream()
         summary['phase'] = 'complete'
     except BaseException as error:
         summary['phase'] = 'cancelled' if isinstance(error, InterruptedError) else 'failed'
@@ -271,19 +276,6 @@ def record_frames(client, session, directory, count, *, mode, target=TargetKind.
             summary['cause'] = str(error.__cause__)
         raise
     finally:
-        try:
-            if lease is not None:
-                if mode == 'realtime':
-                    client.submit(lease, CommandKind.STOP_IMAGE_RECORDING)
-                if outstanding is not None:
-                    client.submit(lease, CommandKind.CANCEL, operation=outstanding)
-                # Relinquishment invokes existing asynchronous resume and capture
-                # retirement, including after cancellation or a failed exchange.
-                client.relinquish(lease)
-        finally:
-            try:
-                writer.close()
-            finally:
-                summary.update(persisted=writer.written, first_frame=first, last_frame=last)
-                (directory / 'recording.json').write_text(json.dumps(summary, indent=2) + '\n')
+        summary.update(persisted=writer.written, first_frame=first, last_frame=last)
+        (directory / 'recording.json').write_text(json.dumps(summary, indent=2) + '\n')
     return summary
