@@ -6,8 +6,8 @@ import sys
 import tempfile
 import time
 
-from simxr_control import Client
 from test_native_quad import require
+from simxr_control import Client
 
 
 def wait_boundary(path, host):

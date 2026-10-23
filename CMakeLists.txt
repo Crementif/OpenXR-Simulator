@@ -494,6 +494,7 @@ if(BUILD_TESTING)
         target_link_libraries(ui_resolution_tests PRIVATE simxr_core)
         target_link_libraries(ui_input_polling_tests PRIVATE simxr_core)
         simxr_add_test(mcp_command_tests tests/mcp_command_tests.cpp mcp_commands)
+        target_link_libraries(mcp_command_tests PRIVATE simxr_control)
     endif()
 endif()
 
