@@ -3,8 +3,12 @@
 #include "control/ControlPacket.h"
 #include "simulation/CommandTypes.h"
 
-#include <chrono>
+#include <array>
+#include <cstdint>
+#include <optional>
 #include <string>
+#include <variant>
+#include <vector>
 
 namespace simxr::app
 {
@@ -36,50 +40,6 @@ struct ObservedSetup
 	// The app enabled tracker interaction; absent from older runtimes.
 	bool appTrackers = false;
 	std::array<bool, 4> boundTrackers{};
-};
-// Ctrl+Z history of device poses: one entry per edit group (a whole drag or one click), never per frame.
-class UndoStack
-{
-  public:
-	// One undoable edit group, named after what it changed (e.g. "Right hand moved").
-	struct Change
-	{
-		std::string label;
-		std::chrono::steady_clock::time_point time;
-	};
-	// Call for each submitted edit with the state observed before it. Input-only edits are not recorded.
-	void Record(const ObservedSetup& before, const ManualTransaction& edit);
-	// End an interrupted gesture without sending another pose.
-	void FinishGesture()
-	{
-		m_open = false;
-	}
-	// Refresh only from an observation with no pending local edit.
-	void Observe(const ObservedSetup& observed);
-	bool Empty() const
-	{
-		return m_entries.empty();
-	}
-	void Clear();
-	// Restores the state before the newest steps groups on the channels this source may drive.
-	std::optional<ManualTransaction> Undo(const ObservedSetup& current, std::optional<CommandSource> source,
-										  std::size_t steps = 1);
-	// The undoable groups, oldest first.
-	std::vector<Change> Changes() const;
-
-  private:
-	struct Entry
-	{
-		TrackingState tracking;
-		BodyProportions proportions;
-		// When the edit group after this state started, and its name if the edit gave one.
-		std::chrono::steady_clock::time_point time;
-		std::string label;
-	};
-	static std::string Describe(const Entry& before, const Entry& after);
-	std::vector<Entry> m_entries;
-	std::optional<Entry> m_authored;
-	bool m_open = false;
 };
 std::optional<TrackingSnapshot> ReadInspectionTracking(const control::Message& state);
 ObservedSetup ReadObservedSetup(const control::Message& state);

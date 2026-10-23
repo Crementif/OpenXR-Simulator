@@ -1,39 +1,36 @@
 #include "app/widgets/InputPad.h"
+#include "Pch.h"
 #include "app/Theme.h"
 
-#include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstdio>
 #include <imgui_internal.h>
 #include <numbers>
-#include <string>
 
 namespace simxr::app
 {
-namespace
-{
-float Unit()
+static float Unit()
 {
 	return ImGui::GetFontSize() / 17;
 }
-// The gesture of the input the mouse holds; only one can be held at a time.
-struct Gesture
+static bool Holding()
 {
-	ImGuiID id = 0;
-	bool dragged = false;
-	// The stick arrow the press started on (0 right, 1 up, 2 left, 3 down), or -1.
-	int direction = -1;
-};
-Gesture& Held(ImGuiID id)
+	return ImGui::IsItemActive() && ImGui::GetCurrentContext()->ActiveIdMouseButton == ImGuiMouseButton_Left &&
+		   ImGui::IsMouseDown(ImGuiMouseButton_Left);
+}
+static bool WasHolding(ImGuiID item, bool holding)
 {
-	static Gesture s_gesture;
-	if (s_gesture.id != id)
-		s_gesture = {id};
-	return s_gesture;
+	auto* storage = ImGui::GetStateStorage();
+	const auto heldKey = ImHashStr("holding", 0, item);
+	const auto frameKey = ImHashStr("held frame", 0, item);
+	const int frame = ImGui::GetFrameCount();
+	const bool previous = storage->GetInt(frameKey, -1) == frame - 1 && storage->GetBool(heldKey);
+	storage->SetBool(heldKey, holding);
+	storage->SetInt(frameKey, frame);
+	return previous;
 }
 // A per-item display value that eases toward target, so presses and releases animate.
-float Ease(ImGuiID item, const char* name, float target, float speed)
+static float Ease(ImGuiID item, const char* name, float target, float speed)
 {
 	float& value = *ImGui::GetStateStorage()->GetFloatRef(ImHashStr(name, 0, item), target);
 	value += (target - value) * std::min(1.0f, ImGui::GetIO().DeltaTime * speed);
@@ -41,29 +38,27 @@ float Ease(ImGuiID item, const char* name, float target, float speed)
 		value = target;
 	return value;
 }
-} // namespace
 bool TriggerBar(const char* id, const char* label, float& value, bool& latched, ImU32 color, float width)
 {
 	const float unit = Unit(), height = 24 * unit;
 	const auto minimum = ImGui::GetCursorScreenPos();
 	const ImVec2 maximum{minimum.x + width, minimum.y + height};
 	ImGui::InvisibleButton(id, {width, height},
-						   ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_EnableNav);
+						   ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight |
+							   ImGuiButtonFlags_EnableNav);
 	const auto previous = value;
+	const bool wasLatched = latched;
 	const auto& io = ImGui::GetIO();
 	const float pointer = std::clamp((io.MousePos.x - minimum.x) / width, 0.f, 1.f);
 	const auto item = ImGui::GetItemID();
-	if (ImGui::IsItemActivated())
-		Held(item).dragged = false;
-	if (ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left))
-	{
-		if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 3 * unit))
-			Held(item).dragged = true;
-		value = Held(item).dragged ? pointer : 1;
-	}
-	if (ImGui::IsItemDeactivated() && !latched)
+	const bool enabled = !(ImGui::GetItemFlags() & (ImGuiItemFlags_Disabled | ImGuiItemFlags_ReadOnly));
+	const bool holding = enabled && Holding();
+	const bool wasHolding = WasHolding(item, holding);
+	if (holding)
+		value = ImGui::IsMouseDragging(ImGuiMouseButton_Left, 3 * unit) ? pointer : 1;
+	else if (enabled && wasHolding && !latched)
 		value = 0;
-	if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
+	if (enabled && ImGui::IsItemClicked(ImGuiMouseButton_Right))
 	{
 		latched = !latched;
 		value = latched ? std::max(pointer, value) : 0;
@@ -72,9 +67,9 @@ bool TriggerBar(const char* id, const char* label, float& value, bool& latched, 
 	const float shown = Ease(item, "shown", value, 24);
 	auto* draw = ImGui::GetWindowDrawList();
 	const float radius = theme::Radius * unit;
-	draw->AddRectFilled(minimum, maximum,
-						ImGui::IsItemHovered() ? theme::Mix(theme::SurfaceRaised, theme::Text, .06f) : theme::SurfaceRaised,
-						radius);
+	draw->AddRectFilled(
+		minimum, maximum,
+		ImGui::IsItemHovered() ? theme::Mix(theme::SurfaceRaised, theme::Text, .06f) : theme::SurfaceRaised, radius);
 	// A sliver under a pixel would draw as a rounded blob.
 	if (shown * width >= 1)
 	{
@@ -94,18 +89,27 @@ bool TriggerBar(const char* id, const char* label, float& value, bool& latched, 
 	draw->AddText({maximum.x - 8 * unit - ImGui::CalcTextSize(percent).x, textY},
 				  value > 0 ? theme::Text : theme::TextDim, percent);
 	ImGui::SetItemTooltip("%s: hold or drag; right-click %s", label, latched ? "releases" : "keeps it held");
-	return value != previous;
+	return value != previous || latched != wasLatched;
 }
 bool HoldButton(const char* id, const char* label, bool& pressed, bool& latched, ImU32 color)
 {
 	const float unit = Unit(), size = 34 * unit;
 	const auto minimum = ImGui::GetCursorScreenPos();
 	ImGui::InvisibleButton(id, {size, size},
-						   ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_EnableNav);
+						   ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight |
+							   ImGuiButtonFlags_EnableNav);
 	const auto previous = pressed;
-	if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
+	const bool wasLatched = latched;
+	const bool enabled = !(ImGui::GetItemFlags() & (ImGuiItemFlags_Disabled | ImGuiItemFlags_ReadOnly));
+	const bool holding = enabled && Holding();
+	const bool wasHolding = WasHolding(ImGui::GetItemID(), holding);
+	if (enabled && (holding || wasHolding))
+		pressed = latched || holding;
+	if (enabled && ImGui::IsItemClicked(ImGuiMouseButton_Right))
+	{
 		latched = !latched;
-	pressed = latched || (ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left));
+		pressed = latched;
+	}
 	// The button sinks and fills with the hand's colour while held, and rises again on release.
 	const float press = Ease(ImGui::GetItemID(), "press", pressed ? 1.0f : 0.0f, 22);
 	auto* draw = ImGui::GetWindowDrawList();
@@ -113,7 +117,8 @@ bool HoldButton(const char* id, const char* label, bool& pressed, bool& latched,
 	const float radius = size / 2 - unit, face = radius * (1 - .08f * press);
 	if (press > 0)
 		draw->AddCircleFilled(center, radius + unit * press, theme::Fade(color, .3f * press));
-	const auto rest = ImGui::IsItemHovered() ? theme::Mix(theme::SurfaceRaised, theme::Text, .12f) : theme::SurfaceRaised;
+	const auto rest =
+		ImGui::IsItemHovered() ? theme::Mix(theme::SurfaceRaised, theme::Text, .12f) : theme::SurfaceRaised;
 	draw->AddCircleFilled(center, face, theme::Mix(rest, color, press));
 	draw->AddCircle(center, face, theme::Mix(theme::Line, color, press), 0, unit);
 	if (latched)
@@ -123,19 +128,20 @@ bool HoldButton(const char* id, const char* label, bool& pressed, bool& latched,
 				  ImGui::FindRenderedTextEnd(label));
 	const std::string name(label, ImGui::FindRenderedTextEnd(label));
 	ImGui::SetItemTooltip("%s: hold to press; right-click %s", name.c_str(), latched ? "releases" : "keeps it pressed");
-	return pressed != previous;
+	return pressed != previous || latched != wasLatched;
 }
 bool StickPad(const char* id, float& x, float& y, bool& click, bool& latched, ImU32 color)
 {
-	constexpr float Pi = std::numbers::pi_v<float>;
-	constexpr std::array<ImVec2, 4> Directions{{{1, 0}, {0, 1}, {-1, 0}, {0, -1}}};
+	constexpr float pi = std::numbers::pi_v<float>;
+	constexpr std::array<ImVec2, 4> directions{{{1, 0}, {0, 1}, {-1, 0}, {0, -1}}};
 	const float unit = Unit(), size = 96 * unit, radius = size / 2, knob = 14 * unit, travel = radius - knob;
 	const auto minimum = ImGui::GetCursorScreenPos();
 	const ImVec2 center{minimum.x + radius, minimum.y + radius};
 	ImGui::InvisibleButton(id, {size, size},
-						   ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_EnableNav);
+						   ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight |
+							   ImGuiButtonFlags_EnableNav);
 	const float previousX = x, previousY = y;
-	const bool previousClick = click;
+	const bool previousClick = click, wasLatched = latched;
 	const auto item = ImGui::GetItemID();
 	const auto& io = ImGui::GetIO();
 	// OpenXR stick Y is up; screen Y is down.
@@ -144,18 +150,21 @@ bool StickPad(const char* id, float& x, float& y, bool& click, bool& latched, Im
 	{
 		if (std::hypot(pointerX, pointerY) <= knob + 4 * unit)
 			return -1;
-		return static_cast<int>(std::lround(std::atan2(pointerY, pointerX) / (Pi / 2))) & 3;
+		return static_cast<int>(std::lround(std::atan2(pointerY, pointerX) / (pi / 2))) & 3;
 	};
-	if (ImGui::IsItemActivated())
-		Held(item) = {item, false, arrowAt()};
-	const bool holding = ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left);
-	auto& gesture = Held(item);
+	const bool enabled = !(ImGui::GetItemFlags() & (ImGuiItemFlags_Disabled | ImGuiItemFlags_ReadOnly));
+	const bool holding = enabled && Holding();
+	auto* storage = ImGui::GetStateStorage();
+	const auto directionKey = ImHashStr("direction", 0, item);
+	const bool wasHolding = WasHolding(item, holding);
+	const int direction = holding && !wasHolding ? arrowAt() : storage->GetInt(directionKey, -1);
+	if (holding && !wasHolding)
+		storage->SetInt(directionKey, direction);
+	const bool dragged = holding && ImGui::IsMouseDragging(ImGuiMouseButton_Left, (direction < 0 ? 3 : 12) * unit);
 	if (holding)
 	{
 		// A press on an arrow keeps it pushed; only a clear drag turns it into steering.
-		if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, (gesture.direction < 0 ? 3 : 12) * unit))
-			gesture.dragged = true;
-		if (gesture.dragged)
+		if (dragged)
 		{
 			float dx = pointerX / travel, dy = pointerY / travel;
 			const float length = std::hypot(dx, dy);
@@ -167,44 +176,44 @@ bool StickPad(const char* id, float& x, float& y, bool& click, bool& latched, Im
 			x = dx;
 			y = dy;
 		}
-		else if (gesture.direction >= 0)
+		else if (direction >= 0)
 		{
-			x = Directions[gesture.direction].x;
-			y = Directions[gesture.direction].y;
+			x = directions[direction].x;
+			y = directions[direction].y;
 		}
-		click = gesture.direction < 0 && !gesture.dragged;
+		click = direction < 0 && !dragged;
 	}
-	if (ImGui::IsItemDeactivated())
+	if (enabled && wasHolding && !holding)
 	{
 		click = false;
 		if (!latched)
 			x = y = 0;
 	}
-	if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
+	if (enabled && ImGui::IsItemClicked(ImGuiMouseButton_Right))
 	{
 		latched = !latched;
 		if (!latched)
 			x = y = 0;
 	}
 	// The knob follows the pointer exactly and eases back to the centre on release.
-	const float speed = holding && gesture.dragged ? 1000.0f : 18.0f;
+	const float speed = dragged ? 1000.0f : 18.0f;
 	const float shownX = Ease(item, "x", x, speed), shownY = Ease(item, "y", y, speed);
 	auto* draw = ImGui::GetWindowDrawList();
 	draw->AddCircleFilled(center, radius, theme::SurfaceRaised, 48);
 	draw->AddCircle(center, radius, theme::Line, 48, unit);
 	const int hoveredArrow = ImGui::IsItemHovered() && !holding ? arrowAt() : -2;
-	const int pushedArrow = holding && !gesture.dragged ? gesture.direction : -2;
+	const int pushedArrow = holding && !dragged ? direction : -2;
 	for (int arrow = 0; arrow < 4; ++arrow)
 	{
-		const float angle = -arrow * Pi / 2;
+		const float angle = -arrow * pi / 2;
 		if (arrow == hoveredArrow || arrow == pushedArrow)
 		{
-			draw->PathArcTo(center, radius - unit, angle - Pi / 4, angle + Pi / 4, 12);
-			draw->PathArcTo(center, knob + 4 * unit, angle + Pi / 4, angle - Pi / 4, 8);
+			draw->PathArcTo(center, radius - unit, angle - pi / 4, angle + pi / 4, 12);
+			draw->PathArcTo(center, knob + 4 * unit, angle + pi / 4, angle - pi / 4, 8);
 			draw->PathFillConcave(arrow == pushedArrow ? theme::Fade(color, .45f) : theme::Fade(theme::Text, .07f));
 		}
 		// Quiet separators between the arrows make it read as a pad.
-		const ImVec2 diagonal{std::cos(angle + Pi / 4), std::sin(angle + Pi / 4)};
+		const ImVec2 diagonal{std::cos(angle + pi / 4), std::sin(angle + pi / 4)};
 		draw->AddLine({center.x + diagonal.x * (knob + 6 * unit), center.y + diagonal.y * (knob + 6 * unit)},
 					  {center.x + diagonal.x * (radius - 4 * unit), center.y + diagonal.y * (radius - 4 * unit)},
 					  theme::Line, unit);
@@ -215,7 +224,8 @@ bool StickPad(const char* id, float& x, float& y, bool& click, bool& latched, Im
 			ImVec2{point.x - direction.x * depth + across.x * half, point.y - direction.y * depth + across.y * half},
 			point,
 			ImVec2{point.x - direction.x * depth - across.x * half, point.y - direction.y * depth - across.y * half}};
-		draw->AddPolyline(chevron.data(), 3, arrow == pushedArrow || arrow == hoveredArrow ? theme::Text : theme::TextDim,
+		draw->AddPolyline(chevron.data(), 3,
+						  arrow == pushedArrow || arrow == hoveredArrow ? theme::Text : theme::TextDim,
 						  ImDrawFlags_None, 2 * unit);
 	}
 	if (latched)
@@ -226,6 +236,6 @@ bool StickPad(const char* id, float& x, float& y, bool& click, bool& latched, Im
 	draw->AddCircle(at, knob, color, 0, 1.5f * unit);
 	ImGui::SetItemTooltip("Stick: click an arrow to push it, drag to steer, click the knob to press; right-click %s",
 						  latched ? "releases" : "keeps it in place");
-	return x != previousX || y != previousY || click != previousClick;
+	return x != previousX || y != previousY || click != previousClick || latched != wasLatched;
 }
 } // namespace simxr::app

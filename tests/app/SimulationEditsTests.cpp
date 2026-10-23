@@ -1,6 +1,6 @@
 #include "../TestSupport.h"
 #include "Math.h"
-#include "app/SimulationEdits.h"
+#include "app/services/SimulationEdits.h"
 #include "control/ControlSchema.h"
 #include "control/SimulationControl.h"
 #include "simulation/CommandScheduler.h"
@@ -190,6 +190,18 @@ void PreserveObservedConfiguration()
 					"Recovery did not restore tracking");
 	}
 }
+void SourceKindRange()
+{
+	for (const auto kind : {std::uint64_t{4}, std::uint64_t{1} << 32, std::numeric_limits<std::uint64_t>::max()})
+	{
+		wire::Message receipt;
+		receipt.fields.push_back(wire::Field::Bytes(wire::tag::Document,
+			wire::InspectionValue::Object({{"source", wire::InspectionValue::Object({
+				{"kind", wire::InspectionValue::Unsigned(kind)}, {"id", wire::InspectionValue::Unsigned(1)}})}}).Encode()));
+		Rejected([&] { app::SimulationEditSource(receipt); });
+	}
+}
+
 void FirstPublicationAndStateFailures()
 {
 	CommandScheduler scheduler;
@@ -258,6 +270,7 @@ int main()
 		DirectPiloting();
 		PreserveObservedConfiguration();
 		FirstPublicationAndStateFailures();
+		SourceKindRange();
 		std::cout << "PASS simulation edits\n";
 		return 0;
 	}

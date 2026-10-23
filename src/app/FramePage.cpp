@@ -2,7 +2,7 @@
 #include "app/DocumentTree.h"
 #include "app/PastInput.h"
 #include "app/RuntimeSession.h"
-#include "app/SimulationEdits.h"
+#include "app/services/SimulationEdits.h"
 #include "app/widgets/SpatialEditor.h"
 #include "app/Theme.h"
 #include "app/widgets/Controls.h"

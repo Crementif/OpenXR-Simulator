@@ -1,7 +1,7 @@
 #pragma once
 
 #include "app/ShellState.h"
-#include "app/SimulationEdits.h"
+#include "app/services/SimulationEdits.h"
 #include "graphics/FrameOutput.h"
 
 #include <array>

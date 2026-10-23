@@ -2,7 +2,7 @@
 
 #include "app/services/PlayerRig.h"
 #include "app/ShellState.h"
-#include "app/SimulationEdits.h"
+#include "app/services/SimulationEdits.h"
 #include "app/widgets/LiveField.h"
 
 #include <array>
@@ -22,6 +22,7 @@ class DeviceControlPanel
 	std::optional<SimulationEdit> Draw(bool supported, const Selection* selection = nullptr,
 									   const std::function<void()>& placement = {});
 	void ClearHeldInputs();
+	std::optional<SimulationEdit> EndInputFrame();
 	int SelectedTracker() const
 	{
 		return m_selectedTracker;
@@ -97,11 +98,13 @@ class DeviceControlPanel
 	int m_trackerRole = 0;
 	TrackingState m_authoredTracking;
 	std::array<ControllerControls, 2> m_authoredControls;
-	struct Latches
+	struct PadInputs
 	{
 		bool trigger = false, grip = false, primary = false, secondary = false, menu = false, stick = false;
 	};
-	std::array<Latches, 2> m_latches{};
+	std::array<PadInputs, 2> m_latches{}, m_heldInputs{};
+	std::array<int, 2> m_padFrames{-1, -1};
+	std::array<unsigned, 2> m_padActiveIds{};
 	BodyProportions m_authoredProportions;
 	ViewSettings m_authoredViews;
 	std::array<std::array<char, 256>, 2> m_controllerProfiles{};

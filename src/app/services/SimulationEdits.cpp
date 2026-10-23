@@ -1,21 +1,18 @@
-#include "app/SimulationEdits.h"
+#include "app/services/SimulationEdits.h"
 #include "Math.h"
+#include "Pch.h"
 #include "control/ControlSchema.h"
 #include "control/SimulationControl.h"
 #include "simulation/BodyModel.h"
-#include <algorithm>
 #include <cmath>
-#include <cstdio>
 #include <limits>
 #include <stdexcept>
 
 namespace simxr::app
 {
-namespace
-{
 namespace wire = control;
 
-wire::Message DecodeNode(std::span<const std::byte> bytes)
+static wire::Message DecodeNode(std::span<const std::byte> bytes)
 {
 	auto decoded = wire::DecodeFields(bytes);
 	if (decoded.error != wire::DecodeError::None)
@@ -24,7 +21,7 @@ wire::Message DecodeNode(std::span<const std::byte> bytes)
 	result.fields = std::move(decoded.fields);
 	return result;
 }
-const wire::Field& NodeData(const wire::Message& node, wire::InspectionType type)
+static const wire::Field& NodeData(const wire::Message& node, wire::InspectionType type)
 {
 	const auto kind = node.Find(2);
 	const auto data = node.Find(3);
@@ -32,7 +29,7 @@ const wire::Field& NodeData(const wire::Message& node, wire::InspectionType type
 		throw std::runtime_error("Runtime returned an invalid simulation state field");
 	return *data;
 }
-std::optional<wire::Message> FindMember(const wire::Message& node, std::string_view name)
+static std::optional<wire::Message> FindMember(const wire::Message& node, std::string_view name)
 {
 	for (const auto& field : DecodeNode(NodeData(node, wire::InspectionType::Object).value).fields)
 	{
@@ -42,13 +39,13 @@ std::optional<wire::Message> FindMember(const wire::Message& node, std::string_v
 	}
 	return {};
 }
-wire::Message Member(const wire::Message& node, std::string_view name)
+static wire::Message Member(const wire::Message& node, std::string_view name)
 {
 	if (auto child = FindMember(node, name))
 		return *child;
 	throw std::runtime_error("Observed device state is not available yet");
 }
-std::vector<wire::Message> Elements(const wire::Message& node)
+static std::vector<wire::Message> Elements(const wire::Message& node)
 {
 	std::vector<wire::Message> elements;
 	for (const auto& page : DecodeNode(NodeData(node, wire::InspectionType::Array).value).fields)
@@ -56,33 +53,40 @@ std::vector<wire::Message> Elements(const wire::Message& node)
 			elements.push_back(DecodeNode(field.value));
 	return elements;
 }
-float Number(const wire::Message& node)
+static float Number(const wire::Message& node)
 {
 	const auto number = NodeData(node, wire::InspectionType::Float).AsF32();
 	if (!number || !std::isfinite(*number))
 		throw std::runtime_error("Observed device pose contains an invalid number");
 	return *number;
 }
-std::uint64_t Unsigned(const wire::Message& node)
+static std::uint64_t Unsigned(const wire::Message& node)
 {
 	const auto value = NodeData(node, wire::InspectionType::Unsigned).AsU64();
 	if (!value)
 		throw std::runtime_error("Invalid unsigned configuration value");
 	return *value;
 }
-bool Boolean(const wire::Message& node)
+template <typename T> static T ReadEnum(const wire::Message& node, T maximum)
+{
+	const auto value = Unsigned(node);
+	if (value > static_cast<std::uint64_t>(maximum))
+		throw std::runtime_error("Unsupported simulation configuration value");
+	return static_cast<T>(value);
+}
+static bool Boolean(const wire::Message& node)
 {
 	const auto value = NodeData(node, wire::InspectionType::Boolean).AsBool();
 	if (!value)
 		throw std::runtime_error("Invalid boolean configuration value");
 	return *value;
 }
-bool Null(const wire::Message& node)
+static bool Null(const wire::Message& node)
 {
 	const auto type = node.Find(2);
 	return type && type->AsU32() == static_cast<std::uint32_t>(wire::InspectionType::Null);
 }
-XrPosef ReadPose(const wire::Message& node)
+static XrPosef ReadPose(const wire::Message& node)
 {
 	const auto p = Elements(Member(node, "position")), q = Elements(Member(node, "orientation"));
 	if (p.size() != 3 || q.size() != 4)
@@ -93,11 +97,11 @@ XrPosef ReadPose(const wire::Message& node)
 		throw std::runtime_error("Invalid configuration orientation");
 	return *pose;
 }
-PoseSample ReadSample(const wire::Message& node)
+static PoseSample ReadSample(const wire::Message& node)
 {
 	return {ReadPose(node), Unsigned(Member(node, "flags"))};
 }
-FrameId NextObservedFrame(const wire::Message& state)
+static FrameId NextObservedFrame(const wire::Message& state)
 {
 	const auto document = state.Find(wire::tag::Document);
 	if (!document)
@@ -137,8 +141,6 @@ FrameId NextObservedFrame(const wire::Message& state)
 		throw std::runtime_error("Simulation frame identity is exhausted");
 	return FrameId{previous + 1};
 }
-} // namespace
-
 std::optional<CommandSource> SimulationEditSource(const control::Message& receipt)
 {
 	const auto document = receipt.Find(wire::tag::Document);
@@ -147,7 +149,7 @@ std::optional<CommandSource> SimulationEditSource(const control::Message& receip
 	const auto source = FindMember(DecodeNode(document->value), "source");
 	if (!source)
 		return {};
-	return CommandSource{static_cast<CommandSourceKind>(Unsigned(Member(*source, "kind"))),
+	return CommandSource{ReadEnum(Member(*source, "kind"), CommandSourceKind::Sequence),
 						 Unsigned(Member(*source, "id"))};
 }
 std::optional<TrackingSnapshot> ReadInspectionTracking(const control::Message& state)
@@ -260,7 +262,7 @@ ObservedSetup ReadObservedSetup(const control::Message& state)
 	if (bodyRoot && !Null(*bodyRoot))
 		values.tracking.body.rootPose = ReadPose(*bodyRoot);
 	values.tracking.body.confidence = Number(Member(body, "confidence"));
-	values.tracking.body.preset = static_cast<BodyPreset>(Unsigned(Member(body, "preset")));
+	values.tracking.body.preset = ReadEnum(Member(body, "preset"), BodyPreset::Seated);
 	const auto bodyControls = FindMember(body, "controls"), bodyJoints = FindMember(body, "joints");
 	result.bodyOverridesAvailable = bodyControls && bodyJoints;
 	if (result.bodyOverridesAvailable)
@@ -325,7 +327,7 @@ ObservedSetup ReadObservedSetup(const control::Message& state)
 		const auto& node = trackers[index];
 		auto& out = values.tracking.trackers[index];
 		out.identity.value = Unsigned(Member(node, "id"));
-		out.role = static_cast<TrackerRole>(Unsigned(Member(node, "role")));
+		out.role = ReadEnum(Member(node, "role"), TrackerRole::Keyboard);
 		out.connected = Boolean(Member(node, "connected"));
 		out.tracked = Boolean(Member(node, "tracked"));
 		const auto anchor = FindMember(node, "anchor"), pose = FindMember(node, "pose_override");
@@ -337,7 +339,7 @@ ObservedSetup ReadObservedSetup(const control::Message& state)
 			out.jointOffset = ReadPose(*offset);
 		out.poseOverride.reset();
 		if (anchor && !Null(*anchor))
-			out.anchor = static_cast<BodyJoint>(Unsigned(*anchor));
+			out.anchor = ReadEnum(*anchor, BodyJoint::SpineUpper);
 		if (pose && !Null(*pose))
 			out.poseOverride = ReadPose(*pose);
 	}
@@ -358,9 +360,8 @@ ObservedSetup ReadObservedSetup(const control::Message& state)
 		throw std::runtime_error("Unsupported ownership configuration");
 	for (std::size_t index = 0; index < owners.size(); ++index)
 		if (!Null(owners[index]))
-			result.owners[index] =
-				CommandSource{static_cast<CommandSourceKind>(Unsigned(Member(owners[index], "kind"))),
-							  Unsigned(Member(owners[index], "id"))};
+			result.owners[index] = CommandSource{ReadEnum(Member(owners[index], "kind"), CommandSourceKind::Sequence),
+												 Unsigned(Member(owners[index], "id"))};
 	for (const auto& scenario : Elements(Member(root, "scenarios")))
 	{
 		const auto index = Unsigned(scenario);
@@ -376,192 +377,6 @@ ObservedSetup ReadObservedSetup(const control::Message& state)
 	return result;
 }
 
-void UndoStack::Observe(const ObservedSetup& observed)
-{
-	if (!m_open)
-		m_authored = Entry{observed.values.tracking, observed.values.proportions};
-}
-void UndoStack::Record(const ObservedSetup& before, const ManualTransaction& edit)
-{
-	const bool pose = std::any_of(edit.commands.begin(), edit.commands.end(),
-								  [](const SimulationCommand& command)
-								  {
-									  return std::holds_alternative<SetHeadPose>(command) ||
-											 std::holds_alternative<SetControllerPose>(command) ||
-											 std::holds_alternative<SetBodyControls>(command) ||
-											 std::holds_alternative<SetGaze>(command) ||
-											 std::holds_alternative<SetTracker>(command) ||
-											 std::holds_alternative<SetBodyProportions>(command);
-								  });
-	if (!pose)
-		return;
-	if (!m_authored)
-		m_authored = Entry{before.values.tracking, before.values.proportions};
-	// The first edit of a drag opens the group; its continuous updates and final edit join it.
-	if (!m_open)
-	{
-		constexpr std::size_t capacity = 64;
-		if (m_entries.size() == capacity)
-			m_entries.erase(m_entries.begin());
-		m_entries.push_back(*m_authored);
-		m_entries.back().time = std::chrono::steady_clock::now();
-		m_entries.back().label = edit.label;
-	}
-	else if (m_entries.back().label.empty())
-		m_entries.back().label = edit.label;
-	for (const auto& command : edit.commands)
-		std::visit([&](const auto& value)
-		{
-			using T = std::decay_t<decltype(value)>;
-			if constexpr (std::is_same_v<T, SetHeadPose>)
-				m_authored->tracking.head = value.value;
-			else if constexpr (std::is_same_v<T, SetControllerPose>)
-				m_authored->tracking.controllers.at(value.hand) = value.value;
-			else if constexpr (std::is_same_v<T, SetBodyControls>)
-				m_authored->tracking.body = value.value;
-			else if constexpr (std::is_same_v<T, SetGaze>)
-				m_authored->tracking.gaze = value.value;
-			else if constexpr (std::is_same_v<T, SetTracker>)
-				m_authored->tracking.trackers.at(value.index) = value.value;
-			else if constexpr (std::is_same_v<T, SetBodyProportions>)
-				m_authored->proportions = value.value;
-		}, command);
-	m_open = edit.continuous;
-}
-void UndoStack::Clear()
-{
-	m_entries.clear();
-	m_authored.reset();
-	m_open = false;
-}
-std::vector<UndoStack::Change> UndoStack::Changes() const
-{
-	std::vector<Change> result;
-	for (std::size_t index = 0; index < m_entries.size(); ++index)
-	{
-		const auto& after = index + 1 < m_entries.size() ? m_entries[index + 1] : m_authored.value_or(m_entries[index]);
-		const auto& label = m_entries[index].label;
-		result.push_back({label.empty() ? Describe(m_entries[index], after) : label, m_entries[index].time});
-	}
-	return result;
-}
-std::string UndoStack::Describe(const Entry& before, const Entry& after)
-{
-	const auto moved = [](const XrPosef& a, const XrPosef& b)
-	{
-		const float distance = std::hypot(a.position.x - b.position.x, a.position.y - b.position.y,
-										  a.position.z - b.position.z);
-		const float dot = a.orientation.x * b.orientation.x + a.orientation.y * b.orientation.y +
-						  a.orientation.z * b.orientation.z + a.orientation.w * b.orientation.w;
-		return distance > .0005f || std::abs(dot) < .99999f;
-	};
-	const auto movedOptional = [&](const std::optional<XrPosef>& a, const std::optional<XrPosef>& b)
-	{
-		return a.has_value() != b.has_value() || (a && moved(*a, *b));
-	};
-	const auto& from = before.tracking;
-	const auto& to = after.tracking;
-	// Moving the player moves everything that follows it; name the cause. The first rig edit only
-	// starts sending a root pose, which moves nothing.
-	if (from.body.rootPose && to.body.rootPose && moved(*from.body.rootPose, *to.body.rootPose))
-		return "Player moved";
-	if (from.body.preset != to.body.preset)
-		return "Body pose changed";
-	char text[64];
-	const auto measure = [&](const char* name, float a, float b)
-	{
-		std::snprintf(text, sizeof(text), "%s %.2f \u2192 %.2f m", name, a, b);
-		return std::string(text);
-	};
-	if (before.proportions.height != after.proportions.height)
-		return measure("Height", before.proportions.height, after.proportions.height);
-	if (before.proportions.shoulderWidth != after.proportions.shoulderWidth)
-		return measure("Shoulder width", before.proportions.shoulderWidth, after.proportions.shoulderWidth);
-	if (before.proportions.hipWidth != after.proportions.hipWidth)
-		return measure("Hip width", before.proportions.hipWidth, after.proportions.hipWidth);
-	std::vector<std::string> names;
-	bool posed = false;
-	const auto note = [&](std::string name, bool pose)
-	{
-		names.push_back(std::move(name));
-		posed |= pose;
-	};
-	if (moved(from.head.pose, to.head.pose))
-		note("Head", true);
-	for (std::size_t hand = 0; hand < 2; ++hand)
-	{
-		const auto& a = from.controllers[hand];
-		const auto& b = to.controllers[hand];
-		const bool pose = moved(a.pose.pose, b.pose.pose);
-		if (pose || a.connected != b.connected)
-			note(hand ? "Right hand" : "Left hand", pose);
-	}
-	for (std::size_t slot = 0; slot < from.trackers.size(); ++slot)
-	{
-		const auto& a = from.trackers[slot];
-		const auto& b = to.trackers[slot];
-		const bool pose = a.anchor != b.anchor || movedOptional(a.poseOverride, b.poseOverride) ||
-						  movedOptional(a.jointOffset, b.jointOffset);
-		if (pose || a.connected != b.connected || a.tracked != b.tracked || a.role != b.role)
-			note("Tracker " + std::to_string(slot + 1), pose);
-	}
-	if (from.gaze.yaw != to.gaze.yaw || from.gaze.pitch != to.gaze.pitch ||
-		from.gaze.available != to.gaze.available || from.gaze.tracked != to.gaze.tracked)
-		note("Eye gaze", false);
-	if (from.body.active != to.body.active || from.body.confidence != to.body.confidence)
-		note("Body", false);
-	const char* verb = posed ? " moved" : " changed";
-	if (names.empty())
-		return "No change";
-	if (names.size() == 1)
-		return names.front() + verb;
-	if (names.size() == 2)
-		return names[0] + " and " + names[1] + verb;
-	return std::to_string(names.size()) + " devices" + verb;
-}
-std::optional<ManualTransaction> UndoStack::Undo(const ObservedSetup& current, std::optional<CommandSource> source,
-												 std::size_t steps)
-{
-	m_open = false;
-	if (m_entries.empty() || steps == 0)
-		return {};
-	steps = std::min(steps, m_entries.size());
-	const auto entry = std::move(m_entries[m_entries.size() - steps]);
-	m_entries.resize(m_entries.size() - steps);
-	m_authored = entry;
-	ManualTransaction result;
-	const auto allowed = [&](ControlChannel channel)
-	{
-		const auto& owner = current.owners[static_cast<std::size_t>(channel)];
-		return !owner || owner == source;
-	};
-	const auto restore = [&](ControlChannel channel, SimulationCommand command)
-	{
-		if (!allowed(channel))
-			return;
-		result.commands.emplace_back(TakeControl{channel, false});
-		result.commands.push_back(std::move(command));
-	};
-	restore(ControlChannel::Head, SetHeadPose{entry.tracking.head});
-	for (std::uint32_t hand = 0; hand < 2; ++hand)
-		restore(hand ? ControlChannel::RightPose : ControlChannel::LeftPose,
-				SetControllerPose{hand, entry.tracking.controllers[hand]});
-	auto body = entry.tracking.body;
-	if (!current.bodyRootAvailable)
-		body.rootPose.reset();
-	restore(ControlChannel::Body, SetBodyControls{body});
-	restore(ControlChannel::Gaze, SetGaze{entry.tracking.gaze});
-	if (current.trackerAttachmentsAvailable && allowed(ControlChannel::Trackers))
-	{
-		result.commands.emplace_back(TakeControl{ControlChannel::Trackers, false});
-		for (std::uint32_t slot = 0; slot < entry.tracking.trackers.size(); ++slot)
-			result.commands.emplace_back(SetTracker{slot, entry.tracking.trackers[slot]});
-	}
-	restore(ControlChannel::Proportions, SetBodyProportions{entry.proportions});
-	if (result.commands.empty())
-		return {};
-	return result;
-}
 ControlChannel ScenarioInputChannel(FailureScenario scenario)
 {
 	switch (scenario)
@@ -620,7 +435,7 @@ PoseSample ObservedDevicePose(const control::Message& state, ControlChannel chan
 	const auto root = DecodeNode(state.Find(wire::tag::Document)->value);
 	if (const auto scenarios = FindMember(root, "scenarios"))
 		for (const auto& scenario : Elements(*scenarios))
-			if (ScenarioInputChannel(static_cast<FailureScenario>(Unsigned(scenario))) == channel)
+			if (ScenarioInputChannel(ReadEnum(scenario, FailureScenario::SessionLoss)) == channel)
 				throw std::runtime_error("Restore the active failure scenario before piloting this device");
 	auto configuration = Member(root, "configuration");
 	wire::Message sample;

@@ -1,21 +1,18 @@
 #include "app/widgets/LiveField.h"
+#include "Pch.h"
 #include "app/Theme.h"
-#include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <imgui.h>
+#include <imgui_internal.h>
 #include <numbers>
 namespace simxr::app
 {
-namespace
-{
-std::string Format(const char* format, float value)
+static std::string Format(const char* format, float value)
 {
 	char text[32];
 	std::snprintf(text, sizeof(text), format, value);
 	return text;
 }
-} // namespace
 void DrawLiveField(bool pending, std::string_view rejection)
 {
 	const auto minimum = ImGui::GetItemRectMin(), maximum = ImGui::GetItemRectMax();
@@ -31,13 +28,18 @@ void DrawLiveField(bool pending, std::string_view rejection)
 	{
 		ImGui::GetWindowDrawList()->AddRect(minimum, maximum, theme::Record);
 		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-			ImGui::SetTooltip("%.*s", static_cast<int>(rejection.size()), rejection.data());
+		{
+			ImGui::BeginTooltip();
+			ImGui::TextUnformatted(rejection.data(), rejection.data() + rejection.size());
+			ImGui::EndTooltip();
+		}
 	}
 }
 bool FieldActions(const char* id, const FieldValue& value)
 {
 	bool changed = false;
 	const bool hovered = ImGui::IsItemHovered();
+	const bool editable = !(ImGui::GetItemFlags() & (ImGuiItemFlags_Disabled | ImGuiItemFlags_ReadOnly));
 	if (value.modified)
 	{
 		// A short accent bar inside the left edge: this value is not its default.
@@ -48,7 +50,7 @@ bool FieldActions(const char* id, const FieldValue& value)
 	}
 	const auto reset = [&](const std::function<void()>& restore)
 	{
-		if (restore)
+		if (editable && restore)
 		{
 			restore();
 			changed = true;
@@ -59,19 +61,19 @@ bool FieldActions(const char* id, const FieldValue& value)
 	const auto& io = ImGui::GetIO();
 	// macOS reports Shift+wheel as horizontal.
 	const float wheel = io.MouseWheel != 0 ? io.MouseWheel : io.KeyShift ? io.MouseWheelH : 0;
-	if (hovered && io.KeyCtrl && wheel != 0 && value.nudge && !ImGui::IsAnyItemActive())
+	if (editable && hovered && io.KeyCtrl && wheel != 0 && value.nudge && !ImGui::IsAnyItemActive())
 	{
 		value.nudge(wheel * (io.KeyShift ? .1f : 1));
 		changed = true;
 	}
 	if (ImGui::BeginPopupContextItem(id))
 	{
-		if (ImGui::MenuItem("Reset", "Middle-click", false, value.modified && value.reset))
+		if (ImGui::MenuItem("Reset", "Middle-click", false, editable && value.modified && value.reset))
 			reset(value.reset);
 		if (value.group && value.resetGroup)
 		{
 			const std::string label = std::string("Reset ") + value.group;
-			if (ImGui::MenuItem(label.c_str()))
+			if (ImGui::MenuItem(label.c_str(), nullptr, false, editable))
 				reset(value.resetGroup);
 		}
 		if (!value.text.empty() || !value.groupText.empty())

@@ -149,7 +149,8 @@ endif()
 add_library(simxr_connection STATIC
     src/app/services/RuntimeConnection.cpp
     src/app/services/LaunchAttachment.cpp
-    src/app/SimulationEdits.cpp
+    src/app/services/SimulationEdits.cpp
+    src/app/services/UndoStack.cpp
     src/app/services/PlayerRig.cpp
     src/app/services/RuntimePanelProtocol.cpp
     src/app/services/FrameHistoryFeed.cpp

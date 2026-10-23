@@ -23,7 +23,7 @@
 #include "app/services/InputHistory.h"
 #include "app/TimelineCanvas.h"
 #include <functional>
-#include "app/SimulationEdits.h"
+#include "app/services/SimulationEdits.h"
 #include "app/services/SpatialMath.h"
 #include "app/render/UiRenderer.h"
 #include "app/platform/Window.h"
@@ -1105,6 +1105,7 @@ void ConfigureObservedDevices()
 	observe(1);
 	Selection selection = DeviceSel{DevicePage::Head};
 	std::optional<SimulationEdit> edit;
+	bool supported = true;
 	const auto frame = [&]
 	{
 		Eventually(
@@ -1117,7 +1118,7 @@ void ConfigureObservedDevices()
 		ImGui::SetNextWindowSize({400, 650}, ImGuiCond_Always);
 		ImGui::Begin("Configuration workflow");
 		const auto headerEdit = panel.DrawHeader(selection);
-		edit = panel.Draw(true, &selection);
+		edit = panel.Draw(supported, &selection);
 		if (headerEdit)
 			edit = headerEdit;
 		ImGui::End();
@@ -1287,6 +1288,45 @@ void ConfigureObservedDevices()
 		if (const auto* pose = std::get_if<simxr::SetControllerPose>(&command); pose && pose->hand == 0)
 			keptDisconnected = !pose->value.connected;
 	Require(keptDisconnected, "Resetting Head reconnected the left controller");
+	// Rendering observed input must not author releases, including while controls are disabled or owned elsewhere.
+	initial.input.controllers[1].trigger = .6f;
+	initial.input.controllers[1].grip = .4f;
+	initial.input.controllers[1].stick = {.2f, -.3f};
+	initial.input.controllers[1].primary = initial.input.controllers[1].secondary = true;
+	initial.input.controllers[1].menu = initial.input.controllers[1].thumbClick = true;
+	scheduler.Start(0, initial);
+	panel.ResetObservations();
+	observe(1);
+	selection = DeviceSel{DevicePage::Right};
+	for (const bool enabled : {true, false, true})
+	{
+		supported = enabled;
+		frame();
+		Require(!edit, "Idle or disabled input pad changed observed controls");
+	}
+	command.id = 1;
+	command.source = {simxr::CommandSourceKind::Rig, 51};
+	command.target.frame = simxr::FrameId{2};
+	command.commands = {simxr::TakeControl{simxr::ControlChannel::RightControls, true},
+						simxr::SetControllerControls{1, initial.input.controllers[1]}};
+	Require(scheduler.Submit(command).result == simxr::CommandResult::Queued, "Pad owner fixture was not admitted");
+	observe(2);
+	Require(scheduler.Snapshot().applied->owners[static_cast<std::size_t>(simxr::ControlChannel::RightControls)] ==
+		command.source, "Pad owner fixture did not acquire the controls channel");
+	panel.SetManualSource(simxr::CommandSource{simxr::CommandSourceKind::Manual, 77});
+	frame();
+	Require(!edit, "Other-owned input pad submitted an unsolicited edit");
+	ImGui::ActivateItemByID(ImHashStr("Primary", 0, window->GetID(1)));
+	frame();
+	Require(!edit, "Other-owned input pad accepted a press before takeover");
+	ImGui::ActivateItemByID(ImHashStr("Take over##Input", 0, window->GetID(1)));
+	frame();
+	Require(edit && std::holds_alternative<ManualTransaction>(*edit), "Input pad takeover did not submit");
+	const auto& takeover = std::get<ManualTransaction>(*edit);
+	Require(takeover.commands.size() == 1 && std::holds_alternative<simxr::TakeControl>(takeover.commands.front()) &&
+				std::get<simxr::TakeControl>(takeover.commands.front()).replace,
+			"Input pad takeover changed input before ownership acknowledgement");
+	std::cout << "PASS passive/disabled input-pad observation and explicit ownership takeover\n";
 	test.renderer.WaitIdle();
 	Require(!test.validation->errors.load(), "Live fields generated validation errors");
 	std::cout << "PASS live configuration: immediate changes, preserved configuration, scenario recovery, reconnect, "
@@ -3144,7 +3184,7 @@ void CheckInputPad(Interaction& test)
 		for (auto* candidate : g.Windows)
 			if (std::string_view(candidate->Name).find("Inspector") != std::string_view::npos && candidate->Active)
 			{
-				const auto id = candidate->GetID(name);
+				const auto id = ImHashStr(name, 0, candidate->GetID(1));
 				ImGui::SetFocusID(id, candidate);
 				pump(1);
 				if (g.NavId == id && g.NavIdIsAlive)
@@ -3188,6 +3228,25 @@ void CheckInputPad(Interaction& test)
 	button(SDL_BUTTON_RIGHT, false);
 	settle([](const auto& c) { return c.trigger == 0; }, "Trigger unlatch did not release");
 	std::cout << "PASS pad trigger hold, drag, latch\n";
+	move(trigger.GetCenter());
+	button(SDL_BUTTON_LEFT, true);
+	settle(
+		[](const auto& c)
+		{
+			return c.trigger > .99f;
+		},
+		"Hidden-pad fixture did not hold the trigger");
+	test.workspace.SetPreviewExpanded(true);
+	settle(
+		[](const auto& c)
+		{
+			return c.trigger == 0;
+		},
+		"Hiding the input pad left a momentary trigger held");
+	button(SDL_BUTTON_LEFT, false);
+	test.workspace.SetPreviewExpanded(false);
+	pump(3);
+	std::cout << "PASS hidden input-pad momentary release\n";
 
 	move(grip.GetCenter());
 	button(SDL_BUTTON_LEFT, true);

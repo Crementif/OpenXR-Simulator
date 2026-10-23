@@ -1,3 +1,4 @@
+#include "app/services/UndoStack.h"
 #include "../TestSupport.h"
 #include "Math.h"
 #include "app/services/PlayerRig.h"
@@ -242,11 +243,69 @@ void HistoryUndo()
 	const auto restore = undo.Undo(original, std::nullopt, 2);
 	Require(restore.has_value(), "Undo to a history entry produced nothing");
 	const auto state = Applied(*restore);
-	Require(state.head.pose.position.x == 1, "Undoing two steps also undid the step before them");
+	Require(std::none_of(restore->commands.begin(), restore->commands.end(), [](const auto& command)
+	{
+		return std::holds_alternative<SetHeadPose>(command);
+	}), "Undoing two steps also rewrote the step before them");
 	SamePose(state.controllers[1].pose.pose, original.values.tracking.controllers[1].pose.pose);
 	Require(undo.Changes().size() == 1 && undo.Changes()[0].label == "Head moved",
 			"Undo to an entry kept the undone changes");
 }
+void UndoOwnershipAndScope()
+{
+	ObservedSetup before;
+	UndoStack undo;
+	ManualTransaction gaze;
+	gaze.commands.emplace_back(SetGaze{GazeInput{.4f, .2f, true, true}});
+	undo.Record(before, gaze);
+	ManualTransaction tracker;
+	auto moved = before.values.tracking.trackers[1];
+	moved.anchor.reset();
+	moved.poseOverride = XrPosef{EulerAngles(.2f, 0, 0), {3, 2, 1}};
+	tracker.commands.emplace_back(SetTracker{1, moved});
+	undo.Record(before, tracker);
+	const auto changes = undo.Changes();
+	ObservedSetup current = before;
+	current.values.tracking.gaze = {.4f, .2f, true, true};
+	current.values.tracking.trackers[1] = moved;
+	current.values.tracking.head.pose.position.x = 7;
+	current.values.tracking.trackers[3].connected = false;
+	undo.Observe(current);
+	Require(undo.Changes()[1].label == changes[1].label,
+		"A later runtime observation changed an earlier edit's description");
+	const CommandSource other{CommandSourceKind::Rig, 2};
+	current.owners[static_cast<std::size_t>(ControlChannel::Trackers)] = other;
+	Require(!undo.Undo(current, std::nullopt, 2) && undo.Changes().size() == 2,
+		"Blocked undo discarded history or partially restored a grouped edit");
+	current.owners[static_cast<std::size_t>(ControlChannel::Trackers)].reset();
+	current.scenarios[static_cast<std::size_t>(FailureScenario::GazeUnavailable)] = true;
+	Require(!undo.Undo(current, std::nullopt, 2) && undo.Changes().size() == 2,
+		"Undo overwrote an active failure scenario or discarded blocked history");
+	current.scenarios = {};
+	current.owners[static_cast<std::size_t>(ControlChannel::Head)] = other;
+	const auto restore = undo.Undo(current, std::nullopt, 2);
+	Require(restore && undo.Empty(), "An unrelated owner blocked undo");
+	Require(restore->commands.size() == 4, "Undo restored channels outside its edit groups");
+	for (const auto& command : restore->commands)
+	{
+		if (const auto value = std::get_if<SetTracker>(&command))
+			Require(value->index == 1 && value->value.anchor == before.values.tracking.trackers[1].anchor &&
+				!value->value.poseOverride, "Undo restored the wrong tracker slot");
+		if (const auto value = std::get_if<SetGaze>(&command))
+			Require(value->value.yaw == 0 && value->value.pitch == 0, "Undo lost the oldest selected gaze state");
+	}
+	// The next edit must start from the unrelated current state, even before another observation.
+	ManualTransaction head;
+	auto pose = current.values.tracking.head;
+	pose.pose.position.x = 8;
+	head.commands.emplace_back(SetHeadPose{pose});
+	undo.Record(before, head);
+	current.owners[static_cast<std::size_t>(ControlChannel::Head)].reset();
+	const auto next = undo.Undo(current, std::nullopt);
+	Require(next && Applied(*next).head.pose.position.x == 7,
+		"Selective undo replaced unrelated authored state with an older snapshot");
+}
+
 void Undo()
 {
 	ObservedSetup before;
@@ -291,6 +350,7 @@ int main()
 		Undo();
 		RapidUndo();
 		HistoryUndo();
+		UndoOwnershipAndScope();
 		std::cout << "PASS Player rig composition, inverse, anchors, body poses, undo and atomic ownership\n";
 	}
 	catch (const std::exception& error)

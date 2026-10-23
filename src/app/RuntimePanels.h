@@ -1,11 +1,12 @@
 #pragma once
 
+#include "app/services/UndoStack.h"
 #include "app/services/PilotBindings.h"
 
 #include "app/Notices.h"
 #include "app/render/PreviewHistory.h"
 #include "app/RuntimeView.h"
-#include "app/SimulationEdits.h"
+#include "app/services/SimulationEdits.h"
 #include "automation/Recording.h"
 #include "control/ControlSchema.h"
 

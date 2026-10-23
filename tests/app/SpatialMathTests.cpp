@@ -1,6 +1,6 @@
 #include "../TestSupport.h"
 #include "Math.h"
-#include "app/SimulationEdits.h"
+#include "app/services/SimulationEdits.h"
 #include "app/services/SpatialMath.h"
 #include "control/ControlSchema.h"
 #include "control/FrameInspection.h"

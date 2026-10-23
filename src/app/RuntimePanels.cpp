@@ -135,8 +135,16 @@ class RuntimePanels::Impl
 	{
 		if (m_pilot.Active() || m_spatial.Active() || !m_view.time.following || !m_session.Setup())
 			return;
-		if (auto undo = m_undo.Undo(*m_session.Setup(), m_session.Input().source, count))
-			m_session.SubmitEdit(*undo);
+		if (m_undo.Empty() || count == 0)
+			return;
+		auto history = m_undo;
+		if (auto undo = history.Undo(*m_session.Setup(), m_session.Input().source, count))
+		{
+			if (m_session.SubmitEdit(*undo))
+				m_undo = std::move(history);
+		}
+		else
+			m_session.Notify("Undo unavailable", "Release the affected devices or restore their tracking first");
 	}
 	void DrawPreview(ShellState& shell)
 	{
@@ -266,9 +274,9 @@ class RuntimePanels::Impl
 	void SubmitEdit(const SimulationEdit& edit)
 	{
 		StopPilot();
-		if (const auto transaction = std::get_if<ManualTransaction>(&edit); transaction && m_session.Setup())
-			m_undo.Record(*m_session.Setup(), *transaction);
-		m_session.SubmitEdit(edit);
+		if (m_session.SubmitEdit(edit))
+			if (const auto transaction = std::get_if<ManualTransaction>(&edit); transaction && m_session.Setup())
+				m_undo.Record(*m_session.Setup(), *transaction);
 	}
 	void StopPilot()
 	{
@@ -278,6 +286,7 @@ class RuntimePanels::Impl
 	void FocusLost()
 	{
 		m_spatial.Cancel();
+		m_undo.FinishGesture();
 		m_session.Haptics().Motors(HapticFeedback::Clock::now(), false);
 		if (m_window)
 			m_window->Rumble({});
@@ -438,6 +447,10 @@ void RuntimePanels::DrawWindows()
 void RuntimePanels::EndFrame()
 {
 	m_impl->m_spatial.EndFrame();
+	if (auto release = m_impl->m_devices.EndInputFrame())
+		m_impl->m_session.SubmitEdit(*release);
+	if (!m_impl->m_spatial.Active() && !ImGui::IsAnyItemActive())
+		m_impl->m_undo.FinishGesture();
 }
 std::vector<Notice> RuntimePanels::TakeNotices()
 {

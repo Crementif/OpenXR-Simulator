@@ -7,6 +7,8 @@ namespace simxr::app
 // Mouse-operable controller inputs (guide §8). Each returns true when its value
 // changed this frame. A latched input keeps its value after the mouse lets go;
 // right-click toggles the latch.
+// Idle and disabled widgets preserve observed values. The caller releases its
+// held inputs when hiding the pad or revoking input ownership.
 
 // Horizontal analog bar: drag sets the value, click-and-hold is fully pressed.
 // Right-click latches at the value under the mouse.
