@@ -1,4 +1,5 @@
 #include "simulation/TrackingSystem.h"
+#include "Pch.h"
 #include "Math.h"
 
 #include <cmath>
@@ -7,9 +8,7 @@
 
 namespace simxr
 {
-namespace
-{
-PoseSample Normalize(PoseSample sample, RuntimeTime time)
+static PoseSample Normalize(PoseSample sample, RuntimeTime time)
 {
 	const auto pose = NormalizedPose(sample.pose);
 	if (!pose)
@@ -24,7 +23,6 @@ PoseSample Normalize(PoseSample sample, RuntimeTime time)
 	sample.sampleTime = time;
 	return sample;
 }
-} // namespace
 
 TrackingSystem::TrackingSystem(std::size_t historyCapacity) : m_history(historyCapacity) {}
 
@@ -99,8 +97,7 @@ TrackingSnapshot TrackingSystem::Evaluate(RuntimeTime time, const TrackingState&
 		if (device.poseOverride && device.jointOffset)
 			throw std::invalid_argument("Tracker cannot have both world and joint-relative poses");
 		if (device.jointOffset)
-			snapshot.input.trackers[index].jointOffset =
-				Normalize({*device.jointOffset, TrackedPoseFlags}, time).pose;
+			snapshot.input.trackers[index].jointOffset = Normalize({*device.jointOffset, TrackedPoseFlags}, time).pose;
 		if (device.poseOverride)
 			snapshot.input.trackers[index].poseOverride =
 				Normalize({*device.poseOverride, TrackedPoseFlags}, time).pose;

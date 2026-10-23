@@ -1,23 +1,20 @@
 #include "simulation/PoseHistory.h"
+#include "Pch.h"
 #include "simulation/TrackingSystem.h"
 
-#include <algorithm>
 #include <cmath>
 #include <iterator>
 #include <numbers>
 #include <stdexcept>
-#include <utility>
 
 namespace simxr
 {
-namespace
-{
-XrVector3f Interpolate(XrVector3f a, XrVector3f b, float fraction)
+static XrVector3f Interpolate(XrVector3f a, XrVector3f b, float fraction)
 {
 	return {std::lerp(a.x, b.x, fraction), std::lerp(a.y, b.y, fraction), std::lerp(a.z, b.z, fraction)};
 }
 
-XrQuaternionf Interpolate(XrQuaternionf a, XrQuaternionf b, float fraction)
+static XrQuaternionf Interpolate(XrQuaternionf a, XrQuaternionf b, float fraction)
 {
 	float dot = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
 	if (dot < 0)
@@ -39,17 +36,17 @@ XrQuaternionf Interpolate(XrQuaternionf a, XrQuaternionf b, float fraction)
 	return {result.x / length, result.y / length, result.z / length, result.w / length};
 }
 
-XrPosef Interpolate(XrPosef a, XrPosef b, float fraction)
+static XrPosef Interpolate(XrPosef a, XrPosef b, float fraction)
 {
 	return {Interpolate(a.orientation, b.orientation, fraction), Interpolate(a.position, b.position, fraction)};
 }
 
-float InterpolateAngle(float a, float b, float fraction)
+static float InterpolateAngle(float a, float b, float fraction)
 {
 	return a + std::remainder(b - a, 2 * std::numbers::pi_v<float>) * fraction;
 }
 
-bool Continuous(const TrackingSnapshot& a, const TrackingSnapshot& b)
+static bool Continuous(const TrackingSnapshot& a, const TrackingSnapshot& b)
 {
 	if (a.body.skeletonRevision != b.body.skeletonRevision || a.input.focused != b.input.focused ||
 		a.head.flags != b.head.flags || a.input.gaze.available != b.input.gaze.available ||
@@ -85,7 +82,6 @@ bool Continuous(const TrackingSnapshot& a, const TrackingSnapshot& b)
 	}
 	return true;
 }
-} // namespace
 
 PoseHistory::PoseHistory(std::size_t capacity) : m_capacity(capacity)
 {
@@ -115,9 +111,11 @@ std::optional<TrackingSnapshot> PoseHistory::Sample(RuntimeTime time) const
 	std::lock_guard lock(m_mutex);
 	if (m_samples.empty() || time < m_samples.front().time)
 		return {};
-	auto right =
-		std::upper_bound(m_samples.begin(), m_samples.end(), time,
-						 [](RuntimeTime value, const TrackingSnapshot& sample) { return value < sample.time; });
+	auto right = std::upper_bound(m_samples.begin(), m_samples.end(), time,
+								  [](RuntimeTime value, const TrackingSnapshot& sample)
+								  {
+									  return value < sample.time;
+								  });
 	auto left = std::prev(right);
 	if (right == m_samples.end() || left->time == time || !Continuous(*left, *right))
 		return *left;

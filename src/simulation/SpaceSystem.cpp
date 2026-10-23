@@ -1,27 +1,24 @@
 #include "simulation/SpaceSystem.h"
+#include "Pch.h"
 #include "Math.h"
 
-#include <algorithm>
 #include <cmath>
-#include <memory>
 #include <stdexcept>
 
 namespace simxr
 {
-namespace
-{
-bool IsSupportedReferenceSpace(XrReferenceSpaceType type)
+static bool IsSupportedReferenceSpace(XrReferenceSpaceType type)
 {
 	return type == XR_REFERENCE_SPACE_TYPE_VIEW || type == XR_REFERENCE_SPACE_TYPE_LOCAL ||
 		   type == XR_REFERENCE_SPACE_TYPE_STAGE;
 }
 
-bool HasFlags(XrSpaceLocationFlags flags, XrSpaceLocationFlags bits)
+static bool HasFlags(XrSpaceLocationFlags flags, XrSpaceLocationFlags bits)
 {
 	return (flags & bits) == bits;
 }
 
-PoseSample ApplyPoseOffset(PoseSample source, XrPosef offset)
+static PoseSample ApplyPoseOffset(PoseSample source, XrPosef offset)
 {
 	const bool translated = offset.position.x != 0 || offset.position.y != 0 || offset.position.z != 0;
 	if (translated && !HasFlags(source.flags, XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
@@ -32,7 +29,6 @@ PoseSample ApplyPoseOffset(PoseSample source, XrPosef offset)
 	source.flags = FinitePoseFlags(source.pose, source.flags);
 	return source;
 }
-} // namespace
 
 SpaceSystem::SpaceSystem(XrSession owner, const TrackingSystem& tracking, ActionSource source,
 						 ActionValidator validator, EventQueue* events, bool combinedEye)
