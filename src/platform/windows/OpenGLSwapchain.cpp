@@ -7,6 +7,7 @@
 #include "platform/windows/OpenGLLibrary.h"
 #include <GL/glext.h>
 
+#include <atomic>
 #include <bit>
 #include <cstdio>
 #include <limits>
@@ -145,7 +146,15 @@ struct OpenGLSwapchain::Resources
 
 XrResult OpenGLSwapchain::MaxSampleCount(std::uint32_t& output)
 {
-	const std::unique_ptr<OpenGLCapabilityContext, decltype(&OpenGLCapabilityContext::Destroy)> owner(
+	// Keep only the fixed system's measured limit across XR instance restarts.
+	// Recreating a capability context can wait on unrelated pending GPU work.
+	static std::atomic<std::uint32_t> s_maxSamples{0};
+	if (const auto cached = s_maxSamples.load())
+	{
+		output = cached;
+		return XR_SUCCESS;
+	}
+	std::unique_ptr<OpenGLCapabilityContext, decltype(&OpenGLCapabilityContext::Destroy)> owner(
 		new OpenGLCapabilityContext, &OpenGLCapabilityContext::Destroy);
 	auto& owned = *owner;
 	const auto& gl = owned.gl;
@@ -179,6 +188,8 @@ XrResult OpenGLSwapchain::MaxSampleCount(std::uint32_t& output)
 	if (!current.Restore())
 		return XR_ERROR_RUNTIME_FAILURE;
 	output = std::bit_floor(common);
+	owner.reset();
+	s_maxSamples.store(output);
 	return XR_SUCCESS;
 }
 
