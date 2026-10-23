@@ -45,6 +45,9 @@
 #include <thread>
 
 #include <SDL3/SDL.h>
+#ifdef _WIN32
+#include "app/platform/windows/LaunchSupport.h"
+#endif
 #ifdef __linux__
 #include <csignal>
 #include <spawn.h>
@@ -125,12 +128,27 @@ void ChooseRigView(ImGuiID rig, const char* view, Pump pump)
 	ImGui::ActivateItemByID(popups.back().Window->GetID(view));
 	pump(2);
 }
+bool UseValidation()
+{
+	static const bool enabled = []
+	{
+		const auto mode = std::getenv("SIMXR_UI_VALIDATION");
+		Require(!mode || std::strcmp(mode, "0") == 0 || std::strcmp(mode, "1") == 0,
+			"SIMXR_UI_VALIDATION must be 0 or 1");
+		const bool requested = !mode || std::strcmp(mode, "0") != 0;
+		std::cout << (requested ? "Vulkan validation=required\n" :
+			"Vulkan validation=disabled explicitly; functional checks only, GPU validation remains unqualified\n")
+			<< std::flush;
+		return requested;
+	}();
+	return enabled;
+}
 class Interaction
 {
   public:
 	Window window{true};
 	std::shared_ptr<ValidationLog> validation = std::make_shared<ValidationLog>();
-	UiRenderer renderer{window, true, validation, true};
+	UiRenderer renderer{window, UseValidation(), validation, true};
 	ProcessSupervisor processes;
 	WorkspacePanels workspace{processes, false, ""};
 	RuntimePanels runtime{renderer, "", &window};
@@ -2210,15 +2228,19 @@ void ConfigureObservedDevices()
 				 "middle-click reset, Ctrl+wheel nudge\n";
 }
 
-#ifdef __linux__
 void CheckDebuggerWorkflow(const char* endpoint)
 {
 	const auto destination = std::getenv("SIMXR_DEBUG_QA_DIRECTORY");
 	Require(destination, "Debugger QA requires a new private output directory");
-	const std::filesystem::path directory(destination);
+	const auto directory = Utf8Path(destination);
 	Require(directory.is_absolute() && std::filesystem::create_directory(directory), "Debugger output must be new");
+#ifdef _WIN32
+	Require(SetEnvironmentVariableW(L"SIMXR_COMPANION_SETTINGS", (directory / "companion.settings").c_str()),
+			"Isolate debugger settings");
+#else
 	Require(::setenv("SIMXR_COMPANION_SETTINGS", (directory / "companion.settings").c_str(), 1) == 0,
 			"Isolate debugger settings");
+#endif
 	Interaction test(true);
 	test.runtime.ConnectEndpoint(endpoint);
 	const auto wait = [&](const auto& ready, const char* failure)
@@ -2265,7 +2287,7 @@ void CheckDebuggerWorkflow(const char* endpoint)
 			return state.inspectedFrame == exact.selectedFrame;
 		},
 		"Exact state inspection failed");
-	Require(test.runtime.RequestExport((directory / "composed.ppm").string()), "Composed export was not accepted");
+	Require(test.runtime.RequestExport(PathText(directory / "composed.ppm")), "Composed export was not accepted");
 	wait(
 		[&](const auto&)
 		{
@@ -2286,7 +2308,7 @@ void CheckDebuggerWorkflow(const char* endpoint)
 		"Selected layer view did not produce a retained image");
 	const auto raw = test.runtime.Snapshot();
 	Require(raw.selectedFrame == exact.selectedFrame + 1, "Strict step admitted more than one frame");
-	Require(test.runtime.RequestExport((directory / "layer.ppm").string()), "Layer export was not accepted");
+	Require(test.runtime.RequestExport(PathText(directory / "layer.ppm")), "Layer export was not accepted");
 	wait(
 		[&](const auto&)
 		{
@@ -2350,6 +2372,7 @@ void CheckDebuggerWorkflow(const char* endpoint)
 	std::cout << "PASS disconnect clears selected image and reconnect selects the new connection epoch\n";
 }
 
+#ifdef __linux__
 void CheckManualEdges(const RuntimeView& target)
 {
 	RecordingController recording;
@@ -2543,8 +2566,11 @@ void CheckNativePlayerRig(const RuntimeView& target)
 	std::cout << "PASS native Player rig: 8 atomic walk/turn frames, 4 World-anchor frames\n";
 }
 
+#endif
+
 void CheckPreviewPilot(Interaction& test)
 {
+	IgnoreRealPointer();
 	const auto target = test.runtime.Snapshot();
 	ManualInputController observer;
 	observer.SetTarget({target.endpoint, target.session, target.generation});
@@ -2589,6 +2615,7 @@ void CheckPreviewPilot(Interaction& test)
 			SDL_Event pointer{};
 			pointer.type = SDL_EVENT_MOUSE_MOTION;
 			pointer.motion.windowID = SDL_GetWindowID(test.window.Native());
+			pointer.motion.which = TestMouse;
 			pointer.motion.x = center.x;
 			pointer.motion.y = center.y;
 			Require(SDL_PushEvent(&pointer), "Position capture pointer");
@@ -2604,6 +2631,8 @@ void CheckPreviewPilot(Interaction& test)
 	};
 	const auto motion = [&](float x, float y)
 	{
+		Require(test.window.Focused() && SDL_GetWindowRelativeMouseMode(test.window.Native()),
+			"Pilot motion lost native focus or pointer capture");
 		SDL_Event event{};
 		event.type = SDL_EVENT_MOUSE_MOTION;
 		event.motion.windowID = SDL_GetWindowID(test.window.Native());
@@ -2654,7 +2683,7 @@ void CheckPreviewPilot(Interaction& test)
 	Require(handHud && handHud->Active, "Pilot ownership HUD missing");
 	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
 	{
-		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "pilot-body-takeover.bmp");
+		test.renderer.RequestScreenshot(Utf8Path(directory) / "pilot-body-takeover.bmp");
 		pump(1);
 	}
 	ImGui::ActivateItemByID(handHud->GetID("Take over"));
@@ -2685,6 +2714,12 @@ void CheckPreviewPilot(Interaction& test)
 	const auto walked = observed();
 	Require(std::abs(walked.values.tracking.head.pose.position.z - before.values.tracking.head.pose.position.z) > .04f,
 			"Preview walk did not move player");
+	const auto lookedBefore = simxr::Rotate(before.values.tracking.head.pose.orientation, {0, 0, -1});
+	const auto lookedAfter = simxr::Rotate(walked.values.tracking.head.pose.orientation, {0, 0, -1});
+	const auto lookChange = std::hypot(lookedAfter.x - lookedBefore.x, lookedAfter.y - lookedBefore.y,
+		lookedAfter.z - lookedBefore.z);
+	std::cout << "Preview head-look direction change: " << lookChange << '\n';
+	Require(lookChange > .05f, "Preview relative mouse look did not rotate the head");
 	const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
 	std::cout << "PASS preview applied-update rate: "
 			  << (test.runtime.Snapshot().appliedPilotUpdates - updates) / seconds << " /s\n";
@@ -2699,13 +2734,22 @@ void CheckPreviewPilot(Interaction& test)
 	pump(5);
 	key(SDL_SCANCODE_3, true);
 	key(SDL_SCANCODE_3, false);
-	const auto handBefore = observed().values.tracking.controllers[1].pose.pose;
+	const auto reachBefore = observed();
+	const auto handBefore = reachBefore.values.tracking.controllers[1].pose.pose;
 	key(SDL_SCANCODE_X, true);
+	Require(ImGui::IsKeyDown(ImGuiKey_X) && !ImGui::GetIO().KeyAlt, "Pilot reach key was not held without Alt");
 	motion(50, -25);
 	pump(5);
+	Require(SDL_GetWindowRelativeMouseMode(test.window.Native()) && ImGui::IsKeyDown(ImGuiKey_X),
+		"Pilot reach lost capture or its held key");
 	key(SDL_SCANCODE_X, false);
 	const auto handAfter = observed().values.tracking.controllers[1].pose.pose;
-	Require(std::abs(handAfter.position.x - handBefore.position.x) > .03f, "Preview reach did not move right hand");
+	const auto viewBefore = simxr::RelativePose(handBefore, reachBefore.values.tracking.head.pose).position;
+	const auto viewAfter = simxr::RelativePose(handAfter, reachBefore.values.tracking.head.pose).position;
+	const XrVector3f reach{viewAfter.x - viewBefore.x, viewAfter.y - viewBefore.y, viewAfter.z - viewBefore.z};
+	std::cout << "Preview reach in head view: " << reach.x << ", " << reach.y << ", " << reach.z << " m\n";
+	Require(std::abs(reach.x - .1f) < .01f && std::abs(reach.y - .05f) < .01f && std::abs(reach.z) < .01f,
+		"Preview reach did not move right hand right/up in the head view plane");
 	key(SDL_SCANCODE_X, true);
 	key(SDL_SCANCODE_LALT, true, SDL_KMOD_ALT);
 	motion(35, 15);
@@ -2876,10 +2920,12 @@ void CheckPreviewPilot(Interaction& test)
 		},
 		"Head page recenter did not update the local reference space");
 	std::cout << "PASS Head page recenter updates reference space without moving the head\n";
+	SDL_SetEventFilter(nullptr, nullptr);
 	Require(test.validation->errors.load() == 0, "Validation during preview piloting");
 	std::cout << "PASS native preview walk, look, reach, primary, trigger and Escape release\n";
 }
 
+#ifdef __linux__
 void CheckSpatialEditing(Interaction& test)
 {
 	IgnoreRealPointer();
@@ -5942,6 +5988,7 @@ int main()
 			std::cout << "PASS startup notice and usable app picker after discovery failure\n";
 			return 0;
 		}
+#endif
 		if (const auto endpoint = std::getenv("SIMXR_TIMELINE_ENDPOINT"))
 		{
 			Interaction test;
@@ -5963,6 +6010,7 @@ int main()
 					return test.runtime.Snapshot().selectedReady;
 				},
 				"Existing isolated app did not supply a preview");
+#ifdef __linux__
 			if (std::getenv("SIMXR_LAYOUT_QA"))
 			{
 				const auto directory = std::getenv("SIMXR_UI_QA_DIR");
@@ -5973,9 +6021,14 @@ int main()
 				CheckSpatialEditing(test);
 			else
 				CheckPreviewPilot(test);
+#else
+			Require(!std::getenv("SIMXR_LAYOUT_QA") && !std::getenv("SIMXR_SPATIAL_QA"),
+				"Connected layout/spatial fixtures are not enabled on this platform");
+			CheckPreviewPilot(test);
+#endif
 			if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
 			{
-				test.renderer.RequestScreenshot(std::filesystem::path(directory) / "cemu-gameplay.bmp");
+				test.renderer.RequestScreenshot(Utf8Path(directory) / "application-gameplay.bmp");
 				test.Frame();
 				test.renderer.WaitIdle();
 			}
@@ -5986,6 +6039,7 @@ int main()
 			CheckDebuggerWorkflow(endpoint);
 			return 0;
 		}
+#ifdef __linux__
 		if (const auto executable = std::getenv("SIMXR_LAUNCH_QA_EXECUTABLE"); executable && std::getenv("SIMXR_PICKER_QA"))
 		{
 			CheckAppPicker(executable);
