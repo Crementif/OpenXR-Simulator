@@ -85,7 +85,7 @@ int main()
 		plan.draws.push_back(draw);
 		std::array sources{OpenGLCompositionSource{app.texture, 0x8058, 8, 8},
 			OpenGLCompositionSource{app.texture, 0x8058, 8, 8}};
-		for (int scenario = 0; scenario < 12; ++scenario)
+		for (int scenario = 0; scenario < 13; ++scenario)
 		{
 			sources[0].texture = sources[1].texture = app.texture;
 			const bool mipChain = scenario >= 8;
@@ -102,7 +102,7 @@ int main()
 				{
 					if (!backend)
 						backend = std::make_unique<OpenGLBackend>(app.device, app.context, device.Device(), device.EnabledExtensions());
-					source.format = std::array<GLenum, 4>{GL_RGBA8, GL_SRGB8_ALPHA8, GL_RGBA16F, GL_RGB10_A2}[scenario - 8];
+					source.format = std::array<GLenum, 5>{GL_RGBA8, GL_SRGB8_ALPHA8, GL_RGBA16F, GL_RGB10_A2, GL_RGBA32F}[scenario - 8];
 					source.mipLevels = 4;
 					for (std::uint32_t mip = 0; mip < source.mipLevels; ++mip)
 					{
@@ -228,7 +228,7 @@ int main()
 			CheckVulkan(delivery.Drain(5000000000ULL), "Drain OpenGL delivery");
 			CheckVulkan(inspection.Drain(), "Drain OpenGL inspection");
 		}
-		std::puts("PASS: canonical GLSL, cropped raw/depth arrays, normalized/linear depth, retained RGBA/sRGB/float16/RGB10 mip chains after producer teardown and GPU handoff");
+		std::puts("PASS: canonical GLSL, cropped raw/depth arrays, normalized/linear depth, retained RGBA/sRGB/float16/float32/RGB10 mip chains after producer teardown and GPU handoff");
 		return 0;
 	}
 	catch (const std::exception& error)

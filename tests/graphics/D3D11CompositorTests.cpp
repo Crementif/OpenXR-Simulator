@@ -125,7 +125,8 @@ void VerifyVulkan(const std::shared_ptr<Frame>& source, bool mipChain = false,
 			else
 				return source->Texture()->GetDesc().Format;
 		}();
-		if (format == DXGI_FORMAT_R16G16B16A16_FLOAT || format == DXGI_FORMAT_R10G10B10A2_UNORM)
+		if (format == DXGI_FORMAT_R16G16B16A16_FLOAT || format == DXGI_FORMAT_R10G10B10A2_UNORM ||
+			format == DXGI_FORMAT_R32G32B32A32_FLOAT)
 		{
 			bool rejected = false;
 			try
@@ -560,7 +561,60 @@ void VerifyD3D12()
 			}
 		}
 	}
+	std::vector<std::shared_ptr<D3D12Frame>> retainedMips;
+	for (const auto format : {DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R10G10B10A2_UNORM,
+		DXGI_FORMAT_R32G32B32A32_FLOAT})
+	{
+		D3D12_RESOURCE_DESC description{};
+		description.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+		description.Width = description.Height = 8;
+		description.DepthOrArraySize = 2;
+		description.MipLevels = 4;
+		description.Format = format;
+		description.SampleDesc.Count = 1;
+		description.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+		D3D12_HEAP_PROPERTIES heap{};
+		heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+		ComPtr<ID3D12Resource> texture;
+		Check(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
+			D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr, IID_PPV_ARGS(&texture)));
+		ComPtr<ID3D12CommandAllocator> allocator;
+		ComPtr<ID3D12GraphicsCommandList> commands;
+		Check(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator)));
+		Check(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr, IID_PPV_ARGS(&commands)));
+		D3D12_DESCRIPTOR_HEAP_DESC descriptors{};
+		descriptors.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+		descriptors.NumDescriptors = 4;
+		ComPtr<ID3D12DescriptorHeap> targets;
+		Check(device->CreateDescriptorHeap(&descriptors, IID_PPV_ARGS(&targets)));
+		for (UINT mip = 0; mip < 4; ++mip)
+		{
+			D3D12_RENDER_TARGET_VIEW_DESC view{};
+			view.Format = format;
+			view.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2DARRAY;
+			view.Texture2DArray = {mip, 1, 1, 0};
+			auto target = targets->GetCPUDescriptorHandleForHeapStart();
+			target.ptr += mip * device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+			device->CreateRenderTargetView(texture.Get(), &view, target);
+			const float color[]{mip == 3 ? 0.0f : 1.0f, 0, mip == 3 ? 1.0f : 0.0f, 1};
+			commands->ClearRenderTargetView(target, color, 0, nullptr);
+		}
+		Check(commands->Close());
+		ID3D12CommandList* lists[]{commands.Get()};
+		queue->ExecuteCommandLists(1, lists);
+		LayerImageDescription image{};
+		image.arraySlice = 1;
+		image.rectangle = {{2, 1}, {4, 3}};
+		std::shared_ptr<D3D12Frame> capture;
+		Check(backend->PrepareCapture(image, {texture.Get(), format}, capture, true));
+		Check(backend->Submit(capture));
+		VerifyVulkan(capture, true);
+		retainedMips.push_back(std::move(capture));
+	}
 	backend.reset();
+	for (const auto& mipChain : retainedMips)
+		VerifyVulkan(mipChain, true);
+	std::puts("PASS: retained D3D12 float16/float32/RGB10 mip chains compose after producer teardown");
 	VerifyVulkan(retained, false, {4, 3}, 1);
 	std::puts("PASS: retained D3D12 pixels survive native producer teardown");
 	std::puts("PASS: D3D12 normalized/linear depth, four depth formats, array selection and MSAA sample zero");
@@ -684,7 +738,7 @@ int main(int argc, char**)
 		}
 #ifdef SIMXR_TEST_D3D11_VULKAN
 		for (const auto format : {DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT,
-			DXGI_FORMAT_R10G10B10A2_UNORM})
+			DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R32G32B32A32_FLOAT})
 		{
 			D3D11_TEXTURE2D_DESC description{};
 			description.Width = description.Height = 8;
@@ -714,7 +768,7 @@ int main(int argc, char**)
 			Check(backend.Submit(retained));
 			VerifyVulkan(retained, true);
 		}
-		std::puts("PASS: retained D3D11 RGBA8/float16/RGB10 mip chains reach independent Vulkan composition");
+		std::puts("PASS: retained D3D11 RGBA8/float16/float32/RGB10 mip chains reach independent Vulkan composition");
 #endif
 		std::puts("PASS: canonical D3D11 shader, array slices, MSAA, shared texture/fence and application state preservation");
 		return 0;

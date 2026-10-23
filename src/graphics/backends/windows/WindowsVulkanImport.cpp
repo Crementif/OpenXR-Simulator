@@ -1,3 +1,4 @@
+#include "Pch.h"
 #include "graphics/backends/windows/WindowsVulkanImport.h"
 
 #include <dxgi.h>
@@ -55,6 +56,7 @@ std::shared_ptr<WindowsVulkanImport> WindowsVulkanImport::Create(std::shared_ptr
 	case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB: format.format = VK_FORMAT_R8G8B8A8_SRGB; break;
 	case DXGI_FORMAT_B8G8R8A8_UNORM: format.format = VK_FORMAT_B8G8R8A8_UNORM; break;
 	case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB: format.format = VK_FORMAT_B8G8R8A8_SRGB; break;
+	case DXGI_FORMAT_R32G32B32A32_FLOAT: format.format = VK_FORMAT_R32G32B32A32_SFLOAT; break;
 	case DXGI_FORMAT_R16G16B16A16_FLOAT: format.format = VK_FORMAT_R16G16B16A16_SFLOAT; break;
 	case DXGI_FORMAT_R10G10B10A2_UNORM: format.format = VK_FORMAT_A2B10G10R10_UNORM_PACK32; break;
 	default: throw VulkanError(VK_ERROR_FORMAT_NOT_SUPPORTED, "Unsupported Windows native shared image format");

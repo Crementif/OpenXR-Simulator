@@ -1,3 +1,4 @@
+#include "Pch.h"
 #include "graphics/backends/d3d11/D3D11Backend.h"
 #include "CompositorHlsl.h"
 
@@ -152,7 +153,8 @@ HRESULT D3D11Backend::Allocate(std::uint32_t width, std::uint32_t height, std::u
 	description.Format = format == DXGI_FORMAT_B8G8R8A8_UNORM || format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB
 		? DXGI_FORMAT_B8G8R8A8_TYPELESS : format == DXGI_FORMAT_R16G16B16A16_FLOAT
 		? DXGI_FORMAT_R16G16B16A16_TYPELESS : format == DXGI_FORMAT_R10G10B10A2_UNORM
-		? DXGI_FORMAT_R10G10B10A2_TYPELESS : DXGI_FORMAT_R8G8B8A8_TYPELESS;
+		? DXGI_FORMAT_R10G10B10A2_TYPELESS : format == DXGI_FORMAT_R32G32B32A32_FLOAT
+		? DXGI_FORMAT_R32G32B32A32_TYPELESS : DXGI_FORMAT_R8G8B8A8_TYPELESS;
 	frame->m_format = format;
 	description.SampleDesc.Count = 1;
 	description.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
@@ -207,7 +209,8 @@ HRESULT D3D11Backend::PrepareCapture(const LayerImageDescription& image, D3D11Co
 	const auto format = source.format == DXGI_FORMAT_UNKNOWN ? description.Format : source.format;
 	if (format != DXGI_FORMAT_R8G8B8A8_UNORM && format != DXGI_FORMAT_R8G8B8A8_UNORM_SRGB &&
 		format != DXGI_FORMAT_B8G8R8A8_UNORM && format != DXGI_FORMAT_B8G8R8A8_UNORM_SRGB &&
-		(!retainMipChain || (format != DXGI_FORMAT_R16G16B16A16_FLOAT && format != DXGI_FORMAT_R10G10B10A2_UNORM)))
+		(!retainMipChain || (format != DXGI_FORMAT_R16G16B16A16_FLOAT && format != DXGI_FORMAT_R10G10B10A2_UNORM &&
+		 format != DXGI_FORMAT_R32G32B32A32_FLOAT)))
 		return DXGI_ERROR_UNSUPPORTED;
 	if (!CompatibleFormat(description.Format, format))
 		return E_INVALIDARG;

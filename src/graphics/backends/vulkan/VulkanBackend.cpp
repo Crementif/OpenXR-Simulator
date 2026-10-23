@@ -1,3 +1,4 @@
+#include "Pch.h"
 #include "graphics/SnapshotBudget.h"
 #include "graphics/backends/vulkan/VulkanBackend.h"
 #include "shaders/generated/CompositorSpirv.h"
@@ -795,7 +796,8 @@ XrResult VulkanBackend::PrepareNativeCopy(std::shared_ptr<VulkanImage> source, V
 	if (!source || source->device != m_state->device || !ready || !owner ||
 		(source->format != VK_FORMAT_R8G8B8A8_SRGB && source->format != VK_FORMAT_R8G8B8A8_UNORM &&
 		 source->format != VK_FORMAT_B8G8R8A8_SRGB && source->format != VK_FORMAT_B8G8R8A8_UNORM &&
-		 source->format != VK_FORMAT_R16G16B16A16_SFLOAT && source->format != VK_FORMAT_A2B10G10R10_UNORM_PACK32) ||
+		 source->format != VK_FORMAT_R16G16B16A16_SFLOAT && source->format != VK_FORMAT_A2B10G10R10_UNORM_PACK32 &&
+		 source->format != VK_FORMAT_R32G32B32A32_SFLOAT) ||
 		!source->layers || source->layers > 2 || !source->mipLevels ||
 		source->samples != VK_SAMPLE_COUNT_1_BIT || !(source->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
 		return XR_ERROR_VALIDATION_FAILURE;

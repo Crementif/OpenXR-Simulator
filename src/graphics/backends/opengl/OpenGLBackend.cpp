@@ -1,3 +1,4 @@
+#include "Pch.h"
 #include "graphics/backends/opengl/OpenGLBackend.h"
 #include "platform/windows/OpenGLContextScope.h"
 #include "CompositorGlsl.h"
@@ -350,6 +351,10 @@ XrResult OpenGLBackend::PrepareCapture(const LayerImageDescription& image, OpenG
 	case GL_RGBA16F:
 		if (!retainMipChain) return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
 		description.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+		break;
+	case GL_RGBA32F:
+		if (!retainMipChain) return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
+		description.format = VK_FORMAT_R32G32B32A32_SFLOAT;
 		break;
 	case GL_RGB10_A2:
 		if (!retainMipChain) return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;

@@ -1,3 +1,4 @@
+#include "Pch.h"
 #include "graphics/backends/d3d12/D3D12Backend.h"
 #include "CompositorHlsl.h"
 
@@ -423,8 +424,9 @@ HRESULT D3D12Backend::PrepareCapture(const LayerImageDescription& image, D3D12Co
 		return E_INVALIDARG;
 	const auto original = source.texture->GetDesc();
 	const auto format = source.format == DXGI_FORMAT_UNKNOWN ? original.Format : source.format;
-	if (!ColorFormat(original.Format, format) || format == DXGI_FORMAT_R32G32B32A32_FLOAT || (!retainMipChain &&
-		(format == DXGI_FORMAT_R16G16B16A16_FLOAT || format == DXGI_FORMAT_R10G10B10A2_UNORM)))
+	if (!ColorFormat(original.Format, format) || (!retainMipChain &&
+		(format == DXGI_FORMAT_R16G16B16A16_FLOAT || format == DXGI_FORMAT_R10G10B10A2_UNORM ||
+		 format == DXGI_FORMAT_R32G32B32A32_FLOAT)))
 		return DXGI_ERROR_UNSUPPORTED;
 	const auto& rectangle = image.rectangle;
 	if (original.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || image.arraySlice >= original.DepthOrArraySize ||
