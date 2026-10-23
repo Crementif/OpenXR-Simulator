@@ -1,7 +1,6 @@
 #include "graphics/RotationalReprojection.h"
+#include "Pch.h"
 #include "Math.h"
-
-#include <utility>
 
 namespace simxr
 {
@@ -42,7 +41,8 @@ XrResult PrepareRotationalComposition(const FrameLayers& layers, const Compositi
 					return XR_ERROR_POSE_INVALID;
 				space.worldPose.pose = Compose(*newHead, *offset);
 				return XR_SUCCESS;
-			}, layer);
+			},
+			layer);
 		if (XR_FAILED(result))
 			return result;
 		if (auto* projection = std::get_if<ProjectionLayerDescription>(&layer))
@@ -58,7 +58,7 @@ XrResult PrepareRotationalComposition(const FrameLayers& layers, const Compositi
 				quad.worldPose.pose = Compose(quad.space.worldPose.pose, quad.poseInSpace);
 		}
 	}
-	return PrepareComposition(FrameLayers{layers.displayTime, layers.blendMode, std::move(descriptions)},
-		target, resolve, output);
+	return PrepareComposition(FrameLayers{layers.displayTime, layers.blendMode, std::move(descriptions)}, target,
+							  resolve, output);
 }
 } // namespace simxr

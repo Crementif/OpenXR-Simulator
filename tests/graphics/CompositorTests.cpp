@@ -158,27 +158,46 @@ void QuadCropBounds()
 	Fixture fixture;
 	fixture.target.width = 96;
 	fixture.target.height = 64;
-	for (int scenario = 0; scenario < 4; ++scenario)
+	for (int scenario = 0; scenario < 8; ++scenario)
 	{
+		fixture.target.eyes[1].fov = Fov();
 		auto quad = fixture.Quad();
 		quad.eyes = XR_EYE_VISIBILITY_RIGHT;
 		quad.worldPose.pose.position.x = scenario == 1 ? 1.8f : 0.2f;
 		quad.worldPose.pose.position.z = scenario == 2 ? -0.1f : scenario == 3 ? 2.0f : -2.0f;
 		quad.worldPose.pose.orientation = EulerAngles(0.4f, 0.2f, 0.1f);
+		if (scenario == 4 || scenario >= 6)
+		{
+			quad.size = {3e38f, 3e38f};
+			quad.worldPose.pose = {{0, 0, 0, 1}, {scenario >= 6 ? 2e38f : 0, 0, -2e38f}};
+			if (scenario == 7)
+				quad.worldPose.pose.orientation = EulerAngles(0.2f, 0, 0);
+			fixture.target.eyes[1].fov = Fov(0, 2, 1, -1);
+		}
+		if (scenario == 5)
+			quad.worldPose.pose.orientation = EulerAngles(std::numbers::pi_v<float>, 0, 0);
 		CompositionPlan plan;
-		Require(PrepareComposition(fixture.Frame({fixture.Projection(), quad}), fixture.target, fixture.extent, plan) == XR_SUCCESS,
-			"Prepare cropped quad fixture");
+		Require(PrepareComposition(fixture.Frame({fixture.Projection(), quad}), fixture.target, fixture.extent, plan) ==
+					XR_SUCCESS,
+				"Prepare cropped quad fixture");
 		const auto bounds = CompositionQuadBounds(plan);
 		Require(bounds[0].extent.width == 0, "Projection or wrong-eye geometry contaminated UI bounds");
 		const auto& rectangle = bounds[1];
+		std::size_t visiblePixels = 0;
 		for (std::int32_t y = 0; y < 64; ++y)
 			for (std::int32_t x = 0; x < 96; ++x)
 				if (EvaluateCompositionSample(plan.draws.back(), {(x + 0.5f) / 96, (y + 0.5f) / 64}))
+				{
+					++visiblePixels;
 					Require(x >= rectangle.offset.x && y >= rectangle.offset.y &&
-						x < rectangle.offset.x + rectangle.extent.width && y < rectangle.offset.y + rectangle.extent.height,
-						"Historical crop excluded a pixel accepted by the compositor ray equation");
-		if (scenario == 3)
-			Require(rectangle.extent.width == 0, "Behind-eye quad produced a visible UI rectangle");
+								x < rectangle.offset.x + rectangle.extent.width &&
+								y < rectangle.offset.y + rectangle.extent.height,
+							"Historical crop excluded a pixel accepted by the compositor ray equation");
+				}
+		if (scenario == 4 || scenario >= 6)
+			Require(visiblePixels > 0, "Large finite quad did not exercise visible crop geometry");
+		if (scenario == 3 || scenario == 5)
+			Require(rectangle.extent.width == 0, "Behind-eye or back-facing quad produced a visible UI rectangle");
 	}
 }
 void Rejection()
@@ -187,6 +206,15 @@ void Rejection()
 	auto quad = f.Quad();
 	CompositionPlan plan;
 	Require(PrepareComposition(f.Frame({quad}), f.target, f.extent, plan) == XR_SUCCESS, "Rejection baseline");
+	for (const bool width : {false, true})
+	{
+		auto oversized = f.target;
+		(width ? oversized.width : oversized.height) =
+			static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()) + 1;
+		Require(PrepareComposition(f.Frame({quad}), oversized, f.extent, plan) == XR_ERROR_VALIDATION_FAILURE &&
+					plan.width == f.target.width && plan.height == f.target.height && plan.draws.size() == 2,
+				"Unrepresentable target extent was accepted or changed the previous plan");
+	}
 	quad.color.rectangle.extent.width = 129;
 	Require(PrepareComposition(f.Frame({quad}), f.target, f.extent, plan) == XR_ERROR_SWAPCHAIN_RECT_INVALID &&
 				plan.draws.size() == 2,

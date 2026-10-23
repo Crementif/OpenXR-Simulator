@@ -1,6 +1,11 @@
 #pragma once
 
 #include "graphics/Compositor.h"
+#include "runtime/validation/LayerValidation.h"
+
+#include <functional>
+#include <memory>
+#include <optional>
 
 namespace simxr
 {
@@ -14,5 +19,5 @@ struct SessionComposition
 	CompositionPlan plan;
 };
 XrResult PrepareSessionComposition(Session& session, const XrFrameEndInfo& info,
-	const SwapchainDescriptionResolver& describe, SessionComposition& output);
-}
+								   const SwapchainDescriptionResolver& describe, SessionComposition& output);
+} // namespace simxr

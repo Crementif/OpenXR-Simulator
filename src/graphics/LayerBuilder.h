@@ -3,6 +3,7 @@
 #include "runtime/validation/LayerValidation.h"
 #include "simulation/TrackingTypes.h"
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>

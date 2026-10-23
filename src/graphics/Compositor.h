@@ -54,8 +54,8 @@ using CompositionExtentResolver = std::function<std::optional<XrExtent2Di>(XrSwa
 XrResult PrepareComposition(const FrameLayers& frame, const CompositionTarget& target,
 							const CompositionExtentResolver& resolve, CompositionPlan& output);
 
-XrResult PrepareDepthComposition(const LayerDepthDescription& depth, bool linear, XrExtent2Di extent,
-	bool multisampled, CompositionPlan& output);
+XrResult PrepareDepthComposition(const LayerDepthDescription& depth, bool linear, XrExtent2Di extent, bool multisampled,
+								 CompositionPlan& output);
 
 // CPU reference for shader ray/crop equations. It evaluates geometry only and
 // returns canonical top-left texture coordinates; it performs no pixel sampling.

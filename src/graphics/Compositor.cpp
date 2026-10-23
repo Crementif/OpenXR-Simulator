@@ -1,16 +1,15 @@
 #include "graphics/Compositor.h"
+#include "Pch.h"
+
 #include "Math.h"
 
-#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numbers>
-#include <utility>
 
 namespace simxr
 {
-namespace
-{
-bool FovTangents(const XrFovf& fov, std::array<float, 4>& output)
+static bool FovTangents(const XrFovf& fov, std::array<float, 4>& output)
 {
 	const std::array angles{fov.angleLeft, fov.angleRight, fov.angleUp, fov.angleDown};
 	for (std::size_t index = 0; index < angles.size(); ++index)
@@ -21,15 +20,15 @@ bool FovTangents(const XrFovf& fov, std::array<float, 4>& output)
 	}
 	return output[0] != output[1] && output[2] != output[3];
 }
-bool ValidLayerFlags(XrCompositionLayerFlags flags)
+static bool ValidLayerFlags(XrCompositionLayerFlags flags)
 {
 	constexpr auto known = XR_COMPOSITION_LAYER_CORRECT_CHROMATIC_ABERRATION_BIT |
 						   XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
 						   XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
 	return !(flags & ~known);
 }
-XrResult ImageConstants(const LayerImageDescription& image, const CompositionExtentResolver& resolve,
-						LayerConstants& constants)
+static XrResult ImageConstants(const LayerImageDescription& image, const CompositionExtentResolver& resolve,
+							   LayerConstants& constants)
 {
 	if (!resolve || image.source == XR_NULL_HANDLE)
 		return XR_ERROR_HANDLE_INVALID;
@@ -46,7 +45,7 @@ XrResult ImageConstants(const LayerImageDescription& image, const CompositionExt
 		static_cast<float>(rect.extent.width) / extent->width, static_cast<float>(rect.extent.height) / extent->height};
 	return XR_SUCCESS;
 }
-bool SourceFromEye(const PoseSample& source, const PoseSample& eye, LayerConstants& constants)
+static bool SourceFromEye(const PoseSample& source, const PoseSample& eye, LayerConstants& constants)
 {
 	const auto eyePose = NormalizedPose(eye.pose);
 	const auto sourcePose = NormalizedPose(source.pose);
@@ -60,28 +59,30 @@ bool SourceFromEye(const PoseSample& source, const PoseSample& eye, LayerConstan
 	constants.sourceFromEyePosition = {relative.position.x, relative.position.y, relative.position.z, 0};
 	return true;
 }
-std::uint32_t AlphaFlags(XrCompositionLayerFlags flags)
+static std::uint32_t AlphaFlags(XrCompositionLayerFlags flags)
 {
 	return ((flags & XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT) ? 1u : 0u) |
 		   ((flags & XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT) ? 2u : 0u);
 }
-bool EmptyImage(const LayerImageDescription& image)
+static bool EmptyImage(const LayerImageDescription& image)
 {
 	return image.rectangle.extent.width == 0 || image.rectangle.extent.height == 0;
 }
-} // namespace
 
-XrResult PrepareDepthComposition(const LayerDepthDescription& depth, bool linear, XrExtent2Di extent,
-	bool multisampled, CompositionPlan& output)
+XrResult PrepareDepthComposition(const LayerDepthDescription& depth, bool linear, XrExtent2Di extent, bool multisampled,
+								 CompositionPlan& output)
 {
 	if (linear && (!std::isfinite(depth.nearZ) || !std::isfinite(depth.farZ)))
 		return XR_ERROR_FEATURE_UNSUPPORTED;
 	if (extent.width <= 0 || extent.height <= 0)
 		return XR_ERROR_SWAPCHAIN_RECT_INVALID;
 	const auto& rectangle = depth.image.rectangle;
-	if (rectangle.offset.x < 0 || rectangle.offset.y < 0 || rectangle.extent.width <= 0 || rectangle.extent.height <= 0 ||
-		static_cast<std::uint64_t>(rectangle.offset.x) + rectangle.extent.width > static_cast<std::uint32_t>(extent.width) ||
-		static_cast<std::uint64_t>(rectangle.offset.y) + rectangle.extent.height > static_cast<std::uint32_t>(extent.height))
+	if (rectangle.offset.x < 0 || rectangle.offset.y < 0 || rectangle.extent.width <= 0 ||
+		rectangle.extent.height <= 0 ||
+		static_cast<std::uint64_t>(rectangle.offset.x) + rectangle.extent.width >
+			static_cast<std::uint32_t>(extent.width) ||
+		static_cast<std::uint64_t>(rectangle.offset.y) + rectangle.extent.height >
+			static_cast<std::uint32_t>(extent.height))
 		return XR_ERROR_SWAPCHAIN_RECT_INVALID;
 	if (!std::isfinite(depth.minDepth) || !std::isfinite(depth.maxDepth) || depth.minDepth < 0 || depth.maxDepth > 1 ||
 		depth.minDepth >= depth.maxDepth || depth.nearZ <= 0 || depth.farZ <= 0 || depth.nearZ == depth.farZ ||
@@ -92,7 +93,8 @@ XrResult PrepareDepthComposition(const LayerDepthDescription& depth, bool linear
 	plan.height = static_cast<std::uint32_t>(rectangle.extent.height);
 	CompositionDraw draw{depth.image, 0, {}};
 	draw.constants.imageRectangle = {static_cast<float>(rectangle.offset.x), static_cast<float>(rectangle.offset.y),
-		static_cast<float>(rectangle.extent.width), static_cast<float>(rectangle.extent.height)};
+									 static_cast<float>(rectangle.extent.width),
+									 static_cast<float>(rectangle.extent.height)};
 	draw.constants.quadParameters = {depth.minDepth, depth.maxDepth, 0, 0};
 	if (linear)
 	{
@@ -109,7 +111,9 @@ XrResult PrepareDepthComposition(const LayerDepthDescription& depth, bool linear
 XrResult PrepareComposition(const FrameLayers& frame, const CompositionTarget& target,
 							const CompositionExtentResolver& resolve, CompositionPlan& output)
 {
-	if (!target.width || !target.height || frame.displayTime.value.count() <= 0)
+	constexpr auto maxExtent = static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max());
+	if (!target.width || !target.height || target.width > maxExtent || target.height > maxExtent ||
+		frame.displayTime.value.count() <= 0)
 		return XR_ERROR_VALIDATION_FAILURE;
 	if (frame.blendMode != XR_ENVIRONMENT_BLEND_MODE_OPAQUE)
 		return XR_ERROR_ENVIRONMENT_BLEND_MODE_UNSUPPORTED;

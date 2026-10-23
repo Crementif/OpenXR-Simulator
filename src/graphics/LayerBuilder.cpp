@@ -1,19 +1,16 @@
 #include "graphics/LayerBuilder.h"
+#include "Pch.h"
 #include "Math.h"
 #include "runtime/validation/StructureChain.h"
 
-#include <utility>
-
 namespace simxr
 {
-namespace
-{
-LayerImageDescription Image(const XrSwapchainSubImage& image)
+static LayerImageDescription Image(const XrSwapchainSubImage& image)
 {
 	return {image.swapchain, image.imageRect, image.imageArrayIndex};
 }
 
-PoseSample Offset(PoseSample world, const XrPosef& offset)
+static PoseSample Offset(PoseSample world, const XrPosef& offset)
 {
 	const bool translated = offset.position.x != 0 || offset.position.y != 0 || offset.position.z != 0;
 	if (translated && !(world.flags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
@@ -24,7 +21,6 @@ PoseSample Offset(PoseSample world, const XrPosef& offset)
 	world.flags = FinitePoseFlags(world.pose, world.flags);
 	return world;
 }
-} // namespace
 
 XrResult BuildLayers(const XrFrameEndInfo& info, const LayerValidationContext& validation,
 					 const LayerSpaceResolver& resolve, std::shared_ptr<const FrameLayers>& output)
@@ -44,8 +40,8 @@ XrResult BuildLayers(const XrFrameEndInfo& info, const LayerValidationContext& v
 		result = resolve(layer.space, time, sample);
 		if (XR_FAILED(result))
 			return result;
-		LayerSpaceDescription space{
-			layer.space, layer.layerFlags, sample.worldPose, sample.referenceType, sample.poseOffset};
+		LayerSpaceDescription space{layer.space, layer.layerFlags, sample.worldPose, sample.referenceType,
+									sample.poseOffset};
 		if (layer.type == XR_TYPE_COMPOSITION_LAYER_PROJECTION)
 		{
 			const auto& projection = reinterpret_cast<const XrCompositionLayerProjection&>(layer);
@@ -92,6 +88,7 @@ std::optional<LayerImageDescription> FindLayerImage(const FrameLayers& frame, st
 		return quad->color;
 	return {};
 }
+
 const LayerDepthDescription* FindLayerDepth(const FrameLayers& frame, std::uint32_t layer, std::uint32_t view)
 {
 	if (layer < frame.layers.size())
