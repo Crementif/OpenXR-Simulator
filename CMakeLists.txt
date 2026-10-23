@@ -154,6 +154,7 @@ add_library(simxr_connection STATIC
     src/app/services/PlayerRig.cpp
     src/app/services/RuntimePanelProtocol.cpp
     src/app/services/FrameHistoryFeed.cpp
+    src/app/services/TimelineHistory.cpp
     src/app/services/HistoryStore.cpp
     src/app/services/InputHistory.cpp
     src/app/services/SpatialMath.cpp

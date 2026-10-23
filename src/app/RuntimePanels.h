@@ -1,7 +1,7 @@
 #pragma once
 
 #include "app/PreviewPanel.h"
-#include "app/RecordingPanel.h"
+#include "app/widgets/RecordingPanel.h"
 #include "app/dialogs/ConnectionDialog.h"
 #include "app/pages/AdvancedSteppingPage.h"
 #include "app/pages/DeviceControlPanel.h"
@@ -144,7 +144,7 @@ class RuntimePanels
 	std::uint32_t m_gamepad = 0;
 	bool m_rumbleFailed = false;
 	RuntimeView m_view;
-	std::string m_lastNotice;
+	std::string m_lastNotice, m_recordingError;
 	ConnectionDialog m_connection;
 	RecordingPanel m_recording;
 	bool m_replayActive = false;

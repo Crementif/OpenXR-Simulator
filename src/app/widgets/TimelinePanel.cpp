@@ -1,103 +1,33 @@
-#include "app/TimelinePanel.h"
-#include "app/services/RecordingController.h"
-#include "app/services/Utf8Path.h"
-#include "app/widgets/Controls.h"
+#include "app/widgets/TimelinePanel.h"
+#include "Pch.h"
+#include "app/RuntimePanels.h"
 #include "app/Theme.h"
 #include "app/services/InputHistory.h"
 #include "app/services/PlayerRig.h"
-#include <algorithm>
+#include "app/services/RecordingController.h"
+#include "app/services/Utf8Path.h"
+#include "app/widgets/Controls.h"
 #include <cstdio>
 #include <imgui.h>
-#include <utility>
 
 namespace simxr::app
 {
-namespace
-{
-const char* Phase(automation::RigPhase phase)
-{
-	switch (phase)
-	{
-	case automation::RigPhase::Idle:
-		return "Idle";
-	case automation::RigPhase::Running:
-		return "Running";
-	case automation::RigPhase::Paused:
-		return "Paused";
-	case automation::RigPhase::Complete:
-		return "Complete";
-	case automation::RigPhase::Cancelled:
-		return "Cancelled";
-	case automation::RigPhase::Failed:
-		return "Failed";
-	}
-	return "Unknown";
-}
-template <typename T> void Bounded(std::vector<T>& values)
-{
-	if (values.size() > 128)
-		values.erase(values.begin(), values.end() - 128);
-}
-RuntimeFrameRun RunOf(const RuntimeView& state)
+static RuntimeFrameRun RunOf(const RuntimeView& state)
 {
 	return {state.epoch, state.session, state.generation};
 }
-} // namespace
-void TimelinePanel::Push(Event event)
+void TimelinePanel::ObserveRig(const RuntimeView& runtime, std::uint64_t run, const automation::RigSnapshot& state,
+							   bool matchesTarget)
 {
-	m_events.push_back(std::move(event));
-	Bounded(m_events);
+	m_history.ObserveScript(runtime, run, state, matchesTarget);
 }
-void TimelinePanel::ObserveRig(const RuntimeView& runtime, std::uint64_t run,
-							   const automation::RigSnapshot& state, bool matchesTarget)
+void TimelinePanel::Observe(const RuntimeView& runtime)
 {
-	// Retire the previous session before consuming a script completion for this frame.
-	Observe(runtime);
-	if (!run)
-		return;
-	const auto append = [&](std::string text, bool failed = false)
-	{
-		Push({matchesTarget ? RunOf(runtime) : RuntimeFrameRun{},
-			  std::chrono::duration<double>(std::chrono::steady_clock::now() - m_started).count(),
-			  runtime.historySeconds, "Script " + std::to_string(run) + ": " + std::move(text), failed});
-	};
-	if (run != m_rigRun)
-	{
-		if (m_scriptBegin)
-		{
-			m_clips.push_back({*std::exchange(m_scriptBegin, {}), runtime.historySeconds, true});
-			Bounded(m_clips);
-		}
-		m_rigRun = run;
-		m_output = m_checkpoints = 0;
-		append("Started");
-		m_phase = automation::RigPhase::Idle;
-	}
-	if (matchesTarget && !m_scriptBegin &&
-		(state.phase == automation::RigPhase::Running || state.phase == automation::RigPhase::Paused))
-		m_scriptBegin = runtime.historySeconds;
-	if (state.phase != m_phase)
-	{
-		m_phase = state.phase;
-		if (m_scriptBegin &&
-			(state.phase == automation::RigPhase::Complete || state.phase == automation::RigPhase::Failed ||
-			 state.phase == automation::RigPhase::Cancelled))
-		{
-			m_clips.push_back({*m_scriptBegin, runtime.historySeconds, true});
-			Bounded(m_clips);
-			m_scriptBegin.reset();
-		}
-		append(Phase(state.phase), state.phase == automation::RigPhase::Failed);
-		if (state.phase == automation::RigPhase::Failed && !state.error.empty())
-			append(state.error, true);
-	}
-	while (m_checkpoints < state.checkpoints.size())
-	{
-		const auto& point = state.checkpoints[m_checkpoints++];
-		append(point.name + ": " + point.detail, !point.passed);
-	}
-	while (m_output < state.output.size())
-		append(state.output[m_output++]);
+	m_history.Observe(runtime, runtime.recording);
+}
+void TimelinePanel::SavedRecording(std::string path, const RuntimeView& runtime)
+{
+	m_history.SavedRecording(std::move(path), RunOf(runtime));
 }
 void TimelinePanel::Play(RuntimePanels& runtime, const std::string& path)
 {
@@ -107,50 +37,92 @@ void TimelinePanel::Play(RuntimePanels& runtime, const std::string& path)
 	}
 	catch (const std::exception& error)
 	{
-		Push({{}, std::chrono::duration<double>(std::chrono::steady_clock::now() - m_started).count(),
-			  m_previous ? m_previous->historySeconds : 0, std::string("Cannot play take: ") + error.what(), true});
+		m_history.Error(std::string("Cannot play take: ") + error.what(), runtime.View().historySeconds);
 	}
 }
-void TimelinePanel::ReplayTake(const std::string& path)
+void TimelinePanel::ReplayTake(const std::string& path, const RuntimeView& state, std::uint64_t scriptRun)
 {
+	m_history.ReplayTake(scriptRun, path, state);
 	m_ghost.reset();
 	for (const auto& take : m_takes)
 		if (take.path == path)
-			m_ghost = Ghost{take, m_previous ? m_previous->historySeconds : 0};
+			m_ghost = Ghost{take, RunOf(state), state.latestFrame, scriptRun};
 }
 void TimelinePanel::DrawGhost(const HistoryStore& history)
 {
 	if (!m_ghost)
 		return;
-	if (!m_ghost->begin && m_scriptBegin && *m_scriptBegin >= m_ghost->requested)
-		m_ghost->begin = m_scriptBegin;
-	// The take's initial values apply on the first frame the replay drives.
-	if (m_ghost->begin && !m_ghost->anchor)
-		for (auto index = history.LowerBound(*m_ghost->begin); index < history.Size(); ++index)
-			if (history.At(index).flags & HistoryDriven)
-			{
-				m_ghost->anchor = history.At(index);
-				break;
-			}
+	const auto* replay = m_history.FindScript(m_ghost->scriptRun);
+	if (!replay || replay->first.Run() != m_ghost->target)
+		return;
+	const auto run = m_ghost->target;
+	const auto origin = m_ghost->anchor ? history.Find(m_ghost->anchor->identity, run.epoch)
+										: history.Find(replay->first.identity, run.epoch);
+	const auto segment = origin ? std::optional{history.SegmentAt(*origin)}
+								: history.LatestSegment({run.session, run.generation, 0}, run.epoch);
+	if (!segment)
+		return;
+	const auto after = [&](std::uint64_t frame)
+	{
+		auto begin = segment->first, end = segment->second;
+		while (begin < end)
+		{
+			const auto middle = begin + (end - begin) / 2;
+			if (history.At(middle).identity.frame <= frame)
+				begin = middle + 1;
+			else
+				end = middle;
+		}
+		return begin;
+	};
+	const auto end = after(replay->last.identity.frame);
+	if (!m_ghost->anchor)
+	{
+		const auto first = after(m_ghost->afterFrame);
+		if (first >= end)
+			return;
+		auto begin = first, limit = end;
+		while (begin < limit)
+		{
+			const auto middle = begin + (limit - begin) / 2;
+			if (history.Query(first, middle + 1).driven)
+				limit = middle;
+			else
+				begin = middle + 1;
+		}
+		const auto& frame = history.At(begin < end ? begin : end - 1);
+		const auto observed = (begin < end ? begin + 1 : end) - first;
+		if (frame.identity.frame - m_ghost->afterFrame != observed)
+		{
+			m_ghost.reset();
+			return;
+		}
+		m_ghost->afterFrame = frame.identity.frame;
+		if (begin < end)
+			m_ghost->anchor = frame;
+	}
 	if (!m_ghost->anchor)
 		return;
 	const auto& source = m_ghost->source;
 	const auto first = history.Find(source.first, source.epoch), last = history.Find(source.last, source.epoch);
 	const auto anchor = history.Find(m_ghost->anchor->identity, m_ghost->anchor->epoch);
-	if (first && last && anchor && *last >= *first)
-		m_canvas.DrawGhost(history, *first, *anchor, *last - *first + 1);
+	if (first && last && anchor && *last >= *first && *anchor < end)
+		m_canvas.DrawGhost(history, *first, *last, *anchor, end - 1);
 }
 void TimelinePanel::DrawMeter(const HistoryStore& history, const RuntimeView& state, ShellRect area, bool oneRow)
 {
-	if (!history.Size() || !state.sessionAvailable || area.width <= 0 || area.height <= 0)
+	if (!state.sessionAvailable || area.width <= 0 || area.height <= 0)
+		return;
+	const auto segment = history.LatestSegment({state.session, state.generation, 0}, state.epoch);
+	if (!segment)
 		return;
 	// The last 90 frames of this run, and every missed frame in the last 10 s.
-	const auto last = history.Size() - 1;
+	const auto last = segment->second - 1;
 	const auto& newest = history.At(last);
 	std::size_t first = last;
 	float sum = 0, minimum = newest.frameMilliseconds, maximum = 0, cpuSum = 0, gpuSum = 0;
 	std::size_t cpuCount = 0, gpuCount = 0;
-	while (first > 0 && last - first < 89 && !(history.At(first).flags & HistoryRunStart))
+	while (first > segment->first && last - first < 89)
 		--first;
 	for (auto index = first; index <= last; ++index)
 	{
@@ -172,14 +144,13 @@ void TimelinePanel::DrawMeter(const HistoryStore& history, const RuntimeView& st
 	const auto count = last - first + 1;
 	const float average = sum / count, budget = newest.periodMilliseconds;
 	const float cpu = cpuCount ? cpuSum / cpuCount : -1, gpu = gpuCount ? gpuSum / gpuCount : -1;
-	std::size_t missed = 0;
-	for (auto index = history.LowerBound(newest.seconds - 10); index <= last; ++index)
-		missed += (history.At(index).flags & (HistoryLate | HistoryDropped)) != 0;
+	const auto missed =
+		history.Query(std::max(segment->first, history.LowerBound(newest.seconds - 10)), last + 1).missed;
 	// Green at budget, amber when frames run long, red when frames were missed.
-	const ImU32 color = state.manual ? theme::TextDim
-						: missed > 3 || (cpu >= 0 ? cpu : average) > budget ? theme::Record
+	const ImU32 color = state.manual										   ? theme::TextDim
+						: missed > 3 || (cpu >= 0 ? cpu : average) > budget	   ? theme::Record
 						: missed || (cpu >= 0 ? cpu : average) >= budget * .9f ? theme::Warn
-																 : theme::Ok;
+																			   : theme::Ok;
 	char text[48];
 	if (oneRow)
 		std::snprintf(text, sizeof(text), "%.0f fps", average > 0 ? 1000 / average : 0);
@@ -212,8 +183,8 @@ void TimelinePanel::DrawMeter(const HistoryStore& history, const RuntimeView& st
 			const float bar = std::min(height, height * work / (2 * std::max(1.f, budget)));
 			const float x = area.x + (index - first) * step;
 			const ImU32 tone = frame.flags & (HistoryLate | HistoryDropped) ? theme::Record
-							   : work >= budget * .9f		 ? theme::Warn
-																			 : theme::Accent;
+							   : work >= budget * .9f						? theme::Warn
+																			: theme::Accent;
 			draw->AddRectFilled({x, sparkBottom - bar}, {x + std::max(1.f, step - scale), sparkBottom}, tone);
 		}
 		const float middle = sparkBottom - height / 2;
@@ -224,14 +195,14 @@ void TimelinePanel::DrawMeter(const HistoryStore& history, const RuntimeView& st
 	if (ImGui::IsMouseHoveringRect(hoverMin, hoverMax) && ImGui::IsWindowHovered())
 	{
 		ImGui::BeginTooltip();
-		ImGui::Text("Last %zu display intervals (ms): min %.1f / avg %.1f / max %.1f",
-					count, minimum, average, maximum);
+		ImGui::Text("Last %zu display intervals (ms): min %.1f / avg %.1f / max %.1f", count, minimum, average,
+					maximum);
 		char gpuText[32] = "unavailable";
 		if (gpu >= 0)
 			std::snprintf(gpuText, sizeof(gpuText), "%.2f ms", gpu);
 		if (cpu >= 0)
-			ImGui::TextDisabled("CPU %.1f ms / %+.1f ms spare; compositor GPU %s; %zu misses / 10 s",
-				cpu, budget - cpu, gpuText, missed);
+			ImGui::TextDisabled("CPU %.1f ms / %+.1f ms spare; compositor GPU %s; %zu misses / 10 s", cpu, budget - cpu,
+								gpuText, missed);
 		else
 			ImGui::TextDisabled("%.1f ms budget; CPU/GPU timing unavailable; %zu misses / 10 s", budget, missed);
 		ImGui::EndTooltip();
@@ -266,71 +237,9 @@ void TimelinePanel::DrawLegend()
 	row("Home / End", "Fit everything / go live");
 	ImGui::EndPopup();
 }
-void TimelinePanel::Observe(const RuntimeView& state)
-{
-	const auto observed = [&](const char* text, const RuntimeView& at)
-	{
-		Push({RunOf(at), std::chrono::duration<double>(std::chrono::steady_clock::now() - m_started).count(),
-			  at.historySeconds, text, false});
-	};
-	const auto closeSpans = [&](double seconds)
-	{
-		if (m_recordingBegin)
-			m_clips.push_back({*std::exchange(m_recordingBegin, {}), seconds, false});
-		if (m_scriptBegin)
-			m_clips.push_back({*std::exchange(m_scriptBegin, {}), seconds, true});
-		if (m_pauseBegin)
-			m_pauses.push_back({*std::exchange(m_pauseBegin, {}), seconds});
-		Bounded(m_clips);
-		Bounded(m_pauses);
-	};
-	if (m_previous)
-	{
-		// A run ends at its last retained frame; nothing open spans into the next run.
-		if (m_previous->connected && (!state.connected || RunOf(state) != RunOf(*m_previous)))
-		{
-			observed("Disconnected", *m_previous);
-			closeSpans(m_previous->historySeconds);
-			m_pauseEnd.reset();
-		}
-		if (state.connected && (!m_previous->connected || RunOf(state) != RunOf(*m_previous)))
-			observed("Connected", state);
-		else if (state.connected && state.manual != m_previous->manual)
-			observed(state.manual ? "Paused" : "Continued", state);
-	}
-	if (state.recording && !m_recordingBegin)
-	{
-		m_recordingBegin = state.historySeconds;
-		observed("Recording started", state);
-	}
-	if (!state.recording && m_recordingBegin)
-	{
-		m_clips.push_back({*std::exchange(m_recordingBegin, {}), state.historySeconds, false});
-		Bounded(m_clips);
-		observed("Recording stopped", state);
-	}
-	if (state.connected && state.manual && !m_pauseBegin)
-	{
-		m_pauseBegin = state.historySeconds;
-		m_pauseFrame = HistoryFrame{{state.session, state.generation, state.latestFrame}, state.epoch};
-	}
-	if (!state.manual && m_pauseBegin)
-	{
-		m_pauses.push_back({*std::exchange(m_pauseBegin, {}), state.historySeconds});
-		Bounded(m_pauses);
-		m_pauseEnd = state.historySeconds;
-	}
-	// The pause lasts until the first frame after Continue.
-	if (m_pauseEnd && state.historySeconds > *m_pauseEnd)
-	{
-		m_pauses.back().last = state.historySeconds;
-		m_pauseEnd.reset();
-	}
-	m_previous = state;
-}
 bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 {
-	const auto state = runtime.Snapshot();
+	const auto& state = runtime.View();
 	const auto& history = runtime.History();
 	bool inspect = false;
 	const auto choose = [&](std::size_t index)
@@ -346,29 +255,18 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 		runtime.SetLive(true);
 		LeaveHistory(shell, true);
 	};
-	Observe(state);
+	m_history.Resolve(history);
 	if (auto saved = std::exchange(shell.timeline.savedTake, {}))
 	{
-		std::erase_if(m_takes, [&](const TakeSource& take) { return take.path == saved->path; });
+		std::erase_if(m_takes,
+					  [&](const TakeSource& take)
+					  {
+						  return take.path == saved->path;
+					  });
 		m_takes.push_back(std::move(*saved));
 		if (m_takes.size() > 16)
 			m_takes.erase(m_takes.begin());
 	}
-	if (auto recorded = std::exchange(shell.timeline.recordedTake, {}))
-		for (auto span = m_clips.rbegin(); span != m_clips.rend(); ++span)
-			if (!span->replay)
-			{
-				if (span->take.empty())
-					span->take = std::move(*recorded);
-				break;
-			}
-	// A pause starts at the frame it stopped on, which history learns about a little later.
-	if (m_pauseBegin && m_pauseFrame)
-		if (const auto paused = history.Find(m_pauseFrame->identity, m_pauseFrame->epoch))
-		{
-			m_pauseBegin = std::min(*m_pauseBegin, history.At(*paused).seconds);
-			m_pauseFrame.reset();
-		}
 	if (history.Size())
 		while (!m_markers.empty() && m_markers.begin()->first < history.At(0).seconds)
 			m_markers.erase(m_markers.begin());
@@ -404,8 +302,9 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 									 ImGui::CalcTextSize("LIVE \u00b7 000000").x + 14 * scale) +
 							button + style.ItemSpacing.x * 3 +
 							(folded ? ImGui::CalcTextSize("000 fps").x + style.ItemSpacing.x : 0);
+	const auto latest = history.Latest({state.session, state.generation, 0}, state.epoch);
 	std::string roles;
-	if (const auto index = history.Nearest(cursor))
+	if (const auto index = state.time.following ? latest : cursorIndex)
 		if (const auto* sample = runtime.InputSamples().Find(history.At(*index).input); sample && sample->trackers)
 			for (const auto& tracker : *sample->trackers)
 				if (tracker.connected)
@@ -415,26 +314,24 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 				}
 	m_canvas.SetInputDetail(std::move(roles));
 	m_canvas.SetTint(m_tint);
-	if (history.Size())
-		m_canvas.SetBudget(history.At(history.Size() - 1).periodMilliseconds);
+	m_canvas.SetBudget(latest ? history.At(*latest).periodMilliseconds : 0);
 	m_canvas.Begin(header, liveWidth, !drawer);
 	const auto cell = m_canvas.TransportRect();
 	m_drawer = drawer && !m_canvas.Compact()
 				   ? ShellRect{cell.x, cell.y + cell.height, cell.width, m_canvas.Bounds().height - cell.height}
 				   : ShellRect{};
-	ImGui::SetCursorScreenPos(
-		{cell.x + style.ItemSpacing.x, cell.y + std::max(0.f, (cell.height - button) / 2)});
-	const char* why = !state.sessionAvailable ? "Connect an app first"
+	ImGui::SetCursorScreenPos({cell.x + style.ItemSpacing.x, cell.y + std::max(0.f, (cell.height - button) / 2)});
+	const char* why = !state.sessionAvailable  ? "Connect an app first"
 					  : state.operationPending ? "Waiting for the last command"
 											   : nullptr;
 	const bool take = shell.timeline.playing;
 	// A playing take steps the paused app itself; Pause holds the take instead.
 	const bool held = take ? shell.timeline.playbackPaused : state.manual;
 	ImGui::BeginDisabled(!take && why != nullptr);
-	const char* pauseTip = take ? (held ? "Continue the take" : "Pause the take")
-					   : why	? why
-					   : held	? "Let the app run again (F8)"
-								: "Freeze the app on its current frame (F6)";
+	const char* pauseTip = take	  ? (held ? "Continue the take" : "Pause the take")
+						   : why  ? why
+						   : held ? "Let the app run again (F8)"
+								  : "Freeze the app on its current frame (F6)";
 	if (held ? IconButton("Continue", Icon::Play, pauseTip) : IconButton("Pause", Icon::Pause, pauseTip))
 	{
 		if (take)
@@ -450,10 +347,8 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 	ImGui::EndDisabled();
 	// The arrows step through frames; at the paused live edge the next frame is
 	// made by the app. Shift jumps between markers instead.
-	const std::optional<std::size_t> latest =
-		history.Size() ? std::optional<std::size_t>(history.Size() - 1) : std::nullopt;
 	const auto current = state.time.following ? latest : cursorIndex;
-	const bool atEdge = !current || *current == *latest;
+	const bool atEdge = state.time.following || !current || *current + 1 == history.Size();
 	const bool shift = ImGui::GetIO().KeyShift;
 	const auto stepBack = [&]
 	{
@@ -509,7 +404,7 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 	ImGui::SameLine();
 	const float recordX = ImGui::GetCursorPosX();
 	ImGui::BeginDisabled(!state.sessionAvailable);
-	char elapsed[16] = "";
+	char elapsed[32] = "";
 	if (state.recording && shell.timeline.recordingSince)
 	{
 		const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() -
@@ -518,8 +413,8 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 		std::snprintf(elapsed, sizeof(elapsed), "%lld:%02lld", static_cast<long long>(seconds / 60),
 					  static_cast<long long>(seconds % 60));
 	}
-	if (state.recording ? IconButton("Stop recording", Icon::Stop, "Stop recording and save the take (Ctrl+R)",
-									 false, elapsed, theme::Record)
+	if (state.recording ? IconButton("Stop recording", Icon::Stop, "Stop recording and save the take (Ctrl+R)", false,
+									 elapsed, theme::Record)
 						: IconButton("Rec", Icon::Record, "Record inputs (Ctrl+R)", false, nullptr, theme::Record))
 	{
 		if (state.recording)
@@ -590,18 +485,18 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 	{
 		const auto bounds = m_canvas.Bounds();
 		const float below = live.y + live.height;
-		DrawMeter(history, state, {live.x + style.ItemSpacing.x, below, live.width - style.ItemSpacing.x * 2,
-								   bounds.y + bounds.height - below},
+		DrawMeter(history, state,
+				  {live.x + style.ItemSpacing.x, below, live.width - style.ItemSpacing.x * 2,
+				   bounds.y + bounds.height - below},
 				  false);
 	}
 	if (state.historyFull)
 	{
 		const char* full = "History full — unpin snapshots";
 		const auto bounds = m_canvas.Bounds();
-		ImGui::GetWindowDrawList()->AddText(
-			{bounds.x + bounds.width / 2 - ImGui::CalcTextSize(full).x / 2,
-			 cell.y + (cell.height - ImGui::GetFontSize()) / 2},
-			theme::Paused, full);
+		ImGui::GetWindowDrawList()->AddText({bounds.x + bounds.width / 2 - ImGui::CalcTextSize(full).x / 2,
+											 cell.y + (cell.height - ImGui::GetFontSize()) / 2},
+											theme::Paused, full);
 	}
 
 	if (shell.timeline.zoomToRange)
@@ -617,9 +512,9 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 		if (first && last)
 			selectedRange = {history.At(*first).seconds, history.At(*last).seconds};
 	}
-	const auto gesture = m_canvas.Draw(history, runtime.KeptPreviews(),
-		 runtime.PreviewCrop().value_or(ImVec4{0, 0, 1, 1}), state.time.following,
-		 state.time.following ? std::optional<double>{} : cursor, selectedRange);
+	const auto gesture =
+		m_canvas.Draw(history, runtime.KeptPreviews(), runtime.PreviewCrop().value_or(ImVec4{0, 0, 1, 1}),
+					  state.time.following, state.time.following ? std::optional<double>{} : cursor, selectedRange);
 	shell.timelineCanvas = m_canvas.Bounds();
 	std::tie(shell.timeline.first, shell.timeline.last) = m_canvas.VisibleRange();
 	if (gesture.stopFollowing)
@@ -682,52 +577,61 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 			ImGui::SetTooltip("%s / frame %llu", marker->second.name.c_str(),
 							  static_cast<unsigned long long>(marker->second.frame.identity.frame));
 	DrawGhost(history);
-	for (const auto& pause : m_pauses)
-		m_canvas.DrawPause(pause.first, pause.last);
-	if (m_pauseBegin)
-		m_canvas.DrawPause(*m_pauseBegin, state.historySeconds);
-	for (const auto& event : m_events)
+	for (const auto& pause : m_history.Pauses())
+		m_canvas.DrawPause(pause.first.seconds, pause.last.seconds);
+	if (const auto& pause = m_history.Pause())
+		m_canvas.DrawPause(pause->first.seconds, pause->last.seconds);
+	for (const auto& event : m_history.Events())
 		m_canvas.DrawEvent(event.axisSeconds, event.seconds, event.text.c_str(), event.failed,
 						   event.run == RuntimeFrameRun{});
-	const auto clip = [&](double first, double last, bool replay, const std::string& take = {}, bool running = false)
+	const auto clip = [&](const char* id, const TimelineSpan& span, bool running = false)
 	{
-		const auto name = take.empty() ? std::string(replay ? (shell.timeline.playing ? "Take" : "Script") : "Recording")
-									   : PathText(Utf8Path(take).stem());
-		const auto hit = m_canvas.DrawClip(first, last, name.c_str(), replay, !take.empty() && runtime.CanReplay(),
-										   running);
+		const auto name = span.take.empty() ? std::string(span.replay ? "Script" : "Recording")
+											: PathText(Utf8Path(span.take).stem());
+		const auto range = span.Range(history);
+		const auto hit = m_canvas.DrawClip(id, span.first.seconds, span.last.seconds, name.c_str(), span.replay,
+										   !span.take.empty() && runtime.CanReplay(), running);
 		if (hit == ClipHit::Play)
-			Play(runtime, take);
+			Play(runtime, span.take);
 		else if (hit == ClipHit::Stop)
 			shell.timeline.stopReplay = true;
 		else if (hit == ClipHit::Opened)
 		{
-			if (take.empty())
+			if (span.take.empty())
 				shell.library = true;
 			else
 			{
-				shell.selection = TakeSel{take};
+				shell.selection = TakeSel{span.take};
 				inspect = true;
 			}
 		}
-		else if (hit == ClipHit::Clicked && history.Size())
-			if (const auto a = history.Nearest(first), b = history.Nearest(last); a && b)
-			{
-				choose(*a);
-				selectRange(*a, *b);
-			}
+		else if (hit == ClipHit::Clicked && range)
+		{
+			choose(range->first);
+			selectRange(range->first, range->second);
+		}
 	};
-	for (const auto& span : m_clips)
-		clip(span.first, span.last, span.replay, span.take);
-	// Takes cut from history sit over their source frames.
+	for (const auto& span : m_history.Clips())
+		clip(("Span/" + std::to_string(span.id)).c_str(), span);
 	for (const auto& take : m_takes)
-		if (take.epoch == state.epoch)
-			if (const auto a = history.Find(take.first, take.epoch), b = history.Find(take.last, take.epoch); a && b)
-				clip(history.At(*a).seconds, history.At(*b).seconds, false, take.path);
-	if (m_scriptBegin)
-		clip(*m_scriptBegin, state.historySeconds, true, {},
-			 m_phase == automation::RigPhase::Running || m_phase == automation::RigPhase::Paused);
-	if (m_recordingBegin)
-		clip(*m_recordingBegin, state.historySeconds, false);
+		if (const auto first = history.Find(take.first, take.epoch), last = history.Find(take.last, take.epoch);
+			first && last)
+		{
+			const TimelineSpan span{{take.first, take.epoch, history.At(*first).seconds},
+									{take.last, take.epoch, history.At(*last).seconds},
+									0,
+									false,
+									take.path};
+			const auto id = "Take/" + take.path + "/" + std::to_string(take.epoch) + "/" +
+							std::to_string(take.first.session) + "/" + std::to_string(take.first.run) + "/" +
+							std::to_string(take.first.frame) + "/" + std::to_string(take.last.session) + "/" +
+							std::to_string(take.last.run) + "/" + std::to_string(take.last.frame);
+			clip(id.c_str(), span);
+		}
+	if (const auto& span = m_history.Script())
+		clip(("Span/" + std::to_string(span->id)).c_str(), *span, true);
+	if (const auto& span = m_history.Recording())
+		clip(("Span/" + std::to_string(span->id)).c_str(), *span);
 	return inspect;
 }
 } // namespace simxr::app

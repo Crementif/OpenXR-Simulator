@@ -17,7 +17,9 @@ static HistoryBucket Merge(HistoryBucket a, HistoryBucket b) noexcept
 			std::max(a.maximum, b.maximum),
 			a.flags | b.flags,
 			{std::max(a.hands[0], b.hands[0]), std::max(a.hands[1], b.hands[1])},
-			std::max(a.cpuMaximum, b.cpuMaximum)};
+			std::max(a.cpuMaximum, b.cpuMaximum),
+			a.missed + b.missed,
+			a.driven + b.driven};
 }
 HistoryStore::HistoryStore(std::size_t capacity)
 {
@@ -49,8 +51,14 @@ void HistoryStore::Update(std::size_t physical) noexcept
 {
 	const auto& frame = m_frames[physical];
 	auto node = m_leaves + physical;
-	m_buckets[node] = {1,			frame.frameMilliseconds, frame.frameMilliseconds, frame.flags,
-					   frame.hands, frame.cpuMilliseconds};
+	m_buckets[node] = {1,
+					   frame.frameMilliseconds,
+					   frame.frameMilliseconds,
+					   frame.flags,
+					   frame.hands,
+					   frame.cpuMilliseconds,
+					   (frame.flags & (HistoryLate | HistoryDropped)) ? 1U : 0U,
+					   (frame.flags & HistoryDriven) ? 1U : 0U};
 	while (node > 1)
 	{
 		node /= 2;
@@ -68,7 +76,7 @@ void HistoryStore::Append(const HistoryFrame& frame)
 	const auto& run = frame.identity;
 	if (m_segments.empty() || m_segments.back().end != m_appended || m_segments.back().epoch != frame.epoch ||
 		m_segments.back().session != run.session || m_segments.back().run != run.run ||
-		run.frame <= At(m_size - 1).identity.frame)
+		(frame.flags & HistoryRunStart) || run.frame <= At(m_size - 1).identity.frame)
 		m_segments.push_back({frame.epoch, run.session, run.run, m_appended, m_appended});
 	++m_segments.back().end;
 	++m_appended;
@@ -117,10 +125,32 @@ std::optional<std::size_t> HistoryStore::Find(FrameIdentity identity, std::uint6
 }
 std::optional<std::size_t> HistoryStore::Latest(FrameIdentity scope, std::uint64_t epoch) const
 {
+	if (const auto segment = LatestSegment(scope, epoch))
+		return segment->second - 1;
+	return {};
+}
+std::optional<std::pair<std::size_t, std::size_t>> HistoryStore::LatestSegment(FrameIdentity scope,
+																			   std::uint64_t epoch) const
+{
+	const auto oldest = m_appended - m_size;
 	for (auto segment = m_segments.rbegin(); segment != m_segments.rend(); ++segment)
 		if (segment->epoch == epoch && segment->session == scope.session && segment->run == scope.run)
-			return static_cast<std::size_t>(segment->end - 1 - (m_appended - m_size));
+			return std::pair{static_cast<std::size_t>(std::max(segment->begin, oldest) - oldest),
+							 static_cast<std::size_t>(segment->end - oldest)};
 	return {};
+}
+std::pair<std::size_t, std::size_t> HistoryStore::SegmentAt(std::size_t index) const
+{
+	if (index >= m_size)
+		throw std::out_of_range("Frame history segment");
+	const auto oldest = m_appended - m_size;
+	const auto segment = std::lower_bound(m_segments.begin(), m_segments.end(), oldest + index,
+										  [](const Segment& candidate, std::uint64_t position)
+										  {
+											  return candidate.end <= position;
+										  });
+	return {static_cast<std::size_t>(std::max(segment->begin, oldest) - oldest),
+			static_cast<std::size_t>(segment->end - oldest)};
 }
 void HistoryStore::SetFlags(std::size_t index, std::uint32_t mask, bool enabled)
 {

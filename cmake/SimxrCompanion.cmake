@@ -49,7 +49,7 @@ target_sources(simxr_app PRIVATE src/app/pages/DeviceControlPanel.cpp src/app/pa
     src/app/pages/DevicePoseControls.cpp src/app/pages/DeviceInputControls.cpp src/app/pages/DeviceTrackingControls.cpp)
 simxr_configure_target(simxr_app)
 target_include_directories(simxr_app PRIVATE "${PROJECT_SOURCE_DIR}/shaders/generated")
-target_sources(simxr_app PRIVATE src/app/RecordingPanel.cpp src/app/TimelinePanel.cpp src/app/TimelineCanvas.cpp src/app/ShellState.cpp
+target_sources(simxr_app PRIVATE src/app/widgets/RecordingPanel.cpp src/app/widgets/TimelinePanel.cpp src/app/widgets/TimelineCanvas.cpp src/app/ShellState.cpp
     src/app/Theme.cpp src/app/widgets/Icons.cpp src/app/widgets/Controls.cpp src/app/DeviceRail.cpp
     src/app/services/RuntimeSession.cpp src/app/services/RuntimeSessionReplies.cpp src/app/services/RuntimeSessionFrames.cpp
     src/app/dialogs/ConnectionDialog.cpp src/app/Notices.cpp src/app/widgets/DocumentTree.cpp src/app/pages/FramePage.cpp src/app/pages/RangePage.cpp src/app/services/RangeExportTask.cpp

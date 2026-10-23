@@ -6,8 +6,8 @@
 #include <chrono>
 #include <filesystem>
 #include <optional>
-#include <utility>
 #include <string>
+#include <utility>
 
 namespace simxr::app
 {
@@ -23,10 +23,12 @@ class RecordingPanel
 	void RequestStart()
 	{
 		m_startRequested = true;
+		m_stopRequested = false;
 	}
 	void RequestStop()
 	{
 		m_stopRequested = true;
+		m_startRequested = false;
 	}
 	// Draw right after the Rec button; the popovers open from the requests above.
 	void DrawPopovers(bool supported);
@@ -37,7 +39,8 @@ class RecordingPanel
 	}
 
   private:
-	void Start();
+	bool Request(RecordingAction action, std::string path = {});
+	bool Start();
 	void Save();
 	RecordingController m_controller;
 	RecordingTarget m_target;

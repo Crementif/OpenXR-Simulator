@@ -98,6 +98,13 @@ const RuntimeView& RuntimePanels::BeginFrame()
 	m_recording.SetTarget(connected && selected.id ? RecordingTarget{connection.path, selected.id, selected.generation}
 												   : RecordingTarget{});
 	m_recording.Poll(CanRecord());
+	const auto recordingError = m_recording.Snapshot().error;
+	if (recordingError != m_recordingError)
+	{
+		m_recordingError = recordingError;
+		if (!recordingError.empty())
+			m_session.Notify("Recording failed", recordingError);
+	}
 	m_view = Build();
 	const bool following = m_view.time.following;
 	const auto image = m_session.Preview().Selected();

@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace simxr::app
@@ -53,6 +54,8 @@ struct HistoryBucket
 	std::uint32_t flags = 0;
 	std::array<std::uint8_t, 2> hands{};
 	float cpuMaximum = -1;
+	std::size_t missed = 0;
+	std::size_t driven = 0;
 };
 // Fixed-size frame ring with a hierarchy of min/max/flags buckets. Appending
 // and querying visit O(log capacity) buckets, without per-frame allocation.
@@ -76,6 +79,9 @@ class HistoryStore
 	void SetFlags(std::size_t index, std::uint32_t mask, bool enabled);
 	std::optional<std::size_t> Find(FrameIdentity identity, std::uint64_t epoch) const;
 	std::optional<std::size_t> Latest(FrameIdentity scope, std::uint64_t epoch) const;
+	// Retained [begin, end) indices of the newest contiguous segment in this scope.
+	std::optional<std::pair<std::size_t, std::size_t>> LatestSegment(FrameIdentity scope, std::uint64_t epoch) const;
+	std::pair<std::size_t, std::size_t> SegmentAt(std::size_t index) const;
 	std::size_t LowerBound(double seconds) const noexcept;
 	std::optional<std::size_t> Nearest(double seconds) const noexcept;
 	HistoryBucket Query(std::size_t first, std::size_t end) const;

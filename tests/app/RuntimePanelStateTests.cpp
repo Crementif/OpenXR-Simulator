@@ -2,6 +2,7 @@
 #include "app/services/DebuggerPanelController.h"
 #include "app/services/ImageExportTask.h"
 #include "app/services/InspectionWorkspace.h"
+#include "app/services/TimelineHistory.h"
 #include "graphics/SnapshotBudget.h"
 #include "graphics/ColorPixels.h"
 #include "app/services/Utf8Path.h"
@@ -31,6 +32,210 @@ wire::Message Message(app::PanelFields fields)
 wire::Field Frame(std::uint64_t id)
 {
 	return wire::Field::Bytes(tag::Frame, wire::EncodeFields(app::PanelFields{wire::Field::U64(tag::FrameId, id)}));
+}
+app::SessionView TimelineState(std::uint64_t epoch, std::uint64_t frame, double seconds)
+{
+	app::SessionView state;
+	state.endpoint = "timeline-fixture";
+	state.connected = state.sessionAvailable = state.sessionRunning = true;
+	state.epoch = epoch;
+	state.session = 11;
+	state.generation = 5;
+	state.latestFrame = frame;
+	state.historySeconds = seconds;
+	return state;
+}
+void TimelineRecordingIdentity()
+{
+	app::HistoryStore frames(3);
+	app::TimelineHistory timeline;
+	for (std::uint64_t frame = 10; frame <= 12; ++frame)
+	{
+		frames.Append({{11, 5, frame}, 1, 0, double(frame), 10});
+		timeline.Observe(TimelineState(1, frame, double(frame)), frame != 12);
+	}
+	timeline.Resolve(frames);
+	Require(timeline.Clips().size() == 1 && !timeline.Recording(), "Recording did not become one completed clip");
+	const auto& clip = timeline.Clips().front();
+	Require(clip.Range(frames) == std::pair<std::size_t, std::size_t>{0, 2},
+			"Completed recording lost its exact inclusive source endpoints");
+	frames.Append({{11, 5, 13}, 1, 0, 13, 10});
+	Require(!clip.Range(frames) && frames.Find({11, 5, 12}, 1),
+			"Partly evicted recording substituted a newer frame for its missing endpoint");
+	for (std::uint64_t frame = 10; frame <= 12; ++frame)
+		frames.Append({{11, 5, frame}, 2, 0, double(frame + 10), 10});
+	timeline.Resolve(frames);
+	Require(!clip.Range(frames) && clip.first.identity == app::FrameIdentity{11, 5, 10} &&
+				clip.last.identity == app::FrameIdentity{11, 5, 12} && clip.first.epoch == 1 && clip.last.epoch == 1,
+			"Reconnect retargeted a completed recording to reused frame identities");
+}
+void TimelineScriptReconnect()
+{
+	app::TimelineHistory timeline;
+	simxr::automation::RigSnapshot script;
+	script.phase = simxr::automation::RigPhase::Running;
+	auto state = TimelineState(1, 10, 10);
+	const auto observe = [&](std::uint64_t run)
+	{
+		timeline.Observe(state, false);
+		timeline.ObserveScript(state, run, script, true);
+	};
+	observe(7);
+	Require(timeline.Script() && timeline.Script()->first.Run() == app::RuntimeFrameRun{1, 11, 5},
+			"Active script did not bind to its original runtime epoch");
+	state.latestFrame = 11;
+	state.historySeconds = 11;
+	observe(7);
+	state = TimelineState(2, 1, 12);
+	observe(7);
+	Require(!timeline.Script() && timeline.Clips().size() == 1 &&
+				timeline.Clips().front().last.Run() == app::RuntimeFrameRun{1, 11, 5} &&
+				timeline.Clips().front().last.identity.frame == 11,
+			"Old script reopened on reconnect with matching endpoint, session and generation");
+	script.phase = simxr::automation::RigPhase::Complete;
+	observe(7);
+	Require(!timeline.Script() && timeline.Clips().size() == 1, "Old script completion created a new-epoch clip");
+	script.phase = simxr::automation::RigPhase::Running;
+	observe(8);
+	Require(timeline.Script() && timeline.ScriptRun() == 8 &&
+				timeline.Script()->first.Run() == app::RuntimeFrameRun{2, 11, 5},
+			"New script could not bind after the prior epoch retired");
+}
+void TimelineCompletedScripts()
+{
+	for (const auto phase : {simxr::automation::RigPhase::Complete, simxr::automation::RigPhase::Cancelled})
+	{
+		app::TimelineHistory timeline;
+		auto state = TimelineState(1, 10, 10);
+		simxr::automation::RigSnapshot script;
+		script.phase = simxr::automation::RigPhase::Running;
+		const auto observe = [&](std::uint64_t run)
+		{
+			timeline.Observe(state, false);
+			timeline.ObserveScript(state, run, script, true);
+		};
+		timeline.ReplayTake(7, "original-take.luau", state);
+		observe(7);
+		const auto* active = timeline.FindScript(7);
+		Require(timeline.Script() && active && active == &*timeline.Script() && active->scriptRun == 7 &&
+					active->take == "original-take.luau" && !timeline.FindScript(0) && !timeline.FindScript(8),
+				"Active replay lookup lost its script identity or saved take label");
+		const auto id = active->id;
+		state.latestFrame = 12;
+		state.historySeconds = 12;
+		script.phase = phase;
+		observe(7);
+		const auto* completed = timeline.FindScript(7);
+		Require(!timeline.Script() && completed && completed->id == id && completed->first.identity.frame == 10 &&
+					completed->last.identity.frame == 12,
+				"Completed or cancelled script lookup lost its original span endpoints");
+		state = TimelineState(2, 1, 13);
+		script.phase = simxr::automation::RigPhase::Running;
+		observe(8);
+		const auto* original = timeline.FindScript(7);
+		const auto* current = timeline.FindScript(8);
+		Require(original && original->id == id && original->first.Run() == app::RuntimeFrameRun{1, 11, 5} &&
+					original->last.Run() == app::RuntimeFrameRun{1, 11, 5} && original->last.identity.frame == 12 &&
+					original->take == "original-take.luau" && current && current->id != id &&
+					current->first.Run() == app::RuntimeFrameRun{2, 11, 5} && current->take.empty(),
+				"New runtime scope retargeted the old script span or inherited its replay label");
+	}
+}
+void TimelineImmediateReplayCompletion()
+{
+	const auto launch = TimelineState(1, 10, 10);
+	for (const auto phase : {simxr::automation::RigPhase::Complete, simxr::automation::RigPhase::Cancelled})
+	{
+		app::TimelineHistory timeline;
+		timeline.ReplayTake(7, "short-take.luau", launch);
+		auto state = TimelineState(1, 12, 12);
+		simxr::automation::RigSnapshot script;
+		script.phase = phase;
+		timeline.Observe(state, false);
+		timeline.ObserveScript(state, 7, script, true);
+		const auto* completed = timeline.FindScript(7);
+		Require(!timeline.Script() && completed && completed->take == "short-take.luau" &&
+					completed->first.Run() == app::RuntimeFrameRun{1, 11, 5} && completed->first.identity.frame == 10 &&
+					completed->first.seconds == 10 && completed->last.identity.frame == 12 &&
+					completed->last.seconds == 12,
+				"Replay completed before first observation lost its launch-to-completion span");
+		timeline.Observe(state, false);
+		timeline.ObserveScript(state, 7, script, true);
+		Require(timeline.Clips().size() == 1, "Repeated completion created duplicate replay spans");
+	}
+	app::TimelineHistory reconnect;
+	reconnect.ReplayTake(7, "retired-take.luau", launch);
+	const auto state = TimelineState(2, 12, 12);
+	simxr::automation::RigSnapshot script;
+	script.phase = simxr::automation::RigPhase::Running;
+	reconnect.Observe(state, false);
+	reconnect.ObserveScript(state, 7, script, true);
+	Require(!reconnect.Script() && !reconnect.FindScript(7),
+			"Replay first observed after reconnect bound to the new epoch instead of its launch target");
+}
+void TimelinePauseEndpoints()
+{
+	for (const bool alreadyAdvanced : {false, true})
+	{
+		app::TimelineHistory timeline;
+		auto state = TimelineState(1, 10, 10);
+		state.manual = true;
+		timeline.Observe(state, false);
+		state.latestFrame = 11;
+		state.historySeconds = 11;
+		timeline.Observe(state, false);
+		state.manual = false;
+		if (alreadyAdvanced)
+		{
+			state.latestFrame = 12;
+			state.historySeconds = 12;
+		}
+		timeline.Observe(state, false);
+		Require(!timeline.Pause() && timeline.Pauses().size() == 1, "Continue did not finish the active pause span");
+		state.latestFrame = 12;
+		state.historySeconds = 12;
+		timeline.Observe(state, false);
+		state.latestFrame = 13;
+		state.historySeconds = 13;
+		timeline.Observe(state, false);
+		Require(timeline.Pauses().front().first.identity.frame == 10 &&
+					timeline.Pauses().front().last.identity.frame == 12 && timeline.Pauses().front().last.seconds == 12,
+				"Pause endpoint did not stop at the first post-Continue frame");
+	}
+	app::TimelineHistory timeline;
+	auto state = TimelineState(1, 20, 20);
+	state.manual = true;
+	timeline.Observe(state, false);
+	state.manual = false;
+	timeline.Observe(state, false);
+	state.generation = 6;
+	state.latestFrame = 1;
+	state.historySeconds = 21;
+	timeline.Observe(state, false);
+	Require(timeline.Pauses().size() == 1 && timeline.Pauses().front().last.Run() == app::RuntimeFrameRun{1, 11, 5} &&
+				timeline.Pauses().front().last.identity.frame == 20 && timeline.Pauses().front().last.seconds == 20,
+			"Pending pause endpoint extended into the next runtime run");
+}
+void TimelineSavedRecordingScope()
+{
+	app::TimelineHistory timeline;
+	for (const auto epoch : {1U, 2U})
+	{
+		timeline.Observe(TimelineState(epoch, 10, epoch * 10), true);
+		timeline.Observe(TimelineState(epoch, 11, epoch * 10 + 1), false);
+	}
+	Require(timeline.Clips().size() == 2, "Recording scope fixture lost one completed clip");
+	timeline.SavedRecording("wrong-epoch.luau", {3, 11, 5});
+	timeline.SavedRecording("wrong-session.luau", {2, 12, 5});
+	timeline.SavedRecording("wrong-run.luau", {2, 11, 6});
+	Require(timeline.Clips()[0].take.empty() && timeline.Clips()[1].take.empty(),
+			"Saved recording attached to a clip from another runtime scope");
+	timeline.SavedRecording("original.luau", {1, 11, 5});
+	Require(timeline.Clips()[0].take == "original.luau" && timeline.Clips()[1].take.empty(),
+			"Delayed recording save attached to the newest clip instead of its original run");
+	timeline.SavedRecording("reconnected.luau", {2, 11, 5});
+	Require(timeline.Clips()[0].take == "original.luau" && timeline.Clips()[1].take == "reconnected.luau",
+			"Recording save failed to attach to its matching runtime scope");
 }
 void SessionRunningUpdates()
 {
@@ -681,6 +886,12 @@ int main()
 {
 	try
 	{
+		TimelineRecordingIdentity();
+		TimelineScriptReconnect();
+		TimelineCompletedScripts();
+		TimelineImmediateReplayCompletion();
+		TimelinePauseEndpoints();
+		TimelineSavedRecordingScope();
 		SessionRunningUpdates();
 		MissingCaptureKeepsSession();
 		ScopedInspectionReaders();

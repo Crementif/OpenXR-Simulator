@@ -14,41 +14,77 @@ void RingAndBuckets()
 {
 	HistoryStore history(37);
 	for (std::uint64_t i = 0; i < 120; ++i)
-		history.Append({{4, i / 60 + 1, i % 60}, 7, 0, double(i), float(i % 11), i == 100 ? HistoryLate : 0U});
+		history.Append({{4, i / 60 + 1, i % 60}, 7, 0, double(i), float(i % 11),
+						i == 100 ? HistoryLate | HistoryDropped : i == 20 || i == 90 ? HistoryDropped : 0U});
 	Require(history.Size() == 37 && history.At(0).seconds == 83, "History ring did not evict oldest frames");
 	for (std::size_t first = 0; first <= history.Size(); ++first)
 		for (std::size_t end = first; end <= history.Size(); ++end)
 		{
 			const auto result = history.Query(first, end);
-			Require(result.count == end - first, "Wrapped bucket count differs from frame range");
+			Require(result.count == end - first && (first != end || result.missed == 0),
+					"Wrapped bucket count differs from frame range");
 			if (first == end)
 				continue;
 			float minimum = 100, maximum = -1;
 			std::uint32_t flags = 0;
+			std::size_t missed = 0;
 			for (auto index = first; index < end; ++index)
 			{
 				minimum = std::min(minimum, history.At(index).frameMilliseconds);
 				maximum = std::max(maximum, history.At(index).frameMilliseconds);
 				flags |= history.At(index).flags;
+				missed += (history.At(index).flags & (HistoryLate | HistoryDropped)) != 0;
 			}
-			Require(result.minimum == minimum && result.maximum == maximum && result.flags == flags,
+			Require(result.minimum == minimum && result.maximum == maximum && result.flags == flags &&
+						result.missed == missed,
 					"Bucket lost a one-frame peak or event across ring wrap");
 		}
 	Require(history.Find({4, 2, 40}, 7) == 17, "Identity lookup lost wrapped frame");
 	Require(!history.Find({4, 2, 1}, 7), "Identity lookup retained evicted frame");
+	Require(history.LatestSegment({4, 2, 0}, 7) == std::pair<std::size_t, std::size_t>{0, 37} &&
+				history.Latest({4, 2, 0}, 7) == 36 && !history.LatestSegment({4, 1, 0}, 7) &&
+				!history.LatestSegment({4, 2, 0}, 8) && !history.LatestSegment({5, 2, 0}, 7),
+			"Latest segment includes evicted frames or another scope");
 	history.SetFlags(17, HistoryMarker, true);
 	Require(history.Query(0, 37).flags & HistoryMarker, "Marker absent from density buckets");
 	history.SetFlags(17, HistoryMarker, false);
 	history.SetCoverage(17, 89, HistorySnapshot);
 	Require(history.At(17).identity.frame == 40 && history.At(17).identity.run == 2 && history.At(17).epoch == 7,
 			"Coverage changed frame identity");
-	Require(history.Query(0, 37).flags == (HistoryLate | HistorySnapshot), "Coverage lost timing flags");
+	Require(history.Query(0, 37).flags == (HistoryLate | HistoryDropped | HistorySnapshot) &&
+				history.Query(0, 37).missed == 2,
+			"Coverage lost timing flags or counted a late and dropped frame twice");
 	history.SetCoverage(17, 0, 0);
-	Require(history.Query(0, 37).flags == HistoryLate, "Released image coverage remained in ancestor buckets");
+	Require(history.Query(0, 37).flags == (HistoryLate | HistoryDropped),
+			"Released image coverage remained in ancestor buckets");
+	history.SetFlags(17, HistoryLate, false);
+	Require(history.Query(0, 37).missed == 2, "Clearing lateness removed a still-dropped frame from the miss count");
+	history.SetFlags(17, HistoryDropped, false);
+	Require(history.Query(0, 37).missed == 1, "Cleared miss remained in ancestor buckets");
+	history.SetFlags(0, HistoryLate | HistoryDropped | HistoryDriven, true);
+	Require(history.Query(0, 37).missed == 2 && history.Query(0, 37).driven == 1 &&
+			history.Query(1, 37).driven == 0, "Updated miss or driven frame was omitted or counted twice");
 	Require(history.Nearest(99.8) == 17 && history.LowerBound(99.8) == 17, "Time hit-testing selected wrong frame");
 	Require(history.Nearest(-1) == 0 && history.Nearest(1000) == 36, "Time hit-testing did not clamp edges");
+	history.Append({{4, 3, 1}, 7, 0, 120, 10, HistoryRunStart});
+	Require(history.LatestSegment({4, 2, 0}, 7) == std::pair<std::size_t, std::size_t>{0, 36} &&
+				history.LatestSegment({4, 3, 0}, 7) == std::pair<std::size_t, std::size_t>{36, 37} &&
+				history.Query(0, 37).missed == 1 && history.Query(0, 37).driven == 0,
+			"New run merged segment bounds or retained an overwritten miss");
+	history.Append({{4, 2, 60}, 7, 0, 121, 10, HistoryRunStart});
+	Require(history.LatestSegment({4, 2, 0}, 7) == std::pair<std::size_t, std::size_t>{36, 37},
+			"Returning to a run included its older segment");
+	Require(history.SegmentAt(0) == std::pair<std::size_t, std::size_t>{0, 35} &&
+			history.SegmentAt(35) == std::pair<std::size_t, std::size_t>{35, 36} &&
+			history.SegmentAt(36) == std::pair<std::size_t, std::size_t>{36, 37},
+			"Segment lookup merged a revisited scope with its original retained segment");
+	history.Append({{4, 2, 61}, 7, 0, 122, 10, HistoryRunStart});
+	Require(history.LatestSegment({4, 2, 0}, 7) == std::pair<std::size_t, std::size_t>{36, 37},
+			"Explicit run boundary joined separate observations of the same run");
 	history.Clear();
-	Require(!history.Nearest(0) && history.Query(0, 0).count == 0, "Clear retained old buckets");
+	Require(!history.Nearest(0) && !history.LatestSegment({4, 2, 0}, 7) &&
+				history.Query(0, 0).count == 0 && history.Query(0, 0).missed == 0 && history.Query(0, 0).driven == 0,
+			"Clear retained old buckets or segments");
 	bool rejected = false;
 	try
 	{
@@ -88,6 +124,9 @@ void RuntimeFeed()
 	Require(feed.History().At(1).flags == (HistoryDropped | HistoryGap | HistoryLate) &&
 				feed.History().At(1).frameMilliseconds == 20 && feed.History().At(1).periodMilliseconds == 10,
 			"Feed lost a dropped frame, gap, late frame or runtime interval");
+	Require(feed.History().Query(0, 2).missed == 2 &&
+				feed.History().LatestSegment({9, 2, 0}, 1) == std::pair<std::size_t, std::size_t>{0, 2},
+			"Runtime segment double-counted lateness or lost its retained bounds");
 	Require(std::abs(feed.History().At(1).runSeconds - .12) < .000001, "Run-relative time used attachment time");
 	feed.SetScope({});
 	feed.SetScope({1, 9, 2});
@@ -101,6 +140,10 @@ void RuntimeFeed()
 				(feed.History().At(2).flags & HistoryRunStart) &&
 				feed.History().At(2).seconds > feed.History().At(1).seconds,
 			"Run clocks were joined without a divider");
+	Require(feed.History().LatestSegment({9, 2, 0}, 1) == std::pair<std::size_t, std::size_t>{0, 2} &&
+				feed.History().LatestSegment({9, 3, 0}, 2) == std::pair<std::size_t, std::size_t>{2, 3} &&
+				!feed.History().LatestSegment({9, 3, 0}, 1),
+			"Run transition changed the retained segment identity");
 	// A rejected page is skipped once and leaves a gap, never a retry loop.
 	Require(!feed.Accept(page(3, 2, 2000, 4)).empty() && feed.After() == 2, "Invalid history page was not skipped");
 	Require(feed.Accept(page(3, 3, 3000)).empty() && feed.History().Size() == 4 &&

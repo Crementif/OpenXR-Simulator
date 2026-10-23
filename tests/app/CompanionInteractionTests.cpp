@@ -10,7 +10,7 @@
 #include "app/widgets/PilotController.h"
 #include "app/services/RunningApps.h"
 #include "app/services/RecordingController.h"
-#include "app/RecordingPanel.h"
+#include "app/widgets/RecordingPanel.h"
 #include "app/services/RuntimeConnection.h"
 #include "app/RuntimePanels.h"
 #include "app/services/RuntimeSession.h"
@@ -24,7 +24,7 @@
 #include "control/ControlService.h"
 #include "app/services/HistoryStore.h"
 #include "app/services/InputHistory.h"
-#include "app/TimelineCanvas.h"
+#include "app/widgets/TimelineCanvas.h"
 #include <functional>
 #include "app/services/SimulationEdits.h"
 #include "app/services/SpatialMath.h"
@@ -261,16 +261,22 @@ void CheckTimelineCanvas(Interaction& test)
 	for (std::uint64_t frame = 1; frame <= 54000; ++frame)
 		history.Append(
 			{{1, 1, frame}, 1, 0, double(frame) / 90, 11.11f, (frame == 200 ? HistoryDropped : 0U) | HistoryMarker});
+	history.SetFlags(49999, HistorySnapshot, true);
 	HistoryStore emptyHistory;
-	bool populated = true;
+	HistoryStore replacement{2};
+	replacement.Append({{1, 1, 27000}, 2, 0, 300, 11.11f});
+	replacement.Append({{1, 1, 50000}, 2, 0, 555, 11.11f});
+	bool populated = true, visible = true, overlap = false, replaced = false, following = false;
 	double canvasSeconds = 0;
 	TimelineCanvas canvas;
 	canvas.Fit();
-	TimelineGesture selected;
-	ImVec2 point, clipPoint;
-	int plays = 0;
+	TimelineGesture selected, lastGesture;
+	ImVec2 point, clipPoint, markerPoint, snapshotPoint, outsidePoint;
+	int plays = 0, otherPlays = 0, pins = 0, selections = 0;
 	test.extraDraw = [&]
 	{
+		if (!visible)
+			return;
 		ImGui::SetNextWindowPos({30, 170}, ImGuiCond_Always);
 		ImGui::SetNextWindowSize({740, 240}, ImGuiCond_Always);
 		ImGui::Begin("Timeline interaction");
@@ -280,15 +286,31 @@ void CheckTimelineCanvas(Interaction& test)
 		point = {top.x + labels + (available.x - labels) * .5f, top.y + 10};
 		const auto drawStarted = std::chrono::steady_clock::now();
 		canvas.Begin(labels, 0);
-		const auto gesture = canvas.Draw(populated ? history : emptyHistory, test.runtime.KeptPreviews(), {0, 0, 1, 1}, false);
+		const auto& shownHistory = !populated ? emptyHistory : replaced ? replacement : history;
+		const auto gesture = canvas.Draw(shownHistory, test.runtime.KeptPreviews(), {0, 0, 1, 1}, following);
+		if (gesture.stopFollowing)
+			following = false;
 		const auto bounds = canvas.Bounds();
 		const auto range = canvas.VisibleRange();
 		clipPoint = {bounds.x + float((200 - range.first) / (range.second - range.first)) * bounds.width + 5,
 			bounds.y + canvas.TransportRect().height + 5};
-		if (canvas.DrawClip(200, 250, "Saved take", false, true) == ClipHit::Play)
+		const float scale = ImGui::GetFontSize() / 16;
+		markerPoint = {bounds.x + bounds.width * .8f, bounds.y + canvas.TransportRect().height - 5 * scale};
+		snapshotPoint = {bounds.x + std::floor(float((history.At(49999).seconds - range.first) /
+			(range.second - range.first)) * bounds.width),
+			bounds.y + canvas.TransportRect().height + (bounds.height - canvas.TransportRect().height) / 2};
+		outsidePoint = {bounds.x - 12, point.y};
+		if (canvas.DrawClip("Saved take", 200, 250, "Saved take", false, true) == ClipHit::Play)
 			++plays;
+		if (overlap && canvas.DrawClip("Another take", 200, 250, "Another take", false, true) == ClipHit::Play)
+			++otherPlays;
 		canvasSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - drawStarted).count();
-		if (gesture.first || gesture.marker)
+		lastGesture = gesture;
+		if (gesture.first)
+			++selections;
+		if (gesture.pin)
+			++pins;
+		if (gesture.first || gesture.marker || gesture.pin)
 			selected = gesture;
 		ImGui::End();
 	};
@@ -340,6 +362,69 @@ void CheckTimelineCanvas(Interaction& test)
 	SDL_PushEvent(&key);
 	test.Frame();
 	Require(selected.marker.has_value(), "M did not mark the hovered timeline frame");
+
+	const auto move = [&](ImVec2 position)
+	{
+		ImGui::GetIO().AddMousePosEvent(position.x, position.y);
+		test.Frame();
+	};
+	const auto button = [&](bool down)
+	{
+		ImGui::GetIO().AddMouseButtonEvent(ImGuiMouseButton_Left, down);
+		test.Frame();
+	};
+	following = true;
+	test.Frame();
+	move(point);
+	button(true);
+	Require(lastGesture.stopFollowing && !following, "Canvas press did not stop the moving live axis");
+	move(markerPoint);
+	button(false);
+	Require(lastGesture.first && lastGesture.last, "Marker release collapsed a ruler range to one frame");
+
+	const auto beforeOutside = selections;
+	move(outsidePoint);
+	button(true);
+	move(snapshotPoint);
+	button(false);
+	Require(pins == 0 && selections == beforeOutside,
+		"Releasing an outside press over a snapshot pinned or selected it");
+	test.Click(snapshotPoint);
+	Require(pins == 1, "Owned snapshot click did not pin its frame");
+
+	const auto beforeHidden = selections;
+	move(point);
+	button(true);
+	visible = false;
+	test.Frame();
+	test.Frame();
+	visible = true;
+	move(markerPoint);
+	button(false);
+	Require(selections == beforeHidden, "A hidden canvas kept an old range gesture alive");
+
+	move(point);
+	button(true);
+	populated = false;
+	test.Frame();
+	populated = true;
+	move(markerPoint);
+	button(false);
+	Require(selections == beforeHidden, "Clearing history retained an old frame press");
+
+	move(point);
+	button(true);
+	replaced = true;
+	move(markerPoint);
+	button(false);
+	Require(selections == beforeHidden, "A frame press selected replacement history from another epoch");
+	replaced = false;
+	test.Frame();
+
+	overlap = true;
+	test.Click(clipPoint);
+	Require(plays == 1 && otherPlays == 1, "Overlapping clips with the same start shared a play press");
+	overlap = false;
 	populated = false;
 	const auto baselineStarted = std::chrono::steady_clock::now();
 	for (int i = 0; i < 60; ++i)
@@ -356,6 +441,95 @@ void CheckTimelineCanvas(Interaction& test)
 	const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
 	std::cout << "PASS native canvas hit-testing and marker; 54000 records, " << 120 / elapsed << " UI frames/s; empty "
 			  << 60 / baseline << "; canvas CPU " << canvasSeconds * 1000 / 120 << " ms/frame\n";
+
+	HistoryStore ghosts{16};
+	const auto appendGhost = [&](std::uint64_t run, std::uint64_t frame, double seconds, std::uint32_t flags,
+		std::uint8_t hand)
+	{
+		HistoryFrame sample{{41, run, frame}, 3, 0, seconds, 11.11f, flags};
+		sample.hands[0] = hand;
+		ghosts.Append(sample);
+	};
+	appendGhost(7, 10, 0, 0, 64);
+	appendGhost(7, 12, 1, HistoryGap, 96);
+	appendGhost(7, 13, 2, 0, 128);
+	appendGhost(7, 14, 3, 0, 160);
+	appendGhost(7, 15, 4, 0, 192);
+	appendGhost(8, 16, 5, HistoryRunStart, 255);
+	appendGhost(9, 100, 10, HistoryDriven, 0);
+	appendGhost(9, 101, 11, HistoryDriven, 0);
+	appendGhost(9, 103, 13, HistoryDriven | HistoryGap, 0);
+	appendGhost(9, 104, 14, 0, 0);
+	appendGhost(9, 105, 15, HistoryDriven, 0);
+	appendGhost(10, 106, 16, HistoryDriven | HistoryRunStart, 0);
+	appendGhost(9, 100, 17, HistoryDriven | HistoryRunStart, 0);
+	HistoryStore denseGhosts{6};
+	for (std::uint64_t frame = 0; frame < 6; ++frame)
+	{
+		HistoryFrame sample{{1, frame < 3 ? 1U : 2U, frame < 3 ? frame + 1 : frame + 97}, 1, 0,
+			frame < 3 ? double(frame) : 10 + double(frame - 3) * .0000001, 11.11f,
+			frame < 3 ? 0U : HistoryDriven};
+		sample.hands[0] = frame == 1 ? 255 : 64;
+		denseGhosts.Append(sample);
+	}
+	TimelineCanvas ghostCanvas;
+	ghostCanvas.Zoom(9, 18);
+	std::vector<ImVec2> boundedGhost, scopedGhost, sourceBoundGhost, denseDrivenGhost, denseReleasedGhost;
+	ShellRect ghostBounds;
+	std::pair<double, double> ghostRange;
+	float ghostScale = 1;
+	test.extraDraw = [&]
+	{
+		ImGui::SetNextWindowPos({30, 170}, ImGuiCond_Always);
+		ImGui::SetNextWindowSize({740, 240}, ImGuiCond_Always);
+		ImGui::Begin("Timeline ghost interaction");
+		ghostCanvas.Begin(0, 0);
+		ghostCanvas.Draw(ghosts, test.runtime.KeptPreviews(), {0, 0, 1, 1}, false);
+		ghostBounds = ghostCanvas.Bounds();
+		ghostRange = ghostCanvas.VisibleRange();
+		ghostScale = ImGui::GetFontSize() / 16;
+		auto* draw = ImGui::GetWindowDrawList();
+		const auto capture = [&](const HistoryStore& samples, std::size_t sourceLast, std::size_t targetFirst,
+			std::size_t targetLast)
+		{
+			const int first = draw->VtxBuffer.Size;
+			ghostCanvas.DrawGhost(samples, 0, sourceLast, targetFirst, targetLast);
+			std::vector<ImVec2> points;
+			for (int vertex = first; vertex < draw->VtxBuffer.Size; ++vertex)
+				points.push_back(draw->VtxBuffer[vertex].pos);
+			return points;
+		};
+		boundedGhost = capture(ghosts, 4, 6, 8);
+		scopedGhost = capture(ghosts, 5, 6, 12);
+		sourceBoundGhost = capture(ghosts, 2, 6, 12);
+		denseDrivenGhost = capture(denseGhosts, 2, 3, 5);
+		denseGhosts.SetFlags(4, HistoryDriven, false);
+		denseReleasedGhost = capture(denseGhosts, 2, 3, 5);
+		denseGhosts.SetFlags(4, HistoryDriven, true);
+		ImGui::End();
+	};
+	test.Frame();
+	const auto painted = [&](const std::vector<ImVec2>& points, double seconds)
+	{
+		const float x = ghostBounds.x + float((seconds - ghostRange.first) /
+			(ghostRange.second - ghostRange.first)) * ghostBounds.width;
+		return std::any_of(points.begin(), points.end(), [&](ImVec2 point)
+		{
+			return std::abs(point.x - x) < 4 * ghostScale;
+		});
+	};
+	Require(painted(boundedGhost, 10) && painted(boundedGhost, 13) && !painted(boundedGhost, 15),
+		"Replay ghost ignored its inclusive completion endpoint");
+	Require(!painted(scopedGhost, 11) && !painted(scopedGhost, 12),
+		"Replay ghost compressed missing source or target frames");
+	Require(painted(scopedGhost, 10) && painted(scopedGhost, 13) && painted(scopedGhost, 15) &&
+		!painted(scopedGhost, 14) && !painted(scopedGhost, 16) && !painted(scopedGhost, 17),
+		"Replay ghost crossed released input or the original run segment");
+	Require(painted(sourceBoundGhost, 13) && !painted(sourceBoundGhost, 15),
+		"Replay ghost exceeded the take's inclusive source endpoint");
+	Require(!denseDrivenGhost.empty() && denseReleasedGhost.empty(),
+		"A dense replay ghost hid driven input or included a released frame");
+	std::cout << "PASS replay ghost frame gaps, completion bounds and input release\n";
 	test.extraDraw = {};
 	test.Frame();
 }
@@ -548,7 +722,7 @@ void CheckTimelineWorkflow(Interaction& test)
 		setPath(destination);
 		ImGui::ActivateItemByID(inspector->GetID("Export frames"));
 		test.Frame();
-		await([&](const auto& state)
+		await([&](const auto&)
 		{
 			std::size_t images = 0;
 			for (const auto& file : std::filesystem::directory_iterator(directory))
@@ -558,7 +732,7 @@ void CheckTimelineWorkflow(Interaction& test)
 			const bool metadataReady = std::filesystem::exists(destination);
 			if (!metadataReady)
 				ImGui::ActivateItemByID(inspector->GetID("Export frames"));
-			return !state.pending && metadataReady && images >= 3;
+			return metadataReady && images >= 3;
 		}, "Range export did not recover from the invalid destination and save three snapshots");
 		Require(!std::filesystem::exists(invalid), "Failed range export reported a saved destination");
 		std::ifstream metadata(destination);
@@ -2809,6 +2983,8 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 	pump(2);
 	Require(readTake() == savedTake, "Replace take did not commit the selected range over the existing file");
 	std::cout << "PASS saved " << history.Size() - begin << " frames as " << take.filename() << '\n';
+	ImGui::ActivateItemByID(inspector->GetID("Zoom to range"));
+	pump(2);
 
 	const auto replayFrom = history.Size();
 	// Real pointer hover and click on the Recording clip's revealed Play button.
@@ -3464,12 +3640,46 @@ void CheckLibrary(Interaction& test, const std::filesystem::path& directory)
 	screenshot("library-save.bmp");
 	auto* popup = ImGui::GetCurrentContext()->OpenPopupStack.back().Window;
 	Require(popup, "Save popover has no window");
-	ImGui::ActivateItemByID(popup->GetID("Save"));
+	const auto existingPath = directory / "recordings" / "Library replacement.luau";
+	std::filesystem::create_directories(existingPath.parent_path());
+	const std::string existingTake = "-- Preserve this recording until replacement is explicit\n";
+	{
+		std::ofstream output(existingPath, std::ios::binary);
+		output << existingTake;
+		output.close();
+		Require(output.good(), "Could not prepare the recording replacement fixture");
+	}
+	const auto readTake = [&]
+	{
+		std::ifstream input(existingPath, std::ios::binary);
+		Require(input.good(), "Could not read the recording replacement fixture");
+		return std::string(std::istreambuf_iterator<char>(input), {});
+	};
+	ImGui::ActivateItemByID(popup->GetID("##Take name"));
+	ImGui::GetCurrentContext()->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
+	pump(1);
+	Require(ImGui::GetActiveID() == popup->GetID("##Take name"), "Recording name did not activate");
+	auto& io = ImGui::GetIO();
+	io.AddKeyEvent(ImGuiMod_Ctrl, true);
+	io.AddKeyEvent(ImGuiKey_A, true);
+	pump(1);
+	io.AddKeyEvent(ImGuiKey_A, false);
+	io.AddKeyEvent(ImGuiMod_Ctrl, false);
+	io.AddInputCharactersUTF8("Library replacement");
+	pump(1);
+	io.AddKeyEvent(ImGuiKey_Enter, true);
+	pump(1);
+	io.AddKeyEvent(ImGuiKey_Enter, false);
+	pump(2);
+	Require(readTake() == existingTake && !test.runtime.Snapshot().recordingBusy &&
+		ImGui::IsPopupOpen(popover, ImGuiPopupFlags_AnyPopupLevel),
+		"Entering a recording name replaced an existing take without the Replace action");
+	ImGui::ActivateItemByID(popup->GetID("Replace take"));
 	Eventually([&] { pump(1); return std::holds_alternative<TakeSel>(test.workspace.State().selection); },
 			   "Saved take was not selected in the Library");
 	const auto path = std::get<TakeSel>(test.workspace.State().selection).id;
-	Require(std::filesystem::path(path).parent_path() == directory / "recordings" && std::filesystem::exists(path),
-			"Saved take is not in the isolated recordings folder");
+	Require(Utf8Path(path) == existingPath && readTake() != existingTake,
+			"Replace take did not save the recording over the chosen Library take");
 	pump(3);
 	screenshot("library-take.bmp");
 	ImGui::ActivateItemByID(FindPanel("Timeline divider tab")->GetID("##Edge"));
@@ -3480,7 +3690,7 @@ void CheckLibrary(Interaction& test, const std::filesystem::path& directory)
 	screenshot("library-replay.bmp");
 	ImGui::ActivateItemByID(FindPanel("Inspector")->GetID("Stop take"));
 	Eventually([&] { pump(1); return !test.runtime.Snapshot().manual; }, "Stop take did not release the app");
-	std::cout << "PASS Rec, stop popover, Library replay and cancel\n";
+	std::cout << "PASS Rec, stop popover, explicit replacement, Library replay and cancel\n";
 
 	// A script from the Library: run, pause, step, resume, finish and report.
 	std::filesystem::create_directories(directory / "scripts");
@@ -3540,7 +3750,6 @@ simxr.resume())";
 	ImGui::ActivateItemByID(rename->GetID("##New name"));
 	ImGui::GetCurrentContext()->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
 	pump(1);
-	auto& io = ImGui::GetIO();
 	io.AddKeyEvent(ImGuiMod_Ctrl, true);
 	io.AddKeyEvent(ImGuiKey_A, true);
 	pump(1);
@@ -5125,6 +5334,13 @@ int main()
 				test.Frame();
 				const auto state = recording.Snapshot();
 				Require(!state.busy && state.error.empty(), "Stale recording click reached the replacement target");
+				recording.RequestStart();
+				recording.RequestStop();
+				recording.Poll(true);
+				test.Frame();
+				const auto stopped = recording.Snapshot();
+				Require(!stopped.busy && stopped.error.empty(),
+					"An earlier Start or background read overrode the queued Stop");
 				test.extraDraw = {};
 			}
 			CheckTimelineCanvas(test);

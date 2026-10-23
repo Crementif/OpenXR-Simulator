@@ -1,12 +1,12 @@
-#include "app/RecordingPanel.h"
-#include "app/services/CompanionSettings.h"
+#include "app/widgets/RecordingPanel.h"
+#include "Pch.h"
 #include "app/Theme.h"
+#include "app/services/CompanionSettings.h"
 #include "app/services/Utf8Path.h"
 
-#include <cstdio>
 #include <ctime>
 #include <imgui.h>
-#include <utility>
+#include <stdexcept>
 
 namespace simxr::app
 {
@@ -32,11 +32,15 @@ void RecordingPanel::SetTarget(RecordingTarget target)
 	m_startRequested = m_stopRequested = m_discarded = false;
 	m_saved.reset();
 	m_popupTarget.reset();
+	m_name = {};
 	m_error.clear();
 }
 RecordingSnapshot RecordingPanel::Snapshot() const
 {
-	return m_controller.Snapshot();
+	auto state = m_controller.Snapshot();
+	if (!m_error.empty())
+		state.error = m_error;
+	return state;
 }
 void RecordingPanel::Poll(bool supported)
 {
@@ -48,17 +52,34 @@ void RecordingPanel::Poll(bool supported)
 			m_saved = state.savedPath;
 	}
 	const auto now = std::chrono::steady_clock::now();
-	if (supported && !state.busy && state.error.empty() && now >= m_nextRead)
+	if (supported && !state.busy && state.error.empty() && !m_startRequested && !m_stopRequested && !m_popupTarget &&
+		now >= m_nextRead)
 	{
-		m_controller.Request(RecordingAction::Read);
+		Request(RecordingAction::Read);
 		m_nextRead = now + std::chrono::seconds(1);
 	}
 }
-void RecordingPanel::Start()
+bool RecordingPanel::Request(RecordingAction action, std::string path)
 {
-	m_controller.Request(RecordingAction::Start);
+	try
+	{
+		if (!m_controller.Request(action, 0, std::move(path)))
+			return false;
+		m_error.clear();
+		return true;
+	}
+	catch (const std::exception& error)
+	{
+		m_error = error.what();
+		return false;
+	}
+}
+bool RecordingPanel::Start()
+{
+	if (!Request(RecordingAction::Start))
+		return false;
 	m_discarded = false;
-	m_error.clear();
+	return true;
 }
 void RecordingPanel::Save()
 {
@@ -70,8 +91,7 @@ void RecordingPanel::Save()
 		if (name.empty() || name == "." || name == ".." || name.find_first_of("/\\:") != std::string::npos)
 			throw std::runtime_error("Name without / \\ or :");
 		std::filesystem::create_directories(m_directory);
-		m_saving = m_controller.Request(RecordingAction::Save, 0, PathText(m_directory / Utf8Path(name + ".luau")));
-		m_error.clear();
+		m_saving = Request(RecordingAction::Save, PathText(m_directory / Utf8Path(name + ".luau")));
 	}
 	catch (const std::exception& error)
 	{
@@ -93,10 +113,11 @@ void RecordingPanel::DrawPopovers(bool supported)
 		else
 			Start();
 	}
-	if (!state.busy && std::exchange(m_stopRequested, false) && active && m_controller.Request(RecordingAction::Stop))
+	if (!state.busy && std::exchange(m_stopRequested, false) && active && Request(RecordingAction::Stop))
 	{
 		const auto now = std::time(nullptr);
-		std::strftime(m_name.data(), m_name.size(), "Take %Y-%m-%d %H-%M-%S", std::localtime(&now));
+		if (const auto local = std::localtime(&now))
+			std::strftime(m_name.data(), m_name.size(), "Take %Y-%m-%d %H-%M-%S", local);
 		m_error.clear();
 		m_popupTarget = m_target;
 		ImGui::OpenPopup("Save take");
@@ -110,18 +131,27 @@ void RecordingPanel::DrawPopovers(bool supported)
 			return;
 		}
 		ImGui::TextUnformatted("The last take is not saved");
-		if (ImGui::Button("Record new take"))
+		ImGui::BeginDisabled(state.busy || !supported || active);
+		if (ImGui::Button("Record new take") && Start())
 		{
-			Start();
+			m_popupTarget.reset();
 			ImGui::CloseCurrentPopup();
 		}
+		ImGui::EndDisabled();
 		ImGui::SameLine();
 		if (ImGui::Button("Keep it"))
+		{
+			m_popupTarget.reset();
 			ImGui::CloseCurrentPopup();
+		}
 		ImGui::EndPopup();
 	}
 	if (!ImGui::BeginPopup("Save take"))
+	{
+		if (!ImGui::IsPopupOpen("Replace unsaved take?"))
+			m_popupTarget.reset();
 		return;
+	}
 	if (m_popupTarget != m_target)
 	{
 		ImGui::CloseCurrentPopup();
@@ -140,32 +170,49 @@ void RecordingPanel::DrawPopovers(bool supported)
 		ImGui::SetKeyboardFocusHere();
 	const bool entered =
 		ImGui::InputText("##Take name", m_name.data(), m_name.size(), ImGuiInputTextFlags_EnterReturnsTrue);
-	std::error_code error;
-	const bool exists =
-		!m_directory.empty() && std::filesystem::exists(m_directory / Utf8Path(std::string(m_name.data()) + ".luau"), error);
-	const bool ready = supported && state.page && !active && !state.busy && !state.page->overflow;
+	bool exists = false;
+	std::string pathError;
+	try
+	{
+		std::error_code error;
+		exists = !m_directory.empty() &&
+				 std::filesystem::exists(m_directory / Utf8Path(std::string(m_name.data()) + ".luau"), error);
+		if (error)
+			pathError = error.message();
+	}
+	catch (const std::exception& error)
+	{
+		pathError = error.what();
+	}
+	const bool ready = supported && state.page && !active && !state.busy && !state.page->overflow && pathError.empty();
 	if (exists)
 		ImGui::TextColored(theme::Vec(theme::Warn), "Replaces the take with this name");
 	if (state.page && state.page->overflow)
 		ImGui::TextColored(theme::Vec(theme::Record), "Recording full; cannot save");
 	ImGui::BeginDisabled(!ready || m_saving);
-	if (ImGui::Button("Save") || (entered && ready && !m_saving))
+	if (ImGui::Button(exists ? "Replace take" : "Save") || (entered && !exists && ready && !m_saving))
 		Save();
 	ImGui::EndDisabled();
 	ImGui::SameLine();
+	ImGui::BeginDisabled(m_saving || state.busy || active);
 	if (ImGui::Button("Discard"))
 	{
 		m_discarded = true;
+		m_popupTarget.reset();
 		ImGui::CloseCurrentPopup();
 	}
+	ImGui::EndDisabled();
 	if (m_saving || state.busy)
 	{
 		ImGui::SameLine();
 		ImGui::TextDisabled("%s", m_saving ? "Saving..." : "Stopping...");
 	}
 	if (m_saved)
+	{
+		m_popupTarget.reset();
 		ImGui::CloseCurrentPopup();
-	for (const std::string* message : {&std::as_const(m_error), &state.error})
+	}
+	for (const std::string* message : {&std::as_const(pathError), &state.error})
 		if (!message->empty())
 		{
 			ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 260 * unit);

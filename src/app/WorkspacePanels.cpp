@@ -7,7 +7,7 @@
 #include "app/services/ProcessLauncher.h"
 #include "app/services/RuntimeConnection.h"
 #include "app/RuntimePanels.h"
-#include "app/TimelinePanel.h"
+#include "app/widgets/TimelinePanel.h"
 #include "app/services/Utf8Path.h"
 #ifdef SIMXR_COMPANION_AUTOMATION
 #include "app/pages/Library.h"
@@ -902,6 +902,7 @@ struct WorkspacePanels::Impl
 	{
 		PollLaunch(runtime);
 		runtime.BeginFrame();
+		timeline.Observe(runtime.View());
 #ifdef SIMXR_COMPANION_AUTOMATION
 		if (auto recording = runtime.TakeRecordingReplay())
 		{
@@ -925,8 +926,8 @@ struct WorkspacePanels::Impl
 					rigs.RunScript(rigTarget, replay->recording.path, *replay->script);
 				else
 				{
-					timeline.ReplayTake(replay->recording.path);
 					rigs.ReplayRecording(rigTarget, replay->recording.path, replay->recording.seed);
+					timeline.ReplayTake(replay->recording.path, rigRuntime, rigs.RunId());
 				}
 				replay.reset();
 				runtime.FinishReplayPreparation();
@@ -966,7 +967,7 @@ struct WorkspacePanels::Impl
 #endif
 		if (auto saved = runtime.TakeSavedTake())
 		{
-			shell.timeline.recordedTake = *saved;
+			timeline.SavedRecording(*saved, runtime.View());
 #ifdef SIMXR_COMPANION_AUTOMATION
 			library.Refresh();
 #endif

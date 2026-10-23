@@ -1,21 +1,14 @@
-#include "app/TimelineCanvas.h"
+#include "app/widgets/TimelineCanvas.h"
+#include "Pch.h"
 #include "app/Theme.h"
 #include "app/render/PreviewHistory.h"
 #include "app/widgets/Icons.h"
-#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <imgui.h>
-#include <string>
-#include <utility>
-#include <vector>
 
 namespace simxr::app
 {
-namespace
-{
-constexpr ImU32 Accent = theme::Accent, MarkerColor = theme::Warn, Alert = theme::Record, Paused = theme::Paused;
-}
 void TimelineCanvas::Zoom(double first, double last) noexcept
 {
 	m_span = m_zoomSpan = std::max(.05, last - first) * 1.2;
@@ -71,13 +64,28 @@ void TimelineCanvas::Begin(float headerWidth, float liveWidth, bool laneNames)
 	draw->AddLine({m_bounds.x, top.y}, {m_bounds.x, top.y + height}, theme::Line);
 	draw->AddLine({m_bounds.x + m_bounds.width, top.y}, {m_bounds.x + m_bounds.width, top.y + height}, theme::Line);
 }
-TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory& previews, ImVec4 crop, bool following, std::optional<double> cursor,
-									 std::optional<std::pair<double, double>> selection)
+TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory& previews, ImVec4 crop, bool following,
+									 std::optional<double> cursor, std::optional<std::pair<double, double>> selection)
 {
 	TimelineGesture result;
-	if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) ||
-		(!ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsMouseReleased(ImGuiMouseButton_Left)))
+	const int frameNumber = ImGui::GetFrameCount();
+	const auto& io = ImGui::GetIO();
+	const bool clicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+	const bool released = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+	if (m_drawnFrame != frameNumber - 1 || io.AppFocusLost || ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+		(!ImGui::IsMouseDown(ImGuiMouseButton_Left) && !released))
+	{
+		m_framePress.reset();
 		m_clipPress.reset();
+	}
+	if (clicked)
+	{
+		m_framePress.reset();
+		m_clipPress.reset();
+	}
+	if (m_clipPress && m_clipPress->drawnFrame != frameNumber - 1)
+		m_clipPress.reset();
+	m_drawnFrame = frameNumber;
 	const float font = ImGui::GetFontSize(), scale = font / 16;
 	const float left = m_bounds.x, right = left + m_bounds.width, pixels = m_bounds.width;
 	const float top = m_top, height = m_height, ruler = m_transport.height;
@@ -88,9 +96,17 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 	ImGui::InvisibleButton("Timeline canvas", {pixels, height},
 						   ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle);
 	const bool hovered = ImGui::IsItemHovered(), active = ImGui::IsItemActive();
+	m_hovered = hovered;
+	if (!active && !released)
+	{
+		m_framePress.reset();
+		m_clipPress.reset();
+	}
 	const float framesBottom = LaneY(Frames) + m_lane - 1;
 	if (!history.Size())
 	{
+		m_framePress.reset();
+		m_clipPress.reset();
 		// An empty run still shows where frames will appear.
 		draw->AddLine({left, framesBottom}, {right, framesBottom}, muted);
 		// The hint sits in the lane below the frame line, or is left out when there is none.
@@ -101,6 +117,8 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 		ImGui::PopID();
 		return result;
 	}
+	if (m_framePress && !history.Find(m_framePress->frame, m_framePress->epoch))
+		m_framePress.reset();
 	const double first = history.At(0).seconds, latest = history.At(history.Size() - 1).seconds;
 	if (m_fit)
 	{
@@ -118,7 +136,6 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 		m_span = m_zoomSpan;
 		m_start = latest - m_span + .001;
 	}
-	const auto& io = ImGui::GetIO();
 	const auto timeAt = [&](float px)
 	{
 		return m_start + std::clamp(double(px - left) / pixels, 0., 1.) * m_span;
@@ -147,22 +164,18 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 		if (ImGui::IsKeyPressed(ImGuiKey_End))
 			result.goLive = true;
 	}
-	if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+	if (hovered && active && clicked)
 	{
-		m_dragStart = timeAt(io.MousePos.x);
-		m_rangeDrag = m_compact || io.MousePos.y < top + ruler;
+		const double time = timeAt(io.MousePos.x);
+		if (const auto index = history.Nearest(time))
+		{
+			const auto& frame = history.At(*index);
+			m_framePress = FramePress{frame.identity, frame.epoch,		  time,
+									  io.MousePos,	  FrameTarget::Frame, m_compact || io.MousePos.y < top + ruler};
+		}
 	}
-	if (m_dragStart && ImGui::IsMouseReleased(ImGuiMouseButton_Left))
-	{
-		const auto end = timeAt(io.MousePos.x);
-		result.first = history.Nearest(*m_dragStart);
-		if (m_rangeDrag && std::abs(end - *m_dragStart) * pixels / m_span > 5 * scale)
-			result.last = history.Nearest(end);
-		if (result.last && *result.first > *result.last)
-			std::swap(result.first, result.last);
-		result.stopFollowing = true;
-		m_dragStart.reset();
-	}
+	std::optional<std::size_t> snapshotHit, markerHit;
+	float snapshotDistance = 6 * scale, markerDistance = 6 * scale;
 	// Finds one flagged frame within a dense pixel column without scanning its frames.
 	const auto findFlag = [&](std::size_t a, std::size_t b, std::uint32_t flag)
 	{
@@ -182,13 +195,13 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 	};
 	draw->PushClipRect({left, top}, {right, top + height}, true);
 	if (selection)
-		draw->AddRectFilled({X(selection->first), top}, {std::max(X(selection->first) + 1, X(selection->second)),
-														 top + height},
+		draw->AddRectFilled({X(selection->first), top},
+							{std::max(X(selection->first) + 1, X(selection->second)), top + height},
 							theme::Fade(theme::Accent, .24f));
 	DrawThumbnails(history, previews, crop);
 	float lastRunLabel = left - 100 * scale, lastSnapshot = left - 12 * scale;
 	// Run names go on the ruler after its numbers, which skip the space they need.
-	std::vector<std::pair<float, std::string>> runLabels;
+	m_runLabels.clear();
 	const float budget = m_budget > 0 ? m_budget : 33.3f / 2;
 	// The budget line: frames under it made their display time.
 	{
@@ -208,35 +221,29 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 		// Bars reach half the lane at the budget; amber above it, red for a missed frame.
 		const bool missed = bucket.flags & (HistoryLate | HistoryDropped);
 		const float work = bucket.cpuMaximum >= 0 ? bucket.cpuMaximum : bucket.maximum;
-		const auto color = missed || work > budget ? Alert : work >= budget * .9f ? theme::Warn : Accent;
+		const auto color = missed || work > budget ? theme::Record : work >= budget * .9f ? theme::Warn : theme::Accent;
 		const auto bar = std::max(1.f, std::min(m_lane - 2, (m_lane - 2) * work / (2 * budget)));
 		draw->AddLine({x, framesBottom}, {x, framesBottom - bar}, color);
 		if (m_tint && missed)
-			draw->AddLine({x, top}, {x, top + height}, theme::Fade(Alert, .22f));
+			draw->AddLine({x, top}, {x, top + height}, theme::Fade(theme::Record, .22f));
 		if (m_lanes > Images)
 		{
 			const float y = LaneY(Images);
 			if (bucket.flags & HistoryPreview)
-				draw->AddLine({x, y + m_lane - 2}, {x, y + m_lane - 1}, Accent);
+				draw->AddLine({x, y + m_lane - 2}, {x, y + m_lane - 1}, theme::Accent);
 			if ((bucket.flags & HistorySnapshot) && x - lastSnapshot >= 10 * scale)
 			{
 				// ★ pinned snapshots are filled; unpinned ones may be evicted.
 				const float cy = y + m_lane / 2, r = std::min(4 * scale, m_lane / 3);
 				if (bucket.flags & HistoryPinned)
-					draw->AddQuadFilled({x, cy - r}, {x + r, cy}, {x, cy + r}, {x - r, cy}, MarkerColor);
+					draw->AddQuadFilled({x, cy - r}, {x + r, cy}, {x, cy + r}, {x - r, cy}, theme::Warn);
 				else
-					draw->AddQuad({x, cy - r}, {x + r, cy}, {x, cy + r}, {x - r, cy}, MarkerColor, 1.5f * scale);
+					draw->AddQuad({x, cy - r}, {x + r, cy}, {x, cy + r}, {x - r, cy}, theme::Warn, 1.5f * scale);
 				lastSnapshot = x;
-				if (near(x, cy, 6 * scale))
+				if (near(x, cy, 6 * scale) && std::abs(io.MousePos.x - x) < snapshotDistance)
 				{
-					const auto snapshot = findFlag(begin, end, HistorySnapshot);
-					result.hovered = snapshot;
-					if (ImGui::IsMouseReleased(ImGuiMouseButton_Left) && !result.last)
-					{
-						result.pin = snapshot;
-						result.first.reset();
-						result.stopFollowing = false;
-					}
+					snapshotHit = findFlag(begin, end, HistorySnapshot);
+					snapshotDistance = std::abs(io.MousePos.x - x);
 				}
 			}
 		}
@@ -258,7 +265,8 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 			draw->AddLine({x, top}, {x, top + height}, muted);
 			if (!m_compact && x - lastRunLabel > 70 * scale)
 			{
-				runLabels.emplace_back(x, "Run " + std::to_string(history.At(begin).identity.run));
+				m_runLabels.emplace_back(
+					x, "Run " + std::to_string(history.At(findFlag(begin, end, HistoryRunStart)).identity.run));
 				lastRunLabel = x;
 			}
 		}
@@ -267,22 +275,55 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 		if (bucket.flags & HistoryMarker)
 		{
 			draw->AddTriangleFilled({x, markerY + 3 * scale}, {x - 4 * scale, markerY - 4 * scale},
-									{x + 4 * scale, markerY - 4 * scale}, MarkerColor);
-			if (near(x, markerY, 6 * scale))
+									{x + 4 * scale, markerY - 4 * scale}, theme::Warn);
+			if (near(x, markerY, 6 * scale) && std::abs(io.MousePos.x - x) < markerDistance)
 			{
-				result.hovered = findFlag(begin, end, HistoryMarker);
-				if (ImGui::IsMouseReleased(ImGuiMouseButton_Left))
-				{
-					result.first = result.hovered;
-					result.last.reset();
-				}
+				markerHit = findFlag(begin, end, HistoryMarker);
+				markerDistance = std::abs(io.MousePos.x - x);
 			}
+		}
+	}
+	result.hovered = snapshotHit ? snapshotHit : markerHit;
+	if (m_framePress && clicked)
+	{
+		if (const auto hit = snapshotHit ? snapshotHit : markerHit)
+		{
+			const auto& frame = history.At(*hit);
+			m_framePress->frame = frame.identity;
+			m_framePress->epoch = frame.epoch;
+			m_framePress->target = snapshotHit ? FrameTarget::Snapshot : FrameTarget::Marker;
+		}
+		result.stopFollowing = m_framePress->target != FrameTarget::Snapshot;
+	}
+	if (m_framePress && released)
+	{
+		const auto press = *std::exchange(m_framePress, {});
+		const auto start = history.Find(press.frame, press.epoch);
+		const bool dragged = std::abs(io.MousePos.x - press.position.x) > 5 * scale;
+		if (start && press.range && dragged)
+		{
+			result.first = start;
+			result.last = history.Nearest(timeAt(io.MousePos.x));
+			if (result.last && *result.first > *result.last)
+				std::swap(result.first, result.last);
+			result.stopFollowing = true;
+		}
+		else if (start && press.target == FrameTarget::Snapshot)
+		{
+			if (snapshotHit == start &&
+				io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] < io.MouseDragThreshold * io.MouseDragThreshold)
+				result.pin = start;
+		}
+		else if (start && (press.target == FrameTarget::Frame || markerHit == start))
+		{
+			result.first = start;
+			result.stopFollowing = true;
 		}
 	}
 	const auto clearOfRuns = [&](float x, const char* text)
 	{
 		const float end = x + ImGui::CalcTextSize(text).x;
-		for (const auto& [runX, label] : runLabels)
+		for (const auto& [runX, label] : m_runLabels)
 			if (x < runX + ImGui::CalcTextSize(label.c_str()).x + 12 * scale && end > runX - 4 * scale)
 				return false;
 		return true;
@@ -320,13 +361,13 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 				draw->AddText({x + 3, top + 2 * scale}, muted, text);
 		}
 	}
-	for (const auto& [x, label] : runLabels)
+	for (const auto& [x, label] : m_runLabels)
 		draw->AddText({x + 4 * scale, top + 2 * scale}, muted, label.c_str());
 	if (cursor)
 		draw->AddLine({X(*cursor), top}, {X(*cursor), top + height}, theme::Past, 2 * scale);
-	if (m_dragStart && m_rangeDrag)
+	if (m_framePress && m_framePress->range)
 	{
-		const float x = X(*m_dragStart);
+		const float x = X(m_framePress->seconds);
 		draw->AddRectFilled({std::min(x, io.MousePos.x), top}, {std::max(x, io.MousePos.x), top + height},
 							theme::Fade(theme::Accent, .24f));
 	}
@@ -341,10 +382,9 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 			ImGui::SetTooltip("Frame %llu / run %.3f s\nDisplay interval %.2f ms%s%s",
 							  static_cast<unsigned long long>(frame.identity.frame), frame.runSeconds,
 							  frame.frameMilliseconds,
-							  frame.flags & HistorySnapshot
-								  ? frame.flags & HistoryPinned ? " / pinned (click to unpin)"
-																: " / snapshot (click to pin)"
-								  : "",
+							  frame.flags & HistorySnapshot ? frame.flags & HistoryPinned ? " / pinned (click to unpin)"
+																						  : " / snapshot (click to pin)"
+															: "",
 							  frame.flags & HistoryPreview ? " / kept preview" : "");
 		}
 	}
@@ -361,11 +401,9 @@ void TimelineCanvas::DrawThumbnails(const HistoryStore& history, PreviewHistory&
 	if (height < 4 * scale)
 		return;
 	const float aspect = previews.Aspect() * (crop.w - crop.y) / (crop.z - crop.x);
-	const float width = std::clamp(height / aspect,
-								  16 * scale, 96 * scale);
+	const float width = std::clamp(height / aspect, 16 * scale, 96 * scale);
 	auto* draw = ImGui::GetWindowDrawList();
-	draw->PushClipRect({m_bounds.x, LaneY(Images)},
-					  {m_bounds.x + m_bounds.width, LaneY(Images) + m_lane}, true);
+	draw->PushClipRect({m_bounds.x, LaneY(Images)}, {m_bounds.x + m_bounds.width, LaneY(Images) + m_lane}, true);
 	for (float x = m_bounds.x; x + width <= m_bounds.x + m_bounds.width; x += width + 3 * scale)
 	{
 		const auto index = history.Nearest(m_start + (x + width / 2 - m_bounds.x) * m_span / m_bounds.width);
@@ -394,15 +432,15 @@ void TimelineCanvas::DrawEvent(double time, double observed, const char* text, b
 		return;
 	// Events sit on the ruler's lower edge, beside markers.
 	const float y = m_compact ? m_top + 5 * scale : m_top + m_transport.height - 5 * scale;
-	const auto color = failed ? Alert : dim ? ImGui::GetColorU32(ImGuiCol_TextDisabled) : theme::Head;
+	const auto color = failed ? theme::Record : dim ? ImGui::GetColorU32(ImGuiCol_TextDisabled) : theme::Head;
 	ImGui::GetWindowDrawList()->AddCircle({x, y}, 3.5f * scale, color, 0, 1.5f * scale);
 	const auto mouse = ImGui::GetIO().MousePos;
 	if (std::abs(mouse.x - x) < 6 * scale && std::abs(mouse.y - y) < 6 * scale && ImGui::IsWindowHovered())
 		ImGui::SetTooltip("%s%s\nObserved +%.2fs (nearest observed frame)", text,
 						  dim ? " (another app or session)" : "", observed);
 }
-ClipHit TimelineCanvas::DrawClip(double first, double last, const char* label, bool replay, bool playable,
-								 bool stoppable)
+ClipHit TimelineCanvas::DrawClip(const char* id, double first, double last, const char* label, bool replay,
+								 bool playable, bool stoppable)
 {
 	if (last < m_start || first > m_start + m_span)
 		return ClipHit::None;
@@ -410,7 +448,7 @@ ClipHit TimelineCanvas::DrawClip(double first, double last, const char* label, b
 	const float top = m_laneY[0], bottom = m_top + m_height;
 	const float x = std::max(m_bounds.x, X(first)),
 				end = std::min(m_bounds.x + m_bounds.width, std::max(X(first) + 2, X(last)));
-	const auto color = replay ? theme::Past : Alert;
+	const auto color = replay ? theme::Past : theme::Record;
 	auto* draw = ImGui::GetWindowDrawList();
 	draw->PushClipRect({m_bounds.x, m_top}, {m_bounds.x + m_bounds.width, bottom}, true);
 	draw->AddRectFilled({x, top}, {end, bottom}, theme::Fade(color, .2f));
@@ -426,42 +464,54 @@ ClipHit TimelineCanvas::DrawClip(double first, double last, const char* label, b
 	const float play = action ? tabHeight : 0;
 	const float tabWidth = play + ImGui::CalcTextSize(label).x + 10 * scale;
 	const ImVec2 tabMin{x, top}, tabMax{x + tabWidth, top + tabHeight};
-	const auto mouse = ImGui::GetIO().MousePos;
-	const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) && mouse.x >= tabMin.x && mouse.x < tabMax.x &&
-						 mouse.y >= tabMin.y && mouse.y < tabMax.y;
-	draw->AddRectFilled(tabMin, tabMax, hovered ? color : theme::Mix(theme::Surface, color, .75f), theme::Radius * scale,
-						ImDrawFlags_RoundCornersBottomRight);
+	const auto& io = ImGui::GetIO();
+	const auto mouse = io.MousePos;
+	const bool hovered = m_hovered && ImGui::IsMouseHoveringRect(tabMin, tabMax);
+	ImGui::PushID(this);
+	const auto clipId = ImGui::GetID(id);
+	ImGui::PopID();
+	if (m_clipPress && m_clipPress->id == clipId)
+		m_clipPress->drawnFrame = ImGui::GetFrameCount();
+	draw->AddRectFilled(tabMin, tabMax, hovered ? color : theme::Mix(theme::Surface, color, .75f),
+						theme::Radius * scale, ImDrawFlags_RoundCornersBottomRight);
 	const bool overPlay = hovered && action && mouse.x < tabMin.x + play;
 	if (action)
 	{
 		if (overPlay)
 			draw->AddRectFilled(tabMin, {tabMin.x + play, tabMax.y}, theme::Accent);
-		DrawIcon(draw, stoppable ? Icon::Stop : Icon::Play, {tabMin.x + play / 2, top + tabHeight / 2},
-				 tabHeight * .7f, theme::Text);
+		DrawIcon(draw, stoppable ? Icon::Stop : Icon::Play, {tabMin.x + play / 2, top + tabHeight / 2}, tabHeight * .7f,
+				 theme::Text);
 	}
 	draw->AddText({tabMin.x + play + 5 * scale, top + (tabHeight - font) / 2}, theme::Text, label);
 	draw->PopClipRect();
 	if (!hovered)
 		return ClipHit::None;
-	const auto actionHit = overPlay ? (stoppable ? ClipHit::Stop : ClipHit::Play) : ClipHit::Clicked;
+	const auto actionHit = overPlay ? (stoppable ? ClipHit::Stop : ClipHit::Play)
+						   : ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) ? ClipHit::Opened
+																				: ClipHit::Clicked;
 	if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
-		m_clipPress = ClipPress{first, replay, actionHit};
-	const bool releasedHere = ImGui::IsMouseReleased(ImGuiMouseButton_Left) && m_clipPress &&
-		m_clipPress->first == first && m_clipPress->replay == replay && m_clipPress->action == actionHit;
+	{
+		m_clipPress = ClipPress{clipId, actionHit, ImGui::GetFrameCount()};
+		m_framePress.reset();
+	}
+	ClipHit result = ClipHit::None;
+	if (ImGui::IsMouseReleased(ImGuiMouseButton_Left) && m_clipPress && m_clipPress->id == clipId &&
+		io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] < io.MouseDragThreshold * io.MouseDragThreshold)
+	{
+		const auto pressed = m_clipPress->action;
+		if (pressed == actionHit || (!overPlay && pressed == ClipHit::Opened))
+		{
+			result = pressed;
+			m_clipPress.reset();
+		}
+	}
 	if (overPlay && stoppable)
-	{
 		ImGui::SetTooltip("Stop %s and release its inputs", label);
-		return releasedHere ? ClipHit::Stop : ClipHit::None;
-	}
-	if (overPlay)
-	{
+	else if (overPlay)
 		ImGui::SetTooltip("Play %s on the app; restores inputs, not game state", label);
-		return releasedHere ? ClipHit::Play : ClipHit::None;
-	}
-	ImGui::SetTooltip("%s\nClick selects its frames; double-click opens it", label);
-	if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-		return ClipHit::Opened;
-	return releasedHere ? ClipHit::Clicked : ClipHit::None;
+	else
+		ImGui::SetTooltip("%s\nClick selects its frames; double-click opens it", label);
+	return result;
 }
 void TimelineCanvas::DrawPause(double first, double last)
 {
@@ -476,30 +526,61 @@ void TimelineCanvas::DrawPause(double first, double last)
 	const char* label = "paused";
 	const auto size = ImGui::CalcTextSize(label);
 	if (end - x > size.x + 8 * scale && m_lane >= size.y)
-		draw->AddText({x + 4 * scale, y + (m_lane - size.y) / 2}, Paused, label);
+		draw->AddText({x + 4 * scale, y + (m_lane - size.y) / 2}, theme::Paused, label);
 	draw->PopClipRect();
 	const auto mouse = ImGui::GetIO().MousePos;
 	if (mouse.x >= x && mouse.x < end && mouse.y >= y && mouse.y < y + m_lane && ImGui::IsWindowHovered())
 		ImGui::SetTooltip("App paused for %.1f s\nIt only advanced when stepped; Continue resumes it", last - first);
 }
-void TimelineCanvas::DrawGhost(const HistoryStore& history, std::size_t source, std::size_t anchor, std::size_t count)
+void TimelineCanvas::DrawGhost(const HistoryStore& history, std::size_t sourceFirst, std::size_t sourceLast,
+							   std::size_t targetFirst, std::size_t targetLast)
 {
-	if (m_lanes <= Input || !history.Size())
+	if (m_lanes <= Input || sourceFirst > sourceLast || targetFirst > targetLast || sourceLast >= history.Size() ||
+		targetLast >= history.Size())
 		return;
+	sourceLast = std::min(sourceLast, history.SegmentAt(sourceFirst).second - 1);
+	targetLast = std::min(targetLast, history.SegmentAt(targetFirst).second - 1);
+	const auto sourceFrame = history.At(sourceFirst).identity.frame;
+	const auto targetFrame = history.At(targetFirst).identity.frame;
+	const auto offset = std::min(history.At(sourceLast).identity.frame - sourceFrame,
+								 history.At(targetLast).identity.frame - targetFrame);
+	const auto frameBound = [&](std::size_t first, std::size_t end, std::uint64_t frame, bool after)
+	{
+		while (first < end)
+		{
+			const auto middle = first + (end - first) / 2;
+			const auto value = history.At(middle).identity.frame;
+			if (value < frame || (after && value == frame))
+				first = middle + 1;
+			else
+				end = middle;
+		}
+		return first;
+	};
+	const auto targetEnd = frameBound(targetFirst, targetLast + 1, targetFrame + offset, true);
 	const float scale = ImGui::GetFontSize() / 16, y = LaneY(Input), middle = y + m_lane / 2, reach = m_lane / 2 - 2;
 	auto* draw = ImGui::GetWindowDrawList();
 	draw->PushClipRect({m_bounds.x, y}, {m_bounds.x + m_bounds.width, y + m_lane}, true);
 	const auto ink = theme::Fade(theme::Text, .8f);
 	for (int column = 0; column < int(m_bounds.width); ++column)
 	{
-		const auto begin = history.LowerBound(m_start + column * m_span / m_bounds.width);
-		const auto end = history.LowerBound(m_start + (column + 1) * m_span / m_bounds.width);
-		if (begin >= end || end <= anchor || begin >= anchor + count)
+		const auto begin = std::max(targetFirst, history.LowerBound(m_start + column * m_span / m_bounds.width));
+		const auto end = std::min(targetEnd, history.LowerBound(m_start + (column + 1) * m_span / m_bounds.width));
+		if (begin >= end)
 			continue;
-		const auto a = std::max(begin, anchor) - anchor, b = std::min(end, anchor + count) - anchor;
-		if (source + b > history.Size())
+		const auto firstFrame = history.At(begin).identity.frame, lastFrame = history.At(end - 1).identity.frame;
+		const auto target = history.Query(begin, end);
+		// A mixed pixel cannot faithfully compare missing or released input.
+		if (lastFrame - firstFrame != end - begin - 1 || target.driven != target.count)
 			continue;
-		const auto bucket = history.Query(source + a, source + b);
+		const auto expectedFirst = sourceFrame + (firstFrame - targetFrame);
+		const auto expectedLast = sourceFrame + (lastFrame - targetFrame);
+		const auto first = frameBound(sourceFirst, sourceLast + 1, expectedFirst, false);
+		const auto last = frameBound(first, sourceLast + 1, expectedLast, false);
+		if (first > sourceLast || last > sourceLast || history.At(first).identity.frame != expectedFirst ||
+			history.At(last).identity.frame != expectedLast || last - first != end - begin - 1)
+			continue;
+		const auto bucket = history.Query(first, last + 1);
 		const float x = m_bounds.x + column;
 		// A tick where the recorded value was; it sits on the bar tip when replay matches.
 		for (int hand = 0; hand < 2; ++hand)

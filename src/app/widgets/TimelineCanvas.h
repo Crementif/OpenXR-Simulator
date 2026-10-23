@@ -3,10 +3,13 @@
 #include "app/ShellState.h"
 #include "app/services/HistoryStore.h"
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <imgui.h>
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace simxr::app
 {
@@ -32,14 +35,14 @@ class TimelineCanvas
   public:
 	// laneNames false leaves the header column below the transport empty, for the Library drawer.
 	void Begin(float headerWidth, float liveWidth, bool laneNames = true);
-	TimelineGesture Draw(const HistoryStore& history, PreviewHistory& previews, ImVec4 crop, bool following, std::optional<double> cursor = {},
-						 std::optional<std::pair<double, double>> selection = {});
+	TimelineGesture Draw(const HistoryStore& history, PreviewHistory& previews, ImVec4 crop, bool following,
+						 std::optional<double> cursor = {}, std::optional<std::pair<double, double>> selection = {});
 	void DrawThumbnails(const HistoryStore& history, PreviewHistory& previews, ImVec4 crop);
 	void DrawEvent(double time, double observed, const char* text, bool failed, bool dim);
 	// A recording (red) or replay (blue) tints every lane over its frames, with a
 	// name tab at its top-left; a playable clip's tab carries a play button, a
 	// running replay's a stop button.
-	ClipHit DrawClip(double first, double last, const char* label, bool replay, bool playable = false,
+	ClipHit DrawClip(const char* id, double first, double last, const char* label, bool replay, bool playable = false,
 					 bool stoppable = false);
 	// A paused span: a solid band on the Frame time lane, labelled when wide enough.
 	void DrawPause(double first, double last);
@@ -58,9 +61,10 @@ class TimelineCanvas
 	{
 		m_tint = tint;
 	}
-	// Draws the source frames of a replayed take over the replay's Input lane,
-	// frame for frame from anchor, so recorded and applied input can be compared.
-	void DrawGhost(const HistoryStore& history, std::size_t source, std::size_t anchor, std::size_t count);
+	// Inclusive source and replay endpoints. Frame-id offsets preserve gaps while
+	// the recorded input is drawn over frames still owned by the replay.
+	void DrawGhost(const HistoryStore& history, std::size_t sourceFirst, std::size_t sourceLast,
+				   std::size_t targetFirst, std::size_t targetLast);
 	void Fit() noexcept
 	{
 		m_fit = true;
@@ -115,13 +119,30 @@ class TimelineCanvas
 	float m_budget = 0;
 	bool m_fit = false, m_compact = false, m_tint = false;
 	std::string m_inputDetail;
-	std::optional<double> m_dragStart;
-	bool m_rangeDrag = false;
+	std::vector<std::pair<float, std::string>> m_runLabels;
+	enum class FrameTarget
+	{
+		Frame,
+		Snapshot,
+		Marker
+	};
+	struct FramePress
+	{
+		FrameIdentity frame;
+		std::uint64_t epoch;
+		double seconds;
+		ImVec2 position;
+		FrameTarget target = FrameTarget::Frame;
+		bool range = false;
+	};
+	std::optional<FramePress> m_framePress;
+	int m_drawnFrame = -1;
+	bool m_hovered = false;
 	struct ClipPress
 	{
-		double first;
-		bool replay;
+		ImGuiID id;
 		ClipHit action;
+		int drawnFrame;
 	};
 	std::optional<ClipPress> m_clipPress;
 };
