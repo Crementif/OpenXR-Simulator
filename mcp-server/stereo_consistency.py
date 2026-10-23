@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
+import math
 import sys
 import time
 from dataclasses import dataclass, field, asdict
@@ -44,6 +44,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 ANALYSIS_WIDTH = 480          # per-eye width the matcher runs at
+ANALYSIS_MAX_HEIGHT = 480     # bound cost-volume storage for portrait captures too
 NEAR_MARGIN_FRACTION = 0.04   # searched beyond the nearest disparity the coarse pass found
 MIN_RANGE_FRACTION = 0.30     # span always searched above the farthest disparity (~0.15 m)
 MAX_RANGE_FRACTION = 0.45     # ...but never more than this span (memory); ~0.1 m at 100 deg
@@ -371,11 +372,12 @@ class Frusta:
 
 def frusta_from_fov(left: dict, right: dict, ipd_metres: float = 0.064) -> Optional[Frusta]:
     """`left`/`right` hold angleLeft/angleRight in radians under the keys aL and aR."""
-    import math
     try:
         ll, lr = math.tan(left["aL"]), math.tan(left["aR"])
         rl, rr = math.tan(right["aL"]), math.tan(right["aR"])
-    except (KeyError, TypeError):
+        if not all(math.isfinite(value) for value in (ll, lr, rl, rr, ipd_metres)) or ipd_metres < 0:
+            return None
+    except (KeyError, TypeError, ValueError):
         return None
     if lr - ll <= 1e-6 or rr - rl <= 1e-6:
         return None
@@ -385,21 +387,35 @@ def frusta_from_fov(left: dict, right: dict, ipd_metres: float = 0.064) -> Optio
 
 def split_eyes(image: Image.Image):
     """Side-by-side preview -> (left, right). Stacked previews are not produced any more."""
+    if image.width < 2 or image.width % 2 or image.height < 1:
+        raise ValueError("A side-by-side image must contain two equal nonempty eyes")
     image = image.convert("RGB")
     half = image.width // 2
     return image.crop((0, 0, half, image.height)), image.crop((half, 0, half * 2, image.height))
 
 
 def _prepare(eye: Image.Image, width: int) -> np.ndarray:
-    height = max(8, round(eye.height * width / eye.width))
-    small = eye.resize((width, height), Image.BOX if eye.width >= width * 2 else Image.BILINEAR)
-    return np.asarray(small, np.float32) / 255.0
+    height = max(16, round(eye.height * width / eye.width))
+    with eye.resize((width, height), Image.BOX if eye.width >= width * 2 else Image.BILINEAR) as small:
+        with small.convert("RGB") as rgb:
+            return np.asarray(rgb, np.float32) / 255.0
 
 
 def analyze_pair(left: Image.Image, right: Image.Image, width: int = ANALYSIS_WIDTH,
                  threshold: float = RESIDUAL_THRESHOLD, want_images: bool = True,
                  frusta: Optional[Frusta] = None):
     """Returns (Report, overlay Image or None)."""
+    if not math.isfinite(threshold) or threshold <= 0:
+        raise ValueError("A finite positive stereo threshold is required")
+    if type(width) is not int or not 16 <= width <= ANALYSIS_WIDTH:
+        raise ValueError(f"Analysis width must be in [16,{ANALYSIS_WIDTH}]")
+    if min(*left.size, *right.size) <= 0:
+        raise ValueError("Both eyes must have nonempty pixels")
+    if left.width * right.height != right.width * left.height:
+        raise ValueError("Both eyes must have the same aspect ratio")
+    width = min(width, ANALYSIS_MAX_HEIGHT * left.width // left.height)
+    if width < 16:
+        raise ValueError("Eye aspect ratio is too narrow for bounded stereo analysis")
     L = _prepare(left, width)
     R = _prepare(right, width)
     h, w = L.shape[:2]
@@ -720,11 +736,13 @@ def _overlay(L, R, warped, residual, valid, flagged, surface, regions, threshold
 
 def analyze_image(image: Image.Image, **kwargs):
     left, right = split_eyes(image)
-    return analyze_pair(left, right, **kwargs)
+    with left, right:
+        return analyze_pair(left, right, **kwargs)
 
 
 def analyze_bytes(data: bytes, **kwargs):
-    return analyze_image(Image.open(BytesIO(data)), **kwargs)
+    with Image.open(BytesIO(data)) as image:
+        return analyze_image(image, **kwargs)
 
 
 def describe(report: Report) -> str:
@@ -750,90 +768,57 @@ def describe(report: Report) -> str:
 
 # ---- capture from a running simulator -------------------------------------------------
 
-def simulator_dir() -> Path:
-    return Path(os.environ.get("LOCALAPPDATA", "")) / "OpenXR-Simulator"
-
-
-def capture(directory: Optional[Path] = None, timeout: float = 5.0) -> Optional[bytes]:
-    """Ask the runtime for a projection-layer screenshot of both eyes and return its bytes."""
-    directory = directory or simulator_dir()
-    candidates = [directory / "screenshot.bmp", directory / "screenshot.png"]
-    for path in candidates:
-        path.unlink(missing_ok=True)
-    request = directory / "screenshot_request.json"
-    temporary = directory / "screenshot_request.json.tmp"
-    temporary.write_text(json.dumps({"timestamp": time.time(), "eye": "both", "layer": "projection",
-                                     "requested_by": "stereo_consistency"}))
-    temporary.replace(request)
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        for path in candidates:
-            if path.exists():
-                time.sleep(0.15)  # let the writer finish
-                try:
-                    data = path.read_bytes()
-                    Image.open(BytesIO(data)).load()
-                    return data
-                except Exception:
-                    continue
-        time.sleep(0.05)
-    return None
-
-
-def read_frusta(directory: Optional[Path] = None, timeout: float = 2.0) -> Optional[Frusta]:
-    """The frusta the app most recently submitted, from the runtime's projection log."""
-    directory = directory or simulator_dir()
-    log = directory / "projection_log.json"
-    log.unlink(missing_ok=True)
-    try:
-        (directory / "projection_log_dump_request").touch()
-    except OSError:
-        return None
-    deadline = time.time() + timeout
-    while time.time() < deadline and not log.exists():
-        time.sleep(0.05)
-    try:
-        time.sleep(0.05)
-        entry = json.loads(log.read_text())["entries"][-1]
-        ipd = 0.064
-        try:
-            ipd = float(json.loads((directory / "settings.json").read_text()).get("ipd_mm", 64)) / 1000.0
-        except (OSError, ValueError):
-            pass
-        return frusta_from_fov(entry["left_fov"], entry["right_fov"], ipd)
-    except (OSError, ValueError, KeyError, IndexError):
-        return None
-
-
 def watch(count: int, interval: float, out_dir: Path, directory: Optional[Path] = None,
           keep_all: bool = False, threshold: float = RESIDUAL_THRESHOLD) -> list:
-    """Sample the running simulator `count` times and keep a report sheet for every failure."""
+    """Sample retained projection frames with the geometry belonging to each image."""
+    from artifact_workflows import CaptureWorkflow, captured_frusta
+    from runtime_artifacts import RuntimeArtifacts, simulator_directory
+
+    if type(count) is not int or count <= 0:
+        raise ValueError("Watch count must be a positive integer")
+    if not math.isfinite(interval) or interval < 0:
+        raise ValueError("Watch interval must be finite and nonnegative")
+    if not math.isfinite(threshold) or threshold <= 0:
+        raise ValueError("A finite positive stereo threshold is required")
     out_dir.mkdir(parents=True, exist_ok=True)
     results = []
     log = out_dir / "stereo_watch.jsonl"
-    frusta = None
-    for index in range(count):
-        started = time.time()
-        if frusta is None:
-            # Asked again until it answers: a watch often starts on a loading screen, where
-            # the app is not submitting a projection layer and there is nothing to log yet.
-            frusta = read_frusta(directory, timeout=1.0)
-            if frusta is not None:
-                (out_dir / "frusta.json").write_text(json.dumps(asdict(frusta)))
-        data = capture(directory)
-        if data is None:
-            print(f"[{index:03d}] no screenshot (is the simulator running?)", flush=True)
-        else:
-            report, sheet = analyze_bytes(data, threshold=threshold, frusta=frusta)
-            entry = {"index": index, "time": time.strftime("%H:%M:%S"), **report.to_dict()}
+    artifacts = RuntimeArtifacts(directory if directory is not None else simulator_directory())
+    workflow = CaptureWorkflow(artifacts)
+    try:
+        for index in range(count):
+            started = time.monotonic()
+            entry = {"index": index, "time": time.strftime("%H:%M:%S")}
+            sheet = None
+            try:
+                data, metadata = workflow.capture(source="stereo_consistency")
+                if data is None:
+                    raise TimeoutError("No projection screenshot arrived")
+                frusta = captured_frusta(metadata, frusta_from_fov)
+                report, sheet = analyze_bytes(data, threshold=threshold, frusta=frusta)
+                entry.update(report.to_dict(), capture=metadata,
+                             frusta=asdict(frusta) if frusta is not None else None)
+                print(f"[{index:03d}] {describe(report)}", flush=True)
+            except Exception as error:
+                entry.update(verdict="CAPTURE_FAILED", error=str(error))
+                print(f"[{index:03d}] capture failed: {error}", flush=True)
             results.append(entry)
-            with open(log, "a") as f:
-                f.write(json.dumps(entry) + "\n")
-            print(f"[{index:03d}] {describe(report)}", flush=True)
-            if sheet is not None and (keep_all or report.verdict.startswith("FAIL") or report.verdict.startswith("WARN")):
-                sheet.save(out_dir / f"frame{index:03d}_{report.verdict}.png")
-                (out_dir / f"frame{index:03d}_pair.bmp").write_bytes(data)
-        time.sleep(max(0.0, interval - (time.time() - started)))
+            with log.open("a", encoding="utf-8") as output:
+                output.write(json.dumps(entry, allow_nan=False) + "\n")
+            if sheet is not None:
+                with sheet:
+                    if keep_all or entry["verdict"].startswith(("FAIL", "WARN")):
+                        sheet.save(out_dir / f"frame{index:03d}_{entry['verdict']}.png")
+                        with Image.open(BytesIO(data)) as pair:
+                            pair.save(out_dir / f"frame{index:03d}_pair.png")
+            if index + 1 < count:
+                time.sleep(max(0.0, interval - (time.monotonic() - started)))
+    finally:
+        workflow.close()
+        try:
+            workflow.disconnect()
+        finally:
+            artifacts.close()
     return results
 
 
@@ -848,22 +833,29 @@ def main(argv=None) -> int:
     parser.add_argument("--interval", type=float, default=2.0)
     parser.add_argument("--out-dir", default="stereo_watch")
     parser.add_argument("--keep-all", action="store_true")
-    parser.add_argument("--sim-dir", help="simulator data directory (default %%LOCALAPPDATA%%\\OpenXR-Simulator)")
+    parser.add_argument("--sim-dir", help="simulator data directory (default SIMXR_DATA_DIR or platform data directory)")
     args = parser.parse_args(argv)
 
-    if args.watch:
+    if not math.isfinite(args.threshold) or args.threshold <= 0:
+        parser.error("--threshold must be finite and positive")
+    if args.watch is not None:
+        if args.watch <= 0 or not math.isfinite(args.interval) or args.interval < 0:
+            parser.error("--watch must be positive and --interval finite and nonnegative")
         results = watch(args.watch, args.interval, Path(args.out_dir),
                         Path(args.sim_dir) if args.sim_dir else None, args.keep_all, args.threshold)
         failing = sum(1 for r in results if r["verdict"].startswith("FAIL"))
-        print(f"{len(results)} frames, {failing} failing")
-        return 1 if failing else 0
+        missing = sum(1 for r in results if r["verdict"] == "CAPTURE_FAILED")
+        print(f"{len(results) - missing} frames, {failing} failing, {missing} captures failed")
+        return 1 if failing or missing or not results else 0
 
     if not args.image:
         parser.error("give an image, or --watch N")
     if args.right:
-        report, sheet = analyze_pair(Image.open(args.image), Image.open(args.right), threshold=args.threshold)
+        with Image.open(args.image) as left, Image.open(args.right) as right:
+            report, sheet = analyze_pair(left, right, threshold=args.threshold)
     else:
-        report, sheet = analyze_image(Image.open(args.image), threshold=args.threshold)
+        with Image.open(args.image) as image:
+            report, sheet = analyze_image(image, threshold=args.threshold)
     print(json.dumps(report.to_dict(), indent=2) if args.json else describe(report))
     if args.out and sheet is not None:
         sheet.save(args.out)

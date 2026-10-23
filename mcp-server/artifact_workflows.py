@@ -63,6 +63,18 @@ def _timeout(value):
     return value
 
 
+def captured_frusta(metadata, from_fov):
+    metadata = metadata or {}
+    composition = metadata.get("composition")
+    if composition is None or not metadata.get("frame") or composition.get("frame") != metadata["frame"]:
+        return None
+    try:
+        fovs = [{"aL": eye["left"], "aR": eye["right"]} for eye in composition["fovs"]]
+        return from_fov(fovs[0], fovs[1], float(composition["ipd"]))
+    except (ValueError, KeyError, IndexError, TypeError):
+        return None
+
+
 class ProjectionWorkflow:
     def __init__(self, artifacts):
         self._artifacts = artifacts
@@ -130,6 +142,12 @@ class CaptureWorkflow:
     def disconnect(self):
         # The application owner calls this after admitted workers have joined.
         self._retained.close()
+
+    def capture(self, timeout=5, *, eye="both", layer="projection", source="mcp"):
+        """Return pixels and their metadata under one complete request admission."""
+        with self._lane.admit():
+            data = self._capture(timeout, eye, layer, source)
+            return data, self._capture_metadata
 
     def _capture(self, timeout, eye="both", layer="projection", source="mcp"):
         timeout = _timeout(timeout)
@@ -219,8 +237,8 @@ class CaptureWorkflow:
         interval = _timeout(arguments.get("interval", 1))
         timeout = _timeout(arguments.get("timeout", 5))
         threshold = float(arguments.get("threshold", analysis.RESIDUAL_THRESHOLD))
-        if not math.isfinite(threshold):
-            raise ValueError("A finite stereo threshold is required")
+        if not math.isfinite(threshold) or threshold <= 0:
+            raise ValueError("A finite positive stereo threshold is required")
         with self._lane.admit():
             worst, worst_sheet, lines = None, None, []
             for index in range(frames):
@@ -229,7 +247,7 @@ class CaptureWorkflow:
                 if data is None:
                     lines.append(f"[{index}] screenshot timeout")
                     continue
-                frusta = self._frusta(analysis)
+                frusta = captured_frusta(self._capture_metadata, analysis.frusta_from_fov)
                 report, sheet = analysis.analyze_bytes(
                     data, threshold=threshold, frusta=frusta
                 )
@@ -254,17 +272,6 @@ class CaptureWorkflow:
                 )
                 result.append(ImageResult(output.getvalue()))
             return result
-
-    def _frusta(self, analysis):
-        metadata = self._capture_metadata or {}
-        composition = metadata.get("composition")
-        if composition is None or composition.get("frame") != metadata.get("frame"):
-            return None
-        try:
-            fovs = [{"aL": eye["left"], "aR": eye["right"]} for eye in composition["fovs"]]
-            return analysis.frusta_from_fov(fovs[0], fovs[1], float(composition["ipd"]))
-        except (ValueError, KeyError, IndexError, TypeError):
-            return None
 
 
 class IncidentWorkflow:

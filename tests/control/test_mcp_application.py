@@ -4,7 +4,7 @@ import asyncio
 import base64
 import importlib.util
 from concurrent.futures import ThreadPoolExecutor
-from io import BytesIO
+from io import BytesIO, StringIO
 import json
 import os
 from pathlib import Path
@@ -105,6 +105,75 @@ class ApplicationTests(unittest.TestCase):
         self.assertIsNone(analysis.analyze_bytes.call_args_list[1].kwargs["frusta"])
         self.assertIn("frame=" + first + ", geometry=captured composition", result[0].text)
         self.assertIn("geometry=unavailable", result[0].text)
+
+    @unittest.skipUnless(importlib.util.find_spec("PIL") and importlib.util.find_spec("numpy"), "Pillow and NumPy are required")
+    def test_stereo_watch_uses_retained_frames_and_reports_missing_samples(self):
+        import stereo_consistency as analysis
+
+        fov = {"left": -.5, "right": .7}
+        frame = {"generation": "1", "frame_id": str(2**53 + 1)}
+        composition = {"frame": frame, "fovs": [fov, fov], "ipd": .07}
+        metadata = {"transport": "retained_capture", "frame": frame, "composition": composition}
+        mismatched = {**metadata, "frame": {**frame, "frame_id": str(2**53 + 2)}}
+        report = analysis.Report("PASS", 0, 0, 100, 0, 0, 0, 0, 0)
+        output = self.root / "stéréo 眼"
+        with patch("artifact_workflows.RetainedScreenshot") as retained, \
+             patch("artifact_workflows.ProjectionWorkflow.read", side_effect=AssertionError("Live geometry substituted")), \
+             patch.object(analysis, "analyze_bytes", return_value=(report, None)) as analyze, \
+             patch("sys.stdout", new_callable=StringIO):
+            retained.return_value.capture.side_effect = [
+                (b"first", metadata), (b"second", mismatched), TimeoutError("No completed capture")]
+            results = analysis.watch(3, 0, output, self.root)
+            retained.return_value.close.assert_called_once_with()
+        self.assertIsNotNone(analyze.call_args_list[0].kwargs["frusta"])
+        self.assertIsNone(analyze.call_args_list[1].kwargs["frusta"])
+        self.assertEqual(results[0]["capture"]["frame"], frame)
+        self.assertEqual(results[2]["verdict"], "CAPTURE_FAILED")
+        self.assertIn("No completed capture", results[2]["error"])
+        saved = [json.loads(line) for line in (output / "stereo_watch.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(saved, results)
+        self.assertFalse((self.root / "screenshot_request.json").exists())
+        self.assertFalse((self.root / "projection_log_dump_request").exists())
+        with patch.object(analysis, "watch", return_value=results), patch("sys.stdout", new_callable=StringIO):
+            self.assertEqual(analysis.main(["--watch", "3"]), 1)
+
+    @unittest.skipUnless(importlib.util.find_spec("PIL") and importlib.util.find_spec("numpy"), "Pillow and NumPy are required")
+    def test_stereo_watch_closes_capture_owner_after_output_failure(self):
+        import stereo_consistency as analysis
+
+        output = self.root / "watch"
+        (output / "stereo_watch.jsonl").mkdir(parents=True)
+        with patch("artifact_workflows.RetainedScreenshot") as retained, patch("sys.stdout", new_callable=StringIO):
+            retained.return_value.capture.return_value = (None, {})
+            with self.assertRaises(OSError):
+                analysis.watch(1, 0, output, self.root)
+            retained.return_value.close.assert_called_once_with()
+        for arguments in (["--watch", "-1"], ["--watch", "1", "--interval", "nan"],
+                          ["--watch", "1", "--threshold", "0"]):
+            with patch.object(analysis, "watch") as watch, patch("sys.stderr", new_callable=StringIO):
+                with self.assertRaises(SystemExit) as rejected:
+                    analysis.main(arguments)
+                self.assertEqual(rejected.exception.code, 2)
+                watch.assert_not_called()
+
+    @unittest.skipUnless(importlib.util.find_spec("PIL") and importlib.util.find_spec("numpy"), "Pillow and NumPy are required")
+    def test_stereo_analysis_bounds_portrait_work_and_normalizes_eye_modes(self):
+        from PIL import Image
+        import stereo_consistency as analysis
+
+        with Image.new("L", (80, 320), 64) as left, Image.new("RGBA", (80, 320), (64, 64, 64, 255)) as right:
+            with patch.object(analysis, "_prepare", wraps=analysis._prepare) as prepare:
+                report, _ = analysis.analyze_pair(left, right)
+                self.assertEqual(report.verdict, "INCONCLUSIVE_NO_FEATURES")
+                self.assertEqual([call.args[1] for call in prepare.call_args_list], [120, 120])
+            for threshold in (0, -1, float("nan"), float("inf")):
+                with self.assertRaisesRegex(ValueError, "positive stereo threshold"):
+                    analysis.analyze_pair(left, right, threshold=threshold)
+        with Image.new("RGB", (1, 10000)) as narrow:
+            with patch.object(analysis, "_prepare", side_effect=AssertionError("Unbounded image allocation")):
+                with self.assertRaisesRegex(ValueError, "too narrow"):
+                    analysis.analyze_pair(narrow, narrow)
+        self.assertIsNone(analysis.frusta_from_fov({"aL": float("nan"), "aR": .5}, {"aL": -.5, "aR": .5}))
 
     def test_modern_errors_and_full_u64_never_fall_back_to_files(self):
         result = self.app.call("debug_start_export", {"image": str(2**64 - 1)})
@@ -339,6 +408,24 @@ class ApplicationTests(unittest.TestCase):
             self.skipTest("NumPy is not installed")
         self.assertIn("verdict", result)
         self.assertIn("side_by_side", result["all_layouts"])
+
+    @unittest.skipUnless(importlib.util.find_spec("PIL") and importlib.util.find_spec("numpy"), "Pillow and NumPy are required")
+    def test_extreme_image_shapes_have_bounded_finite_results(self):
+        from PIL import Image
+        from image_analysis import to_jpeg, validate_stereo_image
+
+        with Image.new("RGB", (4096, 1)) as wide:
+            encoded = BytesIO()
+            wide.save(encoded, format="PNG")
+        with Image.open(BytesIO(to_jpeg(encoded.getvalue()))) as jpeg:
+            self.assertEqual(jpeg.size, (1280, 1))
+        for size in ((1, 1), (2, 10000)):
+            with Image.new("RGB", size) as image:
+                encoded = BytesIO()
+                image.save(encoded, format="PNG")
+            result = validate_stereo_image(encoded.getvalue())
+            self.assertIn("error", result)
+            json.dumps(result, allow_nan=False)
 
     def test_runtime_capture_failure_is_reported_without_waiting_for_pixels(self):
         (self.root / "screenshot_status.json").write_text(

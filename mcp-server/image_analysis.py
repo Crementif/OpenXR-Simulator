@@ -37,7 +37,7 @@ def to_jpeg(
         else:
             image = image.crop((half, 0, image.width, image.height))
     if image.width > max_width:
-        scaled_height = int(image.height * (max_width / image.width))
+        scaled_height = max(1, int(image.height * (max_width / image.width)))
         image = image.resize((max_width, scaled_height), Image.LANCZOS)
     out = BytesIO()
     image.save(out, format="JPEG", quality=quality, optimize=True)
@@ -105,10 +105,11 @@ def validate_stereo_image(image_bytes: bytes) -> dict[str, Any]:
     # blow the MCP request timeout. Match on a downscaled copy and convert the measured
     # disparity back to full-resolution pixels at the end.
     original_width = image.size[0]
-    if original_width > STEREO_ANALYSIS_MAX_WIDTH:
-        scale = STEREO_ANALYSIS_MAX_WIDTH / original_width
+    largest_dimension = max(image.size)
+    if largest_dimension > STEREO_ANALYSIS_MAX_WIDTH:
+        scale = STEREO_ANALYSIS_MAX_WIDTH / largest_dimension
         image = image.resize(
-            (STEREO_ANALYSIS_MAX_WIDTH, max(1, round(image.size[1] * scale))),
+            (max(1, round(image.width * scale)), max(1, round(image.height * scale))),
             Image.BILINEAR,
         )
     else:
@@ -167,7 +168,7 @@ def validate_stereo_image(image_bytes: bytes) -> dict[str, Any]:
 
     results = {}
     for name, left_eye, right_eye in layouts:
-        if left_eye.size != right_eye.size:  # uneven crop — skip
+        if left_eye.size != right_eye.size or min(left_eye.size) < 2:
             continue
         shift, score, contrast = _shift_search(
             left_eye, right_eye, max_shift=min(60, left_eye.size[0] // 6)
