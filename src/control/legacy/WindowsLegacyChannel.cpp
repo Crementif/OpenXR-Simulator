@@ -1,35 +1,18 @@
 #include "control/legacy/WindowsLegacyChannel.h"
+#include "Pch.h"
+
+#include "control/legacy/WindowsLegacyFiles.h"
 #include "control/legacy/WindowsLegacyFormat.h"
 #include "json.h"
 
-#include <algorithm>
-#include <array>
-#include <cerrno>
 #include <cmath>
 #include <cstring>
 #include <fstream>
 #include <iomanip>
 #include <limits>
 #include <locale>
-#include <optional>
-#include <span>
 #include <sstream>
 #include <stdexcept>
-#include <system_error>
-#include <utility>
-#ifdef _WIN32
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#else
-#include <fcntl.h>
-#include <sys/syscall.h>
-#include <unistd.h>
-#endif
 
 namespace mcp
 {
@@ -48,18 +31,16 @@ enum class WindowsCommandFile
 	Burst,
 	ProjectionLog
 };
-namespace
-{
-constexpr std::size_t MaxDocumentBytes = 1024 * 1024;
-constexpr std::size_t MaxImageBytes = 512 * 1024 * 1024;
-constexpr std::size_t MaxImageJobs = 4;
-constexpr std::size_t MaxLogs = 64;
+static constexpr std::size_t s_maxDocumentBytes = 1024 * 1024;
+static constexpr std::size_t s_maxImageBytes = 512 * 1024 * 1024;
+static constexpr std::size_t s_maxImageJobs = 4;
+static constexpr std::size_t s_maxLogs = 64;
 struct CommandFileDefinition
 {
 	WindowsCommandFile kind;
 	const char* filename;
 };
-constexpr std::array CommandFiles{
+static constexpr std::array s_commandFiles{
 	CommandFileDefinition{WindowsCommandFile::HeadPose, "head_pose_command.json"},
 	CommandFileDefinition{WindowsCommandFile::Fov, "fov_command.json"},
 	CommandFileDefinition{WindowsCommandFile::Ipd, "ipd_command.json"},
@@ -72,110 +53,16 @@ constexpr std::array CommandFiles{
 	CommandFileDefinition{WindowsCommandFile::Screenshot, "screenshot_request.json"},
 	CommandFileDefinition{WindowsCommandFile::Burst, "burst_command.json"},
 	CommandFileDefinition{WindowsCommandFile::ProjectionLog, "projection_log_dump_request"}};
-constexpr std::array DocumentFiles{"runtime_status.json", "projection_log.json", "command_ack.json"};
+static constexpr std::array s_documentFiles{"runtime_status.json", "projection_log.json", "command_ack.json"};
 
-unsigned long ProcessId()
+static void WriteDocument(const std::filesystem::path& path, const std::string& document)
 {
-#ifdef _WIN32
-	return GetCurrentProcessId();
-#else
-	return static_cast<unsigned long>(getpid());
-#endif
-}
-
-bool Claim(const std::filesystem::path& source, const std::filesystem::path& destination)
-{
-#ifdef _WIN32
-	if (MoveFileW(source.c_str(), destination.c_str()))
-		return true;
-	const auto error = GetLastError();
-	if (error == ERROR_FILE_NOT_FOUND || error == ERROR_ALREADY_EXISTS || error == ERROR_FILE_EXISTS)
-		return false;
-	throw std::system_error(error, std::system_category(), "Claim Windows compatibility command");
-#else
-	if (syscall(SYS_renameat2, AT_FDCWD, source.c_str(), AT_FDCWD, destination.c_str(), 1) == 0)
-		return true;
-	if (errno == ENOENT || errno == EEXIST)
-		return false;
-	throw std::system_error(errno, std::generic_category(), "Claim compatibility fixture command");
-#endif
-}
-
-void Replace(const std::filesystem::path& temporary, const std::filesystem::path& destination)
-{
-#ifdef _WIN32
-	if (!MoveFileExW(temporary.c_str(), destination.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-		throw std::system_error(GetLastError(), std::system_category(), "Publish compatibility output");
-#else
-	std::filesystem::rename(temporary, destination);
-#endif
-}
-
-class AtomicOutput
-{
-  public:
-	explicit AtomicOutput(std::filesystem::path destination)
-		: m_destination(std::move(destination)),
-		  m_temporary(m_destination.native() + std::filesystem::path(".tmp." + std::to_string(ProcessId())).native())
-	{
-		try
-		{
-			m_stream.exceptions(std::ios::badbit | std::ios::failbit);
-			m_stream.open(m_temporary, std::ios::binary | std::ios::trunc);
-		}
-		catch (...)
-		{
-			Abort();
-			throw;
-		}
-	}
-	~AtomicOutput()
-	{
-		if (!m_committed)
-			Abort();
-	}
-	void Write(std::span<const std::byte> bytes)
-	{
-		m_stream.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-	}
-	void Commit()
-	{
-		m_stream.close();
-		Replace(m_temporary, m_destination);
-		m_committed = true;
-	}
-
-  private:
-	void Abort() noexcept
-	{
-		// Windows cannot unlink an ordinary fstream's still-open file. Close
-		// without throwing before removing even a partially acquired output.
-		try
-		{
-			m_stream.exceptions(std::ios::goodbit);
-			if (m_stream.is_open())
-				m_stream.close();
-		}
-		catch (...)
-		{
-		}
-		std::error_code ignored;
-		std::filesystem::remove(m_temporary, ignored);
-	}
-	std::filesystem::path m_destination;
-	std::filesystem::path m_temporary;
-	std::ofstream m_stream;
-	bool m_committed = false;
-};
-
-void WriteDocument(const std::filesystem::path& path, const std::string& document)
-{
-	AtomicOutput output(path);
+	WindowsLegacyOutput output(path);
 	output.Write(std::as_bytes(std::span(document)));
 	output.Commit();
 }
 
-void WriteBitmap(const std::filesystem::path& path, const BitmapOutput& image)
+static void WriteBitmap(const std::filesystem::path& path, const BitmapOutput& image)
 {
 	std::array<std::byte, 54> header{};
 	const auto store = [&](std::size_t offset, std::uint32_t value)
@@ -193,26 +80,13 @@ void WriteBitmap(const std::filesystem::path& path, const BitmapOutput& image)
 	header[26] = std::byte{1};
 	header[28] = std::byte{32};
 	store(34, static_cast<std::uint32_t>(image.bgra.size()));
-	AtomicOutput output(path);
+	WindowsLegacyOutput output(path);
 	output.Write(header);
 	output.Write(std::as_bytes(std::span(image.bgra)));
 	output.Commit();
 }
 
-std::string ReadDocument(const std::filesystem::path& path)
-{
-	if (!std::filesystem::is_regular_file(std::filesystem::symlink_status(path)))
-		throw std::invalid_argument("Compatibility command must be a regular file");
-	const auto size = std::filesystem::file_size(path);
-	if (size > 64 * 1024)
-		throw std::invalid_argument("Compatibility command exceeds 64 KiB");
-	std::ifstream input(path, std::ios::binary);
-	input.exceptions(std::ios::badbit | std::ios::failbit);
-	std::string document(static_cast<std::size_t>(size), '\0');
-	input.read(document.data(), static_cast<std::streamsize>(document.size()));
-	return document;
-}
-double FiniteNumber(const json::Object& document, const char* field, double fallback)
+static double FiniteNumber(const json::Object& document, const char* field, double fallback)
 {
 	const auto value = document.Number(field, fallback);
 	if (!std::isfinite(value) || std::abs(value) > std::numeric_limits<float>::max())
@@ -220,7 +94,7 @@ double FiniteNumber(const json::Object& document, const char* field, double fall
 	return value;
 }
 
-HeadPoseCommand DecodeHeadPose(const std::string& text)
+static HeadPoseCommand DecodeHeadPose(const std::string& text)
 {
 	HeadPoseCommand command;
 	json::Object document(text.c_str());
@@ -239,7 +113,7 @@ HeadPoseCommand DecodeHeadPose(const std::string& text)
 	return command;
 }
 
-FovCommand DecodeFov(const std::string& text)
+static FovCommand DecodeFov(const std::string& text)
 {
 	FovCommand command;
 	json::Object document(text.c_str());
@@ -267,7 +141,7 @@ FovCommand DecodeFov(const std::string& text)
 	return command;
 }
 
-IpdCommand DecodeIpd(const std::string& text)
+static IpdCommand DecodeIpd(const std::string& text)
 {
 	IpdCommand command;
 	json::Object document(text.c_str());
@@ -285,20 +159,20 @@ IpdCommand DecodeIpd(const std::string& text)
 	return command;
 }
 
-HeadsetProfileCommand DecodeHeadsetProfile(const std::string& text)
+static HeadsetProfileCommand DecodeHeadsetProfile(const std::string& text)
 {
 	HeadsetProfileCommand command;
 	std::string name = json::Object(text.c_str()).String("name");
 	if (name.empty())
 		return command;
 	std::size_t nameLength = std::min(name.size(), sizeof(command.name) - 1);
-	memcpy(command.name, name.data(), nameLength);
+	std::memcpy(command.name, name.data(), nameLength);
 	command.name[nameLength] = 0;
 	command.valid = true;
 	return command;
 }
 
-PoseSweepCommand DecodePoseSweep(const std::string& text)
+static PoseSweepCommand DecodePoseSweep(const std::string& text)
 {
 	PoseSweepCommand command;
 	json::Object document(text.c_str());
@@ -314,7 +188,7 @@ PoseSweepCommand DecodePoseSweep(const std::string& text)
 	return command;
 }
 
-AnaglyphCommand DecodeAnaglyph(const std::string& text)
+static AnaglyphCommand DecodeAnaglyph(const std::string& text)
 {
 	AnaglyphCommand command;
 	json::Object document(text.c_str());
@@ -326,7 +200,7 @@ AnaglyphCommand DecodeAnaglyph(const std::string& text)
 	return command;
 }
 
-ControllerPoseCommand DecodeControllerPose(const std::string& text)
+static ControllerPoseCommand DecodeControllerPose(const std::string& text)
 {
 	ControllerPoseCommand command;
 	json::Object document(text.c_str());
@@ -355,7 +229,7 @@ ControllerPoseCommand DecodeControllerPose(const std::string& text)
 	return command;
 }
 
-ControllerHoldCommand DecodeControllerHold(const std::string& text)
+static ControllerHoldCommand DecodeControllerHold(const std::string& text)
 {
 	ControllerHoldCommand command;
 	json::Object document(text.c_str());
@@ -381,7 +255,7 @@ ControllerHoldCommand DecodeControllerHold(const std::string& text)
 	return command;
 }
 
-WheelSweepCommand DecodeWheelSweep(const std::string& text)
+static WheelSweepCommand DecodeWheelSweep(const std::string& text)
 {
 	WheelSweepCommand command;
 	json::Object document(text.c_str());
@@ -402,7 +276,7 @@ WheelSweepCommand DecodeWheelSweep(const std::string& text)
 	return command;
 }
 
-BurstCommand DecodeBurst(const std::string& text)
+static BurstCommand DecodeBurst(const std::string& text)
 {
 	BurstCommand command;
 	json::Object document(text.c_str());
@@ -425,13 +299,11 @@ BurstCommand DecodeBurst(const std::string& text)
 	}
 	return command;
 }
-} // namespace
-
 WindowsLegacyChannel::WindowsLegacyChannel(std::filesystem::path directory) : m_directory(std::move(directory))
 {
 	std::filesystem::create_directories(m_directory);
-	m_images.reserve(MaxImageJobs);
-	m_logs.reserve(MaxLogs);
+	m_images.reserve(s_maxImageJobs);
+	m_logs.reserve(s_maxLogs);
 	m_worker = std::thread(
 		[this]
 		{
@@ -468,7 +340,7 @@ std::optional<std::string> WindowsLegacyChannel::TakeWrittenScreenshot()
 bool WindowsLegacyChannel::Publish(WindowsDocument kind, std::string document)
 {
 	const auto index = static_cast<std::size_t>(kind);
-	if (index >= m_documents.size() || document.size() > MaxDocumentBytes)
+	if (index >= m_documents.size() || document.size() > s_maxDocumentBytes)
 		return false;
 	{
 		std::lock_guard lock(m_mutex);
@@ -482,8 +354,8 @@ bool WindowsLegacyChannel::Publish(WindowsDocument kind, std::string document)
 }
 bool WindowsLegacyChannel::PublishImages(ImageOutput& output)
 {
-	if (output.images.size() > 64 || output.status.size() > MaxDocumentBytes ||
-		output.manifest.size() > MaxDocumentBytes)
+	if (output.images.size() > 64 || output.status.size() > s_maxDocumentBytes ||
+		output.manifest.size() > s_maxDocumentBytes)
 		throw std::invalid_argument("Compatibility image output metadata exceeds its bound");
 	if (!output.statusFilename.empty() && output.statusFilename != "screenshot_status.json" &&
 		output.statusFilename != "burst_done.json" && output.statusFilename != "command_ack.json")
@@ -492,8 +364,8 @@ bool WindowsLegacyChannel::PublishImages(ImageOutput& output)
 	for (const auto& image : output.images)
 	{
 		const auto pixels = std::uint64_t(image.width) * image.height;
-		if (!pixels || pixels > MaxImageBytes / 4 || image.bgra.size() != pixels * 4 ||
-			image.bgra.size() > MaxImageBytes - bytes)
+		if (!pixels || pixels > s_maxImageBytes / 4 || image.bgra.size() != pixels * 4 ||
+			image.bgra.size() > s_maxImageBytes - bytes)
 			throw std::invalid_argument("Invalid compatibility bitmap extent or byte count");
 		if (std::filesystem::path(image.filename).filename() != image.filename)
 			throw std::invalid_argument("Compatibility image filename must be local");
@@ -501,7 +373,7 @@ bool WindowsLegacyChannel::PublishImages(ImageOutput& output)
 	}
 	{
 		std::lock_guard lock(m_mutex);
-		if (m_stopping || m_status.activeImages == MaxImageJobs || bytes > MaxImageBytes - m_status.activeBytes)
+		if (m_stopping || m_status.activeImages == s_maxImageJobs || bytes > s_maxImageBytes - m_status.activeBytes)
 			return false;
 		m_images.push_back(std::move(output));
 		++m_status.activeImages;
@@ -522,14 +394,14 @@ bool WindowsLegacyChannel::DrainImages(std::chrono::milliseconds timeout)
 }
 bool WindowsLegacyChannel::WaitForImageCapacity(std::size_t bytes)
 {
-	if (bytes > MaxImageBytes)
+	if (bytes > s_maxImageBytes)
 		return false;
 	std::unique_lock lock(m_mutex);
 	m_changed.wait(lock,
 				   [this, bytes]
 				   {
-					   return m_stopping ||
-							  (m_status.activeImages < MaxImageJobs && bytes <= MaxImageBytes - m_status.activeBytes);
+					   return m_stopping || (m_status.activeImages < s_maxImageJobs &&
+											 bytes <= s_maxImageBytes - m_status.activeBytes);
 				   });
 	return !m_stopping;
 }
@@ -541,7 +413,7 @@ bool WindowsLegacyChannel::Log(std::string message)
 		std::lock_guard lock(m_mutex);
 		if (m_stopping)
 			return false;
-		if (m_logs.size() == MaxLogs)
+		if (m_logs.size() == s_maxLogs)
 		{
 			++m_status.droppedLogs;
 			return false;
@@ -553,7 +425,7 @@ bool WindowsLegacyChannel::Log(std::string message)
 }
 void WindowsLegacyChannel::Acknowledge(std::string_view command, bool success)
 {
-	Publish(WindowsDocument::CommandAck, "{\"timestamp\":\"" + detail::LocalTimestamp() + "\",\"command\":\"" +
+	Publish(WindowsDocument::CommandAck, "{\"timestamp\":\"" + LocalTimestamp() + "\",\"command\":\"" +
 											 std::string(command) + "\",\"success\":" + (success ? "true" : "false") +
 											 "}");
 }
@@ -579,7 +451,7 @@ void WindowsLegacyChannel::RecordError(std::string_view error) noexcept
 	{
 		std::lock_guard lock(m_mutex);
 		++m_status.errors;
-		m_status.detail.assign(error);
+		m_status.detail.assign(error.substr(0, 2048));
 	}
 	catch (...)
 	{
@@ -682,13 +554,13 @@ void WindowsLegacyChannel::Stage(WindowsCommandFile command, const std::string& 
 void WindowsLegacyChannel::ReadCommand(WindowsCommandFile command, std::string_view filename)
 {
 	const auto path = m_directory / filename;
-	const auto claimed = m_directory / (std::string(filename) + ".pending." + std::to_string(ProcessId()));
+	const auto claimed = m_directory / (std::string(filename) + ".pending." + std::to_string(WindowsLegacyProcessId()));
 	bool staged = false;
 	try
 	{
-		if (!std::filesystem::exists(claimed) && !Claim(path, claimed))
+		if (!std::filesystem::exists(claimed) && !ClaimWindowsLegacyCommand(path, claimed))
 			return;
-		const auto document = ReadDocument(claimed);
+		const auto document = ReadWindowsLegacyDocument(claimed);
 		Stage(command, document);
 		staged = true;
 		WriteDocument(m_directory / (std::string(filename) + ".received"), "staged");
@@ -705,7 +577,7 @@ void WindowsLegacyChannel::ReadCommand(WindowsCommandFile command, std::string_v
 		}
 		try
 		{
-			if (Claim(claimed, path) || std::filesystem::exists(path))
+			if (ClaimWindowsLegacyCommand(claimed, path) || std::filesystem::exists(path))
 			{
 				std::error_code ignored;
 				std::filesystem::remove(claimed, ignored);
@@ -719,7 +591,7 @@ void WindowsLegacyChannel::ReadCommand(WindowsCommandFile command, std::string_v
 }
 void WindowsLegacyChannel::Scan()
 {
-	for (const auto& command : CommandFiles)
+	for (const auto& command : s_commandFiles)
 		ReadCommand(command.kind, command.filename);
 }
 void WindowsLegacyChannel::WriteImages(const ImageOutput& output)
@@ -767,8 +639,8 @@ void WindowsLegacyChannel::Run() noexcept
 	{
 		std::vector<ImageOutput> images;
 		std::vector<std::string> logs;
-		images.reserve(MaxImageJobs);
-		logs.reserve(MaxLogs);
+		images.reserve(s_maxImageJobs);
+		logs.reserve(s_maxLogs);
 		auto nextScan = std::chrono::steady_clock::now();
 		for (;;)
 		{
@@ -793,7 +665,7 @@ void WindowsLegacyChannel::Run() noexcept
 				if (ready[index])
 					try
 					{
-						WriteDocument(m_directory / DocumentFiles[index], documents[index]);
+						WriteDocument(m_directory / s_documentFiles[index], documents[index]);
 					}
 					catch (const std::exception& error)
 					{
@@ -821,11 +693,13 @@ void WindowsLegacyChannel::Run() noexcept
 			if (!logs.empty())
 				try
 				{
-					std::ofstream file(m_directory / ("openxr_simulator." + std::to_string(ProcessId()) + ".log"),
+					std::ofstream file(m_directory /
+										   ("openxr_simulator." + std::to_string(WindowsLegacyProcessId()) + ".log"),
 									   std::ios::app);
 					file.exceptions(std::ios::badbit | std::ios::failbit);
 					for (const auto& line : logs)
 						file << line << '\n';
+					file.close();
 				}
 				catch (const std::exception& error)
 				{
@@ -854,6 +728,7 @@ void WindowsLegacyChannel::Run() noexcept
 	}
 	catch (...)
 	{
+		RecordError("Unknown compatibility file worker failure");
 	}
 	std::lock_guard lock(m_mutex);
 	m_stopping = true;

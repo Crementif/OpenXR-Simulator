@@ -3,11 +3,16 @@
 #include "control/legacy/LegacyCaptureImage.h"
 #include "control/legacy/LegacyFileChannel.h"
 #include "graphics/backends/vulkan/VulkanFrameObserver.h"
-#include "runtime/Session.h"
 
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <deque>
+#include <memory>
 #include <mutex>
+#include <optional>
+#include <string_view>
+#include <vector>
 
 namespace flicker
 {
@@ -16,6 +21,7 @@ class Diagnostics;
 
 namespace simxr
 {
+class Session;
 class VulkanLegacyCapture final : public VulkanFrameObserver
 {
   public:

@@ -1,5 +1,7 @@
 #include "../TestSupport.h"
+#include "Pch.h"
 #include "control/legacy/WindowsLegacyCapture.h"
+#include "control/legacy/WindowsLegacyFiles.h"
 #include "json.h"
 #include <chrono>
 #include <filesystem>
@@ -8,10 +10,11 @@
 #include <limits>
 #include <locale>
 #include <sstream>
+#include <span>
+#include <string_view>
 
-namespace
+namespace mcp::tests
 {
-using namespace mcp;
 namespace fs = std::filesystem;
 class Directory
 {
@@ -37,12 +40,12 @@ class Directory
   private:
 	fs::path m_path;
 };
-std::string Read(const fs::path& path)
+static std::string Read(const fs::path& path)
 {
 	std::ifstream file(path, std::ios::binary);
 	return {std::istreambuf_iterator<char>(file), {}};
 }
-void Command(const fs::path& directory, const char* filename, const std::string& document)
+static void Command(const fs::path& directory, const char* filename, const std::string& document)
 {
 	const auto path = directory / filename;
 	fs::remove(directory / (std::string(filename) + ".received"));
@@ -63,7 +66,7 @@ void Command(const fs::path& directory, const char* filename, const std::string&
 		},
 		"Worker did not acknowledge independent typed staging");
 }
-void TestTypedStagingAndSeparateBoundaries()
+static void TestTypedStagingAndSeparateBoundaries()
 {
 	Directory directory;
 	WindowsLegacyChannel files(directory.Path());
@@ -89,7 +92,7 @@ void TestTypedStagingAndSeparateBoundaries()
 	Require(!files.TakeCommands().head.valid && !files.TakeRequests().screenshot,
 			"Consumed compatibility values were replayed");
 }
-void TestOpticsClearAndLatestCoalescing()
+static void TestOpticsClearAndLatestCoalescing()
 {
 	Directory directory;
 	WindowsLegacyChannel files(directory.Path());
@@ -106,7 +109,7 @@ void TestOpticsClearAndLatestCoalescing()
 				values.anaglyph.enabled,
 			"Latest typed optics/legacy clear semantics changed");
 }
-void TestScreenshotOwnershipAndPublication()
+static void TestScreenshotOwnershipAndPublication()
 {
 	Directory directory;
 	auto files = std::make_shared<WindowsLegacyChannel>(directory.Path());
@@ -125,7 +128,8 @@ void TestScreenshotOwnershipAndPublication()
 			"Caller mutation changed retained image/alpha bytes");
 	const auto status = Read(directory.Path() / "screenshot_status.json");
 	Require(json::Object(status.c_str()).String("eye") == "left\"\n" &&
-		json::Object(status.c_str()).String("layer") == "projection\\", "Screenshot status did not escape request text");
+				json::Object(status.c_str()).String("layer") == "projection\\",
+			"Screenshot status did not escape request text");
 	Require(status.find("\"requestFrame\":42") != std::string::npos &&
 				status.find("\"capturedFrame\":43") != std::string::npos,
 			"Image completion status lost request/source identity");
@@ -133,7 +137,7 @@ void TestScreenshotOwnershipAndPublication()
 	Require(!capture.SubmitPixels(rgba.data(), 2, 1, 12, false) && capture.ScreenshotRequested(),
 			"Rejected CPU output consumed the pending request");
 }
-void TestAllCaptureUsesOneOutputTransaction()
+static void TestAllCaptureUsesOneOutputTransaction()
 {
 	Directory directory;
 	auto files = std::make_shared<WindowsLegacyChannel>(directory.Path());
@@ -154,7 +158,7 @@ void TestAllCaptureUsesOneOutputTransaction()
 			"All-layer completion metadata or copied pair changed");
 }
 
-void TestCaptureFailureAndQuadFrameIdentity()
+static void TestCaptureFailureAndQuadFrameIdentity()
 {
 	Directory directory;
 	auto files = std::make_shared<WindowsLegacyChannel>(directory.Path());
@@ -188,7 +192,7 @@ void TestCaptureFailureAndQuadFrameIdentity()
 		},
 		"Delayed quad status was not published");
 	Require(json::Object(Read(directory.Path() / "screenshot_status.json").c_str()).String("eye") == "right\"\n",
-		"Quad status did not escape request text");
+			"Quad status did not escape request text");
 	capture.RequestScreenshot({"right", "quad"});
 	Require(!capture.SubmitQuad(true, 43) && !capture.FailScreenshot("old map failed", 43) &&
 				!capture.SubmitPixels(quad.data(), 1, 1, 4, false, 43) && capture.ScreenshotRequested(),
@@ -205,7 +209,7 @@ void TestCaptureFailureAndQuadFrameIdentity()
 			"Closed output cannot silently consume a capture failure");
 }
 
-void TestAllCaptureDoesNotReuseAnOlderQuad()
+static void TestAllCaptureDoesNotReuseAnOlderQuad()
 {
 	Directory directory;
 	auto files = std::make_shared<WindowsLegacyChannel>(directory.Path());
@@ -221,13 +225,14 @@ void TestAllCaptureDoesNotReuseAnOlderQuad()
 			"All-layer capture does not attach retained quad pixels from an older frame");
 }
 
-void TestBurstAndProjectionRetention()
+static void TestBurstAndProjectionRetention()
 {
 	Directory directory;
 	auto files = std::make_shared<WindowsLegacyChannel>(directory.Path());
 	WindowsLegacyCapture capture(files);
+	const auto firstFrame = std::numeric_limits<std::uint64_t>::max() - 2;
 	ProjLogEntry projection;
-	projection.frame = 7;
+	projection.frame = firstFrame;
 	projection.posX = 3;
 	projection.rectW[0] = 2;
 	capture.RecordProjection(projection);
@@ -235,12 +240,13 @@ void TestBurstAndProjectionRetention()
 	Require(capture.BeginBurst(2), "Reserve bounded editable burst");
 	std::array<std::uint8_t, 8> pixels{1, 2, 3, 4, 5, 6, 7, 8};
 	BurstFrameMeta metadata;
-	metadata.frame = 8;
+	metadata.frame = firstFrame + 1;
 	metadata.headYaw = .5f;
 	metadata.proj = capture.LastProjection();
+	Require(metadata.proj.frame == firstFrame, "Retained projection frame identity lost its full width");
 	capture.BurstOnFrame(pixels.data(), 2, 1, 8, metadata);
 	pixels.fill(255);
-	metadata.frame = 9;
+	metadata.frame = firstFrame + 2;
 	capture.BurstOnFrame(pixels.data(), 2, 1, 8, metadata);
 	Require(!capture.BurstActive(), "Completed burst remained active");
 	capture.Close();
@@ -250,9 +256,16 @@ void TestBurstAndProjectionRetention()
 				Read(directory.Path() / "projection_log.json").find("\"x\":3") != std::string::npos &&
 				std::uint8_t(Read(directory.Path() / "burst_000.bmp")[54]) == 1,
 			"Burst CPU data or original projection metadata changed");
+	Require(Read(directory.Path() / "projection_log.json").find("\"frame\":" + std::to_string(firstFrame)) !=
+					std::string::npos &&
+				Read(directory.Path() / "burst_manifest.json").find("\"frame\":" + std::to_string(firstFrame + 1)) !=
+					std::string::npos &&
+				Read(directory.Path() / "burst_manifest.json").find("\"frame\":" + std::to_string(firstFrame + 2)) !=
+					std::string::npos,
+			"Projection or burst serialization narrowed runtime frame identity");
 	Require(files->Status().activeBytes == 0 && files->Status().activeImages == 0, "Drained output retained budget");
 }
-void TestNumericFailureAndClassicJson()
+static void TestNumericFailureAndClassicJson()
 {
 	Directory directory;
 	auto files = std::make_shared<WindowsLegacyChannel>(directory.Path());
@@ -291,6 +304,7 @@ void TestNumericFailureAndClassicJson()
 	} locale;
 	WindowsLegacyCapture capture(files);
 	FrameStatus status;
+	status.frame = (std::uint64_t{1} << 40) + 19;
 	status.yaw = .25f;
 	status.format = "format\"\\";
 	status.state = "state\n";
@@ -299,13 +313,16 @@ void TestNumericFailureAndClassicJson()
 	files->Close();
 	const auto text = Read(directory.Path() / "runtime_status.json");
 	Require(json::Object(text.c_str()).String("format") == status.format &&
-		json::Object(text.c_str()).String("session_state") == status.state, "Runtime status did not escape text");
+				json::Object(text.c_str()).String("session_state") == status.state,
+			"Runtime status did not escape text");
 	Require(text.find("\"yaw\":0.25") != std::string::npos && text.find("\"timestamp\":") != std::string::npos,
 			"Ambient locale or status preparation changed the legacy JSON contract");
+	Require(text.find("\"frame_count\":" + std::to_string(status.frame)) != std::string::npos,
+			"Runtime status narrowed its frame identity");
 	Require(!files->WaitForImageCapacity(0), "Closed worker allowed a new capacity waiter");
 }
 
-void TestCaptureArithmeticRejectsBeforeAllocation()
+static void TestCaptureArithmeticRejectsBeforeAllocation()
 {
 	Directory directory;
 	auto files = std::make_shared<WindowsLegacyChannel>(directory.Path());
@@ -335,7 +352,7 @@ void TestCaptureArithmeticRejectsBeforeAllocation()
 			"Overflowing capture dimensions/row offsets consumed admission or reached pixel allocation");
 }
 
-void TestFailureCapacityAndShutdown()
+static void TestFailureCapacityAndShutdown()
 {
 	Directory directory;
 	auto files = std::make_shared<WindowsLegacyChannel>(directory.Path());
@@ -375,9 +392,55 @@ void TestFailureCapacityAndShutdown()
 	}
 	Require(rejected, "Image output escaped compatibility directory");
 }
-} // namespace
+static void TestIndependentAtomicOutputs()
+{
+	Directory directory;
+	const auto destination = directory.Path() / "runtime_status.json";
+	auto stale = destination;
+	stale += ".tmp." + std::to_string(WindowsLegacyProcessId());
+	{
+		std::ofstream previous(stale);
+		previous << "earlier output";
+	}
+	const std::string_view firstText = "first complete document";
+	const std::string_view secondText = "second complete document with different length";
+	{
+		WindowsLegacyOutput first(destination);
+		WindowsLegacyOutput second(destination);
+		first.Write(std::as_bytes(std::span(firstText)));
+		second.Write(std::as_bytes(std::span(secondText)));
+		first.Commit();
+		Require(Read(destination) == firstText, "Second output modified another owner's pending bytes");
+		second.Commit();
+		Require(Read(destination) == secondText, "Independent pending output could not replace its destination");
+		WindowsLegacyOutput abandoned(destination);
+		abandoned.Write(std::as_bytes(std::span(firstText)));
+	}
+	Require(Read(destination) == secondText && Read(stale) == "earlier output",
+			"Abandoned publication changed completed or previously existing output");
+	fs::remove(stale);
+	for (const auto& entry : fs::directory_iterator(directory.Path()))
+		Require(entry.path() == destination, "Independent atomic publication left temporary files behind");
+}
+
+#ifndef _WIN32
+static void TestLogCloseFailure()
+{
+	Directory directory;
+	const auto path = directory.Path() / ("openxr_simulator." + std::to_string(WindowsLegacyProcessId()) + ".log");
+	fs::create_symlink("/dev/full", path);
+	WindowsLegacyChannel files(directory.Path());
+	Require(files.Log("buffered output"), "Accept log for close failure fixture");
+	files.Close();
+	Require(files.Status().errors != 0 && !files.Status().detail.empty(),
+			"Buffered log close failure was silently discarded");
+}
+#endif
+} // namespace mcp::tests
+
 int main()
 {
+	using namespace mcp::tests;
 	try
 	{
 		TestTypedStagingAndSeparateBoundaries();
@@ -390,6 +453,10 @@ int main()
 		TestFailureCapacityAndShutdown();
 		TestCaptureArithmeticRejectsBeforeAllocation();
 		TestNumericFailureAndClassicJson();
+		TestIndependentAtomicOutputs();
+#ifndef _WIN32
+		TestLogCloseFailure();
+#endif
 		return 0;
 	}
 	catch (const std::exception& error)

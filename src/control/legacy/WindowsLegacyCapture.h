@@ -1,17 +1,22 @@
 #pragma once
+
 #include "control/legacy/WindowsLegacyChannel.h"
+
 #include <array>
+#include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <mutex>
-#include <span>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace mcp
 {
 struct FrameStatus
 {
-	std::uint32_t frame = 0;
+	std::uint64_t frame = 0;
 	std::uint32_t width = 0;
 	std::uint32_t height = 0;
 	std::string format;

@@ -1,6 +1,8 @@
 #include "control/legacy/WindowsLegacyCapture.h"
+#include "Pch.h"
+
 #include "control/legacy/WindowsLegacyFormat.h"
-#include <algorithm>
+
 #include <cstring>
 #include <iomanip>
 #include <limits>
@@ -10,32 +12,30 @@
 
 namespace mcp
 {
-namespace
+static constexpr std::size_t s_maxCaptureBytes = 512 * 1024 * 1024;
+static void WriteJsonString(std::ostream& output, std::string_view text)
 {
-constexpr std::size_t MaxCaptureBytes = 512 * 1024 * 1024;
-void WriteJsonString(std::ostream& output, std::string_view text)
-{
-	constexpr char HexDigits[] = "0123456789abcdef";
+	static constexpr char s_hexDigits[] = "0123456789abcdef";
 	output << '"';
 	for (const unsigned char character : text)
 	{
 		if (character == '"' || character == '\\')
 			output << '\\' << character;
 		else if (character < 0x20)
-			output << "\\u00" << HexDigits[character >> 4] << HexDigits[character & 0xF];
+			output << "\\u00" << s_hexDigits[character >> 4] << s_hexDigits[character & 0xF];
 		else
 			output << character;
 	}
 	output << '"';
 }
-std::string FrameFilename(std::size_t index)
+static std::string FrameFilename(std::size_t index)
 {
 	std::ostringstream name;
 	name.imbue(std::locale::classic());
 	name << "burst_" << std::setw(3) << std::setfill('0') << index << ".bmp";
 	return name.str();
 }
-void ProjectionJson(std::ostream& output, const ProjLogEntry& entry)
+static void ProjectionJson(std::ostream& output, const ProjLogEntry& entry)
 {
 	output << "{\"frame\":" << entry.frame << ",\"pose\":{\"x\":" << entry.posX << ",\"y\":" << entry.posY
 		   << ",\"z\":" << entry.posZ << ",\"qx\":" << entry.poseQx << ",\"qy\":" << entry.poseQy
@@ -50,7 +50,6 @@ void ProjectionJson(std::ostream& output, const ProjLogEntry& entry)
 	}
 	output << '}';
 }
-} // namespace
 WindowsLegacyCapture::WindowsLegacyCapture(std::shared_ptr<WindowsLegacyChannel> files) : m_files(std::move(files))
 {
 	if (!m_files)
@@ -85,7 +84,7 @@ bool WindowsLegacyCapture::FailScreenshot(std::string_view reason, std::uint64_t
 		version = m_requestVersion;
 		std::ostringstream status;
 		status.imbue(std::locale::classic());
-		status << "{\"timestamp\":\"" << detail::LocalTimestamp() << "\",\"success\":false,\"layer\":";
+		status << "{\"timestamp\":\"" << LocalTimestamp() << "\",\"success\":false,\"layer\":";
 		WriteJsonString(status, m_request.layer);
 		status << ",\"eye\":";
 		WriteJsonString(status, m_request.eye);
@@ -113,7 +112,7 @@ BitmapOutput WindowsLegacyCapture::CopyPixels(const std::uint8_t* pixels, std::u
 {
 	const auto count = std::uint64_t(width) * height;
 	const auto rowBytes = std::uint64_t(width) * 4;
-	if (!pixels || !count || count > MaxCaptureBytes / 4 || stride < rowBytes ||
+	if (!pixels || !count || count > s_maxCaptureBytes / 4 || stride < rowBytes ||
 		(height > 1 && stride > (std::numeric_limits<std::size_t>::max() - rowBytes) / (height - 1)))
 		throw std::invalid_argument("Compatibility capture requires bounded representable color rows");
 	BitmapOutput image{std::move(filename), width, height,
@@ -147,7 +146,7 @@ bool WindowsLegacyCapture::SubmitPixels(const std::uint8_t* pixels, std::uint32_
 		if (request.layer == "all" && m_quadFrame == capturedFrame && !m_quad.bgra.empty())
 		{
 			const auto pixels = std::uint64_t(width) * height;
-			if (pixels > MaxCaptureBytes / 4 || m_quad.bgra.size() > MaxCaptureBytes - pixels * 4)
+			if (pixels > s_maxCaptureBytes / 4 || m_quad.bgra.size() > s_maxCaptureBytes - pixels * 4)
 				return false;
 			quad = m_quad;
 		}
@@ -159,12 +158,12 @@ bool WindowsLegacyCapture::SubmitPixels(const std::uint8_t* pixels, std::uint32_
 	output.statusFilename = "screenshot_status.json";
 	std::ostringstream status;
 	status.imbue(std::locale::classic());
-	status << "{\"timestamp\":\"" << detail::LocalTimestamp() << "\",\"layer\":";
+	status << "{\"timestamp\":\"" << LocalTimestamp() << "\",\"layer\":";
 	WriteJsonString(status, request.layer);
 	status << ",\"eye\":";
 	WriteJsonString(status, request.eye);
-	status << ",\"requestFrame\":" << requestFrame << ",\"capturedFrame\":" << capturedFrame
-		   << ",\"width\":" << width << ",\"height\":" << height << '}';
+	status << ",\"requestFrame\":" << requestFrame << ",\"capturedFrame\":" << capturedFrame << ",\"width\":" << width
+		   << ",\"height\":" << height << '}';
 	output.status = status.str();
 	if (!m_files->PublishImages(output))
 		return false;
@@ -199,7 +198,7 @@ bool WindowsLegacyCapture::SubmitQuad(bool completeRequest, std::uint64_t captur
 			output.statusFilename = "screenshot_status.json";
 			std::ostringstream status;
 			status.imbue(std::locale::classic());
-			status << "{\"timestamp\":\"" << detail::LocalTimestamp() << "\",\"layer\":\"quad\",\"eye\":";
+			status << "{\"timestamp\":\"" << LocalTimestamp() << "\",\"layer\":\"quad\",\"eye\":";
 			WriteJsonString(status, m_request.eye);
 			status << ",\"requestFrame\":" << m_requestFrame << ",\"capturedFrame\":" << capturedFrame
 				   << ",\"width\":" << m_quad.width << ",\"height\":" << m_quad.height << '}';
@@ -220,7 +219,7 @@ bool WindowsLegacyCapture::SubmitStereo(const std::uint8_t* left, const std::uin
 		return false;
 	const auto eyes = left && right ? 2u : 1u;
 	const auto pixels = std::uint64_t(width) * height;
-	if (!pixels || pixels > MaxCaptureBytes / (4 * eyes))
+	if (!pixels || pixels > s_maxCaptureBytes / (4 * eyes))
 		throw std::invalid_argument("Stereo capture exceeds its CPU byte bound");
 	const auto total = pixels * 4 * eyes;
 	std::vector<std::uint8_t> joined(static_cast<std::size_t>(total));
@@ -281,7 +280,7 @@ bool WindowsLegacyCapture::BeginBurst(int frames)
 	ImageOutput reset;
 	reset.resetBurst = true;
 	reset.statusFilename = "command_ack.json";
-	reset.status = "{\"timestamp\":\"" + detail::LocalTimestamp() + "\",\"command\":\"burst\",\"success\":true}";
+	reset.status = "{\"timestamp\":\"" + LocalTimestamp() + "\",\"command\":\"burst\",\"success\":true}";
 	if (!m_files->PublishImages(reset))
 		return false;
 	std::lock_guard lock(m_mutex);
@@ -365,7 +364,7 @@ void WindowsLegacyCapture::BurstOnFrame(const std::uint8_t* pixels, std::uint32_
 		flush = m_burstImages.size() >= static_cast<std::size_t>(m_burstTotal) ||
 				(!m_burstImages.empty() &&
 				 (width != m_burstImages.front().width || height != m_burstImages.front().height)) ||
-				std::uint64_t(width) * height > (MaxCaptureBytes - m_burstBytes) / 4;
+				std::uint64_t(width) * height > (s_maxCaptureBytes - m_burstBytes) / 4;
 		if (!flush)
 		{
 			auto image = CopyPixels(pixels, width, height, stride, true, FrameFilename(m_burstImages.size()));
@@ -390,7 +389,7 @@ void WindowsLegacyCapture::PublishStatus(FrameStatus status)
 	}
 	std::ostringstream output;
 	output.imbue(std::locale::classic());
-	output << "{\"timestamp\":\"" << detail::LocalTimestamp() << "\",\"frame_count\":" << status.frame
+	output << "{\"timestamp\":\"" << LocalTimestamp() << "\",\"frame_count\":" << status.frame
 		   << ",\"preview_width\":" << status.width << ",\"preview_height\":" << status.height << ",\"format\":";
 	WriteJsonString(output, status.format);
 	output << ",\"session_state\":";

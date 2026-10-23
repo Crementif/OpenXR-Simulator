@@ -1,8 +1,9 @@
 #include "control/legacy/backends/vulkan/WindowsVulkanCaptureChannel.h"
+#include "Pch.h"
+#include "runtime/Session.h"
 
-#include <algorithm>
 #include <stdexcept>
-#include <utility>
+#include <variant>
 
 namespace simxr
 {
@@ -66,7 +67,7 @@ mcp::BurstFrameMeta WindowsVulkanCaptureChannel::BurstMetadata(const mcp::HeadPo
 {
 	mcp::BurstFrameMeta metadata;
 	const auto snapshot = m_session->Snapshot();
-	metadata.frame = static_cast<std::uint32_t>(snapshot.lastSubmitted.value);
+	metadata.frame = snapshot.lastSubmitted.value;
 	metadata.headX = head.x;
 	metadata.headY = head.y;
 	metadata.headZ = head.z;

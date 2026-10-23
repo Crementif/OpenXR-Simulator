@@ -1,27 +1,24 @@
 #include "control/legacy/backends/vulkan/VulkanLegacyCapture.h"
+#include "Pch.h"
 #include "flicker_detector.h"
+#include "runtime/Session.h"
 
-#include <algorithm>
-#include <chrono>
 #include <locale>
+#include <functional>
 #include <sstream>
 #include <stdexcept>
-#include <utility>
 
 namespace simxr
 {
-namespace
-{
-constexpr std::size_t MaxCaptureJobs = 4;
-constexpr std::size_t MaxCaptureSources = 64;
-constexpr std::size_t MaxSourceBytes = 512 * 1024 * 1024;
+static constexpr std::size_t s_maxCaptureJobs = 4;
+static constexpr std::size_t s_maxCaptureSources = 64;
+static constexpr std::size_t s_maxSourceBytes = 512 * 1024 * 1024;
 
-bool CaptureFormat(VkFormat format)
+static bool CaptureFormat(VkFormat format)
 {
 	return format == VK_FORMAT_R8G8B8A8_UNORM || format == VK_FORMAT_R8G8B8A8_SRGB ||
 		   format == VK_FORMAT_B8G8R8A8_UNORM || format == VK_FORMAT_B8G8R8A8_SRGB;
 }
-} // namespace
 
 void VulkanLegacyCapture::Observe(const XrFrameEndInfo& info, const CompositionPlan& composition,
 								  const VulkanCaptureBindings& bindings) noexcept
@@ -96,10 +93,10 @@ std::optional<std::size_t> VulkanLegacyCapture::AddSource(Job& job, const LayerI
 			existing.extent.height == incoming.extent.height && existing.layer == incoming.layer)
 			return index;
 	}
-	if (job.sources.size() >= MaxCaptureSources)
+	if (job.sources.size() >= s_maxCaptureSources)
 		return {};
 	const auto bytes = CapturePixelBytes(source->region.extent.width, source->region.extent.height);
-	if (bytes > MaxSourceBytes - job.sourceBytes)
+	if (bytes > s_maxSourceBytes - job.sourceBytes)
 		return {};
 	job.sources.push_back(std::move(*source));
 	job.sourceBytes += bytes;
@@ -122,7 +119,7 @@ std::unique_ptr<VulkanLegacyCapture::Job> VulkanLegacyCapture::Prepare(const Com
 	plan.width = static_cast<std::uint32_t>(outputExtent.width);
 	plan.height = static_cast<std::uint32_t>(outputExtent.height);
 	const auto eyeBytes = CapturePixelBytes(plan.width, plan.height);
-	if (eyeBytes > MaxSourceBytes / plan.eyeCount)
+	if (eyeBytes > s_maxSourceBytes / plan.eyeCount)
 		return {};
 	for (const auto& draw : composition.draws)
 	{
@@ -184,7 +181,7 @@ void VulkanLegacyCapture::Submit(const XrFrameEndInfo& frame, const CompositionP
 	auto submit =
 		[&](const RequestState& request, XrExtent2Di extent, std::function<bool(LegacyScreenshot&)> complete = {})
 	{
-		if ((!hasProjection && !quadLayers) || m_jobs.size() >= MaxCaptureJobs ||
+		if ((!hasProjection && !quadLayers) || m_jobs.size() >= s_maxCaptureJobs ||
 			(request.selection.layer == "projection" && !hasProjection) ||
 			(request.selection.layer == "quad" && !quadLayers))
 			return false;

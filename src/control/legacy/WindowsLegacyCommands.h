@@ -17,7 +17,7 @@ struct HeadPoseCommand
 	float yaw = 0.0f;
 	float pitch = 0.0f;
 	float roll = 0.0f;
-	bool hasRoll = false; // false = leave g_headRoll alone (back-compat)
+	bool hasRoll = false; // False preserves the current roll.
 };
 
 struct FovCommand
@@ -61,7 +61,7 @@ struct AnaglyphCommand
 
 struct ProjLogEntry
 {
-	uint32_t frame = 0;
+	std::uint64_t frame = 0;
 	// Pose embedded in projection-layer view 0 (left eye).
 	float poseQx = 0;
 	float poseQy = 0;
@@ -91,7 +91,7 @@ struct BurstCommand
 
 struct BurstFrameMeta
 {
-	uint32_t frame = 0;
+	std::uint64_t frame = 0;
 	float headYaw = 0;
 	float headPitch = 0;
 	float headRoll = 0;

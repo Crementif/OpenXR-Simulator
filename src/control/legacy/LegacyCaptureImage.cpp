@@ -1,17 +1,14 @@
 #include "control/legacy/LegacyCaptureImage.h"
+#include "Pch.h"
 
-#include <algorithm>
-#include <array>
 #include <cmath>
 #include <stdexcept>
 
 namespace simxr
 {
-namespace
-{
-constexpr std::size_t MaxPixelBytes = 512 * 1024 * 1024;
+static constexpr std::size_t s_maxPixelBytes = 512 * 1024 * 1024;
 
-void ValidatePixels(const CapturePixels& source)
+static void ValidatePixels(const CapturePixels& source)
 {
 	if ((source.order != CaptureColorOrder::Rgba && source.order != CaptureColorOrder::Bgra) ||
 		(source.encoding != CaptureColorEncoding::Linear && source.encoding != CaptureColorEncoding::Srgb) ||
@@ -19,7 +16,7 @@ void ValidatePixels(const CapturePixels& source)
 		throw std::invalid_argument("Capture source pixels do not match their format and extent");
 }
 
-float DecodeColor(std::uint8_t channel, CaptureColorEncoding encoding)
+static float DecodeColor(std::uint8_t channel, CaptureColorEncoding encoding)
 {
 	if (encoding == CaptureColorEncoding::Linear)
 		return channel / 255.0f;
@@ -36,14 +33,14 @@ float DecodeColor(std::uint8_t channel, CaptureColorEncoding encoding)
 	return s_linearColors[channel];
 }
 
-std::uint8_t EncodeColor(float linear)
+static std::uint8_t EncodeColor(float linear)
 {
 	linear = std::clamp(linear, 0.0f, 1.0f);
 	const auto srgb = linear <= 0.0031308f ? 12.92f * linear : 1.055f * std::pow(linear, 1.0f / 2.4f) - 0.055f;
 	return static_cast<std::uint8_t>(std::clamp(std::lround(srgb * 255), 0L, 255L));
 }
 
-XrColor4f Texel(const CapturePixels& source, std::uint32_t x, std::uint32_t y)
+static XrColor4f Texel(const CapturePixels& source, std::uint32_t x, std::uint32_t y)
 {
 	const auto offset = (static_cast<std::size_t>(y) * source.width + x) * 4;
 	const auto* pixel = source.pixels.data() + offset;
@@ -53,13 +50,13 @@ XrColor4f Texel(const CapturePixels& source, std::uint32_t x, std::uint32_t y)
 			DecodeColor(pixel[blue], source.encoding), pixel[3] / 255.0f};
 }
 
-XrColor4f Interpolate(XrColor4f first, XrColor4f second, float weight)
+static XrColor4f Interpolate(XrColor4f first, XrColor4f second, float weight)
 {
 	return {std::lerp(first.r, second.r, weight), std::lerp(first.g, second.g, weight),
 			std::lerp(first.b, second.b, weight), std::lerp(first.a, second.a, weight)};
 }
 
-XrColor4f SampleLinear(const CapturePixels& source, XrVector2f coordinates)
+static XrColor4f SampleLinear(const CapturePixels& source, XrVector2f coordinates)
 {
 	const auto x = std::clamp(coordinates.x * source.width - 0.5f, 0.0f, static_cast<float>(source.width - 1));
 	const auto y = std::clamp(coordinates.y * source.height - 0.5f, 0.0f, static_cast<float>(source.height - 1));
@@ -71,12 +68,11 @@ XrColor4f SampleLinear(const CapturePixels& source, XrVector2f coordinates)
 	const auto lower = Interpolate(Texel(source, left, bottom), Texel(source, right, bottom), x - left);
 	return Interpolate(upper, lower, y - top);
 }
-} // namespace
 
 std::size_t CapturePixelBytes(std::uint32_t width, std::uint32_t height)
 {
 	const auto pixels = std::uint64_t{width} * height;
-	if (!pixels || pixels > MaxPixelBytes / 4)
+	if (!pixels || pixels > s_maxPixelBytes / 4)
 		throw std::invalid_argument("Capture pixel extent exceeds the 512 MiB bound");
 	return static_cast<std::size_t>(pixels * 4);
 }
@@ -87,13 +83,13 @@ std::vector<std::uint8_t> ComposeCaptureImage(const CaptureImagePlan& plan, std:
 		plan.draws.size() > 128)
 		throw std::invalid_argument("Capture requires one or two valid eye outputs and bounded sources");
 	const auto eyeBytes = CapturePixelBytes(plan.width, plan.height);
-	if (eyeBytes > MaxPixelBytes / plan.eyeCount)
+	if (eyeBytes > s_maxPixelBytes / plan.eyeCount)
 		throw std::invalid_argument("Packed capture exceeds the 512 MiB bound");
 	std::size_t sourceBytes = 0;
 	for (const auto& source : sources)
 	{
 		ValidatePixels(source);
-		if (source.pixels.size() > MaxPixelBytes - sourceBytes)
+		if (source.pixels.size() > s_maxPixelBytes - sourceBytes)
 			throw std::invalid_argument("Capture sources exceed the 512 MiB bound");
 		sourceBytes += source.pixels.size();
 	}

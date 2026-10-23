@@ -82,6 +82,8 @@ add_library(simxr_control STATIC
     src/control/legacy/LegacyInput.cpp
     src/control/legacy/WindowsLegacyChannel.cpp
     src/control/legacy/WindowsLegacyCapture.cpp
+    src/control/legacy/WindowsLegacyFiles.cpp
+    src/control/legacy/WindowsLegacyFormat.cpp
     src/control/HapticObservation.cpp
     src/control/WireProtocol.cpp
     src/control/InspectionDocument.cpp

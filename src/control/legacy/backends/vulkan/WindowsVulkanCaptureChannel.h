@@ -2,10 +2,15 @@
 
 #include "control/legacy/LegacyFileChannel.h"
 #include "control/legacy/WindowsLegacyCapture.h"
-#include "runtime/Session.h"
+#include <chrono>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
 
 namespace simxr
 {
+class Session;
 class WindowsVulkanCaptureChannel final : public LegacyCaptureChannel
 {
   public:
