@@ -1877,16 +1877,16 @@ static XrResult XRAPI_PTR xrDestroyInstance_runtime(XrInstance instance) {
     Logf("[SimXR] xrDestroyInstance called: instance=%p", instance);
 
     if (!RuntimeState().FindInstance(instance)) return XR_ERROR_HANDLE_INVALID;
-    if (instance == rt::g_instance.handle && rt::g_session.usesD3D12 && !rt::WaitForPreviewIdle(rt::g_session))
-        return XR_ERROR_RUNTIME_FAILURE;
-    if (!RuntimeState().Game().Snapshot().game) ControlEndpoint().Close();
-    RuntimeState().DestroyInstance(instance);
+	// Keep the registered handles available if native retirement needs a retry.
+	if (instance == rt::g_instance.handle && rt::g_session.handle != XR_NULL_HANDLE)
+	{
+		const auto result = DestroyNativeSession(rt::g_session.handle);
+		if (XR_FAILED(result)) return result;
+	}
+	if (!RuntimeState().Game().Snapshot().game) ControlEndpoint().Close();
+	const auto result = RuntimeState().DestroyInstance(instance);
+	if (XR_FAILED(result)) return result;
     if (instance == rt::g_instance.handle) {
-        if (rt::g_session.core) rt::g_session.core->Close();
-        if (rt::g_session.handle != XR_NULL_HANDLE) {
-            const auto result = DestroyNativeSession(rt::g_session.handle);
-            if (XR_FAILED(result)) return result;
-        }
 
         // MUST destroy the window before DLL unloads!
         // The OpenXR loader may unload our DLL after this call.
@@ -2322,17 +2322,10 @@ static XrResult DestroyNativeSession(XrSession s) {
 
 static XrResult XRAPI_PTR xrDestroySession_runtime(XrSession handle)
 {
-    if (handle == rt::g_session.handle && rt::g_session.usesD3D12 && !rt::WaitForPreviewIdle(rt::g_session))
-        return XR_ERROR_RUNTIME_FAILURE;
-	if (handle == rt::g_session.handle)
-	{
-		const auto closed = CloseVulkanSession();
-		if (XR_FAILED(closed))
-			return closed;
-	}
-	auto result = RuntimeState().DestroySession(handle);
-    if (XR_FAILED(result)) return result;
-    return DestroyNativeSession(handle);
+	if (!RuntimeState().FindSession(handle)) return XR_ERROR_HANDLE_INVALID;
+	const auto result = DestroyNativeSession(handle);
+	if (XR_FAILED(result)) return result;
+	return RuntimeState().DestroySession(handle);
 }
 
 
