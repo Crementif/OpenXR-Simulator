@@ -310,11 +310,35 @@ class SimulationTests(unittest.TestCase):
                     if process is not None:
                         process.communicate(timeout=5)
 
+    def test_runner_rejects_invalid_arguments_and_source_before_connect(self):
+        with tempfile.TemporaryDirectory(prefix='simxr-runner-input-') as directory:
+            root = Path(directory)
+            script = root / 'bounded.luau'
+            script.write_text('simxr.checkpoint("valid source", true)')
+            base = [RUNNER, '--socket', str(root / 'absent.sock'), '--rig', str(script)]
+            for flags, detail in [(['--json'], 'Missing nonempty value'),
+                                  (['--json', '--junit', 'report.xml'], 'Missing nonempty value'),
+                                  (['--junit', ''], 'Missing nonempty value'),
+                                  (['--session', '1'], 'must be supplied together'),
+                                  (['--generation', '1'], 'must be supplied together'),
+                                  (['--session', '0', '--generation', '1'], 'must be nonzero')]:
+                with self.subTest(flags=flags):
+                    result = subprocess.run(base + flags, capture_output=True, text=True, timeout=5)
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertIn(detail, result.stderr)
+            script.write_bytes(b' ' * (1024 * 1024 + 1))
+            result = subprocess.run(base, capture_output=True, text=True, timeout=5)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn('Rig source exceeds 1 MiB', result.stderr)
+            result = subprocess.run(base[:-1] + [str(root)], capture_output=True, text=True, timeout=5)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertRegex(result.stderr, r'Cannot (open|read) rig:')
+
     def test_actual_headless_runner_socket_and_reports(self):
         with tempfile.TemporaryDirectory(prefix='simxr-luau-') as directory:
             path, marker = Path(directory) / 'control.sock', Path(directory) / 'start'
-            script = Path(directory) / 'input.luau'
-            report, junit = Path(directory) / 'run.json', Path(directory) / 'run.xml'
+            script = Path(directory) / '入力-é.luau'
+            report, junit = Path(directory) / '結果-é.json', Path(directory) / '結果-é.xml'
             script.write_text('''simxr.pause()
 local id = simxr.schedule({frame="1", commands={
     {kind="take_control",channel="gaze"},
@@ -329,6 +353,14 @@ simxr.checkpoint("actual gaze", simxr.state().configuration.gaze.yaw == 0.25)
             runner = None
             try:
                 wait_for(path.exists, host)
+                report_probe = Path(directory) / 'report-write.luau'
+                report_probe.write_text('simxr.checkpoint("report write", true)')
+                failed = subprocess.run([RUNNER, '--socket', str(path), '--rig', str(report_probe),
+                                         '--json', directory], capture_output=True, text=True, timeout=5)
+                self.assertNotEqual(failed.returncode, 0, failed.stdout)
+                self.assertEqual(json.loads(failed.stdout)['phase'], 'complete')
+                self.assertIn('Cannot open report:', failed.stderr)
+                self.assertTrue(Path(directory).is_dir())
                 runner = subprocess.Popen([RUNNER, '--socket', str(path), '--rig', str(script), '--seed', '83',
                                            '--json', str(report), '--junit', str(junit)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
                 with Client(path) as observer:

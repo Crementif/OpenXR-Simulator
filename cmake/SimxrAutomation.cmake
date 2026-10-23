@@ -18,13 +18,20 @@ add_library(simxr_automation STATIC
     src/automation/RigProgress.cpp
     src/automation/RigRuntime.cpp
     src/automation/RigReport.cpp
-    src/automation/ScriptEngine.cpp)
+    src/automation/ScriptEngine.cpp
+    src/automation/ScriptValues.cpp)
 simxr_configure_target(simxr_automation)
 target_link_libraries(simxr_automation PUBLIC simxr_control simxr_recording PRIVATE Luau.Compiler Luau.VM)
 add_library(simxr_rig_controller STATIC src/app/services/RigController.cpp)
 simxr_configure_target(simxr_rig_controller)
 target_link_libraries(simxr_rig_controller PUBLIC simxr_automation simxr_connection PRIVATE simxr_app_platform)
 add_executable(simxr_runner src/automation/RunnerMain.cpp)
+if(WIN32)
+    target_sources(simxr_runner PRIVATE src/platform/windows/RunnerMain.cpp)
+endif()
+if(MINGW)
+    target_link_options(simxr_runner PRIVATE -municode)
+endif()
 simxr_configure_target(simxr_runner)
 simxr_set_output_directory(simxr_runner)
 target_link_libraries(simxr_runner PRIVATE simxr_automation)

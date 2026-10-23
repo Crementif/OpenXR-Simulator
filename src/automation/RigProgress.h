@@ -1,6 +1,6 @@
 #pragma once
 
-#include "automation/RigRunner.h"
+#include "automation/RigTypes.h"
 
 #include <atomic>
 #include <chrono>

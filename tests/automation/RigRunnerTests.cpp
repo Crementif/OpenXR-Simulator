@@ -219,10 +219,18 @@ for _, anchor in {'4294967296', '18446744073709551615'} do
         simxr.schedule({frame='1', commands={{kind='tracker', anchor=anchor}}})
     end))
 end
+for _, value in {1e100, -1e100, math.huge, -math.huge, 0/0} do
+    for _, command in {{kind='gaze', yaw=value}, {kind='head_pose', position={value, 0, 0}}} do
+        local accepted, error = pcall(function()
+            simxr.schedule({frame='1', commands={command}})
+        end)
+        assert(not accepted and string.find(error, 'finite float value'))
+    end
+end
 )"));
 	runner.Join();
 	Require(runner.Snapshot().phase == automation::RigPhase::Complete && submissions == 0,
-		"Malformed inspection or narrowed tracker anchor escaped script validation");
+		"Malformed inspection, tracker anchor or nonrepresentable float escaped script validation");
 }
 
 void CheckReportText()

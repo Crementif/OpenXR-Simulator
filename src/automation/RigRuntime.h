@@ -1,6 +1,6 @@
 #pragma once
 
-#include "automation/RigRunner.h"
+#include "automation/RigTypes.h"
 #include "control/ControlSchema.h"
 #include "simulation/CommandTypes.h"
 
@@ -82,18 +82,18 @@ class RigRuntime
 	std::vector<std::byte> ProjectionHistory(std::uint32_t count);
 	std::vector<std::byte> ImageHistory(std::uint32_t count, control::TargetKind target);
 	void ExportHistory(std::uint64_t frame, const std::string& path, std::optional<std::uint32_t> arraySlice,
-		control::TargetKind target);
+					   control::TargetKind target);
 	ScriptInspection BeginImageWindow(control::TargetKind target);
 	std::vector<std::byte> ImageWindow(std::uint64_t window);
 	void ExportWindowImage(std::uint64_t window, std::uint64_t frame, const std::string& path,
-		std::optional<std::uint32_t> arraySlice);
+						   std::optional<std::uint32_t> arraySlice);
 	void ReleaseImageWindow(std::uint64_t window);
 	std::vector<std::byte> Revision(std::uint64_t revision);
 	void ReleaseInspection(std::uint64_t inspection);
 	std::vector<std::byte> State();
 	void ReleaseInputs();
-	void Export(std::uint64_t capture, const std::string& path,
-				std::optional<ScriptCaptureTarget> target, std::optional<std::uint32_t> arraySlice);
+	void Export(std::uint64_t capture, const std::string& path, std::optional<ScriptCaptureTarget> target,
+				std::optional<std::uint32_t> arraySlice);
 	void ReleaseCapture(std::uint64_t capture);
 	ScriptGameOperation GameCommand(std::uint32_t kind, std::string payload);
 	std::vector<std::byte> AwaitGame(std::uint64_t game, std::uint64_t operation);

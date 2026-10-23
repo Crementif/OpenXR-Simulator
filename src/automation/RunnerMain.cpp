@@ -1,6 +1,9 @@
-#include "simxr/Version.h"
+#include "automation/RunnerMain.h"
+#include "Pch.h"
+
 #include "automation/RigRunner.h"
 #include "control/ControlSchema.h"
+#include "simxr/Version.h"
 #if defined(__linux__) || defined(_WIN32)
 #include "control/LocalControlClient.h"
 #endif
@@ -10,19 +13,15 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
-#include <iterator>
 #include <stdexcept>
-#include <string_view>
 #include <thread>
 
-namespace
+static volatile std::sig_atomic_t s_interrupted = 0;
+static void Interrupt(int)
 {
-volatile std::sig_atomic_t interrupted = 0;
-void Interrupt(int)
-{
-	interrupted = 1;
+	s_interrupted = 1;
 }
-std::uint64_t Integer(std::string_view text)
+static std::uint64_t Integer(std::string_view text)
 {
 	std::uint64_t value = 0;
 	const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
@@ -30,18 +29,49 @@ std::uint64_t Integer(std::string_view text)
 		throw std::invalid_argument("Expected unsigned integer");
 	return value;
 }
-void Write(const std::string& path, const std::string& text)
+static std::filesystem::path Utf8Path(std::string_view path)
+{
+	return std::filesystem::path{std::u8string{path.begin(), path.end()}};
+}
+
+static std::string ReadRig(const std::string& path)
+{
+	std::ifstream input(Utf8Path(path), std::ios::binary);
+	if (!input)
+		throw std::runtime_error("Cannot open rig: " + path);
+	std::string source;
+	std::array<char, 65536> bytes;
+	while (input)
+	{
+		input.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+		const auto count = static_cast<std::size_t>(input.gcount());
+		if (count > simxr::control::MaxPayload - source.size())
+			throw std::length_error("Rig source exceeds 1 MiB");
+		source.append(bytes.data(), count);
+	}
+	if (input.bad() || !input.eof())
+		throw std::runtime_error("Cannot read rig: " + path);
+	input.clear();
+	input.close();
+	if (!input)
+		throw std::runtime_error("Cannot close rig: " + path);
+	return source;
+}
+
+static void Write(const std::string& path, const std::string& text)
 {
 	if (path.empty())
 		return;
-	std::ofstream output(path, std::ios::binary | std::ios::trunc);
+	std::ofstream output(Utf8Path(path), std::ios::binary | std::ios::trunc);
+	if (!output)
+		throw std::runtime_error("Cannot open report: " + path);
 	output << text << '\n';
 	output.close();
 	if (!output)
 		throw std::runtime_error("Cannot write report: " + path);
 }
-} // namespace
-int main(int argc, char** argv)
+
+int simxr::automation::RunRunner(int argc, char** argv)
 {
 	try
 	{
@@ -61,17 +91,26 @@ int main(int argc, char** argv)
 						  "[--deadline-ms N] [--json PATH] [--junit PATH]");
 				return 0;
 			}
-			if (i + 1 == argc)
-				throw std::invalid_argument("Missing option value");
+			if (flag != "--socket" && flag != "--rig" && flag != "--session" && flag != "--generation" &&
+				flag != "--seed" && flag != "--deadline-ms" && flag != "--json" && flag != "--junit")
+				throw std::invalid_argument("Unknown option: " + std::string{flag});
+			if (i + 1 == argc || !argv[i + 1][0] || std::string_view{argv[i + 1]}.starts_with("--"))
+				throw std::invalid_argument("Missing nonempty value for " + std::string{flag});
 			const std::string value = argv[++i];
 			if (flag == "--socket")
 				socket = value;
 			else if (flag == "--rig")
 				script = value;
-			else if (flag == "--session")
-				options.session.value = Integer(value);
-			else if (flag == "--generation")
-				options.generation = Integer(value);
+			else if (flag == "--session" || flag == "--generation")
+			{
+				const auto identity = Integer(value);
+				if (!identity)
+					throw std::invalid_argument("Session and generation identifiers must be nonzero");
+				if (flag == "--session")
+					options.session.value = identity;
+				else
+					options.generation = identity;
+			}
 			else if (flag == "--seed")
 				options.seed = Integer(value);
 			else if (flag == "--deadline-ms")
@@ -79,23 +118,18 @@ int main(int argc, char** argv)
 				const auto count = Integer(value);
 				if (!count || count > 3600000)
 					throw std::invalid_argument("Deadline must be 1 through 3600000 ms");
-				options.deadline = std::chrono::milliseconds{count};
+				options.deadline = std::chrono::milliseconds{static_cast<std::int64_t>(count)};
 			}
 			else if (flag == "--json")
 				json = value;
 			else if (flag == "--junit")
 				junit = value;
-			else
-				throw std::invalid_argument("Unknown option: " + std::string{flag});
 		}
 		if (socket.empty() || script.empty())
 			throw std::invalid_argument("--socket and --rig are required");
-		if (std::filesystem::file_size(script) > simxr::control::MaxPayload)
-			throw std::length_error("Rig source exceeds 1 MiB");
-		std::ifstream input(script, std::ios::binary);
-		if (!input)
-			throw std::runtime_error("Cannot open rig");
-		options.source.assign(std::istreambuf_iterator<char>{input}, {});
+		if (static_cast<bool>(options.session.value) != static_cast<bool>(options.generation))
+			throw std::invalid_argument("--session and --generation must be supplied together");
+		options.source = ReadRig(script);
 		options.name = "@" + script;
 #if defined(__linux__) || defined(_WIN32)
 		namespace wire = simxr::control;
@@ -159,7 +193,7 @@ int main(int argc, char** argv)
 			if (state.phase != simxr::automation::RigPhase::Running &&
 				state.phase != simxr::automation::RigPhase::Paused)
 				break;
-			if (interrupted)
+			if (s_interrupted)
 				runner.Cancel();
 			std::this_thread::sleep_for(std::chrono::milliseconds{10});
 		}
@@ -179,3 +213,10 @@ int main(int argc, char** argv)
 		return 1;
 	}
 }
+
+#if !defined(_WIN32)
+int main(int argc, char** argv)
+{
+	return simxr::automation::RunRunner(argc, argv);
+}
+#endif
