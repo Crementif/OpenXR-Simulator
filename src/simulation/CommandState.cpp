@@ -1,24 +1,21 @@
 #include "simulation/CommandState.h"
+#include "Pch.h"
 #include "runtime/validation/Path.h"
 #include "simulation/TrackingSystem.h"
 
 #include <stdexcept>
 #include <type_traits>
-#include <utility>
 
 namespace simxr
 {
-namespace
-{
-constexpr std::size_t Index(ControlChannel channel)
+static constexpr std::size_t Index(ControlChannel channel)
 {
 	return static_cast<std::size_t>(channel);
 }
-constexpr std::size_t Index(FailureScenario scenario)
+static constexpr std::size_t Index(FailureScenario scenario)
 {
 	return static_cast<std::size_t>(scenario);
 }
-} // namespace
 
 ControlChannel CommandState::ScenarioChannel(FailureScenario scenario)
 {

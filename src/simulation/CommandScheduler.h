@@ -3,7 +3,9 @@
 #include "simulation/CommandRecorder.h"
 #include "simulation/CommandState.h"
 #include "simulation/PoseSequenceExecution.h"
+
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -21,7 +23,8 @@ class CommandScheduler
 	void Start(std::uint64_t seed = 0, std::optional<CommandConfiguration> initial = {});
 	void Close();
 	CommandOutcome Submit(CommandTransaction transaction);
-	std::optional<PoseSequenceStatus> StartPoseSequence(CommandSource owner, std::shared_ptr<const PoseSequence> program);
+	std::optional<PoseSequenceStatus> StartPoseSequence(CommandSource owner,
+														std::shared_ptr<const PoseSequence> program);
 	std::optional<PoseSequenceStatus> PoseSequenceStatusFor(CommandSource owner) const;
 	std::array<bool, ControlChannelCount> StopPoseSequence(CommandSource owner);
 	std::optional<CommandOutcome> Read(CommandSource source, std::uint64_t id) const;

@@ -1,15 +1,12 @@
 #include "simulation/CommandScheduler.h"
+#include "Pch.h"
 
-#include <algorithm>
 #include <bit>
 #include <limits>
 #include <stdexcept>
 #include <type_traits>
-#include <utility>
 
 namespace simxr
-{
-namespace
 {
 // Canonical words compare retry payloads exactly, including float bits. They are
 // an internal identity representation, not a wire format or an object-memory dump.
@@ -153,7 +150,7 @@ class CommandIdentityBuilder
   private:
 	std::vector<std::uint64_t> m_words;
 };
-std::vector<std::uint64_t> RequestWords(const CommandTransaction& transaction)
+static std::vector<std::uint64_t> RequestWords(const CommandTransaction& transaction)
 {
 	CommandIdentityBuilder identity;
 	identity.Add(transaction.source.kind);
@@ -206,9 +203,9 @@ std::vector<std::uint64_t> RequestWords(const CommandTransaction& transaction)
 	}
 	return std::move(identity).Finish();
 }
-std::optional<CommandOutcome> ReleaseOutcome(CommandSource source,
-											 const std::array<bool, ControlChannelCount>& channels, FrameId frame,
-											 SimulationTime time, bool afterFrame)
+static std::optional<CommandOutcome> ReleaseOutcome(CommandSource source,
+													const std::array<bool, ControlChannelCount>& channels,
+													FrameId frame, SimulationTime time, bool afterFrame)
 {
 	const auto count = std::count(channels.begin(), channels.end(), true);
 	if (!count)
@@ -225,12 +222,12 @@ std::optional<CommandOutcome> ReleaseOutcome(CommandSource source,
 			outcome.transaction.commands.push_back(ReleaseControl{static_cast<ControlChannel>(index)});
 	return outcome;
 }
-bool ValidSource(CommandSource source)
+static bool ValidSource(CommandSource source)
 {
 	return source.id && (source.kind == CommandSourceKind::Manual || source.kind == CommandSourceKind::Mcp ||
 						 source.kind == CommandSourceKind::Rig);
 }
-} // namespace
+
 class CommandScheduler::PreparedCommandBoundary
 {
   public:
@@ -333,7 +330,8 @@ class CommandScheduler::PreparedCommandBoundary
 		if (auto outcome = ReleaseOutcome(source, channels, m_snapshot->frame, m_snapshot->time, false))
 			m_snapshot->outcomes.push_back(std::move(*outcome));
 	}
-	void ApplySequence(FrameId frame, SimulationTime time, RuntimeTime runtimeTime, const CommandConfiguration& baseline)
+	void ApplySequence(FrameId frame, SimulationTime time, RuntimeTime runtimeTime,
+					   const CommandConfiguration& baseline)
 	{
 		if (!m_sequence || !m_sequence->CanPrepare())
 			return;
@@ -377,8 +375,11 @@ class CommandScheduler::PreparedCommandBoundary
 				if (auto* take = std::get_if<TakeControl>(&command))
 					take->replace = owned[static_cast<std::size_t>(take->channel)];
 			CommandOutcome outcome;
-			outcome.transaction = {m_sequence->Status().groups + 1, m_sequence->Source(), {frame, {}},
-				CommandLatePolicy::Reject, std::move(prepared.commands)};
+			outcome.transaction = {m_sequence->Status().groups + 1,
+								   m_sequence->Source(),
+								   {frame, {}},
+								   CommandLatePolicy::Reject,
+								   std::move(prepared.commands)};
 			outcome.appliedFrame = frame;
 			outcome.appliedTime = time;
 			result = outcome.result = m_state.Apply(outcome.transaction, baseline, runtimeTime);
@@ -389,7 +390,8 @@ class CommandScheduler::PreparedCommandBoundary
 		if (result != CommandResult::Applied)
 			ReleaseSource(m_sequence->Source());
 		else if (prepared.capture)
-			m_snapshot->sequenceCapture = SequenceCaptureIntent{m_sequence->Status().id, frame, m_sequence->Status().owner};
+			m_snapshot->sequenceCapture =
+				SequenceCaptureIntent{m_sequence->Status().id, frame, m_sequence->Status().owner};
 	}
 	CommandState m_state;
 	std::deque<CommandOutcome> m_pending;
@@ -466,7 +468,7 @@ CommandOutcome CommandScheduler::Submit(CommandTransaction transaction)
 	const auto same = [&](const auto& value)
 	{
 		return value.transaction.source.kind != CommandSourceKind::Sequence &&
-			value.transaction.source.id == request.source.id && value.transaction.id == request.id;
+			   value.transaction.source.id == request.source.id && value.transaction.id == request.id;
 	};
 	for (const auto* records : {&m_pending, &m_outcomes})
 		if (const auto found = std::find_if(records->begin(), records->end(), same); found != records->end())
@@ -636,7 +638,7 @@ std::array<bool, ControlChannelCount> CommandScheduler::ReleaseSource(CommandSou
 	return released;
 }
 std::optional<PoseSequenceStatus> CommandScheduler::StartPoseSequence(CommandSource owner,
-	std::shared_ptr<const PoseSequence> program)
+																	  std::shared_ptr<const PoseSequence> program)
 {
 	if (!ValidSource(owner) || !program)
 		throw std::invalid_argument("Invalid sequence source or program");
@@ -649,7 +651,8 @@ std::optional<PoseSequenceStatus> CommandScheduler::StartPoseSequence(CommandSou
 		throw std::overflow_error("Sequence identities exhausted");
 	const auto previous = m_applied.empty() ? 0 : m_applied.back()->frame.value;
 	if (previous == std::numeric_limits<std::uint64_t>::max() ||
-		(program->Size() && program->Steps().back().frame.value > std::numeric_limits<std::uint64_t>::max() - previous - 1))
+		(program->Size() &&
+		 program->Steps().back().frame.value > std::numeric_limits<std::uint64_t>::max() - previous - 1))
 		throw std::overflow_error("Pose sequence extends beyond the frame counter");
 	const auto previousSource = m_replacedSequence.value_or(m_sequence ? m_sequence->Source() : CommandSource{});
 	PoseSequenceExecution prepared(m_nextSequence, owner, std::move(program), m_state.OwnedChannels(previousSource));

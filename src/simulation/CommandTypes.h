@@ -3,6 +3,7 @@
 #include "presentation/FrameTypes.h"
 #include "simulation/InputState.h"
 #include "simulation/ReferenceSpaceState.h"
+#include "simulation/TrackingTypes.h"
 #include "simulation/ViewConfiguration.h"
 
 #include <array>

@@ -1,6 +1,6 @@
 #include "simulation/CommandRecorder.h"
+#include "Pch.h"
 
-#include <algorithm>
 #include <stdexcept>
 
 namespace simxr
