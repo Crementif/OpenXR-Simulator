@@ -1,20 +1,20 @@
-#include "Pch.h"
 #include "graphics/backends/opengl/OpenGLBackend.h"
+#include "Pch.h"
+
 #include "platform/windows/OpenGLContextScope.h"
 #include "CompositorGlsl.h"
 #include "graphics/backends/vulkan/VulkanBackend.h"
 #include <GL/glext.h>
 #include <GL/wglext.h>
-#include <algorithm>
 #include <bit>
 #include <cstring>
 #include <mutex>
+#include <new>
 #include <stdexcept>
-#include <string>
 
 namespace simxr
 {
-template<typename Function> static Function Procedure(const char* name)
+template <typename Function> static Function Procedure(const char* name)
 {
 	const auto address = wglGetProcAddress(name);
 	const auto value = std::bit_cast<std::uintptr_t>(address);
@@ -22,11 +22,13 @@ template<typename Function> static Function Procedure(const char* name)
 		throw std::runtime_error(std::string("Required OpenGL command unavailable: ") + name);
 	return std::bit_cast<Function>(address);
 }
+
 static bool IsDepthFormat(GLenum format)
 {
-	return format == GL_DEPTH_COMPONENT16 || format == GL_DEPTH_COMPONENT24 ||
-		format == GL_DEPTH_COMPONENT32F || format == GL_DEPTH24_STENCIL8 || format == GL_DEPTH32F_STENCIL8;
+	return format == GL_DEPTH_COMPONENT16 || format == GL_DEPTH_COMPONENT24 || format == GL_DEPTH_COMPONENT32F ||
+		   format == GL_DEPTH24_STENCIL8 || format == GL_DEPTH32F_STENCIL8;
 }
+
 static void CheckGL(const char* operation)
 {
 	if (glGetError() != GL_NO_ERROR)
@@ -46,29 +48,40 @@ class OpenGLContext final
 		const auto create = Procedure<PFNWGLCREATECONTEXTATTRIBSARBPROC>("wglCreateContextAttribsARB");
 		m_releaseDevice = Procedure<PFNWGLRELEASEPBUFFERDCARBPROC>("wglReleasePbufferDCARB");
 		m_destroy = Procedure<PFNWGLDESTROYPBUFFERARBPROC>("wglDestroyPbufferARB");
-		const int pixelAttributes[]{WGL_DRAW_TO_PBUFFER_ARB, TRUE, WGL_SUPPORT_OPENGL_ARB, TRUE,
-			WGL_PIXEL_TYPE_ARB, WGL_TYPE_RGBA_ARB, WGL_COLOR_BITS_ARB, 24, WGL_ALPHA_BITS_ARB, 8, 0};
+		const int pixelAttributes[]{WGL_DRAW_TO_PBUFFER_ARB,
+									TRUE,
+									WGL_SUPPORT_OPENGL_ARB,
+									TRUE,
+									WGL_PIXEL_TYPE_ARB,
+									WGL_TYPE_RGBA_ARB,
+									WGL_COLOR_BITS_ARB,
+									24,
+									WGL_ALPHA_BITS_ARB,
+									8,
+									0};
 		int format = 0;
 		UINT count = 0;
-		if (!Procedure<PFNWGLCHOOSEPIXELFORMATARBPROC>("wglChoosePixelFormatARB")(
-			applicationDevice, pixelAttributes, nullptr, 1, &format, &count) || !count)
+		if (!Procedure<PFNWGLCHOOSEPIXELFORMATARBPROC>("wglChoosePixelFormatARB")(applicationDevice, pixelAttributes,
+																				  nullptr, 1, &format, &count) ||
+			!count)
 			throw std::runtime_error("Cannot select OpenGL offscreen pixel format");
 		const int pbufferAttributes[]{0};
-		m_pbuffer = Procedure<PFNWGLCREATEPBUFFERARBPROC>("wglCreatePbufferARB")(
-			applicationDevice, format, 1, 1, pbufferAttributes);
+		m_pbuffer = Procedure<PFNWGLCREATEPBUFFERARBPROC>("wglCreatePbufferARB")(applicationDevice, format, 1, 1,
+																				 pbufferAttributes);
 		if (!m_pbuffer)
 			throw std::runtime_error("Cannot create OpenGL offscreen drawable");
 		try
 		{
-			device = Procedure<PFNWGLGETPBUFFERDCARBPROC>("wglGetPbufferDCARB")(m_pbuffer);
-			if (!device)
+			m_device = Procedure<PFNWGLGETPBUFFERDCARBPROC>("wglGetPbufferDCARB")(m_pbuffer);
+			if (!m_device)
 				throw std::runtime_error("Cannot acquire OpenGL offscreen device");
-			const int attributes[]{WGL_CONTEXT_MAJOR_VERSION_ARB, 4, WGL_CONTEXT_MINOR_VERSION_ARB, 5,
-				WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_CORE_PROFILE_BIT_ARB, 0};
-			handle = create(device, applicationContext, attributes);
-			if (!handle)
+			const int attributes[]{
+				WGL_CONTEXT_MAJOR_VERSION_ARB,	  4, WGL_CONTEXT_MINOR_VERSION_ARB, 5, WGL_CONTEXT_PROFILE_MASK_ARB,
+				WGL_CONTEXT_CORE_PROFILE_BIT_ARB, 0};
+			m_handle = create(m_device, applicationContext, attributes);
+			if (!m_handle)
 				throw std::runtime_error("Cannot create shared OpenGL 4.5 context");
-			windows::OpenGLContextScope current(device, handle);
+			windows::OpenGLContextScope current(m_device, m_handle);
 			if (!current.Current())
 				throw std::runtime_error("Cannot activate compositor OpenGL context");
 			const auto getString = Procedure<PFNGLGETSTRINGIPROC>("glGetStringi");
@@ -85,9 +98,9 @@ class OpenGLContext final
 			// Validate cleanup entry points before any frame can partially allocate.
 			Procedure<PFNGLDELETEMEMORYOBJECTSEXTPROC>("glDeleteMemoryObjectsEXT");
 			Procedure<PFNGLDELETESEMAPHORESEXTPROC>("glDeleteSemaphoresEXT");
-			program = CreateProgram(shaders::CompositorVertexGlsl, shaders::CompositorPixelGlsl);
-			depthMsProgram = CreateProgram(shaders::CompositorVertexGlsl, shaders::CompositorDepthMsGlsl);
-			Procedure<PFNGLCREATEVERTEXARRAYSPROC>("glCreateVertexArrays")(1, &vertexArray);
+			m_program = CreateProgram(shaders::CompositorVertexGlsl, shaders::CompositorPixelGlsl);
+			m_depthMsProgram = CreateProgram(shaders::CompositorVertexGlsl, shaders::CompositorDepthMsGlsl);
+			Procedure<PFNGLCREATEVERTEXARRAYSPROC>("glCreateVertexArrays")(1, &m_vertexArray);
 			CheckGL("Initialize canonical OpenGL compositor");
 		}
 		catch (...)
@@ -96,17 +109,19 @@ class OpenGLContext final
 			throw;
 		}
 	}
+
 	~OpenGLContext()
 	{
 		Close();
 	}
-	std::mutex mutex;
-	HDC device = nullptr;
-	HGLRC handle = nullptr;
-	GLuint program = 0, depthMsProgram = 0, vertexArray = 0;
+
+	std::mutex m_mutex;
+	HDC m_device = nullptr;
+	HGLRC m_handle = nullptr;
+	GLuint m_program = 0, m_depthMsProgram = 0, m_vertexArray = 0;
 
   private:
-	GLuint CreateProgram(const char* vertex, const char* pixel)
+	static GLuint CreateProgram(const char* vertex, const char* pixel)
 	{
 		const auto compile = [](GLenum stage, const char* source)
 		{
@@ -151,31 +166,34 @@ class OpenGLContext final
 		Procedure<PFNGLDELETESHADERPROC>("glDeleteShader")(ps);
 		return linked;
 	}
+
 	void Close() noexcept
 	{
-		if (handle)
+		if (m_handle)
 		{
-			windows::OpenGLContextScope current(device, handle);
+			windows::OpenGLContextScope current(m_device, m_handle);
 			if (current.Current())
 			{
-				if (program)
-					std::bit_cast<PFNGLDELETEPROGRAMPROC>(wglGetProcAddress("glDeleteProgram"))(program);
-				if (depthMsProgram)
-					std::bit_cast<PFNGLDELETEPROGRAMPROC>(wglGetProcAddress("glDeleteProgram"))(depthMsProgram);
-				if (vertexArray)
-					std::bit_cast<PFNGLDELETEVERTEXARRAYSPROC>(wglGetProcAddress("glDeleteVertexArrays"))(1, &vertexArray);
+				if (m_program)
+					std::bit_cast<PFNGLDELETEPROGRAMPROC>(wglGetProcAddress("glDeleteProgram"))(m_program);
+				if (m_depthMsProgram)
+					std::bit_cast<PFNGLDELETEPROGRAMPROC>(wglGetProcAddress("glDeleteProgram"))(m_depthMsProgram);
+				if (m_vertexArray)
+					std::bit_cast<PFNGLDELETEVERTEXARRAYSPROC>(wglGetProcAddress("glDeleteVertexArrays"))(
+						1, &m_vertexArray);
 			}
 		}
-		if (handle)
-			wglDeleteContext(handle);
-		if (device)
-			m_releaseDevice(m_pbuffer, device);
+		if (m_handle)
+			wglDeleteContext(m_handle);
+		if (m_device)
+			m_releaseDevice(m_pbuffer, m_device);
 		if (m_pbuffer)
 			m_destroy(m_pbuffer);
-		handle = nullptr;
-		device = nullptr;
+		m_handle = nullptr;
+		m_device = nullptr;
 		m_pbuffer = nullptr;
 	}
+
 	HPBUFFERARB m_pbuffer = nullptr;
 	PFNWGLRELEASEPBUFFERDCARBPROC m_releaseDevice = nullptr;
 	PFNWGLDESTROYPBUFFERARBPROC m_destroy = nullptr;
@@ -192,25 +210,30 @@ struct OpenGLFrame::Resources
 	std::optional<LayerImageDescription> capture;
 	std::vector<OpenGLCompositionSource> sources;
 	std::vector<GLuint> copies;
-	GLuint texture = 0, memory = 0, framebuffer = 0, sourceFramebuffer = 0, copyFramebuffer = 0;
+	// Container attachments keep every source texture alive through native retirement.
+	std::vector<GLuint> sourceFramebuffers;
+	GLuint texture = 0, memory = 0, framebuffer = 0, copyFramebuffer = 0;
 	GLuint availableGL = 0, readyGL = 0;
 	GLsync completion = nullptr;
 	VkCommandPool pool = VK_NULL_HANDLE;
 	VkCommandBuffer initialize = VK_NULL_HANDLE;
 	VkFence initialized = VK_NULL_HANDLE;
 	bool submitted = false;
+	bool sourcesUsed = false;
 	bool retainSource = false;
 };
+
 OpenGLFrame::OpenGLFrame(std::shared_ptr<OpenGLContext> context, std::span<const FrameView> views)
 	: FrameOutput(views), m_resources(std::make_unique<Resources>())
 {
 	m_resources->context = std::move(context);
 }
+
 OpenGLFrame::~OpenGLFrame()
 {
 	auto& resources = *m_resources;
-	std::lock_guard lock(resources.context->mutex);
-	windows::OpenGLContextScope current(resources.context->device, resources.context->handle);
+	std::lock_guard lock(resources.context->m_mutex);
+	windows::OpenGLContextScope current(resources.context->m_device, resources.context->m_handle);
 	if (!current.Current())
 	{
 		m_resources.release(); // Retain context and GPU owners if native cleanup cannot be acquired.
@@ -218,8 +241,10 @@ OpenGLFrame::~OpenGLFrame()
 	}
 	if (resources.completion)
 		Procedure<PFNGLDELETESYNCPROC>("glDeleteSync")(resources.completion);
-	const GLuint framebuffers[]{resources.framebuffer, resources.sourceFramebuffer, resources.copyFramebuffer};
-	Procedure<PFNGLDELETEFRAMEBUFFERSPROC>("glDeleteFramebuffers")(3, framebuffers);
+	const auto deleteFramebuffers = Procedure<PFNGLDELETEFRAMEBUFFERSPROC>("glDeleteFramebuffers");
+	const GLuint framebuffers[]{resources.framebuffer, resources.copyFramebuffer};
+	deleteFramebuffers(2, framebuffers);
+	deleteFramebuffers(static_cast<GLsizei>(resources.sourceFramebuffers.size()), resources.sourceFramebuffers.data());
 	glDeleteTextures(1, &resources.texture);
 	glDeleteTextures(static_cast<GLsizei>(resources.copies.size()), resources.copies.data());
 	if (resources.memory)
@@ -236,24 +261,34 @@ OpenGLFrame::~OpenGLFrame()
 			vkDestroyCommandPool(device, resources.pool, nullptr);
 	}
 }
+
 CompletionStatus OpenGLFrame::PollCompletion() const noexcept
 {
 	auto& resources = *m_resources;
+	std::lock_guard lock(resources.context->m_mutex);
 	if (!resources.submitted || !resources.completion ||
 		vkGetFenceStatus(resources.image->Image()->device->binding.device, resources.initialized) != VK_SUCCESS)
 		return CompletionStatus::Pending;
-	std::lock_guard lock(resources.context->mutex);
-	windows::OpenGLContextScope current(resources.context->device, resources.context->handle);
+	windows::OpenGLContextScope current(resources.context->m_device, resources.context->m_handle);
 	if (!current.Current())
 		return CompletionStatus::Pending;
 	const auto wait = std::bit_cast<PFNGLCLIENTWAITSYNCPROC>(wglGetProcAddress("glClientWaitSync"));
 	const auto result = wait(resources.completion, 0, 0);
-	return result == GL_ALREADY_SIGNALED || result == GL_CONDITION_SATISFIED ? CompletionStatus::Complete : CompletionStatus::Pending;
+	return result == GL_ALREADY_SIGNALED || result == GL_CONDITION_SATISFIED ? CompletionStatus::Complete
+																			 : CompletionStatus::Pending;
 }
+
+bool OpenGLFrame::SourcesUsed() const noexcept
+{
+	std::lock_guard lock(m_resources->context->m_mutex);
+	return m_resources->sourcesUsed;
+}
+
 std::shared_ptr<VulkanImage> OpenGLFrame::Image() const noexcept
 {
 	return m_resources->image->Image();
 }
+
 VkSemaphore OpenGLFrame::Ready() const noexcept
 {
 	return m_resources->ready->Get();
@@ -271,14 +306,15 @@ VulkanExternalIdentity OpenGLBackend::Identity(HDC device, HGLRC context)
 	getIndexed(GL_DEVICE_UUID_EXT, 0, identity.deviceUuid.data());
 	return identity;
 }
+
 struct OpenGLBackend::PendingFrames
 {
 	std::shared_ptr<FrameReservation> preservation;
 	std::vector<std::shared_ptr<OpenGLFrame>> frames;
 	explicit PendingFrames(std::size_t capacity)
 	{
-		static const FramePool owners{64};
-		preservation = owners.Reserve();
+		static const FramePool s_owners{64};
+		preservation = s_owners.Reserve();
 		if (!preservation)
 			throw std::bad_alloc();
 		frames.reserve(capacity);
@@ -286,33 +322,38 @@ struct OpenGLBackend::PendingFrames
 };
 
 OpenGLBackend::OpenGLBackend(HDC device, HGLRC context, std::shared_ptr<VulkanDevice> delivery,
-	std::span<const char* const> extensions)
-	: m_applicationDevice(device), m_applicationContext(context), m_context(std::make_shared<OpenGLContext>(device, context)),
-	m_external(std::move(delivery), extensions, VK_API_VERSION_1_1),
-	m_pending(std::make_unique<PendingFrames>(m_frames.Capacity() + m_retainedFrames.Capacity()))
+							 std::span<const char* const> extensions)
+	: m_applicationDevice(device), m_applicationContext(context),
+	  m_context(std::make_shared<OpenGLContext>(device, context)),
+	  m_external(std::move(delivery), extensions, VK_API_VERSION_1_1),
+	  m_pending(std::make_unique<PendingFrames>(m_frames.Capacity() + m_retainedFrames.Capacity()))
 {
 	if (Identity(device, context) != m_external.Identity())
 		throw std::runtime_error("OpenGL and Vulkan devices differ");
 }
+
 OpenGLBackend::~OpenGLBackend()
 {
 	if (m_pending->frames.empty())
 		return;
 	{
-		std::lock_guard lock(m_context->mutex);
-		windows::OpenGLContextScope current(m_context->device, m_context->handle);
+		std::lock_guard lock(m_context->m_mutex);
+		windows::OpenGLContextScope current(m_context->m_device, m_context->m_handle);
 		const auto completion = m_pending->frames.back()->m_resources->completion;
 		if (current.Current() && completion)
-			Procedure<PFNGLCLIENTWAITSYNCPROC>("glClientWaitSync")(
-				completion, GL_SYNC_FLUSH_COMMANDS_BIT, 5000000000ULL);
+			Procedure<PFNGLCLIENTWAITSYNCPROC>("glClientWaitSync")(completion, GL_SYNC_FLUSH_COMMANDS_BIT,
+																   5000000000ULL);
 	}
-	if (std::any_of(m_pending->frames.begin(), m_pending->frames.end(), [](const auto& frame)
-		{ return frame->PollCompletion() == CompletionStatus::Pending; }))
+	if (std::any_of(m_pending->frames.begin(), m_pending->frames.end(),
+					[](const auto& frame)
+					{
+						return frame->PollCompletion() == CompletionStatus::Pending;
+					}))
 		m_pending.release(); // Preserve the process-wide reservation with unfinished native work.
 }
 
 XrResult OpenGLBackend::Prepare(const CompositionPlan& plan, std::span<const OpenGLCompositionSource> sources,
-	std::shared_ptr<OpenGLFrame>& output, std::uint32_t outputLayers)
+								std::shared_ptr<OpenGLFrame>& output, std::uint32_t outputLayers)
 {
 	if (!outputLayers || outputLayers > 2 || !plan.width || !plan.height || sources.size() != plan.draws.size())
 		return XR_ERROR_LAYER_INVALID;
@@ -334,11 +375,11 @@ XrResult OpenGLBackend::Prepare(const CompositionPlan& plan, std::span<const Ope
 }
 
 XrResult OpenGLBackend::PrepareCapture(const LayerImageDescription& image, OpenGLCompositionSource source,
-	std::shared_ptr<OpenGLFrame>& output, bool retainMipChain)
+									   std::shared_ptr<OpenGLFrame>& output, bool retainMipChain)
 {
 	const auto& rectangle = image.rectangle;
-	if (!source.texture || !source.mipLevels || image.arraySlice >= source.layers ||
-		rectangle.offset.x < 0 || rectangle.offset.y < 0 || rectangle.extent.width <= 0 || rectangle.extent.height <= 0 ||
+	if (!source.texture || !source.mipLevels || image.arraySlice >= source.layers || rectangle.offset.x < 0 ||
+		rectangle.offset.y < 0 || rectangle.extent.width <= 0 || rectangle.extent.height <= 0 ||
 		static_cast<std::uint64_t>(rectangle.offset.x) + rectangle.extent.width > source.width ||
 		static_cast<std::uint64_t>(rectangle.offset.y) + rectangle.extent.height > source.height)
 		return XR_ERROR_LAYER_INVALID;
@@ -347,8 +388,12 @@ XrResult OpenGLBackend::PrepareCapture(const LayerImageDescription& image, OpenG
 	VulkanExternalImageSpec description;
 	switch (source.format)
 	{
-	case GL_RGBA8: description.format = VK_FORMAT_R8G8B8A8_UNORM; break;
-	case GL_SRGB8_ALPHA8: description.format = VK_FORMAT_R8G8B8A8_SRGB; break;
+	case GL_RGBA8:
+		description.format = VK_FORMAT_R8G8B8A8_UNORM;
+		break;
+	case GL_SRGB8_ALPHA8:
+		description.format = VK_FORMAT_R8G8B8A8_SRGB;
+		break;
 	case GL_RGBA16F:
 		description.format = VK_FORMAT_R16G16B16A16_SFLOAT;
 		break;
@@ -358,16 +403,19 @@ XrResult OpenGLBackend::PrepareCapture(const LayerImageDescription& image, OpenG
 	case GL_RGB10_A2:
 		description.format = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
 		break;
-	default: return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
+	default:
+		return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
 	}
 	description.mipLevels = retainMipChain ? source.mipLevels : 1;
 	description.arrayLayers = 1;
-	description.extent = retainMipChain ? VkExtent3D{source.width, source.height, 1} :
-		VkExtent3D{static_cast<std::uint32_t>(rectangle.extent.width), static_cast<std::uint32_t>(rectangle.extent.height), 1};
+	description.extent = retainMipChain ? VkExtent3D{source.width, source.height, 1}
+										: VkExtent3D{static_cast<std::uint32_t>(rectangle.extent.width),
+													 static_cast<std::uint32_t>(rectangle.extent.height), 1};
 	CompositionPlan plan{description.extent.width, description.extent.height, {}, {}};
 	std::shared_ptr<OpenGLFrame> frame;
 	const auto result = PrepareImage(plan, {}, description, source.format, retainMipChain, frame);
-	if (XR_FAILED(result)) return result;
+	if (XR_FAILED(result))
+		return result;
 	frame->m_resources->capture = image;
 	frame->m_resources->sources.push_back(source);
 	output = std::move(frame);
@@ -375,9 +423,14 @@ XrResult OpenGLBackend::PrepareCapture(const LayerImageDescription& image, OpenG
 }
 
 XrResult OpenGLBackend::PrepareImage(const CompositionPlan& plan, std::span<const OpenGLCompositionSource> sources,
-	const VulkanExternalImageSpec& description, GLenum format, bool retained, std::shared_ptr<OpenGLFrame>& output)
+									 const VulkanExternalImageSpec& description, GLenum format, bool retained,
+									 std::shared_ptr<OpenGLFrame>& output)
 {
-	std::erase_if(m_pending->frames, [](const auto& frame) { return frame->PollCompletion() != CompletionStatus::Pending; });
+	std::erase_if(m_pending->frames,
+				  [](const auto& frame)
+				  {
+					  return frame->PollCompletion() != CompletionStatus::Pending;
+				  });
 	auto& pool = retained ? m_retainedFrames : m_frames;
 	auto reservation = pool.Reserve();
 	if (!reservation)
@@ -389,12 +442,13 @@ XrResult OpenGLBackend::PrepareImage(const CompositionPlan& plan, std::span<cons
 	resources.retainSource = retained;
 	resources.sources.assign(sources.begin(), sources.end());
 	resources.copies.resize(sources.size());
+	resources.sourceFramebuffers.resize(std::max<std::size_t>(sources.size(), 1));
 	resources.image = m_external.CreateExportable(description);
 	resources.available = m_external.CreateExportableSemaphore();
 	resources.ready = m_external.CreateExportableSemaphore();
 	{
-		std::lock_guard lock(m_context->mutex);
-		windows::OpenGLContextScope current(m_context->device, m_context->handle);
+		std::lock_guard lock(m_context->m_mutex);
+		windows::OpenGLContextScope current(m_context->m_device, m_context->m_handle);
 		if (!current.Current())
 			return XR_ERROR_RUNTIME_FAILURE;
 		Procedure<PFNGLCREATEMEMORYOBJECTSEXTPROC>("glCreateMemoryObjectsEXT")(1, &resources.memory);
@@ -403,11 +457,14 @@ XrResult OpenGLBackend::PrepareImage(const CompositionPlan& plan, std::span<cons
 			resources.memory, GL_DEDICATED_MEMORY_OBJECT_EXT, &dedicated);
 		auto memory = resources.image->ExportMemory();
 		Procedure<PFNGLIMPORTMEMORYWIN32HANDLEEXTPROC>("glImportMemoryWin32HandleEXT")(
-			resources.memory, resources.image->Descriptor().allocationSize, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, memory.Get());
+			resources.memory, resources.image->Descriptor().allocationSize, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT,
+			memory.Get());
 		Procedure<PFNGLCREATETEXTURESPROC>("glCreateTextures")(GL_TEXTURE_2D_ARRAY, 1, &resources.texture);
-		Procedure<PFNGLTEXTUREPARAMETERIPROC>("glTextureParameteri")(resources.texture, GL_TEXTURE_TILING_EXT, GL_OPTIMAL_TILING_EXT);
+		Procedure<PFNGLTEXTUREPARAMETERIPROC>("glTextureParameteri")(resources.texture, GL_TEXTURE_TILING_EXT,
+																	 GL_OPTIMAL_TILING_EXT);
 		Procedure<PFNGLTEXTURESTORAGEMEM3DEXTPROC>("glTextureStorageMem3DEXT")(
-			resources.texture, description.mipLevels, format, plan.width, plan.height, description.arrayLayers, resources.memory, 0);
+			resources.texture, description.mipLevels, format, plan.width, plan.height, description.arrayLayers,
+			resources.memory, 0);
 		const auto import = [](const std::shared_ptr<VulkanExternalSemaphore>& source, GLuint& target)
 		{
 			auto handle = source->ExportOnce();
@@ -418,21 +475,24 @@ XrResult OpenGLBackend::PrepareImage(const CompositionPlan& plan, std::span<cons
 		import(resources.available, resources.availableGL);
 		import(resources.ready, resources.readyGL);
 		Procedure<PFNGLCREATEFRAMEBUFFERSPROC>("glCreateFramebuffers")(1, &resources.framebuffer);
-		Procedure<PFNGLCREATEFRAMEBUFFERSPROC>("glCreateFramebuffers")(1, &resources.sourceFramebuffer);
+		Procedure<PFNGLCREATEFRAMEBUFFERSPROC>("glCreateFramebuffers")(
+			static_cast<GLsizei>(resources.sourceFramebuffers.size()), resources.sourceFramebuffers.data());
 		Procedure<PFNGLCREATEFRAMEBUFFERSPROC>("glCreateFramebuffers")(1, &resources.copyFramebuffer);
 		for (std::size_t index = 0; index < sources.size(); ++index)
 		{
 			const auto& source = sources[index];
 			auto& copy = resources.copies[index];
 			const bool depthMs = source.samples > 1 && IsDepthFormat(source.format);
-			Procedure<PFNGLCREATETEXTURESPROC>("glCreateTextures")(depthMs ? GL_TEXTURE_2D_MULTISAMPLE : GL_TEXTURE_2D, 1, &copy);
+			Procedure<PFNGLCREATETEXTURESPROC>("glCreateTextures")(depthMs ? GL_TEXTURE_2D_MULTISAMPLE : GL_TEXTURE_2D,
+																   1, &copy);
 			if (depthMs)
 			{
 				Procedure<PFNGLTEXTURESTORAGE2DMULTISAMPLEPROC>("glTextureStorage2DMultisample")(
 					copy, source.samples, source.format, source.width, source.height, GL_TRUE);
 				continue;
 			}
-			Procedure<PFNGLTEXTURESTORAGE2DPROC>("glTextureStorage2D")(copy, source.mipLevels, source.format, source.width, source.height);
+			Procedure<PFNGLTEXTURESTORAGE2DPROC>("glTextureStorage2D")(copy, source.mipLevels, source.format,
+																	   source.width, source.height);
 			const auto parameter = Procedure<PFNGLTEXTUREPARAMETERIPROC>("glTextureParameteri");
 			parameter(copy, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
 			parameter(copy, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -462,7 +522,7 @@ XrResult OpenGLBackend::PrepareImage(const CompositionPlan& plan, std::span<cons
 	barrier.image = resources.image->Image()->image;
 	barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, description.mipLevels, 0, description.arrayLayers};
 	vkCmdPipelineBarrier(resources.initialize, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-		0, 0, nullptr, 0, nullptr, 1, &barrier);
+						 0, 0, nullptr, 0, nullptr, 1, &barrier);
 	CheckVulkan(vkEndCommandBuffer(resources.initialize), "End GL handoff");
 	if (!pool.Consume(reservation))
 		return XR_ERROR_CALL_ORDER_INVALID;
@@ -476,7 +536,7 @@ XrResult OpenGLBackend::Submit(const std::shared_ptr<OpenGLFrame>& frame)
 	if (!frame || frame->m_resources->context != m_context || frame->m_resources->submitted)
 		return XR_ERROR_CALL_ORDER_INVALID;
 	auto& resources = *frame->m_resources;
-	std::lock_guard lock(m_context->mutex);
+	std::lock_guard lock(m_context->m_mutex);
 	windows::OpenGLContextScope application(m_applicationDevice, m_applicationContext);
 	if (!application.Current())
 		return XR_ERROR_RUNTIME_FAILURE;
@@ -489,7 +549,7 @@ XrResult OpenGLBackend::Submit(const std::shared_ptr<OpenGLFrame>& frame)
 	glFlush();
 	m_pending->frames.push_back(frame);
 	resources.submitted = true;
-	windows::OpenGLContextScope current(m_context->device, m_context->handle);
+	windows::OpenGLContextScope current(m_context->m_device, m_context->m_handle);
 	if (!current.Current())
 	{
 		remove(rendered);
@@ -512,36 +572,38 @@ XrResult OpenGLBackend::Submit(const std::shared_ptr<OpenGLFrame>& frame)
 		wait(rendered, 0, GL_TIMEOUT_IGNORED);
 		remove(rendered);
 		const GLenum layout = GL_LAYOUT_GENERAL_EXT;
-		Procedure<PFNGLWAITSEMAPHOREEXTPROC>("glWaitSemaphoreEXT")(
-			resources.availableGL, 0, nullptr, 1, &resources.texture, &layout);
+		Procedure<PFNGLWAITSEMAPHOREEXTPROC>("glWaitSemaphoreEXT")(resources.availableGL, 0, nullptr, 1,
+																   &resources.texture, &layout);
 		glEnable(GL_FRAMEBUFFER_SRGB);
 		if (resources.capture)
 		{
 			const auto& source = resources.sources.front();
+			const auto sourceFramebuffer = resources.sourceFramebuffers.front();
 			const auto& image = *resources.capture;
 			const auto& description = resources.image->Descriptor().image;
 			for (std::uint32_t mip = 0; mip < description.mipLevels; ++mip)
 			{
 				if (source.layers == 1)
 					Procedure<PFNGLNAMEDFRAMEBUFFERTEXTUREPROC>("glNamedFramebufferTexture")(
-						resources.sourceFramebuffer, GL_COLOR_ATTACHMENT0, source.texture, mip);
+						sourceFramebuffer, GL_COLOR_ATTACHMENT0, source.texture, mip);
 				else
 					Procedure<PFNGLNAMEDFRAMEBUFFERTEXTURELAYERPROC>("glNamedFramebufferTextureLayer")(
-						resources.sourceFramebuffer, GL_COLOR_ATTACHMENT0, source.texture, mip, image.arraySlice);
+						sourceFramebuffer, GL_COLOR_ATTACHMENT0, source.texture, mip, image.arraySlice);
 				Procedure<PFNGLNAMEDFRAMEBUFFERTEXTURELAYERPROC>("glNamedFramebufferTextureLayer")(
 					resources.framebuffer, GL_COLOR_ATTACHMENT0, resources.texture, mip, 0);
-				for (const auto framebuffer : {resources.sourceFramebuffer, resources.framebuffer})
+				for (const auto framebuffer : {sourceFramebuffer, resources.framebuffer})
 					if (Procedure<PFNGLCHECKNAMEDFRAMEBUFFERSTATUSPROC>("glCheckNamedFramebufferStatus")(
-						framebuffer, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+							framebuffer, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
 						throw std::runtime_error("OpenGL capture framebuffer incomplete");
 				const auto width = std::max(1u, description.extent.width >> mip);
 				const auto height = std::max(1u, description.extent.height >> mip);
 				const auto sourceHeight = std::max(1u, source.height >> mip);
 				const auto x = resources.retainSource ? 0 : image.rectangle.offset.x;
 				const auto y = resources.retainSource ? 0 : image.rectangle.offset.y;
-				Procedure<PFNGLBLITNAMEDFRAMEBUFFERPROC>("glBlitNamedFramebuffer")(
-					resources.sourceFramebuffer, resources.framebuffer, x, sourceHeight - y, x + width,
-					sourceHeight - y - height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+				const auto blit = Procedure<PFNGLBLITNAMEDFRAMEBUFFERPROC>("glBlitNamedFramebuffer");
+				resources.sourcesUsed = true;
+				blit(sourceFramebuffer, resources.framebuffer, x, sourceHeight - y, x + width,
+					 sourceHeight - y - height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 			}
 		}
 		else
@@ -549,11 +611,12 @@ XrResult OpenGLBackend::Submit(const std::shared_ptr<OpenGLFrame>& frame)
 			for (std::size_t index = 0; index < resources.sources.size(); ++index)
 			{
 				const auto& source = resources.sources[index];
+				const auto sourceFramebuffer = resources.sourceFramebuffers[index];
 				const auto slice = resources.plan.draws[index].source.arraySlice;
 				const bool depth = IsDepthFormat(source.format);
 				const GLenum attachment = depth ? GL_DEPTH_ATTACHMENT : GL_COLOR_ATTACHMENT0;
 				const auto attach = Procedure<PFNGLNAMEDFRAMEBUFFERTEXTUREPROC>("glNamedFramebufferTexture");
-				for (const auto framebuffer : {resources.sourceFramebuffer, resources.copyFramebuffer})
+				for (const auto framebuffer : {sourceFramebuffer, resources.copyFramebuffer})
 				{
 					attach(framebuffer, GL_DEPTH_ATTACHMENT, 0, 0);
 					attach(framebuffer, GL_COLOR_ATTACHMENT0, 0, 0);
@@ -565,23 +628,24 @@ XrResult OpenGLBackend::Submit(const std::shared_ptr<OpenGLFrame>& frame)
 				for (std::uint32_t mip = 0; mip < source.mipLevels; ++mip)
 				{
 					if (source.layers == 1)
-						attach(resources.sourceFramebuffer, attachment, source.texture, mip);
+						attach(sourceFramebuffer, attachment, source.texture, mip);
 					else
 						Procedure<PFNGLNAMEDFRAMEBUFFERTEXTURELAYERPROC>("glNamedFramebufferTextureLayer")(
-							resources.sourceFramebuffer, attachment, source.texture, mip, slice);
+							sourceFramebuffer, attachment, source.texture, mip, slice);
 					attach(resources.copyFramebuffer, attachment, resources.copies[index], mip);
-					for (const auto framebuffer : {resources.sourceFramebuffer, resources.copyFramebuffer})
+					for (const auto framebuffer : {sourceFramebuffer, resources.copyFramebuffer})
 						if (Procedure<PFNGLCHECKNAMEDFRAMEBUFFERSTATUSPROC>("glCheckNamedFramebufferStatus")(
-							framebuffer, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+								framebuffer, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
 							throw std::runtime_error("OpenGL source copy framebuffer incomplete");
 					const auto width = std::max(1u, source.width >> mip), height = std::max(1u, source.height >> mip);
-					Procedure<PFNGLBLITNAMEDFRAMEBUFFERPROC>("glBlitNamedFramebuffer")(
-						resources.sourceFramebuffer, resources.copyFramebuffer, 0, height, width, 0, 0, 0, width, height,
-						depth ? GL_DEPTH_BUFFER_BIT : GL_COLOR_BUFFER_BIT, GL_NEAREST);
+					const auto blit = Procedure<PFNGLBLITNAMEDFRAMEBUFFERPROC>("glBlitNamedFramebuffer");
+					resources.sourcesUsed = true;
+					blit(sourceFramebuffer, resources.copyFramebuffer, 0, height, width, 0, 0, 0, width, height,
+						 depth ? GL_DEPTH_BUFFER_BIT : GL_COLOR_BUFFER_BIT, GL_NEAREST);
 				}
 			}
 			Procedure<PFNGLCLIPCONTROLPROC>("glClipControl")(GL_UPPER_LEFT, GL_NEGATIVE_ONE_TO_ONE);
-			Procedure<PFNGLBINDVERTEXARRAYPROC>("glBindVertexArray")(m_context->vertexArray);
+			Procedure<PFNGLBINDVERTEXARRAYPROC>("glBindVertexArray")(m_context->m_vertexArray);
 			Procedure<PFNGLBINDFRAMEBUFFERPROC>("glBindFramebuffer")(GL_FRAMEBUFFER, resources.framebuffer);
 			glViewport(0, 0, resources.plan.width, resources.plan.height);
 			glEnable(GL_FRAMEBUFFER_SRGB);
@@ -593,7 +657,7 @@ XrResult OpenGLBackend::Submit(const std::shared_ptr<OpenGLFrame>& frame)
 				Procedure<PFNGLNAMEDFRAMEBUFFERTEXTURELAYERPROC>("glNamedFramebufferTextureLayer")(
 					resources.framebuffer, GL_COLOR_ATTACHMENT0, resources.texture, 0, eye);
 				if (Procedure<PFNGLCHECKNAMEDFRAMEBUFFERSTATUSPROC>("glCheckNamedFramebufferStatus")(
-					resources.framebuffer, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+						resources.framebuffer, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
 					throw std::runtime_error("Shared OpenGL target incomplete");
 				glClear(GL_COLOR_BUFFER_BIT);
 				for (std::size_t index = 0; index < resources.plan.draws.size(); ++index)
@@ -602,26 +666,33 @@ XrResult OpenGLBackend::Submit(const std::shared_ptr<OpenGLFrame>& frame)
 					if (draw.eye != eye)
 						continue;
 					const auto& source = resources.sources[index];
-					const auto program = source.samples > 1 && IsDepthFormat(source.format) ? m_context->depthMsProgram : m_context->program;
+					const auto program = source.samples > 1 && IsDepthFormat(source.format)
+											 ? m_context->m_depthMsProgram
+											 : m_context->m_program;
 					Procedure<PFNGLUSEPROGRAMPROC>("glUseProgram")(program);
 					Procedure<PFNGLBINDTEXTUREUNITPROC>("glBindTextureUnit")(0, resources.copies[index]);
 					const auto location = [&](const char* name)
-						{ return Procedure<PFNGLGETUNIFORMLOCATIONPROC>("glGetUniformLocation")(program, name); };
+					{
+						return Procedure<PFNGLGETUNIFORMLOCATIONPROC>("glGetUniformLocation")(program, name);
+					};
 					const auto set = [&](const char* name, const auto& value)
-						{ Procedure<PFNGLUNIFORM4FVPROC>("glUniform4fv")(location(name), 1, value.data()); };
+					{
+						Procedure<PFNGLUNIFORM4FVPROC>("glUniform4fv")(location(name), 1, value.data());
+					};
 					set("layer.eyeTangents", draw.constants.eyeTangents);
 					set("layer.sourceTangents", draw.constants.sourceTangents);
 					set("layer.sourceFromEyeRotation", draw.constants.sourceFromEyeRotation);
 					set("layer.sourceFromEyePosition", draw.constants.sourceFromEyePosition);
 					set("layer.imageRectangle", draw.constants.imageRectangle);
 					set("layer.quadParameters", draw.constants.quadParameters);
-					Procedure<PFNGLUNIFORM4UIVPROC>("glUniform4uiv")(location("layer.control"), 1, draw.constants.control.data());
+					Procedure<PFNGLUNIFORM4UIVPROC>("glUniform4uiv")(location("layer.control"), 1,
+																	 draw.constants.control.data());
 					glDrawArrays(GL_TRIANGLES, 0, 3);
 				}
 			}
 		}
-		Procedure<PFNGLSIGNALSEMAPHOREEXTPROC>("glSignalSemaphoreEXT")(
-			resources.readyGL, 0, nullptr, 1, &resources.texture, &layout);
+		Procedure<PFNGLSIGNALSEMAPHOREEXTPROC>("glSignalSemaphoreEXT")(resources.readyGL, 0, nullptr, 1,
+																	   &resources.texture, &layout);
 		resources.completion = fence(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 		glFlush();
 		CheckGL("Submit canonical OpenGL composition");
@@ -634,7 +705,7 @@ XrResult OpenGLBackend::Submit(const std::shared_ptr<OpenGLFrame>& frame)
 	catch (...)
 	{
 		// Exceptional failure must complete source reads before allowing app reuse.
-		windows::OpenGLContextScope cleanup(m_context->device, m_context->handle);
+		windows::OpenGLContextScope cleanup(m_context->m_device, m_context->m_handle);
 		if (cleanup.Current())
 		{
 			glFinish();
@@ -645,4 +716,4 @@ XrResult OpenGLBackend::Submit(const std::shared_ptr<OpenGLFrame>& frame)
 		throw;
 	}
 }
-}
+} // namespace simxr

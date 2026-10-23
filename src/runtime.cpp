@@ -33,7 +33,8 @@
 #include "control/legacy/backends/vulkan/WindowsVulkanCaptureChannel.h"
 #include "flicker_detector.h"
 #include "graphics/LayerBuilder.h"
-#include "graphics/Swapchain.h"
+#include "graphics/SwapchainAccess.h"
+#include "graphics/SwapchainWaits.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
 #include "graphics/backends/vulkan/VulkanInstanceGraphics.h"
 #include "graphics/backends/vulkan/VulkanSessionGraphics.h"
@@ -207,6 +208,8 @@ struct Session {
     std::atomic<bool> usesD3D12{false};
 	std::shared_ptr<simxr::VulkanSessionGraphics> vulkan;
 	std::shared_ptr<simxr::WindowsSessionGraphics> nativeGraphics;
+	std::shared_ptr<simxr::SwapchainWaits> nativeWaits;
+	bool nativeClosing = false;
 	// OpenGL support
     HDC glDC{nullptr};
     HGLRC glRC{nullptr};
@@ -227,9 +230,7 @@ struct Swapchain {
     // RENDER_TARGET for colour, DEPTH_WRITE for depth.
     D3D12_RESOURCE_STATES releaseState12{D3D12_RESOURCE_STATE_COMMON};
 	std::unique_ptr<simxr::windows::OpenGLSwapchain> glImages;
-    std::unique_ptr<simxr::Swapchain> state;
-    uint32_t lastAcquired{UINT32_MAX};  // Initialize to invalid
-    uint32_t lastReleased{UINT32_MAX};  // Initialize to invalid
+	std::shared_ptr<simxr::SwapchainAccess> access;
     uint32_t imageCount{3};
 };
 
@@ -1290,6 +1291,8 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
 			std::lock_guard lock(rt::g_vulkanMutex);
 			try
 			{
+				rt::g_session.nativeWaits = std::make_shared<simxr::SwapchainWaits>();
+				rt::g_session.nativeClosing = false;
 				if (rt::g_session.usesOpenGL)
 					rt::g_session.nativeGraphics = std::make_shared<simxr::WindowsSessionGraphics>(
 						rt::g_session.glDC, rt::g_session.glRC, creation.core.Shared());
@@ -1434,35 +1437,63 @@ static XrResult CloseVulkanSession()
 
 static XrResult DestroyNativeSession(XrSession s) {
     Logf("[SimXR] xrDestroySession called (handle=%llu)", (unsigned long long)s);
-    if (s != rt::g_session.handle) {
-        Logf("[SimXR] xrDestroySession: ERROR - Invalid handle (expected %llu)", 
-             (unsigned long long)rt::g_session.handle);
-        return XR_ERROR_HANDLE_INVALID;
-    }
-
+	std::shared_ptr<simxr::Session> core;
+	{
+		std::lock_guard lock(rt::g_coreMutex);
+		if (s != rt::g_session.handle)
+			return XR_ERROR_HANDLE_INVALID;
+		core = rt::g_session.core;
+	}
 	std::shared_ptr<simxr::WindowsSessionGraphics> nativeGraphics;
+	std::shared_ptr<simxr::SwapchainWaits> waits;
 	{
 		std::lock_guard lock(rt::g_vulkanMutex);
 		nativeGraphics = rt::g_session.nativeGraphics;
+		waits = rt::g_session.nativeWaits;
+		rt::g_session.nativeClosing = true;
+		if (waits)
+			waits->Close();
+		for (const auto& [handle, chain] : rt::g_swapchains)
+			chain.access->Close();
 	}
+	if (core)
+		core->Close();
+	if (waits && !waits->Drain(std::chrono::seconds(5)))
+		return XR_ERROR_RUNTIME_FAILURE;
 	if (nativeGraphics)
 	{
-		if (rt::g_session.core) rt::g_session.core->Close();
 		const auto closed = nativeGraphics->Close();
-		if (XR_FAILED(closed)) return closed;
-		std::lock_guard lock(rt::g_vulkanMutex);
-		rt::g_session.nativeGraphics.reset();
+		if (XR_FAILED(closed))
+			return closed;
 	}
 	const auto vulkanClosed = CloseVulkanSession();
 	if (XR_FAILED(vulkanClosed))
 		return vulkanClosed;
-    if (rt::g_session.core) rt::g_session.core->Close();
-
-    while (!rt::g_swapchains.empty()) {
-        const auto result = xrDestroySwapchain_runtime(rt::g_swapchains.begin()->first);
-        if (XR_FAILED(result)) return result;
-    }
-    
+	for (;;)
+	{
+		XrSwapchain handle;
+		{
+			std::lock_guard lock(rt::g_vulkanMutex);
+			if (rt::g_swapchains.empty())
+				break;
+			handle = rt::g_swapchains.begin()->first;
+		}
+		const auto result = xrDestroySwapchain_runtime(handle);
+		if (XR_FAILED(result))
+			return result;
+	}
+	{
+		std::lock_guard lock(rt::g_vulkanMutex);
+		rt::g_session.nativeGraphics.reset();
+		rt::g_session.nativeWaits.reset();
+		rt::g_session.d3d11Device.Reset();
+		rt::g_session.usesD3D12 = false;
+		rt::g_session.d3d12Device.Reset();
+		rt::g_session.d3d12Queue.Reset();
+		rt::g_session.usesOpenGL = false;
+		rt::g_session.glDC = nullptr;
+		rt::g_session.glRC = nullptr;
+	}
     std::shared_ptr<simxr::Session> retiredCore;
     std::shared_ptr<simxr::legacy::LegacyControllerMotion> retiredMotion;
     std::shared_ptr<mcp::WindowsLegacyChannel> retiredFiles;
@@ -1477,14 +1508,6 @@ static XrResult DestroyNativeSession(XrSession s) {
         retiredDiagnostics = std::move(rt::g_session.diagnostics);
         rt::g_session.handle = XR_NULL_HANDLE;
     }
-    rt::g_session.d3d11Device.Reset();
-    rt::g_session.usesD3D12 = false;
-    rt::g_session.d3d12Device.Reset();
-    rt::g_session.d3d12Queue.Reset();
-    // Reset OpenGL state
-    rt::g_session.usesOpenGL = false;
-    rt::g_session.glDC = nullptr;
-    rt::g_session.glRC = nullptr;
     Log("[SimXR] xrDestroySession: SUCCESS");
     return XR_SUCCESS;
 }
@@ -1499,28 +1522,27 @@ static XrResult XRAPI_PTR xrDestroySession_runtime(XrSession handle)
 
 
 static XrResult XRAPI_PTR xrEnumerateSwapchainFormats_runtime(XrSession session, uint32_t capacity, uint32_t* count, int64_t* formats) {
+	std::lock_guard lock(rt::g_vulkanMutex);
 	{
-		std::lock_guard lock(rt::g_vulkanMutex);
-		if (rt::g_session.vulkan)
-		{
-			if (session != rt::g_session.handle)
-				return XR_ERROR_HANDLE_INVALID;
-			if (!count || (capacity && !formats))
-				return XR_ERROR_VALIDATION_FAILURE;
-			const auto supported = simxr::VulkanSwapchain::Formats();
-			*count = static_cast<std::uint32_t>(supported.size());
-			if (!capacity)
-				return XR_SUCCESS;
-			if (capacity < supported.size())
-				return XR_ERROR_SIZE_INSUFFICIENT;
-			std::copy(supported.begin(), supported.end(), formats);
+		std::lock_guard coreLock(rt::g_coreMutex);
+		if (session == XR_NULL_HANDLE || session != rt::g_session.handle)
+			return XR_ERROR_HANDLE_INVALID;
+	}
+	if (rt::g_session.vulkan)
+	{
+		if (!count || (capacity && !formats))
+			return XR_ERROR_VALIDATION_FAILURE;
+		const auto supported = simxr::VulkanSwapchain::Formats();
+		*count = static_cast<std::uint32_t>(supported.size());
+		if (!capacity)
 			return XR_SUCCESS;
-		}
+		if (capacity < supported.size())
+			return XR_ERROR_SIZE_INSUFFICIENT;
+		std::copy(supported.begin(), supported.end(), formats);
+		return XR_SUCCESS;
 	}
 	if (rt::g_session.usesOpenGL)
 	{
-		if (!session || session != rt::g_session.handle)
-			return XR_ERROR_HANDLE_INVALID;
 		if (!count)
 			return XR_ERROR_VALIDATION_FAILURE;
 		const auto supported = simxr::windows::OpenGLSwapchain::Formats();
@@ -1538,7 +1560,6 @@ static XrResult XRAPI_PTR xrEnumerateSwapchainFormats_runtime(XrSession session,
 	const auto supportedFormats = simxr::windows::Direct3DSwapchainFormats();
 	const auto formatCount = static_cast<uint32_t>(supportedFormats.size());
 
-	if (!session || session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
 	if (!count || (capacity && !formats)) return XR_ERROR_VALIDATION_FAILURE;
 	*count = formatCount;
 	if (!capacity) return XR_SUCCESS;
@@ -1548,16 +1569,17 @@ static XrResult XRAPI_PTR xrEnumerateSwapchainFormats_runtime(XrSession session,
 }
 
 static XrResult XRAPI_PTR xrCreateSwapchain_runtime(XrSession session, const XrSwapchainCreateInfo* ci, XrSwapchain* sc) {
+	std::lock_guard lock(rt::g_vulkanMutex);
 	{
-		std::lock_guard lock(rt::g_vulkanMutex);
-		if (rt::g_session.vulkan)
-		{
-			if (session != rt::g_session.handle)
-				return XR_ERROR_HANDLE_INVALID;
-			if (!ci || !sc)
-				return XR_ERROR_VALIDATION_FAILURE;
-			return rt::g_session.vulkan->CreateSwapchain(*ci, *sc);
-		}
+		std::lock_guard coreLock(rt::g_coreMutex);
+		if (session == XR_NULL_HANDLE || session != rt::g_session.handle)
+			return XR_ERROR_HANDLE_INVALID;
+	}
+	if (rt::g_session.vulkan)
+	{
+		if (!ci || !sc)
+			return XR_ERROR_VALIDATION_FAILURE;
+		return rt::g_session.vulkan->CreateSwapchain(*ci, *sc);
 	}
 	Log("[SimXR] ============================================");
     Logf("[SimXR] xrCreateSwapchain called: format=%d, size=%ux%u, arraySize=%u, mipCount=%u, sampleCount=%u, usageFlags=0x%X",
@@ -1588,8 +1610,8 @@ static XrResult XRAPI_PTR xrCreateSwapchain_runtime(XrSession session, const XrS
     }
     
     Log("[SimXR] ============================================");
-    if (session == XR_NULL_HANDLE || session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
     if (!ci || !sc) return XR_ERROR_VALIDATION_FAILURE;
+	if (rt::g_session.nativeClosing) return XR_ERROR_SESSION_LOST;
 	if (ci->type != XR_TYPE_SWAPCHAIN_CREATE_INFO || !ci->width || !ci->height || !ci->arraySize ||
 		!ci->sampleCount || !ci->mipCount || !ci->usageFlags || (ci->faceCount != 1 && ci->faceCount != 6))
 		return XR_ERROR_VALIDATION_FAILURE;
@@ -1613,8 +1635,6 @@ static XrResult XRAPI_PTR xrCreateSwapchain_runtime(XrSession session, const XrS
     chain.width = ci->width; 
     chain.height = ci->height; 
     chain.arraySize = ci->arraySize;
-    chain.lastAcquired = UINT32_MAX;  // No image acquired yet
-    chain.lastReleased = UINT32_MAX;  // No image released yet
     // Create textures on appropriate backend
     if (rt::g_session.usesD3D12) {
         chain.backend = rt::Swapchain::Backend::D3D12;
@@ -1690,7 +1710,7 @@ static XrResult XRAPI_PTR xrCreateSwapchain_runtime(XrSession session, const XrS
             chain.images12.push_back(res);
             chain.releaseState12 = init;
         }
-        chain.state = std::make_unique<simxr::Swapchain>(chain.imageCount, (ci->createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) != 0);
+        chain.access = std::make_shared<simxr::SwapchainAccess>(chain.imageCount, (ci->createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) != 0);
         rt::g_swapchains.emplace(chain.handle, std::move(chain));
         *sc = chain.handle;
         Logf("[SimXR] xrCreateSwapchain(D3D12): sc=%p fmt=%d %ux%u array=%u samples=%u", *sc, (int)ci->format, ci->width, ci->height, ci->arraySize, ci->sampleCount);
@@ -1703,7 +1723,7 @@ static XrResult XRAPI_PTR xrCreateSwapchain_runtime(XrSession session, const XrS
 		chain.sampleCount = ci->sampleCount;
 		chain.imageCount = staticImage ? 1 : 3;
 		chain.mipCount = ci->mipCount;
-		chain.state = std::make_unique<simxr::Swapchain>(chain.imageCount, staticImage);
+		chain.access = std::make_shared<simxr::SwapchainAccess>(chain.imageCount, staticImage);
 		const auto result = simxr::windows::OpenGLSwapchain::Create(
 			rt::g_session.glDC, rt::g_session.glRC, *ci, chain.glImages);
 		if (XR_FAILED(result))
@@ -1801,7 +1821,7 @@ static XrResult XRAPI_PTR xrCreateSwapchain_runtime(XrSession session, const XrS
         Logf("[SimXR] Created swapchain texture[%u]: %p", i, tex.Get());
         chain.images.push_back(std::move(tex));
     }
-    chain.state = std::make_unique<simxr::Swapchain>(chain.imageCount, (ci->createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) != 0);
+    chain.access = std::make_shared<simxr::SwapchainAccess>(chain.imageCount, (ci->createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) != 0);
         rt::g_swapchains.emplace(chain.handle, std::move(chain));
     *sc = chain.handle;
     Logf("[SimXR] xrCreateSwapchain: sc=%p fmt=%d %ux%u array=%u samples=%u", *sc, (int)ci->format, ci->width, ci->height, ci->arraySize, ci->sampleCount);
@@ -1809,13 +1829,11 @@ static XrResult XRAPI_PTR xrCreateSwapchain_runtime(XrSession session, const XrS
 }
 
 static XrResult XRAPI_PTR xrEnumerateSwapchainImages_runtime(XrSwapchain sc, uint32_t capacity, uint32_t* count, XrSwapchainImageBaseHeader* images) {
+	std::lock_guard lock(rt::g_vulkanMutex);
+	if (rt::g_session.vulkan)
 	{
-		std::lock_guard lock(rt::g_vulkanMutex);
-		if (rt::g_session.vulkan)
-		{
-			const auto chain = rt::g_session.vulkan->FindSwapchain(sc);
-			return chain ? chain->EnumerateImages(capacity, count, images) : XR_ERROR_HANDLE_INVALID;
-		}
+		const auto chain = rt::g_session.vulkan->FindSwapchain(sc);
+		return chain ? chain->EnumerateImages(capacity, count, images) : XR_ERROR_HANDLE_INVALID;
 	}
 	auto it = rt::g_swapchains.find(sc); if (it == rt::g_swapchains.end()) return XR_ERROR_HANDLE_INVALID;
     if (it->second.backend == rt::Swapchain::Backend::D3D12) {
@@ -1872,25 +1890,22 @@ static XrResult XRAPI_PTR xrEnumerateSwapchainImages_runtime(XrSwapchain sc, uin
 static XrResult XRAPI_PTR xrAcquireSwapchainImage_runtime(XrSwapchain sc, const XrSwapchainImageAcquireInfo* info,
 														  uint32_t* index)
 {
+	std::lock_guard lock(rt::g_vulkanMutex);
+	if (rt::g_session.vulkan)
 	{
-		std::lock_guard lock(rt::g_vulkanMutex);
-		if (rt::g_session.vulkan)
-		{
-			const auto chain = rt::g_session.vulkan->FindSwapchain(sc);
-			if (!chain)
-				return XR_ERROR_HANDLE_INVALID;
-			if (!index || (info && info->type != XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO))
-				return XR_ERROR_VALIDATION_FAILURE;
-			return rt::g_session.vulkan->Acquire(*chain.Shared(), *index);
-		}
+		const auto chain = rt::g_session.vulkan->FindSwapchain(sc);
+		if (!chain)
+			return XR_ERROR_HANDLE_INVALID;
+		if (!index || (info && info->type != XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO))
+			return XR_ERROR_VALIDATION_FAILURE;
+		return rt::g_session.vulkan->Acquire(*chain.Shared(), *index);
 	}
 	auto it = rt::g_swapchains.find(sc); if (it == rt::g_swapchains.end()) return XR_ERROR_HANDLE_INVALID;
     auto& ch = it->second;
     if (!index || (info && info->type != XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO)) return XR_ERROR_VALIDATION_FAILURE;
     uint32_t i;
-    auto result = ch.state->Acquire(i);
+    auto result = ch.access->Acquire(i);
     if (XR_FAILED(result)) return result;
-    ch.lastAcquired = i;
     *index = i;
     
     static int acquireCount = 0;
@@ -1903,53 +1918,61 @@ static XrResult XRAPI_PTR xrAcquireSwapchainImage_runtime(XrSwapchain sc, const 
     }
     return XR_SUCCESS;
 }
-static XrResult XRAPI_PTR xrWaitSwapchainImage_runtime(XrSwapchain sc, const XrSwapchainImageWaitInfo* info) {
+static XrResult XRAPI_PTR xrWaitSwapchainImage_runtime(XrSwapchain sc, const XrSwapchainImageWaitInfo* info)
+{
+	std::unique_lock lock(rt::g_vulkanMutex);
+	if (auto graphics = rt::g_session.vulkan)
 	{
-		std::unique_lock lock(rt::g_vulkanMutex);
-		if (auto graphics = rt::g_session.vulkan)
-		{
-			const auto chain = graphics->FindSwapchain(sc);
-			if (!chain)
-				return XR_ERROR_HANDLE_INVALID;
-			if (!info || info->type != XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO || info->timeout < 0)
-				return XR_ERROR_VALIDATION_FAILURE;
-			auto registration = graphics->EnterWait();
-			if (!registration)
-				return XR_ERROR_SESSION_LOST;
-			lock.unlock();
-			return chain->Wait(info->timeout);
-		}
+		const auto chain = graphics->FindSwapchain(sc);
+		if (!chain)
+			return XR_ERROR_HANDLE_INVALID;
+		if (!info || info->type != XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO || info->timeout < 0)
+			return XR_ERROR_VALIDATION_FAILURE;
+		auto registration = graphics->EnterWait();
+		if (!registration)
+			return XR_ERROR_SESSION_LOST;
+		lock.unlock();
+		return chain->Wait(info->timeout);
 	}
-	auto it = rt::g_swapchains.find(sc);
-    if (it == rt::g_swapchains.end()) return XR_ERROR_HANDLE_INVALID;
-    if (!info || info->type != XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO) return XR_ERROR_VALIDATION_FAILURE;
-    return it->second.state->Wait(info->timeout, true);
+	const auto found = rt::g_swapchains.find(sc);
+	if (found == rt::g_swapchains.end())
+		return XR_ERROR_HANDLE_INVALID;
+	if (!info || info->type != XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO || info->timeout < 0)
+		return XR_ERROR_VALIDATION_FAILURE;
+	const auto access = found->second.access;
+	const auto graphics = rt::g_session.nativeGraphics;
+	const auto waits = rt::g_session.nativeWaits;
+	if (!graphics || !waits)
+		return XR_ERROR_SESSION_LOST;
+	auto registration = waits->Enter();
+	if (!registration)
+		return XR_ERROR_SESSION_LOST;
+	lock.unlock();
+	return access->Wait(info->timeout);
 }
 static XrResult XRAPI_PTR xrReleaseSwapchainImage_runtime(XrSwapchain sc, const XrSwapchainImageReleaseInfo* info)
 {
+	std::lock_guard lock(rt::g_vulkanMutex);
+	if (rt::g_session.vulkan)
 	{
-		std::lock_guard lock(rt::g_vulkanMutex);
-		if (rt::g_session.vulkan)
-		{
-			const auto chain = rt::g_session.vulkan->FindSwapchain(sc);
-			if (!chain)
-				return XR_ERROR_HANDLE_INVALID;
-			if (info && info->type != XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO)
-				return XR_ERROR_VALIDATION_FAILURE;
-			return chain->Release();
-		}
+		const auto chain = rt::g_session.vulkan->FindSwapchain(sc);
+		if (!chain)
+			return XR_ERROR_HANDLE_INVALID;
+		if (info && info->type != XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO)
+			return XR_ERROR_VALIDATION_FAILURE;
+		return chain->Release();
 	}
 	auto it = rt::g_swapchains.find(sc);
     if (it == rt::g_swapchains.end()) return XR_ERROR_HANDLE_INVALID;
     auto& ch = it->second;
     if (info && info->type != XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO) return XR_ERROR_VALIDATION_FAILURE;
-    auto result = ch.state->Release(ch.lastReleased);
+    auto result = ch.access->Release();
     if (XR_FAILED(result)) return result;
 
     static int releaseCount = 0;
     bool shouldLog = (++releaseCount <= 10);
     if (shouldLog || (g_logVerbose && releaseCount % 60 == 1)) {
-        Logf("[SimXR] xrReleaseSwapchainImage: sc=%p released=%u", sc, ch.lastReleased);
+        Logf("[SimXR] xrReleaseSwapchainImage: sc=%p released=%u", sc, *ch.access->ReleasedImage());
 
     }
     return XR_SUCCESS;
@@ -2354,7 +2377,23 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
 	}
 	{
 		std::lock_guard lock(rt::g_vulkanMutex);
+		{
+			std::lock_guard coreLock(rt::g_coreMutex);
+			if (core != rt::g_session.core)
+				return XR_ERROR_HANDLE_INVALID;
+		}
 		if (rt::g_session.nativeGraphics)
+		{
+			if (rt::g_session.nativeClosing)
+				return XR_ERROR_SESSION_LOST;
+			// Retain the exact image selected before submission; callbacks never look it up again.
+			struct SourceImage
+			{
+				XrSwapchain handle;
+				std::shared_ptr<simxr::SwapchainAccess> access;
+				std::uint32_t index;
+			};
+			std::vector<SourceImage> sources;
 			return rt::g_session.nativeGraphics->EndFrame(*info,
 				[](XrSwapchain handle) -> std::optional<simxr::SwapchainDescription>
 				{
@@ -2362,28 +2401,42 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
 					if (found == rt::g_swapchains.end()) return {};
 					const auto& chain = found->second;
 					return simxr::SwapchainDescription{chain.width, chain.height, chain.arraySize,
-						chain.lastReleased != UINT32_MAX};
+						chain.access->ReleasedImage().has_value()};
 				},
-				[](XrSwapchain handle) -> simxr::WindowsSessionGraphics::Source
+				[&sources](XrSwapchain handle) -> simxr::WindowsSessionGraphics::Source
 				{
 					const auto found = rt::g_swapchains.find(handle);
 					if (found == rt::g_swapchains.end()) return {};
 					const auto& chain = found->second;
+					const auto image = chain.access->ReleasedImage();
+					if (!image) return {};
+					if (std::none_of(sources.begin(), sources.end(),
+						[handle](const SourceImage& source) { return source.handle == handle; }))
+						sources.push_back({handle, chain.access, *image});
 					if (chain.backend == rt::Swapchain::Backend::OpenGL)
 					{
-						if (!chain.glImages || chain.lastReleased >= chain.glImages->Images().size()) return {};
-						return simxr::OpenGLCompositionSource{chain.glImages->Images()[chain.lastReleased],
+						if (!chain.glImages || *image >= chain.glImages->Images().size()) return {};
+						return simxr::OpenGLCompositionSource{chain.glImages->Images()[*image],
 							chain.glImages->Format(), chain.width, chain.height, chain.arraySize, chain.mipCount, chain.sampleCount};
 					}
 					if (chain.backend == rt::Swapchain::Backend::D3D12)
 					{
-						if (chain.lastReleased >= chain.images12.size()) return {};
-						return simxr::D3D12CompositionSource{chain.images12[chain.lastReleased].Get(),
+						if (*image >= chain.images12.size()) return {};
+						return simxr::D3D12CompositionSource{chain.images12[*image].Get(),
 							static_cast<DXGI_FORMAT>(chain.format), chain.releaseState12};
 					}
-					if (chain.lastReleased >= chain.images.size()) return {};
-					return simxr::D3D11CompositionSource{chain.images[chain.lastReleased].Get(), static_cast<DXGI_FORMAT>(chain.format)};
+					if (*image >= chain.images.size()) return {};
+					return simxr::D3D11CompositionSource{chain.images[*image].Get(), static_cast<DXGI_FORMAT>(chain.format)};
+				},
+				[&sources](XrSwapchain handle, const std::shared_ptr<const simxr::GpuCompletion>& completion)
+				{
+					const auto source = std::find_if(sources.begin(), sources.end(),
+						[handle](const SourceImage& image) { return image.handle == handle; });
+					if (source != sources.end())
+						source->access->MarkUsed(source->index, completion);
 				});
+		}
+
 		if (rt::g_session.vulkan)
 		{
 			const auto result = rt::g_session.vulkan->EndFrame(*info);
@@ -2660,25 +2713,22 @@ static XrResult XRAPI_PTR xrSyncActions_runtime(XrSession handle, const XrAction
 
 static XrResult XRAPI_PTR xrDestroySwapchain_runtime(XrSwapchain sc)
 {
+	std::lock_guard lock(rt::g_vulkanMutex);
+	if (rt::g_session.vulkan)
 	{
-		std::lock_guard lock(rt::g_vulkanMutex);
-		if (rt::g_session.vulkan)
-		{
-			const auto chain = rt::g_session.vulkan->FindSwapchain(sc);
-			if (!chain)
-				return XR_ERROR_HANDLE_INVALID;
-			rt::g_session.vulkan->DestroySwapchain(chain);
-			return XR_SUCCESS;
-		}
+		const auto chain = rt::g_session.vulkan->FindSwapchain(sc);
+		if (!chain)
+			return XR_ERROR_HANDLE_INVALID;
+		rt::g_session.vulkan->DestroySwapchain(chain);
+		return XR_SUCCESS;
 	}
-	auto it = rt::g_swapchains.find(sc);
-	if (it == rt::g_swapchains.end())
+	const auto found = rt::g_swapchains.find(sc);
+	if (found == rt::g_swapchains.end())
 		return XR_ERROR_HANDLE_INVALID;
-
-	if (it->second.glImages && !it->second.glImages->Close())
+	found->second.access->Close();
+	if (found->second.glImages && !found->second.glImages->Close())
 		return XR_ERROR_RUNTIME_FAILURE;
-
-	rt::g_swapchains.erase(it);
+	rt::g_swapchains.erase(found);
 	Logf("[SimXR] xrDestroySwapchain: sc=%p", sc);
 	return XR_SUCCESS;
 }

@@ -1,4 +1,5 @@
 #include "graphics/ColorPixels.h"
+#include "graphics/SwapchainAccess.h"
 #include "graphics/backends/opengl/OpenGLBackend.h"
 #include "graphics/backends/vulkan/VulkanBackend.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
@@ -12,6 +13,38 @@
 #include <stdexcept>
 #include <thread>
 
+#ifdef SIMXR_TEST_WGL_FAILURE
+using MakeCurrentFunction = BOOL(WINAPI*)(HDC, HGLRC);
+static HGLRC s_applicationContext = nullptr;
+static bool s_failRestoration = false;
+static bool s_rejectContexts = false;
+static bool s_rejectPrivateContext = false;
+static unsigned s_rejectedContexts = 0;
+
+static BOOL WINAPI MakeCurrent(HDC device, HGLRC context)
+{
+	static const auto s_makeCurrent =
+		std::bit_cast<MakeCurrentFunction>(GetProcAddress(GetModuleHandleW(L"opengl32.dll"), "wglMakeCurrent"));
+	if (s_failRestoration && context == s_applicationContext)
+	{
+		s_failRestoration = false;
+		s_rejectContexts = true;
+		s_makeCurrent(nullptr, nullptr);
+	}
+	if (context && (s_rejectContexts || (s_rejectPrivateContext && context != s_applicationContext)))
+	{
+		++s_rejectedContexts;
+		SetLastError(ERROR_BUSY);
+		return FALSE;
+	}
+	return s_makeCurrent(device, context);
+}
+
+extern "C"
+{
+	MakeCurrentFunction __wrap___imp_wglMakeCurrent = MakeCurrent;
+}
+#endif
 using namespace simxr;
 void Require(bool result, const char* message)
 {
@@ -203,6 +236,142 @@ static void VerifyMultisample(Application& app, const VulkanInspectionDevice& de
 	std::puts("PASS: OpenGL 4x MSAA color resolve, sample-zero depth, cropped arrays and retained full source after producer teardown");
 }
 
+static void VerifySubmissionFailures(const VulkanInspectionDevice& device)
+{
+	Application app;
+	CompositionPlan plan{8, 8, {}, {}};
+	CompositionDraw draw{};
+	draw.constants.eyeTangents = draw.constants.sourceTangents = {-1, 1, 1, -1};
+	draw.constants.sourceFromEyeRotation = {0, 0, 0, 1};
+	draw.constants.imageRectangle = {0, 0, 1, 1};
+	plan.draws.push_back(draw);
+	const OpenGLCompositionSource missing{app.texture, GL_RGBA8, 8, 8};
+	{
+		OpenGLBackend backend(app.device, app.context, device.Device(), device.EnabledExtensions());
+		std::shared_ptr<OpenGLFrame> frame;
+		Require(backend.Prepare(plan, std::span{&missing, 1}, frame) == XR_SUCCESS, "Prepare rejected GL source");
+		Require(!frame->SourcesUsed(), "Prepared GL frame marked sources used");
+		glDeleteTextures(1, &app.texture);
+		app.texture = 0;
+		bool rejected = false;
+		try
+		{
+			rejected = XR_FAILED(backend.Submit(frame));
+		}
+		catch (const std::exception&)
+		{
+			rejected = true;
+		}
+		Require(rejected && !frame->SourcesUsed(), "Pre-read GL failure marked source use");
+		Require(wglGetCurrentContext() == app.context, "Rejected GL source changed application context");
+	}
+#ifdef SIMXR_TEST_WGL_FAILURE
+	struct ResetContextFailure
+	{
+		~ResetContextFailure()
+		{
+			s_failRestoration = s_rejectContexts = s_rejectPrivateContext = false;
+			s_applicationContext = nullptr;
+		}
+	} reset;
+	glGenTextures(1, &app.texture);
+	const std::array textures{app.texture, app.depthTexture};
+	std::array<OpenGLCompositionSource, 2> sources;
+	for (std::size_t eye = 0; eye < textures.size(); ++eye)
+	{
+		glBindTexture(GL_TEXTURE_2D, textures[eye]);
+		std::array<std::uint8_t, 8 * 8 * 4> pixels{};
+		for (std::size_t index = 0; index < pixels.size(); index += 4)
+		{
+			pixels[index + eye] = 255;
+			pixels[index + 3] = 255;
+		}
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 8, 8, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+		sources[eye] = {textures[eye], GL_RGBA8, 8, 8};
+	}
+	Require(glGetError() == GL_NO_ERROR, "Upload failure-path GL sources");
+	draw.eye = 1;
+	plan.draws.push_back(draw);
+	auto backend =
+		std::make_unique<OpenGLBackend>(app.device, app.context, device.Device(), device.EnabledExtensions());
+	std::shared_ptr<OpenGLFrame> frame;
+	Require(backend->Prepare(plan, sources, frame) == XR_SUCCESS, "Prepare context-failure GL frame");
+	SwapchainAccess access{1};
+	std::uint32_t image = 0;
+	Require(access.Acquire(image) == XR_SUCCESS && access.Wait(0) == XR_SUCCESS && access.Release() == XR_SUCCESS,
+			"Release failure-path GL source");
+	s_applicationContext = app.context;
+	s_rejectedContexts = 0;
+	s_failRestoration = true;
+	bool rejected = false;
+	try
+	{
+		rejected = XR_FAILED(backend->Submit(frame));
+	}
+	catch (const std::exception&)
+	{
+		rejected = true;
+	}
+	Require(rejected && s_rejectedContexts >= 2, "Did not inject GL restoration and cleanup context failures");
+	Require(frame->SourcesUsed(), "Failed GL submission lost queued source use");
+	access.MarkReleasedUsed(frame);
+	Require(access.Acquire(image) == XR_SUCCESS && access.Wait(0) == XR_TIMEOUT_EXPIRED,
+			"Unconfirmed GL source reads allowed reuse");
+	s_rejectContexts = false;
+	s_rejectPrivateContext = true;
+	Require(wglMakeCurrent(app.device, app.context), "Restore application after injected GL failure");
+	glDeleteTextures(static_cast<GLsizei>(textures.size()), textures.data());
+	app.texture = app.depthTexture = 0;
+	Require(glGetError() == GL_NO_ERROR, "Delete source names while private GL reads are retained");
+	const std::weak_ptr<OpenGLFrame> retained = frame;
+	frame.reset();
+	Require(!retained.expired() && access.Wait(0) == XR_TIMEOUT_EXPIRED,
+			"Failed GL submission dropped source completion ownership");
+	s_rejectPrivateContext = false;
+	frame = retained.lock();
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+	while (frame->PollCompletion() == CompletionStatus::Pending && std::chrono::steady_clock::now() < deadline)
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	Require(frame->PollCompletion() == CompletionStatus::Complete && access.Wait(0) == XR_SUCCESS,
+			"Restored GL completion did not retire source use");
+	VulkanBackend delivery(device.Device(), 8, device.EnabledExtensions(), true);
+	VulkanInspection inspection(OpenGLBackend::Identity(app.device, app.context), 8);
+	std::shared_ptr<VulkanFrame> copied;
+	Require(delivery.PrepareNativeCopy(frame->Image(), frame->Ready(), 0, frame, {}, copied) == XR_SUCCESS,
+			"Prepare failed-submit GL output inspection");
+	auto transfer = inspection.Prepare(copied);
+	Require(delivery.Submit(copied) == XR_SUCCESS, "Copy completed failed-submit GL output");
+	transfer->Commit();
+	auto output = transfer->Output();
+	CheckVulkan(delivery.Drain(5000000000ULL), "Drain failed-submit GL output");
+	CheckVulkan(inspection.Drain(), "Drain failed-submit GL inspection");
+	auto exported = output->Export();
+	std::shared_ptr<const VulkanImagePixels> pixels;
+	const auto exportDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+	while (!(pixels = exported->Pixels()) && std::chrono::steady_clock::now() < exportDeadline)
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	Require(pixels && pixels->width == 8 && pixels->height == 8 && pixels->layers == 2,
+			"Failed-submit GL output was not retained");
+	for (std::size_t eye = 0; eye < 2; ++eye)
+		for (std::size_t pixel = 0; pixel < 64; ++pixel)
+		{
+			const auto offset = (eye * 64 + pixel) * 4;
+			Require(pixels->rgba[offset] == (eye == 0 ? 255 : 0) && pixels->rgba[offset + 1] == (eye == 1 ? 255 : 0) &&
+						pixels->rgba[offset + 2] == 0 && pixels->rgba[offset + 3] == 255,
+					"Deleted GL source storage changed retained output");
+		}
+	transfer.reset();
+	copied.reset();
+	frame.reset();
+	backend.reset();
+	Require(glGetError() == GL_NO_ERROR, "Retiring failed GL sources left an application GL error");
+	std::puts(
+		"PASS: injected WGL restoration/cleanup failures retain both deleted sources and gate reuse until completion");
+#else
+	std::puts("UNAVAILABLE: injected WGL restoration/cleanup failure requires the MinGW x64 linker wrapper");
+#endif
+}
+
 int main()
 {
 	try
@@ -392,6 +561,7 @@ int main()
 			CheckVulkan(inspection.Drain(), "Drain OpenGL inspection");
 		}
 		VerifyMultisample(app, device);
+		VerifySubmissionFailures(device);
 		std::puts("PASS: canonical GLSL, exact float16/float32/RGB10 raw captures, cropped raw/depth arrays, normalized/linear depth, retained RGBA/sRGB/float16/float32/RGB10 mip chains after producer teardown and GPU handoff");
 		return 0;
 	}

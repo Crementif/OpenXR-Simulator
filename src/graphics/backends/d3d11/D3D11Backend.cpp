@@ -1,41 +1,39 @@
-#include "Pch.h"
 #include "graphics/backends/d3d11/D3D11Backend.h"
+#include "Pch.h"
 #include "CompositorHlsl.h"
 
 #include <d3dcompiler.h>
 #include <dxgi1_2.h>
-#include <algorithm>
 #include <limits>
 #include <stdexcept>
-#include <string>
 
 namespace simxr
 {
-namespace
-{
 using Microsoft::WRL::ComPtr;
 
-void Check(HRESULT result, const char* operation)
+static void Check(HRESULT result, const char* operation)
 {
 	if (FAILED(result))
 		throw std::runtime_error(std::string(operation) + " (HRESULT " + std::to_string(result) + ")");
 }
 
-ComPtr<ID3DBlob> Compile(const char* entry, const char* target, bool multisampledDepth = false)
+static ComPtr<ID3DBlob> Compile(const char* entry, const char* target, bool multisampledDepth = false)
 {
 	ComPtr<ID3DBlob> bytecode;
 	ComPtr<ID3DBlob> errors;
 	const D3D_SHADER_MACRO defines[]{{"SIMXR_DEPTH_MS", "1"}, {nullptr, nullptr}};
-	const auto result = D3DCompile(shaders::CompositorHlsl, sizeof(shaders::CompositorHlsl) - 1,
-		"Compositor.hlsl", multisampledDepth ? defines : nullptr, nullptr, entry, target,
-		D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &bytecode, &errors);
+	const auto result =
+		D3DCompile(shaders::CompositorHlsl, sizeof(shaders::CompositorHlsl) - 1, "Compositor.hlsl",
+				   multisampledDepth ? defines : nullptr, nullptr, entry, target,
+				   D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &bytecode, &errors);
 	if (FAILED(result) && errors)
-		throw std::runtime_error(std::string(static_cast<const char*>(errors->GetBufferPointer()), errors->GetBufferSize()));
+		throw std::runtime_error(
+			std::string(static_cast<const char*>(errors->GetBufferPointer()), errors->GetBufferSize()));
 	Check(result, "Compile shared compositor shader");
 	return bytecode;
 }
 
-bool CompatibleFormat(DXGI_FORMAT texture, DXGI_FORMAT view)
+static bool CompatibleFormat(DXGI_FORMAT texture, DXGI_FORMAT view)
 {
 	if (texture == view)
 		return true;
@@ -52,38 +50,38 @@ bool CompatibleFormat(DXGI_FORMAT texture, DXGI_FORMAT view)
 	return false;
 }
 
-struct DepthFormat
+struct D3D11DepthFormat
 {
 	DXGI_FORMAT resource;
 	DXGI_FORMAT view;
 };
-std::optional<DepthFormat> DepthFormats(DXGI_FORMAT format)
+
+static std::optional<D3D11DepthFormat> DepthFormats(DXGI_FORMAT format)
 {
 	switch (format)
 	{
 	case DXGI_FORMAT_D16_UNORM:
 	case DXGI_FORMAT_R16_TYPELESS:
-		return DepthFormat{DXGI_FORMAT_R16_TYPELESS, DXGI_FORMAT_R16_UNORM};
+		return D3D11DepthFormat{DXGI_FORMAT_R16_TYPELESS, DXGI_FORMAT_R16_UNORM};
 	case DXGI_FORMAT_D24_UNORM_S8_UINT:
 	case DXGI_FORMAT_R24G8_TYPELESS:
-		return DepthFormat{DXGI_FORMAT_R24G8_TYPELESS, DXGI_FORMAT_R24_UNORM_X8_TYPELESS};
+		return D3D11DepthFormat{DXGI_FORMAT_R24G8_TYPELESS, DXGI_FORMAT_R24_UNORM_X8_TYPELESS};
 	case DXGI_FORMAT_D32_FLOAT:
 	case DXGI_FORMAT_R32_TYPELESS:
-		return DepthFormat{DXGI_FORMAT_R32_TYPELESS, DXGI_FORMAT_R32_FLOAT};
+		return D3D11DepthFormat{DXGI_FORMAT_R32_TYPELESS, DXGI_FORMAT_R32_FLOAT};
 	case DXGI_FORMAT_D32_FLOAT_S8X24_UINT:
 	case DXGI_FORMAT_R32G8X24_TYPELESS:
-		return DepthFormat{DXGI_FORMAT_R32G8X24_TYPELESS, DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS};
+		return D3D11DepthFormat{DXGI_FORMAT_R32G8X24_TYPELESS, DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS};
 	default:
 		return {};
 	}
 }
 
-bool SameDevice(ID3D11DeviceChild* resource, ID3D11Device* expected)
+static bool SameDevice(ID3D11DeviceChild* resource, ID3D11Device* expected)
 {
 	ComPtr<ID3D11Device> device;
 	resource->GetDevice(&device);
 	return device.Get() == expected;
-}
 }
 
 D3D11Frame::D3D11Frame(std::span<const FrameView> views) : FrameOutput(views) {}
@@ -102,8 +100,11 @@ CompletionStatus D3D11Frame::PollCompletion() const noexcept
 	if (status != CompletionStatus::Pending)
 		return status;
 	const auto value = m_fence->GetCompletedValue();
-	const auto observed = value == std::numeric_limits<std::uint64_t>::max() ? CompletionStatus::Failed :
-		value >= ReadyValue ? CompletionStatus::Complete : CompletionStatus::Pending;
+	auto observed = CompletionStatus::Pending;
+	if (value == std::numeric_limits<std::uint64_t>::max())
+		observed = CompletionStatus::Failed;
+	else if (value >= ReadyValue)
+		observed = CompletionStatus::Complete;
 	m_completion.compare_exchange_strong(status, observed);
 	return m_completion.load();
 }
@@ -127,9 +128,14 @@ DXGI_FORMAT D3D11Frame::Format() const noexcept
 }
 
 HRESULT D3D11Backend::Allocate(std::uint32_t width, std::uint32_t height, std::uint32_t layers, DXGI_FORMAT format,
-	std::span<const FrameView> views, std::shared_ptr<D3D11Frame>& output, std::uint32_t mipLevels, bool retained)
+							   std::span<const FrameView> views, std::shared_ptr<D3D11Frame>& output,
+							   std::uint32_t mipLevels, bool retained)
 {
-	std::erase_if(m_pending, [](const auto& frame) { return frame->PollCompletion() == CompletionStatus::Complete; });
+	std::erase_if(m_pending,
+				  [](const auto& frame)
+				  {
+					  return frame->PollCompletion() == CompletionStatus::Complete;
+				  });
 	const auto& pool = retained ? m_retainedFrames : m_frames;
 	auto reservation = pool.Reserve();
 	if (!reservation)
@@ -150,11 +156,25 @@ HRESULT D3D11Backend::Allocate(std::uint32_t width, std::uint32_t height, std::u
 	description.Height = height;
 	description.MipLevels = mipLevels;
 	description.ArraySize = layers;
-	description.Format = format == DXGI_FORMAT_B8G8R8A8_UNORM || format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB
-		? DXGI_FORMAT_B8G8R8A8_TYPELESS : format == DXGI_FORMAT_R16G16B16A16_FLOAT
-		? DXGI_FORMAT_R16G16B16A16_TYPELESS : format == DXGI_FORMAT_R10G10B10A2_UNORM
-		? DXGI_FORMAT_R10G10B10A2_TYPELESS : format == DXGI_FORMAT_R32G32B32A32_FLOAT
-		? DXGI_FORMAT_R32G32B32A32_TYPELESS : DXGI_FORMAT_R8G8B8A8_TYPELESS;
+	switch (format)
+	{
+	case DXGI_FORMAT_B8G8R8A8_UNORM:
+	case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+		description.Format = DXGI_FORMAT_B8G8R8A8_TYPELESS;
+		break;
+	case DXGI_FORMAT_R16G16B16A16_FLOAT:
+		description.Format = DXGI_FORMAT_R16G16B16A16_TYPELESS;
+		break;
+	case DXGI_FORMAT_R10G10B10A2_UNORM:
+		description.Format = DXGI_FORMAT_R10G10B10A2_TYPELESS;
+		break;
+	case DXGI_FORMAT_R32G32B32A32_FLOAT:
+		description.Format = DXGI_FORMAT_R32G32B32A32_TYPELESS;
+		break;
+	default:
+		description.Format = DXGI_FORMAT_R8G8B8A8_TYPELESS;
+		break;
+	}
 	frame->m_format = format;
 	description.SampleDesc.Count = 1;
 	description.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
@@ -166,8 +186,8 @@ HRESULT D3D11Backend::Allocate(std::uint32_t width, std::uint32_t height, std::u
 	result = frame->m_texture.As(&shared);
 	if (FAILED(result))
 		return result;
-	result = shared->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE,
-		nullptr, &frame->m_textureHandle);
+	result = shared->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr,
+										&frame->m_textureHandle);
 	if (FAILED(result))
 		return result;
 	result = device->CreateFence(0, D3D11_FENCE_FLAG_SHARED, IID_PPV_ARGS(&frame->m_fence));
@@ -183,8 +203,8 @@ HRESULT D3D11Backend::Allocate(std::uint32_t width, std::uint32_t height, std::u
 	return S_OK;
 }
 
-HRESULT D3D11Backend::Prepare(const CompositionPlan& plan,
-	std::span<const D3D11CompositionSource> sources, std::shared_ptr<D3D11Frame>& output, std::uint32_t outputLayers)
+HRESULT D3D11Backend::Prepare(const CompositionPlan& plan, std::span<const D3D11CompositionSource> sources,
+							  std::shared_ptr<D3D11Frame>& output, std::uint32_t outputLayers)
 {
 	if (!outputLayers || outputLayers > 2)
 		return E_INVALIDARG;
@@ -200,7 +220,7 @@ HRESULT D3D11Backend::Prepare(const CompositionPlan& plan,
 }
 
 HRESULT D3D11Backend::PrepareCapture(const LayerImageDescription& image, D3D11CompositionSource source,
-	std::shared_ptr<D3D11Frame>& output, bool retainMipChain)
+									 std::shared_ptr<D3D11Frame>& output, bool retainMipChain)
 {
 	if (!source.texture || !SameDevice(source.texture, m_device.Get()))
 		return E_INVALIDARG;
@@ -240,19 +260,23 @@ HRESULT D3D11Backend::PrepareCapture(const LayerImageDescription& image, D3D11Co
 	std::shared_ptr<D3D11Frame> frame;
 	const auto mipLevels = retainMipChain ? description.MipLevels : 1;
 	auto result = Allocate(mipLevels > 1 ? description.Width : rectangle.extent.width,
-		mipLevels > 1 ? description.Height : rectangle.extent.height, 1, format, {}, frame, mipLevels, retainMipChain);
+						   mipLevels > 1 ? description.Height : rectangle.extent.height, 1, format, {}, frame,
+						   mipLevels, retainMipChain);
 	if (FAILED(result))
 		return result;
 	m_commands->ClearState();
 	const auto subresource = D3D11CalcSubresource(0, image.arraySlice, description.MipLevels);
 	if (resolved)
 		m_commands->ResolveSubresource(resolved.Get(), 0, source.texture, subresource, format);
-	const D3D11_BOX box{static_cast<UINT>(rectangle.offset.x), static_cast<UINT>(rectangle.offset.y), 0,
-		static_cast<UINT>(rectangle.offset.x + rectangle.extent.width),
-		static_cast<UINT>(rectangle.offset.y + rectangle.extent.height), 1};
+	const D3D11_BOX box{static_cast<UINT>(rectangle.offset.x),
+						static_cast<UINT>(rectangle.offset.y),
+						0,
+						static_cast<UINT>(rectangle.offset.x) + static_cast<UINT>(rectangle.extent.width),
+						static_cast<UINT>(rectangle.offset.y) + static_cast<UINT>(rectangle.extent.height),
+						1};
 	for (UINT mip = 0; mip < mipLevels; ++mip)
-		m_commands->CopySubresourceRegion(frame->m_texture.Get(), mip, 0, 0, 0,
-			resolved ? resolved.Get() : source.texture,
+		m_commands->CopySubresourceRegion(
+			frame->m_texture.Get(), mip, 0, 0, 0, resolved ? resolved.Get() : source.texture,
 			resolved ? 0 : D3D11CalcSubresource(mip, image.arraySlice, description.MipLevels),
 			mipLevels > 1 ? nullptr : &box);
 	result = m_commands->FinishCommandList(FALSE, &frame->m_commands);
@@ -295,9 +319,9 @@ D3D11Backend::D3D11Backend(ID3D11Device* device) : m_device(device)
 	const auto vertex = Compile("VSMain", "vs_5_0");
 	const auto pixel = Compile("PSMain", "ps_5_0");
 	Check(device->CreateVertexShader(vertex->GetBufferPointer(), vertex->GetBufferSize(), nullptr, &m_vertex),
-		"Create compositor vertex shader");
+		  "Create compositor vertex shader");
 	Check(device->CreatePixelShader(pixel->GetBufferPointer(), pixel->GetBufferSize(), nullptr, &m_pixel),
-		"Create compositor pixel shader");
+		  "Create compositor pixel shader");
 	D3D11_BUFFER_DESC buffer{};
 	buffer.ByteWidth = sizeof(LayerConstants);
 	buffer.Usage = D3D11_USAGE_DYNAMIC;
@@ -326,17 +350,16 @@ D3D11Backend::D3D11Backend(ID3D11Device* device) : m_device(device)
 	Check(device->CreateDepthStencilState(&depth, &m_depth), "Create compositor depth state");
 }
 
-HRESULT D3D11Backend::Record(const CompositionPlan& plan,
-	std::span<const D3D11CompositionSource> sources, ID3D11Texture2D* output,
-	ComPtr<ID3D11CommandList>& outputCommands)
+HRESULT D3D11Backend::Record(const CompositionPlan& plan, std::span<const D3D11CompositionSource> sources,
+							 ID3D11Texture2D* output, ComPtr<ID3D11CommandList>& outputCommands)
 {
 	if (!output || !plan.width || !plan.height || sources.size() != plan.draws.size() ||
 		!SameDevice(output, m_device.Get()))
 		return E_INVALIDARG;
 	D3D11_TEXTURE2D_DESC description{};
 	output->GetDesc(&description);
-	if (description.Width != plan.width || description.Height != plan.height || !description.ArraySize || description.ArraySize > 2 ||
-		description.MipLevels != 1 || description.SampleDesc.Count != 1 ||
+	if (description.Width != plan.width || description.Height != plan.height || !description.ArraySize ||
+		description.ArraySize > 2 || description.MipLevels != 1 || description.SampleDesc.Count != 1 ||
 		!(description.BindFlags & D3D11_BIND_RENDER_TARGET) ||
 		(description.Format != DXGI_FORMAT_R8G8B8A8_TYPELESS && description.Format != DXGI_FORMAT_R8G8B8A8_UNORM_SRGB))
 		return E_INVALIDARG;
@@ -376,9 +399,11 @@ HRESULT D3D11Backend::Record(const CompositionPlan& plan,
 			return E_INVALIDARG;
 		UINT support = 0;
 		auto result = m_device->CheckFormatSupport(copy.format, &support);
-		const UINT required = copy.depth
-			? D3D11_FORMAT_SUPPORT_SHADER_LOAD | (copy.original.SampleDesc.Count > 1 ? D3D11_FORMAT_SUPPORT_MULTISAMPLE_LOAD : 0)
-			: D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | (copy.original.SampleDesc.Count > 1 ? D3D11_FORMAT_SUPPORT_MULTISAMPLE_RESOLVE : 0);
+		const UINT required =
+			copy.depth ? D3D11_FORMAT_SUPPORT_SHADER_LOAD |
+							 (copy.original.SampleDesc.Count > 1 ? D3D11_FORMAT_SUPPORT_MULTISAMPLE_LOAD : 0)
+					   : D3D11_FORMAT_SUPPORT_SHADER_SAMPLE |
+							 (copy.original.SampleDesc.Count > 1 ? D3D11_FORMAT_SUPPORT_MULTISAMPLE_RESOLVE : 0);
 		if (FAILED(result) || (support & required) != required)
 			return DXGI_ERROR_UNSUPPORTED;
 		description.ArraySize = 1;
@@ -392,8 +417,8 @@ HRESULT D3D11Backend::Record(const CompositionPlan& plan,
 			return result;
 		D3D11_SHADER_RESOURCE_VIEW_DESC view{};
 		view.Format = copy.format;
-		view.ViewDimension = copy.depth && description.SampleDesc.Count > 1
-			? D3D11_SRV_DIMENSION_TEXTURE2DMS : D3D11_SRV_DIMENSION_TEXTURE2D;
+		view.ViewDimension = copy.depth && description.SampleDesc.Count > 1 ? D3D11_SRV_DIMENSION_TEXTURE2DMS
+																			: D3D11_SRV_DIMENSION_TEXTURE2D;
 		if (view.ViewDimension == D3D11_SRV_DIMENSION_TEXTURE2D)
 			view.Texture2D.MipLevels = description.MipLevels;
 		result = m_device->CreateShaderResourceView(copy.texture.Get(), &view, &copy.view);
@@ -413,11 +438,14 @@ HRESULT D3D11Backend::Record(const CompositionPlan& plan,
 			return result;
 	}
 	if (!m_depthMultisample && std::any_of(copies.begin(), copies.end(),
-		[](const SourceCopy& source) { return source.depth && source.original.SampleDesc.Count > 1; }))
+										   [](const SourceCopy& source)
+										   {
+											   return source.depth && source.original.SampleDesc.Count > 1;
+										   }))
 	{
 		const auto shader = Compile("PSMain", "ps_5_0", true);
-		const auto result = m_device->CreatePixelShader(shader->GetBufferPointer(), shader->GetBufferSize(),
-			nullptr, &m_depthMultisample);
+		const auto result = m_device->CreatePixelShader(shader->GetBufferPointer(), shader->GetBufferSize(), nullptr,
+														&m_depthMultisample);
 		if (FAILED(result))
 			return result;
 	}
@@ -430,10 +458,11 @@ HRESULT D3D11Backend::Record(const CompositionPlan& plan,
 		{
 			const auto subresource = D3D11CalcSubresource(mip, slice, copy.original.MipLevels);
 			if (!copy.depth && copy.original.SampleDesc.Count > 1)
-				m_commands->ResolveSubresource(copy.texture.Get(), mip, sources[index].texture, subresource, copy.format);
+				m_commands->ResolveSubresource(copy.texture.Get(), mip, sources[index].texture, subresource,
+											   copy.format);
 			else
-				m_commands->CopySubresourceRegion(copy.texture.Get(), mip, 0, 0, 0,
-					sources[index].texture, subresource, nullptr);
+				m_commands->CopySubresourceRegion(copy.texture.Get(), mip, 0, 0, 0, sources[index].texture, subresource,
+												  nullptr);
 		}
 	}
 	m_commands->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -463,7 +492,9 @@ HRESULT D3D11Backend::Record(const CompositionPlan& plan,
 			*static_cast<LayerConstants*>(mapped.pData) = plan.draws[index].constants;
 			m_commands->Unmap(m_constants.Get(), 0);
 			m_commands->PSSetShader(copies[index].depth && copies[index].original.SampleDesc.Count > 1
-				? m_depthMultisample.Get() : m_pixel.Get(), nullptr, 0);
+										? m_depthMultisample.Get()
+										: m_pixel.Get(),
+									nullptr, 0);
 			m_commands->PSSetShaderResources(0, 1, copies[index].view.GetAddressOf());
 			m_commands->Draw(3, 0);
 		}
@@ -479,4 +510,4 @@ HRESULT D3D11Backend::Record(const CompositionPlan& plan,
 	outputCommands = std::move(commands);
 	return S_OK;
 }
-}
+} // namespace simxr

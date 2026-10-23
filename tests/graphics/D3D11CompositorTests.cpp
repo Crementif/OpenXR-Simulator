@@ -11,6 +11,7 @@
 #include "graphics/backends/vulkan/VulkanInspection.h"
 #include "../../probes/VulkanProbeInstance.h"
 #include <chrono>
+#include <future>
 #include <thread>
 #endif
 #include <algorithm>
@@ -198,6 +199,96 @@ void VerifyVulkan(const std::shared_ptr<Frame>& source, bool mipChain = false,
 	std::puts("PASS: native GPU fence -> Vulkan copy -> retained inspection pixels");
 }
 
+void VerifySessionClose(ID3D11Device* device, ID3D11Texture2D* texture)
+{
+	const auto require = [](bool success, const char* message)
+	{
+		if (!success)
+			throw std::runtime_error(message);
+	};
+	Instance instance(reinterpret_cast<XrInstance>(1), {}, XR_MAKE_VERSION(1, 0, 27));
+	auto session = std::make_shared<Session>(reinterpret_cast<XrSession>(2), instance);
+	WindowsSessionGraphics graphics(device, session);
+	FrameSchedulerConfig timing;
+	timing.mode = ExecutionMode::Deterministic;
+	XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO};
+	begin.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+	require(session->Ready(timing.epoch) == XR_SUCCESS &&
+				session->Begin(begin, timing, PresentationPolicy::Repeat) == XR_SUCCESS,
+			"Start native close-overlap session");
+	XrSpace space;
+	require(session->Spaces().CreateReferenceSpace(XR_REFERENCE_SPACE_TYPE_STAGE, {{0, 0, 0, 1}, {}}, space) ==
+				XR_SUCCESS,
+			"Create native close-overlap space");
+	FramePrediction prediction;
+	require(session->WaitFrame(prediction) == XR_SUCCESS && session->BeginFrame() == XR_SUCCESS,
+			"Begin native close-overlap frame");
+	ViewSettings settings;
+	settings.outerWidth = settings.outerHeight = 8;
+	session->PublishTracking(prediction.displayTime, {}, settings, prediction.id);
+	const auto swapchain = reinterpret_cast<XrSwapchain>(3);
+	XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
+	quad.space = space;
+	quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+	quad.subImage = {swapchain, {{0, 0}, {8, 8}}, 0};
+	quad.pose = {{0, 0, 0, 1}, {0, 1.7f, -1}};
+	quad.size = {1, 1};
+	const XrCompositionLayerBaseHeader* layer = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quad);
+	const XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO,		   nullptr, prediction.displayTime.value.count(),
+							 XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1,		&layer};
+	std::promise<void> entered, resume;
+	auto reached = entered.get_future();
+	auto resumed = resume.get_future().share();
+	bool gated = false;
+	auto submission = std::async(std::launch::async,
+								 [&]
+								 {
+									 return graphics.EndFrame(
+										 end,
+										 [&](XrSwapchain handle) -> std::optional<SwapchainDescription>
+										 {
+											 return handle == swapchain
+														? std::optional{SwapchainDescription{8, 8, 2, true}}
+														: std::nullopt;
+										 },
+										 [&](XrSwapchain)
+										 {
+											 if (!gated)
+											 {
+												 gated = true;
+												 entered.set_value();
+												 resumed.wait();
+											 }
+											 return D3D11CompositionSource{texture, DXGI_FORMAT_R8G8B8A8_UNORM};
+										 });
+								 });
+	const bool preparing = reached.wait_for(std::chrono::seconds(5)) == std::future_status::ready;
+	if (!preparing)
+	{
+		resume.set_value();
+		submission.get();
+		require(false, "Native preparation did not reach close-overlap gate");
+	}
+	session->Close();
+	std::promise<void> closing;
+	auto started = closing.get_future();
+	auto close = std::async(std::launch::async,
+							[&]
+							{
+								closing.set_value();
+								return graphics.Close();
+							});
+	started.wait();
+	const bool held = close.wait_for(std::chrono::milliseconds(50)) == std::future_status::timeout;
+	resume.set_value();
+	const auto submitted = submission.get();
+	const auto closed = close.get();
+	require(held, "Native close overtook an active frame preparation");
+	require(submitted == XR_ERROR_SESSION_NOT_RUNNING && closed == XR_SUCCESS && graphics.Close() == XR_SUCCESS,
+			"Native close-overlap did not cancel preparation and preserve close retry");
+	std::puts("PASS: native close waits for frame preparation before draining");
+}
+
 void VerifySessionCaptures(ID3D11Device* device, ID3D11Texture2D* texture, DXGI_FORMAT depthFormat)
 {
 	const auto require = [](bool success, const char* message)
@@ -301,13 +392,40 @@ void VerifySessionCaptures(ID3D11Device* device, ID3D11Texture2D* texture, DXGI_
 			reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quad)};
 		const XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO, nullptr, prediction.displayTime.value.count(),
 			XR_ENVIRONMENT_BLEND_MODE_OPAQUE, static_cast<std::uint32_t>(layers.size()), layers.data()};
-		const auto submitted = graphics.EndFrame(end,
+		std::array<std::pair<XrSwapchain, std::shared_ptr<const GpuCompletion>>, 64> sourceUses;
+		std::size_t sourceUseCount = 0;
+		const auto submitted = graphics.EndFrame(
+			end,
 			[&](XrSwapchain handle) -> std::optional<SwapchainDescription>
-				{ return handle == swapchain || handle == depthSwapchain ? std::optional{SwapchainDescription{8, 8, 2, true}} : std::nullopt; },
-			[&](XrSwapchain handle) { return handle == depthSwapchain ? D3D11CompositionSource{depthTexture.Get(), depthFormat}
-				: D3D11CompositionSource{texture, DXGI_FORMAT_R8G8B8A8_UNORM}; });
+			{
+				return handle == swapchain || handle == depthSwapchain
+						   ? std::optional{SwapchainDescription{8, 8, 2, true}}
+						   : std::nullopt;
+			},
+			[&](XrSwapchain handle)
+			{
+				return handle == depthSwapchain ? D3D11CompositionSource{depthTexture.Get(), depthFormat}
+												: D3D11CompositionSource{texture, DXGI_FORMAT_R8G8B8A8_UNORM};
+			},
+			[&](XrSwapchain source, const std::shared_ptr<const GpuCompletion>& completion)
+			{
+				if (sourceUseCount < sourceUses.size())
+					sourceUses[sourceUseCount] = {source, completion};
+				++sourceUseCount;
+			});
 		if (XR_FAILED(submitted))
 			throw std::runtime_error("Submit filtered D3D11 capture: " + std::to_string(submitted));
+		require(sourceUseCount && sourceUseCount <= sourceUses.size(), "Native source-use notifications missing");
+		bool usedDepth = false;
+		for (std::size_t index = 0; index < sourceUseCount; ++index)
+		{
+			const auto& [source, completion] = sourceUses[index];
+			const auto native = std::dynamic_pointer_cast<const D3D11Frame>(completion);
+			require((source == swapchain || source == depthSwapchain) && native && native->SourcesUsed(),
+					"Native completion did not identify an executed source read");
+			usedDepth |= source == depthSwapchain;
+		}
+		require(usedDepth == depthOnly, "Native source-use notification included an unrelated depth source");
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
 		std::optional<SnapshotRecord> record;
 		do
@@ -734,6 +852,7 @@ int main(int argc, char**)
 			VerifyVulkan(raw, false, {4, 3}, 1);
 			if (viewFormat != DXGI_FORMAT_R8G8B8A8_UNORM)
 				continue;
+			VerifySessionClose(device.Get(), source.Get());
 			VerifySessionCaptures(device.Get(), source.Get(), DXGI_FORMAT_UNKNOWN);
 			for (const auto depthFormat : {DXGI_FORMAT_D16_UNORM, DXGI_FORMAT_D24_UNORM_S8_UINT,
 				DXGI_FORMAT_D32_FLOAT, DXGI_FORMAT_D32_FLOAT_S8X24_UINT})

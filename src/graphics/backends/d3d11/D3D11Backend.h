@@ -1,13 +1,16 @@
 #pragma once
 
 #include "graphics/Compositor.h"
-
+#include "graphics/FrameOutput.h"
 #include "graphics/FramePool.h"
 
-#include <d3d11_4.h>
 #include <atomic>
-#include <wrl/client.h>
+#include <cstdint>
+#include <d3d11_4.h>
+#include <memory>
 #include <span>
+#include <vector>
+#include <wrl/client.h>
 
 namespace simxr
 {
@@ -23,6 +26,10 @@ class D3D11Frame final : public FrameOutput
   public:
 	~D3D11Frame() override;
 	CompletionStatus PollCompletion() const noexcept override;
+	bool SourcesUsed() const noexcept
+	{
+		return m_submitted;
+	}
 	// Borrowed handles remain valid while the frame is retained. Consumers must
 	// duplicate handles before transferring ownership to another process.
 	HANDLE TextureHandle() const noexcept;
@@ -56,22 +63,22 @@ class D3D11Backend
 	// Produces an immutable, GPU-shared frame. Completion observation never touches
 	// the application context. Readers retain the frame until GPU use completes.
 	HRESULT Prepare(const CompositionPlan& plan, std::span<const D3D11CompositionSource> sources,
-		std::shared_ptr<D3D11Frame>& output, std::uint32_t outputLayers = 2);
+					std::shared_ptr<D3D11Frame>& output, std::uint32_t outputLayers = 2);
 	HRESULT PrepareCapture(const LayerImageDescription& image, D3D11CompositionSource source,
-		std::shared_ptr<D3D11Frame>& output, bool retainMipChain = false);
+						   std::shared_ptr<D3D11Frame>& output, bool retainMipChain = false);
 	HRESULT Submit(const std::shared_ptr<D3D11Frame>& frame);
 
   private:
 	HRESULT Allocate(std::uint32_t width, std::uint32_t height, std::uint32_t layers, DXGI_FORMAT format,
-		std::span<const FrameView> views, std::shared_ptr<D3D11Frame>& output, std::uint32_t mipLevels = 1, bool retained = false);
+					 std::span<const FrameView> views, std::shared_ptr<D3D11Frame>& output, std::uint32_t mipLevels = 1,
+					 bool retained = false);
 	// One acquired texture per plan draw. Array selection comes from the shared
 	// plan. Copies/resolves stay on the GPU; application textures need no SRV bind.
 	// Output is a private two-slice sRGB target. Serialize with application use
 	// of the immediate context.
 	HRESULT Record(const CompositionPlan& plan, std::span<const D3D11CompositionSource> sources,
-		ID3D11Texture2D* output, Microsoft::WRL::ComPtr<ID3D11CommandList>& commands);
+				   ID3D11Texture2D* output, Microsoft::WRL::ComPtr<ID3D11CommandList>& commands);
 
-  private:
 	FramePool m_frames{8};
 	FramePool m_retainedFrames{32};
 	std::vector<std::shared_ptr<D3D11Frame>> m_pending;
@@ -86,4 +93,4 @@ class D3D11Backend
 	Microsoft::WRL::ComPtr<ID3D11RasterizerState> m_rasterizer;
 	Microsoft::WRL::ComPtr<ID3D11DepthStencilState> m_depth;
 };
-}
+} // namespace simxr

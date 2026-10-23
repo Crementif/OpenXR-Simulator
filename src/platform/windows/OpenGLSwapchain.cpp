@@ -1,13 +1,10 @@
-#include "Pch.h"
 #include "platform/windows/OpenGLSwapchain.h"
+#include "Pch.h"
 
 #include "platform/windows/OpenGLContextScope.h"
 #include <GL/glext.h>
 
-#include <algorithm>
-#include <array>
 #include <bit>
-#include <cstdint>
 #include <limits>
 
 namespace simxr::windows
@@ -90,8 +87,8 @@ struct OpenGLCapabilityContext
 XrResult OpenGLSwapchain::MaxSampleCount(std::uint32_t& output)
 {
 	OpenGLCapabilityContext owned;
-	owned.window = CreateWindowExW(0, L"STATIC", L"OpenXR capability query", WS_POPUP, 0, 0, 1, 1,
-		nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+	owned.window = CreateWindowExW(0, L"STATIC", L"OpenXR capability query", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr,
+								   GetModuleHandleW(nullptr), nullptr);
 	if (!owned.window || !(owned.device = GetDC(owned.window)))
 		return XR_ERROR_RUNTIME_FAILURE;
 	PIXELFORMATDESCRIPTOR format{};
@@ -125,9 +122,9 @@ XrResult OpenGLSwapchain::MaxSampleCount(std::uint32_t& output)
 
 std::span<const std::int64_t> OpenGLSwapchain::Formats() noexcept
 {
-	static constexpr std::array<std::int64_t, 8> formats{0x8C43, 0x8058, 0x881A, 0x8814,
-														 0x8059, 0x8CAC, 0x88F0, 0x81A5};
-	return formats;
+	static constexpr std::array<std::int64_t, 8> s_formats{0x8C43, 0x8058, 0x881A, 0x8814,
+														   0x8059, 0x8CAC, 0x88F0, 0x81A5};
+	return s_formats;
 }
 
 OpenGLSwapchain::OpenGLSwapchain(HDC device, HGLRC context, GLenum format)
@@ -176,8 +173,8 @@ XrResult OpenGLSwapchain::Allocate(const XrSwapchainCreateInfo& description)
 		description.arraySize > static_cast<std::uint32_t>(maxLayers))
 		return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
 	const bool multisampled = description.sampleCount > 1;
-	const GLenum target = multisampled ? (arrayTexture ? GL_TEXTURE_2D_MULTISAMPLE_ARRAY : GL_TEXTURE_2D_MULTISAMPLE) :
-		(arrayTexture ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D);
+	const GLenum target = multisampled ? (arrayTexture ? GL_TEXTURE_2D_MULTISAMPLE_ARRAY : GL_TEXTURE_2D_MULTISAMPLE)
+									   : (arrayTexture ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D);
 	if (multisampled)
 	{
 		std::uint32_t samples = 1;
@@ -200,11 +197,12 @@ XrResult OpenGLSwapchain::Allocate(const XrSwapchainCreateInfo& description)
 	{
 		if (multisampled && arrayTexture)
 			storage3DMs(image, description.sampleCount, m_format, description.width, description.height,
-				description.arraySize, GL_TRUE);
+						description.arraySize, GL_TRUE);
 		else if (multisampled)
 			storage2DMs(image, description.sampleCount, m_format, description.width, description.height, GL_TRUE);
 		else if (arrayTexture)
-			storage3D(image, description.mipCount, m_format, description.width, description.height, description.arraySize);
+			storage3D(image, description.mipCount, m_format, description.width, description.height,
+					  description.arraySize);
 		else
 			storage2D(image, description.mipCount, m_format, description.width, description.height);
 		if (!multisampled)

@@ -1,11 +1,16 @@
 #pragma once
 
 #include "graphics/Compositor.h"
+#include "graphics/FrameOutput.h"
 #include "graphics/FramePool.h"
 #include "graphics/backends/vulkan/VulkanExternal.h"
-#include <windows.h>
-#include <GL/gl.h>
+
+#include <cstdint>
+#include <memory>
 #include <span>
+#include <windows.h>
+
+#include <GL/gl.h>
 
 namespace simxr
 {
@@ -15,12 +20,15 @@ struct OpenGLCompositionSource
 	GLenum format = GL_RGBA;
 	std::uint32_t width = 0, height = 0, layers = 1, mipLevels = 1, samples = 1;
 };
+
 class OpenGLContext;
 class OpenGLFrame final : public FrameOutput
 {
   public:
 	~OpenGLFrame() override;
 	CompletionStatus PollCompletion() const noexcept override;
+	// Queued reads still require source retirement when Submit fails.
+	bool SourcesUsed() const noexcept;
 	std::shared_ptr<VulkanImage> Image() const noexcept;
 	VkSemaphore Ready() const noexcept;
 	static constexpr std::uint64_t ReadyValue = 0;
@@ -38,18 +46,19 @@ class OpenGLBackend final
 	using Frame = OpenGLFrame;
 	using Source = OpenGLCompositionSource;
 	OpenGLBackend(HDC applicationDevice, HGLRC applicationContext, std::shared_ptr<VulkanDevice> delivery,
-		std::span<const char* const> extensions);
+				  std::span<const char* const> extensions);
 	~OpenGLBackend();
 	static VulkanExternalIdentity Identity(HDC device, HGLRC context);
 	XrResult Prepare(const CompositionPlan& plan, std::span<const OpenGLCompositionSource> sources,
-		std::shared_ptr<OpenGLFrame>& output, std::uint32_t outputLayers = 2);
+					 std::shared_ptr<OpenGLFrame>& output, std::uint32_t outputLayers = 2);
 	XrResult PrepareCapture(const LayerImageDescription& image, OpenGLCompositionSource source,
-		std::shared_ptr<OpenGLFrame>& output, bool retainMipChain = false);
+							std::shared_ptr<OpenGLFrame>& output, bool retainMipChain = false);
 	XrResult Submit(const std::shared_ptr<OpenGLFrame>& frame);
 
   private:
 	XrResult PrepareImage(const CompositionPlan& plan, std::span<const OpenGLCompositionSource> sources,
-		const VulkanExternalImageSpec& description, GLenum format, bool retained, std::shared_ptr<OpenGLFrame>& output);
+						  const VulkanExternalImageSpec& description, GLenum format, bool retained,
+						  std::shared_ptr<OpenGLFrame>& output);
 	const HDC m_applicationDevice;
 	const HGLRC m_applicationContext;
 	std::shared_ptr<OpenGLContext> m_context;
@@ -59,4 +68,4 @@ class OpenGLBackend final
 	struct PendingFrames;
 	std::unique_ptr<PendingFrames> m_pending;
 };
-}
+} // namespace simxr

@@ -1,12 +1,16 @@
 #pragma once
 
 #include "graphics/Compositor.h"
+#include "graphics/FrameOutput.h"
 #include "graphics/FramePool.h"
 
-#include <d3d12.h>
-#include <wrl/client.h>
 #include <atomic>
+#include <cstdint>
+#include <d3d12.h>
+#include <memory>
 #include <span>
+#include <vector>
+#include <wrl/client.h>
 
 namespace simxr
 {
@@ -22,6 +26,10 @@ class D3D12Frame final : public FrameOutput
   public:
 	~D3D12Frame() override;
 	CompletionStatus PollCompletion() const noexcept override;
+	bool SourcesUsed() const noexcept
+	{
+		return m_submitted;
+	}
 	ID3D12Resource* Texture() const noexcept;
 	HANDLE TextureHandle() const noexcept;
 	HANDLE FenceHandle() const noexcept;
@@ -55,14 +63,14 @@ class D3D12Backend final
 	D3D12Backend(ID3D12Device* device, ID3D12CommandQueue* queue);
 	~D3D12Backend();
 	HRESULT Prepare(const CompositionPlan& plan, std::span<const D3D12CompositionSource> sources,
-		std::shared_ptr<D3D12Frame>& output, std::uint32_t outputLayers = 2);
+					std::shared_ptr<D3D12Frame>& output, std::uint32_t outputLayers = 2);
 	HRESULT PrepareCapture(const LayerImageDescription& image, D3D12CompositionSource source,
-		std::shared_ptr<D3D12Frame>& output, bool retainMipChain = false);
+						   std::shared_ptr<D3D12Frame>& output, bool retainMipChain = false);
 	HRESULT Submit(const std::shared_ptr<D3D12Frame>& frame);
 
   private:
 	HRESULT Allocate(const D3D12_RESOURCE_DESC& description, D3D12_RESOURCE_STATES state,
-		std::span<const FrameView> views, bool retained, std::shared_ptr<D3D12Frame>& output);
+					 std::span<const FrameView> views, bool retained, std::shared_ptr<D3D12Frame>& output);
 	Microsoft::WRL::ComPtr<ID3D12Device> m_device;
 	Microsoft::WRL::ComPtr<ID3D12CommandQueue> m_queue;
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> m_root;
@@ -73,4 +81,4 @@ class D3D12Backend final
 	struct PendingFrames;
 	std::unique_ptr<PendingFrames> m_pending;
 };
-}
+} // namespace simxr

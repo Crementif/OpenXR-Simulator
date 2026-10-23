@@ -1,28 +1,36 @@
 #pragma once
 
 #include "control/ImageInspection.h"
+#include "graphics/GpuCompletion.h"
 #include "graphics/SessionComposition.h"
 #include "graphics/backends/d3d11/D3D11Backend.h"
 #include "graphics/backends/d3d12/D3D12Backend.h"
 #include "graphics/backends/opengl/OpenGLBackend.h"
+
+#include <functional>
+#include <memory>
+#include <mutex>
 #include <variant>
 
 namespace simxr
 {
+class Session;
 class VulkanBackend;
 class VulkanInspection;
 class VulkanInspectionDevice;
-class WindowsSessionGraphics
+class WindowsSessionGraphics final
 {
   public:
 	using Source = std::variant<D3D11CompositionSource, D3D12CompositionSource, OpenGLCompositionSource>;
 	using ImageResolver = std::function<Source(XrSwapchain)>;
+	// Called after native source use begins, including failed submission. Must not allocate or throw.
+	using SourceUse = std::function<void(XrSwapchain, const std::shared_ptr<const GpuCompletion>&)>;
 	WindowsSessionGraphics(ID3D11Device* device, std::shared_ptr<Session> session);
 	WindowsSessionGraphics(ID3D12Device* device, ID3D12CommandQueue* queue, std::shared_ptr<Session> session);
 	WindowsSessionGraphics(HDC device, HGLRC context, std::shared_ptr<Session> session);
 	~WindowsSessionGraphics();
 	XrResult EndFrame(const XrFrameEndInfo& info, const SwapchainDescriptionResolver& describe,
-		const ImageResolver& resolve);
+					  const ImageResolver& resolve, const SourceUse& sourceUsed = {});
 	control::ImageCapabilities Capabilities() const noexcept;
 	XrResult Close();
 
@@ -33,6 +41,8 @@ class WindowsSessionGraphics
 	std::unique_ptr<VulkanInspectionDevice> m_device;
 	std::unique_ptr<VulkanBackend> m_delivery;
 	std::unique_ptr<VulkanInspection> m_inspection;
+	std::mutex m_submissionMutex;
+	std::mutex m_closeMutex;
 	bool m_closing = false;
 };
-}
+} // namespace simxr
