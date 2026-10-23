@@ -2,6 +2,12 @@
 
 #include "graphics/backends/vulkan/VulkanInspection.h"
 
+#include <atomic>
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <optional>
+
 namespace simxr
 {
 // One recorded operation and its native dependencies. Only the owned queue can
@@ -9,7 +15,7 @@ namespace simxr
 class VulkanInspectionWork final : public GpuCompletion
 {
   public:
-	~VulkanInspectionWork();
+	~VulkanInspectionWork() override;
 	CompletionStatus PollCompletion() const noexcept override;
 	bool NativeIdle() const noexcept;
 	bool Submitted() const noexcept;

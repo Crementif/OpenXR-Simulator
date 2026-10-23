@@ -1,14 +1,12 @@
-#include "Pch.h"
 #include "graphics/backends/vulkan/VulkanInspectionWork.h"
+#include "Pch.h"
 #include "graphics/ColorPixels.h"
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
 #include "graphics/backends/vulkan/VulkanSubmission.h"
 
-#include <algorithm>
 #include <cstdio>
 #include <cstring>
-#include <limits>
-#include <utility>
+#include <stdexcept>
 
 namespace simxr
 {
@@ -72,6 +70,7 @@ VulkanInspectionWork::VulkanInspectionWork(std::shared_ptr<VulkanDevice> device,
 	begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 	CheckVulkan(vkBeginCommandBuffer(m_native->command, &begin), "Begin inspection commands");
 }
+
 VulkanInspectionWork::~VulkanInspectionWork()
 {
 	if (!NativeIdle())
@@ -80,10 +79,12 @@ VulkanInspectionWork::~VulkanInspectionWork()
 		m_native->preservation.Preserve(std::move(m_native));
 	}
 }
+
 bool VulkanInspectionWork::Submitted() const noexcept
 {
 	return m_submitted.load();
 }
+
 bool VulkanInspectionWork::NativeIdle() const noexcept
 {
 	if (!m_submitted.load())
@@ -93,6 +94,7 @@ bool VulkanInspectionWork::NativeIdle() const noexcept
 	return m_native->device->lost.load() ||
 		   vkGetFenceStatus(m_native->device->binding.device, m_native->fence) == VK_SUCCESS;
 }
+
 CompletionStatus VulkanInspectionWork::PollCompletion() const noexcept
 {
 	if (m_status.load() != CompletionStatus::Pending || !m_ready.load())
@@ -108,6 +110,7 @@ CompletionStatus VulkanInspectionWork::PollCompletion() const noexcept
 	}
 	return m_status.load();
 }
+
 VkResult VulkanInspectionWork::Wait(std::uint64_t timeout) const noexcept
 {
 	if (!Submitted() || !m_ready.load())
@@ -117,6 +120,7 @@ VkResult VulkanInspectionWork::Wait(std::uint64_t timeout) const noexcept
 		m_native->device->lost.store(true);
 	return result;
 }
+
 void VulkanInspectionWork::ReleaseSources()
 {
 	// Detach first; native-bearing last readers end outside the source mutex.
@@ -139,31 +143,38 @@ void VulkanInspectionWork::ReleaseSources()
 			readbackImage = std::move(m_native->image);
 	}
 }
+
 CompletionStatus VulkanInspectionWork::ProducerCompletion() const noexcept
 {
 	return m_native->producer ? m_native->producer->PollCompletion() : CompletionStatus::Failed;
 }
+
 void VulkanInspectionWork::ImportProducerReady(const VulkanExternalDevice& external)
 {
 	auto ready = m_native->producer->ExportReady();
 	m_native->ready = external.ImportSemaphore(m_native->producer->ExternalImage()->Descriptor().identity, ready);
 }
+
 void VulkanInspectionWork::CommitProducer() noexcept
 {
 	m_native->producer->CommitInspection();
 }
+
 void VulkanInspectionWork::CancelProducer() noexcept
 {
 	m_native->producer->CancelInspection();
 }
+
 const std::shared_ptr<VulkanImage>& VulkanInspectionWork::Image() const noexcept
 {
 	return m_native->image;
 }
+
 const std::shared_ptr<VulkanExternalImage>& VulkanInspectionWork::ExternalOutput() const noexcept
 {
 	return m_native->externalOutput;
 }
+
 const std::shared_ptr<VulkanExternalSemaphore>& VulkanInspectionWork::Signal() const noexcept
 {
 	return m_native->signal;
@@ -200,6 +211,7 @@ VkResult VulkanInspectionWork::Submit() noexcept
 	m_ready.store(true);
 	return result;
 }
+
 std::shared_ptr<const VulkanImagePixels> VulkanInspectionWork::ReadPixels() const
 {
 	if (!m_native->buffer || PollCompletion() != CompletionStatus::Complete)
@@ -232,6 +244,7 @@ std::shared_ptr<const VulkanImagePixels> VulkanInspectionWork::ReadPixels() cons
 	std::memcpy(pixels->rgba.data(), mapped, pixels->rgba.size());
 	return pixels;
 }
+
 std::shared_ptr<VulkanInspectionWork> VulkanInspectionWork::Import(std::shared_ptr<VulkanDevice> device,
 																   const VulkanExternalDevice& external,
 																   std::shared_ptr<FrameReservation> admission,
@@ -268,7 +281,7 @@ std::shared_ptr<VulkanInspectionWork> VulkanInspectionWork::Import(std::shared_p
 		copy.srcSubresource.mipLevel = copy.dstSubresource.mipLevel = mip;
 		copy.extent = {std::max(1U, spec.extent.width >> mip), std::max(1U, spec.extent.height >> mip), 1};
 		vkCmdCopyImage(work->m_native->command, imported.image, acquire.newLayout, destination->image,
-			VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+					   VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
 	}
 	VkImageMemoryBarrier release = acquire;
 	release.srcQueueFamilyIndex = acquire.dstQueueFamilyIndex;
@@ -282,6 +295,7 @@ std::shared_ptr<VulkanInspectionWork> VulkanInspectionWork::Import(std::shared_p
 	CheckVulkan(vkEndCommandBuffer(work->m_native->command), "Record retained inspection copy");
 	return work;
 }
+
 std::shared_ptr<VulkanInspectionWork>
 VulkanInspectionWork::Readback(std::shared_ptr<VulkanDevice> deviceOwner, std::shared_ptr<FrameReservation> admission,
 							   std::shared_ptr<VulkanImage> source, std::shared_ptr<FrameReservation> sourceBudget,
@@ -351,6 +365,7 @@ VulkanInspectionWork::Readback(std::shared_ptr<VulkanDevice> deviceOwner, std::s
 	CheckVulkan(vkEndCommandBuffer(work->m_native->command), "Record explicit inspection export");
 	return work;
 }
+
 std::shared_ptr<VulkanInspectionWork>
 VulkanInspectionWork::Delivery(std::shared_ptr<VulkanDevice> device, const VulkanExternalDevice& external,
 							   std::shared_ptr<FrameReservation> admission, std::shared_ptr<VulkanImage> sourceImage,

@@ -3,13 +3,12 @@
 #include "graphics/FrameSubmission.h"
 #include "graphics/RotationalSource.h"
 #include "graphics/SharedImageTypes.h"
-#include "presentation/SnapshotStore.h"
-#include <functional>
 
+#include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
-#include <vulkan/vulkan.h>
 
 namespace simxr
 {
@@ -40,14 +39,13 @@ class VulkanFrameSubmission final : public FrameSubmissionBackend
   public:
 	VulkanFrameSubmission(Session& session, VulkanBackend& backend, VulkanInspection* inspection,
 						  const VulkanFrameBindings& bindings, bool retainLayers = false);
-	~VulkanFrameSubmission();
+	~VulkanFrameSubmission() override;
 	VulkanFrameSubmission(const VulkanFrameSubmission&) = delete;
 	VulkanFrameSubmission& operator=(const VulkanFrameSubmission&) = delete;
 	FramePool LiveReservations() const override;
 	FramePool HistoryReservations() const override;
-	XrResult Prepare(FrameKey key, const SessionComposition& composition,
-		std::shared_ptr<FrameReservation> reservation, std::span<const FrameCaptureRequest> captures,
-		PreparedFrameSubmission& output) override;
+	XrResult Prepare(FrameKey key, const SessionComposition& composition, std::shared_ptr<FrameReservation> reservation,
+					 std::span<const FrameCaptureRequest> captures, PreparedFrameSubmission& output) override;
 	XrResult Submit() override;
 	bool Submitted() const noexcept override;
 
@@ -60,13 +58,14 @@ class VulkanFrameSubmission final : public FrameSubmissionBackend
 		std::unique_ptr<VulkanInspectionTransfer> transfer;
 	};
 
-	XrResult PrepareOutputs(std::shared_ptr<FrameReservation> reservation, std::span<const FrameCaptureRequest> captures);
+	XrResult PrepareOutputs(std::shared_ptr<FrameReservation> reservation,
+							std::span<const FrameCaptureRequest> captures);
 	XrResult PrepareReprojection();
 	XrResult PrepareCaptures(std::span<const FrameCaptureRequest> requests);
 	XrResult PrepareCapture(const LayerImageDescription& image, const LayerDepthDescription* depth, Capture& capture,
 							std::shared_ptr<FrameReservation> reservation);
 	std::unique_ptr<VulkanInspectionTransfer> PrepareInspection(std::shared_ptr<VulkanFrame> source,
-		CaptureTarget target, VulkanInspectionKind kind);
+																CaptureTarget target, VulkanInspectionKind kind);
 	std::function<void(SharedImageKey)> DeliveryRetirementObserver() const;
 
 	Session& m_session;
