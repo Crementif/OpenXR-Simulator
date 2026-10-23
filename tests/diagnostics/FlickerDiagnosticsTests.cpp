@@ -138,6 +138,14 @@ void ProjectionAndUiSignals()
 			"UI structural failures do not require CPU pixels");
 	Require(ui.Snapshot().incidents.lastReason == "UI_COMPOSITION_FAILED" && ui.Snapshot().lastSourceAlphaCoverage == 0,
 			"UI composition classification and finite JSON values are preserved");
+	ui.Observe(nullptr, 0, 0, 0, 0, 10, info);
+	Require(ui.Snapshot().consecutiveMissingAfterProjection == 2, "Adjacent UI failures did not form a streak");
+	ui.Observe(nullptr, 0, 0, 0, 0, 11, {});
+	Require(ui.Snapshot().consecutiveMissingAfterProjection == 0, "A frame without UI did not end the missing-UI streak");
+	ui.Observe(nullptr, 0, 0, 0, 0, 12, info);
+	Require(ui.Snapshot().consecutiveMissingAfterProjection == 1 &&
+		ui.Snapshot().maxConsecutiveMissingAfterProjection == 2 && ui.Snapshot().missingAfterProjection == 3,
+		"Separated UI failures inflated the consecutive maximum or lost the cumulative count");
 	UiMonitor absent("absent");
 	absent.Capture();
 	Require(absent.NeedsPixels(), "Manual UI capture requests pixels before its first observed frame");

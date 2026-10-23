@@ -260,19 +260,16 @@ IncidentUpdate UiMonitor::Observe(const uint8_t* bgra, uint32_t width, uint32_t 
 		++statistics.cachedCompositions;
 
 	std::string_view reason;
-	if (info.quadLayers > 0 && info.projectionRefreshed)
+	if (info.quadLayers > 0 && info.projectionRefreshed && !info.composed)
 	{
-		if (!info.composed)
-		{
-			++statistics.missingAfterProjection;
-			++statistics.consecutiveMissingAfterProjection;
-			statistics.maxConsecutiveMissingAfterProjection =
-				std::max(statistics.maxConsecutiveMissingAfterProjection, statistics.consecutiveMissingAfterProjection);
-			reason = info.cacheValid ? "UI_NOT_RECOMPOSED_AFTER_PROJECTION" : "UI_CACHE_UNAVAILABLE_AFTER_PROJECTION";
-		}
-		else
-			statistics.consecutiveMissingAfterProjection = 0;
+		++statistics.missingAfterProjection;
+		++statistics.consecutiveMissingAfterProjection;
+		statistics.maxConsecutiveMissingAfterProjection =
+			std::max(statistics.maxConsecutiveMissingAfterProjection, statistics.consecutiveMissingAfterProjection);
+		reason = info.cacheValid ? "UI_NOT_RECOMPOSED_AFTER_PROJECTION" : "UI_CACHE_UNAVAILABLE_AFTER_PROJECTION";
 	}
+	else
+		statistics.consecutiveMissingAfterProjection = 0;
 	if (info.quadLayers > 0 && info.projectionRefreshed && info.cacheValid && !info.composed && info.freshReadback)
 	{
 		++statistics.compositionFailures;
