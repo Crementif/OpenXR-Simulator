@@ -427,7 +427,7 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 		hint = "Hold " + KeyName(PilotAction::Capture) + " over the image to pilot";
 	// Group widths, content only.
 	const float targetWidth = textWidth(preview.c_str()) + rowHeight * 1.5f;
-	float left = targetWidth + gap + rowHeight + textWidth(lock) + style.FramePadding.x;
+	float left = targetWidth + gap + rowHeight + textWidth(lock) + style.FramePadding.x + gap + rowHeight;
 	const float handButton = textWidth("Buttons: Right") + buttonPadding;
 	const float bars = textWidth("Trigger") + textWidth("Grip") + 2 * (36 + 4) * scale + gap;
 	const float pills = textWidth("A") + textWidth("B") + textWidth("Menu") + 3 * 10 * scale + 8 * scale;
@@ -450,19 +450,18 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 	const float y = maximum.y - height - margin;
 	const auto saved = ImGui::GetCursorScreenPos();
 	bool hovered = false;
-	// Idle, only the content dims; each backing stays solid so markers under it do not show through.
+	// Idle, only the content dims; each flat backing stays mostly opaque so markers under it stay quiet.
 	ImGui::PushStyleVar(ImGuiStyleVar_Alpha, Active() || ImGui::GetTime() - m_lastInput < 3 ? 1.0f : .6f);
 	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, padding);
 	ImGui::PushStyleColor(ImGuiCol_ChildBg, 0);
 	const auto group = [&](const char* id, float x, float width, const auto& content)
 	{
 		ImGui::SetCursorScreenPos({x, y});
-		ImGui::BeginChild(id, {width + frame, height},
-						  ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
+		ImGui::BeginChild(id, {width + frame, height}, ImGuiChildFlags_AlwaysUseWindowPadding,
 						  ImGuiWindowFlags_NoScrollbar);
 		const auto corner = ImGui::GetWindowPos();
-		ImGui::GetWindowDrawList()->AddRectFilled(corner, {corner.x + width + frame, corner.y + height}, theme::Bg,
-												  style.ChildRounding);
+		ImGui::GetWindowDrawList()->AddRectFilled(corner, {corner.x + width + frame, corner.y + height},
+												  theme::Fade(theme::Bg, .78f), theme::Radius * scale);
 		content();
 		hovered |= ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
 		ImGui::EndChild();
@@ -497,7 +496,12 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 			  [&]
 			  {
 				  ImGui::SetNextItemWidth(targetWidth);
-				  if (ImGui::BeginCombo("##Pilot target", preview.c_str()))
+				  // A small chevron like the other menus, instead of the combo's solid arrow box.
+				  const bool open = ImGui::BeginCombo("##Pilot target", preview.c_str(), ImGuiComboFlags_NoArrowButton);
+				  const auto box = ImGui::GetItemRectMax();
+				  DrawIcon(ImGui::GetWindowDrawList(), Icon::ChevronDown,
+						   {box.x - rowHeight / 2, box.y - rowHeight / 2}, rowHeight * .5f, theme::TextDim);
+				  if (open)
 				  {
 					  for (std::size_t index = 0; index < std::size(targetNames); ++index)
 					  {
@@ -512,6 +516,14 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 				  const auto lockTip = "Keep the pointer captured without holding " + KeyName(PilotAction::Capture);
 				  if (IconButton("Lock", m_locked ? Icon::Lock : Icon::Unlock, lockTip.c_str(), m_locked, lock))
 					  m_locked = !m_locked;
+				  ImGui::SameLine();
+				  if (IconButton("Pilot keys", Icon::Keyboard, "Mouse, keyboard and gamepad bindings for piloting"))
+					  ImGui::OpenPopup("Piloting");
+				  if (ImGui::BeginPopup("Piloting"))
+				  {
+					  DrawHelp();
+					  ImGui::EndPopup();
+				  }
 			  });
 		const float middleWidth = middle + gap + chevron;
 		const float middleX =

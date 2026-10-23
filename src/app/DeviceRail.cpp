@@ -17,21 +17,18 @@ struct Row
 	Icon icon;
 	std::optional<ControlChannel> channel;
 	std::optional<PilotAction> key;
+	// Hands keep their colour so Left and Right read apart as icons.
+	ImU32 tint;
 };
-constexpr std::array<Row, 10> Rows{{
-	{"Player", Icon::Player, {}, PilotAction::TargetPlayer},
-	{"Head", Icon::Head, ControlChannel::Head, PilotAction::TargetHead},
-	{"Left", Icon::HandLeft, ControlChannel::LeftPose, PilotAction::TargetLeft},
-	{"Right", Icon::HandRight, ControlChannel::RightPose, PilotAction::TargetRight},
-	{"Body", Icon::Body, ControlChannel::Body, {}},
-	{"Gaze", Icon::Eye, ControlChannel::Gaze, {}},
-	{"Trackers", Icon::Tracker, ControlChannel::Trackers, {}},
-	{"Headset", Icon::Headset, {}, {}},
-	{"Scenarios", Icon::Scenarios, {}, {}},
-	{"Library", Icon::Library, {}, {}},
+constexpr std::array<Row, 7> Rows{{
+	{"Player", Icon::Player, {}, PilotAction::TargetPlayer, 0},
+	{"Head", Icon::Head, ControlChannel::Head, PilotAction::TargetHead, 0},
+	{"Left", Icon::HandLeft, ControlChannel::LeftPose, PilotAction::TargetLeft, theme::Left},
+	{"Right", Icon::HandRight, ControlChannel::RightPose, PilotAction::TargetRight, theme::Right},
+	{"Body", Icon::Body, ControlChannel::Body, {}, 0},
+	{"Gaze", Icon::Eye, ControlChannel::Gaze, {}, 0},
+	{"Trackers", Icon::Tracker, ControlChannel::Trackers, {}, 0},
 }};
-// Rows from this index on are under SETUP.
-constexpr std::size_t SetupRow = 7;
 bool Tracked(const PoseSample& pose)
 {
 	return (pose.flags & TrackedPoseFlags) == TrackedPoseFlags;
@@ -91,112 +88,106 @@ const char* OwnerBadge(const std::optional<CommandSource>& owner)
 	}
 	return nullptr;
 }
-} // namespace
-float NarrowRailWidth()
+// A tab's dot, owner badge and key, with the text they point to.
+struct TabStatus
 {
-	float label = 0;
-	for (const auto& row : Rows)
-		label = std::max(label, ImGui::CalcTextSize(row.label).x);
-	const float unit = ImGui::GetFontSize() / 17;
-	return label + 46 * unit + ImGui::GetStyle().WindowPadding.x * 2;
+	RailStatus status;
+	std::string key, tooltip;
+};
+TabStatus Status(std::size_t index, const RuntimeView& view, const CompanionSettings& settings)
+{
+	TabStatus result;
+	const auto& row = Rows[index];
+	if (row.key)
+		result.key = PilotBindingLabel(settings.pilotBindings[static_cast<std::size_t>(*row.key)]);
+	if (view.setup && view.connected)
+	{
+		const char* tooltip = nullptr;
+		std::tie(result.status.dot, tooltip) = DeviceDot(index, *view.setup);
+		result.tooltip = tooltip ? tooltip : "";
+		if (index == 6)
+			for (const auto& tracker : view.setup->values.tracking.trackers)
+				if (tracker.connected)
+				{
+					result.tooltip += "\n";
+					result.tooltip += TrackerRoleName(tracker.role);
+					if (!tracker.tracked)
+						result.tooltip += " (not tracked)";
+				}
+		if (row.channel)
+			result.status.badge = OwnerBadge(view.setup->owners[static_cast<std::size_t>(*row.channel)]);
+		result.status.badgeColor = theme::Head;
+	}
+	result.status.key = result.key.empty() ? nullptr : result.key.c_str();
+	result.status.dotTooltip = result.tooltip.empty() ? nullptr : result.tooltip.c_str();
+	result.status.tint = row.tint;
+	return result;
 }
-float IconRailWidth()
+bool Selected(std::size_t index, const Selection& selection)
+{
+	const auto device = std::get_if<DeviceSel>(&selection);
+	return device && index == static_cast<std::size_t>(device->page);
+}
+} // namespace
+float RailWidth()
 {
 	return 34 * ImGui::GetFontSize() / 17 + ImGui::GetStyle().WindowPadding.x * 2;
 }
+float DeviceTabsHeight()
+{
+	return 40 * ImGui::GetFontSize() / 17;
+}
 std::optional<Selection> DrawDeviceRail(const Selection& selection, const RuntimeView& view,
-										const CompanionSettings& settings, bool iconOnly, float reserve)
+										const CompanionSettings& settings)
 {
 	std::optional<Selection> picked;
-	std::string scenarios;
-	if (view.setup)
-		if (const auto active = std::ranges::count(view.setup->scenarios, true))
-			scenarios = std::to_string(active) + " on";
-	const float unit = ImGui::GetFontSize() / 17;
-	// Section labels are small caps text; the icon-only rail uses a divider instead.
-	const auto section = [&](const char* name)
-	{
-		const auto position = ImGui::GetCursorScreenPos();
-		auto* draw = ImGui::GetWindowDrawList();
-		if (iconOnly)
-		{
-			draw->AddLine({position.x + 6 * unit, position.y + 4 * unit},
-						  {position.x + ImGui::GetContentRegionAvail().x - 6 * unit, position.y + 4 * unit}, theme::Line,
-						  unit);
-			ImGui::Dummy({0, 8 * unit});
-			return;
-		}
-		ImGui::SetWindowFontScale(.78f);
-		draw->AddText({position.x + 8 * unit, position.y + 4 * unit}, theme::TextDim, name);
-		ImGui::Dummy({0, ImGui::GetFontSize() + 6 * unit});
-		ImGui::SetWindowFontScale(1);
-	};
+	const float unit = ImGui::GetFontSize() / 17, spacing = ImGui::GetStyle().ItemSpacing.y;
 	// Rows shrink (down to one text line) rather than clip when the window is short.
-	const float spacing = ImGui::GetStyle().ItemSpacing.y;
-	const float labels = iconOnly ? 2 * (8 * unit + spacing) : 2 * (ImGui::GetFontSize() * .78f + 6 * unit + spacing);
-	const float height =
-		std::clamp((ImGui::GetContentRegionAvail().y - reserve - labels - spacing * (Rows.size() - 1)) / Rows.size(),
-				   ImGui::GetFontSize() + 4, 36 * unit);
-	const bool library = std::holds_alternative<LibrarySel>(selection) || std::holds_alternative<TakeSel>(selection) ||
-						 std::holds_alternative<ScriptSel>(selection);
+	const float height = std::clamp((ImGui::GetContentRegionAvail().y - spacing * (Rows.size() - 1)) / Rows.size(),
+									ImGui::GetFontSize() + 4, 36 * unit);
 	for (std::size_t index = 0; index < Rows.size(); ++index)
 	{
-		if (index == 0 || index == SetupRow)
-			section(index == 0 ? "DEVICES" : "SETUP");
-		const auto& row = Rows[index];
-		bool selected = index == 9 && library;
-		if (const auto device = std::get_if<DeviceSel>(&selection))
-			selected = index == static_cast<std::size_t>(device->page);
-		if (const auto item = std::get_if<SessionItemSel>(&selection))
-			selected = index == SetupRow + static_cast<std::size_t>(item->item);
-		RailStatus status;
-		status.iconOnly = iconOnly;
-		std::string key, trackerStatus;
-		if (row.key)
-		{
-			key = PilotBindingLabel(settings.pilotBindings[static_cast<std::size_t>(*row.key)]);
-			status.key = key.c_str();
-		}
-		else if (index == 9)
-		{
-			status.key = "Ctrl+L";
-			status.pilotKey = false;
-		}
-		if (view.setup && view.connected)
-		{
-			std::tie(status.dot, status.dotTooltip) = DeviceDot(index, *view.setup);
-			if (index == 6)
-			{
-				trackerStatus = status.dotTooltip;
-				for (const auto& tracker : view.setup->values.tracking.trackers)
-					if (tracker.connected)
-					{
-						trackerStatus += "\n";
-						trackerStatus += TrackerRoleName(tracker.role);
-						if (!tracker.tracked)
-							trackerStatus += " (not tracked)";
-					}
-				status.dotTooltip = trackerStatus.c_str();
-			}
-			if (row.channel)
-				status.badge = OwnerBadge(view.setup->owners[static_cast<std::size_t>(*row.channel)]);
-			status.badgeColor = theme::Head;
-			if (index == 8 && !scenarios.empty())
-			{
-				status.badge = scenarios.c_str();
-				status.badgeColor = theme::Warn;
-			}
-		}
-		if (RailItem(row.label, row.icon, selected, status, height))
-		{
-			if (index < SetupRow)
-				picked = DeviceSel{static_cast<DevicePage>(index)};
-			else if (index < 9)
-				picked = SessionItemSel{static_cast<SessionItem>(index - SetupRow)};
-			else
-				picked = LibrarySel{};
-		}
+		auto status = Status(index, view, settings);
+		status.status.iconOnly = true;
+		if (RailItem(Rows[index].label, Rows[index].icon, Selected(index, selection), status.status, height))
+			picked = DeviceSel{static_cast<DevicePage>(index)};
 	}
+	return picked;
+}
+std::optional<Selection> DrawDeviceTabs(const Selection& selection, const RuntimeView& view,
+										const CompanionSettings& settings)
+{
+	std::optional<Selection> picked;
+	const float unit = ImGui::GetFontSize() / 17, height = DeviceTabsHeight();
+	const float width = ImGui::GetContentRegionAvail().x;
+	const auto origin = ImGui::GetCursorScreenPos();
+	// The selected tab is wide enough for its name; the others share the rest.
+	const float icon = 34 * unit;
+	std::size_t current = Rows.size();
+	for (std::size_t index = 0; index < Rows.size(); ++index)
+		if (Selected(index, selection))
+			current = index;
+	float named = 0;
+	if (current < Rows.size())
+		named = icon + ImGui::CalcTextSize(Rows[current].label).x + 10 * unit;
+	if (named && (width - named) / (Rows.size() - 1) < icon)
+		named = 0;
+	const float other = named ? (width - named) / (Rows.size() - 1) : width / Rows.size();
+	const float bottom = origin.y + height - unit;
+	ImGui::GetWindowDrawList()->AddLine({origin.x, bottom}, {origin.x + width, bottom}, theme::Line, unit);
+	float x = origin.x;
+	for (std::size_t index = 0; index < Rows.size(); ++index)
+	{
+		const bool selected = index == current;
+		const float tab = selected && named ? named : other;
+		ImGui::SetCursorScreenPos({x, origin.y});
+		const auto status = Status(index, view, settings);
+		if (DeviceTab(Rows[index].label, Rows[index].icon, selected, status.status, {tab, height}, selected && named))
+			picked = DeviceSel{static_cast<DevicePage>(index)};
+		x += tab;
+	}
+	ImGui::SetCursorScreenPos(origin);
+	ImGui::Dummy({width, height});
 	return picked;
 }
 } // namespace simxr::app

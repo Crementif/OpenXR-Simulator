@@ -18,11 +18,11 @@ constexpr ImU32 Accent = theme::Accent, MarkerColor = theme::Warn, Alert = theme
 }
 void TimelineCanvas::Zoom(double first, double last) noexcept
 {
-	m_span = std::max(.05, last - first) * 1.2;
+	m_span = m_zoomSpan = std::max(.05, last - first) * 1.2;
 	m_start = (first + last - m_span) / 2;
 	m_fit = false;
 }
-void TimelineCanvas::Begin(float headerWidth, float liveWidth)
+void TimelineCanvas::Begin(float headerWidth, float liveWidth, bool laneNames)
 {
 	const auto top = ImGui::GetCursorScreenPos();
 	const auto available = ImGui::GetContentRegionAvail();
@@ -57,7 +57,7 @@ void TimelineCanvas::Begin(float headerWidth, float liveWidth)
 		const float y = m_laneY[lane];
 		if (lane % 2)
 			draw->AddRectFilled({top.x, y}, {top.x + width - m_live, y + m_lane}, theme::Fade(theme::Bg, .45f));
-		if (m_compact || m_lane < font)
+		if (m_compact || m_lane < font || !laneNames)
 			continue;
 		if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect({top.x, y}, {top.x + m_header, y + m_lane}))
 		{
@@ -90,6 +90,11 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 	{
 		// An empty run still shows where frames will appear.
 		draw->AddLine({left, framesBottom}, {right, framesBottom}, muted);
+		// The hint sits in the lane below the frame line, or is left out when there is none.
+		const char* hint = "Frames, images and input appear here while an app runs";
+		const auto size = ImGui::CalcTextSize(hint);
+		if (m_lanes > Images && size.x < pixels - 16 * scale)
+			draw->AddText({left + (pixels - size.x) / 2, LaneY(Images) + (m_lane - size.y) / 2}, muted, hint);
 		ImGui::PopID();
 		return result;
 	}
@@ -97,11 +102,19 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 	if (m_fit)
 	{
 		m_start = first;
-		m_span = std::max(.1, latest - first + .01);
+		m_span = m_zoomSpan = std::max(.1, latest - first + .01);
 		m_fit = false;
 	}
+	else if (following && latest - first < m_zoomSpan)
+	{
+		m_start = first;
+		m_span = std::max(.5, latest - first + .001);
+	}
 	else if (following)
+	{
+		m_span = m_zoomSpan;
 		m_start = latest - m_span + .001;
+	}
 	const auto& io = ImGui::GetIO();
 	const auto timeAt = [&](float px)
 	{
@@ -111,7 +124,7 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 	{
 		// While following, zoom keeps the live edge at the right; otherwise zoom around the mouse.
 		const auto point = following ? latest : timeAt(io.MousePos.x), ratio = (point - m_start) / m_span;
-		m_span = std::clamp(m_span * std::pow(1.5, -io.MouseWheel), .01, std::max(10., latest - first));
+		m_span = m_zoomSpan = std::clamp(m_span * std::pow(1.5, -io.MouseWheel), .01, std::max(10., latest - first));
 		m_start = following ? latest - m_span + .001 : point - ratio * m_span;
 	}
 	if (active && ImGui::IsMouseDragging(ImGuiMouseButton_Middle))
@@ -365,6 +378,9 @@ void TimelineCanvas::DrawThumbnails(const HistoryStore& history, PreviewHistory&
 		const float shownHeight = std::min(height, width * aspect), shownWidth = shownHeight / aspect;
 		const float y = LaneY(Images) + (m_lane - shownHeight) / 2;
 		previews.DrawThumbnail(*shot, {x, y}, {x + shownWidth, y + shownHeight}, crop);
+		// A light veil and hairline keep bright app images from outshouting the frame bars.
+		draw->AddRectFilled({x, y}, {x + shownWidth, y + shownHeight}, theme::Fade(theme::Bg, .3f));
+		draw->AddRect({x, y}, {x + shownWidth, y + shownHeight}, theme::Line);
 	}
 	draw->PopClipRect();
 }
@@ -382,7 +398,8 @@ void TimelineCanvas::DrawEvent(double time, double observed, const char* text, b
 		ImGui::SetTooltip("%s%s\nObserved +%.2fs (nearest observed frame)", text,
 						  dim ? " (another app or session)" : "", observed);
 }
-ClipHit TimelineCanvas::DrawClip(double first, double last, const char* label, bool replay, bool playable)
+ClipHit TimelineCanvas::DrawClip(double first, double last, const char* label, bool replay, bool playable,
+								 bool stoppable)
 {
 	if (last < m_start || first > m_start + m_span)
 		return ClipHit::None;
@@ -399,9 +416,11 @@ ClipHit TimelineCanvas::DrawClip(double first, double last, const char* label, b
 		draw->AddLine({x, top}, {x, bottom}, theme::Fade(color, .7f), scale);
 	if (X(last) <= m_bounds.x + m_bounds.width)
 		draw->AddLine({end, top}, {end, bottom}, theme::Fade(color, .7f), scale);
-	// The name tab at the top-left, with a play button in front for a saved take.
+	// The name tab at the top-left, with a play button in front for a saved take
+	// or a stop button for a running replay.
 	const float font = ImGui::GetFontSize(), tabHeight = std::min(font + 4 * scale, m_lane);
-	const float play = playable ? tabHeight : 0;
+	const bool action = playable || stoppable;
+	const float play = action ? tabHeight : 0;
 	const float tabWidth = play + ImGui::CalcTextSize(label).x + 10 * scale;
 	const ImVec2 tabMin{x, top}, tabMax{x + tabWidth, top + tabHeight};
 	const auto mouse = ImGui::GetIO().MousePos;
@@ -409,23 +428,29 @@ ClipHit TimelineCanvas::DrawClip(double first, double last, const char* label, b
 						 mouse.y >= tabMin.y && mouse.y < tabMax.y;
 	draw->AddRectFilled(tabMin, tabMax, hovered ? color : theme::Mix(theme::Surface, color, .75f), theme::Radius * scale,
 						ImDrawFlags_RoundCornersBottomRight);
-	const bool overPlay = hovered && playable && mouse.x < tabMin.x + play;
-	if (playable)
+	const bool overPlay = hovered && action && mouse.x < tabMin.x + play;
+	if (action)
 	{
 		if (overPlay)
 			draw->AddRectFilled(tabMin, {tabMin.x + play, tabMax.y}, theme::Accent);
-		DrawIcon(draw, Icon::Play, {tabMin.x + play / 2, top + tabHeight / 2}, tabHeight * .7f, theme::Text);
+		DrawIcon(draw, stoppable ? Icon::Stop : Icon::Play, {tabMin.x + play / 2, top + tabHeight / 2},
+				 tabHeight * .7f, theme::Text);
 	}
 	draw->AddText({tabMin.x + play + 5 * scale, top + (tabHeight - font) / 2}, theme::Text, label);
 	draw->PopClipRect();
 	if (!hovered)
 		return ClipHit::None;
+	if (overPlay && stoppable)
+	{
+		ImGui::SetTooltip("Stop %s and release its inputs", label);
+		return ImGui::IsMouseReleased(ImGuiMouseButton_Left) ? ClipHit::Stop : ClipHit::None;
+	}
 	if (overPlay)
 	{
 		ImGui::SetTooltip("Play %s on the app; restores inputs, not game state", label);
 		return ImGui::IsMouseReleased(ImGuiMouseButton_Left) ? ClipHit::Play : ClipHit::None;
 	}
-	ImGui::SetTooltip("%s\nClick selects its frames; double-click opens the library", label);
+	ImGui::SetTooltip("%s\nClick selects its frames; double-click opens it", label);
 	if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
 		return ClipHit::Opened;
 	return ImGui::IsMouseReleased(ImGuiMouseButton_Left) ? ClipHit::Clicked : ClipHit::None;

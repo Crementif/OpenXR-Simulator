@@ -2,6 +2,7 @@
 #include "app/RuntimeSession.h"
 #include "app/CompanionSettings.h"
 #include "app/Utf8Path.h"
+#include "app/widgets/Controls.h"
 
 #include <chrono>
 #include <filesystem>
@@ -153,9 +154,11 @@ std::optional<automation::SavedRecording> RangePage::Draw(const RangeSel& range,
 {
 	const auto& history = m_session.History();
 	const auto first = history.Find(range.first, range.epoch), last = history.Find(range.last, range.epoch);
-	ImGui::SeparatorText("Range");
-	ImGui::Text("Frames %llu – %llu", static_cast<unsigned long long>(range.first.frame),
-				static_cast<unsigned long long>(range.last.frame));
+	const std::string title =
+		"Frames " + std::to_string(range.first.frame) + " \u2013 " + std::to_string(range.last.frame);
+	PageTitle(Icon::Crop, title.c_str());
+	if (PageClose())
+		shell.selection = std::monostate{};
 	if (!first || !last || *last < *first)
 	{
 		ImGui::TextDisabled("These frames are no longer in history");
@@ -170,7 +173,7 @@ std::optional<automation::SavedRecording> RangePage::Draw(const RangeSel& range,
 		shell.timeline.zoomToRange = true;
 	}
 
-	ImGui::SeparatorText("Take");
+	SectionLabel("Take");
 	const bool recorded = m_session.InputSamples().Find(history.At(*first).input) && m_session.InputSamples().Find(history.At(*last).input);
 	if (!m_take[0])
 	{
@@ -198,7 +201,7 @@ std::optional<automation::SavedRecording> RangePage::Draw(const RangeSel& range,
 	if (!m_takeStatus.empty())
 		ImGui::TextDisabled("%s", m_takeStatus.c_str());
 
-	ImGui::SeparatorText("Export");
+	SectionLabel("Export");
 	ImGui::SetNextItemWidth(-1);
 	ImGui::InputText("##Range export file", m_path.data(), m_path.size());
 	ImGui::BeginDisabled(m_export.Busy() || m_session.Exports().Busy());

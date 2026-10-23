@@ -39,6 +39,8 @@ class DeviceControlPanel
 	void ResetObservations();
 	void ObserveDelivery(bool pending, const std::string& error);
 	std::optional<SimulationEdit> DrawAdvanced();
+	// The session's failure scenarios as menu items: Unfocused, Hidden and a confirmed session loss.
+	std::optional<SimulationEdit> DrawSessionMenu();
 	// Page title with the page's Reset button (Reset all on Player).
 	std::optional<SimulationEdit> DrawHeader(const Selection& selection);
 
@@ -48,7 +50,10 @@ class DeviceControlPanel
 	void DrawOwnership();
 	void LoadObservedSettings();
 	void DrawOwner(ControlChannel channel);
-	bool DrawScenarioNotice(ControlChannel channel);
+	// A failure scenario of this channel is active; its fields are read only meanwhile.
+	bool ScenarioActive(ControlChannel channel) const;
+	// The page's Tracked / Lost / Off switch over its failure scenarios.
+	void DrawTracking(DevicePage page);
 	void ReloadRecoveredChannel(ControlChannel channel);
 	void DrawPlayer();
 	void DrawAnchor(std::size_t hand);
@@ -64,7 +69,6 @@ class DeviceControlPanel
 	void DrawGaze();
 	void DrawTrackers();
 	void DrawViews();
-	void DrawScenarios();
 
 	PlayerRig& m_playerRig;
 	std::optional<CommandSource> m_manualSource;
@@ -87,10 +91,8 @@ class DeviceControlPanel
 	std::optional<ObservedSetup> m_observed;
 	std::string m_observationError;
 	std::uint64_t m_loadedFrame = 0;
-	int m_setupSection = 0;
 	int m_selectedChannel = 0;
 	int m_controlHand = 0;
-	int m_selectedScenario = 0;
 	int m_selectedTracker = 0;
 	int m_trackerRole = 0;
 	TrackingState m_authoredTracking;

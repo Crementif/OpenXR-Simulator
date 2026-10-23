@@ -328,9 +328,22 @@ struct UiRenderer::Impl
 		ImGui::GetIO().IniFilename = nullptr;
 		if (const auto base = SDL_GetBasePath())
 		{
-			const auto font = std::filesystem::path(base) / "fonts/LiberationSans-Regular.ttf";
+			const auto font = std::filesystem::path(base) / "fonts/AdwaitaSans-Regular.ttf";
 			if (std::filesystem::exists(font))
-				ImGui::GetIO().Fonts->AddFontFromFileTTF(font.string().c_str(), 17);
+			{
+				// Adwaita Sans (an Inter fork) has proportional digits; they merge back at one width so live
+				// numbers do not jitter. Clamped glyphs are centred in their advance.
+				static constexpr ImWchar digits[]{'0', '9', 0};
+				ImFontConfig text;
+				text.GlyphExcludeRanges = digits;
+				auto& fonts = *ImGui::GetIO().Fonts;
+				fonts.AddFontFromFileTTF(font.string().c_str(), 17, &text);
+				ImFontConfig figures;
+				figures.MergeMode = true;
+				figures.GlyphRanges = digits;
+				figures.GlyphMinAdvanceX = figures.GlyphMaxAdvanceX = 17 * .6f;
+				fonts.AddFontFromFileTTF(font.string().c_str(), 17, &figures);
+			}
 		}
 		auto& style = ImGui::GetStyle();
 		theme::Apply(style);

@@ -22,10 +22,10 @@ std::string ImageLabel(const PreviewImageSummary& image)
 {
 	// Composited and display output are the normal case and need no label.
 	if (image.target == wire::TargetKind::LayerView)
-		return " \u00b7 Layer " + std::to_string(image.layer + 1) + ", view " + std::to_string(image.view + 1);
+		return "Layer " + std::to_string(image.layer + 1) + ", view " + std::to_string(image.view + 1);
 	if (image.target == wire::TargetKind::ComposedEyes || image.target == wire::TargetKind::VirtualDisplay)
 		return "";
-	return " \u00b7 Captured image";
+	return "Captured image";
 }
 } // namespace
 PreviewPanel::PreviewPanel(RuntimeSession& session, PilotController& pilot, SpatialEditor& spatial,
@@ -43,21 +43,8 @@ bool PreviewPanel::Draw(ShellState& shell, const RuntimeView& view)
 		const bool live = view.time.following;
 		if (image && image->ready && !image->released)
 		{
-			// The header row starts at the image's left edge when both fit.
-			const float available = ImGui::GetContentRegionAvail().x;
-			const float imageLeft = std::max(0.0f, (available - m_previousImageSize.x) / 2);
-			ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::min(imageLeft, std::max(0.0f, available - m_headerWidth)));
-			const float headerStart = ImGui::GetCursorScreenPos().x;
-			ImGui::AlignTextToFramePadding();
-			// Paused is the top bar's run chip and the amber border; only looking back is said here.
-			if (!live)
-			{
-				ImGui::TextColored(theme::Vec(theme::Past), "PAST");
-				ImGui::SameLine();
-			}
-			ImGui::TextDisabled("Frame %llu%s", static_cast<unsigned long long>(image->frame),
-								ImageLabel(*image).c_str());
-			DrawImage(shell, view, pilotArea, headerStart);
+			DrawImage(shell, view, pilotArea);
+			DrawCorner(*image, live);
 		}
 		else if (m_spatial.Expanded())
 			m_spatial.DrawExpanded(shell.selection, ImGui::GetContentRegionAvail());
@@ -137,15 +124,36 @@ void PreviewPanel::DrawEmpty(ShellState& shell, const RuntimeView& view)
 	line(view.sessionAvailable ? "Waiting for first frame\u2026" : "Waiting for the app to start XR\u2026",
 		 center.y, theme::TextDim);
 }
-void PreviewPanel::DrawImage(ShellState& shell, const RuntimeView& view, bool& pilotArea, float headerStart)
+void PreviewPanel::DrawCorner(const PreviewImageSummary& image, bool live)
 {
-	auto& preview = m_session.Preview();
-	const auto image = preview.Selected();
-	const bool live = view.time.following;
-	if (m_slice >= static_cast<int>(image->slices))
+	// Floats over the image's top right corner; last frame's width places it.
+	const float scale = ImGui::GetFontSize() / 16, margin = 8 * scale;
+	const ImVec2 padding{4 * scale, 4 * scale};
+	const auto origin = ImGui::GetWindowPos();
+	ImGui::SetCursorScreenPos({origin.x + ImGui::GetWindowWidth() - m_cornerWidth - padding.x * 2 - margin,
+							   origin.y + margin});
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, padding);
+	ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::Fade(theme::Bg, .72f));
+	ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, theme::Radius);
+	const ImGuiChildFlags fit =
+		ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding;
+	ImGui::BeginChild("Image controls", {0, 0}, fit, ImGuiWindowFlags_NoScrollbar);
+	const float start = ImGui::GetCursorScreenPos().x;
+	ImGui::AlignTextToFramePadding();
+	// Paused is the amber border; only looking back and an unusual image are said here.
+	if (!live)
+	{
+		ImGui::TextColored(theme::Vec(theme::Past), "PAST");
+		ImGui::SameLine();
+	}
+	if (const auto label = ImageLabel(image); !label.empty())
+	{
+		ImGui::TextDisabled("%s", label.c_str());
+		ImGui::SameLine();
+	}
+	if (m_slice >= static_cast<int>(image.slices))
 		m_slice = 0;
-	ImGui::SameLine();
-	DrawViewButton(*image);
+	DrawViewButton(image);
 	if (m_crop)
 	{
 		ImGui::SameLine();
@@ -156,18 +164,19 @@ void PreviewPanel::DrawImage(ShellState& shell, const RuntimeView& view, bool& p
 	}
 	ImGui::SameLine();
 	m_spatial.DrawSpaceToggle();
-	if (live && !view.manual && view.connected)
-	{
-		ImGui::SameLine();
-		if (IconButton("Pilot keys", Icon::Keyboard, "Mouse, keyboard and gamepad bindings for piloting"))
-			ImGui::OpenPopup("Piloting");
-		if (ImGui::BeginPopup("Piloting"))
-		{
-			m_pilot.DrawHelp();
-			ImGui::EndPopup();
-		}
-	}
-	m_headerWidth = ImGui::GetItemRectMax().x - headerStart;
+	m_cornerWidth = ImGui::GetItemRectMax().x - start;
+	m_cornerHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+	ImGui::EndChild();
+	ImGui::PopStyleVar(2);
+	ImGui::PopStyleColor();
+}
+void PreviewPanel::DrawImage(ShellState& shell, const RuntimeView& view, bool& pilotArea)
+{
+	auto& preview = m_session.Preview();
+	const auto image = preview.Selected();
+	const bool live = view.time.following;
+	if (m_slice >= static_cast<int>(image->slices))
+		m_slice = 0;
 	ImGui::BeginChild("Image area", {0, 0}, 0, ImGuiWindowFlags_NoScrollWithMouse);
 	if (m_spatial.Expanded())
 	{
@@ -195,7 +204,7 @@ void PreviewPanel::DrawImage(ShellState& shell, const RuntimeView& view, bool& p
 		return;
 	}
 	const bool busy = m_pilot.Active() || m_spatial.Active();
-	if (!busy && !m_fit && !m_crop && ImGui::IsWindowHovered() && ImGui::GetIO().MouseWheel)
+	if (!busy && !m_cornerHovered && !m_fit && !m_crop && ImGui::IsWindowHovered() && ImGui::GetIO().MouseWheel)
 		m_zoom = std::clamp(m_zoom * std::pow(1.15f, ImGui::GetIO().MouseWheel), .05f, 16.0f);
 	if (!busy && ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Middle) && !m_fit)
 		m_panning = true;
@@ -254,8 +263,9 @@ void PreviewPanel::DrawImage(ShellState& shell, const RuntimeView& view, bool& p
 	{
 		auto& input = m_session.ManualInput();
 		const bool hudHovered = m_pilot.DrawHud(imageMin, imageMax, input);
-		m_pilot.Update(*m_window, input, pilotArea,
-					   !hudHovered && !overlayHovered && ImGui::IsMouseHoveringRect(imageMin, imageMax));
+		const bool overImage = !hudHovered && !overlayHovered && !m_cornerHovered &&
+							   ImGui::IsMouseHoveringRect(imageMin, imageMax);
+		m_pilot.Update(*m_window, input, pilotArea, overImage);
 		m_devices.SetRigPiloting(m_pilot.Active() || m_spatial.Active());
 		if (!m_pilot.Error().empty() && m_pilot.Error() != m_pilotError)
 			m_session.Notify("Piloting stopped", m_pilot.Error());
@@ -283,7 +293,7 @@ void PreviewPanel::DrawViewButton(const PreviewImageSummary& image)
 	const bool eyes = image.slices == 2 && image.description.views.size() == 2;
 	if (image.slices > 1)
 	{
-		ImGui::SeparatorText("Eye");
+		SectionLabel("Eye");
 		for (int slice = 0; slice < static_cast<int>(image.slices); ++slice)
 		{
 			const auto label = eyes ? std::string{slice == 0 ? "Left" : "Right"} : "View " + std::to_string(slice + 1);
@@ -294,7 +304,7 @@ void PreviewPanel::DrawViewButton(const PreviewImageSummary& image)
 		if (choice(eyes ? "Both" : "All", m_slice == -1))
 			m_slice = -1;
 	}
-	ImGui::SeparatorText("Zoom");
+	SectionLabel("Zoom");
 	ImGui::BeginDisabled(m_crop.has_value());
 	if (choice("Fit", m_fit))
 		m_fit = true;
@@ -312,7 +322,7 @@ void PreviewPanel::DrawViewButton(const PreviewImageSummary& image)
 	if (ImGui::SliderFloat("##Zoom", &m_zoom, 0.05f, 16.0f, "%.2fx", ImGuiSliderFlags_Logarithmic))
 		m_fit = false;
 	ImGui::EndDisabled();
-	ImGui::SeparatorText("Crop");
+	SectionLabel("Crop");
 	if (ImGui::Button(m_crop ? "Pick again" : "Pick region"))
 	{
 		m_picking = true;

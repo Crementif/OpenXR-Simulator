@@ -58,21 +58,46 @@ void AppPicker::Refresh()
 	m_nextScan = std::chrono::steady_clock::now() + std::chrono::seconds(2);
 }
 AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const RuntimeView& view, const std::string& label,
-								bool open)
+								ImU32 dot, const std::string& tooltip, bool open, const std::function<void()>& session)
 {
 	AppPickerChoice choice;
-	if (IconButton("##App picker", Icon::App, "Launch or connect an OpenXR app", false, label.c_str()) || open)
+	const float height = ImGui::GetFrameHeight(), unit = ImGui::GetFontSize() / 17;
+	const auto text = ImGui::CalcTextSize(label.c_str());
+	const float dotX = height + text.x + 8 * unit, chevronX = dotX + (dot ? 14 * unit : 0);
+	const ImVec2 size{chevronX + 18 * unit, height};
+	const auto minimum = ImGui::GetCursorScreenPos();
+	const bool pressed = ImGui::InvisibleButton("##App picker", size, ImGuiButtonFlags_EnableNav);
+	const bool hovered = ImGui::IsItemHovered(), shown = ImGui::IsPopupOpen("App picker");
+	auto* draw = ImGui::GetWindowDrawList();
+	if (hovered || shown)
+		draw->AddRectFilled(minimum, {minimum.x + size.x, minimum.y + size.y},
+							theme::Mix(theme::Bg, theme::Text, shown ? .1f : .06f), theme::Radius * unit);
+	DrawIcon(draw, Icon::App, {minimum.x + height / 2, minimum.y + height / 2}, height * .6f, theme::TextDim);
+	draw->AddText({minimum.x + height, minimum.y + (height - text.y) / 2}, theme::Text, label.c_str());
+	if (dot)
+		draw->AddCircleFilled({minimum.x + dotX + 4 * unit, minimum.y + height / 2}, 4 * unit, dot);
+	DrawIcon(draw, Icon::ChevronDown, {minimum.x + chevronX + 7 * unit, minimum.y + height / 2}, 12 * unit,
+			 theme::TextDim);
+	if (!tooltip.empty())
+		ImGui::SetItemTooltip("%s", tooltip.c_str());
+	if (pressed || open)
 	{
 		Refresh();
 		ImGui::OpenPopup("App picker");
 	}
+	ImGui::SetNextWindowPos({minimum.x, minimum.y + height + 2 * unit});
 	ImGui::SetNextWindowSizeConstraints({ImGui::GetFontSize() * 24, 0}, {ImGui::GetFontSize() * 40, FLT_MAX});
 	if (!ImGui::BeginPopup("App picker"))
 		return choice;
 	if (std::chrono::steady_clock::now() >= m_nextScan)
 		Refresh();
+	if (view.connected && session)
+	{
+		SectionLabel("Session");
+		session();
+	}
 
-	ImGui::SeparatorText("Running");
+	SectionLabel("Running");
 	ImGui::SameLine();
 	if (IconButton("Refresh", Icon::Refresh, "Look for running apps again"))
 		Refresh();
@@ -104,7 +129,7 @@ AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const Runtime
 		ImGui::PopID();
 	}
 
-	ImGui::SeparatorText("Recent");
+	SectionLabel("Recent");
 	if (settings.recent.empty())
 		ImGui::TextDisabled("Launched and connected apps appear here");
 	for (std::size_t index = 0; index < settings.recent.size(); ++index)
@@ -136,7 +161,7 @@ AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const Runtime
 		ImGui::PopID();
 	}
 
-	ImGui::SeparatorText("Profiles");
+	SectionLabel("Profiles");
 	for (std::size_t index = 0; index < settings.profiles.size(); ++index)
 		if (ImGui::Selectable(settings.profiles[index].name.c_str()))
 			choice.launchProfile = static_cast<int>(index);

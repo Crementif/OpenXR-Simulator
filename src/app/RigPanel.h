@@ -41,8 +41,6 @@ class RigPanel
 	std::uint64_t RunId() const;
 	automation::RigSnapshot Snapshot() const;
 	bool MatchesTarget(const RuntimeView& state) const;
-	bool HasStatus() const;
-	void DrawTransport();
 	void ReplayRecording(RuntimePanels& runtime, const std::string& path, std::uint64_t seed);
 	// Called only for an explicit launch action. A rig is never attached to a
 	// previously connected application or an ambiguous/stale socket.

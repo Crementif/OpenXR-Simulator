@@ -354,7 +354,7 @@ bool LaunchProfilesDialog::DrawForm(CompanionSettings& settings, const LaunchSna
 	const auto environmentProblem = EnvironmentProblem();
 	Problem(environmentProblem);
 
-	if (ImGui::CollapsingHeader("Runtime and script"))
+	if (Section("Runtime and script"))
 	{
 		edited |= PathField("OpenXR runtime JSON", m_manifest, PathKind::File, Browse::Manifest, true);
 		Label("Headset profile");

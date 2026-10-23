@@ -130,19 +130,11 @@ class RuntimePanels::Impl
 	{
 		if (!m_view.connected)
 		{
-			const auto available = ImGui::GetContentRegionAvail();
-			const auto origin = ImGui::GetCursorScreenPos();
-			const float unit = ImGui::GetFontSize() / 17;
-			const char* text = "No app connected";
-			const auto size = ImGui::CalcTextSize(text);
-			DrawIcon(ImGui::GetWindowDrawList(), Icon::Headset, {origin.x + available.x / 2, origin.y + 60 * unit},
-					 36 * unit, theme::TextDim);
-			ImGui::SetCursorScreenPos({origin.x + (available.x - size.x) / 2, origin.y + 90 * unit});
-			ImGui::TextDisabled("%s", text);
-			const float width = ImGui::CalcTextSize("Open app").x + ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x;
-			ImGui::SetCursorScreenPos({origin.x + (available.x - width) / 2, ImGui::GetCursorScreenPos().y + 4 * unit});
-			if (IconButton("Open app##Inspector", Icon::App, "Launch or connect an OpenXR app", false, "Open app"))
-				shell.openAppPicker = true;
+			// The page keeps its title, greyed; the preview's Open app is the one way in.
+			ImGui::BeginDisabled();
+			m_devices.DrawHeader(shell.selection);
+			ImGui::EndDisabled();
+			ImGui::TextDisabled("Values appear once an app connects");
 			return;
 		}
 		if (auto edit = m_devices.DrawHeader(shell.selection))
@@ -226,7 +218,7 @@ class RuntimePanels::Impl
 				m_session.ChooseSession(session);
 			ImGui::SetItemTooltip("Run %llu", static_cast<unsigned long long>(session.generation));
 		}
-		if (ImGui::CollapsingHeader("Advanced connection"))
+		if (Section("Advanced connection"))
 		{
 			ImGui::SetNextItemWidth(-1);
 			ImGui::InputText("##Endpoint", m_endpointInput.data(), m_endpointInput.size());
@@ -375,6 +367,11 @@ void RuntimePanels::DrawAdvancedPage()
 void RuntimePanels::DrawDevicePage(ShellState& shell)
 {
 	m_impl->DrawDevicePage(shell);
+}
+void RuntimePanels::DrawSessionMenu()
+{
+	if (auto edit = m_impl->m_devices.DrawSessionMenu())
+		m_impl->SubmitEdit(*edit);
 }
 void RuntimePanels::DrawRecordingPopovers()
 {

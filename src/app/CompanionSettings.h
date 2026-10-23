@@ -54,6 +54,7 @@ struct CompanionSettings
 	PilotBindings pilotBindings = DefaultPilotBindings();
 	GamepadBindings gamepadBindings;
 	float inspectorWidth = 340, timelineHeight = 132;
+	// railCollapsed is no longer used; it stays so older builds can read the file.
 	bool railCollapsed = true, timelineResized = false;
 	bool inspectorFolded = false, timelineFolded = false, hudFolded = false;
 	std::vector<PreviewCrop> crops;
@@ -68,6 +69,8 @@ struct CompanionSettings
 // Explicit override must be absolute. With no HOME/config base, report unavailable.
 std::filesystem::path CompanionSettingsPath();
 void ValidateSettings(const CompanionSettings& settings);
+// Inspector width, timeline height and folds back to their defaults.
+void ResetLayout(CompanionSettings& settings);
 // Puts the app first, replacing an older entry with the same executable,
 // arguments and working directory, and keeps at most MaxRecentApps.
 void RememberRecentApp(CompanionSettings& settings, LaunchProfile launch, std::int64_t lastUsed);

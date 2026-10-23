@@ -22,6 +22,8 @@ class WorkspacePanels
 	const ShellState& State() const;
 	void Select(Selection selection);
 	void SetPreviewExpanded(bool expanded);
+	// Opens or closes the timeline's Library drawer.
+	void ShowLibrary(bool open);
 	void SetScale(float scale);
 	void Finish();
 

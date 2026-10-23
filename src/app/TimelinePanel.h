@@ -22,6 +22,11 @@ class TimelinePanel
 	{
 		return 36 * scale;
 	}
+	// Screen rectangle of the Library drawer below the transport; empty while it is closed.
+	ShellRect DrawerRect() const
+	{
+		return m_drawer;
+	}
 	void ObserveRig(const RuntimeView& runtime, std::uint64_t run, const automation::RigSnapshot& state,
 					bool matchesTarget);
 	// A take is about to replay; when it was cut from history, its source is drawn over the replay.
@@ -82,6 +87,7 @@ class TimelinePanel
 	std::vector<TakeSource> m_takes;
 	std::optional<Ghost> m_ghost;
 	TimelineCanvas m_canvas;
+	ShellRect m_drawer;
 	bool m_tint = false;
 };
 } // namespace simxr::app

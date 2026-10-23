@@ -303,14 +303,12 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 				const float radius = 5 * scale;
 				draw->AddCircleFilled(position, radius + scale, theme::Fade(theme::Ink, alpha));
 				draw->AddCircleFilled(position, radius, color);
-				const char label[2] = {value.labels[device], 0};
-				draw->AddText({position.x + radius + 2 * scale, position.y - ImGui::GetFontSize() * .5f},
-							  theme::Fade(theme::Head, alpha * .9f), label);
 			}
+			// Only the selected device is named; the colours tell the rest apart without clutter.
 			if (device == selected)
 			{
 				draw->AddCircle(position, 12 * scale, color, 32, 2 * scale);
-				if (device == 1 || device == 2)
+				if (device > 0)
 				{
 					const char label[2] = {value.labels[device], 0};
 					draw->AddText({position.x + 14 * scale, position.y - 14 * scale - ImGui::GetFontSize()}, color,

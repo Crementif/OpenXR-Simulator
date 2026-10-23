@@ -36,6 +36,13 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 		ImGui::TextUnformatted("Kept previews");
 		ImGui::SetItemTooltip("Downscaled copies of shown frames for looking back while the app runs");
 	}
+	if (ImGui::Button("Reset layout"))
+	{
+		ResetLayout(settings);
+		dirty = true;
+	}
+	ImGui::SetItemTooltip("Inspector width, timeline height and hidden panels back to defaults.\n"
+						  "Hide the timeline with Ctrl+T, the inspector with Ctrl+I; F11 shows only the image.");
 	if (ImGui::BeginTabBar("Preference pages"))
 	{
 		if (ImGui::BeginTabItem("Keyboard & mouse"))

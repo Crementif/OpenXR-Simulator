@@ -1,6 +1,7 @@
 #include "app/AdvancedSteppingPage.h"
 #include "app/DeviceControlPanel.h"
 #include "app/RuntimeSession.h"
+#include "app/widgets/Controls.h"
 #include "control/DebugProtocol.h"
 
 #include <algorithm>
@@ -26,20 +27,19 @@ void AdvancedSteppingPage::Draw()
 	auto& preview = m_session.Preview();
 	const auto selected = debugger.Selected();
 	const auto& status = debugger.Status();
-	ImGui::SeparatorText("Advanced stepping");
 	if (auto edit = m_devices.DrawAdvanced())
 		m_session.SubmitEdit(*edit);
 	ImGui::BeginDisabled(!selected.id || !m_session.Connected());
 	if (ImGui::Button("Cancel pending operation"))
 		m_session.CancelPending();
-	if (ImGui::CollapsingHeader("Advanced stepping"))
+	if (Section("Advanced stepping"))
 	{
 		if (ImGui::Button("Advance display only"))
 			m_session.Command(wire::CommandKind::DisplayStep);
 		ImGui::SetItemTooltip("Advances presentation without admitting another application frame");
 		if (ImGui::Button("Strict frame admission"))
 			m_session.Command(wire::CommandKind::StrictAdmission);
-		ImGui::SeparatorText("Capture a submitted source");
+		SectionLabel("Capture a submitted source");
 		ImGui::TextUnformatted("Submitted layer index");
 		ImGui::SetNextItemWidth(-1);
 		ImGui::InputInt("##Source layer", &m_rawLayer);
@@ -51,7 +51,7 @@ void AdvancedSteppingPage::Draw()
 							  static_cast<std::uint32_t>(std::max(0, m_rawView)));
 	}
 	ImGui::EndDisabled();
-	ImGui::SeparatorText("Runtime progress");
+	SectionLabel("Runtime progress");
 	if (!selected.id)
 		ImGui::TextUnformatted("Session unavailable");
 	else
@@ -83,7 +83,7 @@ void AdvancedSteppingPage::Draw()
 		ImGui::Text("Operation %llu: %s / %s", static_cast<unsigned long long>(operation.id), operation.phase.c_str(),
 					operation.progress.c_str());
 
-	ImGui::SeparatorText("Snapshots");
+	SectionLabel("Snapshots");
 	bool autoSelect = m_session.AutoSelect();
 	if (ImGui::Checkbox("Select completed steps", &autoSelect))
 		m_session.SetAutoSelect(autoSelect);
@@ -97,7 +97,7 @@ void AdvancedSteppingPage::Draw()
 			m_session.SelectFrame(capture.local);
 		ImGui::PopID();
 	}
-	ImGui::SeparatorText("Private GPU images");
+	SectionLabel("Private GPU images");
 	for (const auto& image : preview.Images())
 	{
 		const auto label = "Frame " + std::to_string(image.frame) +

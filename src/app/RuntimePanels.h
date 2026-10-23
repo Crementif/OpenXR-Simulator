@@ -46,6 +46,8 @@ class RuntimePanels
 	void DrawRangePage(const RangeSel& range, ShellState& shell);
 	void DrawAdvancedPage();
 	void DrawDevicePage(ShellState& shell);
+	// Session scenarios as items of the menu being drawn.
+	void DrawSessionMenu();
 	// The Rec button's start-confirm and "Save take" popovers.
 	void DrawRecordingPopovers();
 	// A take the stop popover just saved.

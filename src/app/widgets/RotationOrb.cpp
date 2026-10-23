@@ -164,6 +164,8 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 	const float scale = ImGui::GetFontSize() / 16;
 	size *= scale;
 	ImGui::PushID(id);
+	// The ball centres over the angle fields below it.
+	ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (width - size) / 2));
 	const auto minimum = ImGui::GetCursorScreenPos();
 	const ImVec2 center{minimum.x + size / 2, minimum.y + size / 2};
 	const float radius = size * .46f;

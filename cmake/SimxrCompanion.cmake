@@ -85,11 +85,11 @@ simxr_set_output_directory(simxr_companion)
 target_link_libraries(simxr_companion PRIVATE simxr_app)
 foreach(font_directory IN ITEMS "${SIMXR_OUTPUT_DIRECTORY}/fonts" "${CMAKE_CURRENT_BINARY_DIR}/fonts")
     file(MAKE_DIRECTORY "${font_directory}")
-    configure_file("${PROJECT_SOURCE_DIR}/resources/fonts/LiberationSans-Regular.ttf"
-        "${font_directory}/LiberationSans-Regular.ttf" COPYONLY)
+    configure_file("${PROJECT_SOURCE_DIR}/resources/fonts/AdwaitaSans-Regular.ttf"
+        "${font_directory}/AdwaitaSans-Regular.ttf" COPYONLY)
 endforeach()
-install(FILES "${PROJECT_SOURCE_DIR}/resources/fonts/LiberationSans-Regular.ttf" DESTINATION bin/fonts)
-install(FILES "${PROJECT_SOURCE_DIR}/resources/fonts/LIBERATION-LICENSE.txt"
+install(FILES "${PROJECT_SOURCE_DIR}/resources/fonts/AdwaitaSans-Regular.ttf" DESTINATION bin/fonts)
+install(FILES "${PROJECT_SOURCE_DIR}/resources/fonts/ADWAITA-SANS-LICENSE.txt"
     DESTINATION share/licenses/simxr_companion)
 if(BUILD_TESTING)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

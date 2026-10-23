@@ -20,7 +20,7 @@ struct Notice
 	std::string action;
 	std::function<void()> run;
 };
-// The shell's notice toasts at the top right of the preview. They never change
+// The shell's notice toasts at the top centre of the preview. They never change
 // the run state or the border and disappear after a few seconds.
 class Notices
 {

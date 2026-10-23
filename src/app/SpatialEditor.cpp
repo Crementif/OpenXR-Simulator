@@ -269,7 +269,7 @@ void SpatialEditor::DrawPlacement(Selection& selection)
 	const int selected = SelectedDevice(selection);
 	if (selected >= 0)
 	{
-		ImGui::SeparatorText("Rotation");
+		SectionLabel("Rotation");
 		XrQuaternionf reference = m_rig.Root().orientation;
 		if (selected == 1 || selected == 2)
 			reference = m_rig.AnchorPose(m_rig.HandAnchor(selected - 1)).orientation;
@@ -281,8 +281,9 @@ void SpatialEditor::DrawPlacement(Selection& selection)
 		const auto camera = RigCamera(m_view, scene, 1);
 		auto pose = scene.devices[selected];
 		const auto rotationMinimum = ImGui::GetCursorScreenPos();
-		m_rotationBallRect = {rotationMinimum.x, rotationMinimum.y, 160 * scale, 160 * scale};
 		const float column = ImGui::GetContentRegionAvail().x;
+		m_rotationBallRect = {rotationMinimum.x + std::max(0.0f, (column - 160 * scale) / 2), rotationMinimum.y,
+							  160 * scale, 160 * scale};
 		const auto model = selected == 0 ? OrbModel::Headset : selected < 3 ? OrbModel::Controller : OrbModel::Puck;
 		const auto result = RotationOrb("Rotation ball", m_arcballs[selected], pose.orientation, camera.pose.orientation,
 										reference, editable[selected], model, DeviceColor(selected), column);
@@ -419,8 +420,13 @@ bool SpatialEditor::DrawPreview(Selection& selection, ImVec2 minimum, ImVec2 max
 				draw->AddCircleFilled(position, radius, color);
 			if (device == selected)
 				draw->AddCircle(position, radius + 3 * scale, color, 32, 2 * scale);
+			// The letter sits on the marker's visual centre; a triangle's is a third of the way back from its tip.
 			const char label[2]{scene.labels[device], 0};
-			draw->AddText({position.x - 4 * scale, position.y - 7 * scale}, theme::Ink, label);
+			const auto letter = ImGui::CalcTextSize(label);
+			const float back = outside ? radius / 3 : 0;
+			const ImVec2 middle{position.x - direction.x * back, position.y - direction.y * back};
+			draw->AddText({std::round(middle.x - letter.x / 2), std::round(middle.y - letter.y / 2)}, theme::Ink,
+						  label);
 			ImGui::SetCursorScreenPos({position.x - radius, position.y - radius});
 			ImGui::PushID(device);
 			ImGui::BeginDisabled(gizmo.hovered || gizmo.active);
