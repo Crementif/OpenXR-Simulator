@@ -1,3 +1,4 @@
+#include "Pch.h"
 #include "Math.h"
 #include "VulkanProbeInstance.h"
 #include "graphics/backends/vulkan/VulkanBackend.h"
@@ -6,58 +7,51 @@
 #include "runtime/Instance.h"
 #include "runtime/Session.h"
 
-#include <algorithm>
-#include <array>
-#include <chrono>
 #include <cmath>
-#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <future>
 #include <limits>
-#include <memory>
-#include <optional>
 #include <stdexcept>
-#include <string>
 #include <thread>
-#include <utility>
-#include <vector>
 
-namespace
+namespace simxr::probe
 {
-using namespace simxr;
-using simxr::probe::Check;
-constexpr std::uint64_t Timeout = 5000000000ULL;
-constexpr VkImageUsageFlags SourceUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-										  VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+static constexpr std::uint64_t s_timeout = 5000000000ULL;
+static constexpr VkImageUsageFlags s_sourceUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+												   VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
-void Require(bool value, const char* message)
+static void Require(bool value, const char* message)
 {
 	if (!value)
 		throw std::runtime_error(message);
 }
-[[noreturn]] void UnknownCompletion(const char* operation)
+[[noreturn]] static void UnknownCompletion(const char* operation)
 {
 	std::fprintf(stderr, "FAIL: %s; GPU completion unknown, preserving process-owned resources\n", operation);
 	std::fflush(nullptr);
 	std::_Exit(1);
 }
 
-struct Device
+struct CompositorDevice
 {
-	VkPhysicalDevice physical = VK_NULL_HANDLE;
-	VkDevice native = VK_NULL_HANDLE;
-	VkQueue queue = VK_NULL_HANDLE;
-	std::uint32_t family = 0;
-	std::uint32_t index = 0;
-	~Device()
+	CompositorDevice() = default;
+	CompositorDevice(const CompositorDevice&) = delete;
+	CompositorDevice& operator=(const CompositorDevice&) = delete;
+	VkPhysicalDevice m_physical = VK_NULL_HANDLE;
+	VkDevice m_native = VK_NULL_HANDLE;
+	VkQueue m_queue = VK_NULL_HANDLE;
+	std::uint32_t m_family = 0;
+	std::uint32_t m_index = 0;
+	~CompositorDevice()
 	{
-		if (native)
-			vkDestroyDevice(native, nullptr);
+		if (m_native)
+			vkDestroyDevice(m_native, nullptr);
 	}
 	bool Create(VkInstance instance)
 	{
+		Require(!m_native, "Probe device was already created");
 		std::uint32_t count = 0;
 		Check(vkEnumeratePhysicalDevices(instance, &count, nullptr), "enumerate compositor adapters");
 		std::vector<VkPhysicalDevice> adapters(count);
@@ -75,21 +69,22 @@ struct Device
 			{
 				if (!(families[candidate].queueFlags & VK_QUEUE_GRAPHICS_BIT) || !families[candidate].queueCount)
 					continue;
-				physical = adapter;
-				family = candidate;
-				index = families[candidate].queueCount > 1 ? 1 : 0;
+				m_physical = adapter;
+				m_family = candidate;
+				m_index = families[candidate].queueCount > 1 ? 1 : 0;
 				const std::array priorities{1.0f, 1.0f};
 				VkDeviceQueueCreateInfo queues{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
-				queues.queueFamilyIndex = family;
-				queues.queueCount = index + 1;
+				queues.queueFamilyIndex = m_family;
+				queues.queueCount = m_index + 1;
 				queues.pQueuePriorities = priorities.data();
 				VkDeviceCreateInfo info{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
 				info.queueCreateInfoCount = 1;
 				info.pQueueCreateInfos = &queues;
-				Check(vkCreateDevice(physical, &info, nullptr, &native), "create feature-minimal compositor device");
-				vkGetDeviceQueue(native, family, index, &queue);
+				Check(vkCreateDevice(m_physical, &info, nullptr, &m_native),
+					  "create feature-minimal compositor device");
+				vkGetDeviceQueue(m_native, m_family, m_index, &m_queue);
 				std::printf("adapter=%s queueFamily=%u queueIndex=%u optionalFeatures=none optionalExtensions=none\n",
-							properties.deviceName, family, index);
+							properties.deviceName, m_family, m_index);
 				return true;
 			}
 		}
@@ -97,73 +92,77 @@ struct Device
 	}
 };
 
-struct CommandResources
+struct CompositorCommandResources
 {
-	VkDevice device;
-	VkCommandPool pool = VK_NULL_HANDLE;
-	VkCommandBuffer command = VK_NULL_HANDLE;
-	VkFence fence = VK_NULL_HANDLE;
-	VkRenderPass pass = VK_NULL_HANDLE;
-	std::vector<VkFramebuffer> framebuffers;
-	std::vector<VkImageView> views;
-	bool submitted = false;
-	bool complete = false;
-	explicit CommandResources(VkDevice owner) : device(owner) {}
-	~CommandResources()
+	VkDevice m_device;
+	VkCommandPool m_pool = VK_NULL_HANDLE;
+	VkCommandBuffer m_command = VK_NULL_HANDLE;
+	VkFence m_fence = VK_NULL_HANDLE;
+	VkRenderPass m_pass = VK_NULL_HANDLE;
+	std::vector<VkFramebuffer> m_framebuffers;
+	std::vector<VkImageView> m_views;
+	bool m_submitted = false;
+	bool m_complete = false;
+	explicit CompositorCommandResources(VkDevice owner) : m_device(owner) {}
+	CompositorCommandResources(const CompositorCommandResources&) = delete;
+	CompositorCommandResources& operator=(const CompositorCommandResources&) = delete;
+	~CompositorCommandResources()
 	{
-		if (submitted && !complete)
+		if (m_submitted && !m_complete)
 			UnknownCompletion("probe command teardown");
-		if (pool)
-			vkDestroyCommandPool(device, pool, nullptr);
-		for (auto framebuffer : framebuffers)
-			vkDestroyFramebuffer(device, framebuffer, nullptr);
-		if (pass)
-			vkDestroyRenderPass(device, pass, nullptr);
-		for (auto view : views)
-			vkDestroyImageView(device, view, nullptr);
-		if (fence)
-			vkDestroyFence(device, fence, nullptr);
+		if (m_pool)
+			vkDestroyCommandPool(m_device, m_pool, nullptr);
+		for (auto framebuffer : m_framebuffers)
+			vkDestroyFramebuffer(m_device, framebuffer, nullptr);
+		if (m_pass)
+			vkDestroyRenderPass(m_device, m_pass, nullptr);
+		for (auto view : m_views)
+			vkDestroyImageView(m_device, view, nullptr);
+		if (m_fence)
+			vkDestroyFence(m_device, m_fence, nullptr);
 	}
 };
-class Commands
+class CompositorCommands
 {
   public:
-	explicit Commands(Device& owner) : device(owner), resources(owner.native)
+	explicit CompositorCommands(CompositorDevice& owner) : m_device(owner), m_resources(owner.m_native)
 	{
 		VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-		pool.queueFamilyIndex = device.family;
-		Check(vkCreateCommandPool(device.native, &pool, nullptr, &resources.pool), "create probe command pool");
+		pool.queueFamilyIndex = m_device.m_family;
+		Check(vkCreateCommandPool(m_device.m_native, &pool, nullptr, &m_resources.m_pool), "create probe command pool");
 		VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-		allocate.commandPool = resources.pool;
+		allocate.commandPool = m_resources.m_pool;
 		allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 		allocate.commandBufferCount = 1;
-		Check(vkAllocateCommandBuffers(device.native, &allocate, &resources.command), "allocate probe commands");
+		Check(vkAllocateCommandBuffers(m_device.m_native, &allocate, &m_resources.m_command),
+			  "allocate probe commands");
 		VkFenceCreateInfo fence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-		Check(vkCreateFence(device.native, &fence, nullptr, &resources.fence), "create probe completion fence");
+		Check(vkCreateFence(m_device.m_native, &fence, nullptr, &m_resources.m_fence), "create probe completion fence");
 		VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
 		begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-		Check(vkBeginCommandBuffer(resources.command, &begin), "begin probe commands");
+		Check(vkBeginCommandBuffer(m_resources.m_command, &begin), "begin probe commands");
 	}
 	void Finish()
 	{
-		Check(vkEndCommandBuffer(resources.command), "end probe commands");
+		Require(!m_resources.m_submitted, "Probe commands were already submitted");
+		Check(vkEndCommandBuffer(m_resources.m_command), "end probe commands");
 		VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
 		submit.commandBufferCount = 1;
-		submit.pCommandBuffers = &resources.command;
-		const auto result = vkQueueSubmit(device.queue, 1, &submit, resources.fence);
+		submit.pCommandBuffers = &m_resources.m_command;
+		const auto result = vkQueueSubmit(m_device.m_queue, 1, &submit, m_resources.m_fence);
 		if (result != VK_SUCCESS)
 			UnknownCompletion("probe queue submission failed");
-		resources.submitted = true;
-		const auto waited = vkWaitForFences(device.native, 1, &resources.fence, VK_TRUE, Timeout);
+		m_resources.m_submitted = true;
+		const auto waited = vkWaitForFences(m_device.m_native, 1, &m_resources.m_fence, VK_TRUE, s_timeout);
 		if (waited != VK_SUCCESS)
 			UnknownCompletion("probe fence wait failed");
-		resources.complete = true;
+		m_resources.m_complete = true;
 	}
-	Device& device;
-	CommandResources resources;
+	CompositorDevice& m_device;
+	CompositorCommandResources m_resources;
 };
 
-struct Source
+struct CompositorSource
 {
 	XrSwapchain identity;
 	std::shared_ptr<VulkanImage> image;
@@ -173,19 +172,19 @@ struct Source
 		return {identity, {{4, 4}, {8, 8}}, slice};
 	}
 };
-using Palette = std::vector<std::pair<XrSwapchain, std::array<XrColor4f, 4>>>;
+using CompositorPalette = std::vector<std::pair<XrSwapchain, std::array<XrColor4f, 4>>>;
 
-void Paint(Device& device, const Source& source)
+static void Paint(CompositorDevice& device, const CompositorSource& source)
 {
-	Commands work(device);
-	auto& native = work.resources;
+	CompositorCommands work(device);
+	auto& native = work.m_resources;
 	const auto& image = *source.image;
-	VulkanImageBarrier(native.command, image, image.ApplicationLayout(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+	VulkanImageBarrier(native.m_command, image, image.ApplicationLayout(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 					   VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
 	const VkClearColorValue blue{{0, 0, 1, 1}};
 	const VkImageSubresourceRange all{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 4};
-	vkCmdClearColorImage(native.command, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &blue, 1, &all);
-	VulkanImageBarrier(native.command, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, image.ApplicationLayout(),
+	vkCmdClearColorImage(native.m_command, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &blue, 1, &all);
+	VulkanImageBarrier(native.m_command, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, image.ApplicationLayout(),
 					   VK_ACCESS_TRANSFER_WRITE_BIT,
 					   VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
 	VkAttachmentDescription attachment{};
@@ -204,9 +203,9 @@ void Paint(Device& device, const Source& source)
 	pass.pAttachments = &attachment;
 	pass.subpassCount = 1;
 	pass.pSubpasses = &subpass;
-	Check(vkCreateRenderPass(device.native, &pass, nullptr, &native.pass), "create GPU source-paint pass");
-	native.framebuffers.reserve(4);
-	native.views.reserve(4);
+	Check(vkCreateRenderPass(device.m_native, &pass, nullptr, &native.m_pass), "create GPU source-paint pass");
+	native.m_framebuffers.reserve(4);
+	native.m_views.reserve(4);
 	for (std::uint32_t slice = 0; slice < 4; ++slice)
 	{
 		VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
@@ -215,62 +214,64 @@ void Paint(Device& device, const Source& source)
 		view.format = image.format;
 		view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, slice, 1};
 		VkImageView handle;
-		Check(vkCreateImageView(device.native, &view, nullptr, &handle), "create source array-slice view");
-		native.views.push_back(handle);
+		Check(vkCreateImageView(device.m_native, &view, nullptr, &handle), "create source array-slice view");
+		native.m_views.push_back(handle);
 		VkFramebufferCreateInfo framebuffer{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-		framebuffer.renderPass = native.pass;
+		framebuffer.renderPass = native.m_pass;
 		framebuffer.attachmentCount = 1;
-		framebuffer.pAttachments = &native.views.back();
+		framebuffer.pAttachments = &native.m_views.back();
 		framebuffer.width = framebuffer.height = 16;
 		framebuffer.layers = 1;
 		VkFramebuffer target;
-		Check(vkCreateFramebuffer(device.native, &framebuffer, nullptr, &target),
+		Check(vkCreateFramebuffer(device.m_native, &framebuffer, nullptr, &target),
 			  "create GPU source-paint framebuffer");
-		native.framebuffers.push_back(target);
+		native.m_framebuffers.push_back(target);
 		VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-		begin.renderPass = native.pass;
+		begin.renderPass = native.m_pass;
 		begin.framebuffer = target;
 		begin.renderArea.extent = {16, 16};
-		vkCmdBeginRenderPass(native.command, &begin, VK_SUBPASS_CONTENTS_INLINE);
+		vkCmdBeginRenderPass(native.m_command, &begin, VK_SUBPASS_CONTENTS_INLINE);
 		const auto& rgba = source.colors[slice];
 		VkClearAttachment clear{};
 		clear.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 		clear.clearValue.color = {{rgba.r, rgba.g, rgba.b, rgba.a}};
 		const VkClearRect rectangle{{{4, 4}, {8, 8}}, 0, 1};
-		vkCmdClearAttachments(native.command, 1, &clear, 1, &rectangle);
-		vkCmdEndRenderPass(native.command);
+		vkCmdClearAttachments(native.m_command, 1, &clear, 1, &rectangle);
+		vkCmdEndRenderPass(native.m_command);
 	}
 	work.Finish();
 }
 
-struct Readback
+struct CompositorReadback
 {
-	VkDevice device;
-	VkBuffer buffer = VK_NULL_HANDLE;
-	VkDeviceMemory memory = VK_NULL_HANDLE;
-	bool coherent = false;
-	explicit Readback(VkDevice owner) : device(owner) {}
-	~Readback()
+	VkDevice m_device;
+	VkBuffer m_buffer = VK_NULL_HANDLE;
+	VkDeviceMemory m_memory = VK_NULL_HANDLE;
+	bool m_coherent = false;
+	explicit CompositorReadback(VkDevice owner) : m_device(owner) {}
+	CompositorReadback(const CompositorReadback&) = delete;
+	CompositorReadback& operator=(const CompositorReadback&) = delete;
+	~CompositorReadback()
 	{
-		if (buffer)
-			vkDestroyBuffer(device, buffer, nullptr);
-		if (memory)
-			vkFreeMemory(device, memory, nullptr);
+		if (m_buffer)
+			vkDestroyBuffer(m_device, m_buffer, nullptr);
+		if (m_memory)
+			vkFreeMemory(m_device, m_memory, nullptr);
 	}
 };
-std::vector<std::uint8_t> Pixels(Device& device, const VulkanFrame& frame)
+static std::vector<std::uint8_t> Pixels(CompositorDevice& device, const VulkanFrame& frame)
 {
 	const auto& image = frame.Image();
 	const VkDeviceSize size = static_cast<VkDeviceSize>(image.extent.width) * image.extent.height * 4 * 2;
-	Readback storage(device.native);
+	CompositorReadback storage(device.m_native);
 	VkBufferCreateInfo buffer{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
 	buffer.size = size;
 	buffer.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-	Check(vkCreateBuffer(device.native, &buffer, nullptr, &storage.buffer), "create explicit verification buffer");
+	Check(vkCreateBuffer(device.m_native, &buffer, nullptr, &storage.m_buffer), "create explicit verification buffer");
 	VkMemoryRequirements requirements;
-	vkGetBufferMemoryRequirements(device.native, storage.buffer, &requirements);
+	vkGetBufferMemoryRequirements(device.m_native, storage.m_buffer, &requirements);
 	VkPhysicalDeviceMemoryProperties properties;
-	vkGetPhysicalDeviceMemoryProperties(device.physical, &properties);
+	vkGetPhysicalDeviceMemoryProperties(device.m_physical, &properties);
 	std::optional<std::uint32_t> type;
 	for (std::uint32_t index = 0; index < properties.memoryTypeCount; ++index)
 		if ((requirements.memoryTypeBits & (1u << index)) &&
@@ -281,58 +282,70 @@ std::vector<std::uint8_t> Pixels(Device& device, const VulkanFrame& frame)
 				break;
 		}
 	Require(type.has_value(), "No host-visible verification memory");
-	storage.coherent = properties.memoryTypes[*type].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+	storage.m_coherent = properties.memoryTypes[*type].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 	VkMemoryAllocateInfo allocate{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
 	allocate.allocationSize = requirements.size;
 	allocate.memoryTypeIndex = *type;
-	Check(vkAllocateMemory(device.native, &allocate, nullptr, &storage.memory),
+	Check(vkAllocateMemory(device.m_native, &allocate, nullptr, &storage.m_memory),
 		  "allocate explicit verification memory");
-	Check(vkBindBufferMemory(device.native, storage.buffer, storage.memory, 0), "bind verification buffer");
-	Commands work(device);
-	VulkanImageBarrier(work.resources.command, image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+	Check(vkBindBufferMemory(device.m_native, storage.m_buffer, storage.m_memory, 0), "bind verification buffer");
+	CompositorCommands work(device);
+	VulkanImageBarrier(work.m_resources.m_command, image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
 					   VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT);
 	VkBufferImageCopy copy{};
 	copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 2};
 	copy.imageExtent = {image.extent.width, image.extent.height, 1};
-	vkCmdCopyImageToBuffer(work.resources.command, image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, storage.buffer, 1,
-						   &copy);
-	VulkanImageBarrier(work.resources.command, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+	vkCmdCopyImageToBuffer(work.m_resources.m_command, image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+						   storage.m_buffer, 1, &copy);
+	VulkanImageBarrier(work.m_resources.m_command, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
 					   VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT);
 	VkBufferMemoryBarrier host{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
 	host.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 	host.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
 	host.srcQueueFamilyIndex = host.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-	host.buffer = storage.buffer;
+	host.buffer = storage.m_buffer;
 	host.size = VK_WHOLE_SIZE;
-	vkCmdPipelineBarrier(work.resources.command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 0,
+	vkCmdPipelineBarrier(work.m_resources.m_command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 0,
 						 nullptr, 1, &host, 0, nullptr);
 	work.Finish();
-	void* mapped = nullptr;
-	Check(vkMapMemory(device.native, storage.memory, 0, VK_WHOLE_SIZE, 0, &mapped), "map explicit verification pixels");
-	if (!storage.coherent)
-	{
-		VkMappedMemoryRange range{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};
-		range.memory = storage.memory;
-		range.size = VK_WHOLE_SIZE;
-		Check(vkInvalidateMappedMemoryRanges(device.native, 1, &range), "invalidate noncoherent verification memory");
-	}
+	Require(size <= std::numeric_limits<std::size_t>::max(), "Verification image exceeds addressable memory");
 	std::vector<std::uint8_t> result(static_cast<std::size_t>(size));
-	std::memcpy(result.data(), mapped, result.size());
-	vkUnmapMemory(device.native, storage.memory);
+	void* mapped = nullptr;
+	Check(vkMapMemory(device.m_native, storage.m_memory, 0, VK_WHOLE_SIZE, 0, &mapped),
+		  "map explicit verification pixels");
+	try
+	{
+		if (!storage.m_coherent)
+		{
+			VkMappedMemoryRange range{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};
+			range.memory = storage.m_memory;
+			range.size = VK_WHOLE_SIZE;
+			Check(vkInvalidateMappedMemoryRanges(device.m_native, 1, &range),
+				  "invalidate noncoherent verification memory");
+		}
+		std::memcpy(result.data(), mapped, result.size());
+	}
+	catch (...)
+	{
+		vkUnmapMemory(device.m_native, storage.m_memory);
+		throw;
+	}
+	vkUnmapMemory(device.m_native, storage.m_memory);
 	return result;
 }
 
-float Srgb(float value)
+static float Srgb(float value)
 {
 	value = std::clamp(value, 0.0f, 1.0f);
 	return value <= 0.0031308f ? 12.92f * value : 1.055f * std::pow(value, 1.0f / 2.4f) - 0.055f;
 }
-std::uint8_t Byte(float value)
+static std::uint8_t Byte(float value)
 {
 	return static_cast<std::uint8_t>(std::lround(std::clamp(value, 0.0f, 1.0f) * 255));
 }
 
-XrColor4f Expected(const CompositionPlan& plan, const Palette& palette, std::uint32_t eye, XrVector2f uv)
+static XrColor4f Expected(const CompositionPlan& plan, const CompositorPalette& palette, std::uint32_t eye,
+						  XrVector2f uv)
 {
 	XrColor4f result{0, 0, 0, 1};
 	for (const auto& draw : plan.draws)
@@ -349,8 +362,8 @@ XrColor4f Expected(const CompositionPlan& plan, const Palette& palette, std::uin
 	}
 	return result;
 }
-void Verify(Device& device, const VulkanFrame& frame, const CompositionPlan& plan, const Palette& palette,
-			const char* name)
+static void Verify(CompositorDevice& device, const VulkanFrame& frame, const CompositionPlan& plan,
+				   const CompositorPalette& palette, const char* name)
 {
 	const auto pixels = Pixels(device, frame);
 	for (std::uint32_t eye = 0; eye < 2; ++eye)
@@ -372,19 +385,19 @@ void Verify(Device& device, const VulkanFrame& frame, const CompositionPlan& pla
 				plan.width * plan.height);
 }
 
-XrFovf Fov(float left = -1, float right = 1, float up = 1, float down = -1)
+static XrFovf Fov(float left = -1, float right = 1, float up = 1, float down = -1)
 {
 	return {std::atan(left), std::atan(right), std::atan(up), std::atan(down)};
 }
-PoseSample Pose(XrVector3f position = {})
+static PoseSample Pose(XrVector3f position = {})
 {
 	return {{{0, 0, 0, 1}, position}, TrackedPoseFlags, {Duration{1000}}};
 }
-CompositionTarget Target(std::uint32_t width = 32, std::uint32_t height = 24)
+static CompositionTarget Target(std::uint32_t width = 32, std::uint32_t height = 24)
 {
 	return {width, height, {{{Pose({-0.032f, 0, 0}), Fov()}, {Pose({0.032f, 0, 0}), Fov()}}}};
 }
-ProjectionLayerDescription Projection(const Source& source, std::size_t count = 2)
+static ProjectionLayerDescription Projection(const CompositorSource& source, std::size_t count = 2)
 {
 	ProjectionLayerDescription layer;
 	for (std::size_t index = 0; index < count; ++index)
@@ -392,27 +405,27 @@ ProjectionLayerDescription Projection(const Source& source, std::size_t count = 
 			{IdentityPose(), Pose(), Fov(), source.Description(static_cast<std::uint32_t>(index)), {}});
 	return layer;
 }
-QuadLayerDescription Quad(const Source& source, XrCompositionLayerFlags flags, XrEyeVisibility eyes)
+static QuadLayerDescription Quad(const CompositorSource& source, XrCompositionLayerFlags flags, XrEyeVisibility eyes)
 {
 	return {{XR_NULL_HANDLE, flags, Pose()}, eyes,			 IdentityPose(),
 			Pose({0.13f, -0.07f, -2}),		 {1.73f, 1.31f}, source.Description()};
 }
-FrameLayers Frame(std::vector<LayerDescription> layers)
+static FrameLayers Frame(std::vector<LayerDescription> layers)
 {
 	return {{Duration{1000}}, XR_ENVIRONMENT_BLEND_MODE_OPAQUE, std::move(layers)};
 }
 
-class Exercise
+class CompositorExercise
 {
   public:
-	Exercise(Device& native, VulkanBackend& graphics, bool analysis)
-		: device(native), backend(graphics), verify(analysis)
+	CompositorExercise(CompositorDevice& native, VulkanBackend& graphics, bool analysis)
+		: m_device(native), m_backend(graphics), m_verify(analysis)
 	{
 	}
-	Palette Colors() const
+	CompositorPalette Colors() const
 	{
-		Palette colors;
-		for (const auto& source : sources)
+		CompositorPalette colors;
+		for (const auto& source : m_sources)
 			colors.emplace_back(source.identity, source.colors);
 		return colors;
 	}
@@ -429,7 +442,7 @@ class Exercise
 		};
 		Require(PrepareComposition(frame, target, extent, plan) == XR_SUCCESS, "Prepare shared composition plan");
 		std::shared_ptr<VulkanFrame> output;
-		Require(backend.Prepare(
+		Require(m_backend.Prepare(
 					plan,
 					[&](XrSwapchain identity)
 					{
@@ -440,7 +453,7 @@ class Exercise
 				"Prepare production Vulkan output");
 		Require(output && output->PollCompletion() == CompletionStatus::Pending,
 				"Unsubmitted output reported completion");
-		Require(backend.Submit(output) == XR_SUCCESS, "Submit production Vulkan composition");
+		Require(m_backend.Submit(output) == XR_SUCCESS, "Submit production Vulkan composition");
 		Drain();
 		Require(output->PollCompletion() == CompletionStatus::Complete && output->Image().layers == 2 &&
 					output->Image().extent.width == target.width && output->Image().extent.height == target.height,
@@ -449,37 +462,37 @@ class Exercise
 	}
 	void Drain()
 	{
-		if (backend.Drain(Timeout) != VK_SUCCESS)
+		if (m_backend.Drain(s_timeout) != VK_SUCCESS)
 			UnknownCompletion("production backend drain");
 	}
-	Source* Find(XrSwapchain identity)
+	CompositorSource* Find(XrSwapchain identity)
 	{
-		const auto found = std::find_if(sources.begin(), sources.end(),
+		const auto found = std::find_if(m_sources.begin(), m_sources.end(),
 										[&](const auto& source)
 										{
 											return source.identity == identity;
 										});
-		return found == sources.end() ? nullptr : &*found;
+		return found == m_sources.end() ? nullptr : &*found;
 	}
 	void Add(std::uintptr_t identity, std::array<XrColor4f, 4> colors)
 	{
-		auto image = backend.CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {16, 16}, 4, SourceUsage);
-		auto initialized = backend.InitializeImage(image);
-		if (initialized->Wait(Timeout) != VK_SUCCESS)
+		auto image = m_backend.CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {16, 16}, 4, s_sourceUsage);
+		auto initialized = m_backend.InitializeImage(image);
+		if (initialized->Wait(s_timeout) != VK_SUCCESS)
 			UnknownCompletion("source initialization");
 		Require(initialized->PollCompletion() == CompletionStatus::Complete, "Initialization ticket did not complete");
-		sources.push_back({reinterpret_cast<XrSwapchain>(identity), std::move(image), colors});
-		Paint(device, sources.back());
+		m_sources.push_back({reinterpret_cast<XrSwapchain>(identity), std::move(image), colors});
+		Paint(m_device, m_sources.back());
 	}
 	void ReservedPreparation()
 	{
-		backend.RetireCompleted();
-		auto pool = backend.Reservations();
+		m_backend.RetireCompleted();
+		auto pool = m_backend.Reservations();
 		Require(pool.Capacity() == 2 && pool.InUse() == 0, "Reservation baseline retained old frame budget");
 		auto reservation = pool.Reserve();
 		auto reservationReader = reservation;
 		CompositionPlan plan;
-		auto original = Render(Frame({Projection(sources[0])}), Target(), plan);
+		auto original = Render(Frame({Projection(m_sources[0])}), Target(), plan);
 		Require(reservation && pool.InUse() == 2 && !pool.Reserve(),
 				"Explicit reservation failed to protect native capacity");
 		const auto resolve = [&](XrSwapchain identity)
@@ -488,7 +501,7 @@ class Exercise
 			return source ? source->image : nullptr;
 		};
 		auto unchanged = original;
-		Require(backend.Prepare(
+		Require(m_backend.Prepare(
 					plan,
 					[](XrSwapchain)
 					{
@@ -499,32 +512,32 @@ class Exercise
 				"Failed preparation consumed reservation or replaced output");
 		FramePool foreign(1);
 		auto foreignReservation = foreign.Reserve();
-		Require(backend.Prepare(plan, resolve, unchanged, foreignReservation) == XR_ERROR_VALIDATION_FAILURE &&
+		Require(m_backend.Prepare(plan, resolve, unchanged, foreignReservation) == XR_ERROR_VALIDATION_FAILURE &&
 					!foreignReservation->Consumed() && unchanged == original,
 				"Foreign native reservation accepted");
 		std::shared_ptr<VulkanFrame> reserved;
-		Require(backend.Prepare(plan, resolve, reserved, reservation) == XR_SUCCESS && reservation->Consumed() &&
+		Require(m_backend.Prepare(plan, resolve, reserved, reservation) == XR_SUCCESS && reservation->Consumed() &&
 					pool.InUse() == 2,
 				"Explicit preparation could not use reserved full-pool capacity");
-		Require(backend.Prepare(plan, resolve, unchanged, reservation) == XR_ERROR_CALL_ORDER_INVALID &&
+		Require(m_backend.Prepare(plan, resolve, unchanged, reservation) == XR_ERROR_CALL_ORDER_INVALID &&
 					unchanged == original,
 				"Consumed reservation reused for a second output");
-		Require(backend.Submit(reserved) == XR_SUCCESS, "Submit explicitly reserved output");
+		Require(m_backend.Submit(reserved) == XR_SUCCESS, "Submit explicitly reserved output");
 		Drain();
-		if (verify)
-			Verify(device, *reserved, plan, Colors(), "explicit-reservation-retry");
+		if (m_verify)
+			Verify(m_device, *reserved, plan, Colors(), "explicit-reservation-retry");
 		unchanged.reset();
 		original.reset();
-		backend.RetireCompleted();
+		m_backend.RetireCompleted();
 		auto completionReader = reserved->Completion();
 		reserved.reset();
 		reservation.reset();
 		reservationReader.reset();
-		backend.RetireCompleted();
+		m_backend.RetireCompleted();
 		Require(pool.InUse() == 1 && completionReader->PollCompletion() == CompletionStatus::Complete,
 				"Completion reader did not retain producer reservation");
 		completionReader.reset();
-		backend.RetireCompleted();
+		m_backend.RetireCompleted();
 		Require(pool.InUse() == 0, "Final native reservation reader leaked budget");
 		std::puts("case=explicit-reservation-retry foreign=rejected failedPrepare=reusable consumed=once "
 				  "completionReader=retained PASS");
@@ -534,7 +547,7 @@ class Exercise
 	{
 		CompositionPlan plan;
 		Require(PrepareComposition(
-					Frame({Projection(sources[0])}), Target(),
+					Frame({Projection(m_sources[0])}), Target(),
 					[&](XrSwapchain identity) -> std::optional<XrExtent2Di>
 					{
 						return Find(identity) ? std::optional{XrExtent2Di{16, 16}} : std::nullopt;
@@ -542,7 +555,7 @@ class Exercise
 					plan) == XR_SUCCESS,
 				"Producer reservation composition plan");
 		std::shared_ptr<VulkanFrame> output;
-		Require(backend.Prepare(
+		Require(m_backend.Prepare(
 					plan,
 					[&](XrSwapchain identity)
 					{
@@ -550,11 +563,11 @@ class Exercise
 						return source ? source->image : nullptr;
 					},
 					output) == XR_SUCCESS &&
-					backend.Submit(output) == XR_SUCCESS,
+					m_backend.Submit(output) == XR_SUCCESS,
 				"Submit reservation producer");
 		const auto observed = output->PollCompletion();
 		Require(observed != CompletionStatus::Failed, "Reservation producer failed");
-		auto pool = backend.Reservations();
+		auto pool = m_backend.Reservations();
 		output.reset();
 		// Even a producer that finishes quickly remains a native owner until
 		// observed retirement. This does not require fabricating a GPU stall.
@@ -568,15 +581,15 @@ class Exercise
 
 	void SessionWorker(bool capture = false)
 	{
-		auto instance = std::make_shared<Instance>(reinterpret_cast<XrInstance>(100), std::span<const char* const>{},
-												   XR_MAKE_VERSION(1, 0, 27));
+		auto instance = std::make_shared<simxr::Instance>(reinterpret_cast<XrInstance>(100),
+														  std::span<const char* const>{}, XR_MAKE_VERSION(1, 0, 27));
 		auto sessionOwner = std::make_shared<Session>(reinterpret_cast<XrSession>(101), instance);
 		auto& session = *sessionOwner;
 		FrameSchedulerConfig timing;
 		timing.period = Duration{5000000};
 		const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
 		if (capture)
-			Require(session.ConfigureCapturePool(backend.Reservations()) == XR_SUCCESS,
+			Require(session.ConfigureCapturePool(m_backend.Reservations()) == XR_SUCCESS,
 					"Configure production capture pool");
 		Require(session.Ready(timing.epoch) == XR_SUCCESS && session.Begin(begin, timing) == XR_SUCCESS,
 				"GPU worker session lifecycle");
@@ -640,7 +653,7 @@ class Exercise
 			views[eye].type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
 			views[eye].pose = IdentityPose();
 			views[eye].fov = Fov();
-			const auto image = sources[0].Description(eye);
+			const auto image = m_sources[0].Description(eye);
 			views[eye].subImage = {image.source, image.rectangle, image.arraySlice};
 		}
 		XrCompositionLayerProjection projection{
@@ -677,7 +690,7 @@ class Exercise
 					plan) == XR_SUCCESS,
 				"GPU worker composition plan");
 		std::shared_ptr<VulkanFrame> output;
-		Require(backend.Prepare(
+		Require(m_backend.Prepare(
 					plan,
 					[&](XrSwapchain identity)
 					{
@@ -693,7 +706,7 @@ class Exercise
 		Require(session.EndFrame(prediction, &info, prepared, output,
 								 [&]
 								 {
-									 return backend.Submit(output);
+									 return m_backend.Submit(output);
 								 }) == XR_SUCCESS,
 				"GPU worker transactional submission");
 		const auto key = FrameKey{session.Snapshot().generation, prediction.id};
@@ -739,22 +752,22 @@ class Exercise
 					"Real-time worker did not select GPU output without more XR calls");
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		}
-		if (verify)
-			Verify(device, *output, plan, Colors(), "core-session-worker-real-fence");
+		if (m_verify)
+			Verify(m_device, *output, plan, Colors(), "core-session-worker-real-fence");
 		if (capture)
 		{
 			Require(await(command(DebugCommand::Release, {}, reservation.id)).progress == DebugProgress::Released &&
 						!session.Captures().Read(reservation.id),
 					"Logical controller release retained lookup");
 			const auto oldColors = Colors();
-			const auto savedSourceColors = sources[0].colors;
-			sources[0].colors = {{{1, 1, 0, 1}, {0, 1, 1, 1}, {1, 0, 0, 1}, {0, 1, 0, 1}}};
-			Paint(device, sources[0]);
-			if (verify)
-				Verify(device, *output, plan, oldColors, "capture-reader-after-release-source-reuse");
-			sources[0].colors = savedSourceColors;
-			Paint(device, sources[0]);
-			auto pool = backend.Reservations();
+			const auto savedSourceColors = m_sources[0].colors;
+			m_sources[0].colors = {{{1, 1, 0, 1}, {0, 1, 1, 1}, {1, 0, 0, 1}, {0, 1, 0, 1}}};
+			Paint(m_device, m_sources[0]);
+			if (m_verify)
+				Verify(m_device, *output, plan, oldColors, "capture-reader-after-release-source-reuse");
+			m_sources[0].colors = savedSourceColors;
+			Paint(m_device, m_sources[0]);
+			auto pool = m_backend.Reservations();
 			Require(pool.InUse() == 1, "Released capture lost retained GPU reservation");
 			const auto emptyOperation = command(DebugCommand::Step);
 			const auto empty = admit(emptyOperation);
@@ -786,7 +799,7 @@ class Exercise
 			Drain();
 			Require(pool.InUse() == 1, "Last SnapshotRecord reader failed to retain GPU slot");
 			retainedCapture.reset();
-			backend.RetireCompleted();
+			m_backend.RetireCompleted();
 			Require(pool.InUse() == 0, "Released SnapshotRecord reader leaked GPU slot");
 			const auto queuedOperation = command(DebugCommand::Step);
 			const auto queued = admit(queuedOperation);
@@ -803,7 +816,7 @@ class Exercise
 		output.reset();
 		Drain();
 		session.Captures().Poll();
-		Require(backend.Reservations().InUse() == 0, "Closed session retained capture GPU capacity");
+		Require(m_backend.Reservations().InUse() == 0, "Closed session retained capture GPU capacity");
 		std::puts(capture ? "case=debug-controller-capture realFence=ready metadata=immutable reader=retained "
 							"empty=clear unused=cancelled explicitDisplayStep=selected PASS"
 						  : "case=core-session-worker-real-fence XRcallsAfterEndFrame=none producer=complete "
@@ -816,59 +829,59 @@ class Exercise
 		const XrColor4f premultiplied{0.2f, 0.1f, 0.05f, 0.25f};
 		Add(2, {orange, orange, orange, orange});
 		Add(3, {premultiplied, premultiplied, premultiplied, premultiplied});
-		backend.RetireCompleted();
+		m_backend.RetireCompleted();
 		CompositionPlan plan;
 		{
-			auto output = Render(Frame({Projection(sources[0])}), Target(), plan);
-			if (verify)
-				Verify(device, *output, plan, Colors(), "projection-crop-array");
+			auto output = Render(Frame({Projection(m_sources[0])}), Target(), plan);
+			if (m_verify)
+				Verify(m_device, *output, plan, Colors(), "projection-crop-array");
 			const auto left = Expected(plan, Colors(), 0, {0.5f, 0.5f});
 			const auto right = Expected(plan, Colors(), 1, {0.5f, 0.5f});
 			Require(left.r == 1 && left.g == 0 && right.r == 0 && right.g == 1, "Known stereo red/green anchors lost");
 			std::puts("case=projection-crop-array producer=complete private=2eye-GPU PASS");
 		}
 		{
-			auto straight = Quad(sources[1],
+			auto straight = Quad(m_sources[1],
 								 XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
 									 XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT,
 								 XR_EYE_VISIBILITY_BOTH);
 			auto premult =
-				Quad(sources[2], XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT, XR_EYE_VISIBILITY_RIGHT);
+				Quad(m_sources[2], XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT, XR_EYE_VISIBILITY_RIGHT);
 			premult.size = {0.91f, 0.73f};
-			auto output = Render(Frame({Projection(sources[0]), straight, premult}), Target(), plan);
-			if (verify)
-				Verify(device, *output, plan, Colors(), "ordered-linear-alpha-eyes");
+			auto output = Render(Frame({Projection(m_sources[0]), straight, premult}), Target(), plan);
+			if (m_verify)
+				Verify(m_device, *output, plan, Colors(), "ordered-linear-alpha-eyes");
 			std::puts("case=ordered-linear-alpha-eyes producer=complete PASS");
 		}
 		{
-			auto quad = Quad(sources[1], 0, XR_EYE_VISIBILITY_BOTH);
+			auto quad = Quad(m_sources[1], 0, XR_EYE_VISIBILITY_BOTH);
 			quad.worldPose.pose.orientation = EulerAngles(0.25f, 0.08f, 0.1f);
 			auto target = Target();
 			target.eyes[0].fov = Fov(-0.8f, 1.1f, 0.9f, -0.6f);
 			target.eyes[1].fov = Fov(-1.1f, 0.8f, 0.7f, -0.9f);
 			auto output = Render(Frame({quad}), target, plan);
-			if (verify)
-				Verify(device, *output, plan, Colors(), "quad-only-rotated-asymmetric");
+			if (m_verify)
+				Verify(m_device, *output, plan, Colors(), "quad-only-rotated-asymmetric");
 			std::puts("case=quad-only-rotated-asymmetric producer=complete PASS");
 		}
 		{
-			auto projection = Projection(sources[0]);
+			auto projection = Projection(m_sources[0]);
 			projection.views[0].worldPose.pose.orientation = EulerAngles(0.19f, 0.03f, 0);
 			projection.views[1].worldPose.pose.orientation = EulerAngles(-0.12f, -0.07f, 0);
 			projection.views[0].fov = Fov(-0.7f, 1.3f, 0.6f, -0.9f);
 			projection.views[1].fov = Fov(-1.2f, 0.65f, 0.8f, -0.55f);
 			auto output = Render(Frame({projection}), Target(), plan);
-			if (verify)
-				Verify(device, *output, plan, Colors(), "projection-rotated-asymmetric");
+			if (m_verify)
+				Verify(m_device, *output, plan, Colors(), "projection-rotated-asymmetric");
 			std::puts("case=projection-rotated-asymmetric producer=complete PASS");
 		}
 		{
-			auto inset = Projection(sources[0], 4);
+			auto inset = Projection(m_sources[0], 4);
 			inset.views[2].fov = Fov(-0.37f, 0.31f, 0.29f, -0.33f);
 			inset.views[3].fov = Fov(-0.29f, 0.41f, 0.35f, -0.27f);
 			auto output = Render(Frame({inset}), Target(), plan);
-			if (verify)
-				Verify(device, *output, plan, Colors(), "four-view-outer-inset");
+			if (m_verify)
+				Verify(m_device, *output, plan, Colors(), "four-view-outer-inset");
 			const auto left = Expected(plan, Colors(), 0, {0.5f, 0.5f});
 			const auto right = Expected(plan, Colors(), 1, {0.5f, 0.5f});
 			Require(left.g == 1 && left.b == 1 && right.r == 1 && right.b == 1,
@@ -880,19 +893,19 @@ class Exercise
 		SessionWorker();
 		SessionWorker(true);
 		CompositionPlan oldPlan;
-		auto retained = Render(Frame({Projection(sources[0])}), Target(), oldPlan);
+		auto retained = Render(Frame({Projection(m_sources[0])}), Target(), oldPlan);
 		const auto oldColors = Colors();
 		const auto oldImage = retained->Image().image;
-		sources[0].colors = {{{1, 1, 0, 1}, {0, 1, 1, 1}, {1, 0, 0, 1}, {0, 1, 0, 1}}};
-		Paint(device, sources[0]);
-		auto resized = Render(Frame({Projection(sources[0])}), Target(40, 30), plan);
+		m_sources[0].colors = {{{1, 1, 0, 1}, {0, 1, 1, 1}, {1, 0, 0, 1}, {0, 1, 0, 1}}};
+		Paint(m_device, m_sources[0]);
+		auto resized = Render(Frame({Projection(m_sources[0])}), Target(40, 30), plan);
 		Require(resized->Image().image != oldImage && retained->Image().extent.width == 32 &&
 					resized->Image().extent.width == 40,
 				"Resize aliased or mutated retained private output");
-		if (verify)
+		if (m_verify)
 		{
-			Verify(device, *retained, oldPlan, oldColors, "retained-after-source-reuse-resize");
-			Verify(device, *resized, plan, Colors(), "new-source-resized-output");
+			Verify(m_device, *retained, oldPlan, oldColors, "retained-after-source-reuse-resize");
+			Verify(m_device, *resized, plan, Colors(), "new-source-resized-output");
 		}
 		std::shared_ptr<VulkanFrame> rejected;
 		const auto resolve = [&](XrSwapchain identity)
@@ -900,45 +913,45 @@ class Exercise
 			const auto source = Find(identity);
 			return source ? source->image : nullptr;
 		};
-		Require(backend.Prepare(plan, resolve, rejected) == XR_ERROR_LIMIT_REACHED && !rejected,
+		Require(m_backend.Prepare(plan, resolve, rejected) == XR_ERROR_LIMIT_REACHED && !rejected,
 				"Third retained output exceeded capacity two");
 		resized.reset();
-		backend.RetireCompleted();
-		resized = Render(Frame({Projection(sources[0])}), Target(40, 30), plan);
-		if (verify)
-			Verify(device, *resized, plan, Colors(), "capacity-release-reuse");
+		m_backend.RetireCompleted();
+		resized = Render(Frame({Projection(m_sources[0])}), Target(40, 30), plan);
+		if (m_verify)
+			Verify(m_device, *resized, plan, Colors(), "capacity-release-reuse");
 		retained.reset();
-		sources.clear();
-		backend.RetireCompleted();
-		Require(backend.Close() == XR_ERROR_LIMIT_REACHED, "Close accepted retained frame reader");
+		m_sources.clear();
+		m_backend.RetireCompleted();
+		Require(m_backend.Close() == XR_ERROR_LIMIT_REACHED, "Close accepted retained frame reader");
 		resized.reset();
-		backend.RetireCompleted();
-		auto closureImage = backend.CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {16, 16}, 1, SourceUsage);
-		auto ticket = backend.InitializeImage(closureImage);
-		if (ticket->Wait(Timeout) != VK_SUCCESS)
+		m_backend.RetireCompleted();
+		auto closureImage = m_backend.CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {16, 16}, 1, s_sourceUsage);
+		auto ticket = m_backend.InitializeImage(closureImage);
+		if (ticket->Wait(s_timeout) != VK_SUCCESS)
 			UnknownCompletion("closure initialization");
 		closureImage.reset();
-		backend.RetireCompleted();
-		Require(backend.Close() == XR_ERROR_LIMIT_REACHED, "Close accepted retained initialization ticket");
+		m_backend.RetireCompleted();
+		Require(m_backend.Close() == XR_ERROR_LIMIT_REACHED, "Close accepted retained initialization ticket");
 		ticket.reset();
-		backend.RetireCompleted();
-		closureImage = backend.CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {16, 16}, 1, SourceUsage);
-		Require(backend.Close() == XR_ERROR_LIMIT_REACHED, "Close accepted standalone source image reader");
+		m_backend.RetireCompleted();
+		closureImage = m_backend.CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {16, 16}, 1, s_sourceUsage);
+		Require(m_backend.Close() == XR_ERROR_LIMIT_REACHED, "Close accepted standalone source image reader");
 		closureImage.reset();
-		Require(backend.Close() == XR_SUCCESS, "Close did not drain released native owners");
+		Require(m_backend.Close() == XR_SUCCESS, "Close did not drain released native owners");
 		std::puts("case=retention-resize-capacity-close privateOutput=stable readers=required-released PASS");
 	}
-	Device& device;
-	VulkanBackend& backend;
-	bool verify;
-	std::vector<Source> sources;
+	CompositorDevice& m_device;
+	VulkanBackend& m_backend;
+	bool m_verify;
+	std::vector<CompositorSource> m_sources;
 };
 
-void RejectOversizedImage(const VulkanBinding& binding)
+static void RejectOversizedImage(const VulkanBinding& binding)
 {
 	VkImageFormatProperties supported{};
 	Check(vkGetPhysicalDeviceImageFormatProperties(binding.physicalDevice, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TYPE_2D,
-												   VK_IMAGE_TILING_OPTIMAL, SourceUsage, 0, &supported),
+												   VK_IMAGE_TILING_OPTIMAL, s_sourceUsage, 0, &supported),
 		  "query source image limits");
 	Require(supported.maxExtent.width < std::numeric_limits<std::uint32_t>::max(),
 			"Cannot construct an extent above reported image width limit");
@@ -949,7 +962,7 @@ void RejectOversizedImage(const VulkanBinding& binding)
 		try
 		{
 			auto invalid =
-				backend.CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {supported.maxExtent.width + 1, 16}, 1, SourceUsage);
+				backend.CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {supported.maxExtent.width + 1, 16}, 1, s_sourceUsage);
 			(void)invalid;
 		}
 		catch (const VulkanError& error)
@@ -965,7 +978,7 @@ void RejectOversizedImage(const VulkanBinding& binding)
 				supported.maxExtent.width, supported.maxExtent.width + 1);
 }
 
-bool ClosedDepthPipeline(const simxr::probe::Instance& instance)
+static bool ClosedDepthPipeline(const simxr::probe::Instance& instance)
 {
 	std::uint32_t count = 0;
 	Check(vkEnumerateInstanceLayerProperties(&count, nullptr), "query depth closure validation");
@@ -980,7 +993,7 @@ bool ClosedDepthPipeline(const simxr::probe::Instance& instance)
 		std::puts("SKIP: depth pipeline closure requires Vulkan validation");
 		return false;
 	}
-	Device device;
+	CompositorDevice device;
 	if (!device.Create(instance.handle))
 	{
 		std::puts("SKIP: no Vulkan1.1 device for depth pipeline closure");
@@ -992,7 +1005,7 @@ bool ClosedDepthPipeline(const simxr::probe::Instance& instance)
 	for (const auto candidate : {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D16_UNORM})
 	{
 		VkImageFormatProperties properties{};
-		if (vkGetPhysicalDeviceImageFormatProperties(device.physical, candidate, VK_IMAGE_TYPE_2D,
+		if (vkGetPhysicalDeviceImageFormatProperties(device.m_physical, candidate, VK_IMAGE_TYPE_2D,
 													 VK_IMAGE_TILING_OPTIMAL, usage, 0, &properties) != VK_SUCCESS)
 			continue;
 		for (const auto sampleCount : {VK_SAMPLE_COUNT_2_BIT, VK_SAMPLE_COUNT_4_BIT, VK_SAMPLE_COUNT_8_BIT})
@@ -1011,7 +1024,7 @@ bool ClosedDepthPipeline(const simxr::probe::Instance& instance)
 		return false;
 	}
 	const auto errorsBefore = simxr::probe::s_validationErrors.load();
-	const VulkanBinding binding{instance.handle, device.physical, device.native, device.family, device.index};
+	const VulkanBinding binding{instance.handle, device.m_physical, device.m_native, device.m_family, device.m_index};
 	auto backend = std::make_unique<VulkanBackend>(binding, 1);
 	auto image = backend->CreateImage(format, {8, 8}, 1, usage, 1, samples);
 	const LayerDepthDescription depth{{reinterpret_cast<XrSwapchain>(902), {{0, 0}, {8, 8}}, 0}, 0, 1, 0.1f, 100};
@@ -1027,7 +1040,7 @@ bool ClosedDepthPipeline(const simxr::probe::Instance& instance)
 	frame.reset();
 	image.reset();
 	Require(backend->Close() == XR_SUCCESS, "Multisample depth backend did not close");
-	vkDestroyDevice(std::exchange(device.native, VK_NULL_HANDLE), nullptr);
+	vkDestroyDevice(std::exchange(device.m_native, VK_NULL_HANDLE), nullptr);
 	if (simxr::probe::s_validationErrors.load() != errorsBefore)
 	{
 		std::fputs("FAIL: successful Close retained native depth pipeline resources at device teardown\n", stderr);
@@ -1039,7 +1052,7 @@ bool ClosedDepthPipeline(const simxr::probe::Instance& instance)
 	return true;
 }
 
-void ReservedClosure(const VulkanBinding& binding)
+static void ReservedClosure(const VulkanBinding& binding)
 {
 	VulkanBackend backend(binding, 1);
 	auto pool = backend.Reservations();
@@ -1059,7 +1072,7 @@ void ReservedClosure(const VulkanBinding& binding)
 				output, reservation) == XR_SUCCESS &&
 				reservation->Consumed() && backend.Submit(output) == XR_SUCCESS,
 			"Admission closure invalidated already reserved production work");
-	if (backend.Drain(Timeout) != VK_SUCCESS)
+	if (backend.Drain(s_timeout) != VK_SUCCESS)
 		UnknownCompletion("reserved closure drain");
 	output.reset();
 	reservation.reset();
@@ -1080,7 +1093,7 @@ void ReservedClosure(const VulkanBinding& binding)
 	std::puts("case=reservation-close admission=closed existingToken=valid lastReader=required PASS");
 }
 
-void CompletedProducerReclamation(const VulkanBinding& binding)
+static void CompletedProducerReclamation(const VulkanBinding& binding)
 {
 	VulkanBackend backend(binding, 1);
 	auto pool = backend.Reservations();
@@ -1115,8 +1128,8 @@ void CompletedProducerReclamation(const VulkanBinding& binding)
 								  {
 									  return pool.Reserve();
 								  });
-	Require(reservation.wait_for(std::chrono::seconds(5)) == std::future_status::ready,
-			"Control-side reservation blocked while reclaiming an already complete producer");
+	if (reservation.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
+		UnknownCompletion("control-side reservation blocked while reclaiming an already complete producer");
 	auto replacement = reservation.get();
 	Require(replacement && pool.Owns(replacement) && !replacement->Consumed() && pool.InUse() == 1,
 			"Completed producer-only owner stranded capacity without another XR call");
@@ -1126,15 +1139,15 @@ void CompletedProducerReclamation(const VulkanBinding& binding)
 			  "XRcalls=none drainBeforeReserve=none pixelReadback=none PASS");
 }
 
-void ExplicitReadbackOwnership(Device& device, const VulkanBinding& binding, bool verify)
+static void ExplicitReadbackOwnership(CompositorDevice& device, const VulkanBinding& binding, bool verify)
 {
 	VulkanBackend backend(binding, 1);
 	{
-		Source source{reinterpret_cast<XrSwapchain>(901),
-					  backend.CreateImage(VK_FORMAT_R8G8B8A8_UNORM, {16, 16}, 4, SourceUsage),
-					  {{{1, 0, 0, 1}, {0, 1, 0, 1}, {0, 0, 1, 1}, {1, 1, 1, 1}}}};
+		CompositorSource source{reinterpret_cast<XrSwapchain>(901),
+								backend.CreateImage(VK_FORMAT_R8G8B8A8_UNORM, {16, 16}, 4, s_sourceUsage),
+								{{{1, 0, 0, 1}, {0, 1, 0, 1}, {0, 0, 1, 1}, {1, 1, 1, 1}}}};
 		auto initialized = backend.InitializeImage(source.image);
-		if (initialized->Wait(Timeout) != VK_SUCCESS)
+		if (initialized->Wait(s_timeout) != VK_SUCCESS)
 			UnknownCompletion("explicit readback source initialization");
 		Paint(device, source);
 		const VulkanReadbackRegion first{source.image, {4, 4}, {8, 8}, 0};
@@ -1184,7 +1197,7 @@ void ExplicitReadbackOwnership(Device& device, const VulkanBinding& binding, boo
 		Check(readback->Submit(), "submit explicit source-region readback");
 		Require(readback->Submit() == VK_ERROR_INITIALIZATION_FAILED,
 				"Explicit readback submitted the same work twice");
-		if (readback->Wait(Timeout) != VK_SUCCESS)
+		if (readback->Wait(s_timeout) != VK_SUCCESS)
 			UnknownCompletion("explicit source-region readback");
 		Require(readback->NativeIdle() && readback->PollCompletion() == CompletionStatus::Complete,
 				"Actual readback fence did not publish completion");
@@ -1207,38 +1220,44 @@ void ExplicitReadbackOwnership(Device& device, const VulkanBinding& binding, boo
 	std::puts("case=explicit-readback-owner partialRollback=12 capacity=4 reused=true repeatedSubmit=rejected PASS");
 }
 
-int Run(bool verify)
+static int Run(bool verify)
 {
 	simxr::probe::Instance instance;
 	instance.Create();
-	Device device;
+	CompositorDevice device;
 	if (!device.Create(instance.handle))
 	{
 		std::puts("SKIP: no Vulkan1.1 graphics device");
 		return 77;
 	}
-	const VulkanBinding binding{instance.handle, device.physical, device.native, device.family, device.index};
-	const bool depthClosure = ClosedDepthPipeline(instance);
-	RejectOversizedImage(binding);
-	ReservedClosure(binding);
-	CompletedProducerReclamation(binding);
-	ExplicitReadbackOwnership(device, binding, verify);
-	VulkanBackend backend(binding, 2);
 	try
 	{
-		Exercise exercise(device, backend, verify);
-		exercise.Run();
+		const VulkanBinding binding{instance.handle, device.m_physical, device.m_native, device.m_family,
+									device.m_index};
+		const bool depthClosure = ClosedDepthPipeline(instance);
+		RejectOversizedImage(binding);
+		ReservedClosure(binding);
+		CompletedProducerReclamation(binding);
+		ExplicitReadbackOwnership(device, binding, verify);
+		VulkanBackend backend(binding, 2);
+		{
+			CompositorExercise exercise(device, backend, verify);
+			exercise.Run();
+		}
+		Require(backend.Close() == XR_SUCCESS, "Final backend Close failed");
+		return depthClosure ? 0 : 77;
+	}
+	catch (const std::exception& error)
+	{
+		std::fprintf(stderr, "FAIL: %s\n", error.what());
+		UnknownCompletion("exceptional compositor work may retain borrowed-device resources");
 	}
 	catch (...)
 	{
-		if (backend.Drain(Timeout) != VK_SUCCESS)
-			UnknownCompletion("exception cleanup drain");
-		throw;
+		UnknownCompletion("unknown compositor failure may retain borrowed-device resources");
 	}
-	Require(backend.Close() == XR_SUCCESS, "Final backend Close failed");
-	return depthClosure ? 0 : 77;
 }
-} // namespace
+} // namespace simxr::probe
 
 int main(int argc, char** argv)
 {
@@ -1255,8 +1274,8 @@ int main(int argc, char** argv)
 	}
 	try
 	{
-		const int result = Run(verify);
-		Require(simxr::probe::s_validationErrors.load() == 0, "Validation errors after native teardown");
+		const int result = simxr::probe::Run(verify);
+		simxr::probe::Require(simxr::probe::s_validationErrors.load() == 0, "Validation errors after native teardown");
 		if (!result)
 			std::printf("Production Vulkan compositor PASS pixelReadback=%s validationErrors=0\n",
 						verify ? "explicit-analysis" : "none");
