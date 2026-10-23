@@ -9,6 +9,8 @@
 #define XR_USE_GRAPHICS_API_OPENGL
 #define XR_USE_GRAPHICS_API_VULKAN
 
+#include "Pch.h"
+
 #include <windows.h>
 #include "simxr/Version.h"
 #include <limits>
@@ -526,7 +528,7 @@ static const simxr::ExtensionRegistry& Extensions()
 		{XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME, XR_KHR_composition_layer_depth_SPEC_VERSION, {}},
 		{XR_KHR_WIN32_CONVERT_PERFORMANCE_COUNTER_TIME_EXTENSION_NAME,
 			XR_KHR_win32_convert_performance_counter_time_SPEC_VERSION, timeCommands}};
-        const auto simulation = simxr::SimulationExtensions();
+        const auto simulation = simxr::SimulationExtensions({true, true});
         result.insert(result.end(), simulation.begin(), simulation.end());
         return result;
     }();
@@ -1077,14 +1079,36 @@ static XrResult XRAPI_PTR xrGetSystemProperties_runtime(XrInstance instance, XrS
     return XR_SUCCESS;
 }
 
+static XrResult ValidateViewConfiguration(const simxr::EnabledExtensions& extensions, XrSystemId system, XrViewConfigurationType type)
+{
+	if (system != 1)
+		return XR_ERROR_SYSTEM_INVALID;
+	if (type == XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO ||
+		(type == XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO &&
+		 extensions.Contains(XR_VARJO_QUAD_VIEWS_EXTENSION_NAME)))
+		return XR_SUCCESS;
+	return XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;
+}
+
 static XrResult XRAPI_PTR xrEnumerateViewConfigurations_runtime(
 	XrInstance instance, XrSystemId system, uint32_t capacity, uint32_t* count, XrViewConfigurationType* types)
 {
-	if (!RuntimeState().FindInstance(instance)) return XR_ERROR_HANDLE_INVALID;
-	if (system != 1) return XR_ERROR_SYSTEM_INVALID;
-	if (!count || (capacity && !types)) return XR_ERROR_VALIDATION_FAILURE;
-	*count = 1;
-	if (capacity) types[0] = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+	const auto core = RuntimeState().FindInstance(instance);
+	if (!core)
+		return XR_ERROR_HANDLE_INVALID;
+	if (system != 1)
+		return XR_ERROR_SYSTEM_INVALID;
+	if (!count || (capacity && !types))
+		return XR_ERROR_VALIDATION_FAILURE;
+	const bool quadViews = core->Extensions().Contains(XR_VARJO_QUAD_VIEWS_EXTENSION_NAME);
+	*count = quadViews ? 2 : 1;
+	if (!capacity)
+		return XR_SUCCESS;
+	if (capacity < *count)
+		return XR_ERROR_SIZE_INSUFFICIENT;
+	types[0] = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+	if (quadViews)
+		types[1] = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO;
 	return XR_SUCCESS;
 }
 
@@ -1092,21 +1116,40 @@ static XrResult XRAPI_PTR xrEnumerateViewConfigurationViews_runtime(
 	XrInstance instance, XrSystemId system, XrViewConfigurationType viewType,
 	uint32_t capacity, uint32_t* count, XrViewConfigurationView* views)
 {
-	if (!RuntimeState().FindInstance(instance)) return XR_ERROR_HANDLE_INVALID;
-	if (system != 1) return XR_ERROR_SYSTEM_INVALID;
-	if (viewType != XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO) return XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;
-	if (!count || (capacity && !views)) return XR_ERROR_VALIDATION_FAILURE;
-	*count = 2;
-	if (!capacity) return XR_SUCCESS;
-	if (capacity < *count) return XR_ERROR_SIZE_INSUFFICIENT;
-	for (uint32_t index = 0; index < *count; ++index)
-		if (views[index].type != XR_TYPE_VIEW_CONFIGURATION_VIEW) return XR_ERROR_VALIDATION_FAILURE;
-	uint32_t width = 0, height = 0;
-	settings::GetRenderResolution(width, height);
+	const auto core = RuntimeState().FindInstance(instance);
+	if (!core)
+		return XR_ERROR_HANDLE_INVALID;
+	const auto validation = ValidateViewConfiguration(core->Extensions(), system, viewType);
+	if (XR_FAILED(validation))
+		return validation;
+	if (!count || (capacity && !views))
+		return XR_ERROR_VALIDATION_FAILURE;
+	*count = viewType == XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO ? 4 : 2;
+	if (!capacity)
+		return XR_SUCCESS;
+	if (capacity < *count)
+		return XR_ERROR_SIZE_INSUFFICIENT;
+	const bool foveationEnabled = core->Extensions().Contains(XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME);
+	const std::array known{XR_TYPE_FOVEATED_VIEW_CONFIGURATION_VIEW_VARJO};
 	for (uint32_t index = 0; index < *count; ++index)
 	{
-		views[index].recommendedImageRectWidth = width;
-		views[index].recommendedImageRectHeight = height;
+		const simxr::StructureChain chain(views[index].next);
+		if (views[index].type != XR_TYPE_VIEW_CONFIGURATION_VIEW ||
+			XR_FAILED(chain.Validate(std::span(known).first(foveationEnabled ? 1 : 0))))
+			return XR_ERROR_VALIDATION_FAILURE;
+		if (foveationEnabled)
+		{
+			const auto request = chain.Find<XrFoveatedViewConfigurationViewVARJO>(known[0]);
+			if (request && request->foveatedRenderingActive > XR_TRUE)
+				return XR_ERROR_VALIDATION_FAILURE;
+		}
+	}
+	simxr::ViewSettings viewSettings;
+	settings::GetRenderResolution(viewSettings.outerWidth, viewSettings.outerHeight);
+	for (uint32_t index = 0; index < *count; ++index)
+	{
+		views[index].recommendedImageRectWidth = index < 2 ? viewSettings.outerWidth : viewSettings.insetWidth;
+		views[index].recommendedImageRectHeight = index < 2 ? viewSettings.outerHeight : viewSettings.insetHeight;
 		views[index].recommendedSwapchainSampleCount = 1;
 		views[index].maxImageRectWidth = settings::kMaxRenderExtent;
 		views[index].maxImageRectHeight = settings::kMaxRenderExtent;
@@ -1119,9 +1162,12 @@ static XrResult XRAPI_PTR xrEnumerateEnvironmentBlendModes_runtime(
 	XrInstance instance, XrSystemId system, XrViewConfigurationType viewType,
 	uint32_t capacity, uint32_t* count, XrEnvironmentBlendMode* modes)
 {
-	if (!RuntimeState().FindInstance(instance)) return XR_ERROR_HANDLE_INVALID;
-	if (system != 1) return XR_ERROR_SYSTEM_INVALID;
-	if (viewType != XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO) return XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;
+	const auto core = RuntimeState().FindInstance(instance);
+	if (!core)
+		return XR_ERROR_HANDLE_INVALID;
+	const auto validation = ValidateViewConfiguration(core->Extensions(), system, viewType);
+	if (XR_FAILED(validation))
+		return validation;
 	if (!count || (capacity && !modes)) return XR_ERROR_VALIDATION_FAILURE;
 	*count = 1;
 	if (capacity) modes[0] = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
@@ -2361,16 +2407,26 @@ static XrResult XRAPI_PTR xrLocateSpace_runtime(XrSpace space, XrSpace base, XrT
     return simxr::LocateSpace(core->Spaces(), space, base, time, location, &core->Extensions());
 }
 
-static XrResult XRAPI_PTR xrEnumerateReferenceSpaces_runtime(XrSession handle, uint32_t capacity, uint32_t* count, XrReferenceSpaceType* spaces) {
-    if (handle == XR_NULL_HANDLE || handle != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
-    if (!count || (capacity && !spaces)) return XR_ERROR_VALIDATION_FAILURE;
-    *count = 3;
-    if (!capacity) return XR_SUCCESS;
-    if (capacity < *count) return XR_ERROR_SIZE_INSUFFICIENT;
-    spaces[0] = XR_REFERENCE_SPACE_TYPE_VIEW;
-    spaces[1] = XR_REFERENCE_SPACE_TYPE_LOCAL;
-    spaces[2] = XR_REFERENCE_SPACE_TYPE_STAGE;
-    return XR_SUCCESS;
+static XrResult XRAPI_PTR xrEnumerateReferenceSpaces_runtime(
+	XrSession handle, uint32_t capacity, uint32_t* count, XrReferenceSpaceType* spaces)
+{
+	const auto core = rt::RetainSession(handle);
+	if (!core)
+		return XR_ERROR_HANDLE_INVALID;
+	if (!count || (capacity && !spaces))
+		return XR_ERROR_VALIDATION_FAILURE;
+	const bool foveationEnabled = core->Extensions().Contains(XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME);
+	*count = foveationEnabled ? 4 : 3;
+	if (!capacity)
+		return XR_SUCCESS;
+	if (capacity < *count)
+		return XR_ERROR_SIZE_INSUFFICIENT;
+	spaces[0] = XR_REFERENCE_SPACE_TYPE_VIEW;
+	spaces[1] = XR_REFERENCE_SPACE_TYPE_LOCAL;
+	spaces[2] = XR_REFERENCE_SPACE_TYPE_STAGE;
+	if (foveationEnabled)
+		spaces[3] = XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO;
+	return XR_SUCCESS;
 }
 
 static XrResult XRAPI_PTR xrCreateActionSpace_runtime(XrSession handle, const XrActionSpaceCreateInfo* info, XrSpace* out) {
@@ -2627,10 +2683,15 @@ static XrResult XRAPI_PTR xrGetReferenceSpaceBoundsRect_runtime(XrSession handle
 static XrResult XRAPI_PTR xrGetViewConfigurationProperties_runtime(
 	XrInstance instance, XrSystemId system, XrViewConfigurationType type, XrViewConfigurationProperties* props)
 {
-	if (!RuntimeState().FindInstance(instance)) return XR_ERROR_HANDLE_INVALID;
-	if (system != 1) return XR_ERROR_SYSTEM_INVALID;
-	if (type != XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO) return XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;
-	if (!props || props->type != XR_TYPE_VIEW_CONFIGURATION_PROPERTIES) return XR_ERROR_VALIDATION_FAILURE;
+	const auto core = RuntimeState().FindInstance(instance);
+	if (!core)
+		return XR_ERROR_HANDLE_INVALID;
+	const auto validation = ValidateViewConfiguration(core->Extensions(), system, type);
+	if (XR_FAILED(validation))
+		return validation;
+	if (!props || props->type != XR_TYPE_VIEW_CONFIGURATION_PROPERTIES ||
+		XR_FAILED(simxr::StructureChain(props->next).Validate({})))
+		return XR_ERROR_VALIDATION_FAILURE;
 	props->viewConfigurationType = type;
 	props->fovMutable = XR_TRUE;
 	return XR_SUCCESS;

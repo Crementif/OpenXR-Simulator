@@ -10,6 +10,7 @@
 // else is caught here rather than in a corrupted frame.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "Pch.h"
 #include <array>
 #include <charconv>
 #include <cmath>
@@ -121,6 +122,8 @@ int main(int argc, char** argv)
 	bool subRect = EnvOn("XR_PROBE_SUBRECT");
 	bool projectionOnly = EnvOn("XR_PROBE_PROJECTION_ONLY");
 	bool retainInspection = false;
+	bool quadViews = false;
+	bool foveated = false;
 	int totalFrames = 30;
 	int sleepMs = 0;
 	if (const char* value = getenv("XR_PROBE_FRAMES"))
@@ -130,7 +133,7 @@ int main(int argc, char** argv)
 		if (const int parsed = atoi(value); parsed >= 0)
 			sleepMs = parsed;
 	constexpr const char* usage = "Usage: xr_probe_vk [--vulkan1|--vulkan2] [--frames N] [--sleep-ms N] "
-								  "[--projection-only] [--subrect] [--retain-inspection]\n";
+								  "[--projection-only] [--subrect] [--retain-inspection] [--quad] [--foveated]\n";
 	for (int index = 1; index < argc; ++index)
 	{
 		const std::string_view option = argv[index];
@@ -143,6 +146,10 @@ int main(int argc, char** argv)
 			enable1 = option == "--vulkan1";
 		else if (option == "--projection-only")
 			projectionOnly = true;
+		else if (option == "--quad")
+			quadViews = true;
+		else if (option == "--foveated")
+			quadViews = foveated = true;
 		else if (option == "--subrect")
 			subRect = true;
 		else if (option == "--retain-inspection")
@@ -166,6 +173,9 @@ int main(int argc, char** argv)
 			return 2;
 		}
 	}
+	const uint32_t activeViewCount = quadViews ? 4 : 2;
+	const auto viewType = quadViews ? XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO :
+		XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
 	printf("== extension path: %s\n", enable1 ? "XR_KHR_vulkan_enable (v1)" : "XR_KHR_vulkan_enable2");
 
 	step("xrEnumerateInstanceExtensionProperties");
@@ -191,6 +201,10 @@ int main(int argc, char** argv)
     step("xrCreateInstance");
     std::vector<const char*> enabled = { gfxExt, XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME,
                                          XR_KHR_WIN32_CONVERT_PERFORMANCE_COUNTER_TIME_EXTENSION_NAME };
+	if (quadViews)
+		enabled.push_back(XR_VARJO_QUAD_VIEWS_EXTENSION_NAME);
+	if (foveated)
+		enabled.push_back(XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME);
     XrInstanceCreateInfo ici = { XR_TYPE_INSTANCE_CREATE_INFO };
     ici.enabledExtensionCount = (uint32_t)enabled.size();
     ici.enabledExtensionNames = enabled.data();
@@ -228,10 +242,10 @@ int main(int argc, char** argv)
 
     step("xrEnumerateViewConfigurationViews");
     uint32_t viewCount = 0;
-    XRC(xrEnumerateViewConfigurationViews(g_instance, systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 0, &viewCount, nullptr), "view config view count");
-    if (viewCount != 2) { printf("  [FAIL] expected 2 views, got %u\n", viewCount); return 1; }
-    std::array<XrViewConfigurationView, 2> vcv = { XrViewConfigurationView{ XR_TYPE_VIEW_CONFIGURATION_VIEW }, XrViewConfigurationView{ XR_TYPE_VIEW_CONFIGURATION_VIEW } };
-    XRC(xrEnumerateViewConfigurationViews(g_instance, systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, viewCount, &viewCount, vcv.data()), "view config views");
+    XRC(xrEnumerateViewConfigurationViews(g_instance, systemId, viewType, 0, &viewCount, nullptr), "view config view count");
+    if (viewCount != activeViewCount) { printf("  [FAIL] expected %u views, got %u\n", activeViewCount, viewCount); return 1; }
+    std::vector<XrViewConfigurationView> vcv(viewCount, {XR_TYPE_VIEW_CONFIGURATION_VIEW});
+    XRC(xrEnumerateViewConfigurationViews(g_instance, systemId, viewType, viewCount, &viewCount, vcv.data()), "view config views");
     printf("       recommended %ux%u samples %u\n", vcv[0].recommendedImageRectWidth, vcv[0].recommendedImageRectHeight, vcv[0].recommendedSwapchainSampleCount);
 
     // ---- VkInstance -------------------------------------------------------------------
@@ -619,15 +633,20 @@ int main(int argc, char** argv)
         return true;
     };
 
-    Chain colorL, colorR, depthL, depthR, quadChain;
+    Chain colorL, colorR, depthL, depthR, quadChain, insetL, insetR;
     bool chainsOk = true;
     chainsOk &= makeChain(colorFormat, false, colorL, "color swapchain (left)");
     chainsOk &= makeChain(colorFormat, false, colorR, "color swapchain (right)");
     chainsOk &= makeChain(depthFormat, true, depthL, "depth swapchain (left)");
     chainsOk &= makeChain(depthFormat, true, depthR, "depth swapchain (right)");
     chainsOk &= makeChain(colorFormat, false, quadChain, "quad-layer swapchain (2D HUD)");
+	if (quadViews)
+	{
+		chainsOk &= makeChain(colorFormat, false, insetL, "inset swapchain (left)");
+		chainsOk &= makeChain(colorFormat, false, insetR, "inset swapchain (right)");
+	}
     if (!chainsOk) return 1;
-    ok("all five swapchains created and made renderable");
+    ok("all requested swapchains created and made renderable");
 
     step("session state machine (xrPollEvent -> READY -> xrBeginSession)");
     XrSessionState state = XR_SESSION_STATE_UNKNOWN;
@@ -641,7 +660,7 @@ int main(int argc, char** argv)
                 printf("       session state -> %d\n", (int)state);
                 if (state == XR_SESSION_STATE_READY) {
                     XrSessionBeginInfo bi = { XR_TYPE_SESSION_BEGIN_INFO };
-                    bi.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+                    bi.primaryViewConfigurationType = viewType;
                     XRC_SOFT(xrBeginSession(session, &bi), "xrBeginSession");
                     began = true;
                 }
@@ -698,12 +717,15 @@ int main(int argc, char** argv)
 		}
 
         XrViewLocateInfo vli = { XR_TYPE_VIEW_LOCATE_INFO };
-        vli.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+        vli.viewConfigurationType = viewType;
         vli.displayTime = fs.predictedDisplayTime;
         vli.space = stageSpace;
         XrViewState vs = { XR_TYPE_VIEW_STATE };
-        uint32_t n = 2;
-        std::array<XrView, 2> views = { XrView{ XR_TYPE_VIEW }, XrView{ XR_TYPE_VIEW } };
+		XrViewLocateFoveatedRenderingVARJO foveation{XR_TYPE_VIEW_LOCATE_FOVEATED_RENDERING_VARJO, nullptr, XR_TRUE};
+		if (foveated)
+			vli.next = &foveation;
+        uint32_t n = activeViewCount;
+        std::vector<XrView> views(activeViewCount, {XR_TYPE_VIEW});
         r = xrLocateViews(session, &vli, &vs, n, &n, views.data());
         if (XR_FAILED(r)) { fail("xrLocateViews", r); break; }
         if (f == 0) {
@@ -801,35 +823,41 @@ int main(int argc, char** argv)
         };
 
         const int phaseLen = (totalFrames > 200) ? 100 : (totalFrames / 2);
-        const bool quadOnly = !projectionOnly && ((phaseLen <= 0) || ((f / phaseLen) % 2) == 0);
+        const bool quadOnly = !quadViews && !projectionOnly && ((phaseLen <= 0) || ((f / phaseLen) % 2) == 0);
         if (quadOnly) quadOnlyFrames++;
 
         bool cycled = cycle(quadChain);
         if (!quadOnly) {
             cycled = cycled && cycle(colorL, 0) && cycle(colorR, 1) && cycle(depthL) && cycle(depthR);
+			if (quadViews)
+				cycled = cycled && cycle(insetL, 0) && cycle(insetR, 1);
         }
         if (!cycled) { printf("  [FAIL] swapchain acquire/render/release cycle failed on frame %d\n", f); g_fail++; break; }
 
-        XrCompositionLayerDepthInfoKHR depthInfo[2] = {};
-        XrCompositionLayerProjectionView projViews[2] = {};
-        Chain* colorChains[2] = { &colorL, &colorR };
-        Chain* depthChains[2] = { &depthL, &depthR };
-        for (int e = 0; e < 2; ++e) {
-            depthInfo[e] = { XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR };
-            depthInfo[e].subImage.swapchain = depthChains[e]->handle;
-            depthInfo[e].subImage.imageRect = viewRect;
-            depthInfo[e].minDepth = 0.0f; depthInfo[e].maxDepth = 1.0f;
-            depthInfo[e].nearZ = 0.05f; depthInfo[e].farZ = INFINITY;
-
-            projViews[e] = { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW };
-            projViews[e].next = &depthInfo[e];
-            projViews[e].pose = views[e].pose;
-            projViews[e].fov = views[e].fov;
-            projViews[e].subImage.swapchain = colorChains[e]->handle;
-            projViews[e].subImage.imageRect = viewRect;
-        }
+		std::array<XrCompositionLayerDepthInfoKHR, 4> depthInfo{};
+		std::array<XrCompositionLayerProjectionView, 4> projectionViews{};
+		const std::array colorChains{&colorL, &colorR, &insetL, &insetR};
+		const std::array depthChains{&depthL, &depthR};
+		for (uint32_t viewIndex = 0; viewIndex < activeViewCount; ++viewIndex)
+		{
+			auto& depth = depthInfo[viewIndex];
+			depth = {XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR};
+			depth.subImage.swapchain = depthChains[viewIndex % 2]->handle;
+			depth.subImage.imageRect = viewRect;
+			depth.minDepth = 0.0f;
+			depth.maxDepth = 1.0f;
+			depth.nearZ = 0.05f;
+			depth.farZ = INFINITY;
+			auto& projectionView = projectionViews[viewIndex];
+			projectionView = {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW};
+			projectionView.next = &depth;
+			projectionView.pose = views[viewIndex].pose;
+			projectionView.fov = views[viewIndex].fov;
+			projectionView.subImage.swapchain = colorChains[viewIndex]->handle;
+			projectionView.subImage.imageRect = viewRect;
+		}
         XrCompositionLayerProjection proj = { XR_TYPE_COMPOSITION_LAYER_PROJECTION };
-        proj.space = stageSpace; proj.viewCount = 2; proj.views = projViews;
+        proj.space = stageSpace; proj.viewCount = activeViewCount; proj.views = projectionViews.data();
 
         const float eyeY = (views[0].pose.position.y + views[1].pose.position.y) * 0.5f;
         XrCompositionLayerQuad quad = { XR_TYPE_COMPOSITION_LAYER_QUAD };
@@ -903,7 +931,9 @@ int main(int argc, char** argv)
     XRC_SOFT(xrRequestExitSession(session), "xrRequestExitSession");
     XRC_SOFT(xrEndSession(session), "xrEndSession right after xrRequestExitSession");
     vkDeviceWaitIdle(device);
-    for (Chain* c : { &colorL, &colorR, &depthL, &depthR, &quadChain }) {
+    for (Chain* c : { &colorL, &colorR, &depthL, &depthR, &quadChain, &insetL, &insetR }) {
+		if (!c->handle)
+			continue;
         for (VkFramebuffer fb : c->framebuffers) vkDestroyFramebuffer(device, fb, nullptr);
         for (VkImageView v : c->views) vkDestroyImageView(device, v, nullptr);
         if (c->renderPass) vkDestroyRenderPass(device, c->renderPass, nullptr);

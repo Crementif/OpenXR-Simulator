@@ -2,6 +2,7 @@
 #define XR_USE_GRAPHICS_API_D3D11
 #define XR_USE_GRAPHICS_API_D3D12
 #define XR_USE_GRAPHICS_API_OPENGL
+#include "Pch.h"
 #include <windows.h>
 #include <d3d11.h>
 #include <d3d12.h>
@@ -128,7 +129,7 @@ struct D3D12Application
 	}
 };
 #endif
-int main()
+int main(int argc, char** argv)
 {
 	try
 	{
@@ -142,14 +143,89 @@ int main()
 #else
 		const char* extension = XR_KHR_D3D11_ENABLE_EXTENSION_NAME;
 #endif
-		create.enabledExtensionCount = 1;
-		create.enabledExtensionNames = &extension;
+		bool quadViews = std::getenv("XR_PROBE_QUAD") != nullptr;
+		bool foveated = std::getenv("XR_PROBE_FOVEATED") != nullptr;
+		for (int index = 1; index < argc; ++index)
+		{
+			const std::string_view argument(argv[index]);
+			if (argument == "--quad")
+				quadViews = true;
+			else if (argument == "--foveated")
+				foveated = true;
+			else
+				throw std::runtime_error("Unknown probe argument: " + std::string(argument));
+		}
+		if (foveated && !quadViews)
+			throw std::runtime_error("Foveated probe requires quad views");
+		const uint32_t viewCount = quadViews ? 4 : 2;
+		const auto viewType = quadViews ? XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO :
+			XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+		std::vector<const char*> extensions{extension};
+		if (quadViews)
+			extensions.push_back(XR_VARJO_QUAD_VIEWS_EXTENSION_NAME);
+		if (foveated)
+			extensions.push_back(XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME);
+		create.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
+		create.enabledExtensionNames = extensions.data();
 		XrInstance instance;
 		Check(xrCreateInstance(&create, &instance), "Create instance");
 		XrSystemGetInfo getSystem{XR_TYPE_SYSTEM_GET_INFO};
 		getSystem.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
 		XrSystemId system;
 		Check(xrGetSystem(instance, &getSystem, &system), "Get system");
+		uint32_t configurationCount = 0;
+		Check(xrEnumerateViewConfigurations(instance, system, 0, &configurationCount, nullptr), "Count configurations");
+		if (configurationCount != (quadViews ? 2u : 1u))
+			throw std::runtime_error("Incorrect enabled configuration count");
+		std::vector<XrViewConfigurationType> configurations(configurationCount);
+		if (quadViews && xrEnumerateViewConfigurations(instance, system, 1, &configurationCount,
+			configurations.data()) != XR_ERROR_SIZE_INSUFFICIENT)
+			throw std::runtime_error("Undersized configuration enumeration accepted");
+		Check(xrEnumerateViewConfigurations(instance, system, configurationCount, &configurationCount,
+			configurations.data()), "Enumerate configurations");
+		if (configurations.front() != XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO || configurations.back() != viewType)
+			throw std::runtime_error("Incorrect enabled configurations");
+		XrViewConfigurationProperties properties{XR_TYPE_VIEW_CONFIGURATION_PROPERTIES};
+		if (!quadViews && xrGetViewConfigurationProperties(instance, system,
+			XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO, &properties) != XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED)
+			throw std::runtime_error("Disabled quad configuration accepted");
+		Check(xrGetViewConfigurationProperties(instance, system, viewType, &properties), "Configuration properties");
+		uint32_t recommendedCount = 0;
+		Check(xrEnumerateViewConfigurationViews(instance, system, viewType, 0, &recommendedCount, nullptr), "Count views");
+		if (recommendedCount != viewCount)
+			throw std::runtime_error("Incorrect view count");
+		std::vector<XrViewConfigurationView> recommended(viewCount, {XR_TYPE_VIEW_CONFIGURATION_VIEW});
+		recommended[0].recommendedImageRectWidth = 123;
+		if (xrEnumerateViewConfigurationViews(instance, system, viewType, viewCount - 1, &recommendedCount,
+			recommended.data()) != XR_ERROR_SIZE_INSUFFICIENT || recommended[0].recommendedImageRectWidth != 123)
+			throw std::runtime_error("Undersized view enumeration mutated output");
+		Check(xrEnumerateViewConfigurationViews(instance, system, viewType, viewCount, &recommendedCount,
+			recommended.data()), "Enumerate views");
+		if (quadViews && (!recommended[2].recommendedImageRectWidth || !recommended[2].recommendedImageRectHeight ||
+			recommended[2].recommendedImageRectWidth >= recommended[0].recommendedImageRectWidth))
+			throw std::runtime_error("Incorrect inset dimensions");
+		if (foveated)
+		{
+			XrFoveatedViewConfigurationViewVARJO request{XR_TYPE_FOVEATED_VIEW_CONFIGURATION_VIEW_VARJO, nullptr, XR_TRUE};
+			recommended[2].next = &request;
+			Check(xrEnumerateViewConfigurationViews(instance, system, viewType, viewCount, &recommendedCount,
+				recommended.data()), "Foveated view dimensions");
+			request.foveatedRenderingActive = 2;
+			if (xrEnumerateViewConfigurationViews(instance, system, viewType, viewCount, &recommendedCount,
+				recommended.data()) != XR_ERROR_VALIDATION_FAILURE)
+				throw std::runtime_error("Invalid foveation boolean accepted");
+			request.foveatedRenderingActive = XR_TRUE;
+			request.next = &request;
+			if (xrEnumerateViewConfigurationViews(instance, system, viewType, viewCount, &recommendedCount,
+				recommended.data()) != XR_ERROR_VALIDATION_FAILURE)
+				throw std::runtime_error("Cyclic foveation chain accepted");
+			recommended[2].next = nullptr;
+		}
+		uint32_t blendCount = 0;
+		XrEnvironmentBlendMode blendMode{};
+		Check(xrEnumerateEnvironmentBlendModes(instance, system, viewType, 1, &blendCount, &blendMode), "Blend mode");
+		if (blendCount != 1 || blendMode != XR_ENVIRONMENT_BLEND_MODE_OPAQUE)
+			throw std::runtime_error("Incorrect blend mode");
 #ifdef SIMXR_PROBE_OPENGL
 		PFN_xrGetOpenGLGraphicsRequirementsKHR requirementsFunction;
 		Check(xrGetInstanceProcAddr(instance, "xrGetOpenGLGraphicsRequirementsKHR",
@@ -245,6 +321,20 @@ int main()
 			spaceInfo.poseInReferenceSpace.orientation.w = 1;
 			XrSpace space;
 			Check(xrCreateReferenceSpace(session, &spaceInfo, &space), "Create space");
+			uint32_t spaceCount = 0;
+			Check(xrEnumerateReferenceSpaces(session, 0, &spaceCount, nullptr), "Count spaces");
+			if (spaceCount != (foveated ? 4u : 3u))
+				throw std::runtime_error("Incorrect reference space count");
+			std::vector<XrReferenceSpaceType> spaces(spaceCount);
+			Check(xrEnumerateReferenceSpaces(session, spaceCount, &spaceCount, spaces.data()), "Enumerate spaces");
+			XrSpace combinedEye = XR_NULL_HANDLE;
+			if (foveated)
+			{
+				if (spaces.back() != XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO)
+					throw std::runtime_error("Combined eye space missing");
+				spaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO;
+				Check(xrCreateReferenceSpace(session, &spaceInfo, &combinedEye), "Create combined eye space");
+			}
 			XrSwapchainCreateInfo swapchainInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
 			swapchainInfo.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
 #ifdef SIMXR_PROBE_OPENGL
@@ -256,7 +346,7 @@ int main()
 			swapchainInfo.width = 256;
 			swapchainInfo.height = 256;
 			swapchainInfo.faceCount = swapchainInfo.mipCount = 1;
-			swapchainInfo.arraySize = 2;
+			swapchainInfo.arraySize = viewCount;
 			for (unsigned invalidField = 0; invalidField < 5; ++invalidField)
 			{
 				auto invalid = swapchainInfo;
@@ -304,7 +394,7 @@ int main()
 						if (changed.state == XR_SESSION_STATE_READY)
 						{
 							XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO};
-							begin.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+							begin.primaryViewConfigurationType = viewType;
 							Check(xrBeginSession(session, &begin), "Begin session");
 							running = true;
 						}
@@ -351,22 +441,32 @@ int main()
 					std::puts("APP observed right trigger release");
 				}
 				XrViewLocateInfo locate{XR_TYPE_VIEW_LOCATE_INFO};
-				locate.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+				locate.viewConfigurationType = viewType;
 				locate.displayTime = state.predictedDisplayTime;
 				locate.space = space;
 				XrViewState viewState{XR_TYPE_VIEW_STATE};
-				std::array<XrView, 2> views{{{XR_TYPE_VIEW}, {XR_TYPE_VIEW}}};
-				Check(xrLocateViews(session, &locate, &viewState, 2, &count, views.data()), "Locate views");
+				XrViewLocateFoveatedRenderingVARJO foveation{XR_TYPE_VIEW_LOCATE_FOVEATED_RENDERING_VARJO, nullptr, XR_TRUE};
+				if (foveated)
+					locate.next = &foveation;
+				std::vector<XrView> views(viewCount, {XR_TYPE_VIEW});
+				Check(xrLocateViews(session, &locate, &viewState, viewCount, &count, views.data()), "Locate views");
+				if (count != viewCount)
+					throw std::runtime_error("Incorrect located view count");
+				if (combinedEye)
+				{
+					XrSpaceLocation location{XR_TYPE_SPACE_LOCATION};
+					Check(xrLocateSpace(combinedEye, space, state.predictedDisplayTime, &location), "Locate combined eye space");
+				}
 				XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
 				std::uint32_t index;
 				Check(xrAcquireSwapchainImage(swapchain, &acquire, &index), "Acquire image");
 				XrSwapchainImageWaitInfo waitImage{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
 				waitImage.timeout = XR_INFINITE_DURATION;
 				Check(xrWaitSwapchainImage(swapchain, &waitImage), "Wait image");
-				std::array<XrCompositionLayerProjectionView, 2> projectionViews;
-				for (UINT eye = 0; eye < 2; ++eye)
+				std::vector<XrCompositionLayerProjectionView> projectionViews(viewCount);
+				for (UINT eye = 0; eye < viewCount; ++eye)
 				{
-					const float color[]{eye == 0 ? 1.0f : 0.0f, eye == 1 ? 1.0f : 0.0f, 0.1f, 1};
+					const float color[]{eye % 2 == 0 ? 1.0f : 0.0f, eye % 2 == 1 ? 1.0f : 0.0f, eye >= 2 ? 1.0f : 0.1f, 1};
 #ifdef SIMXR_PROBE_OPENGL
 					application.Clear(images[index].image, eye, color);
 #elif defined(SIMXR_PROBE_D3D12)
@@ -390,7 +490,7 @@ int main()
 				Check(xrReleaseSwapchainImage(swapchain, &release), "Release image");
 				XrCompositionLayerProjection projection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
 				projection.space = space;
-				projection.viewCount = 2;
+				projection.viewCount = viewCount;
 				projection.views = projectionViews.data();
 				const auto* layer = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection);
 				XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO};
@@ -405,6 +505,8 @@ int main()
 			Check(xrEndSession(session), "End session");
 			Check(xrDestroySwapchain(swapchain), "Destroy swapchain");
 			Check(xrDestroySpace(space), "Destroy space");
+			if (combinedEye)
+				Check(xrDestroySpace(combinedEye), "Destroy combined eye space");
 			Check(xrDestroySession(session), "Destroy session");
 			std::printf("Session %u: submitted %u frames and destroyed all session resources\n", cycle + 1, frames);
 		}
@@ -412,8 +514,8 @@ int main()
 		Check(xrDestroyInstance(instance), "Destroy instance");
 		if (std::getenv("XR_PROBE_REQUIRE_INPUT") && (!pressed || !released))
 			throw std::runtime_error("Application did not observe both trigger press and release");
-		std::printf("PASS: native loader completed %u sessions, %u stereo frames each, resize=%s\n",
-			sessions, limit, resize ? "yes" : "no");
+		std::printf("PASS: native loader completed %u sessions, %u frames each, views=%u, foveated=%s, resize=%s\n",
+			sessions, limit, viewCount, foveated ? "yes" : "no", resize ? "yes" : "no");
 		return 0;
 	}
 	catch (const std::exception& error)
