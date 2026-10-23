@@ -1,8 +1,9 @@
 #pragma once
+
 #include "simulation/HeadsetProfiles.h"
+
 #include <cstdint>
 #include <filesystem>
-#include <mutex>
 
 namespace simxr::legacy::settings
 {
@@ -41,12 +42,11 @@ struct RuntimeSettings
 	float moveBoost = 4.0f;
 	InputPolling inputPolling = InputPolling::AppForeground;
 };
-extern std::recursive_mutex g_stateMutex;
-extern RuntimeSettings g_settings;
+
 using EyeFov = simxr::HeadsetEyeFov;
 using HeadsetSpec = simxr::HeadsetSpec;
 inline constexpr auto& kHeadsetSpecs = simxr::HeadsetProfileTable;
-inline constexpr int kHeadsetProfileCount = sizeof(kHeadsetSpecs) / sizeof(kHeadsetSpecs[0]);
+inline constexpr int kHeadsetProfileCount = static_cast<int>(sizeof(kHeadsetSpecs) / sizeof(kHeadsetSpecs[0]));
 inline constexpr int kMinRenderWidth = 320;
 inline constexpr int kMinRenderHeight = 240;
 inline constexpr int kMaxRenderExtent = 4096;
@@ -56,18 +56,18 @@ const HeadsetSpec& GetHeadsetSpec(HeadsetProfile profile);
 const HeadsetSpec& GetActiveHeadsetSpec();
 bool UsesProfileFov();
 float ActiveFovAspect();
-int FindHeadsetSpec(const char* s);
+int FindHeadsetSpec(const char* name);
 void SetRenderResolution(int width, int height);
 void GetRenderResolution(uint32_t& width, uint32_t& height);
 int GetIpdMillimeters();
 void SetIpdMillimeters(int ipdMm);
 void SetHeadsetProfile(HeadsetProfile profile);
 const wchar_t* GetHeadsetProfileShortName();
-void SetMoveSpeed(float mps);
+void SetMoveSpeed(float metersPerSecond);
 float GetMoveSpeed(bool boosted);
-HeadsetProfile HeadsetProfileFromName(const char* s, HeadsetProfile def);
-const char* InputPollingName(InputPolling p);
-InputPolling InputPollingFromName(const char* s, InputPolling def);
+HeadsetProfile HeadsetProfileFromName(const char* name, HeadsetProfile fallback);
+const char* InputPollingName(InputPolling polling);
+InputPolling InputPollingFromName(const char* name, InputPolling fallback);
 void ApplySettingsJson(const char* text);
 void LoadSettings(const std::filesystem::path& dataDir);
 } // namespace simxr::legacy::settings

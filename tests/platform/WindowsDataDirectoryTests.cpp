@@ -1,19 +1,18 @@
-#include "mcp_integration.h"
+#include "Pch.h"
 #include "control/legacy/WindowsRuntimeSettings.h"
+#include "mcp_integration.h"
 namespace settings = simxr::legacy::settings;
 
 #include <cstdio>
+#include <fstream>
 #include <stdexcept>
 #include <string_view>
 
-namespace
-{
-void Require(bool condition, const char* message)
+static void Require(bool condition, const char* message)
 {
 	if (!condition)
 		throw std::runtime_error(message);
 }
-} // namespace
 
 int main(int argc, char** argv)
 {
@@ -40,19 +39,51 @@ int main(int argc, char** argv)
 												  : std::filesystem::path(L".") / L"OpenXR-Simulator";
 		const auto& directory = mcp::GetSimulatorDataDirectory();
 		Require(directory == expected, "Runtime data directory ignored environment precedence");
-        std::filesystem::create_directories(directory);
-        FILE* file = nullptr;
-        Require(_wfopen_s(&file, (directory / L"settings.json").c_str(), L"wb") == 0 && file,
-                "Open Unicode settings path");
-        const char json[] = "{\"render_width\": 1500, \"render_height\": 1600}";
-        const bool written = fwrite(json, 1, sizeof(json) - 1, file) == sizeof(json) - 1;
-        const bool closed = fclose(file) == 0;
-        Require(written && closed, "Write compatibility settings fixture");
-        settings::LoadSettings(directory);
-        Require(settings::ReadState().renderWidth == 1500, "Unicode settings did not load");
+		settings::LoadSettings(directory);
+		Require(settings::ReadState().renderWidth == 1280, "Missing settings changed startup defaults");
+		const auto path = directory / "settings.json";
+		const auto writeSettings = [&](std::string_view text)
+		{
+			std::ofstream file(path, std::ios::binary | std::ios::trunc);
+			Require(static_cast<bool>(file), "Open Unicode settings path");
+			file.write(text.data(), static_cast<std::streamsize>(text.size()));
+			Require(static_cast<bool>(file), "Write compatibility settings fixture");
+			file.close();
+			Require(static_cast<bool>(file), "Close compatibility settings fixture");
+		};
+		const auto requireRejectedLoad = [&]
+		{
+			bool rejected = false;
+			try
+			{
+				settings::LoadSettings(directory);
+			}
+			catch (const std::exception&)
+			{
+				rejected = true;
+			}
+			Require(rejected, "Invalid settings input was silently accepted");
+			const auto state = settings::ReadState();
+			Require(state.renderWidth == 1500 && state.renderHeight == 1600,
+					"Failed settings load partially changed the active resolution");
+		};
+
+		writeSettings("{\"padding\":\"" + std::string(4096, ' ') + "\",\"render_width\":1500,\"render_height\":1600}");
+		settings::LoadSettings(directory);
+		Require(settings::ReadState().renderWidth == 1500, "Unicode settings were truncated at 2 KiB");
+
+		writeSettings("{\"render_width\":2200,\"render_height\":2300,\"padding\":\"" + std::string(1024 * 1024, ' ') +
+					  "\"}");
+		requireRejectedLoad();
+		std::filesystem::remove(path);
+		std::filesystem::create_directory(path);
+		requireRejectedLoad();
+		std::filesystem::remove(path);
+		settings::LoadSettings(directory);
+		Require(settings::ReadState().renderWidth == 1500, "Missing settings reset existing values");
 		std::filesystem::current_path(previous);
 		std::filesystem::remove_all(temporary);
-		std::puts("PASS Windows data directory precedence and Unicode settings load");
+		std::puts("PASS Windows data directory precedence and complete Unicode settings load");
 		return 0;
 	}
 	catch (const std::exception& error)

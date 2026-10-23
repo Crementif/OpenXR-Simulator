@@ -301,18 +301,18 @@ static XrFovf MakeFovDeg(float angleLeft, float angleRight, float angleUp, float
 }
 
 static XrFovf GetUiFov(uint32_t eyeIndex) {
-    std::lock_guard stateLock(settings::g_stateMutex);
+    const auto state = settings::ReadState();
     // Shared with settings::ActiveFovAspect, which snaps the recommended render target to the
     // shape of whatever this returns.
-    if (!settings::UsesProfileFov()) {
-        int fovDeg = settings::ReadState().fovDegrees;
+    if (!state.useAsymmetricFov || state.headsetProfile == settings::HeadsetProfile::GenericSymmetric) {
+        int fovDeg = state.fovDegrees;
         if (fovDeg <= 0 || fovDeg > 180) fovDeg = 90;
         float fovRadians = fovDeg * 0.5f * 3.14159265f / 180.0f;
         // XrFovf fields are angles in radians, not tangent-space extents.
         return XrFovf{ -fovRadians, fovRadians, fovRadians, -fovRadians };
     }
 
-    const settings::EyeFov& e = settings::GetActiveHeadsetSpec().eye[eyeIndex == 0 ? 0 : 1];
+    const settings::EyeFov& e = settings::GetHeadsetSpec(state.headsetProfile).eye[eyeIndex == 0 ? 0 : 1];
     return MakeFovDeg(e.angleLeft, e.angleRight, e.angleUp, e.angleDown);
 }
 
@@ -976,8 +976,8 @@ static XrResult XRAPI_PTR xrCreateInstance_runtime(const XrInstanceCreateInfo* c
     // Restore persisted headset defaults before application view-configuration queries.
     static bool s_settingsLoaded = false;
     if (!s_settingsLoaded) {
-        s_settingsLoaded = true;
         settings::LoadSettings(mcp::GetSimulatorDataDirectory());
+        s_settingsLoaded = true;
         Logf("[SimXR] Settings restored: profile=%ls ipd=%dmm asymmetric=%d",
              settings::GetHeadsetProfileShortName(), settings::GetIpdMillimeters(),
              (int)settings::ReadState().useAsymmetricFov);
