@@ -174,6 +174,8 @@ int Application::Run()
 					window.Resize(800, 600);
 				if (frame == 4)
 					window.Resize(1024, 576);
+				if ((frame == 2 || frame == 4) && !SDL_SyncWindow(window.Native()))
+					throw std::runtime_error(std::string("Companion smoke resize did not finish: ") + SDL_GetError());
 				if (frame >= m_options.smokeFrames)
 					running = false;
 			}
