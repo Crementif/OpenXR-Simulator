@@ -49,8 +49,10 @@ def main():
                 outcomes.append(result)
                 time.sleep(.3)
         finally:
-            client.stop_recording(session)
-            client.release_control(session)
+            try:
+                client.stop_recording(session)
+            finally:
+                client.release_control(session)
         recording = collect_recording(client, session)
         script = to_luau(recording)
         with args.output.open('x') as stream:

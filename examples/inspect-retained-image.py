@@ -52,16 +52,20 @@ def main():
                         status = client.export_info(ticket)
                     if status['phase'] != 'complete':
                         raise RuntimeError(status)
-                    pixels = bytearray()
-                    while len(pixels) < status['total_bytes']:
-                        chunk = client.read_export(ticket, len(pixels), 64000)
-                        if chunk['offset'] != len(pixels) or not chunk['bytes']:
-                            raise RuntimeError('Incomplete export')
-                        pixels.extend(chunk['bytes'])
                     descriptor = image['image_descriptor']
                     width, height = descriptor['width'], descriptor['height']
-                    if len(pixels) != width * height * 4:
-                        raise RuntimeError('Export is not tightly packed RGBA8')
+                    expected = width * height * 4
+                    if not 0 < expected <= 128 * 1024 * 1024 or status['total_bytes'] != expected:
+                        raise RuntimeError('Export dimensions or byte budget are invalid')
+                    pixels = bytearray()
+                    while len(pixels) < expected:
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError('Explicit image read did not complete')
+                        chunk = client.read_export(ticket, len(pixels), 64000)
+                        if (chunk['offset'] != len(pixels) or not chunk['bytes']
+                                or len(chunk['bytes']) > expected - len(pixels)):
+                            raise RuntimeError('Incomplete export')
+                        pixels.extend(chunk['bytes'])
                     rgb = bytearray(width * height * 3)
                     for channel in range(3):
                         rgb[channel::3] = pixels[channel::4]
