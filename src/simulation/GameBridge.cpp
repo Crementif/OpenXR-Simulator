@@ -1,16 +1,12 @@
 #include "simulation/GameBridge.h"
+#include "Pch.h"
 
-#include <algorithm>
-#include <cstring>
 #include <limits>
 #include <stdexcept>
-#include <string_view>
 
 namespace simxr
 {
-namespace
-{
-void ValidateText(std::string_view text)
+static void ValidateText(std::string_view text)
 {
 	if (text.size() > SIMXR_GAME_PAYLOAD_CAPACITY || text.find('\0') != std::string_view::npos)
 		throw std::invalid_argument("Game bridge text exceeds its bounded payload");
@@ -53,11 +49,11 @@ void ValidateText(std::string_view text)
 	if (pending)
 		throw std::invalid_argument("Truncated game bridge UTF-8");
 }
-bool Terminal(GameCommandPhase phase)
+static bool Terminal(GameCommandPhase phase)
 {
 	return phase != GameCommandPhase::Queued && phase != GameCommandPhase::Delivered;
 }
-} // namespace
+
 GameBridge::GameBridge()
 {
 	m_commands.reserve(128);
@@ -128,7 +124,10 @@ std::optional<GameCommandRecord> GameBridge::Submit(std::uint64_t game, std::uin
 	if (m_commands.size() == 128)
 	{
 		const auto found = std::find_if(m_commands.begin(), m_commands.end(),
-										[](const auto& command) { return Terminal(command.phase); });
+										[](const auto& command)
+										{
+											return Terminal(command.phase);
+										});
 		if (found == m_commands.end())
 			return {};
 		m_commands.erase(found);
@@ -207,7 +206,11 @@ void GameBridge::Disconnect(std::uint64_t source, bool retire) noexcept
 				command.phase = GameCommandPhase::Cancelled;
 		}
 	if (retire)
-		std::erase_if(m_sources, [&](const auto& cursor) { return cursor.source == source; });
+		std::erase_if(m_sources,
+					  [&](const auto& cursor)
+					  {
+						  return cursor.source == source;
+					  });
 }
 GameBridgeSnapshot GameBridge::Snapshot() const
 {
