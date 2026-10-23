@@ -14,9 +14,7 @@
 
 namespace simxr
 {
-namespace
-{
-template<typename Function> Function Procedure(const char* name)
+template<typename Function> static Function Procedure(const char* name)
 {
 	const auto address = wglGetProcAddress(name);
 	const auto value = std::bit_cast<std::uintptr_t>(address);
@@ -24,16 +22,15 @@ template<typename Function> Function Procedure(const char* name)
 		throw std::runtime_error(std::string("Required OpenGL command unavailable: ") + name);
 	return std::bit_cast<Function>(address);
 }
-bool IsDepthFormat(GLenum format)
+static bool IsDepthFormat(GLenum format)
 {
 	return format == GL_DEPTH_COMPONENT16 || format == GL_DEPTH_COMPONENT24 ||
 		format == GL_DEPTH_COMPONENT32F || format == GL_DEPTH24_STENCIL8 || format == GL_DEPTH32F_STENCIL8;
 }
-void CheckGL(const char* operation)
+static void CheckGL(const char* operation)
 {
 	if (glGetError() != GL_NO_ERROR)
 		throw std::runtime_error(operation);
-}
 }
 
 // A private share-group context keeps native cleanup independent of application
@@ -89,6 +86,7 @@ class OpenGLContext final
 			Procedure<PFNGLDELETEMEMORYOBJECTSEXTPROC>("glDeleteMemoryObjectsEXT");
 			Procedure<PFNGLDELETESEMAPHORESEXTPROC>("glDeleteSemaphoresEXT");
 			program = CreateProgram(shaders::CompositorVertexGlsl, shaders::CompositorPixelGlsl);
+			depthMsProgram = CreateProgram(shaders::CompositorVertexGlsl, shaders::CompositorDepthMsGlsl);
 			Procedure<PFNGLCREATEVERTEXARRAYSPROC>("glCreateVertexArrays")(1, &vertexArray);
 			CheckGL("Initialize canonical OpenGL compositor");
 		}
@@ -105,7 +103,7 @@ class OpenGLContext final
 	std::mutex mutex;
 	HDC device = nullptr;
 	HGLRC handle = nullptr;
-	GLuint program = 0, vertexArray = 0;
+	GLuint program = 0, depthMsProgram = 0, vertexArray = 0;
 
   private:
 	GLuint CreateProgram(const char* vertex, const char* pixel)
@@ -162,6 +160,8 @@ class OpenGLContext final
 			{
 				if (program)
 					std::bit_cast<PFNGLDELETEPROGRAMPROC>(wglGetProcAddress("glDeleteProgram"))(program);
+				if (depthMsProgram)
+					std::bit_cast<PFNGLDELETEPROGRAMPROC>(wglGetProcAddress("glDeleteProgram"))(depthMsProgram);
 				if (vertexArray)
 					std::bit_cast<PFNGLDELETEVERTEXARRAYSPROC>(wglGetProcAddress("glDeleteVertexArrays"))(1, &vertexArray);
 			}
@@ -199,6 +199,7 @@ struct OpenGLFrame::Resources
 	VkCommandBuffer initialize = VK_NULL_HANDLE;
 	VkFence initialized = VK_NULL_HANDLE;
 	bool submitted = false;
+	bool retainSource = false;
 };
 OpenGLFrame::OpenGLFrame(std::shared_ptr<OpenGLContext> context, std::span<const FrameView> views)
 	: FrameOutput(views), m_resources(std::make_unique<Resources>())
@@ -321,8 +322,8 @@ XrResult OpenGLBackend::Prepare(const CompositionPlan& plan, std::span<const Ope
 		if (!source.texture || !source.width || !source.height || !source.mipLevels ||
 			plan.draws[index].eye >= outputLayers || plan.draws[index].source.arraySlice >= source.layers)
 			return XR_ERROR_LAYER_INVALID;
-		if (source.samples != 1)
-			return XR_ERROR_FEATURE_UNSUPPORTED;
+		if (!std::has_single_bit(source.samples) || (source.samples > 1 && source.mipLevels != 1))
+			return XR_ERROR_VALIDATION_FAILURE;
 		if ((plan.draws[index].constants.control[0] == 2) != IsDepthFormat(source.format))
 			return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
 	}
@@ -341,8 +342,8 @@ XrResult OpenGLBackend::PrepareCapture(const LayerImageDescription& image, OpenG
 		static_cast<std::uint64_t>(rectangle.offset.x) + rectangle.extent.width > source.width ||
 		static_cast<std::uint64_t>(rectangle.offset.y) + rectangle.extent.height > source.height)
 		return XR_ERROR_LAYER_INVALID;
-	if (source.samples != 1)
-		return XR_ERROR_FEATURE_UNSUPPORTED;
+	if (!std::has_single_bit(source.samples) || (source.samples > 1 && source.mipLevels != 1))
+		return XR_ERROR_VALIDATION_FAILURE;
 	VulkanExternalImageSpec description;
 	switch (source.format)
 	{
@@ -361,7 +362,7 @@ XrResult OpenGLBackend::PrepareCapture(const LayerImageDescription& image, OpenG
 	}
 	description.mipLevels = retainMipChain ? source.mipLevels : 1;
 	description.arrayLayers = 1;
-	description.extent = description.mipLevels > 1 ? VkExtent3D{source.width, source.height, 1} :
+	description.extent = retainMipChain ? VkExtent3D{source.width, source.height, 1} :
 		VkExtent3D{static_cast<std::uint32_t>(rectangle.extent.width), static_cast<std::uint32_t>(rectangle.extent.height), 1};
 	CompositionPlan plan{description.extent.width, description.extent.height, {}, {}};
 	std::shared_ptr<OpenGLFrame> frame;
@@ -385,6 +386,7 @@ XrResult OpenGLBackend::PrepareImage(const CompositionPlan& plan, std::span<cons
 	auto& resources = *frame->m_resources;
 	resources.preservation = m_pending->preservation;
 	resources.plan = plan;
+	resources.retainSource = retained;
 	resources.sources.assign(sources.begin(), sources.end());
 	resources.copies.resize(sources.size());
 	resources.image = m_external.CreateExportable(description);
@@ -422,7 +424,14 @@ XrResult OpenGLBackend::PrepareImage(const CompositionPlan& plan, std::span<cons
 		{
 			const auto& source = sources[index];
 			auto& copy = resources.copies[index];
-			Procedure<PFNGLCREATETEXTURESPROC>("glCreateTextures")(GL_TEXTURE_2D, 1, &copy);
+			const bool depthMs = source.samples > 1 && IsDepthFormat(source.format);
+			Procedure<PFNGLCREATETEXTURESPROC>("glCreateTextures")(depthMs ? GL_TEXTURE_2D_MULTISAMPLE : GL_TEXTURE_2D, 1, &copy);
+			if (depthMs)
+			{
+				Procedure<PFNGLTEXTURESTORAGE2DMULTISAMPLEPROC>("glTextureStorage2DMultisample")(
+					copy, source.samples, source.format, source.width, source.height, GL_TRUE);
+				continue;
+			}
 			Procedure<PFNGLTEXTURESTORAGE2DPROC>("glTextureStorage2D")(copy, source.mipLevels, source.format, source.width, source.height);
 			const auto parameter = Procedure<PFNGLTEXTUREPARAMETERIPROC>("glTextureParameteri");
 			parameter(copy, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
@@ -521,11 +530,15 @@ XrResult OpenGLBackend::Submit(const std::shared_ptr<OpenGLFrame>& frame)
 						resources.sourceFramebuffer, GL_COLOR_ATTACHMENT0, source.texture, mip, image.arraySlice);
 				Procedure<PFNGLNAMEDFRAMEBUFFERTEXTURELAYERPROC>("glNamedFramebufferTextureLayer")(
 					resources.framebuffer, GL_COLOR_ATTACHMENT0, resources.texture, mip, 0);
+				for (const auto framebuffer : {resources.sourceFramebuffer, resources.framebuffer})
+					if (Procedure<PFNGLCHECKNAMEDFRAMEBUFFERSTATUSPROC>("glCheckNamedFramebufferStatus")(
+						framebuffer, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+						throw std::runtime_error("OpenGL capture framebuffer incomplete");
 				const auto width = std::max(1u, description.extent.width >> mip);
 				const auto height = std::max(1u, description.extent.height >> mip);
 				const auto sourceHeight = std::max(1u, source.height >> mip);
-				const auto x = description.mipLevels > 1 ? 0 : image.rectangle.offset.x;
-				const auto y = description.mipLevels > 1 ? 0 : image.rectangle.offset.y;
+				const auto x = resources.retainSource ? 0 : image.rectangle.offset.x;
+				const auto y = resources.retainSource ? 0 : image.rectangle.offset.y;
 				Procedure<PFNGLBLITNAMEDFRAMEBUFFERPROC>("glBlitNamedFramebuffer")(
 					resources.sourceFramebuffer, resources.framebuffer, x, sourceHeight - y, x + width,
 					sourceHeight - y - height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
@@ -568,7 +581,6 @@ XrResult OpenGLBackend::Submit(const std::shared_ptr<OpenGLFrame>& frame)
 				}
 			}
 			Procedure<PFNGLCLIPCONTROLPROC>("glClipControl")(GL_UPPER_LEFT, GL_NEGATIVE_ONE_TO_ONE);
-			Procedure<PFNGLUSEPROGRAMPROC>("glUseProgram")(m_context->program);
 			Procedure<PFNGLBINDVERTEXARRAYPROC>("glBindVertexArray")(m_context->vertexArray);
 			Procedure<PFNGLBINDFRAMEBUFFERPROC>("glBindFramebuffer")(GL_FRAMEBUFFER, resources.framebuffer);
 			glViewport(0, 0, resources.plan.width, resources.plan.height);
@@ -589,9 +601,12 @@ XrResult OpenGLBackend::Submit(const std::shared_ptr<OpenGLFrame>& frame)
 					const auto& draw = resources.plan.draws[index];
 					if (draw.eye != eye)
 						continue;
+					const auto& source = resources.sources[index];
+					const auto program = source.samples > 1 && IsDepthFormat(source.format) ? m_context->depthMsProgram : m_context->program;
+					Procedure<PFNGLUSEPROGRAMPROC>("glUseProgram")(program);
 					Procedure<PFNGLBINDTEXTUREUNITPROC>("glBindTextureUnit")(0, resources.copies[index]);
 					const auto location = [&](const char* name)
-						{ return Procedure<PFNGLGETUNIFORMLOCATIONPROC>("glGetUniformLocation")(m_context->program, name); };
+						{ return Procedure<PFNGLGETUNIFORMLOCATIONPROC>("glGetUniformLocation")(program, name); };
 					const auto set = [&](const char* name, const auto& value)
 						{ Procedure<PFNGLUNIFORM4FVPROC>("glUniform4fv")(location(name), 1, value.data()); };
 					set("layer.eyeTangents", draw.constants.eyeTangents);

@@ -66,6 +66,143 @@ struct Application
 		if (window) DestroyWindow(window);
 	}
 };
+static void VerifyMultisample(Application& app, const VulkanInspectionDevice& device)
+{
+	const auto createTexture = std::bit_cast<PFNGLCREATETEXTURESPROC>(wglGetProcAddress("glCreateTextures"));
+	const auto createFramebuffer = std::bit_cast<PFNGLCREATEFRAMEBUFFERSPROC>(wglGetProcAddress("glCreateFramebuffers"));
+	const auto attach = std::bit_cast<PFNGLNAMEDFRAMEBUFFERTEXTURELAYERPROC>(wglGetProcAddress("glNamedFramebufferTextureLayer"));
+	const auto bindFramebuffer = std::bit_cast<PFNGLBINDFRAMEBUFFERPROC>(wglGetProcAddress("glBindFramebuffer"));
+	const auto sampleMask = std::bit_cast<PFNGLSAMPLEMASKIPROC>(wglGetProcAddress("glSampleMaski"));
+	for (const GLenum format : {GL_RGBA8, GL_SRGB8_ALPHA8, GL_RGBA16F, GL_RGBA32F, GL_RGB10_A2,
+		GL_DEPTH_COMPONENT16, GL_DEPTH_COMPONENT32F, GL_DEPTH24_STENCIL8})
+	{
+		const bool depth = format == GL_DEPTH_COMPONENT16 || format == GL_DEPTH_COMPONENT32F || format == GL_DEPTH24_STENCIL8;
+		GLuint texture = 0, framebuffer = 0;
+		createTexture(GL_TEXTURE_2D_MULTISAMPLE_ARRAY, 1, &texture);
+		std::bit_cast<PFNGLTEXTURESTORAGE3DMULTISAMPLEPROC>(wglGetProcAddress("glTextureStorage3DMultisample"))(
+			texture, 4, format, 8, 8, 2, GL_TRUE);
+		createFramebuffer(1, &framebuffer);
+		bindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+		glDrawBuffer(depth ? GL_NONE : GL_COLOR_ATTACHMENT0);
+		glReadBuffer(depth ? GL_NONE : GL_COLOR_ATTACHMENT0);
+		glViewport(0, 0, 8, 8);
+		glDisable(GL_FRAMEBUFFER_SRGB);
+		glDisable(GL_BLEND);
+		glEnable(GL_MULTISAMPLE);
+		glEnable(GL_DEPTH_TEST);
+		glDepthFunc(GL_ALWAYS);
+		glDepthMask(GL_TRUE);
+		glClearDepth(0.125);
+		for (GLuint layer = 0; layer < 2; ++layer)
+		{
+			attach(framebuffer, depth ? GL_DEPTH_ATTACHMENT : GL_COLOR_ATTACHMENT0, texture, 0, layer);
+			glClearColor(0, layer == 0 ? 1.0f : 0.0f, 0, 1);
+			glClear(depth ? GL_DEPTH_BUFFER_BIT : GL_COLOR_BUFFER_BIT);
+		}
+		glEnable(GL_SAMPLE_MASK);
+		sampleMask(0, 1);
+		glEnable(GL_SCISSOR_TEST);
+		for (int half = 0; half < 2; ++half)
+		{
+			glScissor(0, half * 4, 8, 4);
+			glColor4f(half ? 1.0f : 0.0f, 0, half ? 0.0f : 1.0f, 1);
+			const float z = half ? 0.5f : 0.0f;
+			glBegin(GL_TRIANGLE_STRIP);
+			glVertex3f(-1, -1, z);
+			glVertex3f(1, -1, z);
+			glVertex3f(-1, 1, z);
+			glVertex3f(1, 1, z);
+			glEnd();
+		}
+		glDisable(GL_SCISSOR_TEST);
+		glDisable(GL_SAMPLE_MASK);
+		glDisable(GL_DEPTH_TEST);
+		Require(glGetError() == GL_NO_ERROR, "Render sample-distinct OpenGL array");
+		for (int mode = 0; mode < (depth ? 2 : 3); ++mode)
+		{
+			VulkanBackend delivery(device.Device(), 8, device.EnabledExtensions(), true);
+			VulkanInspection inspection(OpenGLBackend::Identity(app.device, app.context), 8);
+			auto backend = std::make_unique<OpenGLBackend>(app.device, app.context, device.Device(), device.EnabledExtensions());
+			const OpenGLCompositionSource source{texture, format, 8, 8, 2, 1, 4};
+			LayerDepthDescription selected{};
+			selected.image.arraySlice = 1;
+			selected.image.rectangle = {{2, 1}, {4, 6}};
+			selected.minDepth = 0;
+			selected.maxDepth = 1;
+			selected.nearZ = 0.1f;
+			selected.farZ = 10;
+			CompositionPlan plan;
+			std::shared_ptr<OpenGLFrame> frame;
+			if (depth)
+			{
+				Require(PrepareDepthComposition(selected, mode == 1, {8, 8}, true, plan) == XR_SUCCESS, "Plan MSAA depth");
+				Require(backend->Prepare(plan, std::span{&source, 1}, frame, 1) == XR_SUCCESS, "Prepare MSAA depth");
+			}
+			else if (mode == 0)
+			{
+				plan.width = 4;
+				plan.height = 6;
+				CompositionDraw draw{};
+				draw.source = selected.image;
+				draw.constants.eyeTangents = draw.constants.sourceTangents = {-1, 1, 1, -1};
+				draw.constants.sourceFromEyeRotation = {0, 0, 0, 1};
+				draw.constants.imageRectangle = {0.25f, 0.125f, 0.5f, 0.75f};
+				plan.draws.push_back(draw);
+				Require(backend->Prepare(plan, std::span{&source, 1}, frame, 1) == XR_SUCCESS, "Prepare MSAA color");
+			}
+			else
+				Require(backend->PrepareCapture(selected.image, source, frame, mode == 2) == XR_SUCCESS, "Prepare MSAA raw/retained color");
+			std::shared_ptr<VulkanFrame> copied;
+			Require(delivery.PrepareNativeCopy(frame->Image(), frame->Ready(), 0, frame, {}, copied) == XR_SUCCESS, "Prepare MSAA handoff");
+			auto transfer = inspection.Prepare(copied);
+			Require(backend->Submit(frame) == XR_SUCCESS, "Submit MSAA OpenGL");
+			Require(wglGetCurrentContext() == app.context, "MSAA submission changed application context");
+			Require(delivery.Submit(copied) == XR_SUCCESS, "Submit MSAA handoff");
+			transfer->Commit();
+			auto retained = transfer->Output();
+			CheckVulkan(delivery.Drain(5000000000ULL), "Drain MSAA delivery");
+			CheckVulkan(inspection.Drain(), "Drain MSAA inspection");
+			transfer.reset();
+			copied.reset();
+			frame.reset();
+			backend.reset();
+			if (mode == 2)
+			{
+				glDeleteTextures(1, &texture);
+				texture = 0;
+			}
+			auto exported = retained->Export();
+			std::shared_ptr<const VulkanImagePixels> pixels;
+			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+			while (!(pixels = exported->Pixels()) && std::chrono::steady_clock::now() < deadline)
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			Require(pixels && pixels->layers == 1 && pixels->width == (mode == 2 ? 8u : 4u) &&
+				pixels->height == (mode == 2 ? 8u : 6u), "MSAA retention lost full source or crop extent");
+			const auto stride = ColorPixelBytes(pixels->format);
+			for (const auto y : {1u, pixels->height - 2})
+			{
+				const auto color = DecodeColorPixel(pixels->format, std::as_bytes(std::span(pixels->rgba)).subspan(
+					(y * pixels->width + pixels->width / 2) * stride, stride));
+				const bool top = y < pixels->height / 2;
+				float value = depth ? (top ? 0.75f : 0.5f) : 0.25f;
+				if (depth && mode == 1)
+					value = 0.1f * value / (10 * (1 - value) + 0.1f * value);
+				if (depth || mode == 0 || format == GL_SRGB8_ALPHA8)
+					value = value <= 0.0031308f ? value * 12.92f : 1.055f * std::pow(value, 1.0f / 2.4f) - 0.055f;
+				for (std::size_t channel = 0; channel < 3; ++channel)
+				{
+					const float expected = depth || channel == (top ? 0u : 2u) ? value : 0;
+					Require(std::abs(color[channel] - expected) <= 0.012f, "MSAA resolve/depth sample zero/orientation mismatch");
+				}
+				Require(color[3] == 1, "MSAA alpha changed");
+			}
+		}
+		glDeleteTextures(1, &texture);
+		std::bit_cast<PFNGLDELETEFRAMEBUFFERSPROC>(wglGetProcAddress("glDeleteFramebuffers"))(1, &framebuffer);
+	}
+	std::puts("PASS: OpenGL 4x MSAA color resolve, sample-zero depth, cropped arrays and retained full source after producer teardown");
+}
+
 int main()
 {
 	try
@@ -254,6 +391,7 @@ int main()
 			CheckVulkan(delivery.Drain(5000000000ULL), "Drain OpenGL delivery");
 			CheckVulkan(inspection.Drain(), "Drain OpenGL inspection");
 		}
+		VerifyMultisample(app, device);
 		std::puts("PASS: canonical GLSL, exact float16/float32/RGB10 raw captures, cropped raw/depth arrays, normalized/linear depth, retained RGBA/sRGB/float16/float32/RGB10 mip chains after producer teardown and GPU handoff");
 		return 0;
 	}

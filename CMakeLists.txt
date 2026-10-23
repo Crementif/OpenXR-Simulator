@@ -217,9 +217,11 @@ if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES OR SIMXR_BUILD_COMPANION)
     if(WIN32)
         file(READ "${PROJECT_SOURCE_DIR}/shaders/generated/Compositor.vertex.glsl" SIMXR_COMPOSITOR_VERTEX_GLSL)
         file(READ "${PROJECT_SOURCE_DIR}/shaders/generated/Compositor.pixel.glsl" SIMXR_COMPOSITOR_PIXEL_GLSL)
+        file(READ "${PROJECT_SOURCE_DIR}/shaders/generated/Compositor.depth_ms.glsl" SIMXR_COMPOSITOR_DEPTH_MS_GLSL)
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
             "${PROJECT_SOURCE_DIR}/shaders/generated/Compositor.vertex.glsl"
-            "${PROJECT_SOURCE_DIR}/shaders/generated/Compositor.pixel.glsl")
+            "${PROJECT_SOURCE_DIR}/shaders/generated/Compositor.pixel.glsl"
+            "${PROJECT_SOURCE_DIR}/shaders/generated/Compositor.depth_ms.glsl")
         configure_file(cmake/CompositorGlsl.h.in generated/CompositorGlsl.h @ONLY)
         add_library(simxr_opengl STATIC src/graphics/backends/opengl/OpenGLBackend.cpp)
         simxr_configure_target(simxr_opengl)

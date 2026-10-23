@@ -2,5 +2,6 @@
 namespace simxr::shaders
 {
 inline constexpr char CompositorVertexGlsl[] = R"SIMXR(@SIMXR_COMPOSITOR_VERTEX_GLSL@)SIMXR";
+inline constexpr char CompositorDepthMsGlsl[] = R"SIMXR(@SIMXR_COMPOSITOR_DEPTH_MS_GLSL@)SIMXR";
 inline constexpr char CompositorPixelGlsl[] = R"SIMXR(@SIMXR_COMPOSITOR_PIXEL_GLSL@)SIMXR";
 }

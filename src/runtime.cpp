@@ -218,6 +218,7 @@ struct Swapchain {
     DXGI_FORMAT format{DXGI_FORMAT_R8G8B8A8_UNORM};
     uint32_t width{0}, height{0}, arraySize{2};
     uint32_t mipCount{1};
+    uint32_t sampleCount{1};
     // Backend type and images
     enum class Backend { D3D11, D3D12, OpenGL } backend{Backend::D3D11};
     std::vector<ComPtr<ID3D11Texture2D>> images;      // D3D11 path
@@ -831,9 +832,8 @@ static XrResult XRAPI_PTR xrGetOpenGLGraphicsRequirementsKHR_runtime(
 
     req->type = XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR;
 
-    // Minimum OpenGL version: 4.0.0 (good compatibility)
-    // Maximum: 4.6.0 (latest)
-    req->minApiVersionSupported = XR_MAKE_VERSION(4, 0, 0);
+	// Canonical GLSL and direct-state-access image storage require OpenGL 4.5.
+    req->minApiVersionSupported = XR_MAKE_VERSION(4, 5, 0);
     req->maxApiVersionSupported = XR_MAKE_VERSION(4, 6, 0);
 
     Logf("[SimXR] xrGetOpenGLGraphicsRequirementsKHR: min=%d.%d.%d, max=%d.%d.%d",
@@ -1116,16 +1116,22 @@ static XrResult XRAPI_PTR xrEnumerateViewConfigurations_runtime(
 static XrResult GetMaxSwapchainSampleCount(const simxr::EnabledExtensions& extensions, uint32_t& output)
 {
 	output = 1;
-	// OpenGL allocation and retention currently accept only single-sample images.
-	if (extensions.Contains(XR_KHR_OPENGL_ENABLE_EXTENSION_NAME))
-		return XR_SUCCESS;
+	const bool openGL = extensions.Contains(XR_KHR_OPENGL_ENABLE_EXTENSION_NAME);
+	if (openGL)
+	{
+		const auto result = simxr::windows::OpenGLSwapchain::MaxSampleCount(output);
+		if (XR_FAILED(result))
+			return result;
+	}
 	const bool d3d11 = extensions.Contains(XR_KHR_D3D11_ENABLE_EXTENSION_NAME);
 	const bool d3d12 = extensions.Contains(XR_KHR_D3D12_ENABLE_EXTENSION_NAME);
 	if (d3d11 || d3d12)
 	{
-		const auto result = simxr::windows::Direct3DMaxSampleCount(d3d11, d3d12, output);
+		uint32_t direct3DSamples = 1;
+		const auto result = simxr::windows::Direct3DMaxSampleCount(d3d11, d3d12, direct3DSamples);
 		if (XR_FAILED(result))
 			return result;
+		output = openGL ? std::min(output, direct3DSamples) : direct3DSamples;
 	}
 	if (extensions.Contains(XR_KHR_VULKAN_ENABLE_EXTENSION_NAME) ||
 		extensions.Contains(XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME))
@@ -1135,7 +1141,7 @@ static XrResult GetMaxSwapchainSampleCount(const simxr::EnabledExtensions& exten
 		const auto result = graphics.MaxSampleCount(vulkanSamples);
 		if (XR_FAILED(result))
 			return result;
-		output = d3d11 || d3d12 ? std::min(output, vulkanSamples) : vulkanSamples;
+		output = openGL || d3d11 || d3d12 ? std::min(output, vulkanSamples) : vulkanSamples;
 	}
 	return XR_SUCCESS;
 }
@@ -1694,6 +1700,7 @@ static XrResult XRAPI_PTR xrCreateSwapchain_runtime(XrSession session, const XrS
 	{
 		const bool staticImage = (ci->createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) != 0;
 		chain.backend = rt::Swapchain::Backend::OpenGL;
+		chain.sampleCount = ci->sampleCount;
 		chain.imageCount = staticImage ? 1 : 3;
 		chain.mipCount = ci->mipCount;
 		chain.state = std::make_unique<simxr::Swapchain>(chain.imageCount, staticImage);
@@ -2366,7 +2373,7 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
 					{
 						if (!chain.glImages || chain.lastReleased >= chain.glImages->Images().size()) return {};
 						return simxr::OpenGLCompositionSource{chain.glImages->Images()[chain.lastReleased],
-							chain.glImages->Format(), chain.width, chain.height, chain.arraySize, chain.mipCount, 1};
+							chain.glImages->Format(), chain.width, chain.height, chain.arraySize, chain.mipCount, chain.sampleCount};
 					}
 					if (chain.backend == rt::Swapchain::Backend::D3D12)
 					{

@@ -1,30 +1,18 @@
+#include "Pch.h"
 #include "platform/windows/OpenGLSwapchain.h"
 
 #include "platform/windows/OpenGLContextScope.h"
+#include <GL/glext.h>
 
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <cstdint>
 #include <limits>
-#include <optional>
 
 namespace simxr::windows
 {
-namespace
-{
-constexpr GLenum TextureArray = 0x8C1A;
-constexpr GLenum TextureArrayBinding = 0x8C1D;
-constexpr GLenum MaxArrayLayers = 0x88FF;
-constexpr GLenum UnpackBuffer = 0x88EC;
-constexpr GLenum UnpackBufferBinding = 0x88EF;
-constexpr GLenum UnpackImageHeight = 0x806E;
-constexpr GLenum UnpackSkipImages = 0x806D;
-using BindBuffer = void(APIENTRY*)(GLenum, GLuint);
-using TextureImage3D = void(APIENTRY*)(GLenum, GLint, GLint, GLsizei, GLsizei, GLsizei, GLint, GLenum, GLenum,
-									   const void*);
-
-template <class Function> Function FindProcedure(const char* name) noexcept
+template <class Function> static Function FindProcedure(const char* name) noexcept
 {
 	const auto procedure = wglGetProcAddress(name);
 	const auto address = std::bit_cast<std::uintptr_t>(procedure);
@@ -33,118 +21,107 @@ template <class Function> Function FindProcedure(const char* name) noexcept
 	return std::bit_cast<Function>(procedure);
 }
 
-class TextureUploadScope final
-{
-  public:
-	explicit TextureUploadScope(bool arrayTexture) noexcept : m_arrayTexture(arrayTexture)
-	{
-		m_bindBuffer = FindProcedure<BindBuffer>("glBindBuffer");
-		glGetIntegerv(GL_TEXTURE_BINDING_2D, &m_texture2D);
-		if (m_arrayTexture)
-			glGetIntegerv(TextureArrayBinding, &m_textureArray);
-		glGetIntegerv(UnpackBufferBinding, &m_unpackBuffer);
-		for (auto& parameter : m_unpack)
-			glGetIntegerv(parameter.name, &parameter.previous);
-		if (m_unpackBuffer && !m_bindBuffer)
-			return;
-		if (m_bindBuffer)
-			m_bindBuffer(UnpackBuffer, 0);
-		for (const auto& parameter : m_unpack)
-			glPixelStorei(parameter.name, parameter.name == GL_UNPACK_ALIGNMENT ? 1 : 0);
-		m_valid = true;
-	}
-	TextureUploadScope(const TextureUploadScope&) = delete;
-	TextureUploadScope& operator=(const TextureUploadScope&) = delete;
-	~TextureUploadScope()
-	{
-		if (!m_valid)
-			return;
-		for (const auto& parameter : m_unpack)
-			glPixelStorei(parameter.name, parameter.previous);
-		glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(m_texture2D));
-		if (m_arrayTexture)
-			glBindTexture(TextureArray, static_cast<GLuint>(m_textureArray));
-		if (m_bindBuffer)
-			m_bindBuffer(UnpackBuffer, static_cast<GLuint>(m_unpackBuffer));
-	}
-	bool Valid() const noexcept
-	{
-		return m_valid;
-	}
-
-  private:
-	struct Parameter
-	{
-		GLenum name;
-		GLint previous = 0;
-	};
-	const bool m_arrayTexture;
-	std::array<Parameter, 8> m_unpack{{{GL_UNPACK_ALIGNMENT},
-									   {GL_UNPACK_ROW_LENGTH},
-									   {GL_UNPACK_SKIP_ROWS},
-									   {GL_UNPACK_SKIP_PIXELS},
-									   {GL_UNPACK_SWAP_BYTES},
-									   {GL_UNPACK_LSB_FIRST},
-									   {UnpackImageHeight},
-									   {UnpackSkipImages}}};
-	BindBuffer m_bindBuffer = nullptr;
-	GLint m_texture2D = 0;
-	GLint m_textureArray = 0;
-	GLint m_unpackBuffer = 0;
-	bool m_valid = false;
-};
-
-struct PixelFormat
-{
-	GLenum channels;
-	GLenum type;
-};
-
-std::optional<PixelFormat> DescribeFormat(std::int64_t format) noexcept
-{
-	switch (format)
-	{
-	case 0x8058: // RGBA8
-	case 0x8C43: // SRGB8_ALPHA8
-	case 0x881A: // RGBA16F
-	case 0x8814: // RGBA32F
-	case 0x8059: // RGB10_A2
-		return PixelFormat{GL_RGBA, GL_UNSIGNED_BYTE};
-	case 0x8CAC: // DEPTH_COMPONENT32F
-	case 0x81A5: // DEPTH_COMPONENT16
-		return PixelFormat{GL_DEPTH_COMPONENT, GL_FLOAT};
-	case 0x88F0: // DEPTH24_STENCIL8
-		return PixelFormat{0x84F9, 0x84FA};
-	default:
-		return {};
-	}
-}
-
-XrResult Validate(const XrSwapchainCreateInfo& description) noexcept
+static XrResult Validate(const XrSwapchainCreateInfo& description) noexcept
 {
 	if (description.type != XR_TYPE_SWAPCHAIN_CREATE_INFO || !description.width || !description.height ||
 		!description.arraySize || !description.mipCount || !description.sampleCount || !description.usageFlags ||
 		(description.faceCount != 1 && description.faceCount != 6))
 		return XR_ERROR_VALIDATION_FAILURE;
 	constexpr auto maxDimension = static_cast<std::uint32_t>(std::numeric_limits<GLsizei>::max());
-	if (description.width > maxDimension || description.height > maxDimension || description.arraySize > maxDimension ||
-		description.sampleCount != 1)
+	if (description.width > maxDimension || description.height > maxDimension || description.arraySize > maxDimension)
 		return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
 	const auto largestDimension = std::max(description.width, description.height);
-	if (description.mipCount > static_cast<std::uint32_t>(std::bit_width(largestDimension)))
+	if (!std::has_single_bit(description.sampleCount) || description.sampleCount > 64 ||
+		(description.sampleCount > 1 && description.mipCount != 1) ||
+		description.mipCount > static_cast<std::uint32_t>(std::bit_width(largestDimension)))
 		return XR_ERROR_VALIDATION_FAILURE;
-	if (!DescribeFormat(description.format))
+	const auto formats = OpenGLSwapchain::Formats();
+	if (std::find(formats.begin(), formats.end(), description.format) == formats.end())
 		return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
 	constexpr XrSwapchainUsageFlags supportedUsage =
 		XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
 		XR_SWAPCHAIN_USAGE_UNORDERED_ACCESS_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT |
 		XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_MUTABLE_FORMAT_BIT;
 	if ((description.createFlags & ~XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) ||
-		(description.usageFlags & ~supportedUsage) || description.faceCount != 1 || description.sampleCount != 1)
+		(description.usageFlags & ~supportedUsage) || description.faceCount != 1)
 		return XR_ERROR_FEATURE_UNSUPPORTED;
 	return XR_SUCCESS;
 }
-} // namespace
+
+static XrResult SampleCounts(GLenum format, GLenum target, std::uint32_t& output)
+{
+	const auto query = FindProcedure<PFNGLGETINTERNALFORMATIVPROC>("glGetInternalformativ");
+	if (!query)
+		return XR_ERROR_FUNCTION_UNSUPPORTED;
+	GLint count = 0;
+	query(target, format, GL_NUM_SAMPLE_COUNTS, 1, &count);
+	std::array<GLint, 32> samples{};
+	if (count < 0 || count > static_cast<GLint>(samples.size()))
+		return XR_ERROR_RUNTIME_FAILURE;
+	if (count)
+		query(target, format, GL_SAMPLES, count, samples.data());
+	if (glGetError() != GL_NO_ERROR)
+		return XR_ERROR_RUNTIME_FAILURE;
+	output = 1;
+	for (const auto sample : samples)
+		if (sample > 1 && sample <= 64 && std::has_single_bit(static_cast<std::uint32_t>(sample)))
+			output |= static_cast<std::uint32_t>(sample);
+	return XR_SUCCESS;
+}
+
+struct OpenGLCapabilityContext
+{
+	HWND window = nullptr;
+	HDC device = nullptr;
+	HGLRC context = nullptr;
+	~OpenGLCapabilityContext()
+	{
+		if (context && wglGetCurrentContext() == context)
+			wglMakeCurrent(nullptr, nullptr);
+		if (context)
+			wglDeleteContext(context);
+		if (device)
+			ReleaseDC(window, device);
+		if (window)
+			DestroyWindow(window);
+	}
+};
+
+XrResult OpenGLSwapchain::MaxSampleCount(std::uint32_t& output)
+{
+	OpenGLCapabilityContext owned;
+	owned.window = CreateWindowExW(0, L"STATIC", L"OpenXR capability query", WS_POPUP, 0, 0, 1, 1,
+		nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+	if (!owned.window || !(owned.device = GetDC(owned.window)))
+		return XR_ERROR_RUNTIME_FAILURE;
+	PIXELFORMATDESCRIPTOR format{};
+	format.nSize = sizeof(format);
+	format.nVersion = 1;
+	format.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL;
+	format.iPixelType = PFD_TYPE_RGBA;
+	format.cColorBits = 32;
+	const auto selected = ChoosePixelFormat(owned.device, &format);
+	if (!selected || !SetPixelFormat(owned.device, selected, &format) ||
+		!(owned.context = wglCreateContext(owned.device)))
+		return XR_ERROR_RUNTIME_FAILURE;
+	OpenGLContextScope current(owned.device, owned.context);
+	if (!current.Current())
+		return XR_ERROR_RUNTIME_FAILURE;
+	std::uint32_t common = 127;
+	for (const auto format : Formats())
+		for (const auto target : {GL_TEXTURE_2D_MULTISAMPLE, GL_TEXTURE_2D_MULTISAMPLE_ARRAY})
+		{
+			std::uint32_t samples = 1;
+			const auto result = SampleCounts(static_cast<GLenum>(format), target, samples);
+			if (XR_FAILED(result))
+				return result;
+			common &= samples;
+		}
+	if (!current.Restore())
+		return XR_ERROR_RUNTIME_FAILURE;
+	output = std::bit_floor(common);
+	return XR_SUCCESS;
+}
 
 std::span<const std::int64_t> OpenGLSwapchain::Formats() noexcept
 {
@@ -189,63 +166,61 @@ XrResult OpenGLSwapchain::Allocate(const XrSwapchainCreateInfo& description)
 	if (glGetError() != GL_NO_ERROR)
 		return XR_ERROR_RUNTIME_FAILURE;
 	const bool arrayTexture = description.arraySize > 1;
-	const auto image3D = FindProcedure<TextureImage3D>("glTexImage3D");
-	if (arrayTexture && !image3D)
-		return XR_ERROR_FUNCTION_UNSUPPORTED;
 	GLint maxSize = 0;
 	GLint maxLayers = 1;
 	glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxSize);
 	if (arrayTexture)
-		glGetIntegerv(MaxArrayLayers, &maxLayers);
+		glGetIntegerv(GL_MAX_ARRAY_TEXTURE_LAYERS, &maxLayers);
 	if (maxSize <= 0 || maxLayers <= 0 || description.width > static_cast<std::uint32_t>(maxSize) ||
 		description.height > static_cast<std::uint32_t>(maxSize) ||
 		description.arraySize > static_cast<std::uint32_t>(maxLayers))
 		return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
-	XrResult result = XR_SUCCESS;
+	const bool multisampled = description.sampleCount > 1;
+	const GLenum target = multisampled ? (arrayTexture ? GL_TEXTURE_2D_MULTISAMPLE_ARRAY : GL_TEXTURE_2D_MULTISAMPLE) :
+		(arrayTexture ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D);
+	if (multisampled)
 	{
-		TextureUploadScope upload(arrayTexture);
-		if (!upload.Valid())
-			return XR_ERROR_RUNTIME_FAILURE;
-		const auto pixelFormat = *DescribeFormat(description.format);
-		const GLenum target = arrayTexture ? TextureArray : GL_TEXTURE_2D;
-		for (auto& image : images)
-		{
-			glGenTextures(1, &image);
-			if (!image)
-			{
-				result = XR_ERROR_OUT_OF_MEMORY;
-				break;
-			}
-			glBindTexture(target, image);
-			for (std::uint32_t level = 0; level < description.mipCount; ++level)
-			{
-				const auto width = static_cast<GLsizei>(std::max(1u, description.width >> level));
-				const auto height = static_cast<GLsizei>(std::max(1u, description.height >> level));
-				if (arrayTexture)
-					image3D(target, static_cast<GLint>(level), static_cast<GLint>(m_format), width, height,
-							static_cast<GLsizei>(description.arraySize), 0, pixelFormat.channels, pixelFormat.type,
-							nullptr);
-				else
-					glTexImage2D(target, static_cast<GLint>(level), static_cast<GLint>(m_format), width, height, 0,
-								 pixelFormat.channels, pixelFormat.type, nullptr);
-			}
-			glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-			glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-			const auto error = glGetError();
-			if (error != GL_NO_ERROR)
-			{
-				result = error == GL_OUT_OF_MEMORY ? XR_ERROR_OUT_OF_MEMORY : XR_ERROR_RUNTIME_FAILURE;
-				break;
-			}
-		}
-		if (XR_FAILED(result))
-			glDeleteTextures(static_cast<GLsizei>(images.size()), images.data());
-		else
-			m_images.swap(images);
+		std::uint32_t samples = 1;
+		const auto supported = SampleCounts(m_format, target, samples);
+		if (XR_FAILED(supported))
+			return supported;
+		if (!(samples & description.sampleCount))
+			return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
 	}
-	if (!context.Restore())
-		return XR_ERROR_RUNTIME_FAILURE;
-	return result;
+	const auto create = FindProcedure<PFNGLCREATETEXTURESPROC>("glCreateTextures");
+	const auto storage2D = FindProcedure<PFNGLTEXTURESTORAGE2DPROC>("glTextureStorage2D");
+	const auto storage3D = FindProcedure<PFNGLTEXTURESTORAGE3DPROC>("glTextureStorage3D");
+	const auto storage2DMs = FindProcedure<PFNGLTEXTURESTORAGE2DMULTISAMPLEPROC>("glTextureStorage2DMultisample");
+	const auto storage3DMs = FindProcedure<PFNGLTEXTURESTORAGE3DMULTISAMPLEPROC>("glTextureStorage3DMultisample");
+	const auto parameter = FindProcedure<PFNGLTEXTUREPARAMETERIPROC>("glTextureParameteri");
+	if (!create || !storage2D || !storage3D || !storage2DMs || !storage3DMs || !parameter)
+		return XR_ERROR_FUNCTION_UNSUPPORTED;
+	create(target, static_cast<GLsizei>(images.size()), images.data());
+	for (const auto image : images)
+	{
+		if (multisampled && arrayTexture)
+			storage3DMs(image, description.sampleCount, m_format, description.width, description.height,
+				description.arraySize, GL_TRUE);
+		else if (multisampled)
+			storage2DMs(image, description.sampleCount, m_format, description.width, description.height, GL_TRUE);
+		else if (arrayTexture)
+			storage3D(image, description.mipCount, m_format, description.width, description.height, description.arraySize);
+		else
+			storage2D(image, description.mipCount, m_format, description.width, description.height);
+		if (!multisampled)
+		{
+			parameter(image, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			parameter(image, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		}
+	}
+	const auto error = glGetError();
+	if (error != GL_NO_ERROR)
+	{
+		glDeleteTextures(static_cast<GLsizei>(images.size()), images.data());
+		return error == GL_OUT_OF_MEMORY ? XR_ERROR_OUT_OF_MEMORY : XR_ERROR_RUNTIME_FAILURE;
+	}
+	m_images.swap(images);
+	return context.Restore() ? XR_SUCCESS : XR_ERROR_RUNTIME_FAILURE;
 }
 
 OpenGLSwapchain::~OpenGLSwapchain()

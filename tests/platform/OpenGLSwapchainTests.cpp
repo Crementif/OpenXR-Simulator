@@ -1,8 +1,10 @@
 #include "platform/windows/OpenGLSwapchain.h"
+#include <GL/glext.h>
 
 #include "../TestSupport.h"
 
 #include <array>
+#include <atomic>
 #include <bit>
 #include <condition_variable>
 #include <cstdint>
@@ -64,7 +66,7 @@ class ContextFixture final
 		const auto create = Procedure<CreateContext>("wglCreateContextAttribsARB");
 		if (!create)
 			return;
-		const int attributes[]{0x2091, 4, 0x2092, 0, 0};
+		const int attributes[]{0x2091, 4, 0x2092, 5, 0x9126, 2, 0};
 		const auto modern = create(m_device, nullptr, attributes);
 		if (!modern)
 			return;
@@ -124,8 +126,21 @@ XrSwapchainCreateInfo Description()
 	return description;
 }
 
+std::atomic<unsigned> s_debugErrors{0};
+void APIENTRY DebugMessage(GLenum, GLenum type, GLuint, GLenum, GLsizei, const GLchar* message, const void*)
+{
+	if (type == GL_DEBUG_TYPE_ERROR)
+	{
+		++s_debugErrors;
+		std::cerr << "OpenGL error: " << message << '\n';
+	}
+}
+
 void Exercise(ContextFixture& fixture)
 {
+	Procedure<PFNGLDEBUGMESSAGECALLBACKPROC>("glDebugMessageCallback")(DebugMessage, nullptr);
+	glEnable(GL_DEBUG_OUTPUT);
+	glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
 	using simxr::windows::OpenGLSwapchain;
 	const auto genBuffers = Procedure<GenBuffers>("glGenBuffers");
 	const auto bindBuffer = Procedure<BindBuffer>("glBindBuffer");
@@ -134,6 +149,9 @@ void Exercise(ContextFixture& fixture)
 	GLuint unpackBuffer = 0;
 	genBuffers(1, &unpackBuffer);
 	bindBuffer(UnpackBuffer, unpackBuffer);
+	// Allocate storage across native context migration; allocation must
+	// preserve this binding and every unpack parameter.
+	Procedure<PFNGLBUFFERDATAPROC>("glBufferData")(UnpackBuffer, 32768, nullptr, GL_STATIC_DRAW);
 	std::array<GLuint, 2> hostTextures{};
 	glGenTextures(static_cast<GLsizei>(hostTextures.size()), hostTextures.data());
 	glBindTexture(GL_TEXTURE_2D, hostTextures[0]);
@@ -266,6 +284,35 @@ void Exercise(ContextFixture& fixture)
 		Check(owner->Close());
 		owner.reset();
 	}
+	std::uint32_t maximumSamples = 1;
+	Check(OpenGLSwapchain::MaxSampleCount(maximumSamples) == XR_SUCCESS && maximumSamples > 1);
+	Check(wglGetCurrentContext() == fixture.Context());
+	for (const auto format : OpenGLSwapchain::Formats())
+		for (const auto layers : {1u, 2u})
+		{
+			description.format = format;
+			description.arraySize = layers;
+			description.sampleCount = maximumSamples;
+			description.mipCount = 1;
+			Check(OpenGLSwapchain::Create(fixture.Device(), fixture.Context(), description, owner) == XR_SUCCESS);
+			Check(Integer(GL_TEXTURE_BINDING_2D) == static_cast<GLint>(hostTextures[0]));
+			Check(Integer(TextureArrayBinding) == static_cast<GLint>(hostTextures[1]));
+			Check(Integer(UnpackBufferBinding) == static_cast<GLint>(unpackBuffer));
+			GLint samples = 0;
+			Procedure<PFNGLGETTEXTURELEVELPARAMETERIVPROC>("glGetTextureLevelParameteriv")(
+				owner->Images().front(), 0, GL_TEXTURE_SAMPLES, &samples);
+			Check(samples == static_cast<GLint>(maximumSamples));
+			Check(owner->Close());
+			owner.reset();
+		}
+	description.mipCount = 2;
+	Check(OpenGLSwapchain::Create(fixture.Device(), fixture.Context(), description, owner) == XR_ERROR_VALIDATION_FAILURE);
+	description.mipCount = 1;
+	description.sampleCount = 3;
+	Check(OpenGLSwapchain::Create(fixture.Device(), fixture.Context(), description, owner) == XR_ERROR_VALIDATION_FAILURE);
+	description.sampleCount = 1;
+	Check(s_debugErrors == 0);
+	Procedure<PFNGLDEBUGMESSAGECALLBACKPROC>("glDebugMessageCallback")(nullptr, nullptr);
 	// A pre-existing GL error is observed once and fails creation; it is never
 	// silently drained into a successful, misleading allocation result.
 	glEnable(0xFFFFFFFF);
@@ -282,9 +329,10 @@ int main()
 	ContextFixture fixture;
 	if (!fixture.Ready())
 	{
-		std::cout << "SKIP: OpenGL 4.0 WGL context unavailable\n";
+		std::cout << "SKIP: OpenGL 4.5 WGL context unavailable\n";
 		return 77;
 	}
 	Exercise(fixture);
+	std::cout << "PASS: OpenGL formats, mip arrays, exact maximum samples, binding preservation and context-close retry\n";
 	return 0;
 }
