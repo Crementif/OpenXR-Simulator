@@ -6,13 +6,13 @@
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
+#include <utility>
 
 namespace simxr
 {
-template<typename Handle, typename Core, typename Native>
-class NativeBindings
+template <typename Handle, typename Core, typename Native> class NativeBindings
 {
-public:
+  public:
 	using CoreRef = HandleRef<Handle, Core>;
 	using NativeRef = HandleRef<Handle, Native>;
 
@@ -72,7 +72,7 @@ public:
 		return true;
 	}
 
-private:
+  private:
 	struct Binding
 	{
 		CoreRef core;
@@ -82,4 +82,4 @@ private:
 	using Bindings = std::unordered_map<Handle, std::shared_ptr<Binding>>;
 	std::unique_ptr<Bindings> m_bindings;
 };
-}
+} // namespace simxr

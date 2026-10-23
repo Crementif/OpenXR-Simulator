@@ -1,7 +1,8 @@
 #include "runtime/ExtensionRegistry.h"
+#include "Pch.h"
 
-#include <algorithm>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 
 namespace simxr
@@ -24,6 +25,8 @@ bool EnabledExtensions::Contains(std::string_view name) const
 
 ExtensionRegistry::ExtensionRegistry(std::span<const ExtensionDefinition> definitions) : m_definitions(definitions)
 {
+	if (definitions.size() > std::numeric_limits<std::uint32_t>::max())
+		throw std::invalid_argument("Too many extension definitions");
 	for (std::size_t index = 0; index < definitions.size(); ++index)
 	{
 		const auto& definition = definitions[index];
@@ -35,7 +38,8 @@ ExtensionRegistry::ExtensionRegistry(std::span<const ExtensionDefinition> defini
 	}
 }
 
-XrResult ExtensionRegistry::Enumerate(std::uint32_t capacity, std::uint32_t* count, XrExtensionProperties* properties) const
+XrResult ExtensionRegistry::Enumerate(std::uint32_t capacity, std::uint32_t* count,
+									  XrExtensionProperties* properties) const
 {
 	if (!count || (capacity && !properties))
 		return XR_ERROR_VALIDATION_FAILURE;
@@ -64,7 +68,10 @@ XrResult ExtensionRegistry::Validate(std::span<const char* const> requested, XrV
 		if (!name)
 			return XR_ERROR_VALIDATION_FAILURE;
 		auto definition = std::find_if(m_definitions.begin(), m_definitions.end(),
-			[&](const auto& value) { return value.name == name; });
+									   [&](const auto& value)
+									   {
+										   return value.name == name;
+									   });
 		if (definition == m_definitions.end())
 			return XR_ERROR_EXTENSION_NOT_PRESENT;
 	}
@@ -75,11 +82,13 @@ XrResult ExtensionRegistry::Validate(std::span<const char* const> requested, XrV
 			continue;
 		for (const auto& clause : definition.dependencies)
 		{
-			bool satisfied = std::any_of(clause.alternatives.begin(), clause.alternatives.end(), [&](const auto& dependency)
-			{
-				return (!dependency.extension.empty() && enabled.Contains(dependency.extension)) ||
-					(dependency.coreVersion && coreVersion >= dependency.coreVersion);
-			});
+			bool satisfied =
+				std::any_of(clause.alternatives.begin(), clause.alternatives.end(),
+							[&](const auto& dependency)
+							{
+								return (!dependency.extension.empty() && enabled.Contains(dependency.extension)) ||
+									   (dependency.coreVersion && coreVersion >= dependency.coreVersion);
+							});
 			if (!satisfied)
 				return XR_ERROR_EXTENSION_NOT_PRESENT;
 		}
@@ -103,14 +112,16 @@ bool ExtensionRegistry::CommandEnabled(std::string_view command, const EnabledEx
 
 bool ExtensionRegistry::HasCommand(std::string_view command) const
 {
-	return std::any_of(m_definitions.begin(), m_definitions.end(), [&](const auto& definition)
-	{
-		return std::find(definition.commands.begin(), definition.commands.end(), command) != definition.commands.end();
-	});
+	return std::any_of(m_definitions.begin(), m_definitions.end(),
+					   [&](const auto& definition)
+					   {
+						   return std::find(definition.commands.begin(), definition.commands.end(), command) !=
+								  definition.commands.end();
+					   });
 }
 
 std::span<const ExtensionDefinition> ExtensionRegistry::Definitions() const
 {
 	return m_definitions;
 }
-}
+} // namespace simxr

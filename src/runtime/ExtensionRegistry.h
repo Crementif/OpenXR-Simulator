@@ -30,18 +30,18 @@ struct ExtensionDefinition
 
 class EnabledExtensions
 {
-public:
+  public:
 	explicit EnabledExtensions(std::span<const char* const> requested = {});
 	bool Contains(std::string_view name) const;
 
-private:
+  private:
 	std::vector<std::string> m_names;
 };
 
 // Immutable view: definition names, commands and dependencies must outlive this registry and its copies.
 class ExtensionRegistry
 {
-public:
+  public:
 	explicit ExtensionRegistry(std::span<const ExtensionDefinition> definitions);
 	XrResult Enumerate(std::uint32_t capacity, std::uint32_t* count, XrExtensionProperties* properties) const;
 	XrResult Validate(std::span<const char* const> requested, XrVersion coreVersion) const;
@@ -49,7 +49,7 @@ public:
 	bool HasCommand(std::string_view command) const;
 	std::span<const ExtensionDefinition> Definitions() const;
 
-private:
+  private:
 	std::span<const ExtensionDefinition> m_definitions;
 };
-}
+} // namespace simxr

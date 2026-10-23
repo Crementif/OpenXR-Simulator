@@ -5,11 +5,9 @@
 
 namespace simxr
 {
-template<auto Function>
-struct AbiBoundary;
+template <auto Function> struct AbiBoundary;
 
-template<typename... Arguments, XrResult (XRAPI_PTR *Function)(Arguments...)>
-struct AbiBoundary<Function>
+template <typename... Arguments, XrResult(XRAPI_PTR* Function)(Arguments...)> struct AbiBoundary<Function>
 {
 	static XrResult XRAPI_PTR Invoke(Arguments... arguments) noexcept
 	{
@@ -27,4 +25,4 @@ struct AbiBoundary<Function>
 		}
 	}
 };
-}
+} // namespace simxr

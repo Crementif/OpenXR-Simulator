@@ -1,5 +1,6 @@
 #pragma once
 
+#include "platform/Clock.h"
 #include "presentation/DebugController.h"
 #include "runtime/ExtensionRegistry.h"
 #include "runtime/HandleRegistry.h"
@@ -8,6 +9,7 @@
 #include "simulation/GameBridge.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <unordered_map>

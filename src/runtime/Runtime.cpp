@@ -1,34 +1,35 @@
 #include "runtime/Runtime.h"
+#include "Pch.h"
+
 #include "runtime/validation/StructureChain.h"
 
-#include <algorithm>
 #include <stdexcept>
 
 namespace simxr
 {
 struct Runtime::DebugService
 {
-	std::mutex mutex;
-	std::shared_ptr<DebugController> controller;
-	bool closed = false;
+	std::mutex m_mutex;
+	std::shared_ptr<DebugController> m_controller;
+	bool m_closed = false;
 
 	std::shared_ptr<DebugController> Get(const SessionRef& session, const DebugControllerConfig& configuration)
 	{
-		std::lock_guard lock(mutex);
-		if (closed || session->Snapshot().closed)
+		std::lock_guard lock(m_mutex);
+		if (m_closed || session->Snapshot().closed)
 			return {};
-		if (!controller)
-			controller = std::make_shared<DebugController>(session.Shared(), session->ClockSource(), configuration);
-		return controller;
+		if (!m_controller)
+			m_controller = std::make_shared<DebugController>(session.Shared(), session->ClockSource(), configuration);
+		return m_controller;
 	}
 
 	void Close()
 	{
 		std::shared_ptr<DebugController> retired;
 		{
-			std::lock_guard lock(mutex);
-			closed = true;
-			retired = std::move(controller);
+			std::lock_guard lock(m_mutex);
+			m_closed = true;
+			retired = std::move(m_controller);
 		}
 		if (retired)
 			retired->Close(false);
@@ -93,8 +94,11 @@ XrResult Runtime::CreateInstance(const XrInstanceCreateInfo* info, InstanceRef& 
 			return XR_ERROR_RUNTIME_FAILURE;
 		if (m_instances.Children(0).size() >= m_configuration.maxInstances)
 			return XR_ERROR_LIMIT_REACHED;
-		created = m_instances.Create(0, [&](XrInstance handle)
-									 { return std::make_unique<Instance>(handle, requested, version); });
+		created = m_instances.Create(0,
+									 [&](XrInstance handle)
+									 {
+										 return std::make_unique<Instance>(handle, requested, version);
+									 });
 	}
 	output = std::move(created);
 	return XR_SUCCESS;
@@ -112,8 +116,11 @@ XrResult Runtime::CreateSession(XrInstance owner, SessionRef& output, std::share
 			return XR_ERROR_HANDLE_INVALID;
 		if (m_sessions.Children(owner).size() >= m_configuration.maxSessionsPerInstance)
 			return XR_ERROR_LIMIT_REACHED;
-		created = m_sessions.Create(owner, [&](XrSession handle)
-									{ return instance->CreateSession(handle, instance.Shared(), std::move(clock)); });
+		created = m_sessions.Create(owner,
+									[&](XrSession handle)
+									{
+										return instance->CreateSession(handle, instance.Shared(), std::move(clock));
+									});
 	}
 	output = std::move(created);
 	return XR_SUCCESS;
