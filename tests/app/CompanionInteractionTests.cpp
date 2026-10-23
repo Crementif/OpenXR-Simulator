@@ -926,6 +926,7 @@ void ConfigureObservedDevices()
 	initial.views.outerWidth = 1760;
 	initial.tracking.body.preset = simxr::BodyPreset::Seated;
 	initial.tracking.gaze.yaw = 0.25f;
+	initial.tracking.controllers[0].connected = false;
 	simxr::CommandScheduler scheduler;
 	scheduler.Start(0, initial);
 	const auto observe = [&](std::uint64_t frame)
@@ -951,7 +952,10 @@ void ConfigureObservedDevices()
 		ImGui::SetNextWindowPos({20, 20}, ImGuiCond_Always);
 		ImGui::SetNextWindowSize({400, 650}, ImGuiCond_Always);
 		ImGui::Begin("Configuration workflow");
+		const auto headerEdit = panel.DrawHeader(selection);
 		edit = panel.Draw(true, &selection);
+		if (headerEdit)
+			edit = headerEdit;
 		ImGui::End();
 		Require(test.renderer.Render(), "Live field frame did not render");
 	};
@@ -1055,6 +1059,14 @@ void ConfigureObservedDevices()
 	transaction = typeValue("##IPD", "0.063");
 	Require(std::abs(std::get<simxr::SetViewSettings>(transaction.commands.back()).value.ipd - .063f) < .0001f,
 			"Reconnected field did not send the new value");
+	selection = DeviceSel{DevicePage::Head};
+	frame();
+	transaction = activate("Reset page");
+	bool keptDisconnected = false;
+	for (const auto& command : transaction.commands)
+		if (const auto* pose = std::get_if<simxr::SetControllerPose>(&command); pose && pose->hand == 0)
+			keptDisconnected = !pose->value.connected;
+	Require(keptDisconnected, "Resetting Head reconnected the left controller");
 	test.renderer.WaitIdle();
 	Require(!test.validation->errors.load(), "Live fields generated validation errors");
 	std::cout << "PASS live configuration: immediate changes, preserved configuration, scenario recovery, reconnect\n";

@@ -273,7 +273,9 @@ void DeviceControlPanel::ResetPage(DevicePage page)
 	auto commands = PlayerEdit(true).commands;
 	for (auto& command : commands)
 		if (auto controller = std::get_if<SetControllerPose>(&command);
-			controller && (page == DevicePage::Player || controller->hand == (page == DevicePage::Right ? 1u : 0u)))
+			controller && (page == DevicePage::Player ||
+				(page == DevicePage::Left && controller->hand == 0) ||
+				(page == DevicePage::Right && controller->hand == 1)))
 			controller->value.connected = true;
 	for (auto& command : extra)
 		commands.push_back(std::move(command));
