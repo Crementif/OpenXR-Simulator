@@ -25,6 +25,7 @@ void RigProgress::Resume()
 	{
 		std::lock_guard lock(m_mutex);
 		m_paused = false;
+		m_permits = 0;
 	}
 	m_changed.notify_all();
 }

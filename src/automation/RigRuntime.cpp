@@ -538,62 +538,60 @@ void RigRuntime::CleanupCall(control::OpCode opcode, Fields fields)
 std::string RigRuntime::Cleanup()
 {
 	std::string error;
-	if (m_imageWindow)
-	{
-		ReleaseUnchecked(control::OpCode::ReleaseImageWindow, tag::ImageWindowId, m_imageWindow);
-		m_imageWindow = 0;
-	}
-	for (const auto inspection : m_inspections)
-		ReleaseUnchecked(control::OpCode::ReleaseInspection, tag::InspectionId, inspection);
-	m_inspections.clear();
-	if (m_inputRecording)
+	const auto attempt = [&](const char* resource, auto release)
 	{
 		try
 		{
-			CleanupCall(control::OpCode::StopRecording, Source());
+			release();
 		}
 		catch (const std::exception& failure)
 		{
-			error = std::string{"Input recording stop failed: "} + failure.what();
-		}
-		m_inputRecording = false;
-	}
-	// Cancellation must not prevent releasing source-owned controls or the lease.
-	try
-	{
-		CleanupCall(control::OpCode::ReleaseControl, Source());
-	}
-	catch (const std::exception& failure)
-	{
-		error = std::string{"Input release failed: "} + failure.what();
-	}
-	if (m_lease)
-	{
-		for (const auto capture : m_captures)
-		{
-			try
-			{
-				auto fields = Session();
-				fields.push_back(control::Field::U64(tag::Lease, m_lease));
-				fields.push_back(control::Field::U64(tag::CommandId, Next(m_nextCommand)));
-				fields.push_back(
-					control::Field::U32(tag::CommandKind, static_cast<std::uint32_t>(control::CommandKind::Release)));
-				fields.push_back(control::Field::U64(tag::CaptureId, capture));
-				m_exchange(control::OpCode::Submit, std::move(fields));
-			}
-			catch (...)
-			{
-			}
-		}
-		try
-		{
-			auto fields = Session();
-			fields.push_back(control::Field::U64(tag::Lease, m_lease));
-			m_exchange(control::OpCode::Relinquish, std::move(fields));
+			if (error.empty())
+				error = std::string{resource} + ": " + failure.what();
 		}
 		catch (...)
 		{
+			if (error.empty())
+				error = std::string{resource} + ": unknown cleanup failure";
 		}
+	};
+	if (m_imageWindow)
+	{
+		attempt("Image window release failed", [&]
+		{
+			CleanupCall(control::OpCode::ReleaseImageWindow,
+				{control::Field::U64(tag::ImageWindowId, m_imageWindow)});
+		});
+		m_imageWindow = 0;
+	}
+	for (const auto inspection : m_inspections)
+		attempt("Inspection release failed", [&]
+		{
+			CleanupCall(control::OpCode::ReleaseInspection, {control::Field::U64(tag::InspectionId, inspection)});
+		});
+	m_inspections.clear();
+	if (m_inputRecording)
+	{
+		attempt("Input recording stop failed", [&]
+		{
+			CleanupCall(control::OpCode::StopRecording, Source());
+		});
+		m_inputRecording = false;
+	}
+	// Cancellation must not prevent releasing source-owned controls or the lease.
+	attempt("Input release failed", [&]
+	{
+		CleanupCall(control::OpCode::ReleaseControl, Source());
+	});
+	if (m_lease)
+	{
+		// Relinquishing retires all lease-owned captures and image recording.
+		attempt("Debugger lease release failed", [&]
+		{
+			auto fields = Session();
+			fields.push_back(control::Field::U64(tag::Lease, m_lease));
+			CleanupCall(control::OpCode::Relinquish, std::move(fields));
+		});
 	}
 	m_captures.clear();
 	m_lease = 0;

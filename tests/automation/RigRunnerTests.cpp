@@ -2,6 +2,7 @@
 #include "Math.h"
 #include "automation/Recording.h"
 #include "automation/RigRunner.h"
+#include "automation/RigProgress.h"
 #include "control/ControlSchema.h"
 #include "control/ControlService.h"
 #include "control/InspectionDocument.h"
@@ -128,6 +129,65 @@ void CheckBindingPauseAndStep()
 		runner.Cancel();
 		runner.Join();
 		throw;
+	}
+}
+
+void CheckResumeClearsSteps()
+{
+	automation::RigProgress progress;
+	automation::RigOptions options;
+	options.deadline = std::chrono::milliseconds{20};
+	progress.Start(options);
+	progress.Step();
+	progress.Resume();
+	progress.Pause();
+	bool deadline = false;
+	try
+	{
+		progress.Check(true);
+	}
+	catch (const std::runtime_error& failure)
+	{
+		deadline = std::string_view{failure.what()}.find("deadline") != std::string_view::npos;
+	}
+	Require(deadline, "Resume left a step permit that bypassed a later pause");
+}
+
+void CheckCleanupFailures()
+{
+	for (const auto failed : {wire::OpCode::ReleaseImageWindow, wire::OpCode::ReleaseInspection,
+		wire::OpCode::Relinquish})
+	{
+		Fixture fixture;
+		bool attempted = false, inputsReleased = false;
+		automation::RigRunner runner([&](auto opcode, auto fields)
+		{
+			if (opcode == wire::OpCode::ReleaseControl)
+				inputsReleased = true;
+			if (opcode == failed)
+			{
+				attempted = true;
+				wire::Message response;
+				response.fields = {wire::Field::U32(wire::tag::Error, static_cast<std::uint32_t>(wire::ErrorCode::Internal)),
+					wire::Field::Text(wire::tag::Detail, "injected cleanup failure")};
+				return response;
+			}
+			if (opcode == wire::OpCode::BeginImageWindow || opcode == wire::OpCode::InspectFrame)
+			{
+				wire::Message response;
+				response.fields = {wire::Field::U32(wire::tag::Error, 0),
+					wire::Field::U64(opcode == wire::OpCode::BeginImageWindow ? wire::tag::ImageWindowId : wire::tag::InspectionId, 42),
+					wire::Field::Bytes(wire::tag::Document, wire::InspectionValue::Object({}).Encode())};
+				return response;
+			}
+			return fixture.Exchange(opcode, std::move(fields));
+		});
+		runner.Start(fixture.Options(failed == wire::OpCode::ReleaseImageWindow ? "simxr.begin_image_window()" :
+			failed == wire::OpCode::ReleaseInspection ? "simxr.inspect('7')" : "simxr.pause()"));
+		runner.Join();
+		Require(attempted && inputsReleased && runner.Snapshot().phase == automation::RigPhase::Failed &&
+			runner.Snapshot().error.find("injected cleanup failure") != std::string::npos,
+			"Failed resource cleanup was hidden or prevented remaining cleanup");
 	}
 }
 
@@ -521,6 +581,8 @@ simxr.checkpoint("fresh VM, persistent IDs", applied.applied_frame == "3")
 		Require(fixture.session->Commands().At(FrameId{3})->configuration.tracking.head.pose.position.x == 3,
 				"Restart reused transaction IDs or retained failed VM state");
 		CheckBindingPauseAndStep();
+		CheckResumeClearsSteps();
+		CheckCleanupFailures();
 		CheckTemporaryResourceCleanup();
 		CheckImageWindowCleanup();
 		CheckLeaseRenewal();
