@@ -1,20 +1,21 @@
 #include "VulkanCreationChecks.h"
+#include "Pch.h"
 
 #define XR_USE_GRAPHICS_API_VULKAN
 #include <openxr/openxr_platform.h>
 
-#include "../tests/TestSupport.h"
-
-#include <algorithm>
-#include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <span>
 #include <stdexcept>
 
-namespace
+namespace simxr::probe
 {
-template <class Function> Function Command(XrInstance instance, const char* name)
+static void Require(bool value, const char* message)
+{
+	if (!value)
+		throw std::runtime_error(message);
+}
+template <class Function> static Function Command(XrInstance instance, const char* name)
 {
 	PFN_xrVoidFunction function = nullptr;
 	Require(xrGetInstanceProcAddr(instance, name, &function) == XR_SUCCESS && function,
@@ -231,8 +232,6 @@ class CreationChecks final
 	bool m_missingFunction = false;
 	bool m_reenter = false;
 };
-} // namespace
-
 bool VerifyVulkanCreation(XrInstance instance, XrSystemId system, VkInstance graphicsInstance,
 						  VkPhysicalDevice physicalDevice)
 {
@@ -247,3 +246,4 @@ bool VerifyVulkanCreation(XrInstance instance, XrSystemId system, VkInstance gra
 		return false;
 	}
 }
+} // namespace simxr::probe
