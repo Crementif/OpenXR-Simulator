@@ -48,7 +48,10 @@ std::shared_ptr<VulkanImage> VulkanImage::Create(std::shared_ptr<VulkanDevice> d
 	vkGetImageMemoryRequirements(result->device->binding.device, result->image, &requirements);
 	if (requirements.size > allocationLimit)
 		throw std::length_error("Vulkan image allocation exceeds its budget");
-	VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+	// Each image owns its entire allocation; declare that ownership to the driver.
+	VkMemoryDedicatedAllocateInfo dedicated{VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO};
+	dedicated.image = result->image;
+	VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, &dedicated};
 	allocation.allocationSize = requirements.size;
 	result->allocationSize = requirements.size;
 	try
