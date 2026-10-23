@@ -356,6 +356,74 @@ void RegistryAdmissionRollback()
 #endif
 }
 
+void ReservedSystemBindings()
+{
+	for (const auto profileName :
+		 {"/interaction_profiles/htc/vive_controller", "/interaction_profiles/oculus/touch_controller",
+		  "/interaction_profiles/valve/index_controller"})
+	{
+		EnabledExtensions enabled;
+		ActionRegistry registry(reinterpret_cast<XrInstance>(70), enabled);
+		const std::array paths{Path(registry, "/user/hand/left"), Path(registry, "/user/hand/right")};
+		const auto profile = Path(registry, profileName);
+		const auto set = Set(registry, "reserved-controls");
+		const auto trigger = Action(registry, set, "trigger", XR_ACTION_TYPE_FLOAT_INPUT, paths);
+		const auto click = Action(registry, set, "trigger-click", XR_ACTION_TYPE_BOOLEAN_INPUT, paths);
+		const auto system = Action(registry, set, "system", XR_ACTION_TYPE_BOOLEAN_INPUT, paths);
+		const auto pose = Action(registry, set, "pose", XR_ACTION_TYPE_POSE_INPUT, paths);
+		const auto triggerPath = Path(registry, "/user/hand/right/input/trigger/value");
+		const auto systemPath = Path(registry, "/user/hand/right/input/system/click");
+		const std::array bindings{XrActionSuggestedBinding{trigger, triggerPath},
+								  XrActionSuggestedBinding{click, triggerPath},
+								  XrActionSuggestedBinding{system, systemPath}};
+		const XrInteractionProfileSuggestedBinding suggest{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING, nullptr,
+														   profile, static_cast<std::uint32_t>(bindings.size()),
+														   bindings.data()};
+		Require(registry.SuggestBindings(suggest) == XR_SUCCESS,
+				"Reserved system button rejected the entire controller profile");
+		const XrActionSuggestedBinding incompatible{pose, systemPath};
+		const XrInteractionProfileSuggestedBinding invalid{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING, nullptr,
+														   profile, 1, &incompatible};
+		Require(registry.SuggestBindings(invalid) == XR_ERROR_PATH_UNSUPPORTED &&
+					registry.Bindings(trigger, profile).size() == 1 && registry.Bindings(system, profile).size() == 1,
+				"Reserved path bypassed type validation or replaced accepted bindings on failure");
+
+		ActionSyncState session(registry);
+		const XrSessionActionSetsAttachInfo attach{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO, nullptr, 1, &set};
+		Require(session.Attach(attach) == XR_SUCCESS, "Attach controller profile with reserved controls");
+		InputSnapshot input;
+		input.time = RuntimeTime{Duration{10}};
+		input.preferredProfiles[1] = profileName;
+		input.controllers[1].trigger = 0.75f;
+		input.controllers[1].menu = input.controllers[1].back = input.controllers[1].primary = true;
+		const XrActiveActionSet active{set, paths[1]};
+		const XrActionsSyncInfo sync{XR_TYPE_ACTIONS_SYNC_INFO, nullptr, 1, &active};
+		Require(session.Sync(sync, input, true) == XR_SUCCESS, "Synchronize controller with reserved controls");
+		XrPath selected = XR_NULL_PATH;
+		Require(session.CurrentProfile(paths[1], selected) == XR_SUCCESS && selected == profile,
+				"Reserved control caused fallback from the requested controller profile");
+		const XrActionStateGetInfo triggerGet{XR_TYPE_ACTION_STATE_GET_INFO, nullptr, trigger, paths[1]};
+		const XrActionStateGetInfo clickGet{XR_TYPE_ACTION_STATE_GET_INFO, nullptr, click, paths[1]};
+		const XrActionStateGetInfo systemGet{XR_TYPE_ACTION_STATE_GET_INFO, nullptr, system, paths[1]};
+		XrActionStateFloat triggerValue{XR_TYPE_ACTION_STATE_FLOAT};
+		XrActionStateBoolean clickValue{XR_TYPE_ACTION_STATE_BOOLEAN}, systemValue{XR_TYPE_ACTION_STATE_BOOLEAN};
+		Require(session.GetFloat(triggerGet, triggerValue) == XR_SUCCESS && triggerValue.isActive &&
+					triggerValue.currentState == 0.75f && session.GetBoolean(clickGet, clickValue) == XR_SUCCESS &&
+					clickValue.isActive && clickValue.currentState,
+				"Reserved control suppressed usable bindings or float-to-boolean conversion");
+		Require(session.GetBoolean(systemGet, systemValue) == XR_SUCCESS && !systemValue.isActive &&
+					!systemValue.currentState,
+				"Unavailable system control aliased an application button");
+		input.time = RuntimeTime{Duration{20}};
+		input.controllers[1].trigger = 0;
+		Require(session.Sync(sync, input, true) == XR_SUCCESS &&
+					session.GetFloat(triggerGet, triggerValue) == XR_SUCCESS && triggerValue.isActive &&
+					triggerValue.currentState == 0 && session.GetBoolean(clickGet, clickValue) == XR_SUCCESS &&
+					clickValue.isActive && !clickValue.currentState,
+				"Controller bindings did not release after reserved suggestions were accepted");
+	}
+}
+
 void InputPathLimits()
 {
 	InputState input;
@@ -581,6 +649,7 @@ int main()
 	HistoricalDictionaryAndFrozenBindings();
 	DictionaryAllocationRollback();
 	RegistryAdmissionRollback();
+	ReservedSystemBindings();
 	InputPathLimits();
 	std::cout << "Action registry tests passed\n";
 }

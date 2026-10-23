@@ -690,7 +690,7 @@ XrResult ActionRegistry::SuggestBindings(const XrInteractionProfileSuggestedBind
 		std::string_view componentPath;
 		for (const auto& entry : s_components)
 		{
-			if (entry.profile != *profileText || entry.system)
+			if (entry.profile != *profileText)
 				continue;
 			if (path->size() == entry.user.size() + entry.component.size() && path->starts_with(entry.user) &&
 				std::string_view(*path).substr(entry.user.size()) == entry.component)
