@@ -391,13 +391,13 @@ static float g_headRoll = 0.0f;   // Rotation around forward axis (head tilt). M
 //   angleLeft  < 0,  angleRight > 0
 //   angleDown  < 0,  angleUp    > 0
 // Per eye: index 0 = left eye, 1 = right eye.
-static bool  g_useCustomFov = false;
+static std::atomic<bool> g_useCustomFov{false};
 static float g_eyeFovL[2] = { 0, 0 };
 static float g_eyeFovR[2] = { 0, 0 };
 static float g_eyeFovU[2] = { 0, 0 };
 static float g_eyeFovD[2] = { 0, 0 };
 
-static bool  g_useCustomIpd = false;
+static std::atomic<bool> g_useCustomIpd{false};
 static float g_customIpd = 0.064f;  // meters
 
 static XrFovf MakeFovDeg(float angleLeft, float angleRight, float angleUp, float angleDown) {
@@ -411,10 +411,11 @@ static XrFovf MakeFovDeg(float angleLeft, float angleRight, float angleUp, float
 }
 
 static XrFovf GetUiFov(uint32_t eyeIndex) {
+    std::lock_guard stateLock(ui::g_stateMutex);
     // Shared with ui::ActiveFovAspect, which snaps the recommended render target to the
     // shape of whatever this returns.
     if (!ui::UsesProfileFov()) {
-        int fovDeg = ui::g_uiState.fovDegrees;
+        int fovDeg = ui::ReadState().fovDegrees;
         if (fovDeg <= 0 || fovDeg > 180) fovDeg = 90;
         float fovRadians = fovDeg * 0.5f * 3.14159265f / 180.0f;
         // XrFovf fields are angles in radians, not tangent-space extents.
@@ -426,7 +427,7 @@ static XrFovf GetUiFov(uint32_t eyeIndex) {
 }
 
 static float GetUiIpdMeters() {
-    return (std::max)(0.0f, (std::min)(0.2f, ui::g_uiState.ipdMeters));
+    return (std::max)(0.0f, (std::min)(0.2f, ui::ReadState().ipdMeters));
 }
 
 static void HandleUiSettingsCommand(int cmd) {
@@ -809,13 +810,16 @@ static void ClampToWorkArea(int& w, int& h) {
 // showing those 1:1 stretches the image ~2x horizontally. Resampling the buffer into the
 // frustum's shape is what a real compositor does.
 static void ComputeDisplayDims(int& contentW, int& contentH) {
+    std::lock_guard stateLock(ui::g_stateMutex);
     uint32_t eyeW = 0, eyeH = 0;
     ui::GetDisplayEyeSize(eyeW, eyeH);
-    ComputeContentDims((int)eyeW, (int)eyeH, ui::g_uiState.viewMode, ui::g_uiState.displayLayout,
+    ComputeContentDims((int)eyeW, (int)eyeH, ui::ReadState().viewMode, ui::ReadState().displayLayout,
                        contentW, contentH);
 }
 
 static perf::ProjectionTimingTracker g_projectionTiming;
+static std::mutex g_previewStatsMutex;
+static ui::StatsInfo g_previewStats;
 
 // Build the stats payload for the title bar (used when "Show Statistics" is on).
 static ui::StatsInfo BuildStatsInfo(rt::Session& s) {
@@ -839,6 +843,10 @@ static ui::StatsInfo BuildStatsInfo(rt::Session& s) {
     si.p50FrameMs = timing.p50FrameMs;
     si.p95FrameMs = timing.p95FrameMs;
     si.projectionTimingSamples = (uint32_t)timing.sampleCount;
+    {
+        std::lock_guard lock(g_previewStatsMutex);
+        g_previewStats = si;
+    }
     return si;
 }
 
@@ -847,7 +855,11 @@ static ui::StatsInfo BuildStatsInfo(rt::Session& s) {
 // -- which never arrives at all if the app has stopped submitting frames.
 static void RefreshTitleNow(HWND hwnd) {
     if (!hwnd || hwnd != rt::g_previewUi.hwnd.load()) return;
-    ui::StatsInfo si = BuildStatsInfo(rt::g_session);
+    ui::StatsInfo si;
+    {
+        std::lock_guard lock(g_previewStatsMutex);
+        si = g_previewStats;
+    }
     ui::UpdateWindowTitle(hwnd, &si);
 }
 
@@ -891,6 +903,7 @@ static void RefreshPreviewGeometry(HWND hWnd) {
 // any other zoom is an absolute content scale placed by the pan offset, which the target
 // then clips. Either way the target is cleared first, so whatever is left over is black.
 static FitRect ComputePresentRect(int dstW, int dstH) {
+    std::lock_guard stateLock(ui::g_stateMutex);
     int contentW = 0, contentH = 0;
     ComputeDisplayDims(contentW, contentH);
     const ui::PreviewRect r = ui::ComputePreviewRect(ui::PreviewGeometry{ dstW, dstH, contentW, contentH });
@@ -921,7 +934,7 @@ static void FitWindowToContentAspect(HWND hWnd) {
     // Fit mode deliberately permits any window/monitor aspect: it letterboxes into
     // whatever it is given, so maximizing must stay maximized instead of being snapped
     // back to an aspect-correct floating window.
-    if (ui::g_uiState.fitToWindow) return;
+    if (ui::ReadState().fitToWindow) return;
 
     RECT cr{};
     if (!GetClientRect(hWnd, &cr)) return;
@@ -1061,7 +1074,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
             // Fit mode accepts arbitrary window shapes and letterboxes into them. Manual
             // zoom mode keeps the aspect-locked inspector behavior that makes pixel-scale
             // comparisons predictable.
-            if (ui::g_uiState.fitToWindow) break;
+            if (ui::ReadState().fitToWindow) break;
 
             // Constrain interactive resize to the current content aspect ratio
             // so the window itself follows the stereo layout (no letterbox).
@@ -1158,7 +1171,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         case WM_PAINT: {
             // The frame path owns the client area and never goes through WM_PAINT, so fall
             // through and leave it alone. Mirror off is the exception: nothing paints then.
-            if (ui::g_uiState.previewFps > 0) {
+            if (ui::ReadState().previewFps > 0) {
                 if (rt::g_session.usesD3D12) { ValidateRect(hWnd, nullptr); return 0; }
                 break;
             }
@@ -1192,13 +1205,16 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
             // below, which resizes again and lands here a second time -- so the
             // corrected size is what the last write leaves in the file. Skipped while
             // a drag is in progress; WM_EXITSIZEMOVE writes once at the end of it.
-            ui::g_uiState.windowWidth = (int)cw;
-            ui::g_uiState.windowHeight = (int)ch;
+            {
+                std::lock_guard stateLock(ui::g_stateMutex);
+                ui::g_uiState.windowWidth = (int)cw;
+                ui::g_uiState.windowHeight = (int)ch;
+            }
             if (!rt::g_sizingDrag) ui::SaveSettings();
 
             // Fit mode keeps the dimensions Windows assigned, including a maximized client
             // area, and lets ComputePreviewRect centre the image in them.
-            if (ui::g_uiState.fitToWindow) return 0;
+            if (ui::ReadState().fitToWindow) return 0;
 
             // WM_SIZING constrains interactive drags, but maximize, snap, and
             // programmatic resizes bypass it. If the resulting client aspect
@@ -1265,8 +1281,11 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         case WM_MOUSEMOVE:
             if (rt::g_panDrag) {
                 const POINT pos{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-                ui::g_uiState.panX += (float)(pos.x - rt::g_panLastPos.x);
-                ui::g_uiState.panY += (float)(pos.y - rt::g_panLastPos.y);
+                {
+                    std::lock_guard stateLock(ui::g_stateMutex);
+                    ui::g_uiState.panX += (float)(pos.x - rt::g_panLastPos.x);
+                    ui::g_uiState.panY += (float)(pos.y - rt::g_panLastPos.y);
+                }
                 rt::g_panLastPos = pos;
                 rt::RefreshPreviewGeometry(hWnd);
                 ui::ClampPan();
@@ -1829,12 +1848,12 @@ static XrResult XRAPI_PTR xrCreateInstance_runtime(const XrInstanceCreateInfo* c
         s_settingsLoaded = true;
         ui::LoadSettings(mcp::GetSimulatorDataDirectory());
         char zoomDesc[32] = "fit";
-        if (!ui::g_uiState.fitToWindow) {
-            snprintf(zoomDesc, sizeof(zoomDesc), "%d%%", (int)(ui::g_uiState.zoomLevel * 100));
+        if (!ui::ReadState().fitToWindow) {
+            snprintf(zoomDesc, sizeof(zoomDesc), "%d%%", (int)(ui::ReadState().zoomLevel * 100));
         }
         Logf("[SimXR] Settings restored: profile=%ls ipd=%dmm asymmetric=%d zoom=%s",
              ui::GetHeadsetProfileShortName(), ui::GetIpdMillimeters(),
-             (int)ui::g_uiState.useAsymmetricFov, zoomDesc);
+             (int)ui::ReadState().useAsymmetricFov, zoomDesc);
     }
 
     if (const auto* profile = std::getenv("SIMXR_HEADSET_PROFILE")) {
@@ -2004,7 +2023,7 @@ static XrResult XRAPI_PTR xrEnumerateViewConfigurationViews_runtime(XrInstance, 
         }
         Logf("[SimXR] xrEnumerateViewConfigurationViews: Returned 2 views (%ux%u recommended; headset geometry %s)",
              views[0].recommendedImageRectWidth, views[0].recommendedImageRectHeight,
-             ui::HeadsetProfileName(ui::g_uiState.headsetProfile));
+             ui::HeadsetProfileName(ui::ReadState().headsetProfile));
     }
     return XR_SUCCESS;
 }
@@ -2932,7 +2951,7 @@ static XrResult XRAPI_PTR xrWaitFrame_runtime(XrSession session, const XrFrameWa
 		const float maxPitch = 1.5f; // ~85 degrees, short of gimbal lock
 		rt::g_headPitch = (std::max)(-maxPitch, (std::min)(maxPitch, rt::g_headPitch));
 
-		const ui::InputPolling inputPolling = ui::g_uiState.inputPolling;
+		const ui::InputPolling inputPolling = ui::ReadState().inputPolling;
 		bool inputActive = (inputPolling == ui::InputPolling::Background);
 		const HWND foregroundWindow = inputActive ? nullptr : GetForegroundWindow();
 		if (foregroundWindow != nullptr)
@@ -3095,7 +3114,7 @@ static XrResult XRAPI_PTR xrWaitFrame_runtime(XrSession session, const XrFrameWa
 			}
 
 			// Anaglyph preview overlay toggle. The simulator already renders
-			// a red/cyan anaglyph composite when ui::g_uiState.displayLayout
+			// a red/cyan anaglyph composite when ui::ReadState().displayLayout
 			// == DisplayLayout::Anaglyph (using channel-masked preview blending
 			// blend states), so we just flip the enum. Remember the previous
 			// layout so we can restore it on disable.
@@ -3104,21 +3123,24 @@ static XrResult XRAPI_PTR xrWaitFrame_runtime(XrSession session, const XrFrameWa
 			{
 				static ui::DisplayLayout s_savedLayout = ui::DisplayLayout::SideBySide;
 				static bool s_haveSaved = false;
-				if (ana.enabled)
 				{
-					if (!s_haveSaved)
+					std::lock_guard stateLock(ui::g_stateMutex);
+					if (ana.enabled)
 					{
-						s_savedLayout = ui::g_uiState.displayLayout;
-						s_haveSaved = true;
+						if (!s_haveSaved)
+						{
+							s_savedLayout = ui::g_uiState.displayLayout;
+							s_haveSaved = true;
+						}
+						ui::g_uiState.displayLayout = ui::DisplayLayout::Anaglyph;
 					}
-					ui::g_uiState.displayLayout = ui::DisplayLayout::Anaglyph;
-				}
-				else
-				{
-					if (s_haveSaved)
+					else
 					{
-						ui::g_uiState.displayLayout = s_savedLayout;
-						s_haveSaved = false;
+						if (s_haveSaved)
+						{
+							ui::g_uiState.displayLayout = s_savedLayout;
+							s_haveSaved = false;
+						}
 					}
 				}
 				rt::g_anaglyphPreview = ana.enabled;
@@ -3493,8 +3515,9 @@ static void ensurePreviewWithoutProjection(rt::Session& s) {
     // two 2064x2208 eyes side by side is wider than any monitor, and the saved size may
     // have come from a larger one. A profile or layout change since makes the restored
     // aspect wrong, which the snap on the first WM_SIZE corrects.
-    int windowW = ui::g_uiState.windowWidth;
-    int windowH = ui::g_uiState.windowHeight;
+    const auto uiState = ui::ReadState();
+    int windowW = uiState.windowWidth;
+    int windowH = uiState.windowHeight;
     // Too small to be a size anyone chose: a file left behind by the menu-bar shrink above.
     constexpr int kMinRestoredClient = 240;
     if (windowW < kMinRestoredClient || windowH < kMinRestoredClient) {
@@ -3821,14 +3844,10 @@ static void clearPreviewToBlack(rt::Session& s) {
 // that can skip the composite, so the rate shown is the application's and not the mirror's.
 static void updatePreviewTitle(rt::Session& s) {
     if (!s.hwnd) return;
-    static int frames = 0;
     static auto lastUpdate = std::chrono::high_resolution_clock::now();
-    ++frames;
     const auto now = std::chrono::high_resolution_clock::now();
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastUpdate).count();
     if (elapsed >= 500) {
-        ui::g_lastFps = (int)(frames * 1000 / elapsed);
-        frames = 0;
         lastUpdate = now;
     } else if (ui::g_lastScreenshotTickMs == 0) {
         // Otherwise refresh every frame while a screenshot notice is up, so it appears
@@ -3924,7 +3943,7 @@ static void CaptureProjectionOpenGL(rt::Session& session, const simxr::PreviewPr
 static void RenderProjection(rt::Session& session, const simxr::ProjectionLayerDescription& accepted, bool deferPresent)
 {
 	const auto crop =
-		ui::g_uiState.showFullRender ? simxr::PreviewCropSelection::WholeImage : simxr::PreviewCropSelection::Submitted;
+		ui::ReadState().showFullRender ? simxr::PreviewCropSelection::WholeImage : simxr::PreviewCropSelection::Submitted;
 	const auto projection = simxr::PreparePreviewProjection(
 		accepted,
 		[](XrSwapchain handle) -> std::optional<XrExtent2Di>
@@ -3956,8 +3975,9 @@ static void RenderProjection(rt::Session& session, const simxr::ProjectionLayerD
 	if (!g_previewDueThisFrame)
 		return;
 	const auto images = ResolveProjectionImages(*projection);
-	const auto viewMode = ui::g_uiState.viewMode;
-	const auto packing = ui::g_uiState.displayLayout;
+	const auto uiState = ui::ReadState();
+	const auto viewMode = uiState.viewMode;
+	const auto packing = uiState.displayLayout;
 	std::lock_guard previewLock(session.previewMutex);
 	try
 	{
@@ -4213,8 +4233,9 @@ static void RenderQuadLayer(rt::Session& session, const simxr::QuadLayerDescript
 		const auto presentY = static_cast<int>(std::lround(present.y));
 		const int presentW = (std::max)(1, static_cast<int>(std::lround(present.w)));
 		const int presentH = (std::max)(1, static_cast<int>(std::lround(present.h)));
-		const ui::ViewMode viewMode = ui::g_uiState.viewMode;
-		const ui::DisplayLayout layout = ui::g_uiState.displayLayout;
+		const auto uiState = ui::ReadState();
+		const ui::ViewMode viewMode = uiState.viewMode;
+		const ui::DisplayLayout layout = uiState.displayLayout;
 
 		const rt::FitRect roundedPresent{static_cast<float>(presentX), static_cast<float>(presentY),
 										 static_cast<float>(presentW), static_cast<float>(presentH)};
@@ -4392,8 +4413,9 @@ static void RenderQuadLayer(rt::Session& session, const simxr::QuadLayerDescript
 		return;
 
 	// Calculate viewports matching the projection layer layout (letterboxed)
-	const auto layout = ui::g_uiState.displayLayout;
-	const auto viewMode = ui::g_uiState.viewMode;
+	const auto uiState = ui::ReadState();
+	const auto layout = uiState.displayLayout;
+	const auto viewMode = uiState.viewMode;
 	const bool singleEye = (viewMode != ui::ViewMode::BothEyes);
 
 	// Mirror the rect the projection layer lands in, zoom and pan included.

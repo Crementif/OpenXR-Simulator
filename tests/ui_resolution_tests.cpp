@@ -2,6 +2,8 @@
 
 #include <cmath>
 #include <cstdio>
+#include <thread>
+#include <future>
 
 namespace {
 
@@ -147,6 +149,29 @@ int main() {
     Check(ui::g_uiState.showStats == expectedStats, "replacement settings can be reloaded");
     ui::g_settingsPath.clear();
     std::filesystem::remove_all(settingsDirectory);
+
+    ui::SetHeadsetProfile(ui::HeadsetProfile::Quest3);
+    std::thread writer([] {
+        for (int i = 0; i < 10000; ++i)
+            ui::SetHeadsetProfile(i % 2 ? ui::HeadsetProfile::Quest3 : ui::HeadsetProfile::GenericSymmetric);
+    });
+    bool consistent = true;
+    for (int i = 0; i < 10000; ++i) {
+        const auto state = ui::ReadState();
+        consistent &= state.useAsymmetricFov == (state.headsetProfile != ui::HeadsetProfile::GenericSymmetric);
+        consistent &= Near(state.ipdMeters, ui::GetHeadsetSpec(state.headsetProfile).ipdMm * .001f);
+    }
+    writer.join();
+    Check(consistent, "preview settings snapshots preserve whole profile updates");
+    std::promise<void> observed;
+    auto ready = observed.get_future();
+    std::thread reader;
+    ui::HandleMenuCommand(nullptr, ui::ID_TOOLS_SCREENSHOT, {}, [&] {
+        reader = std::thread([&] { (void)ui::ReadState(); observed.set_value(); });
+        Check(ready.wait_for(std::chrono::seconds(1)) == std::future_status::ready,
+              "window callbacks run without the preview settings lock");
+    });
+    reader.join();
 
     if (failures != 0) return 1;
     std::puts("ui_resolution_tests: PASS");

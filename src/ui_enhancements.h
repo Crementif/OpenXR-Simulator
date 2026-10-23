@@ -5,6 +5,8 @@
 
 #include <windows.h>
 #include <cstdint>
+#include <mutex>
+#include <atomic>
 #include <dwmapi.h>
 #include <string>
 #include <functional>
@@ -185,12 +187,14 @@ struct UIState {
     InputPolling inputPolling = InputPolling::AppForeground;
 };
 
+// Value helpers nest. Protect settings only; release before window callbacks,
+// file I/O or graphics work.
+inline std::recursive_mutex g_stateMutex;
 inline UIState g_uiState;
-
-// Last FPS the render loop measured. Shared so a title refresh triggered from
-// outside the loop (a menu toggle, say) can keep the FPS field rather than
-// blanking it until the next tick.
-inline int g_lastFps = 0;
+inline UIState ReadState() {
+    std::lock_guard lock(g_stateMutex);
+    return g_uiState;
+}
 
 // Everything that varies per headset, in one table.
 //
@@ -221,6 +225,7 @@ inline const HeadsetSpec& GetHeadsetSpec(HeadsetProfile profile) {
 }
 
 inline const HeadsetSpec& GetActiveHeadsetSpec() {
+    std::lock_guard stateLock(g_stateMutex);
     return GetHeadsetSpec(g_uiState.headsetProfile);
 }
 
@@ -228,6 +233,7 @@ inline const HeadsetSpec& GetActiveHeadsetSpec() {
 // symmetric fallback. The generic profile has no geometry of its own, so it stays
 // symmetric even if a stale settings file asks for asymmetry.
 inline bool UsesProfileFov() {
+    std::lock_guard stateLock(g_stateMutex);
     return g_uiState.useAsymmetricFov &&
            g_uiState.headsetProfile != HeadsetProfile::GenericSymmetric;
 }
@@ -236,6 +242,7 @@ inline bool UsesProfileFov() {
 // out of a plane, which is what a render target has to match. Both eyes give the same
 // answer: real geometry is asymmetric per eye but mirrored between them.
 inline float ActiveFovAspect() {
+    std::lock_guard stateLock(g_stateMutex);
     if (!UsesProfileFov()) return 1.0f;   // equal half-angles all round
     const EyeFov& e = GetActiveHeadsetSpec().eye[0];
     const float DEG2RAD = 3.14159265f / 180.0f;
@@ -292,6 +299,7 @@ inline constexpr int kMinRenderHeight = 240;
 inline constexpr int kMaxRenderExtent = 4096;
 
 inline void SetRenderResolution(int width, int height) {
+    std::lock_guard stateLock(g_stateMutex);
     if (width <= 0 || height <= 0) {
         g_uiState.renderWidth = 0;
         g_uiState.renderHeight = 0;
@@ -308,6 +316,7 @@ inline void SetRenderResolution(int width, int height) {
 // here because both numbers describe one lens; ours are independent, so the chosen width
 // stands and the height follows the frustum.
 inline void GetRenderResolution(uint32_t& width, uint32_t& height) {
+    std::lock_guard stateLock(g_stateMutex);
     if (g_uiState.renderWidth > 0 && g_uiState.renderHeight > 0) {
         width = (uint32_t)g_uiState.renderWidth;
         height = (uint32_t)g_uiState.renderHeight;
@@ -330,6 +339,7 @@ inline void GetRenderResolution(uint32_t& width, uint32_t& height) {
 }
 
 inline int GetRenderResolutionPresetIndex() {
+    std::lock_guard stateLock(g_stateMutex);
     for (int i = 0; i < kRenderResolutionPresetCount; ++i) {
         if (g_uiState.renderWidth == kRenderResolutionPresets[i].width &&
             g_uiState.renderHeight == kRenderResolutionPresets[i].height) return i;
@@ -342,6 +352,7 @@ inline int GetRenderResolutionPresetIndex() {
 // (Quest 3 0.935 vs 0.941, PS VR2 0.980 vs 1.049). Showing a frustum-shaped render in a
 // panel-shaped frame is a stretch, and a stretch is indistinguishable from a real one.
 inline void GetDisplayEyeSize(uint32_t& width, uint32_t& height) {
+    std::lock_guard stateLock(g_stateMutex);
     const HeadsetSpec& spec = GetActiveHeadsetSpec();
     width = spec.panelWidth;
     const float aspect = ActiveFovAspect();
@@ -351,30 +362,36 @@ inline void GetDisplayEyeSize(uint32_t& width, uint32_t& height) {
 }
 
 inline int GetIpdMillimeters() {
+    std::lock_guard stateLock(g_stateMutex);
     return (int)(g_uiState.ipdMeters * 1000.0f + 0.5f);
 }
 
 inline void SetIpdMillimeters(int ipdMm) {
+    std::lock_guard stateLock(g_stateMutex);
     ipdMm = (std::max)(0, (std::min)(200, ipdMm));
     g_uiState.ipdMeters = (float)ipdMm * 0.001f;
 }
 
 inline void AdjustIpdMillimeters(int deltaMm) {
+    std::lock_guard stateLock(g_stateMutex);
     SetIpdMillimeters(GetIpdMillimeters() + deltaMm);
 }
 
 inline void SetHeadsetProfile(HeadsetProfile profile) {
+    std::lock_guard stateLock(g_stateMutex);
     g_uiState.headsetProfile = profile;
     g_uiState.useAsymmetricFov = (profile != HeadsetProfile::GenericSymmetric);
     SetIpdMillimeters(GetHeadsetSpec(profile).ipdMm);
 }
 
 inline void SetSymmetricViews() {
+    std::lock_guard stateLock(g_stateMutex);
     g_uiState.headsetProfile = HeadsetProfile::GenericSymmetric;
     g_uiState.useAsymmetricFov = false;
 }
 
 inline void SetAsymmetricViews() {
+    std::lock_guard stateLock(g_stateMutex);
     if (g_uiState.headsetProfile == HeadsetProfile::GenericSymmetric) {
         g_uiState.headsetProfile = HeadsetProfile::Quest3;
     }
@@ -438,17 +455,20 @@ constexpr float kMinMoveSpeed = 0.05f;
 constexpr float kMaxMoveSpeed = 50.0f;
 
 inline void SetMoveSpeed(float mps) {
+    std::lock_guard stateLock(g_stateMutex);
     g_uiState.moveSpeed = (std::max)(kMinMoveSpeed, (std::min)(kMaxMoveSpeed, mps));
 }
 
 // The , and . keys scale rather than add, so a notch feels the same at 0.5 m/s
 // as it does at 10.
 inline void ScaleMoveSpeed(float factor) {
+    std::lock_guard stateLock(g_stateMutex);
     SetMoveSpeed(g_uiState.moveSpeed * factor);
 }
 
 // Meters per second for this frame. `boosted` is the Shift key.
 inline float GetMoveSpeed(bool boosted) {
+    std::lock_guard stateLock(g_stateMutex);
     return boosted ? g_uiState.moveSpeed * g_uiState.moveBoost : g_uiState.moveSpeed;
 }
 
@@ -518,6 +538,7 @@ inline bool IsPreviewRateCommand(int cmd) {
 // xrEndFrame; the answer has to hold for the whole frame, since the eye composite and the
 // quad layers of one frame have to be recorded together or not at all.
 inline bool PreviewFrameDue() {
+    std::lock_guard stateLock(g_stateMutex);
     const int fps = g_uiState.previewFps;
     if (fps <= 0) return false;
     if (fps >= kPreviewRateEveryFrame) return true;
@@ -629,6 +650,7 @@ inline std::filesystem::path g_settingsPath;
 inline std::string g_lastSettingsJson;
 
 inline std::string SerializeSettings() {
+    std::lock_guard stateLock(g_stateMutex);
     char buf[1024];
     snprintf(buf, sizeof(buf),
         "{\n"
@@ -693,6 +715,7 @@ inline void SaveSettings() {
 }
 
 inline void ApplySettingsJson(const char* text) {
+    std::lock_guard stateLock(g_stateMutex);
     json::Object o(text);
 
     // Profile first: it resets FOV symmetry and IPD, so the saved values for
@@ -1071,56 +1094,57 @@ inline HMENU CreateAppMenu() {
 
 // Update menu check marks based on current state
 inline void UpdateMenuState(HMENU menu) {
+    const auto state = ReadState();
     // View mode checks
     CheckMenuItem(menu, ID_VIEW_BOTH_EYES,
-        g_uiState.viewMode == ViewMode::BothEyes ? MF_CHECKED : MF_UNCHECKED);
+        state.viewMode == ViewMode::BothEyes ? MF_CHECKED : MF_UNCHECKED);
     CheckMenuItem(menu, ID_VIEW_LEFT_EYE,
-        g_uiState.viewMode == ViewMode::LeftEyeOnly ? MF_CHECKED : MF_UNCHECKED);
+        state.viewMode == ViewMode::LeftEyeOnly ? MF_CHECKED : MF_UNCHECKED);
     CheckMenuItem(menu, ID_VIEW_RIGHT_EYE,
-        g_uiState.viewMode == ViewMode::RightEyeOnly ? MF_CHECKED : MF_UNCHECKED);
+        state.viewMode == ViewMode::RightEyeOnly ? MF_CHECKED : MF_UNCHECKED);
 
     // Layout checks
     CheckMenuItem(menu, ID_DISPLAY_SIDE_BY_SIDE,
-        g_uiState.displayLayout == DisplayLayout::SideBySide ? MF_CHECKED : MF_UNCHECKED);
+        state.displayLayout == DisplayLayout::SideBySide ? MF_CHECKED : MF_UNCHECKED);
     CheckMenuItem(menu, ID_DISPLAY_OVER_UNDER,
-        g_uiState.displayLayout == DisplayLayout::OverUnder ? MF_CHECKED : MF_UNCHECKED);
+        state.displayLayout == DisplayLayout::OverUnder ? MF_CHECKED : MF_UNCHECKED);
     CheckMenuItem(menu, ID_DISPLAY_ANAGLYPH,
-        g_uiState.displayLayout == DisplayLayout::Anaglyph ? MF_CHECKED : MF_UNCHECKED);
+        state.displayLayout == DisplayLayout::Anaglyph ? MF_CHECKED : MF_UNCHECKED);
 
     // Zoom checks
-    CheckMenuItem(menu, ID_ZOOM_FIT, g_uiState.fitToWindow ? MF_CHECKED : MF_UNCHECKED);
-    CheckMenuItem(menu, ID_ZOOM_25, (!g_uiState.fitToWindow && g_uiState.zoomLevel == 0.25f) ? MF_CHECKED : MF_UNCHECKED);
-    CheckMenuItem(menu, ID_ZOOM_50, (!g_uiState.fitToWindow && g_uiState.zoomLevel == 0.50f) ? MF_CHECKED : MF_UNCHECKED);
-    CheckMenuItem(menu, ID_ZOOM_75, (!g_uiState.fitToWindow && g_uiState.zoomLevel == 0.75f) ? MF_CHECKED : MF_UNCHECKED);
-    CheckMenuItem(menu, ID_ZOOM_100, (!g_uiState.fitToWindow && g_uiState.zoomLevel == 1.0f) ? MF_CHECKED : MF_UNCHECKED);
+    CheckMenuItem(menu, ID_ZOOM_FIT, state.fitToWindow ? MF_CHECKED : MF_UNCHECKED);
+    CheckMenuItem(menu, ID_ZOOM_25, (!state.fitToWindow && state.zoomLevel == 0.25f) ? MF_CHECKED : MF_UNCHECKED);
+    CheckMenuItem(menu, ID_ZOOM_50, (!state.fitToWindow && state.zoomLevel == 0.50f) ? MF_CHECKED : MF_UNCHECKED);
+    CheckMenuItem(menu, ID_ZOOM_75, (!state.fitToWindow && state.zoomLevel == 0.75f) ? MF_CHECKED : MF_UNCHECKED);
+    CheckMenuItem(menu, ID_ZOOM_100, (!state.fitToWindow && state.zoomLevel == 1.0f) ? MF_CHECKED : MF_UNCHECKED);
 
     // Stats toggle
     CheckMenuItem(menu, ID_TOOLS_TOGGLE_STATS,
-        g_uiState.showStats ? MF_CHECKED : MF_UNCHECKED);
+        state.showStats ? MF_CHECKED : MF_UNCHECKED);
 
     // FOV checks
-    CheckMenuItem(menu, ID_FOV_SYMMETRIC, !g_uiState.useAsymmetricFov ? MF_CHECKED : MF_UNCHECKED);
-    CheckMenuItem(menu, ID_FOV_ASYMMETRIC, g_uiState.useAsymmetricFov ? MF_CHECKED : MF_UNCHECKED);
-    CheckMenuItem(menu, ID_FOV_70, (!g_uiState.useAsymmetricFov && g_uiState.fovDegrees == 70) ? MF_CHECKED : MF_UNCHECKED);
-    CheckMenuItem(menu, ID_FOV_90, (!g_uiState.useAsymmetricFov && g_uiState.fovDegrees == 90) ? MF_CHECKED : MF_UNCHECKED);
-    CheckMenuItem(menu, ID_FOV_110, (!g_uiState.useAsymmetricFov && g_uiState.fovDegrees == 110) ? MF_CHECKED : MF_UNCHECKED);
+    CheckMenuItem(menu, ID_FOV_SYMMETRIC, !state.useAsymmetricFov ? MF_CHECKED : MF_UNCHECKED);
+    CheckMenuItem(menu, ID_FOV_ASYMMETRIC, state.useAsymmetricFov ? MF_CHECKED : MF_UNCHECKED);
+    CheckMenuItem(menu, ID_FOV_70, (!state.useAsymmetricFov && state.fovDegrees == 70) ? MF_CHECKED : MF_UNCHECKED);
+    CheckMenuItem(menu, ID_FOV_90, (!state.useAsymmetricFov && state.fovDegrees == 90) ? MF_CHECKED : MF_UNCHECKED);
+    CheckMenuItem(menu, ID_FOV_110, (!state.useAsymmetricFov && state.fovDegrees == 110) ? MF_CHECKED : MF_UNCHECKED);
 
     // Headset profile checks
     for (int i = 0; i < kHeadsetProfileCount; ++i) {
         CheckMenuItem(menu, ID_PROFILE_FIRST + i,
-            (int)g_uiState.headsetProfile == i ? MF_CHECKED : MF_UNCHECKED);
+            (int)state.headsetProfile == i ? MF_CHECKED : MF_UNCHECKED);
     }
 
     // Input polling checks
     for (int i = 0; i < kInputPollingPresetCount; ++i) {
         CheckMenuItem(menu, ID_INPUT_POLLING_FIRST + i,
-            (int)g_uiState.inputPolling == i ? MF_CHECKED : MF_UNCHECKED);
+            (int)state.inputPolling == i ? MF_CHECKED : MF_UNCHECKED);
     }
 
     // Mirror rate checks
     for (int i = 0; i < kPreviewRatePresetCount; ++i) {
         CheckMenuItem(menu, ID_PREVIEW_RATE_FIRST + i,
-            g_uiState.previewFps == kPreviewRatePresets[i].fps ? MF_CHECKED : MF_UNCHECKED);
+            state.previewFps == kPreviewRatePresets[i].fps ? MF_CHECKED : MF_UNCHECKED);
     }
 
     // Render-resolution checks. A custom settings.json value intentionally leaves every
@@ -1141,18 +1165,18 @@ inline void UpdateMenuState(HMENU menu) {
 
     // Full render toggle
     CheckMenuItem(menu, ID_VIEW_FULL_RENDER,
-        g_uiState.showFullRender ? MF_CHECKED : MF_UNCHECKED);
+        state.showFullRender ? MF_CHECKED : MF_UNCHECKED);
 
     // Movement speed checks. Nothing is checked once , or . has walked the
     // speed off a preset, which is the honest answer.
     for (int i = 0; i < kMoveSpeedPresetCount; ++i) {
         CheckMenuItem(menu, ID_MOVE_SPEED_FIRST + i,
-            fabsf(g_uiState.moveSpeed - kMoveSpeedPresets[i].mps) < 0.005f
+            fabsf(state.moveSpeed - kMoveSpeedPresets[i].mps) < 0.005f
                 ? MF_CHECKED : MF_UNCHECKED);
     }
     for (int i = 0; i < kMoveBoostPresetCount; ++i) {
         CheckMenuItem(menu, ID_MOVE_BOOST_FIRST + i,
-            fabsf(g_uiState.moveBoost - kMoveBoostPresets[i].factor) < 0.005f
+            fabsf(state.moveBoost - kMoveBoostPresets[i].factor) < 0.005f
                 ? MF_CHECKED : MF_UNCHECKED);
     }
 }
@@ -1221,13 +1245,14 @@ inline void ShowAboutDialog(HWND parent) {
 // the current view mode. Only ever the starting shape: zoom scales the image inside the
 // window, so nothing resizes the window afterwards except a layout change.
 inline void CalculateWindowSize(int srcWidth, int srcHeight, int& outWidth, int& outHeight) {
-    switch (g_uiState.viewMode) {
+    const auto state = ReadState();
+    switch (state.viewMode) {
         case ViewMode::BothEyes:
-            if (g_uiState.displayLayout == DisplayLayout::SideBySide) {
+            if (state.displayLayout == DisplayLayout::SideBySide) {
                 // Two eyes side by side: double the width
                 outWidth = srcWidth * 2;
                 outHeight = srcHeight;
-            } else if (g_uiState.displayLayout == DisplayLayout::OverUnder) {
+            } else if (state.displayLayout == DisplayLayout::OverUnder) {
                 // Two eyes stacked: double the height
                 outWidth = srcWidth;
                 outHeight = srcHeight * 2;
@@ -1275,14 +1300,19 @@ inline float MaxZoom() { return MaxZoom(g_previewGeom); }
 
 // The scale in force, whichever mode is on.
 inline float EffectiveScale(const PreviewGeometry& g) {
+    std::lock_guard stateLock(g_stateMutex);
     return g_uiState.fitToWindow ? FitScale(g)
                                  : (std::min)(g_uiState.zoomLevel, MaxZoom(g));
 }
-inline float EffectiveScale() { return EffectiveScale(g_previewGeom); }
+inline float EffectiveScale() {
+    std::lock_guard stateLock(g_stateMutex);
+    return EffectiveScale(g_previewGeom);
+}
 
 // Keep the image covering the window: there is nothing to pan while it is smaller than
 // the client area, and once it is larger its edges may not come inside it.
 inline void ClampPan() {
+    std::lock_guard stateLock(g_stateMutex);
     const PreviewGeometry& g = g_previewGeom;
     const float scale = EffectiveScale();
     const float maxX = (std::max)(0.0f, ((float)g.contentW * scale - (float)g.clientW) * 0.5f);
@@ -1294,6 +1324,7 @@ inline void ClampPan() {
 // Read-only, so the render path can lay out a frame off its own geometry rather than
 // through g_previewGeom, which the input handlers own.
 inline PreviewRect ComputePreviewRect(const PreviewGeometry& g) {
+    std::lock_guard stateLock(g_stateMutex);
     if (g.contentW <= 0 || g.contentH <= 0 || g.clientW <= 0 || g.clientH <= 0) {
         return { 0.0f, 0.0f, (float)(std::max)(g.clientW, 1), (float)(std::max)(g.clientH, 1) };
     }
@@ -1311,6 +1342,7 @@ inline PreviewRect ComputePreviewRect(const PreviewGeometry& g) {
 }
 
 inline PreviewRect ComputePreviewRect() {
+    std::lock_guard stateLock(g_stateMutex);
     const PreviewGeometry& g = g_previewGeom;
     if (g.contentW > 0 && g.contentH > 0 && g.clientW > 0 && g.clientH > 0) {
         if (g_uiState.fitToWindow) g_uiState.panX = g_uiState.panY = 0.0f;
@@ -1323,6 +1355,7 @@ inline PreviewRect ComputePreviewRect() {
 // area where it is. Leaving "fit to window" therefore starts from the scale the window was
 // already showing, so the first step is one notch rather than a jump.
 inline void ZoomAbout(float scale, float anchorX, float anchorY) {
+    std::lock_guard stateLock(g_stateMutex);
     const PreviewRect before = ComputePreviewRect();
     const float u = before.w > 0.0f ? (anchorX - before.x) / before.w : 0.5f;
     const float v = before.h > 0.0f ? (anchorY - before.y) / before.h : 0.5f;
@@ -1340,15 +1373,18 @@ inline void ZoomAbout(float scale, float anchorX, float anchorY) {
 
 // Zoom about the middle of the window, for the menu items and the keyboard.
 inline void SetZoom(float scale) {
+    std::lock_guard stateLock(g_stateMutex);
     ZoomAbout(scale, (float)g_previewGeom.clientW * 0.5f, (float)g_previewGeom.clientH * 0.5f);
 }
 
 // Steps scale rather than add, so a notch feels the same at 25% as it does at 400%.
 inline void ZoomBy(float factor) {
+    std::lock_guard stateLock(g_stateMutex);
     SetZoom(EffectiveScale() * factor);
 }
 
 inline void SetFitToWindow() {
+    std::lock_guard stateLock(g_stateMutex);
     g_uiState.fitToWindow = true;
     g_uiState.panX = g_uiState.panY = 0.0f;
 }
@@ -1360,9 +1396,11 @@ inline bool HandleMenuCommand(HWND hwnd, WPARAM wParam,
     std::function<void()> resetViewCallback = nullptr,
     std::function<void(int)> settingsChangedCallback = nullptr) {
 
+    std::unique_lock stateLock(g_stateMutex);
     int cmd = LOWORD(wParam);
     bool needsResize = false;
     bool settingsChanged = false;
+    bool invalidate = false;
 
     switch (cmd) {
         // View modes
@@ -1501,15 +1539,18 @@ inline bool HandleMenuCommand(HWND hwnd, WPARAM wParam,
 
         // Tools
         case ID_TOOLS_SCREENSHOT:
+            stateLock.unlock();
             if (screenshotCallback) screenshotCallback();
             return true;
 
         case ID_TOOLS_RESET_VIEW:
+            stateLock.unlock();
             if (resetViewCallback) resetViewCallback();
             return true;
 
         case ID_TOOLS_TOGGLE_STATS: {
             g_uiState.showStats = !g_uiState.showStats;
+            stateLock.unlock();
             SaveSettings();
             HMENU menuT = GetMenu(hwnd);
             if (menuT) UpdateMenuState(menuT);
@@ -1518,10 +1559,12 @@ inline bool HandleMenuCommand(HWND hwnd, WPARAM wParam,
 
         // Help
         case ID_HELP_CONTROLS:
+            stateLock.unlock();
             ShowControlsDialog(hwnd);
             return true;
 
         case ID_HELP_ABOUT:
+            stateLock.unlock();
             ShowAboutDialog(hwnd);
             return true;
 
@@ -1550,7 +1593,7 @@ inline bool HandleMenuCommand(HWND hwnd, WPARAM wParam,
             if (IsPreviewRateCommand(cmd)) {
                 g_uiState.previewFps = kPreviewRatePresets[cmd - ID_PREVIEW_RATE_FIRST].fps;
                 // The client area just changed hands between the frame path and WM_PAINT.
-                InvalidateRect(hwnd, nullptr, TRUE);
+                invalidate = true;
                 break;
             }
             if (IsRenderResolutionCommand(cmd)) {
@@ -1569,6 +1612,8 @@ inline bool HandleMenuCommand(HWND hwnd, WPARAM wParam,
             break;
     }
 
+    stateLock.unlock();
+    if (invalidate) InvalidateRect(hwnd, nullptr, TRUE);
     if (needsResize && resizeCallback) {
         resizeCallback();
     }
@@ -1697,10 +1742,11 @@ struct StatsInfo {
 // Briefly-shown "Screenshot saved" notice. Set by the capture path; the
 // title-bar updater displays it for a few seconds, then it expires.
 inline std::wstring g_lastScreenshotPath;
-inline DWORD        g_lastScreenshotTickMs = 0;
+inline std::atomic<DWORD> g_lastScreenshotTickMs{0};
 constexpr DWORD     kScreenshotNoticeMs = 4000;
 
 inline void NotifyScreenshotSaved(const std::wstring& path) {
+    std::lock_guard lock(g_stateMutex);
     g_lastScreenshotPath = path;
     g_lastScreenshotTickMs = GetTickCount();
 }
@@ -1709,18 +1755,19 @@ inline void NotifyScreenshotSaved(const std::wstring& path) {
 // "Show Statistics" is on, the title gains a stats suffix. A recent screenshot
 // notice (within kScreenshotNoticeMs) is prepended.
 inline void UpdateWindowTitle(HWND hwnd, const StatsInfo* stats = nullptr) {
+    const auto state = ReadState();
     wchar_t title[768];
 
     const wchar_t* viewModeStr = L"Both Eyes";
-    if (g_uiState.viewMode == ViewMode::LeftEyeOnly) viewModeStr = L"Left Eye";
-    else if (g_uiState.viewMode == ViewMode::RightEyeOnly) viewModeStr = L"Right Eye";
+    if (state.viewMode == ViewMode::LeftEyeOnly) viewModeStr = L"Left Eye";
+    else if (state.viewMode == ViewMode::RightEyeOnly) viewModeStr = L"Right Eye";
 
     // Fit is resolution-independent, so there is no percentage to show for it.
     wchar_t zoomStr[32];
-    if (g_uiState.fitToWindow) {
+    if (state.fitToWindow) {
         swprintf_s(zoomStr, L"Fit");
     } else {
-        swprintf_s(zoomStr, L"%d%%", (int)(g_uiState.zoomLevel * 100.0f + 0.5f));
+        swprintf_s(zoomStr, L"%d%%", (int)(state.zoomLevel * 100.0f + 0.5f));
     }
 
     uint32_t renderW = 0, renderH = 0;
@@ -1740,29 +1787,33 @@ inline void UpdateWindowTitle(HWND hwnd, const StatsInfo* stats = nullptr) {
     }
 
     wchar_t statsSuffix[256] = L"";
-    if (g_uiState.showStats && stats) {
+    if (state.showStats && stats) {
         swprintf_s(statsSuffix,
             L"  |  XR p50 %.1f ms p95 %.1f ms (%u)  Src %dx%d  Win %dx%d  Spd %.2g m/s  Head (%.2f,%.2f,%.2f) Yaw %.0f° Pitch %.0f°",
             stats->p50FrameMs, stats->p95FrameMs, stats->projectionTimingSamples,
             stats->sourceW, stats->sourceH, stats->clientW, stats->clientH,
-            g_uiState.moveSpeed,
+            state.moveSpeed,
             stats->headX, stats->headY, stats->headZ,
             stats->yawDeg, stats->pitchDeg);
     }
 
     // Optional one-shot "Screenshot saved" notice
-    bool showNotice = (g_lastScreenshotTickMs != 0) &&
-                      ((GetTickCount() - g_lastScreenshotTickMs) < kScreenshotNoticeMs);
-    if (showNotice) {
-        swprintf_s(title, L"[Screenshot saved → %s]  %s%s",
-                   g_lastScreenshotPath.c_str(), base, statsSuffix);
-    } else {
-        swprintf_s(title, L"%s%s", base, statsSuffix);
-        if (g_lastScreenshotTickMs != 0) {
-            // Expired — clear so we don't keep re-evaluating.
+    std::wstring notice;
+    {
+        std::lock_guard lock(g_stateMutex);
+        if (g_lastScreenshotTickMs != 0 && GetTickCount() - g_lastScreenshotTickMs < kScreenshotNoticeMs)
+            notice = g_lastScreenshotPath;
+        else {
             g_lastScreenshotPath.clear();
             g_lastScreenshotTickMs = 0;
         }
+    }
+    const bool showNotice = !notice.empty();
+    if (showNotice) {
+        swprintf_s(title, L"[Screenshot saved → %s]  %s%s",
+                   notice.c_str(), base, statsSuffix);
+    } else {
+        swprintf_s(title, L"%s%s", base, statsSuffix);
     }
 
     SetWindowTextW(hwnd, title);
