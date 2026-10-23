@@ -1,14 +1,16 @@
 #pragma once
 
 #include "control/legacy/LegacyInput.h"
-#include "platform/linux/LinuxRuntimeStatus.h"
 #include "graphics/backends/vulkan/VulkanInstanceGraphics.h"
 #include "graphics/backends/vulkan/VulkanSessionGraphics.h"
+#include "platform/linux/LinuxRuntimeStatus.h"
 #include "runtime/NativeBindings.h"
 #include "runtime/Runtime.h"
 
+#include <filesystem>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 namespace flicker
@@ -27,7 +29,7 @@ class LegacyFileChannel;
 class LinuxInstance final
 {
   public:
-	LinuxInstance(Runtime::InstanceRef instance, const std::string& directory, ExecutionMode executionMode);
+	LinuxInstance(Runtime::InstanceRef instance, const std::filesystem::path& directory, ExecutionMode executionMode);
 	~LinuxInstance();
 	LinuxInstance(const LinuxInstance&) = delete;
 	LinuxInstance& operator=(const LinuxInstance&) = delete;
@@ -89,11 +91,11 @@ class LinuxRuntime final
 
   private:
 	void CloseControlEndpoint() noexcept;
-	const std::string& DataDirectory();
+	const std::filesystem::path& DataDirectory();
 
 	Runtime m_core;
 	std::once_flag m_dataDirectoryOnce;
-	std::string m_dataDirectory;
+	std::filesystem::path m_dataDirectory;
 	mutable std::recursive_mutex m_mutex;
 	std::mutex m_lifecycleMutex;
 	NativeBindings<XrInstance, Instance, LinuxInstance> m_instances;

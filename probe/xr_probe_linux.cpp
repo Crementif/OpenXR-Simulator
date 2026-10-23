@@ -154,6 +154,20 @@ static int runProbe()
         else CHECK(unsetenv("SIMXR_HEADSET_PROFILE") == 0);
         CHECK(failure == XR_ERROR_RUNTIME_FAILURE);
         CHECK(rejected == XR_NULL_HANDLE);
+        for (const auto* name : {"SIMXR_WIDTH", "SIMXR_HEIGHT"})
+        {
+            const auto* original = std::getenv(name);
+            const bool hadExtent = original != nullptr;
+            const std::string previousExtent = original ? original : "";
+            for (const auto* value : {"64px", "999999999999999999999999999999999999"})
+            {
+                CHECK(setenv(name, value, 1) == 0);
+                CHECK(xrCreateInstance(&ci, &rejected) == XR_ERROR_RUNTIME_FAILURE);
+                CHECK(rejected == XR_NULL_HANDLE);
+            }
+            if (hadExtent) CHECK(setenv(name, previousExtent.c_str(), 1) == 0);
+            else CHECK(unsetenv(name) == 0);
+        }
     }
     XrInstance instance = XR_NULL_HANDLE;
     XR(xrCreateInstance(&ci, &instance));

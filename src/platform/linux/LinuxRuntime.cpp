@@ -1,6 +1,7 @@
 #define XR_USE_TIMESPEC
 #define XR_USE_GRAPHICS_API_VULKAN
 #include "platform/linux/LinuxRuntime.h"
+#include "Pch.h"
 
 #include "control/ControlService.h"
 #include "control/LocalControlServer.h"
@@ -11,73 +12,82 @@
 #include "runtime/SimulationExtensions.h"
 #include "simulation/HeadsetProfiles.h"
 
-#include <algorithm>
-#include <array>
+#include <cerrno>
 #include <charconv>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <openxr/openxr_platform.h>
 #include <stdexcept>
+#include <system_error>
 #include <time.h>
 #include <unistd.h>
-#include <utility>
 
 namespace simxr
 {
-namespace
+static XrTime MonotonicTime()
 {
-XrTime MonotonicTime()
-{
-	timespec t{};
-	clock_gettime(CLOCK_MONOTONIC, &t);
-	return t.tv_sec * 1000000000LL + t.tv_nsec;
+	timespec time{};
+	if (clock_gettime(CLOCK_MONOTONIC, &time) != 0)
+		throw std::system_error(errno, std::generic_category(), "Read monotonic runtime clock");
+	if (time.tv_sec < 0 || time.tv_nsec < 0 || time.tv_nsec >= 1000000000 ||
+		time.tv_sec > (std::numeric_limits<XrTime>::max() - time.tv_nsec) / 1000000000LL)
+		throw std::overflow_error("Monotonic runtime clock exhausted");
+	return time.tv_sec * 1000000000LL + time.tv_nsec;
 }
-std::string ReadDataDirectory()
+
+static std::filesystem::path ReadDataDirectory()
 {
-	const std::string path = []
-	{
-		const char* explicitPath = std::getenv("SIMXR_DATA_DIR");
-		if (explicitPath && *explicitPath)
-			return std::string(explicitPath);
-		const char* base = std::getenv("XDG_DATA_HOME");
-		if (base && *base)
-			return std::string(base) + "/OpenXR-Simulator";
-		const char* home = std::getenv("HOME");
-		return std::string(home ? home : ".") + "/.local/share/OpenXR-Simulator";
-	}();
-	return path;
+	const char* explicitPath = std::getenv("SIMXR_DATA_DIR");
+	if (explicitPath && *explicitPath)
+		return explicitPath;
+	const char* base = std::getenv("XDG_DATA_HOME");
+	if (base && *base)
+		return std::filesystem::path(base) / "OpenXR-Simulator";
+	const char* home = std::getenv("HOME");
+	return std::filesystem::path(home ? home : ".") / ".local/share/OpenXR-Simulator";
 }
-} // namespace
+
+static std::uint32_t RenderExtent(const char* text)
+{
+	const std::string_view value(text);
+	std::int64_t extent;
+	const auto parsed = std::from_chars(value.data(), value.data() + value.size(), extent);
+	if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size())
+		throw std::invalid_argument("Invalid SIMXR_WIDTH or SIMXR_HEIGHT");
+	return static_cast<std::uint32_t>(std::clamp<std::int64_t>(extent, 16, 8192));
+}
 
 const ExtensionRegistry& LinuxRuntime::Extensions()
 {
-	static constexpr std::array<std::string_view, 4> vulkanCommands{
+	static constexpr std::array<std::string_view, 4> s_vulkanCommands{
 		"xrGetVulkanInstanceExtensionsKHR", "xrGetVulkanDeviceExtensionsKHR", "xrGetVulkanGraphicsDeviceKHR",
 		"xrGetVulkanGraphicsRequirementsKHR"};
-	static constexpr std::array<std::string_view, 4> vulkan2Commands{
+	static constexpr std::array<std::string_view, 4> s_vulkan2Commands{
 		"xrCreateVulkanInstanceKHR", "xrCreateVulkanDeviceKHR", "xrGetVulkanGraphicsDevice2KHR",
 		"xrGetVulkanGraphicsRequirements2KHR"};
-	static constexpr std::array<std::string_view, 2> timeCommands{"xrConvertTimespecTimeToTimeKHR",
-																  "xrConvertTimeToTimespecTimeKHR"};
-	static const std::vector<ExtensionDefinition> definitions = []
+	static constexpr std::array<std::string_view, 2> s_timeCommands{"xrConvertTimespecTimeToTimeKHR",
+																	"xrConvertTimeToTimespecTimeKHR"};
+	static const std::vector<ExtensionDefinition> s_definitions = []
 	{
 		std::vector<ExtensionDefinition> result{
-			{XR_KHR_VULKAN_ENABLE_EXTENSION_NAME, XR_KHR_vulkan_enable_SPEC_VERSION, vulkanCommands},
+			{XR_KHR_VULKAN_ENABLE_EXTENSION_NAME, XR_KHR_vulkan_enable_SPEC_VERSION, s_vulkanCommands},
 			{XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME, XR_KHR_composition_layer_depth_SPEC_VERSION, {}},
-			{XR_KHR_CONVERT_TIMESPEC_TIME_EXTENSION_NAME, XR_KHR_convert_timespec_time_SPEC_VERSION, timeCommands}};
+			{XR_KHR_CONVERT_TIMESPEC_TIME_EXTENSION_NAME, XR_KHR_convert_timespec_time_SPEC_VERSION, s_timeCommands}};
 		const auto simulation = SimulationExtensions({true, true});
 		result.insert(result.end(), simulation.begin(), simulation.end());
 		if (!std::getenv("SIMXR_VULKAN_V1_ONLY"))
 			result.push_back(
-				{XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME, XR_KHR_vulkan_enable2_SPEC_VERSION, vulkan2Commands});
+				{XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME, XR_KHR_vulkan_enable2_SPEC_VERSION, s_vulkan2Commands});
 		return result;
 	}();
-	static const ExtensionRegistry registry(definitions);
-	return registry;
+	static const ExtensionRegistry s_registry(s_definitions);
+	return s_registry;
 }
 
-LinuxInstance::LinuxInstance(Runtime::InstanceRef instance, const std::string& directory, ExecutionMode executionMode)
+LinuxInstance::LinuxInstance(Runtime::InstanceRef instance, const std::filesystem::path& directory,
+							 ExecutionMode executionMode)
 	: core(std::move(instance)), mode(executionMode),
 	  m_files(std::make_shared<LegacyFileChannel>(directory,
 												  std::getenv("SIMXR_SEQUENCE") ? std::getenv("SIMXR_SEQUENCE") : "")),
@@ -92,9 +102,9 @@ LinuxInstance::LinuxInstance(Runtime::InstanceRef instance, const std::string& d
 		views = ProfileViews(*profile);
 	}
 	if (const auto* value = std::getenv("SIMXR_WIDTH"))
-		views.outerWidth = std::clamp(std::atoi(value), 16, 8192);
+		views.outerWidth = RenderExtent(value);
 	if (const auto* value = std::getenv("SIMXR_HEIGHT"))
-		views.outerHeight = std::clamp(std::atoi(value), 16, 8192);
+		views.outerHeight = RenderExtent(value);
 	m_input.SetViews(views);
 }
 LinuxInstance::~LinuxInstance()
@@ -108,11 +118,11 @@ const LegacyInput& LinuxInstance::Input() const noexcept
 bool LinuxInstance::PollCommands(FrameId submitted)
 {
 	auto commands = m_files->TakeCommands();
-	static constexpr std::array kinds{LegacyInputCommand::HeadPose, LegacyInputCommand::Ipd, LegacyInputCommand::Fov,
-									  LegacyInputCommand::ControllerPose, LegacyInputCommand::ControllerHold};
-	for (std::size_t index = 0; index < kinds.size(); ++index)
+	static constexpr std::array s_kinds{LegacyInputCommand::HeadPose, LegacyInputCommand::Ipd, LegacyInputCommand::Fov,
+										LegacyInputCommand::ControllerPose, LegacyInputCommand::ControllerHold};
+	for (std::size_t index = 0; index < s_kinds.size(); ++index)
 		if (commands.input[index])
-			m_input.Apply(kinds[index], *commands.input[index]);
+			m_input.Apply(s_kinds[index], *commands.input[index]);
 	if (commands.sequence)
 		m_input.StartSequence(std::move(*commands.sequence), submitted);
 	return m_input.AdvanceSequence(submitted);
@@ -397,7 +407,7 @@ RuntimeTime LinuxRuntime::SessionTime(const SessionBinding& session)
 		return session.core->Snapshot().time;
 	return {Duration{MonotonicTime()}};
 }
-const std::string& LinuxRuntime::DataDirectory()
+const std::filesystem::path& LinuxRuntime::DataDirectory()
 {
 	std::call_once(m_dataDirectoryOnce,
 				   [this]
@@ -423,8 +433,9 @@ void LinuxRuntime::StartControlEndpoint()
 	try
 	{
 		const auto* selected = std::getenv("SIMXR_CONTROL_SOCKET");
-		const auto path = selected && *selected ? std::string(selected)
-												: DataDirectory() + "/control." + std::to_string(getpid()) + ".sock";
+		const auto path = selected && *selected
+							  ? std::string(selected)
+							  : (DataDirectory() / ("control." + std::to_string(getpid()) + ".sock")).string();
 		m_endpoint = std::make_unique<control::LocalControlServer>(*m_control, path);
 	}
 	catch (const std::exception& error)
