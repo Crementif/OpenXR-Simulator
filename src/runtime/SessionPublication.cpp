@@ -1,8 +1,7 @@
 #include "runtime/SessionPublication.h"
+#include "Pch.h"
 
-#include <algorithm>
 #include <stdexcept>
-#include <utility>
 
 namespace simxr
 {
@@ -73,8 +72,8 @@ SessionPublication::FrameBoundary::FrameBoundary(SessionPublication& owner, bool
 	m_baseline.referenceSpaces = spaces;
 }
 
-void SessionPublication::FrameBoundary::Reserve(const FramePrediction& prediction,
-												const std::function<void(const AppliedCommandSnapshot&)>& reserveHistory)
+void SessionPublication::FrameBoundary::Reserve(
+	const FramePrediction& prediction, const std::function<void(const AppliedCommandSnapshot&)>& reserveHistory)
 {
 	if (m_applied)
 		throw std::logic_error("Frame publication was already reserved");
@@ -258,7 +257,11 @@ void SessionPublication::PublishEffective(RuntimeTime time, const CommandConfigu
 
 void SessionPublication::RecordViewQuery(ViewQuerySnapshot query)
 {
-	std::erase_if(m_viewQueries, [&](const auto& previous) { return previous.displayTime == query.displayTime; });
+	std::erase_if(m_viewQueries,
+				  [&](const auto& previous)
+				  {
+					  return previous.displayTime == query.displayTime;
+				  });
 	m_viewQueries.push_back(std::move(query));
 	while (m_viewQueries.size() > 128)
 		m_viewQueries.pop_front();

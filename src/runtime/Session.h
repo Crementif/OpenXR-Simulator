@@ -16,10 +16,14 @@
 #include "simulation/ViewConfiguration.h"
 
 #include <array>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <openxr/openxr.h>
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace simxr
@@ -80,9 +84,10 @@ class Session
 	FrameImageHistory& ImageHistory();
 	VirtualDisplay& Display();
 	SnapshotStore& Captures();
-	XrResult ConfigureCapturePool(FramePool pool, bool layerViews = false, CapturePromoter promoter = {}, bool depthViews = false, bool filteredComposition = false);
+	XrResult ConfigureCapturePool(FramePool pool, bool layerViews = false, CapturePromoter promoter = {},
+								  bool depthViews = false, bool filteredComposition = false);
 	SnapshotAdmission StartImageRecording(CaptureTarget target, std::uint32_t capacity, std::uint64_t frames = 0,
-		std::span<CaptureId> captures = {});
+										  std::span<CaptureId> captures = {});
 	void StopImageRecording() noexcept;
 	ImageRecordingSnapshot ImageRecording() const;
 	CaptureId RefillImageRecording(CaptureId released);
@@ -107,7 +112,8 @@ class Session
 	// Serializes CPU-only control mutation against Begin/End/Close. The callback
 	// may access Commands/ReleaseCommandSource, but must not change lifecycle,
 	// perform I/O, wait for GPU work or reenter a generation gate.
-	bool WithCommandGeneration(SessionGeneration generation, const std::function<void()>& work, bool requireRunning = true);
+	bool WithCommandGeneration(SessionGeneration generation, const std::function<void()>& work,
+							   bool requireRunning = true);
 	void ReleaseCommandSource(CommandSource source, bool retire = false);
 	void StopPoseSequence(CommandSource source);
 	XrResult ConfigureCommands(std::uint64_t seed, std::optional<CommandConfiguration> initial = {},

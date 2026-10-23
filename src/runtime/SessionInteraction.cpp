@@ -1,8 +1,6 @@
 #include "runtime/SessionInteraction.h"
+#include "Pch.h"
 #include "runtime/Instance.h"
-
-#include <algorithm>
-#include <array>
 
 namespace simxr
 {

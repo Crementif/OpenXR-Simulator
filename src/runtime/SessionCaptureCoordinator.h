@@ -1,8 +1,10 @@
 #pragma once
 
-#include "presentation/SnapshotStore.h"
 #include "presentation/FrameImageHistory.h"
+#include "presentation/SnapshotStore.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -39,11 +41,15 @@ class SessionCaptureCoordinator
 	class SequenceCapture;
 	explicit SessionCaptureCoordinator(FrameHistory& history);
 	~SessionCaptureCoordinator();
-	XrResult Configure(FramePool&& pool, bool layerViews, CapturePromoter&& promoter, bool depthViews, bool filteredComposition);
+	XrResult Configure(FramePool&& pool, bool layerViews, CapturePromoter&& promoter, bool depthViews,
+					   bool filteredComposition);
 	FrameImageHistory::Retired Start(SessionGeneration generation);
 	XrResult EnableImageHistory();
 	bool SupportsImageHistory() const;
-	FrameImageHistory& Images() { return m_images; }
+	FrameImageHistory& Images()
+	{
+		return m_images;
+	}
 	void Stop() noexcept;
 	void Retire() noexcept;
 	SnapshotStore& Snapshots();
@@ -55,7 +61,7 @@ class SessionCaptureCoordinator
 	SequenceCapture PrepareSequenceCapture(const std::optional<SequenceCaptureIntent>& request);
 	std::pair<XrResult, std::shared_ptr<FrameReservation>> PrepareProducer(FrameKey frame, CaptureTarget target);
 	SnapshotAdmission StartImageRecording(CaptureTarget target, std::uint32_t capacity, std::uint64_t frames = 0,
-		std::span<CaptureId> captures = {});
+										  std::span<CaptureId> captures = {});
 	void StopImageRecording() noexcept;
 	ImageRecordingSnapshot ImageRecording() const;
 	CaptureId RefillImageRecording(CaptureId released);

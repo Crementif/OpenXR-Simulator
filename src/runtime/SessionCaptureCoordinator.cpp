@@ -1,9 +1,8 @@
 #include "runtime/SessionCaptureCoordinator.h"
+#include "Pch.h"
 #include "presentation/FrameScheduler.h"
 
-#include <algorithm>
 #include <stdexcept>
-#include <utility>
 
 namespace simxr
 {
@@ -29,8 +28,8 @@ SessionCaptureCoordinator::~SessionCaptureCoordinator()
 	// Release callback captures outside the lock while the store and mutex live.
 }
 
-XrResult SessionCaptureCoordinator::Configure(FramePool&& pool, bool layerViews, CapturePromoter&& promoter, bool depthViews,
-	bool filteredComposition)
+XrResult SessionCaptureCoordinator::Configure(FramePool&& pool, bool layerViews, CapturePromoter&& promoter,
+											  bool depthViews, bool filteredComposition)
 {
 	std::lock_guard lock(m_mutex);
 	if (m_running || m_pool)
@@ -97,8 +96,8 @@ SnapshotStore& SessionCaptureCoordinator::Snapshots()
 bool SessionCaptureCoordinator::SupportsLocked(CaptureTarget target) const
 {
 	return m_pool && (target == CaptureTarget{} || (m_layerViews && target.kind == CaptureKind::LayerView) ||
-		(m_depthViews && target.IsDepth()) ||
-		(m_filteredComposition && target.IsFilteredComposition() && !target.layer && !target.view));
+					  (m_depthViews && target.IsDepth()) ||
+					  (m_filteredComposition && target.IsFilteredComposition() && !target.layer && !target.view));
 }
 
 bool SessionCaptureCoordinator::Supports(CaptureTarget target) const
@@ -130,7 +129,7 @@ void SessionCaptureCoordinator::ReclaimSnapshots(std::size_t producers, std::siz
 	if (slots > m_store.Capacity() || (pool && producers > pool->Capacity()))
 		return;
 	while (m_store.Snapshot().heldSlots + slots > m_store.Capacity() ||
-		(pool && pool->InUse() + producers > pool->Capacity()))
+		   (pool && pool->InUse() + producers > pool->Capacity()))
 	{
 		if (!m_store.EvictOldest())
 			break;
@@ -178,13 +177,14 @@ CaptureBoundaryResult SessionCaptureCoordinator::ReserveBundle(std::span<const C
 	return result;
 }
 
-SessionCaptureCoordinator::SequenceCapture SessionCaptureCoordinator::PrepareSequenceCapture(
-	const std::optional<SequenceCaptureIntent>& request)
+SessionCaptureCoordinator::SequenceCapture
+SessionCaptureCoordinator::PrepareSequenceCapture(const std::optional<SequenceCaptureIntent>& request)
 {
 	return SequenceCapture(*this, request);
 }
 SessionCaptureCoordinator::SequenceCapture::SequenceCapture(SessionCaptureCoordinator& owner,
-	const std::optional<SequenceCaptureIntent>& request) : m_owner(owner)
+															const std::optional<SequenceCaptureIntent>& request)
+	: m_owner(owner)
 {
 	if (!request)
 		return;
@@ -201,7 +201,7 @@ const std::optional<SequenceCaptureRecord>& SessionCaptureCoordinator::SequenceC
 	return m_record;
 }
 void SessionCaptureCoordinator::SequenceCapture::Bind(std::shared_ptr<const FrameRecord> issued,
-	std::shared_ptr<const FrameRecord> cancelled)
+													  std::shared_ptr<const FrameRecord> cancelled)
 {
 	if (!m_record)
 		return;
@@ -228,8 +228,9 @@ void SessionCaptureCoordinator::SequenceCapture::Bind(std::shared_ptr<const Fram
 		break;
 	}
 	m_owner.m_history.Trace(FrameTraceKind::CaptureFailed, issued->key, issued->prediction.displayTime, result,
-		result == XR_ERROR_LIMIT_REACHED ? FrameDiagnosticCategory::Performance : FrameDiagnosticCategory::ApiError,
-		0, "sequence_capture_admission");
+							result == XR_ERROR_LIMIT_REACHED ? FrameDiagnosticCategory::Performance
+															 : FrameDiagnosticCategory::ApiError,
+							0, "sequence_capture_admission");
 }
 
 CaptureReservation SessionCaptureCoordinator::ReserveLocked(CaptureTarget target)
@@ -291,15 +292,16 @@ std::pair<XrResult, std::shared_ptr<FrameReservation>> SessionCaptureCoordinator
 	return {XR_SUCCESS, std::move(replacement)};
 }
 
-SnapshotAdmission SessionCaptureCoordinator::StartImageRecording(CaptureTarget target, std::uint32_t capacity, std::uint64_t frames,
-	std::span<CaptureId> captures)
+SnapshotAdmission SessionCaptureCoordinator::StartImageRecording(CaptureTarget target, std::uint32_t capacity,
+																 std::uint64_t frames, std::span<CaptureId> captures)
 {
 	std::lock_guard lock(m_mutex);
 	if (!m_running)
 		return SnapshotAdmission::Closed;
 	if (!SupportsLocked(target))
 		return SnapshotAdmission::Unsupported;
-	if (!capacity || capacity > 4 || (!captures.empty() && captures.size() != capacity) || !m_queued.empty() || !m_imageRecording.captures.empty())
+	if (!capacity || capacity > 4 || (!captures.empty() && captures.size() != capacity) || !m_queued.empty() ||
+		!m_imageRecording.captures.empty())
 		return SnapshotAdmission::Invalid;
 	m_imageRecording.target = target;
 	m_imageRecording.capacity = capacity;
@@ -404,7 +406,7 @@ void SessionCaptureCoordinator::BindIssued(std::shared_ptr<const FrameRecord> is
 		m_imageRecording.phase = ImageRecordingPhase::Overrun;
 		m_imageRecording.missed = issued->key;
 		m_history.Trace(FrameTraceKind::CaptureFailed, issued->key, issued->prediction.displayTime,
-			XR_ERROR_LIMIT_REACHED, FrameDiagnosticCategory::Performance, 0, "image_recording_overrun");
+						XR_ERROR_LIMIT_REACHED, FrameDiagnosticCategory::Performance, 0, "image_recording_overrun");
 		return;
 	}
 	if (!m_store.Bind(m_recordingQueued.front(), issued, cancelled))
@@ -590,9 +592,12 @@ void SessionCaptureCoordinator::Submission::Commit(std::shared_ptr<const FrameRe
 			}
 		}
 		if (metadata && metadata->submission && metadata->submission->layers)
-			image.quadVisible = std::any_of(metadata->submission->layers->layers.begin(),
-				metadata->submission->layers->layers.end(), [](const auto& layer)
-				{ return std::holds_alternative<QuadLayerDescription>(layer); });
+			image.quadVisible =
+				std::any_of(metadata->submission->layers->layers.begin(), metadata->submission->layers->layers.end(),
+							[](const auto& layer)
+							{
+								return std::holds_alternative<QuadLayerDescription>(layer);
+							});
 		for (const auto& captured : m_outputs)
 		{
 			if (captured.target.kind != CaptureKind::QuadLayers)
@@ -601,9 +606,13 @@ void SessionCaptureCoordinator::Submission::Commit(std::shared_ptr<const FrameRe
 			{
 				image.quadBounds = *captured.quadBounds;
 				image.quadVisible = std::any_of(image.quadBounds.begin(), image.quadBounds.end(),
-					[](const auto& rectangle) { return rectangle.extent.width > 0 && rectangle.extent.height > 0; });
+												[](const auto& rectangle)
+												{
+													return rectangle.extent.width > 0 && rectangle.extent.height > 0;
+												});
 			}
-			if (includeOutputs && std::find(m_requested.begin(), m_requested.end(), captured.target) == m_requested.end())
+			if (includeOutputs &&
+				std::find(m_requested.begin(), m_requested.end(), captured.target) == m_requested.end())
 				image.quadOutput = captured.output;
 		}
 		m_retiredImage = m_owner.m_images.Append(std::move(image));

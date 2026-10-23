@@ -7,7 +7,11 @@
 #include "simulation/SpaceSystem.h"
 
 #include <array>
+#include <cstdint>
 #include <deque>
+#include <functional>
+#include <memory>
+#include <optional>
 
 namespace simxr
 {
@@ -44,7 +48,8 @@ class SessionPublication
 		FrameBoundary(SessionPublication& owner, bool focused, const ReferenceSpaceState& spaces);
 		FrameBoundary(const FrameBoundary&) = delete;
 		FrameBoundary& operator=(const FrameBoundary&) = delete;
-		void Reserve(const FramePrediction& prediction, const std::function<void(const AppliedCommandSnapshot&)>& reserveHistory);
+		void Reserve(const FramePrediction& prediction,
+					 const std::function<void(const AppliedCommandSnapshot&)>& reserveHistory);
 		const AppliedCommandSnapshot& Applied() const;
 		std::optional<XrSessionState> StateTransition(XrSessionState current);
 		void Publish();

@@ -2,30 +2,26 @@
 #include "Pch.h"
 #include "runtime/SpaceQueries.h"
 
-#include <algorithm>
 #include <new>
 #include <stdexcept>
-#include <utility>
 
 namespace simxr
 {
-namespace
-{
-Instance& RetainedInstance(const std::shared_ptr<Instance>& instance)
+static Instance& RetainedInstance(const std::shared_ptr<Instance>& instance)
 {
 	if (!instance)
 		throw std::invalid_argument("Missing instance owner");
 	return *instance;
 }
-} // namespace
 
 Session::Session(XrSession handle, Instance& instance, std::shared_ptr<Clock> clock)
 	: m_handle(handle), m_instance(instance), m_clock(std::move(clock)), m_scheduler(m_clock),
 	  m_display(m_clock, 8, &m_history,
-		[this](FrameKey key, const FramePrediction& prediction, RuntimeTime observed)
-		{
-			m_scheduler.ObserveCompletion(key, prediction, observed);
-		}), m_captures(m_history), m_interaction(handle, instance), m_publication(instance, m_interaction.Actions()),
+				[this](FrameKey key, const FramePrediction& prediction, RuntimeTime observed)
+				{
+					m_scheduler.ObserveCompletion(key, prediction, observed);
+				}),
+	  m_captures(m_history), m_interaction(handle, instance), m_publication(instance, m_interaction.Actions()),
 	  m_spaces(
 		  handle, m_publication.Tracking(),
 		  [this](XrAction action, XrPath path, RuntimeTime time)
@@ -251,8 +247,8 @@ XrResult Session::WaitFrame(FramePrediction& prediction,
 		const auto reserveHistory = [this, &candidate](const AppliedCommandSnapshot& applied)
 		{
 			auto sequenceCapture = m_captures.PrepareSequenceCapture(applied.sequenceCapture);
-			const auto reserveCaptures =
-				[this, &sequenceCapture](std::shared_ptr<const FrameRecord> issued, std::shared_ptr<const FrameRecord> cancelled)
+			const auto reserveCaptures = [this, &sequenceCapture](std::shared_ptr<const FrameRecord> issued,
+																  std::shared_ptr<const FrameRecord> cancelled)
 			{
 				m_captures.BindIssued(issued, cancelled);
 				sequenceCapture.Bind(std::move(issued), std::move(cancelled));
@@ -584,7 +580,7 @@ FrameImageHistory& Session::ImageHistory()
 	return m_captures.Images();
 }
 XrResult Session::ConfigureCapturePool(FramePool pool, bool layerViews, CapturePromoter promoter, bool depthViews,
-	bool filteredComposition)
+									   bool filteredComposition)
 {
 	std::lock_guard lock(m_mutex);
 	if (m_state.closed)
@@ -595,7 +591,7 @@ XrResult Session::ConfigureCapturePool(FramePool pool, bool layerViews, CaptureP
 }
 
 SnapshotAdmission Session::StartImageRecording(CaptureTarget target, std::uint32_t capacity, std::uint64_t frames,
-	std::span<CaptureId> captures)
+											   std::span<CaptureId> captures)
 {
 	m_captures.Collect();
 	std::lock_guard lock(m_mutex);
@@ -747,7 +743,8 @@ CommandScheduler& Session::Commands()
 	return m_publication.Commands();
 }
 
-bool Session::WithCommandGeneration(SessionGeneration generation, const std::function<void()>& work, bool requireRunning)
+bool Session::WithCommandGeneration(SessionGeneration generation, const std::function<void()>& work,
+									bool requireRunning)
 {
 	return WithDebugGeneration(generation, work, requireRunning);
 }
@@ -830,8 +827,8 @@ XrResult Session::LocateViews(const XrViewLocateInfo& info, XrViewState* state, 
 	const RuntimeTime time{Duration{info.displayTime}};
 	auto sample = m_publication.Tracking().Sample(time).value_or(TrackingSnapshot{});
 	ViewQuerySnapshot query;
-	const auto result = simxr::LocateViews(m_spaces, m_publication.ConfigurationAt(time), sample, info, state,
-										 capacity, count, views, &m_instance.Extensions(), &query);
+	const auto result = simxr::LocateViews(m_spaces, m_publication.ConfigurationAt(time), sample, info, state, capacity,
+										   count, views, &m_instance.Extensions(), &query);
 	if (XR_SUCCEEDED(result) && capacity)
 		m_publication.RecordViewQuery(std::move(query));
 	return result;
