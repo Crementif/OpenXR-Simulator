@@ -1,7 +1,7 @@
 #pragma once
 
-#include "graphics/FrameOutput.h"
 #include "graphics/FrameGpuTiming.h"
+#include "graphics/FrameOutput.h"
 #include "graphics/FramePool.h"
 #include "graphics/backends/vulkan/VulkanExternal.h"
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
@@ -9,7 +9,10 @@
 
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <memory>
+#include <mutex>
+#include <span>
 #include <vector>
 
 namespace simxr

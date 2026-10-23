@@ -48,8 +48,8 @@ template <class Resource, std::size_t Capacity> class VulkanNativePreservation
 	};
 	static Storage& Owners()
 	{
-		static auto* owners = new Storage;
-		return *owners;
+		static auto* s_owners = new Storage;
+		return *s_owners;
 	}
 
   public:

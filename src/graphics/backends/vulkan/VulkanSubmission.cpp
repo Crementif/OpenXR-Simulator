@@ -1,9 +1,9 @@
 #include "graphics/backends/vulkan/VulkanSubmission.h"
+#include "Pch.h"
 
-#include <cstdio>
 #include <cmath>
+#include <cstdio>
 #include <limits>
-#include <utility>
 
 namespace simxr
 {
@@ -89,13 +89,12 @@ void VulkanSubmission::ObserveTiming() const noexcept
 		return;
 	std::array<std::uint64_t, 2> values{};
 	const auto result = vkGetQueryPoolResults(resources.device->binding.device, resources.timestamps, 0, 2,
-		 sizeof(values), values.data(), sizeof(values[0]), VK_QUERY_RESULT_64_BIT);
+											  sizeof(values), values.data(), sizeof(values[0]), VK_QUERY_RESULT_64_BIT);
 	if (result != VK_SUCCESS)
 		return;
 	const auto bits = resources.device->timestampBits;
 	const auto mask = bits >= 64 ? ~std::uint64_t{0} : (std::uint64_t{1} << bits) - 1;
-	const long double ns = static_cast<long double>((values[1] - values[0]) & mask) *
-		resources.device->timestampPeriod;
+	const long double ns = static_cast<long double>((values[1] - values[0]) & mask) * resources.device->timestampPeriod;
 	if (ns >= 0 && ns < static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
 		resources.timing->compositorNanoseconds.store(static_cast<std::int64_t>(ns));
 }
@@ -206,7 +205,9 @@ std::shared_ptr<VulkanImage> VulkanFrame::RetainImage() const
 }
 
 VulkanFrame::VulkanFrame(std::shared_ptr<VulkanSubmission> submission, std::span<const FrameView> views)
-	: FrameOutput(views), m_submission(std::move(submission)) {}
+	: FrameOutput(views), m_submission(std::move(submission))
+{
+}
 
 CompletionStatus VulkanFrame::PollCompletion() const noexcept
 {

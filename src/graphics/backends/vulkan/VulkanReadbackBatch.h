@@ -1,9 +1,11 @@
 #pragma once
 
-#include "graphics/FrameOutput.h"
+#include "graphics/GpuCompletion.h"
 #include "graphics/backends/vulkan/VulkanResources.h"
 
 #include <atomic>
+#include <cstdint>
+#include <memory>
 #include <mutex>
 #include <span>
 #include <vector>

@@ -1,21 +1,19 @@
 #include "graphics/backends/vulkan/VulkanReadbackBatch.h"
+#include "Pch.h"
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
 
 #include <cstdio>
 #include <cstring>
 #include <limits>
-#include <utility>
 
 namespace simxr
 {
-namespace
-{
-bool ReadbackFormat(VkFormat format)
+static bool ReadbackFormat(VkFormat format)
 {
 	return format == VK_FORMAT_R8G8B8A8_UNORM || format == VK_FORMAT_R8G8B8A8_SRGB ||
 		   format == VK_FORMAT_B8G8R8A8_UNORM || format == VK_FORMAT_B8G8R8A8_SRGB;
 }
-std::size_t ValidateRegion(const VulkanReadbackRegion& region, const std::shared_ptr<VulkanDevice>& device)
+static std::size_t ValidateRegion(const VulkanReadbackRegion& region, const std::shared_ptr<VulkanDevice>& device)
 {
 	const auto& image = region.image;
 	if (!image || image->device != device || !ReadbackFormat(image->format) ||
@@ -53,7 +51,6 @@ class ReadbackMapping
 	VkDeviceMemory m_memory;
 	void* m_data = nullptr;
 };
-} // namespace
 
 struct VulkanReadbackBatch::Native
 {
@@ -163,24 +160,25 @@ void VulkanReadbackBatch::Record(std::span<const VulkanReadbackRegion> regions)
 		{
 			auto& resolved = m_native->sources[index].resolved;
 			resolved = VulkanImage::Create(device, region.image->format, region.extent, 1,
-				VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+										   VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
 			VulkanImageBarrier(m_native->command, *resolved, VK_IMAGE_LAYOUT_UNDEFINED,
-				VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+							   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
 			VkImageResolve resolve{};
 			resolve.srcSubresource = copy.imageSubresource;
 			resolve.srcOffset = copy.imageOffset;
 			resolve.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
 			resolve.extent = copy.imageExtent;
 			vkCmdResolveImage(m_native->command, region.image->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-				resolved->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &resolve);
+							  resolved->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &resolve);
 			VulkanImageBarrier(m_native->command, *resolved, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-				VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+							   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
+							   VK_ACCESS_TRANSFER_READ_BIT);
 			sourceImage = resolved->image;
 			copy.imageSubresource.baseArrayLayer = 0;
 			copy.imageOffset = {};
 		}
 		vkCmdCopyImageToBuffer(m_native->command, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-			m_native->sources[index].buffer, 1, &copy);
+							   m_native->sources[index].buffer, 1, &copy);
 		VulkanImageBarrier(m_native->command, *region.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
 						   region.image->ApplicationLayout(), VK_ACCESS_TRANSFER_READ_BIT,
 						   VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
