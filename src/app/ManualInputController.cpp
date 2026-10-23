@@ -75,6 +75,7 @@ class ManualInputController::State
 		auto nextRead = Clock::time_point::max();
 		for (;;)
 		{
+			std::shared_ptr<WorkerConnection> retired;
 			ManualInputTarget selected;
 			std::optional<SimulationEdit> edit;
 			bool read = false;
@@ -94,7 +95,7 @@ class ManualInputController::State
 				if (bound != revision)
 				{
 					bound = revision;
-					connection.reset();
+					retired = std::move(connection);
 					current.reset();
 					waiting.reset();
 					observed = receipt = {};
@@ -122,6 +123,7 @@ class ManualInputController::State
 				}
 				refresh = false;
 			}
+			retired.reset();
 			try
 			{
 				if (!connection)
@@ -207,20 +209,21 @@ class ManualInputController::State
 			catch (const std::exception& error)
 			{
 				waiting.reset();
-				std::lock_guard lock(mutex);
-				if (bound == revision)
 				{
-					snapshot.error = error.what();
-					snapshot.posePending = false;
-					snapshot.editPending = false;
-					pose.reset();
-					edits.clear();
+					std::lock_guard lock(mutex);
+					if (bound == revision)
+					{
+						snapshot.error = error.what();
+						snapshot.posePending = false;
+						snapshot.editPending = false;
+						pose.reset();
+						edits.clear();
+						snapshot.source.reset();
+					}
+					current.reset();
 				}
-				// A rejected release must not strand an earlier press. Retiring this
-				// source invokes the runtime's disconnect release before reconnecting.
-				current.reset();
+				// Disconnect releases held inputs; retire the transport outside the UI gate.
 				connection.reset();
-				snapshot.source.reset();
 				nextRead = Clock::now() + std::chrono::milliseconds(500);
 			}
 		}
