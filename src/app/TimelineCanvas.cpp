@@ -1,6 +1,6 @@
 #include "app/TimelineCanvas.h"
 #include "app/Theme.h"
-#include "app/PreviewHistory.h"
+#include "app/render/PreviewHistory.h"
 #include "app/widgets/Icons.h"
 #include <algorithm>
 #include <cmath>

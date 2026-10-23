@@ -7,7 +7,7 @@
 #include "app/services/ManualInputController.h"
 #include "app/services/HapticFeedback.h"
 #include "app/Notices.h"
-#include "app/PreviewImages.h"
+#include "app/render/PreviewImages.h"
 #include "app/RuntimeView.h"
 
 #include <chrono>

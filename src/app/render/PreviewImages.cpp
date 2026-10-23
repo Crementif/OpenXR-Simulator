@@ -1,10 +1,9 @@
-#include "app/PreviewImages.h"
+#include "app/render/PreviewImages.h"
+#include "Pch.h"
 #include "app/UiRenderer.h"
 #include "graphics/SnapshotBudget.h"
 
-#include <algorithm>
 #include <cstdio>
-#include <utility>
 
 namespace simxr::app
 {
@@ -370,7 +369,8 @@ void PreviewImages::Poll()
 	const auto capacity = SnapshotBudget::Capacity();
 	const auto cacheLimit = capacity > 2 ? capacity - 2 : 1;
 	for (auto& image : m_images)
-		if (retained > cacheLimit && !image->exporting && image->id != m_selectedImage && !image->release && image->texture->Ready())
+		if (retained > cacheLimit && !image->exporting && image->id != m_selectedImage && !image->release &&
+			image->texture->Ready())
 		{
 			image->release = true;
 			--retained;
@@ -410,8 +410,7 @@ void PreviewImages::Poll()
 				m_requests.Release(wire::OpCode::ReleaseDelivery, tag::DeliveryId, image.delivery);
 				image.delivery = 0;
 			}
-			if (!image.exporting && (image.release || (image.live && image.texture->Ready())) &&
-				image.reader)
+			if (!image.exporting && (image.release || (image.live && image.texture->Ready())) && image.reader)
 			{
 				m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId, image.reader);
 				image.reader = 0;

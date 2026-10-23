@@ -374,6 +374,11 @@ const ImageDescription& VulkanImageConsumer::Description() const
 {
 	return m_state->description;
 }
+std::uint64_t VulkanImageConsumer::AllocatedBytes() const noexcept
+{
+	return (m_state->image ? m_state->image->allocationSize : 0) +
+		   (m_state->imported ? m_state->imported->Image()->allocationSize : 0);
+}
 const VulkanImage& VulkanImageConsumer::Image() const
 {
 	if (!m_state->image)

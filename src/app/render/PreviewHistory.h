@@ -1,12 +1,13 @@
 #pragma once
 
-#include "app/PreviewTexture.h"
-#include "app/ShellState.h"
+#include "app/render/PreviewTexture.h"
+#include "app/services/FrameIdentity.h"
 
 #include <chrono>
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace simxr::app
@@ -54,15 +55,15 @@ class PreviewHistory
 		return m_error;
 	}
 
-	struct Resources;
-
   private:
+	struct Resources;
 	struct Copy
 	{
 		VkImage source = VK_NULL_HANDLE;
 		std::uint32_t layer = 0;
 		VkExtent2D extent{};
 		std::size_t slot = 0;
+		PreviewShot previous;
 	};
 	bool Prepare(const control::ImageDescription& description);
 	void Retire();
@@ -75,8 +76,11 @@ class PreviewHistory
 	std::vector<std::size_t> m_sampled;
 	std::size_t m_next = 0;
 	std::optional<Copy> m_copy;
+	std::optional<control::ImageDescription> m_pendingDescription;
+	bool m_recorded = false;
 	std::optional<std::size_t> m_display, m_displayed;
 	FrameIdentity m_lastFrame;
+	std::uint64_t m_lastEpoch = 0;
 	std::chrono::steady_clock::time_point m_lastCapture{};
 	std::string m_error;
 };

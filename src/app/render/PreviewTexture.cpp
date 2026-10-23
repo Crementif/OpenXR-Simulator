@@ -1,20 +1,17 @@
+#include "app/render/PreviewTexture.h"
+#include "Pch.h"
 #include "graphics/SnapshotBudget.h"
-#include "app/PreviewTexture.h"
 #if defined(__linux__) || defined(_WIN32)
 #include "control/backends/vulkan/VulkanImageConsumer.h"
 #endif
 
-#include <algorithm>
-#include <array>
 #include <bit>
-#include <chrono>
 #include <cstdio>
 #include <imgui.h>
 #include <imgui_impl_vulkan.h>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
-#include <utility>
 
 namespace simxr::app
 {
@@ -92,9 +89,11 @@ struct PreviewTexture::State::Retirement
 	void Preserve(std::unique_ptr<State> texture) noexcept
 	{
 		const auto index = texture->reservation.index;
-		const auto& description = texture->description;
+
 		std::lock_guard lock(mutex);
-		preservedBytes += std::uint64_t(description.width) * description.height * description.arrayLayers * 4;
+#if defined(__linux__) || defined(_WIN32)
+		preservedBytes += texture->native ? texture->native->AllocatedBytes() : 0;
+#endif
 		preserved[index] = std::move(texture);
 	}
 };
@@ -250,8 +249,8 @@ void PreviewTexture::Draw(float width, std::optional<std::size_t> slice, ImVec4 
 {
 	if (!m_state->ready || (slice && *slice >= m_state->descriptors.size()))
 		return;
-	const auto height = width * (crop.w - crop.y) * m_state->description.height /
-						((crop.z - crop.x) * m_state->description.width);
+	const auto height =
+		width * (crop.w - crop.y) * m_state->description.height / ((crop.z - crop.x) * m_state->description.width);
 	const auto first = slice.value_or(0);
 	const auto end = slice ? first + 1 : m_state->descriptors.size();
 	for (std::size_t index = first; index < end; ++index)

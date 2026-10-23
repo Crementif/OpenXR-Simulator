@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app/PreviewImages.h"
+#include "app/render/PreviewImages.h"
 #include "app/RuntimeView.h"
 
 #include <imgui.h>

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "app/PreviewHistory.h"
-#include "app/PreviewTexture.h"
+#include "app/render/PreviewHistory.h"
+#include "app/render/PreviewTexture.h"
 #include "app/services/RuntimePanelRequests.h"
 
 #include <optional>

@@ -3,7 +3,7 @@
 #include "app/services/PilotBindings.h"
 
 #include "app/Notices.h"
-#include "app/PreviewHistory.h"
+#include "app/render/PreviewHistory.h"
 #include "app/RuntimeView.h"
 #include "app/SimulationEdits.h"
 #include "automation/Recording.h"

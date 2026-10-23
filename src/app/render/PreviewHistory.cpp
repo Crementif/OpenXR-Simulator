@@ -1,11 +1,11 @@
-#include "app/PreviewHistory.h"
+#include "app/render/PreviewHistory.h"
+#include "Pch.h"
 #include "app/UiRenderer.h"
 #if defined(__linux__) || defined(_WIN32)
 #include "graphics/backends/vulkan/VulkanDevice.h"
 #include "graphics/backends/vulkan/VulkanResources.h"
 #endif
 
-#include <algorithm>
 #include <bit>
 #include <cstdio>
 #include <imgui.h>
@@ -15,17 +15,16 @@
 
 namespace simxr::app
 {
-namespace
-{
-constexpr std::uint32_t ChunkLayers = 64, Width = 640;
-constexpr auto Interval = std::chrono::milliseconds(100);
+static constexpr std::uint32_t ChunkLayers = 64, Width = 640;
+static constexpr auto Interval = std::chrono::milliseconds(100);
 // Frames between a requested frame and the kept image shown for it.
-constexpr std::uint64_t MaximumGap = 120;
-} // namespace
+static constexpr std::uint64_t MaximumGap = 120;
 
 #if defined(__linux__) || defined(_WIN32)
 struct PreviewHistory::Resources
 {
+	struct Preserved;
+	static Preserved& PreservedRings();
 	std::unique_ptr<Resources> next;
 	std::shared_ptr<VulkanDevice> device;
 	VkFormat format = VK_FORMAT_UNDEFINED;
@@ -72,22 +71,19 @@ struct PreviewHistory::Resources
 		return bytes;
 	}
 };
-namespace
-{
 // Unknown GPU completion never justifies destruction: such rings stay for the
 // process lifetime and count against later budgets.
-struct Preserved
+struct PreviewHistory::Resources::Preserved
 {
 	std::mutex mutex;
 	std::unique_ptr<PreviewHistory::Resources> rings;
 	std::uint64_t bytes = 0;
 };
-Preserved& PreservedRings()
+PreviewHistory::Resources::Preserved& PreviewHistory::Resources::PreservedRings()
 {
 	static auto* preserved = new Preserved;
 	return *preserved;
 }
-} // namespace
 #else
 struct PreviewHistory::Resources
 {
@@ -102,7 +98,7 @@ struct PreviewHistory::Resources
 PreviewHistory::PreviewHistory(UiRenderer& renderer, std::uint64_t budget) : m_renderer(renderer), m_budget(budget)
 {
 #if defined(__linux__) || defined(_WIN32)
-	(void)PreservedRings();
+	(void)Resources::PreservedRings();
 #endif
 }
 PreviewHistory::~PreviewHistory()
@@ -127,7 +123,7 @@ PreviewHistory::~PreviewHistory()
 	if (m_retired)
 	{
 		std::fputs("Preview history completion unknown; preserving its images\n", stderr);
-		auto& preserved = PreservedRings();
+		auto& preserved = Resources::PreservedRings();
 		std::lock_guard lock(preserved.mutex);
 		while (m_retired)
 		{
@@ -169,18 +165,30 @@ void PreviewHistory::CollectRetired()
 bool PreviewHistory::Prepare(const control::ImageDescription& description)
 {
 #if defined(__linux__) || defined(_WIN32)
-	const VkExtent2D extent{std::min(Width, description.width),
-							std::max(1u, std::min(Width, description.width) * description.height / description.width)};
+	if (!description.width || !description.height || description.width > INT32_MAX || description.height > INT32_MAX)
+		throw std::invalid_argument("Preview history dimensions are invalid");
+	const auto width = std::min(Width, description.width);
+	const VkExtent2D extent{width, static_cast<std::uint32_t>(std::max<std::uint64_t>(
+									   1, std::uint64_t(width) * description.height / description.width))};
 	const auto format = static_cast<VkFormat>(description.format);
 	if (m_resources && m_resources->format == format && m_resources->extent.width == extent.width &&
 		m_resources->extent.height == extent.height)
 		return true;
+	// ImGui may already have borrowed this ring's descriptors for the current
+	// frame. Finish that submission before replacing its resources or copy plan.
+	if (m_display || !m_sampled.empty())
+	{
+		m_pendingDescription = description;
+		return false;
+	}
 	Retire();
 	CollectRetired();
 	m_shots.clear();
 	m_lastUse.clear();
 	m_sampled.clear();
 	m_next = 0;
+	m_lastFrame = {};
+	m_lastEpoch = 0;
 	m_display = m_displayed = std::nullopt;
 	const auto access = m_renderer.DeviceAccess();
 	VkFormatProperties properties;
@@ -195,7 +203,7 @@ bool PreviewHistory::Prepare(const control::ImageDescription& description)
 	}
 	std::uint64_t preserved = PreviewTexture::PreservedBytes() + Bytes();
 	{
-		auto& rings = PreservedRings();
+		auto& rings = Resources::PreservedRings();
 		std::lock_guard lock(rings.mutex);
 		preserved += rings.bytes;
 	}
@@ -233,15 +241,15 @@ bool PreviewHistory::Prepare(const control::ImageDescription& description)
 	if (!resources->descriptor)
 		throw std::runtime_error("Preview history descriptor allocation failed");
 	// A dedicated pool bounds the ring's descriptors without exhausting the UI pool.
-	VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
-										 VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
+	VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT,
+										 nullptr};
 	VkDescriptorSetLayoutCreateInfo layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
 	layout.bindingCount = 1;
 	layout.pBindings = &binding;
 	CheckVulkan(vkCreateDescriptorSetLayout(access.device, &layout, nullptr, &resources->thumbnailLayout),
 				"create thumbnail layout");
 	VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-								 static_cast<std::uint32_t>(resources->capacity)};
+								  static_cast<std::uint32_t>(resources->capacity)};
 	VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
 	pool.maxSets = poolSize.descriptorCount;
 	pool.poolSizeCount = 1;
@@ -263,8 +271,8 @@ void PreviewHistory::Offer(PreviewTexture& source, std::uint32_t layer, FrameIde
 {
 #if defined(__linux__) || defined(_WIN32)
 	const auto now = std::chrono::steady_clock::now();
-	if (m_copy || frame == m_lastFrame || now - m_lastCapture < Interval || !source.Ready() ||
-		layer >= source.Description().arrayLayers)
+	if (m_copy || (frame == m_lastFrame && epoch == m_lastEpoch) || !frame.frame || now - m_lastCapture < Interval ||
+		!source.Ready() || layer >= source.Description().arrayLayers)
 		return;
 	try
 	{
@@ -275,7 +283,8 @@ void PreviewHistory::Offer(PreviewTexture& source, std::uint32_t layer, FrameIde
 			return;
 		const auto completed = m_renderer.CompletedFrames();
 		const auto slot = m_next % resources.capacity;
-		if (m_lastUse[slot] > completed)
+		if (m_lastUse[slot] > completed || m_display == slot ||
+			std::find(m_sampled.begin(), m_sampled.end(), slot) != m_sampled.end())
 			return;
 		if (slot / ChunkLayers >= resources.chunks.size())
 		{
@@ -308,13 +317,10 @@ void PreviewHistory::Offer(PreviewTexture& source, std::uint32_t layer, FrameIde
 		const auto image = source.UseForCopy();
 		if (!image)
 			return;
-		m_copy = Copy{image, layer, {source.Description().width, source.Description().height}, slot};
+		m_copy = Copy{image, layer, {source.Description().width, source.Description().height}, slot, m_shots[slot]};
 		m_shots[slot] = {slot, frame, epoch};
 		if (m_displayed == slot)
 			m_displayed.reset();
-		++m_next;
-		m_lastFrame = frame;
-		m_lastCapture = now;
 	}
 	catch (const std::exception& error)
 	{
@@ -348,7 +354,8 @@ float PreviewHistory::Aspect() const noexcept
 void PreviewHistory::Draw(const PreviewShot& shot, float width, ImVec4 crop)
 {
 #if defined(__linux__) || defined(_WIN32)
-	if (!m_resources || shot.slot >= m_shots.size())
+	if (!m_resources || !shot.frame.frame || shot.slot >= m_shots.size() || m_shots[shot.slot].frame != shot.frame ||
+		m_shots[shot.slot].epoch != shot.epoch)
 		return;
 	m_display = shot.slot;
 	ImGui::Image(std::bit_cast<ImTextureID>(m_resources->descriptor),
@@ -362,7 +369,7 @@ void PreviewHistory::Draw(const PreviewShot& shot, float width, ImVec4 crop)
 void PreviewHistory::DrawThumbnail(const PreviewShot& shot, ImVec2 minimum, ImVec2 maximum, ImVec4 crop)
 {
 #if defined(__linux__) || defined(_WIN32)
-	if (!m_resources || shot.slot >= m_shots.size() || m_shots[shot.slot].frame != shot.frame ||
+	if (!m_resources || !shot.frame.frame || shot.slot >= m_shots.size() || m_shots[shot.slot].frame != shot.frame ||
 		m_shots[shot.slot].epoch != shot.epoch)
 		return;
 	auto& resources = *m_resources;
@@ -373,8 +380,8 @@ void PreviewHistory::DrawThumbnail(const PreviewShot& shot, ImVec2 minimum, ImVe
 		view.image = resources.chunks[shot.slot / ChunkLayers]->image;
 		view.viewType = VK_IMAGE_VIEW_TYPE_2D;
 		view.format = resources.format;
-		view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1,
-								static_cast<std::uint32_t>(shot.slot % ChunkLayers), 1};
+		view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, static_cast<std::uint32_t>(shot.slot % ChunkLayers),
+								 1};
 		if (!thumbnail.view)
 			CheckVulkan(vkCreateImageView(resources.device->binding.device, &view, nullptr, &thumbnail.view),
 						"create thumbnail view");
@@ -394,7 +401,7 @@ void PreviewHistory::DrawThumbnail(const PreviewShot& shot, ImVec2 minimum, ImVe
 	}
 	m_sampled.push_back(shot.slot);
 	ImGui::GetWindowDrawList()->AddImage(std::bit_cast<ImTextureID>(thumbnail.descriptor), minimum, maximum,
-									   {crop.x, crop.y}, {crop.z, crop.w});
+										 {crop.x, crop.y}, {crop.z, crop.w});
 #else
 	(void)shot;
 	(void)minimum;
@@ -411,14 +418,13 @@ void PreviewHistory::Record(VkCommandBuffer command)
 	const bool show = m_display && m_display != m_displayed;
 	if (!m_copy && !show)
 		return;
-	for (; resources.initialized < resources.chunks.size(); ++resources.initialized)
-		VulkanImageBarrier(command, *resources.chunks[resources.initialized], VK_IMAGE_LAYOUT_UNDEFINED,
-						   VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+	for (auto index = resources.initialized; index < resources.chunks.size(); ++index)
+		VulkanImageBarrier(command, *resources.chunks[index], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0,
+						   VK_ACCESS_TRANSFER_WRITE_BIT);
 	if (!resources.displayInitialized)
 	{
 		VulkanImageBarrier(command, *resources.display, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0,
 						   VK_ACCESS_TRANSFER_WRITE_BIT);
-		resources.displayInitialized = true;
 	}
 	// Earlier frames on this queue may still sample the display image or copy slots.
 	VkMemoryBarrier before{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
@@ -432,8 +438,7 @@ void PreviewHistory::Record(VkCommandBuffer command)
 		blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, m_copy->layer, 1};
 		blit.srcOffsets[1] = {static_cast<std::int32_t>(m_copy->extent.width),
 							  static_cast<std::int32_t>(m_copy->extent.height), 1};
-		blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, static_cast<std::uint32_t>(m_copy->slot % ChunkLayers),
-							   1};
+		blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, static_cast<std::uint32_t>(m_copy->slot % ChunkLayers), 1};
 		blit.dstOffsets[1] = {static_cast<std::int32_t>(resources.extent.width),
 							  static_cast<std::int32_t>(resources.extent.height), 1};
 		vkCmdBlitImage(command, m_copy->source, VK_IMAGE_LAYOUT_GENERAL,
@@ -445,8 +450,8 @@ void PreviewHistory::Record(VkCommandBuffer command)
 		VkMemoryBarrier written{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
 		written.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 		written.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-		vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &written,
-							 0, nullptr, 0, nullptr);
+		vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &written, 0,
+							 nullptr, 0, nullptr);
 		VkImageCopy copy{};
 		copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, static_cast<std::uint32_t>(*m_display % ChunkLayers), 1};
 		copy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
@@ -460,6 +465,7 @@ void PreviewHistory::Record(VkCommandBuffer command)
 	vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT,
 						 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &after, 0,
 						 nullptr, 0, nullptr);
+	m_recorded = true;
 #else
 	(void)command;
 #endif
@@ -474,6 +480,10 @@ void PreviewHistory::Submitted(std::uint64_t serial)
 	if (m_copy)
 	{
 		m_lastUse[m_copy->slot] = serial;
+		m_lastFrame = m_shots[m_copy->slot].frame;
+		m_lastEpoch = m_shots[m_copy->slot].epoch;
+		m_lastCapture = std::chrono::steady_clock::now();
+		++m_next;
 		m_copy.reset();
 	}
 	if (m_display)
@@ -484,6 +494,11 @@ void PreviewHistory::Submitted(std::uint64_t serial)
 	}
 #if defined(__linux__) || defined(_WIN32)
 	m_resources->lastUse = serial;
+	if (m_recorded)
+	{
+		m_resources->initialized = m_resources->chunks.size();
+		m_resources->displayInitialized = true;
+	}
 #endif
 }
 void PreviewHistory::BeginFrame()
@@ -492,9 +507,23 @@ void PreviewHistory::BeginFrame()
 	m_sampled.clear();
 	// Work offered for a frame that was never submitted is dropped with it.
 	if (m_copy)
-		m_shots[m_copy->slot] = {};
+		m_shots[m_copy->slot] = m_copy->previous;
 	m_copy.reset();
 	m_display.reset();
+	m_recorded = false;
+	if (m_pendingDescription)
+	{
+		const auto description = *m_pendingDescription;
+		m_pendingDescription.reset();
+		try
+		{
+			Prepare(description);
+		}
+		catch (const std::exception& error)
+		{
+			m_error = error.what();
+		}
+	}
 }
 std::uint64_t PreviewHistory::Bytes() const noexcept
 {

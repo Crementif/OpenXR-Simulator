@@ -32,6 +32,7 @@ class VulkanImageConsumer
 	VkSampler Sampler() const;
 	const ImageDescription& Description() const;
 	const VulkanImage& Image() const;
+	std::uint64_t AllocatedBytes() const noexcept;
 	// A failed import can acknowledge that no consumer access occurred. This
 	// signals the same offered fence on an owned queue without touching source.
 	void CancelUnused();
