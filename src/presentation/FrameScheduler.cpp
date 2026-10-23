@@ -1,10 +1,9 @@
 #include "presentation/FrameScheduler.h"
+#include "Pch.h"
 
-#include <algorithm>
 #include <limits>
 #include <new>
 #include <stdexcept>
-#include <utility>
 
 namespace simxr
 {
@@ -48,9 +47,9 @@ void FrameScheduler::Start(const FrameSchedulerConfig& config, SessionGeneration
 void FrameScheduler::ObserveCompletion(FrameKey key, const FramePrediction& prediction, RuntimeTime observed)
 {
 	std::lock_guard lock(m_mutex);
-	if (!m_state.running || m_state.paused || !m_config.automaticCadence ||
-		m_config.mode != ExecutionMode::RealTime || key.generation != m_generation ||
-		key.frame <= m_lastFeedback || key.frame != prediction.id || key.frame.value >= m_nextFrame)
+	if (!m_state.running || m_state.paused || !m_config.automaticCadence || m_config.mode != ExecutionMode::RealTime ||
+		key.generation != m_generation || key.frame <= m_lastFeedback || key.frame != prediction.id ||
+		key.frame.value >= m_nextFrame)
 		return;
 	m_lastFeedback = key.frame;
 	if (prediction.displayPeriod != m_config.period * m_state.cadence ||
@@ -59,11 +58,12 @@ void FrameScheduler::ObserveCompletion(FrameKey key, const FramePrediction& pred
 	const auto admission = prediction.displayTime.value - prediction.displayPeriod;
 	if (observed.value < admission)
 		return;
-	const bool slow = observed.value - admission > m_config.period;
+	const auto completionDelay = observed.value - admission;
+	const bool slow = completionDelay > m_config.period;
 	m_slowFrames = slow ? m_slowFrames + 1 : 0;
 	if (!slow)
 		++m_fastFrames;
-	else if (observed.value - admission > m_config.period * 2)
+	else if (completionDelay - m_config.period > m_config.period)
 		m_fastFrames = 0;
 	// Completion is observed at display ticks. At half rate, the second tick
 	// cannot distinguish slow work from polling jitter, so it is neutral.
@@ -206,9 +206,12 @@ XrResult FrameScheduler::WaitFrame(FramePrediction& prediction,
 	{
 		for (;;)
 		{
-			m_changed.wait(
-				lock,
-				[&] { return m_revision != revision || (!m_state.waited && (!m_state.paused || m_state.permits)); });
+			m_changed.wait(lock,
+						   [&]
+						   {
+							   return m_revision != revision ||
+									  (!m_state.waited && (!m_state.paused || m_state.permits));
+						   });
 			if (m_revision != revision)
 				return XR_ERROR_SESSION_NOT_RUNNING;
 			auto admission = m_nextAdmission;

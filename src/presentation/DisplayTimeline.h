@@ -6,15 +6,15 @@ namespace simxr
 {
 class DisplayTimeline
 {
-public:
+  public:
 	DisplayTimeline(RuntimeTime epoch, Duration period);
 	RuntimeTime TimeAt(DisplayTick tick) const;
 	DisplayTick TickAtOrAfter(RuntimeTime time) const;
 	Duration Period() const;
 	RuntimeTime Epoch() const;
 
-private:
+  private:
 	RuntimeTime m_epoch;
 	Duration m_period;
 };
-}
+} // namespace simxr

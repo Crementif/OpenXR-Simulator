@@ -1,6 +1,10 @@
 #include "../TestSupport.h"
 #include "presentation/FrameScheduler.h"
 
+#ifdef _WIN32
+#include "platform/windows/WindowsClock.h"
+#endif
+
 #include <atomic>
 #include <future>
 #include <iostream>
@@ -32,6 +36,21 @@ class FakeClock final : public Clock
   private:
 	std::atomic<std::int64_t> m_time{0};
 };
+
+#ifdef _WIN32
+void WindowsExpiredDeadline()
+{
+	WindowsClock clock;
+	std::condition_variable changed;
+	std::mutex mutex;
+	std::unique_lock lock(mutex);
+	clock.WaitUntil(changed, lock, HostTime::min());
+	Require(lock.owns_lock(), "Minimum Windows deadline released the caller lock");
+	const auto expired = clock.Now();
+	clock.WaitUntil(changed, lock, expired);
+	Require(lock.owns_lock(), "Expired Windows deadline released the caller lock");
+}
+#endif
 
 void HostElapsedOverflow()
 {
@@ -303,6 +322,29 @@ void PauseReservationBoundaryAndLimits()
 			"Rebase subtracted large virtual tick from host anchor and underflowed");
 }
 
+void LargeCadencePeriod()
+{
+	auto clock = std::make_shared<FakeClock>();
+	FrameScheduler scheduler(clock);
+	FrameSchedulerConfig config;
+	config.epoch = {1ns};
+	config.period = Duration{std::numeric_limits<std::int64_t>::max() / 2 + 1};
+	config.automaticCadence = true;
+	scheduler.Start(config, {7});
+	FramePrediction prediction, submitted;
+	Require(scheduler.WaitFrame(prediction) == XR_SUCCESS && scheduler.BeginFrame() == XR_SUCCESS &&
+				scheduler.EndFrame(submitted) == XR_SUCCESS && prediction.displayPeriod == config.period,
+			"Representable large-period frame was rejected");
+	scheduler.ObserveCompletion({{7}, prediction.id}, prediction, {prediction.displayTime.value + 1ns});
+	Require(scheduler.Snapshot().cadence == 1, "Single large-period completion changed cadence");
+	clock->Advance(config.period);
+	FramePrediction untouched{{77}};
+	Require(scheduler.WaitFrame(untouched) == XR_ERROR_RUNTIME_FAILURE && untouched.id == FrameId{77} &&
+				!scheduler.Snapshot().waitPending && !scheduler.Snapshot().waited &&
+				scheduler.Snapshot().nextAdmission == DisplayTick{1},
+			"Exhausted large-period timeline fabricated admission or changed output");
+}
+
 void AutomaticCadence()
 {
 	auto clock = std::make_shared<FakeClock>();
@@ -368,6 +410,10 @@ void AutomaticCadence()
 
 int main()
 {
+#ifdef _WIN32
+	WindowsExpiredDeadline();
+#endif
+	LargeCadencePeriod();
 	AutomaticCadence();
 	HostElapsedOverflow();
 	ManualAdmission();

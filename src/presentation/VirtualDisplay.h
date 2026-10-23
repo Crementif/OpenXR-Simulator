@@ -6,10 +6,13 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <cstddef>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <thread>
+#include <vector>
 
 namespace simxr
 {

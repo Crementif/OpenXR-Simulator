@@ -1,4 +1,5 @@
 #include "presentation/DisplayTimeline.h"
+#include "Pch.h"
 
 #include <limits>
 #include <stdexcept>
@@ -13,7 +14,7 @@ DisplayTimeline::DisplayTimeline(RuntimeTime epoch, Duration period) : m_epoch(e
 
 RuntimeTime DisplayTimeline::TimeAt(DisplayTick tick) const
 {
-	auto available = std::numeric_limits<std::int64_t>::max() - m_epoch.value.count();
+	const auto available = std::numeric_limits<std::int64_t>::max() - m_epoch.value.count();
 	if (tick.value > static_cast<std::uint64_t>(available / m_period.count()))
 		throw std::overflow_error("Display timeline exhausted");
 	return {m_epoch.value + m_period * tick.value};
@@ -23,8 +24,8 @@ DisplayTick DisplayTimeline::TickAtOrAfter(RuntimeTime time) const
 {
 	if (time <= m_epoch)
 		return {};
-	auto elapsed = (time.value - m_epoch.value).count();
-	auto ticks = elapsed / m_period.count();
+	const auto elapsed = (time.value - m_epoch.value).count();
+	const auto ticks = elapsed / m_period.count();
 	return {static_cast<std::uint64_t>(ticks + (elapsed % m_period.count() != 0))};
 }
 
@@ -37,4 +38,4 @@ RuntimeTime DisplayTimeline::Epoch() const
 {
 	return m_epoch;
 }
-}
+} // namespace simxr

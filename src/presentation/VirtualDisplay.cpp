@@ -1,9 +1,9 @@
 #include "presentation/VirtualDisplay.h"
+#include "Pch.h"
 
 #include <limits>
 #include <new>
 #include <stdexcept>
-#include <utility>
 
 namespace simxr
 {
@@ -51,24 +51,23 @@ std::optional<PresentationTick> VirtualDisplay::AdvanceTick(RuntimeTime time,
 {
 	if (m_policy == PresentationPolicy::Repeat)
 		return m_controller.Advance(time, generation);
-	return m_controller.Advance(
-		time, generation,
-		[this](const PresentationTick& baseline)
+	const auto reproject = [this](const PresentationTick& baseline)
+	{
+		PoseSample head;
+		try
 		{
-			PoseSample head;
-			try
-			{
-				if (baseline.output && baseline.reprojection.source)
-					head = m_sampleHead(baseline.time);
-			}
-			catch (const std::bad_alloc&)
-			{
-				auto fallback = m_reprojection.Process(baseline, {});
-				fallback.result = XR_ERROR_OUT_OF_MEMORY;
-				return fallback;
-			}
-			return m_reprojection.Process(baseline, head);
-		});
+			if (baseline.output && baseline.reprojection.source)
+				head = m_sampleHead(baseline.time);
+		}
+		catch (const std::bad_alloc&)
+		{
+			auto fallback = m_reprojection.Process(baseline, {});
+			fallback.result = XR_ERROR_OUT_OF_MEMORY;
+			return fallback;
+		}
+		return m_reprojection.Process(baseline, head);
+	};
+	return m_controller.Advance(time, generation, reproject);
 }
 
 void VirtualDisplay::Start(SessionGeneration generation, const DisplayTimeline& timeline, ExecutionMode mode,
@@ -91,7 +90,7 @@ void VirtualDisplay::Start(SessionGeneration generation, const DisplayTimeline& 
 	try
 	{
 		if (mode == ExecutionMode::RealTime)
-			m_worker = std::thread([this] { Run(); });
+			m_worker = std::thread(&VirtualDisplay::Run, this);
 	}
 	catch (...)
 	{
@@ -177,7 +176,7 @@ bool VirtualDisplay::Resume(HostTime hostAnchor, DisplayTick boundary)
 	try
 	{
 		if (m_mode == ExecutionMode::RealTime)
-			m_worker = std::thread([this] { Run(); });
+			m_worker = std::thread(&VirtualDisplay::Run, this);
 	}
 	catch (...)
 	{

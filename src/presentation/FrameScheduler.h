@@ -61,7 +61,7 @@ class FrameScheduler
 	// An optional deferred publication lock is acquired after pacing, outside the
 	// scheduler mutex, and remains owned on return for the caller's publication.
 	XrResult WaitFrame(FramePrediction& prediction, const std::function<void(const FramePrediction&)>& reserve = {},
-		std::unique_lock<std::mutex>* publication = nullptr);
+					   std::unique_lock<std::mutex>* publication = nullptr);
 	XrResult BeginFrame();
 	XrResult EndFrame(FramePrediction& prediction);
 	FramePipelineState Snapshot() const;

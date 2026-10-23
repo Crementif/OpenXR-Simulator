@@ -8,7 +8,7 @@ namespace simxr
 {
 class WindowsClock final : public Clock
 {
-public:
+  public:
 	WindowsClock();
 	~WindowsClock() override;
 	HostTime Now() const override;
@@ -16,8 +16,8 @@ public:
 	void Wake() override;
 	std::shared_ptr<Clock> IndependentWaiter() const override;
 
-private:
+  private:
 	struct State;
 	std::unique_ptr<State> m_state;
 };
-}
+} // namespace simxr

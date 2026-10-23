@@ -1,6 +1,6 @@
 #include "platform/windows/WindowsClock.h"
+#include "Pch.h"
 
-#include <chrono>
 #include <stdexcept>
 #include <windows.h>
 
@@ -20,9 +20,7 @@ struct WindowsClock::State
 	}
 };
 
-WindowsClock::WindowsClock() : m_state(std::make_unique<State>())
-{
-}
+WindowsClock::WindowsClock() : m_state(std::make_unique<State>()) {}
 
 WindowsClock::~WindowsClock() = default;
 
@@ -33,9 +31,10 @@ HostTime WindowsClock::Now() const
 
 void WindowsClock::WaitUntil(std::condition_variable& changed, std::unique_lock<std::mutex>& lock, HostTime deadline)
 {
-	auto remaining = deadline - Now();
-	if (remaining <= HostTime::duration::zero())
+	const auto now = Now();
+	if (deadline <= now)
 		return;
+	const auto remaining = HostTimeDifference(deadline, now);
 	using TimerDuration = std::chrono::duration<LONGLONG, std::ratio<1, 10000000>>;
 	LARGE_INTEGER due{};
 	due.QuadPart = -std::chrono::ceil<TimerDuration>(remaining).count();
@@ -46,7 +45,7 @@ void WindowsClock::WaitUntil(std::condition_variable& changed, std::unique_lock<
 	}
 	HANDLE handles[]{m_state->wake, m_state->timer};
 	lock.unlock();
-	auto result = WaitForMultipleObjects(2, handles, FALSE, INFINITE);
+	const auto result = WaitForMultipleObjects(2, handles, FALSE, INFINITE);
 	lock.lock();
 	if (result == WAIT_FAILED)
 		throw std::runtime_error("Frame timer wait failed");
@@ -62,4 +61,4 @@ std::shared_ptr<Clock> WindowsClock::IndependentWaiter() const
 {
 	return std::make_shared<WindowsClock>();
 }
-}
+} // namespace simxr
