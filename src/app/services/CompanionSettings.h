@@ -1,5 +1,5 @@
 #pragma once
-#include "app/PilotBindings.h"
+#include "app/services/PilotBindings.h"
 #include "app/services/LaunchTypes.h"
 #include "graphics/SnapshotBudget.h"
 

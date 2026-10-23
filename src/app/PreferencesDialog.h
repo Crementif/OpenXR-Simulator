@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-#include "app/CompanionSettings.h"
+#include "app/services/CompanionSettings.h"
 
 namespace simxr::app
 {

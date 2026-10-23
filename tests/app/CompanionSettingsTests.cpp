@@ -1,5 +1,5 @@
 #include "../TestSupport.h"
-#include "app/CompanionSettings.h"
+#include "app/services/CompanionSettings.h"
 #include "app/services/ProcessLauncher.h"
 #include "app/services/ProcessSupervisor.h"
 #include "simulation/HeadsetProfiles.h"
@@ -74,7 +74,7 @@ void Profiles()
 void Persistence()
 {
 	Directory directory;
-	const auto file = directory.path / "nested/companion.settings";
+	const auto file = directory.path / u8"nested 日本語/companion.settings";
 	Require(LoadSettings(file) == CompanionSettings{}, "Missing config has defaults");
 	CompanionSettings settings;
 	settings.scale = 1.375f;
@@ -155,6 +155,25 @@ void Persistence()
 	settings.scale = 2;
 	SaveSettings(file, settings);
 	Require(LoadSettings(file) == settings, "Atomic replacement updates previous settings");
+	{
+		Directory failed;
+		const auto destination = failed.path / u8"保存.settings";
+		std::filesystem::create_directory(destination);
+		Reject(
+			[&]
+			{
+				SaveSettings(destination, settings);
+			});
+		Require(std::filesystem::is_directory(destination) && std::filesystem::is_empty(destination),
+			"Failed replacement preserves the destination");
+		std::size_t entries = 0;
+		for (const auto& entry : std::filesystem::directory_iterator(failed.path))
+		{
+			Require(entry.path() == destination, "Failed replacement removes its temporary file");
+			++entries;
+		}
+		Require(entries == 1, "Failed replacement preserves only its destination");
+	}
 	std::ofstream(file, std::ios::binary | std::ios::app).put('x');
 	Reject(
 		[&]

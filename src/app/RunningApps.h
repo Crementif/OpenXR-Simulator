@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app/CompanionSettings.h"
+#include "app/services/CompanionSettings.h"
 
 #include <chrono>
 #include <cstdint>

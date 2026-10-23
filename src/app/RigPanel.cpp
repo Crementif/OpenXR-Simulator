@@ -3,7 +3,7 @@
 #include "app/widgets/Controls.h"
 #include "app/services/LaunchAttachment.h"
 #include "app/RuntimePanels.h"
-#include "app/Utf8Path.h"
+#include "app/services/Utf8Path.h"
 #include "app/WorkerConnection.h"
 #ifdef SIMXR_COMPANION_AUTOMATION
 #include "automation/RigRunner.h"

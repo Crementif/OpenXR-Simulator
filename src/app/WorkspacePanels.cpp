@@ -8,7 +8,7 @@
 #include "app/RuntimeConnection.h"
 #include "app/RuntimePanels.h"
 #include "app/TimelinePanel.h"
-#include "app/Utf8Path.h"
+#include "app/services/Utf8Path.h"
 #ifdef SIMXR_COMPANION_AUTOMATION
 #include "app/Library.h"
 #include "app/RigPanel.h"

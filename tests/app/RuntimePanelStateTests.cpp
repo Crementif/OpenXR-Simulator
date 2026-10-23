@@ -4,7 +4,7 @@
 #include "app/InspectionWorkspace.h"
 #include "graphics/SnapshotBudget.h"
 #include "graphics/ColorPixels.h"
-#include "app/Utf8Path.h"
+#include "app/services/Utf8Path.h"
 
 #include <filesystem>
 #include <fstream>

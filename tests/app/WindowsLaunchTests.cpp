@@ -1,5 +1,5 @@
 #include "../TestSupport.h"
-#include "app/CompanionSettings.h"
+#include "app/services/CompanionSettings.h"
 #include "app/services/ProcessLauncher.h"
 #include "app/services/ProcessSupervisor.h"
 #include "app/RuntimeEndpoints.h"

@@ -1,0 +1,58 @@
+#include "Pch.h"
+#include "app/platform/SettingsStorage.h"
+#include "app/services/CompanionSettings.h"
+
+#include <cerrno>
+#include <cstdlib>
+#include <stdexcept>
+#include <system_error>
+#include <unistd.h>
+
+namespace simxr::app
+{
+static std::filesystem::path Absolute(const char* value)
+{
+	std::filesystem::path path(value);
+	if (!path.is_absolute())
+		throw std::runtime_error("Companion configuration path must be absolute");
+	return path;
+}
+std::filesystem::path CompanionSettingsPath()
+{
+	if (const auto path = std::getenv("SIMXR_COMPANION_SETTINGS"); path && *path)
+		return Absolute(path);
+	if (const auto path = std::getenv("XDG_CONFIG_HOME"); path && *path)
+		return Absolute(path) / "OpenXR-Simulator/companion.settings";
+	if (const auto path = std::getenv("HOME"); path && *path)
+		return Absolute(path) / ".config/OpenXR-Simulator/companion.settings";
+	throw std::runtime_error("No absolute companion configuration directory is available");
+}
+std::filesystem::path CreateSettingsTemporaryFile(const std::filesystem::path& destination)
+{
+	auto pattern = destination.native() + ".XXXXXX";
+	const int descriptor = ::mkstemp(pattern.data());
+	if (descriptor < 0)
+		throw std::system_error(errno, std::generic_category(), "Cannot create private companion settings temporary file");
+	const int closed = ::close(descriptor);
+	const int closeError = errno;
+	try
+	{
+		if (closed != 0)
+			throw std::system_error(closeError, std::generic_category(), "Cannot close companion settings temporary file");
+		return std::filesystem::path(pattern);
+	}
+	catch (...)
+	{
+		::unlink(pattern.c_str());
+		throw;
+	}
+}
+void ReplaceSettingsFile(const std::filesystem::path& temporary, const std::filesystem::path& destination)
+{
+	std::filesystem::rename(temporary, destination);
+}
+bool CanExecuteFile(const std::filesystem::path& path)
+{
+	return ::access(path.c_str(), X_OK) == 0;
+}
+}

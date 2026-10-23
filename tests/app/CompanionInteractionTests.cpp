@@ -18,7 +18,7 @@
 #include "app/SpatialMath.h"
 #include "app/UiRenderer.h"
 #include "app/Window.h"
-#include "app/Utf8Path.h"
+#include "app/services/Utf8Path.h"
 #include "app/WorkspacePanels.h"
 #include "control/ControlSchema.h"
 #include "control/SimulationControl.h"

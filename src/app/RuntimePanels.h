@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app/PilotBindings.h"
+#include "app/services/PilotBindings.h"
 
 #include "app/Notices.h"
 #include "app/PreviewHistory.h"

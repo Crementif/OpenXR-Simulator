@@ -1,7 +1,7 @@
 #include "app/RecordingPanel.h"
-#include "app/CompanionSettings.h"
+#include "app/services/CompanionSettings.h"
 #include "app/Theme.h"
-#include "app/Utf8Path.h"
+#include "app/services/Utf8Path.h"
 
 #include <cstdio>
 #include <ctime>

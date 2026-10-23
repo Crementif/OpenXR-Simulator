@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <cstddef>
 #include <string>
 
 namespace simxr::app
@@ -71,19 +72,9 @@ struct PilotBinding
 	unsigned modifiers = 0; // Ctrl=1, Shift=2, Alt=4, Super=8.
 	bool operator==(const PilotBinding&) const = default;
 };
-inline std::string PilotBindingLabel(const PilotBinding& binding)
-{
-	return (binding.modifiers & 1 ? std::string{"Ctrl+"} : std::string{}) + (binding.modifiers & 2 ? "Shift+" : "") +
-		   (binding.modifiers & 4 ? "Alt+" : "") + (binding.modifiers & 8 ? "Super+" : "") + binding.key;
-}
+std::string PilotBindingLabel(const PilotBinding& binding);
 using PilotBindings = std::array<PilotBinding, static_cast<std::size_t>(PilotAction::Count)>;
-inline PilotBindings DefaultPilotBindings()
-{
-	return {{{"MouseRight"}, {"W"},		   {"S"},		{"A"},		 {"D"},			{"Q"},		   {"E"},
-			 {"LeftShift"},	 {"LeftCtrl"}, {"LeftAlt"}, {"Z"},		 {"X"},			{"MouseLeft"}, {"MouseMiddle"},
-			 {"R"},			 {"T"},		   {"G"},		{"UpArrow"}, {"DownArrow"}, {"LeftArrow"}, {"RightArrow"},
-			 {"C"},			 {"Tab"},	   {"1"},		{"2"},		 {"3"},			{"0"},		   {"Escape"}}};
-}
+PilotBindings DefaultPilotBindings();
 struct GamepadBindings
 {
 	// SDL's stable mapping names, independent of the controller's hardware layout.

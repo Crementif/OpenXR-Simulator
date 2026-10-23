@@ -1,5 +1,5 @@
 #pragma once
-#include "app/PilotBindings.h"
+#include "app/services/PilotBindings.h"
 #include "app/PlayerRig.h"
 #include "app/Window.h"
 #include <imgui.h>

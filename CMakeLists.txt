@@ -109,7 +109,8 @@ simxr_configure_target(simxr_recording)
 target_link_libraries(simxr_recording PUBLIC simxr_control)
 
 add_library(simxr_app_settings STATIC
-    src/app/CompanionSettings.cpp
+    src/app/services/CompanionSettings.cpp
+    src/app/services/PilotBindings.cpp
     src/app/services/LaunchTypes.cpp
     src/app/services/ProcessLauncher.cpp
     src/app/services/ProcessSupervisor.cpp)
@@ -119,6 +120,11 @@ elseif(WIN32)
     target_sources(simxr_app_settings PRIVATE src/app/platform/windows/ChildProcess.cpp)
 else()
     target_sources(simxr_app_settings PRIVATE src/app/platform/ChildProcess.cpp)
+endif()
+if(WIN32)
+    target_sources(simxr_app_settings PRIVATE src/app/platform/windows/SettingsStorage.cpp)
+else()
+    target_sources(simxr_app_settings PRIVATE src/app/platform/SettingsStorage.cpp)
 endif()
 simxr_configure_target(simxr_app_settings)
 target_include_directories(simxr_app_settings PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")

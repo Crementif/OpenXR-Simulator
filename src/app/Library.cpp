@@ -1,9 +1,9 @@
 #include "app/Library.h"
-#include "app/CompanionSettings.h"
+#include "app/services/CompanionSettings.h"
 #include "app/RecordingController.h"
 #include "app/RuntimePanels.h"
 #include "app/Theme.h"
-#include "app/Utf8Path.h"
+#include "app/services/Utf8Path.h"
 #include "app/widgets/Controls.h"
 
 #include <algorithm>

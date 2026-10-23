@@ -1,71 +1,63 @@
 #include "Pch.h"
-#include "app/CompanionSettings.h"
-#include "app/Utf8Path.h"
-#include "app/WindowsLaunch.h"
+#include "app/services/CompanionSettings.h"
+#include "app/services/Utf8Path.h"
+#include "app/platform/SettingsStorage.h"
 
-#include <algorithm>
-#include <array>
-#include <chrono>
 #include <cmath>
-#include <cstdint>
-#include <cstdlib>
 #include <fstream>
-#include <iterator>
 #include <set>
 #include <stdexcept>
-#include <string_view>
-#ifdef __linux__
-#include <fcntl.h>
-#include <unistd.h>
-#elif defined(_WIN32)
-#include <windows.h>
-#endif
 
 namespace simxr::app
 {
-namespace
+static constexpr std::string_view s_magic = "SIMXR-COMPANION\x01";
+static constexpr std::size_t s_maxFile = 8 * 1024 * 1024;
+static constexpr std::size_t s_maxText = 1024 * 1024;
+static void TextValid(const std::string& text)
 {
-constexpr std::string_view Magic = "SIMXR-COMPANION\x01";
-constexpr std::size_t MaxFile = 8 * 1024 * 1024;
-constexpr std::size_t MaxText = 1024 * 1024;
-void TextValid(const std::string& text)
-{
-	if (text.size() > MaxText || text.find('\0') != std::string::npos)
+	if (text.size() > s_maxText || text.find('\0') != std::string::npos)
 		throw std::invalid_argument("Settings text exceeds its bound or contains NUL");
 }
-void Put(std::string& bytes, std::uint32_t number)
+static void Put(std::string& bytes, std::uint32_t number)
 {
 	for (unsigned shift = 0; shift < 32; shift += 8)
 		bytes.push_back(static_cast<char>(number >> shift));
 }
-void Put(std::string& bytes, const std::string& text)
+static void Put(std::string& bytes, const std::string& text)
 {
 	TextValid(text);
-	if (bytes.size() + 4 + text.size() > MaxFile)
+	if (bytes.size() + 4 + text.size() > s_maxFile)
 		throw std::invalid_argument("Companion settings exceed the file budget");
 	Put(bytes, static_cast<std::uint32_t>(text.size()));
 	bytes += text;
 }
-struct Reader
+class SettingsReader
 {
-	std::string_view bytes;
+  public:
+	explicit SettingsReader(std::string_view bytes) : m_bytes(bytes)
+	{
+	}
+	bool Empty() const noexcept
+	{
+		return m_bytes.empty();
+	}
 	std::uint32_t Number()
 	{
-		if (bytes.size() < 4)
+		if (m_bytes.size() < 4)
 			throw std::runtime_error("Truncated companion settings");
 		std::uint32_t value = 0;
 		for (unsigned index = 0; index < 4; ++index)
-			value |= static_cast<std::uint32_t>(static_cast<unsigned char>(bytes[index])) << (index * 8);
-		bytes.remove_prefix(4);
+			value |= static_cast<std::uint32_t>(static_cast<unsigned char>(m_bytes[index])) << (index * 8);
+		m_bytes.remove_prefix(4);
 		return value;
 	}
 	std::string Text()
 	{
 		const auto size = Number();
-		if (size > MaxText || bytes.size() < size)
+		if (size > s_maxText || m_bytes.size() < size)
 			throw std::runtime_error("Invalid companion settings text length");
-		std::string result(bytes.substr(0, size));
-		bytes.remove_prefix(size);
+		std::string result(m_bytes.substr(0, size));
+		m_bytes.remove_prefix(size);
 		TextValid(result);
 		return result;
 	}
@@ -76,8 +68,11 @@ struct Reader
 			throw std::runtime_error("Companion settings table exceeds its bound");
 		return count;
 	}
+
+  private:
+	std::string_view m_bytes;
 };
-void PutProfile(std::string& bytes, const LaunchProfile& profile)
+static void PutProfile(std::string& bytes, const LaunchProfile& profile)
 {
 	Put(bytes, profile.name);
 	Put(bytes, profile.executable);
@@ -95,7 +90,7 @@ void PutProfile(std::string& bytes, const LaunchProfile& profile)
 		Put(bytes, value);
 	}
 }
-LaunchProfile ReadProfile(Reader& reader)
+static LaunchProfile ReadProfile(SettingsReader& reader)
 {
 	LaunchProfile profile;
 	profile.name = reader.Text();
@@ -113,35 +108,6 @@ LaunchProfile ReadProfile(Reader& reader)
 		profile.environment.emplace_back(std::move(key), std::move(value));
 	}
 	return profile;
-}
-std::filesystem::path Absolute(const char* value)
-{
-	auto path = Utf8Path(value);
-	if (!path.is_absolute())
-		throw std::runtime_error("Companion configuration path must be absolute");
-	return path;
-}
-} // namespace
-std::filesystem::path CompanionSettingsPath()
-{
-#ifdef _WIN32
-	if (const auto path = windows::Environment("SIMXR_COMPANION_SETTINGS"); !path.empty())
-		return Absolute(path.c_str());
-	if (const auto path = windows::Environment("XDG_CONFIG_HOME"); !path.empty())
-		return Absolute(path.c_str()) / "OpenXR-Simulator/companion.settings";
-	if (const auto path = windows::Environment("APPDATA"); !path.empty())
-		return Absolute(path.c_str()) / "OpenXR-Simulator/companion.settings";
-	if (const auto path = windows::Environment("HOME"); !path.empty())
-		return Absolute(path.c_str()) / ".config/OpenXR-Simulator/companion.settings";
-#else
-	if (const auto path = std::getenv("SIMXR_COMPANION_SETTINGS"))
-		return Absolute(path);
-	if (const auto path = std::getenv("XDG_CONFIG_HOME"))
-		return Absolute(path) / "OpenXR-Simulator/companion.settings";
-	if (const auto path = std::getenv("HOME"))
-		return Absolute(path) / ".config/OpenXR-Simulator/companion.settings";
-#endif
-	throw std::runtime_error("No absolute companion configuration directory is available");
 }
 void ResetLayout(CompanionSettings& settings)
 {
@@ -221,10 +187,8 @@ std::string PathProblem(const std::string& path, PathKind kind)
 		return std::filesystem::is_directory(status) ? std::string{} : "Not a folder";
 	if (std::filesystem::is_directory(status))
 		return "This is a folder";
-#ifdef __linux__
-	if (kind == PathKind::Executable && ::access(path.c_str(), X_OK) != 0)
+	if (kind == PathKind::Executable && !CanExecuteFile(target))
 		return "Not executable";
-#endif
 	return {};
 }
 void RememberRecentApp(CompanionSettings& settings, LaunchProfile launch, std::int64_t lastUsed)
@@ -250,15 +214,23 @@ CompanionSettings LoadSettings(const std::filesystem::path& path)
 	if (!exists)
 		return {};
 	const auto size = std::filesystem::file_size(path, error);
-	if (error || size > MaxFile)
+	if (error || size > s_maxFile)
 		throw std::runtime_error("Cannot read companion settings size");
 	std::ifstream input(path, std::ios::binary);
+	if (!input)
+		throw std::runtime_error("Cannot open companion settings");
 	std::string bytes(static_cast<std::size_t>(size), '\0');
 	if (!input.read(bytes.data(), static_cast<std::streamsize>(bytes.size())))
 		throw std::runtime_error("Cannot read companion settings");
-	if (!std::string_view(bytes).starts_with(Magic))
+	if (input.peek() != std::char_traits<char>::eof() || input.bad())
+		throw std::runtime_error("Cannot read complete companion settings");
+	input.clear();
+	input.close();
+	if (!input)
+		throw std::runtime_error("Cannot close companion settings");
+	if (!std::string_view(bytes).starts_with(s_magic))
 		throw std::runtime_error("Unsupported companion settings version");
-	Reader reader{std::string_view(bytes).substr(Magic.size())};
+	SettingsReader reader{std::string_view(bytes).substr(s_magic.size())};
 	CompanionSettings result;
 	result.scale = static_cast<float>(reader.Number()) / 1000;
 	result.endpoint = reader.Text();
@@ -268,7 +240,7 @@ CompanionSettings LoadSettings(const std::filesystem::path& path)
 		result.profiles.push_back(ReadProfile(reader));
 	for (auto count = reader.Count(16); count; --count)
 		result.layouts.push_back({reader.Text(), reader.Text()});
-	if (!reader.bytes.empty())
+	if (!reader.Empty())
 	{
 		if (reader.Number() != 2)
 			throw std::runtime_error("Unknown shell settings version");
@@ -277,7 +249,7 @@ CompanionSettings LoadSettings(const std::filesystem::path& path)
 		result.railCollapsed = reader.Count(1) != 0;
 		result.timelineResized = reader.Count(1) != 0;
 	}
-	if (!reader.bytes.empty())
+	if (!reader.Empty())
 	{
 		if (reader.Number() != 3)
 			throw std::runtime_error("Unknown input settings version");
@@ -295,13 +267,13 @@ CompanionSettings LoadSettings(const std::filesystem::path& path)
 		result.gamepadBindings.gyroHold = reader.Text();
 		result.gamepadBindings.deadzone = reader.Number() / 1000.0f;
 	}
-	if (!reader.bytes.empty())
+	if (!reader.Empty())
 	{
 		if (reader.Number() != 4)
 			throw std::runtime_error("Unknown retention settings version");
 		result.snapshotBudgetMiB = reader.Number();
 	}
-	if (!reader.bytes.empty())
+	if (!reader.Empty())
 	{
 		if (reader.Number() != 5)
 			throw std::runtime_error("Unknown view settings version");
@@ -317,7 +289,7 @@ CompanionSettings LoadSettings(const std::filesystem::path& path)
 			result.crops.push_back(std::move(crop));
 		}
 	}
-	if (!reader.bytes.empty())
+	if (!reader.Empty())
 	{
 		if (reader.Number() != 6)
 			throw std::runtime_error("Unknown recent apps settings version");
@@ -330,7 +302,7 @@ CompanionSettings LoadSettings(const std::filesystem::path& path)
 			result.recent.push_back(std::move(recent));
 		}
 	}
-	if (!reader.bytes.empty())
+	if (!reader.Empty())
 		throw std::runtime_error("Unexpected trailing companion settings data");
 	ValidateSettings(result);
 	return result;
@@ -340,7 +312,7 @@ void SaveSettings(const std::filesystem::path& path, const CompanionSettings& se
 	ValidateSettings(settings);
 	if (!path.is_absolute())
 		throw std::invalid_argument("Companion settings destination must be absolute");
-	std::string bytes(Magic);
+	std::string bytes(s_magic);
 	Put(bytes, static_cast<std::uint32_t>(std::lround(settings.scale * 1000)));
 	Put(bytes, settings.endpoint);
 	Put(bytes, settings.activeProfile);
@@ -400,34 +372,22 @@ void SaveSettings(const std::filesystem::path& path, const CompanionSettings& se
 		Put(bytes, static_cast<std::uint32_t>(lastUsed));
 		Put(bytes, static_cast<std::uint32_t>(lastUsed >> 32));
 	}
-	if (bytes.size() > MaxFile)
+	if (bytes.size() > s_maxFile)
 		throw std::invalid_argument("Companion settings exceed the file budget");
 	std::filesystem::create_directories(path.parent_path());
-	std::filesystem::path temporary;
-#ifdef __linux__
-	std::string pattern = path.string() + ".XXXXXX";
-	const int descriptor = ::mkstemp(pattern.data());
-	if (descriptor < 0)
-		throw std::runtime_error("Cannot create private companion settings temporary file");
-	temporary = pattern;
-	::close(descriptor);
-#else
-	temporary = path;
-	temporary += "." + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".tmp";
-#endif
+	const auto temporary = CreateSettingsTemporaryFile(path);
 	try
 	{
 		std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+		if (!output)
+			throw std::runtime_error("Cannot open companion settings temporary file");
 		output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-		output.close();
 		if (!output)
 			throw std::runtime_error("Cannot write companion settings");
-#ifdef _WIN32
-		if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-			throw std::runtime_error("Cannot replace companion settings");
-#else
-		std::filesystem::rename(temporary, path);
-#endif
+		output.close();
+		if (!output)
+			throw std::runtime_error("Cannot close companion settings temporary file");
+		ReplaceSettingsFile(temporary, path);
 	}
 	catch (...)
 	{
