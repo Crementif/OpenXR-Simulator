@@ -59,7 +59,7 @@ class RuntimeSession
 	void ReleaseSelected();
 	void TogglePin(std::size_t historyIndex);
 	void MarkHistoryFrame(std::size_t historyIndex, bool enabled);
-	void RequestExport(std::string path);
+	bool RequestExport(std::string path);
 
 	void ConnectEndpoint(std::string endpoint);
 	void Disconnect();
@@ -127,6 +127,10 @@ class RuntimeSession
 		return m_preview;
 	}
 	ImageExportTask& Exports() noexcept
+	{
+		return m_exports;
+	}
+	const ImageExportTask& Exports() const noexcept
 	{
 		return m_exports;
 	}

@@ -44,21 +44,72 @@ target_compile_features(simxr_imgui PRIVATE cxx_std_20)
 target_include_directories(simxr_imgui SYSTEM PUBLIC ${simxr_imguizmo_SOURCE_DIR}/src ${simxr_imgui_SOURCE_DIR} ${simxr_imgui_SOURCE_DIR}/backends "${SIMXR_VULKAN_INCLUDE_DIR}")
 target_link_libraries(simxr_imgui PUBLIC SDL3::SDL3-static "${SIMXR_VULKAN_LIBRARY}")
 
-add_library(simxr_app STATIC src/app/Application.cpp src/app/platform/Window.cpp src/app/render/UiRenderer.cpp src/app/render/UiRenderResources.cpp src/app/render/UiRendererDevice.cpp src/app/render/UiRendererSwapchain.cpp src/app/render/UiScreenshot.cpp src/app/RuntimePanels.cpp src/app/render/PreviewTexture.cpp src/app/render/PreviewImages.cpp src/app/render/PreviewHistory.cpp src/app/WorkspacePanels.cpp
-    src/app/shell/WorkspaceToolbar.cpp src/app/shell/WorkspaceLayout.cpp src/app/shell/WorkspacePages.cpp)
-target_sources(simxr_app PRIVATE src/app/pages/DeviceControlPanel.cpp src/app/pages/DeviceOwnership.cpp
-    src/app/pages/DevicePoseControls.cpp src/app/pages/DeviceInputControls.cpp src/app/pages/DeviceTrackingControls.cpp)
+add_library(simxr_app STATIC
+    src/app/Application.cpp
+    src/app/RuntimePanels.cpp
+    src/app/WorkspacePanels.cpp
+
+    src/app/dialogs/ConnectionDialog.cpp
+    src/app/dialogs/LaunchProfilesDialog.cpp
+    src/app/dialogs/PreferencesDialog.cpp
+
+    src/app/pages/AdvancedSteppingPage.cpp
+    src/app/pages/DeviceControlPanel.cpp
+    src/app/pages/DeviceInputControls.cpp
+    src/app/pages/DeviceOwnership.cpp
+    src/app/pages/DevicePoseControls.cpp
+    src/app/pages/DeviceTrackingControls.cpp
+    src/app/pages/FramePage.cpp
+    src/app/pages/RangePage.cpp
+
+    src/app/platform/GamepadFeedback.cpp
+    src/app/platform/Window.cpp
+
+    src/app/qa/RuntimeSmoke.cpp
+
+    src/app/render/PreviewHistory.cpp
+    src/app/render/PreviewImages.cpp
+    src/app/render/PreviewTexture.cpp
+    src/app/render/UiRenderResources.cpp
+    src/app/render/UiRenderer.cpp
+    src/app/render/UiRendererDevice.cpp
+    src/app/render/UiRendererSwapchain.cpp
+    src/app/render/UiScreenshot.cpp
+
+    src/app/services/RangeExportTask.cpp
+    src/app/services/RuntimeSession.cpp
+    src/app/services/RuntimeSessionFrames.cpp
+    src/app/services/RuntimeSessionReplies.cpp
+    src/app/services/ShellState.cpp
+
+    src/app/shell/WorkspaceLayout.cpp
+    src/app/shell/WorkspacePages.cpp
+    src/app/shell/WorkspaceToolbar.cpp
+
+    src/app/widgets/AppPicker.cpp
+    src/app/widgets/Controls.cpp
+    src/app/widgets/DeviceRail.cpp
+    src/app/widgets/DocumentTree.cpp
+    src/app/widgets/HapticEvents.cpp
+    src/app/widgets/Icons.cpp
+    src/app/widgets/InputPad.cpp
+    src/app/widgets/LiveField.cpp
+    src/app/widgets/Notices.cpp
+    src/app/widgets/PastInput.cpp
+    src/app/widgets/PilotController.cpp
+    src/app/widgets/PilotHud.cpp
+    src/app/widgets/PreviewPanel.cpp
+    src/app/widgets/RecordingPanel.cpp
+    src/app/widgets/RigView.cpp
+    src/app/widgets/RotationOrb.cpp
+    src/app/widgets/SpatialEditor.cpp
+    src/app/widgets/SpatialPreview.cpp
+    src/app/widgets/SpatialWidgets.cpp
+    src/app/widgets/Theme.cpp
+    src/app/widgets/TimelineCanvas.cpp
+    src/app/widgets/TimelinePanel.cpp)
 simxr_configure_target(simxr_app)
 target_include_directories(simxr_app PRIVATE "${PROJECT_SOURCE_DIR}/shaders/generated")
-target_sources(simxr_app PRIVATE src/app/widgets/RecordingPanel.cpp src/app/widgets/TimelinePanel.cpp src/app/widgets/TimelineCanvas.cpp src/app/services/ShellState.cpp
-    src/app/widgets/Theme.cpp src/app/widgets/Icons.cpp src/app/widgets/Controls.cpp src/app/widgets/DeviceRail.cpp
-    src/app/services/RuntimeSession.cpp src/app/services/RuntimeSessionReplies.cpp src/app/services/RuntimeSessionFrames.cpp
-    src/app/dialogs/ConnectionDialog.cpp src/app/widgets/Notices.cpp src/app/widgets/DocumentTree.cpp src/app/pages/FramePage.cpp src/app/pages/RangePage.cpp src/app/services/RangeExportTask.cpp
-    src/app/pages/AdvancedSteppingPage.cpp src/app/widgets/PreviewPanel.cpp src/app/dialogs/PreferencesDialog.cpp src/app/dialogs/LaunchProfilesDialog.cpp
-    src/app/widgets/PilotController.cpp src/app/widgets/PilotHud.cpp src/app/widgets/SpatialEditor.cpp src/app/widgets/SpatialPreview.cpp src/app/widgets/LiveField.cpp
-    src/app/widgets/SpatialWidgets.cpp src/app/widgets/RotationOrb.cpp
-    src/app/widgets/InputPad.cpp src/app/widgets/RigView.cpp src/app/widgets/HapticEvents.cpp src/app/platform/GamepadFeedback.cpp)
-target_sources(simxr_app PRIVATE src/app/widgets/PastInput.cpp src/app/widgets/AppPicker.cpp)
 target_link_libraries(simxr_app PUBLIC simxr_imgui simxr_connection simxr_app_settings simxr_recording_controller)
 # The icon SVGs are compiled in as {file stem, source} pairs; Icons.cpp parses them once.
 file(GLOB simxr_icon_files CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/resources/icons/*.svg")
@@ -75,7 +126,7 @@ target_include_directories(simxr_app PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/genera
 target_include_directories(simxr_app SYSTEM PRIVATE "${simxr_nanosvg_SOURCE_DIR}/src")
 target_link_libraries(simxr_app PRIVATE simxr_vulkan_control)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_sources(simxr_app PRIVATE src/app/ProofConsumer.cpp probes/CompanionFrameReceiver.cpp)
+    target_sources(simxr_app PRIVATE src/app/render/ProofConsumer.cpp probes/CompanionFrameReceiver.cpp)
     target_include_directories(simxr_app PRIVATE "${PROJECT_SOURCE_DIR}")
     target_compile_definitions(simxr_app PRIVATE SIMXR_COMPANION_PROOF)
 endif()
@@ -88,6 +139,9 @@ add_executable(simxr_companion src/app/Main.cpp)
 simxr_configure_target(simxr_companion)
 simxr_set_output_directory(simxr_companion)
 target_link_libraries(simxr_companion PRIVATE simxr_app)
+if(MINGW)
+    target_link_options(simxr_companion PRIVATE -municode)
+endif()
 foreach(font_directory IN ITEMS "${SIMXR_OUTPUT_DIRECTORY}/fonts" "${CMAKE_CURRENT_BINARY_DIR}/fonts")
     file(MAKE_DIRECTORY "${font_directory}")
     configure_file("${PROJECT_SOURCE_DIR}/resources/fonts/AdwaitaSans-Regular.ttf"
@@ -120,10 +174,15 @@ if(BUILD_TESTING)
     add_test(NAME companion_smoke COMMAND simxr_companion --smoke-frames 8 --hidden)
     set_tests_properties(companion_smoke PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET xr_probe_linux AND SIMXR_BUILD_RUNTIME AND Python3_Interpreter_FOUND)
+        add_test(NAME companion_arguments COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/control/test_native_companion.py" "$<TARGET_FILE:xr_probe_linux>" "$<TARGET_FILE:simxr_companion>" --cli-only)
+        set_tests_properties(companion_arguments PROPERTIES TIMEOUT 30)
         add_test(NAME companion_runtime COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/control/test_native_companion.py" "$<TARGET_FILE:xr_probe_linux>" "$<TARGET_FILE:simxr_companion>")
         add_test(NAME companion_runtime_pixels COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/control/test_native_companion.py" "$<TARGET_FILE:xr_probe_linux>" "$<TARGET_FILE:simxr_companion>" --verify-pixels)
+        add_test(NAME companion_export_failure COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/control/test_native_companion.py" "$<TARGET_FILE:xr_probe_linux>" "$<TARGET_FILE:simxr_companion>" --fail-export)
         add_test(NAME companion_runtime_x11 COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/control/test_native_companion.py" "$<TARGET_FILE:xr_probe_linux>" "$<TARGET_FILE:simxr_companion>" --visible --verify-pixels)
         set_tests_properties(companion_runtime_x11 PROPERTIES
@@ -133,7 +192,7 @@ if(BUILD_TESTING)
             "${PROJECT_SOURCE_DIR}/tests/control/test_native_companion.py" "$<TARGET_FILE:xr_probe_linux>" "$<TARGET_FILE:simxr_companion>" --verify-pixels --midtone)
         add_test(NAME companion_gamma_srgb COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/control/test_native_companion.py" "$<TARGET_FILE:xr_probe_linux>" "$<TARGET_FILE:simxr_companion>" --verify-pixels --midtone --srgb)
-        set_tests_properties(companion_runtime companion_runtime_pixels companion_gamma_unorm companion_gamma_srgb PROPERTIES
+        set_tests_properties(companion_runtime companion_runtime_pixels companion_export_failure companion_gamma_unorm companion_gamma_srgb PROPERTIES
             ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1"
             TIMEOUT 60 SKIP_RETURN_CODE 77)
     endif()

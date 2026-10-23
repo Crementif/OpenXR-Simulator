@@ -251,12 +251,18 @@ bool RuntimePanels::ReleaseInputs()
 		return m_session.SubmitEdit(ReleaseManualInputs{});
 	return false;
 }
-void RuntimePanels::RequestExport(std::string path)
+bool RuntimePanels::RequestExport(std::string path)
 {
 	if (m_range.Exporting())
+	{
 		m_session.Notify("Export busy", "Wait for the range export to finish");
-	else
-		m_session.RequestExport(std::move(path));
+		return false;
+	}
+	return m_session.RequestExport(std::move(path));
+}
+const ImageExportTask& RuntimePanels::ImageExport() const noexcept
+{
+	return m_session.Exports();
 }
 std::optional<automation::SavedRecording> RuntimePanels::TakeRecordingReplay()
 {

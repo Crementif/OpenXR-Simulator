@@ -110,7 +110,8 @@ class RuntimePanels
 	void StartRecording();
 	void SetReplayActive(bool active);
 	std::vector<std::uint64_t> CaptureIds() const;
-	void RequestExport(std::string path);
+	bool RequestExport(std::string path);
+	const ImageExportTask& ImageExport() const noexcept;
 	void InspectSelected();
 	bool CanReplay() const;
 	void RequestReplay(automation::SavedRecording recording);

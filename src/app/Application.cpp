@@ -1,25 +1,24 @@
 #include "app/Application.h"
-#include "app/services/Utf8Path.h"
-#include "app/services/ProcessSupervisor.h"
+#include "Pch.h"
 #include "app/RuntimePanels.h"
-#include "app/render/UiRenderer.h"
-#include "app/platform/Window.h"
 #include "app/WorkspacePanels.h"
+#include "app/platform/Window.h"
+#include "app/qa/RuntimeSmoke.h"
+#include "app/render/UiRenderer.h"
+#include "app/services/ProcessSupervisor.h"
+#include "app/services/Utf8Path.h"
 #ifdef SIMXR_COMPANION_PROOF
-#include "app/ProofConsumer.h"
+#include "app/render/ProofConsumer.h"
 #endif
 
 #include <SDL3/SDL.h>
-#include <chrono>
 #include <cstdio>
-#include <filesystem>
 #include <imgui.h>
-#include <imgui_internal.h>
 #include <stdexcept>
 
 namespace simxr::app
 {
-Application::Application(ApplicationOptions options) : m_options(options) {}
+Application::Application(ApplicationOptions options) : m_options(std::move(options)) {}
 
 int Application::Run()
 {
@@ -33,9 +32,9 @@ int Application::Run()
 		UiRenderer renderer(window, m_options.validation, validation, !m_options.screenshot.empty(),
 							m_options.proofDescriptor >= 0);
 #ifdef SIMXR_COMPANION_PROOF
-		std::unique_ptr<ProofConsumer> proof;
+		std::optional<ProofConsumer> proof;
 		if (m_options.proofDescriptor >= 0)
-			proof = std::make_unique<ProofConsumer>(renderer, m_options.proofDescriptor, m_options.proofVerifyPixels);
+			proof.emplace(renderer, m_options.proofDescriptor, m_options.proofVerifyPixels);
 #else
 		if (m_options.proofDescriptor >= 0)
 			throw std::runtime_error("FD companion proof is available only in the Linux build");
@@ -43,12 +42,12 @@ int Application::Run()
 		WorkspacePanels workspace(processes,
 								  !m_options.smokeFrames && !m_options.runtimeSmoke && m_options.proofDescriptor < 0,
 								  m_options.controlSocket);
-		std::unique_ptr<RuntimePanels> panels;
+		std::optional<RuntimePanels> panels;
 		if (m_options.proofDescriptor < 0)
-			panels = std::make_unique<RuntimePanels>(renderer, workspace.InitialEndpoint(), &window);
-		unsigned runtimeStage = 0;
-		std::uint64_t rawCapture = 0, holdUntil = 0;
-		bool runtimeFinished = !m_options.runtimeSmoke;
+			panels.emplace(renderer, workspace.InitialEndpoint(), &window);
+		std::optional<RuntimeSmoke> runtimeSmoke;
+		if (m_options.runtimeSmoke)
+			runtimeSmoke.emplace(m_options.imageExport);
 		bool captureRequested = false;
 		bool captureCompleted = false;
 		std::printf("Companion adapter: %s; SDL driver: %s\n", renderer.DeviceName().c_str(),
@@ -92,74 +91,8 @@ int Application::Run()
 				panels->Poll();
 				workspace.BeginFrame(*panels);
 				workspace.Draw(*panels);
-				if (m_options.runtimeSmoke)
-				{
-					const auto state = panels->Snapshot();
-					if (state.phase == "failed")
-						throw std::runtime_error("Runtime smoke operation failed: " + state.error);
-					if (runtimeStage == 0 && state.sessionAvailable)
-					{
-						panels->Pause();
-						runtimeStage = 1;
-					}
-					else if (runtimeStage == 1 && !state.operationPending && state.manual)
-					{
-						std::puts("READY companion production controls paused");
-						std::fflush(stdout);
-						panels->Command(control::CommandKind::Step);
-						runtimeStage = 2;
-					}
-					else if (runtimeStage == 2 && !state.operationPending)
-					{
-						if (state.progress == "clear")
-							panels->Command(control::CommandKind::Step);
-						else if (state.selectedReady && state.selectedFrame == 3)
-						{
-							panels->InspectSelected();
-							holdUntil = renderer.SubmittedFrames() + 4;
-							runtimeStage = 3;
-						}
-					}
-					else if (runtimeStage == 3 && state.inspectedFrame == 3 && renderer.CompletedFrames() >= holdUntil)
-					{
-						panels->Command(control::CommandKind::Step, 0, true);
-						runtimeStage = 4;
-					}
-					else if (runtimeStage == 4 && !state.operationPending && state.selectedReady &&
-							 state.selectedFrame == 4 && state.selectedLayers == 1)
-					{
-						rawCapture = state.selectedCapture;
-						panels->Command(control::CommandKind::Step);
-						runtimeStage = 5;
-					}
-					else if (runtimeStage == 5 && !state.operationPending && state.selectedReady &&
-							 state.selectedFrame == 4 && state.selectedLayers == 2)
-					{
-						for (const auto capture : panels->CaptureIds())
-							panels->Command(control::CommandKind::Release, capture);
-						runtimeStage = 6;
-					}
-					else if (runtimeStage == 6 && !state.operationPending)
-					{
-						panels->SelectCapture(rawCapture);
-						panels->Command(control::CommandKind::Resume);
-						runtimeStage = 7;
-					}
-					else if (runtimeStage == 7 && !state.sessionAvailable && state.selectedReady && state.images >= 3)
-					{
-						if (!m_options.imageExport.empty())
-							panels->RequestExport(m_options.imageExport);
-						holdUntil = renderer.SubmittedFrames() + 4;
-						runtimeStage = 8;
-					}
-					else if (runtimeStage == 8 && renderer.CompletedFrames() >= holdUntil &&
-							 (m_options.imageExport.empty() || std::filesystem::exists(m_options.imageExport)))
-					{
-						runtimeFinished = true;
-						if (m_options.screenshot.empty())
-							running = false;
-					}
-				}
+				if (runtimeSmoke)
+					runtimeSmoke->Poll(*panels, renderer);
 			}
 			else
 			{
@@ -182,6 +115,7 @@ int Application::Run()
 					running = false;
 				ImGui::End();
 			}
+			const bool runtimeFinished = !runtimeSmoke || runtimeSmoke->Finished();
 			bool captureReady = m_options.proofDescriptor < 0 && runtimeFinished;
 #ifdef SIMXR_COMPANION_PROOF
 			if (proof)
@@ -244,7 +178,7 @@ int Application::Run()
 					running = false;
 			}
 		}
-		if (!runtimeFinished)
+		if (runtimeSmoke && !runtimeSmoke->Finished())
 			throw std::runtime_error("Runtime companion qualification did not complete");
 		if (m_options.runtimeSmoke)
 			std::puts("PASS companion production controls, composed/raw GPU snapshots, release/resume, application "

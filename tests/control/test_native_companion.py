@@ -19,17 +19,45 @@ def require(condition, message):
         raise AssertionError(message)
 
 
+def check_arguments(companion):
+    environment = dict(os.environ, SDL_VIDEODRIVER='simxr-unavailable')
+    for arguments, option in [(['--connect', '--runtime-smoke'], '--connect'),
+                              (['--screenshot', ''], '--screenshot'),
+                              (['--export', '--hidden'], '--export'),
+                              (['--smoke-frames'], '--smoke-frames'),
+                              (['--proof-consumer', '-1'], '--proof-consumer')]:
+        result = subprocess.run([companion, *arguments], env=environment, capture_output=True,
+                                text=True, timeout=5)
+        output = result.stdout + result.stderr
+        require(result.returncode == 2 and option in output and 'Companion:' not in output,
+                f'Malformed option reached application startup: {arguments}\n{output}')
+    result = subprocess.run([companion, '--smoke-frames', '8', '--hidden'], env=environment,
+                            capture_output=True, text=True, timeout=5)
+    output = result.stdout + result.stderr
+    require(result.returncode == 77 and 'SDL video/gamepad initialization failed' in output,
+            'Finite smoke did not classify unavailable SDL as a skip\n' + output)
+    print('PASS CLI rejects malformed values before startup and classifies unavailable SDL')
+
+
 def main():
+    if '--check-cli' in sys.argv[3:] or '--cli-only' in sys.argv[3:]:
+        check_arguments(sys.argv[2])
+    if '--cli-only' in sys.argv[3:]:
+        return 0
     visible = '--visible' in sys.argv[3:]
     if visible and os.getenv('SDL_VIDEODRIVER') == 'x11' and not os.getenv('DISPLAY'):
         print('SKIP: no X11 display available')
         return 77
     pixels = '--verify-pixels' in sys.argv[3:]
+    failed_export = '--fail-export' in sys.argv[3:]
+    require(not (pixels and failed_export), 'Choose pixel verification or the failed-export check')
     midtone = '--midtone' in sys.argv[3:]
     srgb = '--srgb' in sys.argv[3:]
     companion = None
     with tempfile.TemporaryDirectory(prefix='simxr-companion-runtime-') as temporary:
         data = Path(temporary)
+        export_path = data / 'frame-é.ppm'
+        screenshot_path = data / 'companion-é.bmp'
         environment = dict(os.environ, SIMXR_DATA_DIR=temporary, SIMXR_PROBE_CONTROL='1',
                            SIMXR_PROBE_RETAIN_CONTROL='1', SIMXR_PROBE_GPU_INSPECTION='1')
         environment['SIMXR_CONTROL_TRACE'] = '1'
@@ -61,7 +89,11 @@ def main():
                 if not visible:
                     arguments.append('--hidden')
                 if pixels:
-                    arguments += ['--export', str(data / 'frame.ppm'), '--screenshot', str(data / 'companion.bmp')]
+                    export_path.write_bytes(b'Previous export must not count as completion')
+                    arguments += ['--export', str(export_path), '--screenshot', str(screenshot_path)]
+                elif failed_export:
+                    export_path.mkdir()
+                    arguments += ['--export', str(export_path)]
                 companion = subprocess.Popen(arguments, env=environment, stdout=subprocess.PIPE,
                                              stderr=subprocess.STDOUT)
                 output = ''
@@ -94,14 +126,21 @@ def main():
                 print(output)
                 if companion.returncode == 77:
                     return 77
-                require(companion.returncode == 0, output)
-                require('PASS companion production controls' in output, output)
-                require('0 validation errors' in output and 'normalReadback=0' in output, output)
+                if failed_export:
+                    require(companion.returncode == 1 and
+                            'Runtime smoke export failed: Cannot open image export destination' in output and
+                            'PASS companion production controls' not in output,
+                            'An existing destination directory was accepted as a successful export\n' + output)
+                    require(export_path.is_dir(), 'Failed export changed the destination directory')
+                else:
+                    require(companion.returncode == 0, output)
+                    require('PASS companion production controls' in output, output)
+                    require('0 validation errors' in output and 'normalReadback=0' in output, output)
                 require('VUID-' not in output and 'preserving' not in output, output)
                 wait_file(data / 'control.destroyed', host)
                 require(not observer.sessions(), 'Public XR sessions survived teardown')
                 if pixels:
-                    ppm = (data / 'frame.ppm').read_bytes()
+                    ppm = export_path.read_bytes()
                     header, source = ppm.split(b'\n255\n', 1)
                     require(header.startswith(b'P6\n# session=') and b'frame=4 capture=' in header and
                             b'target=2 layer=0 view=0 slices=1 slice_height=48' in header and
@@ -113,7 +152,7 @@ def main():
                             all(abs(value - expected[index % 3]) <= (1 if midtone else 0)
                                 for index, value in enumerate(source)),
                             f'Explicit source export changed color encoding: {list(source[:3])}')
-                    screenshot = (data / 'companion.bmp').read_bytes()
+                    screenshot = screenshot_path.read_bytes()
                     require(screenshot[:2] == b'BM', 'Companion screenshot missing')
                     offset = struct.unpack_from('<I', screenshot, 10)[0]
                     rgba = screenshot[offset:]
@@ -123,8 +162,8 @@ def main():
                     if destination := os.getenv('SIMXR_COMPANION_QA_OUTPUT'):
                         destination = Path(destination) / ('srgb' if srgb else 'unorm') if midtone else Path(destination)
                         destination.mkdir(parents=True, exist_ok=True)
-                        shutil.copy(data / 'companion.bmp', destination / 'companion.bmp')
-                        shutil.copy(data / 'frame.ppm', destination / 'frame.ppm')
+                        shutil.copy(screenshot_path, destination / 'companion.bmp')
+                        shutil.copy(export_path, destination / 'frame.ppm')
                     require(matching > 2000,
                             f'Actual companion window did not show display-encoded RGB {display}: {matching}')
                     print(f'PASS unchanged source bytes and actual display-encoded window pixels: {matching}')
@@ -133,7 +172,10 @@ def main():
             require(host.returncode == 0, host_output)
             require('VUID-' not in host_output and 'preserving' not in host_output, host_output)
             print(host_output)
-            print('PASS production companion controls, exact composed/raw GPU images, retention after XR/Vulkan destruction')
+            if failed_export:
+                print('PASS failed explicit export cannot qualify through an existing destination')
+            else:
+                print('PASS production companion controls, exact composed/raw GPU images, retention after XR/Vulkan destruction')
             return 0
         finally:
             for process in (companion, host):

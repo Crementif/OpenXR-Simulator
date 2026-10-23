@@ -176,12 +176,16 @@ void RuntimeSession::ReleaseSelected()
 	m_workspace.ReleaseSelected();
 	m_preview.ReleaseSelected();
 }
-void RuntimeSession::RequestExport(std::string path)
+bool RuntimeSession::RequestExport(std::string path)
 {
 	const auto image = m_preview.Selected();
 	if (!image || !image->reader || image->scope.epoch != m_requests.Epoch() ||
 		!m_exports.Request(image->reader, std::move(path)))
+	{
 		Notify("Image not exportable", "Retain an exact source image before requesting export");
+		return false;
+	}
+	return true;
 }
 std::vector<RuntimeFrame> RuntimeSession::TimelineFrames() const
 {
