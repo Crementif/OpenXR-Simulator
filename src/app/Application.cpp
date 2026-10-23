@@ -1,7 +1,8 @@
 #include "app/Application.h"
+#include "app/services/Utf8Path.h"
 #include "app/services/ProcessSupervisor.h"
 #include "app/RuntimePanels.h"
-#include "app/UiRenderer.h"
+#include "app/render/UiRenderer.h"
 #include "app/Window.h"
 #include "app/WorkspacePanels.h"
 #ifdef SIMXR_COMPANION_PROOF
@@ -185,7 +186,7 @@ int Application::Run()
 			if (captureReady && !m_options.screenshot.empty() && !captureRequested &&
 				(!m_options.smokeFrames || renderer.SubmittedFrames() + 1 >= m_options.smokeFrames))
 			{
-				renderer.RequestScreenshot(m_options.screenshot);
+				renderer.RequestScreenshot(Utf8Path(m_options.screenshot));
 				captureRequested = true;
 			}
 			std::vector<VkSemaphore> waits;

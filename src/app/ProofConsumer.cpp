@@ -1,5 +1,5 @@
 #include "app/ProofConsumer.h"
-#include "app/UiRenderer.h"
+#include "app/render/UiRenderer.h"
 #include "probes/CompanionFrameReceiver.h"
 
 #include <algorithm>

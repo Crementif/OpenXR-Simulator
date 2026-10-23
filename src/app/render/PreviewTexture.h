@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app/VulkanDeviceAccess.h"
+#include "app/render/VulkanDeviceAccess.h"
 #include "control/ImageInspection.h"
 
 #include <imgui.h>

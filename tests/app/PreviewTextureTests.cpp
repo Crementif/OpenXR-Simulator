@@ -4,12 +4,13 @@
 #include "control/LocalControlServer.h"
 #include "graphics/SnapshotBudget.h"
 
-#include "app/UiRenderer.h"
 #include "app/Window.h"
 #include "app/render/PreviewTexture.h"
+#include "app/render/UiRenderer.h"
 #include "control/backends/vulkan/VulkanControlHandle.h"
 #include "graphics/backends/vulkan/VulkanExternal.h"
 #include <filesystem>
+#include <fstream>
 #include <thread>
 
 #include <algorithm>
@@ -246,6 +247,95 @@ void HistoryLifetime(app::UiRenderer& renderer)
 	finish();
 }
 
+void ScreenshotFiles(app::UiRenderer& renderer, app::Window& window)
+{
+	struct Directory
+	{
+		char path[48] = "/tmp/simxr-ui-screenshot-XXXXXX";
+		Directory()
+		{
+			Require(::mkdtemp(path) != nullptr, "Create private screenshot directory");
+		}
+		~Directory()
+		{
+			std::error_code error;
+			std::filesystem::remove_all(path, error);
+		}
+	} directory;
+	auto draw = [&]
+	{
+		Eventually(
+			[&]
+			{
+				return renderer.BeginFrame();
+			},
+			"Admit screenshot frame");
+		ImGui::GetBackgroundDrawList()->AddRectFilled({20, 20}, {80, 80}, IM_COL32(23, 67, 131, 255));
+		Require(renderer.Render(), "Render explicit screenshot");
+	};
+	bool invalidPath = false;
+	try
+	{
+		renderer.RequestScreenshot(std::filesystem::path(std::string("truncated\0path", 14)));
+	}
+	catch (const std::invalid_argument&)
+	{
+		invalidPath = true;
+	}
+	Require(invalidPath, "Embedded NUL screenshot path was accepted");
+	// These fail after a real submission; a later screenshot must still work.
+	for (const auto& path : {std::filesystem::path(directory.path), std::filesystem::path("/dev/full")})
+	{
+		renderer.RequestScreenshot(path);
+		const auto serial = renderer.SubmittedFrames();
+		bool failed = false;
+		try
+		{
+			draw();
+		}
+		catch (const std::ios_base::failure&)
+		{
+			failed = true;
+		}
+		Require(failed && renderer.SubmittedFrames() == serial + 1,
+				"Screenshot open/write failure was hidden or lost its GPU submission");
+	}
+	window.Resize(640, 480);
+	Eventually(
+		[&]
+		{
+			window.PollEvents();
+			return window.PixelSize() == std::pair{640, 480};
+		},
+		"Resize screenshot surface");
+	const auto output = std::filesystem::path(directory.path) / std::filesystem::path(u8"捕获-é.bmp");
+	renderer.RequestScreenshot(output);
+	draw();
+	std::ifstream file(output, std::ios::binary);
+	file.exceptions(std::ios::badbit | std::ios::failbit);
+	std::array<unsigned char, 54> header{};
+	file.read(reinterpret_cast<char*>(header.data()), header.size());
+	auto u32 = [&](std::size_t offset)
+	{
+		std::uint32_t value = 0;
+		for (unsigned byte = 0; byte < 4; ++byte)
+			value |= std::uint32_t(header[offset + byte]) << (8 * byte);
+		return value;
+	};
+	const auto [width, height] = window.PixelSize();
+	Require(header[0] == 'B' && header[1] == 'M' && u32(10) == 54 && u32(18) == std::uint32_t(width) &&
+				u32(22) == 0u - std::uint32_t(height) && u32(2) == std::filesystem::file_size(output),
+			"Unicode screenshot had an invalid BMP header or did not follow the resized surface");
+	file.seekg(54 + (40 * width + 40) * 4);
+	std::array<unsigned char, 4> pixel{};
+	file.read(reinterpret_cast<char*>(pixel.data()), pixel.size());
+	file.close();
+	Require(std::abs(int(pixel[0]) - 131) <= 1 && std::abs(int(pixel[1]) - 67) <= 1 &&
+				std::abs(int(pixel[2]) - 23) <= 1,
+			"Screenshot did not preserve drawn RGB pixels in BMP byte order");
+	renderer.WaitIdle();
+}
+
 void DisplayImageIdentity(app::UiRenderer& renderer)
 {
 	struct Directory
@@ -384,7 +474,7 @@ int main()
 		auto validation = std::make_shared<app::ValidationLog>();
 		{
 			app::Window window(true);
-			app::UiRenderer renderer(window, true, validation);
+			app::UiRenderer renderer(window, true, validation, true);
 			const auto access = renderer.DeviceAccess();
 			if (!access.externalImages || !access.externalFence || !access.ioQueue)
 			{
@@ -394,10 +484,11 @@ int main()
 			DisplayImageIdentity(renderer);
 			BoundAndRollback(access);
 			HistoryLifetime(renderer);
+			ScreenshotFiles(renderer, window);
 		}
 		Require(validation->errors.load() == 0, "Preview texture lifetime produced Vulkan validation errors");
 		std::cout << "PASS display-image identity, preview texture bounds, native rollback, unsent retirement and "
-					 "history submission lifetime\n";
+					 "history submission lifetime and screenshot I/O\n";
 		return 0;
 	}
 	catch (const std::exception& error)

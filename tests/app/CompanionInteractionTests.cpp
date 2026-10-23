@@ -23,7 +23,7 @@
 #include <functional>
 #include "app/SimulationEdits.h"
 #include "app/SpatialMath.h"
-#include "app/UiRenderer.h"
+#include "app/render/UiRenderer.h"
 #include "app/Window.h"
 #include "app/services/Utf8Path.h"
 #include "app/WorkspacePanels.h"
@@ -439,13 +439,13 @@ void CheckTimelineWorkflow(Interaction& test)
 	Require(details != nullptr, "Merged Frame page absent");
 	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
 	{
-		test.renderer.RequestScreenshot((std::filesystem::path(directory) / "timeline-paused.bmp").string());
+		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "timeline-paused.bmp");
 		test.Frame();
 		test.Frame();
 		ImGui::SetScrollY(const_cast<ImGuiWindow*>(details), 410);
 		test.Frame();
 		test.Frame();
-		test.renderer.RequestScreenshot((std::filesystem::path(directory) / "frame-input-actions.bmp").string());
+		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "frame-input-actions.bmp");
 		test.Frame();
 		test.Frame();
 	}
@@ -473,7 +473,7 @@ void CheckTimelineWorkflow(Interaction& test)
 			"Range zoom did not narrow the timeline");
 	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
 	{
-		test.renderer.RequestScreenshot((std::filesystem::path(directory) / "timeline-range.bmp").string());
+		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "timeline-range.bmp");
 		test.Frame();
 		test.Frame();
 	}
@@ -724,7 +724,7 @@ void PilotLiveRuntime(const char* endpoint)
 	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
 	{
 		std::filesystem::create_directories(directory);
-		test.renderer.RequestScreenshot((std::filesystem::path(directory) / "cemu-pilot.bmp").string());
+		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "cemu-pilot.bmp");
 		frame();
 		frame();
 	}
@@ -856,7 +856,7 @@ void PilotLiveRuntime(const char* endpoint)
 		frame();
 	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
 	{
-		test.renderer.RequestScreenshot((std::filesystem::path(directory) / "cemu-recording-saved.bmp").string());
+		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "cemu-recording-saved.bmp");
 		frame();
 		frame();
 	}
@@ -915,7 +915,7 @@ void PilotLiveRuntime(const char* endpoint)
 	{
 		if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
 		{
-			test.renderer.RequestScreenshot((std::filesystem::path(directory) / name).string());
+			test.renderer.RequestScreenshot(std::filesystem::path(directory) / name);
 			frame();
 			frame();
 		}
@@ -1249,7 +1249,7 @@ void CheckDebuggerWorkflow(const char* endpoint)
 			return !state.pending && std::filesystem::exists(directory / "composed.ppm");
 		},
 		"Composed export failed");
-	test.renderer.RequestScreenshot((directory / "inspected.bmp").string());
+	test.renderer.RequestScreenshot(directory / "inspected.bmp");
 	test.Frame();
 	test.runtime.Command(simxr::control::CommandKind::StrictAdmission, 0, true, 0, 0);
 	wait(
@@ -1284,7 +1284,7 @@ void CheckDebuggerWorkflow(const char* endpoint)
 			return !state.operationPending && !state.manual && state.selectedFrame > raw.selectedFrame;
 		},
 		"Resume did not restore advancing live output");
-	test.renderer.RequestScreenshot((directory / "resumed.bmp").string());
+	test.renderer.RequestScreenshot(directory / "resumed.bmp");
 	test.Frame();
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Debugger workflow reported Vulkan validation errors");
@@ -1857,7 +1857,7 @@ void CheckSpatialEditing(Interaction& test)
 			  << RelativePose(after.values.tracking.controllers[1].pose.pose, rig.Root()).position.x << "\n";
 	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
 	{
-		test.renderer.RequestScreenshot((std::filesystem::path(directory) / "spatial-offscreen.bmp").string());
+		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "spatial-offscreen.bmp");
 		pump(1);
 		test.renderer.WaitIdle();
 	}
@@ -1898,7 +1898,7 @@ void CheckSpatialEditing(Interaction& test)
 	Require(test.runtime.Snapshot().rigExpanded, "Rig view did not expand");
 	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
 	{
-		test.renderer.RequestScreenshot((std::filesystem::path(directory) / "spatial-expanded.bmp").string());
+		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "spatial-expanded.bmp");
 		pump(1);
 	}
 	const auto imageArea = FindPanel("Image area");
@@ -1915,7 +1915,7 @@ void CheckSpatialEditing(Interaction& test)
 			test.workspace.SetScale(scale);
 			pump(4);
 			test.renderer.RequestScreenshot(
-				(std::filesystem::path(directory) / (scale == 1 ? "spatial-100.bmp" : "spatial-150.bmp")).string());
+				(std::filesystem::path(directory) / (scale == 1 ? "spatial-100.bmp" : "spatial-150.bmp")));
 			pump(1);
 		}
 		test.renderer.WaitIdle();
@@ -2090,7 +2090,7 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 		Require(SDL_PushEvent(&motion), "Hover the take clip");
 		pump(2);
 		if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
-			test.renderer.RequestScreenshot((std::filesystem::path(qa) / "take-clip-hover.bmp").string());
+			test.renderer.RequestScreenshot(std::filesystem::path(qa) / "take-clip-hover.bmp");
 		SDL_Event click{};
 		click.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
 		click.button.which = TestMouse;
@@ -2146,7 +2146,7 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 				std::cout << "notice: " << notice.title << " " << notice.detail << '\n';
 			if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
 			{
-				test.renderer.RequestScreenshot((std::filesystem::path(qa) / "take-failed.bmp").string());
+				test.renderer.RequestScreenshot(std::filesystem::path(qa) / "take-failed.bmp");
 				pump(1);
 				test.renderer.WaitIdle();
 			}
@@ -2203,21 +2203,21 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 	pump(4);
 	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
 	{
-		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "past-body.bmp").string());
+		test.renderer.RequestScreenshot(std::filesystem::path(qa) / "past-body.bmp");
 		pump(1);
 		test.workspace.Select(DeviceSel{DevicePage::Trackers});
 		pump(3);
-		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "past-trackers.bmp").string());
+		test.renderer.RequestScreenshot(std::filesystem::path(qa) / "past-trackers.bmp");
 		pump(1);
 		test.workspace.Select(FrameSel{history.At(past + 5).identity, history.At(past + 5).epoch});
 		pump(3);
-		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "past-frame.bmp").string());
+		test.renderer.RequestScreenshot(std::filesystem::path(qa) / "past-frame.bmp");
 		pump(1);
 	}
 	test.runtime.SetLive(true);
 	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
 	{
-		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "take-replay.bmp").string());
+		test.renderer.RequestScreenshot(std::filesystem::path(qa) / "take-replay.bmp");
 		pump(1);
 	}
 	test.renderer.WaitIdle();
@@ -2289,7 +2289,7 @@ void CheckLayouts(Interaction& test, const std::filesystem::path& qa)
 					"Inspector is clipped");
 			const auto name = std::to_string(size.width) + "-" + std::to_string(static_cast<int>(size.scale * 100)) +
 							  "-" + std::to_string(page) + ".bmp";
-			test.renderer.RequestScreenshot((qa / name).string());
+			test.renderer.RequestScreenshot(qa / name);
 			pump(2);
 			if (page == 0)
 			{
@@ -2301,7 +2301,7 @@ void CheckLayouts(Interaction& test, const std::filesystem::path& qa)
 				const auto* help = popups.back().Window;
 				Require(help->Pos.x >= 0 && help->Pos.x + help->Size.x <= size.width + 1,
 						"Rig help is clipped");
-				test.renderer.RequestScreenshot((qa / ("help-" + name)).string());
+				test.renderer.RequestScreenshot(qa / ("help-" + name));
 				pump(2);
 				ImGui::ClosePopupsExceptModals();
 				pump(2);
@@ -2320,7 +2320,7 @@ void CheckLayouts(Interaction& test, const std::filesystem::path& qa)
 			click({preview->Pos.x + 30, preview->Pos.y + preview->Size.y * .6f});
 			pump(2);
 			Require(!shell.inspectorVisible, "Clicking the preview did not close the drawer");
-			test.renderer.RequestScreenshot((qa / "overlay-closed.bmp").string());
+			test.renderer.RequestScreenshot(qa / "overlay-closed.bmp");
 			pump(2);
 			ImGui::ActivateItemByID(FindPanel("Device rail")->GetID("Right"));
 			pump(3);
@@ -2392,7 +2392,7 @@ void CheckShell(Interaction& test, const char* qa)
 	{
 		if (qa)
 		{
-			test.renderer.RequestScreenshot((std::filesystem::path(qa) / name).string());
+			test.renderer.RequestScreenshot(std::filesystem::path(qa) / name);
 			pump(2);
 		}
 	};
@@ -2667,7 +2667,7 @@ void CheckIdConflicts(Interaction& test, bool frameOnly)
 		sweep("frame page bottom", "Frame details");
 		if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
 		{
-			test.renderer.RequestScreenshot((std::filesystem::path(qa) / "id-frame-bottom.bmp").string());
+			test.renderer.RequestScreenshot(std::filesystem::path(qa) / "id-frame-bottom.bmp");
 			pump(2);
 		}
 		ImGui::ActivateItemByID(details->GetID("Open in window"));
@@ -2698,7 +2698,7 @@ void CheckLibrary(Interaction& test, const std::filesystem::path& directory)
 	{
 		if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
 		{
-			test.renderer.RequestScreenshot((std::filesystem::path(qa) / name).string());
+			test.renderer.RequestScreenshot(std::filesystem::path(qa) / name);
 			pump(2);
 		}
 	};
@@ -2877,7 +2877,7 @@ void CheckInputPad(Interaction& test)
 			if (std::chrono::steady_clock::now() >= deadline)
 				if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
 				{
-					test.renderer.RequestScreenshot((std::filesystem::path(qa) / "input-pad-failure.bmp").string());
+					test.renderer.RequestScreenshot(std::filesystem::path(qa) / "input-pad-failure.bmp");
 					pump(2);
 					test.renderer.WaitIdle();
 				}
@@ -2925,7 +2925,7 @@ void CheckInputPad(Interaction& test)
 			}
 		if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
 		{
-			test.renderer.RequestScreenshot((std::filesystem::path(qa) / "input-pad-missing.bmp").string());
+			test.renderer.RequestScreenshot(std::filesystem::path(qa) / "input-pad-missing.bmp");
 			pump(1);
 			test.renderer.WaitIdle();
 		}
@@ -2967,7 +2967,7 @@ void CheckInputPad(Interaction& test)
 	settle([](const auto& c) { return c.primary; }, "Primary hold did not press");
 	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
 	{
-		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "input-pad-hold.bmp").string());
+		test.renderer.RequestScreenshot(std::filesystem::path(qa) / "input-pad-hold.bmp");
 		pump(1);
 	}
 	button(SDL_BUTTON_LEFT, false);
@@ -2993,7 +2993,7 @@ void CheckInputPad(Interaction& test)
 		   "Stick left arrow did not push fully left");
 	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
 	{
-		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "input-pad-arrow.bmp").string());
+		test.renderer.RequestScreenshot(std::filesystem::path(qa) / "input-pad-arrow.bmp");
 		pump(1);
 	}
 	button(SDL_BUTTON_LEFT, false);
@@ -3020,7 +3020,7 @@ void CheckInputPad(Interaction& test)
 	settle([](const auto& c) { return c.stick.y == 0; }, "Stick unlatch did not centre");
 	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
 	{
-		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "input-pad.bmp").string());
+		test.renderer.RequestScreenshot(std::filesystem::path(qa) / "input-pad.bmp");
 		pump(1);
 	}
 	test.renderer.WaitIdle();
@@ -3042,7 +3042,7 @@ void CapturePolish(Interaction& test, const std::filesystem::path& qa)
 	};
 	const auto screenshot = [&](const char* name)
 	{
-		test.renderer.RequestScreenshot((qa / name).string());
+		test.renderer.RequestScreenshot(qa / name);
 		pump(2);
 	};
 	const auto activate = [&](const char* window, const char* label)
@@ -3145,7 +3145,7 @@ void CheckMeasuredTiming(Interaction& test)
 		"Measured CPU/GPU timing did not distinguish the deliberately slow probe frames");
 	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
 	{
-		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "measured-timing.bmp").string());
+		test.renderer.RequestScreenshot(std::filesystem::path(qa) / "measured-timing.bmp");
 		test.Frame();
 	}
 	test.renderer.WaitIdle();
@@ -3229,7 +3229,7 @@ void CheckPreviewHistory(Interaction& test)
 	Require(!test.runtime.Snapshot().time.following, "Looking back still follows");
 	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
 	{
-		test.renderer.RequestScreenshot((std::filesystem::path(qa) / "preview-history.bmp").string());
+		test.renderer.RequestScreenshot(std::filesystem::path(qa) / "preview-history.bmp");
 		test.Frame();
 	}
 	test.runtime.SetLive(true);
@@ -3403,7 +3403,7 @@ void CheckAppPicker(const char* executable)
 	{
 		if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
 		{
-			test.renderer.RequestScreenshot((std::filesystem::path(qa) / name).string());
+			test.renderer.RequestScreenshot(std::filesystem::path(qa) / name);
 			pump(1);
 		}
 	};
@@ -3521,7 +3521,7 @@ void CheckBodyRig(Interaction& test)
 	{
 		if (!qa)
 			return;
-		test.renderer.RequestScreenshot((std::filesystem::path(qa) / (name + ".bmp")).string());
+		test.renderer.RequestScreenshot(std::filesystem::path(qa) / (name + ".bmp"));
 		pump(1);
 	};
 	const auto activate = [&](std::initializer_list<const char*> path)
@@ -3951,7 +3951,7 @@ void CheckToolbarLaunch(const char* executable)
 	Interaction test(true);
 	for (unsigned frame = 0; frame < 4; ++frame)
 		test.Frame();
-	test.renderer.RequestScreenshot((directory / "before-launch.bmp").string());
+	test.renderer.RequestScreenshot(directory / "before-launch.bmp");
 	test.Frame();
 	const auto* toolbar = FindPanel("##Workspace toolbar");
 	Require(toolbar != nullptr, "Launch toolbar absent");
@@ -4008,7 +4008,7 @@ void CheckToolbarLaunch(const char* executable)
 	Eventually([&] { test.Frame(); return test.runtime.History().Size() > 0; },
 		"Launched runtime did not populate timeline history");
 	Require(test.runtime.Snapshot().error.empty(), "Launched runtime reported a control error");
-	test.renderer.RequestScreenshot((directory / "toolbar-launch.bmp").string());
+	test.renderer.RequestScreenshot(directory / "toolbar-launch.bmp");
 	test.Frame();
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Validation errors in launched preview");
@@ -4044,7 +4044,7 @@ void CaptureLayouts(const std::filesystem::path& directory)
 				const auto path =
 					directory / (std::to_string(static_cast<int>(size.x)) + "-" +
 								 std::to_string(static_cast<int>(scale * 100)) + "-" + std::to_string(page) + ".bmp");
-				test.renderer.RequestScreenshot(path.string());
+				test.renderer.RequestScreenshot(path);
 				test.Frame();
 			}
 		}
@@ -4277,7 +4277,7 @@ int main()
 				CheckPreviewPilot(test);
 			if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
 			{
-				test.renderer.RequestScreenshot((std::filesystem::path(directory) / "cemu-gameplay.bmp").string());
+				test.renderer.RequestScreenshot(std::filesystem::path(directory) / "cemu-gameplay.bmp");
 				test.Frame();
 				test.renderer.WaitIdle();
 			}

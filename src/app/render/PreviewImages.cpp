@@ -1,6 +1,6 @@
 #include "app/render/PreviewImages.h"
 #include "Pch.h"
-#include "app/UiRenderer.h"
+#include "app/render/UiRenderer.h"
 #include "graphics/SnapshotBudget.h"
 
 #include <cstdio>
