@@ -1,16 +1,14 @@
+#include "graphics/backends/vulkan/VulkanBackend.h"
 #include "Pch.h"
 #include "graphics/ColorPixels.h"
 #include "graphics/SnapshotBudget.h"
-#include "graphics/backends/vulkan/VulkanBackend.h"
+#include "graphics/backends/vulkan/VulkanNativePreservation.h"
 #include "shaders/generated/CompositorSpirv.h"
 
-#include <algorithm>
-#include <chrono>
-#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
-#include <utility>
+#include <stdexcept>
 
 namespace simxr
 {
@@ -36,9 +34,7 @@ XrResult VulkanGraphicsFailure(VkResult result)
 	}
 }
 
-namespace
-{
-struct Pipeline
+struct VulkanBackend::Pipeline
 {
 	std::shared_ptr<VulkanDevice> device;
 	VkRenderPass pass = VK_NULL_HANDLE;
@@ -71,7 +67,8 @@ struct Pipeline
 	}
 };
 
-VkImageView View(const VulkanImage& image, std::uint32_t slice, VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT)
+static VkImageView View(const VulkanImage& image, std::uint32_t slice,
+						VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT)
 {
 	VkImageViewCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
 	info.image = image.image;
@@ -84,7 +81,8 @@ VkImageView View(const VulkanImage& image, std::uint32_t slice, VkImageAspectFla
 	return result;
 }
 
-std::shared_ptr<Pipeline> CreatePipeline(std::shared_ptr<VulkanDevice> device, bool multisampledDepth = false)
+std::shared_ptr<VulkanBackend::Pipeline> VulkanBackend::CreatePipeline(std::shared_ptr<VulkanDevice> device,
+																	   bool multisampledDepth)
 {
 	auto result = std::make_shared<Pipeline>();
 	result->device = std::move(device);
@@ -142,8 +140,8 @@ std::shared_ptr<Pipeline> CreatePipeline(std::shared_ptr<VulkanDevice> device, b
 	module.pCode = shaders::vertex.data();
 	CheckVulkan(vkCreateShaderModule(native, &module, nullptr, &result->vertex),
 				"Create generated compositor vertex shader");
-	const std::span<const std::uint32_t> pixel = multisampledDepth ? std::span<const std::uint32_t>{shaders::depth_ms} :
-		std::span<const std::uint32_t>{shaders::pixel};
+	const std::span<const std::uint32_t> pixel = multisampledDepth ? std::span<const std::uint32_t>{shaders::depth_ms}
+																   : std::span<const std::uint32_t>{shaders::pixel};
 	module.codeSize = pixel.size_bytes();
 	module.pCode = pixel.data();
 	CheckVulkan(vkCreateShaderModule(native, &module, nullptr, &result->pixel),
@@ -204,8 +202,8 @@ std::shared_ptr<Pipeline> CreatePipeline(std::shared_ptr<VulkanDevice> device, b
 	CheckVulkan(vkCreateSampler(native, &sampler, nullptr, &result->nearestSampler), "Create depth preview sampler");
 	return result;
 }
-} // namespace
 
+// This payload can move intact into pre-reserved storage when native completion is unknown.
 struct VulkanBackend::State
 {
 	VulkanNativePreservation<State, 64>::Reservation preservation{
@@ -244,23 +242,28 @@ struct VulkanBackend::State
 	std::shared_ptr<VulkanExternalDevice> external;
 	std::shared_ptr<Retirement> retirement = std::make_shared<Retirement>();
 	State(std::size_t capacity, std::size_t liveCapacity)
-		: reservations([capacity] { return capacity ? capacity : SnapshotBudget::Capacity(); },
-					   [weak = std::weak_ptr<Retirement>(retirement)]
-					   {
-						   if (const auto retained = weak.lock())
-							   retained->Poll();
-					   }),
+		: reservations(
+			  [capacity]
+			  {
+				  return capacity ? capacity : SnapshotBudget::Capacity();
+			  },
+			  [weak = std::weak_ptr<Retirement>(retirement)]
+			  {
+				  if (const auto retained = weak.lock())
+					  retained->Poll();
+			  }),
 		  liveReservations(liveCapacity,
 						   [weak = std::weak_ptr<Retirement>(retirement)]
 						   {
 							   if (const auto retained = weak.lock())
 								   retained->Poll();
 						   }),
-		  historyReservations(3, [weak = std::weak_ptr<Retirement>(retirement)]
-			{
-				if (const auto retained = weak.lock())
-					retained->Poll();
-			})
+		  historyReservations(3,
+							  [weak = std::weak_ptr<Retirement>(retirement)]
+							  {
+								  if (const auto retained = weak.lock())
+									  retained->Poll();
+							  })
 	{
 	}
 	FramePool reservations;
@@ -294,7 +297,7 @@ VulkanBackend::VulkanBackend(const VulkanBinding& binding, std::size_t frameCapa
 }
 
 VulkanBackend::VulkanBackend(std::shared_ptr<VulkanDevice> device, std::size_t frameCapacity,
-	std::span<const char* const> enabledExtensions, bool timelineEnabled)
+							 std::span<const char* const> enabledExtensions, bool timelineEnabled)
 	: m_state(std::make_unique<State>(frameCapacity, 1))
 {
 	if (!device || !device->HasNativeOwner() || !frameCapacity)
@@ -302,7 +305,7 @@ VulkanBackend::VulkanBackend(std::shared_ptr<VulkanDevice> device, std::size_t f
 	m_state->device = std::move(device);
 	if (!enabledExtensions.empty())
 		m_state->external = std::make_shared<VulkanExternalDevice>(m_state->device, enabledExtensions,
-			VK_API_VERSION_1_1, timelineEnabled);
+																   VK_API_VERSION_1_1, timelineEnabled);
 	m_state->pipeline = CreatePipeline(m_state->device);
 }
 
@@ -327,7 +330,8 @@ bool VulkanBackend::Sharing() const
 }
 
 std::shared_ptr<VulkanImage> VulkanBackend::CreateImage(VkFormat format, VkExtent2D extent, std::uint32_t layers,
-														VkImageUsageFlags usage, std::uint32_t mipLevels, VkSampleCountFlagBits samples)
+														VkImageUsageFlags usage, std::uint32_t mipLevels,
+														VkSampleCountFlagBits samples)
 {
 	if (m_state->closed || m_state->failed || m_state->device->lost.load())
 		throw std::logic_error("Vulkan backend closed");
@@ -410,15 +414,15 @@ std::shared_ptr<VulkanSubmission> VulkanBackend::InitializeImage(std::shared_ptr
 
 XrResult VulkanBackend::Prepare(const CompositionPlan& plan, const VulkanImageResolver& resolve,
 								std::shared_ptr<VulkanFrame>& output, std::shared_ptr<FrameReservation> reservation,
-	std::uint32_t outputLayers)
+								std::uint32_t outputLayers)
 {
 	if (!resolve)
 		return XR_ERROR_VALIDATION_FAILURE;
 	return PrepareComposition(plan, resolve, {}, output, std::move(reservation), outputLayers);
 }
 
-XrResult VulkanBackend::PrepareRetained(const CompositionPlan& plan,
-	std::span<const VulkanRetainedSource> sources, std::shared_ptr<VulkanFrame>& output)
+XrResult VulkanBackend::PrepareRetained(const CompositionPlan& plan, std::span<const VulkanRetainedSource> sources,
+										std::shared_ptr<VulkanFrame>& output)
 {
 	if (!m_state->device->HasNativeOwner() || sources.size() != plan.draws.size())
 		return XR_ERROR_VALIDATION_FAILURE;
@@ -426,8 +430,9 @@ XrResult VulkanBackend::PrepareRetained(const CompositionPlan& plan,
 }
 
 XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const VulkanImageResolver& resolve,
-	std::span<const VulkanRetainedSource> retained, std::shared_ptr<VulkanFrame>& output,
-	std::shared_ptr<FrameReservation> reservation, std::uint32_t outputLayers)
+										   std::span<const VulkanRetainedSource> retained,
+										   std::shared_ptr<VulkanFrame>& output,
+										   std::shared_ptr<FrameReservation> reservation, std::uint32_t outputLayers)
 {
 	RetireCompleted();
 	if (m_state->closed || m_state->failed || m_state->device->lost.load())
@@ -446,9 +451,12 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 	if (!reservation)
 		return XR_ERROR_LIMIT_REACHED;
 	const bool multisampledDepth = !plan.draws.empty() && plan.draws.front().constants.control[0] == 2 &&
-		plan.draws.front().constants.control[2] != 0;
-	if (multisampledDepth && std::any_of(plan.draws.begin(), plan.draws.end(), [](const auto& draw)
-		{ return draw.constants.control[0] != 2 || !draw.constants.control[2]; }))
+								   plan.draws.front().constants.control[2] != 0;
+	if (multisampledDepth && std::any_of(plan.draws.begin(), plan.draws.end(),
+										 [](const auto& draw)
+										 {
+											 return draw.constants.control[0] != 2 || !draw.constants.control[2];
+										 }))
 		return XR_ERROR_VALIDATION_FAILURE;
 	if (multisampledDepth && !m_state->depthMultisamplePipeline)
 		m_state->depthMultisamplePipeline = CreatePipeline(m_state->device, true);
@@ -511,8 +519,9 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 	resources.sources.reserve(plan.draws.size());
 	resources.sourceBudgets.reserve(retained.size() + plan.draws.size());
 	std::vector<std::pair<std::shared_ptr<VulkanImage>, std::shared_ptr<VulkanImage>>> resolved;
-	const auto& sourcePool = m_state->reservations.Owns(reservation) ? m_state->reservations :
-		m_state->historyReservations.Owns(reservation) ? m_state->historyReservations : m_state->liveReservations;
+	const auto& sourcePool = m_state->reservations.Owns(reservation)		  ? m_state->reservations
+							 : m_state->historyReservations.Owns(reservation) ? m_state->historyReservations
+																			  : m_state->liveReservations;
 	for (std::size_t index = 0; index < plan.draws.size(); ++index)
 	{
 		const auto& draw = plan.draws[index];
@@ -524,8 +533,8 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 				return XR_ERROR_VALIDATION_FAILURE;
 			resources.sourceBudgets.push_back(retained[index].budget);
 		}
-		if (!image || image->device != m_state->device || draw.source.arraySlice >= image->layers || draw.eye >= outputLayers ||
-			!(image->usage & VK_IMAGE_USAGE_SAMPLED_BIT) ||
+		if (!image || image->device != m_state->device || draw.source.arraySlice >= image->layers ||
+			draw.eye >= outputLayers || !(image->usage & VK_IMAGE_USAGE_SAMPLED_BIT) ||
 			(depth ? !(image->Aspect() & VK_IMAGE_ASPECT_DEPTH_BIT) : image->Aspect() != VK_IMAGE_ASPECT_COLOR_BIT))
 			return XR_ERROR_LAYER_INVALID;
 		if (depth && (image->samples != VK_SAMPLE_COUNT_1_BIT) != multisampledDepth)
@@ -535,7 +544,10 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 			if (!resolve || !(image->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
 				return XR_ERROR_FEATURE_UNSUPPORTED;
 			const auto found = std::find_if(resolved.begin(), resolved.end(),
-				[&](const auto& entry) { return entry.first == image; });
+											[&](const auto& entry)
+											{
+												return entry.first == image;
+											});
 			if (found != resolved.end())
 				image = found->second;
 			else
@@ -544,41 +556,44 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 				if (!budget)
 					return XR_ERROR_LIMIT_REACHED;
 				auto destination = CreateImage(image->format, image->extent, image->layers,
-					VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+											   VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+												   VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
 				if (!sourcePool.Consume(budget))
 					return XR_ERROR_LIMIT_REACHED;
 				resources.sourceBudgets.push_back(std::move(budget));
 				resources.sources.push_back(image);
 				VulkanImageBarrier(resources.command, *image, image->ApplicationLayout(),
-					VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT,
-					VK_ACCESS_TRANSFER_READ_BIT);
+								   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+								   VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT);
 				VulkanImageBarrier(resources.command, *destination, VK_IMAGE_LAYOUT_UNDEFINED,
-					VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+								   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
 				VkImageResolve region{};
 				region.srcSubresource = region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, image->layers};
 				region.extent = {image->extent.width, image->extent.height, 1};
 				vkCmdResolveImage(resources.command, image->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-					destination->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+								  destination->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 				VulkanImageBarrier(resources.command, *image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-					image->ApplicationLayout(), VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT);
+								   image->ApplicationLayout(), VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT);
 				VulkanImageBarrier(resources.command, *destination, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-					destination->ApplicationLayout(), VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT);
+								   destination->ApplicationLayout(), VK_ACCESS_TRANSFER_WRITE_BIT,
+								   VK_ACCESS_MEMORY_READ_BIT);
 				resolved.emplace_back(image, destination);
 				image = std::move(destination);
 			}
 		}
 		VkFormatProperties properties;
 		vkGetPhysicalDeviceFormatProperties(m_state->device->binding.physicalDevice, image->format, &properties);
-		if (!(properties.optimalTilingFeatures & (depth ? VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT
-			: VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)))
+		if (!(properties.optimalTilingFeatures &
+			  (depth ? VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT : VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)))
 			return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
-		const auto view = View(*image, draw.source.arraySlice, depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT);
+		const auto view =
+			View(*image, draw.source.arraySlice, depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT);
 		resources.sourceViews.push_back(view);
 		if (std::find(resources.sources.begin(), resources.sources.end(), image) == resources.sources.end())
 			resources.sources.push_back(image);
 		const VkDescriptorImageInfo sampled{VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-		const VkDescriptorImageInfo sampler{depth ? pipeline->nearestSampler : pipeline->sampler,
-			VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED};
+		const VkDescriptorImageInfo sampler{depth ? pipeline->nearestSampler : pipeline->sampler, VK_NULL_HANDLE,
+											VK_IMAGE_LAYOUT_UNDEFINED};
 		const std::array writes{VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, sets[index], 0, 0,
 													 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &sampled, nullptr, nullptr},
 								VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, sets[index], 1, 0,
@@ -607,8 +622,8 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 		for (std::size_t index = 0; index < plan.draws.size(); ++index)
 			if (plan.draws[index].eye == eye)
 			{
-				vkCmdBindDescriptorSets(resources.command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->layout,
-										0, 1, &sets[index], 0, nullptr);
+				vkCmdBindDescriptorSets(resources.command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->layout, 0, 1,
+										&sets[index], 0, nullptr);
 				vkCmdPushConstants(resources.command, pipeline->layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
 								   sizeof(LayerConstants), &plan.draws[index].constants);
 				vkCmdDraw(resources.command, 3, 1, 0, 0);
@@ -633,8 +648,9 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 	}
 	job->EndTiming();
 	CheckVulkan(vkEndCommandBuffer(resources.command), "End shared compositor commands");
-	const auto& pool = m_state->reservations.Owns(reservation) ? m_state->reservations :
-		m_state->historyReservations.Owns(reservation) ? m_state->historyReservations : m_state->liveReservations;
+	const auto& pool = m_state->reservations.Owns(reservation)			? m_state->reservations
+					   : m_state->historyReservations.Owns(reservation) ? m_state->historyReservations
+																		: m_state->liveReservations;
 	if (!pool.Consume(reservation))
 		return XR_ERROR_CALL_ORDER_INVALID;
 	resources.reservation = std::move(reservation);
@@ -643,8 +659,8 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 }
 
 XrResult VulkanBackend::PrepareDepthCapture(const LayerDepthDescription& depth, bool linear,
-	const VulkanImageResolver& resolve, std::shared_ptr<VulkanFrame>& output,
-	std::shared_ptr<FrameReservation> reservation)
+											const VulkanImageResolver& resolve, std::shared_ptr<VulkanFrame>& output,
+											std::shared_ptr<FrameReservation> reservation)
 {
 	if (!resolve)
 		return XR_ERROR_VALIDATION_FAILURE;
@@ -657,7 +673,8 @@ XrResult VulkanBackend::PrepareDepthCapture(const LayerDepthDescription& depth, 
 	if (!(image->usage & VK_IMAGE_USAGE_SAMPLED_BIT))
 		return XR_ERROR_FEATURE_UNSUPPORTED;
 	CompositionPlan plan;
-	const auto prepared = PrepareDepthComposition(depth, linear,
+	const auto prepared = PrepareDepthComposition(
+		depth, linear,
 		{static_cast<std::int32_t>(image->extent.width), static_cast<std::int32_t>(image->extent.height)},
 		image->samples != VK_SAMPLE_COUNT_1_BIT, plan);
 	if (XR_FAILED(prepared))
@@ -739,7 +756,7 @@ XrResult VulkanBackend::PrepareImageCopy(const LayerImageDescription& descriptio
 	}
 	resources.external = m_state->external->CreateExportable(spec);
 	resources.output = resources.external->Image();
-		SnapshotBudget::ObserveImageBytes(resources.external->Descriptor().allocationSize);
+	SnapshotBudget::ObserveImageBytes(resources.external->Descriptor().allocationSize);
 	m_state->images.push_back(resources.output);
 	resources.ready = m_state->external->CreateExportableSemaphore();
 	resources.outputViews[0] = View(*resources.output, 0);
@@ -756,13 +773,14 @@ XrResult VulkanBackend::PrepareImageCopy(const LayerImageDescription& descriptio
 		copy.srcSubresource.mipLevel = copy.dstSubresource.mipLevel = mip;
 		copy.extent = {std::max(1U, spec.extent.width >> mip), std::max(1U, spec.extent.height >> mip), 1};
 		if (image->samples == VK_SAMPLE_COUNT_1_BIT)
-			vkCmdCopyImage(resources.command, image->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, resources.output->image,
-				VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+			vkCmdCopyImage(resources.command, image->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+						   resources.output->image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
 		else
 		{
-			const VkImageResolve region{copy.srcSubresource, copy.srcOffset, copy.dstSubresource, copy.dstOffset, copy.extent};
+			const VkImageResolve region{copy.srcSubresource, copy.srcOffset, copy.dstSubresource, copy.dstOffset,
+										copy.extent};
 			vkCmdResolveImage(resources.command, image->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-				resources.output->image, VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+							  resources.output->image, VK_IMAGE_LAYOUT_GENERAL, 1, &region);
 		}
 	}
 	VulkanImageBarrier(resources.command, *image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image->ApplicationLayout(),
@@ -786,8 +804,9 @@ XrResult VulkanBackend::PrepareImageCopy(const LayerImageDescription& descriptio
 
 #ifdef _WIN32
 XrResult VulkanBackend::PrepareNativeCopy(std::shared_ptr<VulkanImage> source, VkSemaphore ready,
-	std::uint64_t readyValue, std::shared_ptr<const void> owner, std::span<const FrameView> views,
-	std::shared_ptr<VulkanFrame>& output, std::shared_ptr<FrameReservation> reservation)
+										  std::uint64_t readyValue, std::shared_ptr<const void> owner,
+										  std::span<const FrameView> views, std::shared_ptr<VulkanFrame>& output,
+										  std::shared_ptr<FrameReservation> reservation)
 {
 	RetireCompleted();
 	if (m_state->closed || m_state->failed || m_state->device->lost.load())
@@ -799,14 +818,15 @@ XrResult VulkanBackend::PrepareNativeCopy(std::shared_ptr<VulkanImage> source, V
 		 source->format != VK_FORMAT_B8G8R8A8_SRGB && source->format != VK_FORMAT_B8G8R8A8_UNORM &&
 		 source->format != VK_FORMAT_R16G16B16A16_SFLOAT && source->format != VK_FORMAT_A2B10G10R10_UNORM_PACK32 &&
 		 source->format != VK_FORMAT_R32G32B32A32_SFLOAT) ||
-		!source->layers || source->layers > 2 || !source->mipLevels ||
-		source->samples != VK_SAMPLE_COUNT_1_BIT || !(source->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
+		!source->layers || source->layers > 2 || !source->mipLevels || source->samples != VK_SAMPLE_COUNT_1_BIT ||
+		!(source->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
 		return XR_ERROR_VALIDATION_FAILURE;
 	if (m_state->submissions.size() >= 64)
 		return XR_ERROR_LIMIT_REACHED;
-	if (reservation && ((!m_state->reservations.Owns(reservation) && !m_state->liveReservations.Owns(reservation) &&
-		!m_state->historyReservations.Owns(reservation) && !m_state->reprojectionReservations.Owns(reservation)) ||
-		reservation->Consumed()))
+	if (reservation &&
+		((!m_state->reservations.Owns(reservation) && !m_state->liveReservations.Owns(reservation) &&
+		  !m_state->historyReservations.Owns(reservation) && !m_state->reprojectionReservations.Owns(reservation)) ||
+		 reservation->Consumed()))
 		return XR_ERROR_VALIDATION_FAILURE;
 	if (!reservation)
 		reservation = m_state->reservations.Reserve();
@@ -840,17 +860,17 @@ XrResult VulkanBackend::PrepareNativeCopy(std::shared_ptr<VulkanImage> source, V
 	acquire.dstQueueFamilyIndex = m_state->device->binding.queueFamily;
 	acquire.image = source->image;
 	acquire.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, source->mipLevels, 0, source->layers};
-	vkCmdPipelineBarrier(resources.command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-		0, 0, nullptr, 0, nullptr, 1, &acquire);
-	VulkanImageBarrier(resources.command, *resources.output, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-		0, VK_ACCESS_TRANSFER_WRITE_BIT);
+	vkCmdPipelineBarrier(resources.command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0,
+						 nullptr, 0, nullptr, 1, &acquire);
+	VulkanImageBarrier(resources.command, *resources.output, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0,
+					   VK_ACCESS_TRANSFER_WRITE_BIT);
 	for (std::uint32_t mip = 0; mip < source->mipLevels; ++mip)
 	{
 		VkImageCopy copy{};
 		copy.srcSubresource = copy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 0, source->layers};
 		copy.extent = {std::max(1u, spec.extent.width >> mip), std::max(1u, spec.extent.height >> mip), 1};
-		vkCmdCopyImage(resources.command, source->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-			resources.output->image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+		vkCmdCopyImage(resources.command, source->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, resources.output->image,
+					   VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
 	}
 	// Imported frames are immutable and never returned to their producer for reuse.
 	VkImageMemoryBarrier release{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -860,12 +880,14 @@ XrResult VulkanBackend::PrepareNativeCopy(std::shared_ptr<VulkanImage> source, V
 	release.dstQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;
 	release.image = resources.output->image;
 	release.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, source->mipLevels, 0, source->layers};
-	vkCmdPipelineBarrier(resources.command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-		0, 0, nullptr, 0, nullptr, 1, &release);
+	vkCmdPipelineBarrier(resources.command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0,
+						 nullptr, 0, nullptr, 1, &release);
 	CheckVulkan(vkEndCommandBuffer(resources.command), "End native compositor GPU copy");
-	if (!(m_state->reservations.Owns(reservation) ? m_state->reservations :
-		m_state->historyReservations.Owns(reservation) ? m_state->historyReservations :
-		m_state->reprojectionReservations.Owns(reservation) ? m_state->reprojectionReservations : m_state->liveReservations).Consume(reservation))
+	if (!(m_state->reservations.Owns(reservation)				? m_state->reservations
+		  : m_state->historyReservations.Owns(reservation)		? m_state->historyReservations
+		  : m_state->reprojectionReservations.Owns(reservation) ? m_state->reprojectionReservations
+																: m_state->liveReservations)
+			 .Consume(reservation))
 		return XR_ERROR_CALL_ORDER_INVALID;
 	resources.reservation = std::move(reservation);
 	output = std::move(frame);
@@ -1022,6 +1044,7 @@ XrResult VulkanBackend::Close()
 		return XR_ERROR_LIMIT_REACHED;
 	m_state->closed = true;
 	m_state->pipeline.reset();
+	m_state->depthMultisamplePipeline.reset();
 	return XR_SUCCESS;
 }
 } // namespace simxr

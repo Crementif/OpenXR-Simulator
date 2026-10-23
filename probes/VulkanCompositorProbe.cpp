@@ -965,6 +965,80 @@ void RejectOversizedImage(const VulkanBinding& binding)
 				supported.maxExtent.width, supported.maxExtent.width + 1);
 }
 
+bool ClosedDepthPipeline(const simxr::probe::Instance& instance)
+{
+	std::uint32_t count = 0;
+	Check(vkEnumerateInstanceLayerProperties(&count, nullptr), "query depth closure validation");
+	std::vector<VkLayerProperties> layers(count);
+	Check(vkEnumerateInstanceLayerProperties(&count, layers.data()), "query depth closure validation");
+	if (!instance.messenger || std::none_of(layers.begin(), layers.end(),
+											[](const auto& layer)
+											{
+												return std::strcmp(layer.layerName, "VK_LAYER_KHRONOS_validation") == 0;
+											}))
+	{
+		std::puts("SKIP: depth pipeline closure requires Vulkan validation");
+		return false;
+	}
+	Device device;
+	if (!device.Create(instance.handle))
+	{
+		std::puts("SKIP: no Vulkan1.1 device for depth pipeline closure");
+		return false;
+	}
+	constexpr auto usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+	VkFormat format = VK_FORMAT_UNDEFINED;
+	VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
+	for (const auto candidate : {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D16_UNORM})
+	{
+		VkImageFormatProperties properties{};
+		if (vkGetPhysicalDeviceImageFormatProperties(device.physical, candidate, VK_IMAGE_TYPE_2D,
+													 VK_IMAGE_TILING_OPTIMAL, usage, 0, &properties) != VK_SUCCESS)
+			continue;
+		for (const auto sampleCount : {VK_SAMPLE_COUNT_2_BIT, VK_SAMPLE_COUNT_4_BIT, VK_SAMPLE_COUNT_8_BIT})
+			if (properties.sampleCounts & sampleCount)
+			{
+				format = candidate;
+				samples = sampleCount;
+				break;
+			}
+		if (format != VK_FORMAT_UNDEFINED)
+			break;
+	}
+	if (format == VK_FORMAT_UNDEFINED)
+	{
+		std::puts("SKIP: sampled multisample depth unavailable for pipeline closure");
+		return false;
+	}
+	const auto errorsBefore = simxr::probe::s_validationErrors.load();
+	const VulkanBinding binding{instance.handle, device.physical, device.native, device.family, device.index};
+	auto backend = std::make_unique<VulkanBackend>(binding, 1);
+	auto image = backend->CreateImage(format, {8, 8}, 1, usage, 1, samples);
+	const LayerDepthDescription depth{{reinterpret_cast<XrSwapchain>(902), {{0, 0}, {8, 8}}, 0}, 0, 1, 0.1f, 100};
+	std::shared_ptr<VulkanFrame> frame;
+	Require(backend->PrepareDepthCapture(
+				depth, false,
+				[&](XrSwapchain)
+				{
+					return image;
+				},
+				frame) == XR_SUCCESS,
+			"Prepare multisample depth pipeline closure");
+	frame.reset();
+	image.reset();
+	Require(backend->Close() == XR_SUCCESS, "Multisample depth backend did not close");
+	vkDestroyDevice(std::exchange(device.native, VK_NULL_HANDLE), nullptr);
+	if (simxr::probe::s_validationErrors.load() != errorsBefore)
+	{
+		std::fputs("FAIL: successful Close retained native depth pipeline resources at device teardown\n", stderr);
+		std::fflush(nullptr);
+		std::_Exit(1); // Do not run a stale native destructor against the destroyed device.
+	}
+	backend.reset();
+	std::puts("case=depth-pipeline-close nativeObjects=retired-before-borrowed-device backend=still-alive PASS");
+	return true;
+}
+
 void ReservedClosure(const VulkanBinding& binding)
 {
 	VulkanBackend backend(binding, 1);
@@ -1144,6 +1218,7 @@ int Run(bool verify)
 		return 77;
 	}
 	const VulkanBinding binding{instance.handle, device.physical, device.native, device.family, device.index};
+	const bool depthClosure = ClosedDepthPipeline(instance);
 	RejectOversizedImage(binding);
 	ReservedClosure(binding);
 	CompletedProducerReclamation(binding);
@@ -1161,7 +1236,7 @@ int Run(bool verify)
 		throw;
 	}
 	Require(backend.Close() == XR_SUCCESS, "Final backend Close failed");
-	return 0;
+	return depthClosure ? 0 : 77;
 }
 } // namespace
 

@@ -5,6 +5,7 @@
 #include "graphics/backends/vulkan/VulkanSubmission.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <openxr/openxr.h>
@@ -31,12 +32,13 @@ class VulkanBackend
 	// The supplied device must retain its native owner. Queue serialization is
 	// still the caller's responsibility, including other operations on that queue.
 	explicit VulkanBackend(std::shared_ptr<VulkanDevice> device, std::size_t frameCapacity = 3,
-		std::span<const char* const> enabledExtensions = {}, bool timelineEnabled = false);
+						   std::span<const char* const> enabledExtensions = {}, bool timelineEnabled = false);
 	~VulkanBackend();
 	VulkanBackend(const VulkanBackend&) = delete;
 	VulkanBackend& operator=(const VulkanBackend&) = delete;
 	std::shared_ptr<VulkanImage> CreateImage(VkFormat format, VkExtent2D extent, std::uint32_t layers,
-											 VkImageUsageFlags usage, std::uint32_t mipLevels = 1, VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT);
+											 VkImageUsageFlags usage, std::uint32_t mipLevels = 1,
+											 VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT);
 	// These two submission points require the host's binding-queue access permit.
 	std::shared_ptr<VulkanSubmission> InitializeImage(std::shared_ptr<VulkanImage> image);
 	XrResult Submit(const std::shared_ptr<VulkanFrame>& frame);
@@ -49,18 +51,19 @@ class VulkanBackend
 	// Copies a native API's completed composition or raw image into companion storage.
 	// The imported owner must retain the image and D3D fence semaphore together.
 	// readyValue zero denotes a binary native semaphore; nonzero is a timeline value.
-	XrResult PrepareNativeCopy(std::shared_ptr<VulkanImage> source, VkSemaphore ready,
-		std::uint64_t readyValue, std::shared_ptr<const void> owner, std::span<const FrameView> views,
-		std::shared_ptr<VulkanFrame>& output, std::shared_ptr<FrameReservation> reservation = {});
+	XrResult PrepareNativeCopy(std::shared_ptr<VulkanImage> source, VkSemaphore ready, std::uint64_t readyValue,
+							   std::shared_ptr<const void> owner, std::span<const FrameView> views,
+							   std::shared_ptr<VulkanFrame>& output,
+							   std::shared_ptr<FrameReservation> reservation = {});
 #endif
 	// One completed GENERAL-layout source per draw, with its retained budget.
 	XrResult PrepareRetained(const CompositionPlan& plan, std::span<const VulkanRetainedSource> sources,
-		std::shared_ptr<VulkanFrame>& output);
+							 std::shared_ptr<VulkanFrame>& output);
 	XrResult PrepareCapture(const LayerImageDescription& source, const VulkanImageResolver& resolve,
 							std::shared_ptr<VulkanFrame>& output, std::shared_ptr<FrameReservation> reservation = {});
-	XrResult PrepareDepthCapture(const LayerDepthDescription& source, bool linear,
-		const VulkanImageResolver& resolve, std::shared_ptr<VulkanFrame>& output,
-		std::shared_ptr<FrameReservation> reservation = {});
+	XrResult PrepareDepthCapture(const LayerDepthDescription& source, bool linear, const VulkanImageResolver& resolve,
+								 std::shared_ptr<VulkanFrame>& output,
+								 std::shared_ptr<FrameReservation> reservation = {});
 	XrResult PrepareRetainedLayer(const LayerImageDescription& source, const VulkanImageResolver& resolve,
 								  std::shared_ptr<VulkanFrame>& output);
 	FramePool ReprojectionReservations() const;
@@ -77,9 +80,12 @@ class VulkanBackend
 	bool Sharing() const;
 
   private:
+	struct Pipeline;
+	static std::shared_ptr<Pipeline> CreatePipeline(std::shared_ptr<VulkanDevice> device,
+													bool multisampledDepth = false);
 	XrResult PrepareComposition(const CompositionPlan& plan, const VulkanImageResolver& resolve,
-		std::span<const VulkanRetainedSource> retained, std::shared_ptr<VulkanFrame>& output,
-		std::shared_ptr<FrameReservation> reservation, std::uint32_t outputLayers);
+								std::span<const VulkanRetainedSource> retained, std::shared_ptr<VulkanFrame>& output,
+								std::shared_ptr<FrameReservation> reservation, std::uint32_t outputLayers);
 	XrResult PrepareImageCopy(const LayerImageDescription& source, const VulkanImageResolver& resolve,
 							  std::shared_ptr<VulkanFrame>& output, std::shared_ptr<FrameReservation> reservation,
 							  bool retained);
