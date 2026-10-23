@@ -11,7 +11,7 @@ namespace simxr
 {
 class Swapchain
 {
-public:
+  public:
 	explicit Swapchain(std::uint32_t imageCount, bool staticImage = false);
 	XrResult Acquire(std::uint32_t& index, const std::function<XrResult(std::uint32_t)>& prepare = {});
 	XrResult Wait(XrDuration timeout, bool ready);
@@ -19,7 +19,7 @@ public:
 	std::optional<std::uint32_t> PendingImage() const;
 	std::optional<std::uint32_t> ReleasedImage() const;
 
-private:
+  private:
 	enum class ImageState
 	{
 		Available,
@@ -33,4 +33,4 @@ private:
 	bool m_staticImage;
 	bool m_staticAcquired = false;
 };
-}
+} // namespace simxr

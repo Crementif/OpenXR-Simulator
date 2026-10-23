@@ -1,6 +1,5 @@
 #include "graphics/SwapchainAccess.h"
-
-#include <algorithm>
+#include "Pch.h"
 
 namespace simxr
 {
@@ -86,7 +85,8 @@ XrResult SwapchainAccess::WaitForImage(std::uint32_t index, XrDuration timeout)
 		auto pause = std::chrono::nanoseconds{std::chrono::microseconds{100}};
 		if (timeout != XR_INFINITE_DURATION)
 		{
-			const auto elapsed = std::chrono::steady_clock::now() - started;
+			const auto elapsed =
+				std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started);
 			if (elapsed >= std::chrono::nanoseconds{timeout})
 				return XR_TIMEOUT_EXPIRED;
 			pause = std::min(pause, std::chrono::nanoseconds{timeout} - elapsed);

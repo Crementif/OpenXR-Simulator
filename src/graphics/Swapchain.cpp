@@ -1,11 +1,12 @@
 #include "graphics/Swapchain.h"
+#include "Pch.h"
 
 #include <stdexcept>
 
 namespace simxr
 {
-Swapchain::Swapchain(std::uint32_t imageCount, bool staticImage) :
-	m_images(imageCount, ImageState::Available), m_staticImage(staticImage)
+Swapchain::Swapchain(std::uint32_t imageCount, bool staticImage)
+	: m_images(imageCount, ImageState::Available), m_staticImage(staticImage)
 {
 	if (imageCount == 0 || (staticImage && imageCount != 1))
 		throw std::invalid_argument("Invalid swapchain image count");
@@ -17,15 +18,16 @@ XrResult Swapchain::Acquire(std::uint32_t& index, const std::function<XrResult(s
 		return XR_ERROR_CALL_ORDER_INVALID;
 	for (std::uint32_t offset = 0; offset < m_images.size(); ++offset)
 	{
-		auto candidate = (m_next + offset) % m_images.size();
+		const auto candidate =
+			static_cast<std::uint32_t>((static_cast<std::uint64_t>(m_next) + offset) % m_images.size());
 		if (m_images[candidate] != ImageState::Available)
 			continue;
-		m_acquired.push_back(static_cast<std::uint32_t>(candidate));
+		m_acquired.push_back(candidate);
 		try
 		{
 			if (prepare)
 			{
-				const auto result = prepare(static_cast<std::uint32_t>(candidate));
+				const auto result = prepare(candidate);
 				if (XR_FAILED(result))
 				{
 					m_acquired.pop_back();
@@ -41,7 +43,7 @@ XrResult Swapchain::Acquire(std::uint32_t& index, const std::function<XrResult(s
 		m_images[candidate] = ImageState::Acquired;
 		m_next = static_cast<std::uint32_t>((candidate + 1) % m_images.size());
 		m_staticAcquired = true;
-		index = static_cast<std::uint32_t>(candidate);
+		index = candidate;
 		return XR_SUCCESS;
 	}
 	return XR_ERROR_CALL_ORDER_INVALID;
@@ -81,4 +83,4 @@ std::optional<std::uint32_t> Swapchain::ReleasedImage() const
 {
 	return m_released;
 }
-}
+} // namespace simxr
