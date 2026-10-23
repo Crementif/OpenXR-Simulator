@@ -1,6 +1,7 @@
 #pragma once
 #include "app/services/SpatialMath.h"
 #include "simulation/TrackingTypes.h"
+#include <array>
 #include <imgui.h>
 #include <optional>
 #include <span>
@@ -16,6 +17,7 @@ struct SpatialEditResult
 struct GizmoState
 {
 	int operation = 2, id = 0;
+	int drawnFrame = -1;
 	bool local = false, usingGizmo = false, screenMove = false;
 	XrPosef start{};
 };
@@ -30,7 +32,10 @@ struct ArcballState
 	// -1 drags the ball freely; 0, 1 and 2 turn about the yaw, pitch or roll ring only.
 	int ring = -1;
 	XrVector3f axis{};
+	ImGuiID activeField = 0;
+	int drawnFrame = -1;
 };
+void CancelRotationOrb(ArcballState& state);
 // What the rotation orb shows inside the ball.
 enum class OrbModel
 {
@@ -58,6 +63,7 @@ struct SpatialScene
 };
 struct RigViewState
 {
+	int drawnFrame = -1;
 	// Yaw is relative to the way the player faces; 0 looks over the player's shoulder (Back).
 	float yaw = 0, pitch = -.2f, distance = 2.5f;
 	XrVector3f pan{};

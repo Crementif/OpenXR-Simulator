@@ -3,7 +3,7 @@
 #include "app/PastInput.h"
 #include "app/RuntimeSession.h"
 #include "app/SimulationEdits.h"
-#include "app/SpatialEditor.h"
+#include "app/widgets/SpatialEditor.h"
 #include "app/Theme.h"
 #include "app/widgets/Controls.h"
 #include "control/InspectionDocument.h"

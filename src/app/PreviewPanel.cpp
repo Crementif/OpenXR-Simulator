@@ -2,7 +2,7 @@
 #include "app/DeviceControlPanel.h"
 #include "app/widgets/PilotController.h"
 #include "app/RuntimeSession.h"
-#include "app/SpatialEditor.h"
+#include "app/widgets/SpatialEditor.h"
 #include "app/Theme.h"
 #include "app/platform/Window.h"
 #include "app/widgets/Controls.h"

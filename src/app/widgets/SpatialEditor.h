@@ -1,11 +1,18 @@
 #pragma once
-#include "app/services/ManualInputController.h"
-#include "app/services/PlayerRig.h"
 #include "app/ShellState.h"
+#include "app/SimulationEdits.h"
 #include "app/widgets/SpatialWidgets.h"
+#include <array>
+#include <cstdint>
+#include <optional>
+#include <span>
+#include <string>
 
 namespace simxr::app
 {
+class ManualInputController;
+class PlayerRig;
+struct ManualInputSnapshot;
 class SpatialEditor
 {
   public:
@@ -14,6 +21,9 @@ class SpatialEditor
 	void SetContext(bool editable, bool lookingBack, std::span<const FrameView> eyes,
 					const control::Message* historical, std::uint64_t historyIdentity);
 	void Reset();
+	void Cancel();
+	// Called after all spatial surfaces; hidden widgets cannot retain a gesture.
+	void EndFrame();
 	// The rig view at the top of a device page.
 	void DrawRigView(Selection& selection);
 	// Rotation ball for the selected device.
@@ -51,6 +61,10 @@ class SpatialEditor
 	void DrawSpaceToggle();
 
   private:
+	static int SelectedDevice(const Selection& selection);
+	static void SelectDevice(Selection& selection, int device);
+	static ControlChannel DeviceChannel(int device);
+	void PrepareSelection(const Selection& selection);
 	SpatialScene LiveScene() const;
 	std::array<bool, 7> EditableDevices(const SpatialScene& scene) const;
 	void EditPose(int device, XrPosef pose, bool final);
@@ -65,6 +79,8 @@ class SpatialEditor
 	std::optional<FrameView> m_eye;
 	std::uint64_t m_observation = 0, m_historyIdentity = 0;
 	bool m_editable = false, m_lookingBack = false;
+	bool m_editing = false;
+	int m_selected = -1;
 	std::string m_error;
 	ShellRect m_rotationBallRect;
 	std::array<ShellRect, 7> m_markerRects{};

@@ -1,8 +1,8 @@
 #include "app/widgets/SpatialWidgets.h"
-#include "app/Theme.h"
 #include "Math.h"
+#include "Pch.h"
+#include "app/Theme.h"
 #include <ImGuizmo.h>
-#include <algorithm>
 #include <cmath>
 #include <numbers>
 
@@ -21,14 +21,18 @@ void CancelPoseGizmo(GizmoState& state)
 		ImGuizmo::Enable(false);
 		ImGuizmo::Enable(true);
 		ImGuizmo::PopID();
-		state.usingGizmo = false;
-		state.screenMove = false;
 	}
+	state.usingGizmo = false;
+	state.screenMove = false;
 }
 SpatialEditResult DrawPoseGizmo(const char* id, GizmoState& state, const FrameView& camera, ImVec2 minimum,
 								ImVec2 maximum, XrPosef& pose, bool enabled)
 {
-	state.id = static_cast<int>(ImGui::GetID(id));
+	const int currentId = static_cast<int>(ImGui::GetID(id));
+	if (state.id != currentId)
+		CancelPoseGizmo(state);
+	state.id = currentId;
+	state.drawnFrame = ImGui::GetFrameCount();
 	// A disabled gizmo draws nothing and leaves the shared ImGuizmo state to the views that edit.
 	if (!enabled)
 	{

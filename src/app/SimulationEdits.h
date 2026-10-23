@@ -49,6 +49,11 @@ class UndoStack
 	};
 	// Call for each submitted edit with the state observed before it. Input-only edits are not recorded.
 	void Record(const ObservedSetup& before, const ManualTransaction& edit);
+	// End an interrupted gesture without sending another pose.
+	void FinishGesture()
+	{
+		m_open = false;
+	}
 	// Refresh only from an observation with no pending local edit.
 	void Observe(const ObservedSetup& observed);
 	bool Empty() const

@@ -1,34 +1,30 @@
 #include "Math.h"
+#include "Pch.h"
 #include "app/Theme.h"
 #include "app/widgets/Controls.h"
 #include "app/widgets/SpatialWidgets.h"
 #include <ImGuizmo.h>
-#include <algorithm>
 #include <cmath>
 #include <numbers>
-#include <string_view>
 
 namespace simxr::app
 {
-namespace
-{
-constexpr RigViewState s_defaultView{};
+static constexpr RigViewState s_defaultView{};
 // Shown when the displayed image carries no eye metadata yet.
-constexpr XrFovf s_defaultFov{-.8f, .8f, .8f, -.8f};
+static constexpr XrFovf s_defaultFov{-.8f, .8f, .8f, -.8f};
 // Lines are cut at this distance in front of the camera; nearer points would project far off the view.
-constexpr float s_near = .05f;
+static constexpr float s_near = .05f;
 // Orbiting a single device starts closer than orbiting the whole player.
-constexpr float s_deviceDistance = 1.2f;
-float DefaultDistance(int focus)
+static constexpr float s_deviceDistance = 1.2f;
+static float DefaultDistance(int focus)
 {
 	return focus >= 0 ? s_deviceDistance : s_defaultView.distance;
 }
-float Yaw(XrQuaternionf q)
+static float Yaw(XrQuaternionf q)
 {
 	const auto forward = Rotate(q, {0, 0, -1});
 	return std::atan2(-forward.x, -forward.z);
 }
-} // namespace
 FrameView RigCamera(const RigViewState& state, const SpatialScene& scene, float aspect, float header)
 {
 	if (state.eye && scene.eye)
@@ -40,8 +36,8 @@ FrameView RigCamera(const RigViewState& state, const SpatialScene& scene, float 
 	const float horizontal = std::atan(extent * aspect / below);
 	const float up = std::atan(extent * (1 + 2 * (1 - below) / below));
 	const bool device = state.focus >= 0 && state.focus < 7 && scene.available[state.focus];
-	const auto target = device ? scene.devices[state.focus].position
-							   : Compose(scene.root, {{0, 0, 0, 1}, {0, .9f, 0}}).position;
+	const auto target =
+		device ? scene.devices[state.focus].position : Compose(scene.root, {{0, 0, 0, 1}, {0, .9f, 0}}).position;
 	return {{rotation,
 			 {target.x + state.pan.x + offset.x, target.y + state.pan.y + offset.y, target.z + state.pan.z + offset.z}},
 			{-horizontal, horizontal, up, -.55f}};
@@ -49,6 +45,9 @@ FrameView RigCamera(const RigViewState& state, const SpatialScene& scene, float 
 SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& scene, int& selected,
 						  const std::array<bool, 7>& editable, ImVec2 size, const SpatialScene* ghost)
 {
+	state.drawnFrame = ImGui::GetFrameCount();
+	if (!scene.eye)
+		state.eye = false;
 	const float scale = ImGui::GetFontSize() / 16;
 	size = {size.x * scale, size.y * scale};
 	const auto minimum = ImGui::GetCursorScreenPos();
@@ -77,16 +76,16 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 		state.distance = DefaultDistance(state.focus);
 	};
 	// One view menu at the top left and Expand at the top right keep the view itself clear.
-	constexpr float Pi = std::numbers::pi_v<float>;
+	constexpr float pi = std::numbers::pi_v<float>;
 	const auto near = [](float a, float b)
 	{
 		return std::abs(a - b) < .01f;
 	};
-	const char* current = state.eye								  ? "Eye"
-						  : near(state.pitch, -1.56f) && near(state.yaw, 0) ? "Top"
-						  : near(state.pitch, -.1f) && near(state.yaw, Pi / 2) ? "Side"
+	const char* current = state.eye														 ? "Eye"
+						  : near(state.pitch, -1.56f) && near(state.yaw, 0)				 ? "Top"
+						  : near(state.pitch, -.1f) && near(state.yaw, pi / 2)			 ? "Side"
 						  : near(state.pitch, s_defaultView.pitch) && near(state.yaw, 0) ? "Back"
-																					  : "Free";
+																						 : "Free";
 	const float height = ImGui::GetFrameHeight(), padding = ImGui::GetStyle().FramePadding.x;
 	const float textWidth = ImGui::CalcTextSize(current).x;
 	ImGui::SetCursorScreenPos({minimum.x + 5 * scale, minimum.y + 5 * scale});
@@ -109,7 +108,7 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 			view(0, -1.56f);
 		ImGui::SetItemTooltip("Look down on the player");
 		if (ImGui::MenuItem("Side", nullptr, current == std::string_view("Side")))
-			view(Pi / 2, -.1f);
+			view(pi / 2, -.1f);
 		ImGui::SetItemTooltip("Look from the player's right");
 		if (ImGui::MenuItem("Eye", nullptr, state.eye, scene.eye.has_value()))
 			state.eye = true;
@@ -209,7 +208,8 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 		const float glyph = state.eye ? 1.0f : std::clamp(20 * scale / (perMeter * .12f), 1.0f, 4.0f);
 		const auto local = [&](XrVector3f offset)
 		{
-			return toCamera(Compose(pose, {{0, 0, 0, 1}, {offset.x * glyph, offset.y * glyph, offset.z * glyph}}).position);
+			return toCamera(
+				Compose(pose, {{0, 0, 0, 1}, {offset.x * glyph, offset.y * glyph, offset.z * glyph}}).position);
 		};
 		const auto bottom = local({0, -.035f, .05f}), top = local({0, .005f, -.03f});
 		std::array<XrVector3f, 24> ring;
@@ -220,7 +220,11 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 			ring[step] = local({c, .015f - .866f * s, -.065f - .5f * s});
 		}
 		const bool clipped = bottom.z > -s_near || top.z > -s_near ||
-							 std::ranges::any_of(ring, [](XrVector3f point) { return point.z > -s_near; });
+							 std::ranges::any_of(ring,
+												 [](XrVector3f point)
+												 {
+													 return point.z > -s_near;
+												 });
 		// Each end is as thick as its own depth makes it, so the near end reads as near.
 		const auto radiusAt = [&](XrVector3f point)
 		{
@@ -333,8 +337,10 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 	{
 		// A smaller gizmo than in the preview so it does not cover the player.
 		ImGuizmo::SetGizmoSizeClipSpace(.07f);
+		ImGui::PushID(selected);
 		result =
 			DrawPoseGizmo("Pose", state.gizmo, camera, minimum, maximum, scene.devices[selected], editable[selected]);
+		ImGui::PopID();
 		ImGuizmo::SetGizmoSizeClipSpace(.1f);
 	}
 	// Dragging a tracker by its centre slides it onto the nearest joint.

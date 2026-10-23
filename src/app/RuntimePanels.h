@@ -54,6 +54,7 @@ class RuntimePanels
 	std::optional<std::string> TakeSavedTake();
 	void DrawConnection(bool* open = nullptr);
 	void DrawWindows();
+	void EndFrame();
 	std::vector<Notice> TakeNotices();
 	std::vector<VkSemaphore> ReadyWaits() const;
 	void RecordTransfers(VkCommandBuffer command);

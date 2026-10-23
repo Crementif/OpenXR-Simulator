@@ -1,32 +1,30 @@
 #include "Math.h"
+#include "Pch.h"
 #include "app/Theme.h"
-#include "app/widgets/SpatialWidgets.h"
 #include "app/widgets/LiveField.h"
-#include <algorithm>
+#include "app/widgets/SpatialWidgets.h"
 #include <cmath>
-#include <cstdio>
+#include <imgui_internal.h>
 #include <numbers>
 
 namespace simxr::app
 {
-namespace
-{
-constexpr float s_degrees = 180 / std::numbers::pi_v<float>;
-XrVector3f Cross(XrVector3f a, XrVector3f b)
+static constexpr float s_degrees = 180 / std::numbers::pi_v<float>;
+static XrVector3f Cross(XrVector3f a, XrVector3f b)
 {
 	return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
 }
-float Dot(XrVector3f a, XrVector3f b)
+static float Dot(XrVector3f a, XrVector3f b)
 {
 	return a.x * b.x + a.y * b.y + a.z * b.z;
 }
-XrVector3f Normalize(XrVector3f a)
+static XrVector3f Normalize(XrVector3f a)
 {
 	const float length = std::sqrt(Dot(a, a));
 	return length > 1e-6f ? XrVector3f{a.x / length, a.y / length, a.z / length} : XrVector3f{1, 0, 0};
 }
 // A point on the unit ball under the pointer; outside the disc it slides onto the rim.
-XrVector3f Lift(XrVector2f point)
+static XrVector3f Lift(XrVector2f point)
 {
 	const float squared = point.x * point.x + point.y * point.y;
 	if (squared <= 1)
@@ -35,7 +33,7 @@ XrVector3f Lift(XrVector2f point)
 	return {point.x / length, point.y / length, 0};
 }
 // Signed angle of the turn from one pointer position to another about axis.
-float AngleAbout(XrVector3f axis, XrVector2f from, XrVector2f to)
+static float AngleAbout(XrVector3f axis, XrVector2f from, XrVector2f to)
 {
 	auto project = [&](XrVector3f value)
 	{
@@ -55,7 +53,7 @@ struct OrbCanvas
 		return {center.x + view.x * radius, center.y - view.y * radius};
 	}
 };
-void DrawModel(const OrbCanvas& canvas, OrbModel model, XrQuaternionf local, ImU32 color)
+static void DrawModel(const OrbCanvas& canvas, OrbModel model, XrQuaternionf local, ImU32 color)
 {
 	auto* draw = canvas.draw;
 	const auto view = [&](XrVector3f point)
@@ -129,9 +127,14 @@ void DrawModel(const OrbCanvas& canvas, OrbModel model, XrQuaternionf local, ImU
 		return;
 	}
 	// Headset: a box whose visible faces are shaded by how much they face the viewer.
-	const std::array<XrVector3f, 8> corners{XrVector3f{-.45f, -.25f, -.35f}, {.45f, -.25f, -.35f}, {.45f, .25f, -.35f},
-											{-.45f, .25f, -.35f},			 {-.45f, -.25f, .2f},  {.45f, -.25f, .2f},
-											{.45f, .25f, .2f},				 {-.45f, .25f, .2f}};
+	const std::array<XrVector3f, 8> corners{XrVector3f{-.45f, -.25f, -.35f},
+											{.45f, -.25f, -.35f},
+											{.45f, .25f, -.35f},
+											{-.45f, .25f, -.35f},
+											{-.45f, -.25f, .2f},
+											{.45f, -.25f, .2f},
+											{.45f, .25f, .2f},
+											{-.45f, .25f, .2f}};
 	struct Face
 	{
 		std::array<int, 4> corners;
@@ -154,11 +157,21 @@ void DrawModel(const OrbCanvas& canvas, OrbModel model, XrQuaternionf local, ImU
 		draw->AddPolyline(points.data(), 4, ink, ImDrawFlags_Closed, 1.5f * canvas.scale);
 	}
 }
-} // namespace
+void CancelRotationOrb(ArcballState& state)
+{
+	if (state.activeField && ImGui::GetActiveID() == state.activeField)
+		ImGui::ClearActiveID();
+	state.dragging = false;
+	state.activeField = 0;
+}
 SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf& orientation, XrQuaternionf view,
 							  XrQuaternionf reference, bool enabled, OrbModel model, ImU32 color, float width,
 							  float size)
 {
+	if (!enabled)
+		CancelRotationOrb(state);
+	state.drawnFrame = ImGui::GetFrameCount();
+	state.activeField = 0;
 	if (state.dragging)
 		view = state.view;
 	const float scale = ImGui::GetFontSize() / 16;
@@ -182,9 +195,9 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 	{
 		// Lit from the upper left: each smaller disc moves toward the light, so the ball reads as a sphere.
 		const float t = ring / 24.0f, shift = (1 - t) * radius * .32f;
-		draw->AddCircleFilled({center.x - shift, center.y - shift}, radius * t,
-							  theme::Mix(theme::Mix(theme::Ink, theme::SurfaceRaised, .75f), theme::Text, (1 - t) * .2f),
-							  64);
+		draw->AddCircleFilled(
+			{center.x - shift, center.y - shift}, radius * t,
+			theme::Mix(theme::Mix(theme::Ink, theme::SurfaceRaised, .75f), theme::Text, (1 - t) * .2f), 64);
 	}
 	draw->AddCircle(center, radius, theme::Line, 64, scale);
 	const OrbCanvas canvas{draw, center, radius, scale};
@@ -214,9 +227,11 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 				const auto screen = canvas.Point(onRing);
 				// The far half is dashed and faint so the near half reads as in front.
 				if (step && (onRing.z >= 0) == front && (front || active || step % 2))
-					draw->AddLine(previous, screen,
-								  front ? colors[ring] : theme::Fade(colors[ring], .35f),
-								  (active ? 4.0f : front ? 2.5f : 1.5f) * scale);
+					draw->AddLine(previous, screen, front ? colors[ring] : theme::Fade(colors[ring], .35f),
+								  (active  ? 4.0f
+								   : front ? 2.5f
+										   : 1.5f) *
+									  scale);
 				if (front && onRing.z >= 0)
 				{
 					const float gap = std::hypot(screen.x - mouse.x, screen.y - mouse.y);
@@ -243,9 +258,9 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 		if (onNose)
 			ImGui::SetTooltip("Turn this device toward the rig camera");
 		else if (hoveredRing >= 0)
-			ImGui::SetTooltip("%s", hoveredRing == 0 ? "Drag to turn (yaw); Ctrl snaps to 15 degrees"
-							 : hoveredRing == 1 ? "Drag to tilt (pitch); Ctrl snaps to 15 degrees"
-												: "Drag to roll; Ctrl snaps to 15 degrees");
+			ImGui::SetTooltip("%s", hoveredRing == 0   ? "Drag to turn (yaw); Ctrl snaps to 15 degrees"
+									: hoveredRing == 1 ? "Drag to tilt (pitch); Ctrl snaps to 15 degrees"
+													   : "Drag to roll; Ctrl snaps to 15 degrees");
 		else if (distance <= 1)
 			ImGui::SetTooltip("Drag to rotate; the wheel rolls.\nDouble-click resets; Ctrl snaps.");
 	}
@@ -274,7 +289,12 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 			ImGui::PopID();
 			return {true, true, false, true};
 		}
-		state = {point, orientation, view, true, hoveredRing, hoveredRing >= 0 ? axes[hoveredRing] : XrVector3f{}};
+		state.start = point;
+		state.orientation = orientation;
+		state.view = view;
+		state.dragging = true;
+		state.ring = hoveredRing;
+		state.axis = hoveredRing >= 0 ? axes[hoveredRing] : XrVector3f{};
 	}
 	if (state.dragging && enabled && ImGui::IsMouseDown(ImGuiMouseButton_Left))
 	{
@@ -316,10 +336,12 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 			ImGui::SameLine();
 		ImGui::SetNextItemWidth(field);
 		float* value = index == 0 ? &angles.x : index == 1 ? &angles.y : &angles.z;
-		fieldEdited |= ImGui::DragFloat(labels[index].first, value, .5f, index == 1 ? -89.9f : -180.0f,
-										index == 1 ? 89.9f : 180.0f, labels[index].second,
-										ImGuiSliderFlags_AlwaysClamp);
+		fieldEdited |=
+			ImGui::DragFloat(labels[index].first, value, .5f, index == 1 ? -89.9f : -180.0f,
+							 index == 1 ? 89.9f : 180.0f, labels[index].second, ImGuiSliderFlags_AlwaysClamp);
 		fieldActive |= ImGui::IsItemActive();
+		if (ImGui::IsItemActive())
+			state.activeField = ImGui::GetItemID();
 		fieldFinished |= ImGui::IsItemDeactivatedAfterEdit();
 		// Each angle resets to what the device follows on its own.
 		const float limit = index == 1 ? 89.9f : 180.0f;
@@ -336,7 +358,8 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 	ImGui::EndDisabled();
 	if (fieldEdited)
 	{
-		orientation = Multiply(reference, EulerAngles(angles.x / s_degrees, angles.y / s_degrees, angles.z / s_degrees));
+		orientation =
+			Multiply(reference, EulerAngles(angles.x / s_degrees, angles.y / s_degrees, angles.z / s_degrees));
 		changed = true;
 	}
 	ImGui::PopID();

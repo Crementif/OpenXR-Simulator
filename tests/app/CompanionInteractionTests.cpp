@@ -13,6 +13,8 @@
 #include "app/RuntimePanels.h"
 #include "app/RuntimeSession.h"
 #include "app/widgets/HapticEvents.h"
+#include "app/widgets/SpatialEditor.h"
+#include "control/FrameInspection.h"
 #include "runtime/Runtime.h"
 #include "runtime/SimulationExtensions.h"
 #include "control/LocalControlServer.h"
@@ -982,6 +984,102 @@ void PilotLiveRuntime(const char* endpoint)
 	std::cout << "PASS real application inspection: pause, next frame, captured image, continue and historical view "
 				 "while running\n";
 }
+void CheckSpatialWidgetLifecycle()
+{
+	using namespace simxr;
+	Interaction test;
+	PlayerRig rig;
+	ManualInputController input;
+	UndoStack undo;
+	SpatialEditor editor{rig, input, undo};
+	CommandScheduler scheduler;
+	scheduler.Start();
+	scheduler.Apply(FrameId{1}, SimulationTime{Duration{100}}, RuntimeTime{Duration{200}}, {});
+	ManualInputSnapshot snapshot;
+	snapshot.observation = 1;
+	snapshot.state.fields.push_back(control::Field::Bytes(control::tag::Document,
+		control::SimulationState(scheduler.Snapshot()).Encode()));
+	editor.Observe(snapshot, false);
+	Selection selection = DeviceSel{DevicePage::Right};
+	bool placement = true, historical = false;
+	std::uint64_t historyIdentity = 1;
+	std::vector<FrameView> eyes{{rig.Head(), {-.8f, .8f, .8f, -.8f}}};
+	FrameRecord record;
+	record.key = {{1}, {1}};
+	record.stage = FrameStage::Submitted;
+	record.submission.emplace();
+	record.submission->tracking = TrackingSystem::Evaluate(RuntimeTime{Duration{200}},
+		ReadObservedSetup(snapshot.state).values.tracking, BodyModel{});
+	control::InspectionStore store;
+	control::Message document;
+	document.fields.push_back(control::Field::Bytes(control::tag::Document,
+		control::InspectFrame(store, {1}, record)->document));
+	const auto frame = [&]
+	{
+		Eventually([&] { return test.PollEvents() && test.renderer.BeginFrame(); }, "Spatial fixture stalled");
+		editor.SetContext(!historical, historical, eyes, historical ? &document : nullptr, historyIdentity);
+		ImGui::SetNextWindowPos({20, 20}, ImGuiCond_Always);
+		ImGui::SetNextWindowSize({440, 650}, ImGuiCond_Always);
+		ImGui::Begin("Spatial lifecycle");
+		if (historical)
+			editor.DrawRig(selection, {400, 400});
+		else if (placement)
+			editor.DrawPlacement(selection);
+		ImGui::End();
+		editor.EndFrame();
+		Require(test.renderer.Render(), "Spatial fixture did not render");
+	};
+	const auto pump = [&](int count) { for (int index = 0; index < count; ++index) frame(); };
+	pump(3);
+	auto* window = FindPanel("Spatial lifecycle");
+	Require(window, "Spatial fixture window missing");
+	ImGui::SetWindowFocus(window->Name);
+	const auto orb = ImHashStr("Rotation ball", 0, window->GetID(2));
+	const auto activateYaw = [&]
+	{
+		ImGui::ActivateItemByID(ImHashStr("##Yaw", 0, orb));
+		ImGui::GetCurrentContext()->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
+		frame();
+		Require(editor.Active(), "Numeric rotation did not retain gesture ownership");
+	};
+	activateYaw();
+	auto& io = ImGui::GetIO();
+	io.AddKeyEvent(ImGuiMod_Ctrl, true);
+	io.AddKeyEvent(ImGuiKey_A, true);
+	frame();
+	io.AddKeyEvent(ImGuiKey_A, false);
+	io.AddKeyEvent(ImGuiMod_Ctrl, false);
+	frame();
+	io.AddInputCharactersUTF8("25");
+	frame();
+	io.AddKeyEvent(ImGuiKey_Enter, true);
+	frame();
+	io.AddKeyEvent(ImGuiKey_Enter, false);
+	frame();
+	Require(std::abs(rig.Hand(1).orientation.y) > .1f, "Rejected-edit fixture never edited the rig");
+	Require(undo.Empty(), "Rejected spatial submission entered undo history");
+	activateYaw();
+	placement = false;
+	pump(2);
+	Require(!editor.Active(), "Hidden numeric rotation retained gesture ownership");
+	historical = true;
+	selection = DeviceSel{DevicePage::Head};
+	pump(2);
+	const auto back = editor.RigDevicePoints()[2];
+	ChooseRigView(window->GetID("Rig view"), "Eye", pump);
+	const auto eye = editor.RigDevicePoints()[2];
+	Require(std::hypot(eye.x - back.x, eye.y - back.y) > 10, "Historical Eye fixture did not change camera");
+	eyes.clear();
+	++historyIdentity;
+	pump(2);
+	const auto missing = editor.RigDevicePoints()[2];
+	Require(std::hypot(missing.x - back.x, missing.y - back.y) < .01f,
+		"Historical frame without eye metadata reused another frame's camera");
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Spatial lifecycle validation errors");
+	std::cout << "PASS numeric gesture ownership, hidden widget retirement, rejected undo and historical camera isolation\n";
+}
+
 void ConfigureObservedDevices()
 {
 	Interaction test;
@@ -1823,6 +1921,7 @@ void CheckSpatialEditing(Interaction& test)
 	};
 	const auto pointer = [&](ImVec2 position, int button)
 	{
+		SDL_WarpMouseInWindow(test.window.Native(), position.x, position.y);
 		SDL_Event event{};
 		event.type = SDL_EVENT_MOUSE_MOTION;
 		event.motion.windowID = SDL_GetWindowID(test.window.Native());
@@ -1853,8 +1952,10 @@ void CheckSpatialEditing(Interaction& test)
 	SDL_ShowWindow(test.window.Native());
 	SDL_RaiseWindow(test.window.Native());
 	test.window.Resize(1920, 1080);
+	SDL_WarpMouseInWindow(test.window.Native(), 960, 540);
 	test.workspace.SetScale(1);
 	test.workspace.Select(DeviceSel{DevicePage::Right});
+	Eventually([&] { pump(1); return test.window.Focused(); }, "Spatial window did not receive focus");
 	pump(6);
 	auto before = observe();
 	PlayerRig rig;
@@ -1884,9 +1985,55 @@ void CheckSpatialEditing(Interaction& test)
 	pointer(tip, 0);
 	pump(8);
 	after = observe();
+	if (Rotate(after.values.tracking.controllers[1].pose.pose.orientation, {0, 0, -1}).y <= .99f)
+	{
+		if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
+		{
+			test.renderer.RequestScreenshot(std::filesystem::path(directory) / "spatial-orb-failure.bmp");
+			pump(1);
+		}
+		std::cout << "Spatial orb focus=" << test.window.Focused() << " tip=" << tip.x << "," << tip.y
+			<< " up=" << Rotate(after.values.tracking.controllers[1].pose.pose.orientation, {0, 0, -1}).y << '\n';
+	}
 	Require(Rotate(after.values.tracking.controllers[1].pose.pose.orientation, {0, 0, -1}).y > .99f,
 			"Rotation ball did not point the hand up");
 	std::cout << "PASS arcball pointing up through native observed state\n";
+	const auto changesBefore = test.runtime.Changes().size();
+	const ImVec2 orbStart{ball.x + ball.width * .32f, ball.y + ball.height * .32f};
+	const ImVec2 orbEnd{orbStart.x + 18, orbStart.y + 22};
+	pointer(orbStart, 1);
+	pointer(orbEnd, -1);
+	pump(8);
+	const auto interrupted = observe().values.tracking.controllers[1].pose.pose;
+	Require(std::abs(RelativePose(interrupted, after.values.tracking.controllers[1].pose.pose).orientation.w) < .9999f,
+		"Interrupted rotation fixture did not move the right hand");
+	// Hide a held orb, release it off-screen, then edit a different device.
+	test.workspace.SetPreviewExpanded(true);
+	pump(2);
+	pointer(orbEnd, 0);
+	test.workspace.Select(DeviceSel{DevicePage::Left});
+	test.workspace.SetPreviewExpanded(false);
+	pump(4);
+	const auto leftBefore = observe().values.tracking.controllers[0].pose.pose;
+	const auto leftBall = test.runtime.Snapshot().rotationBall;
+	drag({leftBall.x + leftBall.width * .32f, leftBall.y + leftBall.height * .32f},
+		 {leftBall.x + leftBall.width * .32f + 18, leftBall.y + leftBall.height * .32f + 22});
+	const auto editedLeft = observe().values.tracking.controllers[0].pose.pose;
+	Require(std::abs(RelativePose(editedLeft, leftBefore).orientation.w) < .9999f,
+		"Second rotation fixture did not move the left hand");
+	Require(test.runtime.Changes().size() == changesBefore + 2,
+		"Interrupted rotation merged with a different device's undo gesture");
+	test.runtime.UndoChanges(1);
+	pump(8);
+	const auto undone = observe();
+	Require(std::abs(RelativePose(undone.values.tracking.controllers[0].pose.pose, leftBefore).orientation.w) > .9999f &&
+		std::abs(RelativePose(undone.values.tracking.controllers[1].pose.pose, interrupted).orientation.w) > .9999f,
+		"Undo after a hidden rotation changed the wrong gesture");
+	test.runtime.UndoChanges(1);
+	pump(8);
+	test.workspace.Select(DeviceSel{DevicePage::Right});
+	pump(4);
+	std::cout << "PASS hidden rotation retirement and independent undo after device selection\n";
 	// Type a far-away X, relative to the body, into the hand's position field to put it off screen.
 	ImGui::SetScrollY(inspector, inspector->ScrollMax.y);
 	pump(2);
@@ -1955,6 +2102,29 @@ void CheckSpatialEditing(Interaction& test)
 	Require(after.values.tracking.controllers[1].pose.pose.position.x > world.position.x + .01f,
 			"Preview gizmo did not translate the right hand");
 	std::cout << "PASS preview gizmo translation through native observed state\n";
+	const auto leftPose = after.values.tracking.controllers[0].pose.pose;
+	const auto retargetMarker = test.runtime.Snapshot().markers[2];
+	const ImVec2 retargetOrigin{retargetMarker.x + retargetMarker.width / 2,
+		retargetMarker.y + retargetMarker.height / 2};
+	const ImVec2 heldHandle{retargetOrigin.x + direction.x * 45, retargetOrigin.y + direction.y * 45};
+	pointer({retargetOrigin.x + direction.x * 28, retargetOrigin.y + direction.y * 28}, 1);
+	pointer(heldHandle, -1);
+	pump(4);
+	Require(observe().values.tracking.controllers[1].pose.pose.position.x >
+		after.values.tracking.controllers[1].pose.pose.position.x + .005f,
+		"Retarget fixture did not begin a gizmo drag");
+	test.workspace.Select(DeviceSel{DevicePage::Left});
+	pump(2);
+	pointer({heldHandle.x + direction.x * 35, heldHandle.y + direction.y * 35}, -1);
+	pump(4);
+	const auto retargeted = observe().values.tracking.controllers[0].pose.pose;
+	Require(std::hypot(retargeted.position.x - leftPose.position.x, retargeted.position.y - leftPose.position.y,
+		retargeted.position.z - leftPose.position.z) < .001f,
+		"Changing selection transferred an active gizmo to another device");
+	pointer(heldHandle, 0);
+	test.workspace.Select(DeviceSel{DevicePage::Right});
+	pump(3);
+	std::cout << "PASS preview gizmo cancellation before device retargeting\n";
 	ImGui::ActivateItemByID(ImHashStr("Expand", 0, inspector->GetID("Rig view")));
 	pump(3);
 	Require(test.runtime.Snapshot().rigExpanded, "Rig view did not expand");
@@ -4407,6 +4577,7 @@ int main()
 		Require(validation->errors.load() == 0, "Vulkan validation errors during interaction or teardown");
 		CheckShell();
 		ConfigureObservedDevices();
+		CheckSpatialWidgetLifecycle();
 		if (const auto endpoint = std::getenv("SIMXR_UI_PILOT_ENDPOINT"))
 			PilotLiveRuntime(endpoint);
 		if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))

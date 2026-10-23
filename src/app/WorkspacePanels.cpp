@@ -996,6 +996,7 @@ struct WorkspacePanels::Impl
 			Save();
 		}
 		runtime.DrawWindows();
+		runtime.EndFrame();
 	}
 };
 WorkspacePanels::WorkspacePanels(ProcessSupervisor& processes, bool enabled, std::string endpoint)

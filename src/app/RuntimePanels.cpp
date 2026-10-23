@@ -9,7 +9,7 @@
 #include "app/RangePage.h"
 #include "app/RecordingPanel.h"
 #include "app/RuntimeSession.h"
-#include "app/SpatialEditor.h"
+#include "app/widgets/SpatialEditor.h"
 #include "app/Theme.h"
 #include "app/platform/Window.h"
 #include "app/widgets/Controls.h"
@@ -37,6 +37,7 @@ class RuntimePanels::Impl
 	}
 	~Impl()
 	{
+		m_spatial.Cancel();
 		StopPilot();
 		if (m_window)
 			m_window->Rumble({});
@@ -122,7 +123,8 @@ class RuntimePanels::Impl
 		const bool following = m_view.time.following;
 		const auto image = m_session.Preview().Selected();
 		const auto historical = m_session.Workspace().Selected();
-		m_spatial.SetContext(connected && selected.id && following && !m_pilot.Active(), !following,
+		m_spatial.SetContext(connected && selected.id && following && !m_pilot.Active() &&
+								(!m_window || m_window->Focused()), !following,
 							 image ? std::span<const FrameView>{image->description.views} : std::span<const FrameView>{},
 							 historical && !following ? &historical->document : nullptr,
 							 historical ? historical->local : 0);
@@ -275,6 +277,7 @@ class RuntimePanels::Impl
 	}
 	void FocusLost()
 	{
+		m_spatial.Cancel();
 		m_session.Haptics().Motors(HapticFeedback::Clock::now(), false);
 		if (m_window)
 			m_window->Rumble({});
@@ -431,6 +434,10 @@ void RuntimePanels::DrawConnection(bool* open)
 void RuntimePanels::DrawWindows()
 {
 	m_impl->m_documents.DrawWindow();
+}
+void RuntimePanels::EndFrame()
+{
+	m_impl->m_spatial.EndFrame();
 }
 std::vector<Notice> RuntimePanels::TakeNotices()
 {
