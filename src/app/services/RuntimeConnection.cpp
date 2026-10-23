@@ -56,6 +56,13 @@ void RuntimeConnection::Reply(RuntimeReply reply)
 	m_changed.notify_all();
 }
 #if defined(__linux__) || defined(_WIN32)
+static std::string TimeoutDetail(const control::ControlExchangeTimeout& error, std::uint16_t opcode,
+								 std::chrono::milliseconds deadline)
+{
+	return "Control request " + std::to_string(error.Request().value) + " (opcode " + std::to_string(opcode) +
+		   ") exceeded the " + std::to_string(deadline.count()) + " ms exchange deadline; connection closed";
+}
+
 control::ControlPacket RuntimeConnection::Exchange(control::LocalControlClient& client, control::ControlPacket packet,
 												   std::uint64_t epoch)
 {
@@ -173,6 +180,13 @@ void RuntimeConnection::RunChecked()
 				if (!accepted)
 					client.reset();
 			}
+			catch (const control::ControlExchangeTimeout& error)
+			{
+				client.reset();
+				ConnectionState(activeEpoch, RuntimeConnectionState::Failed,
+								TimeoutDetail(error, static_cast<std::uint16_t>(control::OpCode::Hello),
+											  m_configuration.exchangeDeadline));
+			}
 			catch (const std::exception& error)
 			{
 				client.reset();
@@ -193,13 +207,14 @@ void RuntimeConnection::RunChecked()
 		else
 		{
 #if defined(__linux__) || defined(_WIN32)
+			const auto opcode = request.packet.message.opcode;
 			try
 			{
 				reply.packet = Exchange(*client, std::move(request.packet), activeEpoch);
 			}
 			catch (const control::ControlExchangeTimeout& error)
 			{
-				reply.error = error.what();
+				reply.error = TimeoutDetail(error, opcode, m_configuration.exchangeDeadline);
 				reply.timedOut = true;
 				client.reset();
 				ConnectionState(activeEpoch, RuntimeConnectionState::Failed, reply.error);

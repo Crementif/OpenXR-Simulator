@@ -368,6 +368,11 @@ void ResponsiveShutdownAndDeadline()
 						connection.Snapshot().state == app::RuntimeConnectionState::Failed &&
 						connection.Snapshot().hello.message.Find(wire::tag::Error)->AsU32() == 0,
 					"Deadline discarded diagnostic/Hello or silently resubmitted queued work");
+			Require(replies[0].error == "Control request 3 (opcode " +
+										  std::to_string(static_cast<std::uint16_t>(wire::OpCode::RetainImage)) +
+										  ") exceeded the 60 ms exchange deadline; connection closed" &&
+						connection.Snapshot().detail == replies[0].error,
+					"Deadline omitted the stalled request identity, opcode or overall deadline");
 		}
 		else
 		{
