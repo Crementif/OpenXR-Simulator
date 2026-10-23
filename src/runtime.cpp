@@ -1,7 +1,4 @@
-// Minimal OpenXR Simulator Runtime (D3D11/D3D12/OpenGL)
-// - Implements enough of the runtime interface to let OpenXR apps start and render into runtime-owned swapchains
-// - Opens a desktop window and presents the app's submitted images side-by-side
-// - Supports D3D11, D3D12, and OpenGL graphics APIs
+// Windows OpenXR loader entry points and native runtime composition.
 
 #define XR_USE_PLATFORM_WIN32
 #define XR_USE_GRAPHICS_API_D3D11
@@ -13,22 +10,21 @@
 
 #include "simxr/Version.h"
 #include <d3d11.h>
-#include <d3d11on12.h>
 #include <d3d12.h>
 #include <dxgi.h>
 #include <dxgi1_6.h>
-#include <limits>
 #include <windows.h>
-#include <windowsx.h>
 #include <wrl/client.h>
 
 #define VK_USE_PLATFORM_WIN32_KHR
 #include <vulkan/vulkan.h>
 
-#include "Math.h"
 #include "control/ControlService.h"
 #include "control/LocalControlServer.h"
 #include "control/backends/vulkan/VulkanImageInspection.h"
+#include "control/legacy/WindowsLegacyCapture.h"
+#include "control/legacy/WindowsLegacyChannel.h"
+#include "control/legacy/WindowsRuntimeSettings.h"
 #include "control/legacy/backends/vulkan/VulkanLegacyCapture.h"
 #include "control/legacy/backends/vulkan/WindowsVulkanCaptureChannel.h"
 #include "flicker_detector.h"
@@ -43,6 +39,8 @@
 #include "graphics/backends/windows/WindowsSessionGraphics.h"
 #include "platform/windows/OpenGLSwapchain.h"
 #include "platform/windows/WindowsClock.h"
+#include "platform/windows/WindowsRuntimeInput.h"
+#include "platform/windows/WindowsRuntimePaths.h"
 #include "presentation/FrameScheduler.h"
 #include "runtime/DispatchTable.h"
 #include "runtime/EntryPoints.h"
@@ -56,65 +54,27 @@
 #include "runtime/SpaceQueries.h"
 #include "runtime/validation/LayerValidation.h"
 #include "runtime/validation/StructureChain.h"
-#include "simulation/LegacyControllerMotion.h"
-#include <charconv>
-#include <memory>
-
-static simxr::Runtime& RuntimeState();
-
-// OpenGL headers - minimal definitions for what we need
-#include <GL/gl.h>
-
-#ifndef GL_SRGB8_ALPHA8
-#define GL_SRGB8_ALPHA8 0x8C43
-#endif
-
-#include <algorithm>
-#include <array>
-#include <atomic>
 #include <bit>
-#include <cfloat>
-#include <chrono>
-#include <cmath>
+#include <charconv>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <deque>
 #include <mutex>
-#include <optional>
-#include <share.h>
-#include <span>
-#include <string>
-#include <string_view>
 #include <unordered_map>
-#include <vector>
 
-#include "control/legacy/WindowsRuntimeSettings.h"
-#include "mcp_integration.h"
 #include <loader_interfaces.h>
-#include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 namespace settings = simxr::legacy::settings;
 
 using Microsoft::WRL::ComPtr;
 
-#pragma comment(lib, "dxgi.lib")
-#pragma comment(lib, "d3d11.lib")
-#pragma comment(lib, "d3dcompiler.lib")
-#pragma comment(lib, "d3d12.lib")
-#pragma comment(lib, "opengl32.lib")
-
-// D3D12 helper - calculates subresource index (from d3dx12.h)
-inline UINT D3D12CalcSubresource(UINT MipSlice, UINT ArraySlice, UINT PlaneSlice, UINT MipLevels, UINT ArraySize)
-{
-	return MipSlice + ArraySlice * MipLevels + PlaneSlice * MipLevels * ArraySize;
-}
+static simxr::Runtime& RuntimeState();
 
 // File output is owned by the active instance's joined compatibility worker.
-static std::mutex g_LogMutex;
-static std::weak_ptr<mcp::WindowsLegacyChannel> g_logChannel;
-static const bool g_logVerbose = []()
+static std::mutex s_logMutex;
+static std::weak_ptr<mcp::WindowsLegacyChannel> s_logChannel;
+static const bool s_logVerbose = []()
 {
 	char v[16]{};
 	const DWORD n = GetEnvironmentVariableA("SIMXR_VERBOSE", v, (DWORD)sizeof(v));
@@ -125,8 +85,8 @@ static void Log(const char* msg)
 {
 	std::shared_ptr<mcp::WindowsLegacyChannel> files;
 	{
-		std::lock_guard lock(g_LogMutex);
-		files = g_logChannel.lock();
+		std::lock_guard lock(s_logMutex);
+		files = s_logChannel.lock();
 	}
 	if (files)
 	{
@@ -205,7 +165,7 @@ struct Instance
 	simxr::VulkanInstanceGraphics vulkan;
 	XrInstance handle{XR_NULL_HANDLE};
 	std::shared_ptr<simxr::Instance> core;
-	std::shared_ptr<simxr::legacy::LegacyControllerMotion> controllerMotion;
+	std::shared_ptr<simxr::windows::WindowsRuntimeInput> input;
 	std::shared_ptr<mcp::WindowsLegacyChannel> compatibilityFiles;
 	std::shared_ptr<mcp::WindowsLegacyCapture> compatibilityCapture;
 	std::shared_ptr<flicker::Diagnostics> diagnostics;
@@ -251,7 +211,7 @@ struct Session
 	std::unordered_map<XrSwapchain, Swapchain> swapchains;
 	XrSession handle{XR_NULL_HANDLE};
 	std::shared_ptr<simxr::Session> core;
-	std::shared_ptr<simxr::legacy::LegacyControllerMotion> controllerMotion;
+	std::shared_ptr<simxr::windows::WindowsRuntimeInput> input;
 	std::shared_ptr<mcp::WindowsLegacyChannel> compatibilityFiles;
 	std::shared_ptr<mcp::WindowsLegacyCapture> compatibilityCapture;
 	std::shared_ptr<flicker::Diagnostics> diagnostics;
@@ -329,264 +289,36 @@ static std::shared_ptr<simxr::Session> RetainSession()
 	return native ? native->core : nullptr;
 }
 
-static std::shared_ptr<simxr::legacy::LegacyControllerMotion>
-RetainControllerMotion(const std::shared_ptr<simxr::Session>& session)
-{
-	const auto native = RetainNativeSession();
-	return native && native->core == session ? native->controllerMotion : nullptr;
-}
-
-// Head tracking state for mouse look and WASD movement
-static XrVector3f g_headPos = {0.0f, 1.7f, 0.0f}; // Start at standing eye height
-static float g_headYaw = 0.0f;					  // Rotation around Y axis (left/right)
-static float g_headPitch = 0.0f;				  // Rotation around X axis (up/down)
-static float g_headRoll = 0.0f; // Rotation around forward axis (head tilt). MCP-only — no keyboard binding.
-
-// ---------- Diagnostic state: settable IPD and asymmetric per-eye FOV ----------
-//
-// By default the simulator publishes a UI-selected headset profile with
-// asymmetric per-eye FOV and nonzero IPD. Symmetric FOV is still available
-// from the FOV menu for sanity checks.
-//
-// When g_useCustomFov / g_useCustomIpd are set (via MCP set_fov / set_ipd
-// / set_headset_profile), xrLocateViews emits the configured values
-// instead. Headset profiles (quest3, index, etc.) preset both at once.
-//
-// FOV is stored in radians per OpenXR XrFovf convention:
-//   angleLeft  < 0,  angleRight > 0
-//   angleDown  < 0,  angleUp    > 0
-// Per eye: index 0 = left eye, 1 = right eye.
-static std::atomic<bool> g_useCustomFov{false};
-static float g_eyeFovL[2] = {0, 0};
-static float g_eyeFovR[2] = {0, 0};
-static float g_eyeFovU[2] = {0, 0};
-static float g_eyeFovD[2] = {0, 0};
-
-static std::atomic<bool> g_useCustomIpd{false};
-static float g_customIpd = 0.064f; // meters
-
-static XrFovf MakeFovDeg(float angleLeft, float angleRight, float angleUp, float angleDown)
-{
-	const float DEG2RAD = 3.14159265f / 180.0f;
-	return XrFovf{angleLeft * DEG2RAD, angleRight * DEG2RAD, angleUp * DEG2RAD, angleDown * DEG2RAD};
-}
-
-static XrFovf GetUiFov(uint32_t eyeIndex)
-{
-	const auto state = settings::ReadState();
-	// Shared with settings::ActiveFovAspect, which snaps the recommended render target to the
-	// shape of whatever this returns.
-	if (!state.useAsymmetricFov || state.headsetProfile == settings::HeadsetProfile::GenericSymmetric)
-	{
-		int fovDeg = state.fovDegrees;
-		if (fovDeg <= 0 || fovDeg > 180)
-			fovDeg = 90;
-		float fovRadians = fovDeg * 0.5f * 3.14159265f / 180.0f;
-		// XrFovf fields are angles in radians, not tangent-space extents.
-		return XrFovf{-fovRadians, fovRadians, fovRadians, -fovRadians};
-	}
-
-	const settings::EyeFov& e = settings::GetHeadsetSpec(state.headsetProfile).eye[eyeIndex == 0 ? 0 : 1];
-	return MakeFovDeg(e.angleLeft, e.angleRight, e.angleUp, e.angleDown);
-}
-
-static float GetUiIpdMeters()
-{
-	return (std::max)(0.0f, (std::min)(0.2f, settings::ReadState().ipdMeters));
-}
-
-// Pose sweep: auto-oscillate yaw / pitch / roll on a sine wave so the
-// app sees a continuous range of head orientations. Catches off-axis
-// quaternion bugs in seconds — anything mis-converted from OpenXR's
-// right-handed frame to a left-handed game frame becomes a "world
-// wobbles wrong direction" symptom that's hard to miss.
-static bool g_poseSweepEnabled = false;
-static float g_poseSweepStartT = 0.0f;
-static float g_poseSweepYawAmp = 0.5f;	 // radians (~28 deg)
-static float g_poseSweepPitchAmp = 0.3f; // radians (~17 deg)
-static float g_poseSweepRollAmp = 0.3f;	 // radians (~17 deg)
-static float g_poseSweepFreq = 0.25f;	 // Hz
-static double InputClockSeconds()
-{
-	LARGE_INTEGER now, frequency;
-	QueryPerformanceCounter(&now);
-	QueryPerformanceFrequency(&frequency);
-	return static_cast<double>(now.QuadPart) / static_cast<double>(frequency.QuadPart);
-}
-
-static simxr::legacy::ControllerKeyboardSample PollControllerKeyboard(float frameSeconds)
-{
-	const auto down = [](int key)
-	{
-		return (GetAsyncKeyState(key) & 0x8000) != 0;
-	};
-	simxr::legacy::ControllerKeyboardSample input;
-	input.active = true;
-	input.frameSeconds = frameSeconds;
-	input.animationKeyDown = down('M');
-	input.resetRight = down(VK_NUMPAD5);
-	input.translationDirection = {static_cast<float>(down(VK_NUMPAD6) - down(VK_NUMPAD4)),
-								  static_cast<float>(down(VK_ADD) - down(VK_SUBTRACT)),
-								  static_cast<float>(down(VK_NUMPAD2) - down(VK_NUMPAD8))};
-	input.rotationDirection = {static_cast<float>(down(VK_NUMPAD9) - down(VK_NUMPAD7)),
-							   static_cast<float>(down(VK_NUMPAD1) - down(VK_NUMPAD3))};
-	auto& left = input.hands[0];
-	left.trigger = down(VK_LCONTROL);
-	left.grip = down(VK_LMENU);
-	left.menu = down('G');
-	left.primary = down('V');
-	left.secondary = down('B');
-	if (down('I'))
-		left.stick.y = 1;
-	if (down('K'))
-		left.stick.y = -1;
-	if (down('J'))
-		left.stick.x = -1;
-	if (down('L'))
-		left.stick.x = 1;
-	auto& right = input.hands[1];
-	right.trigger = down(VK_SPACE);
-	right.grip = down('F');
-	right.menu = down(VK_TAB);
-	right.primary = down('R');
-	right.secondary = down('T');
-	right.thumbClick = down(VK_RETURN);
-	if (down(VK_UP))
-		right.stick.y = 1;
-	if (down(VK_DOWN))
-		right.stick.y = -1;
-	if (down(VK_LEFT))
-		right.stick.x = -1;
-	if (down(VK_RIGHT))
-		right.stick.x = 1;
-	return input;
-}
-
-static simxr::legacy::ControllerOverrideEdit<float> DecodeHoldAxis(float value, float presentMinimum,
-																   float activeMinimum)
-{
-	using Edit = simxr::legacy::ControllerOverrideEdit<float>;
-	if (!(value >= presentMinimum))
-		return {};
-	if (value < activeMinimum)
-		return Edit::Release();
-	return Edit::Set(value);
-}
-
-static simxr::legacy::ControllerOverrideEdit<bool> DecodeHoldButton(float value)
-{
-	using Edit = simxr::legacy::ControllerOverrideEdit<bool>;
-	if (!(value >= -0.5f))
-		return {};
-	if (value < 0)
-		return Edit::Release();
-	return Edit::Set(value >= 0.5f);
-}
-
-static simxr::legacy::ControllerHoldEdit DecodeControllerHold(const mcp::ControllerHoldCommand& command)
-{
-	using namespace simxr::legacy;
-	ControllerHoldEdit edit;
-	if (command.hand >= 0)
-		edit.hand = command.hand == 0 ? ControllerHand::Left : ControllerHand::Right;
-	edit.clear = command.clear;
-	edit.trigger = DecodeHoldAxis(command.trigger, -0.5f, 0);
-	edit.grip = DecodeHoldAxis(command.grip, -0.5f, 0);
-	edit.primary = DecodeHoldButton(command.primary);
-	edit.secondary = DecodeHoldButton(command.secondary);
-	edit.menu = DecodeHoldButton(command.menu);
-	edit.thumbClick = DecodeHoldButton(command.thumbClick);
-	edit.stickX = DecodeHoldAxis(command.stickX, -1.5f, -1);
-	edit.stickY = DecodeHoldAxis(command.stickY, -1.5f, -1);
-	if (command.yaw != mcp::kHoldAngleUnset)
-		edit.yaw = ControllerOverrideEdit<float>::Set(command.yaw);
-	if (command.pitch != mcp::kHoldAngleUnset)
-		edit.pitch = ControllerOverrideEdit<float>::Set(command.pitch);
-	if (command.roll != mcp::kHoldAngleUnset)
-		edit.roll = ControllerOverrideEdit<float>::Set(command.roll);
-	return edit;
-}
-
-// Helper function to create quaternion from yaw and pitch
-XrQuaternionf QuatFromYawPitch(float yaw, float pitch)
-{
-	// Create rotation: first yaw around Y, then pitch around X
-	float cy = cosf(yaw * 0.5f);
-	float sy = sinf(yaw * 0.5f);
-	float cp = cosf(pitch * 0.5f);
-	float sp = sinf(pitch * 0.5f);
-
-	// Combine rotations (yaw * pitch)
-	XrQuaternionf q;
-	q.w = cy * cp;
-	q.x = cy * sp;
-	q.y = sy * cp;
-	q.z = -sy * sp;
-	return q;
-}
-
-// Yaw / Pitch / Roll: q = q_yaw * q_pitch * q_roll. Roll is rotation
-// about the head's local forward axis (head tilt), used by the
-// MCP-injected diagnostic poses so off-axis quaternion-handedness
-// bugs surface in the simulator.
-XrQuaternionf QuatFromYawPitchRoll(float yaw, float pitch, float roll)
-{
-	const float hy = yaw * 0.5f, cy = cosf(hy), sy = sinf(hy);
-	const float hp = pitch * 0.5f, cp = cosf(hp), sp = sinf(hp);
-	const float hr = roll * 0.5f, cr = cosf(hr), sr = sinf(hr);
-	XrQuaternionf qyp; // q_yaw * q_pitch (matches QuatFromYawPitch above)
-	qyp.x = cy * sp;
-	qyp.y = sy * cp;
-	qyp.z = -sy * sp;
-	qyp.w = cy * cp;
-	XrQuaternionf q; // qyp * q_roll where q_roll = (0, 0, sr, cr)
-	q.x = qyp.x * cr + qyp.y * sr;
-	q.y = qyp.y * cr - qyp.x * sr;
-	q.z = qyp.z * cr + qyp.w * sr;
-	q.w = qyp.w * cr - qyp.z * sr;
-	return q;
-}
-
-static inline XrQuaternionf MultiplyQuaternions(const XrQuaternionf& a, const XrQuaternionf& b)
-{
-	return XrQuaternionf{a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
-						 a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z};
-}
-
-// Rotate a vector by a quaternion (q * v * q^-1)
-static inline XrVector3f RotateVectorByQuaternion(const XrQuaternionf& q, const XrVector3f& v)
-{
-	const XrQuaternionf qv{v.x, v.y, v.z, 0.0f};
-	const XrQuaternionf qinv{-q.x, -q.y, -q.z, q.w};
-	const XrQuaternionf r = MultiplyQuaternions(MultiplyQuaternions(q, qv), qinv);
-	return XrVector3f{r.x, r.y, r.z};
-}
-
-static void GetEffectiveHeadAngles(float& yaw, float& pitch, float& roll)
-{
-	yaw = g_headYaw;
-	pitch = g_headPitch;
-	roll = g_headRoll;
-	if (!g_poseSweepEnabled)
-		return;
-	const float t = (float)GetTickCount64() * 0.001f - g_poseSweepStartT;
-	const float TWO_PI = 6.2831853f;
-	const float w = TWO_PI * g_poseSweepFreq;
-	yaw = g_poseSweepYawAmp * sinf(w * t);
-	pitch = g_poseSweepPitchAmp * sinf(w * t + 1.0f);
-	roll = g_poseSweepRollAmp * sinf(w * t + 2.0f);
-}
-
-static XrFovf GetViewFov(uint32_t eye)
-{
-	if (g_useCustomFov)
-		return XrFovf{g_eyeFovL[eye], g_eyeFovR[eye], g_eyeFovU[eye], g_eyeFovD[eye]};
-	return GetUiFov(eye);
-}
-
 } // namespace rt
 
-static constexpr XrVersion SupportedApiVersion = XR_MAKE_VERSION(1, 0, 27);
+static const char* SessionStateName(XrSessionState state)
+{
+	switch (state)
+	{
+	case XR_SESSION_STATE_UNKNOWN:
+		return "UNKNOWN";
+	case XR_SESSION_STATE_IDLE:
+		return "IDLE";
+	case XR_SESSION_STATE_READY:
+		return "READY";
+	case XR_SESSION_STATE_SYNCHRONIZED:
+		return "SYNCHRONIZED";
+	case XR_SESSION_STATE_VISIBLE:
+		return "VISIBLE";
+	case XR_SESSION_STATE_FOCUSED:
+		return "FOCUSED";
+	case XR_SESSION_STATE_STOPPING:
+		return "STOPPING";
+	case XR_SESSION_STATE_LOSS_PENDING:
+		return "LOSS_PENDING";
+	case XR_SESSION_STATE_EXITING:
+		return "EXITING";
+	default:
+		return "UNKNOWN";
+	}
+}
+
+static constexpr XrVersion s_supportedApiVersion = XR_MAKE_VERSION(1, 0, 27);
 
 static const simxr::ExtensionRegistry& Extensions()
 {
@@ -783,9 +515,11 @@ xrNegotiateLoaderRuntimeInterface(const XrNegotiateLoaderInfo* loaderInfo, XrNeg
 		}
 
 		Logf("[SimXR] xrNegotiateLoaderRuntimeInterface: loaderInfo=%p, runtimeRequest=%p", loaderInfo, runtimeRequest);
-		Logf("[SimXR]   Loader minInterfaceVersion=%u, maxInterfaceVersion=%u, minApiVersion=0x%X, maxApiVersion=0x%X",
-			 loaderInfo->minInterfaceVersion, loaderInfo->maxInterfaceVersion, loaderInfo->minApiVersion,
-			 loaderInfo->maxApiVersion);
+		Logf("[SimXR]   Loader minInterfaceVersion=%u, maxInterfaceVersion=%u, minApiVersion=0x%llX, "
+			 "maxApiVersion=0x%llX",
+			 loaderInfo->minInterfaceVersion, loaderInfo->maxInterfaceVersion,
+			 static_cast<unsigned long long>(loaderInfo->minApiVersion),
+			 static_cast<unsigned long long>(loaderInfo->maxApiVersion));
 
 		if (loaderInfo->structType != XR_LOADER_INTERFACE_STRUCT_LOADER_INFO ||
 			loaderInfo->structVersion != XR_LOADER_INFO_STRUCT_VERSION ||
@@ -795,15 +529,15 @@ xrNegotiateLoaderRuntimeInterface(const XrNegotiateLoaderInfo* loaderInfo, XrNeg
 			runtimeRequest->structSize != sizeof(*runtimeRequest) ||
 			loaderInfo->minInterfaceVersion > XR_CURRENT_LOADER_RUNTIME_VERSION ||
 			loaderInfo->maxInterfaceVersion < XR_CURRENT_LOADER_RUNTIME_VERSION ||
-			loaderInfo->maxApiVersion < XR_MAKE_VERSION(1, 0, 0) || loaderInfo->minApiVersion > SupportedApiVersion)
+			loaderInfo->maxApiVersion < XR_MAKE_VERSION(1, 0, 0) || loaderInfo->minApiVersion > s_supportedApiVersion)
 			return XR_ERROR_INITIALIZATION_FAILED;
 
 		runtimeRequest->runtimeInterfaceVersion = XR_CURRENT_LOADER_RUNTIME_VERSION;
 		runtimeRequest->getInstanceProcAddr = simxr::AbiBoundary<xrGetInstanceProcAddr_runtime>::Invoke;
-		runtimeRequest->runtimeApiVersion = std::min(loaderInfo->maxApiVersion, SupportedApiVersion);
+		runtimeRequest->runtimeApiVersion = std::min(loaderInfo->maxApiVersion, s_supportedApiVersion);
 
-		Logf("[SimXR] xrNegotiateLoaderRuntimeInterface: SUCCESS - runtimeApiVersion=0x%X (%u)",
-			 runtimeRequest->runtimeApiVersion, runtimeRequest->runtimeApiVersion);
+		Logf("[SimXR] xrNegotiateLoaderRuntimeInterface: SUCCESS - runtimeApiVersion=0x%llX",
+			 static_cast<unsigned long long>(runtimeRequest->runtimeApiVersion));
 		return XR_SUCCESS;
 	}
 	catch (...)
@@ -884,7 +618,7 @@ static XrResult XRAPI_PTR xrGetD3D11GraphicsRequirementsKHR_runtime(XrInstance i
 	HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(f.GetAddressOf()));
 	if (FAILED(hr))
 	{
-		Logf("[SimXR] CreateDXGIFactory1 failed: 0x%08X", hr);
+		Logf("[SimXR] CreateDXGIFactory1 failed: 0x%08X", static_cast<unsigned>(hr));
 		return XR_ERROR_RUNTIME_FAILURE;
 	}
 
@@ -916,11 +650,12 @@ static XrResult XRAPI_PTR xrGetD3D11GraphicsRequirementsKHR_runtime(XrInstance i
 			bestDesc = d;
 			foundHardware = true;
 
-			wchar_t* descStr = d.Description;
-			char descAscii[128];
-			wcstombs(descAscii, descStr, sizeof(descAscii));
-			descAscii[sizeof(descAscii) - 1] = '\0';
-			Logf("[SimXR] Found hardware adapter: %s", descAscii);
+			char description[512]{};
+			if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, d.Description, -1, description,
+									static_cast<int>(sizeof(description)), nullptr, nullptr))
+				Logf("[SimXR] Found hardware adapter: %s", description);
+			else
+				Log("[SimXR] Hardware adapter name is unavailable");
 			Logf("[SimXR]   LUID: High=%ld, Low=%lu", (long)d.AdapterLuid.HighPart,
 				 (unsigned long)d.AdapterLuid.LowPart);
 			Logf("[SimXR]   Dedicated Video Memory: %llu MB",
@@ -1152,14 +887,14 @@ static XrResult XRAPI_PTR xrCreateInstance_runtime(const XrInstanceCreateInfo* c
 	auto native = std::make_unique<rt::Instance>();
 	native->handle = creation.core;
 	native->core = creation.core.Shared();
-	native->controllerMotion = std::make_shared<simxr::legacy::LegacyControllerMotion>();
+	native->input = std::make_shared<simxr::windows::WindowsRuntimeInput>();
 	Logf("[SimXR] xrCreateInstance: app=%s version=%u", createInfo->applicationInfo.applicationName,
 		 createInfo->applicationInfo.applicationVersion);
 
 	static bool s_settingsLoaded = false;
 	if (!s_settingsLoaded)
 	{
-		settings::LoadSettings(mcp::GetSimulatorDataDirectory());
+		settings::LoadSettings(simxr::windows::RuntimeDataDirectory());
 		s_settingsLoaded = true;
 	}
 	if (const auto* profile = std::getenv("SIMXR_HEADSET_PROFILE"))
@@ -1169,15 +904,15 @@ static XrResult XRAPI_PTR xrCreateInstance_runtime(const XrInstanceCreateInfo* c
 			return XR_ERROR_INITIALIZATION_FAILED;
 		settings::SetHeadsetProfile(static_cast<settings::HeadsetProfile>(index));
 	}
-	const auto directory = mcp::GetSimulatorDataDirectory();
+	const auto directory = simxr::windows::RuntimeDataDirectory();
 	native->diagnostics = std::make_shared<flicker::Diagnostics>(directory);
 	native->compatibilityFiles = std::make_shared<mcp::WindowsLegacyChannel>(directory);
 	native->compatibilityCapture = std::make_shared<mcp::WindowsLegacyCapture>(native->compatibilityFiles);
 	ControlEndpoint().Start();
 	const auto attached = rt::State().instances.Attach(creation.core, std::move(native));
 	{
-		std::lock_guard lock(g_LogMutex);
-		g_logChannel = attached->compatibilityFiles;
+		std::lock_guard lock(s_logMutex);
+		s_logChannel = attached->compatibilityFiles;
 	}
 	{
 		std::lock_guard lock(rt::State().mutex);
@@ -1225,8 +960,8 @@ static XrResult XRAPI_PTR xrDestroyInstance_runtime(XrInstance instance)
 		return result;
 	rt::State().instances.Remove(instance);
 	{
-		std::lock_guard lock(g_LogMutex);
-		g_logChannel.reset();
+		std::lock_guard lock(s_logMutex);
+		s_logChannel.reset();
 	}
 	lifecycle.unlock();
 	native = {};
@@ -1464,7 +1199,7 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
 	native.owner = owner;
 	native.handle = creation.core;
 	native.core = creation.core.Shared();
-	native.controllerMotion = owner->controllerMotion;
+	native.input = owner->input;
 	native.compatibilityFiles = owner->compatibilityFiles;
 	native.compatibilityCapture = owner->compatibilityCapture;
 	native.diagnostics = owner->diagnostics;
@@ -1484,24 +1219,13 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
 				graphics->Device(), creation.core.Shared(),
 				std::make_shared<simxr::WindowsVulkanCaptureChannel>(
 					native.compatibilityFiles, native.compatibilityCapture, creation.core.Shared(),
-					[]
+					[input = native.input]
 					{
-						mcp::HeadPoseCommand head;
-						head.x = rt::g_headPos.x;
-						head.y = rt::g_headPos.y;
-						head.z = rt::g_headPos.z;
-						head.yaw = rt::g_headYaw;
-						head.pitch = rt::g_headPitch;
-						head.roll = rt::g_headRoll;
-						return head;
+						return input->Head();
 					},
-					[](const mcp::HeadPoseCommand& pose)
+					[input = native.input](const mcp::HeadPoseCommand& pose)
 					{
-						rt::g_headPos = {pose.x, pose.y, pose.z};
-						rt::g_headYaw = pose.yaw;
-						rt::g_headPitch = pose.pitch;
-						if (pose.hasRoll)
-							rt::g_headRoll = pose.roll;
+						input->SetHead(pose);
 					}),
 				native.diagnostics));
 			native.vulkan = std::move(graphics);
@@ -1788,10 +1512,10 @@ static XrResult XRAPI_PTR xrCreateSwapchain_runtime(XrSession session, const XrS
 		return native->vulkan->CreateSwapchain(*ci, *sc);
 	}
 	Log("[SimXR] ============================================");
-	Logf("[SimXR] xrCreateSwapchain called: format=%d, size=%ux%u, arraySize=%u, mipCount=%u, sampleCount=%u, "
-		 "usageFlags=0x%X",
-		 ci ? (int)ci->format : -1, ci ? ci->width : 0, ci ? ci->height : 0, ci ? ci->arraySize : 0,
-		 ci ? ci->mipCount : 0, ci ? ci->sampleCount : 0, ci ? ci->usageFlags : 0);
+	Logf("[SimXR] xrCreateSwapchain called: format=%lld, size=%ux%u, arraySize=%u, mipCount=%u, sampleCount=%u, "
+		 "usageFlags=0x%llX",
+		 static_cast<long long>(ci ? ci->format : -1), ci ? ci->width : 0, ci ? ci->height : 0, ci ? ci->arraySize : 0,
+		 ci ? ci->mipCount : 0, ci ? ci->sampleCount : 0, static_cast<unsigned long long>(ci ? ci->usageFlags : 0));
 
 	// Log specific usage flags
 	if (ci && ci->usageFlags)
@@ -2187,7 +1911,7 @@ static XrResult XRAPI_PTR xrAcquireSwapchainImage_runtime(XrSwapchain sc, const 
 	const auto acquireCount = ++native->acquireCount;
 	// First few calls give startup context; the recurring line is verbose-only,
 	// since Log() is deliberately expensive (see its comment).
-	if (acquireCount <= 4 || (g_logVerbose && acquireCount % 60 == 1))
+	if (acquireCount <= 4 || (s_logVerbose && acquireCount % 60 == 1))
 	{
 		Logf("[SimXR] xrAcquireSwapchainImage: sc=%p idx=%u (format=%d, %ux%u)", sc, i, (int)ch.format, ch.width,
 			 ch.height);
@@ -2256,7 +1980,7 @@ static XrResult XRAPI_PTR xrReleaseSwapchainImage_runtime(XrSwapchain sc, const 
 
 	const auto releaseCount = ++native->releaseCount;
 	bool shouldLog = releaseCount <= 10;
-	if (shouldLog || (g_logVerbose && releaseCount % 60 == 1))
+	if (shouldLog || (s_logVerbose && releaseCount % 60 == 1))
 	{
 		Logf("[SimXR] xrReleaseSwapchainImage: sc=%p released=%u", sc, *ch.access->ReleasedImage());
 	}
@@ -2279,17 +2003,14 @@ static XrResult XRAPI_PTR xrBeginSession_runtime(XrSession handle, const XrSessi
 	if (!native)
 		return XR_ERROR_HANDLE_INVALID;
 	const auto core = native->core;
-	const auto controllerMotion = rt::RetainControllerMotion(core);
-	if (!controllerMotion)
-		return XR_ERROR_HANDLE_INVALID;
 	if (!info)
 		return XR_ERROR_VALIDATION_FAILURE;
-	LARGE_INTEGER counter{}, frequency{};
-	QueryPerformanceCounter(&counter);
-	QueryPerformanceFrequency(&frequency);
+	XrTime epoch;
+	const auto clockResult = simxr::ReadPerformanceTime(epoch);
+	if (XR_FAILED(clockResult))
+		return clockResult;
 	simxr::FrameSchedulerConfig config;
-	config.epoch = {simxr::Duration{(counter.QuadPart / frequency.QuadPart) * 1000000000LL +
-									(counter.QuadPart % frequency.QuadPart) * 1000000000LL / frequency.QuadPart}};
+	config.epoch = {simxr::Duration{epoch}};
 	std::uint64_t seed = 0;
 	if (const auto* text = std::getenv("SIMXR_SEED"))
 	{
@@ -2304,19 +2025,11 @@ static XrResult XRAPI_PTR xrBeginSession_runtime(XrSession handle, const XrSessi
 		config.mode = simxr::ExecutionMode::Deterministic;
 		config.epoch = {simxr::Duration{1000000000LL}};
 	}
+	const auto input = native->input->Snapshot();
 	simxr::CommandConfiguration baseline;
-	{
-		float yaw, pitch, roll;
-		rt::GetEffectiveHeadAngles(yaw, pitch, roll);
-		baseline.tracking.head.pose = {rt::QuatFromYawPitchRoll(yaw, pitch, roll), rt::g_headPos};
-		const auto controllers = controllerMotion->Snapshot({rt::g_headPos, rt::g_headYaw, rt::g_headPitch});
-		for (std::size_t hand = 0; hand < controllers.hands.size(); ++hand)
-			baseline.tracking.controllers[hand].pose.pose = controllers.hands[hand].worldPose;
-		baseline.input = core->Input().Snapshot();
-		baseline.views.ipd = rt::g_useCustomIpd ? rt::g_customIpd : rt::GetUiIpdMeters();
-		baseline.views.outerFov = {rt::GetViewFov(0), rt::GetViewFov(1)};
-		settings::GetRenderResolution(baseline.views.outerWidth, baseline.views.outerHeight);
-	}
+	baseline.tracking = input.tracking;
+	baseline.input = core->Input().Snapshot();
+	baseline.views = input.views;
 	auto configured = core->ConfigureCommands(seed, baseline, false);
 	if (XR_FAILED(configured))
 		return configured;
@@ -2376,260 +2089,14 @@ static XrResult XRAPI_PTR xrWaitFrame_runtime(XrSession session, const XrFrameWa
 		return XR_ERROR_VALIDATION_FAILURE;
 	simxr::FramePrediction prediction;
 	const auto core = native->core;
-	const auto controllerMotion = native->controllerMotion;
 	const auto compatibilityFiles = native->compatibilityFiles;
 	const auto publishNative = [&](const simxr::FramePrediction& admitted) -> XrResult
 	{
 		std::lock_guard lifecycle(native->owner->lifecycleMutex);
 		if (native->owner->closing || rt::RetainNativeSession(session).Shared() != native.Shared())
 			return XR_ERROR_SESSION_LOST;
-		const double periodSec = std::chrono::duration<double>(admitted.displayPeriod).count();
-
-		// Handle WASD keyboard input for movement (relative to head orientation).
-		//
-		// The PID check is what makes AppForeground the default: the runtime is in-process with
-		// the host, so the game's own window counts as ours. PreviewFocused was once the only
-		// behaviour and left WASD dead in any game that takes the foreground on launch.
-		// Note: a game binding W/S/A/D itself will also act on them while it is focused.
-		const float maxPitch = 1.5f; // ~85 degrees, short of gimbal lock
-		rt::g_headPitch = (std::max)(-maxPitch, (std::min)(maxPitch, rt::g_headPitch));
-
-		const settings::InputPolling inputPolling = settings::ReadState().inputPolling;
-		bool inputActive = (inputPolling == settings::InputPolling::Background);
-		const HWND foregroundWindow = inputActive ? nullptr : GetForegroundWindow();
-		if (foregroundWindow && inputPolling == settings::InputPolling::AppForeground)
-		{
-			DWORD foregroundProcess = 0;
-			GetWindowThreadProcessId(foregroundWindow, &foregroundProcess);
-			inputActive = foregroundProcess == GetCurrentProcessId();
-		}
-		simxr::legacy::ControllerMotionFrame controllerFrame;
-		controllerFrame.glideSeconds = rt::InputClockSeconds();
-		if (inputActive)
-		{
-			// Shift is the sprint modifier; both it and the base speed are set from
-			// Tools > Movement Speed. GetAsyncKeyState rather than the WM_KEYDOWN
-			// path because this reads a held state, and the host window may be the
-			// one with focus (see above).
-			const bool shiftHeld = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
-			const float moveSpeed = settings::GetMoveSpeed(shiftHeld); // meters per second
-			float deltaTime = (float)periodSec;
-
-			XrQuaternionf headQ = rt::QuatFromYawPitch(rt::g_headYaw, rt::g_headPitch);
-			XrVector3f fwd = rt::RotateVectorByQuaternion(headQ, XrVector3f{0.0f, 0.0f, -1.0f});
-			XrVector3f right = rt::RotateVectorByQuaternion(headQ, XrVector3f{1.0f, 0.0f, 0.0f});
-
-			if (GetAsyncKeyState('W') & 0x8000)
-			{
-				rt::g_headPos.x += fwd.x * moveSpeed * deltaTime;
-				rt::g_headPos.y += fwd.y * moveSpeed * deltaTime;
-				rt::g_headPos.z += fwd.z * moveSpeed * deltaTime;
-			}
-			if (GetAsyncKeyState('S') & 0x8000)
-			{
-				rt::g_headPos.x -= fwd.x * moveSpeed * deltaTime;
-				rt::g_headPos.y -= fwd.y * moveSpeed * deltaTime;
-				rt::g_headPos.z -= fwd.z * moveSpeed * deltaTime;
-			}
-			if (GetAsyncKeyState('A') & 0x8000)
-			{
-				rt::g_headPos.x -= right.x * moveSpeed * deltaTime;
-				rt::g_headPos.y -= right.y * moveSpeed * deltaTime;
-				rt::g_headPos.z -= right.z * moveSpeed * deltaTime;
-			}
-			if (GetAsyncKeyState('D') & 0x8000)
-			{
-				rt::g_headPos.x += right.x * moveSpeed * deltaTime;
-				rt::g_headPos.y += right.y * moveSpeed * deltaTime;
-				rt::g_headPos.z += right.z * moveSpeed * deltaTime;
-			}
-			if (GetAsyncKeyState('Q') & 0x8000)
-			{
-				rt::g_headPos.y -= moveSpeed * deltaTime;
-			}
-			if (GetAsyncKeyState('E') & 0x8000)
-			{
-				rt::g_headPos.y += moveSpeed * deltaTime;
-			}
-
-			controllerFrame.keyboard = rt::PollControllerKeyboard(deltaTime);
-		}
-
-		compatibilityFiles->TakeWrittenScreenshot();
-
-		// MCP commands work regardless of window focus (file-based IPC).
-		// The joined worker already decoded and staged copied values.
-		{
-			const auto commands = compatibilityFiles->TakeCommands();
-			mcp::HeadPoseCommand cmd = commands.head;
-			if (cmd.valid)
-			{
-				rt::g_headPos.x = cmd.x;
-				rt::g_headPos.y = cmd.y;
-				rt::g_headPos.z = cmd.z;
-				rt::g_headYaw = cmd.yaw;
-				rt::g_headPitch = cmd.pitch;
-				if (cmd.hasRoll)
-					rt::g_headRoll = cmd.roll;
-				compatibilityFiles->Acknowledge("head_pose", true);
-			}
-
-			// Per-eye FOV override (asymmetric headset profile testing).
-			mcp::FovCommand fov = commands.fov;
-			if (fov.valid)
-			{
-				if (fov.clear)
-				{
-					rt::g_useCustomFov = false;
-				}
-				else
-				{
-					rt::g_useCustomFov = true;
-					for (int i = 0; i < 2; ++i)
-					{
-						rt::g_eyeFovL[i] = fov.angleLeft[i];
-						rt::g_eyeFovR[i] = fov.angleRight[i];
-						rt::g_eyeFovU[i] = fov.angleUp[i];
-						rt::g_eyeFovD[i] = fov.angleDown[i];
-					}
-				}
-				compatibilityFiles->Acknowledge("fov", true);
-			}
-
-			// Settable IPD (test app's response to IPD ranges; 0mm = no parallax).
-			mcp::IpdCommand ipdCmd = commands.ipd;
-			if (ipdCmd.valid)
-			{
-				if (ipdCmd.clear)
-				{
-					rt::g_useCustomIpd = false;
-				}
-				else
-				{
-					rt::g_useCustomIpd = true;
-					rt::g_customIpd = ipdCmd.ipdMeters;
-				}
-				compatibilityFiles->Acknowledge("ipd", true);
-			}
-
-			// Headset profile preset: applies both FOV and IPD at once.
-			mcp::HeadsetProfileCommand prof = commands.profile;
-			if (prof.valid)
-			{
-				const int idx = settings::FindHeadsetSpec(prof.name);
-				// "generic" carries no headset geometry, so it means the same as clearing.
-				const bool clear = idx == 0 || strcmp(prof.name, "default") == 0 || strcmp(prof.name, "clear") == 0;
-				bool applied = true;
-				if (clear)
-				{
-					rt::g_useCustomFov = false;
-					rt::g_useCustomIpd = false;
-				}
-				else if (idx > 0)
-				{
-					const float DEG2RAD = 3.14159265f / 180.0f;
-					const settings::HeadsetSpec& spec = settings::kHeadsetSpecs[idx];
-					rt::g_useCustomFov = true;
-					for (int i = 0; i < 2; ++i)
-					{
-						const settings::EyeFov& e = spec.eye[i];
-						rt::g_eyeFovL[i] = e.angleLeft * DEG2RAD;
-						rt::g_eyeFovR[i] = e.angleRight * DEG2RAD;
-						rt::g_eyeFovU[i] = e.angleUp * DEG2RAD;
-						rt::g_eyeFovD[i] = e.angleDown * DEG2RAD;
-					}
-					rt::g_useCustomIpd = true;
-					rt::g_customIpd = spec.ipdMm * 0.001f;
-				}
-				else
-				{
-					applied = false;
-				}
-				compatibilityFiles->Acknowledge("headset_profile", applied);
-			}
-
-			// Display layout belongs to the companion; the removed runtime mirror cannot apply this command.
-			if (commands.anaglyph.valid)
-				compatibilityFiles->Acknowledge("anaglyph", false);
-
-			// Pose sweep: oscillate yaw/pitch/roll on a sine wave each frame.
-			mcp::PoseSweepCommand sweep = commands.sweep;
-			if (sweep.valid)
-			{
-				const float DEG2RAD = 3.14159265f / 180.0f;
-				rt::g_poseSweepEnabled = sweep.enabled;
-				rt::g_poseSweepYawAmp = sweep.yawAmpDeg * DEG2RAD;
-				rt::g_poseSweepPitchAmp = sweep.pitchAmpDeg * DEG2RAD;
-				rt::g_poseSweepRollAmp = sweep.rollAmpDeg * DEG2RAD;
-				rt::g_poseSweepFreq = sweep.freqHz;
-				rt::g_poseSweepStartT = (float)GetTickCount64() * 0.001f;
-				compatibilityFiles->Acknowledge("pose_sweep", true);
-			}
-
-			const auto pose = commands.controllerPose;
-			if (pose.valid)
-			{
-				simxr::legacy::ControllerPoseEdit edit;
-				edit.hand = pose.hand == 0 ? simxr::legacy::ControllerHand::Left : simxr::legacy::ControllerHand::Right;
-				edit.position = {pose.posX, pose.posY, pose.posZ};
-				edit.yaw = pose.yaw;
-				edit.pitch = pose.pitch;
-				edit.duration = std::chrono::duration<double, std::milli>{pose.durationMs};
-				edit.receivedSeconds = rt::InputClockSeconds();
-				if (pose.triggerSet)
-					edit.trigger = pose.trigger;
-				if (pose.buttonA >= 0)
-					edit.primary = pose.buttonA != 0;
-				controllerFrame.pose = edit;
-				compatibilityFiles->Acknowledge("controller_pose", true);
-			}
-
-			const auto hold = commands.controllerHold;
-			if (hold.valid)
-			{
-				// Legacy selectors outside [0,1] target no hand; negative means both.
-				if (hold.hand < 2)
-					controllerFrame.hold = rt::DecodeControllerHold(hold);
-				compatibilityFiles->Acknowledge("controller_hold", true);
-			}
-
-			const auto wheel = commands.wheel;
-			if (wheel.valid)
-			{
-				constexpr float radians = 0.01745329252f;
-				simxr::legacy::ControllerWheelSweep edit;
-				edit.enabled = wheel.enabled;
-				edit.hub = {wheel.hubX, wheel.hubY, wheel.hubZ};
-				edit.radius = wheel.radius;
-				edit.tilt = wheel.tiltDeg * radians;
-				edit.amplitude = wheel.amplitudeDeg * radians;
-				edit.frequencyHz = wheel.freqHz;
-				edit.grip = wheel.grip;
-				edit.spread = wheel.spreadDeg * radians;
-				edit.receivedSeconds = static_cast<float>(GetTickCount64()) * 0.001f;
-				controllerFrame.wheel = edit;
-				compatibilityFiles->Acknowledge("wheel_sweep", true);
-			}
-		}
-
-		// Evaluation is atomic for action readers: keyboard -> file pose -> wheel
-		// -> held overrides. Shared pose history owns observable space velocities.
-		controllerFrame.head = {rt::g_headPos, rt::g_headYaw, rt::g_headPitch};
-		controllerFrame.wheelSeconds = static_cast<float>(GetTickCount64()) * 0.001f;
-		const auto controllers = controllerMotion->Update(controllerFrame);
-		if (controllers.animationToggle)
-			Logf("[SimXR] Auto motion %s", *controllers.animationToggle ? "ENABLED" : "DISABLED");
-		simxr::TrackingState tracking;
-		float effectiveYaw, effectivePitch, effectiveRoll;
-		rt::GetEffectiveHeadAngles(effectiveYaw, effectivePitch, effectiveRoll);
-		tracking.head.pose = {rt::QuatFromYawPitchRoll(effectiveYaw, effectivePitch, effectiveRoll), rt::g_headPos};
-		for (std::size_t hand = 0; hand < controllers.snapshot.hands.size(); ++hand)
-			tracking.controllers[hand].pose.pose = controllers.snapshot.hands[hand].worldPose;
-		simxr::ViewSettings settings;
-		settings::GetRenderResolution(settings.outerWidth, settings.outerHeight);
-		settings.ipd = rt::g_useCustomIpd ? rt::g_customIpd : rt::GetUiIpdMeters();
-		settings.outerFov = {rt::GetViewFov(0), rt::GetViewFov(1)};
-		core->PublishTracking(admitted.displayTime, tracking, settings, admitted.id);
+		const auto input = native->input->Poll(admitted.displayPeriod, *compatibilityFiles);
+		core->PublishTracking(admitted.displayTime, input.tracking, input.views, admitted.id);
 
 		s->predictedDisplayPeriod = admitted.displayPeriod.count();
 		s->predictedDisplayTime = admitted.displayTime.value.count();
@@ -2752,10 +2219,10 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
 				const auto width = views.views.empty() ? 0u : views.views.front().description.width * 2;
 				const auto height = views.views.empty() ? 0u : views.views.front().description.height;
 				compatibilityCapture->SetFrame(snapshot.lastSubmitted.value);
-				compatibilityCapture->PublishStatus(
-					{static_cast<std::uint32_t>(snapshot.lastSubmitted.value), width, height, "RGBA8",
-					 mcp::GetSessionStateName(static_cast<int>(snapshot.state)), rt::g_headYaw, rt::g_headPitch,
-					 rt::g_headRoll, rt::g_headPos.x, rt::g_headPos.y, rt::g_headPos.z});
+				const auto head = native->input->Head();
+				compatibilityCapture->PublishStatus({snapshot.lastSubmitted.value, width, height, "RGBA8",
+													 SessionStateName(snapshot.state), head.yaw, head.pitch, head.roll,
+													 head.x, head.y, head.z});
 			}
 			return result;
 		}
@@ -3026,32 +2493,12 @@ static XrResult XRAPI_PTR xrDestroyActionSet_runtime(XrActionSet set)
 
 static XrResult XRAPI_PTR xrSyncActions_runtime(XrSession handle, const XrActionsSyncInfo* info)
 {
-	auto core = rt::RetainSession(handle);
-	if (!core)
-		return XR_ERROR_HANDLE_INVALID;
-	const auto controllerMotion = rt::RetainControllerMotion(core);
-	if (!controllerMotion)
+	const auto native = rt::RetainNativeSession(handle);
+	if (!native)
 		return XR_ERROR_HANDLE_INVALID;
 	if (!info)
 		return XR_ERROR_VALIDATION_FAILURE;
-	std::array<simxr::ControllerControls, 2> nativeControls;
-	const auto raw = controllerMotion->Snapshot();
-	for (std::size_t hand = 0; hand < raw.hands.size(); ++hand)
-	{
-		auto& controls = nativeControls[hand];
-		controls.connected = true; // scheduled overrides merge after this native baseline
-		const auto& controller = raw.hands[hand].controls;
-		controls.trigger = controller.trigger;
-		controls.grip = controls.gripForce = controller.grip;
-		controls.stick = controls.trackpad = controller.stick;
-		controls.primary = controls.primaryTouch = controller.primary;
-		controls.secondary = controls.secondaryTouch = controller.secondary;
-		controls.menu = controller.menu;
-		controls.thumbClick = controls.trackpadClick = controller.thumbClick;
-		controls.triggerTouch = controller.triggerTouch;
-		controls.thumbTouch = controls.trackpadTouch = controller.thumbClick;
-	}
-	return core->SyncActions(*info, nativeControls);
+	return native->core->SyncActions(*info, native->input->Snapshot().controls);
 }
 
 static XrResult XRAPI_PTR xrDestroySwapchain_runtime(XrSwapchain sc)
@@ -3237,25 +2684,6 @@ static XrResult XRAPI_PTR xrRequestBodyTrackingFidelityMETA_runtime(XrBodyTracke
 	return core->Body().RequestFidelityFB(tracker, fidelity);
 }
 
-static bool ScalePositiveTime(std::int64_t value, std::int64_t numerator, std::int64_t denominator,
-							  std::int64_t& output)
-{
-	if (value <= 0 || numerator <= 0 || denominator <= 0)
-		return false;
-	const auto whole = static_cast<std::uint64_t>(value / denominator);
-	const auto remainder = static_cast<std::uint64_t>(value % denominator);
-	const auto scale = static_cast<std::uint64_t>(numerator);
-	const auto maximum = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
-	if (whole > maximum / scale || remainder > std::numeric_limits<std::uint64_t>::max() / scale)
-		return false;
-	const auto fractional = remainder * scale / static_cast<std::uint64_t>(denominator);
-	const auto integral = whole * scale;
-	if (fractional > maximum - integral)
-		return false;
-	output = static_cast<std::int64_t>(integral + fractional);
-	return true;
-}
-
 static XrResult XRAPI_PTR xrConvertWin32PerformanceCounterToTimeKHR_runtime(XrInstance instance,
 																			const LARGE_INTEGER* performanceCounter,
 																			XrTime* time)
@@ -3265,12 +2693,7 @@ static XrResult XRAPI_PTR xrConvertWin32PerformanceCounterToTimeKHR_runtime(XrIn
 		return result;
 	if (!performanceCounter || !time)
 		return XR_ERROR_VALIDATION_FAILURE;
-	LARGE_INTEGER frequency{};
-	if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0)
-		return XR_ERROR_RUNTIME_FAILURE;
-	return ScalePositiveTime(performanceCounter->QuadPart, 1000000000LL, frequency.QuadPart, *time)
-			   ? XR_SUCCESS
-			   : XR_ERROR_TIME_INVALID;
+	return simxr::PerformanceCounterToTime(performanceCounter->QuadPart, *time);
 }
 
 static XrResult XRAPI_PTR xrConvertTimeToWin32PerformanceCounterKHR_runtime(XrInstance instance, XrTime time,
@@ -3281,19 +2704,16 @@ static XrResult XRAPI_PTR xrConvertTimeToWin32PerformanceCounterKHR_runtime(XrIn
 		return result;
 	if (!performanceCounter)
 		return XR_ERROR_VALIDATION_FAILURE;
-	LARGE_INTEGER frequency{};
-	if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0)
-		return XR_ERROR_RUNTIME_FAILURE;
 	std::int64_t counter;
-	if (!ScalePositiveTime(time, frequency.QuadPart, 1000000000LL, counter))
-		return XR_ERROR_TIME_INVALID;
-	performanceCounter->QuadPart = counter;
-	return XR_SUCCESS;
+	const auto converted = simxr::TimeToPerformanceCounter(time, counter);
+	if (XR_SUCCEEDED(converted))
+		performanceCounter->QuadPart = counter;
+	return converted;
 }
 
 // ----------------------------------------------
 
-static const simxr::DispatchEntry kFnTable[] = {
+static const simxr::DispatchEntry s_functions[] = {
 	{"xrGetInstanceProcAddr", (PFN_xrVoidFunction)simxr::AbiBoundary<xrGetInstanceProcAddr_runtime>::Invoke, true},
 	{"xrEnumerateApiLayerProperties",
 	 (PFN_xrVoidFunction)simxr::AbiBoundary<xrEnumerateApiLayerProperties_runtime>::Invoke, true},
@@ -3422,7 +2842,7 @@ static XrResult XRAPI_PTR xrGetInstanceProcAddr_runtime(XrInstance instance, con
 	const auto core = RuntimeState().FindInstance(instance);
 	if (instance != XR_NULL_HANDLE && !core)
 		return XR_ERROR_HANDLE_INVALID;
-	static const simxr::DispatchTable table(kFnTable, Extensions());
+	static const simxr::DispatchTable table(s_functions, Extensions());
 	if (!table.CoversAdvertisedCommands())
 		return XR_ERROR_RUNTIME_FAILURE;
 	return table.Resolve(name, core ? &core->Extensions() : nullptr, *function);

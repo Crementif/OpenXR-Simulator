@@ -26,8 +26,23 @@ ControllerMotionFrame Frame(double seconds)
 {
 	ControllerMotionFrame frame;
 	frame.glideSeconds = seconds;
-	frame.wheelSeconds = static_cast<float>(seconds);
+	frame.wheelSeconds = seconds;
 	return frame;
+}
+void WheelAfterLongUptime()
+{
+	LegacyControllerMotion motion;
+	constexpr double origin = 10000000;
+	auto frame = Frame(origin);
+	frame.wheel = ControllerWheelSweep{};
+	frame.wheel->enabled = true;
+	frame.wheel->receivedSeconds = origin;
+	frame.wheel->frequencyHz = 1;
+	frame.wheel->amplitude = 1;
+	motion.Update(frame);
+	const auto next = motion.Update(Frame(origin + 1.0 / 128)).snapshot;
+	Near(next.wheelAngle, static_cast<float>(std::sin(2 * std::numbers::pi / 128)),
+		 "Long uptime quantized a subframe wheel update");
 }
 void FiniteGlideEndpoints()
 {
@@ -64,9 +79,13 @@ void FiniteMotionIntermediates()
 	const auto orientation = motion.Update(frame).snapshot.hands[1].worldPose.orientation;
 	const bool finiteOrientation = std::isfinite(orientation.x) && std::isfinite(orientation.y) &&
 								   std::isfinite(orientation.z) && std::isfinite(orientation.w);
-	const auto expectedOrientation = simxr::Multiply({0, static_cast<float>(std::sin(static_cast<double>(largest))), 0,
-													  static_cast<float>(std::cos(static_cast<double>(largest)))},
-													 simxr::EulerAngles(0, frame.pose->pitch, 0));
+	// Equal head/local yaw must preserve the runtime library's rotation without
+	// overflowing their float sum. Constant folding uses a different reducer on MinGW.
+	volatile double runtimeYaw = frame.head.yaw;
+	const auto yawSine = static_cast<float>(std::sin(runtimeYaw));
+	const auto yawCosine = static_cast<float>(std::cos(runtimeYaw));
+	const auto expectedOrientation =
+		simxr::Multiply({0, yawSine, 0, yawCosine}, simxr::EulerAngles(0, frame.pose->pitch, 0));
 	Near(orientation.x, expectedOrientation.x, "Wide yaw changed orientation");
 	Near(orientation.y, expectedOrientation.y, "Wide yaw changed orientation");
 	Near(orientation.z, expectedOrientation.z, "Wide yaw changed orientation");
@@ -79,7 +98,7 @@ void FiniteMotionIntermediates()
 	const auto wheel = motion.Update(frame).snapshot;
 	const bool finiteWheel = std::isfinite(wheel.wheelAngle) && std::isfinite(wheel.hands[0].local.position.x);
 	std::cout << "Finite legacy intermediates: position=" << finitePosition << " orientation=" << finiteOrientation
-			  << " wheel=" << finiteWheel << std::endl;
+			  << " wheel=" << finiteWheel << " runtime yaw sin/cos=" << yawSine << '/' << yawCosine << std::endl;
 	Require(finitePosition && finiteOrientation && finiteWheel,
 			"Finite motion input overflowed a representable result");
 }
@@ -302,6 +321,7 @@ int main()
 {
 	try
 	{
+		WheelAfterLongUptime();
 		FiniteMotionIntermediates();
 		FiniteGlideEndpoints();
 		HeadSpaceAndTimedMoves();

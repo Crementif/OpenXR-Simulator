@@ -50,6 +50,44 @@ void WindowsExpiredDeadline()
 	clock.WaitUntil(changed, lock, expired);
 	Require(lock.owns_lock(), "Expired Windows deadline released the caller lock");
 }
+void WindowsPerformanceTime()
+{
+	std::int64_t frequency = 0;
+	Require(TimeToPerformanceCounter(1000000000, frequency) == XR_SUCCESS && frequency > 0,
+			"One second did not convert to a positive Windows counter period");
+	XrTime second = 0;
+	Require(PerformanceCounterToTime(frequency, second) == XR_SUCCESS && second == 1000000000,
+			"Windows counter period did not convert back to one second");
+	XrTime now = 0, roundTrip = 0;
+	std::int64_t counter = 0;
+	Require(ReadPerformanceTime(now) == XR_SUCCESS && now > 0 && TimeToPerformanceCounter(now, counter) == XR_SUCCESS &&
+				PerformanceCounterToTime(counter, roundTrip) == XR_SUCCESS && roundTrip <= now &&
+				now - roundTrip <= (1000000000 / frequency) + 1,
+			"Current Windows time did not retain counter precision");
+	for (const auto invalid : {std::int64_t{0}, std::int64_t{-1}, std::numeric_limits<std::int64_t>::min()})
+	{
+		counter = 77;
+		second = 88;
+		Require(PerformanceCounterToTime(invalid, second) == XR_ERROR_TIME_INVALID && second == 88 &&
+					TimeToPerformanceCounter(invalid, counter) == XR_ERROR_TIME_INVALID && counter == 77,
+				"Invalid Windows time changed output or was accepted");
+	}
+	if (frequency < 1000000000)
+	{
+		second = 88;
+		Require(PerformanceCounterToTime(std::numeric_limits<std::int64_t>::max(), second) == XR_ERROR_TIME_INVALID &&
+					second == 88,
+				"Counter conversion overflow changed output or was accepted");
+	}
+	else if (frequency > 1000000000)
+	{
+		counter = 77;
+		Require(TimeToPerformanceCounter(std::numeric_limits<std::int64_t>::max(), counter) == XR_ERROR_TIME_INVALID &&
+					counter == 77,
+				"Time conversion overflow changed output or was accepted");
+	}
+}
+
 #endif
 
 void HostElapsedOverflow()
@@ -412,6 +450,7 @@ int main()
 {
 #ifdef _WIN32
 	WindowsExpiredDeadline();
+	WindowsPerformanceTime();
 #endif
 	LargeCadencePeriod();
 	AutomaticCadence();

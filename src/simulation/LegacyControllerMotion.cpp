@@ -1,5 +1,6 @@
 #include "simulation/LegacyControllerMotion.h"
 #include "Pch.h"
+
 #include "Math.h"
 
 #include <cmath>
@@ -199,11 +200,11 @@ void LegacyControllerMotion::ApplyHoldEdit(const ControllerHoldEdit& edit)
 		Merge(hold.roll, edit.roll);
 	}
 }
-void LegacyControllerMotion::ApplyWheel(float seconds)
+void LegacyControllerMotion::ApplyWheel(double seconds)
 {
 	if (!m_wheel.enabled)
 		return;
-	const auto elapsed = static_cast<double>(seconds) - m_wheel.receivedSeconds;
+	const auto elapsed = seconds - m_wheel.receivedSeconds;
 	m_wheelAngle =
 		static_cast<float>(m_wheel.amplitude * std::sin(2 * std::numbers::pi * m_wheel.frequencyHz * elapsed));
 	const auto cosine = std::cos(static_cast<double>(m_wheel.tilt)), sine = std::sin(static_cast<double>(m_wheel.tilt));

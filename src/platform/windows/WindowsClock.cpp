@@ -1,11 +1,55 @@
 #include "platform/windows/WindowsClock.h"
 #include "Pch.h"
 
+#include <limits>
 #include <stdexcept>
 #include <windows.h>
 
 namespace simxr
 {
+static bool ScalePositiveTime(std::int64_t value, std::int64_t numerator, std::int64_t denominator,
+							  std::int64_t& output) noexcept
+{
+	if (value <= 0 || numerator <= 0 || denominator <= 0)
+		return false;
+	const auto whole = static_cast<std::uint64_t>(value / denominator);
+	const auto remainder = static_cast<std::uint64_t>(value % denominator);
+	const auto scale = static_cast<std::uint64_t>(numerator);
+	const auto maximum = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+	if (whole > maximum / scale || remainder > std::numeric_limits<std::uint64_t>::max() / scale)
+		return false;
+	const auto fractional = remainder * scale / static_cast<std::uint64_t>(denominator);
+	const auto integral = whole * scale;
+	if (fractional > maximum - integral)
+		return false;
+	output = static_cast<std::int64_t>(integral + fractional);
+	return true;
+}
+
+XrResult PerformanceCounterToTime(std::int64_t counter, XrTime& time) noexcept
+{
+	LARGE_INTEGER frequency{};
+	if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0)
+		return XR_ERROR_RUNTIME_FAILURE;
+	return ScalePositiveTime(counter, 1000000000, frequency.QuadPart, time) ? XR_SUCCESS : XR_ERROR_TIME_INVALID;
+}
+
+XrResult TimeToPerformanceCounter(XrTime time, std::int64_t& counter) noexcept
+{
+	LARGE_INTEGER frequency{};
+	if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0)
+		return XR_ERROR_RUNTIME_FAILURE;
+	return ScalePositiveTime(time, frequency.QuadPart, 1000000000, counter) ? XR_SUCCESS : XR_ERROR_TIME_INVALID;
+}
+
+XrResult ReadPerformanceTime(XrTime& time) noexcept
+{
+	LARGE_INTEGER counter{};
+	if (!QueryPerformanceCounter(&counter))
+		return XR_ERROR_RUNTIME_FAILURE;
+	return PerformanceCounterToTime(counter.QuadPart, time);
+}
+
 struct WindowsClock::State
 {
 	HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, 0x00000002, TIMER_ALL_ACCESS);

@@ -106,14 +106,14 @@ struct ControllerWheelSweep
 	float frequencyHz = 0.15f;
 	float grip = 1;
 	float spread = 1.5707963f;
-	float receivedSeconds = 0;
+	double receivedSeconds = 0;
 };
 struct ControllerMotionFrame
 {
 	// Preserve the separate legacy clocks: QPC samples drive glides,
 	// while the wheel uses the native uptime sample with its existing phase.
 	double glideSeconds = 0;
-	float wheelSeconds = 0;
+	double wheelSeconds = 0;
 	ControllerHeadPose head;
 	ControllerKeyboardSample keyboard;
 	std::optional<ControllerPoseEdit> pose;
@@ -186,7 +186,7 @@ class LegacyControllerMotion
 	std::optional<bool> ApplyKeyboard(const ControllerKeyboardSample& keyboard);
 	void ApplyPose(const ControllerPoseEdit& edit);
 	void ApplyHoldEdit(const ControllerHoldEdit& edit);
-	void ApplyWheel(float seconds);
+	void ApplyWheel(double seconds);
 	void ApplyHolds();
 	ControllerMotionSnapshot SnapshotLocked(ControllerHeadPose head) const;
 	mutable std::mutex m_mutex;

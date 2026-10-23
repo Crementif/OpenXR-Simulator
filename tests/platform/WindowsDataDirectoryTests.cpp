@@ -1,6 +1,7 @@
 #include "Pch.h"
 #include "control/legacy/WindowsRuntimeSettings.h"
-#include "mcp_integration.h"
+#include "platform/windows/WindowsRuntimePaths.h"
+#include <windows.h>
 namespace settings = simxr::legacy::settings;
 
 #include <cstdio>
@@ -37,7 +38,7 @@ int main(int argc, char** argv)
 		const auto expected = mode == "override"  ? overridePath
 							  : mode == "default" ? local / L"OpenXR-Simulator"
 												  : std::filesystem::path(L".") / L"OpenXR-Simulator";
-		const auto& directory = mcp::GetSimulatorDataDirectory();
+		const auto& directory = simxr::windows::RuntimeDataDirectory();
 		Require(directory == expected, "Runtime data directory ignored environment precedence");
 		settings::LoadSettings(directory);
 		Require(settings::ReadState().renderWidth == 1280, "Missing settings changed startup defaults");
