@@ -57,7 +57,8 @@ static bool QueueSimulatorCommand(const char* name, const char* json) {
 static XrInstance g_instance = XR_NULL_HANDLE;
 static XrPath P(const char* s) { XrPath p = XR_NULL_PATH; xrStringToPath(g_instance, s, &p); return p; }
 
-int main() {
+int main(int argc, char** argv) {
+    const bool queriesOnly = argc == 2 && strcmp(argv[1], "--queries-only") == 0;
     step("xrEnumerateInstanceExtensionProperties");
     uint32_t extCount = 0;
     XRC(xrEnumerateInstanceExtensionProperties(nullptr, 0, &extCount, nullptr), "enumerate extension count");
@@ -113,10 +114,6 @@ int main() {
     XRC(xrGetViewConfigurationProperties(g_instance, systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, &vcProps), "xrGetViewConfigurationProperties(PRIMARY_STEREO)");
     printf("       fovMutable = %d\n", vcProps.fovMutable);
 
-    XrGraphicsRequirementsD3D12KHR gfxReq = { XR_TYPE_GRAPHICS_REQUIREMENTS_D3D12_KHR };
-    XRC(pfnReq(g_instance, systemId, &gfxReq), "xrGetD3D12GraphicsRequirementsKHR");
-    printf("       adapterLuid = %08lX:%08lX  minFeatureLevel = 0x%X\n", (unsigned long)gfxReq.adapterLuid.HighPart, (unsigned long)gfxReq.adapterLuid.LowPart, (unsigned)gfxReq.minFeatureLevel);
-
     step("xrEnumerateViewConfigurationViews");
     uint32_t viewCount = 0;
     XRC(xrEnumerateViewConfigurationViews(g_instance, systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 0, &viewCount, nullptr), "view config view count");
@@ -126,6 +123,43 @@ int main() {
     XRC(xrEnumerateViewConfigurationViews(g_instance, systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, viewCount, &viewCount, vcv.data()), "view config views");
     printf("       recommended %ux%u  max %ux%u  samples %u\n", vcv[0].recommendedImageRectWidth, vcv[0].recommendedImageRectHeight, vcv[0].maxImageRectWidth, vcv[0].maxImageRectHeight, vcv[0].recommendedSwapchainSampleCount);
     if (vcv[0].recommendedImageRectWidth == 0 || vcv[0].recommendedImageRectHeight == 0) { printf("  [FAIL] zero recommended resolution\n"); g_fail++; }
+
+    step("startup query contracts");
+    auto expect = [](XrResult actual, XrResult expected, const char* label)
+    {
+        if (actual == expected) ok(label);
+        else fail(label, actual);
+    };
+    vcv[0].recommendedImageRectWidth = 123;
+    expect(xrEnumerateViewConfigurationViews(g_instance, systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,
+        1, &viewCount, vcv.data()), XR_ERROR_SIZE_INSUFFICIENT, "short view buffer rejected");
+    if (viewCount != 2 || vcv[0].recommendedImageRectWidth != 123)
+        fail("short view buffer count and output preservation", XR_ERROR_RUNTIME_FAILURE);
+    expect(xrEnumerateViewConfigurationViews(g_instance, systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_MONO,
+        0, &viewCount, nullptr), XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED, "unsupported view configuration");
+    expect(xrEnumerateEnvironmentBlendModes(g_instance, systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_MONO,
+        0, &viewCount, nullptr), XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED, "unsupported blend configuration");
+    vcv[1].type = XR_TYPE_UNKNOWN;
+    expect(xrEnumerateViewConfigurationViews(g_instance, systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,
+        2, &viewCount, vcv.data()), XR_ERROR_VALIDATION_FAILURE, "invalid view output header");
+    if (vcv[0].recommendedImageRectWidth != 123)
+        fail("invalid view array partially written", XR_ERROR_RUNTIME_FAILURE);
+    vcv[1].type = XR_TYPE_VIEW_CONFIGURATION_VIEW;
+    XrBaseOutStructure unknown{XR_TYPE_UNKNOWN, nullptr};
+    vcv[0].next = &unknown;
+    XRC(xrEnumerateViewConfigurationViews(g_instance, systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,
+        2, &viewCount, vcv.data()), "view enumeration with unknown chained output");
+    if (vcv[0].next != &unknown) fail("caller view chain replaced", XR_ERROR_RUNTIME_FAILURE);
+    vcv[0].next = nullptr;
+    if (queriesOnly)
+    {
+        XRC(xrDestroyInstance(g_instance), "query instance teardown");
+        return g_fail ? 1 : 0;
+    }
+
+    XrGraphicsRequirementsD3D12KHR gfxReq = { XR_TYPE_GRAPHICS_REQUIREMENTS_D3D12_KHR };
+    XRC(pfnReq(g_instance, systemId, &gfxReq), "xrGetD3D12GraphicsRequirementsKHR");
+    printf("       adapterLuid = %08lX:%08lX  minFeatureLevel = 0x%X\n", (unsigned long)gfxReq.adapterLuid.HighPart, (unsigned long)gfxReq.adapterLuid.LowPart, (unsigned)gfxReq.minFeatureLevel);
 
     step("D3D12 device on the runtime's adapter");
     // The debug layer is the whole point of the render pass below: a barrier with

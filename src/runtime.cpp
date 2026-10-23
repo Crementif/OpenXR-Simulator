@@ -1948,10 +1948,9 @@ static XrResult XRAPI_PTR xrDestroyInstance_runtime(XrInstance instance) {
     return XR_SUCCESS;
 }
 
-static XrResult XRAPI_PTR xrGetInstanceProperties_runtime(XrInstance, XrInstanceProperties* props) {
-    if (!props) return XR_ERROR_VALIDATION_FAILURE;
-    props->type = XR_TYPE_INSTANCE_PROPERTIES;
-    props->next = nullptr;
+static XrResult XRAPI_PTR xrGetInstanceProperties_runtime(XrInstance instance, XrInstanceProperties* props) {
+    if (!RuntimeState().FindInstance(instance)) return XR_ERROR_HANDLE_INVALID;
+    if (!props || props->type != XR_TYPE_INSTANCE_PROPERTIES) return XR_ERROR_VALIDATION_FAILURE;
     props->runtimeVersion = SupportedApiVersion;
     strncpy(props->runtimeName, "OpenXR Simulator Runtime", XR_MAX_RUNTIME_NAME_SIZE - 1);
     props->runtimeName[XR_MAX_RUNTIME_NAME_SIZE - 1] = '\0';
@@ -1959,8 +1958,9 @@ static XrResult XRAPI_PTR xrGetInstanceProperties_runtime(XrInstance, XrInstance
     return XR_SUCCESS;
 }
 
-static XrResult XRAPI_PTR xrGetSystem_runtime(XrInstance, const XrSystemGetInfo* info, XrSystemId* systemId) {
-    if (!info || !systemId) return XR_ERROR_VALIDATION_FAILURE;
+static XrResult XRAPI_PTR xrGetSystem_runtime(XrInstance instance, const XrSystemGetInfo* info, XrSystemId* systemId) {
+    if (!RuntimeState().FindInstance(instance)) return XR_ERROR_HANDLE_INVALID;
+    if (!info || !systemId || info->type != XR_TYPE_SYSTEM_GET_INFO) return XR_ERROR_VALIDATION_FAILURE;
     Logf("[SimXR] xrGetSystem: formFactor=%d", info->formFactor);
     if (info->formFactor != XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY) {
         Log("[SimXR] xrGetSystem: ERROR - form factor not HMD");
@@ -1985,44 +1985,55 @@ static XrResult XRAPI_PTR xrGetSystemProperties_runtime(XrInstance instance, XrS
     return XR_SUCCESS;
 }
 
-static XrResult XRAPI_PTR xrEnumerateViewConfigurations_runtime(XrInstance, XrSystemId, uint32_t capacity, uint32_t* count, XrViewConfigurationType* types) {
-    Logf("[SimXR] xrEnumerateViewConfigurations called: capacity=%u", capacity);
-    if (count) *count = 1;
-    if (capacity >= 1 && types) {
-        types[0] = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
-        Log("[SimXR] xrEnumerateViewConfigurations: Returning PRIMARY_STEREO");
-    }
-    return XR_SUCCESS;
+static XrResult XRAPI_PTR xrEnumerateViewConfigurations_runtime(
+	XrInstance instance, XrSystemId system, uint32_t capacity, uint32_t* count, XrViewConfigurationType* types)
+{
+	if (!RuntimeState().FindInstance(instance)) return XR_ERROR_HANDLE_INVALID;
+	if (system != 1) return XR_ERROR_SYSTEM_INVALID;
+	if (!count || (capacity && !types)) return XR_ERROR_VALIDATION_FAILURE;
+	*count = 1;
+	if (capacity) types[0] = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+	return XR_SUCCESS;
 }
 
-static XrResult XRAPI_PTR xrEnumerateViewConfigurationViews_runtime(XrInstance, XrSystemId, XrViewConfigurationType viewType, uint32_t capacity, uint32_t* count, XrViewConfigurationView* views) {
-    Logf("[SimXR] xrEnumerateViewConfigurationViews called: viewType=%d, capacity=%u", (int)viewType, capacity);
-    if (count) *count = 2;
-    if (capacity >= 2 && views) {
-        for (uint32_t i = 0; i < 2; ++i) {
-            views[i].type = XR_TYPE_VIEW_CONFIGURATION_VIEW;
-            views[i].next = nullptr;
-            uint32_t renderW = 0, renderH = 0;
-            ui::GetRenderResolution(renderW, renderH);
-            views[i].recommendedImageRectWidth = renderW;
-            views[i].recommendedImageRectHeight = renderH;
-            views[i].recommendedSwapchainSampleCount = 1;
-            views[i].maxImageRectWidth = ui::kMaxRenderExtent;
-            views[i].maxImageRectHeight = ui::kMaxRenderExtent;
-            views[i].maxSwapchainSampleCount = 1;
-        }
-        Logf("[SimXR] xrEnumerateViewConfigurationViews: Returned 2 views (%ux%u recommended; headset geometry %s)",
-             views[0].recommendedImageRectWidth, views[0].recommendedImageRectHeight,
-             ui::HeadsetProfileName(ui::ReadState().headsetProfile));
-    }
-    return XR_SUCCESS;
+static XrResult XRAPI_PTR xrEnumerateViewConfigurationViews_runtime(
+	XrInstance instance, XrSystemId system, XrViewConfigurationType viewType,
+	uint32_t capacity, uint32_t* count, XrViewConfigurationView* views)
+{
+	if (!RuntimeState().FindInstance(instance)) return XR_ERROR_HANDLE_INVALID;
+	if (system != 1) return XR_ERROR_SYSTEM_INVALID;
+	if (viewType != XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO) return XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;
+	if (!count || (capacity && !views)) return XR_ERROR_VALIDATION_FAILURE;
+	*count = 2;
+	if (!capacity) return XR_SUCCESS;
+	if (capacity < *count) return XR_ERROR_SIZE_INSUFFICIENT;
+	for (uint32_t index = 0; index < *count; ++index)
+		if (views[index].type != XR_TYPE_VIEW_CONFIGURATION_VIEW) return XR_ERROR_VALIDATION_FAILURE;
+	uint32_t width = 0, height = 0;
+	ui::GetRenderResolution(width, height);
+	for (uint32_t index = 0; index < *count; ++index)
+	{
+		views[index].recommendedImageRectWidth = width;
+		views[index].recommendedImageRectHeight = height;
+		views[index].recommendedSwapchainSampleCount = 1;
+		views[index].maxImageRectWidth = ui::kMaxRenderExtent;
+		views[index].maxImageRectHeight = ui::kMaxRenderExtent;
+		views[index].maxSwapchainSampleCount = 1;
+	}
+	return XR_SUCCESS;
 }
 
 static XrResult XRAPI_PTR xrEnumerateEnvironmentBlendModes_runtime(
-    XrInstance, XrSystemId, XrViewConfigurationType, uint32_t capacity, uint32_t* count, XrEnvironmentBlendMode* modes) {
-    if (count) *count = 1;
-    if (capacity >= 1 && modes) modes[0] = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-    return XR_SUCCESS;
+	XrInstance instance, XrSystemId system, XrViewConfigurationType viewType,
+	uint32_t capacity, uint32_t* count, XrEnvironmentBlendMode* modes)
+{
+	if (!RuntimeState().FindInstance(instance)) return XR_ERROR_HANDLE_INVALID;
+	if (system != 1) return XR_ERROR_SYSTEM_INVALID;
+	if (viewType != XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO) return XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;
+	if (!count || (capacity && !modes)) return XR_ERROR_VALIDATION_FAILURE;
+	*count = 1;
+	if (capacity) modes[0] = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+	return XR_SUCCESS;
 }
 
 static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrSessionCreateInfo* info, XrSession* session) {
@@ -2378,15 +2389,13 @@ static XrResult XRAPI_PTR xrEnumerateSwapchainFormats_runtime(XrSession session,
     };
     const uint32_t formatCount = sizeof(supportedFormats) / sizeof(supportedFormats[0]);
 
-    if (count) *count = formatCount;
-    if (capacity > 0 && formats) {
-        uint32_t copyCount = (capacity < formatCount) ? capacity : formatCount;
-        for (uint32_t i = 0; i < copyCount; ++i) {
-            formats[i] = supportedFormats[i];
-        }
-        Logf("[SimXR] xrEnumerateSwapchainFormats: Returned %u formats (first: %d)", copyCount, (int)formats[0]);
-    }
-    return XR_SUCCESS;
+	if (!session || session != rt::g_session.handle) return XR_ERROR_HANDLE_INVALID;
+	if (!count || (capacity && !formats)) return XR_ERROR_VALIDATION_FAILURE;
+	*count = formatCount;
+	if (!capacity) return XR_SUCCESS;
+	if (capacity < formatCount) return XR_ERROR_SIZE_INSUFFICIENT;
+	std::copy(std::begin(supportedFormats), std::end(supportedFormats), formats);
+	return XR_SUCCESS;
 }
 
 static XrResult XRAPI_PTR xrCreateSwapchain_runtime(XrSession session, const XrSwapchainCreateInfo* ci, XrSwapchain* sc) {
@@ -2645,11 +2654,15 @@ static XrResult XRAPI_PTR xrEnumerateSwapchainImages_runtime(XrSwapchain sc, uin
 	auto it = rt::g_swapchains.find(sc); if (it == rt::g_swapchains.end()) return XR_ERROR_HANDLE_INVALID;
     if (it->second.backend == rt::Swapchain::Backend::D3D12) {
         const uint32_t n = (uint32_t)it->second.images12.size();
-        if (count) *count = n;
-        if (capacity >= n && images) {
-            auto* arr = reinterpret_cast<XrSwapchainImageD3D12KHR*>(images);
-            for (uint32_t i = 0; i < n; ++i) { arr[i].type = XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR; arr[i].texture = it->second.images12[i].Get(); }
-        }
+		if (!count || (capacity && !images)) return XR_ERROR_VALIDATION_FAILURE;
+		*count = n;
+		if (!capacity) return XR_SUCCESS;
+		if (capacity < n) return XR_ERROR_SIZE_INSUFFICIENT;
+		auto* output = reinterpret_cast<XrSwapchainImageD3D12KHR*>(images);
+		for (uint32_t index = 0; index < n; ++index)
+			if (output[index].type != XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR) return XR_ERROR_VALIDATION_FAILURE;
+		for (uint32_t index = 0; index < n; ++index)
+			output[index].texture = it->second.images12[index].Get();
         Logf("[SimXR] xrEnumerateSwapchainImages(D3D12): sc=%p count=%u", sc, n);
         return XR_SUCCESS;
 	}
@@ -2676,11 +2689,15 @@ static XrResult XRAPI_PTR xrEnumerateSwapchainImages_runtime(XrSwapchain sc, uin
 		return XR_SUCCESS;
     } else {
         const uint32_t n = (uint32_t)it->second.images.size();
-        if (count) *count = n;
-        if (capacity >= n && images) {
-            auto* arr = reinterpret_cast<XrSwapchainImageD3D11KHR*>(images);
-            for (uint32_t i = 0; i < n; ++i) { arr[i].type = XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR; arr[i].texture = it->second.images[i].Get(); }
-        }
+		if (!count || (capacity && !images)) return XR_ERROR_VALIDATION_FAILURE;
+		*count = n;
+		if (!capacity) return XR_SUCCESS;
+		if (capacity < n) return XR_ERROR_SIZE_INSUFFICIENT;
+		auto* output = reinterpret_cast<XrSwapchainImageD3D11KHR*>(images);
+		for (uint32_t index = 0; index < n; ++index)
+			if (output[index].type != XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR) return XR_ERROR_VALIDATION_FAILURE;
+		for (uint32_t index = 0; index < n; ++index)
+			output[index].texture = it->second.images[index].Get();
         Logf("[SimXR] xrEnumerateSwapchainImages(D3D11): sc=%p count=%u", sc, n);
         return XR_SUCCESS;
     }
@@ -2703,7 +2720,7 @@ static XrResult XRAPI_PTR xrAcquireSwapchainImage_runtime(XrSwapchain sc, const 
 	}
 	auto it = rt::g_swapchains.find(sc); if (it == rt::g_swapchains.end()) return XR_ERROR_HANDLE_INVALID;
     auto& ch = it->second;
-    if (!index) return XR_ERROR_VALIDATION_FAILURE;
+    if (!index || (info && info->type != XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO)) return XR_ERROR_VALIDATION_FAILURE;
     uint32_t i;
     auto result = ch.state->Acquire(i);
     if (XR_FAILED(result)) return result;
@@ -2759,6 +2776,7 @@ static XrResult XRAPI_PTR xrReleaseSwapchainImage_runtime(XrSwapchain sc, const 
 	auto it = rt::g_swapchains.find(sc);
     if (it == rt::g_swapchains.end()) return XR_ERROR_HANDLE_INVALID;
     auto& ch = it->second;
+    if (info && info->type != XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO) return XR_ERROR_VALIDATION_FAILURE;
     auto result = ch.state->Release(ch.lastReleased);
     if (XR_FAILED(result)) return result;
 
@@ -5124,6 +5142,7 @@ static XrResult XRAPI_PTR xrDestroySwapchain_runtime(XrSwapchain sc)
 
 // Missing functions Unity needs
 static XrResult XRAPI_PTR xrResultToString_runtime(XrInstance, XrResult value, char buffer[XR_MAX_RESULT_STRING_SIZE]) {
+    if (!buffer) return XR_ERROR_VALIDATION_FAILURE;
     const char* str = "XR_SUCCESS";
     if (value != XR_SUCCESS) str = "XR_ERROR";
     strncpy(buffer, str, XR_MAX_RESULT_STRING_SIZE - 1);
@@ -5132,6 +5151,7 @@ static XrResult XRAPI_PTR xrResultToString_runtime(XrInstance, XrResult value, c
 }
 
 static XrResult XRAPI_PTR xrStructureTypeToString_runtime(XrInstance, XrStructureType value, char buffer[XR_MAX_STRUCTURE_NAME_SIZE]) {
+    if (!buffer) return XR_ERROR_VALIDATION_FAILURE;
     snprintf(buffer, XR_MAX_STRUCTURE_NAME_SIZE, "XrStructureType_%d", (int)value);
     return XR_SUCCESS;
 }
@@ -5143,14 +5163,16 @@ static XrResult XRAPI_PTR xrGetReferenceSpaceBoundsRect_runtime(XrSession handle
     return core->Spaces().Bounds(type, *bounds);
 }
 
-static XrResult XRAPI_PTR xrGetViewConfigurationProperties_runtime(XrInstance, XrSystemId, XrViewConfigurationType type, 
-                                                                   XrViewConfigurationProperties* props) {
-    if (!props) return XR_ERROR_VALIDATION_FAILURE;
-    props->type = XR_TYPE_VIEW_CONFIGURATION_PROPERTIES;
-    props->viewConfigurationType = type;
-    props->fovMutable = XR_FALSE;
-    Log("[SimXR] xrGetViewConfigurationProperties");
-    return XR_SUCCESS;
+static XrResult XRAPI_PTR xrGetViewConfigurationProperties_runtime(
+	XrInstance instance, XrSystemId system, XrViewConfigurationType type, XrViewConfigurationProperties* props)
+{
+	if (!RuntimeState().FindInstance(instance)) return XR_ERROR_HANDLE_INVALID;
+	if (system != 1) return XR_ERROR_SYSTEM_INVALID;
+	if (type != XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO) return XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;
+	if (!props || props->type != XR_TYPE_VIEW_CONFIGURATION_PROPERTIES) return XR_ERROR_VALIDATION_FAILURE;
+	props->viewConfigurationType = type;
+	props->fovMutable = XR_TRUE;
+	return XR_SUCCESS;
 }
 
 static XrResult XRAPI_PTR xrApplyHapticFeedback_runtime(XrSession handle, const XrHapticActionInfo* info, const XrHapticBaseHeader* feedback)
