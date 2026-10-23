@@ -1537,6 +1537,10 @@ int main()
 	Require(session.Begin(begin, config) == XR_SUCCESS, "Begin session");
 	Require(session.Begin(begin, config) == XR_ERROR_SESSION_RUNNING, "Duplicate begin");
 	Require(session.Snapshot().state == XR_SESSION_STATE_FOCUSED, "Initial focus");
+	session.SetFocused(false, config.epoch);
+	Require(session.Snapshot().state == XR_SESSION_STATE_VISIBLE, "Preview lost focus");
+	session.SetFocused(true, config.epoch);
+	Require(session.Snapshot().state == XR_SESSION_STATE_FOCUSED, "Preview regained focus");
 	XrSpace stage;
 	Require(session.Spaces().CreateReferenceSpace(XR_REFERENCE_SPACE_TYPE_STAGE, {{0, 0, 0, 1}, {}}, stage) ==
 				XR_SUCCESS,
@@ -1682,6 +1686,9 @@ int main()
 			"Pipeline identities mixed");
 	Require(session.End({Duration{20}}) == XR_ERROR_SESSION_NOT_STOPPING, "End without request");
 	Require(session.RequestExit({Duration{20}}) == XR_SUCCESS, "Request exit");
+	session.SetFocused(false, {Duration{20}});
+	session.SetFocused(true, {Duration{20}});
+	Require(session.Snapshot().state == XR_SESSION_STATE_STOPPING, "Preview focus cancelled stop request");
 	Require(session.End({Duration{20}}) == XR_SUCCESS, "End session");
 	Require(session.Ready({Duration{30}}) == XR_SUCCESS && session.Begin(begin, config) == XR_SUCCESS,
 			"Restart session");

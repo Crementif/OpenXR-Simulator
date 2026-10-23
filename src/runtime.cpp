@@ -198,9 +198,6 @@ namespace rt {
 
 struct Swapchain;
 
-// Forward declarations
-void PushState(XrSession s, XrSessionState newState);
-
 // Global adapter LUID that we'll use consistently
 static LUID g_adapterLuid = {};
 static bool g_adapterLuidSet = false;
@@ -279,13 +276,12 @@ struct Session {
     std::shared_ptr<mcp::WindowsLegacyChannel> compatibilityFiles;
     std::shared_ptr<mcp::WindowsLegacyCapture> compatibilityCapture;
     std::shared_ptr<flicker::Diagnostics> diagnostics;
-    XrSessionState state{XR_SESSION_STATE_IDLE};
     ComPtr<ID3D11Device> d3d11Device;
     ComPtr<ID3D11DeviceContext> d3d11Context;
     // DX12 support
     ComPtr<ID3D12Device> d3d12Device;
     ComPtr<ID3D12CommandQueue> d3d12Queue;
-    bool usesD3D12{false};
+    std::atomic<bool> usesD3D12{false};
 	std::shared_ptr<simxr::VulkanSessionGraphics> vulkan;
 	// OpenGL support
     HDC glDC{nullptr};
@@ -1010,9 +1006,8 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
     }
     switch (msg) {
         case WM_CLOSE:
-            if (rt::g_session.handle != XR_NULL_HANDLE) {
-                rt::PushState(rt::g_session.handle, XR_SESSION_STATE_EXITING);
-            }
+			if (auto core = rt::RetainSession())
+				core->RequestExit({simxr::SteadyClock{}.Now().time_since_epoch()});
             Log("[SimXR] WndProc: WM_CLOSE received");
             DestroyWindow(hWnd);
             return 0;
@@ -1025,21 +1020,16 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
             if (LOWORD(wParam) != WA_INACTIVE) {
                 rt::g_session.isFocused = true;
                 Log("[SimXR] WndProc: WM_ACTIVATE -> focused");
-                // Push FOCUSED state if we were VISIBLE
-                if (rt::g_session.state == XR_SESSION_STATE_VISIBLE) {
-                    rt::PushState(rt::g_session.handle, XR_SESSION_STATE_FOCUSED);
-                }
             } else {
                 rt::g_session.isFocused = false;
                 Log("[SimXR] WndProc: WM_ACTIVATE -> unfocused");
                 rt::SetMouseLook(hWnd, false);  // also puts the hidden cursor back
                 rt::g_panDrag = false;
                 ReleaseCapture();
-                // Push VISIBLE state if we were FOCUSED
-                if (rt::g_session.state == XR_SESSION_STATE_FOCUSED) {
-                    rt::PushState(rt::g_session.handle, XR_SESSION_STATE_VISIBLE);
-                }
             }
+			if (auto core = rt::RetainSession())
+				core->SetFocused(LOWORD(wParam) != WA_INACTIVE,
+					{simxr::SteadyClock{}.Now().time_since_epoch()});
             return 0;
         case WM_LBUTTONDOWN:
             Logf("[SimXR] WM_LBUTTONDOWN: focused=%d", rt::g_session.isFocused.load());
@@ -2122,7 +2112,6 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
         const auto time = simxr::RuntimeTime{std::chrono::duration_cast<simxr::Duration>(simxr::SteadyClock{}.Now().time_since_epoch())};
         result = creation.core->Ready(time);
         if (XR_FAILED(result)) return result;
-        rt::g_session.state = creation.core->Snapshot().state;
         *session = creation.core;
         creation.committed = true;
         Logf("[SimXR] xrCreateSession: SUCCESS handle=%llu", (unsigned long long)*session);
@@ -2163,7 +2152,6 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
             rt::g_session.d3d12Device.Reset();
             rt::g_session.d3d12Queue.Reset();
             rt::ResetD3D12PreviewResources(rt::g_session);
-            rt::g_session.state = XR_SESSION_STATE_IDLE;
             b->device->GetImmediateContext(rt::g_session.d3d11Context.GetAddressOf());
             // Window will be created lazily on first frame
             return publish();
@@ -2300,7 +2288,6 @@ static XrResult DestroyNativeSession(XrSession s) {
         retiredDiagnostics = std::move(rt::g_session.diagnostics);
         rt::g_session.handle = XR_NULL_HANDLE;
     }
-    rt::g_session.state = XR_SESSION_STATE_IDLE;
 	if (rt::g_session.usesOpenGL && rt::g_session.d3d11Context)
 		rt::g_session.d3d11Context->ClearState();
 	rt::g_session.preview11.reset();
@@ -2790,18 +2777,6 @@ static XrResult XRAPI_PTR xrReleaseSwapchainImage_runtime(XrSwapchain sc, const 
     return XR_SUCCESS;
 }
 
-namespace rt {
-    void PushState(XrSession session, XrSessionState state) {
-        if (session == XR_NULL_HANDLE) return;
-        auto core = RetainSession(session);
-        if (!core) return;
-        const auto time = simxr::RuntimeTime{simxr::SteadyClock{}.Now().time_since_epoch()};
-        if (state == XR_SESSION_STATE_READY) core->Ready(time);
-        else if (state == XR_SESSION_STATE_EXITING) core->RequestExit(time);
-        else core->SetState(state, time);
-        g_session.state = core->Snapshot().state;
-    }
-}
 static XrResult XRAPI_PTR xrPollEvent_runtime(XrInstance instance, XrEventDataBuffer* buffer) {
     if (!RuntimeState().FindInstance(instance)) return XR_ERROR_HANDLE_INVALID;
     if (!buffer) return XR_ERROR_VALIDATION_FAILURE;
@@ -2875,7 +2850,6 @@ static XrResult XRAPI_PTR xrBeginSession_runtime(XrSession handle, const XrSessi
 		}
 	}
 	auto result = core->Begin(*info, config, policy);
-	rt::g_session.state = core->Snapshot().state;
     if (XR_SUCCEEDED(result)) rt::g_session.isFocused = true;
     return result;
 }
@@ -2883,14 +2857,12 @@ static XrResult XRAPI_PTR xrEndSession_runtime(XrSession handle) {
     auto core = rt::RetainSession(handle);
     if (!core) return XR_ERROR_HANDLE_INVALID;
     auto result = core->End({simxr::SteadyClock{}.Now().time_since_epoch()});
-    rt::g_session.state = core->Snapshot().state;
     return result;
 }
 static XrResult XRAPI_PTR xrRequestExitSession_runtime(XrSession handle) {
     auto core = rt::RetainSession(handle);
     if (!core) return XR_ERROR_HANDLE_INVALID;
     auto result = core->RequestExit({simxr::SteadyClock{}.Now().time_since_epoch()});
-    rt::g_session.state = core->Snapshot().state;
     return result;
 }
 static XrResult XRAPI_PTR xrWaitFrame_runtime(XrSession session, const XrFrameWaitInfo* info, XrFrameState* s) {
@@ -3228,8 +3200,8 @@ static XrResult XRAPI_PTR xrWaitFrame_runtime(XrSession session, const XrFrameWa
 
 		s->predictedDisplayPeriod = admitted.displayPeriod.count();
 		s->predictedDisplayTime = admitted.displayTime.value.count();
-		s->shouldRender =
-			rt::g_session.state == XR_SESSION_STATE_VISIBLE || rt::g_session.state == XR_SESSION_STATE_FOCUSED;
+		const auto state = core->Snapshot().state;
+		s->shouldRender = state == XR_SESSION_STATE_VISIBLE || state == XR_SESSION_STATE_FOCUSED;
 		return XR_SUCCESS;
 	};
 	return core->WaitFrame(prediction, publishNative);
@@ -4772,7 +4744,7 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
 
     // MCP Integration - write frame status BEFORE Present (Present may block on D3D12)
     compatibilityCapture->PublishStatus({static_cast<std::uint32_t>(frameCount), rt::g_session.previewWidth, rt::g_session.previewHeight,
-                          "RGBA8", mcp::GetSessionStateName((int)rt::g_session.state),
+                          "RGBA8", mcp::GetSessionStateName(static_cast<int>(core->Snapshot().state)),
                           rt::g_headYaw, rt::g_headPitch, rt::g_headRoll,
                           rt::g_headPos.x, rt::g_headPos.y, rt::g_headPos.z});
 

@@ -184,6 +184,17 @@ XrResult Session::SetState(XrSessionState state, RuntimeTime time)
 	return XR_SUCCESS;
 }
 
+void Session::SetFocused(bool focused, RuntimeTime time)
+{
+	std::lock_guard lock(m_mutex);
+	if (m_state.closed || !m_state.running ||
+		(m_state.state != XR_SESSION_STATE_VISIBLE && m_state.state != XR_SESSION_STATE_FOCUSED))
+		return;
+	const auto state = focused ? XR_SESSION_STATE_FOCUSED : XR_SESSION_STATE_VISIBLE;
+	if (m_state.state != state)
+		Transition(state, time);
+}
+
 void Session::Close()
 {
 	Close(std::nullopt);

@@ -54,6 +54,7 @@ class Session
 	XrResult RequestExit(RuntimeTime time);
 	XrResult End(RuntimeTime time);
 	XrResult SetState(XrSessionState state, RuntimeTime time);
+	void SetFocused(bool focused, RuntimeTime time);
 	void Close();
 	// Native publication runs after admission with session/publication locks released.
 	// Failure retires only the admitted generation, including partially published state.
