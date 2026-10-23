@@ -1,7 +1,11 @@
 #include "graphics/backends/d3d12/D3D12Backend.h"
-#include "CompositorHlsl.h"
 #include "Pch.h"
 
+#include "CompositorHlsl.h"
+#include "platform/windows/ModuleReference.h"
+#include "platform/windows/WindowsLibrary.h"
+
+#include <bit>
 #include <d3dcompiler.h>
 #include <dxgi.h>
 #include <limits>
@@ -15,13 +19,14 @@ static void Check(HRESULT result, const char* operation)
 	if (FAILED(result))
 		throw std::runtime_error(std::string(operation) + " (HRESULT " + std::to_string(result) + ")");
 }
-static ComPtr<ID3DBlob> Compile(const char* entry, const char* target, bool multisampledDepth = false)
+static ComPtr<ID3DBlob> Compile(decltype(&D3DCompile) compile, const char* entry, const char* target,
+								bool multisampledDepth = false)
 {
 	const D3D_SHADER_MACRO definitions[]{{"SIMXR_DEPTH_MS", "1"}, {nullptr, nullptr}};
 	ComPtr<ID3DBlob> code, errors;
-	const auto result = D3DCompile(shaders::CompositorHlsl, sizeof(shaders::CompositorHlsl) - 1, "Compositor.hlsl",
-								   multisampledDepth ? definitions : nullptr, nullptr, entry, target,
-								   D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
+	const auto result = compile(shaders::CompositorHlsl, sizeof(shaders::CompositorHlsl) - 1, "Compositor.hlsl",
+								multisampledDepth ? definitions : nullptr, nullptr, entry, target,
+								D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
 	if (FAILED(result) && errors)
 		throw std::runtime_error(
 			std::string(static_cast<const char*>(errors->GetBufferPointer()), errors->GetBufferSize()));
@@ -86,7 +91,11 @@ static bool ColorFormat(DXGI_FORMAT resource, DXGI_FORMAT view)
 		   (resource == DXGI_FORMAT_R10G10B10A2_TYPELESS && view == DXGI_FORMAT_R10G10B10A2_UNORM);
 }
 
-D3D12Frame::D3D12Frame(std::span<const FrameView> views) : FrameOutput(views) {}
+D3D12Frame::D3D12Frame(std::shared_ptr<const windows::WindowsLibrary> dxgiLibrary,
+					   std::shared_ptr<const windows::WindowsLibrary> runtimeLibrary, std::span<const FrameView> views)
+	: FrameOutput(views), m_dxgiLibrary(std::move(dxgiLibrary)), m_runtimeLibrary(std::move(runtimeLibrary))
+{
+}
 D3D12Frame::~D3D12Frame()
 {
 	if (m_textureHandle)
@@ -121,6 +130,7 @@ HANDLE D3D12Frame::FenceHandle() const noexcept
 
 struct D3D12Backend::PendingFrames
 {
+	windows::ModuleReference m_module;
 	std::shared_ptr<FrameReservation> preservation;
 	std::vector<std::shared_ptr<D3D12Frame>> frames;
 	explicit PendingFrames(std::size_t capacity)
@@ -134,11 +144,16 @@ struct D3D12Backend::PendingFrames
 };
 
 D3D12Backend::D3D12Backend(ID3D12Device* device, ID3D12CommandQueue* queue)
-	: m_device(device), m_queue(queue),
+	: m_dxgiLibrary(std::make_shared<windows::WindowsLibrary>(L"dxgi.dll")),
+	  m_runtimeLibrary(std::make_shared<windows::WindowsLibrary>(L"d3d12.dll")), m_device(device), m_queue(queue),
 	  m_pending(std::make_unique<PendingFrames>(m_frames.Capacity() + m_retainedFrames.Capacity()))
 {
 	if (!device || !SameDevice(queue, device) || queue->GetDesc().Type != D3D12_COMMAND_LIST_TYPE_DIRECT)
 		throw std::invalid_argument("D3D12 compositor requires the application's direct queue");
+	const windows::WindowsLibrary compiler(D3DCOMPILER_DLL_W);
+	const auto serialize = std::bit_cast<decltype(&D3D12SerializeRootSignature)>(
+		m_runtimeLibrary->Procedure("D3D12SerializeRootSignature"));
+	const auto compile = std::bit_cast<decltype(&D3DCompile)>(compiler.Procedure("D3DCompile"));
 	D3D12_DESCRIPTOR_RANGE range{};
 	range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
 	range.NumDescriptors = 1;
@@ -163,13 +178,12 @@ D3D12Backend::D3D12Backend(ID3D12Device* device, ID3D12CommandQueue* queue)
 	root.NumStaticSamplers = 1;
 	root.pStaticSamplers = &sampler;
 	ComPtr<ID3DBlob> serialized, errors;
-	Check(D3D12SerializeRootSignature(&root, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, &errors),
-		  "Serialize compositor root signature");
+	Check(serialize(&root, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, &errors), "Serialize compositor root signature");
 	Check(device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(),
 									  IID_PPV_ARGS(&m_root)),
 		  "Create compositor root signature");
-	const auto vertex = Compile("VSMain", "vs_5_0");
-	const auto pixel = Compile("PSMain", "ps_5_0");
+	const auto vertex = Compile(compile, "VSMain", "vs_5_0");
+	const auto pixel = Compile(compile, "PSMain", "ps_5_0");
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC pipeline{};
 	pipeline.pRootSignature = m_root.Get();
 	pipeline.VS = {vertex->GetBufferPointer(), vertex->GetBufferSize()};
@@ -190,7 +204,7 @@ D3D12Backend::D3D12Backend(ID3D12Device* device, ID3D12CommandQueue* queue)
 	pipeline.SampleDesc.Count = 1;
 	Check(device->CreateGraphicsPipelineState(&pipeline, IID_PPV_ARGS(&m_pipeline)),
 		  "Create canonical compositor pipeline");
-	const auto depthMultisample = Compile("PSMain", "ps_5_0", true);
+	const auto depthMultisample = Compile(compile, "PSMain", "ps_5_0", true);
 	pipeline.PS = {depthMultisample->GetBufferPointer(), depthMultisample->GetBufferSize()};
 	Check(device->CreateGraphicsPipelineState(&pipeline, IID_PPV_ARGS(&m_depthMultisample)),
 		  "Create canonical multisample depth pipeline");
@@ -227,7 +241,7 @@ HRESULT D3D12Backend::Allocate(const D3D12_RESOURCE_DESC& description, D3D12_RES
 	auto reservation = pool.Reserve();
 	if (!reservation)
 		return DXGI_ERROR_WAS_STILL_DRAWING;
-	auto frame = std::shared_ptr<D3D12Frame>(new D3D12Frame(views));
+	auto frame = std::shared_ptr<D3D12Frame>(new D3D12Frame(m_dxgiLibrary, m_runtimeLibrary, views));
 	frame->m_queue = m_queue;
 	frame->m_root = m_root;
 	frame->m_pipeline = m_pipeline;

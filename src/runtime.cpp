@@ -37,8 +37,10 @@
 #include "graphics/backends/windows/WindowsGraphicsCapabilities.h"
 #include "graphics/backends/windows/WindowsSessionGraphics.h"
 #include "platform/windows/Direct3DSwapchain.h"
+#include "platform/windows/ModuleReference.h"
 #include "platform/windows/OpenGLSwapchain.h"
 #include "platform/windows/WindowsClock.h"
+#include "platform/windows/WindowsLibrary.h"
 #include "platform/windows/WindowsRuntimeInput.h"
 #include "platform/windows/WindowsRuntimePaths.h"
 #include "presentation/FrameScheduler.h"
@@ -54,6 +56,7 @@
 #include "runtime/SpaceQueries.h"
 #include "runtime/validation/LayerValidation.h"
 #include "runtime/validation/StructureChain.h"
+
 #include <bit>
 #include <charconv>
 #include <cstdarg>
@@ -116,6 +119,7 @@ namespace rt
 {
 struct Instance
 {
+	simxr::windows::ModuleReference module;
 	std::mutex lifecycleMutex;
 	std::mutex graphicsMutex;
 	simxr::VulkanInstanceGraphics vulkan;
@@ -165,6 +169,8 @@ struct Session
 	std::shared_ptr<mcp::WindowsLegacyChannel> compatibilityFiles;
 	std::shared_ptr<mcp::WindowsLegacyCapture> compatibilityCapture;
 	std::shared_ptr<flicker::Diagnostics> diagnostics;
+	std::optional<simxr::windows::WindowsLibrary> dxgiLibrary;
+	std::optional<simxr::windows::WindowsLibrary> d3dLibrary;
 	ComPtr<ID3D11Device> d3d11Device;
 	ComPtr<ID3D12Device> d3d12Device;
 	ComPtr<ID3D12CommandQueue> d3d12Queue;
@@ -309,6 +315,7 @@ static simxr::Runtime& RuntimeState()
 
 struct NativeControlEndpoint
 {
+	std::optional<simxr::windows::ModuleReference> module;
 	std::mutex mutex;
 	std::unique_ptr<simxr::control::ControlService> service;
 	std::unique_ptr<simxr::control::LocalControlServer> server;
@@ -326,6 +333,7 @@ struct NativeControlEndpoint
 			return true;
 		try
 		{
+			simxr::windows::ModuleReference nextModule;
 			const auto* selected = std::getenv("SIMXR_CONTROL_SOCKET");
 			const auto path = selected && *selected
 								  ? std::string(selected)
@@ -344,6 +352,7 @@ struct NativeControlEndpoint
 						return native->vulkan ? native->vulkan->Capabilities() : simxr::control::ImageCapabilities{};
 					}));
 			auto nextServer = std::make_unique<simxr::control::LocalControlServer>(*nextService, path, 16);
+			module.emplace(std::move(nextModule));
 			service = std::move(nextService);
 			server = std::move(nextServer);
 			Logf("[SimXR] Local control endpoint: %s (control/inspection; session-dependent native GPU transport)",
@@ -358,11 +367,14 @@ struct NativeControlEndpoint
 	}
 	void Close(bool permanent = false) noexcept
 	{
+		std::optional<simxr::windows::ModuleReference> previousModule;
 		std::unique_ptr<simxr::control::ControlService> previousService;
 		std::unique_ptr<simxr::control::LocalControlServer> previousServer;
 		{
 			std::lock_guard lock(mutex);
 			permanentlyClosed = permanentlyClosed || permanent;
+			previousModule = std::move(module);
+			module.reset();
 			previousServer = std::move(server);
 			previousService = std::move(service);
 		}
@@ -1111,6 +1123,8 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
 			if (!b->device)
 				return XR_ERROR_GRAPHICS_DEVICE_INVALID;
 
+			native.dxgiLibrary.emplace(L"dxgi.dll");
+			native.d3dLibrary.emplace(L"d3d11.dll");
 			ComPtr<IDXGIDevice> dxgiDevice;
 			if (SUCCEEDED(b->device->QueryInterface(IID_PPV_ARGS(&dxgiDevice))))
 			{
@@ -1140,6 +1154,8 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
 			const auto* b12 = reinterpret_cast<const XrGraphicsBindingD3D12KHR*>(entry);
 			if (!b12->device || !b12->queue)
 				return XR_ERROR_GRAPHICS_DEVICE_INVALID;
+			native.dxgiLibrary.emplace(L"dxgi.dll");
+			native.d3dLibrary.emplace(L"d3d12.dll");
 			native.usesD3D12 = true;
 			native.d3d12Device = b12->device;
 			native.d3d12Queue = b12->queue;

@@ -6,6 +6,7 @@
 #include "graphics/backends/vulkan/VulkanInspectionWork.h"
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
 #include "graphics/backends/vulkan/VulkanSubmission.h"
+#include "platform/ProcessIdentity.h"
 
 #include <cstdio>
 #include <limits>
@@ -30,7 +31,6 @@ static std::uint64_t Identity(std::atomic<std::uint64_t>& next)
 			return value;
 	}
 }
-static std::atomic<std::uint64_t> s_nextPool{1};
 
 class VulkanDeliveryNative
 {
@@ -158,12 +158,18 @@ class VulkanDeliveryRetirement
 		if (m_worker.joinable())
 			return;
 		std::lock_guard lock(m_mutex);
+#ifdef _WIN32
+		windows::ModuleReference workerModule;
+#endif
 		m_stopping = false;
 		m_worker = std::thread(
 			[this]
 			{
 				Run();
 			});
+#ifdef _WIN32
+		m_workerModule.emplace(std::move(workerModule));
+#endif
 	}
 	void Stop()
 	{
@@ -175,6 +181,10 @@ class VulkanDeliveryRetirement
 		m_changed.notify_all();
 		if (m_worker.joinable())
 			m_worker.join();
+		CollectCompleted();
+#ifdef _WIN32
+		m_workerModule.reset();
+#endif
 	}
 	void Shutdown()
 	{
@@ -201,21 +211,50 @@ class VulkanDeliveryRetirement
 	}
 
   private:
+#ifdef _WIN32
+	std::optional<windows::ModuleReference> m_workerModule;
+#endif
 	std::mutex m_workerMutex;
 	std::mutex m_mutex;
 	std::condition_variable m_changed;
 	std::array<std::shared_ptr<VulkanDeliveryNative>, 8> m_deliveries;
 	bool m_stopping = false;
 	std::thread m_worker;
+	void CollectCompleted() noexcept
+	{
+		std::array<std::shared_ptr<VulkanDeliveryNative>, 8> pending;
+		{
+			std::lock_guard lock(m_mutex);
+			pending = m_deliveries;
+		}
+		for (const auto& delivery : pending)
+		{
+			if (!delivery)
+				continue;
+			try
+			{
+				if (!delivery->ObserveForRetirement())
+					continue;
+				std::lock_guard lock(m_mutex);
+				for (auto& slot : m_deliveries)
+					if (slot == delivery)
+					{
+						slot.reset();
+						break;
+					}
+			}
+			catch (...)
+			{
+				std::fputs("SimXR: shared image retirement observation failed\n", stderr);
+			}
+		}
+	}
 	void Run() noexcept
 	{
 		for (;;)
 		{
-			std::array<std::shared_ptr<VulkanDeliveryNative>, 8> pending;
 			{
 				std::unique_lock lock(m_mutex);
-				if (m_stopping)
-					return;
 				m_changed.wait(lock,
 							   [&]
 							   {
@@ -230,29 +269,8 @@ class VulkanDeliveryRetirement
 				m_changed.wait_for(lock, std::chrono::milliseconds(1));
 				if (m_stopping)
 					return;
-				pending = m_deliveries;
 			}
-			for (const auto& delivery : pending)
-			{
-				if (!delivery)
-					continue;
-				try
-				{
-					if (!delivery->ObserveForRetirement())
-						continue;
-					std::lock_guard lock(m_mutex);
-					for (auto& slot : m_deliveries)
-						if (slot == delivery)
-						{
-							slot.reset();
-							break;
-						}
-				}
-				catch (...)
-				{
-					std::fputs("SimXR: shared image retirement observation failed\n", stderr);
-				}
-			}
+			CollectCompleted();
 		}
 	}
 };
@@ -385,7 +403,7 @@ class VulkanInspectionQueue
 		std::lock_guard lock(m_mutex);
 		if (!m_deliverySpec || !SameShape(*m_deliverySpec, spec))
 		{
-			m_generation = {Identity(s_nextPool)};
+			m_generation = {AllocateProcessIdentity()};
 			m_deliverySpec = spec;
 		}
 		return {m_generation, {Identity(m_nextImage)}};

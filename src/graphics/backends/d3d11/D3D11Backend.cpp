@@ -1,7 +1,10 @@
 #include "graphics/backends/d3d11/D3D11Backend.h"
 #include "Pch.h"
-#include "CompositorHlsl.h"
 
+#include "CompositorHlsl.h"
+#include "platform/windows/WindowsLibrary.h"
+
+#include <bit>
 #include <d3dcompiler.h>
 #include <dxgi1_2.h>
 #include <limits>
@@ -17,15 +20,15 @@ static void Check(HRESULT result, const char* operation)
 		throw std::runtime_error(std::string(operation) + " (HRESULT " + std::to_string(result) + ")");
 }
 
-static ComPtr<ID3DBlob> Compile(const char* entry, const char* target, bool multisampledDepth = false)
+static ComPtr<ID3DBlob> Compile(decltype(&D3DCompile) compile, const char* entry, const char* target,
+								bool multisampledDepth = false)
 {
 	ComPtr<ID3DBlob> bytecode;
 	ComPtr<ID3DBlob> errors;
 	const D3D_SHADER_MACRO defines[]{{"SIMXR_DEPTH_MS", "1"}, {nullptr, nullptr}};
-	const auto result =
-		D3DCompile(shaders::CompositorHlsl, sizeof(shaders::CompositorHlsl) - 1, "Compositor.hlsl",
-				   multisampledDepth ? defines : nullptr, nullptr, entry, target,
-				   D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &bytecode, &errors);
+	const auto result = compile(shaders::CompositorHlsl, sizeof(shaders::CompositorHlsl) - 1, "Compositor.hlsl",
+								multisampledDepth ? defines : nullptr, nullptr, entry, target,
+								D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &bytecode, &errors);
 	if (FAILED(result) && errors)
 		throw std::runtime_error(
 			std::string(static_cast<const char*>(errors->GetBufferPointer()), errors->GetBufferSize()));
@@ -84,7 +87,11 @@ static bool SameDevice(ID3D11DeviceChild* resource, ID3D11Device* expected)
 	return device.Get() == expected;
 }
 
-D3D11Frame::D3D11Frame(std::span<const FrameView> views) : FrameOutput(views) {}
+D3D11Frame::D3D11Frame(std::shared_ptr<const windows::WindowsLibrary> dxgiLibrary,
+					   std::shared_ptr<const windows::WindowsLibrary> runtimeLibrary, std::span<const FrameView> views)
+	: FrameOutput(views), m_dxgiLibrary(std::move(dxgiLibrary)), m_runtimeLibrary(std::move(runtimeLibrary))
+{
+}
 
 D3D11Frame::~D3D11Frame()
 {
@@ -150,7 +157,7 @@ HRESULT D3D11Backend::Allocate(std::uint32_t width, std::uint32_t height, std::u
 	result = immediate.As(&context);
 	if (FAILED(result))
 		return result;
-	auto frame = std::shared_ptr<D3D11Frame>(new D3D11Frame(views));
+	auto frame = std::shared_ptr<D3D11Frame>(new D3D11Frame(m_dxgiLibrary, m_runtimeLibrary, views));
 	D3D11_TEXTURE2D_DESC description{};
 	description.Width = width;
 	description.Height = height;
@@ -310,14 +317,18 @@ HRESULT D3D11Backend::Submit(const std::shared_ptr<D3D11Frame>& frame)
 	return S_OK;
 }
 
-D3D11Backend::D3D11Backend(ID3D11Device* device) : m_device(device)
+D3D11Backend::D3D11Backend(ID3D11Device* device)
+	: m_dxgiLibrary(std::make_shared<windows::WindowsLibrary>(L"dxgi.dll")),
+	  m_runtimeLibrary(std::make_shared<windows::WindowsLibrary>(L"d3d11.dll")), m_device(device)
 {
 	if (!device)
 		throw std::invalid_argument("D3D11 compositor requires a device");
 	m_pending.reserve(m_frames.Capacity() + m_retainedFrames.Capacity());
 	Check(device->CreateDeferredContext(0, &m_commands), "Create compositor context");
-	const auto vertex = Compile("VSMain", "vs_5_0");
-	const auto pixel = Compile("PSMain", "ps_5_0");
+	const windows::WindowsLibrary compiler(D3DCOMPILER_DLL_W);
+	const auto compile = std::bit_cast<decltype(&D3DCompile)>(compiler.Procedure("D3DCompile"));
+	const auto vertex = Compile(compile, "VSMain", "vs_5_0");
+	const auto pixel = Compile(compile, "PSMain", "ps_5_0");
 	Check(device->CreateVertexShader(vertex->GetBufferPointer(), vertex->GetBufferSize(), nullptr, &m_vertex),
 		  "Create compositor vertex shader");
 	Check(device->CreatePixelShader(pixel->GetBufferPointer(), pixel->GetBufferSize(), nullptr, &m_pixel),
@@ -443,7 +454,9 @@ HRESULT D3D11Backend::Record(const CompositionPlan& plan, std::span<const D3D11C
 											   return source.depth && source.original.SampleDesc.Count > 1;
 										   }))
 	{
-		const auto shader = Compile("PSMain", "ps_5_0", true);
+		const windows::WindowsLibrary compiler(D3DCOMPILER_DLL_W);
+		const auto compile = std::bit_cast<decltype(&D3DCompile)>(compiler.Procedure("D3DCompile"));
+		const auto shader = Compile(compile, "PSMain", "ps_5_0", true);
 		const auto result = m_device->CreatePixelShader(shader->GetBufferPointer(), shader->GetBufferSize(), nullptr,
 														&m_depthMultisample);
 		if (FAILED(result))

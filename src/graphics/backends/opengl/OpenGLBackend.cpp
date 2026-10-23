@@ -2,6 +2,7 @@
 #include "Pch.h"
 
 #include "platform/windows/OpenGLContextScope.h"
+#include "platform/windows/ModuleReference.h"
 #include "CompositorGlsl.h"
 #include "graphics/backends/vulkan/VulkanBackend.h"
 #include <GL/glext.h>
@@ -201,6 +202,7 @@ class OpenGLContext final
 
 struct OpenGLFrame::Resources
 {
+	windows::ModuleReference m_module;
 	std::shared_ptr<OpenGLContext> context;
 	std::shared_ptr<VulkanExternalImage> image;
 	std::shared_ptr<VulkanExternalSemaphore> available, ready;
@@ -309,6 +311,7 @@ VulkanExternalIdentity OpenGLBackend::Identity(HDC device, HGLRC context)
 
 struct OpenGLBackend::PendingFrames
 {
+	windows::ModuleReference m_module;
 	std::shared_ptr<FrameReservation> preservation;
 	std::vector<std::shared_ptr<OpenGLFrame>> frames;
 	explicit PendingFrames(std::size_t capacity)

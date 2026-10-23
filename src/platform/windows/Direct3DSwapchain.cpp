@@ -72,7 +72,10 @@ static DXGI_FORMAT Typeless(DXGI_FORMAT format) noexcept
 	}
 }
 
-Direct3DSwapchain::Direct3DSwapchain(DXGI_FORMAT format) : m_format(format) {}
+Direct3DSwapchain::Direct3DSwapchain(DXGI_FORMAT format, const wchar_t* runtimeLibrary)
+	: m_runtimeLibrary(runtimeLibrary), m_format(format)
+{
+}
 
 XrResult Direct3DSwapchain::Create(ID3D11Device* device, const XrSwapchainCreateInfo& description,
 								   std::unique_ptr<Direct3DSwapchain>& output)
@@ -84,8 +87,8 @@ XrResult Direct3DSwapchain::Create(ID3D11Device* device, const XrSwapchainCreate
 		return XR_ERROR_CALL_ORDER_INVALID;
 	if (!device)
 		return XR_ERROR_GRAPHICS_DEVICE_INVALID;
-	auto prepared =
-		std::unique_ptr<Direct3DSwapchain>(new Direct3DSwapchain(static_cast<DXGI_FORMAT>(description.format)));
+	auto prepared = std::unique_ptr<Direct3DSwapchain>(
+		new Direct3DSwapchain(static_cast<DXGI_FORMAT>(description.format), L"d3d11.dll"));
 	const auto result = prepared->Allocate(device, description);
 	if (XR_FAILED(result))
 		return result;
@@ -103,8 +106,8 @@ XrResult Direct3DSwapchain::Create(ID3D12Device* device, const XrSwapchainCreate
 		return XR_ERROR_CALL_ORDER_INVALID;
 	if (!device)
 		return XR_ERROR_GRAPHICS_DEVICE_INVALID;
-	auto prepared =
-		std::unique_ptr<Direct3DSwapchain>(new Direct3DSwapchain(static_cast<DXGI_FORMAT>(description.format)));
+	auto prepared = std::unique_ptr<Direct3DSwapchain>(
+		new Direct3DSwapchain(static_cast<DXGI_FORMAT>(description.format), L"d3d12.dll"));
 	const auto result = prepared->Allocate(device, description);
 	if (XR_FAILED(result))
 		return result;

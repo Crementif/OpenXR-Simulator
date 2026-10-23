@@ -2,6 +2,10 @@
 
 #include "graphics/backends/vulkan/VulkanDevice.h"
 
+#ifdef _WIN32
+#include "platform/windows/ModuleReference.h"
+#endif
+
 #include <array>
 #include <cassert>
 #include <cstddef>
@@ -69,6 +73,9 @@ template <class Resource, std::size_t Capacity> class VulkanNativePreservation
 		}
 
 	  private:
+#ifdef _WIN32
+		windows::ModuleReference m_module;
+#endif
 		const std::size_t m_index;
 	};
 };

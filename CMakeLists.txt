@@ -36,7 +36,6 @@ add_library(simxr_core STATIC
     src/runtime/extensions/EyeGazeInteraction.cpp
     src/runtime/extensions/TrackerInteraction.cpp
     src/runtime/EventQueue.cpp
-    src/runtime/HandleRegistry.cpp
     src/runtime/Instance.cpp
     src/runtime/EnumNames.cpp
     src/runtime/Runtime.cpp
@@ -76,6 +75,13 @@ simxr_configure_target(simxr_core)
 target_include_directories(simxr_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(simxr_core PUBLIC simxr_openxr_headers Threads::Threads)
 target_compile_features(simxr_core PUBLIC cxx_std_20)
+if(WIN32)
+    target_sources(simxr_core PRIVATE src/platform/windows/WindowsProcessIdentity.cpp
+        src/platform/windows/ModuleReference.cpp src/platform/windows/WindowsLibrary.cpp)
+    target_link_libraries(simxr_core PUBLIC advapi32)
+else()
+    target_sources(simxr_core PRIVATE src/platform/ProcessIdentity.cpp)
+endif()
 
 add_library(simxr_control STATIC
     src/control/legacy/LegacyCaptureImage.cpp
@@ -211,15 +217,15 @@ if(WIN32)
     add_library(simxr_d3d11 STATIC src/graphics/backends/d3d11/D3D11Backend.cpp)
     simxr_configure_target(simxr_d3d11)
     target_include_directories(simxr_d3d11 PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
-    target_link_libraries(simxr_d3d11 PUBLIC simxr_graphics d3d11 d3dcompiler)
+    target_link_libraries(simxr_d3d11 PUBLIC simxr_graphics)
     add_library(simxr_d3d12 STATIC src/graphics/backends/d3d12/D3D12Backend.cpp)
     simxr_configure_target(simxr_d3d12)
     target_include_directories(simxr_d3d12 PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
-    target_link_libraries(simxr_d3d12 PUBLIC simxr_graphics d3d12 d3dcompiler)
+    target_link_libraries(simxr_d3d12 PUBLIC simxr_graphics)
 
     if(BUILD_TESTING)
         simxr_add_test(d3d11_compositor_tests tests/graphics/D3D11CompositorTests.cpp d3d11_compositor)
-        target_link_libraries(d3d11_compositor_tests PRIVATE simxr_d3d11 simxr_d3d12)
+        target_link_libraries(d3d11_compositor_tests PRIVATE simxr_d3d11 simxr_d3d12 d3d11 d3d12 dxgi)
     endif()
 endif()
 
@@ -343,7 +349,7 @@ if(SIMXR_BUILD_RUNTIME)
     target_include_directories(openxr_simulator PRIVATE "${SIMXR_VULKAN_INCLUDE_DIR}")
     target_link_libraries(openxr_simulator PRIVATE simxr_core simxr_graphics simxr_control simxr_diagnostics Threads::Threads ${CMAKE_DL_LIBS})
     if(WIN32)
-        target_link_libraries(openxr_simulator PRIVATE simxr_windows_graphics d3d11 d3d12 dxgi d3dcompiler opengl32)
+        target_link_libraries(openxr_simulator PRIVATE simxr_windows_graphics opengl32)
         target_link_libraries(openxr_simulator PRIVATE simxr_vulkan simxr_vulkan_control)
     else()
         find_library(SIMXR_VULKAN_LIBRARY NAMES vulkan libvulkan.so.1 REQUIRED)
@@ -368,6 +374,18 @@ if(BUILD_TESTING)
         target_link_libraries(process_supervisor_tests PRIVATE simxr_app_settings)
     endif()
     if(WIN32)
+        add_library(windows_module_lifetime_fixture SHARED tests/platform/WindowsModuleLifetimeFixture.cpp)
+        simxr_configure_target(windows_module_lifetime_fixture)
+        target_link_libraries(windows_module_lifetime_fixture PRIVATE simxr_core)
+        add_executable(windows_module_lifetime_tests tests/platform/WindowsModuleLifetimeTests.cpp)
+        simxr_configure_target(windows_module_lifetime_tests)
+        target_link_libraries(windows_module_lifetime_tests PRIVATE simxr_core)
+        if(MINGW)
+            target_link_options(windows_module_lifetime_tests PRIVATE -municode)
+        endif()
+        add_test(NAME windows_module_lifetime COMMAND windows_module_lifetime_tests
+            "$<TARGET_FILE:windows_module_lifetime_fixture>")
+        set_tests_properties(windows_module_lifetime PROPERTIES TIMEOUT 20)
         add_executable(windows_data_directory_tests tests/platform/WindowsDataDirectoryTests.cpp)
         simxr_configure_target(windows_data_directory_tests)
         target_link_libraries(windows_data_directory_tests PRIVATE simxr_core)

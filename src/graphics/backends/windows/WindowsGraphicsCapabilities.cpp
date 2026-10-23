@@ -1,6 +1,8 @@
 #include "graphics/backends/windows/WindowsGraphicsCapabilities.h"
 #include "Pch.h"
+#include "platform/windows/WindowsLibrary.h"
 
+#include <bit>
 #include <d3d11.h>
 #include <d3d12.h>
 #include <dxgi.h>
@@ -27,10 +29,11 @@ std::span<const std::int64_t> Direct3DSwapchainFormats()
 	return s_formats;
 }
 
-static XrResult FindAdapter(ComPtr<IDXGIAdapter1>& output, DXGI_ADAPTER_DESC1& description)
+static XrResult FindAdapter(const WindowsLibrary& dxgi, ComPtr<IDXGIAdapter1>& output, DXGI_ADAPTER_DESC1& description)
 {
+	const auto create = std::bit_cast<decltype(&CreateDXGIFactory1)>(dxgi.Procedure("CreateDXGIFactory1"));
 	ComPtr<IDXGIFactory1> factory;
-	if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))))
+	if (FAILED(create(IID_PPV_ARGS(&factory))))
 		return XR_ERROR_RUNTIME_FAILURE;
 	ComPtr<IDXGIAdapter1> adapter;
 	for (UINT index = 0;; ++index)
@@ -55,9 +58,10 @@ static XrResult FindAdapter(ComPtr<IDXGIAdapter1>& output, DXGI_ADAPTER_DESC1& d
 
 XrResult Direct3DAdapterLuid(LUID& output)
 {
+	const WindowsLibrary dxgi(L"dxgi.dll");
 	ComPtr<IDXGIAdapter1> adapter;
 	DXGI_ADAPTER_DESC1 description{};
-	const auto result = FindAdapter(adapter, description);
+	const auto result = FindAdapter(dxgi, adapter, description);
 	if (XR_SUCCEEDED(result))
 		output = description.AdapterLuid;
 	return result;
@@ -70,19 +74,33 @@ XrResult Direct3DMaxSampleCount(bool d3d11, bool d3d12, std::uint32_t& output)
 		output = 1;
 		return XR_SUCCESS;
 	}
+	const WindowsLibrary dxgi(L"dxgi.dll");
+	std::optional<WindowsLibrary> library11, library12;
+	if (d3d11)
+		library11.emplace(L"d3d11.dll");
+	if (d3d12)
+		library12.emplace(L"d3d12.dll");
 	ComPtr<IDXGIAdapter1> adapter;
 	DXGI_ADAPTER_DESC1 description{};
-	const auto result = FindAdapter(adapter, description);
+	const auto result = FindAdapter(dxgi, adapter, description);
 	if (XR_FAILED(result))
 		return result;
 	ComPtr<ID3D11Device> device11;
 	ComPtr<ID3D12Device> device12;
 	const D3D_FEATURE_LEVEL level = D3D_FEATURE_LEVEL_11_0;
-	if (d3d11 && FAILED(D3D11CreateDevice(adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, 0, &level, 1,
-										  D3D11_SDK_VERSION, &device11, nullptr, nullptr)))
-		return XR_ERROR_RUNTIME_FAILURE;
-	if (d3d12 && FAILED(D3D12CreateDevice(adapter.Get(), level, IID_PPV_ARGS(&device12))))
-		return XR_ERROR_RUNTIME_FAILURE;
+	if (library11)
+	{
+		const auto create = std::bit_cast<decltype(&D3D11CreateDevice)>(library11->Procedure("D3D11CreateDevice"));
+		if (FAILED(create(adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, 0, &level, 1, D3D11_SDK_VERSION, &device11,
+						  nullptr, nullptr)))
+			return XR_ERROR_RUNTIME_FAILURE;
+	}
+	if (library12)
+	{
+		const auto create = std::bit_cast<decltype(&D3D12CreateDevice)>(library12->Procedure("D3D12CreateDevice"));
+		if (FAILED(create(adapter.Get(), level, IID_PPV_ARGS(&device12))))
+			return XR_ERROR_RUNTIME_FAILURE;
+	}
 	std::uint32_t maximum = 1;
 	for (UINT samples = 2; samples <= 32; samples *= 2)
 	{

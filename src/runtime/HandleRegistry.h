@@ -1,6 +1,9 @@
 #pragma once
 
+#include "platform/ProcessIdentity.h"
+
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -11,15 +14,21 @@
 
 namespace simxr
 {
-std::uintptr_t AllocateHandleIdentity();
-
 template <typename Handle> Handle AllocateHandle()
 {
-	const auto identity = AllocateHandleIdentity();
+	const auto identity = AllocateProcessIdentity();
 	if constexpr (std::is_pointer_v<Handle>)
-		return reinterpret_cast<Handle>(identity);
+	{
+		if (identity > std::numeric_limits<std::uintptr_t>::max())
+			throw std::overflow_error("Identity does not fit a pointer handle");
+		return reinterpret_cast<Handle>(static_cast<std::uintptr_t>(identity));
+	}
 	else
+	{
+		if (!std::in_range<Handle>(identity))
+			throw std::overflow_error("Identity does not fit an integer handle");
 		return static_cast<Handle>(identity);
+	}
 }
 
 template <typename Handle, typename Object> class HandleRef

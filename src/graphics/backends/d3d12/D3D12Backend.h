@@ -3,6 +3,7 @@
 #include "graphics/Compositor.h"
 #include "graphics/FrameOutput.h"
 #include "graphics/FramePool.h"
+#include "platform/windows/WindowsLibrary.h"
 
 #include <atomic>
 #include <cstdint>
@@ -37,7 +38,10 @@ class D3D12Frame final : public FrameOutput
 
   private:
 	friend class D3D12Backend;
-	explicit D3D12Frame(std::span<const FrameView> views);
+	D3D12Frame(std::shared_ptr<const windows::WindowsLibrary> dxgiLibrary,
+			   std::shared_ptr<const windows::WindowsLibrary> runtimeLibrary, std::span<const FrameView> views);
+	const std::shared_ptr<const windows::WindowsLibrary> m_dxgiLibrary;
+	const std::shared_ptr<const windows::WindowsLibrary> m_runtimeLibrary;
 	Microsoft::WRL::ComPtr<ID3D12Resource> m_texture;
 	Microsoft::WRL::ComPtr<ID3D12Fence> m_fence;
 	Microsoft::WRL::ComPtr<ID3D12CommandQueue> m_queue;
@@ -71,6 +75,8 @@ class D3D12Backend final
   private:
 	HRESULT Allocate(const D3D12_RESOURCE_DESC& description, D3D12_RESOURCE_STATES state,
 					 std::span<const FrameView> views, bool retained, std::shared_ptr<D3D12Frame>& output);
+	const std::shared_ptr<const windows::WindowsLibrary> m_dxgiLibrary;
+	const std::shared_ptr<const windows::WindowsLibrary> m_runtimeLibrary;
 	Microsoft::WRL::ComPtr<ID3D12Device> m_device;
 	Microsoft::WRL::ComPtr<ID3D12CommandQueue> m_queue;
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> m_root;

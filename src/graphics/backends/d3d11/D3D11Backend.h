@@ -3,6 +3,7 @@
 #include "graphics/Compositor.h"
 #include "graphics/FrameOutput.h"
 #include "graphics/FramePool.h"
+#include "platform/windows/WindowsLibrary.h"
 
 #include <atomic>
 #include <cstdint>
@@ -40,7 +41,10 @@ class D3D11Frame final : public FrameOutput
 
   private:
 	friend class D3D11Backend;
-	explicit D3D11Frame(std::span<const FrameView> views);
+	D3D11Frame(std::shared_ptr<const windows::WindowsLibrary> dxgiLibrary,
+			   std::shared_ptr<const windows::WindowsLibrary> runtimeLibrary, std::span<const FrameView> views);
+	const std::shared_ptr<const windows::WindowsLibrary> m_dxgiLibrary;
+	const std::shared_ptr<const windows::WindowsLibrary> m_runtimeLibrary;
 	Microsoft::WRL::ComPtr<ID3D11Texture2D> m_texture;
 	Microsoft::WRL::ComPtr<ID3D11Fence> m_fence;
 	Microsoft::WRL::ComPtr<ID3D11CommandList> m_commands;
@@ -79,6 +83,8 @@ class D3D11Backend
 	HRESULT Record(const CompositionPlan& plan, std::span<const D3D11CompositionSource> sources,
 				   ID3D11Texture2D* output, Microsoft::WRL::ComPtr<ID3D11CommandList>& commands);
 
+	const std::shared_ptr<const windows::WindowsLibrary> m_dxgiLibrary;
+	const std::shared_ptr<const windows::WindowsLibrary> m_runtimeLibrary;
 	FramePool m_frames{8};
 	FramePool m_retainedFrames{32};
 	std::vector<std::shared_ptr<D3D11Frame>> m_pending;

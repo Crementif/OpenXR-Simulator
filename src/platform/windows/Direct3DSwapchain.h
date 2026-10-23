@@ -1,5 +1,7 @@
 #pragma once
 
+#include "platform/windows/WindowsLibrary.h"
+
 #include <d3d11.h>
 #include <d3d12.h>
 #include <openxr/openxr.h>
@@ -34,9 +36,11 @@ class Direct3DSwapchain final
 	D3D12_RESOURCE_STATES ReleaseState12() const noexcept;
 
   private:
-	explicit Direct3DSwapchain(DXGI_FORMAT format);
+	Direct3DSwapchain(DXGI_FORMAT format, const wchar_t* runtimeLibrary);
 	XrResult Allocate(ID3D11Device* device, const XrSwapchainCreateInfo& description);
 	XrResult Allocate(ID3D12Device* device, const XrSwapchainCreateInfo& description);
+	const WindowsLibrary m_dxgiLibrary{L"dxgi.dll"};
+	const WindowsLibrary m_runtimeLibrary;
 	const DXGI_FORMAT m_format;
 	std::vector<Microsoft::WRL::ComPtr<ID3D11Texture2D>> m_images11;
 	std::vector<Microsoft::WRL::ComPtr<ID3D12Resource>> m_images12;
