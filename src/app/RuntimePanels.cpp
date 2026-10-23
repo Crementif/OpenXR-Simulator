@@ -4,7 +4,7 @@
 #include "app/DocumentTree.h"
 #include "app/FramePage.h"
 #include "app/PastInput.h"
-#include "app/PilotController.h"
+#include "app/widgets/PilotController.h"
 #include "app/PreviewPanel.h"
 #include "app/RangePage.h"
 #include "app/RecordingPanel.h"

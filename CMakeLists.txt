@@ -150,12 +150,12 @@ add_library(simxr_connection STATIC
     src/app/services/RuntimeConnection.cpp
     src/app/services/LaunchAttachment.cpp
     src/app/SimulationEdits.cpp
-    src/app/PlayerRig.cpp
+    src/app/services/PlayerRig.cpp
     src/app/services/RuntimePanelProtocol.cpp
     src/app/services/FrameHistoryFeed.cpp
     src/app/services/HistoryStore.cpp
     src/app/services/InputHistory.cpp
-    src/app/SpatialMath.cpp
+    src/app/services/SpatialMath.cpp
     src/app/services/HapticFeedback.cpp
     src/app/services/ManualInputController.cpp
     src/app/services/WorkerConnection.cpp

@@ -1,46 +1,44 @@
-#include "app/PlayerRig.h"
+#include "app/services/PlayerRig.h"
 #include "Math.h"
-#include "app/SpatialMath.h"
+#include "Pch.h"
+#include "app/services/SpatialMath.h"
 #include "simulation/BodyModel.h"
-#include <algorithm>
 #include <cmath>
 #include <numbers>
 
 namespace simxr::app
 {
-namespace
-{
-float Yaw(XrQuaternionf q)
+static float Yaw(XrQuaternionf q)
 {
 	const auto forward = Rotate(q, {0, 0, -1});
 	return std::atan2(-forward.x, -forward.z);
 }
-XrVector3f Add(XrVector3f a, XrVector3f b)
+static XrVector3f Add(XrVector3f a, XrVector3f b)
 {
 	return {a.x + b.x, a.y + b.y, a.z + b.z};
 }
-XrVector3f Subtract(XrVector3f a, XrVector3f b)
+static XrVector3f Subtract(XrVector3f a, XrVector3f b)
 {
 	return {a.x - b.x, a.y - b.y, a.z - b.z};
 }
-XrVector3f Scale(XrVector3f a, float factor)
+static XrVector3f Scale(XrVector3f a, float factor)
 {
 	return {a.x * factor, a.y * factor, a.z * factor};
 }
-float Dot(XrVector3f a, XrVector3f b)
+static float Dot(XrVector3f a, XrVector3f b)
 {
 	return a.x * b.x + a.y * b.y + a.z * b.z;
 }
-float Length(XrVector3f a)
+static float Length(XrVector3f a)
 {
 	return std::sqrt(Dot(a, a));
 }
-XrVector3f Normalize(XrVector3f a)
+static XrVector3f Normalize(XrVector3f a)
 {
 	const float length = Length(a);
 	return length > 1e-6f ? Scale(a, 1 / length) : XrVector3f{0, 0, -1};
 }
-std::size_t Index(BodyJoint joint)
+static std::size_t Index(BodyJoint joint)
 {
 	return static_cast<std::size_t>(joint);
 }
@@ -48,7 +46,7 @@ struct ArmJoints
 {
 	BodyJoint upper, lower, twist, wrist, palm, firstFinger, lastFinger, upperLeg, lowerLeg;
 };
-constexpr std::array<ArmJoints, 2> s_arms{{
+static constexpr std::array<ArmJoints, 2> s_arms{{
 	{BodyJoint::LeftArmUpper, BodyJoint::LeftArmLower, BodyJoint::LeftHandWristTwist, BodyJoint::LeftHandWrist,
 	 BodyJoint::LeftHandPalm, BodyJoint::LeftHandIndexDistal, BodyJoint::LeftHandThumbTip, BodyJoint::LeftUpperLeg,
 	 BodyJoint::LeftLowerLeg},
@@ -56,15 +54,15 @@ constexpr std::array<ArmJoints, 2> s_arms{{
 	 BodyJoint::RightHandPalm, BodyJoint::RightHandIndexDistal, BodyJoint::RightHandThumbTip, BodyJoint::RightUpperLeg,
 	 BodyJoint::RightLowerLeg},
 }};
-constexpr std::array s_attachable{
-	BodyJoint::Hips,		  BodyJoint::Chest,			 BodyJoint::SpineMiddle,	BodyJoint::Neck,
-	BodyJoint::Head,		  BodyJoint::LeftShoulder,	 BodyJoint::RightShoulder,	BodyJoint::LeftArmUpper,
-	BodyJoint::RightArmUpper, BodyJoint::LeftArmLower,	 BodyJoint::RightArmLower,	BodyJoint::LeftHandWrist,
-	BodyJoint::RightHandWrist, BodyJoint::LeftHandPalm,	 BodyJoint::RightHandPalm,	BodyJoint::LeftUpperLeg,
-	BodyJoint::RightUpperLeg, BodyJoint::LeftLowerLeg,	 BodyJoint::RightLowerLeg,	BodyJoint::LeftFootAnkle,
-	BodyJoint::RightFootAnkle, BodyJoint::LeftFootBall,	 BodyJoint::RightFootBall};
+static constexpr std::array s_attachable{
+	BodyJoint::Hips,		   BodyJoint::Chest,		BodyJoint::SpineMiddle,	  BodyJoint::Neck,
+	BodyJoint::Head,		   BodyJoint::LeftShoulder, BodyJoint::RightShoulder, BodyJoint::LeftArmUpper,
+	BodyJoint::RightArmUpper,  BodyJoint::LeftArmLower, BodyJoint::RightArmLower, BodyJoint::LeftHandWrist,
+	BodyJoint::RightHandWrist, BodyJoint::LeftHandPalm, BodyJoint::RightHandPalm, BodyJoint::LeftUpperLeg,
+	BodyJoint::RightUpperLeg,  BodyJoint::LeftLowerLeg, BodyJoint::RightLowerLeg, BodyJoint::LeftFootAnkle,
+	BodyJoint::RightFootAnkle, BodyJoint::LeftFootBall, BodyJoint::RightFootBall};
 // Arm pose from the posed skeleton: the elbow bends back and down when the hand is closer than full reach.
-void PoseArm(const BodySample& base, const ArmJoints& arm, XrVector3f palm, BodyControls& body)
+static void PoseArm(const BodySample& base, const ArmJoints& arm, XrVector3f palm, BodyControls& body)
 {
 	const auto at = [&](BodyJoint joint)
 	{
@@ -101,7 +99,6 @@ void PoseArm(const BodySample& base, const ArmJoints& arm, XrVector3f palm, Body
 			set(static_cast<BodyJoint>(index),
 				Add(palm, Rotate(handRotation, Subtract(base.joints[index].pose.position, bindPalm))), handRotation);
 }
-} // namespace
 const char* TrackerRoleName(TrackerRole role)
 {
 	switch (role)

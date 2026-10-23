@@ -1,5 +1,5 @@
 #pragma once
-#include "app/SpatialMath.h"
+#include "app/services/SpatialMath.h"
 #include "simulation/TrackingTypes.h"
 #include <imgui.h>
 #include <optional>

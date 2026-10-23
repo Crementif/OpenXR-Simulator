@@ -4,7 +4,7 @@
 #include "app/widgets/Controls.h"
 #include "app/Theme.h"
 #include "app/services/InputHistory.h"
-#include "app/PlayerRig.h"
+#include "app/services/PlayerRig.h"
 #include <algorithm>
 #include <cstdio>
 #include <imgui.h>

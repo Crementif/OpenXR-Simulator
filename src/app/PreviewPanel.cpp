@@ -1,6 +1,6 @@
 #include "app/PreviewPanel.h"
 #include "app/DeviceControlPanel.h"
-#include "app/PilotController.h"
+#include "app/widgets/PilotController.h"
 #include "app/RuntimeSession.h"
 #include "app/SpatialEditor.h"
 #include "app/Theme.h"

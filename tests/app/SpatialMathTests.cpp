@@ -1,7 +1,7 @@
 #include "../TestSupport.h"
 #include "Math.h"
 #include "app/SimulationEdits.h"
-#include "app/SpatialMath.h"
+#include "app/services/SpatialMath.h"
 #include "control/ControlSchema.h"
 #include "control/FrameInspection.h"
 #include "control/ImageInspection.h"

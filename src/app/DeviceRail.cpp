@@ -1,6 +1,6 @@
 #include "app/DeviceRail.h"
 #include "app/Theme.h"
-#include "app/PlayerRig.h"
+#include "app/services/PlayerRig.h"
 #include "app/widgets/Controls.h"
 
 #include <algorithm>

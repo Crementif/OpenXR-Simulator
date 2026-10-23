@@ -51,7 +51,7 @@ target_sources(simxr_app PRIVATE src/app/RecordingPanel.cpp src/app/TimelinePane
     src/app/Theme.cpp src/app/widgets/Icons.cpp src/app/widgets/Controls.cpp src/app/DeviceRail.cpp
     src/app/RuntimeSession.cpp src/app/Notices.cpp src/app/DocumentTree.cpp src/app/FramePage.cpp src/app/RangePage.cpp
     src/app/AdvancedSteppingPage.cpp src/app/PreviewPanel.cpp src/app/PreferencesDialog.cpp src/app/LaunchProfilesDialog.cpp
-    src/app/PilotController.cpp src/app/SpatialEditor.cpp src/app/widgets/LiveField.cpp
+    src/app/widgets/PilotController.cpp src/app/widgets/PilotHud.cpp src/app/SpatialEditor.cpp src/app/widgets/LiveField.cpp
     src/app/widgets/SpatialWidgets.cpp src/app/widgets/RotationOrb.cpp
     src/app/widgets/InputPad.cpp src/app/widgets/RigView.cpp src/app/widgets/HapticEvents.cpp src/app/platform/GamepadFeedback.cpp)
 target_sources(simxr_app PRIVATE src/app/PastInput.cpp src/app/AppPicker.cpp)

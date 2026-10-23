@@ -1,5 +1,5 @@
 #include "app/PastInput.h"
-#include "app/PlayerRig.h"
+#include "app/services/PlayerRig.h"
 #include "app/Theme.h"
 
 #include <algorithm>

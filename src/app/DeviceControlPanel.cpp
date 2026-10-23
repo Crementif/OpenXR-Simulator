@@ -1,7 +1,7 @@
 #include "app/DeviceControlPanel.h"
 #include "app/Theme.h"
 #include "Math.h"
-#include "app/SpatialMath.h"
+#include "app/services/SpatialMath.h"
 #include "app/widgets/Controls.h"
 #include "app/widgets/InputPad.h"
 #include "app/widgets/LiveField.h"

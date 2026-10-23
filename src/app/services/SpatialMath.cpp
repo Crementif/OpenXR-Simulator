@@ -1,6 +1,6 @@
-#include "app/SpatialMath.h"
+#include "app/services/SpatialMath.h"
 #include "Math.h"
-#include <algorithm>
+#include "Pch.h"
 #include <cmath>
 
 namespace simxr::app

@@ -1,6 +1,6 @@
 #include "../TestSupport.h"
 #include "Math.h"
-#include "app/PlayerRig.h"
+#include "app/services/PlayerRig.h"
 #include "simulation/CommandScheduler.h"
 #include "simulation/TrackingSystem.h"
 #include <cmath>

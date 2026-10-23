@@ -5,7 +5,7 @@
 #include "app/services/ManualInputController.h"
 #include "app/LaunchProfilesDialog.h"
 #include "app/services/ProcessSupervisor.h"
-#include "app/PilotController.h"
+#include "app/widgets/PilotController.h"
 #include "app/services/RunningApps.h"
 #include "app/services/RecordingController.h"
 #include "app/RecordingPanel.h"
@@ -22,7 +22,7 @@
 #include "app/TimelineCanvas.h"
 #include <functional>
 #include "app/SimulationEdits.h"
-#include "app/SpatialMath.h"
+#include "app/services/SpatialMath.h"
 #include "app/render/UiRenderer.h"
 #include "app/platform/Window.h"
 #include "app/services/Utf8Path.h"
@@ -1593,6 +1593,33 @@ void CheckPreviewPilot(Interaction& test)
 		Require(std::abs(after.values.tracking.head.pose.position.x - before.values.tracking.head.pose.position.x) < .001f,
 			"Releasing buttons without a pose gesture submitted the stale rig pose");
 	}
+	// Player takeover must include the body even when no other device is owned by the rival.
+	ManualTransaction bodyClaim;
+	bodyClaim.commands = {simxr::TakeControl{simxr::ControlChannel::Body, true}};
+	Require(observer.Submit(bodyClaim), "Rival body claim refused");
+	Eventually([&] { pump(1); return !observer.Snapshot().editPending; }, "Rival body claim did not settle");
+	const auto rivalSource = observer.Snapshot().source;
+	Require(rivalSource && observed().owners[static_cast<std::size_t>(simxr::ControlChannel::Body)] == rivalSource,
+		"Rival did not acquire body ownership");
+	// The companion's idle manual-input observation refreshes twice a second.
+	pump(60);
+	auto* handHud = FindPanel("HUD hand");
+	Require(handHud && handHud->Active, "Pilot ownership HUD missing");
+	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
+	{
+		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "pilot-body-takeover.bmp");
+		pump(1);
+	}
+	ImGui::ActivateItemByID(handHud->GetID("Take over"));
+	pump(2);
+	Eventually(
+		[&]
+		{
+			const auto owner = observed().owners[static_cast<std::size_t>(simxr::ControlChannel::Body)];
+			return owner && owner != rivalSource;
+		},
+		"Player HUD did not take over body ownership");
+	std::cout << "PASS Player HUD body ownership takeover\n";
 	button(SDL_BUTTON_RIGHT, true);
 	Eventually(
 		[&]
@@ -1623,6 +1650,8 @@ void CheckPreviewPilot(Interaction& test)
 	Require(observed().values.input.controllers[1].trigger > .99f, "Preview trigger missing");
 	button(SDL_BUTTON_LEFT, false);
 	pump(5);
+	key(SDL_SCANCODE_3, true);
+	key(SDL_SCANCODE_3, false);
 	const auto handBefore = observed().values.tracking.controllers[1].pose.pose;
 	key(SDL_SCANCODE_X, true);
 	motion(50, -25);
@@ -1641,6 +1670,17 @@ void CheckPreviewPilot(Interaction& test)
 					std::abs(rotated.orientation.x - handAfter.orientation.x) >
 				.01f,
 			"Preview hand rotation did not rotate the right hand");
+	motion(20, 0);
+	pump(5);
+	const auto turned = observed().values.tracking.controllers[1].pose.pose;
+	Require(std::hypot(turned.position.x - rotated.position.x, turned.position.y - rotated.position.y,
+					   turned.position.z - rotated.position.z) < .001f,
+		"Target piloting reverted the hand reach");
+	Require(std::abs(turned.orientation.y - rotated.orientation.y) > .01f,
+		"Target piloting did not rotate the reached hand");
+	key(SDL_SCANCODE_0, true);
+	key(SDL_SCANCODE_0, false);
+	std::cout << "PASS hand target motion preserves reach and rotation edits\n";
 	const auto rootBefore = observed().values.tracking.body.rootPose;
 	Require(rootBefore.has_value(), "Player did not publish body root");
 	key(SDL_SCANCODE_LALT, true, SDL_KMOD_ALT);
@@ -1726,14 +1766,28 @@ void CheckPreviewPilot(Interaction& test)
 	Require(gamepad.values.input.controllers[1].primary && gamepad.values.input.controllers[1].trigger > .99f &&
 				gamepad.values.input.controllers[0].stick.x > .4f,
 			"Gamepad button, trigger or thumbstick did not reach runtime");
+	key(SDL_SCANCODE_LCTRL, true, SDL_KMOD_CTRL);
+	button(SDL_BUTTON_RIGHT, true);
+	Eventually(
+		[&]
+		{
+			pump(1);
+			return SDL_GetWindowRelativeMouseMode(test.window.Native());
+		},
+		"Capture with connected gamepad did not start");
+	button(SDL_BUTTON_RIGHT, false);
+	key(SDL_SCANCODE_LCTRL, false);
+	key(SDL_SCANCODE_R, true);
 	SDL_CloseJoystick(pad);
 	Require(SDL_DetachVirtualJoystick(padId), "Detach virtual gamepad");
 	pump(10);
 	const auto unplugged = observed();
+	Require(!SDL_GetWindowRelativeMouseMode(test.window.Native()), "Gamepad unplug retained locked capture");
 	Require(!unplugged.values.input.controllers[1].primary && unplugged.values.input.controllers[1].trigger == 0 &&
 				unplugged.values.input.controllers[0].stick.x == 0,
 			"Gamepad unplug left held input");
-	std::cout << "PASS native gamepad mapping and unplug release\n";
+	key(SDL_SCANCODE_R, false);
+	std::cout << "PASS native gamepad mapping and unplug releases held keyboard input and capture\n";
 	Require(test.validation->errors.load() == 0, "Validation during preview piloting");
 	std::cout << "PASS native preview walk, look, reach, primary, trigger and Escape release\n";
 }

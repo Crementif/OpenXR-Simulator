@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app/PlayerRig.h"
+#include "app/services/PlayerRig.h"
 #include "app/ShellState.h"
 #include "app/SimulationEdits.h"
 #include "app/widgets/LiveField.h"
