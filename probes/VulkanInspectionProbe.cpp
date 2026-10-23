@@ -720,9 +720,9 @@ RawRetention CaptureRaw(Device& device, const VulkanBinding& binding,
 	Check(inspection.Close(Timeout), "close raw inspection service");
 	source.reset();
 	Require(backend.Close() == XR_SUCCESS, "Raw readers retained borrowed application resources");
-	std::printf("case=exact-layer-view format=%s rawOuter=2 rawInset=2 rawQuad=1 crop=4x5 preview=8x6 atomicBatch=yes "
+	std::printf("case=exact-layer-view format=%d rawOuter=2 rawInset=2 rawQuad=1 crop=4x5 preview=8x6 atomicBatch=yes "
 				"sourceReused=yes PASS\n",
-				format == VK_FORMAT_R8G8B8A8_SRGB ? "SRGB" : "UNORM");
+				static_cast<int>(format));
 	return retained;
 }
 void VerifyRaw(const RawRetention& retained)
@@ -1064,6 +1064,7 @@ bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validat
 	auto retirements = std::make_shared<std::pair<std::mutex, std::vector<SharedImageKey>>>();
 	std::optional<SnapshotRecord> retainedCpuReader, sequenceRetention;
 	RawRetention rawRetention, srgbRawRetention;
+	std::array<RawRetention, 2> bgraRetention;
 	std::vector<simxr::probe::RetainedSubmission> automatic;
 	std::vector<SnapshotRecord> liveRetention;
 	{
@@ -1096,6 +1097,8 @@ bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validat
 		liveRetention = LiveCapacity(device, binding, validation);
 		rawRetention = CaptureRaw(device, binding, validation, VK_FORMAT_R8G8B8A8_UNORM);
 		srgbRawRetention = CaptureRaw(device, binding, validation, VK_FORMAT_R8G8B8A8_SRGB);
+		bgraRetention[0] = CaptureRaw(device, binding, validation, VK_FORMAT_B8G8R8A8_UNORM);
+		bgraRetention[1] = CaptureRaw(device, binding, validation, VK_FORMAT_B8G8R8A8_SRGB);
 		{
 			VulkanBackend disabled(binding, 1);
 			Require(!disabled.Sharing(), "Unconfigured logical sharing became enabled");
@@ -1239,6 +1242,8 @@ bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validat
 		Verify(*resized, 40, 30, Reused);
 		VerifyRaw(rawRetention);
 		VerifyRaw(srgbRawRetention);
+		for (const auto& bgra : bgraRetention)
+			VerifyRaw(bgra);
 		for (const auto& snapshot : liveRetention)
 		{
 			const auto image = std::dynamic_pointer_cast<const VulkanInspectionFrame>(snapshot.output);
@@ -1247,6 +1252,7 @@ bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& validat
 			Verify(*image, 32, 24, Original);
 		}
 	}
+	bgraRetention = {};
 	rawRetention.readers.clear();
 	srgbRawRetention.readers.clear();
 	for (auto& retained : automatic)
