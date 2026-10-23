@@ -1,17 +1,22 @@
 #include "platform/windows/OpenGLSwapchain.h"
 #include "Pch.h"
 
+#include "graphics/FramePool.h"
+#include "platform/windows/ModuleReference.h"
 #include "platform/windows/OpenGLContextScope.h"
+#include "platform/windows/OpenGLLibrary.h"
 #include <GL/glext.h>
 
 #include <bit>
+#include <cstdio>
 #include <limits>
+#include <new>
 
 namespace simxr::windows
 {
-template <class Function> static Function FindProcedure(const char* name) noexcept
+template <class Function> static Function FindProcedure(const OpenGLLibrary& gl, const char* name) noexcept
 {
-	const auto procedure = wglGetProcAddress(name);
+	const auto procedure = gl.GetProcAddress(name);
 	const auto address = std::bit_cast<std::uintptr_t>(procedure);
 	if (address <= 3 || address == UINTPTR_MAX)
 		return nullptr;
@@ -45,9 +50,9 @@ static XrResult Validate(const XrSwapchainCreateInfo& description) noexcept
 	return XR_SUCCESS;
 }
 
-static XrResult SampleCounts(GLenum format, GLenum target, std::uint32_t& output)
+static XrResult SampleCounts(const OpenGLLibrary& gl, GLenum format, GLenum target, std::uint32_t& output)
 {
-	const auto query = FindProcedure<PFNGLGETINTERNALFORMATIVPROC>("glGetInternalformativ");
+	const auto query = FindProcedure<PFNGLGETINTERNALFORMATIVPROC>(gl, "glGetInternalformativ");
 	if (!query)
 		return XR_ERROR_FUNCTION_UNSUPPORTED;
 	GLint count = 0;
@@ -57,7 +62,7 @@ static XrResult SampleCounts(GLenum format, GLenum target, std::uint32_t& output
 		return XR_ERROR_RUNTIME_FAILURE;
 	if (count)
 		query(target, format, GL_SAMPLES, count, samples.data());
-	if (glGetError() != GL_NO_ERROR)
+	if (gl.GetError() != GL_NO_ERROR)
 		return XR_ERROR_RUNTIME_FAILURE;
 	output = 1;
 	for (const auto sample : samples)
@@ -68,25 +73,82 @@ static XrResult SampleCounts(GLenum format, GLenum target, std::uint32_t& output
 
 struct OpenGLCapabilityContext
 {
+	ModuleReference module;
+	std::shared_ptr<FrameReservation> preservation;
+	OpenGLLibrary gl;
 	HWND window = nullptr;
 	HDC device = nullptr;
 	HGLRC context = nullptr;
-	~OpenGLCapabilityContext()
+
+	OpenGLCapabilityContext()
 	{
-		if (context && wglGetCurrentContext() == context)
-			wglMakeCurrent(nullptr, nullptr);
+		static const FramePool s_owners{64};
+		preservation = s_owners.Reserve();
+		if (!preservation)
+			throw std::bad_alloc();
+	}
+
+	static void Destroy(OpenGLCapabilityContext* owned) noexcept
+	{
+		if (!owned->Close())
+		{
+			std::fputs("SimXR: preserving OpenGL capability context after native cleanup failure\n", stderr);
+			return;
+		}
+		delete owned;
+	}
+
+	bool Close() noexcept
+	{
 		if (context)
-			wglDeleteContext(context);
+		{
+			if (gl.GetCurrentContext() == context && !gl.MakeCurrent(nullptr, nullptr))
+				return false;
+			if (!gl.DeleteContext(context))
+				return false;
+			context = nullptr;
+		}
 		if (device)
-			ReleaseDC(window, device);
+		{
+			if (!ReleaseDC(window, device))
+				return false;
+			device = nullptr;
+		}
 		if (window)
-			DestroyWindow(window);
+		{
+			if (!DestroyWindow(window))
+				return false;
+			window = nullptr;
+		}
+		return true;
+	}
+};
+
+struct OpenGLSwapchain::Resources
+{
+	ModuleReference module;
+	std::shared_ptr<FrameReservation> preservation;
+	OpenGLLibrary gl;
+	const HDC device;
+	const HGLRC context;
+	const GLenum format;
+	std::vector<GLuint> images;
+
+	Resources(HDC device, HGLRC context, GLenum format) : device(device), context(context), format(format)
+	{
+		static const FramePool s_owners{256};
+		preservation = s_owners.Reserve();
+		if (!preservation)
+			throw std::bad_alloc();
 	}
 };
 
 XrResult OpenGLSwapchain::MaxSampleCount(std::uint32_t& output)
 {
-	OpenGLCapabilityContext owned;
+	const std::unique_ptr<OpenGLCapabilityContext, decltype(&OpenGLCapabilityContext::Destroy)> owner(
+		new OpenGLCapabilityContext, &OpenGLCapabilityContext::Destroy);
+	auto& owned = *owner;
+	const auto& gl = owned.gl;
 	owned.window = CreateWindowExW(0, L"STATIC", L"OpenXR capability query", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr,
 								   GetModuleHandleW(nullptr), nullptr);
 	if (!owned.window || !(owned.device = GetDC(owned.window)))
@@ -99,9 +161,9 @@ XrResult OpenGLSwapchain::MaxSampleCount(std::uint32_t& output)
 	format.cColorBits = 32;
 	const auto selected = ChoosePixelFormat(owned.device, &format);
 	if (!selected || !SetPixelFormat(owned.device, selected, &format) ||
-		!(owned.context = wglCreateContext(owned.device)))
+		!(owned.context = gl.CreateContext(owned.device)))
 		return XR_ERROR_RUNTIME_FAILURE;
-	OpenGLContextScope current(owned.device, owned.context);
+	OpenGLContextScope current(gl, owned.device, owned.context);
 	if (!current.Current())
 		return XR_ERROR_RUNTIME_FAILURE;
 	std::uint32_t common = 127;
@@ -109,7 +171,7 @@ XrResult OpenGLSwapchain::MaxSampleCount(std::uint32_t& output)
 		for (const auto target : {GL_TEXTURE_2D_MULTISAMPLE, GL_TEXTURE_2D_MULTISAMPLE_ARRAY})
 		{
 			std::uint32_t samples = 1;
-			const auto result = SampleCounts(static_cast<GLenum>(format), target, samples);
+			const auto result = SampleCounts(gl, static_cast<GLenum>(format), target, samples);
 			if (XR_FAILED(result))
 				return result;
 			common &= samples;
@@ -128,7 +190,7 @@ std::span<const std::int64_t> OpenGLSwapchain::Formats() noexcept
 }
 
 OpenGLSwapchain::OpenGLSwapchain(HDC device, HGLRC context, GLenum format)
-	: m_device(device), m_context(context), m_format(format)
+	: m_resources(std::make_unique<Resources>(device, context, format))
 {
 }
 
@@ -151,23 +213,25 @@ XrResult OpenGLSwapchain::Create(HDC device, HGLRC context, const XrSwapchainCre
 
 XrResult OpenGLSwapchain::Allocate(const XrSwapchainCreateInfo& description)
 {
+	auto& resources = *m_resources;
+	const auto& gl = resources.gl;
 	const auto imageCount = (description.createFlags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) ? 1u : 3u;
 	// Reserve CPU bookkeeping before native acquisition; every generated name is
 	// registered immediately so all subsequent failures have the same rollback.
 	std::vector<GLuint> images(imageCount, 0);
-	OpenGLContextScope context(m_device, m_context);
+	OpenGLContextScope context(gl, resources.device, resources.context);
 	if (!context.Current())
 		return XR_ERROR_RUNTIME_FAILURE;
 	// GL has no error-queue save/restore API. Reject one outstanding host error
 	// rather than misattribute it to successful storage allocation.
-	if (glGetError() != GL_NO_ERROR)
+	if (gl.GetError() != GL_NO_ERROR)
 		return XR_ERROR_RUNTIME_FAILURE;
 	const bool arrayTexture = description.arraySize > 1;
 	GLint maxSize = 0;
 	GLint maxLayers = 1;
-	glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxSize);
+	gl.GetIntegerv(GL_MAX_TEXTURE_SIZE, &maxSize);
 	if (arrayTexture)
-		glGetIntegerv(GL_MAX_ARRAY_TEXTURE_LAYERS, &maxLayers);
+		gl.GetIntegerv(GL_MAX_ARRAY_TEXTURE_LAYERS, &maxLayers);
 	if (maxSize <= 0 || maxLayers <= 0 || description.width > static_cast<std::uint32_t>(maxSize) ||
 		description.height > static_cast<std::uint32_t>(maxSize) ||
 		description.arraySize > static_cast<std::uint32_t>(maxLayers))
@@ -178,73 +242,80 @@ XrResult OpenGLSwapchain::Allocate(const XrSwapchainCreateInfo& description)
 	if (multisampled)
 	{
 		std::uint32_t samples = 1;
-		const auto supported = SampleCounts(m_format, target, samples);
+		const auto supported = SampleCounts(gl, resources.format, target, samples);
 		if (XR_FAILED(supported))
 			return supported;
 		if (!(samples & description.sampleCount))
 			return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
 	}
-	const auto create = FindProcedure<PFNGLCREATETEXTURESPROC>("glCreateTextures");
-	const auto storage2D = FindProcedure<PFNGLTEXTURESTORAGE2DPROC>("glTextureStorage2D");
-	const auto storage3D = FindProcedure<PFNGLTEXTURESTORAGE3DPROC>("glTextureStorage3D");
-	const auto storage2DMs = FindProcedure<PFNGLTEXTURESTORAGE2DMULTISAMPLEPROC>("glTextureStorage2DMultisample");
-	const auto storage3DMs = FindProcedure<PFNGLTEXTURESTORAGE3DMULTISAMPLEPROC>("glTextureStorage3DMultisample");
-	const auto parameter = FindProcedure<PFNGLTEXTUREPARAMETERIPROC>("glTextureParameteri");
+	const auto create = FindProcedure<PFNGLCREATETEXTURESPROC>(gl, "glCreateTextures");
+	const auto storage2D = FindProcedure<PFNGLTEXTURESTORAGE2DPROC>(gl, "glTextureStorage2D");
+	const auto storage3D = FindProcedure<PFNGLTEXTURESTORAGE3DPROC>(gl, "glTextureStorage3D");
+	const auto storage2DMs = FindProcedure<PFNGLTEXTURESTORAGE2DMULTISAMPLEPROC>(gl, "glTextureStorage2DMultisample");
+	const auto storage3DMs = FindProcedure<PFNGLTEXTURESTORAGE3DMULTISAMPLEPROC>(gl, "glTextureStorage3DMultisample");
+	const auto parameter = FindProcedure<PFNGLTEXTUREPARAMETERIPROC>(gl, "glTextureParameteri");
 	if (!create || !storage2D || !storage3D || !storage2DMs || !storage3DMs || !parameter)
 		return XR_ERROR_FUNCTION_UNSUPPORTED;
 	create(target, static_cast<GLsizei>(images.size()), images.data());
 	for (const auto image : images)
 	{
 		if (multisampled && arrayTexture)
-			storage3DMs(image, description.sampleCount, m_format, description.width, description.height,
+			storage3DMs(image, description.sampleCount, resources.format, description.width, description.height,
 						description.arraySize, GL_TRUE);
 		else if (multisampled)
-			storage2DMs(image, description.sampleCount, m_format, description.width, description.height, GL_TRUE);
+			storage2DMs(image, description.sampleCount, resources.format, description.width, description.height,
+						GL_TRUE);
 		else if (arrayTexture)
-			storage3D(image, description.mipCount, m_format, description.width, description.height,
+			storage3D(image, description.mipCount, resources.format, description.width, description.height,
 					  description.arraySize);
 		else
-			storage2D(image, description.mipCount, m_format, description.width, description.height);
+			storage2D(image, description.mipCount, resources.format, description.width, description.height);
 		if (!multisampled)
 		{
 			parameter(image, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 			parameter(image, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 		}
 	}
-	const auto error = glGetError();
+	const auto error = gl.GetError();
 	if (error != GL_NO_ERROR)
 	{
-		glDeleteTextures(static_cast<GLsizei>(images.size()), images.data());
+		gl.DeleteTextures(static_cast<GLsizei>(images.size()), images.data());
 		return error == GL_OUT_OF_MEMORY ? XR_ERROR_OUT_OF_MEMORY : XR_ERROR_RUNTIME_FAILURE;
 	}
-	m_images.swap(images);
+	resources.images.swap(images);
 	return context.Restore() ? XR_SUCCESS : XR_ERROR_RUNTIME_FAILURE;
 }
 
 OpenGLSwapchain::~OpenGLSwapchain()
 {
-	Close();
+	if (!Close() && !m_resources->images.empty())
+	{
+		std::fputs("SimXR: preserving OpenGL swapchain after native cleanup failure\n", stderr);
+		m_resources.release(); // Keep native images, dependency and reservation when cleanup cannot acquire WGL.
+	}
 }
 
 std::span<const GLuint> OpenGLSwapchain::Images() const noexcept
 {
-	return m_images;
+	return m_resources->images;
 }
 
 GLenum OpenGLSwapchain::Format() const noexcept
 {
-	return m_format;
+	return m_resources->format;
 }
 
 bool OpenGLSwapchain::Close() noexcept
 {
-	if (m_images.empty())
+	auto& resources = *m_resources;
+	const auto& gl = resources.gl;
+	if (resources.images.empty())
 		return true;
-	OpenGLContextScope context(m_device, m_context);
+	OpenGLContextScope context(gl, resources.device, resources.context);
 	if (!context.Current())
 		return false;
-	glDeleteTextures(static_cast<GLsizei>(m_images.size()), m_images.data());
-	m_images.clear();
+	gl.DeleteTextures(static_cast<GLsizei>(resources.images.size()), resources.images.data());
+	resources.images.clear();
 	return context.Restore();
 }
 } // namespace simxr::windows

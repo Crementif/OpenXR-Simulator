@@ -3,24 +3,26 @@
 #define XR_USE_GRAPHICS_API_D3D12
 #define XR_USE_GRAPHICS_API_OPENGL
 #include "Pch.h"
-#include <windows.h>
-#include <d3d11.h>
-#include <d3d12.h>
+#include "WindowsRuntimeModule.h"
 #include <GL/gl.h>
 #include <GL/glext.h>
-#include <dxgi.h>
-#include <wrl/client.h>
-#include <openxr/openxr.h>
-#include <openxr/openxr_platform.h>
 #include <bit>
 #include <charconv>
 #include <cstdio>
-#include <limits>
 #include <cstdlib>
 #include <cstring>
-#include <stdexcept>
+#include <d3d11.h>
+#include <d3d12.h>
+#include <dxgi.h>
 #include <future>
 #include <latch>
+#include <limits>
+#include <openxr/openxr.h>
+#include <openxr/openxr_platform.h>
+#include <span>
+#include <stdexcept>
+#include <windows.h>
+#include <wrl/client.h>
 
 namespace simxr::probe
 {
@@ -39,6 +41,7 @@ static void Check(XrResult result, const char* operation)
 {
 	std::fprintf(stderr, "FAIL: %s; preserving native owners until process exit\n", operation);
 	std::fflush(nullptr);
+	TerminateProcess(GetCurrentProcess(), 1);
 	std::_Exit(1);
 }
 
@@ -171,6 +174,33 @@ struct OpenGLApplication
 		if (glGetError() != GL_NO_ERROR)
 			throw std::runtime_error("Render OpenGL swapchain");
 	}
+	void VerifyAfterUnload()
+	{
+		GLuint texture = 0;
+		glGenTextures(1, &texture);
+		glBindTexture(GL_TEXTURE_2D_ARRAY, texture);
+		OpenGLProc<PFNGLTEXSTORAGE3DPROC>("glTexStorage3D")(GL_TEXTURE_2D_ARRAY, 1, GL_RGBA8, 4, 4, 1);
+		if (!texture || glGetError() != GL_NO_ERROR)
+			throw std::runtime_error("Allocate OpenGL texture after runtime unload");
+		const float color[]{1, 0, 0, 1};
+		Clear(texture, 0, color);
+		const auto fence = OpenGLProc<PFNGLFENCESYNCPROC>("glFenceSync")(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+		if (!fence)
+			UnknownCompletion("Fence OpenGL work after runtime unload");
+		const auto waited =
+			OpenGLProc<PFNGLCLIENTWAITSYNCPROC>("glClientWaitSync")(fence, GL_SYNC_FLUSH_COMMANDS_BIT, 5'000'000'000);
+		if (waited != GL_ALREADY_SIGNALED && waited != GL_CONDITION_SATISFIED)
+			UnknownCompletion("Wait for OpenGL work after runtime unload");
+		OpenGLProc<PFNGLDELETESYNCPROC>("glDeleteSync")(fence);
+		std::array<unsigned char, 4> pixel{};
+		glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel.data());
+		if (glGetError() != GL_NO_ERROR || pixel != std::array<unsigned char, 4>{255, 0, 0, 255})
+			throw std::runtime_error("OpenGL clear/readback failed after runtime unload");
+		m_framebufferTextureLayer(m_framebuffer, GL_COLOR_ATTACHMENT0, 0, 0, 0);
+		glDeleteTextures(1, &texture);
+		if (glGetError() != GL_NO_ERROR)
+			throw std::runtime_error("Retire OpenGL texture after runtime unload");
+	}
 };
 #endif
 #ifdef SIMXR_PROBE_D3D12
@@ -232,9 +262,72 @@ struct D3D12Application
 		if (m_fence->GetCompletedValue() < m_submitted || m_fence->GetCompletedValue() == UINT64_MAX)
 			UnknownCompletion("Application D3D12 clear did not complete");
 	}
+	void VerifyAfterUnload()
+	{
+		D3D12_HEAP_PROPERTIES heap{};
+		heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+		heap.CreationNodeMask = heap.VisibleNodeMask = 1;
+		D3D12_RESOURCE_DESC info{};
+		info.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+		info.Width = info.Height = 4;
+		info.DepthOrArraySize = info.MipLevels = 1;
+		info.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		info.SampleDesc.Count = 1;
+		info.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+		ComPtr<ID3D12Resource> texture;
+		CheckGpu(m_device->CreateCommittedResource(
+			&heap, D3D12_HEAP_FLAG_NONE, &info, D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr, IID_PPV_ARGS(&texture)));
+		const float color[]{1, 0, 0, 1};
+		Clear(texture.Get(), 0, color);
+	}
 };
 #endif
-static int Run(int argc, char** argv)
+#if !defined(SIMXR_PROBE_OPENGL) && !defined(SIMXR_PROBE_D3D12)
+static void VerifyAfterUnload(ID3D11Device* device, ID3D11DeviceContext* context)
+{
+	D3D11_TEXTURE2D_DESC info{};
+	info.Width = info.Height = 4;
+	info.MipLevels = info.ArraySize = info.SampleDesc.Count = 1;
+	info.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	info.BindFlags = D3D11_BIND_RENDER_TARGET;
+	ComPtr<ID3D11Texture2D> texture;
+	CheckGpu(device->CreateTexture2D(&info, nullptr, &texture));
+	ComPtr<ID3D11RenderTargetView> target;
+	CheckGpu(device->CreateRenderTargetView(texture.Get(), nullptr, &target));
+	info.BindFlags = 0;
+	info.Usage = D3D11_USAGE_STAGING;
+	info.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+	ComPtr<ID3D11Texture2D> readback;
+	CheckGpu(device->CreateTexture2D(&info, nullptr, &readback));
+	const D3D11_QUERY_DESC queryInfo{D3D11_QUERY_EVENT, 0};
+	ComPtr<ID3D11Query> completion;
+	CheckGpu(device->CreateQuery(&queryInfo, &completion));
+	const float color[]{1, 0, 0, 1};
+	context->ClearRenderTargetView(target.Get(), color);
+	context->CopyResource(readback.Get(), texture.Get());
+	context->End(completion.Get());
+	context->Flush();
+	const auto deadline = GetTickCount64() + 5000;
+	HRESULT completed;
+	do
+	{
+		completed = context->GetData(completion.Get(), nullptr, 0, D3D11_ASYNC_GETDATA_DONOTFLUSH);
+		if (completed == S_FALSE)
+			Sleep(1);
+	} while (completed == S_FALSE && GetTickCount64() < deadline);
+	if (completed != S_OK)
+		UnknownCompletion("Wait for D3D11 work after runtime unload");
+	D3D11_MAPPED_SUBRESOURCE mapped{};
+	CheckGpu(context->Map(readback.Get(), 0, D3D11_MAP_READ, 0, &mapped));
+	std::uint32_t pixel = 0;
+	std::memcpy(&pixel, mapped.pData, sizeof(pixel));
+	context->Unmap(readback.Get(), 0);
+	if (pixel != 0xff0000ff)
+		throw std::runtime_error("D3D11 clear/readback failed after runtime unload");
+}
+#endif
+
+static int Run(std::span<const std::string> arguments)
 {
 	try
 	{
@@ -253,15 +346,18 @@ static int Run(int argc, char** argv)
 		bool quadViews = EnvOn("XR_PROBE_QUAD");
 		bool foveated = EnvOn("XR_PROBE_FOVEATED");
 		bool multisampled = false;
-		for (int index = 1; index < argc; ++index)
+		std::filesystem::path runtimeModule;
+		for (std::size_t index = 1; index < arguments.size(); ++index)
 		{
-			const std::string_view argument(argv[index]);
+			const std::string_view argument(arguments[index]);
 			if (argument == "--quad")
 				quadViews = true;
 			else if (argument == "--foveated")
 				foveated = true;
 			else if (argument == "--msaa")
 				multisampled = true;
+			else if (argument == "--verify-unload" && index + 1 < arguments.size())
+				runtimeModule = RuntimeModulePath(arguments[++index]);
 			else
 				throw std::runtime_error("Unknown probe argument: " + std::string(argument));
 		}
@@ -279,6 +375,8 @@ static int Run(int argc, char** argv)
 		create.enabledExtensionNames = extensions.data();
 		XrInstance instance;
 		Check(xrCreateInstance(&create, &instance), "Create instance");
+		if (!runtimeModule.empty())
+			RequireRuntimeModule(runtimeModule, true);
 		char resultName[XR_MAX_RESULT_STRING_SIZE]{};
 		char structureName[XR_MAX_STRUCTURE_NAME_SIZE]{};
 		Check(xrResultToString(instance, XR_ERROR_HANDLE_INVALID, resultName), "Name result");
@@ -727,13 +825,57 @@ static int Run(int argc, char** argv)
 			}
 			Check(xrDestroyActionSet(actionSet), "Destroy action set");
 			Check(xrDestroyInstance(instance), "Destroy instance");
+			if (!runtimeModule.empty())
+			{
+				RequireRuntimeModule(runtimeModule, false);
+#if defined(SIMXR_PROBE_OPENGL) || defined(SIMXR_PROBE_D3D12)
+				application.VerifyAfterUnload();
+#else
+				VerifyAfterUnload(device.Get(), context.Get());
+#endif
+				std::puts("PASS runtime DLL unloaded while application graphics remained operational");
+				VerifyRuntimeReload(runtimeModule);
+			}
 			XrInstance recreated = XR_NULL_HANDLE;
 			Check(xrCreateInstance(&create, &recreated), "Recreate instance after complete retirement");
-			if (recreated == instance)
-				throw std::runtime_error("Recreated instance reused a retired identity");
 			XrInstanceProperties recreatedProperties{XR_TYPE_INSTANCE_PROPERTIES};
 			Check(xrGetInstanceProperties(recreated, &recreatedProperties), "Query recreated instance");
+			if (!runtimeModule.empty())
+			{
+				RequireRuntimeModule(runtimeModule, true);
+				Check(xrGetSystem(recreated, &getSystem, &system), "Get recreated system");
+#ifdef SIMXR_PROBE_OPENGL
+				const char* requirementsName = "xrGetOpenGLGraphicsRequirementsKHR";
+#elif defined(SIMXR_PROBE_D3D12)
+				const char* requirementsName = "xrGetD3D12GraphicsRequirementsKHR";
+#else
+				const char* requirementsName = "xrGetD3D11GraphicsRequirementsKHR";
+#endif
+				Check(xrGetInstanceProcAddr(recreated, requirementsName,
+											reinterpret_cast<PFN_xrVoidFunction*>(&requirementsFunction)),
+					  "Refresh graphics requirements function");
+				Check(requirementsFunction(recreated, system, &requirements), "Get recreated graphics requirements");
+				sessionInfo.systemId = system;
+				XrSession recreatedSession = XR_NULL_HANDLE;
+				Check(xrCreateSession(recreated, &sessionInfo, &recreatedSession), "Recreate graphics session");
+				XrSwapchainCreateInfo imageInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+				imageInfo.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
+#ifdef SIMXR_PROBE_OPENGL
+				imageInfo.format = GL_RGBA8;
+#else
+				imageInfo.format = DXGI_FORMAT_R8G8B8A8_UNORM;
+#endif
+				imageInfo.sampleCount = imageInfo.faceCount = imageInfo.arraySize = imageInfo.mipCount = 1;
+				imageInfo.width = imageInfo.height = 32;
+				XrSwapchain recreatedSwapchain = XR_NULL_HANDLE;
+				Check(xrCreateSwapchain(recreatedSession, &imageInfo, &recreatedSwapchain),
+					  "Recreate native swapchain");
+				Check(xrDestroySwapchain(recreatedSwapchain), "Destroy recreated swapchain");
+				Check(xrDestroySession(recreatedSession), "Destroy recreated session");
+			}
 			Check(xrDestroyInstance(recreated), "Destroy recreated instance");
+			if (!runtimeModule.empty())
+				RequireRuntimeModule(runtimeModule, false);
 
 			if (EnvOn("XR_PROBE_REQUIRE_INPUT") && (!pressed || !released))
 				throw std::runtime_error("Application did not observe both trigger press and release");
@@ -760,7 +902,15 @@ static int Run(int argc, char** argv)
 
 } // namespace simxr::probe
 
-int main(int argc, char** argv)
+int wmain(int argc, wchar_t** argv)
 {
-	return simxr::probe::Run(argc, argv);
+	try
+	{
+		return simxr::probe::Run(simxr::probe::WindowsArguments(argc, argv));
+	}
+	catch (const std::exception& error)
+	{
+		std::fprintf(stderr, "FAIL: %s\n", error.what());
+		return 1;
+	}
 }

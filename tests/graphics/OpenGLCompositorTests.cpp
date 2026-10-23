@@ -10,21 +10,33 @@
 #include <cmath>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <stdexcept>
 #include <thread>
 
 #ifdef SIMXR_TEST_WGL_FAILURE
 using MakeCurrentFunction = BOOL(WINAPI*)(HDC, HGLRC);
+using DeleteContextFunction = BOOL(WINAPI*)(HGLRC);
+extern "C"
+{
+	extern decltype(&::GetProcAddress) __real___imp_GetProcAddress;
+	extern decltype(&::FreeLibrary) __real___imp_FreeLibrary;
+}
 static HGLRC s_applicationContext = nullptr;
 static bool s_failRestoration = false;
 static bool s_rejectContexts = false;
 static bool s_rejectPrivateContext = false;
 static unsigned s_rejectedContexts = 0;
+static bool s_rejectDeletion = false;
+static HGLRC s_preservedContext = nullptr;
+static HDC s_preservedDevice = nullptr;
+static HMODULE s_glLibrary = nullptr;
+static unsigned s_libraryReleases = 0;
+static MakeCurrentFunction s_makeCurrent = nullptr;
+static DeleteContextFunction s_deleteContext = nullptr;
 
 static BOOL WINAPI MakeCurrent(HDC device, HGLRC context)
 {
-	static const auto s_makeCurrent =
-		std::bit_cast<MakeCurrentFunction>(GetProcAddress(GetModuleHandleW(L"opengl32.dll"), "wglMakeCurrent"));
 	if (s_failRestoration && context == s_applicationContext)
 	{
 		s_failRestoration = false;
@@ -37,12 +49,53 @@ static BOOL WINAPI MakeCurrent(HDC device, HGLRC context)
 		SetLastError(ERROR_BUSY);
 		return FALSE;
 	}
+	if (s_rejectDeletion && context && context != s_applicationContext)
+		s_preservedDevice = device;
 	return s_makeCurrent(device, context);
+}
+
+static BOOL WINAPI DeleteContext(HGLRC context)
+{
+	if (s_rejectDeletion && context != s_applicationContext)
+	{
+		s_preservedContext = context;
+		SetLastError(ERROR_BUSY);
+		return FALSE;
+	}
+	return s_deleteContext(context);
+}
+
+static FARPROC WINAPI Resolve(HMODULE module, LPCSTR name)
+{
+	const auto function = __real___imp_GetProcAddress(module, name);
+	if (function && reinterpret_cast<std::uintptr_t>(name) > 0xffff && module == GetModuleHandleW(L"opengl32.dll"))
+	{
+		s_glLibrary = module;
+		if (std::strcmp(name, "wglMakeCurrent") == 0)
+		{
+			s_makeCurrent = std::bit_cast<MakeCurrentFunction>(function);
+			return std::bit_cast<FARPROC>(&MakeCurrent);
+		}
+		if (std::strcmp(name, "wglDeleteContext") == 0)
+		{
+			s_deleteContext = std::bit_cast<DeleteContextFunction>(function);
+			return std::bit_cast<FARPROC>(&DeleteContext);
+		}
+	}
+	return function;
+}
+
+static BOOL WINAPI ReleaseLibrary(HMODULE module)
+{
+	if (module == s_glLibrary)
+		++s_libraryReleases;
+	return __real___imp_FreeLibrary(module);
 }
 
 extern "C"
 {
-	MakeCurrentFunction __wrap___imp_wglMakeCurrent = MakeCurrent;
+	decltype(&::GetProcAddress) __wrap___imp_GetProcAddress = Resolve;
+	decltype(&::FreeLibrary) __wrap___imp_FreeLibrary = ReleaseLibrary;
 }
 #endif
 using namespace simxr;
@@ -270,7 +323,7 @@ static void VerifySubmissionFailures(const VulkanInspectionDevice& device)
 	{
 		~ResetContextFailure()
 		{
-			s_failRestoration = s_rejectContexts = s_rejectPrivateContext = false;
+			s_failRestoration = s_rejectContexts = s_rejectPrivateContext = s_rejectDeletion = false;
 			s_applicationContext = nullptr;
 		}
 	} reset;
@@ -367,6 +420,17 @@ static void VerifySubmissionFailures(const VulkanInspectionDevice& device)
 	Require(glGetError() == GL_NO_ERROR, "Retiring failed GL sources left an application GL error");
 	std::puts(
 		"PASS: injected WGL restoration/cleanup failures retain both deleted sources and gate reuse until completion");
+	auto preserved =
+		std::make_unique<OpenGLBackend>(app.device, app.context, device.Device(), device.EnabledExtensions());
+	s_libraryReleases = 0;
+	s_rejectDeletion = true;
+	preserved.reset();
+	s_rejectDeletion = false;
+	Require(s_preservedContext && s_preservedDevice && s_libraryReleases == 0,
+			"Failed WGL deletion released its native dependency owner");
+	Require(wglMakeCurrent(s_preservedDevice, s_preservedContext), "Failed WGL deletion lost its native context");
+	Require(wglMakeCurrent(app.device, app.context), "Restore application after preserved WGL deletion");
+	std::puts("PASS: failed WGL context deletion preserves its native context and graphics library reference");
 #else
 	std::puts("UNAVAILABLE: injected WGL restoration/cleanup failure requires the MinGW x64 linker wrapper");
 #endif

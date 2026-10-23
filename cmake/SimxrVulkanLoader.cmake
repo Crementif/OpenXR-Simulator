@@ -1,35 +1,4 @@
-# Keep Vulkan optional when the runtime is loaded by a D3D/OpenGL application.
+# Every runtime binding uses Vulkan for GPU delivery. A regular dependency lets
+# the Windows loader release it after the runtime's native owners have retired.
 add_library(simxr_vulkan_loader INTERFACE)
-if(MSVC)
-    target_link_libraries(simxr_vulkan_loader INTERFACE "${SIMXR_VULKAN_LIBRARY}" delayimp)
-    target_link_options(simxr_vulkan_loader INTERFACE "/DELAYLOAD:vulkan-1.dll")
-elseif(MINGW)
-    execute_process(COMMAND "${CMAKE_NM}" --defined-only "${SIMXR_VULKAN_LIBRARY}"
-        OUTPUT_VARIABLE vulkan_symbols RESULT_VARIABLE vulkan_symbols_result)
-    if(NOT vulkan_symbols_result EQUAL 0)
-        message(FATAL_ERROR "Cannot read Vulkan loader exports for delay loading")
-    endif()
-    string(REGEX MATCHALL "[ \t]T[ \t]+vk[A-Za-z0-9_]+" vulkan_exports "${vulkan_symbols}")
-    if(NOT vulkan_exports)
-        message(FATAL_ERROR "Vulkan import library has no callable exports")
-    endif()
-    set(vulkan_definition "LIBRARY vulkan-1.dll\nEXPORTS\n")
-    foreach(symbol IN LISTS vulkan_exports)
-        string(REGEX REPLACE "^[ \t]T[ \t]+" "" symbol "${symbol}")
-        string(APPEND vulkan_definition "${symbol}\n")
-    endforeach()
-    set(vulkan_def "${CMAKE_CURRENT_BINARY_DIR}/vulkan-delay.def")
-    file(WRITE "${vulkan_def}" "${vulkan_definition}")
-    set(vulkan_delay "${CMAKE_CURRENT_BINARY_DIR}/libsimxr-vulkan-delay.a")
-    add_custom_command(OUTPUT "${vulkan_delay}"
-        COMMAND "${CMAKE_DLLTOOL}" --dllname vulkan-1.dll --input-def "${vulkan_def}"
-            --output-delaylib "${vulkan_delay}"
-        DEPENDS "${vulkan_def}" VERBATIM)
-    add_custom_target(simxr_vulkan_delay_library DEPENDS "${vulkan_delay}")
-    add_library(simxr_vulkan_delay STATIC IMPORTED)
-    set_target_properties(simxr_vulkan_delay PROPERTIES IMPORTED_LOCATION "${vulkan_delay}")
-    add_dependencies(simxr_vulkan_delay simxr_vulkan_delay_library)
-    target_link_libraries(simxr_vulkan_loader INTERFACE simxr_vulkan_delay delayimp)
-else()
-    target_link_libraries(simxr_vulkan_loader INTERFACE "${SIMXR_VULKAN_LIBRARY}")
-endif()
+target_link_libraries(simxr_vulkan_loader INTERFACE "${SIMXR_VULKAN_LIBRARY}")

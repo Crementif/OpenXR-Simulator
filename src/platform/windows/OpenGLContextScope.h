@@ -7,12 +7,13 @@
 
 namespace simxr::windows
 {
-// Borrowing never transfers ownership of either WGL handle. A failed switch
-// can also unset the caller's context, so it needs the same restoration path.
+class OpenGLLibrary;
+// The dispatch owner must outlive this scope; neither WGL handle changes ownership.
+// A failed switch can unset the caller's context, so it also needs restoration.
 class OpenGLContextScope final
 {
   public:
-	OpenGLContextScope(HDC device, HGLRC context) noexcept;
+	OpenGLContextScope(const OpenGLLibrary& gl, HDC device, HGLRC context) noexcept;
 	~OpenGLContextScope();
 	OpenGLContextScope(const OpenGLContextScope&) = delete;
 	OpenGLContextScope& operator=(const OpenGLContextScope&) = delete;
@@ -24,6 +25,7 @@ class OpenGLContextScope final
 	bool Restore() noexcept;
 
   private:
+	const OpenGLLibrary& m_gl;
 	const HDC m_previousDevice;
 	const HGLRC m_previousContext;
 	bool m_current = false;

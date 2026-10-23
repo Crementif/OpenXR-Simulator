@@ -9,14 +9,17 @@
 // runtime hands over, it is what BetterVR assumes, and a runtime that hands over anything
 // else is caught here rather than in a corrupted frame.
 #include "Pch.h"
+#include "WindowsPendingDelivery.h"
+#include "WindowsRuntimeModule.h"
 #include <atomic>
 #include <bit>
 #include <charconv>
-#include <cstdlib>
-#include <stdexcept>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <span>
+#include <stdexcept>
 #include <unknwn.h> // XR_USE_PLATFORM_WIN32 exposes extensions declared in terms of IUnknown
 #include <windows.h>
 
@@ -130,6 +133,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityF
 	std::fprintf(stderr, "FAIL: %s; GPU completion is unknown, preserving native owners until process exit\n",
 				 operation);
 	std::fflush(nullptr);
+	TerminateProcess(GetCurrentProcess(), 1);
 	std::_Exit(1);
 }
 
@@ -182,7 +186,82 @@ struct Chain
 	bool m_depth = false;
 };
 
-static int Run(int argc, char** argv)
+static void VerifyAfterUnload(VkPhysicalDevice physicalDevice, VkDevice device, VkQueue queue,
+							  VkCommandPool commandPool)
+{
+	VkBufferCreateInfo bufferInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+	bufferInfo.size = sizeof(std::uint32_t);
+	bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+	VkBuffer buffer = VK_NULL_HANDLE;
+	CheckVulkan(vkCreateBuffer(device, &bufferInfo, nullptr, &buffer), "Create buffer after runtime unload");
+	VkMemoryRequirements requirements{};
+	vkGetBufferMemoryRequirements(device, buffer, &requirements);
+	VkPhysicalDeviceMemoryProperties properties{};
+	vkGetPhysicalDeviceMemoryProperties(physicalDevice, &properties);
+	std::uint32_t memoryType = properties.memoryTypeCount;
+	constexpr VkMemoryPropertyFlags required =
+		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+	for (std::uint32_t index = 0; index < properties.memoryTypeCount; ++index)
+	{
+		if ((requirements.memoryTypeBits & (1u << index)) &&
+			(properties.memoryTypes[index].propertyFlags & required) == required)
+		{
+			memoryType = index;
+			break;
+		}
+	}
+	if (memoryType == properties.memoryTypeCount)
+		throw std::runtime_error("No host-visible coherent memory for unload verification");
+	VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+	allocation.allocationSize = requirements.size;
+	allocation.memoryTypeIndex = memoryType;
+	VkDeviceMemory memory = VK_NULL_HANDLE;
+	CheckVulkan(vkAllocateMemory(device, &allocation, nullptr, &memory), "Allocate memory after runtime unload");
+	CheckVulkan(vkBindBufferMemory(device, buffer, memory, 0), "Bind buffer after runtime unload");
+	VkCommandBufferAllocateInfo commandsInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+	commandsInfo.commandPool = commandPool;
+	commandsInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+	commandsInfo.commandBufferCount = 1;
+	VkCommandBuffer commands = VK_NULL_HANDLE;
+	CheckVulkan(vkAllocateCommandBuffers(device, &commandsInfo, &commands), "Allocate commands after runtime unload");
+	const VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+	CheckVulkan(vkBeginCommandBuffer(commands, &begin), "Begin commands after runtime unload");
+	constexpr std::uint32_t expected = 0x51a7c03d;
+	vkCmdFillBuffer(commands, buffer, 0, sizeof(expected), expected);
+	VkBufferMemoryBarrier barrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+	barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+	barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.buffer = buffer;
+	barrier.size = VK_WHOLE_SIZE;
+	vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 0, nullptr, 1,
+						 &barrier, 0, nullptr);
+	CheckVulkan(vkEndCommandBuffer(commands), "End commands after runtime unload");
+	const VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+	VkFence completion = VK_NULL_HANDLE;
+	CheckVulkan(vkCreateFence(device, &fenceInfo, nullptr, &completion), "Create fence after runtime unload");
+	VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+	submit.commandBufferCount = 1;
+	submit.pCommandBuffers = &commands;
+	if (vkQueueSubmit(queue, 1, &submit, completion) != VK_SUCCESS ||
+		vkWaitForFences(device, 1, &completion, VK_TRUE, 5'000'000'000) != VK_SUCCESS)
+		UnknownCompletion("Complete Vulkan work after runtime unload");
+	void* mapped = nullptr;
+	CheckVulkan(vkMapMemory(device, memory, 0, sizeof(expected), 0, &mapped), "Map buffer after runtime unload");
+	std::uint32_t actual = 0;
+	std::memcpy(&actual, mapped, sizeof(actual));
+	vkUnmapMemory(device, memory);
+	if (actual != expected)
+		throw std::runtime_error("Vulkan fill/readback failed after runtime unload");
+	vkDestroyFence(device, completion, nullptr);
+	vkFreeCommandBuffers(device, commandPool, 1, &commands);
+	vkDestroyBuffer(device, buffer, nullptr);
+	vkFreeMemory(device, memory, nullptr);
+	Ok("runtime DLL unloaded while application Vulkan allocation, execution and readback remained operational");
+}
+
+static int Run(std::span<const std::string> arguments, WindowsPendingDelivery* pending = nullptr,
+			   bool releasePending = false)
 {
 	// Unbuffered: a probe that stalls has to have already told you how far it got.
 	setvbuf(stdout, nullptr, _IONBF, 0);
@@ -192,13 +271,15 @@ static int Run(int argc, char** argv)
 	bool retainInspection = false;
 	bool quadViews = false;
 	bool foveated = false;
+	std::filesystem::path runtimeModule;
 	int totalFrames = EnvironmentCount("XR_PROBE_FRAMES", 30, 1);
 	int sleepMs = EnvironmentCount("XR_PROBE_SLEEP_MS", 0, 0);
 	constexpr const char* usage = "Usage: xr_probe_vk [--vulkan1|--vulkan2] [--frames N] [--sleep-ms N] "
-								  "[--projection-only] [--subrect] [--retain-inspection] [--quad] [--foveated]\n";
-	for (int index = 1; index < argc; ++index)
+								  "[--projection-only] [--subrect] [--retain-inspection] [--quad] [--foveated] "
+								  "[--verify-unload DLL|--verify-pending-unload DLL|--verify-gated-unload DLL]\n";
+	for (std::size_t index = 1; index < arguments.size(); ++index)
 	{
-		const std::string_view option = argv[index];
+		const std::string_view option = arguments[index];
 		if (option == "--help")
 		{
 			std::fputs(usage, stdout);
@@ -216,9 +297,17 @@ static int Run(int argc, char** argv)
 			subRect = true;
 		else if (option == "--retain-inspection")
 			retainInspection = true;
-		else if ((option == "--frames" || option == "--sleep-ms") && index + 1 < argc)
+		else if ((option == "--verify-unload" || option == "--verify-pending-unload" ||
+				  option == "--verify-gated-unload") &&
+				 index + 1 < arguments.size())
 		{
-			const std::string_view number = argv[++index];
+			if (!runtimeModule.empty())
+				throw std::runtime_error("Select one unload verification mode");
+			runtimeModule = RuntimeModulePath(arguments[++index]);
+		}
+		else if ((option == "--frames" || option == "--sleep-ms") && index + 1 < arguments.size())
+		{
+			const std::string_view number = arguments[++index];
 			int value = 0;
 			const auto parsed = std::from_chars(number.data(), number.data() + number.size(), value);
 			if (parsed.ec != std::errc{} || parsed.ptr != number.data() + number.size() ||
@@ -235,6 +324,8 @@ static int Run(int argc, char** argv)
 			return 2;
 		}
 	}
+	if (retainInspection && !runtimeModule.empty())
+		throw std::runtime_error("Unload verification requires teardown while application graphics remain alive");
 	const std::uint32_t activeViewCount = quadViews ? 4 : 2;
 	const auto viewType =
 		quadViews ? XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO : XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
@@ -286,11 +377,33 @@ static int Run(int argc, char** argv)
 		enabled.push_back(XR_VARJO_QUAD_VIEWS_EXTENSION_NAME);
 	if (foveated)
 		enabled.push_back(XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME);
+	bool nativeGraphicsQueries = false;
+	if (!runtimeModule.empty())
+	{
+		for (const auto& extension : exts)
+		{
+			const std::string_view name(extension.extensionName);
+			if ((name == "XR_KHR_D3D11_enable" || name == "XR_KHR_D3D12_enable" || name == "XR_KHR_opengl_enable" ||
+				 name == XR_KHR_VULKAN_ENABLE_EXTENSION_NAME || name == XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME) &&
+				std::none_of(enabled.begin(), enabled.end(),
+							 [&](const char* value)
+							 {
+								 return name == value;
+							 }))
+			{
+				enabled.push_back(extension.extensionName);
+				nativeGraphicsQueries |=
+					name == "XR_KHR_D3D11_enable" || name == "XR_KHR_D3D12_enable" || name == "XR_KHR_opengl_enable";
+			}
+		}
+	}
 	XrInstanceCreateInfo ici = {XR_TYPE_INSTANCE_CREATE_INFO};
 	ici.enabledExtensionCount = static_cast<std::uint32_t>(enabled.size());
 	ici.enabledExtensionNames = enabled.data();
 	ici.applicationInfo = {"BetterVR", 1, "Cemu", 1, XR_API_VERSION_1_0};
 	Check(xrCreateInstance(&ici, &s_instance), "xrCreateInstance");
+	if (!runtimeModule.empty())
+		RequireRuntimeModule(runtimeModule, true);
 
 	PFN_xrConvertWin32PerformanceCounterToTimeKHR pfnPcToTime = nullptr;
 	PFN_xrConvertTimeToWin32PerformanceCounterKHR pfnTimeToPc = nullptr;
@@ -523,19 +636,20 @@ static int Run(int argc, char** argv)
 					"Query sample support");
 		commonSamples &= supported.sampleCounts;
 	}
-	std::uint32_t maximumSamples = 1;
-	while (commonSamples >>= 1)
-		maximumSamples <<= 1;
+	const auto maximumSamples = std::bit_floor(commonSamples);
 	for (const auto& view : vcv)
 	{
-		if (view.recommendedSwapchainSampleCount != 1 || view.maxSwapchainSampleCount != maximumSamples)
+		if (view.recommendedSwapchainSampleCount != 1 || !std::has_single_bit(view.maxSwapchainSampleCount) ||
+			!(commonSamples & view.maxSwapchainSampleCount) ||
+			(!nativeGraphicsQueries && view.maxSwapchainSampleCount != maximumSamples))
 		{
-			std::printf("  [FAIL] runtime maximum samples %u differs from device support %u\n",
+			std::printf("  [FAIL] runtime maximum samples %u violates Vulkan support (maximum %u)\n",
 						view.maxSwapchainSampleCount, maximumSamples);
 			return 1;
 		}
 	}
-	std::printf("       maximum swapchain samples %u matches device support\n", maximumSamples);
+	std::printf("       maximum swapchain samples verified against Vulkan support %u%s\n", maximumSamples,
+				nativeGraphicsQueries ? " with all enabled bindings" : "");
 
 	// ---- VkDevice ----------------------------------------------------------------------
 	Step("VkDevice (graphics queue + timeline semaphores)");
@@ -1295,6 +1409,16 @@ static int Run(int argc, char** argv)
 		Check(pfnPcToTime(s_instance, &pc, &t), "xrConvertWin32PerformanceCounterToTimeKHR");
 		LARGE_INTEGER back = {};
 		Check(pfnTimeToPc(s_instance, t, &back), "xrConvertTimeToWin32PerformanceCounterKHR");
+		if (pending)
+		{
+			if (releasePending)
+			{
+				pending->VerifyPending();
+				pending->ReleaseAndVerify();
+			}
+			else
+				pending->Hold();
+		}
 
 		Step("teardown (BetterVR's exact shutdown order)");
 		Check(xrRequestExitSession(session), "xrRequestExitSession");
@@ -1315,6 +1439,8 @@ static int Run(int argc, char** argv)
 				vkDestroyRenderPass(device, c->m_renderPass, nullptr);
 			if (c->m_handle)
 				Check(xrDestroySwapchain(c->m_handle), "xrDestroySwapchain");
+			if (pending)
+				pending->CheckWatchdog();
 		}
 		for (XrSpace s : {headSpace, stageSpace})
 			if (s)
@@ -1322,6 +1448,65 @@ static int Run(int argc, char** argv)
 		Check(xrDestroySession(session), "xrDestroySession");
 		if (!retainInspection)
 			Check(xrDestroyInstance(s_instance), "xrDestroyInstance");
+		if (!runtimeModule.empty() && pending && !releasePending)
+		{
+			RequireRuntimeModule(runtimeModule, true);
+			Ok("pending consumer work retained the runtime DLL after loader instance destruction");
+		}
+		else if (!runtimeModule.empty())
+		{
+			RequireRuntimeModule(runtimeModule, false);
+			VerifyAfterUnload(physicalDevice, device, queue, cmdPool);
+			VerifyRuntimeReload(runtimeModule);
+			Check(xrCreateInstance(&ici, &s_instance), "Recreate loader instance after runtime unload");
+			RequireRuntimeModule(runtimeModule, true);
+			Check(xrGetSystem(s_instance, &sgi, &systemId), "Get recreated system");
+			PFN_xrGetVulkanGraphicsRequirementsKHR requirementsFunction = nullptr;
+			if (!XrFn(enable1 ? "xrGetVulkanGraphicsRequirementsKHR" : "xrGetVulkanGraphicsRequirements2KHR",
+					  requirementsFunction))
+				throw std::runtime_error("Missing recreated Vulkan graphics requirements function");
+			Check(requirementsFunction(s_instance, systemId, &gfxReq), "Get recreated Vulkan requirements");
+			VkPhysicalDevice selected = VK_NULL_HANDLE;
+			if (enable1)
+			{
+				PFN_xrGetVulkanGraphicsDeviceKHR select = nullptr;
+				if (!XrFn("xrGetVulkanGraphicsDeviceKHR", select))
+					throw std::runtime_error("Missing recreated Vulkan device selection function");
+				Check(select(s_instance, systemId, vkInstance, &selected), "Select recreated Vulkan device");
+			}
+			else
+			{
+				PFN_xrGetVulkanGraphicsDevice2KHR select = nullptr;
+				if (!XrFn("xrGetVulkanGraphicsDevice2KHR", select))
+					throw std::runtime_error("Missing recreated Vulkan device selection function");
+				XrVulkanGraphicsDeviceGetInfoKHR selection{XR_TYPE_VULKAN_GRAPHICS_DEVICE_GET_INFO_KHR};
+				selection.systemId = systemId;
+				selection.vulkanInstance = vkInstance;
+				Check(select(s_instance, &selection, &selected), "Select recreated Vulkan device");
+			}
+			if (selected != physicalDevice)
+				throw std::runtime_error("Recreated runtime changed the selected Vulkan device");
+			XrGraphicsBindingVulkanKHR recreatedBinding{XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR};
+			recreatedBinding.instance = vkInstance;
+			recreatedBinding.physicalDevice = physicalDevice;
+			recreatedBinding.device = device;
+			recreatedBinding.queueFamilyIndex = queueFamily;
+			XrSessionCreateInfo recreatedSessionInfo{XR_TYPE_SESSION_CREATE_INFO, &recreatedBinding};
+			recreatedSessionInfo.systemId = systemId;
+			XrSession recreatedSession = XR_NULL_HANDLE;
+			Check(xrCreateSession(s_instance, &recreatedSessionInfo, &recreatedSession), "Recreate Vulkan session");
+			XrSwapchainCreateInfo imageInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+			imageInfo.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
+			imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+			imageInfo.sampleCount = imageInfo.faceCount = imageInfo.arraySize = imageInfo.mipCount = 1;
+			imageInfo.width = imageInfo.height = 32;
+			XrSwapchain recreatedSwapchain = XR_NULL_HANDLE;
+			Check(xrCreateSwapchain(recreatedSession, &imageInfo, &recreatedSwapchain), "Recreate Vulkan swapchain");
+			Check(xrDestroySwapchain(recreatedSwapchain), "Destroy recreated Vulkan swapchain");
+			Check(xrDestroySession(recreatedSession), "Destroy recreated Vulkan session");
+			Check(xrDestroyInstance(s_instance), "Destroy recreated loader instance");
+			RequireRuntimeModule(runtimeModule, false);
+		}
 
 		printf("       destroying Vulkan objects\n");
 		vkDestroyFence(device, completion, nullptr);
@@ -1370,11 +1555,21 @@ static int Run(int argc, char** argv)
 
 } // namespace simxr::probe
 
-int main(int argc, char** argv)
+int wmain(int argc, wchar_t** argv)
 {
 	try
 	{
-		return simxr::probe::Run(argc, argv);
+		const auto arguments = simxr::probe::WindowsArguments(argc, argv);
+		const auto gated = std::find(arguments.begin(), arguments.end(), "--verify-gated-unload") != arguments.end();
+		if (gated || std::find(arguments.begin(), arguments.end(), "--verify-pending-unload") != arguments.end())
+		{
+			simxr::probe::WindowsPendingDelivery pending(gated);
+			const auto first = simxr::probe::Run(arguments, &pending);
+			if (first != 0)
+				return first;
+			return simxr::probe::Run(arguments, &pending, true);
+		}
+		return simxr::probe::Run(arguments);
 	}
 	catch (const std::exception& error)
 	{

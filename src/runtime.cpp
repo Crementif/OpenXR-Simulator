@@ -480,15 +480,6 @@ xrNegotiateLoaderRuntimeInterface(const XrNegotiateLoaderInfo* loaderInfo, XrNeg
 			loaderInfo->maxApiVersion < XR_MAKE_VERSION(1, 0, 0) || loaderInfo->minApiVersion > s_supportedApiVersion)
 			return XR_ERROR_INITIALIZATION_FAILED;
 
-		// Native dependencies and preserved GPU payloads are not yet safe to unload.
-		HMODULE self = nullptr;
-		if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
-								reinterpret_cast<LPCWSTR>(&xrNegotiateLoaderRuntimeInterface), &self))
-		{
-			Logf("[SimXR] Cannot preserve runtime module lifetime: %lu", GetLastError());
-			return XR_ERROR_INITIALIZATION_FAILED;
-		}
-
 		runtimeRequest->runtimeInterfaceVersion = XR_CURRENT_LOADER_RUNTIME_VERSION;
 		runtimeRequest->getInstanceProcAddr = simxr::AbiBoundary<xrGetInstanceProcAddr_runtime>::Invoke;
 		runtimeRequest->runtimeApiVersion = std::min(loaderInfo->maxApiVersion, s_supportedApiVersion);

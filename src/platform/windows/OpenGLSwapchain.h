@@ -12,7 +12,6 @@
 #include <cstdint>
 #include <memory>
 #include <span>
-#include <vector>
 
 namespace simxr::windows
 {
@@ -39,9 +38,7 @@ class OpenGLSwapchain final
 	OpenGLSwapchain(HDC device, HGLRC context, GLenum format);
 	XrResult Allocate(const XrSwapchainCreateInfo& description);
 
-	const HDC m_device;
-	const HGLRC m_context;
-	const GLenum m_format;
-	std::vector<GLuint> m_images;
+	struct Resources;
+	std::unique_ptr<Resources> m_resources;
 };
 } // namespace simxr::windows
