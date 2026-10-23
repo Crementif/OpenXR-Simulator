@@ -229,7 +229,8 @@ BodyControls ReadBody(lua_State* state, int table)
 	lua_getfield(state, table, "root_pose");
 	if (!lua_isnil(state, -1))
 	{
-		if (!lua_istable(state, -1)) throw std::invalid_argument("Invalid body root pose");
+		if (!lua_istable(state, -1))
+			throw std::invalid_argument("Invalid body root pose");
 		body.rootPose = Pose(state, lua_absindex(state, -1)).pose;
 	}
 	lua_pop(state, 1);
@@ -292,7 +293,12 @@ TrackerDevice ReadTracker(lua_State* state, int table)
 						  BoolField(state, table, "tracked", true)};
 	lua_getfield(state, table, "anchor");
 	if (!lua_isnil(state, -1))
-		tracker.anchor = static_cast<BodyJoint>(Integer(state, -1));
+	{
+		const auto anchor = Integer(state, -1);
+		if (anchor >= BodyJointCount)
+			throw std::invalid_argument("Tracker anchor exceeds the body joint range");
+		tracker.anchor = static_cast<BodyJoint>(anchor);
+	}
 	lua_pop(state, 1);
 	lua_getfield(state, table, "position");
 	const auto hasPosition = !lua_isnil(state, -1);
@@ -492,6 +498,8 @@ void PushInspection(lua_State* state, std::span<const std::byte> bytes, unsigned
 		}
 		break;
 	}
+	default:
+		throw std::runtime_error("Unknown inspection value type");
 	}
 }
 } // namespace

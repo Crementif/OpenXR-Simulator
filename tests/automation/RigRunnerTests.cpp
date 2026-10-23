@@ -3,6 +3,7 @@
 #include "automation/Recording.h"
 #include "automation/RigRunner.h"
 #include "automation/RigProgress.h"
+#include "automation/RigReport.h"
 #include "control/ControlSchema.h"
 #include "control/ControlService.h"
 #include "control/InspectionDocument.h"
@@ -14,6 +15,7 @@
 #include <cstring>
 #include <iostream>
 #include <limits>
+#include <locale>
 #include <thread>
 
 using namespace simxr;
@@ -189,6 +191,74 @@ void CheckCleanupFailures()
 			runner.Snapshot().error.find("injected cleanup failure") != std::string::npos,
 			"Failed resource cleanup was hidden or prevented remaining cleanup");
 	}
+}
+
+void CheckScriptValueBoundaries()
+{
+	Fixture fixture;
+	unsigned submissions = 0;
+	automation::RigRunner runner([&](auto opcode, auto fields)
+	{
+		if (opcode == wire::OpCode::SubmitSimulation)
+			++submissions;
+		if (opcode == wire::OpCode::SimulationStatus)
+		{
+			wire::Message response;
+			const auto document = wire::EncodeFields(std::vector{wire::Field::Text(1, ""), wire::Field::U32(2, 999),
+				wire::Field::Bytes(3, {})});
+			response.fields = {wire::Field::U32(wire::tag::Error, 0), wire::Field::Bytes(wire::tag::Document, document)};
+			return response;
+		}
+		return fixture.Exchange(opcode, std::move(fields));
+	});
+	runner.Start(fixture.Options(R"(
+local ok, detail = pcall(simxr.state)
+assert(not ok and string.find(detail, 'Unknown inspection value type'))
+for _, anchor in {'4294967296', '18446744073709551615'} do
+    assert(not pcall(function()
+        simxr.schedule({frame='1', commands={{kind='tracker', anchor=anchor}}})
+    end))
+end
+)"));
+	runner.Join();
+	Require(runner.Snapshot().phase == automation::RigPhase::Complete && submissions == 0,
+		"Malformed inspection or narrowed tracker anchor escaped script validation");
+}
+
+void CheckReportText()
+{
+	const std::string replacement = "\xef\xbf\xbd";
+	for (const std::string invalid : {"\xff", "\xc0\x80", "\xed\xa0\x80", "\xf4\x90\x80\x80", "\xe2\x82"})
+	{
+		automation::RigSnapshot snapshot;
+		snapshot.phase = automation::RigPhase::Failed;
+		snapshot.error = invalid;
+		std::string expected;
+		for (std::size_t index = 0; index < invalid.size(); ++index)
+			expected += replacement;
+		Require(automation::SerializeRigJson(snapshot).find("\"error\":\"" + expected + "\"") != std::string::npos &&
+			automation::SerializeRigJunit(snapshot).find("message=\"" + expected + "\"") != std::string::npos,
+			"Invalid script UTF-8 corrupted a report");
+	}
+	automation::RigSnapshot snapshot;
+	snapshot.phase = automation::RigPhase::Failed;
+	snapshot.error = "\xc3\xa9\xf0\x9f\x98\x80";
+	Require(automation::SerializeRigJson(snapshot).find(snapshot.error) != std::string::npos &&
+		automation::SerializeRigJunit(snapshot).find(snapshot.error) != std::string::npos,
+		"Report damaged valid Unicode");
+	snapshot.error = "\xef\xbf\xbf\r\n\t";
+	Require(automation::SerializeRigJunit(snapshot).find(replacement + "&#13;&#10;&#9;") != std::string::npos,
+		"JUnit contains a forbidden XML character or loses attribute whitespace");
+	struct GroupedNumbers : std::numpunct<char>
+	{
+		std::string do_grouping() const override { return "\3"; }
+	};
+	const auto previous = std::locale();
+	std::locale::global(std::locale{previous, new GroupedNumbers});
+	snapshot.transactions = 1234;
+	const auto json = automation::SerializeRigJson(snapshot);
+	std::locale::global(previous);
+	Require(json.find("\"transactions\":1234") != std::string::npos, "Locale grouping corrupted JSON numbers");
 }
 
 void CheckInputRecording()
@@ -583,6 +653,8 @@ simxr.checkpoint("fresh VM, persistent IDs", applied.applied_frame == "3")
 		CheckBindingPauseAndStep();
 		CheckResumeClearsSteps();
 		CheckCleanupFailures();
+		CheckScriptValueBoundaries();
+		CheckReportText();
 		CheckTemporaryResourceCleanup();
 		CheckImageWindowCleanup();
 		CheckLeaseRenewal();

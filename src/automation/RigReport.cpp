@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <sstream>
+#include <locale>
 #include <string_view>
 
 namespace simxr::automation
@@ -11,8 +12,35 @@ namespace
 std::string Escape(std::string_view text, bool xml = false)
 {
 	std::string result;
-	for (const unsigned char c : text)
+	for (std::size_t offset = 0; offset < text.size(); ++offset)
 	{
+		const auto c = static_cast<unsigned char>(text[offset]);
+		if (c >= 128)
+		{
+			const std::size_t length = c >= 0xc2 && c <= 0xdf ? 2 :
+				c >= 0xe0 && c <= 0xef ? 3 : c >= 0xf0 && c <= 0xf4 ? 4 : 0;
+			unsigned codepoint = length ? c & (0x7f >> length) : 0;
+			bool valid = length && length <= text.size() - offset;
+			for (std::size_t index = 1; valid && index < length; ++index)
+			{
+				const auto next = static_cast<unsigned char>(text[offset + index]);
+				valid = (next & 0xc0) == 0x80;
+				codepoint = (codepoint << 6) | (next & 0x3f);
+			}
+			valid = valid && codepoint >= (length == 2 ? 0x80u : length == 3 ? 0x800u : 0x10000u) &&
+				codepoint <= 0x10ffff && !(codepoint >= 0xd800 && codepoint <= 0xdfff);
+			if (!valid)
+				result += "\xef\xbf\xbd";
+			else
+			{
+				if (xml && (codepoint == 0xfffe || codepoint == 0xffff))
+					result += "\xef\xbf\xbd";
+				else
+					result.append(text.substr(offset, length));
+				offset += length - 1;
+			}
+			continue;
+		}
 		if (xml)
 		{
 			switch (c)
@@ -29,9 +57,20 @@ std::string Escape(std::string_view text, bool xml = false)
 			case '"':
 				result += "&quot;";
 				break;
+			case '\n':
+				result += "&#10;";
+				break;
+			case '\r':
+				result += "&#13;";
+				break;
+			case '\t':
+				result += "&#9;";
+				break;
 			default:
-				if (c >= 32 || c == '\n' || c == '\t')
+				if (c >= 32)
 					result += static_cast<char>(c);
+				else
+					result += "\xef\xbf\xbd";
 			}
 		}
 		else
@@ -83,6 +122,7 @@ const char* PhaseName(RigPhase phase)
 std::string SerializeRigJson(const RigSnapshot& result)
 {
 	std::ostringstream out;
+	out.imbue(std::locale::classic());
 	out << "{\"schema\":1,\"phase\":\"" << PhaseName(result.phase) << "\",\"seed\":\"" << result.seed
 		<< "\",\"transactions\":" << result.transactions << ",\"captures\":" << result.captures << ",\"error\":\""
 		<< Escape(result.error) << "\",\"checkpoints\":[";
@@ -127,6 +167,7 @@ std::string SerializeRigJunit(const RigSnapshot& result)
 										});
 	const bool executionFailure = result.phase != RigPhase::Complete;
 	std::ostringstream out;
+	out.imbue(std::locale::classic());
 	out << "<?xml version=\"1.0\" encoding=\"UTF-8\"?><testsuite name=\"simxr-rig\" tests=\""
 		<< result.checkpoints.size() + 1 << "\" failures=\"" << failures + (executionFailure ? 1 : 0) << "\">";
 	out << "<properties><property name=\"compatibility_deviations\" value=\"";
