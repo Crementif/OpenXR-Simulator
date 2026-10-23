@@ -91,6 +91,7 @@ struct WorkspacePanels::Impl
 		// Set for a Library script; otherwise a take replay.
 		std::optional<ScriptOptions> script;
 		std::chrono::steady_clock::time_point deadline;
+		RuntimeFrameRun target;
 	};
 	std::optional<PendingReplay> replay;
 #endif
@@ -702,6 +703,11 @@ struct WorkspacePanels::Impl
 				2 * scale);
 		ImGui::End();
 	}
+	RuntimeFrameRun ReplayTarget(const RuntimePanels& runtime) const
+	{
+		const auto state = runtime.Snapshot();
+		return {state.epoch, state.session, state.generation};
+	}
 	void DrawInspector(RuntimePanels& runtime)
 	{
 		if (std::holds_alternative<DeviceSel>(shell.selection) || std::holds_alternative<SessionItemSel>(shell.selection))
@@ -720,7 +726,8 @@ struct WorkspacePanels::Impl
 			if (auto run = library.Draw(shell.selection, runtime, rigs))
 			{
 				runtime.PrepareReplay();
-				replay = PendingReplay{{run->path}, run->options, std::chrono::steady_clock::now() + std::chrono::seconds(3)};
+				replay = PendingReplay{{run->path}, run->options,
+					std::chrono::steady_clock::now() + std::chrono::seconds(3), ReplayTarget(runtime)};
 			}
 #else
 			ImGui::TextDisabled("Takes and scripts need a Luau-enabled build");
@@ -735,7 +742,13 @@ struct WorkspacePanels::Impl
 		if (auto recording = runtime.TakeRecordingReplay())
 		{
 			runtime.PrepareReplay();
-			replay = PendingReplay{std::move(*recording), {}, std::chrono::steady_clock::now() + std::chrono::seconds(3)};
+			replay = PendingReplay{std::move(*recording), {},
+				std::chrono::steady_clock::now() + std::chrono::seconds(3), ReplayTarget(runtime)};
+		}
+		if (replay && replay->target != ReplayTarget(runtime))
+		{
+			replay.reset();
+			notices.Push({"Replay target changed", "Select the intended session and replay again"});
 		}
 		if (replay)
 		{

@@ -51,6 +51,8 @@ void TimelinePanel::Push(Event event)
 void TimelinePanel::ObserveRig(const RuntimeView& runtime, std::uint64_t run,
 							   const automation::RigSnapshot& state, bool matchesTarget)
 {
+	// Retire the previous session before consuming a script completion for this frame.
+	Observe(runtime);
 	if (!run)
 		return;
 	const auto append = [&](std::string text, bool failed = false)
@@ -61,16 +63,22 @@ void TimelinePanel::ObserveRig(const RuntimeView& runtime, std::uint64_t run,
 	};
 	if (run != m_rigRun)
 	{
+		if (m_scriptBegin)
+		{
+			m_clips.push_back({*std::exchange(m_scriptBegin, {}), runtime.historySeconds, true});
+			Bounded(m_clips);
+		}
 		m_rigRun = run;
 		m_output = m_checkpoints = 0;
 		append("Started");
 		m_phase = automation::RigPhase::Idle;
 	}
+	if (matchesTarget && !m_scriptBegin &&
+		(state.phase == automation::RigPhase::Running || state.phase == automation::RigPhase::Paused))
+		m_scriptBegin = runtime.historySeconds;
 	if (state.phase != m_phase)
 	{
 		m_phase = state.phase;
-		if (matchesTarget && state.phase == automation::RigPhase::Running && !m_scriptBegin)
-			m_scriptBegin = runtime.historySeconds;
 		if (m_scriptBegin &&
 			(state.phase == automation::RigPhase::Complete || state.phase == automation::RigPhase::Failed ||
 			 state.phase == automation::RigPhase::Cancelled))

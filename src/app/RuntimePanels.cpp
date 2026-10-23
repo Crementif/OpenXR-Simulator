@@ -143,8 +143,10 @@ class RuntimePanels::Impl
 				shell.openAppPicker = true;
 			return;
 		}
+		ImGui::BeginDisabled(!m_view.time.following || !m_session.SupportsEdits());
 		if (auto edit = m_devices.DrawHeader(shell.selection))
 			SubmitEdit(*edit);
+		ImGui::EndDisabled();
 		m_spatial.DrawRigView(shell.selection);
 		m_devices.SetRigPiloting(m_pilot.Active() || m_spatial.Active());
 		if (!m_view.time.following)
