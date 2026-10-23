@@ -1,12 +1,10 @@
 #include "graphics/FramePool.h"
+#include "Pch.h"
 
 #include <mutex>
 #include <stdexcept>
-#include <utility>
 
 namespace simxr
-{
-namespace detail
 {
 struct FramePoolState
 {
@@ -21,9 +19,8 @@ struct FramePoolState
 	std::size_t inUse = 0;
 	bool closed = false;
 };
-} // namespace detail
 
-FrameReservation::FrameReservation(std::shared_ptr<detail::FramePoolState> state) : m_state(std::move(state)) {}
+FrameReservation::FrameReservation(std::shared_ptr<FramePoolState> state) : m_state(std::move(state)) {}
 
 FrameReservation::~FrameReservation()
 {
@@ -42,7 +39,7 @@ bool FrameReservation::Consumed() const
 }
 
 FramePool::FramePool(std::size_t capacity, std::function<void()> reclaim)
-	: m_state(std::make_shared<detail::FramePoolState>(capacity, std::move(reclaim)))
+	: m_state(std::make_shared<FramePoolState>(capacity, std::move(reclaim)))
 {
 	if (!capacity)
 		throw std::invalid_argument("Frame pool requires capacity");
@@ -74,7 +71,8 @@ std::shared_ptr<FrameReservation> FramePool::Reserve(bool collect) const
 	if (collect)
 		Collect();
 	std::lock_guard lock(m_state->mutex);
-	if (m_state->closed || m_state->inUse >= (m_state->capacityProvider ? m_state->capacityProvider() : m_state->capacity))
+	if (m_state->closed ||
+		m_state->inUse >= (m_state->capacityProvider ? m_state->capacityProvider() : m_state->capacity))
 		return {};
 	auto reservation = std::shared_ptr<FrameReservation>(new FrameReservation(m_state));
 	reservation->m_acquired = true;

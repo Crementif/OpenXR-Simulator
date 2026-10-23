@@ -6,10 +6,7 @@
 
 namespace simxr
 {
-namespace detail
-{
 struct FramePoolState;
-}
 class FramePool;
 
 class FrameReservation final
@@ -22,8 +19,8 @@ class FrameReservation final
 
   private:
 	friend class FramePool;
-	explicit FrameReservation(std::shared_ptr<detail::FramePoolState> state);
-	const std::shared_ptr<detail::FramePoolState> m_state;
+	explicit FrameReservation(std::shared_ptr<FramePoolState> state);
+	const std::shared_ptr<FramePoolState> m_state;
 	bool m_acquired = false;
 	bool m_consumed = false;
 };
@@ -50,6 +47,6 @@ class FramePool
 	void SetCapacity(std::size_t capacity) const;
 
   private:
-	std::shared_ptr<detail::FramePoolState> m_state;
+	std::shared_ptr<FramePoolState> m_state;
 };
 } // namespace simxr

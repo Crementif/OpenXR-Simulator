@@ -1,16 +1,13 @@
 #include "graphics/SnapshotBudget.h"
+#include "Pch.h"
 
-#include <algorithm>
 #include <atomic>
 #include <stdexcept>
 
 namespace simxr
 {
-namespace
-{
-std::atomic<std::uint32_t> s_budgetMiB{SnapshotBudget::DefaultMiB};
-std::atomic<std::uint64_t> s_imageBytes{16 * 1024 * 1024};
-} // namespace
+static std::atomic<std::uint32_t> s_budgetMiB{SnapshotBudget::DefaultMiB};
+static std::atomic<std::uint64_t> s_imageBytes{16 * 1024 * 1024};
 void SnapshotBudget::Configure(std::uint32_t mib)
 {
 	if (mib < MinMiB || mib > MaxMiB)
