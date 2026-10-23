@@ -1,16 +1,16 @@
 #include "graphics/FrameSubmission.h"
+#include "Pch.h"
+
 #include "runtime/Session.h"
 
-#include <algorithm>
-
-#include <utility>
+#include <functional>
 
 namespace simxr
 {
 bool FrameCaptureRequest::IgnoreFailure(XrResult result) const noexcept
 {
 	return (history && (result == XR_ERROR_LIMIT_REACHED || result == XR_ERROR_OUT_OF_MEMORY)) ||
-		(image && (result == XR_ERROR_FEATURE_UNSUPPORTED || result == XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED));
+		   (image && (result == XR_ERROR_FEATURE_UNSUPPORTED || result == XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED));
 }
 
 FrameSubmission::FrameSubmission(Session& session, FrameSubmissionBackend& backend)
@@ -20,13 +20,15 @@ FrameSubmission::FrameSubmission(Session& session, FrameSubmissionBackend& backe
 
 FrameSubmission::~FrameSubmission()
 {
-	if (m_reservation && !m_backend.Submitted() &&
-		m_session.Captures().ProducerReservation(m_key, {}) == m_reservation)
+	if (m_reservation && !m_backend.Submitted() && m_session.Captures().ProducerReservation(m_key, {}) == m_reservation)
 		m_session.Captures().AbandonProducer(m_key, {});
 	for (const auto& request : m_captures)
 	{
 		const auto prepared = std::any_of(m_prepared.captures.begin(), m_prepared.captures.end(),
-			[&](const CaptureOutput& output) { return output.target == request.target && output.output; });
+										  [&](const CaptureOutput& output)
+										  {
+											  return output.target == request.target && output.output;
+										  });
 		if (!request.history && request.reservation && (!m_backend.Submitted() || !prepared) &&
 			m_session.Captures().ProducerReservation(m_key, request.target) == request.reservation)
 			m_session.Captures().AbandonProducer(m_key, request.target);
@@ -50,8 +52,11 @@ XrResult FrameSubmission::PrepareCaptures()
 		{
 			request.composition = m_composition.plan;
 			const bool projection = target.kind == CaptureKind::ProjectionLayers;
-			std::erase_if(request.composition->draws, [projection](const CompositionDraw& draw)
-				{ return (draw.constants.control[0] == 0) != projection; });
+			std::erase_if(request.composition->draws,
+						  [projection](const CompositionDraw& draw)
+						  {
+							  return (draw.constants.control[0] == 0) != projection;
+						  });
 			if (request.composition->draws.empty())
 				continue;
 			if (target.kind == CaptureKind::QuadLayers)
@@ -100,13 +105,20 @@ void FrameSubmission::PrepareQuadHistory()
 		request.target = target;
 		request.history = true;
 		request.composition = m_composition.plan;
-		std::erase_if(request.composition->draws, [](const CompositionDraw& draw) { return draw.constants.control[0] != 1; });
+		std::erase_if(request.composition->draws,
+					  [](const CompositionDraw& draw)
+					  {
+						  return draw.constants.control[0] != 1;
+					  });
 		request.quadBounds = CompositionQuadBounds(*request.composition);
 		m_captures.push_back(std::move(request));
 		auto& history = m_captures.back();
 		const auto& plan = *history.composition;
 		if (plan.draws.empty() || std::none_of(history.quadBounds->begin(), history.quadBounds->end(),
-			[](const XrRect2Di& rectangle) { return rectangle.extent.width > 0 && rectangle.extent.height > 0; }))
+											   [](const XrRect2Di& rectangle)
+											   {
+												   return rectangle.extent.width > 0 && rectangle.extent.height > 0;
+											   }))
 			return;
 		const auto bytes = static_cast<std::uint64_t>(plan.width) * plan.height * 8;
 		if (!bytes || bytes > FrameImageHistory::MaxImageBytes)
@@ -139,7 +151,7 @@ XrResult FrameSubmission::Execute(const XrFrameEndInfo& info, const SwapchainDes
 		if (XR_FAILED(result))
 		{
 			m_session.History().Trace(FrameTraceKind::Validation, m_key, {Duration{info.displayTime}}, result,
-				FrameDiagnosticCategory::Validation, 0, "submitted_layers");
+									  FrameDiagnosticCategory::Validation, 0, "submitted_layers");
 			return result;
 		}
 		bool live = true;
@@ -171,18 +183,20 @@ XrResult FrameSubmission::Execute(const XrFrameEndInfo& info, const SwapchainDes
 				const auto result = m_backend.Submit();
 				if (XR_SUCCEEDED(result))
 					m_session.History().Trace(FrameTraceKind::NativeSubmitted, m_key, m_composition.layers->displayTime,
-						XR_SUCCESS, FrameDiagnosticCategory::Timing, 0, "application_queue");
+											  XR_SUCCESS, FrameDiagnosticCategory::Timing, 0, "application_queue");
 				else
 					m_session.Captures().Fail(m_key, result, m_prepared.producer);
 				return result;
 			};
 		FramePrediction prediction;
-		return m_session.EndFrame(prediction, &info, m_composition.layers, m_prepared.output, submit, m_prepared.captures,
-			live ? FrameSubmissionPolicy::Live : FrameSubmissionPolicy::Exact, m_prepared.reprojection, m_prepared.timing);
+		return m_session.EndFrame(prediction, &info, m_composition.layers, m_prepared.output, submit,
+								  m_prepared.captures,
+								  live ? FrameSubmissionPolicy::Live : FrameSubmissionPolicy::Exact,
+								  m_prepared.reprojection, m_prepared.timing);
 	}
 	catch (const std::bad_alloc&)
 	{
 		return XR_ERROR_OUT_OF_MEMORY;
 	}
 }
-}
+} // namespace simxr

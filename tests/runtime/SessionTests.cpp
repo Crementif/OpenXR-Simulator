@@ -1,4 +1,5 @@
 #include "../TestSupport.h"
+#include "graphics/SnapshotBudget.h"
 #include "runtime/Instance.h"
 #include "runtime/Session.h"
 
@@ -1030,6 +1031,183 @@ void TestLiveSubmissionPolicy()
 	Require(debug.InUse() == 0, "Released capture retained admission capacity after real completion");
 }
 
+void TestQuadHistoryCaptureCapacity()
+{
+	using namespace simxr;
+	const CaptureTarget rawTarget{CaptureKind::LayerView};
+	const CaptureTarget quadTarget{CaptureKind::QuadLayers};
+	const std::array bounds{XrRect2Di{{2, 3}, {64, 32}}, XrRect2Di{{4, 5}, {64, 32}}};
+	for (const auto target : {rawTarget, quadTarget})
+	{
+		Instance instance(reinterpret_cast<XrInstance>(197), {}, XR_MAKE_VERSION(1, 0, 27));
+		Session session(reinterpret_cast<XrSession>(198), instance);
+		FramePool pool(2);
+		Require(session.ConfigureCapturePool(
+					pool, true,
+					[](const auto& frame, const FramePool& budget, std::shared_ptr<FrameReservation> reserved)
+					{
+						const auto output = std::dynamic_pointer_cast<const CaptureOutput>(frame);
+						Require(output && output->slot == reserved && budget.Consume(reserved),
+								"Promote requested capture with its reserved producer");
+						return SnapshotAdmission::Accepted;
+					},
+					false, true) == XR_SUCCESS &&
+					session.EnableImageHistory() == XR_SUCCESS,
+				"Configure quad history alongside manual capture");
+		session.Captures().SetCapacity(1);
+		FrameSchedulerConfig timing;
+		timing.mode = ExecutionMode::Deterministic;
+		const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
+		Require(session.Ready(timing.epoch) == XR_SUCCESS && session.Begin(begin, timing) == XR_SUCCESS,
+				"Begin quad history capacity session");
+		session.Scheduler().Pause();
+		session.Display().Pause();
+		const auto capture = session.ReserveCapture(target);
+		FramePrediction prediction;
+		Require(capture.result == SnapshotAdmission::Accepted && session.Scheduler().GrantPermits() == XR_SUCCESS &&
+					session.WaitFrame(prediction) == XR_SUCCESS && session.BeginFrame() == XR_SUCCESS,
+				"Issue requested capture at snapshot capacity");
+		const FrameKey key{session.Snapshot().generation, prediction.id};
+		auto requested = std::make_shared<CaptureOutput>(session.Captures().ProducerReservation(key, target));
+		auto composed = std::make_shared<CaptureOutput>(session.Captures().ProducerReservation(key));
+		const auto& historyBudget = session.ImageHistory().Budget(ImageHistoryView::Quads);
+		auto history = std::make_shared<CaptureOutput>(historyBudget.Reserve());
+		Require(historyBudget.Consume(history->slot), "Reserve independent quad history budget");
+		const auto extraTarget = target == rawTarget ? quadTarget : rawTarget;
+		std::array outputs{simxr::CaptureOutput{target, requested, bounds},
+						   simxr::CaptureOutput{extraTarget, history, bounds}};
+		auto metadata = std::make_shared<const FrameLayers>(prediction.displayTime, XR_ENVIRONMENT_BLEND_MODE_OPAQUE,
+															std::vector<LayerDescription>{QuadLayerDescription{}});
+		const XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO,		   nullptr, prediction.displayTime.value.count(),
+								 XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1,		nullptr};
+		unsigned submits = 0;
+		auto submit = [&]
+		{
+			++submits;
+			return XR_SUCCESS;
+		};
+		const std::array duplicates{simxr::CaptureOutput{quadTarget, {}, bounds},
+									simxr::CaptureOutput{quadTarget, {}, bounds}};
+		const std::array oversized{simxr::CaptureOutput{rawTarget, {}},
+								   simxr::CaptureOutput{{CaptureKind::LayerView, 0, 1}, {}},
+								   simxr::CaptureOutput{quadTarget, {}, bounds}};
+		Require(session.EndFrame(prediction, &end, metadata, composed, submit, duplicates) ==
+						XR_ERROR_VALIDATION_FAILURE &&
+					session.EndFrame(prediction, &end, metadata, composed, submit, oversized) ==
+						XR_ERROR_VALIDATION_FAILURE &&
+					submits == 0 && session.Scheduler().Snapshot().begun && !requested->slot->Consumed(),
+				"Optional history admitted duplicate or excessive capture outputs");
+		if (target == quadTarget)
+		{
+			Require(session.EndFrame(prediction, &end, metadata, composed, submit, outputs) ==
+							XR_ERROR_VALIDATION_FAILURE &&
+						submits == 0 && session.Scheduler().Snapshot().begun &&
+						session.Captures().Read(capture.id)->phase == SnapshotPhase::Begun &&
+						!requested->slot->Consumed(),
+					"Requested quad capture was excluded from ordinary capacity");
+		}
+		const auto accepted = std::span<const simxr::CaptureOutput>{outputs}.first(target == quadTarget ? 1 : 2);
+		Require(session.EndFrame(prediction, &end, metadata, composed, submit, accepted) == XR_SUCCESS &&
+					submits == 1 && !session.Scheduler().Snapshot().begun,
+				"Independent quad history rejected requested capture at snapshot capacity");
+		session.Captures().Poll();
+		Require(session.Captures().Read(capture.id)->phase == SnapshotPhase::GpuPending &&
+					session.Captures().Read(capture.id)->output == requested,
+				"Optional history dropped requested output or fabricated completion");
+		const auto retained = session.ImageHistory().Find(key, ImageHistoryView::Quads);
+		Require(retained.metadata && retained.quadVisible && retained.quadBounds[0].extent.width == 64 &&
+					retained.output == (target == rawTarget ? history : nullptr),
+				"Quad history lost its output or retained a manually requested quad as automatic history");
+		requested->status.store(CompletionStatus::Complete);
+		composed->status.store(CompletionStatus::Complete);
+		history->status.store(CompletionStatus::Complete);
+		session.Captures().Poll();
+		Require(session.Captures().Read(capture.id)->phase == SnapshotPhase::Ready &&
+					session.Captures().Read(capture.id)->output == requested,
+				"Requested capture did not become ready after real completion");
+		Require(session.Captures().Release(capture.id), "Release manual capture beside quad history");
+		session.Close();
+	}
+}
+
+void TestQuadHistoryWithoutSnapshotCapacity()
+{
+	using namespace simxr;
+	const auto previousBudget = SnapshotBudget::MiB();
+	SnapshotBudget::Configure(SnapshotBudget::MinMiB);
+	// Run last: the largest observed image allocation remains process-wide.
+	SnapshotBudget::ObserveImageBytes(64 * 1024 * 1024);
+	Require(SnapshotBudget::Capacity() == 0, "Large images exhaust exact snapshot admission");
+	for (const bool historyEnabled : {false, true})
+	{
+		Instance instance(reinterpret_cast<XrInstance>(199), {}, XR_MAKE_VERSION(1, 0, 27));
+		Session session(reinterpret_cast<XrSession>(200), instance);
+		FramePool pool(2);
+		Require(session.ConfigureCapturePool(
+					pool, true,
+					[](const auto&, const FramePool&, std::shared_ptr<FrameReservation>)
+					{
+						return SnapshotAdmission::Capacity;
+					},
+					false, true) == XR_SUCCESS &&
+					(!historyEnabled || session.EnableImageHistory() == XR_SUCCESS),
+				"Configure optional history with no exact snapshot capacity");
+		FrameSchedulerConfig timing;
+		timing.mode = ExecutionMode::Deterministic;
+		const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
+		Require(session.Ready(timing.epoch) == XR_SUCCESS && session.Begin(begin, timing) == XR_SUCCESS,
+				"Begin zero snapshot capacity session");
+		session.Scheduler().Pause();
+		session.Display().Pause();
+		FramePrediction prediction;
+		Require(session.Scheduler().GrantPermits() == XR_SUCCESS && session.WaitFrame(prediction) == XR_SUCCESS &&
+					session.BeginFrame() == XR_SUCCESS,
+				"Issue live frame without exact snapshot capacity");
+		const FrameKey key{session.Snapshot().generation, prediction.id};
+		auto composed = std::make_shared<CaptureOutput>(nullptr);
+		composed->status.store(CompletionStatus::Complete);
+		auto metadata = std::make_shared<const FrameLayers>(prediction.displayTime, XR_ENVIRONMENT_BLEND_MODE_OPAQUE,
+															std::vector<LayerDescription>{QuadLayerDescription{}});
+		const XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO,		   nullptr, prediction.displayTime.value.count(),
+								 XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1,		nullptr};
+		const std::array bounds{XrRect2Di{{1, 2}, {64, 32}}, XrRect2Di{{3, 4}, {64, 32}}};
+		const std::array quads{simxr::CaptureOutput{{CaptureKind::QuadLayers}, {}, bounds}};
+		const std::array raw{simxr::CaptureOutput{{CaptureKind::LayerView}, {}}};
+		unsigned submits = 0;
+		auto submit = [&]
+		{
+			++submits;
+			return XR_SUCCESS;
+		};
+		Require(session.EndFrame(prediction, &end, metadata, composed, submit, raw, FrameSubmissionPolicy::Live) ==
+						XR_ERROR_VALIDATION_FAILURE &&
+					submits == 0 && session.Scheduler().Snapshot().begun,
+				"Zero snapshot capacity admitted an ordinary capture output");
+		const auto result =
+			session.EndFrame(prediction, &end, metadata, composed, submit, quads, FrameSubmissionPolicy::Live);
+		if (historyEnabled)
+		{
+			Require(result == XR_SUCCESS && submits == 1 && !session.Scheduler().Snapshot().begun,
+					"Optional quad history marker rejected live submission at zero snapshot capacity");
+			const auto retained = session.ImageHistory().Find(key, ImageHistoryView::Quads);
+			Require(retained.metadata && retained.metadata->stage == FrameStage::Submitted && !retained.output &&
+						retained.quadVisible && retained.quadBounds[0].offset.x == 1 &&
+						retained.quadBounds[0].extent.width == 64,
+					"Missing optional image lost its exact live-frame history or bounds");
+		}
+		else
+		{
+			Require(result == XR_ERROR_VALIDATION_FAILURE && submits == 0 && session.Scheduler().Snapshot().begun,
+					"Disabled image history widened capture admission");
+			Require(session.EndFrame(prediction, &end, metadata, composed, submit, {}, FrameSubmissionPolicy::Live) ==
+						XR_SUCCESS,
+					"Rejected history marker consumed the live frame");
+		}
+		session.Close();
+	}
+	SnapshotBudget::Configure(previousBudget);
+}
+
 void TestCaptureBudgetPromotion()
 {
 	using namespace simxr;
@@ -1747,7 +1925,9 @@ int main()
 	TestLayerViewCapture();
 	TestLayerCaptureRejectionReentry();
 	TestLiveSubmissionPolicy();
+	TestQuadHistoryCaptureCapacity();
 	TestCaptureBudgetPromotion();
 	TestLateCaptureBudgetPromotion();
+	TestQuadHistoryWithoutSnapshotCapacity();
 	std::cout << "Session tests passed\n";
 }

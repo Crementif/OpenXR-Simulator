@@ -6,8 +6,16 @@
 #include "graphics/SessionComposition.h"
 #include "presentation/SnapshotStore.h"
 
+#include <array>
+#include <memory>
+#include <optional>
+#include <span>
+#include <vector>
+
 namespace simxr
 {
+class Session;
+
 struct FrameCaptureRequest
 {
 	CaptureTarget target;
@@ -41,8 +49,8 @@ class FrameSubmissionBackend
 	virtual FramePool LiveReservations() const = 0;
 	virtual FramePool HistoryReservations() const = 0;
 	virtual XrResult Prepare(FrameKey key, const SessionComposition& composition,
-		std::shared_ptr<FrameReservation> reservation, std::span<const FrameCaptureRequest> captures,
-		PreparedFrameSubmission& output) = 0;
+							 std::shared_ptr<FrameReservation> reservation,
+							 std::span<const FrameCaptureRequest> captures, PreparedFrameSubmission& output) = 0;
 	virtual XrResult Submit() = 0;
 	virtual bool Submitted() const noexcept = 0;
 };
@@ -69,4 +77,4 @@ class FrameSubmission final
 	PreparedFrameSubmission m_prepared;
 	bool m_executed = false;
 };
-}
+} // namespace simxr

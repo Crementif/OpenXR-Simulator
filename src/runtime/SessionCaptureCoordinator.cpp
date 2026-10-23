@@ -463,20 +463,30 @@ SessionCaptureCoordinator::Submission::Submission(SessionCaptureCoordinator& own
 												  std::span<const CaptureOutput> captures)
 	: m_owner(owner), m_output(std::move(output))
 {
-	if (captures.size() > m_owner.m_store.Capacity())
+	const auto capacity = m_owner.m_store.Capacity();
+	if (captures.size() > capacity)
 	{
-		m_validation = XR_ERROR_VALIDATION_FAILURE;
-		return;
+		// Automatic quad history has its own budget. Confirm that it was not requested in Prepare.
+		if (captures.size() - capacity != 1 || !m_owner.SupportsImageHistory() ||
+			std::none_of(captures.begin(), captures.end(),
+						 [](const CaptureOutput& capture)
+						 {
+							 return capture.target == CaptureTarget{CaptureKind::QuadLayers};
+						 }))
+		{
+			m_validation = XR_ERROR_VALIDATION_FAILURE;
+			return;
+		}
 	}
 	m_outputs.assign(captures.begin(), captures.end());
 	for (std::size_t index = 0; index < m_outputs.size(); ++index)
 	{
 		const auto& capture = m_outputs[index];
 		if (!capture.target.IsAdditionalImage() || std::any_of(m_outputs.begin(), m_outputs.begin() + index,
-																		 [&](const auto& prior)
-																		 {
-																			 return prior.target == capture.target;
-																		 }))
+															   [&](const auto& prior)
+															   {
+																   return prior.target == capture.target;
+															   }))
 		{
 			m_validation = XR_ERROR_VALIDATION_FAILURE;
 			return;
@@ -511,6 +521,18 @@ XrResult SessionCaptureCoordinator::Submission::Prepare(FrameKey frame)
 			return XR_ERROR_FEATURE_UNSUPPORTED;
 	m_frame = frame;
 	m_requested = m_owner.m_store.RequestedTargets(frame);
+	const CaptureTarget quadHistory{CaptureKind::QuadLayers};
+	auto captureCount = m_outputs.size() - 1;
+	if (m_owner.SupportsImageHistory() &&
+		std::find(m_requested.begin(), m_requested.end(), quadHistory) == m_requested.end() &&
+		std::any_of(m_outputs.begin(), m_outputs.end(),
+					[quadHistory](const CaptureOutput& capture)
+					{
+						return capture.target == quadHistory;
+					}))
+		--captureCount;
+	if (captureCount > m_owner.m_store.Capacity())
+		return XR_ERROR_VALIDATION_FAILURE;
 	return XR_SUCCESS;
 }
 
