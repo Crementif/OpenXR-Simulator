@@ -2,7 +2,7 @@
 #include "app/Theme.h"
 #include "app/widgets/Controls.h"
 #include "Math.h"
-#include "app/ManualInputController.h"
+#include "app/services/ManualInputController.h"
 #include <algorithm>
 #include <array>
 #include <string_view>

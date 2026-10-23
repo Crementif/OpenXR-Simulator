@@ -1,6 +1,6 @@
 #include "../TestSupport.h"
 #include "app/services/LaunchAttachment.h"
-#include "app/RuntimeConnection.h"
+#include "app/services/RuntimeConnection.h"
 #include "control/ControlService.h"
 #include "control/LocalControlServer.h"
 #include "runtime/Runtime.h"

@@ -1,7 +1,7 @@
 #include "Pch.h"
 #include "app/services/RecordingController.h"
 #include "app/services/Utf8Path.h"
-#include "app/WorkerConnection.h"
+#include "app/services/WorkerConnection.h"
 #include "app/platform/FileStorage.h"
 #include "control/ControlSchema.h"
 

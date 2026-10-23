@@ -1,5 +1,5 @@
 #pragma once
-#include "app/ManualInputController.h"
+#include "app/services/ManualInputController.h"
 #include "app/PlayerRig.h"
 #include "app/ShellState.h"
 #include "app/widgets/SpatialWidgets.h"

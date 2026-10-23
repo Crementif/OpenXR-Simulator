@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app/RuntimePanelRequests.h"
+#include "app/services/RuntimePanelRequests.h"
 
 #include <condition_variable>
 #include <filesystem>

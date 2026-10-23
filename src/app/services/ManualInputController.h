@@ -1,11 +1,18 @@
 #pragma once
 
 #include "app/SimulationEdits.h"
+#include <condition_variable>
+#include <cstdint>
+#include <deque>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <string>
+#include <thread>
 
 namespace simxr::app
 {
+class WorkerConnection;
 struct ManualInputTarget
 {
 	std::string endpoint;
@@ -26,6 +33,8 @@ class ManualInputController
   public:
 	ManualInputController();
 	~ManualInputController();
+	ManualInputController(const ManualInputController&) = delete;
+	ManualInputController& operator=(const ManualInputController&) = delete;
 	void SetTarget(ManualInputTarget target);
 	bool Submit(SimulationEdit edit, bool continuous = false);
 	void DiscardUnsentPose();
@@ -33,7 +42,18 @@ class ManualInputController
 	ManualInputSnapshot Snapshot() const;
 
   private:
-	class State;
-	std::unique_ptr<State> m_state;
+	void Run() noexcept;
+	void RunChecked();
+	mutable std::mutex m_mutex;
+	std::condition_variable m_changed;
+	ManualInputTarget m_target;
+	ManualInputSnapshot m_snapshot;
+	std::deque<SimulationEdit> m_edits;
+	std::optional<SimulationEdit> m_pose;
+	std::shared_ptr<WorkerConnection> m_current;
+	std::uint64_t m_revision = 0;
+	bool m_stopping = false, m_refresh = false;
+	std::string m_workerFailure = "Manual input worker stopped unexpectedly; restart the companion";
+	std::thread m_worker;
 };
 } // namespace simxr::app

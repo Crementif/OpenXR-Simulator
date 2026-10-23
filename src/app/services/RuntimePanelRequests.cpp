@@ -1,7 +1,5 @@
-#include "app/RuntimePanelRequests.h"
-
-#include <algorithm>
-#include <utility>
+#include "app/services/RuntimePanelRequests.h"
+#include "Pch.h"
 
 namespace simxr::app
 {
@@ -89,7 +87,11 @@ std::uint64_t RuntimePanelRequests::Send(control::OpCode code, PanelWork kind, P
 bool RuntimePanelRequests::Has(PanelWork kind, std::uint64_t id) const
 {
 	if (kind == PanelWork::Release && std::any_of(m_releases.begin(), m_releases.end(),
-		[&](const auto& release) { return release.id && release.epoch == m_epoch && (!id || release.id == id); }))
+												  [&](const auto& release)
+												  {
+													  return release.id && release.epoch == m_epoch &&
+															 (!id || release.id == id);
+												  }))
 		return true;
 	return std::any_of(m_tasks.begin(), m_tasks.end(),
 					   [&](const auto& entry)
@@ -97,14 +99,14 @@ bool RuntimePanelRequests::Has(PanelWork kind, std::uint64_t id) const
 						   return entry.second.kind == kind && (!id || entry.second.id == id);
 					   });
 }
-void RuntimePanelRequests::Release(control::OpCode code, std::uint16_t field, std::uint64_t id,
-								   std::uint64_t session, std::uint64_t generation)
+void RuntimePanelRequests::Release(control::OpCode code, std::uint16_t field, std::uint64_t id, std::uint64_t session,
+								   std::uint64_t generation)
 {
 	if (!id)
 		return;
 	for (const auto& pending : m_releases)
-		if (pending.id == id && pending.code == code && pending.epoch == m_epoch &&
-			pending.session == session && pending.generation == generation)
+		if (pending.id == id && pending.code == code && pending.epoch == m_epoch && pending.session == session &&
+			pending.generation == generation)
 			return;
 	const auto entry = std::find_if(m_releases.begin(), m_releases.end(),
 									[](const auto& pending)

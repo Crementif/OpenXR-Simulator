@@ -137,7 +137,7 @@ if(WIN32)
 endif()
 
 add_library(simxr_connection STATIC
-    src/app/RuntimeConnection.cpp
+    src/app/services/RuntimeConnection.cpp
     src/app/services/LaunchAttachment.cpp
     src/app/SimulationEdits.cpp
     src/app/PlayerRig.cpp
@@ -145,9 +145,9 @@ add_library(simxr_connection STATIC
     src/app/HistoryStore.cpp
     src/app/InputHistory.cpp
     src/app/SpatialMath.cpp
-    src/app/ManualInputController.cpp
-    src/app/WorkerConnection.cpp
-    src/app/RuntimePanelRequests.cpp
+    src/app/services/ManualInputController.cpp
+    src/app/services/WorkerConnection.cpp
+    src/app/services/RuntimePanelRequests.cpp
     src/app/DebuggerPanelController.cpp
     src/app/InspectionWorkspace.cpp
     src/app/ImageExportTask.cpp)

@@ -2,7 +2,7 @@
 
 #include "app/PreviewHistory.h"
 #include "app/PreviewTexture.h"
-#include "app/RuntimePanelRequests.h"
+#include "app/services/RuntimePanelRequests.h"
 
 #include <optional>
 

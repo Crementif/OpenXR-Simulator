@@ -4,7 +4,7 @@
 #include "app/FrameHistoryFeed.h"
 #include "app/ImageExportTask.h"
 #include "app/InspectionWorkspace.h"
-#include "app/ManualInputController.h"
+#include "app/services/ManualInputController.h"
 #include "app/Notices.h"
 #include "app/PreviewImages.h"
 #include "app/RuntimeView.h"

@@ -2,8 +2,16 @@
 
 #include "control/WireProtocol.h"
 
+#include <atomic>
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
+
+namespace simxr::control
+{
+class LocalControlClient;
+}
 
 namespace simxr::app
 {
@@ -21,7 +29,13 @@ class WorkerConnection
 	bool Failed() const noexcept;
 
   private:
-	struct State;
-	std::unique_ptr<State> m_state;
+	control::Message Request(control::OpCode code, std::vector<control::Field> fields);
+	std::string m_endpoint, m_name;
+	std::uint64_t m_required;
+	std::atomic<bool> m_stopping{false};
+	bool m_failed = false;
+#if defined(__linux__) || defined(_WIN32)
+	std::unique_ptr<control::LocalControlClient> m_client;
+#endif
 };
 } // namespace simxr::app

@@ -1,6 +1,6 @@
 #include "../TestSupport.h"
 #include "app/services/RecordingController.h"
-#include "app/WorkerConnection.h"
+#include "app/services/WorkerConnection.h"
 #include "control/ControlSchema.h"
 #include "control/ControlService.h"
 #include "control/LocalControlServer.h"

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "app/RuntimeConnection.h"
 #include "app/RuntimePanelProtocol.h"
+#include "app/services/RuntimeConnection.h"
 
 #include <array>
 #include <map>
@@ -29,8 +29,8 @@ class RuntimePanelRequests
 					   std::vector<std::shared_ptr<control::TransferHandle>> handles = {});
 	bool Has(PanelWork kind, std::uint64_t id = 0) const;
 	bool Pending() const noexcept;
-	void Release(control::OpCode code, std::uint16_t field, std::uint64_t id,
-				 std::uint64_t session = 0, std::uint64_t generation = 0);
+	void Release(control::OpCode code, std::uint16_t field, std::uint64_t id, std::uint64_t session = 0,
+				 std::uint64_t generation = 0);
 	void FlushReleases();
 	std::string TakeError();
 

@@ -4,7 +4,7 @@
 #include "app/services/LaunchAttachment.h"
 #include "app/RuntimePanels.h"
 #include "app/services/Utf8Path.h"
-#include "app/WorkerConnection.h"
+#include "app/services/WorkerConnection.h"
 #ifdef SIMXR_COMPANION_AUTOMATION
 #include "automation/RigRunner.h"
 #include "control/ControlSchema.h"

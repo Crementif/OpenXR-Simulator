@@ -5,7 +5,7 @@
 #include "app/Notices.h"
 #include "app/PreferencesDialog.h"
 #include "app/services/ProcessLauncher.h"
-#include "app/RuntimeConnection.h"
+#include "app/services/RuntimeConnection.h"
 #include "app/RuntimePanels.h"
 #include "app/TimelinePanel.h"
 #include "app/services/Utf8Path.h"

@@ -3,12 +3,19 @@
 #include "control/ControlPacket.h"
 
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
+
+namespace simxr::control
+{
+class LocalControlClient;
+}
 
 namespace simxr::app
 {
@@ -62,7 +69,29 @@ class RuntimeConnection
 	void Close() noexcept;
 
   private:
-	struct State;
-	std::unique_ptr<State> m_state;
+	struct Queued
+	{
+		std::uint64_t ticket = 0, epoch = 0;
+		control::ControlPacket packet;
+	};
+	bool Current(std::uint64_t epoch);
+	void ConnectionState(std::uint64_t epoch, RuntimeConnectionState state, std::string detail,
+						 std::optional<control::ControlPacket> hello = {});
+	void Reply(RuntimeReply reply);
+	control::ControlPacket Exchange(control::LocalControlClient& client, control::ControlPacket packet,
+									std::uint64_t epoch);
+	void Run() noexcept;
+	void RunChecked();
+	const RuntimeConnectionConfig m_configuration;
+	mutable std::mutex m_mutex;
+	std::mutex m_lifecycle;
+	std::condition_variable m_changed;
+	std::thread m_worker;
+	std::thread::id m_workerId;
+	std::vector<Queued> m_requests;
+	std::vector<RuntimeReply> m_replies;
+	RuntimeConnectionSnapshot m_snapshot;
+	std::uint64_t m_nextTicket = 1;
+	bool m_requested = false, m_stopping = false, m_workerExited = false;
 };
 } // namespace simxr::app
