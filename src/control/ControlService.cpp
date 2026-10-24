@@ -1,7 +1,7 @@
 #include "control/ControlService.h"
 #include "Pch.h"
-#include "control/ConnectionImages.h"
 #include "control/ConnectionImageWindows.h"
+#include "control/ConnectionImages.h"
 #include "control/ConnectionLeases.h"
 #include "control/ConnectionRequests.h"
 #include "control/ControlRequestError.h"
@@ -167,7 +167,8 @@ std::uint64_t ControlService::AdvertisedCapabilities(const Client& client, std::
 	if (m_images && minor >= 2)
 		capabilities |= ImageCapabilitiesMask({true, true}, client.nativeHandles);
 	if (m_images && minor >= 3)
-		capabilities |= static_cast<std::uint64_t>(Capability::LivePreview);
+		capabilities |= static_cast<std::uint64_t>(Capability::LivePreview) |
+						static_cast<std::uint64_t>(Capability::ContinuousPreviews);
 	return capabilities;
 }
 
@@ -397,6 +398,32 @@ Message ControlService::DispatchFrame(Client& client, const Message& request, co
 	}
 	case OpCode::RetainPreview:
 	{
+		if (request.Find(tag::FrameId))
+		{
+			const FrameKey key{{RequireRequestU64(request, tag::Generation)},
+							   {RequireRequestU64(request, tag::FrameId)}};
+			auto preview = session->PreviewHistory().Find(key);
+			if (!preview.submitted)
+				throw ControlRequestError{ErrorCode::NotFound, "Frame preview is absent or evicted"};
+			if (!preview.output && !preview.clear)
+				throw ControlRequestError{ErrorCode::NotFound, "Frame preview was evicted or could not be retained"};
+			held.historicalImage.output = std::move(preview.output);
+			response.fields.push_back(Field::Bool(tag::ImageAvailable, held.historicalImage.output != nullptr));
+			if (!held.historicalImage.output)
+			{
+				response.fields.push_back(EncodeFrameKey(tag::Frame, key));
+				return response;
+			}
+			const auto completion = held.historicalImage.output->PollCompletion();
+			if (completion != CompletionStatus::Complete)
+				throw ControlRequestError{completion == CompletionStatus::Pending ? ErrorCode::Busy
+																				  : ErrorCode::Internal,
+										  "Frame preview is not GPU-ready"};
+			client.images.Retain(response, {binding.id, key, {}, {CaptureKind::VirtualDisplay}},
+								 held.historicalImage.output, *m_images, client.nativeHandles, publication.images,
+								 false);
+			return response;
+		}
 		held.display = session->Display().Snapshot();
 		const auto& display = *held.display;
 		if (display.generation.value != RequireRequestU64(request, tag::Generation))
@@ -515,7 +542,8 @@ Message ControlService::DispatchDebugger(Client& client, const Message& request,
 			if (native.rotationalReprojection)
 				capabilities |= static_cast<std::uint64_t>(Capability::RotationalReprojection);
 			if (client.requests.Minor() >= 3 && (native.gpuPreview || native.imageExport))
-				capabilities |= static_cast<std::uint64_t>(Capability::LivePreview);
+				capabilities |= static_cast<std::uint64_t>(Capability::LivePreview) |
+								static_cast<std::uint64_t>(Capability::ContinuousPreviews);
 		}
 		if (status.composedEyes)
 			capabilities |= static_cast<std::uint64_t>(Capability::ComposedCapture) |
@@ -532,6 +560,12 @@ Message ControlService::DispatchDebugger(Client& client, const Message& request,
 		if (status.layerViews)
 			capabilities |= static_cast<std::uint64_t>(Capability::LayerViewCapture);
 		EncodeDebuggerStatus(response, status, state, display, capabilities);
+		std::vector<Field> previews;
+		for (const auto key : session->PreviewHistory().Frames(state.generation))
+			previews.push_back(Field::U64(static_cast<std::uint16_t>(previews.size() + 1), key.frame.value));
+		response.fields.push_back(Nested(tag::PreviewFrames, std::move(previews)));
+		response.fields.push_back(Field::U64(tag::PreviewBytes, session->PreviewHistory().Bytes()));
+		response.fields.push_back(Field::U64(tag::PreviewBudget, FramePreviewHistory::BudgetBytes));
 		return response;
 	}
 	case OpCode::Acquire:

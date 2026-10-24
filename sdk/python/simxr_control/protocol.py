@@ -107,6 +107,7 @@ class Capability(IntFlag):
     SNAPSHOT_PINS = 1 << 23
     FRAME_HISTORY = 1 << 24
     ROTATIONAL_REPROJECTION = 1 << 25
+    CONTINUOUS_PREVIEWS = 1 << 27
 
 
 class CommandKind(IntEnum):
@@ -228,6 +229,9 @@ class Tag(IntEnum):
     ADVANCE_DISPLAY = 193
     SNAPSHOT_BUDGET_MIB = 194
     SNAPSHOT_IMAGE_BYTES = 195
+    PREVIEW_FRAMES = 207
+    PREVIEW_BYTES = 208
+    PREVIEW_BUDGET = 209
     FRAMES = 196
     APPLIED_INPUT = 197
     ACTIVE_ACTIONS = 198
@@ -484,7 +488,9 @@ def to_dict(fields, *, context=None):
             if field.required:
                 raise ProtocolError(f'Unsupported required response field {field.tag}')
             continue
-        if tag == Tag.PINNED:
+        if tag == Tag.PREVIEW_FRAMES:
+            value = [entry.as_u64() for entry in _ordered_fields(field.value)]
+        elif tag == Tag.PINNED:
             value = field.as_u64() if context == Tag.RETENTION else field.as_bool()
         elif tag == Tag.APPLIED_INPUT:
             entries = decode_fields(field.value)

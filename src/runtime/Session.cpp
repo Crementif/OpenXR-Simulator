@@ -461,7 +461,7 @@ XrResult Session::EndFrame(FramePrediction& prediction, const XrFrameEndInfo* in
 					return XR_ERROR_LIMIT_REACHED;
 				submission.outputDisposition = FrameOutputDisposition::Dropped;
 				submission.dropReason = FrameDropReason::PresentationCapacity;
-				runNative = false;
+				// The display may skip this frame, but its independent history image still needs execution.
 				commit();
 				return result;
 			}

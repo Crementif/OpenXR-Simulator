@@ -155,10 +155,15 @@ XrResult VulkanFrameSubmission::PrepareCaptures(std::span<const FrameCaptureRequ
 			if (request.history)
 			{
 				m_captures.reserve(m_captures.size() + 1);
-				m_captureOutputs.push_back(output);
+				if (!request.preview)
+					m_captureOutputs.push_back(output);
 			}
 			if (!request.reservation)
+			{
+				if (request.preview)
+					return XR_ERROR_LIMIT_REACHED;
 				continue;
+			}
 			Capture capture{request.target, request.image ? request.image->source : XR_NULL_HANDLE, {}, {}};
 			const auto result = request.composition
 									? m_backend.Prepare(
@@ -177,11 +182,19 @@ XrResult VulkanFrameSubmission::PrepareCaptures(std::span<const FrameCaptureRequ
 			capture.transfer =
 				PrepareInspection(capture.producer, request.target,
 								  request.history ? VulkanInspectionKind::History : VulkanInspectionKind::Required);
+			if (request.preview && capture.transfer->Output()->Image().allocationSize > FramePreviewHistory::SlotBytes)
+				throw std::runtime_error("Preview allocation exceeds its history reservation");
 			if (request.history &&
 				!capture.transfer->Output()->PromoteCaptureBudget(*request.historyPool, request.historyReservation))
+			{
+				if (request.preview)
+					return XR_ERROR_LIMIT_REACHED;
 				continue;
+			}
 			output.output = capture.transfer->Output();
-			if (request.history)
+			if (request.preview)
+				m_preview = output.output;
+			else if (request.history)
 				m_captureOutputs.back() = std::move(output);
 			else
 				m_captureOutputs.push_back(std::move(output));
@@ -285,7 +298,7 @@ XrResult VulkanFrameSubmission::Prepare(FrameKey key, const SessionComposition& 
 		const auto result = PrepareOutputs(std::move(reservation), captures);
 		if (XR_FAILED(result))
 			return result;
-		output = {m_composed, m_output, m_captureOutputs, m_reprojection, m_composed->Timing()};
+		output = {m_composed, m_output, m_captureOutputs, m_reprojection, m_composed->Timing(), m_preview};
 		return XR_SUCCESS;
 	}
 	catch (const VulkanError& error)

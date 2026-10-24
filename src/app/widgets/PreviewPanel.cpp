@@ -1,7 +1,6 @@
-#include "Pch.h"
 #include "app/widgets/PreviewPanel.h"
+#include "Pch.h"
 #include "app/RuntimeView.h"
-#include "app/widgets/Theme.h"
 #include "app/pages/DeviceControlPanel.h"
 #include "app/pages/FramePage.h"
 #include "app/platform/Window.h"
@@ -9,6 +8,7 @@
 #include "app/widgets/Controls.h"
 #include "app/widgets/PilotController.h"
 #include "app/widgets/SpatialEditor.h"
+#include "app/widgets/Theme.h"
 
 #include <cmath>
 #include <imgui_internal.h>
@@ -155,7 +155,8 @@ void PreviewPanel::DrawEmpty(ShellState& shell, const RuntimeView& view)
 	{
 		const auto text = "Frame " + std::to_string(view.time.cursor.frame);
 		line(text.c_str(), center.y - 20 * unit, theme::Text);
-		line("Image not kept", center.y + 4 * unit, theme::TextDim);
+		line(m_session.LoadingPastImage() ? "Loading frame image..." : "Image not kept", center.y + 4 * unit,
+			 theme::TextDim);
 		return;
 	}
 	// A small spinner while the first image is on its way.

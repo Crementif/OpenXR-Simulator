@@ -177,10 +177,15 @@ template <typename Backend> class WindowsFrameSubmission final : public FrameSub
 					{
 						m_frames.reserve(m_frames.size() + 1);
 						m_batch.reserve(m_batch.size() + 1);
-						output.captures.push_back({request.target, {}, request.quadBounds});
+						if (!request.preview)
+							output.captures.push_back({request.target, {}, request.quadBounds});
 					}
 					if (!request.reservation)
+					{
+						if (request.preview)
+							return XR_ERROR_LIMIT_REACHED;
 						continue;
+					}
 					result = request.depth
 								 ? PrepareDepth(*request.depth, request.target.kind == CaptureKind::LayerDepthLinear,
 												request.reservation)
@@ -191,7 +196,9 @@ template <typename Backend> class WindowsFrameSubmission final : public FrameSub
 						continue;
 					if (XR_FAILED(result))
 						return result;
-					if (request.history)
+					if (request.preview)
+						output.preview = m_frames.back().transfer->Output();
+					else if (request.history)
 						output.captures.back().output = m_frames.back().transfer->Output();
 					else
 						output.captures.push_back(
@@ -400,6 +407,8 @@ template <typename Backend> class WindowsFrameSubmission final : public FrameSub
 			return result;
 		auto transfer = m_inspection.Prepare(copied, {}, {},
 											 history ? VulkanInspectionKind::History : VulkanInspectionKind::Required);
+		if (history && history->preview && transfer->Output()->Image().allocationSize > FramePreviewHistory::SlotBytes)
+			throw std::runtime_error("Preview allocation exceeds its history reservation");
 		if (history && !transfer->Output()->PromoteCaptureBudget(*history->historyPool, history->historyReservation))
 			return XR_ERROR_LIMIT_REACHED;
 		m_frames.push_back({std::move(native), std::move(transfer), std::move(sources)});

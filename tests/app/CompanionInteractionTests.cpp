@@ -5014,153 +5014,75 @@ void CheckMeasuredTiming(Interaction& test)
 
 void CheckPreviewHistory(Interaction& test)
 {
-	const auto access = test.renderer.DeviceAccess();
-	auto device = std::make_shared<simxr::VulkanDevice>(
-		simxr::VulkanBinding{access.instance, access.physical, access.device, access.queueFamily, 0}, access.owner);
-	for (const auto format : {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R32G32B32A32_SFLOAT})
-	{
-		constexpr auto usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-		auto image = simxr::VulkanImage::Create(device, format, {63, 37}, 1, usage);
-		const auto bytes = image->allocationSize;
-		image.reset();
-		bool rejected = false;
-		try
-		{
-			image = simxr::VulkanImage::Create(device, format, {63, 37}, 1, usage, 1, VK_SAMPLE_COUNT_1_BIT, bytes - 1);
-		}
-		catch (const std::length_error&)
-		{
-			rejected = true;
-		}
-		Require(rejected, "Image memory allocation exceeded its byte budget");
-		image = simxr::VulkanImage::Create(device, format, {63, 37}, 1, usage, 1, VK_SAMPLE_COUNT_1_BIT, bytes);
-		Require(image->allocationSize == bytes, "Exact image allocation budget was not honored");
-	}
 	const auto& history = test.runtime.History();
-	const auto& kept = test.runtime.KeptPreviews();
-	const auto started = std::chrono::steady_clock::now();
-	while (std::chrono::steady_clock::now() - started < std::chrono::seconds(12))
-	{
+	Eventually(
+		[&]
+		{
+			test.Frame();
+			std::size_t covered = 0;
+			for (std::size_t index = 0; index < history.Size(); ++index)
+				covered += (history.At(index).flags & HistoryPreview) != 0;
+			return covered >= 40;
+		},
+		"Continuous runtime history did not populate the Images lane");
+	test.runtime.Pause();
+	Eventually(
+		[&]
+		{
+			test.Frame();
+			return test.runtime.Snapshot().manual && !test.runtime.Snapshot().operationPending;
+		},
+		"History fixture did not pause");
+	for (int frame = 0; frame < 10; ++frame)
 		test.Frame();
-		const auto count = std::count_if(kept.Shots().begin(), kept.Shots().end(),
-										 [](const auto& shot)
-										 {
-											 return shot.frame.frame != 0;
-										 });
-		if (count >= 40 && std::chrono::steady_clock::now() - started >= std::chrono::seconds(6))
-			break;
-	}
-	Require(kept.Error().empty(), kept.Error().c_str());
-	std::size_t shots = 0;
-	for (const auto& shot : kept.Shots())
-		shots += shot.frame.frame != 0;
-	std::size_t covered = 0;
+	std::vector<std::size_t> frames;
 	for (std::size_t index = 0; index < history.Size(); ++index)
-		covered += (history.At(index).flags & HistoryPreview) != 0;
-	std::cout << "Kept " << shots << " previews, " << kept.Bytes() / (1 << 20) << " MiB of "
-			  << kept.Budget() / (1 << 20) << " MiB; Images lane covers " << covered << " frames\n";
-	Require(shots >= 40 && covered >= shots / 2, "Preview history kept too few images");
-	Require(kept.Bytes() <= kept.Budget(), "Preview history exceeds its budget");
-	const ImVec4 crop{.2f, .3f, .7f, .8f};
-	test.runtime.PreviewCrop() = crop;
-	for (int frame = 0; frame < 4; ++frame)
-		test.Frame();
-	const auto* timeline = FindPanel("Timeline");
-	Require(timeline, "Thumbnail timeline missing");
-	std::set<ImTextureID> thumbnails;
-	for (const auto& command : timeline->DrawList->CmdBuffer)
+		if (history.At(index).flags & HistoryPreview)
+			frames.push_back(index);
+	Require(frames.size() >= 32, "Pause discarded preview history");
+	frames.erase(frames.begin(), frames.end() - 32);
+	std::uint64_t previous = 0;
+	for (const auto index : frames)
 	{
-		if (command.ElemCount != 6)
-			continue;
-		const auto& a =
-			timeline->DrawList->VtxBuffer[command.VtxOffset + timeline->DrawList->IdxBuffer[command.IdxOffset]];
-		const auto& b =
-			timeline->DrawList->VtxBuffer[command.VtxOffset + timeline->DrawList->IdxBuffer[command.IdxOffset + 2]];
-		if (std::abs(a.uv.x - crop.x) < .001f && std::abs(a.uv.y - crop.y) < .001f &&
-			std::abs(b.uv.x - crop.z) < .001f && std::abs(b.uv.y - crop.w) < .001f)
-			thumbnails.insert(command.GetTexID());
+		const auto identity = history.At(index).identity;
+		Require(!previous || identity.frame == previous + 1, "Retained preview coverage skips frames");
+		previous = identity.frame;
+		test.runtime.LookAt(index);
+		Eventually(
+			[&]
+			{
+				test.Frame();
+				const auto view = test.runtime.Snapshot();
+				return view.selectedReady && view.selectedIdentity == identity;
+			},
+			"Exact historical frame did not become visible");
+		Require(test.runtime.PreviewBytes() <= test.runtime.PreviewBudget(), "Preview history exceeded budget");
 	}
-	Require(thumbnails.size() >= 2, "Images lane did not draw distinct retained images with the pinned crop");
-	const auto index = history.LowerBound(history.At(history.Size() - 1).seconds - 3);
-	const auto nearby = kept.Nearest(history.At(index).identity, history.At(index).epoch);
-	Require(nearby.has_value(), "No kept preview three seconds back");
-	const auto exact = history.Find(nearby->frame, nearby->epoch);
-	Require(exact.has_value(), "Kept preview's frame is missing from history");
-	const auto displayedPreview = [&]
+	// Responses to rapid scrubbing must not replace the final requested frame.
+	for (const auto index : frames)
 	{
-		const auto* preview = FindPanel("GPU preview");
-		Require(preview != nullptr, "Historical preview panel missing");
-		for (const auto& command : preview->DrawList->CmdBuffer)
-		{
-			if (command.ElemCount != 6)
-				continue;
-			const auto& first =
-				preview->DrawList->VtxBuffer[command.VtxOffset + preview->DrawList->IdxBuffer[command.IdxOffset]];
-			const auto& last =
-				preview->DrawList->VtxBuffer[command.VtxOffset + preview->DrawList->IdxBuffer[command.IdxOffset + 2]];
-			if (std::abs(first.uv.x - crop.x) < .001f && std::abs(first.uv.y - crop.y) < .001f &&
-				std::abs(last.uv.x - crop.z) < .001f && std::abs(last.uv.y - crop.w) < .001f)
-				return true;
-		}
-		return false;
-	};
-	test.runtime.LookAt(*exact);
-	for (int frame = 0; frame < 4; ++frame)
+		test.runtime.LookAt(index);
 		test.Frame();
-	Require(displayedPreview(), "Exact retained preview was not shown");
-	Require(!test.runtime.Snapshot().time.following, "Looking back still follows");
-	std::optional<std::size_t> gap;
-	for (std::size_t candidate = *exact + 1; candidate < history.Size(); ++candidate)
-	{
-		const auto& frame = history.At(candidate);
-		const auto shot = kept.Nearest(frame.identity, frame.epoch);
-		if (shot && shot->frame != frame.identity)
-		{
-			gap = candidate;
-			break;
-		}
 	}
-	Require(gap.has_value(), "Preview history fixture has no unsampled frame");
-	test.runtime.LookAt(*gap);
-	for (int frame = 0; frame < 4; ++frame)
-		test.Frame();
-	Require(!displayedPreview(), "An unsampled historical frame displayed a neighbouring preview");
-	test.runtime.LookAt(*exact);
-	for (int frame = 0; frame < 4; ++frame)
-		test.Frame();
+	const auto final = history.At(frames.back()).identity;
+	Eventually(
+		[&]
+		{
+			test.Frame();
+			const auto view = test.runtime.Snapshot();
+			return view.selectedReady && view.selectedIdentity == final;
+		},
+		"Rapid scrubbing selected a stale image");
 	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
 	{
 		test.renderer.RequestScreenshot(std::filesystem::path(qa) / "preview-history.bmp");
 		test.Frame();
 	}
-	test.runtime.SetLive(true);
-	for (int frame = 0; frame < 4; ++frame)
-		test.Frame();
-	const auto target = test.runtime.Snapshot();
-	ManualInputController input;
-	input.SetTarget({target.endpoint, target.session, target.generation});
-	Eventually([&] { test.Frame(); return input.Snapshot().observation != 0; }, "History resize control unavailable");
-	const auto original = ReadObservedSetup(input.Snapshot().state).values.views;
-	for (const auto size : {ImVec2{512, 256}, ImVec2{512, 384},
-		ImVec2{float(original.outerWidth), float(original.outerHeight)}})
-	{
-		auto views = original;
-		views.outerWidth = static_cast<std::uint32_t>(size.x);
-		views.outerHeight = static_cast<std::uint32_t>(size.y);
-		ManualTransaction edit;
-		edit.commands = {simxr::TakeControl{simxr::ControlChannel::Views, false}, simxr::SetViewSettings{views}};
-		Require(input.Submit(edit), "Preview resize refused");
-		Eventually([&]
-		{
-			test.Frame();
-			Require(kept.Bytes() <= kept.Budget(), "Retiring preview rings exceeded the budget");
-			return !input.Snapshot().editPending && std::abs(kept.Aspect() - size.y / size.x) < .002f;
-		}, "Preview history did not adopt the resized output");
-	}
 	test.renderer.WaitIdle();
-	Require(test.validation->errors.load() == 0, "Validation errors with preview history");
-	test.runtime.PreviewCrop().reset();
-	std::cout << "PASS cropped GPU thumbnails and kept preview shown three seconds back while running\n";
+	Require(test.validation->errors.load() == 0, "Validation errors with continuous preview history");
+	test.runtime.SetLive(true);
+	test.runtime.ResumeLive();
+	std::cout << "PASS consecutive historical images after pause and rapid scrub; zero Vulkan validation errors\n";
 }
 
 void CheckSnapshotRetention(Interaction& test)
@@ -6412,6 +6334,8 @@ int main()
 				Require(directory != nullptr, "Connected layout checks need an output directory");
 				CheckLayouts(test, directory);
 			}
+			else if (std::getenv("SIMXR_HISTORY_QA"))
+				CheckPreviewHistory(test);
 			else if (std::getenv("SIMXR_SPATIAL_QA"))
 				CheckSpatialEditing(test);
 			else

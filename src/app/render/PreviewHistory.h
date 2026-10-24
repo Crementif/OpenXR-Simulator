@@ -26,12 +26,12 @@ struct PreviewShot
 class PreviewHistory
 {
   public:
-	static constexpr std::uint64_t DefaultBudget = 512ull << 20;
+	static constexpr std::uint64_t DefaultBudget = 32ull << 20;
 	PreviewHistory(UiRenderer& renderer, std::uint64_t budget = DefaultBudget);
 	~PreviewHistory();
 	PreviewHistory(const PreviewHistory&) = delete;
 	PreviewHistory& operator=(const PreviewHistory&) = delete;
-	// Keeps one eye of a displayed live image, at most ten times a second.
+	// Keeps one eye of each displayed live image.
 	void Offer(PreviewTexture& source, std::uint32_t layer, FrameIdentity frame, std::uint64_t epoch);
 	// The newest kept image at or shortly before a frame of the same run.
 	std::optional<PreviewShot> Nearest(FrameIdentity frame, std::uint64_t epoch) const;
@@ -81,7 +81,6 @@ class PreviewHistory
 	std::optional<std::size_t> m_display, m_displayed;
 	FrameIdentity m_lastFrame;
 	std::uint64_t m_lastEpoch = 0;
-	std::chrono::steady_clock::time_point m_lastCapture{};
 	std::string m_error;
 };
 } // namespace simxr::app

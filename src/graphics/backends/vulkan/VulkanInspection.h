@@ -184,7 +184,7 @@ class VulkanInspection
 	const std::size_t m_capacity;
 	FramePool m_admissions;
 	// Optional history copies cannot consume live/explicit inspection admission.
-	FramePool m_historyAdmissions{3};
+	FramePool m_historyAdmissions{6};
 	FramePool m_reprojectionAdmissions{32};
 	std::mutex m_lifecycle;
 	std::mutex m_polling;

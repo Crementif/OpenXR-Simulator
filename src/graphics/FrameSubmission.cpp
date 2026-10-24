@@ -9,7 +9,7 @@ namespace simxr
 {
 bool FrameCaptureRequest::IgnoreFailure(XrResult result) const noexcept
 {
-	return (history && (result == XR_ERROR_LIMIT_REACHED || result == XR_ERROR_OUT_OF_MEMORY)) ||
+	return (history && !preview && (result == XR_ERROR_LIMIT_REACHED || result == XR_ERROR_OUT_OF_MEMORY)) ||
 		   (image && (result == XR_ERROR_FEATURE_UNSUPPORTED || result == XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED));
 }
 
@@ -91,6 +91,29 @@ XrResult FrameSubmission::PrepareCaptures()
 	return XR_SUCCESS;
 }
 
+void FrameSubmission::PreparePreviewHistory()
+{
+	FrameCaptureRequest request;
+	request.history = request.preview = true;
+	request.composition = m_composition.plan;
+	auto& plan = *request.composition;
+	const auto largest = std::max(plan.width, plan.height);
+	if (!largest)
+		return;
+	if (largest > FramePreviewHistory::Extent)
+	{
+		plan.width =
+			std::max(1u, static_cast<std::uint32_t>(std::uint64_t{plan.width} * FramePreviewHistory::Extent / largest));
+		plan.height = std::max(
+			1u, static_cast<std::uint32_t>(std::uint64_t{plan.height} * FramePreviewHistory::Extent / largest));
+	}
+	request.historyPool = m_session.PreviewHistory().Budget();
+	request.historyReservation = m_session.PreviewHistory().Reserve();
+	if (request.historyReservation)
+		request.reservation = m_backend.HistoryReservations().Reserve();
+	m_captures.push_back(std::move(request));
+}
+
 void FrameSubmission::PrepareQuadHistory()
 {
 	const CaptureTarget target{CaptureKind::QuadLayers};
@@ -163,18 +186,16 @@ XrResult FrameSubmission::Execute(const XrFrameEndInfo& info, const SwapchainDes
 			live = !m_reservation;
 			if (live)
 				m_reservation = m_backend.LiveReservations().Reserve();
-			if (m_reservation)
-			{
-				result = PrepareCaptures();
-				if (XR_FAILED(result))
-					return result;
-				PrepareQuadHistory();
-				result = m_backend.Prepare(m_key, m_composition, m_reservation, m_captures, m_prepared);
-				if (live && result == XR_ERROR_LIMIT_REACHED)
-					m_prepared = {};
-				else if (XR_FAILED(result))
-					return result;
-			}
+			if (!m_reservation)
+				return XR_ERROR_LIMIT_REACHED;
+			result = PrepareCaptures();
+			if (XR_FAILED(result))
+				return result;
+			PreparePreviewHistory();
+			PrepareQuadHistory();
+			result = m_backend.Prepare(m_key, m_composition, m_reservation, m_captures, m_prepared);
+			if (XR_FAILED(result))
+				return result;
 		}
 		std::function<XrResult()> submit;
 		if (m_prepared.producer && m_prepared.output)
@@ -189,10 +210,13 @@ XrResult FrameSubmission::Execute(const XrFrameEndInfo& info, const SwapchainDes
 				return result;
 			};
 		FramePrediction prediction;
-		return m_session.EndFrame(prediction, &info, m_composition.layers, m_prepared.output, submit,
-								  m_prepared.captures,
-								  live ? FrameSubmissionPolicy::Live : FrameSubmissionPolicy::Exact,
-								  m_prepared.reprojection, m_prepared.timing);
+		result =
+			m_session.EndFrame(prediction, &info, m_composition.layers, m_prepared.output, submit, m_prepared.captures,
+							   live ? FrameSubmissionPolicy::Live : FrameSubmissionPolicy::Exact,
+							   m_prepared.reprojection, m_prepared.timing);
+		if (XR_SUCCEEDED(result))
+			m_session.PreviewHistory().Append(m_key, m_prepared.preview, info.layerCount == 0);
+		return result;
 	}
 	catch (const std::bad_alloc&)
 	{

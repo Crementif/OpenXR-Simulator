@@ -87,6 +87,8 @@ class RuntimePanels
 	const HistoryStore& History() const;
 	const InputHistory& InputSamples() const;
 	const PreviewHistory& KeptPreviews() const;
+	std::uint64_t PreviewBytes() const;
+	std::uint64_t PreviewBudget() const;
 	PreviewHistory& KeptPreviews();
 	void LookAt(std::size_t historyIndex);
 	void MarkHistoryFrame(std::size_t index, bool enabled);

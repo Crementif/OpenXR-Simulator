@@ -24,6 +24,7 @@ enum class PanelWork
 	Capture,
 	Retain,
 	Preview,
+	PastPreview,
 	Share,
 	Release,
 	Relinquish,

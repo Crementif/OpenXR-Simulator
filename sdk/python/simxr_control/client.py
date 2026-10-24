@@ -185,9 +185,14 @@ class Client:
         return self.request(OpCode.RETAIN_HISTORICAL_IMAGE,
                             self._history_fields(session, target) + [Field.u64(Tag.FRAME_ID, frame, True)])
 
-    def retain_preview(self, session):
-        """Retain the current completed display image, or observe its actual clear."""
-        return self.request(OpCode.RETAIN_PREVIEW, self._session(session))
+    def retain_preview(self, session, *, frame=None):
+        """Retain the current display image, or an exact continuous-history frame."""
+        fields = self._session(session)
+        if frame is not None:
+            if not self.hello['capabilities'] & Capability.CONTINUOUS_PREVIEWS:
+                raise ProtocolError('Continuous preview history is unavailable')
+            fields.append(Field.u64(Tag.FRAME_ID, frame, True))
+        return self.request(OpCode.RETAIN_PREVIEW, fields)
 
     def share_image(self, image_reader, device_uuid, driver_uuid, consumer_fence_fd, *, completion_kind=0):
         device_uuid, driver_uuid = bytes(device_uuid), bytes(driver_uuid)

@@ -16,7 +16,6 @@
 namespace simxr::app
 {
 static constexpr std::uint32_t ChunkLayers = 64, Width = 640;
-static constexpr auto Interval = std::chrono::milliseconds(100);
 // Frames between a requested frame and the kept image shown for it.
 static constexpr std::uint64_t MaximumGap = 120;
 
@@ -270,9 +269,8 @@ bool PreviewHistory::Prepare(const control::ImageDescription& description)
 void PreviewHistory::Offer(PreviewTexture& source, std::uint32_t layer, FrameIdentity frame, std::uint64_t epoch)
 {
 #if defined(__linux__) || defined(_WIN32)
-	const auto now = std::chrono::steady_clock::now();
-	if (m_copy || (frame == m_lastFrame && epoch == m_lastEpoch) || !frame.frame || now - m_lastCapture < Interval ||
-		!source.Ready() || layer >= source.Description().arrayLayers)
+	if (m_copy || (frame == m_lastFrame && epoch == m_lastEpoch) || !frame.frame || !source.Ready() ||
+		layer >= source.Description().arrayLayers)
 		return;
 	try
 	{
@@ -482,7 +480,6 @@ void PreviewHistory::Submitted(std::uint64_t serial)
 		m_lastUse[m_copy->slot] = serial;
 		m_lastFrame = m_shots[m_copy->slot].frame;
 		m_lastEpoch = m_shots[m_copy->slot].epoch;
-		m_lastCapture = std::chrono::steady_clock::now();
 		++m_next;
 		m_copy.reset();
 	}

@@ -952,8 +952,8 @@ void TestLiveSubmissionPolicy()
 	};
 	const auto droppedResult = session.EndFrame(presentationDrop, &presentationInfo, layers(presentationDrop),
 												std::move(dropped), submit, {}, FrameSubmissionPolicy::Live);
-	Require(droppedResult == XR_SUCCESS && nativeCalls == acceptedNativeCalls && destroyed,
-			"Presentation drop submitted or destroyed last output under Session lock");
+	Require(droppedResult == XR_SUCCESS && nativeCalls == acceptedNativeCalls + 1 && destroyed,
+			"Display drop skipped history execution or destroyed last output under Session lock");
 	const auto presentationRecord = session.History().Find({selectedKey.generation, presentationDrop.id});
 	Require(presentationRecord->submission->outputDisposition == FrameOutputDisposition::Dropped &&
 				presentationRecord->submission->dropReason == FrameDropReason::PresentationCapacity &&
@@ -964,13 +964,17 @@ void TestLiveSubmissionPolicy()
 	auto abandonedInfo = info(abandonedFrame);
 	Require(abandoned.result == SnapshotAdmission::Accepted && session.Captures().Release(abandoned.id),
 			"Release admitted capture before live drop");
+	auto abandonedOutput = std::make_shared<CaptureOutput>(nullptr);
 	Require(session.EndFrame(abandonedFrame, &abandonedInfo, layers(abandonedFrame),
-							 std::make_shared<CaptureOutput>(nullptr), submit, {},
+							 abandonedOutput, submit, {},
 							 FrameSubmissionPolicy::Live) == XR_SUCCESS,
 			"Drop released capture frame");
 	session.Captures().Poll();
+	Require(session.Captures().Snapshot().retiring != 0, "Display drop retired pending native work");
+	abandonedOutput->status.store(CompletionStatus::Complete);
+	session.Captures().Poll();
 	Require(session.Captures().Snapshot().retiring == 0 && debug.InUse() == 0,
-			"Live drop retained unsubmitted GPU output in abandoned capture");
+			"Display drop retained completed output in abandoned capture");
 	const auto exactCapture = session.ReserveCapture();
 	auto exact = issue();
 	auto exactInfo = info(exact);
@@ -983,7 +987,7 @@ void TestLiveSubmissionPolicy()
 	auto exactOutput = std::make_shared<CaptureOutput>(session.Captures().ProducerReservation(exactCapture.id));
 	Require(session.EndFrame(exact, &exactInfo, layers(exact), exactOutput, submit, {}, FrameSubmissionPolicy::Live) ==
 					XR_ERROR_LIMIT_REACHED &&
-				nativeCalls == acceptedNativeCalls &&
+				nativeCalls == acceptedNativeCalls + 2 &&
 				session.Captures().Read(exactCapture.id)->phase == SnapshotPhase::Begun,
 			"Capture queue pressure consumed begun frame or callback");
 	pending.front()->status.store(CompletionStatus::Complete);

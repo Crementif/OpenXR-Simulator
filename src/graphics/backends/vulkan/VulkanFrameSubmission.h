@@ -82,7 +82,7 @@ class VulkanFrameSubmission final : public FrameSubmissionBackend
 	CompositionPlan m_composition;
 	std::shared_ptr<VulkanFrame> m_composed;
 	std::unique_ptr<VulkanInspectionTransfer> m_composedTransfer;
-	std::shared_ptr<const FrameOutput> m_output;
+	std::shared_ptr<const FrameOutput> m_output, m_preview;
 	std::vector<Capture> m_captures;
 	std::vector<CaptureOutput> m_captureOutputs;
 	std::vector<std::shared_ptr<VulkanFrame>> m_batch;

@@ -63,6 +63,7 @@ add_library(simxr_core STATIC
     src/simulation/ViewConfiguration.cpp
     src/presentation/FrameHistory.cpp
     src/presentation/FrameImageHistory.cpp
+    src/presentation/FramePreviewHistory.cpp
     src/presentation/FrameDiagnosticsJournal.cpp
     src/presentation/SnapshotStore.cpp
     src/presentation/DebugController.cpp
@@ -437,6 +438,8 @@ if(BUILD_TESTING)
     target_link_libraries(library_catalog_tests PRIVATE simxr_recording_controller)
     simxr_add_test(runtime_connection_tests tests/app/RuntimeConnectionTests.cpp runtime_connection)
     target_link_libraries(runtime_connection_tests PRIVATE simxr_connection)
+    simxr_add_test(frame_preview_history_tests tests/presentation/FramePreviewHistoryTests.cpp frame_preview_history)
+    target_link_libraries(frame_preview_history_tests PRIVATE simxr_core)
     simxr_add_test(frame_image_history_tests tests/presentation/FrameImageHistoryTests.cpp frame_image_history)
     target_link_libraries(frame_image_history_tests PRIVATE simxr_core)
     simxr_add_test(inspection_document_tests tests/control/InspectionDocumentTests.cpp inspection_document)
@@ -910,6 +913,11 @@ if(SIMXR_BUILD_PROBES)
                             ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_DETERMINISTIC=1;SIMXR_PROBE_DEPTH_FORMAT=${depth_format}"
                             TIMEOUT 90 SKIP_RETURN_CODE 77)
                     endforeach()
+                    add_test(NAME linux_vulkan_continuous_previews COMMAND "${Python3_EXECUTABLE}"
+                        "${PROJECT_SOURCE_DIR}/tests/control/test_native_continuous_previews.py" "$<TARGET_FILE:xr_probe_linux>")
+                    set_tests_properties(linux_vulkan_continuous_previews PROPERTIES
+                        ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json"
+                        TIMEOUT 120)
                     add_test(NAME linux_vulkan_msaa_sources COMMAND "${Python3_EXECUTABLE}"
                         "${PROJECT_SOURCE_DIR}/tests/control/test_native_quad.py" "$<TARGET_FILE:xr_probe_linux>")
                     add_test(NAME linux_vulkan_msaa_reprojection COMMAND "${Python3_EXECUTABLE}"

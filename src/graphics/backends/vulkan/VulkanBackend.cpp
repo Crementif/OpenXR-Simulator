@@ -258,7 +258,7 @@ struct VulkanBackend::State
 							   if (const auto retained = weak.lock())
 								   retained->Poll();
 						   }),
-		  historyReservations(3,
+		  historyReservations(6,
 							  [weak = std::weak_ptr<Retirement>(retirement)]
 							  {
 								  if (const auto retained = weak.lock())

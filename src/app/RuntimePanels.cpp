@@ -379,6 +379,14 @@ void RuntimePanels::EndFrame()
 	if (!m_spatial.Active() && !ImGui::IsAnyItemActive())
 		m_undo.FinishGesture();
 }
+std::uint64_t RuntimePanels::PreviewBytes() const
+{
+	return m_session.PreviewBytes();
+}
+std::uint64_t RuntimePanels::PreviewBudget() const
+{
+	return m_session.PreviewBudget();
+}
 PreviewHistory& RuntimePanels::KeptPreviews()
 {
 	return m_session.Preview().History();

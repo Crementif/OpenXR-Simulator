@@ -87,6 +87,7 @@ void RuntimeSession::SelectImage(std::uint64_t id)
 void RuntimeSession::LookAt(std::size_t index)
 {
 	const auto frame = m_history.History().At(index);
+	m_unavailablePreview = 0;
 	m_time = {false, frame.identity, frame.epoch};
 	for (const auto& capture : m_workspace.Captures())
 		if (SameFrame(capture.scope, capture.frame, frame))
@@ -103,6 +104,23 @@ void RuntimeSession::LookAt(std::size_t index)
 			m_preview.SelectImage(image.id);
 			break;
 		}
+}
+bool RuntimeSession::LoadingPastImage() const
+{
+	const auto image = m_preview.Selected();
+	return m_requests.Has(Work::PastPreview) || (image && !image->ready && !image->released);
+}
+std::uint64_t RuntimeSession::PreviewBytes() const
+{
+	return Supports(wire::Capability::ContinuousPreviews)
+			   ? U64(m_debugger.Status(), tag::PreviewBytes) + m_preview.History().Bytes()
+			   : m_preview.History().Bytes();
+}
+std::uint64_t RuntimeSession::PreviewBudget() const
+{
+	return Supports(wire::Capability::ContinuousPreviews)
+			   ? U64(m_debugger.Status(), tag::PreviewBudget) + m_preview.History().Budget()
+			   : m_preview.History().Budget();
 }
 void RuntimeSession::MarkHistoryFrame(std::size_t index, bool enabled)
 {

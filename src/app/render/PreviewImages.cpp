@@ -70,6 +70,7 @@ void PreviewImages::SetScope(PanelScope scope)
 bool PreviewImages::SelectCapture(PanelScope scope, std::uint64_t capture)
 {
 	m_selectedCapture = capture;
+	m_selectedFrame = 0;
 	m_live = false;
 	// A newly selected snapshot must never display the previous frame while
 	// its private image is still being requested.
@@ -80,6 +81,21 @@ bool PreviewImages::SelectCapture(PanelScope scope, std::uint64_t capture)
 		{
 			m_selectedImage = image->id;
 			return image->reader != 0;
+		}
+	return false;
+}
+bool PreviewImages::SelectFrame(PanelScope scope, std::uint64_t frame)
+{
+	m_selectedCapture = 0;
+	m_selectedFrame = frame;
+	m_selectedImage = 0;
+	m_live = false;
+	for (const auto& image : m_images)
+		if (!image->release && image->frame == frame && image->epoch == scope.epoch &&
+			image->session == scope.session && image->generation == scope.generation)
+		{
+			m_selectedImage = image->id;
+			return true;
 		}
 	return false;
 }
@@ -236,7 +252,8 @@ void PreviewImages::Retained(const wire::Message& message, bool preview)
 				image->reader = reader;
 			else if (image->reader != reader)
 				m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId, reader);
-			if ((preview && m_live) || (!preview && m_selectedCapture == capture))
+			if ((preview && m_live) ||
+				(!preview && !m_live && m_selectedCapture == capture && (!m_selectedFrame || m_selectedFrame == frame)))
 				m_selectedImage = image->id;
 			return;
 		}
@@ -339,7 +356,9 @@ void PreviewImages::Shared(std::uint64_t id, const RuntimeReply& reply)
 		}
 		const bool currentSource = image->epoch == m_scope.epoch && image->session == m_scope.session &&
 								   image->generation == m_scope.generation;
-		if (currentSource && ((!image->live && m_selectedCapture == image->capture) || (image->live && m_live)))
+		if (currentSource && ((!image->live && !m_live && m_selectedCapture == image->capture &&
+							   (!m_selectedFrame || m_selectedFrame == image->frame)) ||
+							  (image->live && m_live)))
 			m_selectedImage = image->id;
 	}
 }

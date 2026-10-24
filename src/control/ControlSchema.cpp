@@ -23,6 +23,7 @@ static constexpr std::array s_beginImageWindow{tag::Session, tag::Generation, ta
 static constexpr std::array s_frameHistory{tag::Session, tag::Generation, tag::Offset, tag::Length};
 static constexpr std::array s_projectionHistory{tag::Session, tag::Generation, tag::Length};
 static constexpr std::array s_recording{tag::Session, tag::Generation, tag::SourceKind, tag::Offset, tag::Length};
+static constexpr std::array s_preview{tag::Session, tag::Generation, tag::FrameId};
 static constexpr std::array s_common{tag::Session, tag::Generation};
 static constexpr std::array s_hello{tag::ClientName, tag::RequiredCapabilities, tag::OptionalCapabilities};
 static constexpr std::array s_submit{tag::Session,			 tag::Generation,		tag::Lease,	 tag::CommandId,
@@ -76,7 +77,7 @@ static constexpr std::array s_schemas{
 	RequestSchema{OpCode::ExportInfo, RequestDomain::Images, 2, s_exportId},
 	RequestSchema{OpCode::ReleaseExport, RequestDomain::Images, 2, s_exportId},
 	RequestSchema{OpCode::ReadExport, RequestDomain::Images, 2, s_readExport},
-	RequestSchema{OpCode::RetainPreview, RequestDomain::Images, 3, s_common},
+	RequestSchema{OpCode::RetainPreview, RequestDomain::Images, 3, s_preview},
 	RequestSchema{OpCode::UploadSequence, RequestDomain::Simulation, 5, s_uploadSequence},
 	RequestSchema{OpCode::StartSequence, RequestDomain::Simulation, 5, s_startSequence},
 	RequestSchema{OpCode::ReadSequence, RequestDomain::Simulation, 5, s_sequence},

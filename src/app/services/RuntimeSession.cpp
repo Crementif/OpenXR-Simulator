@@ -71,6 +71,7 @@ void RuntimeSession::ScopeChanged()
 	m_followOnResume = m_stepRequested = false;
 	m_stepped.reset();
 	m_time = {};
+	m_unavailablePreview = 0;
 	m_manualInput.Refresh();
 	m_workspace.SetScope(m_debugger.Scope());
 	m_preview.SetScope(m_debugger.Scope());
@@ -113,6 +114,18 @@ void RuntimeSession::Poll(bool piloting)
 		m_debugger.Poll();
 		const auto selected = m_debugger.Selected();
 		const auto now = Clock::now();
+		if (!m_time.following && m_time.epoch == m_debugger.Scope().epoch && m_time.cursor.session == selected.id &&
+			m_time.cursor.run == selected.generation && m_time.cursor.frame &&
+			m_unavailablePreview != m_time.cursor.frame && !m_workspace.SelectedId() && !m_preview.SelectedId() &&
+			!m_requests.Has(Work::PastPreview) && Supports(wire::Capability::ContinuousPreviews))
+		{
+			if (!m_preview.SelectFrame(m_debugger.Scope(), m_time.cursor.frame))
+			{
+				auto fields = m_debugger.SessionFields();
+				fields.push_back(wire::Field::U64(tag::FrameId, m_time.cursor.frame, true));
+				m_requests.Send(wire::OpCode::RetainPreview, Work::PastPreview, std::move(fields), m_time.cursor.frame);
+			}
+		}
 		m_history.SetScope(m_debugger.Scope());
 		if (selected.id && selected.running && Supports(wire::Capability::LiveHaptics) && now >= m_nextHaptics &&
 			!m_requests.Has(Work::Haptics))
@@ -194,6 +207,17 @@ void RuntimeSession::Poll(bool piloting)
 			history.SetFlags(*index, HistoryPinned, false);
 		}
 	m_coverage.clear();
+	if (Supports(wire::Capability::ContinuousPreviews))
+	{
+		const auto scope = m_debugger.Scope();
+		for (const auto& field : panel::Nested(m_debugger.Status().Find(tag::PreviewFrames)).fields)
+			if (const auto frame = field.AsU64())
+				if (const auto index = history.Find({scope.session, scope.generation, *frame}, scope.epoch))
+				{
+					m_coverage.push_back(history.At(*index));
+					history.SetFlags(*index, HistoryPreview, true);
+				}
+	}
 	for (const auto& image : m_preview.Images())
 		if (image.ready && !image.released)
 			if (const auto index =

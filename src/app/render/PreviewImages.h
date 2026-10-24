@@ -36,6 +36,7 @@ class PreviewImages
 	bool HasPendingLive() const;
 	bool SelectCapture(PanelScope scope, std::uint64_t capture);
 	void SelectImage(std::uint64_t id);
+	bool SelectFrame(PanelScope scope, std::uint64_t frame);
 	void ClearSelection();
 	void ReleaseSelected();
 	// Shows the newest live image instead of a chosen one.
@@ -78,6 +79,7 @@ class PreviewImages
 	PreviewHistory m_history;
 	std::uint64_t m_nextImage = 1, m_selectedImage = 0, m_selectedCapture = 0;
 	bool m_live = true;
+	std::uint64_t m_selectedFrame = 0;
 	std::string m_error;
 };
 } // namespace simxr::app

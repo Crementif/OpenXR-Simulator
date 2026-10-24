@@ -53,6 +53,9 @@ class RuntimeSession
 
 	// Looks at a retained frame: stops following and loads its capture or image.
 	void LookAt(std::size_t historyIndex);
+	bool LoadingPastImage() const;
+	std::uint64_t PreviewBytes() const;
+	std::uint64_t PreviewBudget() const;
 	void SelectFrame(std::uint64_t local);
 	void SelectCapture(std::uint64_t capture);
 	void SelectImage(std::uint64_t image);
@@ -182,6 +185,7 @@ class RuntimeSession
 	std::uint32_t m_budgetMiB = 0;
 	Clock::time_point m_nextHistory{}, m_nextPreview{}, m_nextCapture{}, m_nextHaptics{}, m_hapticsRequested{},
 		m_nextBudget{};
+	std::uint64_t m_unavailablePreview = 0;
 	std::uint64_t m_observation = 0, m_resumeAfter = 0;
 	bool m_autoSelect = true, m_followOnResume = false, m_stepRequested = false, m_scopeChanged = false,
 		 m_observationChanged = false;

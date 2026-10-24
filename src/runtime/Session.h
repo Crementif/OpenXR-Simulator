@@ -1,5 +1,7 @@
 #pragma once
 
+#include "presentation/FramePreviewHistory.h"
+
 #include "presentation/FrameHistory.h"
 #include "presentation/FrameScheduler.h"
 #include "presentation/SnapshotStore.h"
@@ -82,6 +84,10 @@ class Session
 	XrResult EnableImageHistory();
 	bool SupportsImageHistory() const;
 	FrameImageHistory& ImageHistory();
+	FramePreviewHistory& PreviewHistory() noexcept
+	{
+		return m_previewHistory;
+	}
 	VirtualDisplay& Display();
 	SnapshotStore& Captures();
 	XrResult ConfigureCapturePool(FramePool pool, bool layerViews = false, CapturePromoter promoter = {},
@@ -142,6 +148,7 @@ class Session
 	std::shared_ptr<Clock> m_clock;
 	FrameScheduler m_scheduler;
 	FrameHistory m_history;
+	FramePreviewHistory m_previewHistory;
 	VirtualDisplay m_display;
 	SessionCaptureCoordinator m_captures;
 	SessionInteraction m_interaction;

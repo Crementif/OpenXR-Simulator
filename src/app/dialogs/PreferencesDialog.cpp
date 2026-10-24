@@ -57,7 +57,8 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 							   {ImGui::CalcItemWidth(), 0}, usage.c_str());
 			ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
 			ImGui::TextUnformatted("Kept previews");
-			ImGui::SetItemTooltip("Downscaled copies of shown frames for looking back while the app runs");
+			ImGui::SetItemTooltip(
+				"An image for every submitted frame; oldest images are evicted when the budget fills");
 		}
 		ImGui::PopItemWidth();
 		if (ImGui::Button("Reset layout"))
