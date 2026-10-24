@@ -26,7 +26,10 @@ std::string PilotController::KeyName(PilotAction action) const
 void PilotController::DrawHelp() const
 {
 	ImGui::Text("%s releases the pointer and all held inputs.", KeyName(PilotAction::Escape).c_str());
-	ImGui::Text("Ctrl+%s locks capture so you don't have to hold it.", KeyName(PilotAction::Capture).c_str());
+	if (m_remoteMouseDrag)
+		ImGui::TextUnformatted("Remote drag: release and reposition the cursor at the edge.");
+	else
+		ImGui::Text("Ctrl+%s locks capture so you don't have to hold it.", KeyName(PilotAction::Capture).c_str());
 	if (ImGui::BeginTable("Pilot bindings", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, {360, 300}))
 	{
 		for (std::size_t index = 0; index < m_keys.size(); ++index)
@@ -189,8 +192,10 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 				  ImGui::SetItemTooltip("What mouse look and walking keys move");
 				  ImGui::SameLine();
 				  const auto lockTip = "Keep the pointer captured without holding " + KeyName(PilotAction::Capture);
+				  ImGui::BeginDisabled(m_remoteMouseDrag);
 				  if (IconButton("Lock", m_locked ? Icon::Lock : Icon::Unlock, lockTip.c_str(), m_locked, lock))
 					  m_locked = !m_locked;
+				  ImGui::EndDisabled();
 				  ImGui::SameLine();
 				  if (IconButton("Pilot keys", Icon::Keyboard, "Mouse, keyboard and gamepad bindings for piloting"))
 					  ImGui::OpenPopup("Piloting");

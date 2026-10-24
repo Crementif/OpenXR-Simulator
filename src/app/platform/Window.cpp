@@ -103,10 +103,26 @@ bool Window::PollEvents(const std::function<void(const SDL_Event&)>& processEven
 	{
 		const bool capturedMotion = event.type == SDL_EVENT_MOUSE_MOTION &&
 									event.motion.windowID == SDL_GetWindowID(m_window) && m_pointerCaptured;
-		if (capturedMotion)
+		if (capturedMotion && !m_pointerRelative)
+		{
+			int width = 0, height = 0;
+			SDL_GetWindowSize(m_window, &width, &height);
+			if (event.motion.x < 0 || event.motion.y < 0 || event.motion.x >= width || event.motion.y >= height)
+			{
+				m_focusLost = true;
+				CapturePointer(false);
+			}
+		}
+		if (capturedMotion && m_pointerCaptured)
 		{
 			m_pointerMotion.first += event.motion.xrel;
 			m_pointerMotion.second += event.motion.yrel;
+		}
+		if (event.type == SDL_EVENT_WINDOW_MOUSE_LEAVE && event.window.windowID == SDL_GetWindowID(m_window) &&
+			m_pointerCaptured && !m_pointerRelative)
+		{
+			m_focusLost = true;
+			CapturePointer(false);
 		}
 		if (event.type == SDL_EVENT_GAMEPAD_ADDED)
 			OpenGamepad();
@@ -207,16 +223,17 @@ bool Window::TakeFocusLost()
 	return std::exchange(m_focusLost, false);
 }
 
-bool Window::CapturePointer(bool enabled)
+bool Window::CapturePointer(bool enabled, bool relative)
 {
 	if (!enabled || m_pointerReleasePending)
 		m_pointerMotion = {};
 	m_pointerReleasePending = !enabled && m_pointerCaptured;
-	if (m_pointerCaptured == enabled)
+	if (m_pointerCaptured == enabled && (!enabled || m_pointerRelative == relative))
 		return true;
-	if (!SDL_SetWindowRelativeMouseMode(m_window, enabled))
+	if (!SDL_SetWindowRelativeMouseMode(m_window, enabled && relative))
 		return false;
 	m_pointerCaptured = enabled;
+	m_pointerRelative = enabled && relative;
 	m_pointerReleasePending = false;
 	m_pointerMotion = {};
 	return true;

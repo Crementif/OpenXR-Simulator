@@ -31,8 +31,13 @@ PilotController::PilotController(PlayerRig& rig) : m_rig(rig)
 {
 	Configure(m_keys, m_gamepad);
 }
-void PilotController::Configure(const PilotBindings& keys, const GamepadBindings& gamepad)
+void PilotController::Configure(const PilotBindings& keys, const GamepadBindings& gamepad, bool remoteMouseDrag)
 {
+	if (m_remoteMouseDrag != remoteMouseDrag)
+	{
+		m_remoteMouseDrag = remoteMouseDrag;
+		m_captureModeChanged = true;
+	}
 	if (m_keys == keys && m_gamepad == gamepad && m_resolved[0] != ImGuiKey_None)
 		return;
 	m_keys = keys;
@@ -177,7 +182,7 @@ void PilotController::Update(Window& window, ManualInputController& input, bool 
 	const bool removed = m_gamepadIdentity && m_gamepadIdentity != gamepadIdentity;
 	m_gamepadIdentity = gamepadIdentity;
 	const auto& io = ImGui::GetIO();
-	if (removed || !available || !window.Focused() || io.WantTextInput ||
+	if (std::exchange(m_captureModeChanged, false) || removed || !available || !window.Focused() || io.WantTextInput ||
 		ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId) || ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
 		Pressed(PilotAction::Escape))
 	{
@@ -203,7 +208,7 @@ void PilotController::Update(Window& window, ManualInputController& input, bool 
 	}
 	if (Pressed(PilotAction::Capture) && (m_captured || (hovered && !ImGui::IsAnyItemActive())))
 	{
-		if (io.KeyCtrl)
+		if (io.KeyCtrl && !m_remoteMouseDrag)
 			m_locked = !m_locked;
 		if (!m_captured)
 		{
@@ -218,7 +223,7 @@ void PilotController::Update(Window& window, ManualInputController& input, bool 
 	if (m_starting && state.observation != m_startObservation && !state.posePending)
 	{
 		m_rig.Observe(observed);
-		if (!window.CapturePointer(true))
+		if (!window.CapturePointer(true, !m_remoteMouseDrag))
 		{
 			m_error = "Pointer capture unavailable";
 			Stop(&window, input, true);

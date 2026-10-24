@@ -40,6 +40,7 @@ struct CompanionSettings
 	float scale = 1;
 	std::uint32_t snapshotBudgetMiB = SnapshotBudget::DefaultMiB;
 	PilotBindings pilotBindings = DefaultPilotBindings();
+	bool remoteMouseDrag = false;
 	GamepadBindings gamepadBindings;
 	float inspectorWidth = 340, timelineHeight = 132;
 	// railCollapsed is no longer used; it stays so older builds can read the file.

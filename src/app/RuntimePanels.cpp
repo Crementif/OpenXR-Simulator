@@ -294,9 +294,9 @@ void RuntimePanels::ConfigureSnapshots(std::uint32_t budgetMiB)
 	if (!m_replayPreparation && !m_replayActive)
 		m_session.ConfigureSnapshots(budgetMiB);
 }
-void RuntimePanels::ConfigurePilot(const PilotBindings& keys, const GamepadBindings& gamepad)
+void RuntimePanels::ConfigurePilot(const PilotBindings& keys, const GamepadBindings& gamepad, bool remoteMouseDrag)
 {
-	m_pilot.Configure(keys, gamepad);
+	m_pilot.Configure(keys, gamepad, remoteMouseDrag);
 }
 const RuntimeView& RuntimePanels::View() const
 {

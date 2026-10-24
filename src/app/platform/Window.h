@@ -31,7 +31,7 @@ class Window
 	Window& operator=(const Window&) = delete;
 	SDL_Window* Native() const;
 	std::pair<int, int> PixelSize() const;
-	// Captured relative motion stays with the pilot; other events go to the UI owner.
+	// Pilot motion stays with the pilot; other events go to the UI owner.
 	bool PollEvents(const std::function<void(const SDL_Event&)>& processEvent = {});
 	bool TakeFocusLost();
 	bool Focused() const;
@@ -41,7 +41,7 @@ class Window
 	bool HasGamepad() const noexcept;
 	std::uint32_t GamepadIdentity() const noexcept;
 	void Resize(int width, int height);
-	bool CapturePointer(bool enabled);
+	bool CapturePointer(bool enabled, bool relative = true);
 	std::pair<float, float> TakePointerMotion();
 
   private:
@@ -51,6 +51,7 @@ class Window
 	void OpenGamepad();
 	bool m_focusLost = false;
 	bool m_pointerCaptured = false;
+	bool m_pointerRelative = false;
 	bool m_pointerReleasePending = false;
 	bool m_gyroEnabled = false;
 	std::pair<float, float> m_pointerMotion{};

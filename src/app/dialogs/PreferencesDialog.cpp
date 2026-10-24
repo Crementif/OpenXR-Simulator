@@ -112,6 +112,10 @@ void PreferencesDialog::CancelCapture()
 }
 bool PreferencesDialog::DrawKeyboard(CompanionSettings& settings, bool& dirty)
 {
+	if (ImGui::Checkbox("Remote desktop mouse drag", &settings.remoteMouseDrag))
+		dirty = true;
+	ImGui::SetItemTooltip("For RDP: hold the capture button and drag to pilot, without locking or hiding the cursor.\n"
+						  "Release and reposition at the edge. Esc or leaving the window releases inputs.");
 	if (ImGui::Button("Reset keymap"))
 	{
 		settings.pilotBindings = DefaultPilotBindings();

@@ -239,7 +239,7 @@ void WorkspacePanels::DrawShell(RuntimePanels& runtime)
 		ImGui::EndChild();
 		ImGui::PopStyleColor();
 	}
-	runtime.ConfigurePilot(m_settings.pilotBindings, m_settings.gamepadBindings);
+	runtime.ConfigurePilot(m_settings.pilotBindings, m_settings.gamepadBindings, m_settings.remoteMouseDrag);
 	runtime.ConfigureSnapshots(m_settings.snapshotBudgetMiB);
 	// The overlay drawer closes on a click into the preview and opens on any new selection.
 	const auto window = ImGui::GetWindowPos();

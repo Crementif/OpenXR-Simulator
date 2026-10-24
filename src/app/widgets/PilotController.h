@@ -24,7 +24,7 @@ class PilotController
 {
   public:
 	explicit PilotController(PlayerRig& rig);
-	void Configure(const PilotBindings& keys, const GamepadBindings& gamepad);
+	void Configure(const PilotBindings& keys, const GamepadBindings& gamepad, bool remoteMouseDrag = false);
 	void Update(Window& window, ManualInputController& input, bool available, bool hovered,
 				bool automaticGamepad = true);
 	void Stop(Window* window, ManualInputController& input, bool discard, bool forceButtons = false);
@@ -68,6 +68,7 @@ class PilotController
 	PilotTarget m_target = PilotTarget::Player;
 	unsigned m_hand = 1, m_handEdits = 0;
 	bool m_poseEngaged = false;
+	bool m_remoteMouseDrag = false, m_captureModeChanged = false;
 	bool m_captured = false, m_starting = false, m_locked = false, m_gamepadActive = false, m_hudFolded = false;
 	std::uint64_t m_startObservation = 0;
 	std::uint32_t m_gamepadIdentity = 0;

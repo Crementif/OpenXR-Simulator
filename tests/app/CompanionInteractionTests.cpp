@@ -2825,6 +2825,7 @@ void CheckNativePlayerRig(const RuntimeView& target)
 
 void CheckPreviewPilot(Interaction& test)
 {
+	const bool remote = std::getenv("SIMXR_REMOTE_DRAG_QA") != nullptr;
 	IgnoreRealPointer();
 	const auto target = test.runtime.Snapshot();
 	ManualInputController observer;
@@ -2886,8 +2887,8 @@ void CheckPreviewPilot(Interaction& test)
 	};
 	const auto motion = [&](float x, float y)
 	{
-		Require(test.window.Focused() && SDL_GetWindowRelativeMouseMode(test.window.Native()),
-			"Pilot motion lost native focus or pointer capture");
+		Require(test.window.Focused() && SDL_GetWindowRelativeMouseMode(test.window.Native()) == !remote,
+			"Pilot motion lost focus or selected the wrong pointer mode");
 		SDL_Event event{};
 		event.type = SDL_EVENT_MOUSE_MOTION;
 		event.motion.windowID = SDL_GetWindowID(test.window.Native());
@@ -2923,6 +2924,65 @@ void CheckPreviewPilot(Interaction& test)
 		const auto after = observed();
 		Require(std::abs(after.values.tracking.head.pose.position.x - before.values.tracking.head.pose.position.x) < .001f,
 			"Releasing buttons without a pose gesture submitted the stale rig pose");
+	}
+	if (remote)
+	{
+		const auto orientation = [&] { return observed().values.tracking.head.pose.orientation; };
+		const auto different = [](XrQuaternionf a, XrQuaternionf b)
+		{
+			return std::abs(a.x - b.x) + std::abs(a.y - b.y) + std::abs(a.z - b.z) > .01f;
+		};
+		const auto start = orientation();
+		button(SDL_BUTTON_RIGHT, true);
+		pump(15);
+		Require(SDL_CursorVisible(), "Remote drag hid the cursor");
+		motion(60, 20);
+		pump(5);
+		Require(different(start, orientation()), "Remote drag did not rotate the runtime head");
+		button(SDL_BUTTON_RIGHT, false);
+		pump(5);
+		const auto released = orientation();
+		motion(60, 20);
+		pump(5);
+		Require(!different(released, orientation()), "Mouse-up retained remote piloting");
+		for (const auto exit : {SDL_EVENT_KEY_DOWN, SDL_EVENT_WINDOW_MOUSE_LEAVE, SDL_EVENT_MOUSE_MOTION})
+		{
+			button(SDL_BUTTON_RIGHT, true);
+			pump(15);
+			key(SDL_SCANCODE_W, true);
+			SDL_Event event{};
+			event.type = exit;
+			event.window.windowID = SDL_GetWindowID(test.window.Native());
+			if (exit == SDL_EVENT_KEY_DOWN)
+			{
+				event.key.scancode = SDL_SCANCODE_ESCAPE;
+				event.key.key = SDLK_ESCAPE;
+				event.key.down = true;
+			}
+			if (exit == SDL_EVENT_MOUSE_MOTION)
+			{
+				event.motion.which = TestMouse;
+				event.motion.x = -1;
+				event.motion.xrel = 60;
+			}
+			Require(SDL_PushEvent(&event), "Push remote drag cancellation");
+			pump(10);
+			const auto stopped = observed().values.tracking.head.pose;
+			motion(60, 20);
+			pump(10);
+			const auto after = observed().values.tracking.head.pose;
+			Require(!different(stopped.orientation, after.orientation) &&
+				std::abs(stopped.position.z - after.position.z) < .001f,
+				"Remote drag cancellation retained motion or held keys");
+			key(SDL_SCANCODE_W, false);
+			key(SDL_SCANCODE_ESCAPE, false);
+			button(SDL_BUTTON_RIGHT, false);
+			pump(3);
+		}
+		test.renderer.WaitIdle();
+		Require(test.validation->errors.load() == 0, "Remote drag validation errors");
+		std::cout << "PASS remote drag: visible unlocked pointer, runtime head rotation, mouse-up, Escape and boundary release\n";
+		return;
 	}
 	// Player takeover must include the body even when no other device is owned by the rival.
 	ManualTransaction bodyClaim;
@@ -6326,7 +6386,16 @@ int main()
 		}
 		if (const auto endpoint = std::getenv("SIMXR_PREVIEW_PILOT_ENDPOINT"))
 		{
-			Interaction test;
+			if (std::getenv("SIMXR_REMOTE_DRAG_QA"))
+			{
+				const auto path = QaDirectory("SIMXR_COMPANION_SETTINGS");
+				Require(!path.empty(), "Remote drag QA needs private settings");
+				auto settings = LoadSettings(path);
+				settings.remoteMouseDrag = true;
+				SaveSettings(path, settings);
+			}
+
+			Interaction test(std::getenv("SIMXR_REMOTE_DRAG_QA") != nullptr);
 			test.live = true;
 			test.runtime.ConnectEndpoint(endpoint);
 			Eventually(

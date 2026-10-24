@@ -136,6 +136,7 @@ void Persistence()
 	settings.recent.front().launch.privateProtonPrefix = "Z:\\最近\\first\\pfx";
 	settings.recent.back().launch.runtimeManifest = "Z:\\other runtime\\openxr_simulator.json";
 	settings.recent.back().launch.privateProtonPrefix = "Z:\\最近\\last\\pfx";
+	settings.remoteMouseDrag = true;
 	SaveSettings(file, settings);
 	for (int index = 0; index < 80; ++index)
 		settings.recent.front().launch.environment.emplace_back("CUSTOM_" + std::to_string(index),
@@ -167,7 +168,9 @@ void Persistence()
 		number(static_cast<std::uint32_t>(settings.recent.size()));
 		for (const auto& recent : settings.recent)
 			prefix(recent.launch.privateProtonPrefix);
-		Require(complete.ends_with(extension), "Private prefix settings use the version-7 trailing table");
+		number(8);
+		number(1);
+		Require(complete.ends_with(extension), "Private prefix and pointer settings use versioned trailing tables");
 		const auto extensionStart = complete.size() - extension.size();
 		const auto replace = [&](std::string_view bytes)
 		{
@@ -176,8 +179,11 @@ void Persistence()
 			output.close();
 			Require(output.good(), "Write settings migration fixture");
 		};
-		replace(std::string_view(complete).substr(0, extensionStart));
 		auto previous = settings;
+		previous.remoteMouseDrag = false;
+		replace(std::string_view(complete).substr(0, complete.size() - 8));
+		Require(LoadSettings(file) == previous, "Version-7 settings default to relative mouse capture");
+		replace(std::string_view(complete).substr(0, extensionStart));
 		for (auto& profile : previous.profiles)
 			profile.privateProtonPrefix.clear();
 		for (auto& recent : previous.recent)

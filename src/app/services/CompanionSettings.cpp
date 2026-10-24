@@ -314,6 +314,12 @@ CompanionSettings LoadSettings(const std::filesystem::path& path)
 			recent.launch.privateProtonPrefix = reader.Text();
 	}
 	if (!reader.Empty())
+	{
+		if (reader.Number() != 8)
+			throw std::runtime_error("Unknown pointer settings version");
+		result.remoteMouseDrag = reader.Count(1) != 0;
+	}
+	if (!reader.Empty())
 		throw std::runtime_error("Unexpected trailing companion settings data");
 	ValidateSettings(result);
 	return result;
@@ -390,6 +396,8 @@ void SaveSettings(const std::filesystem::path& path, const CompanionSettings& se
 	Put(bytes, static_cast<std::uint32_t>(settings.recent.size()));
 	for (const auto& recent : settings.recent)
 		Put(bytes, recent.launch.privateProtonPrefix);
+	Put(bytes, std::uint32_t{8});
+	Put(bytes, static_cast<std::uint32_t>(settings.remoteMouseDrag));
 	if (bytes.size() > s_maxFile)
 		throw std::invalid_argument("Companion settings exceed the file budget");
 	std::filesystem::create_directories(path.parent_path());
