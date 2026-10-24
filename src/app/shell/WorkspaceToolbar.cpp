@@ -94,12 +94,12 @@ void WorkspacePanels::DrawAppPicker(RuntimePanels& runtime, const RuntimeView& v
 		runtime.Disconnect();
 }
 
-void WorkspacePanels::DrawHistory(RuntimePanels& runtime, bool labelled)
+void WorkspacePanels::DrawHistory(RuntimePanels& runtime)
 {
 	const bool unseen = m_notices.Unseen();
 	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{});
 	const bool pressed = IconButton("History", Icon::History, "Recent changes and notices",
-									ImGui::IsPopupOpen("History"), labelled ? "History" : nullptr);
+									ImGui::IsPopupOpen("History"));
 	ImGui::PopStyleColor();
 	if (pressed)
 	{
@@ -209,13 +209,9 @@ void WorkspacePanels::DrawToolbar(RuntimePanels& runtime)
 	const float right = ImGui::GetContentRegionMax().x;
 	const auto& style = ImGui::GetStyle();
 	const float button = ImGui::GetFrameHeight();
-	const bool labelled = ImGui::GetMainViewport()->Size.x / m_settings.scale >= 800;
-	const std::string focusLabel = labelled ? (elapsed.empty() ? "Focus" : "Focus \u00b7 " + elapsed) : elapsed;
 	const float focus =
-		focusLabel.empty() ? button : button + ImGui::CalcTextSize(focusLabel.c_str()).x + style.FramePadding.x;
-	const float history = labelled ? button + ImGui::CalcTextSize("History").x + style.FramePadding.x : button;
-	const float settings = labelled ? button + ImGui::CalcTextSize("Settings").x + style.FramePadding.x : button;
-	const float actions = history + focus + settings + style.ItemSpacing.x * 2;
+		elapsed.empty() ? button : button + ImGui::CalcTextSize(elapsed.c_str()).x + style.FramePadding.x;
+	const float actions = button * 2 + focus + style.ItemSpacing.x * 2;
 	const float reserved =
 		actions + style.ItemSpacing.x + (m_shell.session.state == RunState::Failed ? button + style.ItemSpacing.x : 0);
 	ImGui::SetCursorPosY(std::max(0.0f, (ImGui::GetWindowHeight() - button) / 2));
@@ -230,17 +226,16 @@ void WorkspacePanels::DrawToolbar(RuntimePanels& runtime)
 		ImGui::PopStyleColor();
 	}
 	ImGui::SameLine(std::max(ImGui::GetCursorPosX(), right - actions));
-	DrawHistory(runtime, labelled);
+	DrawHistory(runtime);
 	ImGui::SameLine();
 	const std::string focusTip = std::string(m_previewExpanded ? "Exit focus (F11)" : "Focus: only the image (F11)") +
 								 (elapsed.empty() ? "" : "\nRecording " + elapsed + "; Ctrl+R stops");
 	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{});
 	if (IconButton("Focus", Icon::Focus, focusTip.c_str(), m_previewExpanded,
-				   focusLabel.empty() ? nullptr : focusLabel.c_str(), elapsed.empty() ? 0 : theme::Record))
+				   elapsed.empty() ? nullptr : elapsed.c_str(), elapsed.empty() ? 0 : theme::Record))
 		m_previewExpanded = !m_previewExpanded;
 	ImGui::SameLine();
-	if (IconButton("Settings", Icon::Settings, "Preferences: scale, snapshots, keys and layout", m_showSettings,
-				   labelled ? "Settings" : nullptr))
+	if (IconButton("Settings", Icon::Settings, "Preferences: scale, snapshots, keys and layout", m_showSettings))
 		m_showSettings = true;
 	ImGui::PopStyleColor();
 	runtime.DrawRecordingPopovers();

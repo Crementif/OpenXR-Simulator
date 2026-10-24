@@ -52,7 +52,7 @@ class WorkspacePanels
 	void Launch(const LaunchProfile& profile);
 	void PollLaunch(RuntimePanels& runtime);
 	void DrawAppPicker(RuntimePanels& runtime, const RuntimeView& view, float maximumWidth);
-	void DrawHistory(RuntimePanels& runtime, bool labelled);
+	void DrawHistory(RuntimePanels& runtime);
 	void DrawToolbar(RuntimePanels& runtime);
 	void ToggleLibrary();
 	void ShowInspector();
