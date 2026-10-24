@@ -23,6 +23,7 @@ static constexpr std::array s_beginImageWindow{tag::Session, tag::Generation, ta
 static constexpr std::array s_frameHistory{tag::Session, tag::Generation, tag::Offset, tag::Length};
 static constexpr std::array s_projectionHistory{tag::Session, tag::Generation, tag::Length};
 static constexpr std::array s_recording{tag::Session, tag::Generation, tag::SourceKind, tag::Offset, tag::Length};
+static constexpr std::array s_previewBudget{tag::Session, tag::Generation, tag::PreviewBudget};
 static constexpr std::array s_preview{tag::Session, tag::Generation, tag::FrameId};
 static constexpr std::array s_common{tag::Session, tag::Generation};
 static constexpr std::array s_hello{tag::ClientName, tag::RequiredCapabilities, tag::OptionalCapabilities};
@@ -48,6 +49,7 @@ static constexpr std::array s_readExport{tag::ExportId, tag::Offset, tag::Length
 static constexpr std::array s_schemas{
 	RequestSchema{OpCode::Hello, RequestDomain::Connection, 0, s_hello},
 	RequestSchema{OpCode::Sessions, RequestDomain::Connection, 0, {}},
+	RequestSchema{OpCode::ConfigurePreviews, RequestDomain::Debugger, 3, s_previewBudget},
 	RequestSchema{OpCode::Status, RequestDomain::Debugger, 0, s_common},
 	RequestSchema{OpCode::Acquire, RequestDomain::Debugger, 0, s_common},
 	RequestSchema{OpCode::Renew, RequestDomain::Debugger, 0, s_leased},

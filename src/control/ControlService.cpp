@@ -168,7 +168,8 @@ std::uint64_t ControlService::AdvertisedCapabilities(const Client& client, std::
 		capabilities |= ImageCapabilitiesMask({true, true}, client.nativeHandles);
 	if (m_images && minor >= 3)
 		capabilities |= static_cast<std::uint64_t>(Capability::LivePreview) |
-						static_cast<std::uint64_t>(Capability::ContinuousPreviews);
+						static_cast<std::uint64_t>(Capability::ContinuousPreviews) |
+						static_cast<std::uint64_t>(Capability::ConfigurablePreviews);
 	return capabilities;
 }
 
@@ -522,6 +523,17 @@ Message ControlService::DispatchDebugger(Client& client, const Message& request,
 										 HeldReaders& held, Message response)
 {
 	const auto& session = binding.session;
+	if (static_cast<OpCode>(request.opcode) == OpCode::ConfigurePreviews)
+	{
+		const auto bytes = RequireRequestU64(request, tag::PreviewBudget);
+		if (bytes < (std::uint64_t{FramePreviewHistory::MinMiB} << 20) ||
+			bytes > (std::uint64_t{FramePreviewHistory::MaxMiB} << 20) || bytes % FramePreviewHistory::SlotBytes)
+			throw ControlRequestError{ErrorCode::Invalid, "History budget must be 64–16384 MiB in multiples of 4 MiB"};
+		session->PreviewHistory().Configure(bytes);
+		response.fields.push_back(Field::U64(tag::PreviewBudget, session->PreviewHistory().Limit()));
+		return response;
+	}
+
 	auto controller = m_runtime.Debugger(binding.handle);
 	if (!controller)
 		throw ControlRequestError{ErrorCode::Closed, "Session debugger closed"};
@@ -543,7 +555,8 @@ Message ControlService::DispatchDebugger(Client& client, const Message& request,
 				capabilities |= static_cast<std::uint64_t>(Capability::RotationalReprojection);
 			if (client.requests.Minor() >= 3 && (native.gpuPreview || native.imageExport))
 				capabilities |= static_cast<std::uint64_t>(Capability::LivePreview) |
-								static_cast<std::uint64_t>(Capability::ContinuousPreviews);
+								static_cast<std::uint64_t>(Capability::ContinuousPreviews) |
+								static_cast<std::uint64_t>(Capability::ConfigurablePreviews);
 		}
 		if (status.composedEyes)
 			capabilities |= static_cast<std::uint64_t>(Capability::ComposedCapture) |
@@ -561,11 +574,21 @@ Message ControlService::DispatchDebugger(Client& client, const Message& request,
 			capabilities |= static_cast<std::uint64_t>(Capability::LayerViewCapture);
 		EncodeDebuggerStatus(response, status, state, display, capabilities);
 		std::vector<Field> previews;
-		for (const auto key : session->PreviewHistory().Frames(state.generation))
-			previews.push_back(Field::U64(static_cast<std::uint16_t>(previews.size() + 1), key.frame.value));
+		const auto frames = session->PreviewHistory().Frames(state.generation);
+		std::vector<std::byte> ids;
+		ids.reserve(frames.size() * sizeof(std::uint64_t));
+		for (std::size_t index = 0; index < frames.size(); ++index)
+		{
+			const auto id = frames[index].frame.value;
+			for (unsigned shift = 0; shift < 64; shift += 8)
+				ids.push_back(static_cast<std::byte>((id >> shift) & 255));
+			if (frames.size() - index <= MaxFields)
+				previews.push_back(Field::U64(static_cast<std::uint16_t>(previews.size() + 1), id));
+		}
+		response.fields.push_back(Field::Bytes(tag::PreviewFrameIds, ids));
 		response.fields.push_back(Nested(tag::PreviewFrames, std::move(previews)));
 		response.fields.push_back(Field::U64(tag::PreviewBytes, session->PreviewHistory().Bytes()));
-		response.fields.push_back(Field::U64(tag::PreviewBudget, FramePreviewHistory::BudgetBytes));
+		response.fields.push_back(Field::U64(tag::PreviewBudget, session->PreviewHistory().Limit()));
 		return response;
 	}
 	case OpCode::Acquire:

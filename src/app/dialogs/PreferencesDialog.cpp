@@ -50,6 +50,16 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 			settings.snapshotBudgetMiB = static_cast<std::uint32_t>(budget);
 			dirty = true;
 		}
+		int history = static_cast<int>(settings.previewBudgetMiB);
+		if (ImGui::InputInt("History (MiB)", &history, 64, 256))
+		{
+			settings.previewBudgetMiB = static_cast<std::uint32_t>(std::clamp(history, int(FramePreviewHistory::MinMiB),
+																			  int(FramePreviewHistory::MaxMiB))) /
+										4 * 4;
+			dirty = true;
+		}
+		ImGui::SetItemTooltip("GPU frame history, 64–16384 MiB. Applies live and is saved.\n"
+							  "About one stereo preview per 4 MiB. Timeline thumbnails use another 32 MiB.");
 		if (keptBudget)
 		{
 			const auto usage = std::to_string(keptBytes >> 20) + " / " + std::to_string(keptBudget >> 20) + " MiB";

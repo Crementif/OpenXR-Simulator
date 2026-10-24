@@ -289,6 +289,10 @@ RuntimePanels::~RuntimePanels()
 	if (m_window)
 		m_window->Rumble({});
 }
+void RuntimePanels::ConfigurePreviews(std::uint32_t budgetMiB)
+{
+	m_session.ConfigurePreviews(budgetMiB);
+}
 void RuntimePanels::ConfigureSnapshots(std::uint32_t budgetMiB)
 {
 	if (!m_replayPreparation && !m_replayActive)

@@ -658,6 +658,29 @@ void CheckPreferences(Interaction& test)
 				return window;
 		return nullptr;
 	};
+	if (std::getenv("SIMXR_BUDGET_QA"))
+	{
+		auto* contents = contentsWindow();
+		Require(contents, "History settings contents missing");
+		ImGui::ActivateItemByID(contents->GetID("History (MiB)"));
+		pump();
+		io.AddKeyEvent(ImGuiMod_Ctrl, true);
+		tap(ImGuiKey_A);
+		io.AddKeyEvent(ImGuiMod_Ctrl, false);
+		io.AddInputCharactersUTF8("2048");
+		pump();
+		tap(ImGuiKey_Enter);
+		Require(settings.previewBudgetMiB == 2048 && dirty, "History budget field did not accept typed value");
+		if (const auto directory = std::getenv("SIMXR_DIALOG_QA_DIR"))
+		{
+			test.renderer.RequestScreenshot(std::filesystem::path(directory) / "history-budget.bmp");
+			test.Frame();
+		}
+		test.renderer.WaitIdle();
+		Require(test.validation->errors.load() == 0, "History budget UI validation errors");
+		std::cout << "PASS typed history budget and rendered preferences\n";
+		return;
+	}
 	const auto capture = [&](const char* step)
 	{
 		auto* contents = contentsWindow();
@@ -6304,6 +6327,12 @@ int main()
 			test.runtime.ConnectEndpoint(endpoint);
 			Eventually([&] { test.Frame(); return test.runtime.Snapshot().selectedReady; }, "Timeline app preview absent");
 			CheckTimelineWorkflow(test);
+			return 0;
+		}
+		if (std::getenv("SIMXR_BUDGET_QA"))
+		{
+			Interaction test;
+			CheckPreferences(test);
 			return 0;
 		}
 		if (const auto endpoint = std::getenv("SIMXR_PREVIEW_PILOT_ENDPOINT"))

@@ -61,6 +61,7 @@ class OpCode(IntEnum):
     STOP_SEQUENCE = 46
     RELEASE_SEQUENCE_CAPTURE = 47
     READ_FRAME_HISTORY = 48
+    CONFIGURE_PREVIEWS = 50
 
 
 class ErrorCode(IntEnum):
@@ -108,6 +109,7 @@ class Capability(IntFlag):
     FRAME_HISTORY = 1 << 24
     ROTATIONAL_REPROJECTION = 1 << 25
     CONTINUOUS_PREVIEWS = 1 << 27
+    CONFIGURABLE_PREVIEWS = 1 << 28
 
 
 class CommandKind(IntEnum):
@@ -232,6 +234,7 @@ class Tag(IntEnum):
     PREVIEW_FRAMES = 207
     PREVIEW_BYTES = 208
     PREVIEW_BUDGET = 209
+    PREVIEW_FRAME_IDS = 210
     FRAMES = 196
     APPLIED_INPUT = 197
     ACTIVE_ACTIONS = 198
@@ -488,7 +491,11 @@ def to_dict(fields, *, context=None):
             if field.required:
                 raise ProtocolError(f'Unsupported required response field {field.tag}')
             continue
-        if tag == Tag.PREVIEW_FRAMES:
+        if tag == Tag.PREVIEW_FRAME_IDS:
+            if len(field.value) % 8:
+                raise ProtocolError('Invalid packed preview frame IDs')
+            value = [entry[0] for entry in struct.iter_unpack('<Q', field.value)]
+        elif tag == Tag.PREVIEW_FRAMES:
             value = [entry.as_u64() for entry in _ordered_fields(field.value)]
         elif tag == Tag.PINNED:
             value = field.as_u64() if context == Tag.RETENTION else field.as_bool()

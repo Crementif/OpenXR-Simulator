@@ -74,6 +74,7 @@ class RuntimeSession
 	std::string Endpoint() const;
 	void ChooseSession(PanelSession session);
 	void ConfigureSnapshots(std::uint32_t budgetMiB);
+	void ConfigurePreviews(std::uint32_t budgetMiB);
 	// Returns false (with a notice) when no running session accepts edits.
 	bool SubmitEdit(const SimulationEdit& edit);
 
@@ -184,7 +185,7 @@ class RuntimeSession
 	PanelScope m_budgetScope;
 	std::uint32_t m_budgetMiB = 0;
 	Clock::time_point m_nextHistory{}, m_nextPreview{}, m_nextCapture{}, m_nextHaptics{}, m_hapticsRequested{},
-		m_nextBudget{};
+		m_nextBudget{}, m_nextPreviewBudget{};
 	std::uint64_t m_unavailablePreview = 0;
 	std::uint64_t m_observation = 0, m_resumeAfter = 0;
 	bool m_autoSelect = true, m_followOnResume = false, m_stepRequested = false, m_scopeChanged = false,

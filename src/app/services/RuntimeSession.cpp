@@ -210,13 +210,27 @@ void RuntimeSession::Poll(bool piloting)
 	if (Supports(wire::Capability::ContinuousPreviews))
 	{
 		const auto scope = m_debugger.Scope();
-		for (const auto& field : panel::Nested(m_debugger.Status().Find(tag::PreviewFrames)).fields)
-			if (const auto frame = field.AsU64())
-				if (const auto index = history.Find({scope.session, scope.generation, *frame}, scope.epoch))
-				{
-					m_coverage.push_back(history.At(*index));
-					history.SetFlags(*index, HistoryPreview, true);
-				}
+		std::vector<std::uint64_t> frames;
+		if (const auto packed = m_debugger.Status().Find(tag::PreviewFrameIds))
+		{
+			for (std::size_t offset = 0; offset + 8 <= packed->value.size(); offset += 8)
+			{
+				std::uint64_t frame = 0;
+				for (unsigned byte = 0; byte < 8; ++byte)
+					frame |= std::uint64_t{std::to_integer<unsigned char>(packed->value[offset + byte])} << (byte * 8);
+				frames.push_back(frame);
+			}
+		}
+		else
+			for (const auto& field : panel::Nested(m_debugger.Status().Find(tag::PreviewFrames)).fields)
+				if (const auto frame = field.AsU64())
+					frames.push_back(*frame);
+		for (const auto frame : frames)
+			if (const auto index = history.Find({scope.session, scope.generation, frame}, scope.epoch))
+			{
+				m_coverage.push_back(history.At(*index));
+				history.SetFlags(*index, HistoryPreview, true);
+			}
 	}
 	for (const auto& image : m_preview.Images())
 		if (image.ready && !image.released)
@@ -288,6 +302,17 @@ bool RuntimeSession::SubmitEdit(const SimulationEdit& edit)
 		return false;
 	}
 	return true;
+}
+void RuntimeSession::ConfigurePreviews(std::uint32_t budgetMiB)
+{
+	if (!Connected() || !Supports(wire::Capability::ConfigurablePreviews) ||
+		U64(m_debugger.Status(), tag::PreviewBudget) == (std::uint64_t{budgetMiB} << 20) ||
+		m_requests.Has(Work::ConfigurePreviews) || Clock::now() < m_nextPreviewBudget)
+		return;
+	auto fields = m_debugger.SessionFields();
+	fields.push_back(wire::Field::U64(tag::PreviewBudget, std::uint64_t{budgetMiB} << 20, true));
+	m_requests.Send(wire::OpCode::ConfigurePreviews, Work::ConfigurePreviews, std::move(fields));
+	m_nextPreviewBudget = Clock::now() + std::chrono::seconds(1);
 }
 void RuntimeSession::ConfigureSnapshots(std::uint32_t budgetMiB)
 {

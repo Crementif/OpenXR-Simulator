@@ -79,7 +79,8 @@ enum class OpCode : std::uint16_t
 	StopSequence = 46,
 	ReleaseSequenceCapture = 47,
 	ReadFrameHistory = 48,
-	ReadHaptics = 49
+	ReadHaptics = 49,
+	ConfigurePreviews = 50
 };
 
 enum class ErrorCode : std::uint32_t

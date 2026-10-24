@@ -38,10 +38,33 @@ void ContinuousHistory()
 	Require(!history.Find({{2}, {400}}).submitted, "History substituted a different run");
 	history.Append({{1}, {401}}, {}, true);
 	Require(history.Find({{1}, {401}}).clear && !history.Find({{1}, {401}}).output, "Clear became stale pixels");
-	const auto before = history.Find({{1}, {400}}).output;
+	auto before = history.Find({{1}, {400}}).output;
 	for (int read = 0; read < 200; ++read)
 		Require(history.Find({{1}, {400}}).output == before, "Idle history discarded a paused frame");
+	before.reset();
 	retained.reset();
+	history.Configure(2048ull << 20);
+	for (std::uint64_t frame = 402; frame <= 1000; ++frame)
+	{
+		auto reservation = history.Reserve();
+		Require(reservation && history.Budget().Consume(reservation), "Expanded history admission failed");
+		history.Append({{1}, {frame}}, std::make_shared<PreviewOutput>(reservation), false);
+	}
+	Require(history.Frames({1}).size() == 512 && history.Find({{1}, {489}}).output,
+			"Expanded history remained limited to the original ring");
+	auto pinned = history.Find({{1}, {489}}).output;
+	history.Configure(64ull << 20);
+	Require(pinned && history.Limit() == (64ull << 20) && history.Bytes() <= history.Limit() &&
+				!history.Find({{1}, {489}}).output && history.Find({{1}, {1000}}).output,
+			"Shrinking lost the newest frame, invalidated a reader, or exceeded its budget");
+	try
+	{
+		history.Configure(65ull << 20);
+		throw std::runtime_error("Unaligned budget accepted");
+	}
+	catch (const std::invalid_argument&)
+	{
+	}
 }
 } // namespace simxr::test
 int main()

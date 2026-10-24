@@ -2,6 +2,7 @@
 #include "app/services/LaunchTypes.h"
 #include "app/services/PilotBindings.h"
 #include "graphics/SnapshotBudget.h"
+#include "presentation/FramePreviewHistory.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -38,6 +39,7 @@ struct PreviewCrop
 struct CompanionSettings
 {
 	float scale = 1;
+	std::uint32_t previewBudgetMiB = FramePreviewHistory::BudgetBytes >> 20;
 	std::uint32_t snapshotBudgetMiB = SnapshotBudget::DefaultMiB;
 	PilotBindings pilotBindings = DefaultPilotBindings();
 	bool remoteMouseDrag = false;

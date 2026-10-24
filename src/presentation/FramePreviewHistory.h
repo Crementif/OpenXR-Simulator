@@ -2,7 +2,6 @@
 
 #include "graphics/FramePool.h"
 #include "presentation/FrameHistory.h"
-#include <array>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -25,6 +24,12 @@ class FramePreviewHistory
 	static constexpr std::uint64_t SlotBytes = 4ull << 20;
 	static constexpr std::uint64_t BudgetBytes = 480ull << 20;
 	static constexpr std::size_t Capacity = BudgetBytes / SlotBytes;
+	static constexpr std::uint32_t MinMiB = 64, MaxMiB = 16384;
+	void Configure(std::uint64_t bytes);
+	std::uint64_t Limit() const
+	{
+		return m_budget.Capacity() * SlotBytes;
+	}
 	~FramePreviewHistory();
 	std::shared_ptr<FrameReservation> Reserve();
 	const FramePool& Budget() const noexcept
@@ -40,9 +45,10 @@ class FramePreviewHistory
 	}
 
   private:
+	std::shared_ptr<const FrameOutput> EvictOldest();
 	FramePool m_budget{Capacity};
 	mutable std::mutex m_mutex;
-	std::array<FramePreview, Capacity> m_frames;
+	std::vector<FramePreview> m_frames = std::vector<FramePreview>(Capacity);
 	std::size_t m_next = 0;
 };
 } // namespace simxr

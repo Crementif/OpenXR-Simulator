@@ -112,15 +112,13 @@ bool RuntimeSession::LoadingPastImage() const
 }
 std::uint64_t RuntimeSession::PreviewBytes() const
 {
-	return Supports(wire::Capability::ContinuousPreviews)
-			   ? U64(m_debugger.Status(), tag::PreviewBytes) + m_preview.History().Bytes()
-			   : m_preview.History().Bytes();
+	return Supports(wire::Capability::ContinuousPreviews) ? U64(m_debugger.Status(), tag::PreviewBytes)
+														  : m_preview.History().Bytes();
 }
 std::uint64_t RuntimeSession::PreviewBudget() const
 {
-	return Supports(wire::Capability::ContinuousPreviews)
-			   ? U64(m_debugger.Status(), tag::PreviewBudget) + m_preview.History().Budget()
-			   : m_preview.History().Budget();
+	return Supports(wire::Capability::ContinuousPreviews) ? U64(m_debugger.Status(), tag::PreviewBudget)
+														  : m_preview.History().Budget();
 }
 void RuntimeSession::MarkHistoryFrame(std::size_t index, bool enabled)
 {
