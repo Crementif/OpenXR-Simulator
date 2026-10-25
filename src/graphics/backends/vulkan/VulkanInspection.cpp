@@ -6,6 +6,7 @@
 #include "graphics/backends/vulkan/VulkanInspectionWork.h"
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
 #include "graphics/backends/vulkan/VulkanSubmission.h"
+#include "graphics/backends/vulkan/VulkanVideoHistory.h"
 #include "platform/ProcessIdentity.h"
 
 #include <cstdio>
@@ -324,6 +325,13 @@ class VulkanInspectionQueue
 	{
 		m_active.reserve(m_capacity.Capacity());
 	}
+	std::shared_ptr<VulkanVideoHistory> Video()
+	{
+		std::lock_guard lock(m_videoMutex);
+		if (!m_video)
+			m_video = std::make_shared<VulkanVideoHistory>(m_device, m_timeline);
+		return m_video;
+	}
 	~VulkanInspectionQueue()
 	{
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -463,6 +471,8 @@ class VulkanInspectionQueue
 	std::mutex m_mutex;
 	std::vector<std::shared_ptr<VulkanInspectionWork>> m_active;
 	std::unique_ptr<VulkanBackend> m_compositor;
+	std::mutex m_videoMutex;
+	std::shared_ptr<VulkanVideoHistory> m_video;
 };
 
 std::shared_ptr<VulkanDeliveryNative> VulkanDeliveryNative::Prepare(VulkanInspectionQueue& queue,
@@ -900,6 +910,16 @@ std::shared_ptr<VulkanInspectionFrame> VulkanInspectionFrame::FromImage(std::sha
 	auto resources = Resources::Create(std::move(queue), std::move(image), {}, {});
 	resources->PublishTerminal(CompletionStatus::Complete, false);
 	return std::shared_ptr<VulkanInspectionFrame>(new VulkanInspectionFrame(std::move(resources), views));
+}
+bool VulkanInspectionFrame::CanArchive() const noexcept
+{
+	return Image().device->encodeFamily != VK_QUEUE_FAMILY_IGNORED &&
+		   Image().device->decodeFamily != VK_QUEUE_FAMILY_IGNORED;
+}
+std::shared_ptr<const ArchivedFrame> VulkanInspectionFrame::Archive() const
+{
+	return m_resources->Queue()->Video()->Encode(
+		std::static_pointer_cast<const VulkanInspectionFrame>(shared_from_this()));
 }
 VulkanInspectionFrame::~VulkanInspectionFrame() = default;
 CompletionStatus VulkanInspectionFrame::PollCompletion() const noexcept

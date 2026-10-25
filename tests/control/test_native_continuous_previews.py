@@ -17,7 +17,8 @@ def retain(client, session, frame):
         try:
             image = client.retain_preview(session, frame=frame)
             require(image['frame']['frame_id'] == frame, 'Selected frame was substituted')
-            return image['image_reader_id']
+            require('image_reader_id' in image or image['image_available'] is False, image)
+            return image.get('image_reader_id')
         except ControlError as error:
             require(error.code == ErrorCode.BUSY and time.monotonic() < deadline, error.record)
             time.sleep(.005)
@@ -41,7 +42,7 @@ def main(probe):
                         'Continuous preview capability absent')
                 (data / 'control.continue').touch()
                 wait_file(data / 'recording.3.ready', host)
-                client.configure_previews(session, 1280)
+                client.configure_previews(session, 1280, 1024)
                 first = retain(client, session, 3)
                 lease = client.acquire(session)
                 paused = command(client, lease, CommandKind.PAUSE)
@@ -79,18 +80,32 @@ def main(probe):
                 require(frames == list(range(frames[0], 305)), 'Retained history has missing frames')
                 require(status['preview_bytes'] <= status['preview_budget'], 'History exceeded memory budget')
                 for frame in frames:
+                    client.renew(lease)
                     image = retain(client, session, frame)
-                    if image != first:
+                    if image is not None and image != first:
                         client.release_image(image)
-                client.configure_previews(session, 64)
-                shrunk = client.status(session)
-                require(shrunk['preview_bytes'] <= shrunk['preview_budget'] == 64 * 1024 * 1024, shrunk)
-                require(shrunk['preview_frame_ids'][-1] == 304, 'Shrink discarded newest image')
-                try:
-                    client.retain_preview(session, frame=3)
-                    raise AssertionError('Oldest frame was not evicted')
-                except ControlError as error:
-                    require(error.code == ErrorCode.NOT_FOUND, error.record)
+                client.configure_previews(session, 64, 64)
+                deadline = time.monotonic() + 15
+                while True:
+                    shrunk = client.status(session)
+                    require(not shrunk['preview_error'], shrunk)
+                    if shrunk['preview_bytes'] <= shrunk['preview_budget']:
+                        break
+                    require(time.monotonic() < deadline, shrunk)
+                    client.renew(lease)
+                    time.sleep(.02)
+                require(shrunk['preview_budget'] == 64 * 1024 * 1024, shrunk)
+                require(shrunk['preview_ram_budget'] == 64 * 1024 * 1024 and shrunk['preview_ram_bytes'] > 0, shrunk)
+                require(shrunk['preview_frame_ids'] == frames, 'GPU shrink discarded archived images')
+                # Release the exact raw reader only after proving archived pixels independently.
+                for frame in (5, 100, 7, 204):
+                    image = retain(client, session, frame)
+                    _, pixels = export(client, image, 0)
+                    expected = (0, 255, 0, 255) if frame % 2 == 0 else (255, 0, 0, 255)
+                    require(all(abs(value - expected[index % 4]) <= 5 for index, value in enumerate(pixels)),
+                            f'Wrong archived pixels for frame {frame}')
+                    client.release_image(image)
+                    client.renew(lease)
                 command(client, lease, CommandKind.RESUME)
                 client.relinquish(lease)
                 (data / 'recording.304.continue').touch()
@@ -102,7 +117,7 @@ def main(probe):
                 (data / 'control.retained.continue').touch()
             output = host.communicate(timeout=15)[0]
             require(host.returncode == 0 and 'VUID-' not in output and 'Vulkan validation error' not in output, output)
-            print('PASS 301 strict steps with live budget growth/shrink and more than 256 frames: every image, pause survival, exact pixels, oldest eviction, bounded bytes, GPU teardown')
+            print('PASS 301 strict steps with live budget growth/shrink and more than 256 frames: every image, pause survival, exact pixels, H.264 decode, bounded bytes, GPU teardown')
         except Exception:
             if host.poll() is not None:
                 print(host.communicate()[0], file=sys.stderr)

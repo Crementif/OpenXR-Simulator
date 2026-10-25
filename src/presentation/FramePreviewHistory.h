@@ -1,10 +1,14 @@
 #pragma once
-
+#include "graphics/ArchivedFrame.h"
 #include "graphics/FramePool.h"
 #include "presentation/FrameHistory.h"
+#include <atomic>
+#include <condition_variable>
+#include <deque>
 #include <memory>
 #include <mutex>
-#include <vector>
+#include <string>
+#include <thread>
 
 namespace simxr
 {
@@ -13,42 +17,72 @@ struct FramePreview
 {
 	FrameKey key;
 	std::shared_ptr<const FrameOutput> output;
-	bool submitted = false, clear = false;
+	bool submitted = false, clear = false, pending = false;
 };
-// Independent of presentation ticks and debugger captures. A reservation stays
-// charged until the last native owner retires, including readers after eviction.
 class FramePreviewHistory
 {
   public:
 	static constexpr std::uint32_t Extent = 640;
-	static constexpr std::uint64_t SlotBytes = 4ull << 20;
-	static constexpr std::uint64_t BudgetBytes = 480ull << 20;
+	static constexpr std::uint64_t SlotBytes = 4ull << 20, BudgetBytes = 480ull << 20, RamBudgetBytes = 1024ull << 20;
 	static constexpr std::size_t Capacity = BudgetBytes / SlotBytes;
 	static constexpr std::uint32_t MinMiB = 64, MaxMiB = 16384;
+	FramePreviewHistory();
+	~FramePreviewHistory();
 	void Configure(std::uint64_t bytes);
+	void ConfigureRam(std::uint64_t bytes);
 	std::uint64_t Limit() const
 	{
 		return m_budget.Capacity() * SlotBytes;
 	}
-	~FramePreviewHistory();
-	std::shared_ptr<FrameReservation> Reserve();
-	const FramePool& Budget() const noexcept
-	{
-		return m_budget;
-	}
-	void Append(FrameKey key, std::shared_ptr<const FrameOutput> output, bool clear) noexcept;
-	FramePreview Find(FrameKey key) const;
-	std::vector<FrameKey> Frames(SessionGeneration generation) const;
 	std::uint64_t Bytes() const
 	{
 		return m_budget.InUse() * SlotBytes;
 	}
+	std::uint64_t RamLimit() const
+	{
+		return m_ramLimit.load();
+	}
+	std::uint64_t RamBytes() const
+	{
+		return m_ramBytes->load();
+	}
+	std::string Error() const;
+	std::shared_ptr<FrameReservation> Reserve(FrameKey key = {});
+	const FramePool& Budget() const noexcept
+	{
+		return m_budget;
+	}
+	void Append(FrameKey key, std::shared_ptr<const FrameOutput> output, bool clear);
+	FramePreview Find(FrameKey key);
+	std::vector<FrameKey> Frames(SessionGeneration generation, std::size_t limit = SIZE_MAX) const;
 
   private:
-	std::shared_ptr<const FrameOutput> EvictOldest();
+	struct Entry
+	{
+		FramePreview preview;
+		std::weak_ptr<FrameReservation> admission;
+		std::shared_ptr<const ArchivedFrame> archive;
+		std::shared_ptr<std::atomic<std::uint64_t>> counter;
+		std::uint64_t charge = 0;
+		~Entry()
+		{
+			if (counter)
+				counter->fetch_sub(charge);
+		}
+	};
+	std::shared_ptr<Entry> EvictRaw();
+	void TrimRam();
+	void Run() noexcept;
 	FramePool m_budget{Capacity};
+	std::shared_ptr<std::atomic<std::uint64_t>> m_ramBytes = std::make_shared<std::atomic<std::uint64_t>>(0);
+	std::atomic<std::uint64_t> m_ramLimit{RamBudgetBytes};
 	mutable std::mutex m_mutex;
-	std::vector<FramePreview> m_frames = std::vector<FramePreview>(Capacity);
-	std::size_t m_next = 0;
+	std::condition_variable m_changed;
+	std::deque<std::shared_ptr<Entry>> m_frames;
+	FrameKey m_requested{};
+	FramePreview m_decoded;
+	std::string m_error;
+	bool m_stopping = false, m_gpuOnly = false;
+	std::thread m_worker;
 };
 } // namespace simxr

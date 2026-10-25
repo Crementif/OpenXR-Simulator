@@ -108,7 +108,7 @@ void FrameSubmission::PreparePreviewHistory()
 			1u, static_cast<std::uint32_t>(std::uint64_t{plan.height} * FramePreviewHistory::Extent / largest));
 	}
 	request.historyPool = m_session.PreviewHistory().Budget();
-	request.historyReservation = m_session.PreviewHistory().Reserve();
+	request.historyReservation = m_session.PreviewHistory().Reserve(m_key);
 	if (request.historyReservation)
 		request.reservation = m_backend.HistoryReservations().Reserve();
 	m_captures.push_back(std::move(request));

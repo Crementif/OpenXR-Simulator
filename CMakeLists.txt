@@ -247,6 +247,7 @@ if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES OR SIMXR_BUILD_COMPANION)
     endif()
     include(cmake/SimxrVulkanLoader.cmake)
     add_library(simxr_vulkan STATIC
+        src/graphics/backends/vulkan/VulkanVideoHistory.cpp
         src/graphics/backends/vulkan/VulkanVideoConversion.cpp
         src/graphics/backends/vulkan/VulkanVideoSession.cpp
         src/graphics/backends/vulkan/VulkanDevice.cpp

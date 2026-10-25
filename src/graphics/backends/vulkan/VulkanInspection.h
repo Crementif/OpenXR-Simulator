@@ -108,6 +108,8 @@ class VulkanInspectionFrame final : public FrameOutput
 {
   public:
 	~VulkanInspectionFrame();
+	bool CanArchive() const noexcept override;
+	std::shared_ptr<const ArchivedFrame> Archive() const override;
 	// The caller must establish completion and GENERAL layout before publication.
 	static std::shared_ptr<VulkanInspectionFrame> FromImage(std::shared_ptr<VulkanImage> image,
 															std::span<const FrameView> views, bool timeline);

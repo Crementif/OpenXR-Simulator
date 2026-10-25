@@ -65,7 +65,7 @@ inline constexpr std::uint16_t Error = 1, Detail = 2, Session = 3, Generation = 
 							   CompatibilityDeviations = 199, AdditionalTargets = 200, CpuFrameTime = 201,
 							   CompositorGpuTime = 202, JointOffset = 203, InputContext = 204, CompletionKind = 205,
 							   Haptics = 206, PreviewFrames = 207, PreviewBytes = 208, PreviewBudget = 209,
-							   PreviewFrameIds = 210;
+							   PreviewFrameIds = 210, PreviewRamBudget = 211, PreviewRamBytes = 212, PreviewError = 213;
 }
 
 enum class Capability : std::uint64_t

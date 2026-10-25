@@ -17,6 +17,108 @@ class PreviewOutput final : public FrameOutput
   private:
 	std::shared_ptr<FrameReservation> m_reservation;
 };
+class CompressedOutput;
+class CompressedPicture final : public ArchivedFrame
+{
+  public:
+	explicit CompressedPicture(std::uint64_t value) : value(value) {}
+	std::uint64_t Bytes() const noexcept override
+	{
+		return 4ull << 20;
+	}
+	std::shared_ptr<const FrameOutput> Decode(const FramePool& budget) const override;
+	std::uint64_t value;
+};
+class CompressedOutput final : public FrameOutput
+{
+  public:
+	CompressedOutput(std::shared_ptr<FrameReservation> reservation, std::uint64_t value)
+		: reservation(std::move(reservation)), value(value)
+	{
+	}
+	CompletionStatus PollCompletion() const noexcept override
+	{
+		return CompletionStatus::Complete;
+	}
+	bool CanArchive() const noexcept override
+	{
+		return true;
+	}
+	std::shared_ptr<const ArchivedFrame> Archive() const override
+	{
+		return std::make_shared<CompressedPicture>(value);
+	}
+	std::shared_ptr<FrameReservation> reservation;
+	std::uint64_t value;
+};
+std::shared_ptr<const FrameOutput> CompressedPicture::Decode(const FramePool& budget) const
+{
+	auto reservation = budget.Reserve();
+	if (!reservation)
+		return {};
+	Require(budget.Consume(reservation), "Decoded reservation failed");
+	return std::make_shared<CompressedOutput>(std::move(reservation), value);
+}
+template <typename Predicate> void Await(Predicate predicate)
+{
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+	while (!predicate())
+	{
+		Require(std::chrono::steady_clock::now() < deadline, "History worker timed out");
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
+}
+void CompressedHistory()
+{
+	FramePreviewHistory history;
+	history.Configure(64ull << 20);
+	history.ConfigureRam(128ull << 20);
+	std::shared_ptr<const FrameOutput> retained;
+	for (std::uint64_t frame = 1; frame <= 32; ++frame)
+	{
+		std::shared_ptr<FrameReservation> reservation;
+		Await(
+			[&]
+			{
+				reservation = history.Reserve({{1}, {frame}});
+				return bool(reservation);
+			});
+		Require(history.Budget().Consume(reservation), "Compressed admission failed");
+		auto output = std::make_shared<CompressedOutput>(reservation, frame);
+		history.Append({{1}, {frame}}, output, false);
+		if (frame == 1)
+			retained = output;
+	}
+	Await(
+		[&]
+		{
+			return history.RamBytes() >= (96ull << 20);
+		});
+	Require(history.Frames({1}).size() == 32, "Encoding skipped a retained frame");
+	for (const auto frame : {1ull, 17ull, 2ull, 24ull, 32ull})
+	{
+		FramePreview preview;
+		Await(
+			[&]
+			{
+				preview = history.Find({{1}, {frame}});
+				return bool(preview.output);
+			});
+		Require(std::static_pointer_cast<const CompressedOutput>(preview.output)->value == frame,
+				"Decode substituted a frame");
+	}
+	history.ConfigureRam(64ull << 20);
+	Await(
+		[&]
+		{
+			return history.RamBytes() <= history.RamLimit();
+		});
+	const auto frames = history.Frames({1});
+	Require(frames.size() == 23 && !history.Find({{1}, {9}}).submitted && history.Find({{1}, {10}}).submitted,
+			"RAM shrink did not evict the oldest compressed frames");
+	Require(std::static_pointer_cast<const CompressedOutput>(retained)->value == 1, "Eviction invalidated reader");
+	Require(history.Error().empty(), "History worker failed");
+}
 void ContinuousHistory()
 {
 	FramePreviewHistory history;
@@ -50,7 +152,7 @@ void ContinuousHistory()
 		Require(reservation && history.Budget().Consume(reservation), "Expanded history admission failed");
 		history.Append({{1}, {frame}}, std::make_shared<PreviewOutput>(reservation), false);
 	}
-	Require(history.Frames({1}).size() == 512 && history.Find({{1}, {489}}).output,
+	Require(history.Frames({1}).size() == 513 && history.Find({{1}, {489}}).output,
 			"Expanded history remained limited to the original ring");
 	auto pinned = history.Find({{1}, {489}}).output;
 	history.Configure(64ull << 20);
@@ -72,6 +174,7 @@ int main()
 	try
 	{
 		simxr::test::ContinuousHistory();
+		simxr::test::CompressedHistory();
 		std::cout << "PASS consecutive previews, oldest eviction, independent readers, clear and run identity\n";
 		return 0;
 	}

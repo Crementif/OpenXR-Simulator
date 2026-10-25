@@ -404,6 +404,13 @@ Message ControlService::DispatchFrame(Client& client, const Message& request, co
 			const FrameKey key{{RequireRequestU64(request, tag::Generation)},
 							   {RequireRequestU64(request, tag::FrameId)}};
 			auto preview = session->PreviewHistory().Find(key);
+			if (preview.pending)
+			{
+				const auto error = session->PreviewHistory().Error();
+				throw ControlRequestError{error.empty() ? ErrorCode::Busy : ErrorCode::Internal,
+										  error.empty() ? "Decoding exact history frame"
+														: "History codec failed; see history status"};
+			}
 			if (!preview.submitted)
 				throw ControlRequestError{ErrorCode::NotFound, "Frame preview is absent or evicted"};
 			if (!preview.output && !preview.clear)
@@ -529,8 +536,20 @@ Message ControlService::DispatchDebugger(Client& client, const Message& request,
 		if (bytes < (std::uint64_t{FramePreviewHistory::MinMiB} << 20) ||
 			bytes > (std::uint64_t{FramePreviewHistory::MaxMiB} << 20) || bytes % FramePreviewHistory::SlotBytes)
 			throw ControlRequestError{ErrorCode::Invalid, "History budget must be 64–16384 MiB in multiples of 4 MiB"};
+		if (request.Find(tag::PreviewRamBudget))
+		{
+			const auto ram = RequireRequestU64(request, tag::PreviewRamBudget);
+			if (ram < (std::uint64_t{FramePreviewHistory::MinMiB} << 20) ||
+				ram > (std::uint64_t{FramePreviewHistory::MaxMiB} << 20) || ram % FramePreviewHistory::SlotBytes)
+				throw ControlRequestError{ErrorCode::Invalid,
+										  "RAM history budget must be 64–16384 MiB in multiples of 4 MiB"};
+			session->PreviewHistory().ConfigureRam(ram);
+		}
 		session->PreviewHistory().Configure(bytes);
 		response.fields.push_back(Field::U64(tag::PreviewBudget, session->PreviewHistory().Limit()));
+		response.fields.push_back(Field::U64(tag::PreviewRamBudget, session->PreviewHistory().RamLimit()));
+		response.fields.push_back(Field::U64(tag::PreviewRamBytes, session->PreviewHistory().RamBytes()));
+		response.fields.push_back(Field::Text(tag::PreviewError, session->PreviewHistory().Error()));
 		return response;
 	}
 
@@ -574,7 +593,7 @@ Message ControlService::DispatchDebugger(Client& client, const Message& request,
 			capabilities |= static_cast<std::uint64_t>(Capability::LayerViewCapture);
 		EncodeDebuggerStatus(response, status, state, display, capabilities);
 		std::vector<Field> previews;
-		const auto frames = session->PreviewHistory().Frames(state.generation);
+		auto frames = session->PreviewHistory().Frames(state.generation, 65536);
 		std::vector<std::byte> ids;
 		ids.reserve(frames.size() * sizeof(std::uint64_t));
 		for (std::size_t index = 0; index < frames.size(); ++index)
@@ -589,6 +608,9 @@ Message ControlService::DispatchDebugger(Client& client, const Message& request,
 		response.fields.push_back(Nested(tag::PreviewFrames, std::move(previews)));
 		response.fields.push_back(Field::U64(tag::PreviewBytes, session->PreviewHistory().Bytes()));
 		response.fields.push_back(Field::U64(tag::PreviewBudget, session->PreviewHistory().Limit()));
+		response.fields.push_back(Field::U64(tag::PreviewRamBudget, session->PreviewHistory().RamLimit()));
+		response.fields.push_back(Field::U64(tag::PreviewRamBytes, session->PreviewHistory().RamBytes()));
+		response.fields.push_back(Field::Text(tag::PreviewError, session->PreviewHistory().Error()));
 		return response;
 	}
 	case OpCode::Acquire:

@@ -185,12 +185,13 @@ class Client:
         return self.request(OpCode.RETAIN_HISTORICAL_IMAGE,
                             self._history_fields(session, target) + [Field.u64(Tag.FRAME_ID, frame, True)])
 
-    def configure_previews(self, session, budget_mib):
+    def configure_previews(self, session, budget_mib, ram_mib=None):
         """Resize GPU history live; detached readers remain charged until released."""
         if not self.hello['capabilities'] & Capability.CONFIGURABLE_PREVIEWS:
             raise ProtocolError('Configurable preview history is unavailable')
         return self.request(OpCode.CONFIGURE_PREVIEWS, self._session(session) +
-                            [Field.u64(Tag.PREVIEW_BUDGET, budget_mib * 1024 * 1024, True)])
+                            [Field.u64(Tag.PREVIEW_BUDGET, budget_mib * 1024 * 1024, True)] +
+                            ([] if ram_mib is None else [Field.u64(Tag.PREVIEW_RAM_BUDGET, ram_mib * 1024 * 1024, True)]))
 
     def retain_preview(self, session, *, frame=None):
         """Retain the current display image, or an exact continuous-history frame."""
