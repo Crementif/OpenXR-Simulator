@@ -19,10 +19,9 @@ struct PreviewShot
 	FrameIdentity frame;
 	std::uint64_t epoch = 0;
 };
-// A VRAM ring of downscaled copies of the displayed live preview, so the recent
-// past can be seen while the app runs. Copies are GPU blits recorded into the
-// UI frame's own commands; nothing is read back. A slot is reused, and the ring
-// destroyed, only after the UI frames that used it have completed.
+// A bounded GPU cache of live and requested historical thumbnails. Copies use
+// the UI frame's GPU commands; nothing is read back. Slots and resources retire
+// only after the UI frames that used them have completed.
 class PreviewHistory
 {
   public:
@@ -39,6 +38,10 @@ class PreviewHistory
 	{
 		return m_shots;
 	}
+	void BeginThumbnails();
+	void RequestThumbnail(FrameIdentity frame, std::uint64_t epoch);
+	std::optional<PreviewShot> MissingThumbnail() const;
+	void UnavailableThumbnail(FrameIdentity frame, std::uint64_t epoch);
 	float Aspect() const noexcept;
 	void Draw(const PreviewShot& shot, float width, ImVec4 crop = {0, 0, 1, 1});
 	void DrawThumbnail(const PreviewShot& shot, ImVec2 minimum, ImVec2 maximum, ImVec4 crop);
@@ -71,7 +74,7 @@ class PreviewHistory
 	UiRenderer& m_renderer;
 	std::uint64_t m_budget;
 	std::unique_ptr<Resources> m_resources, m_retired;
-	std::vector<PreviewShot> m_shots;
+	std::vector<PreviewShot> m_shots, m_wanted, m_unavailable;
 	std::vector<std::uint64_t> m_lastUse;
 	std::vector<std::size_t> m_sampled;
 	std::size_t m_next = 0;

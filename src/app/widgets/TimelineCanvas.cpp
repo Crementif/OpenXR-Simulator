@@ -1,8 +1,8 @@
 #include "app/widgets/TimelineCanvas.h"
 #include "Pch.h"
-#include "app/widgets/Theme.h"
 #include "app/render/PreviewHistory.h"
 #include "app/widgets/Icons.h"
+#include "app/widgets/Theme.h"
 #include <cmath>
 #include <cstdio>
 #include <imgui.h>
@@ -394,6 +394,7 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 
 void TimelineCanvas::DrawThumbnails(const HistoryStore& history, PreviewHistory& previews, ImVec4 crop)
 {
+	previews.BeginThumbnails();
 	if (m_lanes <= Images || !history.Size())
 		return;
 	const float scale = ImGui::GetFontSize() / 16;
@@ -415,7 +416,12 @@ void TimelineCanvas::DrawThumbnails(const HistoryStore& history, PreviewHistory&
 		// Do not stretch a kept image over a gap or an empty part of the timeline.
 		const double time = m_start + (x + width / 2 - m_bounds.x) * m_span / m_bounds.width;
 		if (!source || std::abs(history.At(*source).seconds - time) > .2)
+		{
+			if ((frame.flags & HistoryPreview) && std::abs(frame.seconds - time) <= .2)
+				previews.RequestThumbnail(frame.identity, frame.epoch);
 			continue;
+		}
+		previews.RequestThumbnail(shot->frame, shot->epoch);
 		const float shownHeight = std::min(height, width * aspect), shownWidth = shownHeight / aspect;
 		const float y = LaneY(Images) + (m_lane - shownHeight) / 2;
 		previews.DrawThumbnail(*shot, {x, y}, {x + shownWidth, y + shownHeight}, crop);

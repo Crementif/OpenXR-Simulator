@@ -177,6 +177,19 @@ void RuntimeSession::Poll(bool piloting)
 			m_requests.Send(wire::OpCode::Capture, Work::Capture, std::move(fields), capture->id);
 			m_nextCapture = now + std::chrono::milliseconds(100);
 		}
+		if (selected.id && Supports(wire::Capability::ContinuousPreviews) && !m_requests.Has(Work::PastPreview) &&
+			!m_requests.Has(Work::Thumbnail) && !m_preview.HasPendingThumbnail())
+		{
+			const auto wanted = m_preview.History().MissingThumbnail();
+			const auto scope = m_debugger.Scope();
+			if (wanted && wanted->epoch == scope.epoch && wanted->frame.session == scope.session &&
+				wanted->frame.run == scope.generation)
+			{
+				auto fields = m_debugger.SessionFields();
+				fields.push_back(wire::Field::U64(tag::FrameId, wanted->frame.frame, true));
+				m_requests.Send(wire::OpCode::RetainPreview, Work::Thumbnail, std::move(fields), wanted->frame.frame);
+			}
+		}
 		if (m_preview.ShowingLive() && selected.id && now >= m_nextPreview && !m_requests.Has(Work::Preview) &&
 			!m_preview.HasPendingLive() && Supports(wire::Capability::LivePreview))
 		{

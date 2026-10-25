@@ -14,7 +14,7 @@ using Work = PanelWork;
 struct PreviewImages::Image
 {
 	std::uint64_t id = 0, reader = 0, delivery = 0, frame = 0, capture = 0, epoch = 0, session = 0, generation = 0;
-	bool live = false, release = false, exporting = false;
+	bool live = false, release = false, exporting = false, thumbnail = false;
 	std::optional<std::uint64_t> imageTick;
 	std::optional<wire::TargetKind> target;
 	std::uint32_t layer = 0, view = 0;
@@ -77,7 +77,7 @@ bool PreviewImages::SelectCapture(PanelScope scope, std::uint64_t capture)
 	// its private image is still being requested.
 	m_selectedImage = 0;
 	for (const auto& image : m_images)
-		if (!image->release && image->capture == capture && image->epoch == scope.epoch &&
+		if (!image->thumbnail && !image->release && image->capture == capture && image->epoch == scope.epoch &&
 			image->session == scope.session && image->generation == scope.generation)
 		{
 			m_selectedImage = image->id;
@@ -92,7 +92,7 @@ bool PreviewImages::SelectFrame(PanelScope scope, std::uint64_t frame)
 	m_selectedImage = 0;
 	m_live = false;
 	for (const auto& image : m_images)
-		if (!image->release && image->frame == frame && image->epoch == scope.epoch &&
+		if (!image->thumbnail && !image->release && image->frame == frame && image->epoch == scope.epoch &&
 			image->session == scope.session && image->generation == scope.generation)
 		{
 			m_selectedImage = image->id;
@@ -102,7 +102,7 @@ bool PreviewImages::SelectFrame(PanelScope scope, std::uint64_t frame)
 }
 void PreviewImages::SelectImage(std::uint64_t id)
 {
-	if (Find(id))
+	if (const auto image = Find(id); image && !image->thumbnail)
 	{
 		m_selectedImage = id;
 		m_live = false;
@@ -162,7 +162,8 @@ std::vector<PreviewImageSummary> PreviewImages::Images() const
 	std::vector<PreviewImageSummary> images;
 	images.reserve(m_images.size());
 	for (const auto& image : m_images)
-		images.push_back(Summary(*image));
+		if (!image->thumbnail)
+			images.push_back(Summary(*image));
 	return images;
 }
 std::size_t PreviewImages::ReadyCount() const
@@ -181,12 +182,32 @@ bool PreviewImages::HasPendingLive() const
 						   return image->live && !image->texture->Ready() && !image->release;
 					   });
 }
+bool PreviewImages::HasPendingThumbnail() const
+{
+	return (m_pending && m_pending->thumbnail) || std::any_of(m_images.begin(), m_images.end(),
+															  [](const auto& image)
+															  {
+																  return image->thumbnail && !image->release;
+															  });
+}
 void PreviewImages::BeginFrame()
 {
 	m_history.BeginFrame();
 	for (auto& image : m_images)
 	{
 		image->texture->BeginFrame();
+		if (!image->live && !image->release && image->texture->Ready())
+		{
+			const FrameIdentity frame{image->session, image->generation, image->frame};
+			const auto shot = m_history.Nearest(frame, image->epoch);
+			if (shot && shot->frame == frame)
+			{
+				if (image->thumbnail)
+					image->release = true;
+			}
+			else
+				m_history.Offer(*image->texture, 0, frame, image->epoch);
+		}
 		if (m_live && image->live && image->texture->Ready() && !image->release && image->epoch == m_scope.epoch &&
 			image->session == m_scope.session && image->generation == m_scope.generation)
 			m_selectedImage = image->id;
@@ -224,7 +245,7 @@ void PreviewImages::Submitted(std::uint64_t serial)
 		image->texture->Submitted(serial);
 	m_history.Submitted(serial);
 }
-void PreviewImages::Retained(const wire::Message& message, bool preview)
+void PreviewImages::Retained(const wire::Message& message, bool preview, bool thumbnail)
 {
 	if (preview && !Boolean(message, tag::ImageAvailable))
 	{
@@ -261,17 +282,22 @@ void PreviewImages::Retained(const wire::Message& message, bool preview)
 	const auto imageTick = tickField ? tickField->AsU64() : std::nullopt;
 	for (const auto& image : m_images)
 		if (!image->release && image->epoch == m_scope.epoch && image->frame == frame && image->capture == capture &&
-			image->live == preview && image->session == U64(message, tag::Session) &&
+			(image->live == preview || thumbnail || image->thumbnail) && image->session == U64(message, tag::Session) &&
 			image->generation == U64(message, tag::Generation) && (!preview || image->imageTick == imageTick))
 		{
+			if (image->thumbnail && !thumbnail)
+			{
+				image->thumbnail = false;
+				image->live = preview;
+			}
 			if (state)
 				image->state = state;
 			if (!image->reader)
 				image->reader = reader;
 			else if (image->reader != reader)
 				m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId, reader);
-			if ((preview && m_live) ||
-				(!preview && !m_live && m_selectedCapture == capture && (!m_selectedFrame || m_selectedFrame == frame)))
+			if (!thumbnail && ((preview && m_live) || (!preview && !m_live && m_selectedCapture == capture &&
+													   (!m_selectedFrame || m_selectedFrame == frame))))
 				m_selectedImage = image->id;
 			return;
 		}
@@ -280,7 +306,7 @@ void PreviewImages::Retained(const wire::Message& message, bool preview)
 		std::optional<PendingImage> prepared;
 		try
 		{
-			prepared.emplace(PendingImage{message, preview});
+			prepared.emplace(PendingImage{message, preview, thumbnail});
 		}
 		catch (...)
 		{
@@ -319,6 +345,7 @@ void PreviewImages::Retained(const wire::Message& message, bool preview)
 		prepared->capture = capture;
 		prepared->epoch = m_scope.epoch;
 		prepared->live = preview;
+		prepared->thumbnail = thumbnail;
 		prepared->session = U64(message, tag::Session);
 		prepared->generation = U64(message, tag::Generation);
 		const auto identity = prepared->texture->Identity();
@@ -375,9 +402,10 @@ void PreviewImages::Shared(std::uint64_t id, const RuntimeReply& reply)
 		}
 		const bool currentSource = image->epoch == m_scope.epoch && image->session == m_scope.session &&
 								   image->generation == m_scope.generation;
-		if (currentSource && ((!image->live && !m_live && m_selectedCapture == image->capture &&
-							   (!m_selectedFrame || m_selectedFrame == image->frame)) ||
-							  (image->live && m_live)))
+		if (currentSource && !image->thumbnail &&
+			((!image->live && !m_live && m_selectedCapture == image->capture &&
+			  (!m_selectedFrame || m_selectedFrame == image->frame)) ||
+			 (image->live && m_live)))
 			m_selectedImage = image->id;
 	}
 }
@@ -486,7 +514,7 @@ void PreviewImages::Poll()
 	{
 		auto pending = std::move(*m_pending);
 		m_pending.reset();
-		Retained(pending.message, pending.live);
+		Retained(pending.message, pending.live, pending.thumbnail);
 	}
 }
 } // namespace simxr::app

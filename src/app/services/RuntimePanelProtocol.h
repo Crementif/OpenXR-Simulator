@@ -25,6 +25,7 @@ enum class PanelWork
 	Retain,
 	Preview,
 	PastPreview,
+	Thumbnail,
 	ConfigurePreviews,
 	Share,
 	Release,

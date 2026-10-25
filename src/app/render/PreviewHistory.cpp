@@ -15,7 +15,7 @@
 
 namespace simxr::app
 {
-static constexpr std::uint32_t ChunkLayers = 64, Width = 640;
+static constexpr std::uint32_t ChunkLayers = 64, Width = 192;
 // Frames between a requested frame and the kept image shown for it.
 static constexpr std::uint64_t MaximumGap = 120;
 
@@ -280,9 +280,24 @@ void PreviewHistory::Offer(PreviewTexture& source, std::uint32_t layer, FrameIde
 		if (!resources.capacity)
 			return;
 		const auto completed = m_renderer.CompletedFrames();
-		const auto slot = m_next % resources.capacity;
-		if (m_lastUse[slot] > completed || m_display == slot ||
-			std::find(m_sampled.begin(), m_sampled.end(), slot) != m_sampled.end())
+		std::size_t slot = resources.capacity;
+		for (std::size_t offset = 0; offset < resources.capacity; ++offset)
+		{
+			const auto candidate = (m_next + offset) % resources.capacity;
+			if (candidate > resources.chunks.size() * ChunkLayers || m_lastUse[candidate] > completed ||
+				m_display == candidate || std::find(m_sampled.begin(), m_sampled.end(), candidate) != m_sampled.end())
+				continue;
+			const auto& kept = m_shots[candidate];
+			if (std::any_of(m_wanted.begin(), m_wanted.end(),
+							[&](const PreviewShot& wanted)
+							{
+								return kept.frame == wanted.frame && kept.epoch == wanted.epoch;
+							}))
+				continue;
+			slot = candidate;
+			break;
+		}
+		if (slot == resources.capacity)
 			return;
 		if (slot / ChunkLayers >= resources.chunks.size())
 		{
@@ -340,6 +355,34 @@ std::optional<PreviewShot> PreviewHistory::Nearest(FrameIdentity frame, std::uin
 			frame.frame - shot.frame.frame <= MaximumGap && (!best || shot.frame.frame > best->frame.frame))
 			best = shot;
 	return best;
+}
+void PreviewHistory::BeginThumbnails()
+{
+	m_wanted.clear();
+}
+void PreviewHistory::RequestThumbnail(FrameIdentity frame, std::uint64_t epoch)
+{
+	m_wanted.push_back({0, frame, epoch});
+}
+std::optional<PreviewShot> PreviewHistory::MissingThumbnail() const
+{
+	for (const auto& wanted : m_wanted)
+	{
+		const auto matches = [&](const PreviewShot& shot)
+		{
+			return shot.frame == wanted.frame && shot.epoch == wanted.epoch;
+		};
+		if (std::none_of(m_shots.begin(), m_shots.end(), matches) &&
+			std::none_of(m_unavailable.begin(), m_unavailable.end(), matches))
+			return wanted;
+	}
+	return {};
+}
+void PreviewHistory::UnavailableThumbnail(FrameIdentity frame, std::uint64_t epoch)
+{
+	if (m_unavailable.size() == 256)
+		m_unavailable.erase(m_unavailable.begin());
+	m_unavailable.push_back({0, frame, epoch});
 }
 float PreviewHistory::Aspect() const noexcept
 {
@@ -480,7 +523,7 @@ void PreviewHistory::Submitted(std::uint64_t serial)
 		m_lastUse[m_copy->slot] = serial;
 		m_lastFrame = m_shots[m_copy->slot].frame;
 		m_lastEpoch = m_shots[m_copy->slot].epoch;
-		++m_next;
+		m_next = m_copy->slot + 1;
 		m_copy.reset();
 	}
 	if (m_display)

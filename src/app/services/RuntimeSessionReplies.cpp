@@ -20,7 +20,8 @@ void RuntimeSession::Reply(const PanelReply& response)
 	const auto selected = m_debugger.Selected();
 	if (task.session && (task.session != selected.id || task.generation != selected.generation))
 	{
-		if (task.kind == Work::Retain || task.kind == Work::Preview || task.kind == Work::PastPreview)
+		if (task.kind == Work::Retain || task.kind == Work::Preview || task.kind == Work::PastPreview ||
+			task.kind == Work::Thumbnail)
 			m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId, U64(message, tag::ImageReaderId));
 		if (task.kind == Work::Inspect)
 			m_requests.Release(wire::OpCode::ReleaseInspection, tag::InspectionId, U64(message, tag::InspectionId));
@@ -42,6 +43,13 @@ void RuntimeSession::Reply(const PanelReply& response)
 	{
 		const auto failure =
 			!reply.error.empty() ? reply.error : Text(message, tag::Detail, "Runtime rejected the operation");
+		if (task.kind == Work::Thumbnail)
+		{
+			if (error != static_cast<std::uint32_t>(wire::ErrorCode::Busy))
+				m_preview.History().UnavailableThumbnail({task.session, task.generation, task.id},
+														 m_debugger.Scope().epoch);
+			return;
+		}
 		if (task.kind == Work::PastPreview)
 		{
 			if (error != static_cast<std::uint32_t>(wire::ErrorCode::Busy))
@@ -160,6 +168,13 @@ void RuntimeSession::Reply(const PanelReply& response)
 			m_historyNotice = skipped;
 			Notify("Frame history page skipped", std::move(skipped));
 		}
+		break;
+	case Work::Thumbnail:
+		if (Boolean(message, tag::ImageAvailable))
+			m_preview.Retained(message, false, true);
+		else
+			m_preview.History().UnavailableThumbnail({task.session, task.generation, task.id},
+													 m_debugger.Scope().epoch);
 		break;
 	case Work::PastPreview:
 		if (!m_time.following && m_time.cursor.frame == task.id)

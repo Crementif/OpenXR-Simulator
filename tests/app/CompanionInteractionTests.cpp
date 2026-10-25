@@ -5072,6 +5072,52 @@ void CheckPreviewHistory(Interaction& test)
 		if (history.At(index).flags & HistoryPreview)
 			frames.push_back(index);
 	Require(frames.size() >= 64, "Pause discarded preview history");
+	std::vector<HistoryFrame> thumbnails;
+	for (std::size_t index = 0; index < frames.size(); index += std::max<std::size_t>(1, frames.size() / 12))
+		if (history.At(frames[index]).identity.frame >= 3)
+			thumbnails.push_back(history.At(frames[index]));
+	test.extraDraw = [&]
+	{
+		auto& previews = test.runtime.KeptPreviews();
+		previews.BeginThumbnails();
+		for (const auto& frame : thumbnails)
+			previews.RequestThumbnail(frame.identity, frame.epoch);
+	};
+	Eventually([&]
+	{
+		test.Frame();
+		for (const auto& frame : thumbnails)
+		{
+			const auto shot = test.runtime.KeptPreviews().Nearest(frame.identity, frame.epoch);
+			if (!shot || shot->frame != frame.identity)
+				return false;
+		}
+		return true;
+	}, "Timeline thumbnails did not load across retained history");
+	TimelineCanvas overview;
+	overview.Fit();
+	test.extraDraw = [&]
+	{
+		ImGui::SetNextWindowPos({20, 480}, ImGuiCond_Always);
+		ImGui::SetNextWindowSize({1200, 280}, ImGuiCond_Always);
+		ImGui::Begin("Retained timeline thumbnails");
+		overview.Begin(100, 0);
+		overview.Draw(history, test.runtime.KeptPreviews(), {0, 0, 1, 1}, false);
+		ImGui::End();
+	};
+	test.Frame();
+	Eventually([&]
+	{
+		test.Frame();
+		return !test.runtime.KeptPreviews().MissingThumbnail();
+	}, "Fitted timeline thumbnails did not finish loading");
+	if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
+	{
+		test.renderer.RequestScreenshot(std::filesystem::path(qa) / "timeline-thumbnails.bmp");
+		test.Frame();
+	}
+	test.extraDraw = {};
+
 	// Select frames older than the GPU recent window to exercise H.264 decoding.
 	frames.erase(frames.end() - 32, frames.end());
 	frames.erase(frames.begin(), frames.end() - 32);

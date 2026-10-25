@@ -29,12 +29,13 @@ class PreviewImages
 	PreviewImages(UiRenderer& renderer, RuntimePanelRequests& requests);
 	~PreviewImages();
 	void SetScope(PanelScope scope);
-	void Retained(const control::Message& message, bool preview);
+	void Retained(const control::Message& message, bool preview, bool thumbnail = false);
 	void Shared(std::uint64_t id, const RuntimeReply& reply);
 	void ShareFailed(std::uint64_t id);
 	void Poll();
 	void ProtectExports(std::span<const std::uint64_t> images);
 	bool HasPendingLive() const;
+	bool HasPendingThumbnail() const;
 	bool SelectCapture(PanelScope scope, std::uint64_t capture);
 	void SelectImage(std::uint64_t id);
 	bool SelectFrame(PanelScope scope, std::uint64_t frame);
@@ -68,7 +69,7 @@ class PreviewImages
 	struct PendingImage
 	{
 		control::Message message;
-		bool live = false;
+		bool live = false, thumbnail = false;
 	};
 	std::optional<PendingImage> m_pending;
 	Image* Find(std::uint64_t id) const;
