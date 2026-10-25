@@ -30,7 +30,6 @@ inline constexpr ImU32 AxisZ = IM_COL32(76, 141, 255, 255);
 
 inline constexpr float ControlHeight = 28;
 inline constexpr float Radius = 4;
-inline constexpr float ChipRadius = 12;
 
 // The same colour with its alpha multiplied by opacity (0..1).
 constexpr ImU32 Fade(ImU32 color, float opacity)

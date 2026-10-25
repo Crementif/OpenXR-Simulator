@@ -179,11 +179,11 @@ bool PreviewPanel::DrawCorner(const PreviewImageSummary& image, bool live, bool 
 	const float labelWidth = height + ImGui::CalcTextSize(zoom.c_str()).x + style.FramePadding.x;
 	const bool compact = labelWidth + height + style.ItemSpacing.x > contentWidth;
 	const float viewWidth = compact ? height : labelWidth;
-	const float cropWidth = 22 * scale + ImGui::CalcTextSize("Crop").x + height;
+	const float cropWidth = height + ImGui::CalcTextSize("Reset crop").x + style.FramePadding.x;
 	const bool showCrop = m_crop && viewWidth + cropWidth + height + style.ItemSpacing.x * 2 <= contentWidth;
 	const float controlsWidth =
 		viewWidth + height + style.ItemSpacing.x + (showCrop ? cropWidth + style.ItemSpacing.x : 0);
-	const float rowHeight = height + (showCrop ? 2 * scale : 0);
+	const float rowHeight = height;
 	const float primaryHeight = std::ceil(padding.y * 2 + rowHeight);
 	std::string header = live ? "" : "PAST";
 	if (const auto label = ImageLabel(image); !label.empty())
@@ -219,9 +219,7 @@ bool PreviewPanel::DrawCorner(const PreviewImageSummary& image, bool live, bool 
 		if (showCrop)
 		{
 			ImGui::SameLine();
-			const auto clear = Icon::Close;
-			if (StateChip("Crop", theme::Accent, "Crop", "Showing a pinned region of each frame", &clear,
-						  "Show the whole image"))
+			if (IconButton("Reset crop", Icon::Crop, "Show the whole image", false, "Reset crop"))
 			{
 				CancelInteraction();
 				m_crop.reset();

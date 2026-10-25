@@ -132,45 +132,6 @@ bool Section(const char* label, ImGuiTreeNodeFlags flags)
 	ImGui::PopFont();
 	return open;
 }
-bool StateChip(const char* id, ImU32 dot, const char* label, const char* tooltip, const Icon* action,
-			   const char* actionTooltip)
-{
-	ImGui::PushID(id);
-	const float height = ImGui::GetFrameHeight(), unit = ImGui::GetFontSize() / 17;
-	const auto textSize = ImGui::CalcTextSize(label);
-	const float actionWidth = action ? height - 4 * unit : 0;
-	const float width = 22 * unit + textSize.x + (action ? actionWidth + 4 * unit : 10 * unit);
-	const auto minimum = ImGui::GetCursorScreenPos();
-	auto* draw = ImGui::GetWindowDrawList();
-	draw->AddRectFilled(minimum, {minimum.x + width, minimum.y + height}, ImGui::GetColorU32(theme::SurfaceRaised),
-						theme::ChipRadius * unit);
-	draw->AddCircleFilled({minimum.x + 12 * unit, minimum.y + height / 2}, 4 * unit, ImGui::GetColorU32(dot));
-	draw->AddText({minimum.x + 22 * unit, minimum.y + (height - textSize.y) / 2}, ImGui::GetColorU32(theme::Text),
-				  label);
-	ImGui::InvisibleButton("##Chip", {width - actionWidth - (action ? 4 * unit : 0), height});
-	if (tooltip)
-		ImGui::SetItemTooltip("%s", tooltip);
-	bool pressed = false;
-	if (action)
-	{
-		ImGui::SameLine(0, 0);
-		const auto start = ImGui::GetCursorScreenPos();
-		ImGui::SetCursorScreenPos({start.x, minimum.y + 2 * unit});
-		const float side = actionWidth;
-		pressed = ImGui::InvisibleButton("##Action", {side, side}, ImGuiButtonFlags_EnableNav);
-		const auto center = ImVec2{start.x + side / 2, minimum.y + 2 * unit + side / 2};
-		if (ImGui::IsItemHovered())
-			draw->AddCircleFilled(center, side / 2,
-								  ImGui::GetColorU32(theme::Mix(theme::SurfaceRaised, theme::Text, .15f)));
-		DrawIcon(draw, *action, center, side * .55f, ImGui::GetColorU32(theme::Text));
-		if (actionTooltip)
-			ImGui::SetItemTooltip("%s", actionTooltip);
-		ImGui::SameLine(0, 4 * unit);
-		ImGui::Dummy({0, height});
-	}
-	ImGui::PopID();
-	return pressed;
-}
 static ImU32 IconColor(const RailStatus& status, bool selected)
 {
 	if (status.tint)

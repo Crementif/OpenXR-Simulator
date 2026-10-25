@@ -26,10 +26,6 @@ void FieldLabel(const char* label);
 void SectionLabel(const char* label);
 // SectionLabel that folds what follows, with a small arrow; the label is its id, as CollapsingHeader's is.
 bool Section(const char* label, ImGuiTreeNodeFlags flags = 0);
-// A rounded pill: coloured dot, label and an optional action button inside the
-// pill. Returns true when the action was pressed.
-bool StateChip(const char* id, ImU32 dot, const char* label, const char* tooltip = nullptr,
-			   const Icon* action = nullptr, const char* actionTooltip = nullptr);
 // What a rail row shows besides its name.
 struct RailStatus
 {

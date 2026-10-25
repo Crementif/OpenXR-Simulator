@@ -6509,6 +6509,24 @@ int main()
 				Require(directory != nullptr, "Connected layout checks need an output directory");
 				CheckLayouts(test, directory);
 			}
+			else if (std::getenv("SIMXR_CROP_QA"))
+			{
+				test.runtime.PreviewCrop() = ImVec4{.2f, .2f, .8f, .8f};
+				test.Frame();
+				test.Frame();
+				const auto directory = QaDirectory("SIMXR_UI_QA_DIR");
+				Require(!directory.empty(), "Crop QA needs an output directory");
+				test.renderer.RequestScreenshot(directory / "crop-control.bmp");
+				test.Frame();
+				auto* controls = FindPanel("Image controls");
+				Require(controls, "Crop controls missing");
+				ImGui::ActivateItemByID(controls->GetID("Reset crop"));
+				test.Frame();
+				Require(!test.runtime.PreviewCrop(), "Reset crop did not restore the whole image");
+				test.renderer.WaitIdle();
+				Require(test.validation->errors.load() == 0, "Crop UI validation errors");
+				std::cout << "PASS plain crop button restores the whole image\n";
+			}
 			else if (std::getenv("SIMXR_VIDEO_QA"))
 				CheckVideoExport(test);
 			else if (std::getenv("SIMXR_HISTORY_QA"))
