@@ -255,8 +255,42 @@ XrResult VulkanInstanceGraphics::CreateInstance(const XrVulkanInstanceCreateInfo
 		reinterpret_cast<PFN_vkCreateInstance>(info->pfnGetInstanceProcAddr(VK_NULL_HANDLE, "vkCreateInstance"));
 	if (!create)
 		return XR_ERROR_RUNTIME_FAILURE;
+	// Older OpenXR clients still call the KHR aliases of the Vulkan 1.1 queries.
+	const auto enumerate = reinterpret_cast<PFN_vkEnumerateInstanceExtensionProperties>(
+		info->pfnGetInstanceProcAddr(VK_NULL_HANDLE, "vkEnumerateInstanceExtensionProperties"));
+	std::vector<const char*> extensions;
+	auto creation = *info->vulkanCreateInfo;
+	if (creation.enabledExtensionCount)
+		extensions.assign(creation.ppEnabledExtensionNames,
+						  creation.ppEnabledExtensionNames + creation.enabledExtensionCount);
+	const auto* properties2 = VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME;
+	if (enumerate && std::none_of(extensions.begin(), extensions.end(),
+								 [properties2](const char* name)
+								 {
+									 return std::strcmp(name, properties2) == 0;
+								 }))
+	{
+		std::uint32_t count = 0;
+		if (enumerate(nullptr, &count, nullptr) == VK_SUCCESS && count)
+		{
+			std::vector<VkExtensionProperties> supported(count);
+			const auto enumeration = enumerate(nullptr, &count, supported.data());
+			if (enumeration == VK_SUCCESS || enumeration == VK_INCOMPLETE)
+			{
+				supported.resize(count);
+				if (std::any_of(supported.begin(), supported.end(),
+								[properties2](const auto& extension)
+								{
+									return std::strcmp(extension.extensionName, properties2) == 0;
+								}))
+					extensions.push_back(properties2);
+			}
+		}
+	}
+	creation.enabledExtensionCount = static_cast<std::uint32_t>(extensions.size());
+	creation.ppEnabledExtensionNames = extensions.data();
 	VkInstance created = VK_NULL_HANDLE;
-	*result = create(info->vulkanCreateInfo, info->vulkanAllocator, &created);
+	*result = create(&creation, info->vulkanAllocator, &created);
 	if (*result == VK_SUCCESS)
 		*output = created;
 	return XR_SUCCESS;

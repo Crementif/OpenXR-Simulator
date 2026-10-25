@@ -42,6 +42,12 @@ class CreationChecks final
 	CreationChecks& operator=(const CreationChecks&) = delete;
 	void Run()
 	{
+		const auto memoryProperties = reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties2KHR>(
+			vkGetInstanceProcAddr(m_graphicsInstance, "vkGetPhysicalDeviceMemoryProperties2KHR"));
+		Require(memoryProperties != nullptr, "Resolve the properties2 alias used by BetterVR");
+		VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+		memoryProperties(m_physicalDevice, &properties);
+		Require(properties.memoryProperties.memoryTypeCount != 0, "Read device memory through the properties2 alias");
 		CheckInstance();
 		CheckDevice();
 		CheckSessionAdmission();
@@ -65,6 +71,8 @@ class CreationChecks final
 			return nullptr;
 		if (std::strcmp(name, "vkCreateInstance") == 0)
 			return reinterpret_cast<PFN_vkVoidFunction>(CreateInstance);
+		if (std::strcmp(name, "vkEnumerateInstanceExtensionProperties") == 0)
+			return reinterpret_cast<PFN_vkVoidFunction>(EnumerateInstanceExtensions);
 		if (std::strcmp(name, "vkCreateDevice") == 0)
 		{
 			if (s_current->m_reenter)
@@ -73,12 +81,27 @@ class CreationChecks final
 		}
 		return nullptr;
 	}
+	static VKAPI_ATTR VkResult VKAPI_CALL EnumerateInstanceExtensions(const char*, std::uint32_t* count,
+																	 VkExtensionProperties* properties)
+	{
+		if (properties && *count)
+			std::strcpy(properties[0].extensionName, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+		*count = 1;
+		return VK_SUCCESS;
+	}
 	static VKAPI_ATTR VkResult VKAPI_CALL CreateInstance(const VkInstanceCreateInfo* info,
 														 const VkAllocationCallbacks* allocator, VkInstance* output)
 	{
 		++s_current->m_creations;
-		Require(info == s_current->m_instanceInfo && allocator == &s_current->m_allocator,
-				"Forward exact instance creation and allocator pointers");
+		Require(info->pApplicationInfo == s_current->m_instanceInfo->pApplicationInfo &&
+					info->pNext == s_current->m_instanceInfo->pNext && allocator == &s_current->m_allocator,
+				"Preserve instance application, chain and allocator pointers");
+		const std::span names(info->ppEnabledExtensionNames, info->enabledExtensionCount);
+		Require(std::count_if(names.begin(), names.end(), [](const char* name)
+							  {
+								  return std::strcmp(name, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME) == 0;
+							  }) == 1,
+				"Enable supported properties2 aliases without duplicating application extensions");
 		*output = reinterpret_cast<VkInstance>(s_current);
 		return s_current->m_nativeResult;
 	}
@@ -134,6 +157,11 @@ class CreationChecks final
 		Require(native.pApplicationInfo == &application && !native.enabledExtensionCount &&
 					!native.ppEnabledExtensionNames,
 				"Application instance configuration remains unchanged");
+		const char* extension = VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME;
+		native.enabledExtensionCount = 1;
+		native.ppEnabledExtensionNames = &extension;
+		Require(create(m_instance, &request, &untouched, &result) == XR_SUCCESS && result == VK_SUCCESS,
+				"Accept an application that already enables properties2");
 		m_creations = 0;
 		m_resolutions = 0;
 	}
