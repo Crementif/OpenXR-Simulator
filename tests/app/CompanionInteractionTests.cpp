@@ -5144,6 +5144,8 @@ void CheckMeasuredTiming(Interaction& test)
 		<< ", slow " << slow << ", fast " << fast << '\n';
 }
 
+#endif
+
 void CheckVideoExport(Interaction& test)
 {
 	const auto directory = QaDirectory("SIMXR_UI_QA_DIR");
@@ -5337,6 +5339,8 @@ void CheckPreviewHistory(Interaction& test)
 	test.runtime.ResumeLive();
 	std::cout << "PASS consecutive historical images after pause and rapid scrub; zero Vulkan validation errors\n";
 }
+
+#ifdef __linux__
 
 void CheckSnapshotRetention(Interaction& test)
 {
@@ -6486,12 +6490,12 @@ int main()
 		}
 
 
-#ifdef __linux__
 		if (std::getenv("SIMXR_RIG_POINTER_QA"))
 		{
 			CheckRigPointer();
 			return 0;
 		}
+#ifdef __linux__
 		if (const auto endpoint = std::getenv("SIMXR_UI_PILOT_ENDPOINT"))
 		{
 			PilotLiveRuntime(endpoint);
@@ -6581,6 +6585,16 @@ int main()
 				SaveSettings(path, settings);
 			}
 
+			if (std::getenv("SIMXR_HISTORY_QA"))
+			{
+				const auto path = QaDirectory("SIMXR_COMPANION_SETTINGS");
+				Require(!path.empty(), "History QA needs private settings");
+				auto settings = LoadSettings(path);
+				settings.previewBudgetMiB = 64;
+				settings.previewRamMiB = 64;
+				SaveSettings(path, settings);
+			}
+
 			Interaction test(std::getenv("SIMXR_REMOTE_DRAG_QA") != nullptr);
 			test.live = true;
 			test.runtime.ConnectEndpoint(endpoint);
@@ -6598,7 +6612,9 @@ int main()
 				Require(directory != nullptr, "Connected layout checks need an output directory");
 				CheckLayouts(test, directory);
 			}
-			else if (std::getenv("SIMXR_RETURN_IMAGE_QA"))
+			else
+#endif
+			if (std::getenv("SIMXR_RETURN_IMAGE_QA"))
 			{
 				test.workspace.Select(DeviceSel{DevicePage::Player});
 				for (int i = 0; i < 3; ++i)
@@ -6639,17 +6655,27 @@ int main()
 						test.Frame();
 					const auto state = test.runtime.Snapshot();
 					Require(state.rigExpanded, recorded ? "Recorded rig did not expand" : "Live rig did not expand");
-					const auto area = state.rigView;
-					const float width = area.width * .25f;
-					const float x = area.x + area.width - width / 2 - 8;
-					const float y = thumbnail ? area.y + area.height - width / 2 - 8
-											  : area.y + area.height - width - 16 - ImGui::GetFrameHeight() / 2;
+					const auto* controls = FindPanel("Return to image");
+					Require(controls, "Return controls missing");
+					const float buttonHeight = ImGui::GetFrameHeight();
+					const float x = controls->Pos.x + controls->Size.x / 2;
+					const float y =
+						controls->Pos.y +
+						(thumbnail ? buttonHeight + 8 + (controls->Size.y - buttonHeight - 8) / 2 : buttonHeight / 2);
 					test.Click({x, y});
 					test.Frame();
 					Require(!test.runtime.Snapshot().rigExpanded, thumbnail
 																	  ? "Thumbnail click did not restore image"
 																	  : "Back to image click did not restore image");
 				}
+				test.runtime.ResumeLive();
+				Eventually(
+					[&]
+					{
+						test.Frame();
+						return !test.runtime.Snapshot().manual && !test.runtime.Snapshot().operationPending;
+					},
+					"Return to image fixture did not resume");
 				test.renderer.WaitIdle();
 				Require(test.validation->errors.load() == 0, "Return to image validation errors");
 				std::cout << "PASS live and recorded rigs restore image from button and thumbnail clicks\n";
@@ -6676,14 +6702,18 @@ int main()
 				CheckVideoExport(test);
 			else if (std::getenv("SIMXR_HISTORY_QA"))
 				CheckPreviewHistory(test);
+#ifdef __linux__
 			else if (std::getenv("SIMXR_SPATIAL_QA"))
 				CheckSpatialEditing(test);
 			else
 				CheckPreviewPilot(test);
 #else
-			Require(!std::getenv("SIMXR_LAYOUT_QA") && !std::getenv("SIMXR_SPATIAL_QA"),
-				"Connected layout/spatial fixtures are not enabled on this platform");
-			CheckPreviewPilot(test);
+			else
+			{
+				Require(!std::getenv("SIMXR_LAYOUT_QA") && !std::getenv("SIMXR_SPATIAL_QA"),
+						"Connected layout/spatial fixtures are not enabled on this platform");
+				CheckPreviewPilot(test);
+			}
 #endif
 			if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
 			{
