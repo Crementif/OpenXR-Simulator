@@ -4,6 +4,7 @@ project(OpenXR-Simulator VERSION 2.0.0 LANGUAGES CXX)
 configure_file(cmake/Version.h.in "${PROJECT_BINARY_DIR}/generated/simxr/Version.h" @ONLY)
 
 include(CTest)
+include(cmake/SimxrRuntimeLibraries.cmake)
 include(cmake/SimxrTargets.cmake)
 find_package(Threads REQUIRED)
 
