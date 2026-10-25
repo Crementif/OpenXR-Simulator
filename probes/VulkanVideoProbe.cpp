@@ -10,6 +10,31 @@
 #include <cstring>
 #include <thread>
 
+#ifdef __linux__
+namespace simxr::probe
+{
+static bool s_failVideoView = false, s_failVideoWait = false;
+}
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateImageView(VkDevice device, const VkImageViewCreateInfo* info,
+															const VkAllocationCallbacks* allocator, VkImageView* view)
+{
+	if (std::exchange(simxr::probe::s_failVideoView, false))
+		return VK_ERROR_OUT_OF_HOST_MEMORY;
+	const auto create = reinterpret_cast<PFN_vkCreateImageView>(vkGetDeviceProcAddr(device, "vkCreateImageView"));
+	return create(device, info, allocator, view);
+}
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkWaitForFences(VkDevice device, std::uint32_t count, const VkFence* fences,
+														  VkBool32 all, std::uint64_t timeout)
+{
+	const auto wait = reinterpret_cast<PFN_vkWaitForFences>(vkGetDeviceProcAddr(device, "vkWaitForFences"));
+	const auto result = wait(device, count, fences, all, timeout);
+	// Actual completion makes the test safe; production still has to treat the injected timeout as unknown.
+	if (result == VK_SUCCESS && std::exchange(simxr::probe::s_failVideoWait, false))
+		return VK_TIMEOUT;
+	return result;
+}
+#endif
+
 namespace simxr::probe
 {
 static void Transfer(const std::shared_ptr<VulkanDevice>& owner, VulkanVideoSession& video, bool upload,
@@ -163,6 +188,47 @@ int main()
 				for (std::size_t i = 0; i < pixels->rgba.size(); ++i)
 					if (std::abs(int(pixels->rgba[i]) - (i % 4 == 3 ? 255 : 104 + (i >= 320 * 480 * 4 ? 8 : 0))) > 5)
 						throw std::runtime_error("GPU RGB/NV12 round-trip mismatch");
+#ifdef __linux__
+				auto archive = source->Archive();
+				const std::weak_ptr<const simxr::VulkanInspectionFrame> weakSource = source;
+				simxr::probe::s_failVideoView = true;
+				bool failed = false;
+				try
+				{
+					source->Archive();
+				}
+				catch (const simxr::VulkanError& error)
+				{
+					failed = error.Result() == VK_ERROR_OUT_OF_HOST_MEMORY;
+				}
+				if (!failed || simxr::probe::s_failVideoView)
+					throw std::runtime_error("Video allocation fault was not exercised");
+				archive.reset();
+				source.reset();
+				if (!weakSource.expired())
+					throw std::runtime_error("Failed encoder retained a source/codec ownership cycle");
+				simxr::FramePool budget(1);
+				auto reservation = budget.Reserve();
+				{
+					simxr::VulkanVideoConversion uncertain(owner.Device(), {640, 480});
+					simxr::probe::s_failVideoWait = true;
+					failed = false;
+					try
+					{
+						uncertain.Decode(frames[3], {320, 480}, 2, reservation);
+					}
+					catch (const simxr::VulkanError& error)
+					{
+						failed = error.Result() == VK_TIMEOUT;
+					}
+					if (!failed || simxr::probe::s_failVideoWait)
+						throw std::runtime_error("Video timeout was not exercised");
+				}
+				reservation.reset();
+				if (budget.InUse() != 1)
+					throw std::runtime_error("Unknown decode completion released its GPU budget");
+				std::puts("Video allocation failure releases source; unknown decode completion retains budget");
+#endif
 			}
 			if (validation->errors.load() || simxr::probe::s_validationErrors.load())
 				throw std::runtime_error("Vulkan validation failed");

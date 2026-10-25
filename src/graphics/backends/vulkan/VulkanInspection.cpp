@@ -328,9 +328,13 @@ class VulkanInspectionQueue
 	std::shared_ptr<VulkanVideoHistory> Video()
 	{
 		std::lock_guard lock(m_videoMutex);
-		if (!m_video)
-			m_video = std::make_shared<VulkanVideoHistory>(m_device, m_timeline);
-		return m_video;
+		auto video = m_video.lock();
+		if (!video)
+		{
+			video = std::make_shared<VulkanVideoHistory>(m_device, m_timeline);
+			m_video = video;
+		}
+		return video;
 	}
 	~VulkanInspectionQueue()
 	{
@@ -472,7 +476,9 @@ class VulkanInspectionQueue
 	std::vector<std::shared_ptr<VulkanInspectionWork>> m_active;
 	std::unique_ptr<VulkanBackend> m_compositor;
 	std::mutex m_videoMutex;
-	std::shared_ptr<VulkanVideoHistory> m_video;
+	// Archived pictures own the codec. A strong queue reference would cycle
+	// through the encoder's retained source when an operation fails.
+	std::weak_ptr<VulkanVideoHistory> m_video;
 };
 
 std::shared_ptr<VulkanDeliveryNative> VulkanDeliveryNative::Prepare(VulkanInspectionQueue& queue,

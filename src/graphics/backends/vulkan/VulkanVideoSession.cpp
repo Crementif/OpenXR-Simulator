@@ -480,6 +480,8 @@ VulkanH264Picture VulkanVideoSession::Encode(VkSemaphore inputReady)
 }
 void VulkanVideoSession::Decode(const VulkanH264Picture& picture, VkSemaphore outputReady)
 {
+	if (m_uncertain)
+		throw std::runtime_error("Video completion unknown; bitstream cannot be reused");
 	if (picture.bytes.empty() || picture.bytes.size() > m_bitstreamSize || picture.sliceOffset >= picture.bytes.size())
 		throw std::invalid_argument("Invalid H.264 history picture");
 	std::memcpy(m_mapped, picture.bytes.data(), picture.bytes.size());

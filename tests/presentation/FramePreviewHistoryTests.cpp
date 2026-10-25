@@ -38,7 +38,7 @@ class CompressedOutput final : public FrameOutput
 	}
 	CompletionStatus PollCompletion() const noexcept override
 	{
-		return CompletionStatus::Complete;
+		return pending.load() ? CompletionStatus::Pending : CompletionStatus::Complete;
 	}
 	bool CanArchive() const noexcept override
 	{
@@ -49,6 +49,7 @@ class CompressedOutput final : public FrameOutput
 		return std::make_shared<CompressedPicture>(value);
 	}
 	std::shared_ptr<FrameReservation> reservation;
+	std::atomic<bool> pending{false};
 	std::uint64_t value;
 };
 std::shared_ptr<const FrameOutput> CompressedPicture::Decode(const FramePool& budget) const
@@ -119,13 +120,49 @@ void CompressedHistory()
 	Require(std::static_pointer_cast<const CompressedOutput>(retained)->value == 1, "Eviction invalidated reader");
 	Require(history.Error().empty(), "History worker failed");
 }
+void PendingEncodeDoesNotBlockSelection()
+{
+	FramePreviewHistory history;
+	history.Configure(64ull << 20);
+	std::shared_ptr<CompressedOutput> pending;
+	for (std::uint64_t frame = 1; frame <= 10; ++frame)
+	{
+		auto reservation = history.Reserve({{1}, {frame}});
+		Require(reservation && history.Budget().Consume(reservation), "Pending history admission failed");
+		auto output = std::make_shared<CompressedOutput>(reservation, frame);
+		if (frame == 2)
+		{
+			pending = output;
+			pending->pending.store(true);
+		}
+		history.Append({{1}, {frame}}, std::move(output), false);
+	}
+	Await(
+		[&]
+		{
+			return history.RamBytes() > 0;
+		});
+	FramePreview selected;
+	Await(
+		[&]
+		{
+			selected = history.Find({{1}, {1}});
+			return bool(selected.output);
+		});
+	Require(std::static_pointer_cast<const CompressedOutput>(selected.output)->value == 1,
+			"Pending encode substituted the requested archive");
+	pending->pending.store(false);
+	auto abandoned = history.Reserve({{1}, {11}});
+	abandoned.reset();
+	Require(bool(history.Reserve({{1}, {11}})), "Abandoned admission blocked a retry");
+}
 void ContinuousHistory()
 {
 	FramePreviewHistory history;
 	std::shared_ptr<const FrameOutput> retained;
 	for (std::uint64_t frame = 1; frame <= 400; ++frame)
 	{
-		auto reservation = history.Reserve();
+		auto reservation = history.Reserve({{1}, {frame}});
 		Require(reservation && history.Budget().Consume(reservation), "Continuous preview admission failed");
 		auto image = std::make_shared<PreviewOutput>(std::move(reservation));
 		history.Append({{1}, {frame}}, image, false);
@@ -148,7 +185,7 @@ void ContinuousHistory()
 	history.Configure(2048ull << 20);
 	for (std::uint64_t frame = 402; frame <= 1000; ++frame)
 	{
-		auto reservation = history.Reserve();
+		auto reservation = history.Reserve({{1}, {frame}});
 		Require(reservation && history.Budget().Consume(reservation), "Expanded history admission failed");
 		history.Append({{1}, {frame}}, std::make_shared<PreviewOutput>(reservation), false);
 	}
@@ -175,6 +212,7 @@ int main()
 	{
 		simxr::test::ContinuousHistory();
 		simxr::test::CompressedHistory();
+		simxr::test::PendingEncodeDoesNotBlockSelection();
 		std::cout << "PASS consecutive previews, oldest eviction, independent readers, clear and run identity\n";
 		return 0;
 	}

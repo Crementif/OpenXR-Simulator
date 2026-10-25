@@ -10,7 +10,8 @@ class VulkanVideoConversion
 	VulkanVideoConversion(std::shared_ptr<VulkanDevice> device, VkExtent2D extent);
 	~VulkanVideoConversion();
 	VulkanH264Picture Encode(std::shared_ptr<const VulkanInspectionFrame> source);
-	std::shared_ptr<VulkanImage> Decode(const VulkanH264Picture& picture, VkExtent2D extent, std::uint32_t layers);
+	std::shared_ptr<VulkanImage> Decode(const VulkanH264Picture& picture, VkExtent2D extent, std::uint32_t layers,
+										std::shared_ptr<FrameReservation> reservation = {});
 	VkExtent2D Extent() const noexcept
 	{
 		return m_session->Extent();
@@ -25,6 +26,7 @@ class VulkanVideoConversion
 		std::shared_ptr<VulkanVideoSession> session;
 		std::shared_ptr<const VulkanInspectionFrame> source;
 		std::shared_ptr<VulkanImage> output;
+		std::shared_ptr<FrameReservation> reservation;
 	};
 	void Initialize();
 	void Destroy() noexcept;

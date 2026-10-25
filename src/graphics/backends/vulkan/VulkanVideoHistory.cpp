@@ -52,7 +52,7 @@ std::shared_ptr<const FrameOutput> VulkanVideoHistory::Decode(const VulkanH264Pi
 		return {};
 	std::lock_guard lock(m_mutex);
 	Configure(extent, layers);
-	auto image = m_conversion->Decode(picture, extent, layers);
+	auto image = m_conversion->Decode(picture, extent, layers, reservation);
 	auto frame = VulkanInspectionFrame::FromImage(std::move(image), views, m_timeline);
 	if (!frame->PromoteCaptureBudget(budget, std::move(reservation)))
 		throw std::runtime_error("Decoded history image budget transfer failed");

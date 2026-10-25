@@ -1,14 +1,16 @@
 #pragma once
 #include "graphics/ArchivedFrame.h"
 #include "graphics/FramePool.h"
-#include "presentation/FrameHistory.h"
+#include "presentation/FrameTypes.h"
 #include <atomic>
 #include <condition_variable>
 #include <deque>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace simxr
 {
@@ -47,7 +49,7 @@ class FramePreviewHistory
 		return m_ramBytes->load();
 	}
 	std::string Error() const;
-	std::shared_ptr<FrameReservation> Reserve(FrameKey key = {});
+	std::shared_ptr<FrameReservation> Reserve(FrameKey key);
 	const FramePool& Budget() const noexcept
 	{
 		return m_budget;
@@ -78,11 +80,13 @@ class FramePreviewHistory
 	std::atomic<std::uint64_t> m_ramLimit{RamBudgetBytes};
 	mutable std::mutex m_mutex;
 	std::condition_variable m_changed;
-	std::deque<std::shared_ptr<Entry>> m_frames;
+	std::map<FrameKey, std::shared_ptr<Entry>> m_frames;
+	// Bounded by GPU admission; archived entries never participate in worker scans.
+	std::deque<std::shared_ptr<Entry>> m_recent;
 	FrameKey m_requested{};
 	FramePreview m_decoded;
 	std::string m_error;
-	bool m_stopping = false, m_gpuOnly = false;
+	bool m_stopping = false, m_gpuOnly = false, m_trimming = false;
 	std::thread m_worker;
 };
 } // namespace simxr

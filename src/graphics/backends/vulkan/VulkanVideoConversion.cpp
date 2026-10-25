@@ -271,7 +271,8 @@ VulkanH264Picture VulkanVideoConversion::Encode(std::shared_ptr<const VulkanInsp
 	return encoded;
 }
 std::shared_ptr<VulkanImage> VulkanVideoConversion::Decode(const VulkanH264Picture& picture, VkExtent2D extent,
-														   std::uint32_t layers)
+														   std::uint32_t layers,
+														   std::shared_ptr<FrameReservation> reservation)
 {
 	if (m_uncertain)
 		throw std::runtime_error("History GPU conversion completion unknown");
@@ -282,6 +283,7 @@ std::shared_ptr<VulkanImage> VulkanVideoConversion::Decode(const VulkanH264Pictu
 							VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
 							1, VK_SAMPLE_COUNT_1_BIT, VK_WHOLE_SIZE, VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT);
 	m_failedOwner->output = output;
+	m_failedOwner->reservation = std::move(reservation);
 	UpdateView(output->image, output->format, layers, false);
 	m_uncertain = true;
 	m_session->Decode(picture, m_decoded);
@@ -318,6 +320,7 @@ std::shared_ptr<VulkanImage> VulkanVideoConversion::Decode(const VulkanH264Pictu
 	output->format = VK_FORMAT_R8G8B8A8_SRGB;
 	vkDestroyImageView(m_device->binding.device, std::exchange(m_view, VK_NULL_HANDLE), nullptr);
 	m_failedOwner->output.reset();
+	m_failedOwner->reservation.reset();
 	return output;
 }
 } // namespace simxr
