@@ -294,7 +294,7 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 	const float button = ImGui::GetFrameHeight(), scale = ImGui::GetFontSize() / 16;
 	// Recording shows its elapsed time on the record button; room for it is kept so the lanes do not shift.
 	const float clock = ImGui::CalcTextSize("00:00").x + style.FramePadding.x;
-	const float transport = button * 7 + clock + style.ItemSpacing.x * 6;
+	const float transport = button * 6 + clock + style.ItemSpacing.x * 5;
 	const bool drawer = shell.library && !folded;
 	const float timelineWidth = ImGui::GetContentRegionAvail().x;
 	const float header = std::max(transport + style.ItemSpacing.x * 2,
@@ -431,10 +431,6 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 	ImGui::SameLine();
 	if (IconButton("Timeline help", Icon::Help, "What the lanes, marks and keys mean"))
 		ImGui::OpenPopup("Timeline legend");
-	ImGui::SameLine();
-	if (IconButton("Fold timeline", folded ? Icon::ChevronUp : Icon::ChevronDown,
-				   folded ? "Show the timeline (Ctrl+T)" : "Hide the timeline (Ctrl+T)"))
-		shell.timeline.toggleFold = true;
 	ImGui::EndGroup();
 	DrawLegend();
 	if (!ImGui::GetIO().WantTextInput && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows))

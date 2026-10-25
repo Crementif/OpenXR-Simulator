@@ -1122,11 +1122,11 @@ void CheckShell()
 	test.Frame();
 	test.Frame();
 	Require(std::abs(FindPanel("GPU preview")->Size.x - width) < 1, "Preview restore changed layout");
-	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Fold timeline"));
+	ImGui::ActivateItemByID(FindPanel("Timeline divider tab")->GetID("##Edge"));
 	for (int i = 0; i < 3; ++i)
 		test.Frame();
 	capture("shell-folded.bmp");
-	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Fold timeline"));
+	ImGui::ActivateItemByID(FindPanel("Timeline divider tab")->GetID("##Edge"));
 	test.Frame();
 	test.window.Resize(800, 720);
 	test.workspace.SetScale(1.5f);
@@ -1568,12 +1568,12 @@ void PilotLiveRuntime(const char* endpoint)
 	frame();
 	frame();
 	const auto timelineHeight = FindPanel("Timeline")->Size.y;
-	activate("Timeline", "Fold timeline");
+	activate("Timeline divider tab", "##Edge");
 	frame();
 	frame();
 	Require(FindPanel("Timeline")->Size.y < timelineHeight * .6f, "Live application timeline did not fold");
 	captureContext("cemu-timeline-folded.bmp");
-	activate("Timeline", "Fold timeline");
+	activate("Timeline divider tab", "##Edge");
 	frame();
 	frame();
 	Require(std::abs(FindPanel("Timeline")->Size.y - timelineHeight) < 1,
@@ -4177,11 +4177,11 @@ void CheckShell(Interaction& test, const char* qa)
 	pump(4);
 	// Folding the timeline leaves one row; folding the inspector widens the preview.
 	const float timelineHeight = FindPanel("Timeline")->Size.y;
-	activate("Timeline", "Fold timeline");
+	activate("Timeline divider tab", "##Edge");
 	pump(2);
 	Require(FindPanel("Timeline")->Size.y < timelineHeight * .6f, "Timeline did not fold");
 	screenshot("timeline-folded.bmp");
-	activate("Timeline", "Fold timeline");
+	activate("Timeline divider tab", "##Edge");
 	pump(2);
 	Require(std::abs(FindPanel("Timeline")->Size.y - timelineHeight) < 1, "Timeline did not unfold");
 	const float previewWidth = FindPanel("GPU preview")->Size.x;
@@ -4581,7 +4581,7 @@ void CheckLibrary(Interaction& test, const std::filesystem::path& directory)
 	Eventually([&] { pump(1); return test.runtime.Snapshot().recording; }, "Rec did not start recording");
 	DrivePilotPulses(test);
 	Require(test.runtime.Snapshot().recordedChanges > 0, "Piloting recorded no input");
-	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Fold timeline"));
+	ImGui::ActivateItemByID(FindPanel("Timeline divider tab")->GetID("##Edge"));
 	pump(3);
 	screenshot("timeline-recording-folded.bmp");
 	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Stop recording"));
@@ -4635,7 +4635,7 @@ void CheckLibrary(Interaction& test, const std::filesystem::path& directory)
 			"Replace take did not save the recording over the chosen Library take");
 	pump(3);
 	screenshot("library-take.bmp");
-	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Fold timeline"));
+	ImGui::ActivateItemByID(FindPanel("Timeline divider tab")->GetID("##Edge"));
 	pump(3);
 	ImGui::ActivateItemByID(FindPanel("Inspector")->GetID("Play take"));
 	Eventually([&] { pump(1); return test.runtime.Snapshot().manual; }, "Library replay did not drive the app");
@@ -5097,11 +5097,11 @@ void CapturePolish(Interaction& test, const std::filesystem::path& qa)
 	Eventually([&] { pump(1); return test.runtime.Snapshot().manual; }, "Pause did not pause");
 	screenshot("polish-paused.bmp");
 	activate("Inspector divider tab", "##Edge");
-	activate("Timeline", "Fold timeline");
+	activate("Timeline divider tab", "##Edge");
 	Require(!test.workspace.State().inspectorVisible, "Inspector divider tab did not fold the inspector");
 	screenshot("polish-folded.bmp");
 	activate("Inspector divider tab", "##Edge");
-	activate("Timeline", "Fold timeline");
+	activate("Timeline divider tab", "##Edge");
 	Require(test.workspace.State().inspectorVisible, "Inspector divider tab did not unfold the inspector");
 	activate("Timeline", "Continue");
 	// Focus hides the timeline; its button carries the recording's time instead.
@@ -6044,7 +6044,7 @@ void CheckSoak(Interaction& test, const std::filesystem::path& directory)
 				activate("Top bar", "Focus");
 				break;
 			case 10:
-				activate("Timeline", "Fold timeline");
+				activate("Timeline divider tab", "##Edge");
 				break;
 			case 11:
 				activate("Inspector divider tab", "##Edge");
