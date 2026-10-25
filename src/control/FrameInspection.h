@@ -9,6 +9,7 @@
 
 namespace simxr::control
 {
+InspectionValue InspectPreviewTracking(const TrackingSnapshot& tracking);
 InspectionValue InspectDiagnostics(const FrameDiagnostics& diagnostics);
 InspectionValue InspectImageWindow(const ImageWindowSnapshot& window);
 InspectionValue InspectImageHistory(const ImageHistorySnapshot& history);

@@ -19,6 +19,7 @@ struct PreviewImages::Image
 	std::optional<wire::TargetKind> target;
 	std::uint32_t layer = 0, view = 0;
 	std::unique_ptr<PreviewTexture> texture;
+	std::shared_ptr<const wire::Message> state;
 };
 PreviewImages::PreviewImages(UiRenderer& renderer, RuntimePanelRequests& requests)
 	: m_renderer(renderer), m_requests(requests), m_history(renderer)
@@ -147,7 +148,8 @@ PreviewImageSummary PreviewImages::Summary(const Image& image) const
 			image.target,
 			image.layer,
 			image.view,
-			image.imageTick};
+			image.imageTick,
+			image.state};
 }
 std::optional<PreviewImageSummary> PreviewImages::Selected() const
 {
@@ -240,6 +242,20 @@ void PreviewImages::Retained(const wire::Message& message, bool preview)
 		return;
 	}
 	const auto reader = U64(message, tag::ImageReaderId), frame = Frame(message);
+	std::shared_ptr<wire::Message> state;
+	try
+	{
+		if (const auto* document = message.Find(tag::Document))
+		{
+			state = std::make_shared<wire::Message>();
+			state->fields.push_back(*document);
+		}
+	}
+	catch (...)
+	{
+		m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId, reader);
+		throw;
+	}
 	const auto capture = U64(message, tag::CaptureId);
 	const auto tickField = message.Find(tag::ImageTick);
 	const auto imageTick = tickField ? tickField->AsU64() : std::nullopt;
@@ -248,6 +264,8 @@ void PreviewImages::Retained(const wire::Message& message, bool preview)
 			image->live == preview && image->session == U64(message, tag::Session) &&
 			image->generation == U64(message, tag::Generation) && (!preview || image->imageTick == imageTick))
 		{
+			if (state)
+				image->state = state;
 			if (!image->reader)
 				image->reader = reader;
 			else if (image->reader != reader)
@@ -296,6 +314,7 @@ void PreviewImages::Retained(const wire::Message& message, bool preview)
 			prepared->view = U32(fields, tag::View);
 		}
 		prepared->frame = frame;
+		prepared->state = std::move(state);
 		prepared->imageTick = imageTick;
 		prepared->capture = capture;
 		prepared->epoch = m_scope.epoch;

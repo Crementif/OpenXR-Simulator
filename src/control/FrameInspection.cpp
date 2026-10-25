@@ -403,7 +403,7 @@ static InspectionValue InspectTrackedBody(const BodySample& body, std::uint64_t 
 	return InspectionValue::Object({{"active", InspectionValue::Boolean(body.active)},
 									{"confidence", InspectionValue::Float(body.confidence)},
 									{"sample_time", InspectionValue::Signed(body.sampleTime.value.count())},
-									{"skeleton", InspectionValue::Revision(skeleton)},
+									{"skeleton", skeleton ? InspectionValue::Revision(skeleton) : InspectionValue::Null()},
 									{"joints", InspectionValue::Array(std::move(joints))}});
 }
 
@@ -423,6 +423,10 @@ static InspectionValue InspectTracking(const TrackingSnapshot& tracking, std::ui
 									{"trackers", InspectArray(tracking.trackers, InspectTrackedDevice)},
 									{"input", InspectTrackingInput(tracking.input)},
 									{"proportions", InspectProportions(tracking.proportions)}});
+}
+InspectionValue InspectPreviewTracking(const TrackingSnapshot& tracking)
+{
+	return InspectionValue::Object({{"tracking", InspectTracking(tracking, 0)}});
 }
 static InspectionValue InspectViews(const ViewSettings& value, ViewLayout layout)
 {

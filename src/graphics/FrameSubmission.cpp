@@ -215,7 +215,12 @@ XrResult FrameSubmission::Execute(const XrFrameEndInfo& info, const SwapchainDes
 							   live ? FrameSubmissionPolicy::Live : FrameSubmissionPolicy::Exact,
 							   m_prepared.reprojection, m_prepared.timing);
 		if (XR_SUCCEEDED(result))
-			m_session.PreviewHistory().Append(m_key, m_prepared.preview, info.layerCount == 0);
+		{
+			const auto record = m_session.History().Find(m_key);
+			const auto* tracking =
+				record && record->submission && record->submission->tracking ? &*record->submission->tracking : nullptr;
+			m_session.PreviewHistory().Append(m_key, m_prepared.preview, info.layerCount == 0, tracking);
+		}
 		return result;
 	}
 	catch (const std::bad_alloc&)

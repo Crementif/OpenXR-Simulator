@@ -2,12 +2,14 @@
 #include "graphics/ArchivedFrame.h"
 #include "graphics/FramePool.h"
 #include "presentation/FrameTypes.h"
+#include "simulation/TrackingTypes.h"
 #include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -20,6 +22,7 @@ struct FramePreview
 	FrameKey key;
 	std::shared_ptr<const FrameOutput> output;
 	bool submitted = false, clear = false, pending = false;
+	std::shared_ptr<const TrackingSnapshot> tracking;
 };
 class FramePreviewHistory
 {
@@ -54,14 +57,17 @@ class FramePreviewHistory
 	{
 		return m_budget;
 	}
-	void Append(FrameKey key, std::shared_ptr<const FrameOutput> output, bool clear);
+	void Append(FrameKey key, std::shared_ptr<const FrameOutput> output, bool clear,
+				const TrackingSnapshot* tracking = nullptr);
 	FramePreview Find(FrameKey key);
+	std::shared_ptr<const TrackingSnapshot> Tracking(FrameKey key) const;
 	std::vector<FrameKey> Frames(SessionGeneration generation, std::size_t limit = SIZE_MAX) const;
 
   private:
 	struct Entry
 	{
 		FramePreview preview;
+		std::optional<TrackingSnapshot> tracking;
 		std::weak_ptr<FrameReservation> admission;
 		std::shared_ptr<const ArchivedFrame> archive;
 		std::shared_ptr<std::atomic<std::uint64_t>> counter;

@@ -54,6 +54,8 @@ class RuntimeSession
 	// Looks at a retained frame: stops following and loads its capture or image.
 	void LookAt(std::size_t historyIndex);
 	bool LoadingPastImage() const;
+	const control::Message* PastState() const;
+
 	std::uint64_t PreviewBytes() const;
 	std::uint64_t PreviewBudget() const;
 	std::uint64_t PreviewRamBytes() const;
@@ -179,6 +181,7 @@ class RuntimeSession
 	ManualInputSnapshot m_input;
 	HapticFeedback m_haptics;
 	TimeCursor m_time;
+	control::Message m_pastState;
 	std::optional<SteppedFrame> m_stepped;
 	std::optional<ObservedSetup> m_setup;
 	std::vector<HistoryFrame> m_coverage;

@@ -415,6 +415,9 @@ Message ControlService::DispatchFrame(Client& client, const Message& request, co
 				throw ControlRequestError{ErrorCode::NotFound, "Frame preview is absent or evicted"};
 			if (!preview.output && !preview.clear)
 				throw ControlRequestError{ErrorCode::NotFound, "Frame preview was evicted or could not be retained"};
+			if (preview.tracking)
+				response.fields.push_back(
+					Field::Bytes(tag::Document, InspectPreviewTracking(*preview.tracking).Encode()));
 			held.historicalImage.output = std::move(preview.output);
 			response.fields.push_back(Field::Bool(tag::ImageAvailable, held.historicalImage.output != nullptr));
 			if (!held.historicalImage.output)
@@ -450,6 +453,8 @@ Message ControlService::DispatchFrame(Client& client, const Message& request, co
 		if (!selected.source || selected.source->generation != display.generation ||
 			selected.output->PollCompletion() != CompletionStatus::Complete)
 			throw ControlRequestError{ErrorCode::Busy, "Selected display image is not complete"};
+		if (const auto tracking = session->PreviewHistory().Tracking(*selected.source))
+			response.fields.push_back(Field::Bytes(tag::Document, InspectPreviewTracking(*tracking).Encode()));
 		const ImageSource source{binding.id, *selected.source, {}, {CaptureKind::VirtualDisplay}, selected.imageTick};
 		client.images.Retain(response, source, selected.output, *m_images, client.nativeHandles, publication.images,
 							 false);

@@ -105,6 +105,20 @@ void RuntimeSession::LookAt(std::size_t index)
 			break;
 		}
 }
+const control::Message* RuntimeSession::PastState() const
+{
+	if (m_time.following)
+		return nullptr;
+	if (const auto image = m_preview.Selected();
+		image && image->frame == m_time.cursor.frame && image->scope.epoch == m_time.epoch &&
+		image->scope.session == m_time.cursor.session && image->scope.generation == m_time.cursor.run && image->state)
+		return image->state.get();
+	const auto scope = m_debugger.Scope();
+	if (m_time.epoch != scope.epoch || m_time.cursor.session != scope.session ||
+		m_time.cursor.run != scope.generation || panel::Frame(m_pastState) != m_time.cursor.frame)
+		return nullptr;
+	return &m_pastState;
+}
 bool RuntimeSession::LoadingPastImage() const
 {
 	const auto image = m_preview.Selected();

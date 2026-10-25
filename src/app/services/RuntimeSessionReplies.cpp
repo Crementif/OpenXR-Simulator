@@ -164,6 +164,10 @@ void RuntimeSession::Reply(const PanelReply& response)
 	case Work::PastPreview:
 		if (!m_time.following && m_time.cursor.frame == task.id)
 		{
+			m_pastState = {};
+			for (const auto name : {tag::Frame, tag::Document})
+				if (const auto* field = message.Find(name))
+					m_pastState.fields.push_back(*field);
 			if (Boolean(message, tag::ImageAvailable))
 				m_preview.Retained(message, false);
 			else

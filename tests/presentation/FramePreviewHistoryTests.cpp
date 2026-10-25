@@ -86,7 +86,9 @@ void CompressedHistory()
 			});
 		Require(history.Budget().Consume(reservation), "Compressed admission failed");
 		auto output = std::make_shared<CompressedOutput>(reservation, frame);
-		history.Append({{1}, {frame}}, output, false);
+		TrackingSnapshot tracking{};
+		tracking.head.pose.position.x = static_cast<float>(frame);
+		history.Append({{1}, {frame}}, output, false, &tracking);
 		if (frame == 1)
 			retained = output;
 	}
@@ -107,6 +109,8 @@ void CompressedHistory()
 			});
 		Require(std::static_pointer_cast<const CompressedOutput>(preview.output)->value == frame,
 				"Decode substituted a frame");
+		Require(preview.tracking && preview.tracking->head.pose.position.x == static_cast<float>(frame),
+				"Archived pose did not survive with its image");
 	}
 	history.ConfigureRam(64ull << 20);
 	Await(

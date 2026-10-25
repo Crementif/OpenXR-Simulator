@@ -100,7 +100,8 @@ std::shared_ptr<FrameReservation> FramePreviewHistory::Reserve(FrameKey key)
 	}
 	return reservation;
 }
-void FramePreviewHistory::Append(FrameKey key, std::shared_ptr<const FrameOutput> output, bool clear)
+void FramePreviewHistory::Append(FrameKey key, std::shared_ptr<const FrameOutput> output, bool clear,
+								 const TrackingSnapshot* tracking)
 {
 	{
 		std::lock_guard lock(m_mutex);
@@ -117,6 +118,10 @@ void FramePreviewHistory::Append(FrameKey key, std::shared_ptr<const FrameOutput
 		if (output && !output->CanArchive())
 			m_gpuOnly = true;
 		entry.preview = {key, std::move(output), true, clear};
+		static_assert(std::is_nothrow_copy_assignable_v<TrackingSnapshot>);
+		// Fixed-size state is reserved with the entry, before native submission.
+		if (tracking)
+			entry.tracking = *tracking;
 		if (clear)
 		{
 			entry.counter = m_ramBytes;
@@ -178,6 +183,14 @@ std::vector<FrameKey> FramePreviewHistory::Frames(SessionGeneration generation, 
 	std::reverse(frames.begin(), frames.end());
 	return frames;
 }
+std::shared_ptr<const TrackingSnapshot> FramePreviewHistory::Tracking(FrameKey key) const
+{
+	std::lock_guard lock(m_mutex);
+	const auto found = m_frames.find(key);
+	if (found == m_frames.end() || !found->second->tracking)
+		return {};
+	return {found->second, &*found->second->tracking};
+}
 FramePreview FramePreviewHistory::Find(FrameKey key)
 {
 	std::lock_guard lock(m_mutex);
@@ -185,17 +198,25 @@ FramePreview FramePreviewHistory::Find(FrameKey key)
 	if (found == m_frames.end() || !found->second->preview.submitted)
 		return {};
 	const auto& entry = found->second;
-	if (entry->preview.output || entry->preview.clear)
-		return entry->preview;
-	if (m_decoded.key == key && m_decoded.output)
-		return m_decoded;
-	if (!entry->archive)
-		return {};
-	m_requested = key;
-	m_changed.notify_one();
-	auto pending = entry->preview;
-	pending.pending = true;
-	return pending;
+	auto result = entry->preview;
+	if (!result.output && !result.clear)
+	{
+		if (m_decoded.key == key && m_decoded.output)
+			result = m_decoded;
+		else if (entry->archive)
+		{
+			m_requested = key;
+			m_changed.notify_one();
+			result.pending = true;
+		}
+		else
+			return {};
+	}
+	// A reader pins the same charged entry as the image's CPU state. Never store
+	// this alias inside Entry itself, which would create an ownership cycle.
+	if (entry->tracking)
+		result.tracking = {entry, &*entry->tracking};
+	return result;
 }
 void FramePreviewHistory::Run() noexcept
 {

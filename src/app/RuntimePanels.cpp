@@ -110,11 +110,12 @@ const RuntimeView& RuntimePanels::BeginFrame()
 	const bool following = m_view.time.following;
 	const auto image = m_session.Preview().Selected();
 	const auto historical = m_session.Workspace().Selected();
-	m_spatial.SetContext(
-		connected && selected.id && following && !m_replayPreparation && !m_pilot.Active() &&
-			(!m_window || m_window->Focused()),
-		!following, image ? std::span<const FrameView>{image->description.views} : std::span<const FrameView>{},
-		historical && !following ? &historical->document : nullptr, historical ? historical->local : 0);
+	m_spatial.SetContext(connected && selected.id && following && !m_replayPreparation && !m_pilot.Active() &&
+							 (!m_window || m_window->Focused()),
+						 !following,
+						 image ? std::span<const FrameView>{image->description.views} : std::span<const FrameView>{},
+						 historical && !following ? &historical->document : m_session.PastState(),
+						 historical ? historical->local * 2 : m_view.time.cursor.frame * 2 + 1);
 	m_session.Preview().BeginFrame();
 	return m_view;
 }

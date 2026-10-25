@@ -72,6 +72,7 @@ void RuntimeSession::ScopeChanged()
 	m_stepped.reset();
 	m_time = {};
 	m_unavailablePreview = 0;
+	m_pastState = {};
 	m_manualInput.Refresh();
 	m_workspace.SetScope(m_debugger.Scope());
 	m_preview.SetScope(m_debugger.Scope());
@@ -116,10 +117,11 @@ void RuntimeSession::Poll(bool piloting)
 		const auto now = Clock::now();
 		if (!m_time.following && m_time.epoch == m_debugger.Scope().epoch && m_time.cursor.session == selected.id &&
 			m_time.cursor.run == selected.generation && m_time.cursor.frame &&
-			m_unavailablePreview != m_time.cursor.frame && !m_workspace.SelectedId() && !m_preview.SelectedId() &&
-			!m_requests.Has(Work::PastPreview) && Supports(wire::Capability::ContinuousPreviews))
+			m_unavailablePreview != m_time.cursor.frame && !m_workspace.SelectedId() &&
+			(!m_preview.SelectedId() || !PastState()) && !m_requests.Has(Work::PastPreview) &&
+			Supports(wire::Capability::ContinuousPreviews))
 		{
-			if (!m_preview.SelectFrame(m_debugger.Scope(), m_time.cursor.frame))
+			if (!m_preview.SelectFrame(m_debugger.Scope(), m_time.cursor.frame) || !PastState())
 			{
 				auto fields = m_debugger.SessionFields();
 				fields.push_back(wire::Field::U64(tag::FrameId, m_time.cursor.frame, true));

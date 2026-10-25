@@ -11,13 +11,16 @@ from test_native_filtered_capture import command
 from simxr_control import Capability, Client, CommandKind, ControlError, ErrorCode
 
 
-def retain(client, session, frame):
+def retain(client, session, frame, states=None):
     deadline = time.monotonic() + 5
     while True:
         try:
             image = client.retain_preview(session, frame=frame)
             require(image['frame']['frame_id'] == frame, 'Selected frame was substituted')
             require('image_reader_id' in image or image['image_available'] is False, image)
+            if states is not None:
+                require('tracking' in image.get('document', {}), 'Historical image lost tracking state')
+                states[frame] = image['document']['tracking']
             return image.get('image_reader_id')
         except ControlError as error:
             require(error.code == ErrorCode.BUSY and time.monotonic() < deadline, error.record)
@@ -50,6 +53,7 @@ def main(probe):
                     command(client, lease, CommandKind.RELEASE, capture=capture)
                 again = retain(client, session, 3)
                 require(again == first, 'Pause discarded the old frame image')
+                states = {}
                 for frame in range(4, 305):
                     (data / f'recording.{frame - 1}.continue').touch()
                     for _ in range(8):
@@ -62,7 +66,7 @@ def main(probe):
                     else:
                         raise AssertionError('Step did not drain pre-pause presentation backlog')
                     wait_file(data / f'recording.{frame}.ready', host)
-                    image = retain(client, session, frame)
+                    image = retain(client, session, frame, states if frame in (4, 100, 204) else None)
                     if frame in (4, 100, 204):
                         _, pixels = export(client, image, 0)
                         expected = bytes((0, 255, 0, 255)) if frame % 2 == 0 else bytes((255, 0, 0, 255))
@@ -98,8 +102,11 @@ def main(probe):
                 require(shrunk['preview_ram_budget'] == 64 * 1024 * 1024 and shrunk['preview_ram_bytes'] > 0, shrunk)
                 require(shrunk['preview_frame_ids'] == frames, 'GPU shrink discarded archived images')
                 # Release the exact raw reader only after proving archived pixels independently.
-                for frame in (5, 100, 7, 204):
-                    image = retain(client, session, frame)
+                for frame in (4, 100, 7, 204):
+                    archived_states = {}
+                    image = retain(client, session, frame, archived_states)
+                    if frame in states:
+                        require(archived_states[frame] == states[frame], 'Archived pose changed after CPU history retirement')
                     _, pixels = export(client, image, 0)
                     expected = (0, 255, 0, 255) if frame % 2 == 0 else (255, 0, 0, 255)
                     require(all(abs(value - expected[index % 4]) <= 5 for index, value in enumerate(pixels)),
