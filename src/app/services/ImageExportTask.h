@@ -63,6 +63,8 @@ class ImageExportTask
 	explicit ImageExportTask(RuntimePanelRequests& requests);
 	void ResetEpoch();
 	bool Request(std::uint64_t reader, std::string path);
+	bool RequestVideo(std::uint64_t session, std::uint64_t generation, std::uint64_t first, std::uint64_t last,
+					  std::string path);
 	bool Handle(const PanelTask& task, const control::Message& message);
 	void Failed(const PanelTask& task, std::string detail);
 	void Poll();
@@ -79,7 +81,7 @@ class ImageExportTask
 	RuntimePanelRequests& m_requests;
 	ImageExportWriter m_writer;
 	std::uint64_t m_id = 0, m_offset = 0, m_size = 0;
-	bool m_requested = false, m_succeeded = false;
+	bool m_requested = false, m_succeeded = false, m_video = false;
 	std::vector<std::byte> m_bytes;
 	std::string m_path, m_detail;
 	ImageExportMetadata m_metadata;

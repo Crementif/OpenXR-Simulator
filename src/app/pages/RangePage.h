@@ -1,7 +1,7 @@
 #pragma once
 
-#include "app/services/ShellState.h"
 #include "app/services/RangeExportTask.h"
+#include "app/services/ShellState.h"
 #include "automation/Recording.h"
 
 #include <array>
@@ -39,6 +39,7 @@ class RangePage
 	RuntimeSession& m_session;
 	RangeExportTask m_export;
 	std::array<char, 512> m_path{"frames.csv"};
+	std::array<char, 512> m_videoPath{"clip.mp4"};
 	std::array<char, 128> m_take{};
 	std::optional<automation::SavedRecording> m_last, m_play;
 	std::string m_takeStatus;

@@ -494,10 +494,10 @@ void FileWorkerAndChunkValidation()
 		if (std::filesystem::exists("/dev/full"))
 		{
 			const auto full = directory / "full.rgba";
-			std::filesystem::create_symlink("/dev/full", full);
-			Require(writer.Save(PathString(full), expected), "Admit failing write");
+			std::filesystem::create_directory(full);
+			Require(writer.Save(PathString(full), expected), "Admit failing atomic publication");
 			Eventually([&] { result = writer.TakeResult(); return result.has_value(); }, "Write failure did not settle");
-			Require(result->status == app::ImageExportWriteResult::Status::WriteFailed, "Write/close failure reported success");
+			Require(result->status == app::ImageExportWriteResult::Status::WriteFailed, "Atomic publication failure reported success");
 		}
 
 		bool rejected = false;
@@ -856,7 +856,7 @@ void ActualConnectionAndDebugger()
 					debugger.Handle(reply.task, reply.response.packet.message);
 			}
 			exporter.Poll();
-			return !exporter.Busy() && exporter.Detail().starts_with("Saved exact image bytes");
+			return !exporter.Busy() && exporter.Succeeded();
 		},
 		"Export owner did not finish exact endpoint bytes");
 	Require(Read(destination) == wire::test::Pixels() && fixture.state->reads == 1 && fixture.state->shares == 0,

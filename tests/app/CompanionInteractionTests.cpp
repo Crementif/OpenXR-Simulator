@@ -5044,6 +5044,65 @@ void CheckMeasuredTiming(Interaction& test)
 		<< ", slow " << slow << ", fast " << fast << '\n';
 }
 
+void CheckVideoExport(Interaction& test)
+{
+	const auto directory = QaDirectory("SIMXR_UI_QA_DIR");
+	Require(!directory.empty(), "Video QA needs an output directory");
+	Eventually(
+		[&]
+		{
+			test.Frame();
+			return test.runtime.History().Size() >= 32;
+		},
+		"Video history did not arrive");
+	test.runtime.Pause();
+	Eventually(
+		[&]
+		{
+			test.Frame();
+			return test.runtime.Snapshot().manual && !test.runtime.Snapshot().operationPending;
+		},
+		"Video fixture did not pause");
+	const auto& history = test.runtime.History();
+	const auto first = history.At(history.Size() - 16), last = history.At(history.Size() - 1);
+	test.workspace.Select(RangeSel{first.identity, last.identity, first.epoch});
+	test.Frame();
+	test.Frame();
+	auto* inspector = FindPanel("Inspector");
+	Require(inspector, "Video range inspector missing");
+	const auto destination = directory / "range-video.mp4";
+	ImGui::ActivateItemByID(inspector->GetID("##Video file"));
+	ImGui::GetCurrentContext()->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
+	test.Frame();
+	auto& io = ImGui::GetIO();
+	io.AddKeyEvent(ImGuiMod_Ctrl, true);
+	io.AddKeyEvent(ImGuiKey_A, true);
+	test.Frame();
+	io.AddKeyEvent(ImGuiKey_A, false);
+	io.AddKeyEvent(ImGuiMod_Ctrl, false);
+	io.AddInputCharactersUTF8(PathText(destination).c_str());
+	test.Frame();
+	io.AddKeyEvent(ImGuiKey_Enter, true);
+	test.Frame();
+	io.AddKeyEvent(ImGuiKey_Enter, false);
+	test.Frame();
+	ImGui::ActivateItemByID(inspector->GetID("Save video"));
+	test.Frame();
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+	while (!std::filesystem::exists(destination) && std::chrono::steady_clock::now() < deadline)
+		test.Frame();
+	Require(std::filesystem::exists(destination), "Video export did not save a file");
+	Require(std::filesystem::file_size(destination) > 100, "Video file missing");
+	Require(test.runtime.Snapshot().manual, "Saving video resumed the app");
+	test.renderer.RequestScreenshot(directory / "video-saved.bmp");
+	test.Frame();
+	test.Frame();
+	test.runtime.ResumeLive();
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Video UI Vulkan validation errors");
+	std::cout << "PASS selected range saved as video through UI while paused\n";
+}
+
 void CheckPreviewHistory(Interaction& test)
 {
 	const auto& history = test.runtime.History();
@@ -6434,6 +6493,8 @@ int main()
 				Require(directory != nullptr, "Connected layout checks need an output directory");
 				CheckLayouts(test, directory);
 			}
+			else if (std::getenv("SIMXR_VIDEO_QA"))
+				CheckVideoExport(test);
 			else if (std::getenv("SIMXR_HISTORY_QA"))
 				CheckPreviewHistory(test);
 			else if (std::getenv("SIMXR_SPATIAL_QA"))

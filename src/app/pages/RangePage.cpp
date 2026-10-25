@@ -64,8 +64,7 @@ std::optional<automation::SavedRecording> RangePage::Draw(const RangeSel& range,
 	}
 	const auto& history = m_session.History();
 	const auto first = history.Find(range.first, range.epoch), last = history.Find(range.last, range.epoch);
-	const std::string title =
-		"Frames " + std::to_string(range.first.frame) + " to " + std::to_string(range.last.frame);
+	const std::string title = "Frames " + std::to_string(range.first.frame) + " to " + std::to_string(range.last.frame);
 	PageTitle(Icon::Crop, title.c_str());
 	if (PageClose())
 		shell.selection = std::monostate{};
@@ -127,6 +126,28 @@ std::optional<automation::SavedRecording> RangePage::Draw(const RangeSel& range,
 		ImGui::TextDisabled("%s", m_takeStatus.c_str());
 		ImGui::PopTextWrapPos();
 	}
+
+	SectionLabel("Video");
+	ImGui::SetNextItemWidth(-1);
+	ImGui::InputText("##Video file", m_videoPath.data(), m_videoPath.size());
+	ImGui::BeginDisabled(m_export.Busy() || m_session.Exports().Busy() || !m_session.Connected() ||
+						 !m_session.Supports(control::Capability::VideoExport) || range.epoch != m_session.Epoch());
+	if (ImGui::Button("Save video"))
+	{
+		try
+		{
+			m_session.Exports().RequestVideo(range.first.session, range.first.run, range.first.frame, range.last.frame,
+											 m_videoPath.data());
+		}
+		catch (const std::exception& error)
+		{
+			m_takeStatus = error.what();
+		}
+	}
+	ImGui::EndDisabled();
+	ImGui::SetItemTooltip("Saves both preview eyes as an MP4 without audio. Replaces an existing file.");
+	if (!m_session.Exports().Detail().empty())
+		ImGui::TextWrapped("%s", m_session.Exports().Detail().c_str());
 
 	SectionLabel("Export");
 	ImGui::SetNextItemWidth(-1);

@@ -1,10 +1,12 @@
 #include "app/services/ImageExportTask.h"
 #include "Pch.h"
+#include "app/platform/FileStorage.h"
 #include "app/services/Utf8Path.h"
 #include "control/ImageInspection.h"
 #include "graphics/ColorPixels.h"
 
 #include <cmath>
+#include <cstring>
 #include <fstream>
 #include <locale>
 
@@ -86,8 +88,13 @@ bool ImageExportWriter::Save(std::string path, std::vector<std::byte> bytes, Ima
 			throw std::invalid_argument(
 				"PPM export requires a supported color image, exact dimensions and frame identity");
 	}
+	else if (destination.extension() == ".mp4")
+	{
+		if (bytes.size() < 12 || std::memcmp(bytes.data() + 4, "ftyp", 4) != 0)
+			throw std::invalid_argument("The export is not an MP4 video");
+	}
 	else if (destination.extension() != ".rgba")
-		throw std::invalid_argument("Use .ppm for a viewable image or .rgba for exact bytes");
+		throw std::invalid_argument("Use .ppm for an image, .rgba for raw pixels or .mp4 for video");
 	std::lock_guard lock(m_mutex);
 	if (m_stopping || m_busy || m_result)
 		return false;
@@ -125,9 +132,11 @@ void ImageExportWriter::Run() noexcept
 			m_job.reset();
 		}
 		auto status = ImageExportWriteResult::Status::OpenFailed;
+		std::filesystem::path temporary;
 		try
 		{
-			std::ofstream file(job->destination, std::ios::binary | std::ios::trunc);
+			temporary = CreatePrivateTemporaryFile(job->destination);
+			std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
 			if (file.is_open())
 			{
 				status = ImageExportWriteResult::Status::WriteFailed;
@@ -139,13 +148,19 @@ void ImageExportWriter::Run() noexcept
 							   static_cast<std::streamsize>(job->bytes.size()));
 				file.close();
 				if (file)
+				{
+					CommitTemporaryFile(temporary, job->destination);
 					status = ImageExportWriteResult::Status::Saved;
+				}
 			}
 		}
 		catch (...)
 		{
 			// Preserve the open/write failure and publish it through the joined worker.
 		}
+		std::error_code ignored;
+		if (!temporary.empty())
+			std::filesystem::remove(temporary, ignored);
 		std::lock_guard lock(m_mutex);
 		m_result.emplace(ImageExportWriteResult{status, std::move(job->path)});
 		m_busy = false;
@@ -164,7 +179,7 @@ void ImageExportTask::ResetEpoch()
 {
 	if (m_requested || m_id)
 	{
-		m_detail = "Image export interrupted by disconnect";
+		m_detail = "Export interrupted by disconnect";
 		m_succeeded = false;
 	}
 	m_id = m_offset = m_size = 0;
@@ -176,12 +191,30 @@ bool ImageExportTask::Request(std::uint64_t reader, std::string path)
 {
 	if (!reader || Busy())
 		return false;
+	m_video = false;
 	m_succeeded = false;
 	m_path = std::move(path);
 	if (m_path.empty())
 		throw std::invalid_argument("Image export destination is empty");
 	m_requested = m_requests.Send(wire::OpCode::StartExport, PanelWork::Export,
 								  {wire::Field::U64(tag::ImageReaderId, reader, true)}) != 0;
+	return m_requested;
+}
+bool ImageExportTask::RequestVideo(std::uint64_t session, std::uint64_t generation, std::uint64_t first,
+								   std::uint64_t last, std::string path)
+{
+	if (Busy())
+		return false;
+	if (Utf8Path(path).extension() != ".mp4")
+		throw std::invalid_argument("Use an .mp4 destination");
+	m_video = true;
+	m_succeeded = false;
+	m_path = std::move(path);
+	m_requested =
+		m_requests.Send(
+			wire::OpCode::StartVideoExport, PanelWork::Export,
+			{wire::Field::U64(tag::Session, session, true), wire::Field::U64(tag::Generation, generation, true),
+			 wire::Field::U64(tag::FirstFrame, first, true), wire::Field::U64(tag::LastFrame, last, true)}) != 0;
 	return m_requested;
 }
 void ImageExportTask::ReleaseRemote()
@@ -229,7 +262,8 @@ bool ImageExportTask::Handle(const PanelTask& task, const wire::Message& message
 							  U32(target, tag::Layer),
 							  U32(target, tag::View)};
 			}
-			if (!m_id || !m_size || m_size > 512ULL * 1024 * 1024)
+			if (!m_id || (!m_video && !m_size) || m_size > 512ULL * 1024 * 1024 ||
+				(m_video && Text(message, tag::MediaType) != "video/mp4"))
 				throw std::runtime_error("Runtime export exceeds the exact image byte capacity");
 			m_bytes.clear();
 			m_bytes.reserve(static_cast<std::size_t>(m_size));
@@ -241,13 +275,20 @@ bool ImageExportTask::Handle(const PanelTask& task, const wire::Message& message
 		{
 			const auto phase = Text(message, tag::Phase);
 			if (phase == "complete")
+			{
+				const auto size = U64(message, tag::TotalBytes);
+				if (!size || size > 512ULL * 1024 * 1024 || (m_size && size != m_size))
+					throw std::runtime_error("Invalid export size");
+				m_size = size;
+				m_bytes.reserve(static_cast<std::size_t>(m_size));
 				m_requests.Send(wire::OpCode::ReadExport, PanelWork::ExportRead,
 								{wire::Field::U64(tag::ExportId, m_id, true),
 								 wire::Field::U64(tag::Offset, m_offset, true),
 								 wire::Field::U64(tag::Length, wire::MaxPayload - 4096, true)},
 								m_id);
+			}
 			else if (phase == "failed")
-				Abort("GPU export failed");
+				Abort(Text(message, tag::Detail).empty() ? "Export failed" : Text(message, tag::Detail));
 			else if (phase != "pending")
 				throw std::runtime_error("Runtime export phase is unsupported");
 		}
@@ -267,7 +308,7 @@ bool ImageExportTask::Handle(const PanelTask& task, const wire::Message& message
 				if (!m_writer.Save(m_path, std::move(m_bytes), m_metadata))
 					throw std::runtime_error("Explicit image file worker is already occupied");
 				ReleaseRemote();
-				m_detail = "Writing captured image";
+				m_detail = "Saving file";
 			}
 		}
 	}
@@ -287,15 +328,13 @@ void ImageExportTask::Poll()
 		{
 		case ImageExportWriteResult::Status::Saved:
 			m_succeeded = true;
-			m_detail = (Utf8Path(result->path).extension() == ".ppm" ? "Saved viewable image with frame identity to "
-																	 : "Saved exact image bytes to ") +
-					   result->path;
+			m_detail = "Saved " + result->path;
 			break;
 		case ImageExportWriteResult::Status::OpenFailed:
-			m_detail = "Cannot open image export destination";
+			m_detail = "Cannot open export destination";
 			break;
 		case ImageExportWriteResult::Status::WriteFailed:
-			m_detail = "Image file write failed";
+			m_detail = "File write failed";
 			break;
 		}
 	}
