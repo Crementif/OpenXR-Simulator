@@ -6509,6 +6509,62 @@ int main()
 				Require(directory != nullptr, "Connected layout checks need an output directory");
 				CheckLayouts(test, directory);
 			}
+			else if (std::getenv("SIMXR_RETURN_IMAGE_QA"))
+			{
+				test.workspace.Select(DeviceSel{DevicePage::Player});
+				for (int i = 0; i < 3; ++i)
+					test.Frame();
+				for (int action = 0; action < 4; ++action)
+				{
+					const bool recorded = action >= 2, thumbnail = action % 2 != 0;
+					if (action == 2)
+					{
+						test.runtime.Pause();
+						Eventually(
+							[&]
+							{
+								test.Frame();
+								const auto state = test.runtime.Snapshot();
+								return state.manual && !state.operationPending;
+							},
+							"Return image fixture did not pause");
+						test.runtime.Step();
+						Eventually(
+							[&]
+							{
+								test.Frame();
+								const auto state = test.runtime.Snapshot();
+								return !state.operationPending && state.selectedReady && state.selectedCapture &&
+									   state.inspectedFrame == state.selectedFrame;
+							},
+							"Recorded image did not load");
+						const auto state = test.runtime.Snapshot();
+						test.workspace.Select(FrameSel{state.selectedIdentity, state.selectedEpoch});
+						test.Frame();
+					}
+					auto* inspector = FindPanel(recorded ? "Frame details" : "Inspector");
+					Require(inspector, "Rig inspector missing");
+					ImGui::ActivateItemByID(
+						ImHashStr("Expand", 0, inspector->GetID(recorded ? "Recorded rig" : "Rig view")));
+					for (int i = 0; i < 3; ++i)
+						test.Frame();
+					const auto state = test.runtime.Snapshot();
+					Require(state.rigExpanded, recorded ? "Recorded rig did not expand" : "Live rig did not expand");
+					const auto area = state.rigView;
+					const float width = area.width * .25f;
+					const float x = area.x + area.width - width / 2 - 8;
+					const float y = thumbnail ? area.y + area.height - width / 2 - 8
+											  : area.y + area.height - width - 16 - ImGui::GetFrameHeight() / 2;
+					test.Click({x, y});
+					test.Frame();
+					Require(!test.runtime.Snapshot().rigExpanded, thumbnail
+																	  ? "Thumbnail click did not restore image"
+																	  : "Back to image click did not restore image");
+				}
+				test.renderer.WaitIdle();
+				Require(test.validation->errors.load() == 0, "Return to image validation errors");
+				std::cout << "PASS live and recorded rigs restore image from button and thumbnail clicks\n";
+			}
 			else if (std::getenv("SIMXR_CROP_QA"))
 			{
 				test.runtime.PreviewCrop() = ImVec4{.2f, .2f, .8f, .8f};

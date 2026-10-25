@@ -261,16 +261,29 @@ std::optional<PreviewPanel::ImageArea> PreviewPanel::DrawImage(ShellState& shell
 		const auto after = ImGui::GetCursorScreenPos();
 		const float width = available.x * .25f;
 		const float height = width * image->description.height / image->description.width;
-		// The app's image in the corner is the way back to it.
-		ImGui::SetCursorScreenPos({minimum.x + available.x - width - 8, minimum.y + available.y - height - 8});
-		preview.DrawSelected(width, m_slice < 0 ? 0 : m_slice);
-		if (ImGui::IsItemHovered())
-			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-		ImGui::SetItemTooltip("Back to the app's image");
-		bool close = ImGui::IsItemClicked();
+		const float buttonHeight = ImGui::GetFrameHeight();
+		const float overlayWidth =
+			std::max(width, buttonHeight + ImGui::CalcTextSize("Back to image").x + ImGui::GetStyle().FramePadding.x);
+		const float overlayHeight = height + buttonHeight + 8;
+		// A child window keeps return controls above the rig's full-area orbit target.
 		ImGui::SetCursorScreenPos(
-			{minimum.x + available.x - width - 8, minimum.y + available.y - height - 16 - ImGui::GetFrameHeight()});
-		close |= IconButton("Back to image", Icon::Close, "Show the app's image again", false, "Back to image");
+			{minimum.x + available.x - overlayWidth - 8, minimum.y + available.y - overlayHeight - 8});
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {0, 0});
+		bool close = false;
+		if (ImGui::BeginChild("Return to image", {overlayWidth, overlayHeight}, 0,
+							  ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
+								  ImGuiWindowFlags_NoBackground))
+		{
+			close = IconButton("Back to image", Icon::Close, "Show the app's image again", false, "Back to image");
+			ImGui::SetCursorPos({0, buttonHeight + 8});
+			preview.DrawSelected(width, m_slice < 0 ? 0 : m_slice);
+			if (ImGui::IsItemHovered())
+				ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+			ImGui::SetItemTooltip("Back to the app's image");
+			close |= ImGui::IsItemClicked();
+		}
+		ImGui::EndChild();
+		ImGui::PopStyleVar();
 		if (close)
 		{
 			if (recorded)
