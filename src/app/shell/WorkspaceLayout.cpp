@@ -270,7 +270,8 @@ void WorkspacePanels::DrawShell(RuntimePanels& runtime)
 	StoreCrop(runtime.PreviewCrop());
 	if (!focus)
 	{
-		const float timelineTop = top + previewHeight + gap;
+		// Start at the visible divider, halfway through its resize hit area.
+		const float timelineTop = std::floor(top + previewHeight + gap / 2);
 		ImGui::SetCursorPos({0, timelineTop});
 		ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::Surface);
 		ImGui::BeginChild("Timeline", {origin.x + left, viewport->WorkSize.y - timelineTop}, 0,
