@@ -67,8 +67,12 @@ void TimelineCanvas::Begin(float headerWidth, float liveWidth, bool laneNames)
 		}
 		draw->AddText({top.x + 8 * scale, y + (m_lane - font) / 2}, theme::TextDim, labels[lane]);
 	}
-	draw->AddLine({m_bounds.x, top.y}, {m_bounds.x, top.y + height}, theme::Line);
-	draw->AddLine({m_bounds.x + m_bounds.width, top.y}, {m_bounds.x + m_bounds.width, top.y + height}, theme::Line);
+	if (!m_compact)
+	{
+		draw->AddLine({m_bounds.x, top.y + ruler}, {m_bounds.x, top.y + height}, theme::Line);
+		draw->AddLine({m_bounds.x + m_bounds.width, top.y + ruler},
+					  {m_bounds.x + m_bounds.width, top.y + height}, theme::Line);
+	}
 }
 TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory& previews, ImVec4 crop, bool following,
 									 std::optional<double> cursor, std::optional<std::pair<double, double>> selection)
