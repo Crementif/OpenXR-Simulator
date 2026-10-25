@@ -63,12 +63,21 @@ std::shared_ptr<FramePreviewHistory::Entry> FramePreviewHistory::EvictRaw()
 std::shared_ptr<FrameReservation> FramePreviewHistory::Reserve(FrameKey key)
 {
 	auto reservation = m_budget.Reserve();
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 	while (!reservation)
 	{
 		auto retired = EvictRaw();
-		if (!retired)
-			return {};
-		retired.reset();
+		if (retired)
+			retired.reset();
+		else
+		{
+			// A budget shrink or slow encoder can leave completed frames awaiting archival.
+			// Keep the next application frame intact while the worker releases their GPU slots.
+			std::unique_lock lock(m_mutex);
+			if (m_stopping || !m_error.empty() || std::chrono::steady_clock::now() >= deadline)
+				return {};
+			m_changed.wait_for(lock, std::chrono::milliseconds(1));
+		}
 		reservation = m_budget.Reserve();
 	}
 	// Allocate both indexes before native submission. Append only publishes pixels.

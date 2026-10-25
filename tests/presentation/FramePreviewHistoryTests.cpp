@@ -124,6 +124,38 @@ void CompressedHistory()
 	Require(std::static_pointer_cast<const CompressedOutput>(retained)->value == 1, "Eviction invalidated reader");
 	Require(history.Error().empty(), "History worker failed");
 }
+void ShrinkWaitsForEncoding()
+{
+	FramePreviewHistory history;
+	history.Configure(128ull << 20);
+	std::shared_ptr<CompressedOutput> pending;
+	for (std::uint64_t frame = 1; frame <= 32; ++frame)
+	{
+		auto reservation = history.Reserve({{1}, {frame}});
+		Require(reservation && history.Budget().Consume(reservation), "Shrink fixture admission failed");
+		auto output = std::make_shared<CompressedOutput>(reservation, frame);
+		if (frame == 1)
+		{
+			pending = output;
+			pending->pending.store(true);
+		}
+		history.Append({{1}, {frame}}, std::move(output), false);
+	}
+	history.Configure(64ull << 20);
+	Require(history.Bytes() > history.Limit(), "Shrink fixture did not retain pending GPU work");
+	std::jthread complete(
+		[pending]
+		{
+			std::this_thread::sleep_for(std::chrono::milliseconds(20));
+			pending->pending.store(false);
+		});
+	auto reservation = history.Reserve({{1}, {33}});
+	Require(reservation && history.Budget().Consume(reservation), "Budget shrink rejected the next frame");
+	history.Append({{1}, {33}}, std::make_shared<CompressedOutput>(reservation, 33), false);
+	Require(history.Frames({1}).size() == 33, "Budget shrink lost a frame instead of encoding it");
+	Require(history.Bytes() <= history.Limit(), "Admission exceeded the smaller GPU budget");
+}
+
 void PendingEncodeDoesNotBlockSelection()
 {
 	FramePreviewHistory history;
@@ -216,6 +248,7 @@ int main()
 	{
 		simxr::test::ContinuousHistory();
 		simxr::test::CompressedHistory();
+		simxr::test::ShrinkWaitsForEncoding();
 		simxr::test::PendingEncodeDoesNotBlockSelection();
 		std::cout << "PASS consecutive previews, oldest eviction, independent readers, clear and run identity\n";
 		return 0;
