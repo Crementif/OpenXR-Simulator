@@ -322,6 +322,7 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 				   ? ShellRect{cell.x, cell.y + cell.height, cell.width, m_canvas.Bounds().height - cell.height}
 				   : ShellRect{};
 	ImGui::SetCursorScreenPos({cell.x + style.ItemSpacing.x, cell.y + std::max(0.f, (cell.height - button) / 2)});
+	ImGui::BeginGroup();
 	const char* why = !state.sessionAvailable  ? "Connect an app first"
 					  : state.operationPending ? "Waiting for the last command"
 											   : nullptr;
@@ -430,6 +431,7 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 	ImGui::SameLine();
 	if (IconButton("Timeline help", Icon::Help, "What the lanes, marks and keys mean"))
 		ImGui::OpenPopup("Timeline legend");
+	ImGui::EndGroup();
 	DrawLegend();
 	if (!ImGui::GetIO().WantTextInput && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows))
 	{

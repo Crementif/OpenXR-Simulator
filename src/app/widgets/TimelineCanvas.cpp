@@ -25,9 +25,9 @@ void TimelineCanvas::Begin(float headerWidth, float liveWidth, bool laneNames)
 	const float effectiveWidth = ImGui::GetMainViewport()->Size.x / scale;
 	m_compact = height < ImGui::GetFrameHeight() * 2.2f;
 	m_lanes = m_compact ? 1 : effectiveWidth < 800 ? 2 : LaneCount;
-	const float ruler = m_compact ? 0 : ImGui::GetFrameHeight() + 2 * scale;
-	m_header = std::min(headerWidth, width * .5f);
+	const float ruler = m_compact ? 0 : ImGui::GetFrameHeight() + 12 * scale;
 	m_live = std::min(liveWidth, width * .2f);
+	m_header = std::min(headerWidth, std::max(width * .5f, width - m_live - 80 * scale));
 	m_top = top.y;
 	m_height = height;
 	m_bounds = {top.x + m_header, top.y, std::max(1.f, width - m_header - m_live), height};
@@ -37,11 +37,17 @@ void TimelineCanvas::Begin(float headerWidth, float liveWidth, bool laneNames)
 	for (int lane = 0; lane < m_lanes; ++lane)
 		m_laneY[lane] = top.y + ruler + lane * m_lane;
 	auto* draw = ImGui::GetWindowDrawList();
+	if (!m_compact)
+		draw->AddRectFilled(top, {top.x + width, top.y + ruler}, theme::Bg);
+	else
+	{
+		draw->AddRectFilled(top, {top.x + m_header, top.y + height}, theme::Bg);
+		draw->AddRectFilled({m_bounds.x + m_bounds.width, top.y}, {top.x + width, top.y + height}, theme::Bg);
+	}
 	static constexpr const char* labels[]{"Frame time", "Images", "Input"};
-	static constexpr const char* tips[]{
-		"CPU frame time, or app frame interval when CPU timing is unavailable.",
-		"Saved images. Pin snapshots to keep them. Gaps have no saved image.",
-		"Hand input: left above, right below. Green marks input read by the app."};
+	static constexpr const char* tips[]{"CPU frame time, or app frame interval when CPU timing is unavailable.",
+										"Saved images. Pin snapshots to keep them. Gaps have no saved image.",
+										"Hand input: left above, right below. Green marks input read by the app."};
 	// Alternate lane shading and one quiet line under the ruler keep the rows apart.
 	if (!m_compact)
 		draw->AddLine({top.x, top.y + ruler}, {top.x + width, top.y + ruler}, theme::Line);
@@ -343,7 +349,7 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 			std::snprintf(text, sizeof(text), "%llu", static_cast<unsigned long long>(frame.identity.frame));
 			if (!clearOfRuns(x + 2, text))
 				continue;
-			draw->AddText({x + 2, top + 2 * scale}, muted, text);
+			draw->AddText({x + 2, top + (ruler - font) / 2}, muted, text);
 			previousLabel = x;
 		}
 	}
@@ -358,11 +364,11 @@ TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory
 			char text[32];
 			std::snprintf(text, sizeof(text), "%.2fs", history.At(*index).runSeconds);
 			if (clearOfRuns(x + 3, text))
-				draw->AddText({x + 3, top + 2 * scale}, muted, text);
+				draw->AddText({x + 3, top + (ruler - font) / 2}, muted, text);
 		}
 	}
 	for (const auto& [x, label] : m_runLabels)
-		draw->AddText({x + 4 * scale, top + 2 * scale}, muted, label.c_str());
+		draw->AddText({x + 4 * scale, top + (ruler - font) / 2}, muted, label.c_str());
 	if (cursor)
 		draw->AddLine({X(*cursor), top}, {X(*cursor), top + height}, theme::Past, 2 * scale);
 	if (m_framePress && m_framePress->range)
