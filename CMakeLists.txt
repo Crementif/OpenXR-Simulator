@@ -247,6 +247,7 @@ if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES OR SIMXR_BUILD_COMPANION)
     endif()
     include(cmake/SimxrVulkanLoader.cmake)
     add_library(simxr_vulkan STATIC
+        src/graphics/backends/vulkan/VulkanVideoSession.cpp
         src/graphics/backends/vulkan/VulkanDevice.cpp
         src/graphics/backends/vulkan/VulkanResources.cpp
         src/graphics/backends/vulkan/VulkanExternal.cpp
@@ -626,6 +627,10 @@ if(SIMXR_BUILD_PROBES)
         set_tests_properties(${fence_test} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
     endif()
     if(NOT WIN32)
+        add_executable(vulkan_video_probe probes/VulkanVideoProbe.cpp)
+        simxr_configure_target(vulkan_video_probe)
+        simxr_set_output_directory(vulkan_video_probe)
+        target_link_libraries(vulkan_video_probe PRIVATE simxr_vulkan simxr_probe_vulkan)
         add_executable(vulkan_compositor_probe probes/VulkanCompositorProbe.cpp)
         simxr_configure_target(vulkan_compositor_probe)
         simxr_set_output_directory(vulkan_compositor_probe)

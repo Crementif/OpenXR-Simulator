@@ -375,6 +375,7 @@ class VulkanInspectionQueue
 	void SubmitComposition(const std::shared_ptr<VulkanFrame>& frame)
 	{
 		std::lock_guard lock(m_mutex);
+		std::lock_guard queueLock(m_device->queueMutex);
 		if (XR_FAILED(m_compositor->Submit(frame)))
 			throw VulkanError(m_device->lost.load() ? VK_ERROR_DEVICE_LOST : VK_ERROR_INITIALIZATION_FAILED,
 							  "Submit retained composition");
@@ -416,6 +417,7 @@ class VulkanInspectionQueue
 		// Capacity is reserved before native acquisition. Publication to this
 		// preallocated list precedes the host queue call and cannot allocate.
 		m_active.push_back(work);
+		std::lock_guard queueLock(m_device->queueMutex);
 		const auto result = work->Submit();
 		if (!work->Submitted())
 			m_active.pop_back();

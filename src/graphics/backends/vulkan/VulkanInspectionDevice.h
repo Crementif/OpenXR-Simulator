@@ -4,6 +4,7 @@
 
 #include <memory>
 #include <span>
+#include <vector>
 
 namespace simxr
 {
@@ -22,6 +23,7 @@ class VulkanInspectionDevice
 	bool ConsumerTimelineEnabled() const noexcept;
 
   private:
+	std::vector<const char*> m_extensions;
 	struct Native;
 	std::shared_ptr<VulkanDevice> m_device;
 	bool m_consumerFences = false;

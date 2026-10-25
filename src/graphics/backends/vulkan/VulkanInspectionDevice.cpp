@@ -99,7 +99,9 @@ VulkanInspectionDevice::VulkanInspectionDevice(const VulkanExternalIdentity& ide
 		owner->validation->liveOwnedDevices.fetch_add(1);
 	VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
 	application.pApplicationName = "SimXR owned inspection";
-	application.apiVersion = VK_API_VERSION_1_1;
+	std::uint32_t loaderVersion = VK_API_VERSION_1_0;
+	vkEnumerateInstanceVersion(&loaderVersion);
+	application.apiVersion = std::min(loaderVersion, VK_API_VERSION_1_3);
 	VkInstanceCreateInfo create{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
 	create.pApplicationInfo = &application;
 	const char* layer = "VK_LAYER_KHRONOS_validation";
@@ -160,6 +162,35 @@ VulkanInspectionDevice::VulkanInspectionDevice(const VulkanExternalIdentity& ide
 		vkGetPhysicalDeviceQueueFamilyProperties(physical, &count, nullptr);
 		std::vector<VkQueueFamilyProperties> families(count);
 		vkGetPhysicalDeviceQueueFamilyProperties(physical, &count, families.data());
+		std::uint32_t encodeFamily = VK_QUEUE_FAMILY_IGNORED, decodeFamily = VK_QUEUE_FAMILY_IGNORED;
+		const std::array videoExtensions{VK_KHR_VIDEO_QUEUE_EXTENSION_NAME, VK_KHR_VIDEO_ENCODE_QUEUE_EXTENSION_NAME,
+										 VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME,
+										 VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME,
+										 VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME};
+		bool video = application.apiVersion >= VK_API_VERSION_1_3 && properties.apiVersion >= VK_API_VERSION_1_3;
+		for (const auto name : videoExtensions)
+			video &= std::any_of(extensions.begin(), extensions.end(),
+								 [name](const auto& entry)
+								 {
+									 return std::strcmp(entry.extensionName, name) == 0;
+								 });
+		if (video)
+		{
+			std::vector<VkQueueFamilyVideoPropertiesKHR> codecs(count,
+																{VK_STRUCTURE_TYPE_QUEUE_FAMILY_VIDEO_PROPERTIES_KHR});
+			std::vector<VkQueueFamilyProperties2> queues(count, {VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2});
+			for (std::uint32_t i = 0; i < count; ++i)
+				queues[i].pNext = &codecs[i];
+			vkGetPhysicalDeviceQueueFamilyProperties2(physical, &count, queues.data());
+			for (std::uint32_t i = 0; i < count; ++i)
+			{
+				if (codecs[i].videoCodecOperations & VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR)
+					encodeFamily = i;
+				if (codecs[i].videoCodecOperations & VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR)
+					decodeFamily = i;
+			}
+			video = encodeFamily != VK_QUEUE_FAMILY_IGNORED && decodeFamily != VK_QUEUE_FAMILY_IGNORED;
+		}
 		for (std::uint32_t family = 0; family < count; ++family)
 		{
 			if (!families[family].queueCount || !(families[family].queueFlags & VK_QUEUE_GRAPHICS_BIT))
@@ -170,12 +201,29 @@ VulkanInspectionDevice::VulkanInspectionDevice(const VulkanExternalIdentity& ide
 			queue.queueCount = 1;
 			queue.pQueuePriorities = &priority;
 			VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
-			device.queueCreateInfoCount = 1;
-			device.pQueueCreateInfos = &queue;
-			device.enabledExtensionCount = fences || timeline ? 3 : 2;
-			device.ppEnabledExtensionNames = fences		? s_deliveryExtensions.data()
-											 : timeline ? s_timelineExtensions.data()
-														: s_externalExtensions.data();
+			std::vector<VkDeviceQueueCreateInfo> queues{queue};
+			if (video)
+				for (const auto videoFamily : {encodeFamily, decodeFamily})
+					if (std::none_of(queues.begin(), queues.end(),
+									 [videoFamily](const auto& entry)
+									 {
+										 return entry.queueFamilyIndex == videoFamily;
+									 }))
+					{
+						auto videoQueue = queue;
+						videoQueue.queueFamilyIndex = videoFamily;
+						queues.push_back(videoQueue);
+					}
+			const auto base = fences	 ? std::span<const char* const>(s_deliveryExtensions)
+							  : timeline ? std::span<const char* const>(s_timelineExtensions)
+										 : std::span<const char* const>(s_externalExtensions);
+			m_extensions.assign(base.begin(), base.end());
+			if (video)
+				m_extensions.insert(m_extensions.end(), videoExtensions.begin(), videoExtensions.end());
+			device.queueCreateInfoCount = static_cast<std::uint32_t>(queues.size());
+			device.pQueueCreateInfos = queues.data();
+			device.enabledExtensionCount = static_cast<std::uint32_t>(m_extensions.size());
+			device.ppEnabledExtensionNames = m_extensions.data();
 			VkPhysicalDeviceTimelineSemaphoreFeatures timelineFeature{
 				VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
 			timelineFeature.timelineSemaphore = timeline;
@@ -183,6 +231,11 @@ VulkanInspectionDevice::VulkanInspectionDevice(const VulkanExternalIdentity& ide
 			CheckVulkan(vkCreateDevice(physical, &device, nullptr, &owner->device), "Create owned inspection device");
 			m_device = std::make_shared<VulkanDevice>(
 				VulkanBinding{owner->instance, physical, owner->device, family, 0}, owner);
+			if (video)
+			{
+				m_device->encodeFamily = encodeFamily;
+				m_device->decodeFamily = decodeFamily;
+			}
 			m_consumerFences = fences;
 			m_consumerTimeline = timeline;
 			return;
@@ -197,11 +250,7 @@ const std::shared_ptr<VulkanDevice>& VulkanInspectionDevice::Device() const noex
 }
 std::span<const char* const> VulkanInspectionDevice::EnabledExtensions() const noexcept
 {
-	if (m_consumerFences)
-		return s_deliveryExtensions;
-	if (m_consumerTimeline)
-		return s_timelineExtensions;
-	return s_externalExtensions;
+	return m_extensions;
 }
 bool VulkanInspectionDevice::ConsumerFencesEnabled() const noexcept
 {

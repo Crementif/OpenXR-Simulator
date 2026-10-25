@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <vulkan/vulkan.h>
 
@@ -36,6 +37,10 @@ class VulkanDevice
 	explicit VulkanDevice(const VulkanBinding& binding, std::shared_ptr<const void> owner = {});
 	const VulkanBinding binding;
 	VkQueue queue = VK_NULL_HANDLE;
+	// Serializes independently owned graphics and video conversion submissions.
+	std::mutex queueMutex;
+	std::uint32_t encodeFamily = VK_QUEUE_FAMILY_IGNORED;
+	std::uint32_t decodeFamily = VK_QUEUE_FAMILY_IGNORED;
 	std::uint32_t timestampBits = 0;
 	float timestampPeriod = 0;
 	std::atomic<bool> lost{false};
