@@ -313,6 +313,17 @@ class VulkanInspectionQueue
 	{
 		m_active.reserve(m_capacity.Capacity());
 	}
+	VulkanInspectionQueue(std::shared_ptr<VulkanDevice> device, bool timeline)
+		: m_device(std::move(device)),
+		  m_external(m_device,
+					 std::array<const char*, 3>{VulkanExternalMemoryExtension, VulkanExternalSemaphoreExtension,
+												timeline ? VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME
+														 : VulkanExternalFenceExtension},
+					 VK_API_VERSION_1_3, timeline),
+		  m_fences(!timeline), m_timeline(timeline)
+	{
+		m_active.reserve(m_capacity.Capacity());
+	}
 	~VulkanInspectionQueue()
 	{
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -527,7 +538,9 @@ class VulkanInspectionFrame::Resources
 			throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Inspection supports at most two image slices");
 		for (std::uint32_t eye = 0; eye < resources->m_image->layers; ++eye)
 		{
-			VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+			VkImageViewUsageCreateInfo usage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
+			usage.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+			VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, &usage};
 			view.image = resources->m_image->image;
 			view.viewType = VK_IMAGE_VIEW_TYPE_2D;
 			view.format = resources->m_image->format;
@@ -880,6 +893,14 @@ VulkanInspectionFrame::Compose(const CompositionPlan& plan,
 	return output;
 }
 
+std::shared_ptr<VulkanInspectionFrame> VulkanInspectionFrame::FromImage(std::shared_ptr<VulkanImage> image,
+																		std::span<const FrameView> views, bool timeline)
+{
+	auto queue = std::make_shared<VulkanInspectionQueue>(image->device, timeline);
+	auto resources = Resources::Create(std::move(queue), std::move(image), {}, {});
+	resources->PublishTerminal(CompletionStatus::Complete, false);
+	return std::shared_ptr<VulkanInspectionFrame>(new VulkanInspectionFrame(std::move(resources), views));
+}
 VulkanInspectionFrame::~VulkanInspectionFrame() = default;
 CompletionStatus VulkanInspectionFrame::PollCompletion() const noexcept
 {

@@ -69,6 +69,7 @@ class VulkanVideoSession
 	VkFence m_fence = VK_NULL_HANDLE;
 	bool m_encodeInitialized = false, m_decodeInitialized = false;
 	std::vector<std::uint8_t> m_headers;
+	StdVideoH264SequenceParameterSetVui m_vui{};
 	StdVideoH264SequenceParameterSet m_sps{};
 	StdVideoH264PictureParameterSet m_pps{};
 	VkVideoCapabilitiesKHR m_encodeCaps{VK_STRUCTURE_TYPE_VIDEO_CAPABILITIES_KHR};

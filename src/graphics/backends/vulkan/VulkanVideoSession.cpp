@@ -122,6 +122,13 @@ void VulkanVideoSession::Initialize()
 		if (m_extent.width < caps.minCodedExtent.width || m_extent.height < caps.minCodedExtent.height ||
 			m_extent.width > caps.maxCodedExtent.width || m_extent.height > caps.maxCodedExtent.height)
 			throw VulkanError(VK_ERROR_FORMAT_NOT_SUPPORTED, "H.264 extent unsupported");
+	m_vui.flags.video_signal_type_present_flag = m_vui.flags.color_description_present_flag = 1;
+	m_vui.flags.video_full_range_flag = 1;
+	m_vui.video_format = 5;
+	m_vui.colour_primaries = m_vui.matrix_coefficients = 1;
+	m_vui.transfer_characteristics = 13;
+	m_sps.flags.vui_parameters_present_flag = 1;
+	m_sps.pSequenceParameterSetVui = &m_vui;
 	m_sps.profile_idc = STD_VIDEO_H264_PROFILE_IDC_MAIN;
 	m_sps.level_idc = STD_VIDEO_H264_LEVEL_IDC_4_1;
 	m_sps.chroma_format_idc = STD_VIDEO_H264_CHROMA_FORMAT_IDC_420;

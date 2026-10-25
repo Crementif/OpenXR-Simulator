@@ -108,6 +108,9 @@ class VulkanInspectionFrame final : public FrameOutput
 {
   public:
 	~VulkanInspectionFrame();
+	// The caller must establish completion and GENERAL layout before publication.
+	static std::shared_ptr<VulkanInspectionFrame> FromImage(std::shared_ptr<VulkanImage> image,
+															std::span<const FrameView> views, bool timeline);
 	// One retained source per draw; crop/slice coordinates address those images.
 	// All sources must belong to the same owned queue. Pending input returns
 	// empty; failed input, invalid bindings or exhausted capacity throw.

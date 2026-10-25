@@ -2,11 +2,13 @@
 #include "VulkanProbeInstance.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
 #include "graphics/backends/vulkan/VulkanInspectionDevice.h"
+#include "graphics/backends/vulkan/VulkanVideoConversion.h"
 #include "graphics/backends/vulkan/VulkanVideoSession.h"
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <thread>
 
 namespace simxr::probe
 {
@@ -34,7 +36,8 @@ static void Transfer(const std::shared_ptr<VulkanDevice>& owner, VulkanVideoSess
 	CheckVulkan(vkMapMemory(device, memory, 0, VK_WHOLE_SIZE, 0, &mapped), "Map test NV12 buffer");
 	if (upload)
 	{
-		std::memset(mapped, value, pixels);
+		for (std::uint32_t i = 0; i < pixels; ++i)
+			static_cast<std::uint8_t*>(mapped)[i] = value + (i % extent.width >= extent.width / 2 ? 8 : 0);
 		std::memset(static_cast<std::uint8_t*>(mapped) + pixels, 128, pixels / 2);
 	}
 	VkCommandPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
@@ -94,7 +97,8 @@ static void Transfer(const std::shared_ptr<VulkanDevice>& owner, VulkanVideoSess
 	bool valid = true;
 	if (!upload)
 		for (std::uint32_t i = 0; i < pixels * 3 / 2; ++i)
-			valid &= std::abs(int(static_cast<const std::uint8_t*>(mapped)[i]) - (i < pixels ? value : 128)) <= 3;
+			valid &= std::abs(int(static_cast<const std::uint8_t*>(mapped)[i]) -
+							  (i < pixels ? value + (i % extent.width >= extent.width / 2 ? 8 : 0) : 128)) <= 3;
 	vkDestroyFence(device, fence, nullptr);
 	vkDestroyCommandPool(device, pool, nullptr);
 	vkUnmapMemory(device, memory);
@@ -141,6 +145,24 @@ int main()
 					video.Decode(frames[i]);
 					simxr::probe::Transfer(owner.Device(), video, false, true, 32 + i * 24);
 				}
+				simxr::VulkanVideoConversion conversion(owner.Device(), {640, 480});
+				auto image = conversion.Decode(frames[3], {320, 480}, 2);
+				auto source = simxr::VulkanInspectionFrame::FromImage(image, {}, owner.ConsumerTimelineEnabled());
+				auto encoded = conversion.Encode(source);
+				auto restored = conversion.Decode(encoded, {320, 480}, 2);
+				auto frame = simxr::VulkanInspectionFrame::FromImage(restored, {}, owner.ConsumerTimelineEnabled());
+				auto readback = frame->Export();
+				const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+				std::shared_ptr<const simxr::VulkanImagePixels> pixels;
+				while (!(pixels = readback->Pixels()))
+				{
+					if (std::chrono::steady_clock::now() > deadline)
+						throw std::runtime_error("History conversion readback timed out");
+					std::this_thread::sleep_for(std::chrono::milliseconds(1));
+				}
+				for (std::size_t i = 0; i < pixels->rgba.size(); ++i)
+					if (std::abs(int(pixels->rgba[i]) - (i % 4 == 3 ? 255 : 104 + (i >= 320 * 480 * 4 ? 8 : 0))) > 5)
+						throw std::runtime_error("GPU RGB/NV12 round-trip mismatch");
 			}
 			if (validation->errors.load() || simxr::probe::s_validationErrors.load())
 				throw std::runtime_error("Vulkan validation failed");

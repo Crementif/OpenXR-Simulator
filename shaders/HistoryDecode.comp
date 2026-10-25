@@ -1,0 +1,17 @@
+#version 450
+layout(local_size_x=8, local_size_y=8) in;
+layout(std430,binding=1) readonly buffer Pixels { uint pixels[]; };
+layout(binding=2,rgba8) uniform writeonly image2DArray outputImage;
+layout(push_constant) uniform Shape { uint width; uint height; uint layers; uint eyeWidth; uint codedHeight; uint srgb; } shape;
+float value(uint address) { return float((pixels[address/4]>>((address%4)*8))&255)/255; }
+void main()
+{
+    uvec3 p=gl_GlobalInvocationID;
+    if(p.x>=shape.width || p.y>=shape.height || p.z>=shape.layers) return;
+    uint stride=shape.eyeWidth*shape.layers, x=p.x+p.z*shape.eyeWidth;
+    float y=value(p.y*stride+x);
+    uint uv=stride*shape.codedHeight+(p.y/2)*stride+(x/2)*2;
+    float u=value(uv)-0.5, v=value(uv+1)-0.5;
+    vec3 rgb=vec3(y+1.5748*v,y-0.187324*u-0.468124*v,y+1.8556*u);
+    imageStore(outputImage,ivec3(p),vec4(clamp(rgb,0,1),1));
+}
