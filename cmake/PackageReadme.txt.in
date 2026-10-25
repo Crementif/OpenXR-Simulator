@@ -1,21 +1,26 @@
 OpenXR Simulator @PROJECT_VERSION@
 
-This is a development qualification package. Native Windows and the remaining
-hardware/application acceptance rows are not yet release-qualified.
+This is a preview package. Some hardware and application checks remain open.
+See share/doc/simxr/BUILDING.md for supported configurations and launch setup.
 
 Extract the entire archive into a new directory. Keep bin/openxr_simulator.json
 beside its runtime library; its relative path allows moving the package.
 
-Launch bin/simxr_companion and create a launch profile with the application's
+On Windows, launch bin/simxr_companion.exe. On Linux, launch bin/simxr_companion.
+Create a launch profile with the application's
 executable and this package's bin/openxr_simulator.json. Runtime selection affects
 that child process only when the OpenXR loader permits environment overrides.
 Run Windows applications without elevation: elevated loaders ignore XR_RUNTIME_JSON.
 For command-line launch, set XR_RUNTIME_JSON to the absolute manifest path in the
 application's environment. This avoids system registration when the loader
-permits environment overrides. The tested Proton environment reports elevated
-integrity; qualification used runtime registration inside an isolated prefix.
-Child-local runtime selection in that environment remains unresolved. On Linux,
-bin/launch-linux.py also launches and attaches the companion.
+permits environment overrides. On Linux, bin/launch-linux.py also launches and
+attaches the companion.
+
+For Proton, use bin/prepare-proton-prefix.py to create a private simulator prefix.
+In the launch profile, select that prepared prefix as Private Proton prefix and
+select the package's openxr_simulator.json. Launching registers the runtime only
+inside that prefix. This registration persists until you remove the private
+prefix. Shared and default prefixes are refused. See BUILDING.md for commands.
 
 The host needs its graphics driver and Vulkan loader. Linux additionally needs
 the usual C/C++ runtime and desktop window-system libraries. This archive does
@@ -34,4 +39,6 @@ probes are in bin when built with SIMXR_BUILD_PROBES.
 To uninstall, close this package's processes and delete the extracted directory.
 Remove any XR_RUNTIME_JSON setting you added to your own launch scripts. User
 settings and recordings are outside the package and are preserved. Extraction
-and launch never change the machine's default OpenXR runtime.
+and normal Windows/Linux launch do not change the machine's default OpenXR
+runtime. To remove the Proton registration, close the prefix's applications and
+delete only the private compatibility-data directory you prepared.
