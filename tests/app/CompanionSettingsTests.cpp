@@ -106,6 +106,7 @@ void Persistence()
 	settings.scale = 1.375f;
 	settings.snapshotBudgetMiB = 2048;
 	settings.previewBudgetMiB = 4096;
+	settings.previewRamMiB = 2048;
 	settings.pilotBindings[static_cast<std::size_t>(PilotAction::Forward)] = {"UpArrow", 2};
 	settings.gamepadBindings.primary[1] = "x";
 	settings.gamepadBindings.gyroHold = "paddle1";
@@ -173,6 +174,8 @@ void Persistence()
 		number(1);
 		number(9);
 		number(settings.previewBudgetMiB);
+		number(10);
+		number(settings.previewRamMiB);
 		Require(complete.ends_with(extension), "Private prefix and pointer settings use versioned trailing tables");
 		const auto extensionStart = complete.size() - extension.size();
 		const auto replace = [&](std::string_view bytes)
@@ -183,11 +186,14 @@ void Persistence()
 			Require(output.good(), "Write settings migration fixture");
 		};
 		auto previous = settings;
-		previous.previewBudgetMiB = simxr::FramePreviewHistory::BudgetBytes >> 20;
+		previous.previewRamMiB = simxr::FramePreviewHistory::RamBudgetBytes >> 20;
 		replace(std::string_view(complete).substr(0, complete.size() - 8));
+		Require(LoadSettings(file) == previous, "Version-9 settings receive default RAM history budget");
+		previous.previewBudgetMiB = simxr::FramePreviewHistory::BudgetBytes >> 20;
+		replace(std::string_view(complete).substr(0, complete.size() - 16));
 		Require(LoadSettings(file) == previous, "Version-8 settings receive default history budget");
 		previous.remoteMouseDrag = false;
-		replace(std::string_view(complete).substr(0, complete.size() - 16));
+		replace(std::string_view(complete).substr(0, complete.size() - 24));
 		Require(LoadSettings(file) == previous, "Version-7 settings default to relative mouse capture");
 		replace(std::string_view(complete).substr(0, extensionStart));
 		for (auto& profile : previous.profiles)

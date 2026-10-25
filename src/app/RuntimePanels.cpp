@@ -289,9 +289,9 @@ RuntimePanels::~RuntimePanels()
 	if (m_window)
 		m_window->Rumble({});
 }
-void RuntimePanels::ConfigurePreviews(std::uint32_t budgetMiB)
+void RuntimePanels::ConfigurePreviews(std::uint32_t budgetMiB, std::uint32_t ramMiB)
 {
-	m_session.ConfigurePreviews(budgetMiB);
+	m_session.ConfigurePreviews(budgetMiB, ramMiB);
 }
 void RuntimePanels::ConfigureSnapshots(std::uint32_t budgetMiB)
 {
@@ -386,6 +386,18 @@ void RuntimePanels::EndFrame()
 std::uint64_t RuntimePanels::PreviewBytes() const
 {
 	return m_session.PreviewBytes();
+}
+std::uint64_t RuntimePanels::PreviewRamBytes() const
+{
+	return m_session.PreviewRamBytes();
+}
+std::uint64_t RuntimePanels::PreviewRamBudget() const
+{
+	return m_session.PreviewRamBudget();
+}
+std::string RuntimePanels::PreviewError() const
+{
+	return m_session.PreviewError();
 }
 std::uint64_t RuntimePanels::PreviewBudget() const
 {

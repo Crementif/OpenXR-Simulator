@@ -297,7 +297,8 @@ void WorkspacePanels::Draw(RuntimePanels& runtime)
 			ImGui::EndPopup();
 		}
 	}
-	if (m_preferences.Draw(m_settings, m_showSettings, m_dirty, runtime.PreviewBytes(), runtime.PreviewBudget()))
+	if (m_preferences.Draw(m_settings, m_showSettings, m_dirty, runtime.PreviewBytes(), runtime.PreviewBudget(),
+						   runtime.PreviewRamBytes(), runtime.PreviewRamBudget(), runtime.PreviewError()))
 	{
 		m_settings.endpoint = runtime.Endpoint();
 		Save();

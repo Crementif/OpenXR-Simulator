@@ -303,14 +303,18 @@ bool RuntimeSession::SubmitEdit(const SimulationEdit& edit)
 	}
 	return true;
 }
-void RuntimeSession::ConfigurePreviews(std::uint32_t budgetMiB)
+void RuntimeSession::ConfigurePreviews(std::uint32_t budgetMiB, std::uint32_t ramMiB)
 {
 	if (!Connected() || !Supports(wire::Capability::ConfigurablePreviews) ||
-		U64(m_debugger.Status(), tag::PreviewBudget) == (std::uint64_t{budgetMiB} << 20) ||
+		(U64(m_debugger.Status(), tag::PreviewBudget) == (std::uint64_t{budgetMiB} << 20) &&
+		 (!m_debugger.Status().Find(tag::PreviewRamBudget) ||
+		  U64(m_debugger.Status(), tag::PreviewRamBudget) == (std::uint64_t{ramMiB} << 20))) ||
 		m_requests.Has(Work::ConfigurePreviews) || Clock::now() < m_nextPreviewBudget)
 		return;
 	auto fields = m_debugger.SessionFields();
 	fields.push_back(wire::Field::U64(tag::PreviewBudget, std::uint64_t{budgetMiB} << 20, true));
+	if (m_debugger.Status().Find(tag::PreviewRamBudget))
+		fields.push_back(wire::Field::U64(tag::PreviewRamBudget, std::uint64_t{ramMiB} << 20, true));
 	m_requests.Send(wire::OpCode::ConfigurePreviews, Work::ConfigurePreviews, std::move(fields));
 	m_nextPreviewBudget = Clock::now() + std::chrono::seconds(1);
 }

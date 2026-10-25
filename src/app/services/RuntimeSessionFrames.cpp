@@ -120,6 +120,18 @@ std::uint64_t RuntimeSession::PreviewBudget() const
 	return Supports(wire::Capability::ContinuousPreviews) ? U64(m_debugger.Status(), tag::PreviewBudget)
 														  : m_preview.History().Budget();
 }
+std::uint64_t RuntimeSession::PreviewRamBytes() const
+{
+	return U64(m_debugger.Status(), tag::PreviewRamBytes);
+}
+std::uint64_t RuntimeSession::PreviewRamBudget() const
+{
+	return U64(m_debugger.Status(), tag::PreviewRamBudget);
+}
+std::string RuntimeSession::PreviewError() const
+{
+	return panel::Text(m_debugger.Status(), tag::PreviewError);
+}
 void RuntimeSession::MarkHistoryFrame(std::size_t index, bool enabled)
 {
 	m_history.History().SetFlags(index, HistoryMarker, enabled);

@@ -56,6 +56,9 @@ class RuntimeSession
 	bool LoadingPastImage() const;
 	std::uint64_t PreviewBytes() const;
 	std::uint64_t PreviewBudget() const;
+	std::uint64_t PreviewRamBytes() const;
+	std::uint64_t PreviewRamBudget() const;
+	std::string PreviewError() const;
 	void SelectFrame(std::uint64_t local);
 	void SelectCapture(std::uint64_t capture);
 	void SelectImage(std::uint64_t image);
@@ -74,7 +77,7 @@ class RuntimeSession
 	std::string Endpoint() const;
 	void ChooseSession(PanelSession session);
 	void ConfigureSnapshots(std::uint32_t budgetMiB);
-	void ConfigurePreviews(std::uint32_t budgetMiB);
+	void ConfigurePreviews(std::uint32_t budgetMiB, std::uint32_t ramMiB);
 	// Returns false (with a notice) when no running session accepts edits.
 	bool SubmitEdit(const SimulationEdit& edit);
 

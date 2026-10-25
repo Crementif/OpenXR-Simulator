@@ -45,7 +45,7 @@ class RuntimePanels
 	RuntimePanels(const RuntimePanels&) = delete;
 	RuntimePanels& operator=(const RuntimePanels&) = delete;
 	void ConfigureSnapshots(std::uint32_t budgetMiB);
-	void ConfigurePreviews(std::uint32_t budgetMiB);
+	void ConfigurePreviews(std::uint32_t budgetMiB, std::uint32_t ramMiB);
 	void ConfigurePilot(const PilotBindings& keys, const GamepadBindings& gamepad, bool remoteMouseDrag = false);
 	void Poll();
 	// Builds this UI frame's view; drawers read it until the next BeginFrame.
@@ -90,6 +90,9 @@ class RuntimePanels
 	const PreviewHistory& KeptPreviews() const;
 	std::uint64_t PreviewBytes() const;
 	std::uint64_t PreviewBudget() const;
+	std::uint64_t PreviewRamBytes() const;
+	std::uint64_t PreviewRamBudget() const;
+	std::string PreviewError() const;
 	PreviewHistory& KeptPreviews();
 	void LookAt(std::size_t historyIndex);
 	void MarkHistoryFrame(std::size_t index, bool enabled);

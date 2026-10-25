@@ -241,7 +241,7 @@ void WorkspacePanels::DrawShell(RuntimePanels& runtime)
 	}
 	runtime.ConfigurePilot(m_settings.pilotBindings, m_settings.gamepadBindings, m_settings.remoteMouseDrag);
 	runtime.ConfigureSnapshots(m_settings.snapshotBudgetMiB);
-	runtime.ConfigurePreviews(m_settings.previewBudgetMiB);
+	runtime.ConfigurePreviews(m_settings.previewBudgetMiB, m_settings.previewRamMiB);
 	// The overlay drawer closes on a click into the preview and opens on any new selection.
 	const auto window = ImGui::GetWindowPos();
 	const auto contains = [&](const ShellRect& rect, ImVec2 point)

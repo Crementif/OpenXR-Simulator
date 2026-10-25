@@ -118,6 +118,9 @@ void ResetLayout(CompanionSettings& settings)
 }
 void ValidateSettings(const CompanionSettings& settings)
 {
+	if (settings.previewRamMiB < FramePreviewHistory::MinMiB || settings.previewRamMiB > FramePreviewHistory::MaxMiB ||
+		settings.previewRamMiB % 4)
+		throw std::invalid_argument("Invalid compressed history budget");
 	if (settings.previewBudgetMiB < FramePreviewHistory::MinMiB ||
 		settings.previewBudgetMiB > FramePreviewHistory::MaxMiB || settings.previewBudgetMiB % 4)
 		throw std::invalid_argument("Invalid preview history budget");
@@ -329,6 +332,12 @@ CompanionSettings LoadSettings(const std::filesystem::path& path)
 		result.previewBudgetMiB = reader.Number();
 	}
 	if (!reader.Empty())
+	{
+		if (reader.Number() != 10)
+			throw std::runtime_error("Unknown compressed history settings version");
+		result.previewRamMiB = reader.Number();
+	}
+	if (!reader.Empty())
 		throw std::runtime_error("Unexpected trailing companion settings data");
 	ValidateSettings(result);
 	return result;
@@ -409,6 +418,8 @@ void SaveSettings(const std::filesystem::path& path, const CompanionSettings& se
 	Put(bytes, static_cast<std::uint32_t>(settings.remoteMouseDrag));
 	Put(bytes, std::uint32_t{9});
 	Put(bytes, settings.previewBudgetMiB);
+	Put(bytes, std::uint32_t{10});
+	Put(bytes, settings.previewRamMiB);
 	if (bytes.size() > s_maxFile)
 		throw std::invalid_argument("Companion settings exceed the file budget");
 	std::filesystem::create_directories(path.parent_path());

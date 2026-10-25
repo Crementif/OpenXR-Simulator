@@ -39,6 +39,7 @@ struct PreviewCrop
 struct CompanionSettings
 {
 	float scale = 1;
+	std::uint32_t previewRamMiB = FramePreviewHistory::RamBudgetBytes >> 20;
 	std::uint32_t previewBudgetMiB = FramePreviewHistory::BudgetBytes >> 20;
 	std::uint32_t snapshotBudgetMiB = SnapshotBudget::DefaultMiB;
 	PilotBindings pilotBindings = DefaultPilotBindings();

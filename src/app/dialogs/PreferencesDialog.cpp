@@ -7,7 +7,8 @@
 namespace simxr::app
 {
 bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirty, std::uint64_t keptBytes,
-							 std::uint64_t keptBudget)
+							 std::uint64_t keptBudget, std::uint64_t ramBytes, std::uint64_t ramBudget,
+							 const std::string& historyError)
 {
 	const bool wasOpen = open;
 	const auto& io = ImGui::GetIO();
@@ -39,7 +40,7 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 	if (ImGui::BeginChild("Preference contents", {0, contentHeight}))
 	{
 		const float labelWidth =
-			std::max(ImGui::CalcTextSize("Snapshots (MiB)").x, ImGui::CalcTextSize("Kept previews").x);
+			std::max(ImGui::CalcTextSize("History GPU (MiB)").x, ImGui::CalcTextSize("Kept previews").x);
 		ImGui::PushItemWidth(
 			std::max(1.f, ImGui::GetContentRegionAvail().x - labelWidth - ImGui::GetStyle().ItemInnerSpacing.x));
 		if (ImGui::SliderFloat("UI scale", &settings.scale, 0.75f, 2.5f, "%.2f"))
@@ -51,7 +52,7 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 			dirty = true;
 		}
 		int history = static_cast<int>(settings.previewBudgetMiB);
-		if (ImGui::InputInt("History (MiB)", &history, 64, 256))
+		if (ImGui::InputInt("History GPU (MiB)", &history, 64, 256))
 		{
 			settings.previewBudgetMiB = static_cast<std::uint32_t>(std::clamp(history, int(FramePreviewHistory::MinMiB),
 																			  int(FramePreviewHistory::MaxMiB))) /
@@ -60,16 +61,34 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 		}
 		ImGui::SetItemTooltip("GPU frame history, 64–16384 MiB. Applies live and is saved.\n"
 							  "About one stereo preview per 4 MiB. Timeline thumbnails use another 32 MiB.");
+		int ram = static_cast<int>(settings.previewRamMiB);
+		if (ImGui::InputInt("History RAM (MiB)", &ram, 64, 256))
+		{
+			settings.previewRamMiB = static_cast<std::uint32_t>(std::clamp(ram, 64, 16384)) / 4 * 4;
+			dirty = true;
+		}
+		ImGui::SetItemTooltip("Older frames use H.264 in RAM. Every frame remains selectable until oldest-frame "
+							  "eviction. Applies live and is saved.");
 		if (keptBudget)
 		{
 			const auto usage = std::to_string(keptBytes >> 20) + " / " + std::to_string(keptBudget >> 20) + " MiB";
 			ImGui::ProgressBar(static_cast<float>(keptBytes) / static_cast<float>(keptBudget),
 							   {ImGui::CalcItemWidth(), 0}, usage.c_str());
 			ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
-			ImGui::TextUnformatted("Kept previews");
+			ImGui::TextUnformatted("GPU used");
 			ImGui::SetItemTooltip(
 				"An image for every submitted frame; oldest images are evicted when the budget fills");
 		}
+		if (ramBudget)
+		{
+			const auto usage = std::to_string(ramBytes >> 20) + " / " + std::to_string(ramBudget >> 20) + " MiB";
+			ImGui::ProgressBar(static_cast<float>(ramBytes) / static_cast<float>(ramBudget),
+							   {ImGui::CalcItemWidth(), 0}, usage.c_str());
+			ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+			ImGui::TextUnformatted("RAM used");
+		}
+		if (!historyError.empty())
+			ImGui::TextWrapped("History: %s", historyError.c_str());
 		ImGui::PopItemWidth();
 		if (ImGui::Button("Reset layout"))
 		{

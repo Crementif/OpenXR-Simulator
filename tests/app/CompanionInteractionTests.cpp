@@ -629,7 +629,7 @@ void CheckPreferences(Interaction& test)
 		ImGui::Begin("Preferences fixture");
 		if (visible)
 		{
-			closed += dialog.Draw(settings, open, dirty, 64ULL << 20, 512ULL << 20);
+			closed += dialog.Draw(settings, open, dirty, 64ULL << 20, 512ULL << 20, 32ULL << 20, 1024ULL << 20);
 			closeMinimum = ImGui::GetItemRectMin();
 			closeMaximum = ImGui::GetItemRectMax();
 		}
@@ -662,7 +662,7 @@ void CheckPreferences(Interaction& test)
 	{
 		auto* contents = contentsWindow();
 		Require(contents, "History settings contents missing");
-		ImGui::ActivateItemByID(contents->GetID("History (MiB)"));
+		ImGui::ActivateItemByID(contents->GetID("History GPU (MiB)"));
 		pump();
 		io.AddKeyEvent(ImGuiMod_Ctrl, true);
 		tap(ImGuiKey_A);
@@ -671,6 +671,15 @@ void CheckPreferences(Interaction& test)
 		pump();
 		tap(ImGuiKey_Enter);
 		Require(settings.previewBudgetMiB == 2048 && dirty, "History budget field did not accept typed value");
+		ImGui::ActivateItemByID(contents->GetID("History RAM (MiB)"));
+		pump();
+		io.AddKeyEvent(ImGuiMod_Ctrl, true);
+		tap(ImGuiKey_A);
+		io.AddKeyEvent(ImGuiMod_Ctrl, false);
+		io.AddInputCharactersUTF8("4096");
+		pump();
+		tap(ImGuiKey_Enter);
+		Require(settings.previewRamMiB == 4096, "RAM history budget field did not accept typed value");
 		if (const auto directory = std::getenv("SIMXR_DIALOG_QA_DIR"))
 		{
 			test.renderer.RequestScreenshot(std::filesystem::path(directory) / "history-budget.bmp");
