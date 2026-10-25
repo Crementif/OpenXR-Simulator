@@ -5054,7 +5054,7 @@ void CheckPreviewHistory(Interaction& test)
 			std::size_t covered = 0;
 			for (std::size_t index = 0; index < history.Size(); ++index)
 				covered += (history.At(index).flags & HistoryPreview) != 0;
-			return covered >= 40;
+			return covered >= 80;
 		},
 		"Continuous runtime history did not populate the Images lane");
 	test.runtime.Pause();
@@ -5071,7 +5071,9 @@ void CheckPreviewHistory(Interaction& test)
 	for (std::size_t index = 0; index < history.Size(); ++index)
 		if (history.At(index).flags & HistoryPreview)
 			frames.push_back(index);
-	Require(frames.size() >= 32, "Pause discarded preview history");
+	Require(frames.size() >= 64, "Pause discarded preview history");
+	// Select frames older than the GPU recent window to exercise H.264 decoding.
+	frames.erase(frames.end() - 32, frames.end());
 	frames.erase(frames.begin(), frames.end() - 32);
 	std::uint64_t previous = 0;
 	for (const auto index : frames)
