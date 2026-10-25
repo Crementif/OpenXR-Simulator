@@ -50,8 +50,11 @@ bool PreviewPanel::Draw(ShellState& shell, const RuntimeView& view, bool inputAv
 	{
 		const auto image = m_session.Preview().Selected();
 		const bool live = view.time.following;
+		if (!view.connected || (m_lastImage && m_lastImage->scope.epoch != view.time.epoch))
+			m_lastImage.reset();
 		if (image && image->ready && !image->released)
 		{
+			m_lastImage = image;
 			if ((m_picking || m_panning) && !SameGestureTarget(*image))
 				CancelInteraction();
 			const auto area = DrawImage(shell, view, inputAvailable);
@@ -71,12 +74,18 @@ bool PreviewPanel::Draw(ShellState& shell, const RuntimeView& view, bool inputAv
 		else
 		{
 			CancelInteraction();
-			if (std::holds_alternative<FrameSel>(shell.selection) && m_frame.Expanded())
-				m_frame.DrawExpanded(ImGui::GetContentRegionAvail());
-			else if (!std::holds_alternative<FrameSel>(shell.selection) && m_spatial.Expanded())
-				m_spatial.DrawExpanded(shell.selection, ImGui::GetContentRegionAvail());
-			else if (!DrawKept(view))
-				DrawEmpty(shell, view);
+			if (ImGui::BeginChild("Image area", {0, 0}, 0, ImGuiWindowFlags_NoScrollWithMouse))
+			{
+				if (std::holds_alternative<FrameSel>(shell.selection) && m_frame.Expanded())
+					m_frame.DrawExpanded(ImGui::GetContentRegionAvail());
+				else if (!std::holds_alternative<FrameSel>(shell.selection) && m_spatial.Expanded())
+					m_spatial.DrawExpanded(shell.selection, ImGui::GetContentRegionAvail());
+				else if (!DrawKept(view))
+					DrawEmpty(shell, view);
+			}
+			ImGui::EndChild();
+			if (m_lastImage)
+				DrawCorner(*m_lastImage, live, false);
 		}
 	}
 	else
@@ -102,30 +111,21 @@ bool PreviewPanel::SameGestureTarget(const PreviewImageSummary& image) const
 }
 bool PreviewPanel::DrawKept(const RuntimeView& view)
 {
-	if (view.time.following || !view.connected)
+	if (view.time.following || !view.connected || m_slice != 0 || (!m_fit && !m_crop))
 		return false;
 	auto& history = m_session.Preview().History();
 	const auto shot = history.Nearest(view.time.cursor, view.time.epoch);
 	if (!shot || shot->frame != view.time.cursor || shot->epoch != view.time.epoch)
 		return false;
-	ImGui::AlignTextToFramePadding();
-	ImGui::TextColored(theme::Vec(theme::Past), "PAST");
-	ImGui::SameLine();
-	ImGui::TextDisabled("Frame %llu", static_cast<unsigned long long>(view.time.cursor.frame));
-	ImGui::SameLine();
-	StateChip("Kept preview", theme::TextDim, "Preview", "Preview copy (reduced size) of this frame");
 	const auto crop = m_crop.value_or(ImVec4{0, 0, 1, 1});
-	if (m_crop)
-	{
-		ImGui::SameLine();
-		StateChip("Kept crop", theme::Accent, "Crop", "The pinned region of a downscaled image");
-	}
 	const auto available = ImGui::GetContentRegionAvail();
 	const float aspect = history.Aspect() * (crop.w - crop.y) / (crop.z - crop.x);
 	const float width = std::max(16.f, std::min(available.x, available.y / aspect));
 	ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, (available.x - width) / 2));
 	ImGui::SetCursorPosY(ImGui::GetCursorPosY() + std::max(0.f, (available.y - width * aspect) / 2));
 	history.Draw(*shot, width, crop);
+	const auto origin = ImGui::GetWindowPos();
+	ImGui::GetWindowDrawList()->AddText({origin.x + 8, origin.y + 8}, theme::TextDim, "Preview");
 	return true;
 }
 void PreviewPanel::DrawEmpty(ShellState& shell, const RuntimeView& view)

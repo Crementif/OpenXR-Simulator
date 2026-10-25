@@ -5122,6 +5122,8 @@ void CheckPreviewHistory(Interaction& test)
 	frames.erase(frames.end() - 32, frames.end());
 	frames.erase(frames.begin(), frames.end() - 32);
 	std::uint64_t previous = 0;
+	std::optional<float> inspectorHeight;
+	bool capturedLoading = false;
 	for (const auto index : frames)
 	{
 		const auto identity = history.At(index).identity;
@@ -5133,6 +5135,18 @@ void CheckPreviewHistory(Interaction& test)
 			{
 				test.Frame();
 				const auto view = test.runtime.Snapshot();
+				const auto* inspector = FindPanel("Inspector");
+				const float height = inspector->DC.CursorMaxPos.y - inspector->DC.CursorStartPos.y;
+				if (inspectorHeight)
+					Require(std::abs(height - *inspectorHeight) < 1.f, "Inspector shifted while changing frames");
+				if (!view.selectedReady && !capturedLoading)
+					if (const auto qa = std::getenv("SIMXR_UI_QA_DIR"))
+					{
+						test.renderer.RequestScreenshot(std::filesystem::path(qa) / "scrub-loading.bmp");
+						capturedLoading = true;
+					}
+				if (view.selectedReady && view.selectedIdentity == identity)
+					inspectorHeight = height;
 				return view.selectedReady && view.selectedIdentity == identity;
 			},
 			"Exact historical frame did not become visible");

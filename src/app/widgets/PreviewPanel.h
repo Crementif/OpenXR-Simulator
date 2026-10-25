@@ -70,7 +70,7 @@ class PreviewPanel
 	bool m_fit = true, m_panning = false, m_picking = false;
 	std::optional<ImVec4> m_crop;
 	std::optional<ImVec2> m_pickStart;
-	std::optional<PreviewImageSummary> m_gestureImage;
+	std::optional<PreviewImageSummary> m_gestureImage, m_lastImage;
 	ImVec4 m_gestureCrop{}, m_pickBounds{};
 	int m_gestureSlice = 0;
 	std::string m_pilotError;

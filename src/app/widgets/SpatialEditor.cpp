@@ -245,7 +245,14 @@ void SpatialEditor::DrawRig(Selection& selection, ImVec2 size)
 	PrepareSelection(selection);
 	if (m_lookingBack && !m_historical)
 	{
-		ImGui::TextDisabled("Pose unavailable");
+		const float scale = ImGui::GetFontSize() / 16;
+		const auto origin = ImGui::GetCursorScreenPos();
+		const ImVec2 extent{size.x * scale, size.y * scale};
+		const auto text = ImGui::CalcTextSize("Pose unavailable");
+		ImGui::GetWindowDrawList()->AddText(
+			{origin.x + std::max(0.f, (extent.x - text.x) / 2), origin.y + std::max(0.f, (extent.y - text.y) / 2)},
+			ImGui::GetColorU32(ImGuiCol_TextDisabled), "Pose unavailable");
+		ImGui::Dummy(extent);
 		return;
 	}
 	const auto live = LiveScene();
