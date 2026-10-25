@@ -12,6 +12,7 @@
 #include <cstring>
 #include <dxgi.h>
 #include <stdexcept>
+#include <thread>
 #include <type_traits>
 
 namespace simxr
@@ -144,7 +145,18 @@ template <typename Backend> class WindowsFrameSubmission final : public FrameSub
 
 	FramePool LiveReservations() const override
 	{
-		return m_delivery.LiveReservations();
+		auto pool = m_delivery.LiveReservations();
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+		// Native composition, the Vulkan copy and inspection retire independently.
+		// Apply backpressure before admission instead of rejecting a valid app frame.
+		while (pool.InUse() >= pool.Capacity())
+		{
+			pool.Collect();
+			if (pool.InUse() < pool.Capacity() || std::chrono::steady_clock::now() >= deadline)
+				break;
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		}
+		return pool;
 	}
 
 	FramePool HistoryReservations() const override

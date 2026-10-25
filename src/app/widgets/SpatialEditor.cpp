@@ -1,5 +1,5 @@
 #include "app/widgets/SpatialEditor.h"
-#include "Math.h"
+#include "math/Math.h"
 #include "Pch.h"
 #include "app/widgets/Theme.h"
 #include "app/services/ManualInputController.h"

@@ -1,5 +1,5 @@
 #include "../TestSupport.h"
-#include "Math.h"
+#include "math/Math.h"
 #include "automation/Recording.h"
 #include "automation/RigRunner.h"
 #include "automation/RigProgress.h"

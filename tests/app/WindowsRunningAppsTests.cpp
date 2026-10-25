@@ -1,5 +1,6 @@
 #include "../TestSupport.h"
 #include "app/services/RunningApps.h"
+#include "app/platform/windows/RuntimeEndpoints.h"
 #include "app/platform/windows/LaunchSupport.h"
 #include <algorithm>
 #include <iostream>
@@ -28,6 +29,7 @@ int main()
 		Require(std::none_of(busy.begin(), busy.end(), [&](const auto& app) { return app.endpoint == endpoint; }),
 			"Busy disconnected pipe advertised as connectable");
 		pipe = windows::Handle{};
+		Require(!RuntimeEndpointExists(endpoint), "Ended pipe still exists");
 		const auto ended = DiscoverRunningApps(25ms);
 		Require(std::none_of(ended.begin(), ended.end(), [&](const auto& app) { return app.endpoint == endpoint; }),
 			"Ended pipe remained in Running");

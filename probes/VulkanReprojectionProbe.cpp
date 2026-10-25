@@ -1,6 +1,6 @@
 #include "VulkanReprojectionProbe.h"
 #include "Pch.h"
-#include "Math.h"
+#include "math/Math.h"
 #include "graphics/RotationalReprojection.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
 

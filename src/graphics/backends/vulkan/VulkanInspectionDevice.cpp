@@ -93,6 +93,11 @@ VulkanInspectionDevice::VulkanInspectionDevice(const VulkanExternalIdentity& ide
 											   std::shared_ptr<VulkanInspectionValidation> validation,
 											   bool requireTimeline)
 {
+#ifdef _WIN32
+	// The consumer handle is exchanged before submission. Use an explicit timeline
+	// value: opaque Win32 fence payloads do not reliably preserve that handshake.
+	requireTimeline = true;
+#endif
 	auto owner = std::make_shared<Native>();
 	owner->validation = std::move(validation);
 	if (owner->validation)

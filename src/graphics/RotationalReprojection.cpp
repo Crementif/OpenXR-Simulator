@@ -1,6 +1,6 @@
 #include "graphics/RotationalReprojection.h"
 #include "Pch.h"
-#include "Math.h"
+#include "math/Math.h"
 
 namespace simxr
 {

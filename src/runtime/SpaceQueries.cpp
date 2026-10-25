@@ -1,6 +1,6 @@
 #include "runtime/SpaceQueries.h"
 #include "Pch.h"
-#include "Math.h"
+#include "math/Math.h"
 #include "runtime/validation/StructureChain.h"
 
 namespace simxr

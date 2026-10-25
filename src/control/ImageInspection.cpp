@@ -1,6 +1,6 @@
 #include "control/ImageInspection.h"
 #include "Pch.h"
-#include "Math.h"
+#include "math/Math.h"
 #include "control/ControlSchema.h"
 
 #include <cmath>

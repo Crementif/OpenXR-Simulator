@@ -1560,6 +1560,16 @@ int wmain(int argc, wchar_t** argv)
 	try
 	{
 		const auto arguments = simxr::probe::WindowsArguments(argc, argv);
+		if (arguments.size() == 4 && arguments[1] == "--pending-consumer")
+		{
+			std::uint32_t process = 0;
+			const auto& text = arguments[2];
+			const auto parsed = std::from_chars(text.data(), text.data() + text.size(), process);
+			if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() || !process ||
+				(arguments[3] != "gated" && arguments[3] != "pending"))
+				throw std::invalid_argument("Invalid pending-consumer arguments");
+			return simxr::probe::RunWindowsPendingConsumer(arguments[3] == "gated", process);
+		}
 		const auto gated = std::find(arguments.begin(), arguments.end(), "--verify-gated-unload") != arguments.end();
 		if (gated || std::find(arguments.begin(), arguments.end(), "--verify-pending-unload") != arguments.end())
 		{

@@ -1,5 +1,5 @@
 #include "../TestSupport.h"
-#include "Math.h"
+#include "math/Math.h"
 #include "graphics/Compositor.h"
 
 #include <cmath>

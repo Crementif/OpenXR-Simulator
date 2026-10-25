@@ -1,6 +1,6 @@
 #include "simulation/SpaceSystem.h"
 #include "Pch.h"
-#include "Math.h"
+#include "math/Math.h"
 
 #include <cmath>
 #include <stdexcept>

@@ -136,6 +136,9 @@ class VulkanExternalImage final
 	const VulkanGetMemoryHandle m_getMemoryHandle;
 	const bool m_exportable;
 	mutable std::mutex m_exportMutex;
+#ifdef _WIN32
+	mutable VulkanExternalHandle m_memoryHandle;
+#endif
 };
 
 // A binary semaphore is exported at most once by this owner. Users retain this

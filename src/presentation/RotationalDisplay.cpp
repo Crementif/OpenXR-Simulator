@@ -1,7 +1,7 @@
 #include "presentation/RotationalDisplay.h"
 #include "Pch.h"
 
-#include "Math.h"
+#include "math/Math.h"
 
 #include <new>
 

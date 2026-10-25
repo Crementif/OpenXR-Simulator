@@ -375,6 +375,8 @@ VulkanExternalHandle VulkanExternalImage::ExportMemory() const
 	if (!m_exportable || !m_getMemoryHandle)
 		throw VulkanError(VK_ERROR_INVALID_EXTERNAL_HANDLE, "Imported image is not export-enabled");
 #ifdef _WIN32
+	if (m_memoryHandle)
+		return m_memoryHandle.Duplicate();
 	VkMemoryGetWin32HandleInfoKHR info{VK_STRUCTURE_TYPE_MEMORY_GET_WIN32_HANDLE_INFO_KHR};
 #else
 	VkMemoryGetFdInfoKHR info{VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR};
@@ -387,8 +389,15 @@ VulkanExternalHandle VulkanExternalImage::ExportMemory() const
 	VulkanExternalHandle result(descriptor);
 	if (!result)
 		throw VulkanError(VK_ERROR_INVALID_EXTERNAL_HANDLE, "Image export returned an invalid descriptor");
+#ifdef _WIN32
+	// An NT memory handle may be exported only once per allocation and handle type.
+	m_memoryHandle = std::move(result);
+	PreventInheritance(m_memoryHandle);
+	return m_memoryHandle.Duplicate();
+#else
 	PreventInheritance(result);
 	return result;
+#endif
 }
 
 VulkanExternalSemaphore::VulkanExternalSemaphore(std::shared_ptr<VulkanDevice> device, VulkanExternalIdentity identity,
@@ -628,7 +637,9 @@ std::shared_ptr<VulkanExternalImage> VulkanExternalDevice::ImportImage(const Vul
 		!(requirements.memoryTypeBits & (1u << descriptor.memoryTypeIndex)) ||
 		(properties.memoryTypes[descriptor.memoryTypeIndex].propertyFlags & VK_MEMORY_PROPERTY_PROTECTED_BIT))
 		throw VulkanError(VK_ERROR_INVALID_EXTERNAL_HANDLE, "External image exact allocation parameters mismatch");
+#ifndef _WIN32
 	auto imported = handle.Duplicate();
+#endif
 	VkMemoryDedicatedAllocateInfo dedicated{VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO};
 	dedicated.image = image->image;
 #ifdef _WIN32
@@ -638,7 +649,8 @@ std::shared_ptr<VulkanExternalImage> VulkanExternalDevice::ImportImage(const Vul
 #endif
 	external.handleType = s_memoryHandle;
 #ifdef _WIN32
-	external.handle = imported.Get();
+	// Win32 import borrows the handle; ownership stays here until binding succeeds.
+	external.handle = handle.Get();
 #else
 	external.fd = imported.Get();
 #endif

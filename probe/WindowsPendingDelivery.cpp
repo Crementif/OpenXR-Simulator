@@ -27,11 +27,10 @@ static void Require(bool condition, const char* detail)
 	std::_Exit(1);
 }
 
-static std::string ControlEndpoint()
+static std::string ControlEndpoint(std::uint32_t process)
 {
 	const auto* selected = std::getenv("SIMXR_CONTROL_SOCKET");
-	return selected && *selected ? selected
-								 : std::string(R"(\\.\pipe\SimXR.Control.)") + std::to_string(GetCurrentProcessId());
+	return selected && *selected ? selected : std::string(R"(\\.\pipe\SimXR.Control.)") + std::to_string(process);
 }
 
 static control::ControlPacket Exchange(control::LocalControlClient& client, control::OpCode operation,
@@ -282,10 +281,153 @@ static void AwaitConsumers(std::span<const std::unique_ptr<control::VulkanImageC
 	}
 }
 
-WindowsPendingDelivery::WindowsPendingDelivery(bool gated) : m_gated(gated) {}
+static std::wstring PendingPipe(std::uint32_t process)
+{
+	return LR"(\\.\pipe\SimXR.PendingConsumer.)" + std::to_wstring(process);
+}
+
+WindowsPendingDelivery::WindowsPendingDelivery(bool gated, std::uint32_t runtimeProcess)
+	: m_gated(gated), m_runtimeProcess(runtimeProcess ? runtimeProcess : GetCurrentProcessId())
+{
+	if (runtimeProcess)
+		return;
+	control::windows::Security security;
+	m_pipe = control::windows::Handle(
+		CreateNamedPipeW(PendingPipe(m_runtimeProcess).c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
+						 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_NOWAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 4096, 4096,
+						 0, &security.attributes));
+	Require(m_pipe.value != INVALID_HANDLE_VALUE, "Cannot create pending-consumer command pipe");
+	std::wstring executable(32768, L'\0');
+	const auto size = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
+	Require(size && size < executable.size(), "Cannot identify pending-consumer executable");
+	executable.resize(size);
+	auto command = L"\"" + executable + L"\" --pending-consumer " + std::to_wstring(m_runtimeProcess) +
+				   (m_gated ? L" gated" : L" pending");
+	STARTUPINFOW startup{sizeof(startup)};
+	PROCESS_INFORMATION child{};
+	Require(CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
+						   nullptr, &startup, &child),
+			"Cannot start isolated pending consumer");
+	m_process = control::windows::Handle(child.hProcess);
+	control::windows::Handle thread(child.hThread);
+	try
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+		while (!ConnectNamedPipe(m_pipe.value, nullptr))
+		{
+			const auto error = GetLastError();
+			if (error == ERROR_PIPE_CONNECTED)
+				break;
+			Require(error == ERROR_PIPE_LISTENING && std::chrono::steady_clock::now() < deadline &&
+						WaitForSingleObject(m_process.value, 0) == WAIT_TIMEOUT,
+					"Pending consumer did not connect");
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		}
+		DWORD mode = PIPE_READMODE_BYTE | PIPE_WAIT;
+		Require(SetNamedPipeHandleState(m_pipe.value, &mode, nullptr, nullptr), "Cannot configure consumer pipe");
+	}
+	catch (...)
+	{
+		TerminateProcess(m_process.value, 1);
+		WaitForSingleObject(m_process.value, 5000);
+		throw;
+	}
+}
+
+void WindowsPendingDelivery::Command(std::uint8_t command) const
+{
+	DWORD transferred = 0;
+	Require(WriteFile(m_pipe.value, &command, sizeof(command), &transferred, nullptr) && transferred == sizeof(command),
+			"Cannot send pending-consumer command");
+	std::array<char, 1024> response{};
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+	for (;;)
+	{
+		DWORD available = 0;
+		Require(PeekNamedPipe(m_pipe.value, nullptr, 0, nullptr, &available, nullptr),
+				"Pending consumer closed its command pipe");
+		if (available >= response.size())
+			break;
+		Require(std::chrono::steady_clock::now() < deadline && WaitForSingleObject(m_process.value, 0) == WAIT_TIMEOUT,
+				"Pending consumer did not answer");
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
+	Require(ReadFile(m_pipe.value, response.data(), static_cast<DWORD>(response.size()), &transferred, nullptr) &&
+				transferred == response.size(),
+			"Incomplete pending-consumer response");
+	Require(response.front() == '\0', response.data());
+}
+
+int RunWindowsPendingConsumer(bool gated, std::uint32_t runtimeProcess)
+{
+	control::windows::Handle pipe(CreateFileW(PendingPipe(runtimeProcess).c_str(), GENERIC_READ | GENERIC_WRITE, 0,
+											  nullptr, OPEN_EXISTING, 0, nullptr));
+	Require(pipe.value != INVALID_HANDLE_VALUE, "Cannot connect pending-consumer command pipe");
+	WindowsPendingDelivery consumer(gated, runtimeProcess);
+	for (;;)
+	{
+		std::uint8_t command = 0;
+		DWORD transferred = 0;
+		Require(ReadFile(pipe.value, &command, sizeof(command), &transferred, nullptr) &&
+					transferred == sizeof(command),
+				"Pending-consumer parent disconnected");
+		std::array<char, 1024> response{};
+		try
+		{
+			switch (command)
+			{
+			case 1:
+				consumer.Hold();
+				break;
+			case 2:
+				consumer.VerifyPending();
+				break;
+			case 3:
+				consumer.ReleaseAndVerify();
+				break;
+			case 4:
+				consumer.CheckWatchdog();
+				break;
+			case 5:
+				break;
+			default:
+				throw std::runtime_error("Unknown pending-consumer command");
+			}
+		}
+		catch (const std::exception& error)
+		{
+			std::snprintf(response.data(), response.size(), "%s", error.what());
+		}
+		Require(WriteFile(pipe.value, response.data(), static_cast<DWORD>(response.size()), &transferred, nullptr) &&
+					transferred == response.size(),
+				"Cannot acknowledge pending-consumer command");
+		if (response.front())
+			PreservePending(response.data());
+		if (command == 5)
+			return 0;
+	}
+}
 
 WindowsPendingDelivery::~WindowsPendingDelivery()
 {
+	if (m_process.value != INVALID_HANDLE_VALUE)
+	{
+		try
+		{
+			Command(5);
+			DWORD code = 1;
+			Require(WaitForSingleObject(m_process.value, 5000) == WAIT_OBJECT_0 &&
+						GetExitCodeProcess(m_process.value, &code) && code == 0,
+					"Pending consumer did not exit cleanly");
+		}
+		catch (...)
+		{
+			TerminateProcess(m_process.value, 1);
+			WaitForSingleObject(m_process.value, 5000);
+			PreservePending("isolated consumer failed to retire");
+		}
+		return;
+	}
 	if (m_active)
 		PreservePending("test ended before confirmed GPU retirement");
 	StopWatchdog();
@@ -350,14 +492,25 @@ void WindowsPendingDelivery::StopWatchdog()
 
 void WindowsPendingDelivery::CheckWatchdog() const
 {
+	if (m_process.value != INVALID_HANDLE_VALUE)
+	{
+		Command(4);
+		return;
+	}
 	if (m_watchdogExpired)
 		PreservePending("native call returned only after the watchdog released pending consumer work");
 }
 
 void WindowsPendingDelivery::Hold()
 {
+	if (m_process.value != INVALID_HANDLE_VALUE)
+	{
+		Command(1);
+		std::puts("pending-runtime: eight isolated consumers held");
+		return;
+	}
 	Require(!m_device && !m_complete, "Pending-runtime hold was already started");
-	control::LocalControlClient client(ControlEndpoint(), std::chrono::milliseconds(5000));
+	control::LocalControlClient client(ControlEndpoint(m_runtimeProcess), std::chrono::milliseconds(5000));
 	const auto preview = RetainPreview(client);
 	m_completion = preview.description.completionKind;
 	m_timelineEnabled = m_gated || m_completion == ImageCompletionKind::Timeline;
@@ -418,9 +571,15 @@ void WindowsPendingDelivery::Hold()
 
 void WindowsPendingDelivery::VerifyPending()
 {
+	if (m_process.value != INVALID_HANDLE_VALUE)
+	{
+		Command(2);
+		std::puts("pending-runtime: recreated runtime preserves occupied delivery capacity");
+		return;
+	}
 	CheckWatchdog();
 	Require(m_held && !m_verified, "Pending-runtime verification is out of order");
-	control::LocalControlClient client(ControlEndpoint(), std::chrono::milliseconds(5000));
+	control::LocalControlClient client(ControlEndpoint(m_runtimeProcess), std::chrono::milliseconds(5000));
 	const auto preview = RetainPreview(client);
 	Require(preview.description.completionKind == m_completion, "Recreated runtime changed consumer completion kind");
 	for (const auto& consumer : m_consumers)
@@ -436,6 +595,12 @@ void WindowsPendingDelivery::VerifyPending()
 
 void WindowsPendingDelivery::ReleaseAndVerify()
 {
+	if (m_process.value != INVALID_HANDLE_VALUE)
+	{
+		Command(3);
+		std::puts("pending-runtime: isolated consumers retired; all eight delivery slots recovered");
+		return;
+	}
 	Require(m_verified && !m_complete, "Pending-runtime release is out of order");
 	StopWatchdog();
 	CheckWatchdog();
@@ -459,7 +624,7 @@ void WindowsPendingDelivery::ReleaseAndVerify()
 		vkDestroySemaphore(m_device->binding.device, m_gate, nullptr);
 		m_gate = VK_NULL_HANDLE;
 	}
-	control::LocalControlClient client(ControlEndpoint(), std::chrono::milliseconds(5000));
+	control::LocalControlClient client(ControlEndpoint(m_runtimeProcess), std::chrono::milliseconds(5000));
 	const auto preview = RetainPreview(client);
 	Require(preview.description.completionKind == m_completion, "Recovery changed consumer completion kind");
 	std::array<std::uint64_t, DeliveryCount> deliveries{};

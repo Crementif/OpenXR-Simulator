@@ -1,7 +1,7 @@
 #include "control/legacy/LegacyInput.h"
 #include "Pch.h"
 
-#include "Math.h"
+#include "math/Math.h"
 #include "json.h"
 
 #include <charconv>

@@ -1,6 +1,6 @@
 #include "runtime/validation/LayerValidation.h"
 #include "runtime/validation/StructureChain.h"
-#include "Math.h"
+#include "math/Math.h"
 #include "../TestSupport.h"
 
 #include <array>

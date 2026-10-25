@@ -267,6 +267,22 @@ static void ExerciseMemoryAndSemaphore(VulkanExternalDevice& exporter, VulkanExt
 	auto importedImage = importer.ImportImage(image->Descriptor(), memory);
 	Require(!memory && importedImage->Descriptor().allocationSize == image->Descriptor().allocationSize,
 			"Import exact dedicated allocation and consume caller ownership on success");
+#ifdef _WIN32
+	// Repeat exports while unrelated handles are recycled. Each transfer must
+	// remain independently owned and refer to the original image allocation.
+	for (unsigned iteration = 0; iteration < 64; ++iteration)
+	{
+		auto largerSpec = spec;
+		largerSpec.extent = {256, 256, 1};
+		auto larger = exporter.CreateExportable(largerSpec);
+		auto source = image->ExportMemory();
+		auto recycled = larger->ExportMemory();
+		recycled.Reset();
+		auto imported = importer.ImportImage(image->Descriptor(), source);
+		Require(!source && imported->Descriptor().allocationSize == image->Descriptor().allocationSize,
+				"Recycled Win32 handle changed the imported allocation");
+	}
+#endif
 	auto semaphore = exporter.CreateExportableSemaphore();
 	auto handle = semaphore->ExportOnce();
 	Require(handle && ValidNonInherited(handle.Get()), "Export non-inherited semaphore");
@@ -365,9 +381,19 @@ static bool ExerciseTimeline(VkInstance instance, VkPhysicalDevice physical, std
 	submit.pSignalSemaphores = &signal;
 	CheckSubmission(vkQueueSubmit(consumer.m_device->queue, 1, &submit, VK_NULL_HANDLE),
 					"submit timeline completion proof");
-	bool stayedPending = true;
-	for (int poll = 0; poll < 100; ++poll)
-		stayedPending &= imported->PollCompletion() == CompletionStatus::Pending;
+	std::atomic<bool> stayedPending{true};
+	std::array<std::jthread, 4> readers;
+	for (auto& reader : readers)
+		reader = std::jthread(
+			[&]
+			{
+				for (int poll = 0; poll < 100; ++poll)
+					if (completion->PollCompletion() != CompletionStatus::Pending ||
+						imported->PollCompletion() != CompletionStatus::Pending)
+						stayedPending.store(false);
+			});
+	for (auto& reader : readers)
+		reader.join();
 	auto release = reinterpret_cast<PFN_vkSignalSemaphoreKHR>(
 		vkGetDeviceProcAddr(consumer.m_native, coreTimeline ? "vkSignalSemaphore" : "vkSignalSemaphoreKHR"));
 	VkSemaphoreSignalInfo releaseGate{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO};
@@ -376,7 +402,7 @@ static bool ExerciseTimeline(VkInstance instance, VkPhysicalDevice physical, std
 	if (!release || release(consumer.m_native, &releaseGate) != VK_SUCCESS ||
 		vkQueueWaitIdle(consumer.m_device->queue) != VK_SUCCESS)
 		std::_Exit(1);
-	Require(stayedPending, "Timeline completed while consumer work was gated");
+	Require(stayedPending.load(), "Timeline completed while consumer work was gated");
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 	while (imported->PollCompletion() == CompletionStatus::Pending && std::chrono::steady_clock::now() < deadline)
 		std::this_thread::yield();
@@ -497,7 +523,8 @@ int main(int argc, char** argv)
 	using namespace simxr;
 	using namespace simxr::probe;
 	const bool coreTimeline = argc == 2 && std::strcmp(argv[1], "--core-timeline") == 0;
-	if (argc > 1 && !coreTimeline)
+	const bool timelineOnly = argc == 2 && std::strcmp(argv[1], "--timeline-only") == 0;
+	if (argc > 1 && !coreTimeline && !timelineOnly)
 		return 2;
 	const auto api = coreTimeline ? VK_API_VERSION_1_2 : VK_API_VERSION_1_1;
 	try
@@ -546,7 +573,7 @@ int main(int argc, char** argv)
 							sharedResources = true;
 						}
 						exercised |= ExerciseTimeline(instance.handle, physical, family, api);
-						if (capabilities.CanImport() && capabilities.CanExport())
+						if (!timelineOnly && capabilities.CanImport() && capabilities.CanExport())
 						{
 							Exercise(instance.handle, physical, family);
 							exercised = true;

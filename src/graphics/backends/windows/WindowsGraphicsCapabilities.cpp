@@ -3,9 +3,11 @@
 #include "platform/windows/WindowsLibrary.h"
 
 #include <bit>
+#include <cstring>
 #include <d3d11.h>
 #include <d3d12.h>
 #include <dxgi.h>
+#include <vulkan/vulkan.h>
 #include <wrl/client.h>
 
 namespace simxr::windows
@@ -35,25 +37,58 @@ static XrResult FindAdapter(const WindowsLibrary& dxgi, ComPtr<IDXGIAdapter1>& o
 	ComPtr<IDXGIFactory1> factory;
 	if (FAILED(create(IID_PPV_ARGS(&factory))))
 		return XR_ERROR_RUNTIME_FAILURE;
-	ComPtr<IDXGIAdapter1> adapter;
-	for (UINT index = 0;; ++index)
+	struct Instance
 	{
-		const auto enumerated = factory->EnumAdapters1(index, &adapter);
-		if (enumerated == DXGI_ERROR_NOT_FOUND)
-			return XR_ERROR_SYSTEM_INVALID;
-		if (FAILED(enumerated))
-			return XR_ERROR_RUNTIME_FAILURE;
-		DXGI_ADAPTER_DESC1 candidate{};
-		if (FAILED(adapter->GetDesc1(&candidate)))
-			return XR_ERROR_RUNTIME_FAILURE;
-		if (!(candidate.Flags & DXGI_ADAPTER_FLAG_SOFTWARE))
+		VkInstance handle = VK_NULL_HANDLE;
+		~Instance()
 		{
-			output = std::move(adapter);
-			description = candidate;
-			return XR_SUCCESS;
+			if (handle)
+				vkDestroyInstance(handle, nullptr);
 		}
-		adapter.Reset();
+	} instance;
+	VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+	application.apiVersion = VK_API_VERSION_1_1;
+	VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+	info.pApplicationInfo = &application;
+	if (vkCreateInstance(&info, nullptr, &instance.handle) != VK_SUCCESS)
+		return XR_ERROR_RUNTIME_FAILURE;
+	std::uint32_t count = 0;
+	if (vkEnumeratePhysicalDevices(instance.handle, &count, nullptr) != VK_SUCCESS)
+		return XR_ERROR_RUNTIME_FAILURE;
+	std::vector<VkPhysicalDevice> physical(count);
+	if (vkEnumeratePhysicalDevices(instance.handle, &count, physical.data()) != VK_SUCCESS)
+		return XR_ERROR_RUNTIME_FAILURE;
+	physical.resize(count);
+	// DXGI can expose remote/session adapters with the same name as the real GPU.
+	// Only a matching Vulkan LUID can support the companion's shared images.
+	for (const auto device : physical)
+	{
+		VkPhysicalDeviceIDProperties identity{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
+		VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &identity};
+		vkGetPhysicalDeviceProperties2(device, &properties);
+		if (!identity.deviceLUIDValid)
+			continue;
+		for (UINT index = 0;; ++index)
+		{
+			ComPtr<IDXGIAdapter1> adapter;
+			const auto enumerated = factory->EnumAdapters1(index, &adapter);
+			if (enumerated == DXGI_ERROR_NOT_FOUND)
+				break;
+			if (FAILED(enumerated))
+				return XR_ERROR_RUNTIME_FAILURE;
+			DXGI_ADAPTER_DESC1 candidate{};
+			if (FAILED(adapter->GetDesc1(&candidate)))
+				return XR_ERROR_RUNTIME_FAILURE;
+			if (!(candidate.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) &&
+				!std::memcmp(&candidate.AdapterLuid, identity.deviceLUID, VK_LUID_SIZE))
+			{
+				output = std::move(adapter);
+				description = candidate;
+				return XR_SUCCESS;
+			}
+		}
 	}
+	return XR_ERROR_SYSTEM_INVALID;
 }
 
 XrResult Direct3DAdapterLuid(LUID& output)

@@ -1,7 +1,7 @@
 #include "simulation/LegacyControllerMotion.h"
 #include "Pch.h"
 
-#include "Math.h"
+#include "math/Math.h"
 
 #include <cmath>
 #include <limits>

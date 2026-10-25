@@ -1,5 +1,5 @@
 #include "runtime/SpaceQueries.h"
-#include "Math.h"
+#include "math/Math.h"
 #include "../TestSupport.h"
 
 #include <array>

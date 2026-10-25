@@ -1,6 +1,7 @@
 #pragma once
 
 #include "graphics/SharedImageTypes.h"
+#include "platform/windows/WindowsControl.h"
 
 #include <array>
 #include <atomic>
@@ -22,10 +23,12 @@ class VulkanImageConsumer;
 }
 namespace probe
 {
+int RunWindowsPendingConsumer(bool gated, std::uint32_t runtimeProcess);
+
 class WindowsPendingDelivery
 {
   public:
-	explicit WindowsPendingDelivery(bool gated = false);
+	explicit WindowsPendingDelivery(bool gated = false, std::uint32_t runtimeProcess = 0);
 	~WindowsPendingDelivery();
 	WindowsPendingDelivery(const WindowsPendingDelivery&) = delete;
 	WindowsPendingDelivery& operator=(const WindowsPendingDelivery&) = delete;
@@ -38,6 +41,9 @@ class WindowsPendingDelivery
   private:
 	static constexpr std::size_t DeliveryCount = 8;
 	const bool m_gated;
+	const std::uint32_t m_runtimeProcess;
+	control::windows::Handle m_pipe, m_process;
+	void Command(std::uint8_t command) const;
 	std::shared_ptr<VulkanDevice> m_device;
 	std::vector<const char*> m_extensions;
 	std::array<std::unique_ptr<control::VulkanImageConsumer>, DeliveryCount> m_consumers;

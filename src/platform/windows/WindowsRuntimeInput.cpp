@@ -1,7 +1,7 @@
 #include "platform/windows/WindowsRuntimeInput.h"
 #include "Pch.h"
 
-#include "Math.h"
+#include "math/Math.h"
 #include "control/legacy/WindowsLegacyChannel.h"
 #include "control/legacy/WindowsRuntimeSettings.h"
 #include "platform/windows/WindowsClock.h"

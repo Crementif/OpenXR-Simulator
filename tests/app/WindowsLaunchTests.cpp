@@ -109,7 +109,8 @@ RuntimeRegistration ReadRuntimeRegistration(HKEY root)
 	result.exists = true;
 	result.bytes.resize(size);
 	status = RegGetValueW(root, key, L"ActiveRuntime", flags, &result.type, result.bytes.data(), &size);
-	Require(status == ERROR_SUCCESS && size == result.bytes.size(), "Read unchanged runtime registration");
+	Require(status == ERROR_SUCCESS && size <= result.bytes.size(), "Read runtime registration");
+	result.bytes.resize(size);
 	return result;
 }
 RuntimeRegistration ManifestRegistration(const std::filesystem::path& path)

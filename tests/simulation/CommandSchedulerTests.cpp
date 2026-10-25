@@ -1,5 +1,5 @@
 #include "../TestSupport.h"
-#include "Math.h"
+#include "math/Math.h"
 #include "runtime/Session.h"
 #include "simulation/CommandScheduler.h"
 #include "simulation/CommandState.h"

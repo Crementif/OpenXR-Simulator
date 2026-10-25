@@ -1,6 +1,6 @@
 #include "simulation/ViewConfiguration.h"
 #include "simulation/TrackingSystem.h"
-#include "Math.h"
+#include "math/Math.h"
 #include "../TestSupport.h"
 
 #include <cmath>

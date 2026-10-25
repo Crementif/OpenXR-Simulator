@@ -1,5 +1,5 @@
 #include "../TestSupport.h"
-#include "Math.h"
+#include "math/Math.h"
 #include "app/widgets/AppPicker.h"
 #include "app/widgets/DeviceRail.h"
 #include "app/widgets/Theme.h"
@@ -47,6 +47,10 @@
 #include <SDL3/SDL.h>
 #ifdef _WIN32
 #include "app/platform/windows/LaunchSupport.h"
+
+// The static SDL test dependency exposes its event-injection entry points.
+extern "C" bool SDL_SetKeyboardFocus(SDL_Window* window);
+extern "C" void SDL_SetMouseFocus(SDL_Window* window);
 #endif
 #ifdef __linux__
 #include <csignal>
@@ -2932,6 +2936,18 @@ void CheckPreviewPilot(Interaction& test)
 	};
 	Require(SDL_ShowWindow(test.window.Native()), "Show isolated pilot window");
 	SDL_RaiseWindow(test.window.Native());
+#ifdef _WIN32
+	if (std::getenv("SIMXR_SESSION_ZERO_INPUT"))
+	{
+		DWORD session = ~DWORD{0};
+		Require(ProcessIdToSessionId(GetCurrentProcessId(), &session) && session == 0,
+			"Synthetic focus is restricted to isolated Windows session 0");
+		pump(3);
+		Require(SDL_SetKeyboardFocus(test.window.Native()), "Inject isolated SDL keyboard focus");
+		SDL_SetMouseFocus(test.window.Native());
+		std::cout << "QA input uses injected SDL focus in session 0; physical foreground input is unqualified\n";
+	}
+#endif
 	Eventually(
 		[&]
 		{

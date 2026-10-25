@@ -1,6 +1,7 @@
 #include "app/services/UndoStack.h"
 #include "../TestSupport.h"
-#include "Math.h"
+#include "math/Math.h"
+#include <algorithm>
 #include "app/services/PlayerRig.h"
 #include "simulation/CommandScheduler.h"
 #include "simulation/TrackingSystem.h"

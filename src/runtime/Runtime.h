@@ -55,7 +55,8 @@ class Runtime
 	HandleRegistry<XrInstance, Instance, std::uint32_t> m_instances;
 	HandleRegistry<XrSession, Session, XrInstance> m_sessions;
 	struct DebugService;
-	std::unordered_map<XrSession, std::shared_ptr<DebugService>> m_debuggers;
+	using DebugServices = std::unordered_map<XrSession, std::shared_ptr<DebugService>>;
+	std::unique_ptr<DebugServices> m_debuggers = std::make_unique<DebugServices>();
 	GameBridge m_game;
 	bool m_closed = false;
 };

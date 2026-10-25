@@ -1,7 +1,7 @@
 #include "runtime/extensions/EyeGazeInteraction.h"
 #include "runtime/extensions/TrackerInteraction.h"
 #include "simulation/SpaceSystem.h"
-#include "Math.h"
+#include "math/Math.h"
 #include "../../TestSupport.h"
 
 #include <algorithm>

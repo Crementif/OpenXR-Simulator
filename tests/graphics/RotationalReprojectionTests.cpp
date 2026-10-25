@@ -1,5 +1,5 @@
 #include "../TestSupport.h"
-#include "Math.h"
+#include "math/Math.h"
 #include "graphics/RotationalReprojection.h"
 #include "simulation/SpaceSystem.h"
 

@@ -36,6 +36,7 @@
 namespace
 {
 thread_local std::size_t failAllocationSize = 0;
+thread_local std::size_t lastAllocationSize = 0;
 thread_local int skipMatchingAllocations = 0;
 thread_local bool allocationFailed = false;
 thread_local bool failNextAllocation = false;
@@ -58,6 +59,7 @@ struct MatchingAllocationFailure
 } // namespace
 void* operator new(std::size_t size)
 {
+	lastAllocationSize = size;
 	if (std::exchange(failNextAllocation, false))
 	{
 		allocationFailed = true;
@@ -775,7 +777,9 @@ void InspectionResponseAllocationRollback()
 	fields.push_back(wire::Field::U64(wire::tag::CaptureId, capture));
 	const auto baseline = client.Call(wire::OpCode::InspectFrame, fields);
 	Require(Error(baseline) == wire::ErrorCode::Ok, "Prepare inspection allocation regression");
-	const auto size = baseline.Find(wire::tag::Document)->value.size();
+	// Measure the vector allocation, including any standard-library alignment overhead.
+	const auto document = baseline.Find(wire::tag::Document)->value;
+	const auto size = lastAllocationSize;
 	const auto firstId = U64(baseline, wire::tag::InspectionId);
 	Require(client.Call(wire::OpCode::ReleaseInspection, {wire::Field::U64(wire::tag::InspectionId, firstId)})
 					.Find(wire::tag::Released)

@@ -5,6 +5,7 @@
 #include "graphics/backends/d3d11/D3D11VulkanImport.h"
 #include "graphics/backends/d3d12/D3D12VulkanImport.h"
 #include "graphics/backends/windows/WindowsSessionGraphics.h"
+#include "graphics/backends/windows/WindowsGraphicsCapabilities.h"
 #include "runtime/Session.h"
 #include "runtime/Instance.h"
 #include "graphics/backends/vulkan/VulkanBackend.h"
@@ -44,10 +45,36 @@ void Check(HRESULT result)
 		throw std::runtime_error("Direct3D failure: " + std::to_string(result));
 }
 
+static ComPtr<IDXGIAdapter1> TestAdapter()
+{
+	ComPtr<IDXGIAdapter1> adapter;
 #ifdef SIMXR_TEST_D3D11_VULKAN
-template<typename Frame>
-void VerifyVulkan(const std::shared_ptr<Frame>& source, bool mipChain = false,
-	VkExtent2D expected = {8, 8}, std::uint32_t layers = 2, int grayscale = -1)
+	LUID luid{};
+	if (XR_FAILED(windows::Direct3DAdapterLuid(luid)))
+		throw std::runtime_error("No shared Direct3D/Vulkan adapter");
+	ComPtr<IDXGIFactory1> factory;
+	Check(CreateDXGIFactory1(IID_PPV_ARGS(&factory)));
+	for (UINT index = 0;; ++index)
+	{
+		Check(factory->EnumAdapters1(index, &adapter));
+		DXGI_ADAPTER_DESC1 description{};
+		Check(adapter->GetDesc1(&description));
+		if (!std::memcmp(&description.AdapterLuid, &luid, sizeof(luid)))
+			break;
+		adapter.Reset();
+	}
+#else
+	ComPtr<IDXGIFactory1> factory;
+	Check(CreateDXGIFactory1(IID_PPV_ARGS(&factory)));
+	Check(factory->EnumAdapters1(0, &adapter));
+#endif
+	return adapter;
+}
+
+#ifdef SIMXR_TEST_D3D11_VULKAN
+template <typename Frame>
+void VerifyVulkan(const std::shared_ptr<Frame>& source, bool mipChain = false, VkExtent2D expected = {8, 8},
+				  std::uint32_t layers = 2, int grayscale = -1)
 {
 	probe::Instance instance;
 	instance.Create();
@@ -57,9 +84,42 @@ void VerifyVulkan(const std::shared_ptr<Frame>& source, bool mipChain = false,
 	CheckVulkan(vkEnumeratePhysicalDevices(instance.handle, &count, physical.data()), "Enumerate import devices");
 	if (physical.empty())
 		throw std::runtime_error("No Vulkan device for D3D11 import");
-	vkGetPhysicalDeviceQueueFamilyProperties(physical.front(), &count, nullptr);
+	const auto adapterLuid = [&]()
+	{
+		if constexpr (std::is_same_v<Frame, D3D11Frame>)
+		{
+			ComPtr<ID3D11Device> device;
+			source->Texture()->GetDevice(&device);
+			ComPtr<IDXGIDevice> dxgi;
+			ComPtr<IDXGIAdapter> adapter;
+			DXGI_ADAPTER_DESC description{};
+			Check(device.As(&dxgi));
+			Check(dxgi->GetAdapter(&adapter));
+			Check(adapter->GetDesc(&description));
+			return description.AdapterLuid;
+		}
+		else
+		{
+			ComPtr<ID3D12Device> device;
+			Check(source->Texture()->GetDevice(IID_PPV_ARGS(&device)));
+			return device->GetAdapterLuid();
+		}
+	}();
+	const auto matching = std::find_if(
+		physical.begin(), physical.end(),
+		[&](VkPhysicalDevice candidate)
+		{
+			VkPhysicalDeviceIDProperties identity{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
+			VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &identity};
+			vkGetPhysicalDeviceProperties2(candidate, &properties);
+			return identity.deviceLUIDValid && !std::memcmp(identity.deviceLUID, &adapterLuid, VK_LUID_SIZE);
+		});
+	if (matching == physical.end())
+		throw std::runtime_error("No Vulkan device matches the Direct3D source adapter");
+	const auto importDevice = *matching;
+	vkGetPhysicalDeviceQueueFamilyProperties(importDevice, &count, nullptr);
 	std::vector<VkQueueFamilyProperties> families(count);
-	vkGetPhysicalDeviceQueueFamilyProperties(physical.front(), &count, families.data());
+	vkGetPhysicalDeviceQueueFamilyProperties(importDevice, &count, families.data());
 	std::uint32_t family = 0;
 	while (family < count && !(families[family].queueFlags & VK_QUEUE_GRAPHICS_BIT))
 		++family;
@@ -71,10 +131,10 @@ void VerifyVulkan(const std::shared_ptr<Frame>& source, bool mipChain = false,
 	queue.queueCount = 1;
 	queue.pQueuePriorities = &priority;
 	const std::array extensions{VulkanExternalMemoryExtension, VulkanExternalSemaphoreExtension,
-		VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME};
+								VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME};
 	VkPhysicalDeviceTimelineSemaphoreFeatures timeline{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
 	VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &timeline};
-	vkGetPhysicalDeviceFeatures2(physical.front(), &features);
+	vkGetPhysicalDeviceFeatures2(importDevice, &features);
 	if (!timeline.timelineSemaphore)
 		throw std::runtime_error("Native compositor import requires timeline semaphores");
 	VkDeviceCreateInfo create{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &timeline};
@@ -94,9 +154,8 @@ void VerifyVulkan(const std::shared_ptr<Frame>& source, bool mipChain = false,
 			}
 		}
 	} native;
-	CheckVulkan(vkCreateDevice(physical.front(), &create, nullptr, &native.device), "Create import device");
-	VulkanBackend backend({instance.handle, physical.front(), native.device, family, 0}, 8, extensions,
-		VK_API_VERSION_1_1);
+	CheckVulkan(vkCreateDevice(importDevice, &create, nullptr, &native.device), "Create import device");
+	VulkanBackend backend({instance.handle, importDevice, native.device, family, 0}, 8, extensions, VK_API_VERSION_1_1);
 	auto imported = [&]()
 	{
 		if constexpr (std::is_same_v<Frame, D3D11Frame>)
@@ -540,7 +599,7 @@ void VerifySessionCaptures(ID3D11Device* device, ID3D11Texture2D* texture, DXGI_
 void VerifyD3D12()
 {
 	ComPtr<ID3D12Device> device;
-	Check(D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device)));
+	Check(D3D12CreateDevice(TestAdapter().Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device)));
 	D3D12_COMMAND_QUEUE_DESC queueDescription{};
 	queueDescription.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
 	ComPtr<ID3D12CommandQueue> queue;
@@ -750,7 +809,7 @@ int main(int argc, char**)
 #endif
 		ComPtr<ID3D11Device> device;
 		ComPtr<ID3D11DeviceContext> context;
-		Check(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0,
+		Check(D3D11CreateDevice(TestAdapter().Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, 0, nullptr, 0,
 			D3D11_SDK_VERSION, &device, nullptr, &context));
 		D3D11Backend backend(device.Get());
 		for (const auto [samples, resourceFormat, viewFormat] : ColorSources)
@@ -816,7 +875,7 @@ int main(int argc, char**)
 			ComPtr<ID3D11Texture2D> staging;
 			ComPtr<ID3D11Device> consumer;
 			ComPtr<ID3D11DeviceContext> consumerContext;
-			Check(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0,
+			Check(D3D11CreateDevice(TestAdapter().Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, 0, nullptr, 0,
 				D3D11_SDK_VERSION, &consumer, nullptr, &consumerContext));
 			ComPtr<ID3D11Device5> consumerDevice;
 			ComPtr<ID3D11DeviceContext4> consumerQueue;

@@ -136,10 +136,10 @@ XrResult Runtime::DestroySession(XrSession handle)
 		if (!retired)
 			return XR_ERROR_HANDLE_INVALID;
 		m_sessions.Erase(handle);
-		if (const auto entry = m_debuggers.find(handle); entry != m_debuggers.end())
+		if (const auto entry = m_debuggers->find(handle); entry != m_debuggers->end())
 		{
 			debugger = std::move(entry->second);
-			m_debuggers.erase(entry);
+			m_debuggers->erase(entry);
 		}
 	}
 	retired->Close();
@@ -166,10 +166,10 @@ XrResult Runtime::DestroyInstance(XrInstance handle)
 		for (auto child : children)
 		{
 			m_sessions.Erase(child);
-			if (const auto entry = m_debuggers.find(child); entry != m_debuggers.end())
+			if (const auto entry = m_debuggers->find(child); entry != m_debuggers->end())
 			{
 				debuggers.push_back(std::move(entry->second));
-				m_debuggers.erase(entry);
+				m_debuggers->erase(entry);
 			}
 		}
 		m_instances.Erase(handle);
@@ -225,9 +225,9 @@ std::shared_ptr<DebugController> Runtime::Debugger(XrSession handle, const Debug
 		session = m_sessions.Find(handle);
 		if (!session || m_closed)
 			return {};
-		auto entry = m_debuggers.find(handle);
-		if (entry == m_debuggers.end())
-			entry = m_debuggers.emplace(handle, std::make_shared<DebugService>()).first;
+		auto entry = m_debuggers->find(handle);
+		if (entry == m_debuggers->end())
+			entry = m_debuggers->emplace(handle, std::make_shared<DebugService>()).first;
 		debugger = entry->second;
 	}
 	return debugger->Get(session, configuration);
@@ -238,10 +238,12 @@ void Runtime::CloseDebugger(XrSession handle)
 	std::shared_ptr<DebugService> debugger;
 	{
 		std::lock_guard lock(m_mutex);
-		if (const auto entry = m_debuggers.find(handle); entry != m_debuggers.end())
+		if (!m_debuggers)
+			return;
+		if (const auto entry = m_debuggers->find(handle); entry != m_debuggers->end())
 		{
 			debugger = std::move(entry->second);
-			m_debuggers.erase(entry);
+			m_debuggers->erase(entry);
 		}
 	}
 	if (debugger)
@@ -252,14 +254,14 @@ void Runtime::Close()
 {
 	decltype(m_instances)::Retired instances;
 	decltype(m_sessions)::Retired sessions;
-	std::unordered_map<XrSession, std::shared_ptr<DebugService>> debuggers;
+	std::unique_ptr<DebugServices> debuggers;
 	{
 		std::lock_guard lock(m_mutex);
 		if (m_closed)
 			return;
 		instances = m_instances.RetireAll();
 		sessions = m_sessions.RetireAll();
-		debuggers.swap(m_debuggers);
+		debuggers = std::move(m_debuggers);
 		m_closed = true;
 	}
 	m_game.Close();
@@ -268,7 +270,7 @@ void Runtime::Close()
 		{
 			session->Close();
 		});
-	for (auto& [handle, debugger] : debuggers)
+	for (auto& [handle, debugger] : *debuggers)
 		debugger->Close();
 }
 } // namespace simxr

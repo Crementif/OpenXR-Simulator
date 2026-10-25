@@ -27,7 +27,7 @@ bool RuntimeEndpointExists(const std::string& endpoint)
 	if (search == INVALID_HANDLE_VALUE)
 	{
 		const auto error = GetLastError();
-		if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND)
+		if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND || error == ERROR_NO_MORE_FILES)
 			return false;
 		if (error == ERROR_ACCESS_DENIED)
 			return true;
@@ -97,7 +97,8 @@ std::vector<std::string> DiscoverRuntimeEndpoints(bool includeExplicit)
 		if (GetLastError() != ERROR_NO_MORE_FILES)
 			throw std::runtime_error("Cannot enumerate runtime processes");
 	}
-	else if (searchError != ERROR_FILE_NOT_FOUND && searchError != ERROR_PATH_NOT_FOUND)
+	else if (searchError != ERROR_FILE_NOT_FOUND && searchError != ERROR_PATH_NOT_FOUND &&
+			 searchError != ERROR_NO_MORE_FILES)
 		throw windows::Error("Cannot discover runtime endpoints", searchError);
 	std::sort(result.begin(), result.end());
 	result.erase(std::unique(result.begin(), result.end()), result.end());

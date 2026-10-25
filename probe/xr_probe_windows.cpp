@@ -4,6 +4,7 @@
 #define XR_USE_GRAPHICS_API_OPENGL
 #include "Pch.h"
 #include "WindowsRuntimeModule.h"
+#include <windows.h>
 #include <GL/gl.h>
 #include <GL/glext.h>
 #include <bit>
@@ -21,7 +22,6 @@
 #include <openxr/openxr_platform.h>
 #include <span>
 #include <stdexcept>
-#include <windows.h>
 #include <wrl/client.h>
 
 namespace simxr::probe

@@ -1,6 +1,6 @@
 #include "Pch.h"
 
-#include "Math.h"
+#include "math/Math.h"
 #include "VulkanImageDeliveryProbe.h"
 #include "VulkanProbeInstance.h"
 #include "VulkanReprojectionProbe.h"
