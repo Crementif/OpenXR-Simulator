@@ -114,6 +114,7 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 	ImGui::SetCursorScreenPos({minimum.x + 5 * scale, minimum.y + 5 * scale});
 	if (ImGui::Button("##View", {textWidth + padding * 2 + height * .6f, height}))
 		ImGui::OpenPopup("Rig views");
+	bool headerHovered = ImGui::IsItemHovered();
 	ImGui::SetItemTooltip("Choose a camera view. Double-click to return to Back.");
 	{
 		auto* header = ImGui::GetWindowDrawList();
@@ -144,9 +145,11 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 	if (IconButton("Expand", Icon::Fullscreen,
 				   state.expanded ? "Back to the inspector" : "Show the rig in the image area", state.expanded))
 		state.expanded = !state.expanded;
+	headerHovered |= ImGui::IsItemHovered();
 	ImGui::SetCursorScreenPos({minimum.x + 5 * scale, maximum.y - ImGui::GetFrameHeight() - 4 * scale});
 	if (ImGui::SmallButton("?##Rig help"))
 		ImGui::OpenPopup("Rig help");
+	headerHovered |= ImGui::IsItemHovered();
 	ImGui::SetItemTooltip("Camera controls, device handles and undo");
 	if (ImGui::BeginPopup("Rig help"))
 	{
@@ -157,7 +160,6 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 		ImGui::TextDisabled("Ctrl+Z undoes. Camera moves never change devices.");
 		ImGui::EndPopup();
 	}
-	const bool headerHovered = ImGui::IsAnyItemHovered();
 	const auto camera = RigCamera(state, scene, size.x / size.y, 30 * scale / size.y);
 	const float tanLeft = std::tan(camera.fov.angleLeft), tanRight = std::tan(camera.fov.angleRight);
 	const float tanUp = std::tan(camera.fov.angleUp), tanDown = std::tan(camera.fov.angleDown);
@@ -424,13 +426,13 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 		state.panning = true;
 	state.orbiting &= ImGui::IsMouseDown(ImGuiMouseButton_Left);
 	state.panning &= ImGui::IsMouseDown(ImGuiMouseButton_Middle);
-	if (state.orbiting)
+	if (state.orbiting && !ImGui::IsMouseClicked(ImGuiMouseButton_Left))
 	{
 		state.eye = false;
 		state.yaw -= input.MouseDelta.x * .01f;
 		state.pitch = std::clamp(state.pitch - input.MouseDelta.y * .01f, -1.56f, 1.56f);
 	}
-	if (state.panning)
+	if (state.panning && !ImGui::IsMouseClicked(ImGuiMouseButton_Middle))
 	{
 		state.eye = false;
 		const auto delta = Rotate(camera.pose.orientation, {-input.MouseDelta.x * state.distance * .001f,

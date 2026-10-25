@@ -1653,6 +1653,90 @@ void CheckDocumentTreeIdentity()
 	std::cout << "PASS inspection tree sibling identity across expansion and collapse\n";
 }
 
+void CheckRigPointer()
+{
+	Interaction test;
+	IgnoreRealPointer();
+	RigViewState state;
+	auto scene = SpatialScene::FromTracking(simxr::TrackingSystem::Evaluate(
+		simxr::RuntimeTime{simxr::Duration{200}}, simxr::TrackingState{}, simxr::BodyModel{}));
+	int selected = -1;
+	const auto frame = [&]
+	{
+		Eventually(
+			[&]
+			{
+				return test.PollEvents() && test.renderer.BeginFrame();
+			},
+			"Rig pointer fixture stalled");
+		ImGui::SetNextWindowPos({20, 20}, ImGuiCond_Always);
+		ImGui::SetNextWindowSize({500, 500}, ImGuiCond_Always);
+		ImGui::Begin("Rig pointer");
+		RigView("Rig", state, scene, selected, {}, {440, 400});
+		ImGui::End();
+		Require(test.renderer.Render(), "Rig pointer fixture did not render");
+	};
+	frame();
+	frame();
+	ImGui::SetWindowFocus("Rig pointer");
+	const auto move = [&](float x, float y)
+	{
+		SDL_WarpMouseInWindow(test.window.Native(), x, y);
+		SDL_Event event{};
+		event.type = SDL_EVENT_MOUSE_MOTION;
+		event.motion.windowID = SDL_GetWindowID(test.window.Native());
+		event.motion.which = TestMouse;
+		event.motion.x = x;
+		event.motion.y = y;
+		Require(SDL_PushEvent(&event), "Push absolute rig motion");
+	};
+	const auto press = [&](int button, bool down)
+	{
+		SDL_Event event{};
+		event.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+		event.button.windowID = SDL_GetWindowID(test.window.Native());
+		event.button.which = TestMouse;
+		event.button.button = button == ImGuiMouseButton_Left ? SDL_BUTTON_LEFT : SDL_BUTTON_MIDDLE;
+		event.button.down = down;
+		Require(SDL_PushEvent(&event), "Push rig button");
+	};
+	for (const auto button : {ImGuiMouseButton_Left, ImGuiMouseButton_Middle})
+	{
+		move(state.minimum.x + 100, state.minimum.y + 320);
+		frame();
+		const auto yaw = state.yaw;
+		const auto pan = state.pan;
+		const ImVec2 start{state.minimum.x + 350, state.minimum.y + 320};
+		move(start.x, start.y);
+		press(button, true);
+		frame();
+		Require(state.yaw == yaw && state.pan.x == pan.x && state.pan.y == pan.y && state.pan.z == pan.z,
+				"Rig jumped from movement before the mouse press");
+		move(start.x + 20, start.y + 10);
+		frame();
+		Require(button == ImGuiMouseButton_Left ? state.yaw != yaw : state.pan.x != pan.x,
+				"Absolute pointer drag did not move the rig camera");
+		press(button, false);
+		frame();
+		const auto stoppedYaw = state.yaw;
+		const auto stoppedPan = state.pan;
+		move(start.x - 20, start.y - 10);
+		frame();
+		Require(state.yaw == stoppedYaw && state.pan.x == stoppedPan.x, "Rig camera moved after release");
+	}
+	const auto head = state.points[0];
+	move(head.x, head.y);
+	press(ImGuiMouseButton_Left, true);
+	frame();
+	Require(selected == 0 && !state.orbiting, "Absolute pointer click did not select the head");
+	press(ImGuiMouseButton_Left, false);
+	frame();
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Rig pointer validation errors");
+	SDL_SetEventFilter(nullptr, nullptr);
+	std::cout << "PASS absolute rig clicks, orbit and pan without press jumps\n";
+}
+
 void CheckCapturedRig()
 {
 	using namespace simxr;
@@ -6403,6 +6487,11 @@ int main()
 
 
 #ifdef __linux__
+		if (std::getenv("SIMXR_RIG_POINTER_QA"))
+		{
+			CheckRigPointer();
+			return 0;
+		}
 		if (const auto endpoint = std::getenv("SIMXR_UI_PILOT_ENDPOINT"))
 		{
 			PilotLiveRuntime(endpoint);
