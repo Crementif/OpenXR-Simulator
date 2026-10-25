@@ -258,11 +258,11 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 		if (onNose)
 			ImGui::SetTooltip("Turn this device toward the rig camera");
 		else if (hoveredRing >= 0)
-			ImGui::SetTooltip("%s", hoveredRing == 0   ? "Drag to turn (yaw); Ctrl snaps to 15 degrees"
-									: hoveredRing == 1 ? "Drag to tilt (pitch); Ctrl snaps to 15 degrees"
-													   : "Drag to roll; Ctrl snaps to 15 degrees");
+			ImGui::SetTooltip("%s", hoveredRing == 0   ? "Drag to turn (yaw). Ctrl snaps to 15 degrees"
+									: hoveredRing == 1 ? "Drag to tilt (pitch). Ctrl snaps to 15 degrees"
+													   : "Drag to roll. Ctrl snaps to 15 degrees");
 		else if (distance <= 1)
-			ImGui::SetTooltip("Drag to rotate; the wheel rolls.\nDouble-click resets; Ctrl snaps.");
+			ImGui::SetTooltip("Drag to rotate. The wheel rolls.\nDouble-click resets. Ctrl snaps.");
 	}
 	bool changed = false;
 	if (enabled && hovered && distance <= 1 && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
@@ -350,7 +350,7 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 			fieldEdited = true;
 			fieldFinished = true;
 		}
-		ImGui::SetItemTooltip("%s\nMiddle-click resets; Ctrl+wheel nudges.",
+		ImGui::SetItemTooltip("%s\nMiddle-click resets. Ctrl+wheel nudges.",
 							  index == 0   ? "Turn left or right relative to what it follows"
 							  : index == 1 ? "Tilt up or down"
 										   : "Roll around its pointing axis");

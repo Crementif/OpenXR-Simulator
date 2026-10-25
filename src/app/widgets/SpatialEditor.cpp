@@ -233,7 +233,7 @@ void SpatialEditor::Submit(bool final)
 		m_editing = !final;
 	}
 	else
-		m_error = "Pose rejected — retry";
+		m_error = "Could not change the pose. Try again.";
 }
 void SpatialEditor::ApplyResult(const SpatialEditResult& result, int device, XrPosef pose)
 {
@@ -340,8 +340,8 @@ std::array<ShellRect, 7> SpatialEditor::RigDevicePoints() const
 void SpatialEditor::DrawSpaceToggle()
 {
 	if (IconButton("Gizmo space", m_view.gizmo.local ? Icon::Axes : Icon::Globe,
-				   m_view.gizmo.local ? "Gizmo axes: local. Space cycles move, rotate or both; Ctrl snaps."
-									  : "Gizmo axes: world. Space cycles move, rotate or both; Ctrl snaps."))
+				   m_view.gizmo.local ? "Local axes. Space selects move, rotate or both. Ctrl snaps."
+									  : "World axes. Space selects move, rotate or both. Ctrl snaps."))
 		m_view.gizmo.local = !m_view.gizmo.local;
 	for (auto& gizmo : m_previewGizmos)
 		gizmo.local = m_view.gizmo.local;

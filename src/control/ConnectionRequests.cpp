@@ -61,7 +61,7 @@ ConnectionRequests::Exchange::Exchange(ConnectionRequests& owner, const ControlP
 		if (message.requestId != owner.m_lastIdentity || m_payload != owner.m_lastPayload || !owner.m_lastResponse)
 		{
 			Reject(ErrorCode::Conflict,
-				   "Request identity retired or changed; use a new request ID with the original command ID");
+				   "This request ID expired or changed. Use a new request ID with the original command ID.");
 			return;
 		}
 		if (!request.handles.empty())

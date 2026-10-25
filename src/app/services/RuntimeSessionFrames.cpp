@@ -224,7 +224,7 @@ bool RuntimeSession::RequestExport(std::string path)
 	if (!image || !image->reader || image->scope.epoch != m_requests.Epoch() ||
 		!m_exports.Request(image->reader, std::move(path)))
 	{
-		Notify("Image not exportable", "Retain an exact source image before requesting export");
+		Notify("Image not exportable", "Select a saved image before exporting.");
 		return false;
 	}
 	return true;

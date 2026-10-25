@@ -187,7 +187,7 @@ bool PreviewPanel::DrawCorner(const PreviewImageSummary& image, bool live, bool 
 	const float primaryHeight = std::ceil(padding.y * 2 + rowHeight);
 	std::string header = live ? "" : "PAST";
 	if (const auto label = ImageLabel(image); !label.empty())
-		header += (header.empty() ? "" : " · ") + label;
+		header += (header.empty() ? "" : ", ") + label;
 	const float headerHeight = header.empty() ? 0 : ImGui::GetFontSize() + style.ItemSpacing.y;
 	const bool showHeader = headerHeight && primaryHeight + headerHeight <= ImGui::GetWindowHeight();
 	const float panelHeight = std::min(primaryHeight + (showHeader ? headerHeight : 0), ImGui::GetWindowHeight());
@@ -442,7 +442,7 @@ void PreviewPanel::DrawViewButton(const PreviewImageSummary& image, bool imageVi
 	}
 	ImGui::EndDisabled();
 	if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled))
-		ImGui::SetTooltip("%s", imageVisible ? "Drag over the image; the region stays while you step and scrub frames"
+		ImGui::SetTooltip("%s", imageVisible ? "Drag over the image. The region stays while you step and scrub frames"
 											 : "Return to the image to pick a region");
 	if (m_crop)
 	{
@@ -478,7 +478,7 @@ void PreviewPanel::PickCrop(const ImageArea& area, bool hovered)
 	auto* draw = area.window->DrawList;
 	draw->PushClipRect(area.window->InnerClipRect.Min, area.window->InnerClipRect.Max, false);
 	draw->AddRectFilled(imageMin, imageMax, theme::Fade(theme::Bg, .35f));
-	const char* hint = m_pickStart ? "Release to pin this region" : "Drag a region to pin it · Esc cancels";
+	const char* hint = m_pickStart ? "Release to pin this region" : "Drag to select a region. Esc cancels.";
 	const float inset = 8 * ImGui::GetFontSize() / 17;
 	const float hintWidth = std::max(1.0f, std::min(imageMax.x, area.window->InnerClipRect.Max.x) -
 											   std::max(imageMin.x, area.window->InnerClipRect.Min.x) - inset * 2);

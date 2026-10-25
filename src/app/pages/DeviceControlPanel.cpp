@@ -200,14 +200,14 @@ std::optional<SimulationEdit> DeviceControlPanel::DrawHeader(const Selection& se
 		if (ImGui::Button("Reset all"))
 			ResetPage(page);
 		ImGui::EndDisabled();
-		ImGui::SetItemTooltip("Player, devices, body and trackers back to defaults. Settings stay.");
+		ImGui::SetItemTooltip("Restore device defaults.");
 	}
 	else
 	{
 		ImGui::SameLine(right - ImGui::GetFrameHeight());
 		ImGui::BeginDisabled(!ready);
 		const std::string tip =
-			std::string("Restore defaults for ") + titles[static_cast<int>(page)] + "; other pages stay";
+			std::string("Restore defaults for ") + titles[static_cast<int>(page)] + ". Other pages are unchanged.";
 		if (IconButton("Reset page", Icon::ResetPose, tip.c_str()))
 			ResetPage(page);
 		ImGui::EndDisabled();

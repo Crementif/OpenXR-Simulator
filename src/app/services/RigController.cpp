@@ -20,7 +20,7 @@ static std::string LoadScript(const std::filesystem::path& path)
 	std::error_code error;
 	const auto size = std::filesystem::file_size(path, error);
 	if (error || !size || size > wire::MaxPayload)
-		throw std::runtime_error("Rig script must be a readable file of 1–1048576 bytes");
+		throw std::runtime_error("Cannot read the script. Choose a nonempty file up to 1 MiB.");
 	std::string source(static_cast<std::size_t>(size), '\0');
 	std::ifstream input(path, std::ios::binary);
 	if (!input.read(source.data(), static_cast<std::streamsize>(source.size())) ||

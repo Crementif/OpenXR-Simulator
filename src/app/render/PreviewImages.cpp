@@ -459,7 +459,7 @@ void PreviewImages::Poll()
 			}
 			else if (phase == CompletionStatus::Failed)
 			{
-				m_error = "Native image copy failed; actual GPU owners remain retained";
+				m_error = "Could not copy the image. Its GPU memory is kept until it is safe to free.";
 				image->release = true;
 			}
 		}

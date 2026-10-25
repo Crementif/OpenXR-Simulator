@@ -33,7 +33,7 @@ void RangePage::SaveTake(const RangeSel& range, std::size_t first, std::size_t l
 			if (const auto* sample = m_session.InputSamples().Find(history.At(index).input))
 				samples.push_back(sample);
 			else
-				throw std::runtime_error("Input is missing from this range; select frames with retained input");
+				throw std::runtime_error("Some input is missing. Select frames with saved input.");
 		const auto take = TakeFromInput(samples);
 		std::filesystem::create_directories(directory);
 		SaveRecording(path, take, replace);
@@ -65,7 +65,7 @@ std::optional<automation::SavedRecording> RangePage::Draw(const RangeSel& range,
 	const auto& history = m_session.History();
 	const auto first = history.Find(range.first, range.epoch), last = history.Find(range.last, range.epoch);
 	const std::string title =
-		"Frames " + std::to_string(range.first.frame) + " \u2013 " + std::to_string(range.last.frame);
+		"Frames " + std::to_string(range.first.frame) + " to " + std::to_string(range.last.frame);
 	PageTitle(Icon::Crop, title.c_str());
 	if (PageClose())
 		shell.selection = std::monostate{};

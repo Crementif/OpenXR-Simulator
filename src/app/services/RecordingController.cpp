@@ -243,7 +243,7 @@ automation::SavedRecording OpenSavedRecording(const std::string& path)
 	std::error_code error;
 	const auto size = std::filesystem::file_size(Utf8Path(path), error);
 	if (error || size == 0 || size > control::MaxPayload)
-		throw std::runtime_error("Recording must be a readable file of 1–1048576 bytes");
+		throw std::runtime_error("Cannot read the recording. Choose a nonempty file up to 1 MiB.");
 	std::ifstream input(Utf8Path(path), std::ios::binary);
 	if (!input)
 		throw std::runtime_error("Cannot open saved recording");

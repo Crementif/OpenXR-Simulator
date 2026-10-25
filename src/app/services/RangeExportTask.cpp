@@ -74,7 +74,7 @@ bool RangeExportTask::Start(FrameIdentity first, FrameIdentity last, std::uint64
 		const auto& history = m_session.History();
 		const auto begin = history.Find(first, epoch), end = history.Find(last, epoch);
 		if (!begin || !end || *end < *begin || first.session != last.session || first.run != last.run)
-			throw std::invalid_argument("Choose retained frames from one run");
+			throw std::invalid_argument("Choose saved frames from one run.");
 		std::vector<HistoryFrame> frames;
 		frames.reserve(*end - *begin + 1);
 		for (auto index = *begin; index <= *end; ++index)

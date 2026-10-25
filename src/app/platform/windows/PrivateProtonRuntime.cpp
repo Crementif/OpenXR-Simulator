@@ -172,10 +172,10 @@ void RegisterPrivateProtonRuntime(const std::string& selected, const std::string
 	if (!std::filesystem::is_regular_file(prefixPath / s_marker) ||
 		!std::filesystem::is_regular_file(prefixPath.parent_path() / s_marker))
 		throw std::runtime_error(
-			"Private Proton ownership marker is missing; use prepare-proton-prefix.py to create a new private prefix");
+			"Private Proton ownership marker is missing. Use prepare-proton-prefix.py to create a new private prefix");
 	const auto metadata = ReadText(prefixPath / s_marker, 16384);
 	if (metadata != ReadText(prefixPath.parent_path() / s_marker, 16384))
-		throw std::runtime_error("Private Proton ownership markers do not match; use prepare-proton-prefix.py");
+		throw std::runtime_error("Private Proton ownership markers do not match. Use prepare-proton-prefix.py");
 	const auto recorded = OpenDirectory(RecordedPrefix(metadata));
 	RequireSameDirectory(prefix, recorded);
 	const auto drive = OpenDirectory(prefixPath / L"drive_c");

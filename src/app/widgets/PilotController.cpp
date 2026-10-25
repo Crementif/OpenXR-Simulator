@@ -170,7 +170,7 @@ void PilotController::Submit(ManualInputController& input, const ObservedSetup& 
 	if (!edit.commands.empty())
 	{
 		if (!input.Submit(edit))
-			m_error = "Input queue full — release inputs";
+			m_error = "Too many inputs. Release the controls and try again.";
 		m_lastInput = ImGui::GetTime();
 	}
 	m_controls = controls;

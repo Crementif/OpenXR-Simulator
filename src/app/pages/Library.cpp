@@ -171,7 +171,7 @@ std::optional<ScriptRun> Library::DrawBrowser(Selection& selection, RuntimePanel
 	if (m_catalog && m_catalog->Busy())
 		ImGui::TextDisabled("Updating library…");
 	if (m_limited)
-		ImGui::TextDisabled("Showing 512 entries; open other scripts by path.");
+		ImGui::TextDisabled("Showing 512 entries. Open other scripts by path.");
 	if (m_entries.empty())
 	{
 		ImGui::TextDisabled("No takes or scripts");
@@ -214,7 +214,7 @@ std::optional<ScriptRun> Library::DrawBrowser(Selection& selection, RuntimePanel
 			ImGui::TableNextColumn();
 			ImGui::BeginDisabled(!idle || !entry.error.empty());
 			if (IconButton("Play entry", Icon::Play,
-						   entry.take ? "Restore recorded inputs on the selected app; not game state"
+						   entry.take ? "Replay recorded inputs. This does not restore game state."
 									  : "Run this script on the selected app"))
 				Play(entry, runtime);
 			ImGui::EndDisabled();
@@ -249,7 +249,7 @@ bool Library::DrawHeader(Selection& selection, const std::string& path, Icon kin
 		ImGui::OpenPopup("Rename");
 	}
 	ImGui::SameLine();
-	if (IconButton("Delete entry", Icon::Delete, "Delete this file from disk; asks for confirmation", false, nullptr,
+	if (IconButton("Delete entry", Icon::Delete, "Delete this file after confirmation.", false, nullptr,
 				   theme::Record))
 		ImGui::OpenPopup("Delete?");
 	ImGui::EndDisabled();
@@ -386,12 +386,12 @@ void Library::DrawScript(Selection& selection, const std::string& path, RuntimeP
 	if (active)
 	{
 		const bool paused = state.phase == automation::RigPhase::Paused;
-		if (paused ? IconButton("Resume script", Icon::Play, "Continue executing this paused script")
-				   : IconButton("Pause script", Icon::Pause, "Hold this script before its next transaction"))
+		if (paused ? IconButton("Resume script", Icon::Play, "Continue this script.")
+				   : IconButton("Pause script", Icon::Pause, "Pause before the next script step."))
 			paused ? rigs.Resume() : rigs.Pause();
 		ImGui::SameLine();
 		ImGui::BeginDisabled(!paused);
-		if (IconButton("Step script", Icon::StepForward, "Step one transaction"))
+		if (IconButton("Step script", Icon::StepForward, "Run one script step."))
 			rigs.Step();
 		ImGui::EndDisabled();
 		ImGui::SameLine();
@@ -413,7 +413,7 @@ void Library::DrawScript(Selection& selection, const std::string& path, RuntimeP
 	{
 		ImGui::SameLine();
 		ImGui::AlignTextToFramePadding();
-		ImGui::TextDisabled("%s · %llu transactions", rigs.Error().empty() ? PhaseName(state.phase) : "Failed",
+		ImGui::TextDisabled("%s, %llu steps", rigs.Error().empty() ? PhaseName(state.phase) : "Failed",
 							static_cast<unsigned long long>(state.transactions));
 		for (const auto* error : {&rigs.Error(), &state.error})
 			if (!error->empty())

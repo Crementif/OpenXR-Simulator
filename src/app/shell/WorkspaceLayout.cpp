@@ -165,12 +165,12 @@ bool WorkspacePanels::Divider(const char* id, ShellRect strip, bool vertical, fl
 	DrawIcon(tabDraw, chevron, {(tabMin.x + tabMax.x) / 2, (tabMin.y + tabMax.y) / 2}, 12 * scale,
 			 tabHovered || active ? theme::Text : theme::TextDim);
 	if (tabHovered && !active)
-		ImGui::SetTooltip("%s", vertical ? (folded ? "Show the inspector (Ctrl+I); drag to resize"
-												   : "Hide the inspector (Ctrl+I); drag to resize")
-										 : (folded ? "Show the timeline (Ctrl+T); drag to resize"
-												   : "Hide the timeline (Ctrl+T); drag to resize"));
+		ImGui::SetTooltip("%s", vertical ? (folded ? "Show the inspector (Ctrl+I). Drag to resize"
+												   : "Hide the inspector (Ctrl+I). Drag to resize")
+										 : (folded ? "Show the timeline (Ctrl+T). Drag to resize"
+												   : "Hide the timeline (Ctrl+T). Drag to resize"));
 	else if (lineHovered && !active)
-		ImGui::SetTooltip("Drag to resize; drag past the edge to hide; double-click resets");
+		ImGui::SetTooltip("Drag to resize. Drag past the edge to hide. Double-click resets");
 	ImGui::PopID();
 	return toggle;
 }

@@ -209,7 +209,7 @@ void DeviceControlPanel::DrawViews()
 	if (edited && !m_edit)
 		ApplyOwned(ControlChannel::Views, SetViewSettings{m_authoredViews});
 	ImGui::EndDisabled();
-	ImGui::Text("View size: %u x %u; inset: %u x %u", m_authoredViews.outerWidth, m_authoredViews.outerHeight,
+	ImGui::Text("View size: %u x %u. Inset: %u x %u", m_authoredViews.outerWidth, m_authoredViews.outerHeight,
 				m_authoredViews.insetWidth, m_authoredViews.insetHeight);
 }
 } // namespace simxr::app

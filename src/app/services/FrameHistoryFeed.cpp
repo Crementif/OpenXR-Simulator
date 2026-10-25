@@ -103,7 +103,7 @@ std::string FrameHistoryFeed::Accept(const control::Message& message)
 	catch (const std::exception& error)
 	{
 		m_unreadable = m_skipped = true;
-		return std::string(error.what()) + ". History stopped; reconnect to resume.";
+		return std::string(error.what()) + ". History stopped. Reconnect to resume.";
 	}
 	try
 	{
@@ -125,7 +125,7 @@ std::string FrameHistoryFeed::Accept(const control::Message& message)
 				m_after = std::max(m_after, id);
 		}
 		m_skipped = true;
-		return std::string(error.what()) + (m_unreadable ? ". History stopped; reconnect to resume." : "");
+		return std::string(error.what()) + (m_unreadable ? ". History stopped. Reconnect to resume." : "");
 	}
 }
 void FrameHistoryFeed::Append(const control::Message& message, const control::Message& frames)

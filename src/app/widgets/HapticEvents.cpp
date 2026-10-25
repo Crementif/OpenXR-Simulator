@@ -28,7 +28,7 @@ void DrawHapticEvents(const HapticFeedback& feedback, std::uint32_t hand, bool s
 	if (!ImGui::CollapsingHeader("Haptics"))
 		return;
 	ImGui::TextDisabled("Live application output");
-	ImGui::SetItemTooltip("Left hand drives the low-frequency motor; right hand drives the high-frequency motor. "
+	ImGui::SetItemTooltip("Left hand drives the low-frequency motor. Right hand drives the high-frequency motor. "
 						  "Each event is limited to two seconds. Rumble stops when this window loses focus.");
 	if (!supported)
 	{

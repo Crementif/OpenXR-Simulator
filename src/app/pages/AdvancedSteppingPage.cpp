@@ -34,17 +34,17 @@ void AdvancedSteppingPage::Draw()
 	{
 		if (ImGui::Button("Advance display only"))
 			m_session.Command(wire::CommandKind::DisplayStep);
-		ImGui::SetItemTooltip("Advances presentation without admitting another application frame");
-		if (ImGui::Button("Strict frame admission"))
+		ImGui::SetItemTooltip("Advance the display without letting the app render another frame.");
+		if (ImGui::Button("Step one frame at a time"))
 			m_session.Command(wire::CommandKind::StrictAdmission);
-		SectionLabel("Capture a submitted source");
+		SectionLabel("Capture a layer");
 		ImGui::TextUnformatted("Submitted layer index");
 		ImGui::SetNextItemWidth(-1);
 		ImGui::InputInt("##Source layer", &m_rawLayer);
 		ImGui::TextUnformatted("Projection view index");
 		ImGui::SetNextItemWidth(-1);
 		ImGui::InputInt("##Source view", &m_rawView);
-		if (ImGui::Button("Advance and capture source"))
+		if (ImGui::Button("Step and capture a layer"))
 			m_session.Command(wire::CommandKind::Step, 0, true, static_cast<std::uint32_t>(std::max(0, m_rawLayer)),
 							  static_cast<std::uint32_t>(std::max(0, m_rawView)));
 	}
@@ -53,19 +53,19 @@ void AdvancedSteppingPage::Draw()
 	if (!selected.id)
 		ImGui::TextUnformatted("Session unavailable");
 	else
-		ImGui::Text("Admission: %s; controller: %s", debugger.Manual() ? "manual" : "automatic",
+		ImGui::Text("Stepping: %s. Control: %s", debugger.Manual() ? "manual" : "automatic",
 					debugger.HasLease() ? "this connection" : "observer");
 	const auto deviations = wire::DecodeCompatibilityDeviations(status);
 	ImGui::Text("Compatibility deviations: %s", !deviations ? "Unknown" : deviations->empty() ? "None" : "Active");
-	ImGui::SetItemTooltip("Named API exceptions reported by the runtime; execution mode is separate");
+	ImGui::SetItemTooltip("OpenXR behavior changed for app compatibility.");
 	if (deviations)
 		for (const auto& name : *deviations)
 			ImGui::BulletText("%s", name.c_str());
 	const auto pipeline = Nested(status.Find(tag::Pipeline));
 	if (!selected.id && status.Find(tag::Pipeline))
-		ImGui::TextUnformatted("Last observed pipeline:");
+		ImGui::TextUnformatted("Last frame status:");
 	if (status.Find(tag::Pipeline))
-		ImGui::Text("Permits: %u; wait pending: %s", U32(pipeline, tag::Permits),
+		ImGui::Text("Frames allowed: %u. App waiting: %s", U32(pipeline, tag::Permits),
 					Boolean(pipeline, tag::WaitPending) ? "yes" : "no");
 	for (const auto field : {tag::Waited, tag::Begun})
 		if (const auto value = pipeline.Find(field))
@@ -74,7 +74,7 @@ void AdvancedSteppingPage::Draw()
 	const auto presentation = Nested(status.Find(tag::Presentation));
 	const auto display = Nested(presentation.Find(tag::Display));
 	if (status.Find(tag::Presentation))
-		ImGui::Text("Last submitted: %llu; display tick: %llu; selection: %s",
+		ImGui::Text("Last submitted: %llu. Display tick: %llu. Selection: %s",
 					static_cast<unsigned long long>(U64(presentation, tag::LastSubmitted)),
 					static_cast<unsigned long long>(U64(display, tag::Tick)), Text(display, tag::Kind).c_str());
 	for (const auto& operation : debugger.Operations())

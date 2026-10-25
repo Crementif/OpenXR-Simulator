@@ -239,7 +239,7 @@ void WorkspacePanels::Draw(RuntimePanels& runtime)
 		{
 			m_replay.reset();
 			runtime.FinishReplayPreparation();
-			m_notices.Push({"Replay unavailable", "Input release did not complete. Release inputs and try again"});
+			m_notices.Push({"Replay unavailable", "Could not release all inputs. Try again."});
 		}
 	}
 	const bool matchingReplay = m_rigs.MatchesTarget(rigTarget);

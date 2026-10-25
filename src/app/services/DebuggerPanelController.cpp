@@ -255,7 +255,7 @@ bool DebuggerPanelController::Handle(const PanelTask& task, const wire::Message&
 		if (!m_lease)
 		{
 			m_deferred.reset();
-			throw std::runtime_error("Runtime returned an empty debugger lease");
+			throw std::runtime_error("The runtime did not grant debugger control.");
 		}
 		m_command = 1;
 		m_acknowledged = 0;
@@ -311,7 +311,7 @@ bool DebuggerPanelController::Handle(const PanelTask& task, const wire::Message&
 							pending.push_back({*capture.AsU64(), Frame(message), false, false, operation.kind});
 				}
 				if (pending.size() > 32 - m_effects.size())
-					throw std::runtime_error("Runtime capture notices exceed the bounded catalog");
+					throw std::runtime_error("Too many snapshot updates from the runtime.");
 				operation = std::move(prepared);
 				m_effects.insert(m_effects.end(), pending.begin(), pending.end());
 			}

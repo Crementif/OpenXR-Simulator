@@ -185,7 +185,7 @@ void ManualInputController::RunChecked()
 						waiting.reset();
 						if (SimulationEditPhase(*outcome) != "applied")
 							throw std::runtime_error("Input rejected: " + SimulationEditPhase(*outcome) +
-													 ". Check input ownership.");
+													 ". Check which script or replay controls the device.");
 						std::lock_guard lock(m_mutex);
 						if (bound == m_revision && waitingPose)
 							++m_snapshot.appliedPoses;
@@ -251,7 +251,7 @@ bool ManualInputController::Submit(SimulationEdit edit, bool continuous)
 		continuous |= transaction->continuous;
 		if (!continuous && m_edits.size() + (m_pose ? 1 : 0) >= 32)
 		{
-			m_snapshot.error = "Input queue full — release inputs";
+			m_snapshot.error = "Too many inputs. Release the controls and try again.";
 			if (!transaction->releaseEdge)
 				return false;
 			// A safety release retires queued presses rather than losing a release edge.

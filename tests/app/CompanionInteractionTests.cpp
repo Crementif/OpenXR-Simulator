@@ -4419,7 +4419,7 @@ void CheckIdConflicts(Interaction& test, bool frameOnly)
 	test.workspace.Select(FrameSel{captured.selectedIdentity, captured.selectedEpoch});
 	pump(30);
 	auto* inspector = FindPanel("Inspector");
-	for (const char* header : {"All input values", "Input owners and commands", "All actions and bindings", "Layers",
+	for (const char* header : {"All input values", "Input sources and commands", "All actions and bindings", "Layers",
 							   "Timing", "Raw"})
 	{
 		auto* details = FindPanel("Frame details");

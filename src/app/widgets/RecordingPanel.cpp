@@ -188,7 +188,7 @@ void RecordingPanel::DrawPopovers(bool supported)
 	if (exists)
 		ImGui::TextColored(theme::Vec(theme::Warn), "Replaces the take with this name");
 	if (state.page && state.page->overflow)
-		ImGui::TextColored(theme::Vec(theme::Record), "Recording full; cannot save");
+		ImGui::TextColored(theme::Vec(theme::Record), "The recording is full and cannot be saved.");
 	ImGui::BeginDisabled(!ready || m_saving);
 	if (ImGui::Button(exists ? "Replace take" : "Save") || (entered && !exists && ready && !m_saving))
 		Save();

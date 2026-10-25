@@ -54,7 +54,7 @@ bool InspectionWorkspace::Add(std::uint64_t id, std::uint64_t frame)
 							{
 								return !capture.released && Boolean(capture.metadata, tag::Pinned);
 							}))
-				m_error = "History full — unpin snapshots";
+				m_error = "History is full. Unpin a snapshot to free space.";
 			return false;
 		}
 		if (oldest->inspection && oldest->scope.epoch == m_scope.epoch)

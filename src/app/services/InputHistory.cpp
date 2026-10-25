@@ -183,7 +183,7 @@ automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& 
 	if (samples.size() < 2)
 		throw std::invalid_argument("Select at least two frames with input");
 	if (std::ranges::find(samples, nullptr) != samples.end())
-		throw std::invalid_argument("The range includes input that is no longer retained");
+		throw std::invalid_argument("Some input in this range is no longer saved.");
 	const auto& origin = *samples.front();
 	for (const auto* sample : samples)
 	{
@@ -193,7 +193,7 @@ automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& 
 		if (!sample->context)
 			throw std::invalid_argument("This run did not record its view/profile context");
 		if (!sample->complete || !sample->body || !sample->trackers || !sample->gaze)
-			throw std::invalid_argument("This range has incomplete device input; a take needs every device channel");
+			throw std::invalid_argument("Some device input is missing. Choose a range with complete input.");
 	}
 	automation::InputRecording take;
 	take.version = 2;
@@ -224,7 +224,7 @@ automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& 
 		if (b.identity.frame <= a.identity.frame)
 			throw std::invalid_argument("The range is not in frame order");
 		if (b.identity.frame - a.identity.frame != 1)
-			throw std::invalid_argument("The range has missing input frames; select a continuous range");
+			throw std::invalid_argument("The range has missing input frames. Select a continuous range");
 		if (a.scenarios != b.scenarios || !Same(a.head, b.head) || !Same(a.poses, b.poses) ||
 			!Same(a.controls, b.controls) || !Same(*a.gaze, *b.gaze) || !Same(a.bodyRoot, b.bodyRoot, SamePose) ||
 			(a.body != b.body && !Same(*a.body, *b.body)) ||
@@ -234,7 +234,7 @@ automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& 
 	}
 	const auto tail = changed.empty() || changed.back() != samples.size() - 1 ? 1u : 0u;
 	if (changed.size() + tail > 1024)
-		throw std::invalid_argument("The take exceeds 1024 input changes; select a shorter range");
+		throw std::invalid_argument("The take exceeds 1024 input changes. Select a shorter range");
 	const InputSample* previous = &origin;
 	for (std::size_t position = 0; position < changed.size(); ++position)
 	{

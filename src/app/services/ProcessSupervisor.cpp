@@ -28,7 +28,7 @@ void LaunchObservation::Running(std::uint64_t process)
 	std::lock_guard lock(m_mutex);
 	m_snapshot.process = process;
 	m_snapshot.state = LaunchState::Running;
-	m_snapshot.detail = "Process running; attach using Runtime connection";
+	m_snapshot.detail = "The app is running. Open Connection to connect.";
 }
 void LaunchObservation::Exited(int code)
 {

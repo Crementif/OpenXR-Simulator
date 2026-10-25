@@ -88,7 +88,7 @@ bool TriggerBar(const char* id, const char* label, float& value, bool& latched, 
 	std::snprintf(percent, sizeof(percent), "%d%%", static_cast<int>(std::lround(value * 100)));
 	draw->AddText({maximum.x - 8 * unit - ImGui::CalcTextSize(percent).x, textY},
 				  value > 0 ? theme::Text : theme::TextDim, percent);
-	ImGui::SetItemTooltip("%s: hold or drag; right-click %s", label, latched ? "releases" : "keeps it held");
+	ImGui::SetItemTooltip("%s: hold or drag. Right-click %s", label, latched ? "releases" : "keeps it held");
 	return value != previous || latched != wasLatched;
 }
 bool HoldButton(const char* id, const char* label, bool& pressed, bool& latched, ImU32 color)
@@ -127,7 +127,7 @@ bool HoldButton(const char* id, const char* label, bool& pressed, bool& latched,
 	draw->AddText({center.x - text.x / 2, center.y - text.y / 2}, theme::Mix(theme::Text, theme::Ink, press), label,
 				  ImGui::FindRenderedTextEnd(label));
 	const std::string name(label, ImGui::FindRenderedTextEnd(label));
-	ImGui::SetItemTooltip("%s: hold to press; right-click %s", name.c_str(), latched ? "releases" : "keeps it pressed");
+	ImGui::SetItemTooltip("%s: hold to press. Right-click %s", name.c_str(), latched ? "releases" : "keeps it pressed");
 	return pressed != previous || latched != wasLatched;
 }
 bool StickPad(const char* id, float& x, float& y, bool& click, bool& latched, ImU32 color)
@@ -234,7 +234,7 @@ bool StickPad(const char* id, float& x, float& y, bool& click, bool& latched, Im
 	draw->AddCircleFilled({at.x, at.y + unit}, knob + unit, theme::Fade(theme::Ink, .6f));
 	draw->AddCircleFilled(at, knob, click ? color : theme::Mix(theme::SurfaceRaised, color, .6f));
 	draw->AddCircle(at, knob, color, 0, 1.5f * unit);
-	ImGui::SetItemTooltip("Stick: click an arrow to push it, drag to steer, click the knob to press; right-click %s",
+	ImGui::SetItemTooltip("Stick: click an arrow to push it, drag to steer, click the knob to press. Right-click %s",
 						  latched ? "releases" : "keeps it in place");
 	return x != previousX || y != previousY || click != previousClick || latched != wasLatched;
 }

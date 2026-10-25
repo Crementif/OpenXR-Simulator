@@ -54,7 +54,7 @@ void DeviceControlPanel::DrawOwnership()
 	static constexpr const char* channels[] = {"Head",			 "Left pose",	"Right pose", "Left controls",
 											   "Right controls", "Body",		"Gaze",		  "Trackers",
 											   "Views",			 "Proportions", "Profiles",	  "Session scenarios"};
-	ImGui::Text("Input ownership");
+	ImGui::Text("Input control");
 	ImGui::Combo("##Input ownership", &m_selectedChannel, channels, IM_ARRAYSIZE(channels));
 	DrawOwner(static_cast<ControlChannel>(m_selectedChannel), false);
 	ImGui::Checkbox("Replace owner", &m_replaceOwner);
@@ -65,7 +65,7 @@ void DeviceControlPanel::DrawOwnership()
 		Apply({ReleaseControl{static_cast<ControlChannel>(m_selectedChannel)}});
 	if (ImGui::Button("Release all manual inputs"))
 		m_edit = ReleaseManualInputs{};
-	ImGui::TextUnformatted("Channel ownership");
+	ImGui::TextUnformatted("Input sources");
 }
 void DeviceControlPanel::DrawTracking(DevicePage page, float titleWidth)
 {
@@ -107,7 +107,7 @@ void DeviceControlPanel::DrawTracking(DevicePage page, float titleWidth)
 												  "Simulate the device being unavailable to the app"};
 	static constexpr const char* connected[] = {"Connected", "Off"};
 	static constexpr const char* connectedTips[] = {"Normal connection",
-													"Simulate the device disconnecting; restores when switched back"};
+													"Disconnect the device. Switch back to reconnect."};
 	const std::span<const char* const> labels = lost ? std::span<const char* const>(tracked) : connected;
 	const std::span<const char* const> tips = lost ? std::span<const char* const>(trackedTips) : connectedTips;
 	const int last = static_cast<int>(labels.size()) - 1;
@@ -171,7 +171,7 @@ void DeviceControlPanel::DrawOwner(ControlChannel channel, bool takeover)
 		break;
 	}
 	ImGui::TextColored(theme::Vec(theme::Head), "Driven by %s", name);
-	ImGui::SetItemTooltip("Source %llu owns this channel.", static_cast<unsigned long long>(owner->id));
+	ImGui::SetItemTooltip("Input source %llu controls this input.", static_cast<unsigned long long>(owner->id));
 	if (takeover)
 	{
 		ImGui::SameLine();

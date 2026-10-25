@@ -117,7 +117,7 @@ void RuntimePanelRequests::Release(control::OpCode code, std::uint16_t field, st
 	if (entry == m_releases.end())
 	{
 		m_connection.Disconnect(m_epoch);
-		m_error = "Resource release queue exhausted; connection closed to release its tables";
+		m_error = "Too many pending cleanup requests. The connection was closed.";
 		return;
 	}
 	*entry = {code, field, id, m_epoch, session, generation};

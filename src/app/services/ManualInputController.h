@@ -53,7 +53,7 @@ class ManualInputController
 	std::shared_ptr<WorkerConnection> m_current;
 	std::uint64_t m_revision = 0;
 	bool m_stopping = false, m_refresh = false;
-	std::string m_workerFailure = "Manual input worker stopped unexpectedly; restart the companion";
+	std::string m_workerFailure = "Input stopped unexpectedly. Restart the companion.";
 	std::thread m_worker;
 };
 } // namespace simxr::app

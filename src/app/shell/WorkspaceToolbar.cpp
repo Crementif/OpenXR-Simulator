@@ -24,7 +24,7 @@ void WorkspacePanels::DrawAppPicker(RuntimePanels& runtime, const RuntimeView& v
 					  : state == RunState::Launching || state == RunState::WaitingForSession ? theme::Warn
 					  : state == RunState::Disconnected										 ? theme::TextDim
 																							 : 0;
-	std::string tooltip = std::string(RunStateLabel(state)) + " \u00b7 " + label;
+	std::string tooltip = std::string(RunStateLabel(state)) + ", " + label;
 	if (view.connected)
 		tooltip += "\n" + view.endpoint;
 	tooltip += "\nLaunch, connect or switch apps";
@@ -229,7 +229,7 @@ void WorkspacePanels::DrawToolbar(RuntimePanels& runtime)
 	DrawHistory(runtime);
 	ImGui::SameLine();
 	const std::string focusTip = std::string(m_previewExpanded ? "Exit focus (F11)" : "Focus: only the image (F11)") +
-								 (elapsed.empty() ? "" : "\nRecording " + elapsed + "; Ctrl+R stops");
+								 (elapsed.empty() ? "" : "\nRecording " + elapsed + ". Ctrl+R stops");
 	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{});
 	if (IconButton("Focus", Icon::Focus, focusTip.c_str(), m_previewExpanded,
 				   elapsed.empty() ? nullptr : elapsed.c_str(), elapsed.empty() ? 0 : theme::Record))

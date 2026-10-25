@@ -98,7 +98,7 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 	if (conflict)
 		hint = "A replay or script controls these devices";
 	else if (m_captured)
-		hint = (m_locked ? std::string{"Locked · "} : std::string{}) + KeyName(PilotAction::Escape) + " releases · " +
+		hint = (m_locked ? std::string{"Locked, "} : std::string{}) + KeyName(PilotAction::Escape) + " releases, " +
 			   KeyName(PilotAction::FreeLook) + ": look only";
 	else
 		hint = "Hold " + KeyName(PilotAction::Capture) + " over the image to pilot";
@@ -214,7 +214,7 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 				  auto* draw = ImGui::GetWindowDrawList();
 				  if (ImGui::Button(m_hand ? "Buttons: Right" : "Buttons: Left"))
 					  m_hand = 1 - m_hand;
-				  ImGui::SetItemTooltip("Trigger, grip and buttons go to this hand; %s switches",
+				  ImGui::SetItemTooltip("Buttons control this hand. Press %s to switch hands.",
 										KeyName(PilotAction::SwapHand).c_str());
 				  const auto bar = [&](const char* label, float value)
 				  {
@@ -267,7 +267,7 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 						  for (const auto channel : channels)
 							  edit.commands.emplace_back(TakeControl{channel, true});
 						  if (!input.Submit(std::move(edit)))
-							  m_error = "Input queue full — release inputs";
+							  m_error = "Too many inputs. Release the controls and try again.";
 					  }
 					  ImGui::SetItemTooltip("Take these devices back from the replay or script that controls them");
 				  }

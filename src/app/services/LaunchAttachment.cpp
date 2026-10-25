@@ -36,7 +36,7 @@ static std::optional<LaunchedSession> UniqueSession(const control::Message& mess
 		if (!id || !generation || !id->AsU64().value_or(0) || !generation->AsU64().value_or(0))
 			throw std::runtime_error("Invalid launched session identity");
 		if (selected)
-			throw std::runtime_error("Launched runtime has multiple running sessions; select one explicitly");
+			throw std::runtime_error("The app has several XR sessions. Choose one.");
 		selected = LaunchedSession{endpoint, *id->AsU64(), *generation->AsU64()};
 	}
 	return selected;
@@ -74,7 +74,7 @@ std::optional<LaunchedSession> LaunchAttachment::Poll()
 		return {};
 	if (std::chrono::steady_clock::now() >= m_deadline)
 		throw std::runtime_error("Launched application did not expose a unique running session before the attach "
-								 "deadline; attach explicitly");
+								 "deadline. Connect manually.");
 	if (std::holds_alternative<WaitingForProcess>(m_state))
 		return {};
 	if (const auto* waiting = std::get_if<WaitingForEndpoint>(&m_state))

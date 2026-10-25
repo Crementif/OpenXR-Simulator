@@ -42,7 +42,7 @@ void UiRenderer::CreateSwapchain()
 	if (selected.colorSpace != VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
 		throw std::runtime_error("The companion requires an sRGB display surface");
 	if (m_rendererReady && IsSrgb(gpu.format) != IsSrgb(selected.format))
-		throw std::runtime_error("Display color encoding changed; reopen the companion for the new surface");
+		throw std::runtime_error("The display color format changed. Reopen the companion.");
 	gpu.format = selected.format;
 	gpu.extent = capabilities.currentExtent;
 	if (gpu.extent.width == std::numeric_limits<std::uint32_t>::max())

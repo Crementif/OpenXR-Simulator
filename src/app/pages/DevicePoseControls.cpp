@@ -67,7 +67,7 @@ void DeviceControlPanel::DrawExactPose(int device)
 	// Rotation as angles to edit, or as the raw quaternion to read and copy.
 	static constexpr const char* forms[] = {"Angles", "Quaternion"};
 	static constexpr const char* formTips[] = {"Yaw, pitch and roll in degrees",
-											   "The orientation as x, y, z, w; read only"};
+											   "Read-only rotation as x, y, z, w."};
 	bool& quaternion = m_quaternionView[static_cast<std::size_t>(device)];
 	// Segments share the width equally, so size both for the longer label.
 	const float formWidth = (ImGui::CalcTextSize("Quaternion").x + ImGui::GetStyle().FramePadding.x * 2) * 2;
@@ -123,7 +123,7 @@ void DeviceControlPanel::DrawExactPose(int device)
 			 << ", " << pose.position.z << "], \"orientation\": [" << std::setprecision(5) << q.x << ", " << q.y << ", "
 			 << q.z << ", " << q.w << "]}";
 	char quaternionText[80];
-	std::snprintf(quaternionText, sizeof(quaternionText), "Quaternion x %.4f  y %.4f  z %.4f  w %.4f", q.x, q.y, q.z,
+	std::snprintf(quaternionText, sizeof(quaternionText), "Quaternion: x %.4f, y %.4f, z %.4f, w %.4f", q.x, q.y, q.z,
 				  q.w);
 	const auto value = [&](float& number, float fallbackNumber, float step, float limit, const char* format)
 	{
@@ -146,7 +146,7 @@ void DeviceControlPanel::DrawExactPose(int device)
 		edited |= Field(positionIds[axis],
 						ImGui::DragFloat(positionIds[axis], positions[axis], .005f, 0, 0, positionFormats[axis]), true,
 						value(*positions[axis], fallbackPositions[axis], .01f, 100, "%.4f"));
-		ImGui::SetItemTooltip("X right, Y up, Z back.\nMiddle-click resets; Ctrl+wheel nudges.");
+		ImGui::SetItemTooltip("X right, Y up, Z back.\nMiddle-click resets. Ctrl+wheel nudges.");
 	}
 	bool turned = false;
 	if (quaternion)
@@ -170,7 +170,7 @@ void DeviceControlPanel::DrawExactPose(int device)
 			copy.resetGroup = reset;
 			copy.groupText = poseText.str();
 			FieldActions((m_fieldScope + componentIds[component]).c_str(), copy);
-			ImGui::SetItemTooltip("Read only; Angles edits the rotation");
+			ImGui::SetItemTooltip("Read only. Use Angles to change the rotation.");
 		}
 	}
 	else
@@ -188,7 +188,7 @@ void DeviceControlPanel::DrawExactPose(int device)
 							ImGui::DragFloat(angleIds[axis], &angle, .5f, -limit, limit, angleFormats[axis],
 											 ImGuiSliderFlags_AlwaysClamp),
 							true, value(angle, fallbackAngles[static_cast<std::size_t>(axis)], 1, limit, "%.1f"));
-			ImGui::SetItemTooltip("%s\nMiddle-click resets; Ctrl+wheel nudges.", quaternionText);
+			ImGui::SetItemTooltip("%s\nMiddle-click resets. Ctrl+wheel nudges.", quaternionText);
 		}
 	}
 	if (turned)
@@ -222,10 +222,10 @@ void DeviceControlPanel::DrawBodyPoses()
 {
 	ImGui::BeginDisabled(!CanControl(ControlChannel::Body) || ScenarioActive(ControlChannel::Body) ||
 						 !m_observed->bodyOverridesAvailable);
-	static constexpr const char* tips[] = {"Arms down at the sides; hands and attached trackers follow",
-										   "Arms straight out to the sides; hands and attached trackers follow",
-										   "Arms 45° down; hands and attached trackers follow",
-										   "Seated, hands on the thighs; hands and attached trackers follow"};
+	static constexpr const char* tips[] = {"Lower the arms. Hands and attached trackers follow.",
+										   "Extend the arms sideways. Hands and attached trackers follow.",
+										   "Lower the arms to 45°. Hands and attached trackers follow.",
+										   "Sit with hands on thighs. Attached trackers follow."};
 	const auto current = m_playerRig.CurrentBodyPose();
 	ImGui::PushID("Body pose");
 	const int pose =
@@ -246,7 +246,7 @@ void DeviceControlPanel::DrawPlayer()
 	ImGui::SliderFloat("##Walk speed", &m_playerRig.walkSpeed, .1f, 5.0f, "%.1f m/s");
 	// Walk speed only paces piloting; it is not sent to the app.
 	FieldActions("Walk speed", NumberValue(m_playerRig.walkSpeed, 1, .1f, .1f, 5, "%.1f"));
-	ImGui::SetItemTooltip("Piloting speed.\nMiddle-click for 1 m/s; Ctrl+wheel nudges.");
+	ImGui::SetItemTooltip("Piloting speed.\nMiddle-click for 1 m/s. Ctrl+wheel nudges.");
 	DrawOwner(ControlChannel::Head);
 	ImGui::BeginDisabled(!CanControl(ControlChannel::Head) || ScenarioActive(ControlChannel::Head) ||
 						 ((m_observed->bodyRootAvailable || m_observed->bodyOverridesAvailable) &&
@@ -309,9 +309,9 @@ void DeviceControlPanel::DrawAnchor(std::size_t hand)
 void DeviceControlPanel::DrawHandPresets(std::size_t hand)
 {
 	static constexpr const char* names[] = {"Rest", "Forward", "Up"};
-	static constexpr const char* tips[] = {"Low in front, holding the controller; this hand only",
-										   "Reaching forward at eye level; this hand only",
-										   "Pointing straight up; this hand only"};
+	static constexpr const char* tips[] = {"Hold this hand low in front.",
+										   "Reach forward at eye level with this hand.",
+										   "Point this hand straight up."};
 	ImGui::PushID("Hand presets");
 	const int preset = Segmented(names, -1, ImGui::GetContentRegionAvail().x, tips);
 	if (preset >= 0 && m_observed && m_playerRig.Ready())

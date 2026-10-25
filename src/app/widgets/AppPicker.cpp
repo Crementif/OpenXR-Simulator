@@ -147,7 +147,7 @@ AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const Runtime
 							  app.executable.empty() ? "" : "\n", app.endpoint.c_str());
 		std::string detail = app.process ? "PID " + std::to_string(app.process) : std::string{};
 		if (app.started)
-			detail += " · started " + Clock(*app.started);
+			detail += ", started " + Clock(*app.started);
 		AppDetail(detail, {connected ? "Connected" : "Connect"});
 		if (connected)
 			ImGui::TextColored(theme::Vec(theme::Ok), "Connected");

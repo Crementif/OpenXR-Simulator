@@ -23,7 +23,7 @@ control::Message WorkerConnection::Request(control::OpCode code, std::vector<con
 		{
 			m_failed = true;
 			m_client->Close();
-			throw std::runtime_error("Worker exchange stopped or timed out; remote admission is unknown");
+			throw std::runtime_error("The request stopped or timed out. It may still be running.");
 		}
 		try
 		{

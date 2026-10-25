@@ -59,7 +59,7 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 										4 * 4;
 			dirty = true;
 		}
-		ImGui::SetItemTooltip("GPU frame history, 64–16384 MiB. Applies live and is saved.\n"
+		ImGui::SetItemTooltip("Memory for recent frames: 64 to 16384 MiB. Changes are saved automatically.\n"
 							  "About one stereo preview per 4 MiB. Timeline thumbnails use another 32 MiB.");
 		int ram = static_cast<int>(settings.previewRamMiB);
 		if (ImGui::InputInt("History RAM (MiB)", &ram, 64, 256))
@@ -67,8 +67,8 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 			settings.previewRamMiB = static_cast<std::uint32_t>(std::clamp(ram, 64, 16384)) / 4 * 4;
 			dirty = true;
 		}
-		ImGui::SetItemTooltip("Older frames use H.264 in RAM. Every frame remains selectable until oldest-frame "
-							  "eviction. Applies live and is saved.");
+		ImGui::SetItemTooltip("Older frames are compressed with H.264 in RAM. When memory fills, "
+							  "the oldest frames are removed. Changes are saved automatically.");
 		if (keptBudget)
 		{
 			const auto usage = std::to_string(keptBytes >> 20) + " / " + std::to_string(keptBudget >> 20) + " MiB";
@@ -77,7 +77,7 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 			ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
 			ImGui::TextUnformatted("GPU used");
 			ImGui::SetItemTooltip(
-				"An image for every submitted frame; oldest images are evicted when the budget fills");
+				"Keep every frame until memory fills, then remove the oldest.");
 		}
 		if (ramBudget)
 		{
@@ -95,8 +95,8 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 			ResetLayout(settings);
 			dirty = true;
 		}
-		ImGui::SetItemTooltip("Inspector width, timeline height and hidden panels back to defaults.\n"
-							  "Hide the timeline with Ctrl+T, the inspector with Ctrl+I; F11 shows only the image.");
+		ImGui::SetItemTooltip("Restore panel sizes and visibility.\n"
+							  "Hide the timeline with Ctrl+T, the inspector with Ctrl+I. F11 shows only the image.");
 		if (ImGui::BeginTabBar("Preference pages"))
 		{
 			if (ImGui::BeginTabItem("Keyboard & mouse"))
@@ -144,7 +144,7 @@ bool PreferencesDialog::DrawKeyboard(CompanionSettings& settings, bool& dirty)
 {
 	if (ImGui::Checkbox("Remote desktop mouse drag", &settings.remoteMouseDrag))
 		dirty = true;
-	ImGui::SetItemTooltip("For RDP: hold the capture button and drag to pilot, without locking or hiding the cursor.\n"
+	ImGui::SetItemTooltip("For remote desktop: hold the capture button and drag to move the view.\n"
 						  "Release and reposition at the edge. Esc or leaving the window releases inputs.");
 	if (ImGui::Button("Reset keymap"))
 	{
@@ -178,8 +178,8 @@ bool PreferencesDialog::DrawKeyboard(CompanionSettings& settings, bool& dirty)
 			}
 			if (m_capture == static_cast<int>(index))
 				overBinding = ImGui::IsItemHovered() || ImGui::IsItemActive();
-			ImGui::SetItemTooltip("Press a key or mouse button. Hold modifiers for a chord; "
-								  "release a modifier to bind it alone. Esc cancels.");
+			ImGui::SetItemTooltip("Press a key or mouse button. Hold Ctrl, Shift or Alt to combine keys. "
+								  "Release a modifier to bind it alone. Esc cancels.");
 			ImGui::PopID();
 		}
 		ImGui::EndTable();

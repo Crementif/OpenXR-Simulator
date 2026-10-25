@@ -113,7 +113,7 @@ void Notices::Draw(ShellRect area)
 			}
 			ImGui::SameLine();
 			ImGui::SetCursorScreenPos({right - height, icon.y});
-			if (IconButton("Hide notice", Icon::Close, "Hide this notice; the history keeps it"))
+			if (IconButton("Hide notice", Icon::Close, "Dismiss this notice. It stays in History."))
 				m_entries[index].shown = now - Lifetime - std::chrono::seconds(1);
 			ImGui::EndGroup();
 			if (!brief && !notice.detail.empty() && titleHovered)

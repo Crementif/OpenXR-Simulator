@@ -185,7 +185,7 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 		ImGui::SameLine();
 		ImGui::AlignTextToFramePadding();
 		ImGui::TextDisabled("earlier run");
-		ImGui::SetItemTooltip("This frame belongs to a run that has ended; its images may be gone");
+		ImGui::SetItemTooltip("This frame belongs to a run that has ended. Its images may be gone");
 	}
 	if (PageClose())
 	{
@@ -220,8 +220,8 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 		if (ImGui::SmallButton(pinned ? "Unpin snapshot" : "Pin snapshot"))
 			m_session.Debugger().Command(pinned ? wire::CommandKind::UnpinSnapshot : wire::CommandKind::PinSnapshot,
 										 capture->id);
-		ImGui::SetItemTooltip(pinned ? "Lets history drop this snapshot when it needs room"
-									 : "Keeps this snapshot when history needs room");
+		ImGui::SetItemTooltip(pinned ? "Allow this snapshot to be removed when history fills."
+									 : "Keep this snapshot when history fills.");
 	}
 	if (const auto image = preview.Selected(); image && matches(image->scope, image->frame) && image->ready)
 		if (Section("Export image"))
@@ -290,13 +290,13 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 				}
 				catch (const std::exception&)
 				{
-					ImGui::TextDisabled("Input owners unavailable");
+					ImGui::TextDisabled("Input sources unavailable");
 				}
 			}
 			else
 				workspace.RequestRevision(revisionId, documentEpoch);
 		}
-		if (Section("Input owners and commands"))
+		if (Section("Input sources and commands"))
 			m_documents.Draw("Commands", commands);
 	}
 	else
@@ -371,8 +371,8 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 			const auto& frame = history.At(*index);
 			const bool missed = frame.flags & (HistoryLate | HistoryDropped);
 			ImGui::TextColored(theme::Vec(missed ? theme::Record : theme::Text), "Interval %.1f ms of %.1f ms budget%s",
-							   frame.frameMilliseconds, frame.periodMilliseconds, missed ? " \u00b7 missed" : "");
-			ImGui::SetItemTooltip("Time between this frame's display time and the previous one; the budget is the "
+							   frame.frameMilliseconds, frame.periodMilliseconds, missed ? ", missed" : "");
+			ImGui::SetItemTooltip("Time between this frame's display time and the previous one. The budget is the "
 								  "display period");
 			if (frame.cpuMilliseconds >= 0)
 			{
@@ -385,7 +385,7 @@ void FramePage::Draw(ShellState& shell, const RuntimeView& view)
 			if (frame.compositorGpuMilliseconds >= 0)
 			{
 				ImGui::Text("Compositor GPU %.2f ms", frame.compositorGpuMilliseconds);
-				ImGui::SetItemTooltip("GPU timestamps around composition of submitted layers; excludes app rendering");
+				ImGui::SetItemTooltip("GPU timestamps around composition of submitted layers. Excludes app rendering");
 			}
 			else
 				ImGui::TextDisabled("Compositor GPU timing unavailable");

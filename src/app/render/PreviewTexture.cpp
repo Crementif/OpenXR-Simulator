@@ -131,7 +131,7 @@ PreviewTexture::PreviewTexture(const VulkanDeviceAccess& device, control::ImageD
 	m_state->native = std::make_unique<control::VulkanImageConsumer>(consumerDevice, extensions, VK_API_VERSION_1_1,
 																	 kind, device.externalTimeline);
 	if (m_state->description.identity != m_state->native->Identity())
-		throw std::runtime_error("Runtime and companion device/driver UUIDs differ; select the runtime's adapter");
+		throw std::runtime_error("The app and companion use different GPUs or drivers. Select the app's GPU.");
 #else
 	(void)device;
 	throw std::runtime_error("Native preview is unavailable on this companion platform");

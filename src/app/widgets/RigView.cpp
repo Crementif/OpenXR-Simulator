@@ -114,7 +114,7 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 	ImGui::SetCursorScreenPos({minimum.x + 5 * scale, minimum.y + 5 * scale});
 	if (ImGui::Button("##View", {textWidth + padding * 2 + height * .6f, height}))
 		ImGui::OpenPopup("Rig views");
-	ImGui::SetItemTooltip("Camera view; double-click the view for Back");
+	ImGui::SetItemTooltip("Choose a camera view. Double-click to return to Back.");
 	{
 		auto* header = ImGui::GetWindowDrawList();
 		const auto button = ImGui::GetItemRectMin();
@@ -137,7 +137,7 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 			state.eye = true;
 		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
 			ImGui::SetTooltip("%s",
-							  scene.eye ? "Through the app's left eye" : "The displayed image has no eye metadata.");
+							  scene.eye ? "Through the app's left eye" : "Eye position is unavailable for this image.");
 		ImGui::EndPopup();
 	}
 	ImGui::SetCursorScreenPos({maximum.x - height - 5 * scale, minimum.y + 5 * scale});
@@ -151,8 +151,8 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 	if (ImGui::BeginPopup("Rig help"))
 	{
 		ImGui::TextUnformatted("Placing devices");
-		ImGui::TextDisabled("Drag empty space to orbit; middle-drag pans; wheel zooms.");
-		ImGui::TextDisabled("The view menu resets the camera; double-click is Back.");
+		ImGui::TextDisabled("Drag empty space to orbit. Middle-drag pans. Wheel zooms.");
+		ImGui::TextDisabled("Use the view menu to reset the camera. Double-click to return to Back.");
 		ImGui::TextDisabled("Select a device, then drag its handles. Ctrl snaps.");
 		ImGui::TextDisabled("Ctrl+Z undoes. Camera moves never change devices.");
 		ImGui::EndPopup();

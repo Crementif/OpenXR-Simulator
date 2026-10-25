@@ -39,9 +39,9 @@ void TimelineCanvas::Begin(float headerWidth, float liveWidth, bool laneNames)
 	auto* draw = ImGui::GetWindowDrawList();
 	static constexpr const char* labels[]{"Frame time", "Images", "Input"};
 	static constexpr const char* tips[]{
-		"CPU frame span against the display period; falls back to application interval when timing is unavailable",
-		"Kept preview coverage; snapshots can be pinned. Gaps have no saved image.",
-		"Applied hand inputs: left rises, right falls. Green marks actions read by the app."};
+		"CPU frame time, or app frame interval when CPU timing is unavailable.",
+		"Saved images. Pin snapshots to keep them. Gaps have no saved image.",
+		"Hand input: left above, right below. Green marks input read by the app."};
 	// Alternate lane shading and one quiet line under the ruler keep the rows apart.
 	if (!m_compact)
 		draw->AddLine({top.x, top.y + ruler}, {top.x + width, top.y + ruler}, theme::Line);
@@ -514,9 +514,9 @@ ClipHit TimelineCanvas::DrawClip(const char* id, double first, double last, cons
 	if (overPlay && stoppable)
 		ImGui::SetTooltip("Stop %s and release its inputs", label);
 	else if (overPlay)
-		ImGui::SetTooltip("Play %s on the app; restores inputs, not game state", label);
+		ImGui::SetTooltip("Play %s. This restores inputs, not game state.", label);
 	else
-		ImGui::SetTooltip("%s\nClick selects its frames; double-click opens it", label);
+		ImGui::SetTooltip("%s\nClick selects its frames. Double-click opens it", label);
 	return result;
 }
 void TimelineCanvas::DrawPause(double first, double last)
@@ -536,7 +536,7 @@ void TimelineCanvas::DrawPause(double first, double last)
 	draw->PopClipRect();
 	const auto mouse = ImGui::GetIO().MousePos;
 	if (mouse.x >= x && mouse.x < end && mouse.y >= y && mouse.y < y + m_lane && ImGui::IsWindowHovered())
-		ImGui::SetTooltip("App paused for %.1f s\nIt only advanced when stepped; Continue resumes it", last - first);
+		ImGui::SetTooltip("App paused for %.1f s\nIt only advanced when stepped. Continue resumes it", last - first);
 }
 void TimelineCanvas::DrawGhost(const HistoryStore& history, std::size_t sourceFirst, std::size_t sourceLast,
 							   std::size_t targetFirst, std::size_t targetLast)

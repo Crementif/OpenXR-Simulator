@@ -409,7 +409,7 @@ Message ControlService::DispatchFrame(Client& client, const Message& request, co
 				const auto error = session->PreviewHistory().Error();
 				throw ControlRequestError{error.empty() ? ErrorCode::Busy : ErrorCode::Internal,
 										  error.empty() ? "Decoding exact history frame"
-														: "History codec failed; see history status"};
+														: "Could not decode this frame. Check history status for details."};
 			}
 			if (!preview.submitted)
 				throw ControlRequestError{ErrorCode::NotFound, "Frame preview is absent or evicted"};

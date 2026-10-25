@@ -46,7 +46,7 @@ void DocumentTree::Node(std::span<const std::byte> bytes, unsigned depth)
 	if (depth > 20 || ++m_nodesDrawn > s_maximumNodes)
 	{
 		if (m_nodesDrawn == s_maximumNodes + 1)
-			ImGui::TextDisabled("Showing first %u fields \u00b7 collapse some to see more", s_maximumNodes);
+			ImGui::TextDisabled("Showing %u fields. Collapse some to see more.", s_maximumNodes);
 		return;
 	}
 	auto decoded = wire::DecodeFields(bytes);

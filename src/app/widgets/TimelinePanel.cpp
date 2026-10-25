@@ -155,7 +155,7 @@ void TimelinePanel::DrawMeter(const HistoryStore& history, const RuntimeView& st
 	if (oneRow)
 		std::snprintf(text, sizeof(text), "%.0f fps", average > 0 ? 1000 / average : 0);
 	else
-		std::snprintf(text, sizeof(text), "%.0f fps \u00b7 %.1f ms", average > 0 ? 1000 / average : 0, average);
+		std::snprintf(text, sizeof(text), "%.0f fps, %.1f ms", average > 0 ? 1000 / average : 0, average);
 	auto* draw = ImGui::GetWindowDrawList();
 	const float font = ImGui::GetFontSize(), scale = font / 16;
 	const float textY = oneRow ? area.y + (area.height - font) / 2 : area.y + 2 * scale;
@@ -197,14 +197,14 @@ void TimelinePanel::DrawMeter(const HistoryStore& history, const RuntimeView& st
 		ImGui::BeginTooltip();
 		ImGui::Text("Last %zu application intervals (ms): min %.1f / avg %.1f / max %.1f", count, minimum, average,
 					maximum);
-		ImGui::TextDisabled("Display period %.1f ms; %zu misses / 10 s", budget, missed);
+		ImGui::TextDisabled("Display period %.1f ms. %zu misses / 10 s", budget, missed);
 		char gpuText[32] = "unavailable";
 		if (gpu >= 0)
 			std::snprintf(gpuText, sizeof(gpuText), "%.2f ms", gpu);
 		if (cpu >= 0)
-			ImGui::TextDisabled("CPU span %.1f ms; compositor GPU %s", cpu, gpuText);
+			ImGui::TextDisabled("CPU span %.1f ms. Compositor GPU %s", cpu, gpuText);
 		else
-			ImGui::TextDisabled("CPU span unavailable; compositor GPU %s", gpuText);
+			ImGui::TextDisabled("CPU span unavailable. Compositor GPU %s", gpuText);
 		ImGui::TextDisabled("Application GPU time is unavailable");
 		ImGui::EndTooltip();
 	}
@@ -220,20 +220,20 @@ void TimelinePanel::DrawLegend()
 		ImGui::TextDisabled("%s", meaning);
 	};
 	SectionLabel("Lanes");
-	row("Frame time", "One bar per frame; dashed line is the frame budget");
+	row("Frame time", "One bar per frame. Dashed line is the frame budget");
 	row("", "Amber ran long, red missed its display time");
-	row("paused", "The app was frozen; it only advanced when stepped");
-	row("Images", "Kept images; diamonds are snapshots, filled when pinned");
-	row("Input", "Left hand rises, right hand falls; shading is script or replay");
-	row("Red band", "Recorded; the tab plays a saved take or opens the Library");
+	row("paused", "The app was paused and advanced one frame at a time.");
+	row("Images", "Saved images. Diamonds mark snapshots. Filled diamonds are pinned.");
+	row("Input", "Left hand above, right hand below. Shading marks scripts and replays.");
+	row("Red band", "Click the tab to play a take or open the Library.");
 	row("Blue band", "A replay or script drove these frames");
-	row("Ruler dots", "Connects, pauses and script output; triangles are markers");
+	row("Ruler dots", "Connections, pauses and script output. Triangles mark saved points.");
 	SectionLabel("Mouse and keys");
 	row("Wheel", "Zoom around the pointer");
 	row("Middle drag", "Pan");
 	row("Click", "Show that frame");
 	row("Drag ruler", "Select a range");
-	row(", and .", "Previous and next frame; with Shift, markers");
+	row(", and .", "Go to the previous or next frame. Hold Shift to jump between markers.");
 	row("M", "Add a marker");
 	row("Home / End", "Fit everything / go live");
 	ImGui::EndPopup();
@@ -300,7 +300,7 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 	const float header = drawer ? std::clamp(timelineWidth * .32f, 260 * scale, 380 * scale)
 								: std::max(transport, ImGui::CalcTextSize("Frame time").x) + style.ItemSpacing.x * 2;
 	const float liveWidth = std::max(ImGui::CalcTextSize("Go live").x + button + style.FramePadding.x,
-									 ImGui::CalcTextSize("LIVE \u00b7 000000").x + 14 * scale) +
+									 ImGui::CalcTextSize("LIVE Frame 000000").x + 14 * scale) +
 							button + style.ItemSpacing.x * 3 +
 							(folded ? ImGui::CalcTextSize("000 fps").x + style.ItemSpacing.x : 0);
 	const auto latest = history.Latest({state.session, state.generation, 0}, state.epoch);
@@ -463,9 +463,9 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 		if (roomy)
 		{
 			ImGui::SameLine(0, ImGui::CalcTextSize(" ").x);
-			ImGui::TextDisabled("\u00b7 %llu", static_cast<unsigned long long>(state.latestFrame));
+			ImGui::TextDisabled("Frame %llu", static_cast<unsigned long long>(state.latestFrame));
 		}
-		ImGui::SetItemTooltip(state.manual ? "Showing the paused frame; stepping shows each new frame"
+		ImGui::SetItemTooltip(state.manual ? "Step to show the next frame."
 										   : "Showing the newest frame as the app makes it");
 	}
 	if (folded && roomy)
@@ -493,7 +493,7 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 	}
 	if (state.historyFull)
 	{
-		const char* full = "History full — unpin snapshots";
+		const char* full = "History is full. Unpin a snapshot to free space.";
 		const auto bounds = m_canvas.Bounds();
 		ImGui::GetWindowDrawList()->AddText({bounds.x + bounds.width / 2 - ImGui::CalcTextSize(full).x / 2,
 											 cell.y + (cell.height - ImGui::GetFontSize()) / 2},

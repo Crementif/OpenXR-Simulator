@@ -28,7 +28,7 @@ static void RequireRuntimeOverride()
 		throw std::runtime_error(
 			"The OpenXR loader ignores runtime overrides in elevated processes. "
 			"Run the companion without elevation, or select a provisioned private Proton prefix in the "
-			"launch profile; this launch has been cancelled.");
+			"launch profile. This launch has been cancelled.");
 }
 struct EnvironmentOrder
 {

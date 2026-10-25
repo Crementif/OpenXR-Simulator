@@ -60,7 +60,7 @@ void ConnectionDialog::Draw(RuntimeSession& session, bool* open)
 						 ResizeEndpoint, &m_endpoint);
 		if (ImGui::Button("Connect to endpoint"))
 			session.ConnectEndpoint(m_endpoint.data());
-		ImGui::TextWrapped("Queued: %zu; replies: %zu; exchange: %s", state.queued, state.ready,
+		ImGui::TextWrapped("Queued: %zu. Replies: %zu. Exchange: %s", state.queued, state.ready,
 						   state.inFlight ? "pending" : "idle");
 	}
 	ImGui::EndPopup();

@@ -60,7 +60,7 @@ static std::string TimeoutDetail(const control::ControlExchangeTimeout& error, s
 								 std::chrono::milliseconds deadline)
 {
 	return "Control request " + std::to_string(error.Request().value) + " (opcode " + std::to_string(opcode) +
-		   ") exceeded the " + std::to_string(deadline.count()) + " ms exchange deadline; connection closed";
+		   ") exceeded the " + std::to_string(deadline.count()) + " ms exchange deadline. Connection closed";
 }
 
 control::ControlPacket RuntimeConnection::Exchange(control::LocalControlClient& client, control::ControlPacket packet,
