@@ -64,7 +64,7 @@ struct TakeSource
 struct TimelineWindow
 {
 	double first = 0, last = 0;
-	bool zoomToRange = false;
+	bool zoomToRange = false, toggleFold = false;
 	std::optional<TakeSource> savedTake;
 	// A take playing on the selected session. The transport's Pause then sets
 	// togglePlayback instead of pausing the app, and the shell pauses the take.

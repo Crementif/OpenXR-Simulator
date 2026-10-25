@@ -26,8 +26,8 @@ void TimelineCanvas::Begin(float headerWidth, float liveWidth, bool laneNames)
 	m_compact = height < ImGui::GetFrameHeight() * 2.2f;
 	m_lanes = m_compact ? 1 : effectiveWidth < 800 ? 2 : LaneCount;
 	const float ruler = m_compact ? 0 : ImGui::GetFrameHeight() + 12 * scale;
-	m_live = std::min(liveWidth, width * .2f);
-	m_header = std::min(headerWidth, std::max(width * .5f, width - m_live - 80 * scale));
+	m_header = std::min(headerWidth, std::max(0.f, width - 80 * scale));
+	m_live = std::min({liveWidth, width * .2f, std::max(0.f, width - m_header - 80 * scale)});
 	m_top = top.y;
 	m_height = height;
 	m_bounds = {top.x + m_header, top.y, std::max(1.f, width - m_header - m_live), height};
@@ -70,8 +70,8 @@ void TimelineCanvas::Begin(float headerWidth, float liveWidth, bool laneNames)
 	if (!m_compact)
 	{
 		draw->AddLine({m_bounds.x, top.y + ruler}, {m_bounds.x, top.y + height}, theme::Line);
-		draw->AddLine({m_bounds.x + m_bounds.width, top.y + ruler},
-					  {m_bounds.x + m_bounds.width, top.y + height}, theme::Line);
+		draw->AddLine({m_bounds.x + m_bounds.width, top.y + ruler}, {m_bounds.x + m_bounds.width, top.y + height},
+					  theme::Line);
 	}
 }
 TimelineGesture TimelineCanvas::Draw(const HistoryStore& history, PreviewHistory& previews, ImVec4 crop, bool following,

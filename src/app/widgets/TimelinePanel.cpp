@@ -294,11 +294,12 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 	const float button = ImGui::GetFrameHeight(), scale = ImGui::GetFontSize() / 16;
 	// Recording shows its elapsed time on the record button; room for it is kept so the lanes do not shift.
 	const float clock = ImGui::CalcTextSize("00:00").x + style.FramePadding.x;
-	const float transport = button * 6 + clock + style.ItemSpacing.x * 5;
+	const float transport = button * 7 + clock + style.ItemSpacing.x * 6;
 	const bool drawer = shell.library && !folded;
 	const float timelineWidth = ImGui::GetContentRegionAvail().x;
-	const float header = drawer ? std::clamp(timelineWidth * .32f, 260 * scale, 380 * scale)
-								: std::max(transport, ImGui::CalcTextSize("Frame time").x) + style.ItemSpacing.x * 2;
+	const float header = std::max(transport + style.ItemSpacing.x * 2,
+								  drawer ? std::clamp(timelineWidth * .32f, 260 * scale, 380 * scale)
+										 : ImGui::CalcTextSize("Frame time").x + style.ItemSpacing.x * 2);
 	const float liveWidth = std::max(ImGui::CalcTextSize("Go live").x + button + style.FramePadding.x,
 									 ImGui::CalcTextSize("LIVE Frame 000000").x + 14 * scale) +
 							button + style.ItemSpacing.x * 3 +
@@ -404,7 +405,6 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 		ImGui::EndPopup();
 	}
 	ImGui::SameLine();
-	const float recordX = ImGui::GetCursorPosX();
 	ImGui::BeginDisabled(!state.sessionAvailable);
 	char elapsed[32] = "";
 	if (state.recording && shell.timeline.recordingSince)
@@ -425,12 +425,16 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 			runtime.StartRecording();
 	}
 	ImGui::EndDisabled();
-	ImGui::SameLine(recordX + button + clock + style.ItemSpacing.x);
+	ImGui::SameLine();
 	if (IconButton("Library", Icon::Library, "Saved takes and scripts (Ctrl+L)", shell.library))
 		shell.library = !shell.library;
 	ImGui::SameLine();
 	if (IconButton("Timeline help", Icon::Help, "What the lanes, marks and keys mean"))
 		ImGui::OpenPopup("Timeline legend");
+	ImGui::SameLine();
+	if (IconButton("Fold timeline", folded ? Icon::ChevronUp : Icon::ChevronDown,
+				   folded ? "Show the timeline (Ctrl+T)" : "Hide the timeline (Ctrl+T)"))
+		shell.timeline.toggleFold = true;
 	ImGui::EndGroup();
 	DrawLegend();
 	if (!ImGui::GetIO().WantTextInput && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows))

@@ -107,7 +107,9 @@ bool WorkspacePanels::Divider(const char* id, ShellRect strip, bool vertical, fl
 	const ImVec2 tabSize = vertical ? ImVec2{14 * scale, 40 * scale} : ImVec2{40 * scale, 14 * scale};
 	const ShellRect tab{strip.x + (strip.width - tabSize.x) / 2, strip.y + (strip.height - tabSize.y) / 2, tabSize.x,
 						tabSize.y};
-	const auto [tabHovered, tabActive, tabReleased, tabDoubleClicked, tabMin, tabMax, tabDraw] = region("tab", tab);
+	const auto [tabHovered, tabActive, tabReleased, tabDoubleClicked, tabMin, tabMax, tabDraw] =
+		vertical ? region("tab", tab)
+				 : std::tuple{false, false, false, false, ImVec2{}, ImVec2{}, static_cast<ImDrawList*>(nullptr)};
 	bool toggle = false;
 	const ImGuiID key = ImGui::GetID("Drag");
 	const bool active = lineActive || tabActive;
@@ -154,22 +156,22 @@ bool WorkspacePanels::Divider(const char* id, ShellRect strip, bool vertical, fl
 					  : hot	 ? theme::Fade(theme::Accent, .6f)
 							 : theme::Line,
 					  (hot ? 2.0f : 1.0f) * scale);
-	tabDraw->AddRectFilled(tabMin, tabMax,
-						   tabHovered || active ? theme::Mix(theme::SurfaceRaised, theme::Text, .14f)
-												: theme::SurfaceRaised,
-						   theme::Radius * scale);
-	tabDraw->AddRect(tabMin, tabMax, hot ? theme::Fade(theme::Accent, .7f) : theme::Line, theme::Radius * scale);
-	// The chevron points the way the region goes when clicked.
-	const Icon chevron =
-		vertical ? (folded ? Icon::ChevronLeft : Icon::ChevronRight) : (folded ? Icon::ChevronUp : Icon::ChevronDown);
-	DrawIcon(tabDraw, chevron, {(tabMin.x + tabMax.x) / 2, (tabMin.y + tabMax.y) / 2}, 12 * scale,
-			 tabHovered || active ? theme::Text : theme::TextDim);
-	if (tabHovered && !active)
-		ImGui::SetTooltip("%s", vertical ? (folded ? "Show the inspector (Ctrl+I). Drag to resize"
-												   : "Hide the inspector (Ctrl+I). Drag to resize")
-										 : (folded ? "Show the timeline (Ctrl+T). Drag to resize"
-												   : "Hide the timeline (Ctrl+T). Drag to resize"));
-	else if (lineHovered && !active)
+	if (vertical)
+	{
+		tabDraw->AddRectFilled(tabMin, tabMax,
+							   tabHovered || active ? theme::Mix(theme::SurfaceRaised, theme::Text, .14f)
+													: theme::SurfaceRaised,
+							   theme::Radius * scale);
+		tabDraw->AddRect(tabMin, tabMax, hot ? theme::Fade(theme::Accent, .7f) : theme::Line, theme::Radius * scale);
+		// The chevron points the way the region goes when clicked.
+		const Icon chevron = folded ? Icon::ChevronLeft : Icon::ChevronRight;
+		DrawIcon(tabDraw, chevron, {(tabMin.x + tabMax.x) / 2, (tabMin.y + tabMax.y) / 2}, 12 * scale,
+				 tabHovered || active ? theme::Text : theme::TextDim);
+		if (tabHovered && !active)
+			ImGui::SetTooltip("%s", folded ? "Show the inspector (Ctrl+I). Drag to resize"
+										   : "Hide the inspector (Ctrl+I). Drag to resize");
+	}
+	if (lineHovered && !active)
 		ImGui::SetTooltip("Drag to resize. Drag past the edge to hide. Double-click resets");
 	ImGui::PopID();
 	return toggle;
@@ -283,6 +285,8 @@ void WorkspacePanels::DrawShell(RuntimePanels& runtime)
 			m_dirty = true;
 		ImGui::EndChild();
 		ImGui::PopStyleColor();
+		if (std::exchange(m_shell.timeline.toggleFold, false))
+			FoldTimeline();
 		DrawLibrary(runtime);
 	}
 	if (m_shell.selection != selected)

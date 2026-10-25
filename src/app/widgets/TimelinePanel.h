@@ -17,8 +17,7 @@ struct RuntimeView;
 class TimelinePanel
 {
   public:
-	// Folded draws one row: transport, LIVE and the frame rate. fold is set when
-	// the user asks to fold or unfold the timeline.
+	// Folded draws one row: transport, LIVE and the frame rate.
 	bool Draw(RuntimePanels& runtime, ShellState& shell, bool folded);
 	static float FoldedHeight(float scale)
 	{
