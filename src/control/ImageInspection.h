@@ -13,6 +13,8 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace simxr::control
@@ -72,6 +74,14 @@ class ImageDelivery : public PacketExposure
 class ImageExport : public GpuCompletion
 {
   public:
+	virtual std::string_view MediaType() const noexcept
+	{
+		return "image/raw";
+	}
+	virtual std::string Error() const
+	{
+		return {};
+	}
 	virtual ImageDescription Description() const = 0;
 	virtual std::uint64_t ByteSize() const noexcept = 0;
 	// Explicit export only; immutable borrowed storage lives through this ticket.

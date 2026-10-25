@@ -64,6 +64,7 @@ add_library(simxr_core STATIC
     src/presentation/FrameHistory.cpp
     src/presentation/FrameImageHistory.cpp
     src/presentation/FramePreviewHistory.cpp
+    src/media/Mp4Video.cpp
     src/presentation/FrameDiagnosticsJournal.cpp
     src/presentation/SnapshotStore.cpp
     src/presentation/DebugController.cpp
@@ -85,6 +86,7 @@ else()
 endif()
 
 add_library(simxr_control STATIC
+    src/control/VideoExport.cpp
     src/control/legacy/LegacyCaptureImage.cpp
     src/control/legacy/LegacyInput.cpp
     src/control/legacy/WindowsLegacyChannel.cpp
@@ -441,6 +443,8 @@ if(BUILD_TESTING)
     target_link_libraries(library_catalog_tests PRIVATE simxr_recording_controller)
     simxr_add_test(runtime_connection_tests tests/app/RuntimeConnectionTests.cpp runtime_connection)
     target_link_libraries(runtime_connection_tests PRIVATE simxr_connection)
+    simxr_add_test(mp4_video_tests tests/media/Mp4VideoTests.cpp mp4_video)
+    target_link_libraries(mp4_video_tests PRIVATE simxr_control)
     simxr_add_test(frame_preview_history_tests tests/presentation/FramePreviewHistoryTests.cpp frame_preview_history)
     target_link_libraries(frame_preview_history_tests PRIVATE simxr_core)
     simxr_add_test(frame_image_history_tests tests/presentation/FrameImageHistoryTests.cpp frame_image_history)
@@ -476,6 +480,8 @@ if(BUILD_TESTING)
         target_link_libraries(control_endpoint_host PRIVATE simxr_control)
         find_package(Python3 QUIET COMPONENTS Interpreter)
         if(Python3_Interpreter_FOUND)
+            add_test(NAME python_video COMMAND "${Python3_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/tests/control/test_video.py")
             add_test(NAME python_recording COMMAND "${Python3_EXECUTABLE}"
                 "${PROJECT_SOURCE_DIR}/tests/control/test_recording.py")
             add_test(NAME python_pose_sequence_adapter COMMAND "${Python3_EXECUTABLE}"

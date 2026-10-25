@@ -133,7 +133,15 @@ TOOL_DEFINITIONS = [
     _tool('debug_start_export', 'Explicitly request a bounded GPU-to-CPU image export. Poll its ticket; creation does not return pixels.',
           {'connection': _CONNECTION, 'image': _ID,
            'layer': {'type': 'integer', 'minimum': 0, 'maximum': 2**32 - 1}}, ['connection', 'image']),
-    _tool('debug_export_info', 'Poll explicit image-export metadata. Pending never means complete.',
+    _tool('debug_start_video_export', 'Create an MP4 export of an inclusive retained frame range. Poll and download with the export tools. Both eyes, no audio.',
+          {**_SESSION, 'first_frame': _ID, 'last_frame': _ID}),
+    _tool('debug_save_video', 'Save an inclusive retained frame range as an MP4 on the MCP server machine. Both eyes, no audio. Fails if any frame was evicted.',
+          {**_SESSION, 'first_frame': _ID, 'last_frame': _ID,
+           'path': {'type': 'string', 'minLength': 1},
+           'timeout': {'type': 'number', 'exclusiveMinimum': 0, 'maximum': 600},
+           'overwrite': {'type': 'boolean', 'default': False}},
+          [*_SESSION, 'first_frame', 'last_frame', 'path']),
+    _tool('debug_export_info', 'Poll image or video export metadata. Pending never means complete.',
           {'connection': _CONNECTION, 'export': _ID}),
     _tool('debug_read_export', 'Explicitly read a bounded completed export chunk. The bytes field contains base64 data with encoding metadata.',
           {'connection': _CONNECTION, 'export': _ID,
@@ -404,7 +412,12 @@ class DebugTools:
                                             length=args.get('length', 1024 * 1024 - 4096))
             else:
                 session = sdk.Session(args['session'], args['generation']) if 'session' in args else None
-                if name == 'game_bridge_status':
+                if name == 'debug_start_video_export':
+                    record = client.start_video_export(session, args['first_frame'], args['last_frame'])
+                elif name == 'debug_save_video':
+                    record = client.save_video(session, args['first_frame'], args['last_frame'], args['path'],
+                                               timeout=args.get('timeout', 120), overwrite=args.get('overwrite', False))
+                elif name == 'game_bridge_status':
                     record = client.game_status(session)
                 elif name == 'game_bridge_command':
                     record = client.game_command(session, args['game'], args['kind'], args.get('payload', ''), command_id=args['command_id'])

@@ -10,6 +10,15 @@ class VulkanArchivedFrame final : public ArchivedFrame
 	VulkanH264Picture picture;
 	VkExtent2D extent{};
 	std::uint32_t layers = 0;
+	VkExtent2D coded{};
+	std::shared_ptr<const ArchivedFrame> Black() const override
+	{
+		return codec->Black(extent, layers);
+	}
+	H264Frame Video() const noexcept override
+	{
+		return {picture.bytes, coded.width, coded.height};
+	}
 	std::vector<FrameView> views;
 	std::uint64_t Bytes() const noexcept override
 	{
@@ -41,6 +50,19 @@ std::shared_ptr<const ArchivedFrame> VulkanVideoHistory::Encode(std::shared_ptr<
 	result->views.assign(source->Views().begin(), source->Views().end());
 	Configure(result->extent, result->layers);
 	result->picture = m_conversion->Encode(std::move(source));
+	result->coded = m_conversion->Extent();
+	return result;
+}
+std::shared_ptr<const ArchivedFrame> VulkanVideoHistory::Black(VkExtent2D extent, std::uint32_t layers)
+{
+	std::lock_guard lock(m_mutex);
+	auto result = std::make_shared<VulkanArchivedFrame>();
+	result->codec = shared_from_this();
+	result->extent = extent;
+	result->layers = layers;
+	Configure(extent, layers);
+	result->picture = m_conversion->Encode({});
+	result->coded = m_conversion->Extent();
 	return result;
 }
 std::shared_ptr<const FrameOutput> VulkanVideoHistory::Decode(const VulkanH264Picture& picture, VkExtent2D extent,

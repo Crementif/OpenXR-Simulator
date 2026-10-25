@@ -1,8 +1,9 @@
 #include "control/ConnectionImages.h"
 #include "Pch.h"
-#include "graphics/SnapshotBudget.h"
-#include "control/DebugProtocol.h"
 #include "control/ControlSchema.h"
+#include "control/DebugProtocol.h"
+#include "control/VideoExport.h"
+#include "graphics/SnapshotBudget.h"
 
 #include <limits>
 
@@ -201,6 +202,20 @@ void ConnectionImages::Retain(Message& response, ImageSource source, std::shared
 	response.fields.push_back(Field::Text(tag::Phase, CompletionName(entry->value->PollCompletion())));
 }
 
+void ConnectionImages::StartVideo(Message& response, ImageSource source, std::vector<PreviewClipFrame> frames,
+								  Publication& publication)
+{
+	m_exports.CheckCapacity();
+	auto video = std::make_shared<VideoExport>(std::move(frames));
+	publication.m_retired.m_value = video;
+	const auto entry = m_exports.Add(std::move(video), source);
+	publication.Track(ResourceKind::Export, entry->id);
+	Source(response, source, false);
+	response.fields.push_back(Field::U64(tag::ExportId, entry->id));
+	response.fields.push_back(Field::Text(tag::MediaType, "video/mp4"));
+	response.fields.push_back(Field::Text(tag::Phase, "pending"));
+}
+
 Message ConnectionImages::Dispatch(const ControlPacket& incoming, ControlPacket& outgoing, std::uint16_t minor,
 								   bool nativeHandles, Publication& publication, RetiredResource& retired)
 {
@@ -322,11 +337,16 @@ Message ConnectionImages::Dispatch(const ControlPacket& incoming, ControlPacket&
 	Source(response, entry->source);
 	response.fields.push_back(Field::U64(tag::ImageReaderId, entry->reader));
 	response.fields.push_back(Field::U64(tag::ExportId, entry->id));
-	response.fields.push_back(EncodeImageDescription(entry->value->Description()));
-	const auto total = entry->value->ByteSize();
+	if (entry->value->MediaType() == "image/raw")
+		response.fields.push_back(EncodeImageDescription(entry->value->Description()));
+	else
+		response.fields.push_back(Field::Text(tag::MediaType, entry->value->MediaType()));
 	const auto phase = entry->value->PollCompletion();
+	const auto total = entry->value->ByteSize();
 	response.fields.push_back(Field::U64(tag::TotalBytes, total));
 	response.fields.push_back(Field::Text(tag::Phase, CompletionName(phase)));
+	if (phase == CompletionStatus::Failed)
+		response.fields.push_back(Field::Text(tag::Detail, entry->value->Error()));
 	if (operation == OpCode::ReadExport)
 	{
 		const auto offset = U64(request, tag::Offset), length = U64(request, tag::Length);

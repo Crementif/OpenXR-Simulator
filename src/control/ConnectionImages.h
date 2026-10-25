@@ -1,6 +1,7 @@
 #pragma once
 
 #include "control/ImageInspection.h"
+#include "presentation/FramePreviewHistory.h"
 #include "presentation/SnapshotStore.h"
 
 #include <compare>
@@ -79,6 +80,8 @@ class ConnectionImages
 	void Retain(Message& response, ImageSource source, std::shared_ptr<const FrameOutput> output,
 				const ImageInspectionProvider& provider, bool nativeHandles, Publication& publication,
 				bool includeSession = true);
+	void StartVideo(Message& response, ImageSource source, std::vector<PreviewClipFrame> frames,
+					Publication& publication);
 	Message Dispatch(const ControlPacket& incoming, ControlPacket& outgoing, std::uint16_t minor, bool nativeHandles,
 					 Publication& publication, RetiredResource& retired);
 

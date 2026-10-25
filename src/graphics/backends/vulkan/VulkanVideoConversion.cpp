@@ -228,22 +228,32 @@ VulkanH264Picture VulkanVideoConversion::Encode(std::shared_ptr<const VulkanInsp
 {
 	if (m_uncertain)
 		throw std::runtime_error("History GPU conversion completion unknown");
-	if (!source || source->PollCompletion() != CompletionStatus::Complete || source->Image().device != m_device)
-		throw std::invalid_argument("History encoder requires a completed image on its owned device");
-	const auto& image = source->Image();
-	if (!image.layers || image.layers > 2 || image.extent.width > Extent().width / image.layers ||
-		image.extent.height > Extent().height)
-		throw std::invalid_argument("History encoder dimensions mismatch");
-	m_failedOwner->source = std::move(source);
-	UpdateView(image.image, image.format, image.layers, true);
-	Begin();
-	Bind(true, image.extent, image.layers,
-		 image.format == VK_FORMAT_R8G8B8A8_SRGB || image.format == VK_FORMAT_B8G8R8A8_SRGB);
+	if (source)
+	{
+		if (source->PollCompletion() != CompletionStatus::Complete || source->Image().device != m_device)
+			throw std::invalid_argument("History encoder requires a completed image on its owned device");
+		const auto& image = source->Image();
+		if (!image.layers || image.layers > 2 || image.extent.width > Extent().width / image.layers ||
+			image.extent.height > Extent().height)
+			throw std::invalid_argument("History encoder dimensions mismatch");
+		m_failedOwner->source = std::move(source);
+		UpdateView(image.image, image.format, image.layers, true);
+		Begin();
+		Bind(true, image.extent, image.layers,
+			 image.format == VK_FORMAT_R8G8B8A8_SRGB || image.format == VK_FORMAT_B8G8R8A8_SRGB);
+	}
+	else
+	{
+		Begin();
+		const auto luma = VkDeviceSize{Extent().width} * Extent().height;
+		vkCmdFillBuffer(m_command, m_buffer, 0, luma, 0);
+		vkCmdFillBuffer(m_command, m_buffer, luma, luma / 2, 0x80808080);
+	}
 	VkMemoryBarrier memory{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-	memory.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+	memory.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
 	memory.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-	vkCmdPipelineBarrier(m_command, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &memory,
-						 0, nullptr, 0, nullptr);
+	vkCmdPipelineBarrier(m_command, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+						 VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &memory, 0, nullptr, 0, nullptr);
 	VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
 	barrier.image = m_session->Input();
 	barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;

@@ -229,6 +229,19 @@ class Client:
             fields.append(Field.u32(Tag.LAYER, layer, True))
         return self.request(OpCode.START_EXPORT, fields)
 
+    def start_video_export(self, session, first_frame, last_frame):
+        """Pin an inclusive retained range and encode a silent stereo MP4 asynchronously."""
+        if (type(first_frame) is not int or type(last_frame) is not int or
+                not 0 < first_frame <= last_frame < 2**64 or last_frame - first_frame >= 1_000_000):
+            raise ValueError('Select one to one million consecutive frames')
+        return self.request(OpCode.START_VIDEO_EXPORT, self._session(session) + [
+            Field.u64(Tag.FIRST_FRAME, first_frame, True), Field.u64(Tag.LAST_FRAME, last_frame, True)])
+
+    def save_video(self, session, first_frame, last_frame, path, *, timeout=120.0, overwrite=False):
+        """Save an inclusive clip atomically on this client's machine. No FFmpeg is needed."""
+        from .video import save_video
+        return save_video(self, session, first_frame, last_frame, path, timeout=timeout, overwrite=overwrite)
+
     def export_info(self, export):
         return self.request(OpCode.EXPORT_INFO, [Field.u64(Tag.EXPORT_ID, export, True)])
 

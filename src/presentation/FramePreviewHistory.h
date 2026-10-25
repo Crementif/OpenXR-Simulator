@@ -24,6 +24,16 @@ struct FramePreview
 	bool submitted = false, clear = false, pending = false;
 	std::shared_ptr<const TrackingSnapshot> tracking;
 };
+struct PreviewClipFrame
+{
+	FrameKey key;
+	RuntimeTime time;
+	Duration period;
+	std::shared_ptr<const FrameOutput> output;
+	std::shared_ptr<const ArchivedFrame> archive;
+	std::shared_ptr<const void> retention;
+	bool clear = false;
+};
 class FramePreviewHistory
 {
   public:
@@ -58,8 +68,9 @@ class FramePreviewHistory
 		return m_budget;
 	}
 	void Append(FrameKey key, std::shared_ptr<const FrameOutput> output, bool clear,
-				const TrackingSnapshot* tracking = nullptr);
+				const TrackingSnapshot* tracking = nullptr, RuntimeTime time = {}, Duration period = {});
 	FramePreview Find(FrameKey key);
+	std::vector<PreviewClipFrame> RetainRange(FrameKey first, FrameKey last) const;
 	std::shared_ptr<const TrackingSnapshot> Tracking(FrameKey key) const;
 	std::vector<FrameKey> Frames(SessionGeneration generation, std::size_t limit = SIZE_MAX) const;
 
@@ -67,6 +78,8 @@ class FramePreviewHistory
 	struct Entry
 	{
 		FramePreview preview;
+		RuntimeTime time;
+		Duration period;
 		std::optional<TrackingSnapshot> tracking;
 		std::weak_ptr<FrameReservation> admission;
 		std::shared_ptr<const ArchivedFrame> archive;

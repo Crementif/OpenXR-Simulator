@@ -13,6 +13,7 @@ class VulkanVideoHistory : public std::enable_shared_from_this<VulkanVideoHistor
 	{
 	}
 	std::shared_ptr<const ArchivedFrame> Encode(std::shared_ptr<const VulkanInspectionFrame> source);
+	std::shared_ptr<const ArchivedFrame> Black(VkExtent2D extent, std::uint32_t layers);
 	std::shared_ptr<const FrameOutput> Decode(const VulkanH264Picture& picture, VkExtent2D extent, std::uint32_t layers,
 											  std::span<const FrameView> views, const FramePool& budget);
 

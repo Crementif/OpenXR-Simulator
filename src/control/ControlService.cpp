@@ -157,6 +157,8 @@ std::uint64_t ControlService::ServiceCapabilities(std::uint16_t minor) const
 	}
 	if (minor >= 5)
 		capabilities |= static_cast<std::uint64_t>(Capability::PoseSequences);
+	if (minor >= 7 && m_images)
+		capabilities |= static_cast<std::uint64_t>(Capability::VideoExport);
 	if (minor >= 6)
 		capabilities |= static_cast<std::uint64_t>(Capability::LiveHaptics);
 	return capabilities;
@@ -397,6 +399,24 @@ Message ControlService::DispatchFrame(Client& client, const Message& request, co
 		response.fields.push_back(Field::Bytes(tag::Document, inspection->document, true));
 		return response;
 	}
+	case OpCode::StartVideoExport:
+	{
+		const auto first = RequireRequestU64(request, tag::FirstFrame),
+				   last = RequireRequestU64(request, tag::LastFrame);
+		const SessionGeneration generation{RequireRequestU64(request, tag::Generation)};
+		std::vector<PreviewClipFrame> frames;
+		try
+		{
+			frames = session->PreviewHistory().RetainRange({generation, {first}}, {generation, {last}});
+		}
+		catch (const std::runtime_error& error)
+		{
+			throw ControlRequestError{ErrorCode::NotFound, error.what()};
+		}
+		client.images.StartVideo(response, {binding.id, {generation, {first}}, {}, {CaptureKind::VirtualDisplay}},
+								 std::move(frames), publication.images);
+		return response;
+	}
 	case OpCode::RetainPreview:
 	{
 		if (request.Find(tag::FrameId))
@@ -408,8 +428,9 @@ Message ControlService::DispatchFrame(Client& client, const Message& request, co
 			{
 				const auto error = session->PreviewHistory().Error();
 				throw ControlRequestError{error.empty() ? ErrorCode::Busy : ErrorCode::Internal,
-										  error.empty() ? "Decoding exact history frame"
-														: "Could not decode this frame. Check history status for details."};
+										  error.empty()
+											  ? "Decoding exact history frame"
+											  : "Could not decode this frame. Check history status for details."};
 			}
 			if (!preview.submitted)
 				throw ControlRequestError{ErrorCode::NotFound, "Frame preview is absent or evicted"};
@@ -703,7 +724,7 @@ Message ControlService::Dispatch(Client& client, const Message& request, HeldRea
 		{
 			return DispatchWindow(client, request, held, publication, std::move(response));
 		}
-		if (opcode != OpCode::RetainImage && opcode != OpCode::RetainPreview)
+		if (opcode != OpCode::RetainImage && opcode != OpCode::RetainPreview && opcode != OpCode::StartVideoExport)
 			return client.images.Dispatch(incoming, outgoing, client.requests.Minor(), client.nativeHandles,
 										  publication.images, held.images);
 	}

@@ -101,7 +101,7 @@ std::shared_ptr<FrameReservation> FramePreviewHistory::Reserve(FrameKey key)
 	return reservation;
 }
 void FramePreviewHistory::Append(FrameKey key, std::shared_ptr<const FrameOutput> output, bool clear,
-								 const TrackingSnapshot* tracking)
+								 const TrackingSnapshot* tracking, RuntimeTime time, Duration period)
 {
 	{
 		std::lock_guard lock(m_mutex);
@@ -118,6 +118,8 @@ void FramePreviewHistory::Append(FrameKey key, std::shared_ptr<const FrameOutput
 		if (output && !output->CanArchive())
 			m_gpuOnly = true;
 		entry.preview = {key, std::move(output), true, clear};
+		entry.time = time;
+		entry.period = period;
 		static_assert(std::is_nothrow_copy_assignable_v<TrackingSnapshot>);
 		// Fixed-size state is reserved with the entry, before native submission.
 		if (tracking)
@@ -190,6 +192,27 @@ std::shared_ptr<const TrackingSnapshot> FramePreviewHistory::Tracking(FrameKey k
 	if (found == m_frames.end() || !found->second->tracking)
 		return {};
 	return {found->second, &*found->second->tracking};
+}
+std::vector<PreviewClipFrame> FramePreviewHistory::RetainRange(FrameKey first, FrameKey last) const
+{
+	if (first.generation != last.generation || !first.frame.value || last.frame.value < first.frame.value ||
+		last.frame.value - first.frame.value >= 1000000)
+		throw std::invalid_argument("Choose a valid clip range of at most one million frames.");
+	std::vector<PreviewClipFrame> frames;
+	frames.reserve(static_cast<std::size_t>(last.frame.value - first.frame.value + 1));
+	std::lock_guard lock(m_mutex);
+	for (auto id = first.frame.value;; ++id)
+	{
+		const auto found = m_frames.find({first.generation, {id}});
+		if (found == m_frames.end() || !found->second->preview.submitted)
+			throw std::runtime_error("Some frames in this clip are no longer saved.");
+		const auto& entry = found->second;
+		frames.push_back({entry->preview.key, entry->time, entry->period, entry->preview.output, entry->archive, entry,
+						  entry->preview.clear});
+		if (id == last.frame.value)
+			break;
+	}
+	return frames;
 }
 FramePreview FramePreviewHistory::Find(FrameKey key)
 {

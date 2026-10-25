@@ -219,7 +219,8 @@ XrResult FrameSubmission::Execute(const XrFrameEndInfo& info, const SwapchainDes
 			const auto record = m_session.History().Find(m_key);
 			const auto* tracking =
 				record && record->submission && record->submission->tracking ? &*record->submission->tracking : nullptr;
-			m_session.PreviewHistory().Append(m_key, m_prepared.preview, info.layerCount == 0, tracking);
+			m_session.PreviewHistory().Append(m_key, m_prepared.preview, info.layerCount == 0, tracking,
+											  {Duration{info.displayTime}}, prediction.displayPeriod);
 		}
 		return result;
 	}
