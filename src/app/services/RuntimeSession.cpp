@@ -219,35 +219,43 @@ void RuntimeSession::Poll(bool piloting)
 	if (Supports(wire::Capability::ContinuousPreviews))
 	{
 		const auto scope = m_debugger.Scope();
-		std::vector<std::uint64_t> frames;
-		if (const auto packed = m_debugger.Status().Find(tag::PreviewFrameIds))
+		// Retained previews can predate this companion's metadata feed. They remain
+		// available in the runtime, but have no local timeline row to annotate yet.
+		if (const auto bounds = history.FrameBounds({scope.session, scope.generation, 0}, scope.epoch))
 		{
-			for (std::size_t offset = 0; offset + 8 <= packed->value.size(); offset += 8)
+			const auto add = [&](std::uint64_t frame)
 			{
-				std::uint64_t frame = 0;
-				for (unsigned byte = 0; byte < 8; ++byte)
-					frame |= std::uint64_t{std::to_integer<unsigned char>(packed->value[offset + byte])} << (byte * 8);
-				frames.push_back(frame);
+				if (frame >= bounds->first && frame <= bounds->second)
+					m_coverage.Add({scope.session, scope.generation, frame}, scope.epoch, 0, HistoryPreview);
+			};
+			if (const auto packed = m_debugger.Status().Find(tag::PreviewFrameIds))
+			{
+				for (std::size_t offset = 0; offset + 8 <= packed->value.size(); offset += 8)
+				{
+					std::uint64_t frame = 0;
+					for (unsigned byte = 0; byte < 8; ++byte)
+						frame |= std::uint64_t{std::to_integer<unsigned char>(packed->value[offset + byte])}
+								 << (byte * 8);
+					add(frame);
+				}
 			}
+			else
+				for (const auto& field : panel::Nested(m_debugger.Status().Find(tag::PreviewFrames)).fields)
+					if (const auto frame = field.AsU64())
+						add(*frame);
 		}
-		else
-			for (const auto& field : panel::Nested(m_debugger.Status().Find(tag::PreviewFrames)).fields)
-				if (const auto frame = field.AsU64())
-					frames.push_back(*frame);
-		for (const auto frame : frames)
-			m_coverage.Add({scope.session, scope.generation, frame}, scope.epoch, 0, HistoryPreview);
 	}
 	for (const auto& image : m_preview.Images())
 		if (image.ready && !image.released)
-			m_coverage.Add({image.scope.session, image.scope.generation, image.frame}, image.scope.epoch,
-						   image.capture, image.live ? HistoryPreview : HistorySnapshot);
+			m_coverage.Add({image.scope.session, image.scope.generation, image.frame}, image.scope.epoch, image.capture,
+						   image.live ? HistoryPreview : HistorySnapshot);
 	for (const auto& shot : m_preview.History().Shots())
 		if (shot.frame.frame)
 			m_coverage.Add(shot.frame, shot.epoch, 0, HistoryPreview);
 	for (const auto& capture : m_workspace.Captures())
 		if (!capture.released && Boolean(capture.metadata, tag::Pinned))
-			m_coverage.Add({capture.scope.session, capture.scope.generation, capture.frame}, capture.scope.epoch,
-						   0, HistoryPinned);
+			m_coverage.Add({capture.scope.session, capture.scope.generation, capture.frame}, capture.scope.epoch, 0,
+						   HistoryPinned);
 	m_coverage.Apply(history);
 	if (auto error = m_requests.TakeError(); !error.empty())
 		m_failure = std::move(error);

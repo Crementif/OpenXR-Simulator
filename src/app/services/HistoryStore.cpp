@@ -133,6 +133,27 @@ std::optional<std::size_t> HistoryStore::Find(FrameIdentity identity, std::uint6
 	}
 	return {};
 }
+std::optional<std::pair<std::uint64_t, std::uint64_t>> HistoryStore::FrameBounds(FrameIdentity scope,
+																				 std::uint64_t epoch) const
+{
+	std::optional<std::pair<std::uint64_t, std::uint64_t>> bounds;
+	const auto oldest = m_appended - m_size;
+	for (const auto& segment : m_segments)
+		if (segment.epoch == epoch && segment.session == scope.session && segment.run == scope.run)
+		{
+			const auto first = static_cast<std::size_t>(std::max(segment.begin, oldest) - oldest);
+			const auto last = static_cast<std::size_t>(segment.end - oldest - 1);
+			const auto begin = At(first).identity.frame, end = At(last).identity.frame;
+			if (!bounds)
+				bounds = {begin, end};
+			else
+			{
+				bounds->first = std::min(bounds->first, begin);
+				bounds->second = std::max(bounds->second, end);
+			}
+		}
+	return bounds;
+}
 std::optional<std::size_t> HistoryStore::Latest(FrameIdentity scope, std::uint64_t epoch) const
 {
 	if (const auto segment = LatestSegment(scope, epoch))

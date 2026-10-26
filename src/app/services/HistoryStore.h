@@ -84,6 +84,8 @@ class HistoryStore
 	void SetFlags(std::size_t index, std::uint32_t mask, bool enabled);
 	std::optional<std::size_t> Find(FrameIdentity identity, std::uint64_t epoch) const;
 	std::optional<std::size_t> Latest(FrameIdentity scope, std::uint64_t epoch) const;
+	// Inclusive frame-id bounds across every retained segment of this scope.
+	std::optional<std::pair<std::uint64_t, std::uint64_t>> FrameBounds(FrameIdentity scope, std::uint64_t epoch) const;
 	// Retained [begin, end) indices of the newest contiguous segment in this scope.
 	std::optional<std::pair<std::size_t, std::size_t>> LatestSegment(FrameIdentity scope, std::uint64_t epoch) const;
 	std::pair<std::size_t, std::size_t> SegmentAt(std::size_t index) const;

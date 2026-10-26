@@ -74,6 +74,32 @@ static void UnsortedSources()
 			"Interleaved additions and removals left stale coverage");
 }
 
+static void MetadataBounds()
+{
+	HistoryStore history(4);
+	const FrameIdentity scope{1, 1, 0};
+	Require(!history.FrameBounds(scope, 1), "Empty history has frame bounds");
+	history.Append({{1, 1, 100}, 1, 0, 1, 16});
+	history.Append({{1, 1, 110}, 1, 0, 2, 16});
+	history.Append({{1, 2, 900}, 1, 0, 3, 16});
+	history.Append({{1, 1, 50}, 1, 0, 4, 16});
+	Require(history.FrameBounds(scope, 1) == std::pair<std::uint64_t, std::uint64_t>{50, 110} &&
+				!history.FrameBounds(scope, 2) && !history.FrameBounds({2, 1, 0}, 1),
+			"Bounds omitted an older segment or crossed an epoch/session");
+	history.Append({{1, 1, 75}, 1, 0, 5, 16});
+	Require(history.FrameBounds(scope, 1) == std::pair<std::uint64_t, std::uint64_t>{50, 110},
+			"Partially evicted segment lost its surviving frame bound");
+	history.Append({{1, 1, 80}, 1, 0, 6, 16});
+	Require(history.FrameBounds(scope, 1) == std::pair<std::uint64_t, std::uint64_t>{50, 80},
+			"Fully evicted segment retained its frame bound");
+	history.Append({{1, 1, 500}, 2, 0, 7, 16});
+	Require(history.FrameBounds(scope, 1) == std::pair<std::uint64_t, std::uint64_t>{50, 80} &&
+				history.FrameBounds(scope, 2) == std::pair<std::uint64_t, std::uint64_t>{500, 500},
+			"A reconnect merged independent metadata bounds");
+	history.Clear();
+	Require(!history.FrameBounds(scope, 1) && !history.FrameBounds(scope, 2), "Clear retained metadata bounds");
+}
+
 static void ScopeAndRingChanges()
 {
 	HistoryStore history(2);
@@ -124,6 +150,7 @@ int main()
 	{
 		simxr::test::OverlappingSources();
 		simxr::test::ScopeAndRingChanges();
+		simxr::test::MetadataBounds();
 		simxr::test::UnsortedSources();
 		std::cout << "PASS overlapping coverage, release, reconnect, late pages and ring reuse\n";
 		return 0;
