@@ -243,6 +243,7 @@ struct VulkanBackend::State
 	std::shared_ptr<VulkanExternalDevice> external;
 	std::shared_ptr<VulkanFrameSyncPool> syncPool;
 	std::shared_ptr<VulkanImagePool> imagePool;
+	std::array<std::shared_ptr<VulkanImage>, 8> localOutputs;
 	std::shared_ptr<Retirement> retirement = std::make_shared<Retirement>();
 	State(std::size_t capacity, std::size_t liveCapacity)
 		: reservations(
@@ -494,9 +495,34 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 		resources.sync = m_state->syncPool->Acquire();
 	}
 	else
-		resources.output = CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {plan.width, plan.height}, outputLayers,
-									   VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-										   VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+	{
+		std::shared_ptr<VulkanImage> allocation;
+		VkDeviceSize cachedBytes = 0;
+		for (const auto& cached : m_state->localOutputs)
+		{
+			if (!cached)
+				continue;
+			cachedBytes += cached->allocationSize;
+			if (!allocation && cached.use_count() == 1 && cached->extent.width == plan.width &&
+				cached->extent.height == plan.height && cached->layers == outputLayers)
+				allocation = cached;
+		}
+		if (!allocation)
+		{
+			allocation = CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {plan.width, plan.height}, outputLayers,
+									 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+										 VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+			constexpr VkDeviceSize budget = 64ULL * 1024 * 1024;
+			if (allocation->allocationSize <= budget - cachedBytes)
+				for (auto& cached : m_state->localOutputs)
+					if (!cached)
+					{
+						cached = allocation;
+						break;
+					}
+		}
+		resources.output = VulkanImage::Lease(std::move(allocation));
+	}
 	const auto native = m_state->device->binding.device;
 	for (std::uint32_t eye = 0; eye < outputLayers; ++eye)
 	{
@@ -1061,6 +1087,8 @@ XrResult VulkanBackend::Close()
 	const auto result = Drain(5000000000ULL);
 	if (result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST)
 		return XR_ERROR_RUNTIME_FAILURE;
+	m_state->localOutputs = {};
+	RetireCompleted();
 	if (!m_state->submissions.empty() || !m_state->images.empty())
 		return XR_ERROR_LIMIT_REACHED;
 	if (m_state->syncPool)

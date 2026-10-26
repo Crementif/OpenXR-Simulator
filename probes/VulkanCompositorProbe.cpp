@@ -1245,6 +1245,53 @@ static void CommandStorageReuse(const VulkanBinding& binding)
 	std::puts("case=command-storage-reuse iterations=32 heldStorage=distinct fence=reset PASS");
 }
 
+static void LocalOutputReuse(const VulkanBinding& binding)
+{
+	VulkanBackend backend(binding, 2);
+	CompositionPlan plan;
+	plan.width = plan.height = 16;
+	std::shared_ptr<VulkanImage> held;
+	VkImage original = VK_NULL_HANDLE;
+	unsigned retired = 0;
+	for (unsigned iteration = 0; iteration < 12; ++iteration)
+	{
+		if (iteration == 4)
+			held.reset();
+		if (iteration == 8)
+			plan.width = 32;
+		std::shared_ptr<VulkanFrame> frame;
+		Require(backend.Prepare(
+					plan,
+					[](XrSwapchain)
+					{
+						return std::shared_ptr<VulkanImage>{};
+					},
+					frame) == XR_SUCCESS,
+				"Prepare reusable local output");
+		Require(frame->Image().extent.width == plan.width, "Local output reused the wrong extent");
+		if (!iteration)
+		{
+			held = frame->RetainImage();
+			original = held->image;
+			held->retired = [&retired]
+			{
+				++retired;
+			};
+		}
+		else if (iteration < 4)
+			Require(frame->Image().image != original && retired == 0, "Local output reused a retained reader");
+		else if (iteration < 8)
+			Require(frame->Image().image == original && retired == 1, "Local output failed to reuse a retired lease");
+		const std::array frames{frame};
+		Require(backend.Submit(frames) == XR_SUCCESS, "Submit reusable local output");
+		Check(backend.Drain(s_timeout), "Wait reusable local output");
+	}
+	backend.RetireCompleted();
+	Require(backend.Close() == XR_SUCCESS, "Local output cache prevented backend closure");
+	Require(retired == 1, "Local image retirement callback leaked into a later lease");
+	std::puts("case=local-output-reuse heldReader=distinct retiredLease=reused resize=correct PASS");
+}
+
 static void Benchmark(CompositorDevice& device, const VulkanBinding& binding)
 {
 	VulkanBackend backend(binding, 2);
@@ -1328,6 +1375,7 @@ static int Run(bool verify, bool benchmark)
 			return 0;
 		}
 		CommandStorageReuse(binding);
+		LocalOutputReuse(binding);
 		const bool depthClosure = ClosedDepthPipeline(instance);
 		RejectOversizedImage(binding);
 		ReservedClosure(binding);

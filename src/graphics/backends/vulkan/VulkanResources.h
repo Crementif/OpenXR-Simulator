@@ -57,6 +57,7 @@ class VulkanImage
 	friend class VulkanExternalDevice;
 	friend class WindowsVulkanImport;
 	friend class VulkanImagePool;
+	friend class VulkanBackend;
 	// A fresh image lifetime and retirement observer over a retained allocation.
 	static std::shared_ptr<VulkanImage> Lease(std::shared_ptr<VulkanImage> allocation);
 	explicit VulkanImage(std::shared_ptr<VulkanDevice> device);
