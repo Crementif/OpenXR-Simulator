@@ -176,6 +176,7 @@ add_library(simxr_connection STATIC
     src/app/services/FrameHistoryFeed.cpp
     src/app/services/TimelineHistory.cpp
     src/app/services/HistoryStore.cpp
+    src/app/services/HistoryCoverage.cpp
     src/app/services/InputHistory.cpp
     src/app/services/SpatialMath.cpp
     src/app/services/HapticFeedback.cpp
@@ -437,6 +438,8 @@ if(BUILD_TESTING)
     target_link_libraries(command_scheduler_tests PRIVATE simxr_core)
     simxr_add_test(history_store_tests tests/app/HistoryStoreTests.cpp history_store)
     target_link_libraries(history_store_tests PRIVATE simxr_connection)
+    simxr_add_test(history_coverage_tests tests/app/HistoryCoverageTests.cpp history_coverage)
+    target_link_libraries(history_coverage_tests PRIVATE simxr_connection)
     simxr_add_test(player_rig_tests tests/app/PlayerRigTests.cpp player_rig)
     target_link_libraries(player_rig_tests PRIVATE simxr_connection)
     simxr_add_test(spatial_math_tests tests/app/SpatialMathTests.cpp spatial_math)

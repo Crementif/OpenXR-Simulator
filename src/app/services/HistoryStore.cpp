@@ -32,6 +32,8 @@ HistoryStore::HistoryStore(std::size_t capacity)
 }
 void HistoryStore::Clear() noexcept
 {
+	if (m_identityRevision != std::numeric_limits<std::uint64_t>::max())
+		++m_identityRevision;
 	m_start = m_size = 0;
 	m_appended = 0;
 	m_segments.clear();
@@ -77,7 +79,11 @@ void HistoryStore::Append(const HistoryFrame& frame)
 	if (m_segments.empty() || m_segments.back().end != m_appended || m_segments.back().epoch != frame.epoch ||
 		m_segments.back().session != run.session || m_segments.back().run != run.run ||
 		(frame.flags & HistoryRunStart) || run.frame <= At(m_size - 1).identity.frame)
+	{
 		m_segments.push_back({frame.epoch, run.session, run.run, m_appended, m_appended});
+		if (m_identityRevision != std::numeric_limits<std::uint64_t>::max())
+			++m_identityRevision;
+	}
 	++m_segments.back().end;
 	++m_appended;
 	m_frames[physical] = frame;
@@ -97,8 +103,12 @@ void HistoryStore::SetCoverage(std::size_t index, std::uint64_t capture, std::ui
 	auto& frame = m_frames[physical];
 	frame.capture = capture;
 	constexpr auto coverage = HistorySnapshot | HistoryPreview;
-	frame.flags = (frame.flags & ~coverage) | (flags & coverage);
-	Update(physical);
+	const auto updated = (frame.flags & ~coverage) | (flags & coverage);
+	if (frame.flags != updated)
+	{
+		frame.flags = updated;
+		Update(physical);
+	}
 }
 std::optional<std::size_t> HistoryStore::Find(FrameIdentity identity, std::uint64_t epoch) const
 {
@@ -157,8 +167,12 @@ void HistoryStore::SetFlags(std::size_t index, std::uint32_t mask, bool enabled)
 	(void)At(index);
 	const auto physical = Physical(index);
 	auto& flags = m_frames[physical].flags;
-	flags = enabled ? flags | mask : flags & ~mask;
-	Update(physical);
+	const auto updated = enabled ? flags | mask : flags & ~mask;
+	if (flags != updated)
+	{
+		flags = updated;
+		Update(physical);
+	}
 }
 std::size_t HistoryStore::LowerBound(double seconds) const noexcept
 {

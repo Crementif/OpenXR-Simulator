@@ -215,13 +215,7 @@ void RuntimeSession::Poll(bool piloting)
 	m_exports.Poll();
 	m_preview.Poll();
 	auto& history = m_history.History();
-	for (const auto& frame : m_coverage)
-		if (const auto index = history.Find(frame.identity, frame.epoch))
-		{
-			history.SetCoverage(*index, 0, 0);
-			history.SetFlags(*index, HistoryPinned, false);
-		}
-	m_coverage.clear();
+	m_coverage.Begin();
 	if (Supports(wire::Capability::ContinuousPreviews))
 	{
 		const auto scope = m_debugger.Scope();
@@ -241,37 +235,20 @@ void RuntimeSession::Poll(bool piloting)
 				if (const auto frame = field.AsU64())
 					frames.push_back(*frame);
 		for (const auto frame : frames)
-			if (const auto index = history.Find({scope.session, scope.generation, frame}, scope.epoch))
-			{
-				m_coverage.push_back(history.At(*index));
-				history.SetFlags(*index, HistoryPreview, true);
-			}
+			m_coverage.Add({scope.session, scope.generation, frame}, scope.epoch, 0, HistoryPreview);
 	}
 	for (const auto& image : m_preview.Images())
 		if (image.ready && !image.released)
-			if (const auto index =
-					history.Find({image.scope.session, image.scope.generation, image.frame}, image.scope.epoch))
-			{
-				const auto frame = history.At(*index);
-				history.SetCoverage(*index, image.capture ? image.capture : frame.capture,
-									frame.flags | (image.live ? HistoryPreview : HistorySnapshot));
-				m_coverage.push_back(frame);
-			}
+			m_coverage.Add({image.scope.session, image.scope.generation, image.frame}, image.scope.epoch,
+						   image.capture, image.live ? HistoryPreview : HistorySnapshot);
 	for (const auto& shot : m_preview.History().Shots())
 		if (shot.frame.frame)
-			if (const auto index = history.Find(shot.frame, shot.epoch))
-			{
-				m_coverage.push_back(history.At(*index));
-				history.SetFlags(*index, HistoryPreview, true);
-			}
+			m_coverage.Add(shot.frame, shot.epoch, 0, HistoryPreview);
 	for (const auto& capture : m_workspace.Captures())
 		if (!capture.released && Boolean(capture.metadata, tag::Pinned))
-			if (const auto index =
-					history.Find({capture.scope.session, capture.scope.generation, capture.frame}, capture.scope.epoch))
-			{
-				m_coverage.push_back(history.At(*index));
-				history.SetFlags(*index, HistoryPinned, true);
-			}
+			m_coverage.Add({capture.scope.session, capture.scope.generation, capture.frame}, capture.scope.epoch,
+						   0, HistoryPinned);
+	m_coverage.Apply(history);
 	if (auto error = m_requests.TakeError(); !error.empty())
 		m_failure = std::move(error);
 	for (auto error : {m_debugger.TakeError(), m_workspace.TakeError(), m_preview.TakeError()})

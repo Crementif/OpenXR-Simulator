@@ -4,6 +4,7 @@
 #include "app/services/DebuggerPanelController.h"
 #include "app/services/FrameHistoryFeed.h"
 #include "app/services/HapticFeedback.h"
+#include "app/services/HistoryCoverage.h"
 #include "app/services/ImageExportTask.h"
 #include "app/services/InspectionWorkspace.h"
 #include "app/services/ManualInputController.h"
@@ -184,7 +185,7 @@ class RuntimeSession
 	control::Message m_pastState;
 	std::optional<SteppedFrame> m_stepped;
 	std::optional<ObservedSetup> m_setup;
-	std::vector<HistoryFrame> m_coverage;
+	HistoryCoverage m_coverage;
 	std::vector<Notice> m_notices;
 	std::vector<std::string> m_endpoints;
 	std::string m_endpoint, m_failure, m_historyNotice, m_hapticFailure;

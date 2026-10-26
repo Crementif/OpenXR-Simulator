@@ -71,6 +71,11 @@ class HistoryStore
 	{
 		return m_frames.size();
 	}
+	// Changes when clear or a new segment can replace an identity lookup.
+	std::uint64_t IdentityRevision() const noexcept
+	{
+		return m_identityRevision;
+	}
 	void Clear() noexcept;
 	void Append(const HistoryFrame& frame);
 	const HistoryFrame& At(std::size_t index) const;
@@ -95,7 +100,7 @@ class HistoryStore
 		std::uint64_t begin = 0, end = 0;
 	};
 	std::vector<Segment> m_segments;
-	std::uint64_t m_appended = 0;
+	std::uint64_t m_appended = 0, m_identityRevision = 0;
 	std::vector<HistoryFrame> m_frames;
 	std::vector<HistoryBucket> m_buckets;
 	std::size_t m_start = 0, m_size = 0, m_leaves = 1;
