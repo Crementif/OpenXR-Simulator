@@ -530,14 +530,38 @@ int main()
 	Require(second.displayTime.value == config.epoch.value + 20ms, "Wrong prediction after pacing");
 	Require(scheduler.BeginFrame() == XR_SUCCESS, "Paced begin");
 	clock->Advance(107ms);
-	waiting = std::async(std::launch::async, [&] { return scheduler.WaitFrame(first); });
-	Eventually([&] { return scheduler.Snapshot().waitPending; }, "Stalled wait not entered");
-	Require(waiting.wait_for(20ms) == std::future_status::timeout, "Stall causes catch-up burst");
-	clock->Advance(3ms);
-	Require(waiting.wait_for(1s) == std::future_status::ready && waiting.get() == XR_SUCCESS,
-			"Stall did not preserve display phase");
+	waiting = std::async(std::launch::async,
+						 [&]
+						 {
+							 return scheduler.WaitFrame(first);
+						 });
+	if (waiting.wait_for(1s) != std::future_status::ready)
+	{
+		scheduler.Stop();
+		Require(false, "A late application waited for another display tick");
+	}
+	Require(waiting.get() == XR_SUCCESS, "Late admission failed");
 	Require(first.displayTime.value == config.epoch.value + 130ms, "Stall prediction lost phase");
 	Require(first.displayTime > second.displayTime, "Prediction regressed");
+	Require(scheduler.BeginFrame() == XR_FRAME_DISCARDED, "Late frame did not replace its unfinished predecessor");
+	waiting = std::async(std::launch::async,
+						 [&]
+						 {
+							 return scheduler.WaitFrame(second);
+						 });
+	Eventually(
+		[&]
+		{
+			return scheduler.Snapshot().waitPending;
+		},
+		"Post-stall pacing not entered");
+	Require(waiting.wait_for(20ms) == std::future_status::timeout, "Late admission allowed a catch-up burst");
+	clock->Advance(12ms);
+	Require(waiting.wait_for(20ms) == std::future_status::timeout, "Post-stall pacing returned before its boundary");
+	clock->Advance(1ms);
+	Require(waiting.wait_for(1s) == std::future_status::ready && waiting.get() == XR_SUCCESS &&
+				second.displayTime.value == config.epoch.value + 140ms,
+			"Post-stall admission lost display phase");
 	scheduler.Stop();
 
 	config.mode = ExecutionMode::Deterministic;

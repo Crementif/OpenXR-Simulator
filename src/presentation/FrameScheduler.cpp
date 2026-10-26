@@ -220,8 +220,8 @@ XrResult FrameScheduler::WaitFrame(FramePrediction& prediction,
 			{
 				const auto elapsed =
 					std::chrono::duration_cast<Duration>(HostTimeDifference(m_clock->Now(), m_hostEpoch));
-				const auto relative = m_timeline.TimeAt(admission).value - m_timeline.TimeAt(m_hostTick).value;
-				if (elapsed > relative)
+				const auto admissionOffset = m_timeline.TimeAt(admission).value - m_timeline.TimeAt(m_hostTick).value;
+				if (elapsed > admissionOffset)
 				{
 					const auto elapsedTicks = static_cast<std::uint64_t>(elapsed.count() / m_config.period.count());
 					const auto extra = static_cast<std::uint64_t>(elapsedTicks != 0);
@@ -229,10 +229,10 @@ XrResult FrameScheduler::WaitFrame(FramePrediction& prediction,
 						throw std::overflow_error("Frame host tick exhausted");
 					admission.value = m_hostTick.value + elapsedTicks + extra;
 				}
-				const auto offset = m_timeline.TimeAt(admission).value - m_timeline.TimeAt(m_hostTick).value;
-				if (m_hostEpoch > HostTime::max() - std::chrono::duration_cast<HostTime::duration>(offset))
+				// A late frame advances its prediction without waiting for the replacement tick.
+				if (m_hostEpoch > HostTime::max() - std::chrono::duration_cast<HostTime::duration>(admissionOffset))
 					throw std::overflow_error("Frame host deadline exhausted");
-				const auto deadline = m_hostEpoch + offset;
+				const auto deadline = m_hostEpoch + admissionOffset;
 				while (m_revision == revision && m_policyRevision == policy && m_clock->Now() < deadline)
 					m_clock->WaitUntil(m_changed, lock, deadline);
 				if (m_revision != revision)
