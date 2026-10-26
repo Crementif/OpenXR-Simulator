@@ -453,6 +453,77 @@ static std::shared_ptr<VulkanFrame> Producer(VulkanBackend& backend, const std::
 	return output;
 }
 
+static bool Benchmark()
+{
+	simxr::probe::Instance instance;
+	instance.Create();
+	Device device;
+	if (!device.Create(instance.handle))
+		return false;
+	const VulkanBinding binding{instance.handle, device.m_physical, device.m_native, device.m_family, device.m_index};
+	VulkanBackend backend(binding, 2, s_sharingExtensions, VK_API_VERSION_1_1);
+	VulkanExternalDevice external(backend.Device(), s_sharingExtensions, VK_API_VERSION_1_1);
+	VulkanInspection inspection(external.Identity(), 4);
+	{
+		auto source = backend.CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {16, 16}, 2, s_sourceUsage);
+		Check(backend.InitializeImage(source)->Wait(s_timeout), "Initialize transfer benchmark source");
+		Paint(device, *source, s_original);
+		const auto layers = Layers(reinterpret_cast<XrSwapchain>(201));
+		const std::array plans{Plan(*layers, 1280, 1280), Plan(*layers, 640, 640)};
+		std::vector<double> preparation, completion;
+		preparation.reserve(600);
+		completion.reserve(600);
+		for (unsigned iteration = 0; iteration < 664; ++iteration)
+		{
+			const auto start = std::chrono::steady_clock::now();
+			{
+				std::array<std::shared_ptr<VulkanFrame>, 2> producers;
+				std::array<std::unique_ptr<VulkanInspectionTransfer>, 2> transfers;
+				for (std::size_t index = 0; index < plans.size(); ++index)
+				{
+					Require(backend.Prepare(
+								plans[index],
+								[&](XrSwapchain)
+								{
+									return source;
+								},
+								producers[index]) == XR_SUCCESS,
+							"Prepare transfer benchmark output");
+					transfers[index] = inspection.Prepare(producers[index]);
+				}
+				const auto prepared = std::chrono::steady_clock::now();
+				Require(backend.Submit(producers) == XR_SUCCESS, "Submit transfer benchmark outputs");
+				for (const auto& transfer : transfers)
+					transfer->Commit();
+				Check(inspection.Drain(s_timeout), "Drain transfer benchmark");
+				for (const auto& transfer : transfers)
+					Require(transfer->Output()->PollCompletion() == CompletionStatus::Complete,
+							"Transfer benchmark did not complete");
+				if (iteration >= 64)
+					preparation.push_back(std::chrono::duration<double, std::micro>(prepared - start).count());
+			}
+			backend.RetireCompleted();
+			if (iteration >= 64)
+				completion.push_back(
+					std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count());
+		}
+		const auto report = [](const char* name, std::vector<double>& samples)
+		{
+			std::sort(samples.begin(), samples.end());
+			std::printf("benchmark=%s samples=%zu p50_us=%.2f p95_us=%.2f p99_us=%.2f\n", name, samples.size(),
+						samples[samples.size() / 2], samples[samples.size() * 95 / 100],
+						samples[samples.size() * 99 / 100]);
+		};
+		report("stereo-and-history-transfer-prepare", preparation);
+		report("stereo-and-history-transfer-complete", completion);
+	}
+	Check(inspection.Close(s_timeout), "Close transfer benchmark inspector");
+	Check(backend.Drain(s_timeout), "Drain transfer benchmark producer");
+	Require(backend.Close() == XR_SUCCESS, "Transfer benchmark retained borrowed resources");
+	Require(simxr::probe::s_validationErrors.load() == 0, "Transfer benchmark validation failed");
+	return true;
+}
+
 static void CancelLargeBatch(const VulkanBinding& binding,
 							 const std::shared_ptr<VulkanInspectionValidation>& validation)
 {
@@ -1428,10 +1499,13 @@ int main(int argc, char** argv)
 {
 	using namespace simxr::probe::inspection;
 	bool verify = false;
+	bool benchmark = false;
 	for (int index = 1; index < argc; ++index)
 	{
 		if (std::strcmp(argv[index], "--verify-pixels") == 0)
 			verify = true;
+		else if (std::strcmp(argv[index], "--benchmark") == 0)
+			benchmark = true;
 		else
 		{
 			std::fprintf(stderr, "Unknown inspection probe argument: %s\n", argv[index]);
@@ -1440,6 +1514,8 @@ int main(int argc, char** argv)
 	}
 	try
 	{
+		if (benchmark)
+			return Benchmark() ? 0 : 77;
 		auto validation = std::make_shared<simxr::VulkanInspectionValidation>();
 		const bool supported = Run(verify, validation);
 		Await(

@@ -17,7 +17,6 @@ struct VulkanInspectionWork::Native
 	std::shared_ptr<VulkanDevice> device;
 	std::shared_ptr<FrameReservation> slot;
 	std::shared_ptr<VulkanFrame> producer;
-	std::shared_ptr<VulkanExternalImage> imported;
 	std::shared_ptr<VulkanExternalImage> externalOutput;
 	std::shared_ptr<VulkanExternalSemaphore> ready;
 	std::shared_ptr<VulkanExternalSemaphore> signal;
@@ -111,7 +110,6 @@ void VulkanInspectionWork::ReleaseSources()
 {
 	// Detach first; native-bearing last readers end outside the source mutex.
 	std::shared_ptr<VulkanFrame> producer;
-	std::shared_ptr<VulkanExternalImage> imported;
 	std::shared_ptr<VulkanExternalSemaphore> ready;
 	std::shared_ptr<VulkanImage> source;
 	std::shared_ptr<VulkanImage> readbackImage;
@@ -121,7 +119,6 @@ void VulkanInspectionWork::ReleaseSources()
 		if (!NativeIdle())
 			return;
 		producer = std::move(m_native->producer);
-		imported = std::move(m_native->imported);
 		ready = std::move(m_native->ready);
 		sourceBudget = std::move(m_native->sourceSlot);
 		source = std::move(m_native->sourceImage);
@@ -240,45 +237,20 @@ std::shared_ptr<VulkanInspectionWork> VulkanInspectionWork::Import(std::shared_p
 	work->m_native->producer = producer;
 	const auto image = producer->ExternalImage();
 	auto memory = image->ExportMemory();
-	work->m_native->imported = external.ImportImage(image->Descriptor(), memory);
 	const auto& descriptor = image->Descriptor();
 	const auto& spec = descriptor.image;
-	auto destination = VulkanImage::Create(
-		device, spec.format, {spec.extent.width, spec.extent.height}, spec.arrayLayers,
-		VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, spec.mipLevels);
-	work->m_native->image = destination;
-	const auto& imported = *work->m_native->imported->Image();
+	// Opaque FD and NT imports retain the allocation payload independently of the producer device.
+	work->m_native->image = external.ImportImage(descriptor, memory)->Image();
 	VkImageMemoryBarrier acquire{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
 	acquire.oldLayout = acquire.newLayout = descriptor.producerLayout;
 	acquire.srcQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;
 	acquire.dstQueueFamilyIndex = device->binding.queueFamily;
-	acquire.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-	acquire.image = imported.image;
+	acquire.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+	acquire.image = work->m_native->image->image;
 	acquire.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, spec.mipLevels, 0, spec.arrayLayers};
 	vkCmdPipelineBarrier(work->m_native->commands->command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
 						 VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &acquire);
-	VulkanImageBarrier(work->m_native->commands->command, *destination, VK_IMAGE_LAYOUT_UNDEFINED,
-					   VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
-	VkImageCopy copy{};
-	copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, spec.arrayLayers};
-	copy.dstSubresource = copy.srcSubresource;
-	for (std::uint32_t mip = 0; mip < spec.mipLevels; ++mip)
-	{
-		copy.srcSubresource.mipLevel = copy.dstSubresource.mipLevel = mip;
-		copy.extent = {std::max(1U, spec.extent.width >> mip), std::max(1U, spec.extent.height >> mip), 1};
-		vkCmdCopyImage(work->m_native->commands->command, imported.image, acquire.newLayout, destination->image,
-					   VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
-	}
-	VkImageMemoryBarrier release = acquire;
-	release.srcQueueFamilyIndex = acquire.dstQueueFamilyIndex;
-	release.dstQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;
-	release.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-	release.dstAccessMask = 0;
-	vkCmdPipelineBarrier(work->m_native->commands->command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-						 VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &release);
-	VulkanImageBarrier(work->m_native->commands->command, *destination, VK_IMAGE_LAYOUT_GENERAL,
-					   VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT);
-	CheckVulkan(vkEndCommandBuffer(work->m_native->commands->command), "Record retained inspection copy");
+	CheckVulkan(vkEndCommandBuffer(work->m_native->commands->command), "Record retained image ownership transfer");
 	return work;
 }
 

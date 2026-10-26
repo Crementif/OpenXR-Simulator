@@ -403,7 +403,7 @@ class VulkanInspectionQueue
 			throw VulkanError(m_device->lost.load() ? VK_ERROR_DEVICE_LOST : VK_ERROR_INITIALIZATION_FAILED,
 							  "Submit retained composition");
 	}
-	std::shared_ptr<VulkanInspectionWork> ImportCopy(std::shared_ptr<VulkanFrame> source)
+	std::shared_ptr<VulkanInspectionWork> ImportFrame(std::shared_ptr<VulkanFrame> source)
 	{
 		return VulkanInspectionWork::Import(m_device, m_external, ReserveWork(), std::move(source));
 	}
@@ -1133,7 +1133,7 @@ std::unique_ptr<VulkanInspectionTransfer> VulkanInspection::Prepare(std::shared_
 				source->CancelInspection();
 		}
 	} claim{source};
-	auto work = m_queue->ImportCopy(source);
+	auto work = m_queue->ImportFrame(source);
 	work->Image()->retired = std::move(retired);
 	auto resources = VulkanInspectionFrame::Resources::Create(m_queue, work->Image(), source->Reservation(),
 															  std::move(completed), {}, std::move(deliveryRetired));
