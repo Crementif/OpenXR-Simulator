@@ -83,6 +83,7 @@ struct VulkanExternalImageSpec
 	VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL;
 	VkImageType imageType = VK_IMAGE_TYPE_2D;
 	VkImageCreateFlags flags = 0;
+	bool operator==(const VulkanExternalImageSpec& other) const noexcept;
 };
 
 struct VulkanExternalImageDescriptor
@@ -130,12 +131,15 @@ class VulkanExternalImage final
 
   private:
 	friend class VulkanExternalDevice;
+	friend class VulkanImagePool;
+	VulkanExternalImage(std::shared_ptr<VulkanImage> image, std::shared_ptr<const VulkanExternalImage> allocation);
 	VulkanExternalImage(std::shared_ptr<VulkanImage> image, VulkanExternalImageDescriptor descriptor,
 						VulkanGetMemoryHandle getMemoryHandle, bool exportable);
 	const std::shared_ptr<VulkanImage> m_image;
 	const VulkanExternalImageDescriptor m_descriptor;
 	const VulkanGetMemoryHandle m_getMemoryHandle;
 	const bool m_exportable;
+	const std::shared_ptr<const VulkanExternalImage> m_allocation;
 	mutable std::mutex m_exportMutex;
 #ifdef _WIN32
 	mutable VulkanExternalHandle m_memoryHandle;

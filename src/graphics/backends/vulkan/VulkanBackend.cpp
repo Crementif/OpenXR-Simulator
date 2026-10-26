@@ -242,6 +242,7 @@ struct VulkanBackend::State
 	std::shared_ptr<Pipeline> depthMultisamplePipeline;
 	std::shared_ptr<VulkanExternalDevice> external;
 	std::shared_ptr<VulkanFrameSyncPool> syncPool;
+	std::shared_ptr<VulkanImagePool> imagePool;
 	std::shared_ptr<Retirement> retirement = std::make_shared<Retirement>();
 	State(std::size_t capacity, std::size_t liveCapacity)
 		: reservations(
@@ -296,7 +297,10 @@ VulkanBackend::VulkanBackend(const VulkanBinding& binding, std::size_t frameCapa
 		m_state->external =
 			std::make_shared<VulkanExternalDevice>(m_state->device, enabledExtensions, instanceApiVersion);
 	if (m_state->external)
+	{
 		m_state->syncPool = std::make_shared<VulkanFrameSyncPool>(m_state->external);
+		m_state->imagePool = std::make_shared<VulkanImagePool>(m_state->external);
+	}
 	m_state->pipeline = CreatePipeline(m_state->device);
 }
 
@@ -311,7 +315,10 @@ VulkanBackend::VulkanBackend(std::shared_ptr<VulkanDevice> device, std::size_t f
 		m_state->external = std::make_shared<VulkanExternalDevice>(m_state->device, enabledExtensions,
 																   VK_API_VERSION_1_1, timelineEnabled);
 	if (m_state->external)
+	{
 		m_state->syncPool = std::make_shared<VulkanFrameSyncPool>(m_state->external);
+		m_state->imagePool = std::make_shared<VulkanImagePool>(m_state->external);
+	}
 	m_state->pipeline = CreatePipeline(m_state->device);
 }
 
@@ -479,7 +486,8 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 		VulkanExternalImageSpec spec;
 		spec.extent = {plan.width, plan.height, 1};
 		spec.arrayLayers = outputLayers;
-		resources.external = m_state->external->CreateExportable(spec);
+		resources.imageLease = m_state->imagePool->Acquire(spec);
+		resources.external = resources.imageLease->External();
 		resources.output = resources.external->Image();
 		SnapshotBudget::ObserveImageBytes(resources.external->Descriptor().allocationSize);
 		m_state->images.push_back(resources.output);
@@ -763,7 +771,8 @@ XrResult VulkanBackend::PrepareImageCopy(const LayerImageDescription& descriptio
 		spec.extent = {image->extent.width, image->extent.height, 1};
 		spec.mipLevels = image->mipLevels;
 	}
-	resources.external = m_state->external->CreateExportable(spec);
+	resources.imageLease = m_state->imagePool->Acquire(spec);
+	resources.external = resources.imageLease->External();
 	resources.output = resources.external->Image();
 	SnapshotBudget::ObserveImageBytes(resources.external->Descriptor().allocationSize);
 	m_state->images.push_back(resources.output);
@@ -856,7 +865,8 @@ XrResult VulkanBackend::PrepareNativeCopy(std::shared_ptr<VulkanImage> source, V
 	spec.arrayLayers = source->layers;
 	spec.mipLevels = source->mipLevels;
 	spec.extent = {source->extent.width, source->extent.height, 1};
-	resources.external = m_state->external->CreateExportable(spec);
+	resources.imageLease = m_state->imagePool->Acquire(spec);
+	resources.external = resources.imageLease->External();
 	resources.output = resources.external->Image();
 	SnapshotBudget::ObserveImageBytes(resources.external->Descriptor().allocationSize);
 	m_state->images.push_back(resources.output);
@@ -1055,6 +1065,8 @@ XrResult VulkanBackend::Close()
 		return XR_ERROR_LIMIT_REACHED;
 	if (m_state->syncPool)
 		m_state->syncPool->Close();
+	if (m_state->imagePool)
+		m_state->imagePool->Close();
 	m_state->device->ClearCommands();
 	m_state->closed = true;
 	m_state->pipeline.reset();

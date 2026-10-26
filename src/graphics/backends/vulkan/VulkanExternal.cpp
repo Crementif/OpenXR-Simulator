@@ -36,8 +36,9 @@ static constexpr std::array s_sharingNames{VulkanExternalMemoryExtension, Vulkan
 static constexpr VkImageUsageFlags s_imageUsages = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
 												   VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
-static bool SameImage(const VulkanExternalImageSpec& left, const VulkanExternalImageSpec& right)
+bool VulkanExternalImageSpec::operator==(const VulkanExternalImageSpec& right) const noexcept
 {
+	const auto& left = *this;
 	return left.format == right.format && left.extent.width == right.extent.width &&
 		   left.extent.height == right.extent.height && left.extent.depth == right.extent.depth &&
 		   left.arrayLayers == right.arrayLayers && left.mipLevels == right.mipLevels &&
@@ -369,6 +370,12 @@ VulkanExternalImage::VulkanExternalImage(std::shared_ptr<VulkanImage> image, Vul
 	: m_image(std::move(image)), m_descriptor(descriptor), m_getMemoryHandle(getMemoryHandle), m_exportable(exportable)
 {
 }
+VulkanExternalImage::VulkanExternalImage(std::shared_ptr<VulkanImage> image,
+										 std::shared_ptr<const VulkanExternalImage> allocation)
+	: m_image(std::move(image)), m_descriptor(allocation->Descriptor()), m_getMemoryHandle(nullptr),
+	  m_exportable(false), m_allocation(std::move(allocation))
+{
+}
 std::shared_ptr<VulkanImage> VulkanExternalImage::Image() const noexcept
 {
 	return m_image;
@@ -379,6 +386,8 @@ const VulkanExternalImageDescriptor& VulkanExternalImage::Descriptor() const noe
 }
 VulkanExternalHandle VulkanExternalImage::ExportMemory() const
 {
+	if (m_allocation)
+		return m_allocation->ExportMemory();
 	std::lock_guard lock(m_exportMutex);
 	RequireLive(*m_image->device);
 	if (!m_exportable || !m_getMemoryHandle)
@@ -506,7 +515,7 @@ VulkanExternalCapabilities VulkanExternalDevice::ImageCapabilities(const VulkanE
 	{
 		std::lock_guard lock(m_imageQueryMutex);
 		for (const auto& query : m_imageQueries)
-			if (query.capabilities.result == VK_SUCCESS && SameImage(query.image, image))
+			if (query.capabilities.result == VK_SUCCESS && query.image == image)
 				return query.capabilities;
 	}
 	const auto capabilities = Query(m_device->binding.physicalDevice, image, m_instanceApiVersion);

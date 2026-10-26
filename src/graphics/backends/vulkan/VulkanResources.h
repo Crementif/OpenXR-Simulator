@@ -48,7 +48,7 @@ class VulkanImage
 	std::uint32_t mipLevels = 1;
 	VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
 	VkImageUsageFlags usage = 0;
-	// Set before publication; observes actual native image destruction only.
+	// Set before publication; observes the end of this image lease after its GPU uses retire.
 	std::function<void()> retired;
 	VkImageAspectFlags Aspect() const;
 	VkImageLayout ApplicationLayout() const;
@@ -56,7 +56,11 @@ class VulkanImage
   private:
 	friend class VulkanExternalDevice;
 	friend class WindowsVulkanImport;
+	friend class VulkanImagePool;
+	// A fresh image lifetime and retirement observer over a retained allocation.
+	static std::shared_ptr<VulkanImage> Lease(std::shared_ptr<VulkanImage> allocation);
 	explicit VulkanImage(std::shared_ptr<VulkanDevice> device);
+	std::shared_ptr<VulkanImage> m_allocation;
 };
 
 void VulkanImageBarrier(VkCommandBuffer command, const VulkanImage& image, VkImageLayout previous, VkImageLayout next,

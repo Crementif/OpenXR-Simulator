@@ -114,12 +114,30 @@ std::shared_ptr<VulkanImage> VulkanImage::Create(std::shared_ptr<VulkanDevice> d
 	return result;
 }
 
+std::shared_ptr<VulkanImage> VulkanImage::Lease(std::shared_ptr<VulkanImage> allocation)
+{
+	auto result = std::shared_ptr<VulkanImage>(new VulkanImage(allocation->device));
+	result->m_allocation = std::move(allocation);
+	const auto& source = *result->m_allocation;
+	result->image = source.image;
+	result->memory = source.memory;
+	result->allocationSize = source.allocationSize;
+	result->format = source.format;
+	result->extent = source.extent;
+	result->layers = source.layers;
+	result->mipLevels = source.mipLevels;
+	result->samples = source.samples;
+	result->usage = source.usage;
+	return result;
+}
+
 VulkanImage::~VulkanImage()
 {
-	if (image)
+	if (image && !m_allocation)
 		vkDestroyImage(device->binding.device, image, nullptr);
-	if (memory)
+	if (memory && !m_allocation)
 		vkFreeMemory(device->binding.device, memory, nullptr);
+	m_allocation.reset();
 	try
 	{
 		if (retired)

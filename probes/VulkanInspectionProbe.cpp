@@ -453,6 +453,131 @@ static std::shared_ptr<VulkanFrame> Producer(VulkanBackend& backend, const std::
 	return output;
 }
 
+class InspectionQueueGate
+{
+  public:
+	InspectionQueueGate(std::shared_ptr<VulkanDevice> consumer, const VulkanExternalDevice& producer)
+		: m_consumer(std::move(consumer)), m_producer(producer.Device()), m_waitFence(m_consumer->AcquireCommands()),
+		  m_signalFence(m_producer->AcquireCommands()), m_signal(producer.CreateExportableSemaphore())
+	{
+		auto handle = m_signal->ExportOnce();
+		VulkanExternalDevice external(m_consumer, s_sharingExtensions, VK_API_VERSION_1_1);
+		m_wait = external.ImportSemaphore(producer.Identity(), handle);
+	}
+	~InspectionQueueGate()
+	{
+		if (!m_submitted)
+			return;
+		Release();
+		if (vkWaitForFences(m_consumer->binding.device, 1, &m_waitFence->fence, VK_TRUE, s_timeout) != VK_SUCCESS ||
+			vkWaitForFences(m_producer->binding.device, 1, &m_signalFence->fence, VK_TRUE, s_timeout) != VK_SUCCESS)
+			UnknownCompletion("Inspection queue gate did not retire");
+	}
+	void Submit()
+	{
+		const auto semaphore = m_wait->Get();
+		const VkPipelineStageFlags stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+		VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+		submit.waitSemaphoreCount = 1;
+		submit.pWaitSemaphores = &semaphore;
+		submit.pWaitDstStageMask = &stage;
+		std::lock_guard lock(m_consumer->queueMutex);
+		if (vkQueueSubmit(m_consumer->queue, 1, &submit, m_waitFence->fence) != VK_SUCCESS)
+			UnknownCompletion("Inspection queue gate submission failed");
+		m_submitted = true;
+	}
+	void Release()
+	{
+		if (m_released)
+			return;
+		const auto semaphore = m_signal->Get();
+		VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+		submit.signalSemaphoreCount = 1;
+		submit.pSignalSemaphores = &semaphore;
+		std::lock_guard lock(m_producer->queueMutex);
+		if (vkQueueSubmit(m_producer->queue, 1, &submit, m_signalFence->fence) != VK_SUCCESS)
+			UnknownCompletion("Inspection queue gate release failed");
+		m_released = true;
+	}
+
+  private:
+	const std::shared_ptr<VulkanDevice> m_consumer;
+	const std::shared_ptr<VulkanDevice> m_producer;
+	const std::unique_ptr<VulkanCommands> m_waitFence;
+	const std::unique_ptr<VulkanCommands> m_signalFence;
+	const std::shared_ptr<VulkanExternalSemaphore> m_signal;
+	std::shared_ptr<VulkanExternalSemaphore> m_wait;
+	bool m_submitted = false;
+	bool m_released = false;
+};
+
+static void ReuseAllocations(const VulkanBinding& binding, Device& device,
+							 const std::shared_ptr<VulkanInspectionValidation>& validation)
+{
+	VulkanBackend backend(binding, 4, s_sharingExtensions, VK_API_VERSION_1_1);
+	VulkanExternalDevice external(backend.Device(), s_sharingExtensions, VK_API_VERSION_1_1);
+	VulkanInspection inspection(external.Identity(), 4, validation);
+	auto source = backend.CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {16, 16}, 2, s_sourceUsage);
+	Check(backend.InitializeImage(source)->Wait(s_timeout), "Initialize image reuse source");
+	const auto finish = [&](const std::shared_ptr<VulkanFrame>& producer)
+	{
+		auto transfer = inspection.Prepare(producer);
+		Require(backend.Submit(producer) == XR_SUCCESS, "Submit reusable image");
+		transfer->Commit();
+		Check(inspection.Drain(s_timeout), "Drain reusable image");
+		Require(transfer->Output()->PollCompletion() == CompletionStatus::Complete, "Reusable image did not complete");
+		return transfer->Output();
+	};
+	Paint(device, *source, s_original);
+	auto firstProducer = Producer(backend, source);
+	const auto producerImage = firstProducer->Image().image;
+	auto first = finish(firstProducer);
+	const auto consumerImage = first->Image().image;
+	firstProducer.reset();
+	backend.RetireCompleted();
+
+	Paint(device, *source, s_reused);
+	auto secondProducer = Producer(backend, source);
+	Require(secondProducer->Image().image != producerImage, "Reused an allocation with a retained inspection reader");
+	auto borrowed = secondProducer->ExternalImage()->Image();
+	auto second = finish(secondProducer);
+	Verify(*first, 32, 24, s_original);
+	Verify(*second, 32, 24, s_reused);
+	second.reset();
+	secondProducer.reset();
+	backend.RetireCompleted();
+
+	InspectionQueueGate gate(first->Image().device, external);
+	gate.Submit();
+	auto readback = first->Export();
+	first.reset();
+	Require(readback->PollCompletion() == CompletionStatus::Pending, "Readback passed its unsignaled GPU gate");
+	auto third = Producer(backend, source);
+	Require(third->Image().image != producerImage && third->Image().image != borrowed->image,
+			"Reused an allocation retained by a readback or a bare producer image");
+	third.reset();
+	gate.Release();
+	AwaitComplete(*readback);
+	readback.reset();
+	Check(inspection.Drain(s_timeout), "Retire final readback image owner");
+	backend.RetireCompleted();
+
+	auto reusedProducer = Producer(backend, source);
+	Require(reusedProducer->Image().image == producerImage, "Released producer allocation was not reused");
+	auto reused = finish(reusedProducer);
+	Require(reused->Image().image == consumerImage, "Released inspection import was not reused");
+	Verify(*reused, 32, 24, s_reused);
+	reusedProducer.reset();
+	source.reset();
+	Check(inspection.Close(s_timeout), "Close reusable image inspector");
+	Require(backend.Close() == XR_ERROR_LIMIT_REACHED, "Close released a still-retained borrowed image");
+	borrowed.reset();
+	Require(backend.Close() == XR_SUCCESS, "Close retained cached borrowed image allocations");
+	Verify(*reused, 32, 24, s_reused);
+	std::puts("case=image-allocation-reuse retainedPixels=exact readbackAndBorrowedOwners=protected "
+			  "producerAndImport=reused closeRetry=ready PASS");
+}
+
 static bool Benchmark()
 {
 	simxr::probe::Instance instance;
@@ -1371,6 +1496,7 @@ static bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& 
 				Require(!disabled.Sharing(), "Unconfigured logical sharing became enabled");
 				Require(disabled.Close() == XR_SUCCESS, "Close unconfigured backend");
 			}
+			ReuseAllocations(binding, device, validation);
 			CancelLargeBatch(binding, validation);
 			VulkanBackend backend(binding, 3, s_sharingExtensions, VK_API_VERSION_1_1);
 			Require(backend.Sharing(), "Explicit logical external-sharing configuration unavailable");

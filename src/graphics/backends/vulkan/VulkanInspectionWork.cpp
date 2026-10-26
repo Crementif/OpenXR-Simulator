@@ -254,11 +254,10 @@ std::shared_ptr<VulkanInspectionWork> VulkanInspectionWork::Import(std::shared_p
 	auto work = std::shared_ptr<VulkanInspectionWork>(new VulkanInspectionWork(device, std::move(admission)));
 	work->m_native->producer = producer;
 	const auto image = producer->ExternalImage();
-	auto memory = image->ExportMemory();
 	const auto& descriptor = image->Descriptor();
 	const auto& spec = descriptor.image;
 	// Opaque FD and NT imports retain the allocation payload independently of the producer device.
-	work->m_native->image = external.ImportImage(descriptor, memory)->Image();
+	work->m_native->image = producer->ImportImage(external);
 	VkImageMemoryBarrier acquire{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
 	acquire.oldLayout = acquire.newLayout = descriptor.producerLayout;
 	acquire.srcQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;

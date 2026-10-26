@@ -228,6 +228,11 @@ std::shared_ptr<VulkanExternalImage> VulkanFrame::ExternalImage() const
 	return m_submission->m_resources->external;
 }
 
+std::shared_ptr<VulkanImage> VulkanFrame::ImportImage(const VulkanExternalDevice& consumer) const
+{
+	return m_submission->m_resources->imageLease->Import(consumer);
+}
+
 std::shared_ptr<VulkanFrameSync> VulkanFrame::InspectionSync() const
 {
 	return m_submission->m_resources->sync;

@@ -4,6 +4,7 @@
 #include "graphics/FrameOutput.h"
 #include "graphics/FramePool.h"
 #include "graphics/backends/vulkan/VulkanExternal.h"
+#include "graphics/backends/vulkan/VulkanImagePool.h"
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
 #include "graphics/backends/vulkan/VulkanResources.h"
 
@@ -47,6 +48,7 @@ class VulkanSubmission final : public GpuCompletion
 		std::vector<std::shared_ptr<VulkanImage>> sources;
 		// Source CPU readers may disappear before this submission reaches its fence.
 		std::vector<std::shared_ptr<FrameReservation>> sourceBudgets;
+		std::shared_ptr<VulkanImagePool::Lease> imageLease;
 		std::shared_ptr<VulkanImage> output;
 		std::shared_ptr<VulkanExternalImage> external;
 		std::shared_ptr<VulkanFrameSync> sync;
@@ -92,6 +94,7 @@ class VulkanFrame final : public FrameOutput
 	explicit VulkanFrame(std::shared_ptr<VulkanSubmission> submission, std::span<const FrameView> views = {});
 	VkResult Wait(std::uint64_t timeout) const noexcept;
 	std::shared_ptr<VulkanFrameSync> InspectionSync() const;
+	std::shared_ptr<VulkanImage> ImportImage(const VulkanExternalDevice& consumer) const;
 	bool ClaimInspection();
 	void CancelInspection() noexcept;
 	void CommitInspection() noexcept;
