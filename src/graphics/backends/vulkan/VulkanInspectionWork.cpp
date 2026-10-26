@@ -1,6 +1,7 @@
 #include "graphics/backends/vulkan/VulkanInspectionWork.h"
 #include "Pch.h"
 #include "graphics/ColorPixels.h"
+#include "graphics/backends/vulkan/VulkanFrameSync.h"
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
 #include "graphics/backends/vulkan/VulkanSubmission.h"
 
@@ -18,6 +19,7 @@ struct VulkanInspectionWork::Native
 	std::shared_ptr<FrameReservation> slot;
 	std::shared_ptr<VulkanFrame> producer;
 	std::shared_ptr<VulkanExternalImage> externalOutput;
+	std::shared_ptr<VulkanFrameSync> sync;
 	std::shared_ptr<VulkanExternalSemaphore> ready;
 	std::shared_ptr<VulkanExternalSemaphore> signal;
 	std::shared_ptr<VulkanImage> sourceImage;
@@ -122,6 +124,7 @@ void VulkanInspectionWork::ReleaseSources()
 {
 	// Detach first; native-bearing last readers end outside the source mutex.
 	std::shared_ptr<VulkanFrame> producer;
+	std::shared_ptr<VulkanFrameSync> sync;
 	std::shared_ptr<VulkanExternalSemaphore> ready;
 	std::shared_ptr<VulkanImage> source;
 	std::shared_ptr<VulkanImage> readbackImage;
@@ -130,6 +133,9 @@ void VulkanInspectionWork::ReleaseSources()
 		std::lock_guard lock(m_sourceMutex);
 		if (!NativeIdle())
 			return;
+		if (m_native->sync && PollCompletion() == CompletionStatus::Complete)
+			m_native->sync->MarkConsumed();
+		sync = std::move(m_native->sync);
 		producer = std::move(m_native->producer);
 		ready = std::move(m_native->ready);
 		sourceBudget = std::move(m_native->sourceSlot);
@@ -146,8 +152,8 @@ CompletionStatus VulkanInspectionWork::ProducerCompletion() const noexcept
 
 void VulkanInspectionWork::ImportProducerReady(const VulkanExternalDevice& external)
 {
-	auto ready = m_native->producer->ExportReady();
-	m_native->ready = external.ImportSemaphore(m_native->producer->ExternalImage()->Descriptor().identity, ready);
+	m_native->sync = m_native->producer->InspectionSync();
+	m_native->ready = m_native->sync->Import(external);
 }
 
 void VulkanInspectionWork::CommitProducer() noexcept

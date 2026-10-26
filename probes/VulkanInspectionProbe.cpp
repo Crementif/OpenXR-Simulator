@@ -618,7 +618,60 @@ static void RejectedPreparation(VulkanBackend& backend, const std::shared_ptr<Vu
 		Check(cancelledRetryService.Close(s_timeout), "close inspector after cancelled-transfer retry");
 		Check(available.Close(s_timeout), "close inspector after capacity-rejected source retry");
 	}
-	std::puts("case=rejected-inspection-prepare closedAndCapacity=checked sameProducerRetry=ready PASS");
+	{
+		auto producer = Producer(backend, source);
+		VulkanInspection first(identity, 1, validation);
+		auto cancelled = first.Prepare(producer);
+		Require(backend.Submit(producer) == XR_SUCCESS, "Submit producer before consumer cancellation");
+		cancelled.reset();
+		Check(first.Close(s_timeout), "Close cancelled consumer after producer submission");
+		VulkanInspection replacement(identity, 1, validation);
+		auto retry = replacement.Prepare(producer);
+		retry->Commit();
+		AwaitComplete(*retry->Output());
+		Check(replacement.Close(s_timeout), "Drain replacement consumer of already submitted producer");
+	}
+	std::puts("case=rejected-inspection-prepare closedAndCapacity=checked sameProducerRetry=ready "
+			  "submittedConsumerReplacement=ready PASS");
+}
+
+static void DrainRetirement(VulkanBackend& backend, const std::shared_ptr<VulkanImage>& source,
+							const VulkanExternalIdentity& identity,
+							const std::shared_ptr<VulkanInspectionValidation>& validation)
+{
+	std::latch entered(1), release(1);
+	VulkanInspection inspection(identity, 1, validation);
+	{
+		struct Unblock
+		{
+			std::latch& release;
+			~Unblock()
+			{
+				release.count_down();
+			}
+		} unblock{release};
+		auto producer = Producer(backend, source);
+		auto transfer = inspection.Prepare(producer, {},
+										   [&]
+										   {
+											   entered.count_down();
+											   release.wait();
+										   });
+		Require(backend.Submit(producer) == XR_SUCCESS, "Submit producer with gated retirement");
+		transfer->Commit();
+		transfer.reset();
+		producer.reset();
+		Await(
+			[&]
+			{
+				return entered.try_wait();
+			},
+			"Inspection did not reach native retirement");
+		Require(inspection.Drain(0) == VK_TIMEOUT, "Drain completed before native retirement finished");
+	}
+	Check(inspection.Drain(s_timeout), "Drain released native retirement");
+	Check(inspection.Close(s_timeout), "Close released native retirement");
+	std::puts("case=drain-retirement finalOwnerGated=yes earlySuccess=no PASS");
 }
 
 static std::shared_ptr<VulkanInspectionFrame> EarlyClose(VulkanBackend& backend,
@@ -1342,6 +1395,7 @@ static bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& 
 			}
 			Paint(device, *source, s_original);
 			RejectedPreparation(backend, source, external.Identity(), validation);
+			DrainRetirement(backend, source, external.Identity(), validation);
 			closedOutput = EarlyClose(backend, source, external.Identity(), validation);
 			{
 				DebugCapture capture(backend);

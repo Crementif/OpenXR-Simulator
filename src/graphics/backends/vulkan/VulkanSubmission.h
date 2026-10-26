@@ -18,6 +18,7 @@
 namespace simxr
 {
 class VulkanBackend;
+class VulkanFrameSync;
 
 class VulkanSubmission final : public GpuCompletion
 {
@@ -48,7 +49,7 @@ class VulkanSubmission final : public GpuCompletion
 		std::vector<std::shared_ptr<FrameReservation>> sourceBudgets;
 		std::shared_ptr<VulkanImage> output;
 		std::shared_ptr<VulkanExternalImage> external;
-		std::shared_ptr<VulkanExternalSemaphore> ready;
+		std::shared_ptr<VulkanFrameSync> sync;
 #ifdef _WIN32
 		std::shared_ptr<const void> nativeSource;
 		VkSemaphore nativeReady = VK_NULL_HANDLE;
@@ -90,13 +91,12 @@ class VulkanFrame final : public FrameOutput
 	friend class VulkanInspectionWork;
 	explicit VulkanFrame(std::shared_ptr<VulkanSubmission> submission, std::span<const FrameView> views = {});
 	VkResult Wait(std::uint64_t timeout) const noexcept;
-	VulkanExternalHandle ExportReady();
+	std::shared_ptr<VulkanFrameSync> InspectionSync() const;
 	bool ClaimInspection();
 	void CancelInspection() noexcept;
 	void CommitInspection() noexcept;
 	std::shared_ptr<VulkanSubmission> m_submission;
 	std::mutex m_inspectionMutex;
-	VulkanExternalHandle m_readyFd;
 	enum class InspectionClaim
 	{
 		Available,

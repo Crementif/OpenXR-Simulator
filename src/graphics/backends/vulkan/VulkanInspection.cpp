@@ -798,7 +798,7 @@ VkResult VulkanInspection::Drain(std::uint64_t timeout)
 			Poll();
 			lock.lock();
 		}
-		if (m_jobs.empty())
+		if (m_jobs.empty() && !m_observing)
 			return m_queue->Device()->lost.load() ? VK_ERROR_DEVICE_LOST : VK_SUCCESS;
 		if (std::chrono::steady_clock::now() >= deadline)
 			return VK_TIMEOUT;
@@ -839,6 +839,22 @@ void VulkanInspection::CheckAdmission() const
 std::shared_ptr<VulkanInspectionTransfer::State> VulkanInspection::Poll()
 {
 	std::lock_guard polling(m_polling);
+	{
+		std::lock_guard lock(m_mutex);
+		m_observing = true;
+	}
+	struct Observation
+	{
+		VulkanInspection& inspection;
+		~Observation()
+		{
+			{
+				std::lock_guard lock(inspection.m_mutex);
+				inspection.m_observing = false;
+			}
+			inspection.m_changed->notify_all();
+		}
+	} observation{*this};
 	std::array<std::shared_ptr<VulkanInspectionTransfer::State>, SnapshotBudget::MaxCapacity + 3 + 32> pending;
 	std::size_t count = 0;
 	{
@@ -863,8 +879,6 @@ std::shared_ptr<VulkanInspectionTransfer::State> VulkanInspection::Poll()
 		std::erase(m_jobs, nullptr);
 	}
 	m_queue->Collect();
-	if (count)
-		m_changed->notify_all();
 	return next;
 }
 void VulkanInspection::Run() noexcept

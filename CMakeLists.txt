@@ -268,6 +268,7 @@ if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES OR SIMXR_BUILD_COMPANION)
         src/graphics/backends/vulkan/VulkanReadbackBatch.cpp
         src/graphics/backends/vulkan/VulkanInspectionDevice.cpp
         src/graphics/backends/vulkan/VulkanSubmission.cpp
+        src/graphics/backends/vulkan/VulkanFrameSync.cpp
         src/graphics/backends/vulkan/VulkanBackend.cpp)
     target_sources(simxr_vulkan PRIVATE src/graphics/backends/vulkan/VulkanSwapchain.cpp
         src/graphics/backends/vulkan/VulkanSessionGraphics.cpp

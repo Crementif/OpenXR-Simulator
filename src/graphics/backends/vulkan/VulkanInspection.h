@@ -197,6 +197,7 @@ class VulkanInspection
 	// Prepared transfers can outlive the service that observes them.
 	std::shared_ptr<std::condition_variable> m_changed = std::make_shared<std::condition_variable>();
 	std::vector<std::shared_ptr<VulkanInspectionTransfer::State>> m_jobs;
+	bool m_observing = false;
 	bool m_closed = false;
 	bool m_stopping = false;
 	std::atomic<bool> m_workerStopped{false};

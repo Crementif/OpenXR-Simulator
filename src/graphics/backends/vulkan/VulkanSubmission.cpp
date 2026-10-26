@@ -1,5 +1,6 @@
 #include "graphics/backends/vulkan/VulkanSubmission.h"
 #include "Pch.h"
+#include "graphics/backends/vulkan/VulkanFrameSync.h"
 
 #include <cmath>
 #include <cstdio>
@@ -227,15 +228,9 @@ std::shared_ptr<VulkanExternalImage> VulkanFrame::ExternalImage() const
 	return m_submission->m_resources->external;
 }
 
-VulkanExternalHandle VulkanFrame::ExportReady()
+std::shared_ptr<VulkanFrameSync> VulkanFrame::InspectionSync() const
 {
-	std::lock_guard lock(m_inspectionMutex);
-	const auto& ready = m_submission->m_resources->ready;
-	if (!ready)
-		throw VulkanError(VK_ERROR_FEATURE_NOT_PRESENT, "Frame has no external GPU readiness dependency");
-	if (!m_readyFd)
-		m_readyFd = ready->ExportOnce();
-	return m_readyFd.Duplicate();
+	return m_submission->m_resources->sync;
 }
 
 bool VulkanFrame::ClaimInspection()

@@ -2,6 +2,7 @@
 #include "Pch.h"
 #include "graphics/ColorPixels.h"
 #include "graphics/SnapshotBudget.h"
+#include "graphics/backends/vulkan/VulkanFrameSync.h"
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
 #include "shaders/generated/CompositorSpirv.h"
 
@@ -240,6 +241,7 @@ struct VulkanBackend::State
 	std::shared_ptr<Pipeline> pipeline;
 	std::shared_ptr<Pipeline> depthMultisamplePipeline;
 	std::shared_ptr<VulkanExternalDevice> external;
+	std::shared_ptr<VulkanFrameSyncPool> syncPool;
 	std::shared_ptr<Retirement> retirement = std::make_shared<Retirement>();
 	State(std::size_t capacity, std::size_t liveCapacity)
 		: reservations(
@@ -293,6 +295,8 @@ VulkanBackend::VulkanBackend(const VulkanBinding& binding, std::size_t frameCapa
 	if (enabled(VulkanExternalMemoryExtension) && enabled(VulkanExternalSemaphoreExtension))
 		m_state->external =
 			std::make_shared<VulkanExternalDevice>(m_state->device, enabledExtensions, instanceApiVersion);
+	if (m_state->external)
+		m_state->syncPool = std::make_shared<VulkanFrameSyncPool>(m_state->external);
 	m_state->pipeline = CreatePipeline(m_state->device);
 }
 
@@ -306,6 +310,8 @@ VulkanBackend::VulkanBackend(std::shared_ptr<VulkanDevice> device, std::size_t f
 	if (!enabledExtensions.empty())
 		m_state->external = std::make_shared<VulkanExternalDevice>(m_state->device, enabledExtensions,
 																   VK_API_VERSION_1_1, timelineEnabled);
+	if (m_state->external)
+		m_state->syncPool = std::make_shared<VulkanFrameSyncPool>(m_state->external);
 	m_state->pipeline = CreatePipeline(m_state->device);
 }
 
@@ -477,7 +483,7 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 		resources.output = resources.external->Image();
 		SnapshotBudget::ObserveImageBytes(resources.external->Descriptor().allocationSize);
 		m_state->images.push_back(resources.output);
-		resources.ready = m_state->external->CreateExportableSemaphore();
+		resources.sync = m_state->syncPool->Acquire();
 	}
 	else
 		resources.output = CreateImage(VK_FORMAT_R8G8B8A8_SRGB, {plan.width, plan.height}, outputLayers,
@@ -761,7 +767,7 @@ XrResult VulkanBackend::PrepareImageCopy(const LayerImageDescription& descriptio
 	resources.output = resources.external->Image();
 	SnapshotBudget::ObserveImageBytes(resources.external->Descriptor().allocationSize);
 	m_state->images.push_back(resources.output);
-	resources.ready = m_state->external->CreateExportableSemaphore();
+	resources.sync = m_state->syncPool->Acquire();
 	resources.outputViews[0] = View(*resources.output, 0);
 	VulkanImageBarrier(resources.commands->command, *image, image->ApplicationLayout(),
 					   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
@@ -854,7 +860,7 @@ XrResult VulkanBackend::PrepareNativeCopy(std::shared_ptr<VulkanImage> source, V
 	resources.output = resources.external->Image();
 	SnapshotBudget::ObserveImageBytes(resources.external->Descriptor().allocationSize);
 	m_state->images.push_back(resources.output);
-	resources.ready = m_state->external->CreateExportableSemaphore();
+	resources.sync = m_state->syncPool->Acquire();
 	for (std::uint32_t eye = 0; eye < source->layers; ++eye)
 		resources.outputViews[eye] = View(*resources.output, eye);
 	VkImageMemoryBarrier acquire{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -941,8 +947,8 @@ XrResult VulkanBackend::Submit(std::span<const std::shared_ptr<VulkanFrame>> fra
 			waitStages[waitCount++] = VK_PIPELINE_STAGE_TRANSFER_BIT;
 		}
 #endif
-		if (resources.ready)
-			signals[signalCount++] = resources.ready->Get();
+		if (resources.sync)
+			signals[signalCount++] = resources.sync->Signal();
 	}
 	const auto leader = frames.front()->m_submission;
 	{
@@ -1047,6 +1053,8 @@ XrResult VulkanBackend::Close()
 		return XR_ERROR_RUNTIME_FAILURE;
 	if (!m_state->submissions.empty() || !m_state->images.empty())
 		return XR_ERROR_LIMIT_REACHED;
+	if (m_state->syncPool)
+		m_state->syncPool->Close();
 	m_state->device->ClearCommands();
 	m_state->closed = true;
 	m_state->pipeline.reset();
