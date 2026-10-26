@@ -582,6 +582,90 @@ static void VerifySubmissionFailures(const VulkanInspectionDevice& device)
 #endif
 }
 
+static void VerifyImageReuse(const VulkanInspectionDevice& device)
+{
+	Application app;
+	auto backend =
+		std::make_unique<OpenGLBackend>(app.device, app.context, device.Device(), device.EnabledExtensions());
+	VulkanBackend delivery(device.Device(), 8, device.EnabledExtensions(), true);
+	VulkanInspection inspection(OpenGLBackend::Identity(app.device, app.context), 8);
+	CompositionPlan plan{8, 8, {}, {}};
+	CompositionDraw draw{};
+	draw.constants.eyeTangents = draw.constants.sourceTangents = {-1, 1, 1, -1};
+	draw.constants.sourceFromEyeRotation = {0, 0, 0, 1};
+	draw.constants.imageRectangle = {0, 0, 1, 1};
+	plan.draws.push_back(draw);
+	const OpenGLCompositionSource source{app.texture, GL_RGBA8, 8, 8};
+	std::shared_ptr<VulkanImage> held;
+	std::shared_ptr<const VulkanInspectionFrame> first;
+	VkImage firstImage = VK_NULL_HANDLE;
+	const auto verify = [](const std::shared_ptr<const VulkanInspectionFrame>& frame, unsigned channel)
+	{
+		auto exported = frame->Export();
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+		std::shared_ptr<const VulkanImagePixels> pixels;
+		while (!(pixels = exported->Pixels()) && std::chrono::steady_clock::now() < deadline)
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		Require(pixels && pixels->layers == 1, "Reusable OpenGL output did not export");
+		for (std::size_t offset = 0; offset < pixels->rgba.size(); offset += 4)
+			for (unsigned component = 0; component < 4; ++component)
+				Require(pixels->rgba[offset + component] == (component == channel || component == 3 ? 255 : 0),
+						"Reusable OpenGL output changed retained pixels");
+	};
+	for (unsigned iteration = 0; iteration < 12; ++iteration)
+	{
+		std::array<std::uint8_t, 8 * 8 * 4> pixels{};
+		for (std::size_t offset = 0; offset < pixels.size(); offset += 4)
+		{
+			pixels[offset + (iteration ? 1 : 0)] = 255;
+			pixels[offset + 3] = 255;
+		}
+		glBindTexture(GL_TEXTURE_2D, app.texture);
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 8, 8, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+		if (iteration == 4)
+			held.reset();
+		if (iteration == 6)
+			plan.width = 16;
+		std::shared_ptr<OpenGLFrame> frame;
+		Require(backend->Prepare(plan, std::span{&source, 1}, frame, 1) == XR_SUCCESS, "Prepare reusable OpenGL frame");
+		if (!iteration)
+		{
+			held = frame->Image();
+			firstImage = held->image;
+		}
+		else if (iteration < 4)
+			Require(frame->Image()->image != firstImage, "Reused an OpenGL allocation with a bare image reader");
+		else if (iteration == 4)
+			Require(frame->Image()->image == firstImage, "Released OpenGL allocation was not reused");
+		Require(frame->Image()->extent.width == plan.width, "OpenGL cache reused the wrong extent");
+		std::shared_ptr<VulkanFrame> copied;
+		Require(delivery.PrepareNativeCopy(frame->Image(), frame->Ready(), 0, frame, {}, copied) == XR_SUCCESS,
+				"Prepare reusable OpenGL delivery");
+		auto transfer = inspection.Prepare(copied);
+		Require(backend->Submit(frame) == XR_SUCCESS && delivery.Submit(copied) == XR_SUCCESS,
+				"Submit reusable OpenGL delivery");
+		transfer->Commit();
+		CheckVulkan(delivery.Drain(5000000000ULL), "Drain reusable OpenGL producer");
+		CheckVulkan(inspection.Drain(), "Drain reusable OpenGL consumer");
+		if (!iteration)
+			first = transfer->Output();
+		verify(transfer->Output(), iteration ? 1 : 0);
+		if (iteration)
+			verify(first, 0);
+		frame.reset();
+		copied.reset();
+		transfer.reset();
+		delivery.RetireCompleted();
+	}
+	backend.reset();
+	verify(first, 0);
+	first.reset();
+	CheckVulkan(inspection.Close(), "Close reusable OpenGL inspection");
+	Require(delivery.Close() == XR_SUCCESS, "Close reusable OpenGL delivery");
+	std::puts(
+		"PASS: OpenGL image reuse waits for bare readers, preserves pixels, handles resize and producer teardown");
+}
+
 int main()
 {
 	try
@@ -592,7 +676,8 @@ int main()
 		VulkanInspectionDevice device(identity, {}, true);
 		VulkanBackend delivery(device.Device(), 8, device.EnabledExtensions(), true);
 		VulkanInspection inspection(identity, 8);
-		auto backend = std::make_unique<OpenGLBackend>(app.device, app.context, device.Device(), device.EnabledExtensions());
+		auto backend =
+			std::make_unique<OpenGLBackend>(app.device, app.context, device.Device(), device.EnabledExtensions());
 		CompositionPlan plan{8, 8, {}, {}};
 		CompositionDraw draw{};
 		draw.constants.eyeTangents = draw.constants.sourceTangents = {-1, 1, 1, -1};
@@ -772,6 +857,7 @@ int main()
 			CheckVulkan(inspection.Drain(), "Drain OpenGL inspection");
 		}
 		VerifyMultisample(app, device);
+		VerifyImageReuse(device);
 		VerifySubmissionFailures(device);
 		std::puts("PASS: canonical GLSL, exact float16/float32/RGB10 raw captures, cropped raw/depth arrays, normalized/linear depth, retained RGBA/sRGB/float16/float32/RGB10 mip chains after producer teardown and GPU handoff");
 		return 0;

@@ -5,6 +5,7 @@
 #include "graphics/FramePool.h"
 #include "graphics/backends/vulkan/VulkanExternal.h"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -22,6 +23,7 @@ struct OpenGLCompositionSource
 };
 
 class OpenGLContext;
+class OpenGLSharedImage;
 class OpenGLFrame final : public FrameOutput
 {
   public:
@@ -64,6 +66,7 @@ class OpenGLBackend final
 	const HGLRC m_applicationContext;
 	std::shared_ptr<OpenGLContext> m_context;
 	VulkanExternalDevice m_external;
+	std::array<std::shared_ptr<OpenGLSharedImage>, 8> m_images;
 	FramePool m_frames{8};
 	FramePool m_retainedFrames{32};
 	struct PendingFrames;

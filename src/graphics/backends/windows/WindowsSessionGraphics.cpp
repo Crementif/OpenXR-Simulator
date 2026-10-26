@@ -417,8 +417,13 @@ template <typename Backend> class WindowsFrameSubmission final : public FrameSub
 														 imported, native->Views(), copied, std::move(reservation));
 		if (XR_FAILED(result))
 			return result;
-		auto transfer = m_inspection.Prepare(copied, {}, {},
-											 history ? VulkanInspectionKind::History : VulkanInspectionKind::Required);
+		auto transfer = m_inspection.Prepare(
+			copied,
+			[producers = m_delivery.LiveReservations()](CompletionStatus)
+			{
+				producers.Collect();
+			},
+			{}, history ? VulkanInspectionKind::History : VulkanInspectionKind::Required);
 		if (history && history->preview && transfer->Output()->Image().allocationSize > FramePreviewHistory::SlotBytes)
 			throw std::runtime_error("Preview allocation exceeds its history reservation");
 		if (history && !transfer->Output()->PromoteCaptureBudget(*history->historyPool, history->historyReservation))

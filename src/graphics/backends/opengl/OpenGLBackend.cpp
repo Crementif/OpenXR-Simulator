@@ -38,6 +38,20 @@ static void CheckGL(const windows::OpenGLLibrary& gl, const char* operation)
 		throw std::runtime_error(operation);
 }
 
+static bool HasExtension(std::string_view extensions, std::string_view name)
+{
+	while (!extensions.empty())
+	{
+		const auto end = extensions.find(' ');
+		if (extensions.substr(0, end) == name)
+			return true;
+		if (end == std::string_view::npos)
+			break;
+		extensions.remove_prefix(end + 1);
+	}
+	return false;
+}
+
 static void RequireApplicationCapabilities(const windows::OpenGLLibrary& gl, HDC device)
 {
 	GLint major = 0, minor = 0, count = 0;
@@ -86,21 +100,7 @@ static void RequireApplicationCapabilities(const windows::OpenGLLibrary& gl, HDC
 	for (const std::string_view required :
 		 {"WGL_ARB_create_context", "WGL_ARB_create_context_profile", "WGL_ARB_pixel_format", "WGL_ARB_pbuffer"})
 	{
-		std::string_view remaining(extensions);
-		bool found = false;
-		while (!remaining.empty())
-		{
-			const auto end = remaining.find(' ');
-			if (remaining.substr(0, end) == required)
-			{
-				found = true;
-				break;
-			}
-			if (end == std::string_view::npos)
-				break;
-			remaining.remove_prefix(end + 1);
-		}
-		if (!found)
+		if (!HasExtension(extensions, required))
 			throw std::runtime_error(std::string("Application OpenGL context requires ") + std::string(required));
 	}
 }
@@ -183,10 +183,19 @@ class OpenGLContext final
 		m_device = Procedure<PFNWGLGETPBUFFERDCARBPROC>(gl, "wglGetPbufferDCARB")(m_pbuffer);
 		if (!m_device)
 			throw std::runtime_error("Cannot acquire OpenGL offscreen device");
-		const int attributes[]{
-			WGL_CONTEXT_MAJOR_VERSION_ARB,	  4, WGL_CONTEXT_MINOR_VERSION_ARB, 5, WGL_CONTEXT_PROFILE_MASK_ARB,
-			WGL_CONTEXT_CORE_PROFILE_BIT_ARB, 0};
-		m_handle = create(m_device, applicationContext, attributes);
+		std::vector<int> attributes{WGL_CONTEXT_MAJOR_VERSION_ARB, 4,
+									WGL_CONTEXT_MINOR_VERSION_ARB, 5,
+									WGL_CONTEXT_PROFILE_MASK_ARB,  WGL_CONTEXT_CORE_PROFILE_BIT_ARB};
+		const auto extensions =
+			Procedure<PFNWGLGETEXTENSIONSSTRINGARBPROC>(gl, "wglGetExtensionsStringARB")(applicationDevice);
+		if (extensions && HasExtension(extensions, "WGL_ARB_context_flush_control"))
+		{
+			// Submission flushes each GPU handoff explicitly; polling and preparation need no implicit flush.
+			attributes.push_back(WGL_CONTEXT_RELEASE_BEHAVIOR_ARB);
+			attributes.push_back(WGL_CONTEXT_RELEASE_BEHAVIOR_NONE_ARB);
+		}
+		attributes.push_back(0);
+		m_handle = create(m_device, applicationContext, attributes.data());
 		if (!m_handle)
 			throw std::runtime_error("Cannot create shared OpenGL 4.5 context");
 		windows::OpenGLContextScope current(gl, m_device, m_handle);
@@ -215,6 +224,7 @@ class OpenGLContext final
 		m_depthMsProgram = CreateProgram(shaders::CompositorVertexGlsl, shaders::CompositorDepthMsGlsl);
 		Procedure<PFNGLCREATEVERTEXARRAYSPROC>(gl, "glCreateVertexArrays")(1, &m_vertexArray);
 		CheckGL(gl, "Initialize canonical OpenGL compositor");
+		gl.Flush();
 		if (!current.Restore() || !application.Restore())
 			throw std::runtime_error("Cannot restore OpenGL context after compositor initialization");
 	}
@@ -293,6 +303,7 @@ class OpenGLContext final
 				m_deleteVertexArrays(1, &m_vertexArray);
 				m_vertexArray = 0;
 			}
+			gl.Flush();
 			if (!current.Restore())
 				return false;
 		}
@@ -327,11 +338,54 @@ class OpenGLContext final
 	PFNWGLDESTROYPBUFFERARBPROC m_destroy = nullptr;
 };
 
+class OpenGLSharedImage final
+{
+  public:
+	std::shared_ptr<OpenGLContext> context;
+	std::shared_ptr<VulkanExternalImage> image;
+	GLuint texture = 0, memory = 0, framebuffer = 0;
+	GLenum format = 0;
+	bool ready = false;
+
+	static std::shared_ptr<OpenGLSharedImage> Create(std::shared_ptr<OpenGLContext> context)
+	{
+		auto result = std::shared_ptr<OpenGLSharedImage>(
+			new OpenGLSharedImage,
+			[](OpenGLSharedImage* image)
+			{
+				if (image->Close())
+					delete image;
+				else
+					std::fputs("SimXR: preserving shared OpenGL image after native cleanup failure\n", stderr);
+			});
+		result->context = std::move(context);
+		return result;
+	}
+
+  private:
+	bool Close() noexcept
+	{
+		if (!texture && !memory && !framebuffer)
+			return true;
+		std::lock_guard lock(context->m_mutex);
+		const auto& gl = context->m_gl;
+		windows::OpenGLContextScope current(gl, context->m_device, context->m_handle);
+		if (!current.Current())
+			return false;
+		context->m_deleteFramebuffers(1, &framebuffer);
+		gl.DeleteTextures(1, &texture);
+		if (memory)
+			context->m_deleteMemory(1, &memory);
+		framebuffer = texture = memory = 0;
+		return current.Restore();
+	}
+};
+
 struct OpenGLFrame::Resources
 {
 	windows::ModuleReference m_module;
 	std::shared_ptr<OpenGLContext> context;
-	std::shared_ptr<VulkanExternalImage> image;
+	std::shared_ptr<OpenGLSharedImage> storage;
 	std::shared_ptr<VulkanExternalSemaphore> available, ready;
 	std::shared_ptr<FrameReservation> reservation;
 	std::shared_ptr<FrameReservation> preservation;
@@ -341,7 +395,7 @@ struct OpenGLFrame::Resources
 	std::vector<GLuint> copies;
 	// Container attachments keep every source texture alive through native retirement.
 	std::vector<GLuint> sourceFramebuffers;
-	GLuint texture = 0, memory = 0, framebuffer = 0, copyFramebuffer = 0;
+	GLuint copyFramebuffer = 0;
 	GLuint availableGL = 0, readyGL = 0;
 	GLsync completion = nullptr;
 	VkCommandPool pool = VK_NULL_HANDLE;
@@ -372,19 +426,15 @@ OpenGLFrame::~OpenGLFrame()
 	if (resources.completion)
 		resources.context->m_deleteSync(resources.completion);
 	const auto deleteFramebuffers = resources.context->m_deleteFramebuffers;
-	const GLuint framebuffers[]{resources.framebuffer, resources.copyFramebuffer};
-	deleteFramebuffers(2, framebuffers);
+	deleteFramebuffers(1, &resources.copyFramebuffer);
 	deleteFramebuffers(static_cast<GLsizei>(resources.sourceFramebuffers.size()), resources.sourceFramebuffers.data());
-	gl.DeleteTextures(1, &resources.texture);
 	gl.DeleteTextures(static_cast<GLsizei>(resources.copies.size()), resources.copies.data());
-	if (resources.memory)
-		resources.context->m_deleteMemory(1, &resources.memory);
 	for (const auto semaphore : {resources.availableGL, resources.readyGL})
 		if (semaphore)
 			resources.context->m_deleteSemaphores(1, &semaphore);
-	if (resources.image)
+	if (resources.storage && resources.storage->image)
 	{
-		const auto device = resources.image->Image()->device->binding.device;
+		const auto device = resources.storage->image->Image()->device->binding.device;
 		if (resources.initialized)
 			vkDestroyFence(device, resources.initialized, nullptr);
 		if (resources.pool)
@@ -398,7 +448,8 @@ CompletionStatus OpenGLFrame::PollCompletion() const noexcept
 	const auto& gl = resources.context->m_gl;
 	std::lock_guard lock(resources.context->m_mutex);
 	if (!resources.submitted || !resources.completion ||
-		vkGetFenceStatus(resources.image->Image()->device->binding.device, resources.initialized) != VK_SUCCESS)
+		vkGetFenceStatus(resources.storage->image->Image()->device->binding.device, resources.initialized) !=
+			VK_SUCCESS)
 		return CompletionStatus::Pending;
 	windows::OpenGLContextScope current(gl, resources.context->m_device, resources.context->m_handle);
 	if (!current.Current())
@@ -419,7 +470,7 @@ bool OpenGLFrame::SourcesUsed() const noexcept
 
 std::shared_ptr<VulkanImage> OpenGLFrame::Image() const noexcept
 {
-	return m_resources->image->Image();
+	return std::shared_ptr<VulkanImage>(m_resources->storage, m_resources->storage->image->Image().get());
 }
 
 VkSemaphore OpenGLFrame::Ready() const noexcept
@@ -582,7 +633,20 @@ XrResult OpenGLBackend::PrepareImage(const CompositionPlan& plan, std::span<cons
 	resources.sources.assign(sources.begin(), sources.end());
 	resources.copies.resize(sources.size());
 	resources.sourceFramebuffers.resize(std::max<std::size_t>(sources.size(), 1));
-	resources.image = m_external.CreateExportable(description);
+	for (const auto& image : m_images)
+		if (image && image.use_count() == 1 && image->ready && image->format == format &&
+			image->image->Descriptor().image == description)
+		{
+			resources.storage = image;
+			break;
+		}
+	if (!resources.storage)
+	{
+		resources.storage = OpenGLSharedImage::Create(m_context);
+		resources.storage->format = format;
+		resources.storage->image = m_external.CreateExportable(description);
+	}
+
 	resources.available = m_external.CreateExportableSemaphore();
 	resources.ready = m_external.CreateExportableSemaphore();
 	{
@@ -590,20 +654,25 @@ XrResult OpenGLBackend::PrepareImage(const CompositionPlan& plan, std::span<cons
 		windows::OpenGLContextScope current(gl, m_context->m_device, m_context->m_handle);
 		if (!current.Current())
 			return XR_ERROR_RUNTIME_FAILURE;
-		Procedure<PFNGLCREATEMEMORYOBJECTSEXTPROC>(gl, "glCreateMemoryObjectsEXT")(1, &resources.memory);
-		const GLint dedicated = GL_TRUE;
-		Procedure<PFNGLMEMORYOBJECTPARAMETERIVEXTPROC>(gl, "glMemoryObjectParameterivEXT")(
-			resources.memory, GL_DEDICATED_MEMORY_OBJECT_EXT, &dedicated);
-		auto memory = resources.image->ExportMemory();
-		Procedure<PFNGLIMPORTMEMORYWIN32HANDLEEXTPROC>(gl, "glImportMemoryWin32HandleEXT")(
-			resources.memory, resources.image->Descriptor().allocationSize, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT,
-			memory.Get());
-		Procedure<PFNGLCREATETEXTURESPROC>(gl, "glCreateTextures")(GL_TEXTURE_2D_ARRAY, 1, &resources.texture);
-		Procedure<PFNGLTEXTUREPARAMETERIPROC>(gl, "glTextureParameteri")(resources.texture, GL_TEXTURE_TILING_EXT,
-																		 GL_OPTIMAL_TILING_EXT);
-		Procedure<PFNGLTEXTURESTORAGEMEM3DEXTPROC>(gl, "glTextureStorageMem3DEXT")(
-			resources.texture, description.mipLevels, format, plan.width, plan.height, description.arrayLayers,
-			resources.memory, 0);
+		if (!resources.storage->ready)
+		{
+			Procedure<PFNGLCREATEMEMORYOBJECTSEXTPROC>(gl, "glCreateMemoryObjectsEXT")(1, &resources.storage->memory);
+			const GLint dedicated = GL_TRUE;
+			Procedure<PFNGLMEMORYOBJECTPARAMETERIVEXTPROC>(gl, "glMemoryObjectParameterivEXT")(
+				resources.storage->memory, GL_DEDICATED_MEMORY_OBJECT_EXT, &dedicated);
+			auto memory = resources.storage->image->ExportMemory();
+			Procedure<PFNGLIMPORTMEMORYWIN32HANDLEEXTPROC>(gl, "glImportMemoryWin32HandleEXT")(
+				resources.storage->memory, resources.storage->image->Descriptor().allocationSize,
+				GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, memory.Get());
+			Procedure<PFNGLCREATETEXTURESPROC>(gl, "glCreateTextures")(GL_TEXTURE_2D_ARRAY, 1,
+																	   &resources.storage->texture);
+			Procedure<PFNGLTEXTUREPARAMETERIPROC>(gl, "glTextureParameteri")(
+				resources.storage->texture, GL_TEXTURE_TILING_EXT, GL_OPTIMAL_TILING_EXT);
+			Procedure<PFNGLTEXTURESTORAGEMEM3DEXTPROC>(gl, "glTextureStorageMem3DEXT")(
+				resources.storage->texture, description.mipLevels, format, plan.width, plan.height,
+				description.arrayLayers, resources.storage->memory, 0);
+		}
+
 		const auto import = [&](const std::shared_ptr<VulkanExternalSemaphore>& source, GLuint& target)
 		{
 			auto handle = source->ExportOnce();
@@ -613,7 +682,8 @@ XrResult OpenGLBackend::PrepareImage(const CompositionPlan& plan, std::span<cons
 		};
 		import(resources.available, resources.availableGL);
 		import(resources.ready, resources.readyGL);
-		Procedure<PFNGLCREATEFRAMEBUFFERSPROC>(gl, "glCreateFramebuffers")(1, &resources.framebuffer);
+		if (!resources.storage->ready)
+			Procedure<PFNGLCREATEFRAMEBUFFERSPROC>(gl, "glCreateFramebuffers")(1, &resources.storage->framebuffer);
 		Procedure<PFNGLCREATEFRAMEBUFFERSPROC>(gl, "glCreateFramebuffers")(
 			static_cast<GLsizei>(resources.sourceFramebuffers.size()), resources.sourceFramebuffers.data());
 		Procedure<PFNGLCREATEFRAMEBUFFERSPROC>(gl, "glCreateFramebuffers")(1, &resources.copyFramebuffer);
@@ -639,6 +709,7 @@ XrResult OpenGLBackend::PrepareImage(const CompositionPlan& plan, std::span<cons
 			parameter(copy, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 		}
 		CheckGL(gl, "Prepare shared OpenGL compositor images");
+		resources.storage->ready = true;
 		if (!current.Restore())
 			return XR_ERROR_RUNTIME_FAILURE;
 	}
@@ -660,7 +731,7 @@ XrResult OpenGLBackend::PrepareImage(const CompositionPlan& plan, std::span<cons
 	barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
 	barrier.srcQueueFamilyIndex = commands.queueFamilyIndex;
 	barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;
-	barrier.image = resources.image->Image()->image;
+	barrier.image = resources.storage->image->Image()->image;
 	barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, description.mipLevels, 0, description.arrayLayers};
 	vkCmdPipelineBarrier(resources.initialize, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
 						 0, 0, nullptr, 0, nullptr, 1, &barrier);
@@ -668,6 +739,23 @@ XrResult OpenGLBackend::PrepareImage(const CompositionPlan& plan, std::span<cons
 	if (!pool.Consume(reservation))
 		return XR_ERROR_CALL_ORDER_INVALID;
 	resources.reservation = std::move(reservation);
+	VkDeviceSize cachedBytes = 0;
+	bool cached = false;
+	for (const auto& image : m_images)
+		if (image)
+		{
+			cachedBytes += image->image->Descriptor().allocationSize;
+			cached |= image == resources.storage;
+		}
+	const auto bytes = resources.storage->image->Descriptor().allocationSize;
+	constexpr VkDeviceSize limit = 64ULL * 1024 * 1024;
+	if (!cached && bytes <= limit && cachedBytes <= limit - bytes)
+		for (auto& image : m_images)
+			if (!image)
+			{
+				image = resources.storage;
+				break;
+			}
 	output = std::move(frame);
 	return XR_SUCCESS;
 }
@@ -715,14 +803,14 @@ XrResult OpenGLBackend::Submit(const std::shared_ptr<OpenGLFrame>& frame)
 		remove(rendered);
 		const GLenum layout = GL_LAYOUT_GENERAL_EXT;
 		Procedure<PFNGLWAITSEMAPHOREEXTPROC>(gl, "glWaitSemaphoreEXT")(resources.availableGL, 0, nullptr, 1,
-																	   &resources.texture, &layout);
+																	   &resources.storage->texture, &layout);
 		gl.Enable(GL_FRAMEBUFFER_SRGB);
 		if (resources.capture)
 		{
 			const auto& source = resources.sources.front();
 			const auto sourceFramebuffer = resources.sourceFramebuffers.front();
 			const auto& image = *resources.capture;
-			const auto& description = resources.image->Descriptor().image;
+			const auto& description = resources.storage->image->Descriptor().image;
 			for (std::uint32_t mip = 0; mip < description.mipLevels; ++mip)
 			{
 				if (source.layers == 1)
@@ -732,8 +820,8 @@ XrResult OpenGLBackend::Submit(const std::shared_ptr<OpenGLFrame>& frame)
 					Procedure<PFNGLNAMEDFRAMEBUFFERTEXTURELAYERPROC>(gl, "glNamedFramebufferTextureLayer")(
 						sourceFramebuffer, GL_COLOR_ATTACHMENT0, source.texture, mip, image.arraySlice);
 				Procedure<PFNGLNAMEDFRAMEBUFFERTEXTURELAYERPROC>(gl, "glNamedFramebufferTextureLayer")(
-					resources.framebuffer, GL_COLOR_ATTACHMENT0, resources.texture, mip, 0);
-				for (const auto framebuffer : {sourceFramebuffer, resources.framebuffer})
+					resources.storage->framebuffer, GL_COLOR_ATTACHMENT0, resources.storage->texture, mip, 0);
+				for (const auto framebuffer : {sourceFramebuffer, resources.storage->framebuffer})
 					if (Procedure<PFNGLCHECKNAMEDFRAMEBUFFERSTATUSPROC>(gl, "glCheckNamedFramebufferStatus")(
 							framebuffer, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
 						throw std::runtime_error("OpenGL capture framebuffer incomplete");
@@ -744,7 +832,7 @@ XrResult OpenGLBackend::Submit(const std::shared_ptr<OpenGLFrame>& frame)
 				const auto y = resources.retainSource ? 0 : image.rectangle.offset.y;
 				const auto blit = Procedure<PFNGLBLITNAMEDFRAMEBUFFERPROC>(gl, "glBlitNamedFramebuffer");
 				resources.sourcesUsed = true;
-				blit(sourceFramebuffer, resources.framebuffer, x, sourceHeight - y, x + width,
+				blit(sourceFramebuffer, resources.storage->framebuffer, x, sourceHeight - y, x + width,
 					 sourceHeight - y - height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 			}
 		}
@@ -788,18 +876,19 @@ XrResult OpenGLBackend::Submit(const std::shared_ptr<OpenGLFrame>& frame)
 			}
 			Procedure<PFNGLCLIPCONTROLPROC>(gl, "glClipControl")(GL_UPPER_LEFT, GL_NEGATIVE_ONE_TO_ONE);
 			Procedure<PFNGLBINDVERTEXARRAYPROC>(gl, "glBindVertexArray")(m_context->m_vertexArray);
-			Procedure<PFNGLBINDFRAMEBUFFERPROC>(gl, "glBindFramebuffer")(GL_FRAMEBUFFER, resources.framebuffer);
+			Procedure<PFNGLBINDFRAMEBUFFERPROC>(gl, "glBindFramebuffer")(GL_FRAMEBUFFER,
+																		 resources.storage->framebuffer);
 			gl.Viewport(0, 0, resources.plan.width, resources.plan.height);
 			gl.Enable(GL_FRAMEBUFFER_SRGB);
 			gl.Enable(GL_BLEND);
 			gl.BlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 			gl.ClearColor(0, 0, 0, 1);
-			for (GLuint eye = 0; eye < resources.image->Descriptor().image.arrayLayers; ++eye)
+			for (GLuint eye = 0; eye < resources.storage->image->Descriptor().image.arrayLayers; ++eye)
 			{
 				Procedure<PFNGLNAMEDFRAMEBUFFERTEXTURELAYERPROC>(gl, "glNamedFramebufferTextureLayer")(
-					resources.framebuffer, GL_COLOR_ATTACHMENT0, resources.texture, 0, eye);
+					resources.storage->framebuffer, GL_COLOR_ATTACHMENT0, resources.storage->texture, 0, eye);
 				if (Procedure<PFNGLCHECKNAMEDFRAMEBUFFERSTATUSPROC>(gl, "glCheckNamedFramebufferStatus")(
-						resources.framebuffer, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+						resources.storage->framebuffer, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
 					throw std::runtime_error("Shared OpenGL target incomplete");
 				gl.Clear(GL_COLOR_BUFFER_BIT);
 				for (std::size_t index = 0; index < resources.plan.draws.size(); ++index)
@@ -834,7 +923,7 @@ XrResult OpenGLBackend::Submit(const std::shared_ptr<OpenGLFrame>& frame)
 			}
 		}
 		Procedure<PFNGLSIGNALSEMAPHOREEXTPROC>(gl, "glSignalSemaphoreEXT")(resources.readyGL, 0, nullptr, 1,
-																		   &resources.texture, &layout);
+																		   &resources.storage->texture, &layout);
 		resources.completion = fence(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 		gl.Flush();
 		CheckGL(gl, "Submit canonical OpenGL composition");
