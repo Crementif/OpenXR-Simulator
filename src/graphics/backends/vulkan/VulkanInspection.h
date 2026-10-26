@@ -182,7 +182,7 @@ class VulkanInspection
 	std::shared_ptr<FrameReservation> Reserve(VulkanInspectionKind kind);
 	void Publish(const std::shared_ptr<VulkanInspectionTransfer::State>& job);
 	void CheckAdmission() const;
-	void Poll();
+	std::shared_ptr<VulkanInspectionTransfer::State> Poll();
 	void Run() noexcept;
 
 	std::shared_ptr<VulkanInspectionQueue> m_queue;
@@ -194,7 +194,8 @@ class VulkanInspection
 	std::mutex m_lifecycle;
 	std::mutex m_polling;
 	std::mutex m_mutex;
-	std::condition_variable m_changed;
+	// Prepared transfers can outlive the service that observes them.
+	std::shared_ptr<std::condition_variable> m_changed = std::make_shared<std::condition_variable>();
 	std::vector<std::shared_ptr<VulkanInspectionTransfer::State>> m_jobs;
 	bool m_closed = false;
 	bool m_stopping = false;

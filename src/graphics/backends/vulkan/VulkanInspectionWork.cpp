@@ -106,6 +106,18 @@ VkResult VulkanInspectionWork::Wait(std::uint64_t timeout) const noexcept
 	return result;
 }
 
+VkResult VulkanInspectionWork::WaitForProgress(std::uint64_t timeout) const noexcept
+{
+	if (Submitted())
+		return Wait(timeout);
+	std::shared_ptr<VulkanFrame> producer;
+	{
+		std::lock_guard lock(m_sourceMutex);
+		producer = m_native->producer;
+	}
+	return producer ? producer->Wait(timeout) : VK_NOT_READY;
+}
+
 void VulkanInspectionWork::ReleaseSources()
 {
 	// Detach first; native-bearing last readers end outside the source mutex.

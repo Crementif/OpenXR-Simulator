@@ -217,6 +217,11 @@ std::shared_ptr<const GpuCompletion> VulkanFrame::Completion() const
 	return m_submission;
 }
 
+VkResult VulkanFrame::Wait(std::uint64_t timeout) const noexcept
+{
+	return m_submission->Wait(timeout);
+}
+
 std::shared_ptr<VulkanExternalImage> VulkanFrame::ExternalImage() const
 {
 	return m_submission->m_resources->external;

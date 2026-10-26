@@ -20,6 +20,7 @@ class VulkanInspectionWork final : public GpuCompletion
 	bool NativeIdle() const noexcept;
 	bool Submitted() const noexcept;
 	VkResult Wait(std::uint64_t timeout) const noexcept;
+	VkResult WaitForProgress(std::uint64_t timeout) const noexcept;
 	void ReleaseSources();
 	std::shared_ptr<const VulkanImagePixels> ReadPixels() const;
 	CompletionStatus ProducerCompletion() const noexcept;
@@ -51,6 +52,6 @@ class VulkanInspectionWork final : public GpuCompletion
 	std::atomic<bool> m_submitted{false};
 	std::atomic<bool> m_ready{false};
 	mutable std::atomic<CompletionStatus> m_status{CompletionStatus::Pending};
-	std::mutex m_sourceMutex;
+	mutable std::mutex m_sourceMutex;
 };
 } // namespace simxr

@@ -651,8 +651,9 @@ class VulkanInspectionTransfer::State
 {
   public:
 	State(std::shared_ptr<FrameReservation> admission, std::shared_ptr<VulkanInspectionWork> work,
-		  std::shared_ptr<VulkanInspectionFrame> output)
-		: m_admission(std::move(admission)), m_work(std::move(work)), m_output(std::move(output))
+		  std::shared_ptr<VulkanInspectionFrame> output, std::shared_ptr<std::condition_variable> changed)
+		: m_admission(std::move(admission)), m_work(std::move(work)), m_output(std::move(output)),
+		  m_changed(std::move(changed))
 	{
 	}
 	std::shared_ptr<VulkanInspectionFrame> Output() const noexcept
@@ -670,6 +671,7 @@ class VulkanInspectionTransfer::State
 			return;
 		m_work->CancelProducer();
 		m_gate.store(Gate::Cancelled);
+		m_changed->notify_all();
 	}
 	void Commit() noexcept
 	{
@@ -678,6 +680,15 @@ class VulkanInspectionTransfer::State
 			return;
 		m_work->CommitProducer();
 		m_gate.store(Gate::Committed);
+		m_changed->notify_all();
+	}
+	bool Pending() const noexcept
+	{
+		return m_gate.load() == Gate::Committed && m_output->PollCompletion() == CompletionStatus::Pending;
+	}
+	void WaitForProgress(std::uint64_t timeout) const noexcept
+	{
+		m_work->WaitForProgress(timeout);
 	}
 	void Advance(VulkanInspectionQueue& queue)
 	{
@@ -747,6 +758,7 @@ class VulkanInspectionTransfer::State
 	std::shared_ptr<FrameReservation> m_admission;
 	std::shared_ptr<VulkanInspectionWork> m_work;
 	std::shared_ptr<VulkanInspectionFrame> m_output;
+	const std::shared_ptr<std::condition_variable> m_changed;
 };
 
 std::shared_ptr<FrameReservation> VulkanInspection::Reserve(VulkanInspectionKind kind)
@@ -771,7 +783,7 @@ void VulkanInspection::Publish(const std::shared_ptr<VulkanInspectionTransfer::S
 	// Publication cannot allocate: the bounded list is fully reserved.
 	job->ImportReady(m_queue->External());
 	m_jobs.push_back(job);
-	m_changed.notify_all();
+	m_changed->notify_all();
 }
 VkResult VulkanInspection::Drain(std::uint64_t timeout)
 {
@@ -790,7 +802,7 @@ VkResult VulkanInspection::Drain(std::uint64_t timeout)
 			return m_queue->Device()->lost.load() ? VK_ERROR_DEVICE_LOST : VK_SUCCESS;
 		if (std::chrono::steady_clock::now() >= deadline)
 			return VK_TIMEOUT;
-		m_changed.wait_for(lock, std::chrono::milliseconds(1));
+		m_changed->wait_for(lock, std::chrono::milliseconds(1));
 	}
 }
 VkResult VulkanInspection::Close(std::uint64_t timeout)
@@ -807,7 +819,7 @@ VkResult VulkanInspection::Close(std::uint64_t timeout)
 		std::lock_guard lock(m_mutex);
 		m_stopping = true;
 	}
-	m_changed.notify_all();
+	m_changed->notify_all();
 	if (m_worker.joinable())
 		m_worker.join();
 	if (result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST)
@@ -824,7 +836,7 @@ void VulkanInspection::CheckAdmission() const
 	if (m_closed)
 		throw VulkanError(VK_ERROR_INITIALIZATION_FAILED, "Inspection admission closed");
 }
-void VulkanInspection::Poll()
+std::shared_ptr<VulkanInspectionTransfer::State> VulkanInspection::Poll()
 {
 	std::lock_guard polling(m_polling);
 	std::array<std::shared_ptr<VulkanInspectionTransfer::State>, SnapshotBudget::MaxCapacity + 3 + 32> pending;
@@ -834,8 +846,13 @@ void VulkanInspection::Poll()
 		for (const auto& job : m_jobs)
 			pending.at(count++) = job;
 	}
+	std::shared_ptr<VulkanInspectionTransfer::State> next;
 	for (std::size_t index = 0; index < count; ++index)
+	{
 		pending[index]->Advance(*m_queue);
+		if (!next && pending[index]->Pending())
+			next = pending[index];
+	}
 	std::array<std::shared_ptr<VulkanInspectionTransfer::State>, SnapshotBudget::MaxCapacity + 3 + 32> retired;
 	count = 0;
 	{
@@ -846,14 +863,18 @@ void VulkanInspection::Poll()
 		std::erase(m_jobs, nullptr);
 	}
 	m_queue->Collect();
+	if (count)
+		m_changed->notify_all();
+	return next;
 }
 void VulkanInspection::Run() noexcept
 {
 	for (;;)
 	{
+		std::shared_ptr<VulkanInspectionTransfer::State> next;
 		try
 		{
-			Poll();
+			next = Poll();
 		}
 		catch (...)
 		{
@@ -865,7 +886,15 @@ void VulkanInspection::Run() noexcept
 			m_workerStopped.store(true);
 			return;
 		}
-		m_changed.wait_for(lock, std::chrono::milliseconds(1));
+		if (next)
+		{
+			// Limit the native wait to one millisecond; no locks cross the driver wait.
+			lock.unlock();
+			next->WaitForProgress(1000000);
+			lock.lock();
+		}
+		else
+			m_changed->wait_for(lock, std::chrono::milliseconds(1));
 		if (m_stopping)
 		{
 			m_workerStopped.store(true);
@@ -1139,8 +1168,8 @@ std::unique_ptr<VulkanInspectionTransfer> VulkanInspection::Prepare(std::shared_
 															  std::move(completed), {}, std::move(deliveryRetired));
 	auto output =
 		std::shared_ptr<VulkanInspectionFrame>(new VulkanInspectionFrame(std::move(resources), source->Views()));
-	auto job =
-		std::make_shared<VulkanInspectionTransfer::State>(std::move(admission), std::move(work), std::move(output));
+	auto job = std::make_shared<VulkanInspectionTransfer::State>(std::move(admission), std::move(work),
+																 std::move(output), m_changed);
 	auto transfer = std::unique_ptr<VulkanInspectionTransfer>(new VulkanInspectionTransfer(job));
 	claim.retained = true;
 	Publish(job);
