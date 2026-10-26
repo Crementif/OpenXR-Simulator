@@ -354,17 +354,21 @@ XrResult LinuxRuntime::EndSession(XrSession handle)
 XrResult LinuxRuntime::DestroySession(XrSession handle)
 {
 	const auto session = FindSession(handle);
-	std::unique_lock lock(m_mutex);
-	if (!FindSession(session))
+	if (!session)
 		return XR_ERROR_HANDLE_INVALID;
-	session->graphics->BeginClose();
-	lock.unlock();
+	// Cancel CPU admission before waiting for an in-flight graphics call.
 	session->core->Close();
 	m_core.CloseDebugger(session);
+	{
+		std::lock_guard nativeLock(session->graphicsMutex);
+		if (!FindSession(session))
+			return XR_ERROR_HANDLE_INVALID;
+		session->graphics->BeginClose();
+	}
 	const auto drained = session->graphics->Drain();
 	if (XR_FAILED(drained))
 		return drained;
-	lock.lock();
+	std::lock_guard nativeLock(session->graphicsMutex);
 	if (!FindSession(session))
 		return XR_ERROR_HANDLE_INVALID;
 	session->core->Display().PollRetired();
@@ -372,12 +376,14 @@ XrResult LinuxRuntime::DestroySession(XrSession handle)
 	const auto closed = session->graphics->FinishClose();
 	if (XR_FAILED(closed))
 		return closed;
+	std::lock_guard lock(m_mutex);
 	m_core.DestroySession(session);
 	m_sessions.Remove(session);
 	m_currentSession = XR_NULL_HANDLE;
 	session->owner->PublishStatus();
 	return XR_SUCCESS;
 }
+
 XrResult LinuxRuntime::DestroyInstance(XrInstance handle)
 {
 	std::lock_guard lifecycle(m_lifecycleMutex);

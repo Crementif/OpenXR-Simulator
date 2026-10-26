@@ -1890,6 +1890,8 @@ int main()
 	Require(session.Ready({Duration{30}}) == XR_SUCCESS && session.Begin(begin, config) == XR_SUCCESS,
 			"Restart session");
 	Require(session.Snapshot().generation != generation, "Session restart reused history identity");
+	Require(bool(session.PreviewHistory().Reserve({session.Snapshot().generation, {1}})),
+			"Session restart closed preview admission");
 	Require(session.History().Find({generation, {2}})->stage == FrameStage::Cancelled,
 			"Session end fabricated completion");
 	Require(session.WaitFrame(prediction) == XR_SUCCESS && prediction.id == FrameId{1}, "Restart scheduling");
@@ -1906,6 +1908,8 @@ int main()
 		},
 		"Closing wait did not enter");
 	session.Close();
+	Require(!session.PreviewHistory().Reserve({session.Snapshot().generation, {2}}),
+			"Closed session accepted preview admission");
 	Require(!session.Spaces().Owns(stage), "Closed session retained spaces");
 	Require(pending.wait_for(1s) == std::future_status::ready && pending.get() == XR_ERROR_SESSION_NOT_RUNNING,
 			"Close did not cancel wait");

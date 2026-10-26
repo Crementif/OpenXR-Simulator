@@ -3,6 +3,7 @@
 #define XR_USE_TIMESPEC
 #define XR_USE_GRAPHICS_API_VULKAN
 #include "Pch.h"
+#include "VulkanAdmissionChecks.h"
 #include "VulkanCreationChecks.h"
 #include <atomic>
 #include <charconv>
@@ -1584,7 +1585,9 @@ static int RunProbe()
 			projection.viewCount = activeViewCount;
 		}
 		auto endStart = std::chrono::steady_clock::now();
-		auto ended = xrEndFrame(session, &end);
+		auto ended = frame == 0 && std::getenv("SIMXR_PROBE_NATIVE_ADMISSION")
+						 ? CheckNativeAdmission(instance, session, end)
+						 : xrEndFrame(session, &end);
 		auto endElapsed = std::chrono::steady_clock::now() - endStart;
 		if (frame == 2)
 		{

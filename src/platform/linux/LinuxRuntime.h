@@ -53,7 +53,8 @@ class LinuxInstance final
 };
 
 // Owns native bindings and transport; the portable Runtime owns XR identities.
-// Native calls serialize through Mutex, but pacing and GPU drain run outside it.
+// Instance state uses Mutex. Session graphics have a separate native gate; pacing
+// and GPU drain run outside both. Never acquire a graphics gate while holding Mutex.
 class LinuxRuntime final
 {
   public:
@@ -64,6 +65,7 @@ class LinuxRuntime final
 					   std::unique_ptr<VulkanSessionGraphics> native);
 		const InstanceRef owner;
 		const Runtime::SessionRef core;
+		std::mutex graphicsMutex;
 		const std::unique_ptr<VulkanSessionGraphics> graphics;
 	};
 	using SessionRef = HandleRef<XrSession, SessionBinding>;

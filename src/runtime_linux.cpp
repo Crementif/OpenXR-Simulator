@@ -373,10 +373,11 @@ static XrResult XRAPI_PTR RunXrWaitFrame(XrSession sHandle, const XrFrameWaitInf
 	simxr::FramePrediction prediction;
 	const auto publishNative = [&](const simxr::FramePrediction& admitted) -> XrResult
 	{
-		std::lock_guard nativeLock(Host().Mutex());
-		if (!Valid(s) || s->core.Shared() != core)
+		std::lock_guard nativeLock(s->graphicsMutex);
+		if (!Valid(s) || s->core.Shared() != core || core->Snapshot().closed)
 			return XR_ERROR_HANDLE_INVALID;
 		s->graphics->PollCaptures();
+		std::lock_guard stateLock(Host().Mutex());
 		if (s->owner->PollCommands(s->core->Snapshot().lastSubmitted))
 			s->graphics->RequestCapture({"both", "all"}, s->core->Snapshot().lastSubmitted);
 		const auto& input = s->owner->Input();
@@ -432,7 +433,9 @@ static XrResult XRAPI_PTR RunXrEnumerateSwapchainFormats(XrSession handle, std::
 static XrResult XRAPI_PTR RunXrCreateSwapchain(XrSession handle, const XrSwapchainCreateInfo* info, XrSwapchain* output)
 {
 	auto session = Host().FindSession(handle);
-	std::lock_guard lock(Host().Mutex());
+	if (!session)
+		return XR_ERROR_HANDLE_INVALID;
+	std::lock_guard nativeLock(session->graphicsMutex);
 	if (!Valid(session))
 		return XR_ERROR_HANDLE_INVALID;
 	if (session->core->Snapshot().closed)
@@ -444,10 +447,13 @@ static XrResult XRAPI_PTR RunXrCreateSwapchain(XrSession handle, const XrSwapcha
 static XrResult XRAPI_PTR RunXrEnumerateSwapchainImages(XrSwapchain handle, std::uint32_t capacity,
 														std::uint32_t* count, XrSwapchainImageBaseHeader* images)
 {
-	std::lock_guard lock(Host().Mutex());
 	const auto session = Host().CurrentSession();
-	const auto chain =
-		session ? session->graphics->FindSwapchain(handle) : simxr::VulkanSessionGraphics::SwapchainRef{};
+	if (!session)
+		return XR_ERROR_HANDLE_INVALID;
+	std::lock_guard nativeLock(session->graphicsMutex);
+	if (!Valid(session))
+		return XR_ERROR_HANDLE_INVALID;
+	const auto chain = session->graphics->FindSwapchain(handle);
 	if (!chain)
 		return XR_ERROR_HANDLE_INVALID;
 	return chain->EnumerateImages(capacity, count, images);
@@ -455,10 +461,13 @@ static XrResult XRAPI_PTR RunXrEnumerateSwapchainImages(XrSwapchain handle, std:
 static XrResult XRAPI_PTR RunXrAcquireSwapchainImage(XrSwapchain handle, const XrSwapchainImageAcquireInfo* info,
 													 std::uint32_t* index)
 {
-	std::lock_guard lock(Host().Mutex());
 	const auto session = Host().CurrentSession();
-	const auto chain =
-		session ? session->graphics->FindSwapchain(handle) : simxr::VulkanSessionGraphics::SwapchainRef{};
+	if (!session)
+		return XR_ERROR_HANDLE_INVALID;
+	std::lock_guard nativeLock(session->graphicsMutex);
+	if (!Valid(session))
+		return XR_ERROR_HANDLE_INVALID;
+	const auto chain = session->graphics->FindSwapchain(handle);
 	if (!chain)
 		return XR_ERROR_HANDLE_INVALID;
 	if (session->core->Snapshot().closed)
@@ -469,10 +478,13 @@ static XrResult XRAPI_PTR RunXrAcquireSwapchainImage(XrSwapchain handle, const X
 }
 static XrResult XRAPI_PTR RunXrWaitSwapchainImage(XrSwapchain handle, const XrSwapchainImageWaitInfo* info)
 {
-	std::unique_lock lock(Host().Mutex());
 	const auto session = Host().CurrentSession();
-	const auto chain =
-		session ? session->graphics->FindSwapchain(handle) : simxr::VulkanSessionGraphics::SwapchainRef{};
+	if (!session)
+		return XR_ERROR_HANDLE_INVALID;
+	std::unique_lock nativeLock(session->graphicsMutex);
+	if (!Valid(session))
+		return XR_ERROR_HANDLE_INVALID;
+	const auto chain = session->graphics->FindSwapchain(handle);
 	if (!chain)
 		return XR_ERROR_HANDLE_INVALID;
 	if (!info || info->type != XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO || info->timeout < 0)
@@ -480,15 +492,18 @@ static XrResult XRAPI_PTR RunXrWaitSwapchainImage(XrSwapchain handle, const XrSw
 	auto registered = session->graphics->EnterWait();
 	if (!registered)
 		return XR_ERROR_SESSION_LOST;
-	lock.unlock();
+	nativeLock.unlock();
 	return chain->Wait(info->timeout);
 }
 static XrResult XRAPI_PTR RunXrReleaseSwapchainImage(XrSwapchain handle, const XrSwapchainImageReleaseInfo* info)
 {
-	std::lock_guard lock(Host().Mutex());
 	const auto session = Host().CurrentSession();
-	const auto chain =
-		session ? session->graphics->FindSwapchain(handle) : simxr::VulkanSessionGraphics::SwapchainRef{};
+	if (!session)
+		return XR_ERROR_HANDLE_INVALID;
+	std::lock_guard nativeLock(session->graphicsMutex);
+	if (!Valid(session))
+		return XR_ERROR_HANDLE_INVALID;
+	const auto chain = session->graphics->FindSwapchain(handle);
 	if (!chain)
 		return XR_ERROR_HANDLE_INVALID;
 	if (info && info->type != XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO)
@@ -497,10 +512,13 @@ static XrResult XRAPI_PTR RunXrReleaseSwapchainImage(XrSwapchain handle, const X
 }
 static XrResult XRAPI_PTR RunXrDestroySwapchain(XrSwapchain handle)
 {
-	std::lock_guard lock(Host().Mutex());
 	const auto session = Host().CurrentSession();
-	const auto chain =
-		session ? session->graphics->FindSwapchain(handle) : simxr::VulkanSessionGraphics::SwapchainRef{};
+	if (!session)
+		return XR_ERROR_HANDLE_INVALID;
+	std::lock_guard nativeLock(session->graphicsMutex);
+	if (!Valid(session))
+		return XR_ERROR_HANDLE_INVALID;
+	const auto chain = session->graphics->FindSwapchain(handle);
 	if (!chain)
 		return XR_ERROR_HANDLE_INVALID;
 	session->graphics->PollCaptures();
@@ -510,7 +528,9 @@ static XrResult XRAPI_PTR RunXrDestroySwapchain(XrSwapchain handle)
 static XrResult XRAPI_PTR RunXrEndFrame(XrSession handle, const XrFrameEndInfo* info)
 {
 	const auto session = Host().FindSession(handle);
-	std::lock_guard lock(Host().Mutex());
+	if (!session)
+		return XR_ERROR_HANDLE_INVALID;
+	std::lock_guard nativeLock(session->graphicsMutex);
 	if (!Valid(session))
 		return XR_ERROR_HANDLE_INVALID;
 	if (!session->core->Snapshot().running)
@@ -533,6 +553,7 @@ static XrResult XRAPI_PTR RunXrEndFrame(XrSession handle, const XrFrameEndInfo* 
 		for (std::uint32_t layer = 0; layer < info->layerCount; ++layer)
 			if (info->layers[layer]->type == XR_TYPE_COMPOSITION_LAYER_PROJECTION)
 				++projectionCount;
+		std::lock_guard lock(Host().Mutex());
 		session->owner->PublishStatus(session->core,
 									  simxr::LinuxRuntimeStatus::FrameCounts{info->layerCount, projectionCount});
 	}

@@ -1,6 +1,7 @@
 #include "../TestSupport.h"
 #include "graphics/FrameOutput.h"
 #include "presentation/FramePreviewHistory.h"
+#include <future>
 #include <iostream>
 
 namespace simxr::test
@@ -156,6 +157,35 @@ void ShrinkWaitsForEncoding()
 	Require(history.Bytes() <= history.Limit(), "Admission exceeded the smaller GPU budget");
 }
 
+void CloseWakesAdmission()
+{
+	FramePreviewHistory history;
+	history.Configure(64ull << 20);
+	for (std::uint64_t frame = 1; frame <= 16; ++frame)
+	{
+		auto reservation = history.Reserve({{1}, {frame}});
+		Require(reservation && history.Budget().Consume(reservation), "Close fixture admission failed");
+		auto output = std::make_shared<CompressedOutput>(std::move(reservation), frame);
+		output->pending.store(true);
+		history.Append({{1}, {frame}}, std::move(output), false);
+	}
+	std::promise<void> started;
+	auto waiting = std::async(std::launch::async,
+							  [&]
+							  {
+								  started.set_value();
+								  return history.Reserve({{1}, {17}});
+							  });
+	started.get_future().wait();
+	Require(waiting.wait_for(std::chrono::milliseconds(20)) == std::future_status::timeout,
+			"Full history did not apply backpressure");
+	history.CloseAdmission();
+	Require(waiting.wait_for(std::chrono::seconds(2)) == std::future_status::ready && !waiting.get(),
+			"Closing history left frame admission blocked");
+	Require(!history.Reserve({{1}, {18}}) && history.Frames({1}).size() == 16,
+			"Closing admission removed history or accepted another frame");
+}
+
 void PendingEncodeDoesNotBlockSelection()
 {
 	FramePreviewHistory history;
@@ -249,6 +279,7 @@ int main()
 		simxr::test::ContinuousHistory();
 		simxr::test::CompressedHistory();
 		simxr::test::ShrinkWaitsForEncoding();
+		simxr::test::CloseWakesAdmission();
 		simxr::test::PendingEncodeDoesNotBlockSelection();
 		std::cout << "PASS consecutive previews, oldest eviction, independent readers, clear and run identity\n";
 		return 0;

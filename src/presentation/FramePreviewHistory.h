@@ -44,6 +44,7 @@ class FramePreviewHistory
 	FramePreviewHistory();
 	~FramePreviewHistory();
 	void Configure(std::uint64_t bytes);
+	void CloseAdmission();
 	void ConfigureRam(std::uint64_t bytes);
 	std::uint64_t Limit() const
 	{
@@ -105,6 +106,7 @@ class FramePreviewHistory
 	FrameKey m_requested{};
 	FramePreview m_decoded;
 	std::string m_error;
+	bool m_admissionClosed = false;
 	bool m_stopping = false, m_gpuOnly = false, m_trimming = false;
 	std::thread m_worker;
 };

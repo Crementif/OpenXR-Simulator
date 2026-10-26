@@ -31,6 +31,15 @@ void FramePreviewHistory::Configure(std::uint64_t bytes)
 			break;
 	m_changed.notify_all();
 }
+void FramePreviewHistory::CloseAdmission()
+{
+	{
+		std::lock_guard lock(m_mutex);
+		m_admissionClosed = true;
+	}
+	m_budget.CloseAdmission();
+	m_changed.notify_all();
+}
 void FramePreviewHistory::ConfigureRam(std::uint64_t bytes)
 {
 	if (bytes < (std::uint64_t{MinMiB} << 20) || bytes > (std::uint64_t{MaxMiB} << 20) || bytes % SlotBytes)
@@ -66,6 +75,11 @@ std::shared_ptr<FrameReservation> FramePreviewHistory::Reserve(FrameKey key)
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 	while (!reservation)
 	{
+		{
+			std::lock_guard lock(m_mutex);
+			if (m_admissionClosed || m_stopping || !m_error.empty() || std::chrono::steady_clock::now() >= deadline)
+				return {};
+		}
 		auto retired = EvictRaw();
 		if (retired)
 			retired.reset();
@@ -74,8 +88,6 @@ std::shared_ptr<FrameReservation> FramePreviewHistory::Reserve(FrameKey key)
 			// A budget shrink or slow encoder can leave completed frames awaiting archival.
 			// Keep the next application frame intact while the worker releases their GPU slots.
 			std::unique_lock lock(m_mutex);
-			if (m_stopping || !m_error.empty() || std::chrono::steady_clock::now() >= deadline)
-				return {};
 			m_changed.wait_for(lock, std::chrono::milliseconds(1));
 		}
 		reservation = m_budget.Reserve();
@@ -86,6 +98,8 @@ std::shared_ptr<FrameReservation> FramePreviewHistory::Reserve(FrameKey key)
 	entry->admission = reservation;
 	{
 		std::lock_guard lock(m_mutex);
+		if (m_admissionClosed)
+			return {};
 		std::erase_if(m_recent,
 					  [&](const auto& frame)
 					  {

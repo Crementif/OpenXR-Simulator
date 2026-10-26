@@ -209,6 +209,7 @@ void Session::Close(std::optional<SessionGeneration> expectedGeneration)
 	m_state.running = false;
 	m_publication.Stop();
 	m_scheduler.Stop();
+	m_previewHistory.CloseAdmission();
 	m_history.CancelPending();
 	m_captures.Stop();
 	m_interaction.LoseFocus(m_state.time);
