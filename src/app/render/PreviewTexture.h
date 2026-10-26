@@ -10,6 +10,11 @@
 
 namespace simxr::app
 {
+// Display height/width from the camera ray spans, independent of sampling resolution.
+// Without a selected slice, returns the tallest slice for layout.
+float PreviewAspect(const control::ImageDescription& image, std::optional<std::size_t> slice = {},
+					bool correctProportions = true);
+
 // UI-thread owner of one private native copy and its sampled descriptors.
 class PreviewTexture
 {
@@ -30,7 +35,8 @@ class PreviewTexture
 	void BeginFrame();
 	// crop is the shown region (x0, y0, x1, y1) in normalized image coordinates;
 	// width is the shown width and the height follows the region's aspect.
-	void Draw(float width, std::optional<std::size_t> slice = {}, ImVec4 crop = {0, 0, 1, 1});
+	void Draw(float width, std::optional<std::size_t> slice = {}, ImVec4 crop = {0, 0, 1, 1},
+			  bool correctProportions = true);
 	VkSemaphore ReadyWait() const;
 	void Submitted(std::uint64_t serial);
 	void ObserveCompletion(std::uint64_t serial);

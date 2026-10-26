@@ -331,7 +331,8 @@ void PreviewHistory::Offer(PreviewTexture& source, std::uint32_t layer, FrameIde
 		if (!image)
 			return;
 		m_copy = Copy{image, layer, {source.Description().width, source.Description().height}, slot, m_shots[slot]};
-		m_shots[slot] = {slot, frame, epoch};
+		m_aspect = PreviewAspect(source.Description(), layer);
+		m_shots[slot] = {slot, frame, epoch, m_aspect};
 		if (m_displayed == slot)
 			m_displayed.reset();
 	}
@@ -386,11 +387,7 @@ void PreviewHistory::UnavailableThumbnail(FrameIdentity frame, std::uint64_t epo
 }
 float PreviewHistory::Aspect() const noexcept
 {
-#if defined(__linux__) || defined(_WIN32)
-	if (m_resources)
-		return float(m_resources->extent.height) / float(m_resources->extent.width);
-#endif
-	return 9.f / 16;
+	return m_aspect;
 }
 void PreviewHistory::Draw(const PreviewShot& shot, float width, ImVec4 crop)
 {
@@ -400,7 +397,8 @@ void PreviewHistory::Draw(const PreviewShot& shot, float width, ImVec4 crop)
 		return;
 	m_display = shot.slot;
 	ImGui::Image(std::bit_cast<ImTextureID>(m_resources->descriptor),
-				 {width, width * Aspect() * (crop.w - crop.y) / (crop.z - crop.x)}, {crop.x, crop.y}, {crop.z, crop.w});
+				 {width, width * shot.aspect * (crop.w - crop.y) / (crop.z - crop.x)}, {crop.x, crop.y},
+				 {crop.z, crop.w});
 #else
 	(void)shot;
 	(void)width;

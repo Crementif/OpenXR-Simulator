@@ -18,6 +18,7 @@ struct PreviewShot
 	std::size_t slot = 0;
 	FrameIdentity frame;
 	std::uint64_t epoch = 0;
+	float aspect = 9.f / 16;
 };
 // A bounded GPU cache of live and requested historical thumbnails. Copies use
 // the UI frame's GPU commands; nothing is read back. Slots and resources retire
@@ -84,6 +85,7 @@ class PreviewHistory
 	std::optional<std::size_t> m_display, m_displayed;
 	FrameIdentity m_lastFrame;
 	std::uint64_t m_lastEpoch = 0;
+	float m_aspect = 9.f / 16;
 	std::string m_error;
 };
 } // namespace simxr::app

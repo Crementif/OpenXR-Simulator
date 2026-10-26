@@ -432,7 +432,8 @@ void TimelineCanvas::DrawThumbnails(const HistoryStore& history, PreviewHistory&
 			continue;
 		}
 		previews.RequestThumbnail(shot->frame, shot->epoch);
-		const float shownHeight = std::min(height, width * aspect), shownWidth = shownHeight / aspect;
+		const float shotAspect = shot->aspect * (crop.w - crop.y) / (crop.z - crop.x);
+		const float shownHeight = std::min(height, width * shotAspect), shownWidth = shownHeight / shotAspect;
 		const float y = LaneY(Images) + (m_lane - shownHeight) / 2;
 		previews.DrawThumbnail(*shot, {x, y}, {x + shownWidth, y + shownHeight}, crop);
 		// A light veil and hairline keep bright app images from outshouting the frame bars.

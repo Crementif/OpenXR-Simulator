@@ -49,8 +49,10 @@ class PreviewImages
 	std::vector<PreviewImageSummary> Images() const;
 	std::size_t ReadyCount() const;
 	void BeginFrame();
-	void DrawSelected(float width, std::optional<std::size_t> slice = {}, ImVec4 crop = {0, 0, 1, 1});
-	void DrawImage(std::uint64_t id, float width, std::optional<std::size_t> slice = {}, ImVec4 crop = {0, 0, 1, 1});
+	void DrawSelected(float width, std::optional<std::size_t> slice = {}, ImVec4 crop = {0, 0, 1, 1},
+					  bool correctProportions = true);
+	void DrawImage(std::uint64_t id, float width, std::optional<std::size_t> slice = {}, ImVec4 crop = {0, 0, 1, 1},
+				   bool correctProportions = true);
 	std::vector<VkSemaphore> ReadyWaits() const;
 	void RecordTransfers(VkCommandBuffer command);
 	void Submitted(std::uint64_t serial);

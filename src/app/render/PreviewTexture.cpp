@@ -6,6 +6,7 @@
 #endif
 
 #include <bit>
+#include <cmath>
 #include <cstdio>
 #include <imgui.h>
 #include <imgui_impl_vulkan.h>
@@ -15,6 +16,30 @@
 
 namespace simxr::app
 {
+float PreviewAspect(const control::ImageDescription& image, std::optional<std::size_t> slice, bool correctProportions)
+{
+	const float pixels = image.width && image.height ? float(image.height) / image.width : 1;
+	if (!correctProportions || image.views.empty())
+		return pixels;
+	float aspect = 0;
+	const auto first = slice.value_or(0);
+	const auto end = slice ? first + 1 : image.arrayLayers;
+	for (auto index = first; index < end; ++index)
+	{
+		float value = pixels;
+		if (index < image.views.size())
+		{
+			const auto& fov = image.views[index].fov;
+			const float horizontal = std::abs(std::tan(fov.angleRight) - std::tan(fov.angleLeft));
+			const float vertical = std::abs(std::tan(fov.angleUp) - std::tan(fov.angleDown));
+			if (horizontal > 0 && vertical > 0 && std::isfinite(vertical / horizontal))
+				value = vertical / horizontal;
+		}
+		aspect = std::max(aspect, value);
+	}
+	return aspect > 0 ? aspect : pixels;
+}
+
 struct PreviewTexture::State
 {
 	struct Retirement;
@@ -245,20 +270,20 @@ void PreviewTexture::BeginFrame()
 {
 	m_state->drawn = false;
 }
-void PreviewTexture::Draw(float width, std::optional<std::size_t> slice, ImVec4 crop)
+void PreviewTexture::Draw(float width, std::optional<std::size_t> slice, ImVec4 crop, bool correctProportions)
 {
 	if (!m_state->ready || (slice && *slice >= m_state->descriptors.size()))
 		return;
-	const auto height =
-		width * (crop.w - crop.y) * m_state->description.height / ((crop.z - crop.x) * m_state->description.width);
 	const auto first = slice.value_or(0);
 	const auto end = slice ? first + 1 : m_state->descriptors.size();
 	for (std::size_t index = first; index < end; ++index)
 	{
+		const float height = width * PreviewAspect(m_state->description, index, correctProportions) *
+							 (crop.w - crop.y) / (crop.z - crop.x);
 		ImGui::Image(std::bit_cast<ImTextureID>(m_state->descriptors[index]), {width, height}, {crop.x, crop.y},
 					 {crop.z, crop.w});
 		if (index + 1 < end)
-			ImGui::SameLine(0, 12);
+			ImGui::SameLine(0, 12 * ImGui::GetFontSize() / 16);
 	}
 	m_state->drawn = true;
 }

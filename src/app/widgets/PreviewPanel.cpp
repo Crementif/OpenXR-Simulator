@@ -119,7 +119,7 @@ bool PreviewPanel::DrawKept(const RuntimeView& view)
 		return false;
 	const auto crop = m_crop.value_or(ImVec4{0, 0, 1, 1});
 	const auto available = ImGui::GetContentRegionAvail();
-	const float aspect = history.Aspect() * (crop.w - crop.y) / (crop.z - crop.x);
+	const float aspect = shot->aspect * (crop.w - crop.y) / (crop.z - crop.x);
 	const float width = std::max(16.f, std::min(available.x, available.y / aspect));
 	ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, (available.x - width) / 2));
 	ImGui::SetCursorPosY(ImGui::GetCursorPosY() + std::max(0.f, (available.y - width * aspect) / 2));
@@ -260,7 +260,7 @@ std::optional<PreviewPanel::ImageArea> PreviewPanel::DrawImage(ShellState& shell
 			m_spatial.DrawExpanded(shell.selection, available);
 		const auto after = ImGui::GetCursorScreenPos();
 		const float width = available.x * .25f;
-		const float height = width * image->description.height / image->description.width;
+		const float height = width * PreviewAspect(image->description, m_slice < 0 ? 0 : m_slice);
 		const float buttonHeight = ImGui::GetFrameHeight();
 		const float overlayWidth =
 			std::max(width, buttonHeight + ImGui::CalcTextSize("Back to image").x + ImGui::GetStyle().FramePadding.x);
@@ -303,8 +303,10 @@ std::optional<PreviewPanel::ImageArea> PreviewPanel::DrawImage(ShellState& shell
 	// A pinned crop always fits the region it shows.
 	const auto crop = m_crop.value_or(ImVec4{0, 0, 1, 1});
 	const bool fit = m_fit || m_crop;
+	const auto selectedSlice = m_slice < 0 ? std::nullopt : std::optional<std::size_t>(m_slice);
+	const float aspect = PreviewAspect(description, selectedSlice, fit);
 	const float shownWidth = description.width * (crop.z - crop.x),
-				shownHeight = description.height * (crop.w - crop.y);
+				shownHeight = description.width * aspect * (crop.w - crop.y);
 	float width = shownWidth * m_zoom;
 	if (fit)
 		width = std::max(16.0f, std::min((available.x - spacing * (slices - 1)) / slices,
@@ -323,7 +325,7 @@ std::optional<PreviewPanel::ImageArea> PreviewPanel::DrawImage(ShellState& shell
 	ImGui::SetCursorPosY(ImGui::GetCursorPosY() + std::max(0.0f, (available.y - height) / 2));
 	const auto imageMin = ImGui::GetCursorScreenPos();
 	const ImVec2 imageMax{imageMin.x + totalWidth, imageMin.y + height};
-	preview.DrawSelected(width, m_slice < 0 ? std::nullopt : std::optional<std::size_t>(m_slice), crop);
+	preview.DrawSelected(width, selectedSlice, crop, fit);
 	bool overlayHovered = false;
 	// Device markers project onto the whole image, so a crop or a pick hides them.
 	if (!m_pilot.Active() && !m_crop && !m_picking && (!view.manual || image->frame == m_spatial.ObservedFrame()))
@@ -333,8 +335,10 @@ std::optional<PreviewPanel::ImageArea> PreviewPanel::DrawImage(ShellState& shell
 			if (eye < description.views.size())
 			{
 				const ImVec2 eyeMin{imageMin.x + ordinal * (width + spacing), imageMin.y};
-				overlayHovered |= m_spatial.DrawPreview(shell.selection, eyeMin, {eyeMin.x + width, imageMax.y},
-														description.views[eye], static_cast<unsigned>(eye));
+				overlayHovered |=
+					m_spatial.DrawPreview(shell.selection, eyeMin,
+										  {eyeMin.x + width, eyeMin.y + width * PreviewAspect(description, eye, fit)},
+										  description.views[eye], static_cast<unsigned>(eye));
 			}
 		}
 	bool hudHovered = false;
@@ -423,6 +427,8 @@ void PreviewPanel::DrawViewButton(const PreviewImageSummary& image, bool imageVi
 	ImGui::BeginDisabled(m_crop.has_value());
 	if (choice("Fit", m_fit))
 		m_fit = true;
+	ImGui::SetItemTooltip(
+		"Fit preserves proportions using the recorded field of view. Other zoom levels show image pixels.");
 	for (const int level : {1, 2, 4})
 	{
 		ImGui::SameLine();
@@ -469,7 +475,7 @@ void PreviewPanel::DrawViewButton(const PreviewImageSummary& image, bool imageVi
 void PreviewPanel::PickCrop(const ImageArea& area, bool hovered)
 {
 	const auto imageMin = area.minimum, imageMax = area.maximum;
-	const float eyeWidth = area.eyeWidth, height = imageMax.y - imageMin.y;
+	const float eyeWidth = area.eyeWidth;
 	const ImVec4 bounds{imageMin.x, imageMin.y, imageMax.x, imageMax.y};
 	if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsMouseClicked(ImGuiMouseButton_Right) ||
 		(m_pickStart && (!SameRect(bounds, m_pickBounds) || (!ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
@@ -512,6 +518,14 @@ void PreviewPanel::PickCrop(const ImageArea& area, bool hovered)
 	const int eye =
 		std::clamp(static_cast<int>((m_pickStart->x - imageMin.x) / (eyeWidth + spacing)), 0, area.eyes - 1);
 	const float left = imageMin.x + eye * (eyeWidth + spacing);
+	const auto slice = m_gestureSlice < 0 ? eye : m_gestureSlice;
+	const float height = eyeWidth * PreviewAspect(m_gestureImage->description, slice, m_fit || m_crop) *
+						 (m_gestureCrop.w - m_gestureCrop.y) / (m_gestureCrop.z - m_gestureCrop.x);
+	if (m_pickStart->x > left + eyeWidth || m_pickStart->y > imageMin.y + height)
+	{
+		CancelInteraction();
+		return;
+	}
 	const auto normalized = [&](ImVec2 point)
 	{
 		return ImVec2{std::clamp((point.x - left) / eyeWidth, 0.0f, 1.0f),

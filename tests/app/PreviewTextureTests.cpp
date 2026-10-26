@@ -1,8 +1,11 @@
 #include "../TestSupport.h"
 #include "../control/FakeImageInspection.h"
 #include "app/render/PreviewImages.h"
+#include "app/services/SpatialMath.h"
 #include "control/LocalControlServer.h"
 #include "graphics/SnapshotBudget.h"
+#include "math/Math.h"
+#include <cmath>
 
 #include "app/platform/Window.h"
 #include "app/render/PreviewTexture.h"
@@ -17,7 +20,7 @@
 #include <array>
 #include <iostream>
 
-namespace
+namespace simxr::tests
 {
 using namespace simxr;
 namespace app = simxr::app;
@@ -47,7 +50,8 @@ wire::ImageDescription Description(const app::VulkanDeviceAccess& access)
 }
 // Real external images exercise history copies and the same UI submission path
 // used by the companion, including descriptor lifetime across a format change.
-std::unique_ptr<app::PreviewTexture> HistorySource(app::UiRenderer& renderer, VkExtent2D extent, VkFormat format)
+std::unique_ptr<app::PreviewTexture> HistorySource(app::UiRenderer& renderer, VkExtent2D extent, VkFormat format,
+												   std::optional<XrFovf> fov = {})
 {
 	const auto access = renderer.DeviceAccess();
 	auto device = std::make_shared<VulkanDevice>(
@@ -108,6 +112,8 @@ std::unique_ptr<app::PreviewTexture> HistorySource(app::UiRenderer& renderer, Vk
 	auto description = Description(access);
 	description.width = extent.width;
 	description.height = extent.height;
+	if (fov)
+		description.views = {{IdentityPose(), *fov}};
 	description.arrayLayers = 1;
 	description.format = format;
 	description.usage = spec.usage;
@@ -131,8 +137,9 @@ std::unique_ptr<app::PreviewTexture> HistorySource(app::UiRenderer& renderer, Vk
 }
 void HistoryLifetime(app::UiRenderer& renderer)
 {
-	auto source = HistorySource(renderer, {64, 64}, VK_FORMAT_R8G8B8A8_UNORM);
-	auto changed = HistorySource(renderer, {32, 16}, VK_FORMAT_R8G8B8A8_SRGB);
+	auto source = HistorySource(renderer, {64, 64}, VK_FORMAT_R8G8B8A8_UNORM,
+								XrFovf{-std::atan(2.f), std::atan(2.f), std::atan(1.f), -std::atan(1.f)});
+	auto changed = HistorySource(renderer, {32, 16}, VK_FORMAT_R8G8B8A8_SRGB, XrFovf{-.8f, .8f, .8f, -.8f});
 	// Use actual allocation requirements to make exactly one reusable history slot.
 	const auto access = renderer.DeviceAccess();
 	auto device = std::make_shared<VulkanDevice>(
@@ -206,7 +213,13 @@ void HistoryLifetime(app::UiRenderer& renderer)
 	history.Offer(*source, 0, first, 1);
 	const auto original = history.Nearest(first, 1);
 	Require(original.has_value(), "Abandoned history frame could not be retried");
+	Require(std::abs(original->aspect - .5f) < .0001f, "History lost the recorded camera aspect");
+	source->Draw(120, 0);
+	Require(std::abs(ImGui::GetItemRectSize().y - 60) < .01f, "Native preview ignored camera proportions");
+	source->Draw(120, 0, {0, 0, 1, 1}, false);
+	Require(std::abs(ImGui::GetItemRectSize().y - 120) < .01f, "Pixel zoom corrected the source aspect");
 	history.Draw(*original, 120);
+	Require(std::abs(ImGui::GetItemRectSize().y - 60) < .01f, "Cached preview ignored recorded proportions");
 	finish();
 	std::this_thread::sleep_for(std::chrono::milliseconds(110));
 	begin();
@@ -242,7 +255,7 @@ void HistoryLifetime(app::UiRenderer& renderer)
 	Require(!history.Nearest(first, 2), "Deferred format change did not replace history at the frame boundary");
 	history.Offer(*changed, 0, second, 2);
 	const auto resized = history.Nearest(second, 2);
-	Require(resized && history.Aspect() == .5f, "Deferred history format/size change failed");
+	Require(resized && history.Aspect() == 1.f && resized->aspect == 1.f, "Deferred history format/size change failed");
 	history.Draw(*resized, 120);
 	finish();
 }
@@ -424,6 +437,34 @@ void DisplayImageIdentity(app::UiRenderer& renderer)
 	SnapshotBudget::Configure(previousBudget);
 	requests.Close();
 }
+void PreviewProportions()
+{
+	wire::ImageDescription image;
+	image.width = 1280;
+	image.height = 720;
+	image.arrayLayers = 2;
+	Require(std::abs(app::PreviewAspect(image) - 9.f / 16) < .0001f, "Image without camera lost pixel aspect");
+	image.views = {{IdentityPose(), {-.7f, .9f, .8f, -.6f}}, {IdentityPose(), {-.5f, .5f, .9f, -.9f}}};
+	for (std::size_t eye = 0; eye < image.views.size(); ++eye)
+	{
+		// A front-facing 16:9 screen must remain 16:9 despite nonuniform pixel density.
+		const auto left = app::ProjectPoint(image.views[eye], {-8.f / 9, 0, -2});
+		const auto right = app::ProjectPoint(image.views[eye], {8.f / 9, 0, -2});
+		const auto top = app::ProjectPoint(image.views[eye], {0, .5f, -2});
+		const auto bottom = app::ProjectPoint(image.views[eye], {0, -.5f, -2});
+		const float displayed = (right.uv.x - left.uv.x) / (bottom.uv.y - top.uv.y) / app::PreviewAspect(image, eye);
+		Require(std::abs(displayed - 16.f / 9) < .0001f, "Projected screen aspect changed with eye FOV");
+	}
+	Require(app::PreviewAspect(image) == app::PreviewAspect(image, 1), "Stereo fit clipped the taller eye");
+	Require(std::abs(app::PreviewAspect(image, 0, false) - 9.f / 16) < .0001f, "Pixel inspection lost pixel aspect");
+	const float aspect = app::PreviewAspect(image, 0);
+	image.width = 720;
+	image.height = 1280;
+	Require(app::PreviewAspect(image, 0) == aspect, "Render resolution changed physical proportions");
+	image.views[0].fov = {};
+	Require(std::abs(app::PreviewAspect(image, 0) - 16.f / 9) < .0001f, "Degenerate camera lacked pixel fallback");
+}
+
 void BoundAndRollback(const app::VulkanDeviceAccess& access)
 {
 	const auto description = Description(access);
@@ -466,11 +507,13 @@ void BoundAndRollback(const app::VulkanDeviceAccess& access)
 	for (auto& texture : textures)
 		texture = std::make_unique<app::PreviewTexture>(access, description);
 }
-} // namespace
+} // namespace simxr::tests
 int main()
 {
+	using namespace simxr::tests;
 	try
 	{
+		PreviewProportions();
 		auto validation = std::make_shared<app::ValidationLog>();
 		{
 			app::Window window(true);

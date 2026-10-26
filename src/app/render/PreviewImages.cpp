@@ -213,15 +213,16 @@ void PreviewImages::BeginFrame()
 			m_selectedImage = image->id;
 	}
 }
-void PreviewImages::DrawSelected(float width, std::optional<std::size_t> slice, ImVec4 crop)
+void PreviewImages::DrawSelected(float width, std::optional<std::size_t> slice, ImVec4 crop, bool correctProportions)
 {
-	DrawImage(m_selectedImage, width, slice, crop);
+	DrawImage(m_selectedImage, width, slice, crop, correctProportions);
 }
-void PreviewImages::DrawImage(std::uint64_t id, float width, std::optional<std::size_t> slice, ImVec4 crop)
+void PreviewImages::DrawImage(std::uint64_t id, float width, std::optional<std::size_t> slice, ImVec4 crop,
+							  bool correctProportions)
 {
 	if (auto image = Find(id); image && !image->release && image->texture->Ready())
 	{
-		image->texture->Draw(width, slice, crop);
+		image->texture->Draw(width, slice, crop, correctProportions);
 		if (image->live)
 			m_history.Offer(*image->texture, static_cast<std::uint32_t>(slice.value_or(0)),
 							{image->session, image->generation, image->frame}, image->epoch);
