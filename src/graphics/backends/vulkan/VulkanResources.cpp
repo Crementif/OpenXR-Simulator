@@ -6,6 +6,50 @@
 
 namespace simxr
 {
+VulkanCommands::VulkanCommands(VkDevice device, std::uint32_t queueFamily) : m_device(device)
+{
+	try
+	{
+		VkCommandPoolCreateInfo info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+		info.queueFamilyIndex = queueFamily;
+		CheckVulkan(vkCreateCommandPool(device, &info, nullptr, &pool), "Create reusable command pool");
+		VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+		allocate.commandPool = pool;
+		allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		allocate.commandBufferCount = 1;
+		CheckVulkan(vkAllocateCommandBuffers(device, &allocate, &command), "Allocate reusable commands");
+		VkFenceCreateInfo completion{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+		CheckVulkan(vkCreateFence(device, &completion, nullptr, &fence), "Create reusable completion fence");
+	}
+	catch (...)
+	{
+		Destroy();
+		throw;
+	}
+}
+VulkanCommands::~VulkanCommands()
+{
+	Destroy();
+}
+void VulkanCommands::Destroy() noexcept
+{
+	if (pool)
+		vkDestroyCommandPool(m_device, pool, nullptr);
+	if (descriptors)
+		vkDestroyDescriptorPool(m_device, descriptors, nullptr);
+	if (timestamps)
+		vkDestroyQueryPool(m_device, timestamps, nullptr);
+	if (fence)
+		vkDestroyFence(m_device, fence, nullptr);
+}
+void VulkanCommands::Reset()
+{
+	CheckVulkan(vkResetCommandPool(m_device, pool, 0), "Reset completed command pool");
+	if (descriptors)
+		CheckVulkan(vkResetDescriptorPool(m_device, descriptors, 0), "Reset completed descriptors");
+	CheckVulkan(vkResetFences(m_device, 1, &fence), "Reset completed fence");
+}
+
 VulkanImage::VulkanImage(std::shared_ptr<VulkanDevice> owner) : device(std::move(owner)) {}
 
 std::shared_ptr<VulkanImage> VulkanImage::Create(std::shared_ptr<VulkanDevice> device, VkFormat format,

@@ -168,6 +168,12 @@ XrResult FrameSubmission::Execute(const XrFrameEndInfo& info, const SwapchainDes
 	if (!begun)
 		return XR_ERROR_CALL_ORDER_INVALID;
 	m_key = {snapshot.generation, begun->id};
+	const auto trace = [&](std::string_view stage, XrResult result = XR_SUCCESS)
+	{
+		m_session.History().Trace(FrameTraceKind::RuntimeWork, m_key, {Duration{info.displayTime}}, result,
+								  FrameDiagnosticCategory::Performance, 0, stage);
+	};
+	trace("end_started");
 	try
 	{
 		auto result = PrepareSessionComposition(m_session, info, describe, m_composition);
@@ -177,6 +183,7 @@ XrResult FrameSubmission::Execute(const XrFrameEndInfo& info, const SwapchainDes
 									  FrameDiagnosticCategory::Validation, 0, "submitted_layers");
 			return result;
 		}
+		trace("composition_prepared");
 		bool live = true;
 		if (info.layerCount)
 		{
@@ -188,15 +195,19 @@ XrResult FrameSubmission::Execute(const XrFrameEndInfo& info, const SwapchainDes
 				m_reservation = m_backend.LiveReservations().Reserve();
 			if (!m_reservation)
 				return XR_ERROR_LIMIT_REACHED;
+			trace("producers_reserved");
 			result = PrepareCaptures();
 			if (XR_FAILED(result))
 				return result;
+			trace("preview_started");
 			PreparePreviewHistory();
+			trace("preview_reserved");
 			PrepareQuadHistory();
 			result = m_backend.Prepare(m_key, m_composition, m_reservation, m_captures, m_prepared);
 			if (XR_FAILED(result))
 				return result;
 		}
+		trace("graphics_prepared");
 		std::function<XrResult()> submit;
 		if (m_prepared.producer && m_prepared.output)
 			submit = [&]
@@ -222,6 +233,7 @@ XrResult FrameSubmission::Execute(const XrFrameEndInfo& info, const SwapchainDes
 			m_session.PreviewHistory().Append(m_key, m_prepared.preview, info.layerCount == 0, tracking,
 											  {Duration{info.displayTime}}, prediction.displayPeriod);
 		}
+		trace("end_finished", result);
 		return result;
 	}
 	catch (const std::bad_alloc&)

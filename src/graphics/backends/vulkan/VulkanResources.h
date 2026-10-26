@@ -8,6 +8,26 @@
 
 namespace simxr
 {
+// Scratch storage is leased exclusively and reset only after its prior GPU use finishes.
+class VulkanCommands
+{
+  public:
+	explicit VulkanCommands(VkDevice device, std::uint32_t queueFamily);
+	~VulkanCommands();
+	VulkanCommands(const VulkanCommands&) = delete;
+	VulkanCommands& operator=(const VulkanCommands&) = delete;
+	void Reset();
+	VkCommandPool pool = VK_NULL_HANDLE;
+	VkCommandBuffer command = VK_NULL_HANDLE;
+	VkFence fence = VK_NULL_HANDLE;
+	VkQueryPool timestamps = VK_NULL_HANDLE;
+	VkDescriptorPool descriptors = VK_NULL_HANDLE;
+
+  private:
+	void Destroy() noexcept;
+	const VkDevice m_device;
+};
+
 class VulkanImage
 {
   public:

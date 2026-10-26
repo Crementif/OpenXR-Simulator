@@ -13,8 +13,9 @@
 #ifdef __linux__
 namespace simxr::probe
 {
-static bool s_failVideoView = false, s_failVideoWait = false;
-}
+static bool s_failVideoView = false;
+static unsigned s_failVideoWait = 0;
+} // namespace simxr::probe
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateImageView(VkDevice device, const VkImageViewCreateInfo* info,
 															const VkAllocationCallbacks* allocator, VkImageView* view)
 {
@@ -29,7 +30,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkWaitForFences(VkDevice device, std::
 	const auto wait = reinterpret_cast<PFN_vkWaitForFences>(vkGetDeviceProcAddr(device, "vkWaitForFences"));
 	const auto result = wait(device, count, fences, all, timeout);
 	// Actual completion makes the test safe; production still has to treat the injected timeout as unknown.
-	if (result == VK_SUCCESS && std::exchange(simxr::probe::s_failVideoWait, false))
+	if (result == VK_SUCCESS && simxr::probe::s_failVideoWait && --simxr::probe::s_failVideoWait == 0)
 		return VK_TIMEOUT;
 	return result;
 }
@@ -211,7 +212,7 @@ int main()
 				auto reservation = budget.Reserve();
 				{
 					simxr::VulkanVideoConversion uncertain(owner.Device(), {640, 480});
-					simxr::probe::s_failVideoWait = true;
+					simxr::probe::s_failVideoWait = 1;
 					failed = false;
 					try
 					{
@@ -227,7 +228,30 @@ int main()
 				reservation.reset();
 				if (budget.InUse() != 1)
 					throw std::runtime_error("Unknown decode completion released its GPU budget");
-				std::puts("Video allocation failure releases source; unknown decode completion retains budget");
+				auto retainedSource =
+					simxr::VulkanInspectionFrame::FromImage(image, {}, owner.ConsumerTimelineEnabled());
+				const std::weak_ptr<const simxr::VulkanInspectionFrame> pendingSource = retainedSource;
+				{
+					simxr::VulkanVideoConversion uncertain(owner.Device(), {640, 480});
+					// The encoder completes first; conversion's own fence must still be observed.
+					simxr::probe::s_failVideoWait = 2;
+					failed = false;
+					try
+					{
+						uncertain.Encode(retainedSource);
+					}
+					catch (const simxr::VulkanError& error)
+					{
+						failed = error.Result() == VK_TIMEOUT;
+					}
+					if (!failed || simxr::probe::s_failVideoWait)
+						throw std::runtime_error("Conversion fence timeout after encoding was not exercised");
+				}
+				retainedSource.reset();
+				if (pendingSource.expired())
+					throw std::runtime_error("Unknown conversion completion released its source");
+				std::puts(
+					"Video allocation failure releases source; unknown decode/conversion completion retains owners");
 #endif
 			}
 			if (validation->errors.load() || simxr::probe::s_validationErrors.load())

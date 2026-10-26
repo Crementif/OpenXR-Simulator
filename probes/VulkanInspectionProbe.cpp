@@ -1,6 +1,5 @@
 #include "Pch.h"
 
-#include "math/Math.h"
 #include "VulkanImageDeliveryProbe.h"
 #include "VulkanProbeInstance.h"
 #include "VulkanReprojectionProbe.h"
@@ -10,6 +9,7 @@
 #include "graphics/backends/vulkan/VulkanBackend.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
 #include "graphics/backends/vulkan/VulkanInspectionDevice.h"
+#include "math/Math.h"
 #include "presentation/DebugController.h"
 #include "runtime/Instance.h"
 #include "runtime/Session.h"
@@ -1162,20 +1162,15 @@ static std::vector<SnapshotRecord> LiveCapacity(Device& device, const VulkanBind
 						pressure.EndFrame(clear) == XR_SUCCESS,
 					"Fill exact presentation queue with submitted clears");
 		}
-		auto rejected = SubmitLive(pressure, backend, inspection, source, sourceId);
-		const auto history = pressure.History().Find(rejected.key);
-		Require(rejected.producer && !rejected.submitted && !rejected.producer->Submitted() &&
+		auto unpresented = SubmitLive(pressure, backend, inspection, source, sourceId);
+		const auto history = pressure.History().Find(unpresented.key);
+		Require(unpresented.producer && unpresented.submitted && unpresented.producer->Submitted() &&
 					history->submission->outputDisposition == FrameOutputDisposition::Dropped &&
 					history->submission->dropReason == FrameDropReason::PresentationCapacity,
-				"Presentation pressure submitted GPU work or failed ordinary frame coordination");
-		Await(
-			[&]
-			{
-				return rejected.output->PollCompletion() == CompletionStatus::Failed;
-			},
-			"Cancel unsubmitted dropped live transfer");
-		rejected.producer.reset();
-		rejected.output.reset();
+				"Presentation pressure lost native work needed by independent frame history");
+		AwaitComplete(*unpresented.output);
+		unpresented.producer.reset();
+		unpresented.output.reset();
 		FramePrediction clear;
 		Require(pressure.WaitFrame(clear) == XR_SUCCESS && pressure.BeginFrame() == XR_SUCCESS &&
 					pressure.EndFrame(clear, nullptr, {}, {}, {}, {}, FrameSubmissionPolicy::Live) == XR_SUCCESS,
@@ -1194,7 +1189,8 @@ static std::vector<SnapshotRecord> LiveCapacity(Device& device, const VulkanBind
 	Require(backend.Close() == XR_SUCCESS && !backend.LiveReservations().Reserve(),
 			"Close native live budget with retained owned snapshots");
 	std::puts("case=live-debug-capacity debugFull=yes liveFull=explicitDrop presentationFull=explicitDrop "
-			  "nativeDropSubmissions=0 boundaryPromotion=sameImage resume=progress clear=mailbox PASS");
+			  "nativeDropSubmissions=0 presentationDropRetainsHistory=yes boundaryPromotion=sameImage resume=progress "
+			  "clear=mailbox PASS");
 	return {std::move(second), std::move(*pinned)};
 }
 

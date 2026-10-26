@@ -224,19 +224,22 @@ std::unique_ptr<VulkanInspectionTransfer> VulkanFrameSubmission::PrepareInspecti
 	const auto label = target.kind == CaptureKind::LayerDepth		  ? "owned_depth_view:"
 					   : target.kind == CaptureKind::LayerDepthLinear ? "owned_linear_depth_view:"
 																	  : "owned_layer_view:";
-	const auto detail = target.kind == CaptureKind::ComposedEyes	   ? std::string{"owned_composed"}
+	const auto detail = target.kind == CaptureKind::ComposedEyes
+							? std::string{kind == VulkanInspectionKind::History ? "owned_preview" : "owned_composed"}
 						: target.kind == CaptureKind::ProjectionLayers ? std::string{"owned_projection_layers"}
 						: target.kind == CaptureKind::QuadLayers
 							? std::string{"owned_quad_layers"}
 							: label + std::to_string(target.layer) + ":" + std::to_string(target.view);
 	return m_inspection->Prepare(
 		std::move(source),
-		[journal, key, time, detail](CompletionStatus status)
+		[journal, key, time, detail, producers = m_backend.LiveReservations()](CompletionStatus status)
 		{
 			journal->Trace(status == CompletionStatus::Complete ? FrameTraceKind::GpuComplete
 																: FrameTraceKind::GpuFailed,
 						   key, time, status == CompletionStatus::Complete ? XR_SUCCESS : XR_ERROR_RUNTIME_FAILURE,
 						   FrameDiagnosticCategory::Timing, 0, detail);
+			// Collect completed producers on the inspection worker before the next application frame.
+			producers.Collect();
 		},
 		[journal, key, time, detail]
 		{

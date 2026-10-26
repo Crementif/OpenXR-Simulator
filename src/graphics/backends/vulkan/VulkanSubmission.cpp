@@ -15,40 +15,21 @@ VulkanSubmission::Resources::~Resources()
 	for (auto framebuffer : framebuffers)
 		if (framebuffer)
 			vkDestroyFramebuffer(native, framebuffer, nullptr);
-	if (pool)
-		vkDestroyCommandPool(native, pool, nullptr);
-	if (descriptors)
-		vkDestroyDescriptorPool(native, descriptors, nullptr);
 	for (auto view : sourceViews)
 		vkDestroyImageView(native, view, nullptr);
 	for (auto view : outputViews)
 		if (view)
 			vkDestroyImageView(native, view, nullptr);
-	if (timestamps)
-		vkDestroyQueryPool(native, timestamps, nullptr);
-	if (fence)
-		vkDestroyFence(native, fence, nullptr);
+	device->RecycleCommands(std::move(commands));
 }
 
 VulkanSubmission::VulkanSubmission(std::shared_ptr<VulkanDevice> device)
 	: m_resources(std::make_unique<Resources>(std::move(device)))
 {
-	const auto native = m_resources->device->binding.device;
-	VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-	pool.queueFamilyIndex = m_resources->device->binding.queueFamily;
-	CheckVulkan(vkCreateCommandPool(native, &pool, nullptr, &m_resources->pool),
-				"Create Vulkan submission command pool");
-	VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-	allocate.commandPool = m_resources->pool;
-	allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-	allocate.commandBufferCount = 1;
-	CheckVulkan(vkAllocateCommandBuffers(native, &allocate, &m_resources->command),
-				"Allocate Vulkan submission commands");
-	VkFenceCreateInfo fence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-	CheckVulkan(vkCreateFence(native, &fence, nullptr, &m_resources->fence), "Create Vulkan producer completion");
+	m_resources->commands = m_resources->device->AcquireCommands();
 	VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
 	begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-	CheckVulkan(vkBeginCommandBuffer(m_resources->command, &begin), "Begin Vulkan submission commands");
+	CheckVulkan(vkBeginCommandBuffer(m_resources->commands->command, &begin), "Begin Vulkan submission commands");
 }
 
 VulkanSubmission::~VulkanSubmission()
@@ -70,17 +51,21 @@ void VulkanSubmission::BeginTiming()
 	VkQueryPoolCreateInfo query{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
 	query.queryType = VK_QUERY_TYPE_TIMESTAMP;
 	query.queryCount = 2;
-	const auto result = vkCreateQueryPool(device.binding.device, &query, nullptr, &m_resources->timestamps);
+	const auto result = m_resources->commands->timestamps ? VK_SUCCESS
+														  : vkCreateQueryPool(device.binding.device, &query, nullptr,
+																			  &m_resources->commands->timestamps);
 	if (result != VK_SUCCESS)
 		return;
 	m_resources->timing = std::make_shared<FrameGpuTiming>();
-	vkCmdResetQueryPool(m_resources->command, m_resources->timestamps, 0, 2);
-	vkCmdWriteTimestamp(m_resources->command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m_resources->timestamps, 0);
+	vkCmdResetQueryPool(m_resources->commands->command, m_resources->commands->timestamps, 0, 2);
+	vkCmdWriteTimestamp(m_resources->commands->command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+						m_resources->commands->timestamps, 0);
 }
 void VulkanSubmission::EndTiming()
 {
-	if (m_resources->timestamps)
-		vkCmdWriteTimestamp(m_resources->command, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, m_resources->timestamps, 1);
+	if (m_resources->commands->timestamps)
+		vkCmdWriteTimestamp(m_resources->commands->command, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+							m_resources->commands->timestamps, 1);
 }
 void VulkanSubmission::ObserveTiming() const noexcept
 {
@@ -88,7 +73,7 @@ void VulkanSubmission::ObserveTiming() const noexcept
 	if (!resources.timing || resources.timing->compositorNanoseconds.load() >= 0)
 		return;
 	std::array<std::uint64_t, 2> values{};
-	const auto result = vkGetQueryPoolResults(resources.device->binding.device, resources.timestamps, 0, 2,
+	const auto result = vkGetQueryPoolResults(resources.device->binding.device, resources.commands->timestamps, 0, 2,
 											  sizeof(values), values.data(), sizeof(values[0]), VK_QUERY_RESULT_64_BIT);
 	if (result != VK_SUCCESS)
 		return;
@@ -120,7 +105,7 @@ CompletionStatus VulkanSubmission::PollCompletion() const noexcept
 			ObserveTiming();
 		return m_status.load();
 	}
-	const auto result = vkGetFenceStatus(m_resources->device->binding.device, m_resources->fence);
+	const auto result = vkGetFenceStatus(m_resources->device->binding.device, m_resources->commands->fence);
 	if (result == VK_SUCCESS)
 	{
 		auto expected = CompletionStatus::Pending;
@@ -151,7 +136,7 @@ bool VulkanSubmission::NativeIdle() const noexcept
 		return true;
 	if (m_resources->completion)
 		return m_resources->completion->NativeIdle();
-	return vkGetFenceStatus(m_resources->device->binding.device, m_resources->fence) == VK_SUCCESS;
+	return vkGetFenceStatus(m_resources->device->binding.device, m_resources->commands->fence) == VK_SUCCESS;
 }
 
 VkResult VulkanSubmission::Wait(std::uint64_t timeout) const noexcept
@@ -163,7 +148,8 @@ VkResult VulkanSubmission::Wait(std::uint64_t timeout) const noexcept
 		return submitted;
 	if (m_resources->completion)
 		return m_resources->completion->Wait(timeout);
-	const auto result = vkWaitForFences(m_resources->device->binding.device, 1, &m_resources->fence, VK_TRUE, timeout);
+	const auto result =
+		vkWaitForFences(m_resources->device->binding.device, 1, &m_resources->commands->fence, VK_TRUE, timeout);
 	if (result == VK_SUCCESS)
 	{
 		auto expected = CompletionStatus::Pending;
@@ -183,17 +169,6 @@ void VulkanSubmission::ReleaseSources()
 	if (!NativeIdle())
 		return;
 	const auto native = m_resources->device->binding.device;
-	if (m_resources->pool)
-	{
-		vkDestroyCommandPool(native, m_resources->pool, nullptr);
-		m_resources->pool = VK_NULL_HANDLE;
-		m_resources->command = VK_NULL_HANDLE;
-	}
-	if (m_resources->descriptors)
-	{
-		vkDestroyDescriptorPool(native, m_resources->descriptors, nullptr);
-		m_resources->descriptors = VK_NULL_HANDLE;
-	}
 	for (auto view : m_resources->sourceViews)
 		vkDestroyImageView(native, view, nullptr);
 	m_resources->sourceViews.clear();

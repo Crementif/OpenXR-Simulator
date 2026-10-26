@@ -1,6 +1,7 @@
 #include "graphics/backends/vulkan/VulkanDevice.h"
 
 #include "Pch.h"
+#include "graphics/backends/vulkan/VulkanResources.h"
 
 namespace simxr
 {
@@ -39,6 +40,50 @@ VulkanDevice::VulkanDevice(const VulkanBinding& value, std::shared_ptr<const voi
 	vkGetDeviceQueue(binding.device, binding.queueFamily, binding.queueIndex, &queue);
 	if (!queue)
 		throw std::invalid_argument("Vulkan binding queue was not enabled by the application");
+}
+
+VulkanDevice::~VulkanDevice()
+{
+	ClearCommands();
+}
+std::unique_ptr<VulkanCommands> VulkanDevice::AcquireCommands()
+{
+	std::unique_ptr<VulkanCommands> commands;
+	{
+		std::lock_guard lock(m_commandsMutex);
+		for (auto& available : m_commands)
+			if (available)
+			{
+				commands = std::move(available);
+				break;
+			}
+	}
+	if (commands)
+		commands->Reset();
+	else
+		commands = std::make_unique<VulkanCommands>(binding.device, binding.queueFamily);
+	return commands;
+}
+void VulkanDevice::RecycleCommands(std::unique_ptr<VulkanCommands> commands)
+{
+	std::lock_guard lock(m_commandsMutex);
+	if (m_commandsClosed || lost.load())
+		return;
+	for (auto& available : m_commands)
+		if (!available)
+		{
+			available = std::move(commands);
+			return;
+		}
+}
+void VulkanDevice::ClearCommands()
+{
+	decltype(m_commands) retired;
+	{
+		std::lock_guard lock(m_commandsMutex);
+		m_commandsClosed = true;
+		retired.swap(m_commands);
+	}
 }
 
 bool VulkanDevice::HasNativeOwner() const noexcept

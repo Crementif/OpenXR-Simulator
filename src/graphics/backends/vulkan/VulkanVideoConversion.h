@@ -33,6 +33,7 @@ class VulkanVideoConversion
 	void Destroy() noexcept;
 	void Begin();
 	void Submit(VkSemaphore wait, VkSemaphore signal);
+	void Wait();
 	void Bind(bool encode, VkExtent2D extent, std::uint32_t layers, bool srgb);
 	void UpdateView(VkImage image, VkFormat format, std::uint32_t layers, bool encode);
 	std::shared_ptr<VulkanDevice> m_device;

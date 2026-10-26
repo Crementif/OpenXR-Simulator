@@ -896,7 +896,7 @@ InspectionValue InspectDiagnostics(const FrameDiagnostics& diagnostics)
 										"gpu_complete",		"gpu_failed",		"display_selected", "display_repeated",
 										"display_cleared",	"capture_ready",	"capture_failed",	"preview_dropped",
 										"commands_applied", "command_rejected", "api_error",		"validation",
-										"display_empty",	"image_retired"};
+										"display_empty",	"image_retired",	"runtime_work"};
 	static constexpr std::array s_categories{"timing", "performance", "api_error", "validation", "command"};
 	return InspectionValue::Object(
 		{{"capacity", InspectionValue::Unsigned(diagnostics.capacity)},

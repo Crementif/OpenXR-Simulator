@@ -150,6 +150,14 @@ def main():
                              and event['detail'] == 'owned_composed']
                     require(len(native) == len(ready) == 1 and native[0]['sequence'] < ready[0]['sequence'],
                             f'Native queue acceptance/completion identity incorrect: {frame}')
+                    stages = [event for event in events if event['kind'] == 'runtime_work']
+                    require([event['detail'] for event in stages] ==
+                            ['end_started', 'composition_prepared', 'producers_reserved',
+                             'preview_started', 'preview_reserved',
+                             'graphics_prepared', 'end_finished'],
+                            f'Submission timing stages missing or reordered: {frame}')
+                    require(all(a['host_time'] <= b['host_time'] for a, b in zip(stages, stages[1:])),
+                            f'Submission timing moved backwards: {frame}')
                 for (frame, target), capture_id in exact.items():
                     events = [event for event in diagnostics['events']
                               if event['kind'] == 'capture_ready' and event['related'] == capture_id]

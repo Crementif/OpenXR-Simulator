@@ -1,8 +1,8 @@
 #include "Pch.h"
-#include "math/Math.h"
 #include "VulkanProbeInstance.h"
 #include "graphics/backends/vulkan/VulkanBackend.h"
 #include "graphics/backends/vulkan/VulkanReadbackBatch.h"
+#include "math/Math.h"
 #include "presentation/DebugController.h"
 #include "runtime/Instance.h"
 #include "runtime/Session.h"
@@ -1220,7 +1220,95 @@ static void ExplicitReadbackOwnership(CompositorDevice& device, const VulkanBind
 	std::puts("case=explicit-readback-owner partialRollback=12 capacity=4 reused=true repeatedSubmit=rejected PASS");
 }
 
-static int Run(bool verify)
+static void CommandStorageReuse(const VulkanBinding& binding)
+{
+	VulkanDevice device(binding);
+	auto held = device.AcquireCommands();
+	auto commands = device.AcquireCommands();
+	const auto pool = commands->pool;
+	const auto fence = commands->fence;
+	for (unsigned iteration = 0; iteration < 32; ++iteration)
+	{
+		Require(commands->pool == pool && commands->fence == fence && commands->pool != held->pool,
+				"Command storage was recreated or reused while still held");
+		Require(vkGetFenceStatus(binding.device, commands->fence) == VK_NOT_READY,
+				"Recycled commands inherited a completed frame's fence");
+		Check(vkQueueSubmit(device.queue, 0, nullptr, commands->fence), "signal reusable completion");
+		if (vkWaitForFences(binding.device, 1, &commands->fence, VK_TRUE, s_timeout) != VK_SUCCESS)
+			UnknownCompletion("command storage reuse");
+		device.RecycleCommands(std::move(commands));
+		commands = device.AcquireCommands();
+	}
+	device.RecycleCommands(std::move(commands));
+	device.ClearCommands();
+	held.reset();
+	std::puts("case=command-storage-reuse iterations=32 heldStorage=distinct fence=reset PASS");
+}
+
+static void Benchmark(CompositorDevice& device, const VulkanBinding& binding)
+{
+	VulkanBackend backend(binding, 2);
+	{
+		CompositorSource source{reinterpret_cast<XrSwapchain>(902),
+								backend.CreateImage(VK_FORMAT_R8G8B8A8_UNORM, {16, 16}, 4, s_sourceUsage),
+								{{{1, 0, 0, 1}, {0, 1, 0, 1}, {0, 0, 1, 1}, {1, 1, 1, 1}}}};
+		{
+			auto initialized = backend.InitializeImage(source.image);
+			Check(initialized->Wait(s_timeout), "initialize benchmark image");
+		}
+		Paint(device, source);
+		CompositionPlan plan;
+		Require(PrepareComposition(
+					Frame({Projection(source)}), Target(1280, 720),
+					[](XrSwapchain) -> std::optional<XrExtent2Di>
+					{
+						return XrExtent2Di{16, 16};
+					},
+					plan) == XR_SUCCESS,
+				"Prepare benchmark plan");
+		auto preview = plan;
+		preview.width = 640;
+		preview.height = 360;
+		std::vector<double> prepare, total;
+		prepare.reserve(600);
+		total.reserve(600);
+		for (unsigned iteration = 0; iteration < 664; ++iteration)
+		{
+			const auto start = std::chrono::steady_clock::now();
+			{
+				std::array<std::shared_ptr<VulkanFrame>, 2> frames;
+				const auto resolve = [&](XrSwapchain)
+				{
+					return source.image;
+				};
+				Require(backend.Prepare(plan, resolve, frames[0]) == XR_SUCCESS &&
+							backend.Prepare(preview, resolve, frames[1]) == XR_SUCCESS,
+						"Prepare benchmark frames");
+				const auto recorded = std::chrono::steady_clock::now();
+				Require(backend.Submit(frames) == XR_SUCCESS, "Submit benchmark frames");
+				Check(backend.Drain(s_timeout), "Drain benchmark frames");
+				if (iteration >= 64)
+					prepare.push_back(std::chrono::duration<double, std::micro>(recorded - start).count());
+			}
+			backend.RetireCompleted();
+			if (iteration >= 64)
+				total.push_back(
+					std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count());
+		}
+		const auto report = [](const char* name, std::vector<double>& samples)
+		{
+			std::sort(samples.begin(), samples.end());
+			std::printf("benchmark=%s samples=%zu p50_us=%.2f p95_us=%.2f p99_us=%.2f\n", name, samples.size(),
+						samples[samples.size() / 2], samples[samples.size() * 95 / 100],
+						samples[samples.size() * 99 / 100]);
+		};
+		report("stereo-and-history-prepare", prepare);
+		report("stereo-and-history-complete", total);
+	}
+	Require(backend.Close() == XR_SUCCESS, "Benchmark retained native resources");
+}
+
+static int Run(bool verify, bool benchmark)
 {
 	simxr::probe::Instance instance;
 	instance.Create();
@@ -1234,6 +1322,12 @@ static int Run(bool verify)
 	{
 		const VulkanBinding binding{instance.handle, device.m_physical, device.m_native, device.m_family,
 									device.m_index};
+		if (benchmark)
+		{
+			Benchmark(device, binding);
+			return 0;
+		}
+		CommandStorageReuse(binding);
 		const bool depthClosure = ClosedDepthPipeline(instance);
 		RejectOversizedImage(binding);
 		ReservedClosure(binding);
@@ -1262,10 +1356,13 @@ static int Run(bool verify)
 int main(int argc, char** argv)
 {
 	bool verify = false;
+	bool benchmark = false;
 	for (int index = 1; index < argc; ++index)
 	{
 		if (std::strcmp(argv[index], "--verify-pixels") == 0)
 			verify = true;
+		else if (std::strcmp(argv[index], "--benchmark") == 0)
+			benchmark = true;
 		else
 		{
 			std::fprintf(stderr, "Unknown argument: %s\n", argv[index]);
@@ -1274,7 +1371,7 @@ int main(int argc, char** argv)
 	}
 	try
 	{
-		const int result = simxr::probe::Run(verify);
+		const int result = simxr::probe::Run(verify, benchmark);
 		simxr::probe::Require(simxr::probe::s_validationErrors.load() == 0, "Validation errors after native teardown");
 		if (!result)
 			std::printf("Production Vulkan compositor PASS pixelReadback=%s validationErrors=0\n",

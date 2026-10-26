@@ -380,9 +380,9 @@ std::shared_ptr<VulkanSubmission> VulkanBackend::InitializeImage(std::shared_ptr
 	auto job = std::shared_ptr<VulkanSubmission>(new VulkanSubmission(m_state->device));
 	job->m_resources->sources.push_back(std::move(image));
 	const auto& source = *job->m_resources->sources.front();
-	VulkanImageBarrier(job->m_resources->command, source, VK_IMAGE_LAYOUT_UNDEFINED, source.ApplicationLayout(), 0,
-					   VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
-	CheckVulkan(vkEndCommandBuffer(job->m_resources->command), "End initial Vulkan image transition");
+	VulkanImageBarrier(job->m_resources->commands->command, source, VK_IMAGE_LAYOUT_UNDEFINED,
+					   source.ApplicationLayout(), 0, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+	CheckVulkan(vkEndCommandBuffer(job->m_resources->commands->command), "End initial Vulkan image transition");
 	m_state->submissions.push_back(job);
 	{
 		std::lock_guard lock(m_state->retirement->mutex);
@@ -391,8 +391,8 @@ std::shared_ptr<VulkanSubmission> VulkanBackend::InitializeImage(std::shared_ptr
 	}
 	VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
 	submit.commandBufferCount = 1;
-	submit.pCommandBuffers = &job->m_resources->command;
-	const auto result = vkQueueSubmit(m_state->device->queue, 1, &submit, job->m_resources->fence);
+	submit.pCommandBuffers = &job->m_resources->commands->command;
+	const auto result = vkQueueSubmit(m_state->device->queue, 1, &submit, job->m_resources->commands->fence);
 	{
 		std::lock_guard lock(m_state->retirement->mutex);
 		job->m_submitResult.store(result);
@@ -501,17 +501,18 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 	if (!sets.empty())
 	{
 		const auto count = static_cast<std::uint32_t>(sets.size());
-		const std::array sizes{VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, count},
-							   VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLER, count}};
+		const std::array sizes{VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 64},
+							   VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLER, 64}};
 		VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-		pool.maxSets = count;
+		pool.maxSets = 64;
 		pool.poolSizeCount = static_cast<std::uint32_t>(sizes.size());
 		pool.pPoolSizes = sizes.data();
-		CheckVulkan(vkCreateDescriptorPool(native, &pool, nullptr, &resources.descriptors),
-					"Create bounded compositor descriptor storage");
+		if (!resources.commands->descriptors)
+			CheckVulkan(vkCreateDescriptorPool(native, &pool, nullptr, &resources.commands->descriptors),
+						"Create bounded compositor descriptor storage");
 		std::vector<VkDescriptorSetLayout> layouts(count, pipeline->descriptors);
 		VkDescriptorSetAllocateInfo allocate{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-		allocate.descriptorPool = resources.descriptors;
+		allocate.descriptorPool = resources.commands->descriptors;
 		allocate.descriptorSetCount = count;
 		allocate.pSetLayouts = layouts.data();
 		CheckVulkan(vkAllocateDescriptorSets(native, &allocate, sets.data()), "Allocate compositor draw descriptors");
@@ -563,19 +564,19 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 					return XR_ERROR_LIMIT_REACHED;
 				resources.sourceBudgets.push_back(std::move(budget));
 				resources.sources.push_back(image);
-				VulkanImageBarrier(resources.command, *image, image->ApplicationLayout(),
+				VulkanImageBarrier(resources.commands->command, *image, image->ApplicationLayout(),
 								   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
 								   VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT);
-				VulkanImageBarrier(resources.command, *destination, VK_IMAGE_LAYOUT_UNDEFINED,
+				VulkanImageBarrier(resources.commands->command, *destination, VK_IMAGE_LAYOUT_UNDEFINED,
 								   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
 				VkImageResolve region{};
 				region.srcSubresource = region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, image->layers};
 				region.extent = {image->extent.width, image->extent.height, 1};
-				vkCmdResolveImage(resources.command, image->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				vkCmdResolveImage(resources.commands->command, image->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
 								  destination->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-				VulkanImageBarrier(resources.command, *image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				VulkanImageBarrier(resources.commands->command, *image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
 								   image->ApplicationLayout(), VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT);
-				VulkanImageBarrier(resources.command, *destination, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+				VulkanImageBarrier(resources.commands->command, *destination, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 								   destination->ApplicationLayout(), VK_ACCESS_TRANSFER_WRITE_BIT,
 								   VK_ACCESS_MEMORY_READ_BIT);
 				resolved.emplace_back(image, destination);
@@ -602,7 +603,8 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 		vkUpdateDescriptorSets(native, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
 	}
 	for (const auto& image : resources.sources)
-		VulkanImageBarrier(resources.command, *image, resolve ? image->ApplicationLayout() : VK_IMAGE_LAYOUT_GENERAL,
+		VulkanImageBarrier(resources.commands->command, *image,
+						   resolve ? image->ApplicationLayout() : VK_IMAGE_LAYOUT_GENERAL,
 						   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 						   VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_SHADER_READ_BIT);
 	for (std::uint32_t eye = 0; eye < outputLayers; ++eye)
@@ -614,25 +616,25 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 		pass.renderArea.extent = {plan.width, plan.height};
 		pass.clearValueCount = 1;
 		pass.pClearValues = &clear;
-		vkCmdBeginRenderPass(resources.command, &pass, VK_SUBPASS_CONTENTS_INLINE);
-		vkCmdBindPipeline(resources.command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->pipeline);
+		vkCmdBeginRenderPass(resources.commands->command, &pass, VK_SUBPASS_CONTENTS_INLINE);
+		vkCmdBindPipeline(resources.commands->command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->pipeline);
 		const VkViewport viewport{0, 0, static_cast<float>(plan.width), static_cast<float>(plan.height), 0, 1};
 		const VkRect2D scissor{{0, 0}, {plan.width, plan.height}};
-		vkCmdSetViewport(resources.command, 0, 1, &viewport);
-		vkCmdSetScissor(resources.command, 0, 1, &scissor);
+		vkCmdSetViewport(resources.commands->command, 0, 1, &viewport);
+		vkCmdSetScissor(resources.commands->command, 0, 1, &scissor);
 		for (std::size_t index = 0; index < plan.draws.size(); ++index)
 			if (plan.draws[index].eye == eye)
 			{
-				vkCmdBindDescriptorSets(resources.command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->layout, 0, 1,
-										&sets[index], 0, nullptr);
-				vkCmdPushConstants(resources.command, pipeline->layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+				vkCmdBindDescriptorSets(resources.commands->command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->layout,
+										0, 1, &sets[index], 0, nullptr);
+				vkCmdPushConstants(resources.commands->command, pipeline->layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
 								   sizeof(LayerConstants), &plan.draws[index].constants);
-				vkCmdDraw(resources.command, 3, 1, 0, 0);
+				vkCmdDraw(resources.commands->command, 3, 1, 0, 0);
 			}
-		vkCmdEndRenderPass(resources.command);
+		vkCmdEndRenderPass(resources.commands->command);
 	}
 	for (const auto& image : resources.sources)
-		VulkanImageBarrier(resources.command, *image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+		VulkanImageBarrier(resources.commands->command, *image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 						   resolve ? image->ApplicationLayout() : VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_READ_BIT,
 						   VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
 	if (resources.external)
@@ -644,11 +646,11 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 		release.dstQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;
 		release.image = resources.output->image;
 		release.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, outputLayers};
-		vkCmdPipelineBarrier(resources.command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-							 0, 0, nullptr, 0, nullptr, 1, &release);
+		vkCmdPipelineBarrier(resources.commands->command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+							 VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &release);
 	}
 	job->EndTiming();
-	CheckVulkan(vkEndCommandBuffer(resources.command), "End shared compositor commands");
+	CheckVulkan(vkEndCommandBuffer(resources.commands->command), "End shared compositor commands");
 	const auto& pool = m_state->reservations.Owns(reservation)			? m_state->reservations
 					   : m_state->historyReservations.Owns(reservation) ? m_state->historyReservations
 																		: m_state->liveReservations;
@@ -761,10 +763,11 @@ XrResult VulkanBackend::PrepareImageCopy(const LayerImageDescription& descriptio
 	m_state->images.push_back(resources.output);
 	resources.ready = m_state->external->CreateExportableSemaphore();
 	resources.outputViews[0] = View(*resources.output, 0);
-	VulkanImageBarrier(resources.command, *image, image->ApplicationLayout(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-					   VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
-	VulkanImageBarrier(resources.command, *resources.output, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0,
-					   VK_ACCESS_TRANSFER_WRITE_BIT);
+	VulkanImageBarrier(resources.commands->command, *image, image->ApplicationLayout(),
+					   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+					   VK_ACCESS_TRANSFER_READ_BIT);
+	VulkanImageBarrier(resources.commands->command, *resources.output, VK_IMAGE_LAYOUT_UNDEFINED,
+					   VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
 	VkImageCopy copy{};
 	copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, description.arraySlice, 1};
 	copy.srcOffset = fullMipChain ? VkOffset3D{} : VkOffset3D{rectangle.offset.x, rectangle.offset.y, 0};
@@ -774,18 +777,19 @@ XrResult VulkanBackend::PrepareImageCopy(const LayerImageDescription& descriptio
 		copy.srcSubresource.mipLevel = copy.dstSubresource.mipLevel = mip;
 		copy.extent = {std::max(1U, spec.extent.width >> mip), std::max(1U, spec.extent.height >> mip), 1};
 		if (image->samples == VK_SAMPLE_COUNT_1_BIT)
-			vkCmdCopyImage(resources.command, image->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			vkCmdCopyImage(resources.commands->command, image->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
 						   resources.output->image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
 		else
 		{
 			const VkImageResolve region{copy.srcSubresource, copy.srcOffset, copy.dstSubresource, copy.dstOffset,
 										copy.extent};
-			vkCmdResolveImage(resources.command, image->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			vkCmdResolveImage(resources.commands->command, image->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
 							  resources.output->image, VK_IMAGE_LAYOUT_GENERAL, 1, &region);
 		}
 	}
-	VulkanImageBarrier(resources.command, *image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image->ApplicationLayout(),
-					   VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+	VulkanImageBarrier(resources.commands->command, *image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+					   image->ApplicationLayout(), VK_ACCESS_TRANSFER_READ_BIT,
+					   VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
 	VkImageMemoryBarrier release{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
 	release.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 	release.oldLayout = release.newLayout = VK_IMAGE_LAYOUT_GENERAL;
@@ -793,9 +797,9 @@ XrResult VulkanBackend::PrepareImageCopy(const LayerImageDescription& descriptio
 	release.dstQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;
 	release.image = resources.output->image;
 	release.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, spec.mipLevels, 0, 1};
-	vkCmdPipelineBarrier(resources.command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
-						 0, nullptr, 0, nullptr, 1, &release);
-	CheckVulkan(vkEndCommandBuffer(resources.command), "End exact layer/view copy commands");
+	vkCmdPipelineBarrier(resources.commands->command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+						 VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &release);
+	CheckVulkan(vkEndCommandBuffer(resources.commands->command), "End exact layer/view copy commands");
 	if (!budget.Consume(reservation))
 		return XR_ERROR_CALL_ORDER_INVALID;
 	resources.reservation = std::move(reservation);
@@ -861,17 +865,17 @@ XrResult VulkanBackend::PrepareNativeCopy(std::shared_ptr<VulkanImage> source, V
 	acquire.dstQueueFamilyIndex = m_state->device->binding.queueFamily;
 	acquire.image = source->image;
 	acquire.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, source->mipLevels, 0, source->layers};
-	vkCmdPipelineBarrier(resources.command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0,
-						 nullptr, 0, nullptr, 1, &acquire);
-	VulkanImageBarrier(resources.command, *resources.output, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0,
-					   VK_ACCESS_TRANSFER_WRITE_BIT);
+	vkCmdPipelineBarrier(resources.commands->command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+						 0, 0, nullptr, 0, nullptr, 1, &acquire);
+	VulkanImageBarrier(resources.commands->command, *resources.output, VK_IMAGE_LAYOUT_UNDEFINED,
+					   VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
 	for (std::uint32_t mip = 0; mip < source->mipLevels; ++mip)
 	{
 		VkImageCopy copy{};
 		copy.srcSubresource = copy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 0, source->layers};
 		copy.extent = {std::max(1u, spec.extent.width >> mip), std::max(1u, spec.extent.height >> mip), 1};
-		vkCmdCopyImage(resources.command, source->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, resources.output->image,
-					   VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+		vkCmdCopyImage(resources.commands->command, source->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+					   resources.output->image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
 	}
 	// Imported frames are immutable and never returned to their producer for reuse.
 	VkImageMemoryBarrier release{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -881,9 +885,9 @@ XrResult VulkanBackend::PrepareNativeCopy(std::shared_ptr<VulkanImage> source, V
 	release.dstQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;
 	release.image = resources.output->image;
 	release.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, source->mipLevels, 0, source->layers};
-	vkCmdPipelineBarrier(resources.command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0,
-						 nullptr, 0, nullptr, 1, &release);
-	CheckVulkan(vkEndCommandBuffer(resources.command), "End native compositor GPU copy");
+	vkCmdPipelineBarrier(resources.commands->command, VK_PIPELINE_STAGE_TRANSFER_BIT,
+						 VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &release);
+	CheckVulkan(vkEndCommandBuffer(resources.commands->command), "End native compositor GPU copy");
 	if (!(m_state->reservations.Owns(reservation)				? m_state->reservations
 		  : m_state->historyReservations.Owns(reservation)		? m_state->historyReservations
 		  : m_state->reprojectionReservations.Owns(reservation) ? m_state->reprojectionReservations
@@ -928,7 +932,7 @@ XrResult VulkanBackend::Submit(std::span<const std::shared_ptr<VulkanFrame>> fra
 			if (frames[previous] == frame)
 				return XR_ERROR_VALIDATION_FAILURE;
 		const auto& resources = *frame->m_submission->m_resources;
-		commands[index] = resources.command;
+		commands[index] = resources.commands->command;
 #ifdef _WIN32
 		if (resources.nativeReady)
 		{
@@ -974,7 +978,7 @@ XrResult VulkanBackend::Submit(std::span<const std::shared_ptr<VulkanFrame>> fra
 	submit.pCommandBuffers = commands.data();
 	submit.signalSemaphoreCount = static_cast<std::uint32_t>(signalCount);
 	submit.pSignalSemaphores = signals.data();
-	const auto result = vkQueueSubmit(m_state->device->queue, 1, &submit, leader->m_resources->fence);
+	const auto result = vkQueueSubmit(m_state->device->queue, 1, &submit, leader->m_resources->commands->fence);
 	{
 		std::lock_guard lock(m_state->retirement->mutex);
 		for (const auto& frame : frames)
@@ -1043,6 +1047,7 @@ XrResult VulkanBackend::Close()
 		return XR_ERROR_RUNTIME_FAILURE;
 	if (!m_state->submissions.empty() || !m_state->images.empty())
 		return XR_ERROR_LIMIT_REACHED;
+	m_state->device->ClearCommands();
 	m_state->closed = true;
 	m_state->pipeline.reset();
 	m_state->depthMultisamplePipeline.reset();

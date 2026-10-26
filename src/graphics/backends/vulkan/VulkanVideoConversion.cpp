@@ -178,7 +178,11 @@ void VulkanVideoConversion::Submit(VkSemaphore wait, VkSemaphore signal)
 		m_uncertain = true;
 		CheckVulkan(vkQueueSubmit(m_device->queue, 1, &submit, m_fence), "Submit GPU video conversion");
 	}
-	CheckVulkan(vkWaitForFences(device, 1, &m_fence, VK_TRUE, 5000000000ULL), "Wait for GPU video conversion");
+}
+void VulkanVideoConversion::Wait()
+{
+	CheckVulkan(vkWaitForFences(m_device->binding.device, 1, &m_fence, VK_TRUE, 5000000000ULL),
+				"Wait for GPU video conversion");
 	m_uncertain = false;
 }
 void VulkanVideoConversion::UpdateView(VkImage image, VkFormat format, std::uint32_t layers, bool encode)
@@ -272,9 +276,9 @@ VulkanH264Picture VulkanVideoConversion::Encode(std::shared_ptr<const VulkanInsp
 	vkCmdPipelineBarrier(m_command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr,
 						 0, nullptr, 1, &barrier);
 	Submit(VK_NULL_HANDLE, m_ready);
-	m_uncertain = true;
+	// Queue encoding behind conversion on the GPU, without a CPU round trip between them.
 	auto encoded = m_session->Encode(m_ready);
-	m_uncertain = false;
+	Wait();
 	m_initialized = true;
 	vkDestroyImageView(m_device->binding.device, std::exchange(m_view, VK_NULL_HANDLE), nullptr);
 	m_failedOwner->source.reset();
@@ -327,6 +331,7 @@ std::shared_ptr<VulkanImage> VulkanVideoConversion::Decode(const VulkanH264Pictu
 	VulkanImageBarrier(m_command, *output, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_WRITE_BIT,
 					   VK_ACCESS_SHADER_READ_BIT);
 	Submit(m_decoded, VK_NULL_HANDLE);
+	Wait();
 	output->format = VK_FORMAT_R8G8B8A8_SRGB;
 	vkDestroyImageView(m_device->binding.device, std::exchange(m_view, VK_NULL_HANDLE), nullptr);
 	m_failedOwner->output.reset();

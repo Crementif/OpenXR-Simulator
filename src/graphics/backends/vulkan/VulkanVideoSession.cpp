@@ -354,8 +354,9 @@ void VulkanVideoSession::Begin(bool encode)
 									: VK_IMAGE_LAYOUT_UNDEFINED;
 	barrier.newLayout = encode ? VK_IMAGE_LAYOUT_VIDEO_ENCODE_DPB_KHR : VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR;
 	barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-	// Execution and memory visibility between conversion and video are supplied
-	// by the caller. This barrier establishes the session-private image layout.
+	barrier.srcAccessMask = initialized ? VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT : 0;
+	barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+	// The private DPB transition must be visible to the following video writes.
 	vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr,
 						 0, nullptr, 1, &barrier);
 	VkVideoPictureResourceInfoKHR picture{VK_STRUCTURE_TYPE_VIDEO_PICTURE_RESOURCE_INFO_KHR};

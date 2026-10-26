@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <memory>
@@ -9,6 +10,8 @@
 
 namespace simxr
 {
+class VulkanCommands;
+
 class VulkanError : public std::runtime_error
 {
   public:
@@ -35,6 +38,11 @@ class VulkanDevice
 {
   public:
 	explicit VulkanDevice(const VulkanBinding& binding, std::shared_ptr<const void> owner = {});
+	~VulkanDevice();
+	std::unique_ptr<VulkanCommands> AcquireCommands();
+	// Return only after GPU completion and the last completion observer have retired.
+	void RecycleCommands(std::unique_ptr<VulkanCommands> commands);
+	void ClearCommands();
 	const VulkanBinding binding;
 	VkQueue queue = VK_NULL_HANDLE;
 	// Serializes independently owned graphics and video conversion submissions.
@@ -49,5 +57,8 @@ class VulkanDevice
 
   private:
 	const std::shared_ptr<const void> m_owner;
+	std::mutex m_commandsMutex;
+	std::array<std::unique_ptr<VulkanCommands>, 16> m_commands;
+	bool m_commandsClosed = false;
 };
 } // namespace simxr

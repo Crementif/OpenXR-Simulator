@@ -14,7 +14,7 @@ struct VulkanH264Picture
 };
 
 // Serial use by the history worker. All images and bitstream buffers are private
-// to this session; the caller supplies already completed NV12 conversion output.
+// to this session; NV12 conversion is complete or ordered by the input semaphore.
 class VulkanVideoSession
 {
   public:

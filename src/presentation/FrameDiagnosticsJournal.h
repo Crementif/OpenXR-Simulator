@@ -37,7 +37,8 @@ enum class FrameTraceKind
 	ApiError,
 	Validation,
 	DisplayEmpty,
-	ImageRetired
+	ImageRetired,
+	RuntimeWork
 };
 enum class FrameDiagnosticCategory
 {

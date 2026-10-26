@@ -40,12 +40,8 @@ class VulkanSubmission final : public GpuCompletion
 		std::shared_ptr<FrameReservation> reservation;
 		std::shared_ptr<VulkanSubmission> completion;
 		std::shared_ptr<const void> pipeline;
-		VkCommandPool pool = VK_NULL_HANDLE;
-		VkCommandBuffer command = VK_NULL_HANDLE;
-		VkFence fence = VK_NULL_HANDLE;
-		VkQueryPool timestamps = VK_NULL_HANDLE;
+		std::unique_ptr<VulkanCommands> commands;
 		std::shared_ptr<FrameGpuTiming> timing;
-		VkDescriptorPool descriptors = VK_NULL_HANDLE;
 		std::vector<VkImageView> sourceViews;
 		std::vector<std::shared_ptr<VulkanImage>> sources;
 		// Source CPU readers may disappear before this submission reaches its fence.
