@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #ifndef _WIN32
 #include <fcntl.h>
 #endif
@@ -267,6 +268,28 @@ static void ExerciseMemoryAndSemaphore(VulkanExternalDevice& exporter, VulkanExt
 	auto importedImage = importer.ImportImage(image->Descriptor(), memory);
 	Require(!memory && importedImage->Descriptor().allocationSize == image->Descriptor().allocationSize,
 			"Import exact dedicated allocation and consume caller ownership on success");
+	// Warm capability lookup must still validate a changed shape and each allocation descriptor.
+	auto oversized = spec;
+	oversized.extent.width = std::numeric_limits<std::uint32_t>::max();
+	Rejected(
+		[&]
+		{
+			exporter.CreateExportable(oversized);
+		},
+		VK_ERROR_FORMAT_NOT_SUPPORTED, "Reject oversized extent after successful format query");
+	memory = image->ExportMemory();
+	invalid = image->Descriptor();
+	--invalid.allocationSize;
+	Rejected(
+		[&]
+		{
+			importer.ImportImage(invalid, memory);
+		},
+		VK_ERROR_INVALID_EXTERNAL_HANDLE, "Cached image capability bypassed allocation validation");
+	Require(memory && ValidNonInherited(memory.Get()), "Rejected cached import consumed caller memory handle");
+	auto repeated = importer.ImportImage(image->Descriptor(), memory);
+	Require(!memory && repeated->Image()->extent.width == spec.extent.width,
+			"Valid retry after cached import rejection failed");
 #ifdef _WIN32
 	// Repeat exports while unrelated handles are recycled. Each transfer must
 	// remain independently owned and refer to the original image allocation.

@@ -36,6 +36,15 @@ static constexpr std::array s_sharingNames{VulkanExternalMemoryExtension, Vulkan
 static constexpr VkImageUsageFlags s_imageUsages = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
 												   VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
+static bool SameImage(const VulkanExternalImageSpec& left, const VulkanExternalImageSpec& right)
+{
+	return left.format == right.format && left.extent.width == right.extent.width &&
+		   left.extent.height == right.extent.height && left.extent.depth == right.extent.depth &&
+		   left.arrayLayers == right.arrayLayers && left.mipLevels == right.mipLevels &&
+		   left.samples == right.samples && left.usage == right.usage && left.tiling == right.tiling &&
+		   left.imageType == right.imageType && left.flags == right.flags;
+}
+
 static bool SupportedShape(const VulkanExternalImageSpec& image)
 {
 	return (image.format == VK_FORMAT_R8G8B8A8_SRGB || image.format == VK_FORMAT_R8G8B8A8_UNORM ||
@@ -492,6 +501,25 @@ VulkanExternalCapabilities VulkanExternalDevice::Query(VkPhysicalDevice physical
 	return result;
 }
 
+VulkanExternalCapabilities VulkanExternalDevice::ImageCapabilities(const VulkanExternalImageSpec& image) const
+{
+	{
+		std::lock_guard lock(m_imageQueryMutex);
+		for (const auto& query : m_imageQueries)
+			if (query.capabilities.result == VK_SUCCESS && SameImage(query.image, image))
+				return query.capabilities;
+	}
+	const auto capabilities = Query(m_device->binding.physicalDevice, image, m_instanceApiVersion);
+	// Keep only successful, device-local queries. Transient failures remain retryable.
+	if (capabilities.result == VK_SUCCESS)
+	{
+		std::lock_guard lock(m_imageQueryMutex);
+		m_imageQueries[m_nextImageQuery] = {image, capabilities};
+		m_nextImageQuery = (m_nextImageQuery + 1) % m_imageQueries.size();
+	}
+	return capabilities;
+}
+
 VulkanExternalDevice::VulkanExternalDevice(std::shared_ptr<VulkanDevice> device,
 										   std::span<const char* const> enabledExtensions,
 										   std::uint32_t instanceApiVersion, bool timelineEnabled)
@@ -582,7 +610,7 @@ std::shared_ptr<VulkanExternalImage> VulkanExternalDevice::CreateExportable(cons
 																			VkImageLayout producerLayout) const
 {
 	RequireLive(*m_device);
-	const auto capabilities = Query(m_device->binding.physicalDevice, spec, m_instanceApiVersion);
+	const auto capabilities = ImageCapabilities(spec);
 	CheckVulkan(capabilities.result, "Query external image shape and format");
 	if (!capabilities.CanExportImage() || producerLayout != VK_IMAGE_LAYOUT_GENERAL)
 		throw VulkanError(VK_ERROR_FORMAT_NOT_SUPPORTED, "External image export or handoff layout unsupported");
@@ -621,7 +649,7 @@ std::shared_ptr<VulkanExternalImage> VulkanExternalDevice::ImportImage(const Vul
 	if (!handle || descriptor.identity != m_identity || !descriptor.dedicated || !descriptor.allocationSize ||
 		descriptor.producerLayout != VK_IMAGE_LAYOUT_GENERAL)
 		throw VulkanError(VK_ERROR_INVALID_EXTERNAL_HANDLE, "External image identity, dedication or layout mismatch");
-	const auto capabilities = Query(m_device->binding.physicalDevice, descriptor.image, m_instanceApiVersion);
+	const auto capabilities = ImageCapabilities(descriptor.image);
 	CheckVulkan(capabilities.result, "Query external image import shape and format");
 	if (!capabilities.CanImportImage())
 		throw VulkanError(VK_ERROR_FORMAT_NOT_SUPPORTED, "External image native-handle import unsupported");

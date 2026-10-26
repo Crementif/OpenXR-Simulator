@@ -5,6 +5,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -251,6 +252,15 @@ class VulkanExternalDevice
 															 VulkanExternalHandle& handle, bool timeline) const;
 	PFN_vkGetSemaphoreCounterValueKHR m_counter = nullptr;
 	std::shared_ptr<VulkanImage> CreateImage(const VulkanExternalImageSpec& image) const;
+	VulkanExternalCapabilities ImageCapabilities(const VulkanExternalImageSpec& image) const;
+	struct ImageQuery
+	{
+		VulkanExternalImageSpec image;
+		VulkanExternalCapabilities capabilities;
+	};
+	mutable std::mutex m_imageQueryMutex;
+	mutable std::array<ImageQuery, 16> m_imageQueries{};
+	mutable std::size_t m_nextImageQuery = 0;
 	const std::shared_ptr<VulkanDevice> m_device;
 	const std::uint32_t m_instanceApiVersion;
 	VulkanExternalIdentity m_identity;
