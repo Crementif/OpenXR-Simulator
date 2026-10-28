@@ -5,9 +5,6 @@
 #include "math/Math.h"
 #include "simulation/BodyModel.h"
 #include "simulation/ViewConfiguration.h"
-#include <cmath>
-#include <limits>
-#include <stdexcept>
 
 namespace simxr::app
 {

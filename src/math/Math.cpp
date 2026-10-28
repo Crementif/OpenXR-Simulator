@@ -1,8 +1,6 @@
 #include "math/Math.h"
 #include "Pch.h"
 
-#include <cmath>
-#include <limits>
 
 namespace simxr
 {

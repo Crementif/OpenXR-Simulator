@@ -2,9 +2,6 @@
 #include "control/legacy/WindowsRuntimeSettings.h"
 namespace settings = simxr::legacy::settings;
 
-#include <cmath>
-#include <cstdio>
-#include <thread>
 
 static int s_failures = 0;
 
@@ -21,8 +18,7 @@ static bool Near(float a, float b)
 	return std::fabs(a - b) < 0.001f;
 }
 
-// The property the whole snap exists for: what we recommend has the shape of what we
-// report. One pixel of rounding either way is all the slack there is.
+// Recommended dimensions match the reported FOV aspect within one pixel.
 static bool MatchesFovAspect(uint32_t width, uint32_t height)
 {
 	if (width == 0 || height == 0)
@@ -54,8 +50,7 @@ int main()
 	settings::GetRenderResolution(width, height);
 	Check(width == 1440 && MatchesFovAspect(width, height), "native mode updates when the headset profile changes");
 
-	// A profile switch moves the frustum, so it has to move the recommendation with it --
-	// this is the case that used to advertise Quest 3 pixels in an Index shape.
+	// A profile switch updates the recommendation to match the new frustum.
 	settings::SetRenderResolution(1280, 1400);
 	settings::SetHeadsetProfile(settings::HeadsetProfile::Quest3);
 	settings::GetRenderResolution(width, height);

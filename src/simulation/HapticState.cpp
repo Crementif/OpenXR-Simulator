@@ -1,9 +1,6 @@
 #include "simulation/HapticState.h"
 #include "Pch.h"
 
-#include <cmath>
-#include <limits>
-#include <stdexcept>
 
 namespace simxr
 {

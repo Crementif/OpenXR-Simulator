@@ -4,11 +4,7 @@
 #include "control/SimulationControl.h"
 #include "simulation/BodyObservation.h"
 
-#include <charconv>
-#include <cmath>
-#include <limits>
 #include <lua.h>
-#include <stdexcept>
 
 namespace simxr::automation::script
 {

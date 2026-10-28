@@ -1,9 +1,6 @@
 #include "simulation/GameBridge.h"
 #include "Pch.h"
 
-#include <limits>
-#include <stdexcept>
-
 namespace simxr
 {
 static void ValidateText(std::string_view text)

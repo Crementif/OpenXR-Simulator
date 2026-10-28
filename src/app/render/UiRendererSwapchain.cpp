@@ -1,12 +1,9 @@
 #include "CompanionSpirv.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/platform/Window.h"
 #include "app/render/UiRenderResources.h"
 #include "app/render/UiRenderer.h"
-#include <imgui.h>
 #include <imgui_impl_vulkan.h>
-#include <limits>
-#include <stdexcept>
 
 namespace simxr::app
 {

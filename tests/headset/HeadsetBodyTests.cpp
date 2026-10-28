@@ -4,9 +4,7 @@
 #include "headset/OpenXrRuntime.h"
 #include "simulation/BodyModel.h"
 
-#include <cmath>
 #include <iostream>
-#include <limits>
 
 namespace simxr::headset::test
 {

@@ -1,18 +1,8 @@
 #include "app/services/HeadsetHost.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/services/SimulationEdits.h"
 #include "app/services/Utf8Path.h"
 #include "math/Math.h"
-
-#include <SDL3/SDL.h>
-#include <array>
-#include <charconv>
-#include <chrono>
-#include <cmath>
-#include <memory>
-#include <stdexcept>
-#include <string_view>
-#include <vector>
 
 namespace simxr::app
 {

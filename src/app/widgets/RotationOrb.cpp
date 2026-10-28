@@ -1,11 +1,9 @@
 #include "math/Math.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/widgets/Theme.h"
 #include "app/widgets/LiveField.h"
 #include "app/widgets/SpatialWidgets.h"
-#include <cmath>
 #include <imgui_internal.h>
-#include <numbers>
 
 namespace simxr::app
 {

@@ -1,4 +1,4 @@
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/platform/OpenLocalPath.h"
 #include "app/platform/windows/LaunchSupport.h"
 

@@ -2,9 +2,6 @@
 #include "control/legacy/WindowsRuntimeSettings.h"
 namespace settings = simxr::legacy::settings;
 
-#include <cstdio>
-#include <cstring>
-#include <string>
 
 static int s_failures = 0;
 

@@ -5,8 +5,6 @@
 #include "automation/RigReport.h"
 #include "automation/ScriptEngine.h"
 
-#include <stdexcept>
-
 namespace simxr::automation
 {
 void RigRunner::Run()

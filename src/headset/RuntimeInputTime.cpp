@@ -2,8 +2,6 @@
 #include "headset/HeadsetActions.h"
 #include "headset/RuntimeClock.h"
 
-#include <stdexcept>
-
 namespace simxr::headset
 {
 HeadsetNativeTimes RuntimeInputTimes(const OpenXrRuntime& runtime, const HeadsetInputSample& input)

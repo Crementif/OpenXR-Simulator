@@ -4,9 +4,6 @@
 #include "graphics/FrameOutput.h"
 #include "simulation/BodyModel.h"
 
-#include <stdexcept>
-#include <variant>
-
 namespace simxr::control
 {
 template <class Range, class Function> static InspectionValue InspectArray(const Range& range, Function function)

@@ -1,8 +1,6 @@
 #include "simulation/HeadsetProfiles.h"
 #include "Pch.h"
 
-#include <numbers>
-
 namespace simxr
 {
 ViewSettings ProfileViews(const HeadsetSpec& profile)

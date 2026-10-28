@@ -1,9 +1,6 @@
 #include "Pch.h"
 #include "headset/RuntimeSelection.h"
 
-#include <cstdlib>
-#include <stdexcept>
-
 namespace simxr::headset
 {
 void PrepareHostEnvironment(const std::filesystem::path& manifest)

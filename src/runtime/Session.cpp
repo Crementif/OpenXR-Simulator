@@ -3,7 +3,6 @@
 #include "runtime/SpaceQueries.h"
 
 #include <new>
-#include <stdexcept>
 
 namespace simxr
 {

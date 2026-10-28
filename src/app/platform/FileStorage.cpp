@@ -2,14 +2,10 @@
 #include "app/platform/FileStorage.h"
 #include "app/services/CompanionSettings.h"
 
-#include <cerrno>
-#include <cstdlib>
 #include <fcntl.h>
 #include <linux/fs.h>
 #include <sys/syscall.h>
 #include <sys/file.h>
-#include <stdexcept>
-#include <system_error>
 #include <unistd.h>
 
 namespace simxr::app

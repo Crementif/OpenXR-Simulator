@@ -1,3 +1,4 @@
+#include "app/UiPch.h"
 #include "../TestSupport.h"
 #include "math/Math.h"
 #include "app/widgets/AppPicker.h"
@@ -8,7 +9,6 @@
 #include "app/services/PlayerRig.h"
 #include "app/services/ManualInputController.h"
 #include "app/dialogs/LaunchProfilesDialog.h"
-#include <map>
 #include "app/services/ProcessSupervisor.h"
 #include "app/widgets/PilotController.h"
 #include "app/services/RunningApps.h"
@@ -30,7 +30,6 @@
 #include "app/services/InputHistory.h"
 #include "app/widgets/TimelineCanvas.h"
 #include "app/widgets/Notices.h"
-#include <functional>
 #include "app/services/SimulationEdits.h"
 #include "app/services/SpatialMath.h"
 #include "app/render/UiRenderer.h"
@@ -46,11 +45,7 @@
 #include "graphics/backends/vulkan/VulkanResources.h"
 #include "graphics/SnapshotBudget.h"
 #include "simxr/Version.h"
-#include <algorithm>
-#include <cmath>
-#include <thread>
 
-#include <SDL3/SDL.h>
 #ifdef _WIN32
 #include "app/platform/windows/LaunchSupport.h"
 #include "app/platform/windows/UpdateTransport.h"
@@ -70,19 +65,9 @@ extern "C" void SDL_SetMouseFocus(SDL_Window* window);
 #include <unistd.h>
 extern char** environ;
 #endif
-#include <cstdlib>
-#include <cstring>
-#include <deque>
-#include <filesystem>
-#include <fstream>
-#include <imgui.h>
 #include <imgui_internal.h>
 #include <iostream>
-#include <locale>
-#include <optional>
 #include <random>
-#include <set>
-#include <sstream>
 
 namespace
 {

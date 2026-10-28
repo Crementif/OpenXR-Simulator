@@ -8,8 +8,6 @@
 #define XR_USE_GRAPHICS_API_D3D12
 #include <openxr/openxr_platform.h>
 
-#include <bit>
-
 namespace simxr::windows
 {
 static XrResult Validate(const XrSwapchainCreateInfo& description) noexcept

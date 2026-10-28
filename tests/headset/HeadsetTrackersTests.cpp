@@ -3,9 +3,7 @@
 #include "headset/HeadsetTrackers.h"
 #include "headset/OpenXrRuntime.h"
 
-#include <cstring>
 #include <iostream>
-#include <map>
 
 namespace simxr::headset::test
 {

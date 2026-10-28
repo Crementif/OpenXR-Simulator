@@ -7,8 +7,6 @@
 #include <windows.h>
 #define XR_USE_PLATFORM_WIN32
 #include <openxr/openxr_platform.h>
-#include <stdexcept>
-#include <utility>
 
 namespace simxr::headset
 {

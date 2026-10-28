@@ -1,4 +1,4 @@
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/services/HeadlessApplications.h"
 #include "app/mcp/McpInstance.h"
 #include "app/services/LaunchAttachment.h"
@@ -10,8 +10,6 @@
 #include "app/services/LuauAutomation.h"
 #include "app/services/RigController.h"
 #endif
-
-#include <stdexcept>
 
 namespace simxr::app
 {

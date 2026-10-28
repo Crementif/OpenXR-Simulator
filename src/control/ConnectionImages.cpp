@@ -5,8 +5,6 @@
 #include "control/VideoExport.h"
 #include "graphics/SnapshotBudget.h"
 
-#include <limits>
-
 namespace simxr::control
 {
 template <class Resource> ConnectionImages::ImageTable<Resource>::ImageTable()

@@ -1,4 +1,4 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpScreenshot.h"
 #include "app/mcp/McpApplication.h"
 #include "app/mcp/McpDebug.h"
@@ -10,11 +10,6 @@
 #include "control/ProtocolTypes.h"
 #include "graphics/ColorPixels.h"
 #include "math/Math.h"
-
-#include <atomic>
-#include <charconv>
-#include <cmath>
-#include <stdexcept>
 
 namespace simxr::app::mcp
 {

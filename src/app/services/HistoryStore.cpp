@@ -1,8 +1,5 @@
 #include "app/services/HistoryStore.h"
 #include "Pch.h"
-#include <cmath>
-#include <limits>
-#include <stdexcept>
 
 namespace simxr::app
 {

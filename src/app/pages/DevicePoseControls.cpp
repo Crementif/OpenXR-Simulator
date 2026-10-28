@@ -1,17 +1,12 @@
 #include "math/Math.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/pages/DeviceControlPanel.h"
 #include "app/services/PlayerRig.h"
 #include "app/services/SpatialMath.h"
 #include "app/widgets/Controls.h"
 #include "app/widgets/Theme.h"
-#include <cmath>
-#include <cstdio>
 #include <imgui_internal.h>
 #include <iomanip>
-#include <locale>
-#include <numbers>
-#include <sstream>
 
 namespace simxr::app
 {

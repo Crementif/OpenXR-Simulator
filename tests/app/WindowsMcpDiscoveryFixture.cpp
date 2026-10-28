@@ -4,12 +4,6 @@
 #include "app/mcp/McpInstance.h"
 #include "app/mcp/McpServer.h"
 
-#include <charconv>
-#include <chrono>
-#include <cstdio>
-#include <string_view>
-#include <thread>
-
 int main(int argc, char** argv)
 {
 	std::intptr_t inherited = -1;

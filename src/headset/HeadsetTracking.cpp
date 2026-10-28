@@ -3,10 +3,6 @@
 #include "math/Math.h"
 #include "simulation/ViewConfiguration.h"
 
-#include <cmath>
-#include <limits>
-#include <stdexcept>
-
 namespace simxr::headset
 {
 XrPosef AlignHeadset(const HeadsetInputSample& input, const HeadsetAlignment& alignment)

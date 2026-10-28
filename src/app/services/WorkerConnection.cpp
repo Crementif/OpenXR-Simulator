@@ -5,7 +5,6 @@
 #include "control/LocalControlClient.h"
 #endif
 
-#include <stdexcept>
 
 namespace simxr::app
 {

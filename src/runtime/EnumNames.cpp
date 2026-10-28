@@ -1,7 +1,6 @@
 #include "runtime/EnumNames.h"
 #include "Pch.h"
 
-#include <charconv>
 #include <openxr/openxr_reflection.h>
 
 namespace simxr

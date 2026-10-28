@@ -11,13 +11,7 @@
 #include "control/LocalControlClient.h"
 #endif
 
-#include <charconv>
 #include <csignal>
-#include <cstdio>
-#include <filesystem>
-#include <fstream>
-#include <stdexcept>
-#include <thread>
 
 static volatile std::sig_atomic_t s_interrupted = 0;
 static void Interrupt(int)

@@ -1,7 +1,5 @@
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/services/UpdateChecker.h"
-
-#include <stdexcept>
 
 namespace simxr::app
 {

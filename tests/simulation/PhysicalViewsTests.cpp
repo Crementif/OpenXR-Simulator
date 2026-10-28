@@ -7,7 +7,6 @@
 #include "simulation/TrackingSystem.h"
 #include "simulation/ViewConfiguration.h"
 
-#include <cmath>
 #include <iostream>
 
 namespace simxr::tests

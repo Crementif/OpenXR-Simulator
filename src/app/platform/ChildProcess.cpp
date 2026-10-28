@@ -1,8 +1,6 @@
 #include "Pch.h"
 #include "app/platform/ChildProcess.h"
 
-#include <stdexcept>
-
 namespace simxr::app
 {
 struct ChildProcess::State

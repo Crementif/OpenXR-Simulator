@@ -1,11 +1,6 @@
 #include "Pch.h"
 #include "graphics/ColorPixels.h"
 
-#include <bit>
-#include <cmath>
-#include <limits>
-#include <stdexcept>
-
 namespace simxr
 {
 std::uint32_t ColorPixelBytes(std::uint32_t format) noexcept

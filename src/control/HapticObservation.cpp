@@ -2,9 +2,6 @@
 #include "Pch.h"
 #include "control/ControlSchema.h"
 
-#include <cmath>
-#include <stdexcept>
-
 namespace simxr::control
 {
 Field EncodeHaptics(std::span<const HapticOutput> outputs)

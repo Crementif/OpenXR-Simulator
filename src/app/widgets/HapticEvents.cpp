@@ -1,8 +1,6 @@
 #include "app/widgets/HapticEvents.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/services/HapticFeedback.h"
-
-#include <imgui.h>
 
 namespace simxr::app
 {

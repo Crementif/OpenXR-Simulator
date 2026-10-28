@@ -1,9 +1,6 @@
 #include "graphics/SnapshotBudget.h"
 #include "Pch.h"
 
-#include <atomic>
-#include <stdexcept>
-
 namespace simxr
 {
 static std::atomic<std::uint32_t> s_budgetMiB{SnapshotBudget::DefaultMiB};

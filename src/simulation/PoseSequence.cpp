@@ -1,9 +1,6 @@
 #include "simulation/PoseSequence.h"
 #include "Pch.h"
 
-#include <limits>
-#include <stdexcept>
-
 namespace simxr
 {
 PoseSequence::PoseSequence(std::vector<PoseSequenceStep> steps, bool loop) : m_steps(std::move(steps)), m_loop(loop)

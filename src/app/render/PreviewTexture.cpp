@@ -1,19 +1,11 @@
 #include "app/render/PreviewTexture.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "graphics/SnapshotBudget.h"
 #if defined(__linux__) || defined(_WIN32)
 #include "control/backends/vulkan/VulkanImageConsumer.h"
 #endif
 
-#include <bit>
-#include <cmath>
-#include <cstdio>
-#include <imgui.h>
 #include <imgui_impl_vulkan.h>
-#include <limits>
-#include <mutex>
-#include <stdexcept>
-#include <thread>
 
 namespace simxr::app
 {

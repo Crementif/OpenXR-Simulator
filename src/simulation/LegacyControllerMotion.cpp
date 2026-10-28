@@ -3,11 +3,6 @@
 
 #include "math/Math.h"
 
-#include <cmath>
-#include <limits>
-#include <numbers>
-#include <stdexcept>
-
 namespace simxr::legacy
 {
 template <typename T> static void Merge(std::optional<T>& current, const ControllerOverrideEdit<T>& edit)

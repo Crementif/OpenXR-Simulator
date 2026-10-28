@@ -1,9 +1,6 @@
 #include "control/InspectionDocument.h"
 #include "Pch.h"
 
-#include <limits>
-#include <stdexcept>
-
 namespace simxr::control
 {
 static InspectionValue Scalar(InspectionType type, Field field)

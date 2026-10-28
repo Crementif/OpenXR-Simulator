@@ -1,7 +1,6 @@
 #include "presentation/FrameImageHistory.h"
 #include "Pch.h"
 
-#include <stdexcept>
 
 namespace simxr
 {

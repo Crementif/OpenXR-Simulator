@@ -2,10 +2,6 @@
 #include "Pch.h"
 #include "graphics/backends/vulkan/VulkanFrameSync.h"
 
-#include <cmath>
-#include <cstdio>
-#include <limits>
-
 namespace simxr
 {
 VulkanSubmission::Resources::Resources(std::shared_ptr<VulkanDevice> owner) : device(std::move(owner)) {}

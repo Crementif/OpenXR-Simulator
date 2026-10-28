@@ -11,11 +11,7 @@
 #include "graphics/ColorPixels.h"
 #include "../TestSupport.h"
 
-#include <cstring>
-#include <exception>
 #include <latch>
-#include <limits>
-#include <thread>
 
 int main(int argc, char** argv)
 {

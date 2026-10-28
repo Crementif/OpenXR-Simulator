@@ -1,5 +1,5 @@
 #include "app/pages/FramePage.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/services/RuntimeSession.h"
 #include "app/services/SimulationEdits.h"
 #include "app/widgets/Controls.h"
@@ -7,9 +7,6 @@
 #include "app/widgets/PastInput.h"
 #include "app/widgets/Theme.h"
 #include "control/InspectionDocument.h"
-
-#include <exception>
-#include <imgui.h>
 
 namespace simxr::app
 {

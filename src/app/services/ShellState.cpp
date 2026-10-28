@@ -1,5 +1,5 @@
 #include "app/services/ShellState.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/services/SessionView.h"
 
 namespace simxr::app

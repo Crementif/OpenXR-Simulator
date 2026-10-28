@@ -4,11 +4,6 @@
 #include "control/ControlService.h"
 #include "platform/windows/WindowsControl.h"
 
-#include <atomic>
-#include <cstdio>
-#include <mutex>
-#include <stdexcept>
-#include <thread>
 
 namespace simxr::control
 {

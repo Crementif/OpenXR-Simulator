@@ -1,8 +1,6 @@
 #include "app/services/HapticFeedback.h"
 #include "Pch.h"
 
-#include <cmath>
-
 namespace simxr::app
 {
 void HapticFeedback::Observe(control::HapticObservation observation, Clock::time_point requested,

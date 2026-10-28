@@ -1,10 +1,8 @@
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/RuntimePanels.h"
 #include "app/WorkspacePanels.h"
 #include "app/widgets/Controls.h"
 #include "app/widgets/Theme.h"
-
-#include <imgui.h>
 
 namespace simxr::app
 {

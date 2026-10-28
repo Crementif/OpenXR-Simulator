@@ -1,10 +1,9 @@
 #include "app/widgets/PilotController.h"
 #include "math/Math.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/platform/Window.h"
 #include "app/services/ManualInputController.h"
 #include "app/services/PlayerRig.h"
-#include <cmath>
 
 namespace simxr::app
 {

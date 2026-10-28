@@ -1,14 +1,11 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpConnector.h"
 #include "app/mcp/McpCredentials.h"
 #ifdef _WIN32
 #include "app/mcp/windows/McpCancelablePost.h"
 #endif
 
-#include <algorithm>
-#include <chrono>
 #include <iostream>
-#include <stdexcept>
 
 #include <httplib.h>
 

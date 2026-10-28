@@ -1,4 +1,4 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpConnector.h"
 #include "app/mcp/McpCredentials.h"
 #include "app/mcp/McpConfiguration.h"
@@ -10,10 +10,6 @@
 #include "app/services/Utf8Path.h"
 #endif
 
-#include <charconv>
-#include <cstdio>
-#include <exception>
-#include <string_view>
 #ifdef _WIN32
 #include "app/platform/windows/LaunchSupport.h"
 #include "platform/windows/InstallUse.h"

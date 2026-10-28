@@ -3,8 +3,6 @@
 #include "control/ControlSchema.h"
 #include "platform/windows/WindowsControl.h"
 
-#include <mutex>
-
 namespace simxr::control
 {
 namespace native = windows;

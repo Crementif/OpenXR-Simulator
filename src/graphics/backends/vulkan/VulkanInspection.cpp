@@ -9,10 +9,6 @@
 #include "graphics/backends/vulkan/VulkanVideoHistory.h"
 #include "platform/ProcessIdentity.h"
 
-#include <cstdio>
-#include <limits>
-#include <stdexcept>
-
 namespace simxr
 {
 static FramePool& DeliveryBudget()

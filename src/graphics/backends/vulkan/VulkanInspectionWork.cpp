@@ -5,10 +5,6 @@
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
 #include "graphics/backends/vulkan/VulkanSubmission.h"
 
-#include <cstdio>
-#include <cstring>
-#include <stdexcept>
-
 namespace simxr
 {
 struct VulkanInspectionWork::Native

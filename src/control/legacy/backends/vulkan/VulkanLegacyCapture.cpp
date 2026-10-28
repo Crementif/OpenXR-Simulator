@@ -3,11 +3,6 @@
 #include "flicker_detector.h"
 #include "runtime/Session.h"
 
-#include <locale>
-#include <functional>
-#include <sstream>
-#include <stdexcept>
-
 namespace simxr
 {
 static constexpr std::size_t s_maxCaptureJobs = 4;

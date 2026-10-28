@@ -1,11 +1,10 @@
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/services/UpdateChecker.h"
 
 #include <curl/curl.h>
 #include <dlfcn.h>
 #include <pthread.h>
 #include <signal.h>
-#include <stdexcept>
 
 namespace simxr::app
 {

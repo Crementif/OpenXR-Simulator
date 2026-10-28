@@ -1,18 +1,12 @@
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/widgets/Theme.h"
 #include "app/platform/Window.h"
 #include "app/render/UiRenderResources.h"
 #include "app/render/UiRenderer.h"
 #include "app/services/Utf8Path.h"
 #include "graphics/backends/vulkan/VulkanExternal.h"
-#include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
-#include <cstdio>
-#include <cstring>
-#include <filesystem>
-#include <imgui.h>
 #include <imgui_impl_sdl3.h>
-#include <stdexcept>
 
 namespace simxr::app
 {

@@ -4,19 +4,11 @@
 #include "control/ControlService.h"
 #include "platform/linux/ControlFd.h"
 
-#include <atomic>
-#include <cerrno>
 #include <climits>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <mutex>
 #include <poll.h>
-#include <stdexcept>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
-#include <thread>
 #include <unistd.h>
 
 namespace simxr::control

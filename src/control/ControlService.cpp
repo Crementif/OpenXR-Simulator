@@ -16,11 +16,7 @@
 #include "runtime/Session.h"
 #include "simulation/GameBridge.h"
 
-#include <limits>
-#include <mutex>
 #include <new>
-#include <stdexcept>
-#include <type_traits>
 
 namespace simxr::control
 {

@@ -8,10 +8,6 @@
 #include "simulation/BodyModel.h"
 #include "../TestSupport.h"
 
-#include <chrono>
-#include <limits>
-#include <stdexcept>
-
 using namespace simxr;
 using Json = nlohmann::json;
 namespace wire = simxr::control;

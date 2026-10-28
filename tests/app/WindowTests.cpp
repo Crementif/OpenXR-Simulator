@@ -1,9 +1,8 @@
+#include "app/UiPch.h"
 #include "../TestSupport.h"
 #include "app/platform/Window.h"
 
-#include <SDL3/SDL.h>
 #include <iostream>
-#include <stdexcept>
 
 static bool s_rejectRelease = false;
 extern "C" bool __real_SDL_SetWindowRelativeMouseMode(SDL_Window*, bool);

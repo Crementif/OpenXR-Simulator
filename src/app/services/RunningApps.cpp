@@ -3,8 +3,6 @@
 #include "app/platform/RunningApps.h"
 #include "app/services/RuntimeEndpoints.h"
 
-#include <stdexcept>
-
 namespace simxr::app
 {
 std::vector<RunningApp> DiscoverRunningApps(std::chrono::milliseconds timeout, std::stop_token stop)

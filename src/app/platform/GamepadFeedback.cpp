@@ -1,7 +1,5 @@
 #include "app/platform/GamepadFeedback.h"
-#include "Pch.h"
-
-#include <SDL3/SDL.h>
+#include "app/UiPch.h"
 
 namespace simxr::app
 {

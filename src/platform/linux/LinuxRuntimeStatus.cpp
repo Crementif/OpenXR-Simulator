@@ -6,9 +6,6 @@
 #include "runtime/Session.h"
 
 #include <iomanip>
-#include <locale>
-#include <sstream>
-#include <stdexcept>
 
 namespace simxr
 {

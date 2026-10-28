@@ -4,9 +4,6 @@
 #include "app/services/Utf8Path.h"
 #include "app/platform/windows/LaunchSupport.h"
 
-#include <atomic>
-#include <stdexcept>
-
 namespace simxr::app
 {
 SettingsFileLock::SettingsFileLock(const std::filesystem::path& path)

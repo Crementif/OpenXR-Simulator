@@ -1,13 +1,9 @@
 #include "app/widgets/PastInput.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/widgets/Theme.h"
 #include "app/services/PlayerRig.h"
 
-#include <cstdio>
-#include <imgui.h>
 #include <iomanip>
-#include <numbers>
-#include <sstream>
 
 namespace simxr::app
 {

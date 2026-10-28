@@ -3,9 +3,7 @@
 #include "graphics/SnapshotBudget.h"
 #include "runtime/Session.h"
 
-#include <limits>
 #include <new>
-#include <stdexcept>
 
 namespace simxr
 {

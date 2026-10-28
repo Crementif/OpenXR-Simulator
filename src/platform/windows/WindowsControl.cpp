@@ -2,8 +2,6 @@
 #include "Pch.h"
 #include "control/ControlSchema.h"
 
-#include <atomic>
-#include <cstdio>
 #include <sddl.h>
 
 namespace simxr::control::windows

@@ -1,9 +1,6 @@
 #include "platform/windows/WindowsLibrary.h"
 #include "Pch.h"
 
-#include <cstdio>
-#include <system_error>
-
 namespace simxr::windows
 {
 WindowsLibrary::WindowsLibrary(const wchar_t* name)

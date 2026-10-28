@@ -1,10 +1,8 @@
 #include "app/widgets/SpatialWidgets.h"
 #include "math/Math.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/widgets/Theme.h"
 #include <ImGuizmo.h>
-#include <cmath>
-#include <numbers>
 
 namespace simxr::app
 {

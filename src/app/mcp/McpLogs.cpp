@@ -1,13 +1,10 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpLogs.h"
 #include "app/mcp/McpApplication.h"
 #include "app/mcp/McpIncident.h"
 #include "app/mcp/McpLogFile.h"
 #include "app/mcp/McpTransientDebug.h"
 #include "app/services/Utf8Path.h"
-
-#include <cmath>
-#include <deque>
 
 namespace simxr::app::mcp
 {

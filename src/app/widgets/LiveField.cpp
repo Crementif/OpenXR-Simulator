@@ -1,10 +1,7 @@
 #include "app/widgets/LiveField.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/widgets/Theme.h"
-#include <cmath>
-#include <cstdio>
 #include <imgui_internal.h>
-#include <numbers>
 namespace simxr::app
 {
 static std::string Format(const char* format, float value)

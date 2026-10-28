@@ -12,8 +12,6 @@
 #define XR_USE_GRAPHICS_API_VULKAN
 #include <iostream>
 #include <openxr/openxr_platform.h>
-#include <stdexcept>
-#include <thread>
 
 namespace simxr::headset
 {

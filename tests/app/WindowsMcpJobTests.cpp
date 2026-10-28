@@ -3,12 +3,6 @@
 #include "app/services/Utf8Path.h"
 #include "../TestSupport.h"
 
-#include <chrono>
-#include <cstdio>
-#include <filesystem>
-#include <fstream>
-#include <thread>
-
 #include <nlohmann/json.hpp>
 
 using namespace std::chrono_literals;

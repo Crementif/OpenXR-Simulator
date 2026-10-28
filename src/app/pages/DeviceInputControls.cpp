@@ -1,4 +1,4 @@
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/pages/DeviceControlPanel.h"
 #include "app/services/PlayerRig.h"
 #include "app/widgets/Controls.h"

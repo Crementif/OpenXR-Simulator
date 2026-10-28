@@ -1,10 +1,6 @@
 #include "diagnostics/FlickerSample.h"
 #include "Pch.h"
 
-#include <cmath>
-#include <cstring>
-#include <limits>
-
 namespace flicker
 {
 static uint8_t Luma(const uint8_t* bgra)

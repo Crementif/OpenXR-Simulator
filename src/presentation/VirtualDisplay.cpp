@@ -1,9 +1,7 @@
 #include "presentation/VirtualDisplay.h"
 #include "Pch.h"
 
-#include <limits>
 #include <new>
-#include <stdexcept>
 
 namespace simxr
 {

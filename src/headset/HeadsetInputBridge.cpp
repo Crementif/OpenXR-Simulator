@@ -7,9 +7,6 @@
 #include "headset/HeadsetTracking.h"
 #include "math/Math.h"
 
-#include <cmath>
-#include <stdexcept>
-
 namespace simxr::headset
 {
 HeadsetInputBridge::HeadsetInputBridge(HeadsetInputTarget target) : m_target(std::move(target))

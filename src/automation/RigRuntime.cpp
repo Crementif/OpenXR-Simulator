@@ -7,12 +7,7 @@
 #include "control/InspectionDocument.h"
 #include "control/SimulationControl.h"
 
-#include <filesystem>
-#include <fstream>
 #include <iterator>
-#include <limits>
-#include <stdexcept>
-#include <thread>
 
 namespace simxr::automation
 {

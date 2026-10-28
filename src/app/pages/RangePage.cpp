@@ -1,5 +1,5 @@
 #include "app/pages/RangePage.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/services/CompanionSettings.h"
 #include "app/services/RecordingController.h"
 #include "app/services/RuntimeSession.h"
@@ -7,8 +7,6 @@
 #include "app/widgets/Controls.h"
 
 #include <ctime>
-#include <imgui.h>
-#include <stdexcept>
 
 namespace simxr::app
 {

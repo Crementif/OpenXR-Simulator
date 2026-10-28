@@ -1,5 +1,5 @@
 #include "app/mcp/StereoImageOps.h"
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 
 namespace simxr::app::mcp
 {

@@ -1,9 +1,6 @@
 #include "simulation/TrackerSourcePath.h"
 #include "Pch.h"
 
-#include <algorithm>
-#include <stdexcept>
-
 namespace simxr
 {
 TrackerSourcePath::TrackerSourcePath(std::string_view path)

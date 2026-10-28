@@ -5,14 +5,7 @@
 #include "control/legacy/WindowsLegacyFormat.h"
 #include "json.h"
 
-#include <cmath>
-#include <cstring>
-#include <fstream>
 #include <iomanip>
-#include <limits>
-#include <locale>
-#include <sstream>
-#include <stdexcept>
 
 namespace mcp
 {

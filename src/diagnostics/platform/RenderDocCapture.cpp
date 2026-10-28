@@ -7,8 +7,6 @@
 #include <dlfcn.h>
 #endif
 
-#include <bit>
-#include <cstdlib>
 
 namespace flicker
 {

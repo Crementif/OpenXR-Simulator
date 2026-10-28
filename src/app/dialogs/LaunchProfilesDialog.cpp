@@ -1,18 +1,9 @@
 #include "app/dialogs/LaunchProfilesDialog.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/services/Utf8Path.h"
 #include "app/widgets/Controls.h"
 #include "app/widgets/Theme.h"
 #include "simulation/HeadsetProfiles.h"
-
-#include <SDL3/SDL_dialog.h>
-#include <SDL3/SDL_error.h>
-#include <SDL3/SDL_clipboard.h>
-#include <SDL3/SDL_filesystem.h>
-#include <exception>
-#include <imgui.h>
-#include <mutex>
-#include <set>
 
 namespace simxr::app
 {

@@ -1,8 +1,6 @@
 #include "diagnostics/FlickerMonitors.h"
 #include "Pch.h"
 
-#include <cmath>
-
 namespace flicker
 {
 static constexpr size_t s_historyFrames = 10;

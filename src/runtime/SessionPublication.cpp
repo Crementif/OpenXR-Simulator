@@ -1,8 +1,6 @@
 #include "runtime/SessionPublication.h"
 #include "Pch.h"
 
-#include <stdexcept>
-
 namespace simxr
 {
 SessionPublication::SessionPublication(Instance& instance, ActionSyncState& actions)

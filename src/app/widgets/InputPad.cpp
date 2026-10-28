@@ -1,11 +1,8 @@
 #include "app/widgets/InputPad.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/widgets/Theme.h"
 
-#include <cmath>
-#include <cstdio>
 #include <imgui_internal.h>
-#include <numbers>
 
 namespace simxr::app
 {

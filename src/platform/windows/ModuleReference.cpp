@@ -1,8 +1,6 @@
 #include "platform/windows/ModuleReference.h"
 #include "Pch.h"
 
-#include <cstdio>
-#include <system_error>
 #include <windows.h>
 
 namespace simxr::windows

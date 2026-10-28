@@ -1,4 +1,4 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpVideoSave.h"
 #include "app/mcp/McpArtifactCalls.h"
 #include "app/mcp/McpApplication.h"
@@ -6,12 +6,6 @@
 #include "app/platform/FileStorage.h"
 #include "app/services/Utf8Path.h"
 #include "control/ProtocolTypes.h"
-
-#include <charconv>
-#include <atomic>
-#include <cmath>
-#include <fstream>
-#include <thread>
 
 namespace simxr::app::mcp
 {

@@ -1,10 +1,7 @@
 #include "app/dialogs/PreferencesDialog.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "simxr/Version.h"
 #include "app/platform/PackageDocumentation.h"
-
-#include <SDL3/SDL.h>
-#include <imgui.h>
 
 namespace simxr::app
 {

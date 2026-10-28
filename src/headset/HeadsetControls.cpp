@@ -1,8 +1,6 @@
 #include "Pch.h"
 #include "headset/HeadsetActions.h"
 
-#include <cmath>
-
 namespace simxr::headset
 {
 bool NeutralHeadsetControls(const HeadsetHandSample& hand)

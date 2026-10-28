@@ -1,14 +1,9 @@
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/mcp/McpApplication.h"
 #include "app/mcp/McpCredentials.h"
 #include "app/services/CompanionSettings.h"
 #include "app/services/Utf8Path.h"
 #include "app/services/ApplicationCatalog.h"
-
-#include <charconv>
-#include <chrono>
-#include <set>
-#include <stdexcept>
 
 namespace simxr::app
 {

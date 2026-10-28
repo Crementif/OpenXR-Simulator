@@ -2,9 +2,6 @@
 #include "app/mcp/StereoSurface.h"
 #include "../TestSupport.h"
 
-#include <cmath>
-#include <fstream>
-
 using simxr::app::mcp::MatchStereoSurface;
 
 static float Median(std::vector<float> values)

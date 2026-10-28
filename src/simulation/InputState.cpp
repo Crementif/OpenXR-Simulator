@@ -2,9 +2,6 @@
 #include "Pch.h"
 #include "runtime/validation/Path.h"
 
-#include <cmath>
-#include <limits>
-#include <set>
 
 namespace simxr
 {

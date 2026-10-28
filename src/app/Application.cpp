@@ -1,5 +1,5 @@
 #include "app/Application.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/RuntimePanels.h"
 #include "app/WorkspacePanels.h"
 #include "app/mcp/McpHost.h"
@@ -13,11 +13,6 @@
 #ifdef SIMXR_COMPANION_PROOF
 #include "app/render/ProofConsumer.h"
 #endif
-
-#include <SDL3/SDL.h>
-#include <cstdio>
-#include <imgui.h>
-#include <stdexcept>
 
 namespace simxr::app
 {

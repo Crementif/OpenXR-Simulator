@@ -1,16 +1,11 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpCredentials.h"
 #include "app/mcp/McpHost.h"
 #include "app/services/CompanionSettings.h"
 #include "app/services/Utf8Path.h"
 #include "../TestSupport.h"
 
-#include <chrono>
-#include <cstdio>
-#include <cstdlib>
-#include <filesystem>
 #include <httplib.h>
-#include <nlohmann/json.hpp>
 
 int main(int argc, char** argv)
 {

@@ -9,7 +9,6 @@
 #include "graphics/backends/vulkan/VulkanSwapchain.h"
 #include "runtime/Session.h"
 
-#include <stdexcept>
 
 namespace simxr
 {

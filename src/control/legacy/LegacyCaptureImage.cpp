@@ -1,9 +1,6 @@
 #include "control/legacy/LegacyCaptureImage.h"
 #include "Pch.h"
 
-#include <cmath>
-#include <stdexcept>
-
 namespace simxr
 {
 static constexpr std::size_t s_maxPixelBytes = 512 * 1024 * 1024;

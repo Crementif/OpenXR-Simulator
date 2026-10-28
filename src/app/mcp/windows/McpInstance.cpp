@@ -1,4 +1,4 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpInstance.h"
 #include "app/mcp/McpCredentials.h"
 #include "app/platform/FileStorage.h"
@@ -6,17 +6,7 @@
 #include "app/platform/windows/PrivateSecurity.h"
 #include "app/services/Utf8Path.h"
 
-
-#include <algorithm>
-#include <bit>
 #include <cwchar>
-#include <fstream>
-#include <limits>
-#include <map>
-#include <span>
-#include <stdexcept>
-
-#include <nlohmann/json.hpp>
 
 namespace simxr::app
 {

@@ -2,9 +2,6 @@
 #include "Pch.h"
 #include "runtime/validation/StructureChain.h"
 
-#include <cmath>
-#include <numbers>
-
 namespace simxr
 {
 static bool ValidPose(const XrPosef& pose)

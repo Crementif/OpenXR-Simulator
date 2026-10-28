@@ -3,10 +3,6 @@
 #include "math/Math.h"
 #include "simulation/BodyModel.h"
 
-#include <cmath>
-#include <limits>
-#include <stdexcept>
-
 namespace simxr
 {
 BodyObservation NormalizeBodyObservation(BodyObservation observation)

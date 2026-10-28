@@ -1,9 +1,5 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpStereoAnalysis.h"
-
-#include <cmath>
-#include <limits>
-#include <stdexcept>
 
 namespace simxr::app::mcp
 {

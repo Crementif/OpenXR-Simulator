@@ -1,7 +1,5 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpSocket.h"
-
-#include <stdexcept>
 
 namespace simxr::app
 {

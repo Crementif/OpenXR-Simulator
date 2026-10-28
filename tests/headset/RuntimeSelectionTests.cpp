@@ -2,9 +2,6 @@
 #include "Pch.h"
 #include "headset/RuntimeSelection.h"
 
-#include <cstdlib>
-#include <filesystem>
-#include <fstream>
 #include <iostream>
 
 namespace simxr::headset::tests

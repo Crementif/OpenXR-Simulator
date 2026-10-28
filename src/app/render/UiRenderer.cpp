@@ -1,15 +1,12 @@
 #include "app/render/UiRenderer.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/platform/Window.h"
 #include "app/render/UiRenderResources.h"
-#include <SDL3/SDL.h>
-#include <imgui.h>
 
 #include <ImGuizmo.h>
 
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
-#include <stdexcept>
 
 namespace simxr::app
 {

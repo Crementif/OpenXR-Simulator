@@ -2,10 +2,6 @@
 #include "Pch.h"
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
 
-#include <cstdio>
-#include <cstring>
-#include <limits>
-
 namespace simxr
 {
 static bool ReadbackFormat(VkFormat format)

@@ -7,7 +7,6 @@
 #include "headset/HeadsetImages.h"
 
 #include <iostream>
-#include <thread>
 
 namespace simxr::headset
 {

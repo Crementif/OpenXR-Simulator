@@ -1,10 +1,6 @@
 #include "Pch.h"
 #include "../TestSupport.h"
 
-#include <bit>
-#include <cstdio>
-#include <filesystem>
-#include <system_error>
 #include <windows.h>
 
 namespace simxr::test

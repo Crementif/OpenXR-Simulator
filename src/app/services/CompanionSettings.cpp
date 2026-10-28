@@ -3,11 +3,6 @@
 #include "app/platform/FileStorage.h"
 #include "app/services/Utf8Path.h"
 
-#include <cmath>
-#include <fstream>
-#include <set>
-#include <stdexcept>
-
 namespace simxr::app
 {
 static constexpr std::string_view s_magic = "SIMXR-COMPANION\x01";

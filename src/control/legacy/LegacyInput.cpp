@@ -4,11 +4,7 @@
 #include "math/Math.h"
 #include "json.h"
 
-#include <charconv>
-#include <cmath>
 #include <istream>
-#include <limits>
-#include <stdexcept>
 
 namespace simxr
 {

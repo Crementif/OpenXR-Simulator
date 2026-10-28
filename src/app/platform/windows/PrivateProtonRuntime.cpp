@@ -2,13 +2,6 @@
 #include "Pch.h"
 #include "app/platform/windows/LaunchSupport.h"
 
-#include <charconv>
-#include <filesystem>
-#include <fstream>
-#include <limits>
-#include <stdexcept>
-#include <type_traits>
-
 namespace simxr::app::windows
 {
 static constexpr const wchar_t* s_marker = L".simxr-private-proton";

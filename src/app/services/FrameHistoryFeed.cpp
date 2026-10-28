@@ -1,8 +1,6 @@
 #include "app/services/FrameHistoryFeed.h"
 #include "Pch.h"
 #include "control/SimulationControl.h"
-#include <cmath>
-#include <stdexcept>
 
 namespace simxr::app
 {

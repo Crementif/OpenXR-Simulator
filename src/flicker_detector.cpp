@@ -3,9 +3,6 @@
 
 #include "diagnostics/platform/ArtifactFile.h"
 
-#include <atomic>
-#include <exception>
-
 namespace flicker
 {
 static std::string RunName()

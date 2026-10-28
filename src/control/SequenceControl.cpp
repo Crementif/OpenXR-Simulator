@@ -8,9 +8,6 @@
 #include "control/legacy/LegacyInput.h"
 #include "runtime/Session.h"
 
-#include <sstream>
-#include <stdexcept>
-
 namespace simxr::control
 {
 static InspectionValue Status(const PoseSequenceStatus& status)

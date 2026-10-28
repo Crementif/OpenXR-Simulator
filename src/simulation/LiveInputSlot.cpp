@@ -5,9 +5,6 @@
 #include "simulation/TrackingSystem.h"
 #include "simulation/ViewConfiguration.h"
 
-#include <cmath>
-#include <type_traits>
-
 namespace simxr
 {
 static std::uint32_t DigitalState(const ControllerControls& controls)

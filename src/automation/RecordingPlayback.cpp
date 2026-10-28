@@ -4,11 +4,6 @@
 #include "automation/RigProgress.h"
 #include "automation/RigRuntime.h"
 
-#include <algorithm>
-#include <array>
-#include <limits>
-#include <stdexcept>
-
 namespace simxr::automation
 {
 static std::uint64_t AddFrame(std::uint64_t frame, std::uint64_t offset)

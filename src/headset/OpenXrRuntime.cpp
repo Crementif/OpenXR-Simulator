@@ -2,9 +2,6 @@
 #include "Pch.h"
 #include "headset/RuntimeSelection.h"
 
-#include <cstring>
-#include <stdexcept>
-
 namespace simxr::headset
 {
 void CheckXr(XrResult result, const char* operation)

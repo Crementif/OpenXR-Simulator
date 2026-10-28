@@ -6,9 +6,6 @@
 #include "automation/RecordingArchive.h"
 #include "automation/RecordingRange.h"
 
-#include <fstream>
-#include <stdexcept>
-
 namespace simxr::app
 {
 static void ReadEntry(LibraryEntry& entry, const std::filesystem::path& path)

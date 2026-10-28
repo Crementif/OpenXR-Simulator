@@ -4,9 +4,6 @@
 #include "runtime/Runtime.h"
 #include "runtime/Session.h"
 
-#include <limits>
-#include <stdexcept>
-
 namespace simxr::control
 {
 ControlSessions::ControlSessions(Runtime& runtime) : m_runtime(runtime) {}

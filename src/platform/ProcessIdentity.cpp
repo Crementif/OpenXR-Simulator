@@ -1,10 +1,6 @@
 #include "platform/ProcessIdentity.h"
 #include "Pch.h"
 
-#include <atomic>
-#include <limits>
-#include <stdexcept>
-
 namespace simxr
 {
 static std::atomic<std::uint64_t> s_nextIdentity{1};

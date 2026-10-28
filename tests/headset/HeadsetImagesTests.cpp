@@ -5,7 +5,6 @@
 #include "headset/HeadsetGraphics.h"
 #include "headset/HeadsetImages.h"
 
-#include <filesystem>
 #include <iostream>
 
 // Exercise production transport and image ownership with a controllable consumer.

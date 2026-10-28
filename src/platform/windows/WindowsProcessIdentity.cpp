@@ -1,7 +1,6 @@
 #include "Pch.h"
 #include "platform/ProcessIdentity.h"
 
-#include <system_error>
 #include <windows.h>
 
 namespace simxr

@@ -1,14 +1,8 @@
 #include "app/platform/ChildProcess.h"
 #include "Pch.h"
 
-#include <cerrno>
 #include <csignal>
-#include <cstring>
-#include <filesystem>
-#include <fstream>
-#include <map>
 #include <spawn.h>
-#include <stdexcept>
 #include <sys/wait.h>
 
 extern char** environ;

@@ -2,10 +2,6 @@
 #include "Pch.h"
 #include "automation/RecordingArchive.h"
 
-#include <algorithm>
-#include <limits>
-#include <stdexcept>
-
 namespace simxr::automation
 {
 static std::optional<std::int64_t> Add(std::int64_t value, std::int64_t delta)

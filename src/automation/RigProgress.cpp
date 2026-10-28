@@ -1,8 +1,6 @@
 #include "automation/RigProgress.h"
 #include "Pch.h"
 
-#include <stdexcept>
-
 namespace simxr::automation
 {
 void RigProgress::Start(const RigOptions& options)

@@ -5,8 +5,6 @@
 #include "app/platform/windows/LaunchSupport.h"
 #include "app/services/Utf8Path.h"
 
-#include <stdexcept>
-
 namespace simxr::app
 {
 static std::string Environment(const LaunchProfile& profile, const char* name)

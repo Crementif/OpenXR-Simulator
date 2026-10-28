@@ -1,8 +1,7 @@
 #include "CompanionFrameReceiver.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "VulkanProcessPeer.h"
 
-#include <cerrno>
 #include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>

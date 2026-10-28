@@ -12,15 +12,7 @@
 #include "runtime/SimulationExtensions.h"
 #include "simulation/HeadsetProfiles.h"
 
-#include <cerrno>
-#include <charconv>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <limits>
 #include <openxr/openxr_platform.h>
-#include <stdexcept>
-#include <system_error>
 #include <time.h>
 #include <unistd.h>
 

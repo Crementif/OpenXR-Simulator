@@ -1,10 +1,7 @@
 #include "platform/linux/ControlFd.h"
 #include "Pch.h"
 
-#include <cerrno>
 #include <fcntl.h>
-#include <stdexcept>
-#include <system_error>
 #include <unistd.h>
 
 namespace simxr::control

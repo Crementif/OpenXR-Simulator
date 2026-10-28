@@ -4,9 +4,7 @@
 #include "math/Math.h"
 #include "simulation/BodyModel.h"
 
-#include <cmath>
 #include <iostream>
-#include <limits>
 
 namespace simxr::tests
 {

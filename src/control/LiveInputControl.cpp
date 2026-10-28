@@ -7,8 +7,6 @@
 #include "control/SimulationControl.h"
 #include "runtime/Session.h"
 
-#include <limits>
-
 namespace simxr::control
 {
 std::vector<Field> EncodeLiveInput(const LiveInputSample& sample)

@@ -3,15 +3,7 @@
 #include "control/legacy/WindowsLegacyCapture.h"
 #include "control/legacy/WindowsLegacyFiles.h"
 #include "json.h"
-#include <chrono>
-#include <filesystem>
-#include <fstream>
 #include <iostream>
-#include <limits>
-#include <locale>
-#include <sstream>
-#include <span>
-#include <string_view>
 
 namespace mcp::tests
 {

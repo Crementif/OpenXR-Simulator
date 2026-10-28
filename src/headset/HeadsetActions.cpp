@@ -2,10 +2,6 @@
 #include "Pch.h"
 #include "headset/OpenXrRuntime.h"
 
-#include <cmath>
-#include <cstring>
-#include <stdexcept>
-
 namespace simxr::headset
 {
 struct ButtonBinding

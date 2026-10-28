@@ -1,7 +1,6 @@
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/services/RuntimeSession.h"
 #include "control/SimulationControl.h"
-#include <stdexcept>
 
 namespace simxr::app
 {

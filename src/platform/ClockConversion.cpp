@@ -1,8 +1,6 @@
 #include "platform/ClockConversion.h"
 #include "Pch.h"
 
-#include <limits>
-
 namespace simxr
 {
 bool ScalePositiveTime(std::int64_t value, std::int64_t numerator, std::int64_t denominator,

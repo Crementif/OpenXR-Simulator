@@ -1,10 +1,7 @@
 #include "app/qa/RuntimeSmoke.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/RuntimePanels.h"
 #include "app/render/UiRenderer.h"
-
-#include <cstdio>
-#include <stdexcept>
 
 namespace simxr::app
 {

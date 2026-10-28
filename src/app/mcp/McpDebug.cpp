@@ -1,4 +1,4 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpDebug.h"
 #include "app/mcp/McpApplication.h"
 #include "app/mcp/McpCredentials.h"
@@ -24,10 +24,6 @@
 #include "control/SimulationControl.h"
 #include "graphics/ColorPixels.h"
 
-#include <atomic>
-#include <charconv>
-#include <set>
-#include <stdexcept>
 #include <tuple>
 
 namespace simxr::app

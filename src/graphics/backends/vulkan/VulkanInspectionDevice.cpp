@@ -2,9 +2,6 @@
 #include "Pch.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
 
-#include <cstdio>
-#include <cstring>
-
 namespace simxr
 {
 static constexpr std::array<const char*, 2> s_externalExtensions{VulkanExternalMemoryExtension,

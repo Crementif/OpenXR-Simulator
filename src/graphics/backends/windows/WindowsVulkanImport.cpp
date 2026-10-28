@@ -1,7 +1,6 @@
 #include "graphics/backends/windows/WindowsVulkanImport.h"
 #include "Pch.h"
 
-#include <cstring>
 #include <vulkan/vulkan_win32.h>
 
 namespace simxr

@@ -1,14 +1,9 @@
 #include "app/render/ProofConsumer.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/render/UiRenderer.h"
 
-#include <bit>
-#include <cstdio>
-#include <cstdlib>
-#include <imgui.h>
 #include <imgui_impl_vulkan.h>
 #include <imgui_internal.h>
-#include <stdexcept>
 
 namespace simxr::app
 {

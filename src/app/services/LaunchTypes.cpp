@@ -3,10 +3,6 @@
 #include "app/services/Utf8Path.h"
 #include "simulation/HeadsetProfiles.h"
 
-#include <fstream>
-#include <set>
-#include <stdexcept>
-
 namespace simxr::app
 {
 std::string ProfileLaunchCommand(const std::filesystem::path& executable, std::string_view profile,

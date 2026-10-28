@@ -2,9 +2,6 @@
 #include "Pch.h"
 #include "runtime/Session.h"
 
-#include <stdexcept>
-#include <variant>
-
 namespace simxr
 {
 WindowsVulkanCaptureChannel::WindowsVulkanCaptureChannel(std::shared_ptr<mcp::WindowsLegacyChannel> files,

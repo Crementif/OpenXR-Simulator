@@ -1,11 +1,9 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpIncidentSave.h"
 #include "app/mcp/McpImageEncode.h"
 #include "app/platform/FileStorage.h"
 #include "app/services/Utf8Path.h"
 #include "graphics/ColorPixels.h"
-
-#include <fstream>
 
 namespace simxr::app::mcp
 {

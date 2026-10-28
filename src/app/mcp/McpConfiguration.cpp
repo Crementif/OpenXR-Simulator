@@ -1,9 +1,6 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpConfiguration.h"
 #include "app/services/Utf8Path.h"
-
-#include <stdexcept>
-#include <nlohmann/json.hpp>
 
 namespace simxr::app
 {

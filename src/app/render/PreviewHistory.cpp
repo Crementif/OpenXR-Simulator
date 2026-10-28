@@ -1,18 +1,12 @@
 #include "app/render/PreviewHistory.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/render/UiRenderer.h"
 #if defined(__linux__) || defined(_WIN32)
 #include "graphics/backends/vulkan/VulkanDevice.h"
 #include "graphics/backends/vulkan/VulkanResources.h"
 #endif
 
-#include <bit>
-#include <cstdio>
-#include <imgui.h>
 #include <imgui_impl_vulkan.h>
-#include <limits>
-#include <mutex>
-#include <thread>
 
 namespace simxr::app
 {

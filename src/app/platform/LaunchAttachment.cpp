@@ -1,9 +1,6 @@
 #include "Pch.h"
 #include "app/services/LaunchAttachment.h"
 
-#include <cstdlib>
-#include <stdexcept>
-
 namespace simxr::app
 {
 static std::string Environment(const LaunchProfile& profile, const char* name)

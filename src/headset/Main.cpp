@@ -15,15 +15,7 @@
 #include "platform/windows/InstallUse.h"
 #endif
 
-#include <charconv>
-#include <chrono>
-#include <cmath>
 #include <iostream>
-#include <limits>
-#include <optional>
-#include <sstream>
-#include <stdexcept>
-#include <thread>
 
 namespace simxr::headset
 {

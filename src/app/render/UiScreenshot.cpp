@@ -1,12 +1,7 @@
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/render/UiRenderResources.h"
 #include "app/render/UiRenderer.h"
 #include "app/services/Utf8Path.h"
-#include <cstdio>
-#include <cstring>
-#include <fstream>
-#include <limits>
-#include <stdexcept>
 
 namespace simxr::app
 {

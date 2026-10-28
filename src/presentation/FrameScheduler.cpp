@@ -2,10 +2,7 @@
 #include "Pch.h"
 #include "platform/ClockConversion.h"
 
-#include <limits>
 #include <new>
-#include <stdexcept>
-#include <utility>
 
 namespace simxr
 {

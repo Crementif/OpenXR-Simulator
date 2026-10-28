@@ -5,10 +5,7 @@
 
 #include <ctime>
 #define XR_USE_TIMESPEC
-#include <limits>
 #include <openxr/openxr_platform.h>
-#include <stdexcept>
-#include <utility>
 
 namespace simxr::headset
 {

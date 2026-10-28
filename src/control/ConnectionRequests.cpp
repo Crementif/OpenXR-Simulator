@@ -1,9 +1,6 @@
 #include "control/ConnectionRequests.h"
 #include "Pch.h"
 
-#include <stdexcept>
-#include <type_traits>
-
 namespace simxr::control
 {
 ConnectionRequests::ConnectionRequests(std::function<void()> onClosed) : m_onClosed(std::move(onClosed)) {}

@@ -8,7 +8,6 @@
 #include <tlhelp32.h>
 #include <fcntl.h>
 #include <io.h>
-#include <fstream>
 #include <iostream>
 
 using namespace simxr::app;

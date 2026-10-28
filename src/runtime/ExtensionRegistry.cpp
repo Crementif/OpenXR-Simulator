@@ -1,10 +1,6 @@
 #include "runtime/ExtensionRegistry.h"
 #include "Pch.h"
 
-#include <cstring>
-#include <limits>
-#include <stdexcept>
-
 namespace simxr
 {
 EnabledExtensions::EnabledExtensions(std::span<const char* const> requested)

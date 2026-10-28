@@ -1,14 +1,10 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpImageEncode.h"
 #include "graphics/ColorPixels.h"
 
 #define STBI_WRITE_NO_STDIO
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
-
-#include <atomic>
-#include <cmath>
-#include <stdexcept>
 
 namespace simxr::app::mcp
 {

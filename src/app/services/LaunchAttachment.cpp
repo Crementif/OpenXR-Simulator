@@ -3,8 +3,6 @@
 #include "app/services/RuntimeConnection.h"
 #include "control/ControlSchema.h"
 
-#include <stdexcept>
-
 namespace simxr::app
 {
 static std::optional<LaunchedSession> UniqueSession(const control::Message& message, const std::string& endpoint, std::uint64_t process)

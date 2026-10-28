@@ -3,7 +3,6 @@
 #include "headset/HeadsetSpace.h"
 #include "math/Math.h"
 
-#include <cmath>
 #include <iostream>
 
 namespace simxr::tests

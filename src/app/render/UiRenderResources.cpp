@@ -1,9 +1,6 @@
 #include "app/render/UiRenderResources.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/render/UiRenderer.h"
-#include <cstdio>
-#include <cstdlib>
-#include <imgui.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
 

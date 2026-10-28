@@ -3,9 +3,6 @@
 
 #include "math/Math.h"
 
-#include <cmath>
-#include <limits>
-#include <numbers>
 
 namespace simxr
 {

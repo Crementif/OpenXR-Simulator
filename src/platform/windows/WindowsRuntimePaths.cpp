@@ -1,7 +1,6 @@
 #include "platform/windows/WindowsRuntimePaths.h"
 #include "Pch.h"
 
-#include <system_error>
 #include <windows.h>
 
 namespace simxr::windows

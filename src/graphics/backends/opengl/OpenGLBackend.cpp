@@ -8,12 +8,7 @@
 #include "platform/windows/OpenGLLibrary.h"
 #include <GL/glext.h>
 #include <GL/wglext.h>
-#include <bit>
-#include <cstdio>
-#include <cstring>
-#include <mutex>
 #include <new>
-#include <stdexcept>
 
 namespace simxr
 {

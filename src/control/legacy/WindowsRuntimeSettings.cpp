@@ -2,13 +2,6 @@
 #include "Pch.h"
 #include "json.h"
 
-#include <cmath>
-#include <cstring>
-#include <fstream>
-#include <mutex>
-#include <stdexcept>
-#include <system_error>
-
 namespace simxr::legacy::settings
 {
 static std::recursive_mutex s_stateMutex;

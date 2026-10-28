@@ -4,9 +4,6 @@
 #include "control/backends/vulkan/VulkanControlHandle.h"
 #include "graphics/backends/vulkan/VulkanInspection.h"
 
-#include <mutex>
-#include <stdexcept>
-
 namespace simxr::control
 {
 template <class Function> static auto Translate(Function&& function)

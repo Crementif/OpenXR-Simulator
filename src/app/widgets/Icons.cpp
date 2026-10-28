@@ -1,7 +1,5 @@
 #include "app/widgets/Icons.h"
-#include "Pch.h"
-
-#include <cmath>
+#include "app/UiPch.h"
 
 #define NANOSVG_IMPLEMENTATION
 #include <nanosvg.h>

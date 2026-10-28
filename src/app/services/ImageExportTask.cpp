@@ -5,11 +5,6 @@
 #include "control/ImageInspection.h"
 #include "graphics/ColorPixels.h"
 
-#include <cmath>
-#include <cstring>
-#include <fstream>
-#include <locale>
-
 namespace simxr::app
 {
 namespace wire = control;

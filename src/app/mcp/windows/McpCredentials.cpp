@@ -1,10 +1,8 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpCredentials.h"
 #include "app/platform/windows/LaunchSupport.h"
 
-#include <array>
 #include <bcrypt.h>
-#include <stdexcept>
 
 namespace simxr::app
 {

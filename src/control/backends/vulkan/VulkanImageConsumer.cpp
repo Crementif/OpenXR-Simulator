@@ -6,11 +6,6 @@
 #include "graphics/SnapshotBudget.h"
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
 
-#include <cstdio>
-#include <limits>
-#include <stdexcept>
-#include <thread>
-
 namespace simxr::control
 {
 static FramePool& ConsumerBudget(bool companion)

@@ -5,10 +5,6 @@
 #include "automation/RigReport.h"
 #include "control/ControlSchema.h"
 
-#include <fstream>
-#include <limits>
-#include <stdexcept>
-
 namespace simxr::app
 {
 namespace wire = control;

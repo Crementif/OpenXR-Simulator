@@ -3,7 +3,6 @@
 #include "headset/HeadsetProjection.h"
 #include "math/Math.h"
 
-#include <cmath>
 #include <iostream>
 
 namespace simxr::headset::tests

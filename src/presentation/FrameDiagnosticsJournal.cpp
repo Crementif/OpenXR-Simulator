@@ -1,9 +1,6 @@
 #include "presentation/FrameDiagnosticsJournal.h"
 #include "Pch.h"
 
-#include <limits>
-#include <stdexcept>
-
 namespace simxr
 {
 FrameDiagnosticsJournal::FrameDiagnosticsJournal(std::size_t capacity, TimestampSource timestamp)

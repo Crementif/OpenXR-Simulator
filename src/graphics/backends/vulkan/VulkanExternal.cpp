@@ -1,15 +1,10 @@
 #include "graphics/backends/vulkan/VulkanExternal.h"
 #include "Pch.h"
 
-#include <bit>
-#include <cerrno>
-#include <cstring>
 #ifndef _WIN32
 #include <fcntl.h>
 #include <unistd.h>
 #endif
-#include <stdexcept>
-#include <system_error>
 
 namespace simxr
 {

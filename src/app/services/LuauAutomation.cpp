@@ -2,8 +2,6 @@
 #include "app/services/LuauAutomation.h"
 #include "app/services/RigController.h"
 
-#include <stdexcept>
-
 namespace simxr::app
 {
 std::uint64_t StartLuauRun(RigController& rigs, const ApplicationSnapshot& application, LuauRunRequest request,

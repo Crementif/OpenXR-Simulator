@@ -2,9 +2,7 @@
 #include "Pch.h"
 #include "app/services/RuntimeConnection.h"
 
-#include <chrono>
 #include <iostream>
-#include <thread>
 
 #if defined(_WIN32)
 #include "control/ControlService.h"
@@ -17,10 +15,6 @@
 #include "../control/FakeImageInspection.h"
 #include "control/LocalControlServer.h"
 
-#include <condition_variable>
-#include <filesystem>
-#include <functional>
-#include <mutex>
 #endif
 
 namespace simxr::test

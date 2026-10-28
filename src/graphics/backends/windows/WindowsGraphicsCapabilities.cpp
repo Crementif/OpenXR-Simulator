@@ -2,8 +2,6 @@
 #include "Pch.h"
 #include "platform/windows/WindowsLibrary.h"
 
-#include <bit>
-#include <cstring>
 #include <d3d11.h>
 #include <d3d12.h>
 #include <dxgi.h>

@@ -3,8 +3,6 @@
 #include "app/services/SpatialMath.h"
 #include "math/Math.h"
 #include "simulation/BodyModel.h"
-#include <cmath>
-#include <numbers>
 
 namespace simxr::app
 {

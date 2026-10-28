@@ -1,9 +1,7 @@
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/platform/PackageDocumentation.h"
 #include "app/platform/OpenLocalPath.h"
 #include "app/services/Utf8Path.h"
-
-#include <SDL3/SDL.h>
 
 namespace simxr::app
 {

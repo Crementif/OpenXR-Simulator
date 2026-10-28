@@ -4,7 +4,6 @@
 #include "app/platform/windows/PrivateSecurity.h"
 #include "app/services/Utf8Path.h"
 
-#include <fstream>
 #include <nlohmann/json.hpp>
 
 namespace simxr::app::windows

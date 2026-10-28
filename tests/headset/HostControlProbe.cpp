@@ -1,9 +1,7 @@
 #include "Pch.h"
 #include "headset/HostControl.h"
 
-#include <chrono>
 #include <iostream>
-#include <thread>
 
 int main()
 {

@@ -1,14 +1,11 @@
 #include "app/widgets/RecordingPanel.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/services/CompanionSettings.h"
 #include "app/services/Utf8Path.h"
 #include "app/widgets/Theme.h"
 #include "platform/ProcessIdentity.h"
 
-#include <chrono>
 #include <ctime>
-#include <imgui.h>
-#include <stdexcept>
 
 namespace simxr::app
 {

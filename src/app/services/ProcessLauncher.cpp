@@ -3,9 +3,6 @@
 #include "app/services/LaunchObservation.h"
 #include "app/services/ProcessSupervisor.h"
 
-#include <mutex>
-#include <stdexcept>
-
 namespace simxr::app
 {
 ProcessLauncher::ProcessLauncher(ProcessSupervisor& supervisor) : m_supervisor(supervisor)

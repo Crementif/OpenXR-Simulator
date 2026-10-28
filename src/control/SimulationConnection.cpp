@@ -11,8 +11,6 @@
 #include "runtime/Session.h"
 #include "simulation/GameBridge.h"
 
-#include <stdexcept>
-
 namespace simxr::control
 {
 static InspectionValue ReadDiagnostics(Session& session, const Message& request)

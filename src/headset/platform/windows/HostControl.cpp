@@ -1,7 +1,6 @@
 #include "headset/HostControl.h"
 #include "Pch.h"
 
-#include <stdexcept>
 #include <windows.h>
 
 namespace simxr::headset

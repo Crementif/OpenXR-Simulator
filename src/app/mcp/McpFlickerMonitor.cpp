@@ -1,10 +1,8 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpFlickerMonitor.h"
 #include "app/mcp/McpApplication.h"
 #include "app/mcp/McpFlickerCoverage.h"
 #include "app/mcp/McpIncident.h"
-
-#include <cmath>
 
 namespace simxr::app
 {

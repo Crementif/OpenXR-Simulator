@@ -4,7 +4,6 @@
 #include "headset/OpenXrRuntime.h"
 
 #include <iostream>
-#include <set>
 
 namespace simxr::headset::test
 {

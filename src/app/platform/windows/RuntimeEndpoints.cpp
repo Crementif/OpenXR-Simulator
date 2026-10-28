@@ -3,7 +3,6 @@
 #include "app/platform/windows/LaunchSupport.h"
 #include "app/services/RuntimeEndpoints.h"
 
-#include <stdexcept>
 #include <tlhelp32.h>
 
 namespace simxr::app

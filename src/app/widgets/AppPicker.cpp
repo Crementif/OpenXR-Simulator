@@ -1,5 +1,5 @@
 #include "app/widgets/AppPicker.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/RuntimeView.h"
 #include "app/services/CompanionSettings.h"
 #include "app/widgets/Controls.h"
@@ -7,7 +7,6 @@
 
 #include <cfloat>
 #include <ctime>
-#include <exception>
 #include <imgui_internal.h>
 #include <initializer_list>
 

@@ -1,7 +1,5 @@
 #include "media/Mp4Video.h"
 #include "Pch.h"
-#include <limits>
-#include <stdexcept>
 
 namespace simxr
 {

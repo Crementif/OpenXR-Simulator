@@ -2,9 +2,6 @@
 #include "Pch.h"
 #include "math/Math.h"
 
-#include <limits>
-#include <stdexcept>
-
 namespace simxr::headset
 {
 void HeadsetSpace::Schedule(XrTime changeTime, bool valid, XrPosef previousFromNew)

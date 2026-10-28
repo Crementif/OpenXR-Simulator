@@ -9,8 +9,6 @@
 #include "simulation/HeadsetProfiles.h"
 #include "../TestSupport.h"
 
-#include <stdexcept>
-
 using Json = nlohmann::json;
 using namespace simxr;
 

@@ -1,4 +1,4 @@
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/pages/DeviceControlPanel.h"
 #include "app/services/PlayerRig.h"
 #include "app/services/SpatialMath.h"
@@ -6,8 +6,6 @@
 #include "app/widgets/Theme.h"
 #include "math/Math.h"
 #include "simulation/BodyModel.h"
-#include <imgui.h>
-#include <numbers>
 
 namespace simxr::app
 {

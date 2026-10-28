@@ -3,8 +3,6 @@
 
 #include "runtime/Session.h"
 
-#include <stdexcept>
-
 namespace simxr
 {
 Instance::Instance(XrInstance handle, std::span<const char* const> extensions, XrVersion apiVersion)

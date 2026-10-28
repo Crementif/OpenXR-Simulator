@@ -6,10 +6,6 @@
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
 #include "shaders/generated/CompositorSpirv.h"
 
-#include <cstdio>
-#include <cstring>
-#include <mutex>
-#include <stdexcept>
 
 namespace simxr
 {

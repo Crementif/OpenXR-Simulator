@@ -1,5 +1,5 @@
 #include "app/pages/Library.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/RuntimePanels.h"
 #include "app/services/CompanionSettings.h"
 #include "app/services/Utf8Path.h"
@@ -7,8 +7,6 @@
 #include "app/widgets/Theme.h"
 
 #include <cctype>
-#include <cstdio>
-#include <imgui.h>
 #include <imgui_internal.h>
 #include <tuple>
 

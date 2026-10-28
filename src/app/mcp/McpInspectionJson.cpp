@@ -1,10 +1,6 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpSimulation.h"
 #include "control/InspectionDocument.h"
-
-#include <cmath>
-#include <set>
-#include <stdexcept>
 
 namespace simxr::app::mcp
 {

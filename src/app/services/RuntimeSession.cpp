@@ -1,8 +1,7 @@
 #include "app/services/RuntimeSession.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/services/RuntimeEndpoints.h"
 #include "graphics/SnapshotBudget.h"
-#include <stdexcept>
 
 namespace simxr::app
 {

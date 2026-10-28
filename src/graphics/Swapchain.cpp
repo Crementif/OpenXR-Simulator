@@ -1,8 +1,6 @@
 #include "graphics/Swapchain.h"
 #include "Pch.h"
 
-#include <stdexcept>
-
 namespace simxr
 {
 Swapchain::Swapchain(std::uint32_t imageCount, bool staticImage)

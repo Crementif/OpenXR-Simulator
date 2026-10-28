@@ -3,10 +3,8 @@
 #include "headset/OpenXrRuntime.h"
 
 #define XR_USE_GRAPHICS_API_VULKAN
-#include <cstring>
 #include <iostream>
 #include <openxr/openxr_platform.h>
-#include <stdexcept>
 
 namespace simxr::headset
 {

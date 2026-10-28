@@ -2,8 +2,6 @@
 #include "Pch.h"
 #include "math/Math.h"
 
-#include <cmath>
-
 namespace simxr
 {
 bool NormalizeReferenceSpaces(ReferenceSpaceState& state)

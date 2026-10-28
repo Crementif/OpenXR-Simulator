@@ -1,7 +1,5 @@
 #include "graphics/backends/vulkan/VulkanVideoSession.h"
 #include "Pch.h"
-#include <cstring>
-#include <limits>
 
 namespace simxr
 {

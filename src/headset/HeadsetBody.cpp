@@ -4,9 +4,6 @@
 #include "math/Math.h"
 #include "simulation/BodyModel.h"
 
-#include <cmath>
-#include <stdexcept>
-
 namespace simxr::headset
 {
 HeadsetBody::HeadsetBody(OpenXrRuntime& runtime) : m_runtime(runtime) {}

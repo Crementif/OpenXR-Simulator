@@ -3,13 +3,7 @@
 
 #include "diagnostics/platform/ArtifactFile.h"
 
-#include <fstream>
 #include <iomanip>
-#include <limits>
-#include <locale>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
 
 namespace flicker
 {

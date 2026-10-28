@@ -4,12 +4,7 @@
 #include "headset/OpenXrRuntime.h"
 #include "math/Math.h"
 
-#include <cstring>
 #include <iostream>
-#include <limits>
-#include <map>
-#include <string>
-#include <vector>
 
 namespace simxr::headset::test
 {

@@ -4,11 +4,8 @@
 #include "CompositorHlsl.h"
 #include "platform/windows/WindowsLibrary.h"
 
-#include <bit>
 #include <d3dcompiler.h>
 #include <dxgi1_2.h>
-#include <limits>
-#include <stdexcept>
 
 namespace simxr
 {

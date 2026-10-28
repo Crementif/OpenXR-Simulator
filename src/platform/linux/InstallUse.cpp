@@ -8,10 +8,6 @@
 #include <sys/sysmacros.h>
 #include <unistd.h>
 
-#include <cstdio>
-#include <filesystem>
-#include <fstream>
-
 namespace simxr
 {
 static void InstallAnchor() {}

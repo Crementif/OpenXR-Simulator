@@ -3,10 +3,6 @@
 #include "math/Math.h"
 #include "control/ControlSchema.h"
 
-#include <cmath>
-#include <numbers>
-#include <stdexcept>
-
 namespace simxr::control
 {
 Field EncodeImageDescription(const ImageDescription& value, bool external)

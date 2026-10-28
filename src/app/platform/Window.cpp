@@ -1,12 +1,7 @@
 #include "app/platform/Window.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/services/Utf8Path.h"
 #include "simxr/Version.h"
-
-#include <SDL3/SDL.h>
-#include <cmath>
-#include <limits>
-#include <stdexcept>
 
 #if defined(SIMXR_X11_WINDOW)
 #include <X11/Xlib.h>

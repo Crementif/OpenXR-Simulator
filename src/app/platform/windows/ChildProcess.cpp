@@ -7,8 +7,6 @@
 #endif
 
 #include <cwchar>
-#include <filesystem>
-#include <map>
 
 namespace simxr::app
 {

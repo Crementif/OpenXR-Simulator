@@ -2,9 +2,6 @@
 #include "Pch.h"
 #include "math/Math.h"
 
-#include <cmath>
-#include <stdexcept>
-
 namespace simxr
 {
 static bool IsSupportedReferenceSpace(XrReferenceSpaceType type)

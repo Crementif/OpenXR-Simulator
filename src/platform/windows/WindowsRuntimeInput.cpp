@@ -6,11 +6,6 @@
 #include "control/legacy/WindowsRuntimeSettings.h"
 #include "platform/windows/WindowsClock.h"
 
-#include <cmath>
-#include <cstring>
-#include <cstdlib>
-#include <numbers>
-#include <stdexcept>
 #include <windows.h>
 
 namespace simxr::windows
@@ -337,7 +332,7 @@ RuntimeInputSnapshot WindowsRuntimeInput::Poll(std::chrono::nanoseconds period, 
 			files.Acknowledge("headset_profile", applied);
 		}
 
-		// Display layout belongs to the companion; the removed runtime mirror cannot apply this command.
+		// Display layout is controlled by the companion.
 		if (commands.anaglyph.valid)
 			files.Acknowledge("anaglyph", false);
 

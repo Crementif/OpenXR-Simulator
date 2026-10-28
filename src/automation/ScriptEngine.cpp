@@ -5,12 +5,9 @@
 #include "automation/RigRuntime.h"
 #include "automation/ScriptValues.h"
 
-#include <cstdlib>
-#include <limits>
 #include <lua.h>
 #include <luacode.h>
 #include <lualib.h>
-#include <stdexcept>
 
 namespace simxr::automation
 {

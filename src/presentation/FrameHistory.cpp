@@ -1,9 +1,6 @@
 #include "presentation/FrameHistory.h"
 #include "Pch.h"
 
-#include <atomic>
-#include <limits>
-#include <stdexcept>
 
 namespace simxr
 {

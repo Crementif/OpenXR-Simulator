@@ -4,14 +4,9 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
-#include <cerrno>
-#include <cstdlib>
 #include <unistd.h>
 #endif
 
-#include <atomic>
-#include <stdexcept>
-#include <system_error>
 
 namespace flicker
 {

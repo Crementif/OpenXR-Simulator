@@ -2,8 +2,6 @@
 
 #include "Pch.h"
 
-#include <bit>
-
 namespace simxr
 {
 VulkanCommands::VulkanCommands(VkDevice device, std::uint32_t queueFamily) : m_device(device)

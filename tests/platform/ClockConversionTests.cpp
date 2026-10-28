@@ -4,7 +4,6 @@
 #include "platform/ClockConversion.h"
 
 #include <iostream>
-#include <limits>
 
 namespace simxr::tests
 {

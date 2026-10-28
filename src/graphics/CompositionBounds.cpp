@@ -2,9 +2,6 @@
 #include "Pch.h"
 #include "math/Math.h"
 
-#include <cmath>
-#include <limits>
-
 namespace simxr
 {
 struct QuadGeometry

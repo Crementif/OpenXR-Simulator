@@ -1,10 +1,8 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpLogFile.h"
 
-#include <cerrno>
 #include <fcntl.h>
 #include <sys/stat.h>
-#include <system_error>
 #include <unistd.h>
 
 namespace simxr::app::mcp

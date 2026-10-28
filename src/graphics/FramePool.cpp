@@ -1,9 +1,6 @@
 #include "graphics/FramePool.h"
 #include "Pch.h"
 
-#include <mutex>
-#include <stdexcept>
-
 namespace simxr
 {
 struct FramePoolState

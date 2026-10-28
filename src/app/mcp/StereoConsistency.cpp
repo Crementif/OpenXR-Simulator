@@ -1,13 +1,10 @@
 #include "app/mcp/StereoConsistency.h"
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/StereoImageOps.h"
 #include "app/mcp/StereoConsistencyImage.h"
 #include "app/mcp/StereoSurface.h"
 
-#include <cmath>
-#include <limits>
 #include <numeric>
-#include <stdexcept>
 
 namespace simxr::app::mcp
 {

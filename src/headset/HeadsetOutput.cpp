@@ -6,8 +6,6 @@
 #include "math/Math.h"
 
 #define XR_USE_GRAPHICS_API_VULKAN
-#include <cmath>
-#include <numbers>
 #include <openxr/openxr_platform.h>
 
 namespace simxr::headset

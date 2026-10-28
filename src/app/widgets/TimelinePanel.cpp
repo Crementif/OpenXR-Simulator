@@ -1,5 +1,5 @@
 #include "app/widgets/TimelinePanel.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/RuntimePanels.h"
 #include "app/services/InputHistory.h"
 #include "app/services/PlayerRig.h"
@@ -7,8 +7,6 @@
 #include "app/services/Utf8Path.h"
 #include "app/widgets/Controls.h"
 #include "app/widgets/Theme.h"
-#include <cstdio>
-#include <imgui.h>
 
 namespace simxr::app
 {

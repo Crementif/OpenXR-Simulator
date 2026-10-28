@@ -1,7 +1,5 @@
 #include "app/mcp/StereoConsistencyImage.h"
-#include "Pch.h"
-
-#include <cmath>
+#include "app/mcp/McpPch.h"
 
 namespace simxr::app::mcp
 {

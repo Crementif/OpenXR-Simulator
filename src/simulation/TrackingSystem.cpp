@@ -4,10 +4,6 @@
 #include "simulation/ViewConfiguration.h"
 #include "simulation/BodyObservation.h"
 
-#include <cmath>
-#include <numbers>
-#include <stdexcept>
-
 namespace simxr
 {
 static PoseSample Normalize(PoseSample sample, RuntimeTime time)

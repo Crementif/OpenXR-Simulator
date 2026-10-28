@@ -1,13 +1,10 @@
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/mcp/McpHost.h"
 #include "app/mcp/McpApplication.h"
 #include "app/mcp/McpCredentials.h"
 #include "app/mcp/McpConfiguration.h"
 #include "app/mcp/McpInstance.h"
 #include "app/mcp/McpServer.h"
-
-#include <cstdio>
-#include <stdexcept>
 
 namespace simxr::app
 {

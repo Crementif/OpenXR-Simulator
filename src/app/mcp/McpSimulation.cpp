@@ -1,12 +1,7 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpSimulation.h"
 #include "control/ControlSchema.h"
 #include "control/SimulationControl.h"
-
-#include <charconv>
-#include <limits>
-#include <set>
-#include <stdexcept>
 
 namespace simxr::app::mcp
 {

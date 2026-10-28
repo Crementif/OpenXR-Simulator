@@ -7,8 +7,6 @@
 #include "graphics/SnapshotBudget.h"
 #include "runtime/Session.h"
 
-#include <stdexcept>
-
 namespace simxr::control
 {
 static std::uint32_t ReadU32(const Message& message, std::uint16_t name, std::optional<std::uint32_t> fallback = {})

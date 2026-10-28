@@ -3,8 +3,6 @@
 #include "app/services/WorkerConnection.h"
 #include "control/ControlSchema.h"
 
-#include <stdexcept>
-
 namespace simxr::app
 {
 namespace wire = control;

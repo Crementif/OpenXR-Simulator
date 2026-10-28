@@ -3,11 +3,7 @@
 #include "control/SimulationControl.h"
 #include "simulation/BodyObservation.h"
 
-#include <cmath>
-#include <limits>
-#include <stdexcept>
 #include <tuple>
-#include <type_traits>
 
 namespace simxr::app
 {

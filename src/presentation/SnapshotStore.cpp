@@ -3,11 +3,7 @@
 
 #include "graphics/SnapshotBudget.h"
 
-#include <atomic>
 #include <cinttypes>
-#include <cstdio>
-#include <limits>
-#include <stdexcept>
 
 namespace simxr
 {

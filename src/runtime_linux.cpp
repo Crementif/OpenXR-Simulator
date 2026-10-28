@@ -22,14 +22,8 @@
 #include "simulation/HapticState.h"
 #include "simxr/Version.h"
 
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
 #include <ctime>
-#include <exception>
-#include <limits>
 #include <loader_interfaces.h>
-#include <mutex>
 #include <openxr/openxr_platform.h>
 #include <vulkan/vulkan.h>
 

@@ -1,4 +1,4 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpServer.h"
 #include "app/mcp/McpCredentials.h"
 #include "app/mcp/McpDebug.h"
@@ -9,10 +9,6 @@
 #include "control/ProtocolTypes.h"
 #include "simxr/Version.h"
 
-#include <algorithm>
-#include <charconv>
-#include <cstdio>
-#include <stdexcept>
 #include <unordered_set>
 
 namespace simxr::app

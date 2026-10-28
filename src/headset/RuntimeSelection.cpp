@@ -2,9 +2,6 @@
 #include "Pch.h"
 #include "json.h"
 
-#include <fstream>
-#include <stdexcept>
-
 namespace simxr::headset
 {
 static std::string LowerAscii(std::string_view text)

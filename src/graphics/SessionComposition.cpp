@@ -3,7 +3,6 @@
 #include "runtime/Session.h"
 #include "runtime/validation/LayerValidation.h"
 
-#include <limits>
 
 namespace simxr
 {

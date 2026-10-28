@@ -3,12 +3,6 @@
 #include "app/platform/ChildProcess.h"
 #include "app/services/LaunchObservation.h"
 
-#include <charconv>
-#include <condition_variable>
-#include <mutex>
-#include <stdexcept>
-#include <thread>
-
 namespace simxr::app
 {
 LaunchObservation::LaunchObservation(std::string profile)

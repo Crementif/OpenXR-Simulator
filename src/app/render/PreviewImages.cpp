@@ -1,10 +1,7 @@
 #include "app/render/PreviewImages.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/render/UiRenderer.h"
 #include "graphics/SnapshotBudget.h"
-
-#include <cstdio>
-#include <limits>
 
 namespace simxr::app
 {

@@ -1,10 +1,7 @@
 #include "app/widgets/Notices.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/widgets/Theme.h"
 #include "app/widgets/Controls.h"
-
-#include <exception>
-#include <imgui.h>
 
 namespace simxr::app
 {

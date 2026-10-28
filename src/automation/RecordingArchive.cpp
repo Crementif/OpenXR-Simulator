@@ -3,10 +3,6 @@
 #include "control/ControlSchema.h"
 #include "control/SimulationControl.h"
 
-#include <array>
-#include <limits>
-#include <stdexcept>
-
 namespace simxr::automation
 {
 static constexpr std::array<char, 8> s_magic{'S', 'I', 'M', 'X', 'R', 'T', 'K', '1'};

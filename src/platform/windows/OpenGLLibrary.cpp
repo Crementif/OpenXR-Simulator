@@ -1,8 +1,6 @@
 #include "platform/windows/OpenGLLibrary.h"
 #include "Pch.h"
 
-#include <bit>
-
 namespace simxr::windows
 {
 OpenGLLibrary::OpenGLLibrary()

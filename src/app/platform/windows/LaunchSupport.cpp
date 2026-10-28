@@ -1,9 +1,6 @@
 #include "app/platform/windows/LaunchSupport.h"
 #include "Pch.h"
 
-#include <limits>
-#include <filesystem>
-
 namespace simxr::app::windows
 {
 // An ASCII short path lets narrow-stream OpenXR loaders open Unicode manifests

@@ -1,5 +1,5 @@
 #include "app/widgets/PreviewPanel.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/RuntimeView.h"
 #include "app/pages/DeviceControlPanel.h"
 #include "app/pages/FramePage.h"
@@ -10,7 +10,6 @@
 #include "app/widgets/SpatialEditor.h"
 #include "app/widgets/Theme.h"
 
-#include <cmath>
 #include <imgui_internal.h>
 
 namespace simxr::app

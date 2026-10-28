@@ -8,8 +8,6 @@
 #include "graphics/backends/vulkan/VulkanExternal.h"
 #include "runtime/validation/StructureChain.h"
 
-#include <cstring>
-
 namespace simxr
 {
 static XrResult WriteExtensions(std::string_view names, std::uint32_t capacity, std::uint32_t* count, char* output)

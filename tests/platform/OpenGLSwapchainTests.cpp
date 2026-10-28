@@ -6,15 +6,8 @@
 
 #include "../TestSupport.h"
 
-#include <array>
-#include <atomic>
-#include <bit>
-#include <condition_variable>
-#include <cstdint>
 #include <iostream>
-#include <mutex>
 #include <source_location>
-#include <thread>
 
 namespace
 {

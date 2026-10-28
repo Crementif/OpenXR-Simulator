@@ -1,7 +1,6 @@
 #include "app/services/HistoryCoverage.h"
 #include "Pch.h"
 #include "app/services/HistoryStore.h"
-#include <limits>
 #include <tuple>
 
 namespace simxr::app

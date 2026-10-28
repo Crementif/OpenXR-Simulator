@@ -1,11 +1,6 @@
 #include "runtime/EventQueue.h"
 #include "Pch.h"
 
-#include <cstring>
-#include <limits>
-#include <stdexcept>
-#include <type_traits>
-
 namespace simxr
 {
 template <class Event> static void WriteEvent(const Event& event, XrEventDataBuffer& output)

@@ -2,8 +2,6 @@
 #include "platform/Clock.h"
 #include "platform/ClockConversion.h"
 
-#include <stdexcept>
-#include <utility>
 #ifdef _WIN32
 #include <windows.h>
 #else

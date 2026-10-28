@@ -1,4 +1,4 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpLogFile.h"
 #include "app/platform/windows/LaunchSupport.h"
 

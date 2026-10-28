@@ -9,11 +9,7 @@
 #include "graphics/backends/vulkan/VulkanReprojection.h"
 #include "runtime/Session.h"
 
-#include <cstring>
 #include <dxgi.h>
-#include <stdexcept>
-#include <thread>
-#include <type_traits>
 
 namespace simxr
 {

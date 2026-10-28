@@ -2,10 +2,6 @@
 #include "Pch.h"
 #include "math/Math.h"
 
-#include <charconv>
-#include <cmath>
-#include <numbers>
-#include <stdexcept>
 
 namespace simxr
 {

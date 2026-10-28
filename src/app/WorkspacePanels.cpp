@@ -1,17 +1,10 @@
 #include "app/WorkspacePanels.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/RuntimePanels.h"
 #include "app/services/Utf8Path.h"
 #include "app/widgets/Controls.h"
 #include "app/widgets/Theme.h"
 #include "simxr/Version.h"
-
-#include <SDL3/SDL_clipboard.h>
-#include <SDL3/SDL_error.h>
-#include <SDL3/SDL_filesystem.h>
-#include <SDL3/SDL_misc.h>
-#include <imgui.h>
-#include <stdexcept>
 
 namespace simxr::app
 {

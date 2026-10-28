@@ -1,4 +1,4 @@
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/services/RuntimeSession.h"
 
 namespace simxr::app

@@ -7,10 +7,6 @@
 #include "automation/RigTypes.h"
 #include "control/ControlSchema.h"
 
-#include <charconv>
-#include <fstream>
-#include <stdexcept>
-
 namespace simxr::app
 {
 namespace wire = control;

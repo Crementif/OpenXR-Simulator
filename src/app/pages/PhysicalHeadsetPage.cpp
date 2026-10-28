@@ -1,12 +1,8 @@
 #include "app/pages/PhysicalHeadsetPage.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/services/SimulationEdits.h"
 #include "app/services/Utf8Path.h"
 #include "app/widgets/Controls.h"
-
-#include <SDL3/SDL.h>
-#include <imgui.h>
-#include <mutex>
 
 namespace simxr::app
 {

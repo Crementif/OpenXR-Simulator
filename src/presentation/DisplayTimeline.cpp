@@ -1,9 +1,6 @@
 #include "presentation/DisplayTimeline.h"
 #include "Pch.h"
 
-#include <limits>
-#include <stdexcept>
-
 namespace simxr
 {
 DisplayTimeline::DisplayTimeline(RuntimeTime epoch, Duration period) : m_epoch(epoch), m_period(period)

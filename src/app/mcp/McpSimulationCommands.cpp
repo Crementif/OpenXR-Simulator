@@ -1,12 +1,7 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpSimulation.h"
 #include "control/SimulationControl.h"
 #include "simulation/BodyObservation.h"
-
-#include <charconv>
-#include <cmath>
-#include <limits>
-#include <stdexcept>
 
 namespace simxr::app::mcp
 {

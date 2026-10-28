@@ -1,11 +1,9 @@
 #include "app/pages/AdvancedSteppingPage.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/pages/DeviceControlPanel.h"
 #include "app/services/RuntimeSession.h"
 #include "app/widgets/Controls.h"
 #include "control/DebugProtocol.h"
-
-#include <imgui.h>
 
 namespace simxr::app
 {

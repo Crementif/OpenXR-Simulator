@@ -2,8 +2,6 @@
 #include "Pch.h"
 #include "presentation/FrameScheduler.h"
 
-#include <stdexcept>
-
 namespace simxr
 {
 SessionCaptureCoordinator::SessionCaptureCoordinator(FrameHistory& history) : m_history(history), m_store(0, &history)

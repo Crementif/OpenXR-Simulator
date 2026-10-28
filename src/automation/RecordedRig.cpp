@@ -5,12 +5,7 @@
 #include "control/SimulationControl.h"
 #include "simulation/BodyObservation.h"
 
-#include <charconv>
-#include <cmath>
 #include <initializer_list>
-#include <limits>
-#include <map>
-#include <stdexcept>
 
 namespace simxr::automation
 {

@@ -3,7 +3,6 @@
 
 #include "runtime/validation/StructureChain.h"
 
-#include <stdexcept>
 
 namespace simxr
 {

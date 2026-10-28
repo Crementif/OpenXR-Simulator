@@ -1,11 +1,8 @@
 #include "app/widgets/TimelineCanvas.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/render/PreviewHistory.h"
 #include "app/widgets/Icons.h"
 #include "app/widgets/Theme.h"
-#include <cmath>
-#include <cstdio>
-#include <imgui.h>
 
 namespace simxr::app
 {

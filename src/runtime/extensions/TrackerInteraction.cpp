@@ -3,8 +3,6 @@
 #include "runtime/validation/StructureChain.h"
 #include "simulation/BodyModel.h"
 
-#include <stdexcept>
-
 namespace simxr
 {
 TrackerInteraction::TrackerInteraction(ActionRegistry& registry, const EnabledExtensions& enabled, EventQueue& events)

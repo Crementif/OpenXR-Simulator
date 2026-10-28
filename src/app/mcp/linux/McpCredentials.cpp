@@ -1,10 +1,6 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpCredentials.h"
 
-#include <cstdlib>
-#include <array>
-#include <cerrno>
-#include <stdexcept>
 #include <sys/random.h>
 
 namespace simxr::app

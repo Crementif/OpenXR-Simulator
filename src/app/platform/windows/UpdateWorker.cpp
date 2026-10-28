@@ -1,9 +1,6 @@
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/platform/windows/LaunchSupport.h"
 #include "app/platform/windows/UpdateTransport.h"
-
-#include <stdexcept>
-#include <thread>
 
 namespace simxr::app::windows
 {

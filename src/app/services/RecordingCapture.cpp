@@ -4,8 +4,6 @@
 #include "automation/RecordingArchive.h"
 #include "control/ControlSchema.h"
 
-#include <stdexcept>
-
 namespace simxr::app
 {
 namespace wire = control;

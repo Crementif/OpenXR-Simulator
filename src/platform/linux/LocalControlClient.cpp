@@ -3,16 +3,12 @@
 #include "control/ControlSchema.h"
 #include "platform/linux/ControlFd.h"
 
-#include <cerrno>
 #include <climits>
-#include <cstring>
-#include <mutex>
 #include <poll.h>
 #include <sys/eventfd.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
-#include <system_error>
 #include <unistd.h>
 
 namespace simxr::control

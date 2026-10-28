@@ -1,12 +1,7 @@
 #include "control/backends/vulkan/VulkanControlHandle.h"
 #include "Pch.h"
 
-#include <bit>
-#include <limits>
-#include <stdexcept>
-#include <system_error>
 #ifndef _WIN32
-#include <cerrno>
 #include <fcntl.h>
 #endif
 

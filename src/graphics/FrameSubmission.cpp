@@ -3,8 +3,6 @@
 
 #include "runtime/Session.h"
 
-#include <functional>
-
 namespace simxr
 {
 bool FrameCaptureRequest::IgnoreFailure(XrResult result) const noexcept

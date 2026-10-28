@@ -1,5 +1,5 @@
 #include "app/shell/ApplicationTabs.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/RuntimePanels.h"
 #include "app/WorkspacePanels.h"
 #include "app/platform/Window.h"
@@ -8,9 +8,6 @@
 #ifdef SIMXR_COMPANION_AUTOMATION
 #include "app/services/LuauAutomation.h"
 #endif
-
-#include <imgui.h>
-#include <stdexcept>
 
 namespace simxr::app
 {

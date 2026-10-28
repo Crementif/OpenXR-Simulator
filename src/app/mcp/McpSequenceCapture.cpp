@@ -1,4 +1,4 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpSequenceCapture.h"
 #include "app/mcp/McpApplication.h"
 #include "app/mcp/McpArtifactCalls.h"
@@ -11,13 +11,6 @@
 #include "app/services/Utf8Path.h"
 #include "control/ProtocolTypes.h"
 #include "graphics/ColorPixels.h"
-
-#include <cmath>
-#include <fstream>
-#include <map>
-#include <mutex>
-#include <set>
-#include <thread>
 
 namespace simxr::app::mcp
 {

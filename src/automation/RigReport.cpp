@@ -1,9 +1,6 @@
 #include "automation/RigReport.h"
 #include "Pch.h"
 
-#include <sstream>
-#include <locale>
-
 namespace simxr::automation
 {
 static std::string Escape(std::string_view text, bool xml = false)

@@ -1,8 +1,6 @@
 #include "app/platform/RunningApps.h"
 #include "Pch.h"
 
-#include <stdexcept>
-
 namespace simxr::app
 {
 std::optional<RunningApp> ProbeRunningApp(const std::string&, std::chrono::milliseconds)

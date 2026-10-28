@@ -3,12 +3,7 @@
 
 #include "control/legacy/WindowsLegacyFormat.h"
 
-#include <cstring>
 #include <iomanip>
-#include <limits>
-#include <locale>
-#include <sstream>
-#include <stdexcept>
 
 namespace mcp
 {

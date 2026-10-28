@@ -1,10 +1,6 @@
 #include "app/services/UndoStack.h"
 #include "Pch.h"
 
-#include <cmath>
-#include <cstdio>
-#include <type_traits>
-
 namespace simxr::app
 {
 void UndoStack::Observe(const ObservedSetup& observed)

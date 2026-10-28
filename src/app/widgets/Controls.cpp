@@ -1,5 +1,5 @@
 #include "app/widgets/Controls.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/widgets/Theme.h"
 
 #include <cfloat>

@@ -1,8 +1,6 @@
 #include "Pch.h"
 #include "runtime/Session.h"
 
-#include <cstdio>
-
 namespace simxr
 {
 CommandResult Session::SubmitLiveInput(SessionGeneration generation, CommandSource source,

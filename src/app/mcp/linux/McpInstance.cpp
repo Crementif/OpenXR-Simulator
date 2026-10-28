@@ -1,26 +1,15 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpInstance.h"
 #include "app/mcp/McpCredentials.h"
 #include "app/platform/FileStorage.h"
 #include "app/services/Utf8Path.h"
 
-#include <algorithm>
-#include <array>
-#include <cerrno>
-#include <cstdlib>
-#include <cstring>
 #include <fcntl.h>
-#include <fstream>
-#include <limits>
-#include <map>
 #include <spawn.h>
-#include <stdexcept>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
-
-#include <nlohmann/json.hpp>
 
 extern char** environ;
 

@@ -4,10 +4,6 @@
 #include <windows.h>
 namespace settings = simxr::legacy::settings;
 
-#include <cstdio>
-#include <fstream>
-#include <stdexcept>
-#include <string_view>
 
 static void Require(bool condition, const char* message)
 {

@@ -1,11 +1,9 @@
 #include "app/pages/DeviceControlPanel.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/services/PlayerRig.h"
 #include "app/widgets/Controls.h"
 #include "app/widgets/Theme.h"
-#include <exception>
 #include <imgui_internal.h>
-#include <stdexcept>
 
 namespace simxr::app
 {

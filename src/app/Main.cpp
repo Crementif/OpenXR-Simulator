@@ -1,4 +1,4 @@
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/Application.h"
 #include "app/platform/StartupFailure.h"
 #include "app/services/LaunchTypes.h"
@@ -12,9 +12,6 @@
 #endif
 
 #include <SDL3/SDL_main.h>
-#include <charconv>
-#include <cstdio>
-#include <exception>
 
 #ifdef _WIN32
 static int RunUpdateWorker(std::string_view repository)

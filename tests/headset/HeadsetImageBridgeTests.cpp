@@ -3,7 +3,6 @@
 #include "control/LocalControlServer.h"
 #include "headset/HeadsetImageBridge.h"
 
-#include <filesystem>
 #include <iostream>
 
 namespace simxr::tests

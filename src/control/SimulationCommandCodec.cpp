@@ -3,10 +3,7 @@
 #include "control/SimulationControl.h"
 #include "simulation/BodyObservation.h"
 
-#include <cmath>
 #include <initializer_list>
-#include <stdexcept>
-#include <variant>
 
 namespace simxr::control
 {

@@ -1,5 +1,5 @@
 #include "app/widgets/SpatialEditor.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/services/ManualInputController.h"
 #include "app/services/PlayerRig.h"
 #include "app/widgets/Controls.h"

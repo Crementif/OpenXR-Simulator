@@ -1,8 +1,7 @@
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/services/PlayerRig.h"
 #include "app/widgets/SpatialEditor.h"
 #include "app/widgets/Theme.h"
-#include <cmath>
 
 namespace simxr::app
 {

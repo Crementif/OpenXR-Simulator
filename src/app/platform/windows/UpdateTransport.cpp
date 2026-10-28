@@ -1,10 +1,9 @@
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/platform/windows/LaunchSupport.h"
 #include "app/platform/windows/UpdateTransport.h"
 #include "app/services/UpdateChecker.h"
 
 #include <winhttp.h>
-#include <stdexcept>
 
 namespace simxr::app
 {

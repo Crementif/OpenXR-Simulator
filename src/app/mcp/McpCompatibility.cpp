@@ -1,12 +1,8 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpCompatibility.h"
 #include "app/mcp/McpSimulation.h"
 #include "math/Math.h"
 #include "simulation/HeadsetProfiles.h"
-
-#include <cmath>
-#include <numbers>
-#include <set>
 
 namespace simxr::app::mcp
 {

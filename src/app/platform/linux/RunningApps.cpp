@@ -1,16 +1,9 @@
 #include "app/platform/RunningApps.h"
 #include "Pch.h"
 
-#include <cerrno>
-#include <cstring>
-#include <filesystem>
-#include <fstream>
-#include <limits>
 #include <poll.h>
-#include <sstream>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <system_error>
 #include <unistd.h>
 
 namespace simxr::app

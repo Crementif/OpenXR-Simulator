@@ -1,8 +1,6 @@
 #include "app/services/RuntimePanelProtocol.h"
 #include "Pch.h"
 
-#include <stdexcept>
-
 namespace simxr::app
 {
 namespace panel

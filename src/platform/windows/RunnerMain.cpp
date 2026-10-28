@@ -2,9 +2,6 @@
 #include "Pch.h"
 #include "platform/windows/InstallUse.h"
 
-#include <cstdio>
-#include <limits>
-#include <stdexcept>
 #include <windows.h>
 
 static std::string Utf8(std::wstring_view value)

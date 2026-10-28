@@ -1,4 +1,4 @@
-#include "Pch.h"
+#include "app/mcp/McpPch.h"
 #include "app/mcp/McpIncident.h"
 #include "app/mcp/McpIncidentAnalysis.h"
 #include "app/mcp/McpIncidentSave.h"
@@ -9,9 +9,6 @@
 #include "control/ProtocolTypes.h"
 #include "control/ControlSchema.h"
 #include "graphics/ColorPixels.h"
-
-#include <atomic>
-#include <cmath>
 
 namespace simxr::app::mcp
 {

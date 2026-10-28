@@ -2,8 +2,6 @@
 #include "Pch.h"
 #include "math/Math.h"
 
-#include <cmath>
-#include <stdexcept>
 #include <tuple>
 
 namespace simxr

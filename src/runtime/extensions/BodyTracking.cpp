@@ -3,10 +3,6 @@
 #include "math/Math.h"
 #include "runtime/validation/StructureChain.h"
 
-#include <cmath>
-#include <limits>
-#include <stdexcept>
-
 namespace simxr
 {
 static bool Has(XrSpaceLocationFlags flags, XrSpaceLocationFlags bits)

@@ -5,11 +5,8 @@
 #include "platform/windows/ModuleReference.h"
 #include "platform/windows/WindowsLibrary.h"
 
-#include <bit>
 #include <d3dcompiler.h>
 #include <dxgi.h>
-#include <limits>
-#include <stdexcept>
 
 namespace simxr
 {

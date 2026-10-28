@@ -8,14 +8,6 @@
 #include "graphics/backends/vulkan/VulkanInspectionDevice.h"
 #include <GL/glext.h>
 #include <GL/wglext.h>
-#include <array>
-#include <bit>
-#include <cmath>
-#include <chrono>
-#include <cstdio>
-#include <cstring>
-#include <stdexcept>
-#include <thread>
 
 #ifdef SIMXR_TEST_WGL_FAILURE
 using MakeCurrentFunction = BOOL(WINAPI*)(HDC, HGLRC);

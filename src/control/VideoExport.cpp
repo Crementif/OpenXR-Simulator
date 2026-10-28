@@ -1,8 +1,6 @@
 #include "control/VideoExport.h"
 #include "Pch.h"
 #include "media/Mp4Video.h"
-#include <chrono>
-#include <stdexcept>
 
 namespace simxr::control
 {

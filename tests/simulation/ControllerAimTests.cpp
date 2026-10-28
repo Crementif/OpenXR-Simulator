@@ -6,9 +6,7 @@
 #include "runtime/SessionPublication.h"
 #include "simulation/TrackingSystem.h"
 
-#include <cstring>
 #include <iostream>
-#include <limits>
 
 namespace simxr::tests
 {

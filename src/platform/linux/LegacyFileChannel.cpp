@@ -2,19 +2,13 @@
 #include "Pch.h"
 #include "json.h"
 
-#include <cerrno>
-#include <cstring>
 #include <fcntl.h>
 #include <linux/fs.h>
 #include <poll.h>
-#include <sstream>
-#include <stdexcept>
 #include <sys/eventfd.h>
 #include <sys/inotify.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
-#include <system_error>
-#include <type_traits>
 #include <unistd.h>
 
 namespace simxr

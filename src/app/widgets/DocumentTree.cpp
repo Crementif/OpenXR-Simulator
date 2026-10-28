@@ -1,9 +1,7 @@
 #include "app/widgets/DocumentTree.h"
-#include "Pch.h"
+#include "app/UiPch.h"
 #include "app/services/RuntimeSession.h"
 #include "control/InspectionDocument.h"
-
-#include <imgui.h>
 
 namespace simxr::app
 {

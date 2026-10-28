@@ -7,10 +7,6 @@
 #include "platform/windows/OpenGLLibrary.h"
 #include <GL/glext.h>
 
-#include <atomic>
-#include <bit>
-#include <cstdio>
-#include <limits>
 #include <new>
 
 namespace simxr::windows

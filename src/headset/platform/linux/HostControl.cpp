@@ -1,9 +1,7 @@
 #include "headset/HostControl.h"
 #include "Pch.h"
 
-#include <cerrno>
 #include <poll.h>
-#include <stdexcept>
 #include <sys/stat.h>
 #include <unistd.h>
 

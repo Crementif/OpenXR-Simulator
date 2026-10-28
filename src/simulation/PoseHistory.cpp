@@ -2,10 +2,7 @@
 #include "Pch.h"
 #include "simulation/TrackingSystem.h"
 
-#include <cmath>
 #include <iterator>
-#include <numbers>
-#include <stdexcept>
 
 namespace simxr
 {

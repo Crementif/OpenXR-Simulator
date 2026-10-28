@@ -4,8 +4,6 @@
 #include "simulation/TrackingSystem.h"
 #include "simulation/BodyObservation.h"
 
-#include <stdexcept>
-#include <type_traits>
 
 namespace simxr
 {
