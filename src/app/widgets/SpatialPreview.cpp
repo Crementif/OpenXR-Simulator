@@ -110,7 +110,6 @@ bool SpatialEditor::DrawPreview(Selection& selection, ImVec2 minimum, ImVec2 max
 				draw->AddCircleFilled(position, radius, color);
 			if (device == selected)
 				draw->AddCircle(position, radius + 3 * scale, color, 32, 2 * scale);
-			// The letter sits on the marker's visual centre; a triangle's is a third of the way back from its tip.
 			const char label[2]{scene.labels[device], 0};
 			const auto letter = ImGui::CalcTextSize(label);
 			const float back = outside ? radius / 3 : 0;

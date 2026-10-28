@@ -780,7 +780,6 @@ int main()
 				Require(retained->Image().mipLevels == 4 && retained->Image().layers == 1 &&
 					retained->Image().extent.width == 8, "Retained OpenGL image lost full mip chain");
 				backend.reset();
-				// Destroy application storage before independent GPU recomposition.
 				glDeleteTextures(1, &app.texture);
 				glGenTextures(1, &app.texture);
 				glBindTexture(GL_TEXTURE_2D, app.texture);

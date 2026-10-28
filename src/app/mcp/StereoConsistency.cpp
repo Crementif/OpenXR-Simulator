@@ -350,7 +350,6 @@ StereoConsistencyReport AnalyzeStereoConsistency(std::span<const std::uint8_t> l
 	for (std::size_t i = 0; i < count; ++i)
 		mask[i] = rawMask[i] && support[i] > .45f;
 
-	// Classify connected rivalry regions against their surrounding surface.
 	std::vector<int> labels(count, 0);
 	std::vector<StereoRegion> regions;
 	const auto warpedBlur = StereoBoxMean(warpedY, width, height, 2, 2);

@@ -318,7 +318,6 @@ void SaveAndReplay(bool dense = false)
 				"Dense body take did not exercise a source larger than one IPC message");
 	}
 #ifdef SIMXR_TEST_AUTOMATION
-	// Reopen from disk as a fresh companion does; replay must recover its original seed.
 	const auto reopened = app::OpenSavedRecording(app::PathText(destination));
 	Require(reopened.seed == saved.savedSeed && reopened.path == app::PathText(destination),
 			"Reopening lost recording metadata");
@@ -567,7 +566,6 @@ void RejectArchive(RecordingHost& host, const std::filesystem::path& directory)
 	runner.Start(std::move(options));
 	runner.Join();
 	const auto result = runner.Snapshot();
-	// Cleanup may release the runner's own inputs, but must not pause or schedule replay.
 	Require(result.phase == automation::RigPhase::Failed && result.transactions == 0 &&
 				result.error.find("complete recording archive") != std::string::npos && mutations <= 1,
 			"Incomplete archive reached replay mutation");

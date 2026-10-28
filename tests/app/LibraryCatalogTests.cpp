@@ -76,7 +76,6 @@ static void CheckCatalog(const std::filesystem::path& root)
 				result.renamed == app::PathText(renamed) && std::filesystem::exists(renamed) &&
 				!std::filesystem::exists(take),
 			"Refresh overwrote a rename result or Unicode path changed");
-	// A refresh requested before the rename starts is satisfied by its final scan.
 	while (catalog.Busy())
 		Finished(catalog);
 	Require(catalog.Delete(app::PathText(renamed)), "Admit delete");

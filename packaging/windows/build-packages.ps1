@@ -46,8 +46,7 @@ try {
     foreach ($relative in @('bin\simxr_companion.exe', 'bin\simxr_mcp_connector.exe',
                             'bin\simxr_runner.exe', 'bin\simxr_install_check.exe',
                             'bin\openxr_simulator.json',
-                            'share\doc\simxr\RELEASE_QUALIFICATION.md',
-                            'share\doc\simxr\AUTOMATION.md', 'share\doc\simxr\MCP_COMPATIBILITY.md',
+                            'share\doc\simxr\BUILDING.md',
                             'share\simxr\branding\openxr-simulator.ico', 'share\licenses\simxr\LICENSE')) {
         if (-not (Test-Path -LiteralPath (Join-Path $stage $relative) -PathType Leaf)) {
             throw "The staged installation is incomplete: $relative"

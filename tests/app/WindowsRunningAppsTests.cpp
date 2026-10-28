@@ -11,7 +11,6 @@ int main()
 	using namespace std::chrono_literals;
 	try
 	{
-		// A custom suffix verifies that the actual server PID comes from the pipe.
 		const auto endpoint = std::string(R"(\\.\pipe\SimXR.Control.DiscoveryTest.)") + std::to_string(GetCurrentProcessId());
 		const auto path = windows::Wide(endpoint);
 		windows::Handle pipe(CreateNamedPipeW(path.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
@@ -22,7 +21,6 @@ int main()
 		const auto found = std::find_if(apps.begin(), apps.end(), [&](const auto& app) { return app.endpoint == endpoint; });
 		Require(found != apps.end() && found->process == GetCurrentProcessId(), "Probe lost the server PID");
 		Require(!found->name.empty() && !found->executable.empty() && found->started.has_value(), "Missing process details");
-		// Leave the connected instance occupied. Discovery must return within its bound.
 		const auto start = std::chrono::steady_clock::now();
 		const auto busy = DiscoverRunningApps(25ms);
 		Require(std::chrono::steady_clock::now() - start < 2s, "Busy pipe probe exceeded its bound");

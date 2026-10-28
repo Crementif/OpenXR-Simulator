@@ -7,8 +7,6 @@
 
 #include <iostream>
 
-// Exercise production transport and image ownership with a controllable consumer.
-// Native imports, queue visibility and GPU lifetime require separate hardware tests.
 namespace simxr::headset::tests
 {
 static unsigned s_alive = 0, s_peak = 0, s_submits = 0;

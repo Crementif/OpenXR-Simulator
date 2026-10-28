@@ -358,8 +358,6 @@ void ScopedInspectionReaders()
 	Require(bounded.Captures().size() == capacity && bounded.Captures().front().scope == reconnect &&
 				bounded.Captures().back().scope == reconnect,
 			"Reconnect catalog recycling exceeded its bound");
-	// Another session in this endpoint can still release its connection-owned
-	// inspection, but its capture must only be retired locally.
 	bounded.Select(101);
 	const auto anotherSessionLocal = bounded.Selected()->local;
 	bounded.SetScope({reconnect.epoch, 99, 1});
@@ -817,8 +815,6 @@ void ActualConnectionAndDebugger()
 		},
 		"Debugger owner did not resume the actual session");
 	Require(debugger.Operations().back().command == 4, "Next command lost monotonic identity");
-	// Exercise the new export owner through its actual asynchronous transport,
-	// not by treating the CPU fixture's memfd as a native GPU image.
 	app::ImageExportTask exporter(requests);
 	std::uint64_t reader = 0;
 	auto retain = debugger.SessionFields();

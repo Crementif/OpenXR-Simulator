@@ -36,10 +36,8 @@ def run(probe):
                     (data / 'control.continue').touch()
                     for frame in range(3, 9):
                         wait_boundary(data / f'rendering.{frame}.ready', host)
-                        # Hold actual work across several display deadlines.
                         time.sleep(.035)
                         (data / f'rendering.{frame}.continue').touch()
-                    # No control round trips or gate waits in the fast workload.
                     for frame in range(9, 183):
                         (data / f'rendering.{frame}.continue').touch()
                     require(host.wait(timeout=15) == 0, 'Probe failed after cadence workflow')

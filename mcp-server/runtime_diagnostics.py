@@ -74,12 +74,10 @@ class RuntimeDiagnostics:
             if state_matches:
                 diagnostics["session_state"] = state_matches[-1]
 
-            # Extract frame count
             frame_matches = re.findall(r"xrEndFrame called \(frame #(\d+)\)", content)
             if frame_matches:
                 diagnostics["frame_count"] = int(frame_matches[-1])
 
-            # Extract swapchain info
             swapchain_matches = re.findall(
                 r"xrCreateSwapchain.*?format=(\w+).*?(\d+)x(\d+)", content
             )
@@ -92,11 +90,9 @@ class RuntimeDiagnostics:
                     }
                 )
 
-            # Extract errors
             error_matches = re.findall(r"\[SimXR\].*?ERROR.*", content, re.IGNORECASE)
             diagnostics["errors"] = error_matches[-10:]  # Last 10 errors
 
-            # Extract warnings
             warning_matches = re.findall(
                 r"\[SimXR\].*?WARNING.*", content, re.IGNORECASE
             )
@@ -108,7 +104,6 @@ class RuntimeDiagnostics:
             if api_match:
                 diagnostics["graphics_api"] = api_match[-1]
 
-            # Get file modification time as last activity
             diagnostics["last_activity"] = datetime.fromtimestamp(
                 log_file.modified
             ).isoformat()
@@ -136,7 +131,6 @@ class RuntimeDiagnostics:
         if status is None:
             if self._artifacts.exists(Artifact.STATUS):
                 return {"error": "Failed to read runtime_status.json"}
-            # Fall back to parsing from log
             return self.diagnostics()
 
         # The runtime leaves the last frame's status behind when it exits, so a caller
@@ -163,7 +157,6 @@ class RuntimeDiagnostics:
 
         symptoms_lower = symptoms.lower()
 
-        # Check for common issues
         if "black" in symptoms_lower or "blank" in symptoms_lower:
             analysis["potential_issues"].append("Blank/black screen in VR view")
             if diagnostics["frame_count"] == 0:
@@ -217,7 +210,6 @@ class RuntimeDiagnostics:
                 "Verify sRGB vs linear color space handling is correct."
             )
 
-        # Add log excerpt for context
         if "error" in logs.lower() or "warning" in logs.lower():
             analysis["log_excerpt"] = self.read_logs(
                 lines=50, filter_pattern=r"(error|warning|fail)"
@@ -308,7 +300,6 @@ class RuntimeDiagnostics:
         tracking = info.get("head_tracking", {})
 
         if not tracking or tracking.get("position") is None:
-            # Parse from recent logs
             logs = self.read_logs(lines=50)
             pos_match = re.search(
                 r"head pos.*?(-?\d+\.?\d*),\s*(-?\d+\.?\d*),\s*(-?\d+\.?\d*)",

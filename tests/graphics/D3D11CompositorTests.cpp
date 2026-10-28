@@ -661,7 +661,6 @@ void VerifyD3D12()
 		Check(backend->Prepare(plan, sources, frame));
 		Check(backend->Submit(frame));
 		VerifyVulkan(frame);
-		// Reuse the same application resources in their release state on the next frame.
 		std::shared_ptr<D3D12Frame> repeated;
 		Check(backend->Prepare(plan, sources, repeated));
 		Check(backend->Submit(repeated));
@@ -820,8 +819,6 @@ int main(int argc, char**)
 			description.ArraySize = 2;
 			description.Format = resourceFormat;
 			description.SampleDesc.Count = samples;
-			// Swapchains need not permit shader views. Exercise two array slices and
-			// multisample resolve through the exact native input used by the runtime.
 			description.BindFlags = D3D11_BIND_RENDER_TARGET;
 			ComPtr<ID3D11Texture2D> source;
 			Check(device->CreateTexture2D(&description, nullptr, &source));
@@ -860,7 +857,6 @@ int main(int argc, char**)
 			plan.draws.push_back(draw);
 			const std::array sources{D3D11CompositionSource{source.Get(), viewFormat},
 				D3D11CompositionSource{source.Get(), viewFormat}};
-			// Verify that executing the private list preserves the application's state.
 			context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
 			std::shared_ptr<D3D11Frame> frame;
 			Check(backend.Prepare(plan, sources, frame));

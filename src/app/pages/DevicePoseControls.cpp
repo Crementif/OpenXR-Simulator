@@ -84,7 +84,6 @@ void DeviceControlPanel::DrawExactPose(int device)
 	};
 	auto angles = toDegrees(pose.orientation);
 	const auto fallbackAngles = toDegrees(fallback.orientation);
-	// Resets only this device's pose; controls and connection stay.
 	const auto reset = [this, device]
 	{
 		if (device == 0)
@@ -265,7 +264,6 @@ void DeviceControlPanel::DrawPlayer()
 	floorText.imbue(std::locale::classic());
 	floorText << std::fixed << std::setprecision(3) << position.x << ", " << position.y << ", " << position.z;
 	floor.text = floorText.str();
-	// One drag per axis, each named in its own box; the group is the one field.
 	ImGui::BeginGroup();
 	ImGui::PushID("Player position");
 	const float gap = ImGui::GetStyle().ItemInnerSpacing.x, width = (ImGui::CalcItemWidth() - gap * 2) / 3;

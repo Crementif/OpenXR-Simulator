@@ -111,8 +111,6 @@ std::shared_ptr<PendingOutput> NewOutput(wire::test::Fixture& fixture, Completio
 }
 void Through(wire::test::Fixture& fixture, DisplayTick tick)
 {
-	// Manual display stepping can already be ahead of the next XR prediction.
-	// Observe the newly submitted update at one new eligible tick in that case.
 	if (fixture.session->Display().NextTick() > tick)
 		tick = fixture.session->Display().NextTick();
 	while (fixture.session->Display().NextTick() <= tick)

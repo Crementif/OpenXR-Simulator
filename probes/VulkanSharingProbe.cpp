@@ -155,7 +155,6 @@ static void ProveCrossProcess(VkPhysicalDevice physicalDevice, std::uint32_t fam
 	if (complete != 3)
 		throw std::runtime_error("Consumer retention proof failed");
 	consumer.Join();
-	// A repeated join must never wait for or reap another child process.
 	consumer.Join();
 }
 

@@ -17,20 +17,14 @@ struct LaunchRestartRequest
 	LaunchProfile profile;
 	std::uint64_t process = 0;
 };
-// The launch profile editor: profiles on the left, the selected one's form on
-// the right. Valid edits are stored as they are made.
 class LaunchProfilesDialog
 {
   public:
 	LaunchProfilesDialog();
 	LaunchProfilesDialog(const LaunchProfilesDialog&) = delete;
 	LaunchProfilesDialog& operator=(const LaunchProfilesDialog&) = delete;
-	// Loads a stored profile into the editor; -1 starts a new one.
 	void Edit(const CompanionSettings& settings, int index);
-	// Stores a new profile made from an existing launch (a recent app) under a
-	// unique name and edits it. Returns true when settings changed.
 	bool Create(CompanionSettings& settings, const LaunchProfile& launch);
-	// The edited profile.
 	LaunchProfile Profile() const;
 	int Selected() const noexcept
 	{
@@ -70,7 +64,6 @@ class LaunchProfilesDialog
 	bool TakePath();
 	std::string NameProblem(const CompanionSettings& settings) const;
 	std::string EnvironmentProblem() const;
-	// Stores the form when it is valid; returns true when settings changed.
 	bool Store(CompanionSettings& settings);
 	void DrawList(CompanionSettings& settings, bool& changed);
 	bool DrawForm(CompanionSettings& settings, const LaunchSnapshot& process, bool& changed,

@@ -65,7 +65,6 @@ def run(probe, cancelled, failed=False, mode='controlled', overrun=False, hdr=Fa
                     time.sleep(.01)
                 (data / 'control.continue').touch()
                 require(writing.wait(10), f'No frame reached persistence: {errors}')
-                # A full single-slot writer must prevent any subsequent admission.
                 before = observer.status(session)['pipeline']
                 time.sleep(.15)
                 after = observer.status(session)['pipeline']

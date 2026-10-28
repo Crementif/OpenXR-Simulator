@@ -23,7 +23,6 @@ def verify(path, first, last):
                                    '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'])
     require(len(raw) == width * height * 3 * (last - first + 1), 'Decoded size differs')
     for index, frame in enumerate(range(first, last + 1)):
-        # Inspect the 64x48 left eye within the encoder's padded extent.
         offset = (index * width * height + 24 * width + 32) * 3
         expected = (0, 0, 0) if frame < 3 else (0, 255, 0) if frame % 2 == 0 else (255, 0, 0)
         require(all(abs(a-b) <= 6 for a,b in zip(raw[offset:offset+3], expected)),

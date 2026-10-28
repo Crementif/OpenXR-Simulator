@@ -11,8 +11,6 @@ namespace simxr::app
 {
 class DocumentTree;
 class RuntimeSession;
-// Inspector page for one selected frame: images, inputs, actions, layers and
-// timing as the runtime recorded them.
 class FramePage
 {
   public:

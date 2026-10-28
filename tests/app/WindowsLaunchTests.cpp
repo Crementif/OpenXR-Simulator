@@ -253,7 +253,6 @@ void LaunchTests()
 	const auto originalRuntime = windows::Environment("XR_RUNTIME_JSON");
 	LaunchProfile profile;
 	profile.name = "Unicode literal launch";
-	// Exercise spaces and Unicode in the executable's own path as well as cwd and argv.
 	const auto executable = directory.path / L"child 日本語 with spaces.exe";
 	std::filesystem::copy_file(Executable(), executable);
 	profile.executable = Utf8(executable);

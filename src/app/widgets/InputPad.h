@@ -10,13 +10,7 @@ namespace simxr::app
 // Idle and disabled widgets preserve observed values. The caller releases its
 // held inputs when hiding the pad or revoking input ownership.
 
-// Horizontal analog bar: drag sets the value, click-and-hold is fully pressed.
-// Right-click latches at the value under the mouse.
 bool TriggerBar(const char* id, const char* label, float& value, bool& latched, ImU32 color, float width);
-// Round button pressed while the mouse holds it.
 bool HoldButton(const char* id, const char* label, bool& pressed, bool& latched, ImU32 color);
-// Thumbstick: an arrow pushes the stick fully that way while held, as for menu
-// navigation; dragging steers it freely. It springs back unless latched.
-// Clicking the knob without dragging presses the stick.
 bool StickPad(const char* id, float& x, float& y, bool& click, bool& latched, ImU32 color);
 } // namespace simxr::app

@@ -390,8 +390,6 @@ void ScenarioOriginAndSharedCoreReplay()
 	auto recording = rigs::DecodeRecordingPage(Page(source.Commands().Recorder(), 0, 16)).recording;
 	Require(recording.transactions.size() == 1, "Initial scenario history was duplicated in transactions");
 
-	// Destination holds unrelated failures on the same source. Initial replay
-	// must explicitly clear them; taking already-owned channels does not do so.
 	submit(destination, 1, 1,
 		   {TakeControl{ControlChannel::Body}, SetScenario{FailureScenario::BodyUnavailable, true},
 			TakeControl{ControlChannel::Gaze}, SetScenario{FailureScenario::GazeUnavailable, true},

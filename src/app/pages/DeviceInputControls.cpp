@@ -78,7 +78,6 @@ void DeviceControlPanel::DrawInputPad(std::uint32_t hand)
 	auto& latched = m_latches[hand];
 	const auto previous = controls;
 	const auto color = hand ? theme::Right : theme::Left;
-	// Face button names follow the interaction profile.
 	const std::string_view profile = m_controllerProfiles[hand].data();
 	const bool touch = profile.find("oculus") != std::string_view::npos ||
 					   profile.find("meta") != std::string_view::npos || profile.find("pico") != std::string_view::npos;
@@ -125,7 +124,6 @@ void DeviceControlPanel::DrawInputPad(std::uint32_t hand)
 	continuous |= stick && ImGui::IsItemActive();
 	const float stickHeight = ImGui::GetItemRectSize().y;
 	ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x * 2);
-	// Trigger, grip and the face buttons, centred beside the stick.
 	const float unit = ImGui::GetFontSize() / 17, spacing = ImGui::GetStyle().ItemSpacing.y;
 	ImGui::SetCursorPosY(top + std::max(0.0f, (stickHeight - (24 * 2 + 34) * unit - spacing * 2) / 2));
 	ImGui::BeginGroup();
@@ -147,7 +145,6 @@ void DeviceControlPanel::DrawInputPad(std::uint32_t hand)
 	ImGui::SameLine();
 	changed |= InputField("Menu", HoldButton("Menu", "M##Menu", controls.menu, latched.menu, color));
 	held(holds.menu);
-	// Release-all sits at the row's right end, centred on the round buttons.
 	const float buttonRow = ImGui::GetItemRectSize().y;
 	ImGui::SameLine(width - ImGui::GetFrameHeight());
 	ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (buttonRow - ImGui::GetFrameHeight()) / 2);

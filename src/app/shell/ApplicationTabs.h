@@ -20,7 +20,6 @@ class UiRenderer;
 class Window;
 class WorkspacePanels;
 
-// Owns application workspaces and routes shared-window input to one of them.
 class ApplicationTabs : public ApplicationCatalog
 {
   public:
@@ -29,7 +28,6 @@ class ApplicationTabs : public ApplicationCatalog
 	~ApplicationTabs();
 	RuntimePanels& ActiveRuntime();
 	WorkspacePanels& ActiveWorkspace();
-	// Opens a newly discovered application, or selects its existing tab.
 	void OpenApplication(RunningApp app);
 	std::uint64_t LaunchApplication(const LaunchProfile& profile) override;
 	void RequestApplicationClose(std::uint64_t id) override;

@@ -32,7 +32,7 @@ def main():
     manifests = [Path(path) / "VkLayer_khronos_validation.json" for path in layers if path]
     versions = [json.loads(path.read_text())["layer"]["api_version"] for path in manifests if path.is_file()]
     if not versions or any(tuple(map(int, version.split("."))) < (1, 4, 363) for version in versions):
-        parser.error("Set VK_LAYER_PATH and LD_LIBRARY_PATH to SDK 1.4.363 or newer; see COMPANION_CONNECTION.md")
+        parser.error("Set VK_LAYER_PATH and LD_LIBRARY_PATH to SDK 1.4.363 or newer")
     output, build = args.output.resolve(), args.build.resolve()
     data = output / "session"
     if len(os.fsencode(data / "control.2147483647.sock")) >= 108:

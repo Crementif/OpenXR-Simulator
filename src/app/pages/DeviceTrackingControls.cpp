@@ -102,7 +102,6 @@ void DeviceControlPanel::DrawTrackers()
 	}
 	else
 	{
-		// One chip per tracker, named by its role.
 		ImGui::PushID("Tracker chips");
 		const float right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
 		for (int slot = 0; slot < static_cast<int>(m_authoredTracking.trackers.size()); ++slot)

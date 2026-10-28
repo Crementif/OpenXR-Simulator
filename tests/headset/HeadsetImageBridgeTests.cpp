@@ -130,7 +130,6 @@ static void DeliveryLifecycle()
 	bridge.Stop();
 	Require(!request(), "Stopped bridge accepted work");
 
-	// The real service rejects incompatible completion primitives before exposure.
 	HeadsetImageBridge incompatible(source);
 	select(next);
 	const auto newest = fixture.Submit();
@@ -143,7 +142,6 @@ static void DeliveryLifecycle()
 		});
 	Require(fixture.state->shares == 2, "Incompatible completion primitive exposed native handles");
 
-	// Shutdown must wake the worker even when the GPU owner has not acknowledged.
 	HeadsetImageBridge pending(source);
 	fixture.state->consumerPhase = CompletionStatus::Pending;
 	Require(pending.Request(control::test::Description().identity, completion, 0, ImageCompletionKind::Fence),

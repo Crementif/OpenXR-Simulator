@@ -1,8 +1,6 @@
 #pragma once
 #include "graphics/SnapshotBudget.h"
 
-// CPU-only service/transport fixture. Its memfd and pipe are deliberately not
-// Vulkan image/semaphore handles; native GPU qualification lives in the probes.
 #include "../TestSupport.h"
 #include "control/ControlSchema.h"
 #include "control/ControlService.h"

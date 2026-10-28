@@ -159,8 +159,6 @@ void Exercise(ContextFixture& fixture)
 	GLuint unpackBuffer = 0;
 	genBuffers(1, &unpackBuffer);
 	bindBuffer(UnpackBuffer, unpackBuffer);
-	// Allocate storage across native context migration; allocation must
-	// preserve this binding and every unpack parameter.
 	Procedure<PFNGLBUFFERDATAPROC>("glBufferData")(UnpackBuffer, 32768, nullptr, GL_STATIC_DRAW);
 	std::array<GLuint, 2> hostTextures{};
 	glGenTextures(static_cast<GLsizei>(hostTextures.size()), hostTextures.data());
@@ -215,8 +213,6 @@ void Exercise(ContextFixture& fixture)
 		  XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED);
 	Check(!rejected && owner.get() == preserved);
 
-	// A context bound on another thread is unavailable, not permission to delete
-	// names in whichever context happens to be current on the calling thread.
 	Check(wglMakeCurrent(nullptr, nullptr));
 	const auto hostContext = wglCreateContext(fixture.Device());
 	Check(hostContext && wglMakeCurrent(fixture.Device(), hostContext));
@@ -268,7 +264,6 @@ void Exercise(ContextFixture& fixture)
 	Check(!glIsTexture(first));
 	Check(owner->Close());
 
-	// Array depth and all mip levels remain the actual submitted description.
 	description = Description();
 	description.arraySize = 2;
 	description.createFlags = XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT;
@@ -323,8 +318,6 @@ void Exercise(ContextFixture& fixture)
 	description.sampleCount = 1;
 	Check(s_debugErrors == 0);
 	Procedure<PFNGLDEBUGMESSAGECALLBACKPROC>("glDebugMessageCallback")(nullptr, nullptr);
-	// A pre-existing GL error is observed once and fails creation; it is never
-	// silently drained into a successful, misleading allocation result.
 	glEnable(0xFFFFFFFF);
 	Check(OpenGLSwapchain::Create(fixture.Device(), fixture.Context(), description, owner) == XR_ERROR_RUNTIME_FAILURE);
 	Check(!owner && glGetError() == GL_NO_ERROR);

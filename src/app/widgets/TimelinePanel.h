@@ -13,17 +13,14 @@ namespace simxr::app
 {
 class RuntimePanels;
 struct RuntimeView;
-// Transport, retained-frame navigation and bounded, explicitly observed events.
 class TimelinePanel
 {
   public:
-	// Folded draws one row: transport, LIVE and the frame rate.
 	bool Draw(RuntimePanels& runtime, ShellState& shell, bool folded);
 	static float FoldedHeight(float scale)
 	{
 		return 36 * scale;
 	}
-	// Screen rectangle of the Library drawer below the transport; empty while it is closed.
 	ShellRect DrawerRect() const
 	{
 		return m_drawer;
@@ -32,28 +29,23 @@ class TimelinePanel
 					bool matchesTarget);
 	void Observe(const RuntimeView& runtime);
 	void SavedRecording(std::string path, const RuntimeView& runtime);
-	// A take is about to replay; when it was cut from history, its source is drawn over the replay.
 	void ReplayTake(const std::string& path, const RuntimeView& state, std::uint64_t scriptRun);
 
   private:
-	// Markers keep their frame's run identity; the canvas time orders them.
 	struct Marker
 	{
 		HistoryFrame frame;
 		std::string name;
 	};
-	// Source frames of a take cut from history, and where its replay began.
 	struct Ghost
 	{
 		TakeSource source;
-		// The predecessor belongs to the target run; earlier driven frames are not the replay.
 		RuntimeFrameRun target;
 		std::uint64_t afterFrame = 0, scriptRun = 0;
 		std::optional<HistoryFrame> anchor;
 	};
 	void Play(RuntimePanels& runtime, const std::string& path);
 	void DrawGhost(const HistoryStore& history);
-	// The frame-rate meter in the LIVE column: numbers, and a sparkline when there is room.
 	void DrawMeter(const HistoryStore& history, const RuntimeView& state, ShellRect area, bool oneRow);
 	void DrawLegend();
 	std::map<double, Marker> m_markers;

@@ -4,9 +4,6 @@
 
 namespace simxr::app
 {
-// Icons come from the SVG set in resources/icons, compiled into the binary and
-// drawn as tinted vector paths so they scale with the UI. They always
-// accompany a word or a tooltip.
 enum class Icon
 {
 	Play,
@@ -55,6 +52,5 @@ enum class Icon
 	History,
 	Fullscreen,
 };
-// Draws an icon centred on center inside a square of the given side length.
 void DrawIcon(ImDrawList* draw, Icon icon, ImVec2 center, float size, ImU32 color);
 } // namespace simxr::app

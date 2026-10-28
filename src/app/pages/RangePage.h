@@ -13,12 +13,10 @@
 namespace simxr::app
 {
 class RuntimeSession;
-// Inspector page for a selected range of frames.
 class RangePage
 {
   public:
 	explicit RangePage(RuntimeSession& session) : m_session(session), m_export(session) {}
-	// Returns a take to play when one was saved and the user asked to play it.
 	std::optional<automation::SavedRecording> Draw(const RangeSel& range, ShellState& shell);
 	void Poll()
 	{
@@ -28,7 +26,6 @@ class RangePage
 	{
 		return m_export.Busy();
 	}
-	// The take whose save notice's Play was pressed.
 	std::optional<automation::SavedRecording> TakePlayRequest()
 	{
 		return std::exchange(m_play, {});

@@ -106,7 +106,6 @@ def main():
                         require(status['manual'] == baseline['manual'] == False and
                                 status['pipeline']['permits'] == baseline['pipeline']['permits'],
                                 'Historical readers changed application admission')
-                        # Optional history yields its cached readers before debugger retention.
                         lease = client.acquire(session)
                         paused = command(client, lease, CommandKind.PAUSE)
                         for capture in paused.get('captures', []):

@@ -96,7 +96,6 @@ static std::string Capitals(const char* label)
 			character = static_cast<char>(character - 'a' + 'A');
 	return text;
 }
-// Room above a section, except at the top of its window.
 static void SectionGap()
 {
 	if (ImGui::GetCursorPosY() > ImGui::GetCursorStartPos().y + 1)
@@ -183,7 +182,6 @@ bool RailItem(const char* label, Icon icon, bool selected, const RailStatus& sta
 		draw->AddCircleFilled({iconX + iconSize / 2, minimum.y + height / 2 + iconSize / 2 - 2 * unit}, 3.5f * unit,
 							  ImGui::GetColorU32(status.dot));
 	const float textX = iconX + iconSize / 2 + 8 * unit;
-	// An icon-only rail names the row in its tooltip.
 	const bool named = !status.iconOnly;
 	if (named)
 		draw->AddText({textX, minimum.y + (height - ImGui::GetFontSize()) / 2},

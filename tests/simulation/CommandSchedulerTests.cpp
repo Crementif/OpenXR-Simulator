@@ -462,7 +462,6 @@ void ImmutableRecordingPublication()
 	CommandScheduler scheduler;
 	scheduler.Start(17);
 	scheduler.Recorder().Start({17});
-	// Isolate the full-recorder boundary without requiring 1,024 XR admissions.
 	std::vector<CommandOutcome> priorOutcomes(1024);
 	Require(scheduler.Recorder().Observe(priorOutcomes), "Fill the bounded recorder exactly");
 	scheduler.Submit(Request(1, 1, {TakeControl{ControlChannel::Head}, SetHeadPose{Pose(8)}}));

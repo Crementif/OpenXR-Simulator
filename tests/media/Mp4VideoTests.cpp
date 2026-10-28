@@ -15,7 +15,6 @@ int main()
 {
 	try
 	{
-		// Minimal NAL units test the container contract, not decoder conformance.
 		const std::array<std::uint8_t, 22> picture{0, 0,	0,	  1, 0x67, 77, 0, 31,	0x80, 0,	0,
 												   1, 0x68, 0x80, 0, 0,	   0,  1, 0x65, 0x88, 0x84, 0x80};
 		std::array<simxr::VideoSample, 2> samples{{{{picture, 256, 128}, 1000}, {{picture, 256, 128}, 2000}}};

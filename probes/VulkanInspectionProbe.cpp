@@ -818,8 +818,6 @@ static std::shared_ptr<VulkanInspectionFrame> EarlyClose(VulkanBackend& backend,
 		Require(closed == VK_SUCCESS || closed == VK_TIMEOUT, "Unexpected zero-time inspection close failure");
 		firstTerminal = output->PollCompletion();
 		Require(firstTerminal != CompletionStatus::Pending, "Closed inspection left a nonterminal output");
-		// Explicitly exercise concurrent post-worker control paths. A timed-out
-		// copy still needs retirement, even though its public result is terminal.
 		std::latch ready(3), start(1);
 		std::future<VkResult> firstDrain, secondDrain, repeatedClose;
 		const auto awaitWorkers = [&]
@@ -1058,7 +1056,6 @@ static RawRetention CaptureRaw(Device& device, const VulkanBinding& binding,
 		retained.frames.push_back(std::move(output));
 		retained.readers.push_back(std::move(*reader));
 	}
-	// Replace every source byte; retained outputs must still describe their original views.
 	{
 		Commands work(device);
 		VulkanImageBarrier(work.Handle(), *source, source->ApplicationLayout(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -1560,8 +1557,6 @@ static bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& 
 														return result;
 													}) == XR_SUCCESS,
 						"Commit captured owned transfer at actual producer acceptance");
-				// No WaitFrame/BeginFrame/EndFrame occurs from here until capture
-				// readiness: the owned queue and controller worker progress independently.
 				const auto completed = capture.AwaitOperation(capture.m_step);
 				Require(completed.progress == DebugProgress::SnapshotReady && completed.capture == capture.m_capture,
 						"Controller did not observe independently completed owned copy");
@@ -1623,8 +1618,6 @@ static bool Run(bool verify, const std::shared_ptr<VulkanInspectionValidation>& 
 			UnknownCompletion("unknown inspection failure may retain borrowed-device resources");
 		}
 	}
-	// Both the borrowed device/instance and the inspection service have now gone.
-	// Private outputs retain their independent device and explicit export queue.
 	AwaitComplete(*retained);
 	AwaitComplete(*resized);
 	Require(closedOutput && closedOutput->PollCompletion() != CompletionStatus::Pending,

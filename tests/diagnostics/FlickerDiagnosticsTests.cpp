@@ -72,7 +72,6 @@ void ClassificationAndDrain()
 		diagnostics.ObservePreview(pixels.data(), 8, 4, 256, frame, frame);
 		diagnostics.ObservePaint(frame, true);
 	}
-	// A repeated generation must not read pixels at all.
 	diagnostics.ObservePreview(reinterpret_cast<const uint8_t*>(1), 8, 4, 256, 5, 6);
 	Require(diagnostics.Status().preview.previewSamples == 5, "Repeated generation is ignored before reading pixels");
 	Require(std::abs(diagnostics.Status().preview.metrics.mean - 128.0f / 255.0f) < 0.00001f,

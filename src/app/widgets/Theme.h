@@ -22,13 +22,10 @@ inline constexpr ImU32 Warn = IM_COL32(229, 181, 58, 255);
 inline constexpr ImU32 Left = IM_COL32(108, 168, 255, 255);
 inline constexpr ImU32 Right = IM_COL32(255, 138, 101, 255);
 inline constexpr ImU32 Head = IM_COL32(201, 167, 255, 255);
-// Dark ink for labels drawn on top of coloured markers.
 inline constexpr ImU32 Ink = IM_COL32(14, 20, 27, 255);
-// 3D axis colours for gizmos, the rig view and the rotation ball.
 inline constexpr ImU32 AxisX = IM_COL32(229, 72, 77, 255);
 inline constexpr ImU32 AxisY = IM_COL32(61, 190, 122, 255);
 inline constexpr ImU32 AxisZ = IM_COL32(76, 141, 255, 255);
-// Brighter axis variants for small text, including disabled numeric controls.
 inline constexpr ImU32 AxisTextX = IM_COL32(255, 145, 150, 255);
 inline constexpr ImU32 AxisTextY = IM_COL32(126, 223, 170, 255);
 inline constexpr ImU32 AxisTextZ = IM_COL32(145, 185, 255, 255);
@@ -36,7 +33,6 @@ inline constexpr ImU32 AxisTextZ = IM_COL32(145, 185, 255, 255);
 inline constexpr float ControlHeight = 28;
 inline constexpr float Radius = 4;
 
-// The same colour with its alpha multiplied by opacity (0..1).
 constexpr ImU32 Fade(ImU32 color, float opacity)
 {
 	const auto alpha = static_cast<float>((color >> IM_COL32_A_SHIFT) & 0xFF) * opacity;
@@ -45,12 +41,10 @@ constexpr ImU32 Fade(ImU32 color, float opacity)
 																		  : alpha)
 										 << IM_COL32_A_SHIFT);
 }
-// Linear blend between two colours, t in 0..1.
 ImU32 Mix(ImU32 from, ImU32 to, float t);
 inline ImVec4 Vec(ImU32 color)
 {
 	return ImGui::ColorConvertU32ToFloat4(color);
 }
-// Applies the tokens to an ImGui style at base (unscaled) metrics.
 void Apply(ImGuiStyle& style);
 } // namespace simxr::app::theme

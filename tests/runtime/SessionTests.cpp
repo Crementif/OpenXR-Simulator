@@ -135,7 +135,6 @@ void TestConcurrentNativeControlSynchronization()
 	{
 		nativeControls[1].trigger = syncCount % 2 ? 0.25f : 0.75f;
 		const auto result = session.SyncActions(sync, nativeControls);
-		// Always release the finite frame worker before any assertion can throw.
 		if (syncCount == 0)
 			nativeSyncStarted.count_down();
 		Require(result == XR_SUCCESS, "Native controls raced frame time during xrSyncActions");
@@ -802,7 +801,6 @@ void TestLayerViewCapture()
 				"Raw snapshot substituted composed output or lost metadata");
 		Require(session.Captures().Release(capture.id), "Release selected target");
 		session.Close();
-		// Each independent target also exercises retained-reader ownership at close.
 		Require(pool.InUse() == 2, "Closing session erased active raw/composed readers");
 	}
 }
@@ -1139,7 +1137,6 @@ void TestQuadHistoryWithoutSnapshotCapacity()
 	using namespace simxr;
 	const auto previousBudget = SnapshotBudget::MiB();
 	SnapshotBudget::Configure(SnapshotBudget::MinMiB);
-	// Run last: the largest observed image allocation remains process-wide.
 	SnapshotBudget::ObserveImageBytes(64 * 1024 * 1024);
 	Require(SnapshotBudget::Capacity() == 0, "Large images exhaust exact snapshot admission");
 	for (const bool historyEnabled : {false, true})
@@ -1349,7 +1346,6 @@ void TestLateCaptureBudgetPromotion()
 	Require(session.PrepareCaptureProducer(key, retry) == XR_ERROR_LIMIT_REACHED && !retry,
 			"Failed output reader ceased to account for retained capacity");
 	output.reset();
-	// The observer above is deliberately another reservation reader.
 	Require(debug.InUse() == 1, "Late promotion lost explicit reservation reader ownership");
 	original.reset();
 	Require(debug.InUse() == 0 && session.PrepareCaptureProducer(key, retry) == XR_SUCCESS && retry &&

@@ -1,4 +1,3 @@
-// Windows OpenXR loader entry points and native runtime composition.
 
 #define XR_USE_PLATFORM_WIN32
 #define XR_USE_GRAPHICS_API_D3D11
@@ -620,8 +619,6 @@ static XrResult XRAPI_PTR xrGetVulkanGraphicsDevice2KHR_runtime(XrInstance insta
 	return native->vulkan.PhysicalDevice(getInfo->systemId, getInfo->vulkanInstance, out);
 }
 
-// Thin passthrough: the app's own vkCreateInstance runs, with the interop extensions the
-// runtime needs appended to whatever it asked for.
 static XrResult XRAPI_PTR xrCreateVulkanInstanceKHR_runtime(XrInstance instance,
 															const XrVulkanInstanceCreateInfoKHR* createInfo,
 															VkInstance* vulkanInstance, VkResult* vulkanResult)
@@ -1130,7 +1127,6 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
 			native.usesD3D12 = false;
 			native.d3d12Device.Reset();
 			native.d3d12Queue.Reset();
-			// The shared adapter publishes GPU images to the companion.
 			return publish();
 		}
 		else if (entry->type == XR_TYPE_GRAPHICS_BINDING_D3D12_KHR)
@@ -1155,7 +1151,6 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
 								 !owner->core->Extensions().Contains(XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME)))
 				return XR_ERROR_GRAPHICS_DEVICE_INVALID;
 			// XR_TYPE_GRAPHICS_BINDING_VULKAN2_KHR is an alias of this, so one branch serves
-			// XR_KHR_vulkan_enable and XR_KHR_vulkan_enable2 alike.
 			simxr::VulkanBinding binding{};
 			{
 				std::lock_guard lock(owner->graphicsMutex);
@@ -1441,7 +1436,6 @@ static XrResult XRAPI_PTR xrAcquireSwapchainImage_runtime(XrSwapchain sc, const 
 	*index = i;
 
 	const auto acquireCount = ++native->acquireCount;
-	// Log initial acquisition and sample recurring calls only in verbose mode.
 	if (acquireCount <= 4 || (s_logVerbose && acquireCount % 60 == 1))
 	{
 		Logf("[SimXR] xrAcquireSwapchainImage: sc=0x%llX idx=%u (format=%lld, %ux%u)",
@@ -2317,7 +2311,6 @@ static const simxr::DispatchEntry s_functions[] = {
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetD3D12GraphicsRequirementsKHR_runtime>::Invoke)},
 	{"xrGetOpenGLGraphicsRequirementsKHR",
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetOpenGLGraphicsRequirementsKHR_runtime>::Invoke)},
-	// XR_KHR_vulkan_enable
 	{"xrGetVulkanGraphicsRequirementsKHR",
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetVulkanGraphicsRequirementsKHR_runtime>::Invoke)},
 	{"xrGetVulkanInstanceExtensionsKHR",
@@ -2326,7 +2319,6 @@ static const simxr::DispatchEntry s_functions[] = {
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetVulkanDeviceExtensionsKHR_runtime>::Invoke)},
 	{"xrGetVulkanGraphicsDeviceKHR",
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetVulkanGraphicsDeviceKHR_runtime>::Invoke)},
-	// XR_KHR_vulkan_enable2
 	{"xrGetVulkanGraphicsRequirements2KHR",
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetVulkanGraphicsRequirements2KHR_runtime>::Invoke)},
 	{"xrCreateVulkanInstanceKHR",
@@ -2337,7 +2329,6 @@ static const simxr::DispatchEntry s_functions[] = {
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetVulkanGraphicsDevice2KHR_runtime>::Invoke)},
 	{"xrRequestExitSession",
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrRequestExitSession_runtime>::Invoke)},
-	// Space functions
 	{"xrCreateReferenceSpace",
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrCreateReferenceSpace_runtime>::Invoke)},
 	{"xrDestroySpace", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrDestroySpace_runtime>::Invoke)},
@@ -2346,7 +2337,6 @@ static const simxr::DispatchEntry s_functions[] = {
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrEnumerateReferenceSpaces_runtime>::Invoke)},
 	{"xrCreateActionSpace",
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrCreateActionSpace_runtime>::Invoke)},
-	// Action functions
 	{"xrCreateActionSet", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrCreateActionSet_runtime>::Invoke)},
 	{"xrDestroyActionSet",
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrDestroyActionSet_runtime>::Invoke)},
@@ -2365,17 +2355,14 @@ static const simxr::DispatchEntry s_functions[] = {
 	{"xrGetActionStateVector2f",
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetActionStateVector2f_runtime>::Invoke)},
 	{"xrSyncActions", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrSyncActions_runtime>::Invoke)},
-	// Path functions
 	{"xrStringToPath", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrStringToPath_runtime>::Invoke)},
 	{"xrPathToString", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrPathToString_runtime>::Invoke)},
-	// Interaction functions
 	{"xrGetCurrentInteractionProfile",
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetCurrentInteractionProfile_runtime>::Invoke)},
 	{"xrEnumerateBoundSourcesForAction",
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrEnumerateBoundSourcesForAction_runtime>::Invoke)},
 	{"xrGetInputSourceLocalizedName",
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetInputSourceLocalizedName_runtime>::Invoke)},
-	// Utility functions
 	{"xrResultToString", reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrResultToString_runtime>::Invoke)},
 	{"xrStructureTypeToString",
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrStructureTypeToString_runtime>::Invoke)},
@@ -2383,12 +2370,10 @@ static const simxr::DispatchEntry s_functions[] = {
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetReferenceSpaceBoundsRect_runtime>::Invoke)},
 	{"xrGetViewConfigurationProperties",
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrGetViewConfigurationProperties_runtime>::Invoke)},
-	// Haptic functions
 	{"xrApplyHapticFeedback",
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrApplyHapticFeedback_runtime>::Invoke)},
 	{"xrStopHapticFeedback",
 	 reinterpret_cast<PFN_xrVoidFunction>(simxr::AbiBoundary<xrStopHapticFeedback_runtime>::Invoke)},
-	// Time conversion functions
 	{"xrConvertWin32PerformanceCounterToTimeKHR",
 	 reinterpret_cast<PFN_xrVoidFunction>(
 		 simxr::AbiBoundary<xrConvertWin32PerformanceCounterToTimeKHR_runtime>::Invoke)},

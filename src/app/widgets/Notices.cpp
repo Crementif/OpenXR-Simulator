@@ -63,7 +63,6 @@ void Notices::Draw(ShellRect area)
 	if (ImGui::Begin("##Notices", nullptr, flags))
 	{
 		auto* draw = ImGui::GetWindowDrawList();
-		// Each notice is a card: the content first, then its backing behind it on the lower channel.
 		for (std::size_t index = m_entries.size(); index-- > 0;)
 		{
 			const auto& notice = m_entries[index].notice;
@@ -86,7 +85,6 @@ void Notices::Draw(ShellRect area)
 			ImGui::TextUnformatted(notice.title.c_str());
 			ImGui::PopTextWrapPos();
 			const bool titleHovered = ImGui::IsItemHovered();
-			// A short detail reads in place; a long one waits in the tooltip and the history.
 			const auto newline = notice.detail.find('\n');
 			const bool brief =
 				!notice.detail.empty() && newline == std::string::npos && notice.detail.size() <= 48 &&

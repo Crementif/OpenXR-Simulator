@@ -22,7 +22,6 @@ class DeviceControlPanel
 {
   public:
 	explicit DeviceControlPanel(PlayerRig& rig);
-	// placement draws the spatial editors; hand pages put it below the input pad.
 	std::optional<SimulationEdit> Draw(bool supported, const Selection* selection = nullptr,
 									   const std::function<void()>& placement = {});
 	void ClearHeldInputs();
@@ -45,9 +44,7 @@ class DeviceControlPanel
 	void ResetObservations();
 	void ObserveDelivery(bool pending, const std::string& error);
 	std::optional<SimulationEdit> DrawAdvanced();
-	// The session's failure scenarios as menu items: Unfocused, Hidden and a confirmed session loss.
 	std::optional<SimulationEdit> DrawSessionMenu();
-	// Live state and Reset controls; historical pages omit live state.
 	std::optional<SimulationEdit> DrawHeader(const Selection& selection, bool showState = true);
 
   private:
@@ -60,9 +57,7 @@ class DeviceControlPanel
 	void DrawOwnership();
 	void LoadObservedSettings();
 	void DrawOwner(ControlChannel channel, bool takeover = true);
-	// A failure scenario of this channel is active; its fields are read only meanwhile.
 	bool ScenarioActive(ControlChannel channel) const;
-	// Compact device state menu beside the page title.
 	void DrawTracking(DevicePage page);
 	void ReloadRecoveredChannel(ControlChannel channel);
 	void DrawPlayer();
@@ -90,12 +85,9 @@ class DeviceControlPanel
 	std::set<std::string> m_pendingFields, m_rejectedFields;
 	std::string m_deliveryError, m_fieldScope;
 	double m_rejectedUntil = 0;
-	// Marks a field edited and draws its live state; value adds reset, nudge and copy (FieldActions).
 	bool Field(const char* key, bool changed, bool continuous = false, const FieldValue& value = {});
-	// Pad inputs are momentary and show their own state: only a rejection is drawn on them.
 	bool InputField(const char* key, bool changed);
 	bool m_replaceOwner = false, m_exactAnchor = false;
-	// Per device page: the rotation shown as a quaternion instead of angles.
 	std::array<bool, MaxTrackerDevices + 3> m_quaternionView{};
 	bool m_configurationLoaded = false;
 	std::optional<ObservedSetup> m_observed;

@@ -42,10 +42,9 @@ def read_prefix(stream, limit=1024 * 1024):
     return stream.read(limit)
 
 
-def validate_archive(path, root, windows, qualification, version):
+def validate_archive(path, root, windows, version):
     common = ("README.txt", "bin/openxr_simulator.json", "include/simxr/game_bridge.h",
-              "share/doc/simxr/RELEASE_QUALIFICATION.md", "share/doc/simxr/AUTOMATION.md",
-              "share/doc/simxr/MCP_COMPATIBILITY.md", "share/simxr/rigs/pose_sweep.luau",
+              "share/doc/simxr/BUILDING.md", "share/simxr/rigs/pose_sweep.luau",
               "share/simxr/sdk/python/pyproject.toml", "share/simxr/sdk/python/simxr_control/client.py", *LICENSES)
     if windows:
         binaries = ("bin/simxr_companion.exe", "bin/simxr_mcp_connector.exe", "bin/simxr_runner.exe",
@@ -99,8 +98,6 @@ def validate_archive(path, root, windows, qualification, version):
         runtime = f"bin/{library[2:]}"
         if f"{root}/{runtime}" not in members:
             raise ValueError(f"{path.name} is missing {runtime}")
-        if read(f"{root}/share/doc/simxr/RELEASE_QUALIFICATION.md") != qualification:
-            raise ValueError(f"{path.name} has a different qualification matrix")
         for relative in (*LICENSES, *(("share/licenses/simxr_companion/curl-headers.txt",) if not windows else ())):
             if not read(f"{root}/{relative}"):
                 raise ValueError(f"{path.name} contains an empty license: {relative}")
@@ -168,66 +165,15 @@ def release_notes(version, wheels):
     prefix = f"openxr-simulator-{version}"
     notes = f"""# OpenXR Simulator {version} preview
 
-Launch OpenXR applications, control simulated devices and inspect stereo output
-without a headset. The app, native MCP connector and bundled Luau automation do
-not require Python or Node.
+Launch OpenXR applications, control simulated devices and inspect stereo output without a headset.
 
-These are development preview packages. Read `QUALIFICATION.md` for the tested
-platforms and remaining limitations. The Windows packages are unsigned; no
-verified publisher signature is claimed.
+- Windows: run `{prefix}-windows-x64-setup.exe`, or extract `{prefix}-windows-x64.zip` and launch `bin/simxr_companion.exe`.
+- Linux: extract `{prefix}-linux-x64.tar.gz` and run `./install.sh` or `bin/simxr_companion`.
 
-## Choose a download
-
-| Download | Use |
-| --- | --- |
-| `{prefix}-windows-x64-setup.exe` | Windows per-user installer with a Start menu shortcut; no administrator rights needed. |
-| `{prefix}-windows-x64.zip` | Portable Windows installation; extract the whole archive. |
-| `{prefix}-linux-x64.tar.gz` | Linux archive targeting updated Ubuntu 24.04 LTS; extract and run `./install.sh` for desktop integration, or use it directly. |
-
-Windows and Linux need a compatible Vulkan driver and the system Vulkan loader.
-Linux library requirements are listed in the package's `README.txt`. Drivers are
-not bundled. Proton uses the separate private-prefix instructions in the package;
-macOS, ARM64 and general Steam Deck compatibility are not qualified.
-
-## First launch and automation
-
-Open **OpenXR Simulator** from the application menu, or run
-`bin/simxr_companion.exe` (Windows) / `bin/simxr_companion` (Linux). Choose
-**Add application**, select its executable and launch it. New profiles select the
-bundled runtime automatically, without changing the system's default runtime.
-
-For MCP, use **Preferences → Copy MCP configuration**, or run the packaged
-`simxr_mcp_connector` with `--print-config` (`.exe` on Windows). Add `--windowless`
-to that command for automation without a simulator window. Neither the app nor
-the target application needs to be running first. See `README.txt` and
-`share/doc/simxr/AUTOMATION.md` for setup, images and development-build targeting.
-
-## Upgrade, uninstall and verify
-
-Close the simulator, its MCP connector and applications using its runtime before
-upgrading. Windows users can run the new installer; Linux users can run the new
-archive's `install.sh` against the existing install location. Portable users
-should extract into a new directory and update saved MCP executable paths.
-Settings and recordings are stored separately and are preserved by uninstall.
-The package README includes unattended setup and uninstall commands.
-
-Download `SHA256SUMS` alongside the assets. On Linux, run `sha256sum -c SHA256SUMS`
-after downloading every listed file. On Windows, compare
-`Get-FileHash .\\{prefix}-windows-x64-setup.exe -Algorithm SHA256` with its entry.
-Checksums detect changed files; they are not a publisher signature.
-
+Both platforms require a Vulkan driver and loader. Choose **Add application**, select an executable and launch it. For MCP, copy the configuration from **Preferences → MCP**. See the package README for installation and removal instructions.
 """
     if wheels:
-        notes += f"""
-## Optional Python automation
-
-Python 3.10+ users can install `simxr_control-{version}-py3-none-any.whl` for the
-SDK. The retained `openxr_simulator_mcp-{version}-py3-none-any.whl` server is an
-optional compatibility path. Download both wheels into one directory, then use
-`python -m pip install --find-links . openxr_simulator_mcp-{version}-py3-none-any.whl`
-inside a virtual environment; pip also installs its external dependencies.
-The native app and connector do not use these wheels.
-"""
+        notes += "\nOptional Python SDK and compatibility server wheels are included.\n"
     return notes
 
 
@@ -235,8 +181,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True, help="version embedded in the packages, e.g. 2.0.0")
     parser.add_argument("--directory", type=Path, required=True, help="directory containing all three packages")
-    parser.add_argument("--qualification", type=Path, default=Path(__file__).resolve().parent.parent /
-                        "docs/RELEASE_QUALIFICATION.md")
     parser.add_argument("--python-wheels", type=Path,
                         help="include the matching SDK and legacy MCP wheels from this directory")
     args = parser.parse_args()
@@ -253,25 +197,20 @@ def main():
     for path in files:
         if path.is_symlink() or not path.is_file():
             raise ValueError(f"Missing regular package: {path}")
-    qualification = args.qualification.read_bytes()
-    if not qualification or len(qualification) > 1024 * 1024:
-        raise ValueError("Qualification matrix is empty or too large")
-    validate_archive(windows_zip, windows_root, True, qualification, args.version)
-    validate_archive(linux_archive, linux_root, False, qualification, args.version)
+    validate_archive(windows_zip, windows_root, True, args.version)
+    validate_archive(linux_archive, linux_root, False, args.version)
     with installer.open("rb") as stream:
         # Inno Setup's launcher can be PE32 even when it installs only x64 payloads.
         if not is_pe(read_prefix(stream), (0x14C, 0x8664)):
             raise ValueError("Installer is not a Windows executable")
-    matrix_name = "QUALIFICATION.md"
     sums_name = "SHA256SUMS"
     notes_name = "RELEASE_NOTES.md"
-    names = (matrix_name, notes_name, *(wheel.name for wheel in wheels), sums_name)
+    names = (notes_name, *(wheel.name for wheel in wheels), sums_name)
     for name in names:
         if (directory / name).exists() or (directory / name).is_symlink():
             raise FileExistsError(f"Refusing to replace {name}")
     with tempfile.TemporaryDirectory(prefix=".simxr-release-", dir=directory) as temporary:
         temp = Path(temporary)
-        (temp / matrix_name).write_bytes(qualification)
         (temp / notes_name).write_text(release_notes(args.version, wheels), encoding="utf-8", newline="\n")
         for wheel in wheels:
             shutil.copyfile(wheel, temp / wheel.name)
@@ -287,7 +226,7 @@ def main():
             for path in reversed(created):
                 path.unlink()
             raise
-    print(f"Prepared release instructions, qualification, {len(wheels)} Python wheels and checksums in {directory}")
+    print(f"Prepared release instructions, {len(wheels)} Python wheels and checksums in {directory}")
 
 
 if __name__ == "__main__":

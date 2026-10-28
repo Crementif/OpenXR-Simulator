@@ -14,20 +14,16 @@ namespace simxr::app
 class UndoStack
 {
   public:
-	// One undoable edit group, named after what it changed (e.g. "Right hand moved").
 	struct Change
 	{
 		std::string label;
 		std::chrono::steady_clock::time_point time;
 	};
-	// Call for each submitted edit with the state observed before it. Input-only edits are not recorded.
 	void Record(const ObservedSetup& before, const ManualTransaction& edit);
-	// End an interrupted gesture without sending another pose.
 	void FinishGesture()
 	{
 		m_open = false;
 	}
-	// Refresh only from an observation with no pending local edit.
 	void Observe(const ObservedSetup& observed);
 	bool Empty() const
 	{
@@ -37,7 +33,6 @@ class UndoStack
 	// Restores the channels authored by the newest groups; blocked ownership keeps history intact.
 	std::optional<ManualTransaction> Undo(const ObservedSetup& current, std::optional<CommandSource> source,
 										  std::size_t steps = 1);
-	// The undoable groups, oldest first.
 	std::vector<Change> Changes() const;
 
   private:

@@ -1,6 +1,5 @@
 /include/openxr/** text eol=lf
 /scripts/launch-linux.py text eol=lf
-/docs/RELEASE_QUALIFICATION.md text eol=lf
 
 # Shader provenance and generated text comparisons use canonical LF bytes.
 /scripts/generate-*.py text eol=lf

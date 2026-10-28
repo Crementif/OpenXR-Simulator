@@ -37,7 +37,6 @@ static HeadsetHostSnapshot Wait(HeadsetHost& host, bool terminal)
 int main(int argc, char** argv)
 {
 #ifdef _WIN32
-	// Preserve the exact LF and CRLF sequences used by the child protocol fixtures.
 	if (_setmode(_fileno(stdout), _O_BINARY) == -1)
 		return 1;
 #endif
@@ -91,7 +90,6 @@ int main(int argc, char** argv)
 			std::cout << "simxr_host_eye_sizes=2048,2160," << std::flush;
 			std::this_thread::sleep_for(std::chrono::milliseconds(20));
 			std::cout << "2200,2300\r\n";
-			// Bad updates must neither replace nor partially modify the report.
 			std::cout << "simxr_host_eye_sizes=1,2,3,4junk\n"
 					  << "simxr_host_eye_sizes=1,2,3\n"
 					  << "simxr_host_eye_sizes=1,2,3,4,5\n"

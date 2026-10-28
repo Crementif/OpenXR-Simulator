@@ -106,7 +106,6 @@ static void Streaming()
 	const auto path = root.path / "take";
 	CommandRecorder recorder(16);
 	recorder.Start({}, true);
-	// Publication may race the StartRecording response; the origin still starts at offset zero.
 	Require(recorder.Observe(Outcome(1, false)), "Record origin race fixture");
 	archive::RecordingArchiveWriter writer(path, Response(recorder, wire::OpCode::StartRecording, 0, 0));
 	auto first = Response(recorder, wire::OpCode::ReadRecording, 0, 1);

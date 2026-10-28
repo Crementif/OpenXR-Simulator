@@ -284,7 +284,6 @@ void AlignPausedDisplayBoundary()
 			"Display alignment first frame");
 	clock->Advance(10ms);
 	Require(scheduler.WaitFrame(second) == XR_SUCCESS, "Display alignment early issued frame");
-	// Display clock advances independently while the host keeps an issued frame.
 	clock->Advance(1190ms);
 	const DisplayTick frozenDisplayNext{121};
 	const auto boundary = scheduler.Pause();
@@ -331,8 +330,6 @@ void PublicationContention()
 			return scheduler.Snapshot().waitPending;
 		},
 		"Publication waiter not admitted");
-	// Pausing must remain possible while publication is blocked, and that pause
-	// must be rechecked before the candidate consumes an application frame.
 	scheduler.Pause();
 	held.unlock();
 	Require(waiting.wait_for(5ms) == std::future_status::timeout && !scheduler.Snapshot().waited,

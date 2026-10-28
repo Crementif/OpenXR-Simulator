@@ -49,8 +49,6 @@ wire::ImageDescription Description(const app::VulkanDeviceAccess& access)
 				   });
 	return description;
 }
-// Real external images exercise history copies and the same UI submission path
-// used by the companion, including descriptor lifetime across a format change.
 std::unique_ptr<app::PreviewTexture> HistorySource(app::UiRenderer& renderer, VkExtent2D extent, VkFormat format,
 												   std::optional<XrFovf> fov = {})
 {
@@ -141,7 +139,6 @@ void HistoryLifetime(app::UiRenderer& renderer)
 	auto source = HistorySource(renderer, {64, 64}, VK_FORMAT_R8G8B8A8_UNORM,
 								XrFovf{-std::atan(2.f), std::atan(2.f), std::atan(1.f), -std::atan(1.f)});
 	auto changed = HistorySource(renderer, {32, 16}, VK_FORMAT_R8G8B8A8_SRGB, XrFovf{-.8f, .8f, .8f, -.8f});
-	// Use actual allocation requirements to make exactly one reusable history slot.
 	const auto access = renderer.DeviceAccess();
 	auto device = std::make_shared<VulkanDevice>(
 		VulkanBinding{access.instance, access.physical, access.device, access.queueFamily, 0}, access.owner);
@@ -207,7 +204,6 @@ void HistoryLifetime(app::UiRenderer& renderer)
 	begin();
 	history.Offer(*source, 0, first, 1);
 	Require(history.Nearest(first, 1).has_value(), "History did not accept a real native image");
-	// Drop an offered copy; next frame must accept the same identity again.
 	finish(false);
 	begin();
 	Require(!history.Nearest(first, 1), "Abandoned history copy remained visible");
@@ -235,7 +231,6 @@ void HistoryLifetime(app::UiRenderer& renderer)
 	Require(history.Nearest(second, 1)->frame == first, "History overwrote the currently displayed frame");
 	finish();
 	begin();
-	// A new epoch may reuse the exact same runtime frame identity.
 	history.Offer(*source, 0, first, 2);
 	const auto replacement = history.Nearest(first, 2);
 	Require(replacement.has_value() && !history.Nearest(first, 1), "History deduplicated across epochs");
@@ -297,7 +292,6 @@ void ScreenshotFiles(app::UiRenderer& renderer, app::Window& window)
 		invalidPath = true;
 	}
 	Require(invalidPath, "Embedded NUL screenshot path was accepted");
-	// These fail after a real submission; a later screenshot must still work.
 	for (const auto& path : {std::filesystem::path(directory.path), std::filesystem::path("/dev/full")})
 	{
 		renderer.RequestScreenshot(path);
@@ -395,8 +389,6 @@ void DisplayImageIdentity(app::UiRenderer& renderer)
 			message.fields.push_back(wire::Field::U64(wire::tag::ImageTick, *imageTick));
 		images.Retained(message, true);
 	};
-	// Readers are deliberately absent from the fixture: exercise acquisition
-	// identity and native fence retirement, without pretending to import pixels.
 	retained(101, 5);
 	retained(102, 5);
 	Require(images.Images().size() == 1 && images.Images().front().imageTick == 5,
@@ -448,7 +440,6 @@ void PreviewProportions()
 	image.views = {{IdentityPose(), {-.7f, .9f, .8f, -.6f}}, {IdentityPose(), {-.5f, .5f, .9f, -.9f}}};
 	for (std::size_t eye = 0; eye < image.views.size(); ++eye)
 	{
-		// A front-facing 16:9 screen must remain 16:9 despite nonuniform pixel density.
 		const auto left = app::ProjectPoint(image.views[eye], {-8.f / 9, 0, -2});
 		const auto right = app::ProjectPoint(image.views[eye], {8.f / 9, 0, -2});
 		const auto top = app::ProjectPoint(image.views[eye], {0, .5f, -2});
@@ -504,7 +495,6 @@ void BoundAndRollback(const app::VulkanDeviceAccess& access)
 		Require(texture->CanRetire(0), "Unsent consumer reservation failed to retire");
 		texture.reset();
 	}
-	// Constructor rejection and normal retirement must return both slot budgets.
 	for (auto& texture : textures)
 		texture = std::make_unique<app::PreviewTexture>(access, description);
 }

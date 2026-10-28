@@ -45,7 +45,6 @@ def main():
                 require(client.wait(session, pause)['progress'] == 'paused', 'Native pause did not settle')
                 require(observer.status(session)['manual'], 'Observer could not inspect paused native session')
                 retained = []
-                # Initial loading clears may already be retained; inspect them without issuing more work.
                 while True:
                     first = client.submit(lease, CommandKind.STEP)['operation_id']
                     record = client.operation(session, first)
@@ -123,7 +122,6 @@ def main():
                     operation = client.submit(lease, CommandKind.RELEASE, capture=capture)['operation_id']
                     require(client.wait(session, operation)['progress'] == 'released', 'Native Release failed')
                 resumed = client.submit(lease, CommandKind.RESUME)['operation_id']
-                # Host may destroy its public session immediately after resume; admission is the ack.
                 require(resumed > 0, 'Resume did not return an operation ID')
                 output = process.communicate(timeout=10)[0]
                 require(process.returncode == 0, output)

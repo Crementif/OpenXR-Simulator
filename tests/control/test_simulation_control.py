@@ -216,7 +216,6 @@ class SimulationTests(unittest.TestCase):
                     self.assertAlmostEqual(state['views']['ipd'], .07)
                     self.assertAlmostEqual(state['views']['outer_fov'][0], math.radians(-40), places=5)
                     tools.close()
-                    # The applied frame remains historical after connection cleanup.
                     self.assertEqual(client.simulation_status(session)['document']['frame_id'], 5)
                     resumed = client.submit(lease, CommandKind.RESUME)
                     self.assertGreater(resumed['operation_id'], 0)

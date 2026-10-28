@@ -106,7 +106,6 @@ void AtomicOwnership()
 	SamePose(rig.Hand(1), moved.values.tracking.controllers[1].pose.pose);
 	rig.Observe(observed);
 }
-// Applies an edit to the default configuration.
 TrackingState Applied(const ManualTransaction& edit)
 {
 	CommandScheduler scheduler;
@@ -131,7 +130,6 @@ void BodyPoses()
 	ObservedSetup observed;
 	PlayerRig rig;
 	rig.Reset(observed);
-	// Trackers start on their role joints and follow them natively.
 	auto edit = rig.Transaction(observed, std::nullopt, true);
 	for (const auto& command : edit.commands)
 		if (const auto tracker = std::get_if<SetTracker>(&command))
@@ -181,7 +179,6 @@ void JointOffsetsFollowBody()
 	auto tracking = Applied(rig.Transaction(observed, std::nullopt, true));
 	Require(tracking.trackers[0].jointOffset.has_value() && !tracking.trackers[0].poseOverride,
 			"Attached offset was frozen in world space");
-	// No further tracker command: application body animation must move the tracker.
 	for (const auto preset : {BodyPreset::Standing, BodyPreset::Seated, BodyPreset::TPose})
 	{
 		tracking.body.preset = preset;
@@ -307,7 +304,6 @@ void RapidUndo()
 	Require(Applied(*undo.Undo(original, std::nullopt)).head.pose.position.x == 0,
 			"Edit after undo reused a stale authored state");
 }
-// The history popover names each undo step and can undo several at once.
 void HistoryUndo()
 {
 	ObservedSetup original;
@@ -388,7 +384,6 @@ void UndoOwnershipAndScope()
 		if (const auto value = std::get_if<SetGaze>(&command))
 			Require(value->value.yaw == 0 && value->value.pitch == 0, "Undo lost the oldest selected gaze state");
 	}
-	// The next edit must start from the unrelated current state, even before another observation.
 	ManualTransaction head;
 	auto pose = current.values.tracking.head;
 	pose.pose.position.x = 8;

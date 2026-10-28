@@ -14,7 +14,6 @@ struct DeviceRow
 	Icon icon;
 	std::optional<ControlChannel> channel;
 	std::optional<PilotAction> key;
-	// Hands keep their colour so Left and Right read apart as icons.
 	ImU32 tint;
 };
 static constexpr std::array<DeviceRow, 7> s_rows{{
@@ -30,7 +29,6 @@ static bool IsTracked(const PoseSample& pose)
 {
 	return (pose.flags & TrackedPoseFlags) == TrackedPoseFlags;
 }
-// Dot colour and its tooltip for one row, from the applied device state.
 static std::pair<ImU32, const char*> DeviceDot(DevicePage page, const ObservedSetup& setup)
 {
 	const auto& tracking = setup.values.tracking;
@@ -119,7 +117,6 @@ static const char* OwnerBadge(const std::optional<CommandSource>& owner)
 	}
 	return nullptr;
 }
-// A tab's dot, owner badge and key, with the text they point to.
 struct DeviceTabStatus
 {
 	RailStatus status;
@@ -197,7 +194,6 @@ std::optional<Selection> DrawDeviceTabs(const Selection& selection, const Runtim
 	const float unit = ImGui::GetFontSize() / 17, height = DeviceTabsHeight();
 	const float width = ImGui::GetContentRegionAvail().x;
 	const auto origin = ImGui::GetCursorScreenPos();
-	// The selected tab is wide enough for its name; the others share the rest.
 	const float icon = 34 * unit;
 	std::size_t current = s_rows.size();
 	for (std::size_t index = 0; index < s_rows.size(); ++index)

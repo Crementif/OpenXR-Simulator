@@ -15,14 +15,11 @@
 namespace simxr::app
 {
 class RuntimePanels;
-// A script the Library asks to run once the session is free.
 struct ScriptRun
 {
 	std::string path;
 	ScriptOptions options;
 };
-// Saved takes and Luau scripts in one list (the timeline's drawer), with an
-// inspector page for each: replay or run, transport, rename, delete, details and reports.
 class Library
 {
   public:
@@ -30,10 +27,7 @@ class Library
 	void Refresh();
 	void Advance(Selection& selection, RigController& rigs);
 	bool Busy() const;
-	// The list: search, play buttons and opening a script by path. A click selects the entry's page;
-	// a script's play button returns its run.
 	std::optional<ScriptRun> DrawBrowser(Selection& selection, RuntimePanels& runtime, RigController& rigs);
-	// The selected take's or script's page.
 	std::optional<ScriptRun> Draw(Selection& selection, RuntimePanels& runtime, RigController& rigs);
 
   private:
@@ -42,7 +36,6 @@ class Library
 	void DrawTake(Selection& selection, const std::string& path, RuntimePanels& runtime, RigController& rigs);
 	void DrawEvidence(const LibraryEntry& entry, bool changing);
 	void DrawScript(Selection& selection, const std::string& path, RuntimePanels& runtime, RigController& rigs);
-	// Name, rename, delete and close; false once the file is gone or the page closed.
 	bool DrawHeader(Selection& selection, const std::string& path, Icon kind, bool changing = true);
 	void Play(const LibraryEntry& entry, RuntimePanels& runtime);
 	std::filesystem::path m_takes, m_scripts;

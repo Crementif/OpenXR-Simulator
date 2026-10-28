@@ -268,7 +268,6 @@ static void ExerciseMemoryAndSemaphore(VulkanExternalDevice& exporter, VulkanExt
 	auto importedImage = importer.ImportImage(image->Descriptor(), memory);
 	Require(!memory && importedImage->Descriptor().allocationSize == image->Descriptor().allocationSize,
 			"Import exact dedicated allocation and consume caller ownership on success");
-	// Warm capability lookup must still validate a changed shape and each allocation descriptor.
 	auto oversized = spec;
 	oversized.extent.width = std::numeric_limits<std::uint32_t>::max();
 	Rejected(
@@ -291,8 +290,6 @@ static void ExerciseMemoryAndSemaphore(VulkanExternalDevice& exporter, VulkanExt
 	Require(!memory && repeated->Image()->extent.width == spec.extent.width,
 			"Valid retry after cached import rejection failed");
 #ifdef _WIN32
-	// Repeat exports while unrelated handles are recycled. Each transfer must
-	// remain independently owned and refer to the original image allocation.
 	for (unsigned iteration = 0; iteration < 64; ++iteration)
 	{
 		auto largerSpec = spec;
@@ -485,7 +482,6 @@ static void Exercise(VkInstance instance, VkPhysicalDevice physical, std::uint32
 		},
 		VK_ERROR_EXTENSION_NOT_PRESENT, "Disabled fence extension allowed import");
 	Require(fd.Get() == original && ValidNonInherited(original), "Disabled fence extension consumed caller handle");
-	// Optional fence absence leaves the existing semaphore path usable.
 	auto semaphore = unavailable.CreateExportableSemaphore();
 	Require(semaphore->Get() != VK_NULL_HANDLE, "Optional fence requirement broke semaphore sharing");
 	auto imported = importer.ImportFence(exporter.Identity(), fd);
@@ -533,7 +529,6 @@ static void Exercise(VkInstance instance, VkPhysicalDevice physical, std::uint32
 		Require(std::chrono::steady_clock::now() < deadline, "Cross-device fence completion timed out");
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
-	// Only the fence payload is needed after actual consumer work retirement.
 	for (int poll = 0; poll != 100; ++poll)
 		Require(imported->PollCompletion() == CompletionStatus::Complete, "Terminal fence observation regressed");
 	std::printf(

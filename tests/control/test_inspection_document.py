@@ -22,7 +22,6 @@ class InspectionTests(unittest.TestCase):
     def test_cpp_historical_fixture(self):
         fixture = subprocess.run([BINARY, '--fixture'], check=True, capture_output=True).stdout
         value = decode_inspection(fixture)
-        # Also verify strict JSON output has no NaN/Infinity or imprecise ID conversion.
         json.dumps(value, allow_nan=False)
         frame = value['frame']
         revisions = {item['revision_id']: item for item in value['revisions']}

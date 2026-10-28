@@ -19,7 +19,6 @@ namespace simxr::app
 {
 struct CompanionSettings;
 struct RuntimeView;
-// What the user chose in the app picker; the shell carries it out.
 struct AppPickerChoice
 {
 	std::optional<RunningApp> connect;
@@ -29,9 +28,6 @@ struct AppPickerChoice
 	std::string discoveryError;
 	bool addProfile = false, editProfiles = false, connectEndpoint = false, disconnect = false;
 };
-// The top bar's app control: icon, app name and run-state dot, flat until hovered.
-// Its menu holds the connected app's session actions, then runtimes running now,
-// recent apps and launch profiles.
 class AppPicker
 {
   public:

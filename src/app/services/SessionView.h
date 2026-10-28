@@ -12,7 +12,6 @@
 
 namespace simxr::app
 {
-// Following shows the live edge; otherwise the exact retained frame at the cursor.
 struct TimeCursor
 {
 	bool following = true;
@@ -30,23 +29,18 @@ struct RuntimeFrame
 	std::uint64_t local = 0, capture = 0, frame = 0;
 	bool selected = false, imageReady = false, stateReady = false, remoteAvailable = false;
 };
-// A frame that Next frame (or following while paused) moved to.
 struct SteppedFrame
 {
 	FrameIdentity frame;
 	std::uint64_t epoch = 0;
-	// Next frame asked for it; otherwise it only updates an open Frame page.
 	bool requested = false;
 };
-// Read-only state of one runtime connection.
 struct SessionView
 {
 	TimeCursor time;
-	// The latest applied device state and input owners, once the runtime reported one.
 	std::optional<ObservedSetup> setup;
 	std::vector<FrameView> selectedViews;
 	double historySeconds = 0;
-	// The loaded image (or capture) the preview currently shows.
 	FrameIdentity selectedIdentity;
 	bool connected = false, sessionAvailable = false, sessionRunning = false, manual = false;
 	bool historyFull = false, selectedPinned = false;
@@ -61,7 +55,6 @@ struct SessionView
 	std::uint32_t selectedLayers = 0;
 	float fps = 0;
 	std::string phase, progress, endpoint, appName;
-	// A failure stops the session (connection lost, protocol error); a notice does not.
 	std::string error, notice;
 };
 } // namespace simxr::app

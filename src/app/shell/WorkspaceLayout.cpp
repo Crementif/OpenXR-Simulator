@@ -131,7 +131,6 @@ bool WorkspacePanels::Divider(const char* id, ShellRect strip, bool vertical, fl
 			m_settings.timelineResized = true;
 		m_dirty = true;
 	}
-	// A click on the tab without a drag folds or unfolds.
 	if (tabReleased && m_dividerDrag && m_dividerDrag->id == key && m_dividerDrag->travel * scale < 3)
 		toggle = !toggle;
 	if (!active && m_dividerDrag && m_dividerDrag->id == key)
@@ -157,7 +156,6 @@ bool WorkspacePanels::Divider(const char* id, ShellRect strip, bool vertical, fl
 												: theme::SurfaceRaised,
 						   theme::Radius * scale);
 	tabDraw->AddRect(tabMin, tabMax, hot ? theme::Fade(theme::Accent, .7f) : theme::Line, theme::Radius * scale);
-	// The chevron points the way the region goes when clicked.
 	const Icon chevron =
 		vertical ? (folded ? Icon::ChevronLeft : Icon::ChevronRight) : (folded ? Icon::ChevronUp : Icon::ChevronDown);
 	DrawIcon(tabDraw, chevron, {(tabMin.x + tabMax.x) / 2, (tabMin.y + tabMax.y) / 2}, 12 * scale,
@@ -190,9 +188,6 @@ void WorkspacePanels::DrawShell(RuntimePanels& runtime)
 	ImGui::BeginChild("Top bar", {width, 40 * scale}, 0, ImGuiWindowFlags_NoScrollbar);
 	DrawToolbar(runtime);
 	ImGui::EndChild();
-	// Preview over timeline on the left; the inspector takes the full height on the
-	// right with the device tabs across its top. While the inspector is folded, or
-	// a narrow window makes it a drawer, the tabs become an icon rail at the edge.
 	const bool compact = width / scale < 1100, overlay = width / scale < 800;
 	const bool focus = m_previewExpanded;
 	// Narrowing into the drawer layout must not cover the image with the drawer.
@@ -239,7 +234,6 @@ void WorkspacePanels::DrawShell(RuntimePanels& runtime)
 	runtime.ConfigurePilot(m_settings.pilotBindings, m_settings.gamepadBindings, m_settings.remoteMouseDrag);
 	runtime.ConfigureSnapshots(m_settings.snapshotBudgetMiB);
 	runtime.ConfigurePreviews(m_settings.previewBudgetMiB, m_settings.previewRamMiB);
-	// The overlay drawer closes on a click into the preview and opens on any new selection.
 	const auto window = ImGui::GetWindowPos();
 	const auto contains = [&](const ShellRect& rect, ImVec2 point)
 	{
@@ -272,7 +266,6 @@ void WorkspacePanels::DrawShell(RuntimePanels& runtime)
 	StoreCrop(runtime.PreviewCrop());
 	if (!focus)
 	{
-		// Start at the visible divider, halfway through its resize hit area.
 		const float timelineTop = std::floor(top + previewHeight + gap / 2);
 		ImGui::SetCursorPos({0, timelineTop});
 		ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::Surface);
@@ -302,7 +295,6 @@ void WorkspacePanels::DrawShell(RuntimePanels& runtime)
 		const float chip =
 			ImGui::CalcTextSize(label).x + ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x * 3;
 		ImGui::SetCursorPos({m_shell.preview.x + 8 * scale, m_shell.preview.y + 4 * scale});
-		// Its own child, created after the preview, so it draws and hovers above the image.
 		ImGui::BeginChild("Focus exit", {chip, ImGui::GetFrameHeight()}, 0,
 						  ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
 		if (IconButton("Exit focus", Icon::Focus, "Back to the full layout (F11 or Esc)", true, label))
@@ -311,7 +303,6 @@ void WorkspacePanels::DrawShell(RuntimePanels& runtime)
 	}
 	else
 	{
-		// Created after the regions so they draw and hover above them.
 		if (!overlay && Divider("Inspector divider", {origin.x + left - 3 * scale, top, 6 * scale, bodyHeight}, true,
 								m_settings.inspectorWidth, 280, compact ? 320 : 520, 340, inspectorFolded, 200))
 			FoldInspector();

@@ -25,7 +25,6 @@ int main()
 	Check(settings::ReadState().inputPolling == settings::InputPolling::AppForeground,
 		  "input polling defaults to accepting the application's own window");
 
-	// A reordered table would silently rename every saved setting.
 	Check(settings::kInputPollingPresetCount == 3, "three input polling modes");
 	Check(std::strcmp(settings::InputPollingName(settings::InputPolling::PreviewFocused), "preview") == 0 &&
 			  std::strcmp(settings::InputPollingName(settings::InputPolling::AppForeground), "app") == 0 &&

@@ -58,7 +58,6 @@ def main():
                         require(doc['phase'] == 'complete' and doc['post_count'] == 12, doc)
                         require([row['frame_id'] for row in doc['entries']] == list(range(3, 25)), doc)
                     if frame == 34:
-                        # Release of a second connection's collecting window frees admission immediately.
                         if ui:
                             pressured = client.image_history(session, target=TargetKind.QUAD_LAYERS)['document']
                             composed = client.image_history(session)['document']

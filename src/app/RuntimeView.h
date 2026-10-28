@@ -9,12 +9,10 @@
 
 namespace simxr::app
 {
-// One UI frame's session state plus the layout and recording presentation.
 struct RuntimeView : SessionView
 {
 	ShellRect rotationBall, rigView;
 	std::array<ShellRect, MaxTrackerDevices + 3> markers{};
-	// Device points in the rig view, as zero-size rectangles for hit tests and QA.
 	std::array<ShellRect, MaxTrackerDevices + 3> rigDevices{};
 	bool rigExpanded = false;
 	bool recording = false, recordingBusy = false, recordingOverflow = false, recordingStopping = false;

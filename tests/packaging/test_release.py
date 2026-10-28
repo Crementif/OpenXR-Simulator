@@ -21,14 +21,14 @@ def run(command, success=True):
     return result
 
 
-def linux_fixture(path, root, version, qualification, licenses, executable_mode):
+def linux_fixture(path, root, version, licenses, executable_mode):
     elf = bytearray(b"\x7fELF\x02\x01" + b"\0" * 14)
     struct.pack_into("<H", elf, 18, 62)
     binaries = ("bin/simxr_companion", "bin/simxr_mcp_connector", "bin/simxr_runner")
     executable = ("install.sh", "launch-desktop.sh", *binaries)
     content = {name: b"fixture" for name in (
         "include/simxr/game_bridge.h", "share/simxr/rigs/pose_sweep.luau",
-        "share/doc/simxr/AUTOMATION.md", "share/doc/simxr/MCP_COMPATIBILITY.md",
+        "share/doc/simxr/BUILDING.md",
         "share/simxr/sdk/python/pyproject.toml", "share/simxr/sdk/python/simxr_control/client.py",
         "share/simxr/branding/openxr-simulator.png", "share/licenses/simxr_companion/curl-headers.txt",
         *licenses, *executable)}
@@ -36,7 +36,6 @@ def linux_fixture(path, root, version, qualification, licenses, executable_mode)
         content[binary] = bytes(elf)
     content["README.txt"] = f"OpenXR Simulator {version}\n".encode()
     content["bin/openxr_simulator.json"] = json.dumps({"runtime": {"library_path": "./libopenxr_simulator.so"}}).encode()
-    content["share/doc/simxr/RELEASE_QUALIFICATION.md"] = qualification
     with tarfile.open(path, "w:gz") as archive:
         for name, data in content.items():
             info = tarfile.TarInfo(root + "/" + name)
@@ -50,7 +49,6 @@ def main():
     version = sys.argv[4]
     source = Path(__file__).resolve().parents[2]
     prepare = source / "packaging/prepare-release.py"
-    qualification = source / "docs/RELEASE_QUALIFICATION.md"
     windows_root = f"openxr-simulator-{version}-windows-x64"
     linux_root = f"openxr-simulator-{version}-linux-x64"
     with tempfile.TemporaryDirectory(prefix="simxr release ' Ω ") as temporary:
@@ -59,20 +57,13 @@ def main():
         shutil.copyfile(installer, root / f"{windows_root}-setup.exe")
         with zipfile.ZipFile(root / f"{windows_root}.zip", "w", zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
             for file in sorted(windows_stage.rglob("*")):
-                if file.is_file() and file.relative_to(windows_stage).as_posix() != "share/doc/simxr/RELEASE_QUALIFICATION.md":
+                if file.is_file():
                     archive.write(file, windows_root + "/" + file.relative_to(windows_stage).as_posix())
-            archive.write(qualification, windows_root + "/share/doc/simxr/RELEASE_QUALIFICATION.md")
         command = [sys.executable, str(prepare), "--version", version, "--directory", str(root)]
-        incorrect = root / "incorrect.md"
-        incorrect.write_text("different qualification", encoding="utf-8")
-        failure = run(command + ["--qualification", str(incorrect)], success=False)
-        assert "different qualification matrix" in failure.stderr
-        assert not (root / "SHA256SUMS").exists() and not (root / "QUALIFICATION.md").exists()
         run(command)
-        assert (root / "QUALIFICATION.md").read_bytes() == qualification.read_bytes()
         lines = (root / "SHA256SUMS").read_text(encoding="ascii").splitlines()
-        assert len(lines) == 5
-        assert "Choose a download" in (root / "RELEASE_NOTES.md").read_text(encoding="utf-8")
+        assert len(lines) == 4
+        assert "Add application" in (root / "RELEASE_NOTES.md").read_text(encoding="utf-8")
         for line in lines:
             expected, filename = line.split("  ", 1)
             actual = hashlib.sha256()
@@ -91,13 +82,11 @@ def main():
         negative.mkdir()
         for filename in (f"{windows_root}.zip", f"{windows_root}-setup.exe"):
             shutil.copyfile(root / filename, negative / filename)
-        linux_fixture(negative / f"{linux_root}.tar.gz", linux_root, version, qualification.read_bytes(),
-                      module.LICENSES, 0o644)
+        linux_fixture(negative / f"{linux_root}.tar.gz", linux_root, version, module.LICENSES, 0o644)
         invalid_command = [sys.executable, str(prepare), "--version", version, "--directory", str(negative)]
         failure = run(invalid_command, success=False)
         assert "non-executable" in failure.stderr
-        linux_fixture(negative / f"{linux_root}.tar.gz", linux_root, version, qualification.read_bytes(),
-                      module.LICENSES, 0o755)
+        linux_fixture(negative / f"{linux_root}.tar.gz", linux_root, version, module.LICENSES, 0o755)
         pe = bytearray(512)
         pe[:2] = b"MZ"
         struct.pack_into("<I", pe, 0x3c, 0x80)
@@ -111,7 +100,7 @@ def main():
         (root / f"{linux_root}.tar.gz").unlink()
         failure = run(command, success=False)
         assert "Missing regular package" in failure.stderr
-    print("PASS release assembly, qualification consistency, hashes and refusal cases")
+    print("PASS release assembly, hashes and refusal cases")
 
 
 if __name__ == "__main__":

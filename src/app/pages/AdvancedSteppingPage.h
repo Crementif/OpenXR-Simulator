@@ -4,8 +4,6 @@ namespace simxr::app
 {
 class DeviceControlPanel;
 class RuntimeSession;
-// Inspector page for low-level frame admission, raw source capture and the
-// retained snapshot/image catalogs.
 class AdvancedSteppingPage
 {
   public:

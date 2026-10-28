@@ -250,7 +250,6 @@ RetainedSubmission RetainSubmittedLayers(VulkanBackend& backend, VulkanInspectio
 
 void VerifySubmittedLayers(RetainedSubmission retained, bool verifyPixels)
 {
-	// Original 16x16 textures contain a colored 4x5 crop and blue border.
 	const std::array<std::array<std::uint8_t, 4>, 4> colors{
 		{{64, 128, 192, 77}, {17, 45, 93, 125}, {111, 37, 201, 222}, {33, 199, 78, 159}}};
 	std::vector<std::shared_ptr<const VulkanImagePixels>> reference;

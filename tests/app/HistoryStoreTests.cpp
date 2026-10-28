@@ -129,7 +129,6 @@ void RuntimeFeed()
 	feed.Accept(page(2, 10, 100000000));
 	feed.Accept(page(2, 12, 120000000));
 	Require(feed.History().Size() == 2 && feed.After() == 12, "Feed repeated a paginated frame");
-	// Twice the 10 ms period is a missed display time.
 	Require(feed.History().At(1).flags == (HistoryDropped | HistoryGap | HistoryLate) &&
 				feed.History().At(1).frameMilliseconds == 20 && feed.History().At(1).periodMilliseconds == 10,
 			"Feed lost a dropped frame, gap, late frame or runtime interval");
@@ -153,7 +152,6 @@ void RuntimeFeed()
 				feed.History().LatestSegment({9, 3, 0}, 2) == std::pair<std::size_t, std::size_t>{2, 3} &&
 				!feed.History().LatestSegment({9, 3, 0}, 1),
 			"Run transition changed the retained segment identity");
-	// A rejected page is skipped once and leaves a gap, never a retry loop.
 	Require(!feed.Accept(page(3, 2, 2000, 4)).empty() && feed.After() == 2, "Invalid history page was not skipped");
 	Require(feed.Accept(page(3, 3, 3000)).empty() && feed.History().Size() == 4 &&
 				(feed.History().At(3).flags & HistoryGap),
@@ -189,8 +187,6 @@ void RuntimeFeed()
 	Require(!feed.Accept(broken).empty() && !feed.CanRead() && feed.After() == 3,
 			"Undecodable record identity must stop polling without throwing from recovery");
 }
-// A walking player in T pose with a moving tracker: 32k frames keep one body
-// block, and a take cut from them carries body, gaze and tracker changes.
 void AppliedInputFeed()
 {
 	namespace wire = simxr::control;
@@ -336,7 +332,6 @@ void AppliedInputFeed()
 					!clearedBody.observation,
 				"Take changed observation time or failed to restore authored body");
 		Require(!automation::EditableRig(observedTake).empty(), "Observed history take cannot export");
-		// Metadata-only and skeleton-only changes are observations, even when all poses are unchanged.
 		std::vector<InputSample> variants(4, *first);
 		std::vector<const InputSample*> variantRange;
 		for (std::size_t index = 0; index < variants.size(); ++index)
@@ -497,7 +492,6 @@ void AppliedInputFeed()
 			"Take omitted inventory removal or restoration");
 
 
-	// Conversion must retain scenario and button edges, including at the size boundary.
 	std::vector<InputSample> edges(1026, *range.front());
 	std::vector<const InputSample*> edgeRange;
 	for (std::size_t index = 0; index < edges.size(); ++index)
@@ -569,8 +563,6 @@ void AppliedInputFeed()
 	edges[1].scenarios[recenter] = true;
 	edges[1].head.pose.position = {7, 1.8f, -3};
 	edges[1].head.flags = TrackedPoseFlags;
-	// Recenter happened before this frame's final head update; its recorded
-	// origin must win over a fresh recenter derived from that final head pose.
 	auto context = wire::DecodeFields(*edges[1].context).fields;
 	ReferenceSpaceState recordedSpaces;
 	recordedSpaces.local.position = {2, 1.6f, -1};
@@ -598,8 +590,6 @@ void AppliedInputFeed()
 	Require(replayState.Apply(replay, baseline, RuntimeTime{Duration{1}}) == CommandResult::Applied &&
 				SameReferenceSpaces(replayState.Merge(baseline).referenceSpaces, recordedSpaces),
 			"Range replay recomputed the captured recenter origin from the final head pose");
-	// A recenter can keep the same origin. Still publish the exact spaces so
-	// the runtime can notify the game, even though context bytes are unchanged.
 	edges[0].context = edges[1].context;
 	edges[1].head = edges[0].head;
 	const auto unchangedRecenter = TakeFromInput({&edges[0], &edges[1]});

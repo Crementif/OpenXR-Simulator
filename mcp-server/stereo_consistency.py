@@ -1,31 +1,7 @@
 #!/usr/bin/env python3
-"""
-Binocular-consistency analysis for a stereo pair.
+"""Detect stereo shading mismatches using surface disparity and luminance residuals.
 
-A correct stereo render shows the SAME world to both eyes, displaced horizontally by a
-disparity that depends only on depth. Everything that is attached to a surface - texture,
-paint, and the shadow lying on it - must therefore move with that surface. This module
-measures where that fails:
-
-  1. SURFACE DISPARITY. A dense left->right disparity map is matched on features chosen
-     to ignore illumination (locally normalised texture plus chromaticity) with a
-     semi-global matcher, so a single shadow edge cannot drag the match away from the
-     surface it lies on. A coarse pass finds the range to search first.
-  2. RESIDUAL. The right eye is warped onto the left through that map and the two are
-     compared in low-frequency log luminance. Geometry cancels. What is left is shading
-     one eye sees and the other does not: binocular rivalry.
-  3. CLASSIFICATION. Each residual region is re-matched on its own. A region that
-     disappears when shifted is shading drawn at the wrong DEPTH (and if that shift
-     lands exactly on infinity it has no parallax at all: it is locked to the screen).
-     A region nothing cancels exists in ONE EYE ONLY. Each is also a SHADOW or a
-     HIGHLIGHT, by whether the odd eye is darker or brighter than the surface around it.
-
-Only numpy and Pillow are required. Disparities are reported in percent of the eye width,
-so they mean the same thing at any capture resolution.
-
-    python stereo_consistency.py pair.bmp --out report.png
-    python stereo_consistency.py --watch 40 --interval 3 --out-dir incidents
-    python test_stereo_consistency.py        # synthetic ground truth for every verdict
+Disparities are percentages of eye width, independent of capture resolution.
 """
 
 from __future__ import annotations
@@ -426,7 +402,6 @@ def analyze_pair(left: Image.Image, right: Image.Image, width: int = ANALYSIS_WI
         return Report("INCONCLUSIVE_NO_FEATURES", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
                       notes=["Both eyes are flat colour; nothing to match."]), None
 
-    # ---- global checks -------------------------------------------------------------
     # Vertical offset between the eyes must be zero with parallel frusta.
     rows_l = yl[:, w // 4: 3 * w // 4].mean(1)
     rows_r = yr[:, w // 4: 3 * w // 4].mean(1)
@@ -441,7 +416,6 @@ def analyze_pair(left: Image.Image, right: Image.Image, width: int = ANALYSIS_WI
             best_dy, best_err = dy, err
     vertical_px = best_dy * left.height / h
 
-    # ---- 1. surface disparity ------------------------------------------------------
     lowest, highest = _disparity_bounds(L, R)
     d_min = lowest - FAR_RANGE_PX
     if frusta is not None:
@@ -479,35 +453,21 @@ def analyze_pair(left: Image.Image, right: Image.Image, width: int = ANALYSIS_WI
                              "featureless or the two eyes do not show the same scene."]), None
 
     surface = _fill(disp_l, trusted)
-    # Occlusions are legitimate differences (one eye sees round a corner) and are
-    # excluded. They are found GEOMETRICALLY, from the surface itself: a left pixel is
-    # hidden in the right eye when a nearer surface lands on the same right-eye column.
-    # "The other eye does not match here" cannot be the test - that is also exactly what
-    # a shadow present in one eye looks like, and it would excuse the very thing this
-    # is looking for.
+    # Detect occlusion geometrically: a mismatch alone could be the shadow under test.
     target = np.clip(np.round(xs - surface).astype(np.int64), 0, w - 1)
     flat = (np.arange(h, dtype=np.int64)[:, None] * w + target).ravel()
     nearest = np.full(h * w, -np.inf, np.float32)
     np.maximum.at(nearest, flat, surface.ravel())
     occluded = surface < nearest[flat].reshape(h, w) - 2.5
-    # Despeckle before growing: a noisy disparity on a flat-coloured near surface
-    # "occludes" single pixels all over it, and growing each of those would excuse the
-    # whole surface.
+    # Despeckle before growing, or noisy disparities mask the whole surface.
     occluded &= _box(occluded.astype(np.float32), 2, 2) > 0.35
     excluded = _dilate(occluded, 1) | ~((xs - surface >= 1.0) & (xs - surface <= w - 2.0))
-    # The left eye's periphery has no counterpart at all, and how wide that strip is
-    # depends on depth: a held item or an arm leaves the right eye's frame long before
-    # the road behind it does. A pixel that found no consistent match, and sits where
-    # the nearest surface on its rows would already be out of frame, is not compared.
+    # Exclude the unmatched periphery using the nearest surface on each row.
     row_near = np.where(trusted, disp_l, -np.inf).max(1)
     row_near = np.where(np.isfinite(row_near), row_near, float(np.median(disp_l[trusted])))
     row_near = _extreme(row_near[:, None], 12, True)[:, 0]
     excluded |= ~trusted & (xs < row_near[:, None] + 2.0)
-    # ---- 2. residual ----------------------------------------------------------------
-    # Next to a depth edge a pixel may belong to either side, and the filled surface is
-    # least certain exactly there. So each pixel is compared through the nearest and the
-    # farthest disparity in its neighbourhood as well as its own, and keeps whichever
-    # agrees best. Inside a surface the three coincide and nothing is forgiven.
+    # Near depth edges, compare both neighbouring extremes to allow for uncertain disparity.
     warped = _sample_x(R, xs - surface)
     log_l = np.log(_box(yl, 2, 2) + LOG_EPS)
     smooth_r = _box(yr, 2, 2)
@@ -535,7 +495,6 @@ def analyze_pair(left: Image.Image, right: Image.Image, width: int = ANALYSIS_WI
     mask &= _box(mask.astype(np.float32), 2, 2) > 0.45
     labels, count = _label(mask)
 
-    # ---- 3. classify ----------------------------------------------------------------
     matched = disp_l[trusted]
     far = float(np.percentile(matched, 2))
     # Where zero parallax lands: the declared frusta say exactly; without them the
@@ -765,8 +724,6 @@ def describe(report: Report) -> str:
     lines.extend("  note: " + n for n in report.notes)
     return "\n".join(lines)
 
-
-# ---- capture from a running simulator -------------------------------------------------
 
 def watch(count: int, interval: float, out_dir: Path, directory: Optional[Path] = None,
           keep_all: bool = False, threshold: float = RESIDUAL_THRESHOLD) -> list:

@@ -11,8 +11,6 @@
 
 #include <iostream>
 
-// Substitute the vendor and GPU owners to exercise the real session coordinator.
-// These checks cover API ordering and failure cleanup, not physical/GPU qualification.
 namespace simxr::headset::tests
 {
 struct State

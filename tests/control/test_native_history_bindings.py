@@ -102,7 +102,6 @@ simxr.checkpoint("Exact historical window exported", true)
                     require(json.loads((data / 'report.json').read_text())['phase'] == 'complete', output)
                     check_pixels((data / 'window.rgba').read_bytes(), ui)
                     check_pixels((data / 'admitted.rgba').read_bytes(), ui, b'\0\xff\0')
-                    # Explicit rig release leaves session observer admission free.
                     with Client(socket) as client:
                         session, = client.sessions()
                         fresh = client.begin_image_window(session)['image_window_id']

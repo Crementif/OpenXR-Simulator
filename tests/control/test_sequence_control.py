@@ -121,7 +121,6 @@ class SequenceTests(unittest.TestCase):
         self.assertEqual(self.client.sequence_status(self.session, newer)['document']['held_captures'], [])
 
     def test_large_program_limits_and_invalid_replacement(self):
-        # A full-size upload crosses every chunk boundary; padding remains an ignored legacy line.
         row = b'{"frame":0,"head":{"x":3}}\n'
         payload = row + b'#' + b' ' * (16 * 1024 * 1024 - len(row) - 1)
         program = self.client.upload_sequence(self.session, payload)

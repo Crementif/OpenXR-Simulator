@@ -21,9 +21,6 @@
 namespace simxr::app
 {
 class UiRenderer;
-// The companion's model of one runtime connection: requests and replies,
-// the selected session, retained captures and images, frame history, manual
-// input delivery and the time cursor. It draws nothing.
 class RuntimeSession
 {
   public:
@@ -32,10 +29,8 @@ class RuntimeSession
 	RuntimeSession(const RuntimeSession&) = delete;
 	RuntimeSession& operator=(const RuntimeSession&) = delete;
 
-	// Exchanges requests and replies; piloting raises the live preview rate.
 	void Poll(bool piloting, bool foreground = true);
 	SessionView View() const;
-	// True once after the selected session, run or connection changed.
 	bool TakeScopeChanged();
 	std::vector<Notice> TakeNotices();
 	void Notify(std::string title, std::string detail = {});
@@ -43,16 +38,13 @@ class RuntimeSession
 
 	void Command(control::CommandKind kind, std::uint64_t capture = 0, bool raw = false, std::uint32_t layer = 0,
 				 std::uint32_t view = 0);
-	// Pause keeps following: the paused frame becomes the live edge.
 	void Pause();
-	// Advances one frame, follows it and reports it through TakeSteppedFrame.
 	void Step();
 	void ResumeLive();
 	void SetLive(bool enabled);
 	std::optional<SteppedFrame> TakeSteppedFrame();
 	void CancelPending();
 
-	// Looks at a retained frame: stops following and loads its capture or image.
 	void LookAt(std::size_t historyIndex);
 	bool LoadingPastImage() const;
 	const control::Message* PastState() const;
@@ -81,7 +73,6 @@ class RuntimeSession
 	void ChooseSession(PanelSession session);
 	void ConfigureSnapshots(std::uint32_t budgetMiB);
 	void ConfigurePreviews(std::uint32_t budgetMiB, std::uint32_t ramMiB);
-	// Returns false (with a notice) when no running session accepts edits.
 	bool SubmitEdit(const SimulationEdit& edit);
 
 	bool Connected() const;
@@ -152,7 +143,6 @@ class RuntimeSession
 	{
 		return m_input;
 	}
-	// True once after the observed device state changed.
 	bool TakeObservation();
 	HapticFeedback& Haptics() noexcept
 	{

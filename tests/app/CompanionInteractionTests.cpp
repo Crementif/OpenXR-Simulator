@@ -52,7 +52,6 @@
 #include <fcntl.h>
 #include <io.h>
 
-// The static SDL test dependency exposes its event-injection entry points.
 extern "C" bool SDL_SetKeyboardFocus(SDL_Window* window);
 extern "C" void SDL_SetMouseFocus(SDL_Window* window);
 #endif
@@ -115,7 +114,6 @@ ImGuiWindow* FindPanel(const char* name)
 			return window;
 	return nullptr;
 }
-// Picks a camera from the rig view's menu: opens it, then activates the entry.
 template <typename Pump>
 void ChooseRigView(ImGuiID rig, const char* view, Pump pump)
 {
@@ -1026,7 +1024,6 @@ void CheckTimelineWorkflow(Interaction& test)
 	const auto bounds = test.workspace.State().timelineCanvas;
 	ImGui::GetIO().AddMousePosEvent(bounds.x + bounds.width - 1, bounds.y + 2);
 	test.Frame();
-	// Keep the first stepped snapshot visible even when validation makes steps slow.
 	const auto& beforeZoom = test.workspace.State();
 	const auto latestIndex = *test.runtime.History().Find(newest.selectedIdentity, newest.selectedEpoch);
 	const double snapshotSpan = test.runtime.History().At(latestIndex).seconds - test.runtime.History().At(index).seconds;
@@ -1078,7 +1075,6 @@ void CheckTimelineWorkflow(Interaction& test)
 		test.Frame();
 		test.Frame();
 	}
-	// Select a range through the ruler, then use its inspector action.
 	const auto beforeRange = test.workspace.State();
 	const auto rectangle = beforeRange.timelineCanvas;
 	const float rangeStart = x - 1, rangeEnd = rectangle.x + rectangle.width - 1;
@@ -1258,7 +1254,6 @@ void CheckShell()
 			std::abs(inspector->Pos.y + inspector->Size.y - viewport->WorkPos.y - viewport->WorkSize.y) < 1,
 			"Inspector is not joined to the toolbar and window edges");
 	static constexpr const char* tabs[]{"Player", "Head", "Left", "Right", "Body", "Gaze", "Trackers"};
-	// Player is open at start, and clicking the open tab folds the inspector; it comes last.
 	for (const int index : {1, 2, 3, 4, 5, 6, 0})
 	{
 		auto* strip = FindPanel("Device tabs");
@@ -1295,7 +1290,6 @@ void CheckShell()
 	test.renderer.WaitIdle();
 	Require(test.validation->errors.load() == 0, "Shell generated validation errors");
 }
-// Opt-in walkthrough against a separately launched application, never the user's session.
 void PilotLiveRuntime(const char* endpoint)
 {
 	IgnoreRealPointer();
@@ -1651,7 +1645,6 @@ void PilotLiveRuntime(const char* endpoint)
 		throw;
 	}
 	captureContext("cemu-recording-saved.bmp");
-	// The Library catalog loads the newly saved file independently.
 	Eventually(
 		[&]
 		{
@@ -1700,7 +1693,6 @@ void PilotLiveRuntime(const char* endpoint)
 			"Cancelled replay retained input ownership");
 	std::cout << "PASS Cemu record while piloting, global stop, save, independent reopen, replay and cancel release\n";
 
-	// Reuse the current retained-frame UI workflow, including exact-frame export.
 	SDL_SetEventFilter(nullptr, nullptr);
 	test.live = true;
 	test.runtime.SetLive(true);
@@ -2334,7 +2326,6 @@ void ConfigureObservedDevices()
 	transaction = typeValue("##IPD", "0.063");
 	Require(std::abs(std::get<simxr::SetViewSettings>(transaction.commands.back()).value.ipd - .063f) < .0001f,
 			"Reconnected field did not send the new value");
-	// Field gestures use one value step, with fast/fine modifiers, and never scroll the panel too.
 	{
 		auto& g = *ImGui::GetCurrentContext();
 		auto& io = ImGui::GetIO();
@@ -2463,7 +2454,6 @@ void ConfigureObservedDevices()
 		if (const auto* pose = std::get_if<simxr::SetControllerPose>(&command); pose && pose->hand == 0)
 			keptDisconnected = !pose->value.connected;
 	Require(keptDisconnected, "Resetting Head reconnected the left controller");
-	// Rendering observed input must not author releases, including while controls are disabled or owned elsewhere.
 	initial.input.controllers[1].trigger = .6f;
 	initial.input.controllers[1].physicalProfile = "/interaction_profiles/htc/vive_controller";
 	initial.input.controllers[1].triggerClick = false;
@@ -2527,7 +2517,6 @@ void ConfigureObservedDevices()
 				std::get<simxr::TakeControl>(takeover.commands.front()).replace,
 			"Input pad takeover changed input before ownership acknowledgement");
 	std::cout << "PASS passive/disabled input-pad observation and explicit ownership takeover\n";
-	// Selecting a tracker outside its own chips must update both its fields and its header action.
 	initial.tracking.trackers[0].role = simxr::TrackerRole::Camera;
 	initial.tracking.trackers[1].role = simxr::TrackerRole::Keyboard;
 	initial.tracking.trackers[0].jointOffset = XrPosef{{0, 0, 0, 1}, {2, 0, 0}};
@@ -2555,7 +2544,6 @@ void ConfigureObservedDevices()
 	Require(std::abs(rig.TrackerAt(0).offset.position.x - 2) < .0001f &&
 				std::abs(rig.TrackerAt(1).offset.position.x) < .0001f,
 			"Tracker header reset used the previously selected slot");
-	// Advanced replacement is an explicit ownership action, not permission for ordinary fields to steal channels.
 	scheduler.Start(0, initial);
 	panel.ResetObservations();
 	observe(1);
@@ -2611,7 +2599,6 @@ void ConfigureObservedDevices()
 	blockedAction("Tracked");
 	blockedAction("Snap to body");
 	blockedAction("Reset page");
-	// Finishing an editable field must not replace the explicit takeover clicked earlier in that frame.
 	command.id = 2;
 	command.target.frame = simxr::FrameId{3};
 	command.commands = {simxr::ReleaseControl{simxr::ControlChannel::Views}};
@@ -2631,7 +2618,6 @@ void ConfigureObservedDevices()
 				std::get<simxr::TakeControl>(transaction.commands.front()).channel == simxr::ControlChannel::Head &&
 				std::get<simxr::TakeControl>(transaction.commands.front()).replace,
 			"Numeric field finalization replaced the explicit Head takeover");
-	// A numeric field loses its gesture when editing is disabled or a different device reuses its ImGui ID.
 	scheduler.Start(0, initial);
 	panel.ResetObservations();
 	observe(1);
@@ -2653,7 +2639,6 @@ void ConfigureObservedDevices()
 	Require(!edit && !panel.Active(), "Device selection transferred a numeric edit to the matching field ID");
 	frame();
 	Require(!edit, "Retired numeric field submitted a delayed final value");
-	// Older runtimes can edit basic devices without body overrides or tracker attachments.
 	auto limitedDocument = simxr::control::SimulationState(scheduler.Snapshot(), false, {}, {}, effectiveProfiles).Encode();
 	const auto omitExtensions = [&](auto&& self, std::vector<std::byte>& encoded) -> void
 	{
@@ -2703,7 +2688,6 @@ void ConfigureObservedDevices()
 		Require(!edit, "Unsupported device reset submitted edits to unrelated channels");
 	}
 	std::cout << "PASS device field ownership, tracker selection/reset and numeric gesture retirement\n";
-	// The authored poses stay tracked while failure scenarios change what the runtime exposes.
 	RuntimeView statusView;
 	statusView.connected = true;
 	auto& statusSetup = statusView.setup.emplace();
@@ -2733,7 +2717,6 @@ void ConfigureObservedDevices()
 		{
 			const ImVec2 dot{origin.x + width * (index + .5f) + 8 * unit,
 							 origin.y + DeviceTabsHeight() / 2 + 6 * unit};
-			// The solid dot is drawn after its icon and backing ring.
 			for (int vertex = vertices.Size - 1; vertex >= 0; --vertex)
 			{
 				const auto& point = vertices[vertex];
@@ -3154,7 +3137,6 @@ void CheckManualEdges(const RuntimeView& target)
 			return !input.Snapshot().editPending;
 		},
 		"Final release did not complete");
-	// Losing a transaction must also retire held inputs from this source.
 	ManualInputController rival;
 	rival.SetTarget({target.endpoint, target.session, target.generation});
 	Eventually(
@@ -3442,7 +3424,6 @@ void CheckPreviewPilot(Interaction& test)
 		std::cout << "PASS remote drag: visible unlocked pointer, runtime head rotation, mouse-up, Escape and boundary release\n";
 		return;
 	}
-	// Player takeover must include the body even when no other device is owned by the rival.
 	ManualTransaction bodyClaim;
 	bodyClaim.commands = {simxr::TakeControl{simxr::ControlChannel::Body, true}};
 	Require(observer.Submit(bodyClaim), "Rival body claim refused");
@@ -3450,7 +3431,6 @@ void CheckPreviewPilot(Interaction& test)
 	const auto rivalSource = observer.Snapshot().source;
 	Require(rivalSource && observed().owners[static_cast<std::size_t>(simxr::ControlChannel::Body)] == rivalSource,
 		"Rival did not acquire body ownership");
-	// The companion's idle manual-input observation refreshes twice a second.
 	pump(60);
 	auto* handHud = FindPanel("HUD hand");
 	Require(handHud && handHud->Active, "Pilot ownership HUD missing");
@@ -3782,7 +3762,6 @@ void CheckSpatialEditing(Interaction& test)
 	const auto inspector = FindPanel("Inspector");
 	Require(inspector, "Spatial inspector missing");
 	ChooseRigView(inspector->GetID("Rig view"), "Top", pump);
-	// The rig camera orbits relative to the player's facing.
 	const auto facing = Rotate(rig.Root().orientation, {0, 0, -1});
 	const auto view = EulerAngles(std::atan2(-facing.x, -facing.z), -1.56f, 0);
 	const auto local =
@@ -3816,7 +3795,6 @@ void CheckSpatialEditing(Interaction& test)
 	const auto interrupted = observe().values.tracking.controllers[1].pose.pose;
 	Require(std::abs(RelativePose(interrupted, after.values.tracking.controllers[1].pose.pose).orientation.w) < .9999f,
 		"Interrupted rotation fixture did not move the right hand");
-	// Hide a held orb, release it off-screen, then edit a different device.
 	test.workspace.SetPreviewExpanded(true);
 	pump(2);
 	pointer(orbEnd, 0);
@@ -3843,7 +3821,6 @@ void CheckSpatialEditing(Interaction& test)
 	test.workspace.Select(DeviceSel{DevicePage::Right});
 	pump(4);
 	std::cout << "PASS hidden rotation retirement and independent undo after device selection\n";
-	// Type a far-away X, relative to the body, into the hand's position field to put it off screen.
 	ImGui::SetScrollY(inspector, inspector->ScrollMax.y);
 	pump(2);
 	ImGui::ActivateItemByID(inspector->GetID("Position & rotation"));
@@ -3956,7 +3933,6 @@ void CheckSpatialEditing(Interaction& test)
 	std::cout << "PASS expanded rig view and picture-in-picture restore\n";
 	test.runtime.PrepareReplay();
 	Eventually([&] { pump(1); return test.runtime.ReplayReady(); }, "Replay input release did not complete");
-	// Even an already-neutral observation predates the new release request.
 	test.runtime.PrepareReplay();
 	Require(!test.runtime.ReplayReady(), "Replay used the observation from before its release request");
 	Eventually([&] { pump(1); return test.runtime.ReplayReady(); }, "Replay did not observe its new input release");
@@ -3978,10 +3954,6 @@ void CheckSpatialEditing(Interaction& test)
 	Require(test.validation->errors.load() == 0, "Spatial preview validation errors");
 }
 
-// D8: play without Rec, cut the range into a take, replay it, and compare the
-// replay's applied input with the source frames it was cut from.
-// Pilots the right hand through real SDL events: about two seconds of trigger
-// and primary-button pulses, then Escape.
 void DrivePilotPulses(Interaction& test, const std::function<void(int)>& onPulse = {})
 {
 	const auto pump = [&](int count)
@@ -4036,7 +4008,6 @@ void DrivePilotPulses(Interaction& test, const std::function<void(int)>& onPulse
 	button(SDL_BUTTON_RIGHT, true);
 	Eventually([&] { pump(1); return SDL_GetWindowRelativeMouseMode(test.window.Native()); },
 			   "Take pilot did not capture pointer");
-	// Pulses of the right trigger and the primary button, about two seconds.
 	for (int pulse = 0; pulse < 4; ++pulse)
 	{
 		if (onPulse)
@@ -4147,12 +4118,10 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 	pump(2);
 
 	const auto replayFrom = history.Size();
-	// Real pointer hover and click on the Recording clip's revealed Play button.
 	{
 		const auto& shell = test.workspace.State();
 		const auto canvas = shell.timelineCanvas;
 		const float ruler = ImGui::GetFrameHeight() + 2 * ImGui::GetFontSize() / 16;
-		// The Play button leads the clip's name tab at the top-left of its band.
 		const float lane = (canvas.height - ruler) / 3;
 		const float tab = std::min(ImGui::GetFontSize() * (1 + 4.0f / 16), lane);
 		const float x = canvas.x + float((first.seconds - shell.timeline.first) /
@@ -4271,7 +4240,6 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 			"Source range lacks T pose or tracker motion");
 	Require(devicesMatched == sourceCount, "Replayed body, gaze or trackers diverge from the source");
 
-	// Looking back at a T-pose source frame shows its recorded body read-only.
 	std::size_t past = source;
 	while (sampleAt(past)->body->preset != simxr::BodyPreset::TPose)
 		++past;
@@ -4302,7 +4270,6 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 	std::cout << "PASS retroactive take replayed over its source frames\n";
 }
 
-// D11: connected layouts at the target sizes and the overlay drawer below 800 effective pixels.
 void CheckLayouts(Interaction& test, const std::filesystem::path& qa)
 {
 	const auto pump = [&](int count)
@@ -4390,7 +4357,6 @@ void CheckLayouts(Interaction& test, const std::filesystem::path& qa)
 			const auto* inspector = FindPanel("Inspector");
 			const auto* preview = FindPanel("GPU preview");
 			Require(inspector->Pos.x < preview->Pos.x + preview->Size.x, "Overlay drawer does not cover the preview");
-			// The drawer is drawn after the preview, so it covers it.
 			Require(inspector->ParentWindow == preview->ParentWindow &&
 						inspector->BeginOrderWithinParent > preview->BeginOrderWithinParent,
 					"Overlay drawer is drawn under the preview");
@@ -4407,7 +4373,6 @@ void CheckLayouts(Interaction& test, const std::filesystem::path& qa)
 	test.window.Resize(1280, 800);
 	test.workspace.SetScale(1);
 	pump(4);
-	// Switching eyes, including to Both and back (D12: Both aborted on a style pop).
 	for (const char* eye : {"Both", "Right", "Both", "Left"})
 	{
 		ImGui::ActivateItemByID(FindPanel("Image controls")->GetID("View"));
@@ -4424,9 +4389,6 @@ void CheckLayouts(Interaction& test, const std::filesystem::path& qa)
 	std::cout << "PASS connected layouts at four sizes and the overlay drawer\n";
 }
 
-// F1-F4: folding, focus, Library toggle, image fit at every width, frame
-// stepping, the pinned crop and missed-frame timing (the probe runs with
-// SIMXR_PROBE_SLOW_EVERY so some frames miss their display time).
 void CheckShell(Interaction& test, const char* qa)
 {
 	const auto pump = [&](int count)
@@ -4478,7 +4440,6 @@ void CheckShell(Interaction& test, const char* qa)
 	test.workspace.SetScale(1);
 	test.workspace.Select(DeviceSel{DevicePage::Head});
 	pump(6);
-	// The image fits in one piece at every width, single eye and both eyes.
 	for (const float scale : {1.0f, 1.5f})
 		for (int width = 640; width <= 1920; width += 80)
 		{
@@ -4501,7 +4462,6 @@ void CheckShell(Interaction& test, const char* qa)
 	test.window.Resize(1280, 800);
 	test.workspace.SetScale(1);
 	pump(4);
-	// Folding the timeline leaves one row; folding the inspector widens the preview.
 	const float timelineHeight = FindPanel("Timeline")->Size.y;
 	activate("Timeline divider tab", "##Edge");
 	pump(2);
@@ -4517,7 +4477,6 @@ void CheckShell(Interaction& test, const char* qa)
 	activate("Device rail", "Head");
 	pump(2);
 	Require(shell.inspectorVisible, "Clicking the open tab did not unfold the inspector");
-	// The Library drawer opens in the timeline and leaves the page alone.
 	activate("Timeline", "Library");
 	Require(shell.library && FindPanel("Library") && FindPanel("Library")->Active, "Library did not open");
 	screenshot("library-drawer.bmp");
@@ -4525,7 +4484,6 @@ void CheckShell(Interaction& test, const char* qa)
 	Require(!shell.library && std::holds_alternative<DeviceSel>(shell.selection) &&
 				std::get<DeviceSel>(shell.selection).page == DevicePage::Head,
 			"Library did not close or changed the page");
-	// Focus shows one way back.
 	activate("Top bar", "Focus");
 	pump(2);
 	Require(FindPanel("Focus exit") && FindPanel("GPU preview")->Size.x > previewWidth + 100, "Focus did not expand");
@@ -4535,7 +4493,6 @@ void CheckShell(Interaction& test, const char* qa)
 	activate("Focus exit", "Exit focus");
 	pump(2);
 	Require(std::abs(FindPanel("GPU preview")->Size.x - previewWidth) < 1, "Exit focus did not restore the layout");
-	// Pin a crop by dragging over the image, then step frames: it stays.
 	Require(SDL_ShowWindow(test.window.Native()), "Show preview interaction window");
 	SDL_RaiseWindow(test.window.Native());
 	Eventually(
@@ -4675,7 +4632,6 @@ void CheckShell(Interaction& test, const char* qa)
 	}
 	Require(test.runtime.PreviewCrop().has_value(), "Stepping cleared the crop");
 	screenshot("crop.bmp");
-	// Stepping back walks older frames; stepping forward returns to the edge.
 	const auto edge = test.runtime.Snapshot().time.cursor.frame;
 	activate("Timeline", "Step back");
 	activate("Timeline", "Step back");
@@ -4690,7 +4646,6 @@ void CheckShell(Interaction& test, const char* qa)
 	activate("Timeline", "Continue");
 	Eventually([&] { pump(1); return !test.runtime.Snapshot().manual && test.runtime.Snapshot().time.following; },
 			   "Shell check did not continue");
-	// Missed frames from the slowed probe are marked and the tint shows them.
 	std::size_t late = 0;
 	Eventually(
 		[&]
@@ -4763,7 +4718,6 @@ void CheckIdConflicts(Interaction& test, bool frameOnly)
 										 DeviceSel{DevicePage::Left},	DeviceSel{DevicePage::Right},
 										 DeviceSel{DevicePage::Body},	DeviceSel{DevicePage::Gaze},
 										 DeviceSel{DevicePage::Trackers}};
-	// Conflicts hide inside sections that start closed, so open every section a page may have.
 	const auto openSections = [&]
 	{
 		for (const char* region : {"Inspector", "Head details", "Hand details", "Configuration details"})
@@ -4791,7 +4745,6 @@ void CheckIdConflicts(Interaction& test, bool frameOnly)
 				}
 
 		}
-		// The take/script pages require files; the Library workflow supplies real saved takes.
 		const auto directory = std::filesystem::path(test.runtime.Snapshot().endpoint).parent_path();
 		for (const char* folder : {"recordings", "scripts"})
 		{
@@ -4879,7 +4832,6 @@ void CheckIdConflicts(Interaction& test, bool frameOnly)
 	std::cout << "PASS no duplicate IDs under the pointer on " << (frameOnly ? "frame and raw pages" : "all checked pages") << '\n';
 }
 
-// D10: record, stop, replay and cancel with Rec and the Library.
 void CheckLibrary(Interaction& test, const std::filesystem::path& directory)
 {
 	const auto pump = [&](int count)
@@ -4939,10 +4891,8 @@ void CheckLibrary(Interaction& test, const std::filesystem::path& directory)
 	Eventually([&] { pump(1); return !test.runtime.Snapshot().manual; }, "Stop take did not release the app");
 	std::cout << "PASS Rec, automatic archive save, Library replay and cancel\n";
 
-	// A script from the Library: run, pause, step, resume, finish and report.
 	std::filesystem::create_directories(directory / "scripts");
 	const auto script = directory / "scripts" / "pose_sweep.luau";
-	// examples/rigs/pose_sweep.luau
 	std::ofstream(script) << R"(simxr.pause()
 for sample = 0, 15 do
     local frame = simxr.frame_add(simxr.state().frame_id or "0", "1")
@@ -4969,7 +4919,6 @@ simxr.resume())";
 	ImGui::ActivateItemByID(FindPanel("Library")->GetID("Refresh library"));
 	pump(3);
 	screenshot("library-list.bmp");
-	// Changing the entry within one page kind must reopen the narrow inspector.
 	const auto otherTake = directory / "recordings" / "Other library take.simxrtake";
 	const auto otherScript = directory / "scripts" / "other_library_script.luau";
 	std::filesystem::create_directory(otherTake);
@@ -5076,7 +5025,6 @@ simxr.resume())";
 	std::cout << "PASS Library script run, pause, step, resume, report, Unicode rename and delete\n";
 }
 
-// D10: every hand input is operable with the mouse alone, through real SDL events.
 void CheckInputPad(Interaction& test)
 {
 	IgnoreRealPointer();
@@ -5165,7 +5113,6 @@ void CheckInputPad(Interaction& test)
 		Require(SDL_PushEvent(&event), "Push pad button");
 		pump(2);
 	};
-	// The pad lives somewhere inside the inspector; nav focus reports an item's rectangle.
 	const auto rect = [&](const char* name)
 	{
 		auto& g = *ImGui::GetCurrentContext();
@@ -5270,7 +5217,6 @@ void CheckInputPad(Interaction& test)
 	settle([](const auto& c) { return !c.menu; }, "Menu did not release");
 	std::cout << "PASS pad grip, face buttons and menu\n";
 
-	// An arrow pushes the stick fully that way while held, for menu navigation.
 	move({stick.Min.x + stick.GetWidth() * .12f, stick.GetCenter().y});
 	button(SDL_BUTTON_LEFT, true);
 	settle([](const auto& c) { return c.stick.x < -.99f && c.stick.y == 0 && !c.thumbClick; },
@@ -5313,8 +5259,6 @@ void CheckInputPad(Interaction& test)
 	std::cout << "PASS pad stick drag, click, spring-back and latch\n";
 }
 
-// Screenshots of the reworked surfaces: rig view orbiting a hand and through the eye,
-// the recording band, the folded HUD, the dividers and the single paused indicator.
 void CapturePolish(Interaction& test, const std::filesystem::path& qa)
 {
 	const auto pump = [&](int count)
@@ -5347,7 +5291,6 @@ void CapturePolish(Interaction& test, const std::filesystem::path& qa)
 	pump(2);
 	screenshot("polish-eye.bmp");
 	ChooseRigView(rig, "Back", pump);
-	// Position & rotation and the presets sit at the bottom of the hand page.
 	const auto inspector = FindPanel("Inspector");
 	ImGui::SetScrollY(inspector, inspector->ScrollMax.y);
 	pump(2);
@@ -5381,7 +5324,6 @@ void CapturePolish(Interaction& test, const std::filesystem::path& qa)
 	rotationForm("##Yaw", "Quaternion");
 	screenshot("polish-quaternion.bmp");
 	rotationForm("##Qx", "Euler angles");
-	// A hand preset is one undoable change; the history names it and undoes it.
 	const auto before = test.runtime.Changes().size();
 	ImGui::ActivateItemByID(ImHashStr("Forward", 0, inspector->GetID("Hand presets")));
 	Eventually([&] { pump(1); return test.runtime.Changes().size() == before + 1; }, "Hand preset left no history");
@@ -5420,7 +5362,6 @@ void CapturePolish(Interaction& test, const std::filesystem::path& qa)
 	activate("Timeline divider tab", "##Edge");
 	Require(test.workspace.State().inspectorVisible, "Inspector divider tab did not unfold the inspector");
 	activate("Timeline", "Continue");
-	// Focus hides the timeline; its button carries the recording's time instead.
 	activate("Top bar", "Focus");
 	screenshot("polish-focus-recording.bmp");
 	activate("Top bar", "Focus");
@@ -5431,7 +5372,6 @@ void CapturePolish(Interaction& test, const std::filesystem::path& qa)
 	std::cout << "PASS polish capture\n";
 }
 
-// D9: while the app runs, look back a few seconds and see the kept preview.
 void CheckMeasuredTiming(Interaction& test)
 {
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(6);
@@ -5595,7 +5535,6 @@ void CheckPreviewHistory(Interaction& test)
 	}
 	test.extraDraw = {};
 
-	// Select frames older than the GPU recent window to exercise H.264 decoding.
 	frames.erase(frames.end() - 32, frames.end());
 	frames.erase(frames.begin(), frames.end() - 32);
 	std::uint64_t previous = 0;
@@ -5629,7 +5568,6 @@ void CheckPreviewHistory(Interaction& test)
 			"Exact historical frame did not become visible");
 		Require(test.runtime.PreviewBytes() <= test.runtime.PreviewBudget(), "Preview history exceeded budget");
 	}
-	// Responses to rapid scrubbing must not replace the final requested frame.
 	for (const auto index : frames)
 	{
 		test.runtime.LookAt(index);
@@ -5739,9 +5677,6 @@ void CheckSnapshotRetention(Interaction& test)
 	std::cout << "PASS 200 native Next frame actions with pinned snapshot surviving; normalReadback=0\n";
 }
 
-// F9: an app whose companion is gone is listed under Running without being
-// attached, Connect attaches it explicitly, the connected app becomes a recent
-// entry and a profile in two clicks, and the editor marks a bad path inline.
 void CheckAppPicker(const char* executable)
 {
 	const auto directoryValue = std::getenv("SIMXR_LAUNCH_QA_DIRECTORY");
@@ -5751,7 +5686,6 @@ void CheckAppPicker(const char* executable)
 			"Picker QA directory must be new and absolute");
 	const auto settingsPath = directory / "companion.settings";
 	Require(::setenv("SIMXR_COMPANION_SETTINGS", settingsPath.c_str(), 1) == 0, "Set isolated settings path");
-	// Discovery and the probe both use only this run's socket directory.
 	Require(::setenv("SIMXR_DATA_DIR", directory.c_str(), 1) == 0 && ::unsetenv("SIMXR_CONTROL_SOCKET") == 0,
 			"Isolate the socket directory");
 	CompanionSettings settings;
@@ -5759,7 +5693,6 @@ void CheckAppPicker(const char* executable)
 	settings.activeProfile = "Broken path";
 	SaveSettings(settingsPath, settings);
 
-	// A socket left by a process that no longer listens must not be listed.
 	const auto stale = directory / ("control." + std::to_string(::getpid()) + ".sock");
 	{
 		const int descriptor = ::socket(AF_UNIX, SOCK_STREAM, 0);
@@ -5977,7 +5910,6 @@ void CheckAppPicker(const char* executable)
 	std::cout << "PASS recent app saved as profile \"" << saved.profiles.back().name << "\" in two clicks\n";
 }
 
-// F5-F7: rig view readability, trackers on the body, body poses, reset and undo.
 void CheckBodyRig(Interaction& test)
 {
 	IgnoreRealPointer();
@@ -6035,7 +5967,6 @@ void CheckBodyRig(Interaction& test)
 	test.workspace.Select(DeviceSel{DevicePage::Head});
 	pump(10);
 
-	// Trackers start on their joints; their preview markers only select, never bring forward.
 	auto state = observe();
 	for (const auto& tracker : state.values.tracking.trackers)
 	{
@@ -6091,7 +6022,6 @@ void CheckBodyRig(Interaction& test)
 		pump(6);
 	}
 
-	// Head selected for 10 s: the selection ring is drawn on every captured frame.
 	std::vector<std::pair<std::string, ShellRect>> rings;
 	if (qa)
 	{
@@ -6131,7 +6061,6 @@ void CheckBodyRig(Interaction& test)
 		std::cout << "PASS head ring stable over 10 s\n";
 	}
 
-	// T-pose moves skeleton and hands together, and Ctrl+Z undoes it in one step.
 	test.workspace.Select(DeviceSel{DevicePage::Player});
 	pump(6);
 	const auto standing = observe();
@@ -6191,7 +6120,6 @@ void CheckBodyRig(Interaction& test)
 				"Ctrl+Z did not restore the body joints");
 	std::cout << "PASS Ctrl+Z undid the T-pose in one step\n";
 
-	// Reset all puts the player, hands and body back to their defaults.
 	activate({"Body pose", "A-pose"});
 	activate({"Reset all"});
 	state = observe();
@@ -6241,7 +6169,6 @@ void CheckSoak(Interaction& test, const std::filesystem::path& directory)
 		recent.push_back(std::to_string(++actions) + " " + action);
 		if (recent.size() > 20)
 			recent.pop_front();
-		// Written before the action: assertions and driver crashes bypass exception handlers.
 		std::ofstream output(directory / "soak-last-actions.txt");
 		output << "seed=" << seed << '\n';
 		for (const auto& entry : recent)
@@ -6503,7 +6430,6 @@ static void CheckHeadsetRestartWorkflow(Interaction& test, const std::filesystem
 	};
 	detect();
 	reviewRestart();
-	// Switch before the next workspace poll can queue a game-close request.
 	test.runtime.Disconnect();
 	test.Frame();
 	test.Frame();

@@ -371,7 +371,6 @@ class EndpointTests(unittest.TestCase):
                 packet[24:28] = struct.pack('<I', 1024 * 1024 + 1)
                 oversized.sendall(packet)
                 self.assertEqual(oversized.recv(1), b'')
-                # Three workers blocked on different incomplete prefixes must join promptly.
                 for prefix in (b'S', b'SXR2', Message(OpCode.HELLO, 1, (Field.text(Tag.CLIENT_NAME, 'body'),)).encode()[:35]):
                     connect().sendall(prefix)
                 started = time.monotonic()
@@ -442,7 +441,6 @@ class EndpointTests(unittest.TestCase):
                         revision_id = document['view_settings']['revision_id']
                         self.assertEqual(client.revision(revision_id)['revision_kind'], 'view_settings_v1')
                         self.assertEqual(observer.status(session)['pipeline']['permits'], 0)
-                        # Connection-scoped IDs cannot reveal another client's revision.
                         with self.assertRaises(ControlError) as foreign:
                             observer.revision(revision_id)
                         self.assertEqual(foreign.exception.code, ErrorCode.NOT_FOUND)
@@ -470,7 +468,6 @@ class EndpointTests(unittest.TestCase):
                     operation = client.submit(lease, CommandKind.CONFIGURE_SNAPSHOTS,
                                               snapshot_budget_mib=budget)['operation_id']
                     self.assertEqual(client.wait(session, operation)['phase'], 'complete')
-                    # Status/polling and duplicate commands did not issue frame five.
                     self.assertEqual(client.status(session)['pipeline']['permits'], 0)
                     for capture in retained:
                         release = client.submit(lease, CommandKind.RELEASE, capture=capture)['operation_id']
@@ -479,7 +476,6 @@ class EndpointTests(unittest.TestCase):
                             client.capture(session, capture)
                         self.assertEqual(absent.exception.code, ErrorCode.NOT_FOUND)
                     client.acknowledge(lease, 14)
-                    # Abrupt controller disconnect recovers admission without an XR call.
                     client.close()
                     output = process.communicate(timeout=5)[0]
                     self.assertEqual(process.returncode, 0, output)

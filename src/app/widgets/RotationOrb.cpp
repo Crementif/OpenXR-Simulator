@@ -21,7 +21,6 @@ static XrVector3f Normalize(XrVector3f a)
 	const float length = std::sqrt(Dot(a, a));
 	return length > 1e-6f ? XrVector3f{a.x / length, a.y / length, a.z / length} : XrVector3f{1, 0, 0};
 }
-// A point on the unit ball under the pointer; outside the disc it slides onto the rim.
 static XrVector3f Lift(XrVector2f point)
 {
 	const float squared = point.x * point.x + point.y * point.y;
@@ -30,7 +29,6 @@ static XrVector3f Lift(XrVector2f point)
 	const float length = std::sqrt(squared);
 	return {point.x / length, point.y / length, 0};
 }
-// Signed angle of the turn from one pointer position to another about axis.
 static float AngleAbout(XrVector3f axis, XrVector2f from, XrVector2f to)
 {
 	auto project = [&](XrVector3f value)
@@ -124,7 +122,6 @@ static void DrawModel(const OrbCanvas& canvas, OrbModel model, XrQuaternionf loc
 		draw->AddCircleFilled(canvas.Point(view({0, .05f, -.3f})), 3.5f * canvas.scale, theme::Ok);
 		return;
 	}
-	// Headset: a box whose visible faces are shaded by how much they face the viewer.
 	const std::array<XrVector3f, 8> corners{XrVector3f{-.45f, -.25f, -.35f},
 											{.45f, -.25f, -.35f},
 											{.45f, .25f, -.35f},
@@ -175,7 +172,6 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 	const float scale = ImGui::GetFontSize() / 16;
 	size *= scale;
 	ImGui::PushID(id);
-	// The ball centres over the angle fields below it.
 	ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (width - size) / 2));
 	const auto minimum = ImGui::GetCursorScreenPos();
 	const ImVec2 center{minimum.x + size / 2, minimum.y + size / 2};
@@ -246,7 +242,6 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 	drawRings(false);
 	DrawModel(canvas, model, local, color);
 	drawRings(true);
-	// The nose: click it to point the device at the viewer.
 	const auto forward = axes[2];
 	const ImVec2 nose{center.x + forward.x * radius * .75f, center.y - forward.y * radius * .75f};
 	const bool onNose = std::hypot(mouse.x - nose.x, mouse.y - nose.y) < 9 * scale;
@@ -318,7 +313,6 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 	const bool released = state.dragging && (!enabled || !ImGui::IsMouseDown(ImGuiMouseButton_Left));
 	if (released)
 		state.dragging = false;
-	// Angles relative to the anchor, editable by drag: one row when wide, otherwise stacked.
 	auto angles = YawPitchRoll(RelativePose({orientation, {}}, {reference, {}}).orientation);
 	angles = {angles.x * s_degrees, angles.y * s_degrees, angles.z * s_degrees};
 	const bool row = width >= 270 * scale;
@@ -344,7 +338,6 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 		if (ImGui::IsItemActive())
 			state.activeField = ImGui::GetItemID();
 		fieldFinished |= ImGui::IsItemDeactivatedAfterEdit();
-		// Each angle resets to what the device follows on its own.
 		const float limit = index == 1 ? 89.9f : 180.0f;
 		if (FieldActions(labels[index].first, NumberValue(*value, 0, 1, -limit, limit, "%.1f")))
 		{

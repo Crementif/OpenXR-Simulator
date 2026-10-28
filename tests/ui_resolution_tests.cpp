@@ -18,7 +18,6 @@ static bool Near(float a, float b)
 	return std::fabs(a - b) < 0.001f;
 }
 
-// Recommended dimensions match the reported FOV aspect within one pixel.
 static bool MatchesFovAspect(uint32_t width, uint32_t height)
 {
 	if (width == 0 || height == 0)
@@ -50,7 +49,6 @@ int main()
 	settings::GetRenderResolution(width, height);
 	Check(width == 1440 && MatchesFovAspect(width, height), "native mode updates when the headset profile changes");
 
-	// A profile switch updates the recommendation to match the new frustum.
 	settings::SetRenderResolution(1280, 1400);
 	settings::SetHeadsetProfile(settings::HeadsetProfile::Quest3);
 	settings::GetRenderResolution(width, height);
@@ -72,7 +70,6 @@ int main()
 	Check(width == static_cast<uint32_t>(settings::kMinRenderWidth) && MatchesFovAspect(width, height),
 		  "custom render resolution is clamped to runtime limits");
 
-	// The Index frustum is tall enough that a full-width target overflows maxImageRect.
 	settings::SetHeadsetProfile(settings::HeadsetProfile::ValveIndex);
 	settings::SetRenderResolution(settings::kMaxRenderExtent, settings::kMaxRenderExtent);
 	settings::GetRenderResolution(width, height);

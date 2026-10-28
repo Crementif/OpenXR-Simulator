@@ -529,8 +529,6 @@ class DeliveryConsumerCopy
 			throw;
 		}
 	}
-	// Explicit analysis of private storage produced by the production consumer.
-	// Normal headless/companion consumption never constructs this readback job.
 	DeliveryConsumerCopy(std::shared_ptr<VulkanDevice> owner, const VulkanImage& image)
 		: m_privateImage(owner, &image), m_device(std::move(owner)),
 		  m_external(m_device, s_extensions, VK_API_VERSION_1_1)
@@ -937,8 +935,6 @@ void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
 	instance->Create();
 	auto first = ConsumerDevice(instance, deliveries[0]->Descriptor().identity);
 	auto second = ConsumerDevice(instance, deliveries[1]->Descriptor().identity);
-	// Repeated constructor rejection must return both the ordinary consumer
-	// budget and the pre-reserved preservation cell before the next attempt.
 	for (unsigned index = 0; index < 12; ++index)
 	{
 		bool rejected = false;
@@ -1036,8 +1032,6 @@ void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
 			},
 			"Delivery exposed handles after consumer signaled before exposure");
 	}
-	// Returning an unexposed completed image recovers delivery budget without
-	// changing or releasing the original capture's GPU allocation.
 	FramePool sourceBudget{1}, retainedBudget{1};
 	Require(original->PromoteCaptureBudget(sourceBudget), "Classify source for independent delivery retirement test");
 	{
@@ -1070,10 +1064,6 @@ void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
 	}
 	DeliveryConsumerCopy waiting(first, replacement, verifyPixels);
 	Require(original->PromoteCaptureBudget(retainedBudget), "Move retained source image to its later budget");
-	// No producer/delivery PollCompletion, Share, XR or native submission below.
-	// Only the independent retirement observer can release the accepted copy's
-	// old source reservation after its actual fence, even with an exposed but
-	// not-yet-submitted consumer still retaining this delivery.
 	const auto sourceDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 	while (sourceBudget.InUse() != 0)
 	{

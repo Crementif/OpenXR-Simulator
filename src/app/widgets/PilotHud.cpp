@@ -102,7 +102,6 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 			   KeyName(PilotAction::FreeLook) + ": look only";
 	else
 		hint = "Hold " + KeyName(PilotAction::Capture) + " over the image to pilot";
-	// Group widths, content only.
 	const float targetWidth = textWidth(preview.c_str()) + rowHeight * 1.5f;
 	float left = targetWidth + gap + rowHeight + textWidth(lock) + style.FramePadding.x + gap + rowHeight;
 	const float handButton = textWidth("Buttons: Right") + buttonPadding;
@@ -113,7 +112,6 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 							: handButton + gap + bars + gap + pills + sticks;
 	float right = textWidth(hint.c_str()) + (m_gamepadActive ? textWidth("Gamepad") + 10 * scale + gap : 0);
 	const float frame = padding.x * 2;
-	// Too narrow for all three: the hint goes, then the middle keeps only the hand switch.
 	bool showRight = true, fullMiddle = true;
 	if (left + middle + right + chevron + frame * 3 + gap * 2 > available)
 		showRight = false;
@@ -127,7 +125,6 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 	const float y = maximum.y - height - margin;
 	const auto saved = ImGui::GetCursorScreenPos();
 	bool hovered = false;
-	// Idle, only the content dims; each flat backing stays mostly opaque so markers under it stay quiet.
 	ImGui::PushStyleVar(ImGuiStyleVar_Alpha, Active() || ImGui::GetTime() - m_lastInput < 3 ? 1.0f : .6f);
 	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, padding);
 	ImGui::PushStyleColor(ImGuiCol_ChildBg, 0);
@@ -150,7 +147,6 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 	};
 	if (folded)
 	{
-		// Folded away to one button; while captured, the way out stays readable beside it.
 		const std::string release = KeyName(PilotAction::Escape) + " releases";
 		const float width = rowHeight + (m_captured ? gap + textWidth(release.c_str()) : 0);
 		group(
@@ -174,7 +170,6 @@ bool PilotController::DrawHud(ImVec2 minimum, ImVec2 maximum, ManualInputControl
 			  [&]
 			  {
 				  ImGui::SetNextItemWidth(targetWidth);
-				  // A small chevron like the other menus, instead of the combo's solid arrow box.
 				  const bool open = ImGui::BeginCombo("##Pilot target", preview.c_str(), ImGuiComboFlags_NoArrowButton);
 				  const auto box = ImGui::GetItemRectMax();
 				  DrawIcon(ImGui::GetWindowDrawList(), Icon::ChevronDown,

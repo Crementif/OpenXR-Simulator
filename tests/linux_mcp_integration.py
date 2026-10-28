@@ -85,7 +85,6 @@ async def test(data):
                     result = await session.call_tool('get_frame_info', {})
                     assert not result.isError
                     print('PASS: live MCP pose/controller/input commands reached OpenXR queries, capture returned image, projection log matched submitted rects; frame', observed['frame'])
-            # The probe must still pass Vulkan/lifecycle checks after external control.
             code = await asyncio.to_thread(probe.wait, timeout=10)
             assert code==0, (data/'probe-output.log').read_text()
         finally:

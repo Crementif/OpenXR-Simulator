@@ -18,13 +18,11 @@ class PilotController;
 class RuntimeSession;
 class SpatialEditor;
 class Window;
-// Preview navigation, device overlays and the pilot HUD.
 class PreviewPanel
 {
   public:
 	PreviewPanel(RuntimeSession& session, PilotController& pilot, SpatialEditor& spatial, FramePage& frame,
 				 DeviceControlPanel& devices, Window* window);
-	// Returns whether the image may be piloted this frame.
 	bool Draw(ShellState& shell, const RuntimeView& view, bool inputAvailable, bool automaticGamepad);
 	void CancelInteraction();
 	// The pinned region (x0, y0, x1, y1, normalized), shown instead of the whole
@@ -47,15 +45,11 @@ class PreviewPanel
 	std::optional<ImageArea> DrawImage(ShellState& shell, const RuntimeView& view, bool inputAvailable);
 	void UpdateImage(const ImageArea& area, const PreviewImageSummary& image, bool cornerHovered, bool pilotArea,
 					 bool automaticGamepad);
-	// Eye, zoom, crop and gizmo space, floating in the preview's top right corner.
 	bool DrawCorner(const PreviewImageSummary& image, bool live, bool imageVisible);
-	// The single view button: eye, zoom and crop live in its popover.
 	void DrawViewButton(const PreviewImageSummary& image, bool imageVisible, bool compact);
-	// Picking a crop: drag a rectangle over one eye's image.
 	void PickCrop(const ImageArea& area, bool hovered);
 	bool SameGestureTarget(const PreviewImageSummary& image) const;
 	void DrawEmpty(ShellState& shell, const RuntimeView& view);
-	// A downscaled copy of the selected historical frame.
 	bool DrawKept(const RuntimeView& view);
 	RuntimeSession& m_session;
 	PilotController& m_pilot;

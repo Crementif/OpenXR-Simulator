@@ -74,7 +74,6 @@ static void NeutralRestart(std::optional<BodyJointSet> bodySet = {}, bool forwar
 			if (body.skeleton)
 				(*body.skeleton)[index] = SkeletonJoint{joint, {}, IdentityPose()};
 		}
-		// Unselected observations must be ignored, even if their provider data is invalid.
 		if (!forwardBody)
 			body.requestedTime = -1;
 	}

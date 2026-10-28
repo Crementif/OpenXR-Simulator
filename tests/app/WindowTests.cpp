@@ -121,7 +121,6 @@ int main()
 		}
 		Require((SDL_WasInit(subsystems) & subsystems) == subsystems,
 				"Window teardown terminated another owner's SDL subsystems");
-		// A failed Vulkan window creation must also balance its SDL references.
 		SDL_QuitSubSystem(subsystems);
 		Require(SDL_SetHintWithPriority(SDL_HINT_VIDEO_DRIVER, "dummy", SDL_HINT_OVERRIDE),
 				"Select isolated failing Vulkan surface driver");

@@ -193,7 +193,6 @@ extern "C"
 		const auto& name = s_actions.at(info->action);
 		const bool left = s_paths.at(info->subactionPath) == "/user/hand/left";
 		state->isActive = Bound(*info);
-		// Deliberately nonzero inactive values must never leak into controls.
 		state->currentState = s_pressed && (name != "primary" || left);
 		return XR_SUCCESS;
 	}

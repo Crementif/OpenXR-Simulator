@@ -628,8 +628,6 @@ class CompositorExercise
 		Require(observed != CompletionStatus::Failed, "Reservation producer failed");
 		auto pool = m_backend.Reservations();
 		output.reset();
-		// Even a producer that finishes quickly remains a native owner until
-		// observed retirement. This does not require fabricating a GPU stall.
 		Require(pool.InUse() == 1, "Submitted producer released budget with last CPU output reader");
 		Drain();
 		Require(pool.InUse() == 0, "Completed producer did not retire its reservation");
@@ -1180,8 +1178,6 @@ static void CompletedProducerReclamation(const VulkanBinding& binding)
 	}
 	output.reset();
 	Require(pool.InUse() == 1, "Capacity-one producer did not retain its native reservation");
-	// The control-side reservation itself observes retirement. No Drain,
-	// RetireCompleted, Prepare or further application/XR call prunes the owner.
 	auto reservation = std::async(std::launch::async,
 								  [pool]
 								  {

@@ -40,7 +40,6 @@ def pixels_for_eye(fov, ipd, eye, yaw):
             color = LEFT if eye == 0 else RIGHT
             if not visible:
                 color = (0, 0, 0, 255)
-            # The right-eye VIEW quad stays fixed while the STAGE projection rotates.
             if eye == 1 and abs(ipd / 2 + 2 * ray_x) < .5 and abs(2 * ray_y) < .5:
                 color = LEFT
             pixels.extend(color)
@@ -142,7 +141,6 @@ def run(probe, policy):
                     else:
                         require(not tick['reprojected'] and tick['image_tick'] == baseline['display']['image_tick'], tick)
                         verify_pixels(client, current['image_reader_id'], views, 0)
-                    # An independent reader still owns the submitted image after the display changes.
                     verify_pixels(client, baseline['image_reader_id'], views, 0)
                     enqueue = max(item['reprojection_submission_time'] for item in samples)
                     completion = max(item['reprojection_completion_latency'] for item in samples)

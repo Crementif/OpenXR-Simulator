@@ -470,7 +470,6 @@ simxr.stop_input_recording()
 								api.complete(api.context, game, command.id, rejectReset ? 0 : 1, nullptr, 0),
 							"Game reset acknowledgement failed");
 				}
-				// Run the simulated game only when the real debugger admits a frame.
 				if (replay.session->Scheduler().Snapshot().permits)
 				{
 					FramePrediction prediction;

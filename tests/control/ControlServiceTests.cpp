@@ -495,7 +495,6 @@ void NegotiationPublicationRollback()
 		wire::Message response;
 		bool failed = false;
 		{
-			// Hello publishes four fields; include the replay-cache copy.
 			MatchingAllocationFailure failure(4 * sizeof(wire::Field), skip);
 			response = f.service.Handle(client.connection, hello);
 			failed = allocationFailed;
@@ -898,7 +897,6 @@ void InspectionResponseAllocationRollback()
 	fields.push_back(wire::Field::U64(wire::tag::CaptureId, capture));
 	const auto baseline = client.Call(wire::OpCode::InspectFrame, fields);
 	Require(Error(baseline) == wire::ErrorCode::Ok, "Prepare inspection allocation regression");
-	// Measure the vector allocation, including any standard-library alignment overhead.
 	const auto document = baseline.Find(wire::tag::Document)->value;
 	const auto size = lastAllocationSize;
 	const auto firstId = U64(baseline, wire::tag::InspectionId);
@@ -908,8 +906,6 @@ void InspectionResponseAllocationRollback()
 			"Release baseline inspection");
 	int failures = 0;
 	bool exhausted = false;
-	// The exact document-sized allocations include the serialized record,
-	// outgoing Document field, and replay-cache copy. Fail each occurrence.
 	for (int skip = 0; skip != 32; ++skip)
 	{
 		auto request = client.Request(wire::OpCode::InspectFrame, fields);
@@ -930,8 +926,6 @@ void InspectionResponseAllocationRollback()
 		}
 		++failures;
 		Require(Error(response) == wire::ErrorCode::Capacity, "Allocation failure lacked structured capacity error");
-		// A failed export must not publish any undisclosed reader, even when
-		// the catalog commit preceded the outgoing field/cache allocation.
 		for (std::uint64_t id = firstId + 1; id <= firstId + skip + 1; ++id)
 			Require(client.Call(wire::OpCode::ReleaseInspection, {wire::Field::U64(wire::tag::InspectionId, id)})
 							.Find(wire::tag::Released)
@@ -1248,8 +1242,6 @@ void DiscoveryFailureRetainsReadersUntilSettlement()
 	};
 	wire::Message response;
 	{
-		// The first reservation holds discovered readers. Fail the prepared
-		// registration reservation after those readers have been acquired.
 		MatchingAllocationFailure failure(sizeof(wire::ControlSession) * wire::ControlSessions::Capacity, 1,
 										  [&]
 										  {
@@ -1333,8 +1325,6 @@ void ConcurrentDiscoveryPublishesInCollectionOrder()
 	bool overtook = false;
 	bool failed = false;
 	{
-		// Stop after collecting the old session set but before publishing it.
-		// Another discovery must not register a new session ahead of this one.
 		MatchingAllocationFailure failure(
 			sizeof(wire::ControlSession) * wire::ControlSessions::Capacity, 1,
 			[&]
@@ -1595,8 +1585,6 @@ void ImageOwnerPublicationAndDeferredRelease()
 	Require(target.Find(wire::tag::Layer)->AsU32() == 3 && target.Find(wire::tag::View)->AsU32() == 2,
 			"Image owner substituted a selected layer/view identity");
 
-	// An error describing an already-published source must leave its existing
-	// reader intact; rollback owns only entries created by this transaction.
 	observations.rejectDescription = true;
 	try
 	{
@@ -1653,8 +1641,6 @@ void ImageOwnerPublicationAndDeferredRelease()
 		wire::ConnectionImages::Publication publication(images, unpublished);
 		bool allocationRejected = false;
 		{
-			// Response construction allocates an eight-byte identifier only after
-			// removing the resource. Request fields were prepared above.
 			MatchingAllocationFailure failure(sizeof(std::uint64_t), 0);
 			try
 			{
@@ -1856,8 +1842,6 @@ void RequestCloseSettlementAndRollback()
 	requests.Close();
 	Require(closed == 1 && closedReentry, "Close notification was repeated or held the request mutex");
 
-	// The observer itself may own native readers. Destroy it while the closed
-	// admission state and mutex are still valid for last-reader reentry.
 	bool observerRetiredSafely = false;
 	auto output = std::make_shared<Output>();
 	wire::ConnectionRequests* destroying = nullptr;
@@ -1910,7 +1894,6 @@ void ImagePublicationRollbackReentry()
 	allocationFailed = false;
 	observations.onRetained = []
 	{
-		// The provider has returned its reader; the table entry is the next allocation.
 		failNextAllocation = true;
 	};
 	const auto entryRejected = client.Call(wire::OpCode::RetainPreview, client.Common());

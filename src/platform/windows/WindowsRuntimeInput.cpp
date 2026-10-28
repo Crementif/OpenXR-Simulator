@@ -266,7 +266,6 @@ RuntimeInputSnapshot WindowsRuntimeInput::Poll(std::chrono::nanoseconds period, 
 			files.Acknowledge("head_pose", true);
 		}
 
-		// Per-eye FOV override (asymmetric headset profile testing).
 		const auto& fov = commands.fov;
 		if (fov.valid)
 		{
@@ -288,7 +287,6 @@ RuntimeInputSnapshot WindowsRuntimeInput::Poll(std::chrono::nanoseconds period, 
 			files.Acknowledge("fov", true);
 		}
 
-		// Settable IPD (test app's response to IPD ranges; 0mm = no parallax).
 		const auto& ipdCmd = commands.ipd;
 		if (ipdCmd.valid)
 		{
@@ -303,7 +301,6 @@ RuntimeInputSnapshot WindowsRuntimeInput::Poll(std::chrono::nanoseconds period, 
 			files.Acknowledge("ipd", true);
 		}
 
-		// Headset profile preset: applies both FOV and IPD at once.
 		const auto& prof = commands.profile;
 		if (prof.valid)
 		{
@@ -332,11 +329,9 @@ RuntimeInputSnapshot WindowsRuntimeInput::Poll(std::chrono::nanoseconds period, 
 			files.Acknowledge("headset_profile", applied);
 		}
 
-		// Display layout is controlled by the companion.
 		if (commands.anaglyph.valid)
 			files.Acknowledge("anaglyph", false);
 
-		// Pose sweep: oscillate yaw/pitch/roll on a sine wave each frame.
 		const auto& sweep = commands.sweep;
 		if (sweep.valid)
 		{

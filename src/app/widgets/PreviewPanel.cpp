@@ -170,7 +170,6 @@ void PreviewPanel::DrawEmpty(ShellState& shell, const RuntimeView& view)
 			 theme::TextDim);
 		return;
 	}
-	// A small spinner while the first image is on its way.
 	const float angle = static_cast<float>(ImGui::GetTime()) * 6;
 	draw->PathArcTo({center.x, center.y - 24 * unit}, 10 * unit, angle, angle + 4.4f);
 	draw->PathStroke(theme::TextDim, ImDrawFlags_None, 2 * unit);
@@ -311,7 +310,6 @@ std::optional<PreviewPanel::ImageArea> PreviewPanel::DrawImage(ShellState& shell
 	const auto& description = image->description;
 	const float slices = m_slice < 0 ? static_cast<float>(image->slices) : 1;
 	const float spacing = 12 * ImGui::GetFontSize() / 16;
-	// A pinned crop always fits the region it shows.
 	const auto crop = m_crop.value_or(ImVec4{0, 0, 1, 1});
 	const bool fit = m_fit || m_crop;
 	const auto selectedSlice = m_slice < 0 ? std::nullopt : std::optional<std::size_t>(m_slice);

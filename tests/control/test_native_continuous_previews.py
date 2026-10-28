@@ -101,7 +101,6 @@ def main(probe):
                 require(shrunk['preview_budget'] == 64 * 1024 * 1024, shrunk)
                 require(shrunk['preview_ram_budget'] == 64 * 1024 * 1024 and shrunk['preview_ram_bytes'] > 0, shrunk)
                 require(shrunk['preview_frame_ids'] == frames, 'GPU shrink discarded archived images')
-                # Release the exact raw reader only after proving archived pixels independently.
                 for frame in (4, 100, 7, 204):
                     archived_states = {}
                     image = retain(client, session, frame, archived_states)
