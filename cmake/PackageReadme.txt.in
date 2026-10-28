@@ -1,34 +1,142 @@
 OpenXR Simulator @PROJECT_VERSION@
 
-This is a preview package. Some hardware and application checks remain open.
-See share/doc/simxr/BUILDING.md for supported configurations and launch setup.
+Launch and inspect OpenXR applications without a headset. The desktop launcher,
+native MCP connector and bundled Luau automation need neither Python nor Node.
+This is a preview package; see share/doc/simxr/RELEASE_QUALIFICATION.md for
+tested platforms and limitations, and BUILDING.md in that directory for details.
+
+GET STARTED
+
+Windows: use the setup program for a per-user install and Start menu shortcut,
+or extract the portable ZIP and open bin/simxr_companion.exe.
+The Windows package targets native x64 Windows; ARM64 emulation is not supported.
+Preview packages are unsigned.
+Linux: extract the archive and run ./install.sh for application-menu integration,
+or open ./bin/simxr_companion directly. Both platforms need a compatible Vulkan
+driver and the system Vulkan loader; graphics drivers are not bundled.
+
+Releases: https://github.com/Crementif/OpenXR-Simulator/releases
+Support:  https://github.com/Crementif/OpenXR-Simulator
+
+Open OpenXR Simulator, choose Add application, select an executable and Launch.
+New profiles select the included runtime automatically. For AI/automation setup,
+use Preferences > Copy MCP configuration, or run the native connector below:
+
+  Windows PowerShell: .\bin\simxr_mcp_connector.exe --print-config --windowless
+  Linux shell:        ./bin/simxr_mcp_connector --print-config --windowless
+
+Omit --windowless to have the connector open the simulator window. Neither the
+simulator nor the target executable needs to be running before the client starts.
+
+INSTALLATION AND UNATTENDED SETUP
 
 Extract the entire archive into a new directory. Keep bin/openxr_simulator.json
 beside its runtime library; its relative path allows moving the package.
 
+On Linux, run ./install.sh to copy the package to the current user's data
+directory and add an application-menu entry. The package remains usable without
+installation. Use ./install.sh --prefix /absolute/path for a custom location.
+To remove an installation, run its install.sh --uninstall, adding the same
+--prefix when one was specified. The script returns 0 on success, 2 when files
+are in use or installation is locked, and 1 for other errors. Close both the
+simulator and applications using its runtime before upgrading or uninstalling.
+The Linux installer requires /proc, flock and standard GNU command-line
+utilities. Current installations use a shared lock held by the app and loaded
+runtime. Earlier experimental v1 installations require process inspection
+before upgrade or uninstall; Linux may deny that check for unrelated processes.
+
+The Windows setup installs per-user without administrator rights and creates a
+Start menu shortcut. A desktop shortcut is optional. The final setup page offers
+Launch OpenXR Simulator; unattended installation never launches it. For unattended setup, run:
+
+  openxr-simulator-@PROJECT_VERSION@-windows-x64-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /LOG="setup.log"
+
+To uninstall silently, run unins000.exe from the installed directory:
+
+  unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="uninstall.log"
+
+Setup returns 0 on success and 7 if preparation rejects the install, including
+when files are in use. Uninstall returns 0 on success and a nonzero code on
+failure; a running simulator or application using its runtime returns 1. The
+log explains a refusal. The uninstaller can return before its second process
+finishes; wait for its uninstall registration and .simxr-install marker to
+disappear before treating removal as complete. Close those programs and retry;
+setup does not close them or schedule binary replacements on reboot. User data
+is preserved.
+
+LAUNCH PROFILES AND RUNTIME SELECTION
+
 On Windows, launch bin/simxr_companion.exe. On Linux, launch bin/simxr_companion.
-Create a launch profile with the application's
-executable and this package's bin/openxr_simulator.json. Runtime selection affects
-that child process only when the OpenXR loader permits environment overrides.
+Choose Add application and select the application's executable. New profiles use
+this package's runtime automatically; the profile editor also supports an
+explicit runtime manifest. Runtime selection affects that child process only
+when the OpenXR loader permits environment overrides.
 Run Windows applications without elevation: elevated loaders ignore XR_RUNTIME_JSON.
+For absolute Windows manifest paths containing non-ASCII characters, the
+launcher uses an ASCII short path when available. Otherwise it can create a
+private compatibility manifest in the user's temporary directory, pointing to
+the original runtime. Some loaders still require an ASCII package path if the
+temporary directory is not ASCII-addressable or the bounded cache is full.
+See share/doc/simxr/BUILDING.md for the cache limits and safe cleanup.
 For command-line launch, set XR_RUNTIME_JSON to the absolute manifest path in the
 application's environment. This avoids system registration when the loader
 permits environment overrides. On Linux, bin/launch-linux.py also launches and
 attaches the companion.
 
+MCP AND AUTOMATION
+
+For an MCP client that supports a stdio server, open Preferences in the
+app, select MCP > Client (Generic JSON or Codex), and use Copy MCP
+configuration. Merge the generated entry into the client's MCP
+configuration. Alternatively, set the server's command to the absolute path of
+bin/simxr_mcp_connector (bin/simxr_mcp_connector.exe on Windows). The connector
+starts the companion beside it when needed; neither Python nor Node is required.
+For unattended configuration, run bin/simxr_mcp_connector --print-config
+(or bin/simxr_mcp_connector.exe --print-config on Windows). It prints a JSON
+client configuration without starting the simulator or changing settings. Add
+--client codex for a TOML entry to merge into Codex config.toml. Add
+--windowless to include that option, and --app ABSOLUTE_PATH to target a
+development executable. Regenerate the configuration after moving the package.
+Add --windowless as a connector argument to request a host without a visible
+window. An already-running matching companion is reused, including a visible
+one. The connector can launch an application through simulator_launch_application;
+the application does not need to be running when the client connects.
+
+An already-open companion must have MCP enabled in Preferences, or be started
+with --mcp, to be discovered. The connector stays running and reconnects after a
+companion restart, but does not repeatedly start the app after it stops. After
+a rebuild, start the selected app with --mcp or --windowless. Tool-list refresh
+depends on the client; the verified Codex workflow needs its experimental
+mcp_tool_list_changed setting. See the automation guide for setup. Restart the MCP
+connection to update the connector itself. Use simxr_mcp_connector --version
+(.exe on Windows) to identify its build and connector compatibility protocol.
+Tool additions do not require a new connector protocol. An incompatible app
+reports that a compatible connector is needed. Closing the connector leaves the
+companion and launched applications running. After moving a portable extraction,
+update the connector path in the client's configuration. See
+share/doc/simxr/AUTOMATION.md for examples, image access and current limitations.
+
+PROTON AND PLATFORM REQUIREMENTS
+
 For Proton, use bin/prepare-proton-prefix.py to create a private simulator prefix.
-In the launch profile, select that prepared prefix as Private Proton prefix and
-select the package's openxr_simulator.json. Launching registers the runtime only
+In the launch profile, select that prepared prefix as Private Proton prefix.
+Launching registers the selected simulator runtime only
 inside that prefix. This registration persists until you remove the private
 prefix. Shared and default prefixes are refused. See BUILDING.md for commands.
 
-The host needs its graphics driver and Vulkan loader. Linux additionally needs
-the usual C/C++ runtime and desktop window-system libraries. This archive does
-not install or replace drivers. Windows requires a Vulkan-capable driver even
-when the application uses Direct3D or OpenGL.
+The Linux x64 package targets updated Ubuntu 24.04 LTS, with its C/C++ runtime,
+X11 desktop libraries, the system Vulkan loader (libvulkan1), and a compatible
+GPU driver. Other distributions may work but are not qualified. Wayland and
+hardware compatibility remain separate checks. The optional headset host and
+OpenXR probes need the system OpenXR loader (libopenxr-loader1); update checks
+also need a compatible system libcurl.so.4. This archive does not install or
+replace drivers. Windows requires a Vulkan-capable driver even when the
+application uses Direct3D or OpenGL.
 
 bin/simxr_companion --version
 bin/simxr_runner --version
+
+OPTIONAL SDK AND EXAMPLES
 
 Python 3.10+ SDK: install share/simxr/sdk/python into a virtual environment with
 pip, or put that directory on PYTHONPATH. Examples are in share/simxr/examples;
@@ -36,7 +144,15 @@ Luau rigs are also in share/simxr/rigs. The C game bridge header is in include.
 See share/doc/simxr for runner and control protocol instructions. Optional loader
 probes are in bin when built with SIMXR_BUILD_PROBES.
 
-To uninstall, close this package's processes and delete the extracted directory.
+UPGRADES AND REMOVAL
+
+Close the app, MCP connector and all applications using this package's runtime
+before upgrading. Windows users can run the newer setup against the same install
+location. Linux users can run install.sh from the new extracted package, passing
+the existing --prefix if customized. For a portable upgrade, extract into a new
+directory and regenerate the MCP configuration for its connector path.
+
+To remove a portable extraction, close its processes and delete that directory.
 Remove any XR_RUNTIME_JSON setting you added to your own launch scripts. User
 settings and recordings are outside the package and are preserved. Extraction
 and normal Windows/Linux launch do not change the machine's default OpenXR

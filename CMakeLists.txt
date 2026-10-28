@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.24)
 project(OpenXR-Simulator VERSION 2.0.0 LANGUAGES CXX)
 
+set(SIMXR_RELEASE_REPOSITORY "" CACHE STRING "Public GitHub owner/repository for update checks")
+if(SIMXR_RELEASE_REPOSITORY AND NOT SIMXR_RELEASE_REPOSITORY MATCHES "^[A-Za-z0-9-]+/[A-Za-z0-9_.-]+$")
+    message(FATAL_ERROR "SIMXR_RELEASE_REPOSITORY must be a GitHub owner/repository")
+endif()
 configure_file(cmake/Version.h.in "${PROJECT_BINARY_DIR}/generated/simxr/Version.h" @ONLY)
 
 include(CTest)
@@ -13,6 +17,7 @@ option(SIMXR_BUILD_RUNTIME "Build the OpenXR runtime" ON)
 option(SIMXR_BUILD_PROBES "Build native graphics compatibility probes" ON)
 option(SIMXR_BUILD_AUTOMATION "Build Luau rig runtime and headless runner" ON)
 option(SIMXR_BUILD_COMPANION "Build the separate SDL3/Vulkan companion" OFF)
+option(SIMXR_BUILD_HEADSET "Build the native OpenXR headset host" ${SIMXR_BUILD_COMPANION})
 set(SIMXR_SANITIZER "" CACHE STRING "Sanitizer: address, thread, or empty")
 set_property(CACHE SIMXR_SANITIZER PROPERTY STRINGS "" address thread)
 set(SIMXR_MCP_TEST_PYTHON "" CACHE FILEPATH "Optional Python interpreter with the MCP SDK for stdio integration tests")
@@ -25,12 +30,15 @@ add_library(simxr_core STATIC
     src/Json.cpp
     src/math/Math.cpp
     src/platform/Clock.cpp
+    src/platform/ClockConversion.cpp
+    src/platform/NativeClock.cpp
     src/graphics/SnapshotBudget.cpp
     src/graphics/FramePool.cpp
     src/simulation/ActionRegistry.cpp
     src/simulation/InputState.cpp
     src/simulation/LegacyControllerMotion.cpp
     src/simulation/CommandScheduler.cpp
+    src/simulation/LiveInputSlot.cpp
     src/simulation/CommandState.cpp
     src/simulation/CommandRecorder.cpp
     src/simulation/GameBridge.cpp
@@ -41,6 +49,7 @@ add_library(simxr_core STATIC
     src/runtime/EnumNames.cpp
     src/runtime/Runtime.cpp
     src/runtime/Session.cpp
+    src/runtime/SessionLiveInput.cpp
     src/runtime/SessionInteraction.cpp
     src/runtime/SessionCaptureCoordinator.cpp
     src/runtime/SessionPublication.cpp
@@ -58,14 +67,16 @@ add_library(simxr_core STATIC
     src/simulation/PoseSequence.cpp
     src/simulation/PoseSequenceExecution.cpp
     src/simulation/PoseHistory.cpp
+    src/simulation/TrackerSourcePath.cpp
     src/simulation/TrackingSystem.cpp
+    src/simulation/BodyObservation.cpp
     src/simulation/SpaceSystem.cpp
     src/simulation/ReferenceSpaceState.cpp
     src/simulation/ViewConfiguration.cpp
     src/presentation/FrameHistory.cpp
     src/presentation/FrameImageHistory.cpp
-    src/presentation/FramePreviewHistory.cpp
     src/media/Mp4Video.cpp
+    src/presentation/FramePreviewHistory.cpp
     src/presentation/FrameDiagnosticsJournal.cpp
     src/presentation/SnapshotStore.cpp
     src/presentation/DebugController.cpp
@@ -110,6 +121,7 @@ add_library(simxr_control STATIC
     src/control/RecordingControl.cpp
     src/control/SequenceControl.cpp
     src/control/SimulationConnection.cpp
+    src/control/LiveInputControl.cpp
     src/control/SimulationControl.cpp
     src/control/SimulationCommandCodec.cpp)
 simxr_configure_target(simxr_control)
@@ -124,14 +136,24 @@ elseif(WIN32)
         src/platform/windows/WindowsControl.cpp src/platform/windows/WindowsRuntimeInput.cpp)
     target_link_libraries(simxr_control PRIVATE advapi32 user32)
 endif()
-add_library(simxr_recording STATIC src/automation/Recording.cpp src/automation/RecordedRig.cpp)
+add_library(simxr_recording STATIC src/automation/Recording.cpp src/automation/RecordedRig.cpp src/automation/RecordingArchive.cpp src/automation/RecordingRange.cpp src/automation/RecordingEvidence.cpp)
 simxr_configure_target(simxr_recording)
 target_link_libraries(simxr_recording PUBLIC simxr_control)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_library(simxr_install_use STATIC src/platform/linux/InstallUse.cpp)
+    set_target_properties(simxr_install_use PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    simxr_configure_target(simxr_install_use)
+    target_link_libraries(simxr_install_use PUBLIC ${CMAKE_DL_LIBS})
+elseif(WIN32)
+    add_library(simxr_install_use STATIC src/platform/windows/InstallUse.cpp)
+    simxr_configure_target(simxr_install_use)
+endif()
 add_library(simxr_app_platform STATIC)
 if(WIN32)
     target_sources(simxr_app_platform PRIVATE src/app/platform/windows/FileStorage.cpp
-        src/app/platform/windows/LaunchSupport.cpp src/app/platform/windows/RuntimeEndpoints.cpp)
+        src/app/platform/windows/LaunchSupport.cpp src/app/platform/windows/PrivateSecurity.cpp
+        src/app/platform/windows/RuntimeEndpoints.cpp)
 else()
     target_sources(simxr_app_platform PRIVATE src/app/platform/FileStorage.cpp src/app/platform/RuntimeEndpoints.cpp)
 endif()
@@ -159,9 +181,18 @@ elseif(WIN32)
 else()
     target_sources(simxr_app_settings PRIVATE src/app/platform/ChildProcess.cpp)
 endif()
+if(WIN32 AND SIMXR_BUILD_COMPANION)
+    include(cmake/SimxrJson.cmake)
+    target_sources(simxr_app_settings PRIVATE src/app/platform/windows/ManifestAlias.cpp)
+    target_include_directories(simxr_app_settings SYSTEM PRIVATE "${simxr_json_SOURCE_DIR}/single_include")
+    target_compile_definitions(simxr_app_settings PRIVATE SIMXR_MANIFEST_ALIAS)
+endif()
 simxr_configure_target(simxr_app_settings)
 target_include_directories(simxr_app_settings PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(simxr_app_settings PUBLIC Threads::Threads PRIVATE simxr_app_platform)
+if(WIN32)
+    target_link_libraries(simxr_app_settings PRIVATE user32)
+endif()
 if(WIN32)
     target_link_libraries(simxr_app_settings PRIVATE advapi32)
 endif()
@@ -194,7 +225,7 @@ endif()
 simxr_configure_target(simxr_connection)
 target_link_libraries(simxr_connection PUBLIC simxr_control PRIVATE simxr_app_platform)
 
-add_library(simxr_recording_controller STATIC src/app/services/RecordingController.cpp src/app/services/LibraryCatalog.cpp)
+add_library(simxr_recording_controller STATIC src/app/services/RecordingCapture.cpp src/app/services/RecordingController.cpp src/app/services/LibraryCatalog.cpp)
 simxr_configure_target(simxr_recording_controller)
 target_link_libraries(simxr_recording_controller PUBLIC simxr_connection simxr_recording PRIVATE simxr_app_platform)
 
@@ -241,7 +272,7 @@ if(WIN32)
     endif()
 endif()
 
-if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES OR SIMXR_BUILD_COMPANION)
+if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES OR SIMXR_BUILD_COMPANION OR SIMXR_BUILD_HEADSET)
     find_path(SIMXR_VULKAN_INCLUDE_DIR vulkan/vulkan.h
         HINTS "$ENV{SIMXR_VULKAN_INCLUDE_DIR}" "$ENV{VULKAN_SDK}/Include" "$ENV{VULKAN_SDK}/include")
     if(NOT SIMXR_VULKAN_INCLUDE_DIR)
@@ -249,7 +280,7 @@ if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES OR SIMXR_BUILD_COMPANION)
     endif()
 endif()
 
-if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES OR SIMXR_BUILD_COMPANION)
+if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES OR SIMXR_BUILD_COMPANION OR SIMXR_BUILD_HEADSET)
     if(WIN32)
         find_library(SIMXR_VULKAN_LIBRARY NAMES vulkan-1 HINTS "$ENV{VULKAN_SDK}/Lib" REQUIRED)
     else()
@@ -368,9 +399,14 @@ if(SIMXR_BUILD_RUNTIME)
     if(WIN32)
         target_link_libraries(openxr_simulator PRIVATE simxr_windows_graphics)
         target_link_libraries(openxr_simulator PRIVATE simxr_vulkan simxr_vulkan_control)
+        target_sources(openxr_simulator PRIVATE src/platform/windows/RuntimeInstallUse.cpp)
+        target_link_libraries(openxr_simulator PRIVATE simxr_install_use)
     else()
         find_library(SIMXR_VULKAN_LIBRARY NAMES vulkan libvulkan.so.1 REQUIRED)
         target_link_libraries(openxr_simulator PRIVATE "${SIMXR_VULKAN_LIBRARY}")
+        if(TARGET simxr_install_use)
+            target_link_libraries(openxr_simulator PRIVATE simxr_install_use)
+        endif()
         target_link_libraries(openxr_simulator PRIVATE simxr_vulkan simxr_vulkan_control)
     endif()
 
@@ -384,6 +420,8 @@ endif()
 if(BUILD_TESTING)
     simxr_add_test(recording_tests tests/automation/RecordingTests.cpp recording)
     target_link_libraries(recording_tests PRIVATE simxr_recording)
+    simxr_add_test(recording_archive_tests tests/automation/RecordingArchiveTests.cpp recording_archive)
+    target_link_libraries(recording_archive_tests PRIVATE simxr_recording)
     simxr_add_test(companion_settings_tests tests/app/CompanionSettingsTests.cpp companion_settings)
     target_link_libraries(companion_settings_tests PRIVATE simxr_app_settings simxr_core)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -391,6 +429,9 @@ if(BUILD_TESTING)
         target_link_libraries(process_supervisor_tests PRIVATE simxr_app_settings)
     endif()
     if(WIN32)
+        add_executable(windows_profile_fixture tests/app/WindowsProfileFixture.cpp)
+        simxr_configure_target(windows_profile_fixture)
+        target_link_libraries(windows_profile_fixture PRIVATE simxr_app_settings shell32)
         add_library(windows_module_lifetime_fixture SHARED tests/platform/WindowsModuleLifetimeFixture.cpp)
         simxr_configure_target(windows_module_lifetime_fixture)
         target_link_libraries(windows_module_lifetime_fixture PRIVATE simxr_core)
@@ -438,7 +479,7 @@ if(BUILD_TESTING)
     simxr_add_test(command_scheduler_tests tests/simulation/CommandSchedulerTests.cpp command_scheduler)
     target_link_libraries(command_scheduler_tests PRIVATE simxr_core)
     simxr_add_test(history_store_tests tests/app/HistoryStoreTests.cpp history_store)
-    target_link_libraries(history_store_tests PRIVATE simxr_connection)
+    target_link_libraries(history_store_tests PRIVATE simxr_connection simxr_recording)
     simxr_add_test(history_coverage_tests tests/app/HistoryCoverageTests.cpp history_coverage)
     target_link_libraries(history_coverage_tests PRIVATE simxr_connection)
     simxr_add_test(player_rig_tests tests/app/PlayerRigTests.cpp player_rig)
@@ -467,9 +508,12 @@ if(BUILD_TESTING)
     target_link_libraries(wire_protocol_tests PRIVATE simxr_control)
     simxr_add_test(control_service_tests tests/control/ControlServiceTests.cpp control_service)
     target_link_libraries(control_service_tests PRIVATE simxr_control)
+    simxr_add_test(recording_controller_tests tests/app/RecordingControllerTests.cpp recording_controller)
+    target_link_libraries(recording_controller_tests PRIVATE simxr_recording_controller)
+    set_tests_properties(recording_controller PROPERTIES TIMEOUT 90)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        simxr_add_test(recording_controller_tests tests/app/RecordingControllerTests.cpp recording_controller)
-        target_link_libraries(recording_controller_tests PRIVATE simxr_recording_controller)
+        add_test(NAME recording_write_failure COMMAND recording_controller_tests --write-failure)
+        set_tests_properties(recording_write_failure PROPERTIES TIMEOUT 30)
         simxr_add_test(rig_launch_attachment_tests tests/app/LaunchAttachmentTests.cpp rig_launch_attachment)
         target_link_libraries(rig_launch_attachment_tests PRIVATE simxr_connection)
         simxr_add_test(control_fd_tests tests/control/ControlFdTests.cpp control_fd)
@@ -495,7 +539,8 @@ if(BUILD_TESTING)
             add_test(NAME python_video COMMAND "${Python3_EXECUTABLE}"
                 "${PROJECT_SOURCE_DIR}/tests/control/test_video.py")
             add_test(NAME python_recording COMMAND "${Python3_EXECUTABLE}"
-                "${PROJECT_SOURCE_DIR}/tests/control/test_recording.py")
+                "${PROJECT_SOURCE_DIR}/tests/control/test_recording.py"
+                --native-codec "$<TARGET_FILE:body_observation_codec_tests>")
             add_test(NAME python_pose_sequence_adapter COMMAND "${Python3_EXECUTABLE}"
                 "${PROJECT_SOURCE_DIR}/tests/control/test_pose_sequence_adapter.py")
             add_test(NAME python_legacy_control COMMAND "${Python3_EXECUTABLE}"
@@ -579,6 +624,8 @@ if(BUILD_TESTING)
     target_link_libraries(legacy_input_tests PRIVATE simxr_control)
     simxr_add_test(session_tests tests/runtime/SessionTests.cpp session)
     target_link_libraries(session_tests PRIVATE simxr_core)
+    simxr_add_test(frame_submission_tests tests/graphics/FrameSubmissionTests.cpp frame_submission)
+    target_link_libraries(frame_submission_tests PRIVATE simxr_graphics)
     simxr_add_test(session_failure_tests tests/runtime/SessionFailureTests.cpp session_failure)
     target_link_libraries(session_failure_tests PRIVATE simxr_core)
     simxr_add_test(simulation_extensions_tests tests/runtime/SimulationExtensionsTests.cpp simulation_extensions)
@@ -593,6 +640,20 @@ if(BUILD_TESTING)
     target_link_libraries(body_tracking_tests PRIVATE simxr_core)
     simxr_add_test(body_model_tests tests/simulation/BodyModelTests.cpp body_model)
     target_link_libraries(body_model_tests PRIVATE simxr_core)
+    simxr_add_test(clock_conversion_tests tests/platform/ClockConversionTests.cpp clock_conversion)
+    target_link_libraries(clock_conversion_tests PRIVATE simxr_core)
+    simxr_add_test(live_input_control_tests tests/control/LiveInputControlTests.cpp live_input_control)
+    target_link_libraries(live_input_control_tests PRIVATE simxr_control)
+    simxr_add_test(physical_views_tests tests/simulation/PhysicalViewsTests.cpp physical_views)
+    target_link_libraries(physical_views_tests PRIVATE simxr_control)
+    simxr_add_test(live_input_tests tests/simulation/LiveInputTests.cpp live_input)
+    target_link_libraries(live_input_tests PRIVATE simxr_recording)
+    simxr_add_test(controller_aim_tests tests/simulation/ControllerAimTests.cpp controller_aim)
+    target_link_libraries(controller_aim_tests PRIVATE simxr_recording)
+    simxr_add_test(body_observation_codec_tests tests/control/BodyObservationCodecTests.cpp body_observation_codec)
+    target_link_libraries(body_observation_codec_tests PRIVATE simxr_control)
+    simxr_add_test(body_observation_tests tests/simulation/BodyObservationTests.cpp body_observation)
+    target_link_libraries(body_observation_tests PRIVATE simxr_core)
     simxr_add_test(tracking_tests tests/simulation/TrackingTests.cpp tracking)
     target_link_libraries(tracking_tests PRIVATE simxr_core)
     simxr_add_test(quad_views_tests tests/runtime/QuadViewsTests.cpp quad_views)
@@ -714,18 +775,7 @@ if(SIMXR_BUILD_PROBES)
             message(STATUS "OpenGL/EGL development libraries unavailable; GL/Vulkan sharing probe excluded")
         endif()
     endif()
-    find_package(OpenXR CONFIG QUIET)
-    if(TARGET OpenXR::openxr_loader)
-        set(SIMXR_OPENXR_LOADER_TARGET OpenXR::openxr_loader)
-    else()
-        find_library(SIMXR_OPENXR_LOADER NAMES openxr_loader libopenxr_loader.so.1
-            HINTS "$ENV{OPENXR_SDK}/lib" "$ENV{OPENXR_SDK}/lib/x64")
-        if(SIMXR_OPENXR_LOADER)
-            add_library(simxr_openxr_loader UNKNOWN IMPORTED)
-            set_target_properties(simxr_openxr_loader PROPERTIES IMPORTED_LOCATION "${SIMXR_OPENXR_LOADER}")
-            set(SIMXR_OPENXR_LOADER_TARGET simxr_openxr_loader)
-        endif()
-    endif()
+    include(cmake/SimxrOpenXrLoader.cmake)
     if(SIMXR_OPENXR_LOADER_TARGET)
         if(WIN32)
             add_executable(xr_probe_d3d11 probe/xr_probe_windows.cpp)
@@ -757,10 +807,12 @@ if(SIMXR_BUILD_PROBES)
             target_link_libraries(xr_probe_vk PRIVATE simxr_vulkan_control simxr_probe_vulkan)
             foreach(probe xr_probe_d3d11 xr_probe_d3d12 xr_probe_opengl xr_probe_vk)
                 target_sources(${probe} PRIVATE probe/WindowsRuntimeModule.cpp)
+                target_link_libraries(${probe} PRIVATE simxr_install_use)
                 if(MINGW)
                     target_link_options(${probe} PRIVATE -municode)
                 endif()
             endforeach()
+            target_link_libraries(xr_probe PRIVATE simxr_install_use)
             if(BUILD_TESTING AND SIMXR_BUILD_RUNTIME)
                 add_test(NAME windows_d3d12_loader COMMAND xr_probe)
                 add_test(NAME windows_vulkan_loader COMMAND xr_probe_vk)
@@ -791,7 +843,7 @@ if(SIMXR_BUILD_PROBES)
             simxr_set_output_directory(xr_probe_linux)
             target_include_directories(xr_probe_linux PRIVATE "${SIMXR_VULKAN_INCLUDE_DIR}")
             target_link_libraries(xr_probe_linux PRIVATE ${SIMXR_OPENXR_LOADER_TARGET}
-                "${SIMXR_VULKAN_LIBRARY}" Threads::Threads ${CMAKE_DL_LIBS})
+                "${SIMXR_VULKAN_LIBRARY}" Threads::Threads ${CMAKE_DL_LIBS} simxr_install_use)
             if(BUILD_TESTING AND SIMXR_BUILD_RUNTIME)
                 foreach(probe_mode IN ITEMS default v1 threaded bgra body devices quad close_retry creation_rollback native_admission)
                     if(probe_mode STREQUAL "default")
@@ -1010,18 +1062,39 @@ endif()
 
 install(FILES include/simxr/game_bridge.h DESTINATION include/simxr)
 
-if(TARGET openxr_simulator AND NOT WIN32 AND BUILD_TESTING AND Python3_Interpreter_FOUND)
+if(TARGET openxr_simulator AND BUILD_TESTING)
+    if(NOT Python3_Interpreter_FOUND)
+        find_package(Python3 QUIET COMPONENTS Interpreter)
+    endif()
     add_executable(game_bridge_probe probes/GameBridgeProbe.cpp)
     simxr_configure_target(game_bridge_probe)
     simxr_set_output_directory(game_bridge_probe)
     target_link_libraries(game_bridge_probe PRIVATE ${CMAKE_DL_LIBS} Threads::Threads)
-    add_test(NAME native_game_bridge COMMAND "${Python3_EXECUTABLE}"
-        "${PROJECT_SOURCE_DIR}/tests/control/test_game_bridge_native.py" "$<TARGET_FILE:game_bridge_probe>"
-        "$<TARGET_FILE:openxr_simulator>")
-    set_tests_properties(native_game_bridge PROPERTIES TIMEOUT 20)
-    add_test(NAME native_game_example COMMAND "${Python3_EXECUTABLE}"
-        "${PROJECT_SOURCE_DIR}/tests/control/test_game_example.py" "$<TARGET_FILE:openxr_simulator>")
-    set_tests_properties(native_game_example PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        target_link_libraries(game_bridge_probe PRIVATE user32)
+        if(MINGW)
+            target_link_options(game_bridge_probe PRIVATE -municode)
+        endif()
+    endif()
+    if(NOT WIN32 AND Python3_Interpreter_FOUND)
+        add_test(NAME native_game_bridge COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/control/test_game_bridge_native.py" "$<TARGET_FILE:game_bridge_probe>"
+            "$<TARGET_FILE:openxr_simulator>")
+        set_tests_properties(native_game_bridge PROPERTIES TIMEOUT 20)
+        add_test(NAME native_game_example COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/control/test_game_example.py" "$<TARGET_FILE:openxr_simulator>")
+        set_tests_properties(native_game_example PROPERTIES TIMEOUT 20)
+    endif()
+    if(Python3_Interpreter_FOUND AND TARGET simxr_companion AND TARGET simxr_mcp_connector)
+        add_test(NAME native_mcp_game_bridge COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/app/test_mcp_game_bridge.py" "$<TARGET_FILE:simxr_companion>"
+            "$<TARGET_FILE:simxr_mcp_connector>" "$<TARGET_FILE:game_bridge_probe>" "$<TARGET_FILE:openxr_simulator>")
+        set_tests_properties(native_mcp_game_bridge PROPERTIES TIMEOUT 30)
+    endif()
+endif()
+
+if(SIMXR_BUILD_HEADSET)
+    include(cmake/SimxrHeadset.cmake)
 endif()
 
 include(cmake/SimxrPackage.cmake)

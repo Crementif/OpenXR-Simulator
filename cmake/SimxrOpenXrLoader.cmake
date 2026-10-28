@@ -1,0 +1,13 @@
+include_guard(GLOBAL)
+find_package(OpenXR CONFIG QUIET)
+if(TARGET OpenXR::openxr_loader)
+    set(SIMXR_OPENXR_LOADER_TARGET OpenXR::openxr_loader)
+else()
+    find_library(SIMXR_OPENXR_LOADER NAMES openxr_loader libopenxr_loader.so.1
+        HINTS "$ENV{OPENXR_SDK}/lib" "$ENV{OPENXR_SDK}/lib/x64")
+    if(SIMXR_OPENXR_LOADER)
+        add_library(simxr_openxr_loader UNKNOWN IMPORTED)
+        set_target_properties(simxr_openxr_loader PROPERTIES IMPORTED_LOCATION "${SIMXR_OPENXR_LOADER}")
+        set(SIMXR_OPENXR_LOADER_TARGET simxr_openxr_loader)
+    endif()
+endif()

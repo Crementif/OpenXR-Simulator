@@ -15,6 +15,7 @@ if(NOT simxr_luau_POPULATED)
 endif()
 add_library(simxr_automation STATIC
     src/automation/RigRunner.cpp
+    src/automation/RecordingPlayback.cpp
     src/automation/RigProgress.cpp
     src/automation/RigRuntime.cpp
     src/automation/RigReport.cpp
@@ -22,7 +23,7 @@ add_library(simxr_automation STATIC
     src/automation/ScriptValues.cpp)
 simxr_configure_target(simxr_automation)
 target_link_libraries(simxr_automation PUBLIC simxr_control simxr_recording PRIVATE Luau.Compiler Luau.VM)
-add_library(simxr_rig_controller STATIC src/app/services/RigController.cpp)
+add_library(simxr_rig_controller STATIC src/app/services/RigController.cpp src/app/services/LuauAutomation.cpp)
 simxr_configure_target(simxr_rig_controller)
 target_link_libraries(simxr_rig_controller PUBLIC simxr_automation simxr_connection PRIVATE simxr_app_platform)
 add_executable(simxr_runner src/automation/RunnerMain.cpp)
@@ -35,6 +36,9 @@ endif()
 simxr_configure_target(simxr_runner)
 simxr_set_output_directory(simxr_runner)
 target_link_libraries(simxr_runner PRIVATE simxr_automation)
+if(TARGET simxr_install_use)
+    target_link_libraries(simxr_runner PRIVATE simxr_install_use)
+endif()
 if(BUILD_TESTING)
     simxr_add_test(rig_controller_tests tests/app/RigControllerTests.cpp rig_controller)
     target_link_libraries(rig_controller_tests PRIVATE simxr_rig_controller)

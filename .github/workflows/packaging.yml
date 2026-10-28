@@ -1,0 +1,241 @@
+name: Packaging
+
+on:
+  workflow_dispatch:
+    inputs:
+      create_release_draft:
+        description: 'Create an unsigned preview draft (run against the matching vMAJOR.MINOR.PATCH tag)'
+        type: boolean
+        default: false
+  pull_request:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  release-context:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Validate public release destination
+        if: github.event_name == 'workflow_dispatch' && inputs.create_release_draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${GITHUB_REPOSITORY,,}" != crementif/openxr-simulator ]; then
+            echo 'Preview releases must be built in Crementif/OpenXR-Simulator.' >&2
+            exit 1
+          fi
+          if [ "$(gh api "repos/$GITHUB_REPOSITORY" --jq .visibility)" != public ]; then
+            echo 'The release repository must be public.' >&2
+            exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" != tag ]; then
+            echo 'Run the release workflow against the matching version tag.' >&2
+            exit 1
+          fi
+
+  linux:
+    needs: [release-context]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      SIMXR_RELEASE_REPOSITORY: ${{ github.repository }}
+      SIMXR_CI_DESKTOP_DRIVER: ${{ vars.SIMXR_CI_DESKTOP_DRIVER }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libvulkan-dev libopenxr-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev \
+            libxrender-dev libxtst-dev libxss-dev libxkbcommon-dev libwayland-dev wayland-protocols \
+            libegl-dev libgles-dev libudev-dev libdbus-1-dev libusb-1.0-0-dev \
+            libdecor-0-dev libdrm-dev libgbm-dev libibus-1.0-dev libthai-dev libfribidi-dev \
+            desktop-file-utils libglib2.0-bin xvfb xauth mesa-vulkan-drivers vulkan-validationlayers \
+            python3-numpy python3-pil
+      - name: Build and stage Linux archive
+        run: sh packaging/ci/build-linux.sh "$GITHUB_WORKSPACE/out/ci-linux"
+      - name: Test the extracted Linux package
+        run: |
+          mkdir out/ci-linux/extracted
+          tar -xzf out/ci-linux/packages/*.tar.gz -C out/ci-linux/extracted
+          stage=$(find "$GITHUB_WORKSPACE/out/ci-linux/extracted" -mindepth 1 -maxdepth 1 -type d -print -quit)
+          python3 tests/packaging/test_linux_abi.py "$stage"
+          xvfb-run -a python3 tests/packaging/test_linux_install.py "$stage"
+          python3 tests/packaging/test_linux_portable.py "$stage" --skip-image
+          if [ "${SIMXR_CI_DESKTOP_DRIVER:-}" = x11 ]; then
+            python3 tests/packaging/test_linux_desktop_mcp.py "$stage" --video-driver x11 --normal-close
+          elif [ -n "${SIMXR_CI_DESKTOP_DRIVER:-}" ]; then
+            python3 tests/packaging/test_linux_desktop_mcp.py "$stage" --video-driver "$SIMXR_CI_DESKTOP_DRIVER"
+          fi
+          /usr/bin/python3 tests/app/test_stereo_consistency_reference.py "$GITHUB_WORKSPACE/out/ci-linux/build/stereo_consistency_tests"
+          xvfb-run -a -s '-screen 0 640x480x24' python3 tests/app/test_startup_failure.py \
+            "$stage/bin/simxr_companion" "$stage/bin/simxr_mcp_connector"
+          SIMXR_DATA_DIR="$GITHUB_WORKSPACE/out/ci-linux/smoke-data" xvfb-run -a \
+            "$stage/bin/simxr_companion" --hidden --validation --smoke-frames 8
+          XR_RUNTIME_JSON="$stage/bin/openxr_simulator.json" \
+            SIMXR_DATA_DIR="$GITHUB_WORKSPACE/out/ci-linux/smoke-data" SIMXR_PROBE_FRAMES=8 \
+            "$stage/bin/xr_probe_linux"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: linux-package
+          path: |
+            out/ci-linux/packages/*.tar.gz
+            out/ci-linux/packages/VERSION
+          if-no-files-found: error
+
+  windows:
+    needs: [release-context]
+    runs-on: windows-2025
+    timeout-minutes: 90
+    env:
+      SIMXR_RELEASE_REPOSITORY: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build and stage Windows packages
+        shell: powershell
+        run: |
+          & ./packaging/ci/build-windows.ps1 -WorkDirectory "$env:GITHUB_WORKSPACE\out\ci-windows" `
+            -InnoCompiler "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-packages
+          path: |
+            out/ci-windows/packages/*.zip
+            out/ci-windows/packages/*-setup.exe
+          if-no-files-found: error
+
+  python-packages:
+    needs: [release-context]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build optional Python distributions
+        run: |
+          python3 -m venv out/python-build
+          out/python-build/bin/python -m pip wheel --no-deps --wheel-dir out/python-wheels ./sdk/python ./mcp-server
+          (cd out/python-wheels && sha256sum *.whl > SHA256SUMS)
+      - name: Install and test without source imports
+        run: |
+          python3 -m venv out/python-test
+          out/python-test/bin/python -m pip install --find-links out/python-wheels out/python-wheels/openxr_simulator_mcp-*.whl
+          out/python-test/bin/python -m pip check
+          env -u PYTHONPATH out/python-test/bin/python tests/packaging/test_python_distributions.py
+          out/python-test/bin/python tests/packaging/test_missing_python_sdk.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: python-distributions
+          path: out/python-wheels/*
+          if-no-files-found: error
+
+  python-windows:
+    needs: [python-packages]
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: python-distributions
+          path: out/python-wheels
+      - name: Install and test without source imports
+        shell: powershell
+        run: |
+          python -m venv out/python-test
+          $py = (Resolve-Path out/python-test/Scripts/python.exe).Path
+          $wheel = @(Get-ChildItem out/python-wheels/openxr_simulator_mcp-*.whl)
+          if ($wheel.Count -ne 1) { throw 'Expected exactly one MCP wheel.' }
+          & $py -m pip install --find-links out/python-wheels $wheel[0].FullName
+          if ($LASTEXITCODE -ne 0) { throw 'Wheel installation failed.' }
+          & $py -m pip check
+          if ($LASTEXITCODE -ne 0) { throw 'Installed dependencies are inconsistent.' }
+          Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+          & $py tests/packaging/test_python_distributions.py
+          if ($LASTEXITCODE -ne 0) { throw 'Installed package test failed.' }
+          & $py tests/packaging/test_missing_python_sdk.py
+          if ($LASTEXITCODE -ne 0) { throw 'Missing SDK test failed.' }
+
+  candidate:
+    needs: [linux, windows, python-packages, python-windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: linux-package
+          path: out/candidate
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: windows-packages
+          path: out/candidate
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: python-distributions
+          path: out/python-wheels
+      - name: Validate packages and create checksums
+        id: prepare
+        run: |
+          version=$(tr -d '\r\n' < out/candidate/VERSION)
+          python3 packaging/prepare-release.py --version "$version" --directory out/candidate \
+            --python-wheels out/python-wheels
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          rm out/candidate/VERSION
+          (cd out/candidate && sha256sum -c SHA256SUMS)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-candidate
+          path: out/candidate/*
+          if-no-files-found: error
+
+  release-draft:
+    if: github.event_name == 'workflow_dispatch' && inputs.create_release_draft
+    needs: [candidate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: release-draft-${{ github.ref }}
+      cancel-in-progress: false
+    env:
+      VERSION: ${{ needs.candidate.outputs.version }}
+      RELEASE_REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Check the release destination and tag
+        run: |
+          if [ "${RELEASE_REPOSITORY,,}" != crementif/openxr-simulator ]; then
+            echo 'Preview releases must be built in Crementif/OpenXR-Simulator.' >&2
+            exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" != tag ] || [ "$GITHUB_REF_NAME" != "v$VERSION" ]; then
+            echo 'Run this workflow against the existing vMAJOR.MINOR.PATCH tag matching the package version.' >&2
+            exit 1
+          fi
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-candidate
+          path: out/candidate
+      - name: Create the preview draft with all assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          (cd out/candidate && sha256sum -c SHA256SUMS)
+          tag_commit=$(gh api "repos/$RELEASE_REPOSITORY/commits/$GITHUB_REF_NAME" --jq .sha)
+          if [ "$tag_commit" != "$GITHUB_SHA" ]; then
+            echo 'The release tag changed after this build started; refusing to attach these packages.' >&2
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" out/candidate/* \
+            --repo "$RELEASE_REPOSITORY" --verify-tag --draft --prerelease --latest=false \
+            --title "OpenXR Simulator $VERSION preview" \
+            --notes-file out/candidate/RELEASE_NOTES.md
+          printf 'Created an unsigned preview draft for `%s`. Review its assets and qualification matrix before publishing.\n' \
+            "$GITHUB_REF_NAME" >> "$GITHUB_STEP_SUMMARY"

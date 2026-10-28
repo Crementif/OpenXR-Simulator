@@ -5,5 +5,6 @@
 namespace simxr
 {
 inline constexpr char Version[] = "@PROJECT_VERSION@";
+inline constexpr char ReleaseRepository[] = "@SIMXR_RELEASE_REPOSITORY@";
 inline constexpr XrVersion RuntimeVersion = XR_MAKE_VERSION(@PROJECT_VERSION_MAJOR@, @PROJECT_VERSION_MINOR@, @PROJECT_VERSION_PATCH@);
 }
