@@ -70,31 +70,139 @@ static void AppDetail(const std::string& detail, std::initializer_list<const cha
 	if (sameLine)
 		ImGui::SameLine();
 }
+AppPicker::~AppPicker()
+{
+	StopDiscovery();
+	if (m_worker.joinable())
+		m_worker.join();
+}
+void AppPicker::StopDiscovery() noexcept
+{
+	if (!m_worker.joinable())
+		return;
+	m_worker.request_stop();
+	m_changed.notify_all();
+}
+bool AppPicker::DiscoveryStopped() const noexcept
+{
+	return m_workerExited.load();
+}
 std::string AppPicker::Refresh()
 {
 	try
 	{
-		m_running = DiscoverRunningApps();
+		if (m_workerFailed.exchange(false) && m_worker.joinable())
+			m_worker.join();
+		if (!m_worker.joinable())
+		{
+			m_workerExited.store(false);
+			try
+			{
+				m_worker = std::jthread(
+					[this](std::stop_token stop)
+					{
+						Run(stop);
+					});
+			}
+			catch (...)
+			{
+				m_workerExited.store(true);
+				throw;
+			}
+		}
+		{
+			std::lock_guard lock(m_mutex);
+			++m_requested;
+		}
+		m_loading = true;
 		m_discoveryFailed = false;
+		m_running.clear();
+		m_changed.notify_all();
 		return {};
 	}
 	catch (const std::exception& error)
 	{
-		m_running.clear();
+		m_loading = false;
 		m_discoveryFailed = true;
 		return error.what();
 	}
 }
+void AppPicker::Run(std::stop_token stop) noexcept
+{
+	struct ExitSignal
+	{
+		std::atomic<bool>& exited;
+		~ExitSignal() { exited.store(true); }
+	} exitSignal{m_workerExited};
+	try
+	{
+		std::uint64_t observed = 0;
+		while (!stop.stop_requested())
+		{
+			std::uint64_t request = 0;
+			{
+				std::unique_lock lock(m_mutex);
+				m_changed.wait(lock, stop,
+							   [&]
+							   {
+								   return m_requested != observed;
+							   });
+				if (stop.stop_requested())
+					return;
+				request = observed = m_requested;
+			}
+			DiscoveryResult result;
+			try
+			{
+				result.apps = DiscoverRunningApps(std::chrono::milliseconds(150), stop);
+			}
+			catch (const std::exception& error)
+			{
+				result.error = error.what();
+			}
+			catch (...)
+			{
+				result.error = "Application discovery failed";
+			}
+			if (stop.stop_requested())
+				return;
+			std::lock_guard lock(m_mutex);
+			if (request == m_requested)
+				m_result = std::move(result);
+		}
+	}
+	catch (...)
+	{
+		m_workerFailed.store(true);
+	}
+}
 AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const RuntimeView& view, const std::string& label,
 								ImU32 dot, const std::string& tooltip, bool open, const std::function<void()>& session,
-								float maximumWidth)
+								float maximumWidth, bool compact)
 {
 	AppPickerChoice choice;
+	if (m_workerFailed.load() && !m_discoveryFailed)
+	{
+		m_loading = false;
+		m_discoveryFailed = true;
+		choice.discoveryError = "Application discovery worker failed";
+	}
+	{
+		std::lock_guard lock(m_mutex);
+		if (m_result)
+		{
+			m_running = std::move(m_result->apps);
+			choice.discoveryError = std::move(m_result->error);
+			m_discoveryFailed = !choice.discoveryError.empty();
+			m_result.reset();
+			m_loading = false;
+		}
+	}
 	const float height = ImGui::GetFrameHeight(), unit = ImGui::GetFontSize() / 17;
 	const auto text = ImGui::CalcTextSize(label.c_str());
 	const float extra = (dot ? 14 * unit : 0) + 18 * unit;
 	const float fullWidth = height + text.x + 8 * unit + extra;
-	const ImVec2 size{maximumWidth > 0 ? std::min(fullWidth, maximumWidth) : fullWidth, height};
+	const ImVec2 size{compact ? height : maximumWidth > 0 ? std::min(fullWidth, maximumWidth) : fullWidth, height};
 	const float dotX = size.x - extra, chevronX = size.x - 18 * unit;
 	const auto minimum = ImGui::GetCursorScreenPos();
 	const bool pressed = ImGui::InvisibleButton("##App picker", size, ImGuiButtonFlags_EnableNav);
@@ -104,19 +212,28 @@ AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const Runtime
 		draw->AddRectFilled(minimum, {minimum.x + size.x, minimum.y + size.y},
 							theme::Mix(theme::Bg, theme::Text, shown ? .1f : .06f), theme::Radius * unit);
 	DrawIcon(draw, Icon::App, {minimum.x + height / 2, minimum.y + height / 2}, height * .6f, theme::TextDim);
-	const float textRight = minimum.x + std::max(height, dotX - 4 * unit);
-	ImGui::RenderTextEllipsis(draw, {minimum.x + height, minimum.y + (height - text.y) / 2},
-							  {textRight, minimum.y + height}, textRight, label.data(), label.data() + label.size(),
-							  &text);
-	if (dot)
-		draw->AddCircleFilled({minimum.x + dotX + 4 * unit, minimum.y + height / 2}, 4 * unit, dot);
-	DrawIcon(draw, Icon::ChevronDown, {minimum.x + chevronX + 7 * unit, minimum.y + height / 2}, 12 * unit,
-			 theme::TextDim);
+	if (compact)
+	{
+		if (dot)
+			draw->AddCircleFilled({minimum.x + size.x - 4 * unit, minimum.y + size.y - 4 * unit}, 3 * unit, dot);
+	}
+	else
+	{
+		const float textRight = minimum.x + std::max(height, dotX - 4 * unit);
+		ImGui::RenderTextEllipsis(draw, {minimum.x + height, minimum.y + (height - text.y) / 2},
+								  {textRight, minimum.y + height}, textRight, label.data(), label.data() + label.size(),
+								  &text);
+		if (dot)
+			draw->AddCircleFilled({minimum.x + dotX + 4 * unit, minimum.y + height / 2}, 4 * unit, dot);
+		DrawIcon(draw, Icon::ChevronDown, {minimum.x + chevronX + 7 * unit, minimum.y + height / 2}, 12 * unit,
+				 theme::TextDim);
+	}
 	if (!tooltip.empty())
 		ImGui::SetItemTooltip("%s", tooltip.c_str());
 	if (pressed || open)
 	{
-		choice.discoveryError = Refresh();
+		if (auto error = Refresh(); !error.empty())
+			choice.discoveryError = std::move(error);
 		ImGui::OpenPopup("App picker");
 	}
 	ImGui::SetNextWindowPos({minimum.x, minimum.y + height + 2 * unit});
@@ -135,9 +252,12 @@ AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const Runtime
 	SectionLabel("Running");
 	ImGui::SameLine();
 	if (IconButton("Refresh", Icon::Refresh, "Look for running apps again"))
-		choice.discoveryError = Refresh();
+		if (auto error = Refresh(); !error.empty())
+			choice.discoveryError = std::move(error);
 	if (m_running.empty())
-		ImGui::TextDisabled("%s", m_discoveryFailed ? "Running apps unavailable" : "No running apps found");
+		ImGui::TextDisabled("%s", m_loading			  ? "Looking for running apps…"
+								  : m_discoveryFailed ? "Running apps unavailable"
+													  : "No running apps found");
 	for (const auto& app : m_running)
 	{
 		ImGui::PushID(app.endpoint.c_str());
@@ -209,7 +329,7 @@ AppPickerChoice AppPicker::Draw(const CompanionSettings& settings, const Runtime
 		ImGui::PopID();
 	}
 	ImGui::PopID();
-	if (ImGui::Selectable("Add…"))
+	if (ImGui::Selectable("Add application…"))
 		choice.addProfile = true;
 	if (!settings.profiles.empty() && ImGui::Selectable("Edit profiles"))
 		choice.editProfiles = true;

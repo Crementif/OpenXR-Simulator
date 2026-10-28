@@ -46,7 +46,7 @@ struct RuntimeConnectionSnapshot
 {
 	RuntimeConnectionState state = RuntimeConnectionState::Disconnected;
 	std::string path, detail, appName;
-	std::uint64_t epoch = 0;
+	std::uint64_t epoch = 0, peerProcess = 0;
 	std::size_t queued = 0, ready = 0;
 	bool inFlight = false;
 	control::ControlPacket hello;
@@ -60,7 +60,7 @@ class RuntimeConnection
 	~RuntimeConnection();
 	RuntimeConnection(const RuntimeConnection&) = delete;
 	RuntimeConnection& operator=(const RuntimeConnection&) = delete;
-	std::uint64_t Connect(std::string path);
+	std::uint64_t Connect(std::string path, std::optional<std::uint64_t> expectedProcess = {});
 	void Disconnect(std::optional<std::uint64_t> expectedEpoch = {});
 	// Zero means closed, not connected, or bounded admission exhausted.
 	std::uint64_t Submit(control::ControlPacket request);
@@ -76,7 +76,8 @@ class RuntimeConnection
 	};
 	bool Current(std::uint64_t epoch);
 	void ConnectionState(std::uint64_t epoch, RuntimeConnectionState state, std::string detail,
-						 std::optional<control::ControlPacket> hello = {}, std::string appName = {});
+						 std::optional<control::ControlPacket> hello = {}, std::string appName = {},
+						 std::uint64_t peerProcess = 0);
 	void Reply(RuntimeReply reply);
 	control::ControlPacket Exchange(control::LocalControlClient& client, control::ControlPacket packet,
 									std::uint64_t epoch);
@@ -92,6 +93,7 @@ class RuntimeConnection
 	std::vector<RuntimeReply> m_replies;
 	RuntimeConnectionSnapshot m_snapshot;
 	std::uint64_t m_nextTicket = 1;
+	std::optional<std::uint64_t> m_expectedProcess;
 	bool m_requested = false, m_stopping = false, m_workerExited = false;
 };
 } // namespace simxr::app

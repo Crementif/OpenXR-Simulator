@@ -8,6 +8,7 @@
 #include "app/services/PlayerRig.h"
 #include "app/services/ManualInputController.h"
 #include "app/dialogs/LaunchProfilesDialog.h"
+#include <map>
 #include "app/services/ProcessSupervisor.h"
 #include "app/widgets/PilotController.h"
 #include "app/services/RunningApps.h"
@@ -33,20 +34,28 @@
 #include "app/services/SimulationEdits.h"
 #include "app/services/SpatialMath.h"
 #include "app/render/UiRenderer.h"
+#include "app/render/PreviewTexture.h"
 #include "app/platform/Window.h"
 #include "app/services/Utf8Path.h"
 #include "app/WorkspacePanels.h"
+#include "app/shell/ApplicationTabs.h"
 #include "control/ControlSchema.h"
 #include "control/SimulationControl.h"
 #include "simulation/CommandScheduler.h"
 #include "simulation/TrackingSystem.h"
 #include "graphics/backends/vulkan/VulkanResources.h"
+#include "graphics/SnapshotBudget.h"
+#include "simxr/Version.h"
+#include <algorithm>
 #include <cmath>
 #include <thread>
 
 #include <SDL3/SDL.h>
 #ifdef _WIN32
 #include "app/platform/windows/LaunchSupport.h"
+#include "app/platform/windows/UpdateTransport.h"
+#include <fcntl.h>
+#include <io.h>
 
 // The static SDL test dependency exposes its event-injection entry points.
 extern "C" bool SDL_SetKeyboardFocus(SDL_Window* window);
@@ -624,6 +633,11 @@ void CheckPreferences(Interaction& test)
 {
 	PreferencesDialog dialog;
 	CompanionSettings settings;
+	McpUiState mcp;
+	UpdateUiState update;
+	mcp.available = true;
+	mcp.configuration = R"({"mcpServers":{"openxr-simulator":{"command":"/tmp/simulator connector"}}})";
+	mcp.codexConfiguration = "[mcp_servers.openxr-simulator]\ncommand = \"/tmp/simulator connector\"\nargs = []";
 	bool open = true, dirty = false, visible = true;
 	unsigned closed = 0;
 	ImVec2 closeMinimum, closeMaximum;
@@ -633,7 +647,8 @@ void CheckPreferences(Interaction& test)
 		ImGui::Begin("Preferences fixture");
 		if (visible)
 		{
-			closed += dialog.Draw(settings, open, dirty, 64ULL << 20, 512ULL << 20, 32ULL << 20, 1024ULL << 20);
+			closed += dialog.Draw(settings, open, dirty, 64ULL << 20, 512ULL << 20, 32ULL << 20, 1024ULL << 20,
+								  {}, 0, 0, &mcp, &update);
 			closeMinimum = ImGui::GetItemRectMin();
 			closeMaximum = ImGui::GetItemRectMax();
 		}
@@ -666,7 +681,8 @@ void CheckPreferences(Interaction& test)
 	{
 		auto* contents = contentsWindow();
 		Require(contents, "History settings contents missing");
-		ImGui::ActivateItemByID(contents->GetID("History GPU (MiB)"));
+		const auto general = ImHashStr("General", 0, contents->GetID("Preference pages"));
+		ImGui::ActivateItemByID(ImHashStr("History GPU (MiB)", 0, general));
 		pump();
 		io.AddKeyEvent(ImGuiMod_Ctrl, true);
 		tap(ImGuiKey_A);
@@ -675,7 +691,7 @@ void CheckPreferences(Interaction& test)
 		pump();
 		tap(ImGuiKey_Enter);
 		Require(settings.previewBudgetMiB == 2048 && dirty, "History budget field did not accept typed value");
-		ImGui::ActivateItemByID(contents->GetID("History RAM (MiB)"));
+		ImGui::ActivateItemByID(ImHashStr("History RAM (MiB)", 0, general));
 		pump();
 		io.AddKeyEvent(ImGuiMod_Ctrl, true);
 		tap(ImGuiKey_A);
@@ -713,7 +729,7 @@ void CheckPreferences(Interaction& test)
 			test.renderer.WaitIdle();
 			Require(false, (std::string("Preferences content missing before ") + step).c_str());
 		}
-		const auto keyboard = ImHashStr("Keyboard & mouse", 0, contents->GetID("Preference pages"));
+		const auto keyboard = ImHashStr("Keys & mouse", 0, contents->GetID("Preference pages"));
 		const auto row = ImHashData(&action, sizeof(action), ImHashStr("Bindings", 0, keyboard));
 		ImGui::ActivateItemByID(ImHashStr("###Binding", 0, row));
 		pump();
@@ -725,6 +741,150 @@ void CheckPreferences(Interaction& test)
 		ImGui::ActivateItemByID(ImHashStr(name, 0, contents->GetID("Preference pages")));
 		pump();
 	};
+	if (std::getenv("SIMXR_UPDATE_UI_QA"))
+	{
+		tab("About");
+		auto* contents = contentsWindow();
+		Require(contents, "Update preferences contents missing");
+		const auto about = ImHashStr("About", 0, contents->GetID("Preference pages"));
+		ImGui::ActivateItemByID(ImHashStr("Check for updates at startup", 0, about));
+		pump();
+		Require(settings.autoUpdateCheck && dirty, "Automatic update preference did not change");
+		ImGui::ActivateItemByID(ImHashStr("Check for updates", 0, about));
+		pump();
+		Require(update.checkRequested, "Manual update check was not requested");
+		update.result = {UpdateStatus::Unavailable, {}, {}, "Network unavailable"};
+		pump();
+		if (const auto directory = std::getenv("SIMXR_DIALOG_QA_DIR"))
+		{
+			test.renderer.RequestScreenshot(std::filesystem::path(directory) / "update-offline.bmp");
+			test.Frame();
+		}
+		const auto resize = [&](int width, int height)
+		{
+			const auto rebuilds = test.renderer.RebuildCount();
+			test.window.Resize(width, height);
+			Eventually([&] { test.Frame(); return test.renderer.RebuildCount() > rebuilds; },
+					   "Update preferences resize did not rebuild the swapchain");
+		};
+		resize(760, 600);
+		pump();
+		if (const auto directory = std::getenv("SIMXR_DIALOG_QA_DIR"))
+		{
+			test.renderer.RequestScreenshot(std::filesystem::path(directory) / "update-offline-narrow.bmp");
+			test.Frame();
+		}
+		resize(1280, 800);
+		update.result = {UpdateStatus::Available, "v2.1.0", "https://github.com/owner/repo/releases/tag/v2.1.0"};
+		pump();
+		settings.scale = 2.5f;
+		test.workspace.SetScale(settings.scale);
+		pump();
+		contents = contentsWindow();
+		Require(contents, "Enlarged update preferences contents missing");
+		if (contents->ScrollMax.y > 0)
+		{
+			ImGui::SetScrollY(contents, contents->ScrollMax.y);
+			pump();
+		}
+		const auto* viewport = ImGui::GetMainViewport();
+		Require(closeMinimum.y >= viewport->WorkPos.y && closeMaximum.y <= viewport->WorkPos.y + viewport->WorkSize.y,
+				"Enlarged update preferences put Close outside the viewport");
+		if (const auto directory = std::getenv("SIMXR_DIALOG_QA_DIR"))
+		{
+			test.renderer.RequestScreenshot(std::filesystem::path(directory) / "update-available-enlarged.bmp");
+			test.Frame();
+		}
+		resize(760, 600);
+		pump();
+		if (const auto directory = std::getenv("SIMXR_DIALOG_QA_DIR"))
+		{
+			test.renderer.RequestScreenshot(std::filesystem::path(directory) / "update-available-narrow-enlarged.bmp");
+			test.Frame();
+		}
+		test.renderer.WaitIdle();
+		Require(test.validation->errors.load() == 0, "Update preferences generated Vulkan validation errors");
+		test.extraDraw = {};
+		test.workspace.SetScale(1);
+		std::cout << "PASS update preferences, manual check and availability states\n";
+		return;
+	}
+	if (std::getenv("SIMXR_MCP_UI_QA"))
+	{
+		tab("MCP");
+		auto* contents = contentsWindow();
+		const auto mcpTab = ImHashStr("MCP", 0, contents->GetID("Preference pages"));
+		const auto activate = [&](const char* name)
+		{
+			ImGui::ActivateItemByID(ImHashStr(name, 0, mcpTab));
+			pump();
+		};
+		activate("Enable MCP on startup");
+		Require(settings.mcpEnabled && dirty, "MCP startup preference did not change");
+		mcp.listening = true;
+		mcp.discoverable = true;
+		mcp.sessions = 1;
+		mcp.httpConfiguration = R"({"url":"http://127.0.0.1:1234/mcp"})";
+		pump();
+		ImGui::ActivateItemByID(ImHashStr("Copy MCP configuration", 0, mcpTab));
+		test.Frame();
+		char* clipboard = SDL_GetClipboardText();
+		if (!clipboard || mcp.configuration != clipboard)
+		{
+			std::cout << "MCP clipboard mismatch: " << (clipboard ? clipboard : "<unavailable>") << '\n';
+			if (const auto directory = std::getenv("SIMXR_DIALOG_QA_DIR"))
+			{
+				test.renderer.RequestScreenshot(std::filesystem::path(directory) / "mcp-preferences-failure.bmp");
+				test.Frame();
+				test.renderer.WaitIdle();
+			}
+		}
+		Require(clipboard && mcp.configuration == clipboard, "MCP configuration was not copied exactly");
+		SDL_free(clipboard);
+		activate("Client");
+		const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+		Require(!popups.empty() && popups.back().Window, "MCP client selector did not open");
+		ImGui::ActivateItemByID(ImHashStr("Codex", 0, popups.back().Window->GetID(1)));
+		pump();
+		activate("Copy MCP configuration");
+		clipboard = SDL_GetClipboardText();
+		std::string codexClipboard = clipboard ? clipboard : "";
+		// The native Windows clipboard adds CR to text line endings.
+		for (auto offset = codexClipboard.find("\r\n"); offset != std::string::npos; offset = codexClipboard.find("\r\n", offset))
+			codexClipboard.erase(offset, 1);
+		Require(clipboard && mcp.codexConfiguration == codexClipboard, "Codex configuration was not copied correctly");
+		SDL_free(clipboard);
+		if (const auto directory = std::getenv("SIMXR_DIALOG_QA_DIR"))
+		{
+			test.renderer.RequestScreenshot(std::filesystem::path(directory) / "mcp-preferences-normal.bmp");
+			test.Frame();
+		}
+		activate("Stop MCP");
+		Require(!settings.mcpEnabled && mcp.stopRequested, "Stop MCP did not clear the preference and request stop");
+		mcp.listening = false;
+		mcp.error = "The local endpoint is unavailable.";
+		pump();
+		activate("Retry MCP");
+		Require(settings.mcpEnabled && mcp.retryRequested, "Retry MCP did not enable and request retry");
+		settings.scale = 2.5f;
+		test.workspace.SetScale(settings.scale);
+		pump();
+		const auto* viewport = ImGui::GetMainViewport();
+		Require(closeMinimum.y >= viewport->WorkPos.y && closeMaximum.y <= viewport->WorkPos.y + viewport->WorkSize.y,
+				"Enlarged MCP preferences put Close outside the viewport");
+		if (const auto directory = std::getenv("SIMXR_DIALOG_QA_DIR"))
+		{
+			test.renderer.RequestScreenshot(std::filesystem::path(directory) / "mcp-preferences-enlarged.bmp");
+			test.Frame();
+		}
+		test.renderer.WaitIdle();
+		Require(test.validation->errors.load() == 0, "MCP preferences generated Vulkan validation errors");
+		test.extraDraw = {};
+		test.workspace.SetScale(1);
+		std::cout << "PASS MCP preferences, clipboard, stop and retry controls\n";
+		return;
+	}
+	tab("Keys & mouse");
 	capture("Ctrl+K chord");
 	io.AddKeyEvent(ImGuiMod_Ctrl, true);
 	io.AddKeyEvent(ImGuiKey_LeftCtrl, true);
@@ -766,7 +926,7 @@ void CheckPreferences(Interaction& test)
 	tab("Gamepad");
 	Require(FindPanel("Gamepad mapping") && FindPanel("Gamepad mapping")->Active, "Gamepad tab did not open");
 	tap(ImGuiKey_J);
-	tab("Keyboard & mouse");
+	tab("Keys & mouse");
 	tap(ImGuiKey_L);
 	Require(settings.pilotBindings == bindings && !dirty, "Changing tabs left a keyboard binding armed");
 	capture("focus cancellation");
@@ -1065,9 +1225,14 @@ void CheckShell()
 	const auto checkToolbar = [&]
 	{
 		auto* toolbar = FindPanel("Top bar");
+		const auto* viewport = ImGui::GetMainViewport();
 		Require(toolbar && !toolbar->ScrollbarX && !toolbar->ScrollbarY &&
 				toolbar->ContentSize.x <= toolbar->Size.x + 1 && toolbar->ContentSize.y <= toolbar->Size.y + 1,
 				"Top-bar controls overflow their region");
+		Require(std::abs(toolbar->Pos.x - viewport->WorkPos.x) < 1 &&
+				std::abs(toolbar->Pos.y - viewport->WorkPos.y) < 1 &&
+				std::abs(toolbar->Pos.x + toolbar->Size.x - viewport->WorkPos.x - viewport->WorkSize.x) < 1,
+				"Top bar does not reach the window edges");
 		for (const char* action : {"History", "Settings", "##App picker"})
 		{
 			ImGui::ActivateItemByID(toolbar->GetID(action));
@@ -1099,6 +1264,14 @@ void CheckShell()
 	const auto inspector = FindPanel("Inspector");
 	Require(preview && inspector && !preview->DockId && !inspector->DockId, "Shell still uses docks");
 	Require(preview->Pos.x + preview->Size.x <= inspector->Pos.x + 1, "Inspector overlaps the wide preview");
+	const auto* viewport = ImGui::GetMainViewport();
+	const auto* toolbar = FindPanel("Top bar");
+	const auto* deviceTabs = FindPanel("Device tabs");
+	Require(deviceTabs && std::abs(deviceTabs->Pos.y - toolbar->Pos.y - toolbar->Size.y) < 1 &&
+			std::abs(deviceTabs->Pos.y + deviceTabs->Size.y - inspector->Pos.y) < 1 &&
+			std::abs(inspector->Pos.x + inspector->Size.x - viewport->WorkPos.x - viewport->WorkSize.x) < 1 &&
+			std::abs(inspector->Pos.y + inspector->Size.y - viewport->WorkPos.y - viewport->WorkSize.y) < 1,
+			"Inspector is not joined to the toolbar and window edges");
 	static constexpr const char* tabs[]{"Player", "Head", "Left", "Right", "Body", "Gaze", "Trackers"};
 	// Player is open at start, and clicking the open tab folds the inspector; it comes last.
 	for (const int index : {1, 2, 3, 4, 5, 6, 0})
@@ -1444,7 +1617,7 @@ void PilotLiveRuntime(const char* endpoint)
 			return test.window.Focused() && !ImGui::GetIO().AppFocusLost;
 		},
 		"Pilot UI did not regain focus");
-	const auto savePopover = FindPanel("Top bar")->GetID("Save take");
+	const auto savePopover = FindPanel("Top bar")->GetID("Recorded take");
 	std::string savedPath;
 	try
 	{
@@ -1464,36 +1637,19 @@ void PilotLiveRuntime(const char* endpoint)
 		frame();
 		auto* popup = ImGui::GetCurrentContext()->OpenPopupStack.back().Window;
 		Require(popup, "Save popover has no window");
-		const auto name = "R5 Cemu " + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
-		const auto destination = CompanionSettingsPath().parent_path() / "recordings" / (name + ".luau");
-		Require(!std::filesystem::exists(destination), "Pilot take destination already exists");
-		ImGui::SetWindowFocus(popup->Name);
-		ImGui::ActivateItemByID(popup->GetID("##Take name"));
-		ImGui::GetCurrentContext()->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
-		frame();
-		Require(ImGui::GetActiveID() == popup->GetID("##Take name"), "Pilot take name did not activate");
-		auto& io = ImGui::GetIO();
-		io.AddKeyEvent(ImGuiMod_Ctrl, true);
-		io.AddKeyEvent(ImGuiKey_A, true);
-		frame();
-		io.AddKeyEvent(ImGuiKey_A, false);
-		io.AddKeyEvent(ImGuiMod_Ctrl, false);
-		io.AddInputCharactersUTF8(name.c_str());
-		frame();
-		io.AddKeyEvent(ImGuiKey_Enter, true);
-		frame();
-		io.AddKeyEvent(ImGuiKey_Enter, false);
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
 		for (;;)
 		{
 			frame();
 			if (const auto take = std::get_if<TakeSel>(&test.workspace.State().selection))
 				savedPath = take->id;
-			if (Utf8Path(savedPath) == destination && std::filesystem::exists(destination) &&
+			if (!savedPath.empty() && std::filesystem::exists(Utf8Path(savedPath) / "input.simxr") &&
 				!test.runtime.Snapshot().recordingBusy)
 				break;
-			Require(std::chrono::steady_clock::now() < deadline, "Save take did not produce a persistent file");
+			Require(std::chrono::steady_clock::now() < deadline, "Stop did not produce a persistent archive");
 		}
+		ImGui::ActivateItemByID(popup->GetID("Done"));
+		frame();
 		Require(!OpenSavedRecording(savedPath).path.empty(), "Saved take cannot be reopened independently");
 	}
 	catch (...)
@@ -1913,6 +2069,61 @@ void CheckSpatialWidgetLifecycle()
 	std::cout << "PASS numeric gesture ownership, hidden widget retirement, rejected undo and historical camera isolation\n";
 }
 
+void CheckExpandedTrackerUi()
+{
+	using namespace simxr;
+	Interaction test;
+	PlayerRig rig;
+	DeviceControlPanel panel{rig};
+	Selection selection = DeviceSel{DevicePage::Trackers, 63};
+	for (const auto count : {64u, 0u, 5u})
+	{
+		CommandConfiguration config;
+		config.tracking.trackers.clear();
+		for (unsigned index = 0; index < count; ++index)
+		{
+			TrackerDevice device{{100 + index}, TrackerRole::Unassigned};
+			device.poseOverride = XrPosef{{0, 0, 0, 1}, {float(index % 8) * .15f, 1, float(index / 8) * .15f}};
+			config.tracking.trackers.push_back(device);
+		}
+		CommandScheduler scheduler;
+		scheduler.Start(0, config);
+		scheduler.Apply({1}, {Duration{100}}, {Duration{200}}, {});
+		control::Message state;
+		state.fields.push_back(control::Field::Bytes(control::tag::Document,
+			control::SimulationState(scheduler.Snapshot()).Encode()));
+		panel.ObserveState(state);
+		auto scene = SpatialScene::FromTracking(TrackingSystem::Evaluate({Duration{200}}, config.tracking, BodyModel{}));
+		Require(std::count(scene.available.begin() + 3, scene.available.end(), true) == count,
+			"Spatial scene omitted available trackers");
+		RigViewState view;
+		int selected = count ? static_cast<int>(count + 2) : -1;
+		for (unsigned frame = 0; frame < 3; ++frame)
+		{
+			Eventually([&] { return test.PollEvents() && test.renderer.BeginFrame(); }, "Tracker UI stalled");
+			ImGui::SetNextWindowPos({20, 20}, ImGuiCond_Always);
+			ImGui::SetNextWindowSize({420, 650}, ImGuiCond_Always);
+			ImGui::Begin("Tracker inventory");
+			panel.DrawHeader(selection, true);
+			panel.Draw(true, &selection);
+			ImGui::End();
+			ImGui::SetNextWindowPos({460, 20}, ImGuiCond_Always);
+			ImGui::SetNextWindowSize({560, 650}, ImGuiCond_Always);
+			ImGui::Begin("Expanded rig");
+			RigView("Trackers", view, scene, selected, {}, {520, 560});
+			ImGui::End();
+			if (frame == 2)
+				if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
+					test.renderer.RequestScreenshot(std::filesystem::path(directory) / ("trackers-" + std::to_string(count) + ".bmp"));
+			Require(test.renderer.Render(), "Expanded tracker UI did not render");
+		}
+		if (count == 64)
+			Require(panel.SelectedTracker() == 63, "Tracker selection was clamped to four slots");
+	}
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Expanded tracker UI validation errors");
+	std::cout << "PASS expanded tracker controls, empty inventory and complete spatial display\n";
+}
 void ConfigureObservedDevices()
 {
 	Interaction test;
@@ -1925,6 +2136,7 @@ void ConfigureObservedDevices()
 	initial.tracking.gaze.yaw = 0.25f;
 	initial.tracking.controllers[0].connected = false;
 	simxr::CommandScheduler scheduler;
+	std::optional<std::array<std::string, 2>> effectiveProfiles;
 	scheduler.Start(0, initial);
 	const auto observe = [&](std::uint64_t frame)
 	{
@@ -1932,14 +2144,14 @@ void ConfigureObservedDevices()
 						simxr::RuntimeTime{simxr::Duration{200}}, {});
 		simxr::control::Message state;
 		state.fields.push_back(simxr::control::Field::Bytes(
-			simxr::control::tag::Document, simxr::control::SimulationState(scheduler.Snapshot()).Encode()));
+			simxr::control::tag::Document, simxr::control::SimulationState(scheduler.Snapshot(), false, {}, {}, effectiveProfiles).Encode()));
 		panel.ObserveState(state);
 	};
 	observe(1);
 	Selection selection = DeviceSel{DevicePage::Head};
 	std::optional<SimulationEdit> edit;
 	bool supported = true;
-	bool advanced = false, showState = true;
+	bool advanced = false, showState = true, profileScreenshot = false;
 	ImVec2 panelSize{400, 650};
 	const auto frame = [&](bool headerOnly = false)
 	{
@@ -1962,6 +2174,12 @@ void ConfigureObservedDevices()
 			if (headerEdit)
 				edit = headerEdit;
 		}
+		if (profileScreenshot)
+		{
+			Require(ImGui::GetItemRectMax().x <= ImGui::GetCurrentWindow()->InnerRect.Max.x,
+				"Profile editor extends outside the visible inspector");
+			ImGui::SetScrollHereY(1.0f);
+		}
 		ImGui::End();
 		if (auto release = panel.EndInputFrame())
 		{
@@ -1982,14 +2200,24 @@ void ConfigureObservedDevices()
 				(std::string("Live field did not submit: ") + label).c_str());
 		return std::get<ManualTransaction>(*edit);
 	};
-	// A page's Tracked / Lost / Off switch.
-	const auto tracking = [&](const char* label)
+	const auto openTracking = [&]
 	{
 		ImGui::SetWindowFocus(window->Name);
-		ImGui::ActivateItemByID(ImHashStr(label, 0, window->GetID("Tracking")));
+		const auto page = static_cast<int>(std::get<DeviceSel>(selection).page);
+		const auto scope = ImHashData(&page, sizeof(page), window->GetID("Tracking"));
+		ImGui::ActivateItemByID(ImHashStr("Device state", 0, scope));
+		frame(true);
+		frame(true);
+		const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+		Require(!popups.empty() && popups.back().Window, "Device state menu did not open");
+		return popups.back().Window;
+	};
+	const auto tracking = [&](const char* label)
+	{
+		ImGui::ActivateItemByID(openTracking()->GetID(label));
 		frame(true);
 		Require(edit && std::holds_alternative<ManualTransaction>(*edit),
-				(std::string("Tracking switch did not submit: ") + label).c_str());
+				(std::string("Tracking menu did not submit: ") + label).c_str());
 		return std::get<ManualTransaction>(*edit);
 	};
 	const auto beginValue = [&](const char* label, const char* value)
@@ -2075,7 +2303,9 @@ void ConfigureObservedDevices()
 	frame();
 	showState = false;
 	frame(true);
-	ImGui::ActivateItemByID(ImHashStr("Lost", 0, window->GetID("Tracking")));
+	const int headPage = static_cast<int>(DevicePage::Head);
+	ImGui::ActivateItemByID(ImHashStr("Device state", 0,
+		ImHashData(&headPage, sizeof(headPage), window->GetID("Tracking"))));
 	frame(true);
 	Require(!edit, "Historical header exposed live state controls");
 	showState = true;
@@ -2096,13 +2326,18 @@ void ConfigureObservedDevices()
 		frame();
 		test.renderer.RequestScreenshot(directory / "header-narrow-large.bmp");
 		frame();
+		openTracking();
+		test.renderer.RequestScreenshot(directory / "header-state-menu-large.bmp");
+		frame(true);
+		ImGui::ClosePopupsExceptModals();
 		test.workspace.SetScale(1);
 		panelSize.x = 400;
 	}
 	selection = DeviceSel{DevicePage::Head};
 	panel.ResetObservations();
 	frame();
-	ImGui::ActivateItemByID(ImHashStr("Lost", 0, window->GetID("Tracking")));
+	ImGui::ActivateItemByID(ImHashStr("Device state", 0,
+		ImHashData(&headPage, sizeof(headPage), window->GetID("Tracking"))));
 	frame();
 	Require(!edit, "Disconnected field submitted stale settings");
 	initial.views.ipd = .061f;
@@ -2114,50 +2349,126 @@ void ConfigureObservedDevices()
 	transaction = typeValue("##IPD", "0.063");
 	Require(std::abs(std::get<simxr::SetViewSettings>(transaction.commands.back()).value.ipd - .063f) < .0001f,
 			"Reconnected field did not send the new value");
-	// Ctrl+wheel nudges the field under the pointer by its step; middle-click puts it back to its default.
+	// Field gestures use one value step, with fast/fine modifiers, and never scroll the panel too.
 	{
 		auto& g = *ImGui::GetCurrentContext();
-		const auto id = window->GetID("##IPD");
-		ImGui::SetFocusID(id, window);
-		frame();
-		Require(g.NavId == id && g.NavIdIsAlive, "IPD field not laid out");
-		const auto center = ImGui::WindowRectRelToAbs(window, window->NavRectRel[0]).GetCenter();
-		ImGui::ClearActiveID();
-		g.NavId = 0;
-		SDL_Event event{};
-		event.type = SDL_EVENT_MOUSE_MOTION;
-		event.motion.windowID = SDL_GetWindowID(test.window.Native());
-		event.motion.x = center.x;
-		event.motion.y = center.y;
-		Require(SDL_PushEvent(&event), "Push field pointer");
-		frame();
 		auto& io = ImGui::GetIO();
-		io.AddKeyEvent(ImGuiMod_Ctrl, true);
-		io.AddMouseWheelEvent(0, -1);
-		frame();
-		const auto nudged = edit;
-		io.AddKeyEvent(ImGuiMod_Ctrl, false);
-		frame();
-		Require(nudged && std::holds_alternative<ManualTransaction>(*nudged), "Ctrl+wheel did not edit the field");
-		const auto nudgedIpd = std::get<simxr::SetViewSettings>(std::get<ManualTransaction>(*nudged).commands.back());
-		Require(std::abs(nudgedIpd.value.ipd - .062f) < .0001f, "Ctrl+wheel did not take off one step");
-		for (const bool down : {true, false})
+		const auto hover = [&](const char* label)
 		{
-			event = {};
-			event.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
-			event.button.windowID = SDL_GetWindowID(test.window.Native());
-			event.button.button = SDL_BUTTON_MIDDLE;
-			event.button.down = down;
-			Require(SDL_PushEvent(&event), "Push field middle click");
+			const auto id = window->GetID(label);
+			ImGui::SetFocusID(id, window);
 			frame();
-			if (down)
-			{
-				Require(edit && std::holds_alternative<ManualTransaction>(*edit), "Middle-click did not reset");
-				const auto reset = std::get<simxr::SetViewSettings>(std::get<ManualTransaction>(*edit).commands.back());
-				Require(std::abs(reset.value.ipd - simxr::ViewSettings{}.ipd) < .0001f,
-						"Middle-click did not restore the default IPD");
-			}
+			Require(g.NavId == id && g.NavIdIsAlive, "Value field not laid out");
+			const auto center = ImGui::WindowRectRelToAbs(window, window->NavRectRel[0]).GetCenter();
+			ImGui::ClearActiveID();
+			g.NavId = 0;
+			SDL_Event event{};
+			event.type = SDL_EVENT_MOUSE_MOTION;
+			event.motion.windowID = SDL_GetWindowID(test.window.Native());
+			event.motion.x = center.x;
+			event.motion.y = center.y;
+			Require(SDL_PushEvent(&event), "Push field pointer");
+			frame();
+		};
+		const auto rightClick = [&](bool shift)
+		{
+			io.AddKeyEvent(ImGuiMod_Shift, shift);
+			io.AddMouseButtonEvent(ImGuiMouseButton_Right, true);
+			frame();
+			io.AddMouseButtonEvent(ImGuiMouseButton_Right, false);
+			frame();
+		};
+		const auto menuItem = [&](const char* label)
+		{
+			frame();
+			Require(!g.OpenPopupStack.empty() && g.OpenPopupStack.back().Window, "Field context menu did not open");
+			ImGui::ActivateItemByID(g.OpenPopupStack.back().Window->GetID(label));
+			frame();
+		};
+		hover("##IPD");
+		struct WheelCase
+		{
+			bool shift, control;
+			float wheel, expected;
+		};
+		for (const auto& step : {WheelCase{false, false, -1, .062f}, {true, false, 1, .072f},
+								{false, true, -1, .0719f}, {true, true, -1, .0718f}})
+		{
+			io.AddKeyEvent(ImGuiMod_Shift, step.shift);
+			io.AddKeyEvent(ImGuiMod_Ctrl, step.control);
+			const float scroll = window->Scroll.y;
+			io.AddMouseWheelEvent(0, step.wheel);
+			frame();
+			Require(edit && std::holds_alternative<ManualTransaction>(*edit), "Wheel did not edit the field");
+			const auto& nudged = std::get<simxr::SetViewSettings>(std::get<ManualTransaction>(*edit).commands.back());
+			Require(std::abs(nudged.value.ipd - step.expected) < .00001f, "Wheel modifier used the wrong step");
+			Require(window->Scroll.y == scroll, "Value wheel also scrolled the inspector");
 		}
+		io.AddKeyEvent(ImGuiMod_Ctrl, false);
+		rightClick(false);
+		menuItem("Copy");
+		Require(!edit && std::abs(std::stof(ImGui::GetClipboardText()) - .0718f) < .00001f,
+				"Copy rounded away the fine wheel adjustment");
+		hover("##IPD");
+		rightClick(true);
+		Require(edit && std::holds_alternative<ManualTransaction>(*edit), "Shift+right-click did not reset");
+		const auto reset = std::get<simxr::SetViewSettings>(std::get<ManualTransaction>(*edit).commands.back());
+		Require(std::abs(reset.value.ipd - simxr::ViewSettings{}.ipd) < .0001f,
+				"Shift+right-click did not restore the default IPD");
+		Require(g.OpenPopupStack.empty(), "Reset gesture also opened a context menu");
+		io.AddKeyEvent(ImGuiMod_Shift, false);
+		frame();
+		rightClick(false);
+		menuItem("Copy");
+		Require(!edit && std::abs(std::stof(ImGui::GetClipboardText()) - reset.value.ipd) < .0001f,
+				"Field Copy changed input or copied the wrong value");
+		window->StateStorage.SetInt(window->GetID("Position & rotation"), 1);
+		frame();
+		hover("##Yaw");
+		rightClick(false);
+		if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
+		{
+			test.renderer.RequestScreenshot(directory / "rotation-context.bmp");
+			frame();
+		}
+		menuItem("Quaternion");
+		Require(!edit, "Changing rotation display authored a pose");
+		frame();
+		hover("##Qx");
+		io.AddMouseWheelEvent(0, 1);
+		frame();
+		Require(!edit, "Read-only quaternion accepted a wheel edit");
+		rightClick(true);
+		Require(!edit && g.OpenPopupStack.empty(), "Read-only quaternion accepted a reset gesture");
+		io.AddKeyEvent(ImGuiMod_Shift, false);
+		frame();
+		rightClick(false);
+		menuItem("Copy");
+		Require(!edit && std::abs(std::stof(ImGui::GetClipboardText()) - rig.Head().orientation.x) < .00001f,
+				"Quaternion Copy changed input or copied the wrong component");
+		if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
+		{
+			test.workspace.SetScale(1.5f);
+			panelSize.x = 480;
+			frame();
+			frame();
+			hover("##Qx");
+			rightClick(false);
+			test.renderer.RequestScreenshot(directory / "quaternion-context-large.bmp");
+			frame();
+			ImGui::ClosePopupsExceptModals();
+			test.workspace.SetScale(1);
+			panelSize.x = 400;
+			frame();
+			frame();
+		}
+		hover("##Qx");
+		rightClick(false);
+		menuItem("Euler angles");
+		Require(!edit, "Rotation context menu authored a pose");
+		frame();
+		hover("##Yaw");
+		std::cout << "PASS value wheel modifiers, Shift+right-click reset, Copy and rotation display menus\n";
 	}
 	selection = DeviceSel{DevicePage::Head};
 	frame();
@@ -2169,6 +2480,9 @@ void ConfigureObservedDevices()
 	Require(keptDisconnected, "Resetting Head reconnected the left controller");
 	// Rendering observed input must not author releases, including while controls are disabled or owned elsewhere.
 	initial.input.controllers[1].trigger = .6f;
+	initial.input.controllers[1].physicalProfile = "/interaction_profiles/htc/vive_controller";
+	initial.input.controllers[1].triggerClick = false;
+	effectiveProfiles = std::array<std::string, 2>{"", "/interaction_profiles/khr/simple_controller"};
 	initial.input.controllers[1].grip = .4f;
 	initial.input.controllers[1].stick = {.2f, -.3f};
 	initial.input.controllers[1].primary = initial.input.controllers[1].secondary = true;
@@ -2195,6 +2509,28 @@ void ConfigureObservedDevices()
 	panel.SetManualSource(simxr::CommandSource{simxr::CommandSourceKind::Manual, 77});
 	frame();
 	Require(!edit, "Other-owned input pad submitted an unsolicited edit");
+	if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
+	{
+		window->StateStorage.SetInt(window->GetID("Connection and profile"), 1);
+		for (const float scale : {1.0f, 1.5f})
+		{
+			test.workspace.SetScale(scale);
+			panelSize.x = scale == 1 ? 400 : 320 * scale;
+			profileScreenshot = true;
+			frame();
+			frame();
+			frame();
+			test.renderer.RequestScreenshot(directory / (scale == 1 ? "physical-profiles.bmp" : "physical-profiles-narrow.bmp"));
+			frame();
+		}
+		test.workspace.SetScale(1);
+		panelSize.x = 400;
+		profileScreenshot = false;
+		window->StateStorage.SetInt(window->GetID("Connection and profile"), 0);
+		ImGui::SetScrollY(window, 0);
+		frame();
+	}
+
 	ImGui::ActivateItemByID(ImHashStr("Primary", 0, window->GetID(1)));
 	frame();
 	Require(!edit, "Other-owned input pad accepted a press before takeover");
@@ -2277,6 +2613,11 @@ void ConfigureObservedDevices()
 	blockedAction("Reset page");
 	selection = DeviceSel{DevicePage::Head};
 	frame();
+	ImGui::ActivateItemByID(ImHashStr("Device state", 0,
+		ImHashData(&headPage, sizeof(headPage), window->GetID("Tracking"))));
+	frame();
+	Require(!edit && ImGui::GetCurrentContext()->OpenPopupStack.empty(),
+			"Other-owned device opened its state menu");
 	blockedAction("##X", true);
 	blockedAction("##IPD", true);
 	blockedAction("Reset page");
@@ -2328,7 +2669,7 @@ void ConfigureObservedDevices()
 	frame();
 	Require(!edit, "Retired numeric field submitted a delayed final value");
 	// Older runtimes can edit basic devices without body overrides or tracker attachments.
-	auto limitedDocument = simxr::control::SimulationState(scheduler.Snapshot()).Encode();
+	auto limitedDocument = simxr::control::SimulationState(scheduler.Snapshot(), false, {}, {}, effectiveProfiles).Encode();
 	const auto omitExtensions = [&](auto&& self, std::vector<std::byte>& encoded) -> void
 	{
 		auto node = simxr::control::DecodeFields(encoded).fields;
@@ -2445,7 +2786,7 @@ void ConfigureObservedDevices()
 	test.renderer.WaitIdle();
 	Require(!test.validation->errors.load(), "Live fields generated validation errors");
 	std::cout << "PASS live configuration: immediate changes, preserved configuration, scenario recovery, reconnect, "
-				 "middle-click reset, Ctrl+wheel nudge\n";
+				 "Shift+right-click reset, normal/fast/fine wheel steps\n";
 }
 
 void CheckDebuggerWorkflow(const char* endpoint)
@@ -4553,7 +4894,7 @@ void CheckIdConflicts(Interaction& test, bool frameOnly)
 	std::cout << "PASS no duplicate IDs under the pointer on " << (frameOnly ? "frame and raw pages" : "all checked pages") << '\n';
 }
 
-// D10: record, stop, name, replay and cancel with only Rec, the stop popover and the Library.
+// D10: record, stop, replay and cancel with Rec and the Library.
 void CheckLibrary(Interaction& test, const std::filesystem::path& directory)
 {
 	const auto pump = [&](int count)
@@ -4585,7 +4926,7 @@ void CheckLibrary(Interaction& test, const std::filesystem::path& directory)
 	pump(3);
 	screenshot("timeline-recording-folded.bmp");
 	ImGui::ActivateItemByID(FindPanel("Timeline")->GetID("Stop recording"));
-	const auto popover = FindPanel("Top bar")->GetID("Save take");
+	const auto popover = FindPanel("Top bar")->GetID("Recorded take");
 	Eventually([&] { pump(1); return ImGui::IsPopupOpen(popover, ImGuiPopupFlags_AnyPopupLevel); },
 			   "Stop did not open the save popover");
 	Eventually([&] { pump(1); return !test.runtime.Snapshot().recording && !test.runtime.Snapshot().recordingBusy; },
@@ -4593,46 +4934,14 @@ void CheckLibrary(Interaction& test, const std::filesystem::path& directory)
 	screenshot("library-save.bmp");
 	auto* popup = ImGui::GetCurrentContext()->OpenPopupStack.back().Window;
 	Require(popup, "Save popover has no window");
-	const auto existingPath = directory / "recordings" / "Library replacement.luau";
-	std::filesystem::create_directories(existingPath.parent_path());
-	const std::string existingTake = "-- Preserve this recording until replacement is explicit\n";
-	{
-		std::ofstream output(existingPath, std::ios::binary);
-		output << existingTake;
-		output.close();
-		Require(output.good(), "Could not prepare the recording replacement fixture");
-	}
-	const auto readTake = [&]
-	{
-		std::ifstream input(existingPath, std::ios::binary);
-		Require(input.good(), "Could not read the recording replacement fixture");
-		return std::string(std::istreambuf_iterator<char>(input), {});
-	};
-	ImGui::ActivateItemByID(popup->GetID("##Take name"));
-	ImGui::GetCurrentContext()->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
-	pump(1);
-	Require(ImGui::GetActiveID() == popup->GetID("##Take name"), "Recording name did not activate");
-	auto& io = ImGui::GetIO();
-	io.AddKeyEvent(ImGuiMod_Ctrl, true);
-	io.AddKeyEvent(ImGuiKey_A, true);
-	pump(1);
-	io.AddKeyEvent(ImGuiKey_A, false);
-	io.AddKeyEvent(ImGuiMod_Ctrl, false);
-	io.AddInputCharactersUTF8("Library replacement");
-	pump(1);
-	io.AddKeyEvent(ImGuiKey_Enter, true);
-	pump(1);
-	io.AddKeyEvent(ImGuiKey_Enter, false);
-	pump(2);
-	Require(readTake() == existingTake && !test.runtime.Snapshot().recordingBusy &&
-		ImGui::IsPopupOpen(popover, ImGuiPopupFlags_AnyPopupLevel),
-		"Entering a recording name replaced an existing take without the Replace action");
-	ImGui::ActivateItemByID(popup->GetID("Replace take"));
+	ImGui::ActivateItemByID(popup->GetID("Done"));
 	Eventually([&] { pump(1); return std::holds_alternative<TakeSel>(test.workspace.State().selection); },
-			   "Saved take was not selected in the Library");
+		"Saved archive was not selected in the Library");
 	const auto path = std::get<TakeSel>(test.workspace.State().selection).id;
-	Require(Utf8Path(path) == existingPath && readTake() != existingTake,
-			"Replace take did not save the recording over the chosen Library take");
+	const auto existingPath = Utf8Path(path);
+	Require(existingPath.parent_path() == directory / "recordings" && existingPath.extension() == ".simxrtake" &&
+		std::filesystem::exists(existingPath / "input.simxr"), "Stop did not automatically persist its archive");
+	auto& io = ImGui::GetIO();
 	pump(3);
 	screenshot("library-take.bmp");
 	ImGui::ActivateItemByID(FindPanel("Timeline divider tab")->GetID("##Edge"));
@@ -4643,7 +4952,7 @@ void CheckLibrary(Interaction& test, const std::filesystem::path& directory)
 	screenshot("library-replay.bmp");
 	ImGui::ActivateItemByID(FindPanel("Inspector")->GetID("Stop take"));
 	Eventually([&] { pump(1); return !test.runtime.Snapshot().manual; }, "Stop take did not release the app");
-	std::cout << "PASS Rec, stop popover, explicit replacement, Library replay and cancel\n";
+	std::cout << "PASS Rec, automatic archive save, Library replay and cancel\n";
 
 	// A script from the Library: run, pause, step, resume, finish and report.
 	std::filesystem::create_directories(directory / "scripts");
@@ -4676,9 +4985,10 @@ simxr.resume())";
 	pump(3);
 	screenshot("library-list.bmp");
 	// Changing the entry within one page kind must reopen the narrow inspector.
-	const auto otherTake = directory / "recordings" / "Other library take.luau";
+	const auto otherTake = directory / "recordings" / "Other library take.simxrtake";
 	const auto otherScript = directory / "scripts" / "other_library_script.luau";
-	Require(std::filesystem::copy_file(existingPath, otherTake) && std::filesystem::copy_file(script, otherScript),
+	std::filesystem::create_directory(otherTake);
+	Require(std::filesystem::copy_file(existingPath / "input.simxr", otherTake / "input.simxr") && std::filesystem::copy_file(script, otherScript),
 			"Could not prepare same-kind Library selections");
 	int oldWidth = 0, oldHeight = 0;
 	Require(SDL_GetWindowSize(test.window.Native(), &oldWidth, &oldHeight), "Could not read Library window size");
@@ -4694,13 +5004,13 @@ simxr.resume())";
 		Require(!test.workspace.State().inspectorVisible, "Narrowing the Library did not close the inspector");
 		ImGui::ActivateItemByID(FindPanel("Library")->GetID("Refresh library"));
 		pump(1);
-		const auto entryPath = PathText(entry), name = PathText(entry.stem());
+		const auto entryPath = PathText(entry);
 		Eventually([&]
 		{
 			auto* browser = FindPanel("Library");
 			Require(browser && browser->Active, "Library browser is not visible");
 			const auto row = ImHashStr(entryPath.c_str(), 0, browser->GetID("Library entries"));
-			ImGui::ActivateItemByID(ImHashStr(name.c_str(), 0, row));
+			ImGui::ActivateItemByID(ImHashStr("##Entry", 0, row));
 			pump(1);
 			return test.workspace.State().selection == after;
 		}, "Library entry did not become the selected page");
@@ -5060,11 +5370,32 @@ void CapturePolish(Interaction& test, const std::filesystem::path& qa)
 	pump(2);
 	ImGui::SetScrollY(inspector, inspector->ScrollMax.y);
 	pump(2);
-	ImGui::ActivateItemByID(ImHashStr("Quaternion", 0, inspector->GetID("Rotation form")));
-	pump(3);
+	const auto rotationForm = [&](const char* field, const char* label)
+	{
+		const auto id = inspector->GetID(field);
+		ImGui::SetFocusID(id, inspector);
+		pump(1);
+		auto& context = *ImGui::GetCurrentContext();
+		Require(context.NavId == id && context.NavIdIsAlive, "Rotation field not laid out");
+		const auto center = ImGui::WindowRectRelToAbs(inspector, inspector->NavRectRel[0]).GetCenter();
+		ImGui::ClearActiveID();
+		context.NavId = 0;
+		auto& io = ImGui::GetIO();
+		io.AddMousePosEvent(center.x, center.y);
+		pump(1);
+		io.AddMouseButtonEvent(ImGuiMouseButton_Right, true);
+		pump(1);
+		io.AddMouseButtonEvent(ImGuiMouseButton_Right, false);
+		pump(2);
+		const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+		Require(!popups.empty() && popups.back().Window, "Rotation display menu did not open");
+		screenshot("polish-rotation-menu.bmp");
+		ImGui::ActivateItemByID(popups.back().Window->GetID(label));
+		pump(2);
+	};
+	rotationForm("##Yaw", "Quaternion");
 	screenshot("polish-quaternion.bmp");
-	ImGui::ActivateItemByID(ImHashStr("Angles", 0, inspector->GetID("Rotation form")));
-	pump(2);
+	rotationForm("##Qx", "Euler angles");
 	// A hand preset is one undoable change; the history names it and undoes it.
 	const auto before = test.runtime.Changes().size();
 	ImGui::ActivateItemByID(ImHashStr("Forward", 0, inspector->GetID("Hand presets")));
@@ -6090,6 +6421,216 @@ void CheckSoak(Interaction& test, const std::filesystem::path& directory)
 
 #endif
 
+#ifdef __linux__
+static void CheckHeadsetRestartWorkflow(Interaction& test, const std::filesystem::path& directory)
+{
+	const auto original = test.runtime.Snapshot();
+	const auto processFor = [&](const std::string& endpoint)
+	{
+		Require(std::filesystem::path(endpoint).parent_path() == directory,
+				"Restart escaped its isolated endpoint directory");
+		const auto name = std::filesystem::path(endpoint).filename().string();
+		Require(name.starts_with("control.") && name.ends_with(".sock"), "Unexpected restart endpoint name");
+		return static_cast<pid_t>(std::stoi(name.substr(8, name.size() - 13)));
+	};
+	struct ProbeCleanup
+	{
+		std::filesystem::path directory;
+		std::vector<pid_t> processes;
+		~ProbeCleanup()
+		{
+			try
+			{
+				for (const auto& entry : std::filesystem::directory_iterator(directory))
+				{
+					const auto name = entry.path().filename().string();
+					if (name.starts_with("control.") && name.ends_with(".sock"))
+						processes.push_back(static_cast<pid_t>(std::stoi(name.substr(8, name.size() - 13))));
+				}
+			}
+			catch (...)
+			{
+			}
+			std::ranges::sort(processes);
+			processes.erase(std::unique(processes.begin(), processes.end()), processes.end());
+			for (const auto process : processes)
+				try
+				{
+					const auto profile = DescribeProcess(process);
+					if (profile && std::filesystem::path(profile->executable).filename() == "xr_probe_linux" &&
+						std::ranges::find(profile->environment,
+										  std::pair{std::string("SIMXR_DATA_DIR"), directory.string()}) !=
+							profile->environment.end())
+					{
+						::kill(process, SIGTERM);
+						::kill(process, SIGCONT);
+					}
+				}
+				catch (...)
+				{
+				}
+		}
+	} cleanup{directory, {processFor(original.endpoint)}};
+	const auto pumpUntil = [&](auto condition, const char* message)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+		do
+		{
+			test.Frame();
+			Require(std::chrono::steady_clock::now() < deadline, message);
+		} while (!condition());
+	};
+	const auto detect = [&]
+	{
+		HeadsetHostOptions options;
+		options.executable = Utf8Path(SDL_GetBasePath()) / "headset_host_service_tests";
+		options.discover = true;
+		test.runtime.ConnectHeadset(std::move(options));
+		pumpUntil(
+			[&]
+			{
+				return test.runtime.HeadsetStatus().recommendedEyes.has_value();
+			},
+			"Restart fixture did not detect headset dimensions");
+	};
+	const auto reviewRestart = [&]
+	{
+		ImGui::ActivateItemByID(FindPanel("Top bar")->GetID("##App picker"));
+		test.Frame();
+		test.Frame();
+		const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+		Require(!popups.empty() && popups.back().Window, "Restart app picker did not open");
+		ImGui::ActivateItemByID(popups.back().Window->GetID("Edit profiles"));
+		test.Frame();
+		test.Frame();
+		auto* form = FindPanel("Profile form");
+		Require(form && form->Active, "Restart launch profile did not open");
+		ImGui::SetScrollY(form, form->ScrollMax.y);
+		test.Frame();
+		test.Frame();
+		ImGui::ActivateItemByID(ImHashStr("Restart with headset settings", 0, ImHashStr("2", 0, form->ID)));
+		test.Frame();
+		test.Frame();
+		auto* review = FindPanel("Restart application?");
+		Require(review && review->Active, "Owned application restart review missing");
+		ImGui::ActivateItemByID(review->GetID("Restart"));
+		test.Frame();
+	};
+	detect();
+	reviewRestart();
+	// Switch before the next workspace poll can queue a game-close request.
+	test.runtime.Disconnect();
+	test.Frame();
+	test.Frame();
+	pumpUntil(
+		[&]
+		{
+			return test.runtime.HeadsetStatus().phase == HeadsetHostPhase::Exited;
+		},
+		"Cancelled restart did not stop its discovery host");
+	Require(::kill(cleanup.processes.front(), 0) == 0, "Target change closed the original game");
+	auto* error = FindPanel("Error details");
+	Require(error && error->Active, "Target-change cancellation did not explain why restart stopped");
+	ImGui::ActivateItemByID(error->GetID("Dismiss"));
+	test.Frame();
+	test.Frame();
+	ImGui::ClosePopupToLevel(0, true);
+	test.runtime.ConnectEndpoint(original.endpoint);
+	pumpUntil(
+		[&]
+		{
+			return test.runtime.Snapshot().selectedReady;
+		},
+		"Cancelled restart lost the original session");
+	Require(test.runtime.Snapshot().session == original.session &&
+				test.runtime.Snapshot().generation == original.generation,
+			"Cancelled restart replaced the application session");
+	detect();
+	reviewRestart();
+	pumpUntil(
+		[&]
+		{
+			const auto state = test.runtime.Snapshot();
+			if (state.endpoint == original.endpoint || !state.connected || !state.selectedReady)
+				return false;
+			cleanup.processes.push_back(processFor(state.endpoint));
+			return true;
+		},
+		"Restart did not attach to replacement live pixels");
+	const auto host = test.runtime.HeadsetStatus();
+	Require(host.phase == HeadsetHostPhase::Exited && !host.forcedStop,
+			"Replacement attached before clean headset shutdown");
+	Require(::kill(cleanup.processes.front(), 0) != 0 && errno == ESRCH,
+			"Replacement launched before original process exited");
+	const auto replacement = DescribeProcess(cleanup.processes.back());
+	Require(replacement.has_value(), "Replacement process could not be inspected");
+	const auto environment =
+		std::map<std::string, std::string>(replacement->environment.begin(), replacement->environment.end());
+	Require(environment.at("SIMXR_WIDTH") == "2200" && environment.at("SIMXR_HEIGHT") == "2300",
+			"Replacement did not receive reviewed headset dimensions");
+	Require(test.runtime.Snapshot().selectedLayers == 2 && test.runtime.Snapshot().error.empty(),
+			"Replacement stereo session is not healthy");
+	ImGui::ClosePopupToLevel(0, true);
+	test.renderer.RequestScreenshot(directory / "headset-restarted.bmp");
+	test.Frame();
+	const auto replacementEndpoint = test.runtime.Snapshot().endpoint;
+	detect();
+	const auto stoppedProcess = cleanup.processes.back();
+	Require(::kill(stoppedProcess, SIGSTOP) == 0, "Cannot gate the isolated replacement's exit");
+	reviewRestart();
+	pumpUntil(
+		[&]
+		{
+			std::ifstream status(std::filesystem::path("/proc") / std::to_string(stoppedProcess) / "status");
+			for (std::string line; std::getline(status, line);)
+				if (line.starts_with("ShdPnd:") || line.starts_with("SigPnd:"))
+				{
+					std::istringstream field(line.substr(line.find(':') + 1));
+					std::uint64_t signals = 0;
+					field >> std::hex >> signals;
+					if ((signals & (std::uint64_t{1} << (SIGTERM - 1))) != 0)
+						return true;
+				}
+			return false;
+		},
+		"Restart did not deliver a close request to the gated application");
+	const auto changedEndpoint = (directory / "different-target.sock").string();
+	test.runtime.ConnectEndpoint(changedEndpoint);
+	test.Frame();
+	test.Frame();
+	error = FindPanel("Error details");
+	Require(error && error->Active, "Queued restart target change was not reported");
+	ImGui::ActivateItemByID(error->GetID("Dismiss"));
+	test.Frame();
+	test.Frame();
+	ImGui::ClosePopupToLevel(0, true);
+	Require(::kill(stoppedProcess, SIGCONT) == 0, "Cannot release isolated application exit gate");
+	pumpUntil(
+		[&]
+		{
+			return ::kill(stoppedProcess, 0) != 0 && errno == ESRCH;
+		},
+		"Cancelled restart did not observe original close completion");
+	for (unsigned frame = 0; frame < 50; ++frame)
+		test.Frame();
+	Require(test.runtime.Endpoint() == changedEndpoint,
+			"Cancelled restart attached a replacement over the selected endpoint");
+	for (const auto& entry : std::filesystem::directory_iterator(directory))
+	{
+		const auto name = entry.path().filename().string();
+		if (!name.starts_with("control.") || !name.ends_with(".sock"))
+			continue;
+		const auto profile = DescribeProcess(processFor(entry.path().string()));
+		Require(!profile || std::ranges::find(profile->environment,
+											  std::pair{std::string("SIMXR_DATA_DIR"), directory.string()}) ==
+								profile->environment.end(),
+				"Cancelled restart launched another isolated application after the close completed");
+	}
+	std::cout << "PASS target-change cancellation preserved " << original.endpoint << "; restart attached "
+			  << replacementEndpoint << "; queued target change cancelled the next replacement\n";
+}
+#endif
+
 void CheckToolbarLaunch(const char* executable)
 {
 	const auto directory = QaDirectory("SIMXR_LAUNCH_QA_DIRECTORY");
@@ -6117,6 +6658,11 @@ void CheckToolbarLaunch(const char* executable)
 		profile.workingDirectory = cwd;
 	const auto arguments = std::getenv("SIMXR_LAUNCH_QA_ARGUMENTS");
 #endif
+	if (std::getenv("SIMXR_LAUNCH_QA_BUNDLED"))
+	{
+		profile.runtimeManifest.clear();
+		profile.useBundledRuntime = true;
+	}
 	if (arguments)
 	{
 		std::istringstream lines(arguments);
@@ -6125,7 +6671,7 @@ void CheckToolbarLaunch(const char* executable)
 	}
 	profile.environment = {{"SIMXR_DATA_DIR", PathText(directory)}, {"SIMXR_CONTROL_SOCKET", ""}};
 #ifdef __linux__
-	if (std::getenv("SIMXR_SOAK_QA"))
+	if (std::getenv("SIMXR_SOAK_QA") || std::getenv("SIMXR_RESTART_QA"))
 	{
 		Require(std::filesystem::path(executable).filename() == "xr_probe_linux", "Soak requires the isolated probe");
 		profile.environment.emplace_back("SIMXR_PROBE_INTERACTIVE", "1");
@@ -6198,6 +6744,13 @@ void CheckToolbarLaunch(const char* executable)
 #endif
 	std::ofstream(directory / "attached.endpoint") << state.endpoint;
 #ifdef __linux__
+	if (std::getenv("SIMXR_RESTART_QA"))
+	{
+		CheckHeadsetRestartWorkflow(test, directory);
+		test.renderer.WaitIdle();
+		Require(test.validation->errors.load() == 0, "Restart workflow produced Vulkan validation errors");
+		return;
+	}
 	if (std::getenv("SIMXR_SOAK_QA"))
 		CheckSoak(test, directory);
 	if (std::getenv("SIMXR_TIMELINE_QA"))
@@ -6279,6 +6832,1199 @@ void CaptureLayouts(const std::filesystem::path& directory)
 }
 
 #ifdef __linux__
+int RunTabLaunchFixture()
+{
+	using namespace simxr;
+	using namespace std::chrono_literals;
+	const auto* data = std::getenv("SIMXR_DATA_DIR");
+	Require(data && *data, "Launch fixture requires a private data directory");
+	ExtensionRegistry extensions{SimulationExtensions()};
+	Runtime engine{extensions};
+	Runtime::InstanceRef instance;
+	Runtime::SessionRef session;
+	XrInstanceCreateInfo create{XR_TYPE_INSTANCE_CREATE_INFO};
+	create.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
+	std::strcpy(create.applicationInfo.applicationName, "Launched tab fixture");
+	Require(engine.CreateInstance(&create, instance) == XR_SUCCESS && engine.CreateSession(instance, session) == XR_SUCCESS,
+			"Create launched tab fixture");
+	FrameSchedulerConfig configuration;
+	configuration.mode = ExecutionMode::Deterministic;
+	configuration.epoch = RuntimeTime{1s};
+	const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
+	Require(session->Ready(configuration.epoch) == XR_SUCCESS && session->Begin(begin, configuration) == XR_SUCCESS,
+			"Start launched tab fixture");
+	FramePrediction frame;
+	Require(session->WaitFrame(frame) == XR_SUCCESS && session->BeginFrame() == XR_SUCCESS &&
+				session->EndFrame(frame) == XR_SUCCESS, "Publish launched tab fixture frame");
+	control::ControlService service{engine};
+	control::LocalControlServer server{service,
+		(std::filesystem::path(data) / ("control." + std::to_string(::getpid()) + ".sock")).string()};
+	for (;;)
+		std::this_thread::sleep_for(100ms);
+}
+
+void CheckTabLaunches()
+{
+	const auto directory = std::filesystem::temp_directory_path() /
+		("simxr-tab-launch-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+	std::filesystem::create_directories(directory);
+	const auto saveEnvironment = [](const char* name) -> std::optional<std::string>
+	{
+		const auto* value = std::getenv(name);
+		return value ? std::optional<std::string>{value} : std::nullopt;
+	};
+	struct Cleanup
+	{
+		std::filesystem::path directory;
+		std::optional<std::string> settings, data, endpoint;
+		~Cleanup()
+		{
+			std::error_code ignored;
+			for (std::filesystem::directory_iterator entry(directory, ignored), end; !ignored && entry != end;
+				 entry.increment(ignored))
+			{
+				const auto name = entry->path().filename().string();
+				if (!name.starts_with("control.") || !name.ends_with(".sock"))
+					continue;
+				try
+				{
+					const auto pid = std::stol(name.substr(8, name.size() - 13));
+					if (pid > 1 && pid <= std::numeric_limits<pid_t>::max())
+					{
+						const auto process = DescribeProcess(static_cast<std::uint64_t>(pid));
+						if (process && std::filesystem::equivalent(process->executable, "/proc/self/exe") &&
+							std::ranges::find(process->environment,
+											  std::pair{std::string("SIMXR_DATA_DIR"), directory.string()}) !=
+								process->environment.end())
+							::kill(static_cast<pid_t>(pid), SIGTERM);
+					}
+				}
+				catch (const std::exception&) {}
+			}
+			const auto restore = [](const char* name, const std::optional<std::string>& value)
+			{
+				if (value)
+					::setenv(name, value->c_str(), 1);
+				else
+					::unsetenv(name);
+			};
+			restore("SIMXR_COMPANION_SETTINGS", settings);
+			restore("SIMXR_DATA_DIR", data);
+			restore("SIMXR_CONTROL_SOCKET", endpoint);
+			std::filesystem::remove_all(directory, ignored);
+		}
+	} cleanup{directory, saveEnvironment("SIMXR_COMPANION_SETTINGS"), saveEnvironment("SIMXR_DATA_DIR"),
+			  saveEnvironment("SIMXR_CONTROL_SOCKET")};
+	const auto settingsPath = directory / "settings.json";
+	Require(::setenv("SIMXR_COMPANION_SETTINGS", settingsPath.c_str(), 1) == 0 &&
+				::setenv("SIMXR_DATA_DIR", directory.c_str(), 1) == 0 && ::unsetenv("SIMXR_CONTROL_SOCKET") == 0,
+			"Isolate launch fixture environment");
+	CompanionSettings settings;
+	LaunchProfile profile;
+	profile.name = "Multiplayer client";
+	profile.executable = std::filesystem::read_symlink("/proc/self/exe").string();
+	profile.environment = {{"SIMXR_TAB_LAUNCH_FIXTURE", "1"}, {"SIMXR_DATA_DIR", directory.string()}};
+	const auto script = directory / "background.luau";
+	{
+		std::ofstream output(script);
+		output << "while true do end\n";
+		Require(bool(output), "Cannot prepare background launch script");
+	}
+	profile.rig = script.string();
+	settings.profiles.push_back(profile);
+	settings.activeProfile = profile.name;
+	SaveSettings(settingsPath, settings);
+	Interaction test;
+	{
+		ApplicationTabs tabs{test.processes, test.renderer, test.window, true, "", true};
+		const auto frame = [&]
+		{
+			Eventually([&] { return test.PollEvents() && test.renderer.BeginFrame(); }, "Launch tab UI stalled");
+			tabs.Draw();
+			Require(test.renderer.Render(tabs.ReadyWaits(), [&](VkCommandBuffer command) { tabs.RecordTransfers(command); }),
+					"Launch tab frame was not rendered");
+			tabs.Submitted(test.renderer.SubmittedFrames());
+		};
+		const auto launch = [&]
+		{
+			frame();
+			auto* toolbar = FindPanel("Top bar");
+			Require(toolbar, "Launch picker toolbar missing");
+			ImGui::ActivateItemByID(toolbar->GetID("##App picker"));
+			frame();
+			frame();
+			const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+			Require(!popups.empty() && popups.back().Window, "Launch picker did not open");
+			const int index = 0;
+			const auto group = ImHashStr("Profiles", 0, popups.back().Window->ID);
+			const auto row = ImHashData(&index, sizeof(index), group);
+			ImGui::ActivateItemByID(ImHashStr("##Launch profile", 0, row));
+			frame();
+		};
+		launch();
+		Eventually([&] { frame(); return tabs.ActiveRuntime().Snapshot().sessionRunning; },
+				   "First launch did not attach to its own session");
+		Eventually([&] { frame(); return tabs.ActiveWorkspace().HasActiveAutomation(); },
+				   "First launch did not start its script");
+		const auto first = tabs.ActiveRuntime().Endpoint();
+		Require(std::filesystem::path(first).parent_path() == directory, "First launch escaped its fixture directory");
+		launch();
+		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() != first &&
+									 tabs.ActiveRuntime().Snapshot().sessionRunning; },
+				   "Second launch of the same profile did not attach independently");
+		const auto second = tabs.ActiveRuntime().Endpoint();
+		const auto pid = [](const std::string& endpoint)
+		{
+			const auto name = std::filesystem::path(endpoint).filename().string();
+			return static_cast<pid_t>(std::stol(name.substr(8, name.size() - 13)));
+		};
+		Require(std::filesystem::path(second).parent_path() == directory && tabs.Count() == 2,
+				"The two launches did not retain separate tabs and endpoints");
+		Eventually([&] { frame(); return tabs.ActiveWorkspace().HasActiveAutomation(); },
+				   "Second launch did not start its independent script");
+		tabs.OpenApplication(RunningApp{first});
+		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == first; }, "Return to first launched player");
+		Require(tabs.ActiveWorkspace().HasActiveAutomation(), "Background launch script stopped when switching tabs");
+		tabs.ActiveWorkspace().StopAutomation();
+		Eventually([&] { frame(); return !tabs.ActiveWorkspace().HasActiveAutomation(); }, "First script did not stop");
+		tabs.OpenApplication(RunningApp{second});
+		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == second; }, "Return to second launched player");
+		Require(tabs.ActiveWorkspace().HasActiveAutomation(), "Stopping the first script stopped the second script");
+		tabs.OpenApplication(RunningApp{first});
+		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == first; }, "Select the first player for restart");
+		auto& restarting = tabs.ActiveRuntime();
+		auto& restartWorkspace = tabs.ActiveWorkspace();
+		HeadsetHostOptions discovery;
+		discovery.executable = Utf8Path(SDL_GetBasePath()) / "headset_host_service_tests";
+		discovery.discover = true;
+		restarting.ConnectHeadset(discovery);
+		Eventually([&] { frame(); return restarting.HeadsetStatus().recommendedEyes.has_value(); },
+				   "Restart tab did not discover headset dimensions");
+		ImGui::ActivateItemByID(FindPanel("Top bar")->GetID("##App picker"));
+		frame();
+		frame();
+		const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+		Require(!popups.empty() && popups.back().Window, "Restart picker did not open");
+		ImGui::ActivateItemByID(popups.back().Window->GetID("Edit profiles"));
+		frame();
+		frame();
+		auto* form = FindPanel("Profile form");
+		Require(form && form->Active, "Restart profile editor did not open");
+		ImGui::SetScrollY(form, form->ScrollMax.y);
+		frame();
+		frame();
+		ImGuiWindow* review = nullptr;
+		for (int revision = 1; revision <= 8 && !review; ++revision)
+		{
+			const auto scope = std::to_string(revision);
+			ImGui::ActivateItemByID(ImHashStr("Restart with headset settings", 0, ImHashStr(scope.c_str(), 0, form->ID)));
+			frame();
+			frame();
+			if (auto* window = FindPanel("Restart application?"); window && window->Active)
+				review = window;
+		}
+		Require(review && review->Active, "Restart confirmation did not open");
+		ImGui::ActivateItemByID(review->GetID("Restart"));
+		frame();
+		ImGui::ClosePopupToLevel(0, true);
+		tabs.OpenApplication(RunningApp{second});
+		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == second; }, "Switch away during restart");
+		Eventually([&] { frame(); return restarting.Endpoint() != first && restarting.Snapshot().sessionRunning; },
+				   "Background restart did not attach its replacement");
+		const auto replacement = restarting.Endpoint();
+		Require(pid(replacement) != pid(first) && restartWorkspace.Process().process == static_cast<std::uint64_t>(pid(replacement)) &&
+					::kill(pid(first), 0) != 0 && errno == ESRCH && ::kill(pid(second), 0) == 0 &&
+					tabs.ActiveWorkspace().HasActiveAutomation(),
+				"Restart changed the other application or its running script");
+		tabs.ActiveWorkspace().StopAutomation();
+		Eventually([&] { frame(); return !tabs.ActiveWorkspace().HasActiveAutomation(); }, "Second script did not stop");
+		Require(pid(replacement) != pid(second) && ::kill(pid(replacement), 0) == 0 && ::kill(pid(second), 0) == 0,
+				"Same-profile launches did not leave both applications running");
+		::kill(pid(replacement), SIGTERM);
+		::kill(pid(second), SIGTERM);
+		Eventually([&] { frame(); return test.processes.Outstanding() == 0; }, "Launch fixtures did not exit");
+	}
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Vulkan validation errors during same-profile launches");
+	std::cout << "PASS independent launches and background restart of one of two applications\n";
+}
+
+void CheckGpuTabInput(const std::string& firstEndpoint, const std::string& secondEndpoint)
+{
+	Interaction test;
+	{
+		ApplicationTabs tabs{test.processes, test.renderer, test.window, false, "", true};
+		const auto frame = [&]
+		{
+			Eventually([&] { return test.PollEvents() && test.renderer.BeginFrame(); }, "Input tab UI stalled");
+			tabs.Draw();
+			Require(test.renderer.Render(tabs.ReadyWaits(), [&](VkCommandBuffer command) { tabs.RecordTransfers(command); }),
+					"Input tab frame was not rendered");
+			tabs.Submitted(test.renderer.SubmittedFrames());
+		};
+		const auto gate = [&](const std::string& endpoint, int number)
+		{
+			const auto directory = std::filesystem::path(endpoint).parent_path();
+			const auto name = "rendering." + std::to_string(number);
+			Eventually([&] { frame(); return std::filesystem::exists(directory / (name + ".ready")); },
+					   "Input producer did not reach its frame gate");
+			std::ofstream release(directory / (name + ".continue"));
+			Require(bool(release), "Cannot release input producer frame");
+		};
+		const RunningApp first{firstEndpoint, "Input player one"}, second{secondEndpoint, "Input player two"};
+		tabs.OpenApplication(first);
+		Eventually([&] { frame(); return tabs.ActiveRuntime().Snapshot().sessionRunning; }, "First input tab did not connect");
+		const auto firstSession = tabs.ActiveRuntime().Snapshot();
+		tabs.OpenApplication(second);
+		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == secondEndpoint &&
+									 tabs.ActiveRuntime().Snapshot().sessionRunning; }, "Second input tab did not connect");
+		const auto secondSession = tabs.ActiveRuntime().Snapshot();
+		for (int index = 3; index <= 6; ++index)
+			for (const auto& app : {first, second})
+				gate(app.endpoint, index);
+		tabs.OpenApplication(first);
+		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == firstEndpoint &&
+									 tabs.ActiveRuntime().Snapshot().selectedReady; }, "First input preview unavailable");
+		ManualInputController firstObserver, secondObserver;
+		firstObserver.SetTarget({firstEndpoint, firstSession.session, firstSession.generation});
+		secondObserver.SetTarget({secondEndpoint, secondSession.session, secondSession.generation});
+		const auto observed = [&](ManualInputController& observer)
+		{
+			const auto before = observer.Snapshot().observation;
+			observer.Refresh();
+			Eventually([&] { frame(); return observer.Snapshot().observation > before; }, "Input observation stalled");
+			return ReadObservedSetup(observer.Snapshot().state).values.input.controllers[1].primary;
+		};
+		SDL_VirtualJoystickDesc description{};
+		SDL_INIT_INTERFACE(&description);
+		description.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+		description.naxes = SDL_GAMEPAD_AXIS_COUNT;
+		description.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+		description.axis_mask = (1u << SDL_GAMEPAD_AXIS_COUNT) - 1;
+		description.button_mask = (1u << SDL_GAMEPAD_BUTTON_COUNT) - 1;
+		description.name = "SimXR tab controls QA";
+		const auto id = SDL_AttachVirtualJoystick(&description);
+		Require(id, "Attach tab controls gamepad");
+		struct Gamepad
+		{
+			SDL_JoystickID id;
+			SDL_Joystick* joystick = nullptr;
+			Window& window;
+			~Gamepad()
+			{
+				if (joystick)
+					SDL_CloseJoystick(joystick);
+				SDL_DetachVirtualJoystick(id);
+				window.PollEvents();
+			}
+		} pad{id, SDL_OpenJoystick(id), test.window};
+		Require(pad.joystick, "Open tab controls gamepad");
+		Require(SDL_SetJoystickVirtualAxis(pad.joystick, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, -32768) &&
+					SDL_SetJoystickVirtualAxis(pad.joystick, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, -32768),
+				"Set neutral gamepad triggers");
+		Require(SDL_ShowWindow(test.window.Native()) && SDL_RaiseWindow(test.window.Native()), "Show tab controls window");
+		Eventually([&] { frame(); return test.window.Focused(); }, "Tab controls window did not receive focus");
+		Require(!observed(firstObserver) && !observed(secondObserver), "Input fixtures started with a held button");
+		Require(SDL_SetJoystickVirtualButton(pad.joystick, SDL_GAMEPAD_BUTTON_SOUTH, true), "Press virtual gamepad button");
+		for (int index = 0; index < 20; ++index)
+		{
+			frame();
+			SDL_Delay(5);
+		}
+		gate(firstEndpoint, 7);
+		Eventually([&] { frame(); return observed(firstObserver); }, "Button did not reach the first application");
+		Require(!observed(secondObserver), "Background application received the first application's button");
+		tabs.OpenApplication(second);
+		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == secondEndpoint &&
+									 tabs.ActiveRuntime().Snapshot().selectedReady; }, "Second input preview unavailable");
+		for (int index = 0; index < 20; ++index)
+		{
+			frame();
+			SDL_Delay(5);
+		}
+		gate(firstEndpoint, 8);
+		gate(secondEndpoint, 7);
+		Eventually([&] { frame(); return !observed(firstObserver); }, "Switching tabs left the first button held");
+		Eventually([&] { frame(); return observed(secondObserver); }, "Held button did not reach the selected application");
+		Require(SDL_SetJoystickVirtualButton(pad.joystick, SDL_GAMEPAD_BUTTON_SOUTH, false), "Release virtual gamepad button");
+		for (int index = 0; index < 20; ++index)
+		{
+			frame();
+			SDL_Delay(5);
+		}
+		gate(secondEndpoint, 8);
+		Eventually([&] { frame(); return !observed(secondObserver); }, "Selected application's button did not release");
+		Require(!observed(firstObserver), "Released button reappeared in the background application");
+		Require(SDL_HideWindow(test.window.Native()), "Hide tab controls window");
+	}
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Vulkan validation errors during tab input handoff");
+	std::cout << "PASS tab gamepad input ownership\n";
+}
+
+#endif
+
+void CheckReplayTabClose(ApplicationTabs& tabs, Interaction& test, RuntimePanels& replayRuntime,
+						 WorkspacePanels& replayWorkspace, const std::string& firstEndpoint,
+						 const std::string& secondEndpoint, const std::function<void()>& frame)
+{
+	ImGui::ClosePopupsExceptModals();
+	frame();
+	auto* window = FindPanel("Applications");
+	Require(window, "Replay tab bar is missing");
+	auto* bar = ImGui::GetCurrentContext()->TabBars.GetByKey(window->GetID("Applications"));
+	Require(bar, "Replay tab bar state is missing");
+	ImGuiID id = 0;
+	ImVec2 hover{};
+	for (auto& item : bar->Tabs)
+		if (std::string_view(ImGui::TabBarGetTabName(bar, &item)).find("###application-2") != std::string_view::npos)
+		{
+			id = item.ID;
+			hover = {bar->BarRect.Min.x + item.Offset + item.Width - ImGui::GetFontSize() * .5f - bar->FramePadding.x,
+					 (bar->BarRect.Min.y + bar->BarRect.Max.y) / 2};
+		}
+	Require(id, "Background replay tab is missing");
+	SDL_Event motion{};
+	motion.type = SDL_EVENT_MOUSE_MOTION;
+	motion.motion.windowID = SDL_GetWindowID(test.window.Native());
+	motion.motion.which = TestMouse;
+	motion.motion.x = hover.x;
+	motion.motion.y = hover.y;
+	Require(SDL_PushEvent(&motion), "Cannot hover the background replay close button");
+	frame();
+	frame();
+	const auto close = [&]
+	{
+		ImGui::ActivateItemByID(ImGui::GetIDWithSeed("#CLOSE", nullptr, id));
+		frame();
+		const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+		Require(!popups.empty() && popups.back().Window, "Closing a replay did not ask for confirmation");
+		return popups.back().Window;
+	};
+	const auto count = tabs.Count();
+	auto* confirm = close();
+	ImGui::ActivateItemByID(confirm->GetID("Cancel"));
+	frame();
+	Require(tabs.Count() == count && tabs.ActiveRuntime().Endpoint() == secondEndpoint &&
+				replayWorkspace.HasActiveAutomation() && replayRuntime.Snapshot().manual,
+			"Cancelling background tab close changed the replay or selected application");
+	confirm = close();
+	ImGui::ActivateItemByID(confirm->GetID("Stop and close"));
+	frame();
+	RuntimeSession observer{test.renderer, firstEndpoint};
+	Eventually(
+		[&]
+		{
+			frame();
+			observer.Poll(false, false);
+			const auto view = observer.View();
+			return tabs.Count() == count - 1 && view.connected && view.sessionRunning && !view.manual &&
+				   tabs.ActiveRuntime().Endpoint() == secondEndpoint && tabs.ActiveRuntime().Snapshot().selectedReady;
+		},
+		"Closing a background replay did not release its application or preserve the foreground preview");
+	std::cout << "PASS background replay tab close and independent foreground preview\n";
+}
+
+#ifdef __linux__
+void CheckMultiGpuTabs(const std::string& firstEndpoint, const std::string& secondEndpoint)
+{
+	Interaction test;
+	{
+		ApplicationTabs tabs{test.processes, test.renderer, test.window, false, "", true};
+		const auto frame = [&]
+		{
+			Eventually(
+				[&]
+				{
+					return test.PollEvents() && test.renderer.BeginFrame();
+				},
+				"GPU tab frame admission stalled");
+			tabs.Draw();
+			Require(test.renderer.Render(tabs.ReadyWaits(),
+										 [&](VkCommandBuffer command)
+										 {
+											 tabs.RecordTransfers(command);
+										 }),
+					"GPU tab frame was not rendered");
+			tabs.Submitted(test.renderer.SubmittedFrames());
+		};
+		const RunningApp first{firstEndpoint, "GPU player one"}, second{secondEndpoint, "GPU player two"};
+		std::vector<RunningApp> apps{first, second};
+		if (const auto* third = std::getenv("SIMXR_TABS_GPU_THIRD"))
+		{
+			const auto* fourth = std::getenv("SIMXR_TABS_GPU_FOURTH");
+			Require(fourth, "Four GPU tabs require both additional endpoints");
+			apps.emplace_back(RunningApp{third, "GPU player three"});
+			apps.emplace_back(RunningApp{fourth, "GPU player four"});
+		}
+		tabs.OpenApplication(first);
+		Eventually(
+			[&]
+			{
+				frame();
+				return tabs.ActiveRuntime().Snapshot().sessionRunning;
+			},
+			"First GPU tab did not connect");
+		tabs.ActiveRuntime().StartRecording();
+		Eventually(
+			[&]
+			{
+				frame();
+				return tabs.ActiveRuntime().Snapshot().recording;
+			},
+			"First GPU tab did not begin recording");
+		tabs.OpenApplication(second);
+		Eventually(
+			[&]
+			{
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == secondEndpoint &&
+					   tabs.ActiveRuntime().Snapshot().sessionRunning;
+			},
+			"Second GPU tab did not connect");
+		for (std::size_t index = 2; index < apps.size(); ++index)
+		{
+			tabs.OpenApplication(apps[index]);
+			Eventually(
+				[&]
+				{
+					frame();
+					return tabs.ActiveRuntime().Endpoint() == apps[index].endpoint &&
+						   tabs.ActiveRuntime().Snapshot().sessionRunning;
+				},
+				"Additional GPU tab did not connect");
+		}
+		for (int index = 3; index <= 5; ++index)
+		{
+			for (const auto& app : apps)
+			{
+				const auto directory = std::filesystem::path(app.endpoint).parent_path();
+				const auto gate = "rendering." + std::to_string(index);
+				Eventually(
+					[&]
+					{
+						frame();
+						return std::filesystem::exists(directory / (gate + ".ready"));
+					},
+					"GPU producer did not reach its frame gate");
+				std::ofstream release(directory / (gate + ".continue"));
+				Require(bool(release), "Cannot release GPU frame gate");
+			}
+		}
+		for (const auto& app : apps)
+		{
+			const auto boundary = std::filesystem::path(app.endpoint).parent_path() / "rendering.6.ready";
+			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+			while (!std::filesystem::exists(boundary))
+			{
+				frame();
+				Require(std::chrono::steady_clock::now() < deadline, "GPU producer did not finish frame 5");
+			}
+		}
+		for (std::size_t index = 2; index < apps.size(); ++index)
+		{
+			tabs.OpenApplication(apps[index]);
+			Eventually(
+				[&]
+				{
+					frame();
+					return tabs.ActiveRuntime().Endpoint() == apps[index].endpoint &&
+						   tabs.ActiveRuntime().History().Size() >= 5 &&
+						   tabs.ActiveRuntime().Snapshot().selectedReady &&
+						   tabs.ActiveRuntime().Snapshot().selectedFrame >= 5;
+				},
+				"Additional GPU tab lost its background history or preview");
+		}
+		tabs.OpenApplication(second);
+		Eventually(
+			[&]
+			{
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == secondEndpoint;
+			},
+			"Return to the second GPU tab");
+		try
+		{
+			Eventually(
+				[&]
+				{
+					frame();
+					return tabs.ActiveRuntime().Snapshot().selectedReady &&
+						   tabs.ActiveRuntime().Snapshot().selectedFrame >= 5;
+				},
+				"Second GPU preview unavailable");
+		}
+		catch (...)
+		{
+			const auto state = tabs.ActiveRuntime().Snapshot();
+			std::cerr << "GPU preview state: endpoint=" << state.endpoint << " frame=" << state.selectedFrame
+					  << " ready=" << state.selectedReady << " following=" << state.time.following
+					  << " images=" << state.images << " error=" << state.error << " notice=" << state.notice << '\n';
+			throw;
+		}
+		tabs.OpenApplication(first);
+		Eventually(
+			[&]
+			{
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == firstEndpoint && tabs.ActiveRuntime().History().Size() >= 5;
+			},
+			"Background GPU history unavailable");
+		tabs.ActiveRuntime().StopRecording();
+		Eventually(
+			[&]
+			{
+				frame();
+				return !tabs.ActiveRuntime().Snapshot().recordingBusy &&
+					   std::holds_alternative<TakeSel>(tabs.ActiveWorkspace().State().selection);
+			},
+			"GPU tab did not save its recording");
+		const auto saved = std::get<TakeSel>(tabs.ActiveWorkspace().State().selection).id;
+		auto& replayRuntime = tabs.ActiveRuntime();
+		auto& replayWorkspace = tabs.ActiveWorkspace();
+		Require(replayRuntime.CanReplay(), "GPU recording is not available for replay");
+		replayRuntime.RequestReplay(OpenSavedRecording(saved));
+		Eventually(
+			[&]
+			{
+				frame();
+				return replayWorkspace.State().timeline.playing && replayRuntime.Snapshot().manual;
+			},
+			"GPU recording did not enter replay");
+		tabs.OpenApplication(second);
+		Eventually(
+			[&]
+			{
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == secondEndpoint;
+			},
+			"Switch away from GPU replay");
+		Require(replayWorkspace.State().timeline.playing && replayWorkspace.HasActiveAutomation() &&
+					!tabs.ActiveRuntime().Snapshot().manual,
+				"Background replay changed the other GPU application's pause state");
+		if (std::getenv("SIMXR_TABS_REPLAY_CLOSE_QA"))
+			CheckReplayTabClose(tabs, test, replayRuntime, replayWorkspace, firstEndpoint, secondEndpoint, frame);
+		else
+		{
+			replayWorkspace.StopAutomation();
+			Eventually(
+				[&]
+				{
+					frame();
+					return !replayWorkspace.HasActiveAutomation() && !replayRuntime.Snapshot().manual;
+				},
+				"Stopping background GPU replay did not release its frame control");
+			tabs.OpenApplication(first);
+			Eventually(
+				[&]
+				{
+					frame();
+					return tabs.ActiveRuntime().Endpoint() == firstEndpoint;
+				},
+				"Return after GPU replay");
+			const auto& history = tabs.ActiveRuntime().History();
+			const auto index = history.Size() - 2;
+			const auto expected = history.At(index).identity.frame;
+			tabs.ActiveRuntime().LookAt(index);
+			Eventually(
+				[&]
+				{
+					frame();
+					const auto view = tabs.ActiveRuntime().Snapshot();
+					return view.selectedReady && view.selectedFrame == expected;
+				},
+				"Background GPU frame did not import exactly");
+			tabs.OpenApplication(second);
+			Eventually(
+				[&]
+				{
+					frame();
+					return tabs.ActiveRuntime().Endpoint() == secondEndpoint &&
+						   tabs.ActiveRuntime().Snapshot().selectedReady;
+				},
+				"Second GPU preview did not recover");
+			tabs.OpenApplication(first);
+			Eventually(
+				[&]
+				{
+					frame();
+					const auto view = tabs.ActiveRuntime().Snapshot();
+					return tabs.ActiveRuntime().Endpoint() == firstEndpoint && view.selectedReady &&
+						   view.selectedFrame == expected;
+				},
+				"First GPU selection did not survive tab switching");
+			for (int index = 0; index < 6; ++index)
+			{
+				tabs.OpenApplication(second);
+				Eventually(
+					[&]
+					{
+						frame();
+						return tabs.ActiveRuntime().Endpoint() == secondEndpoint &&
+							   tabs.ActiveRuntime().Snapshot().selectedReady;
+					},
+					"Repeated switching lost the second GPU preview");
+				tabs.OpenApplication(first);
+				Eventually(
+					[&]
+					{
+						frame();
+						const auto view = tabs.ActiveRuntime().Snapshot();
+						return tabs.ActiveRuntime().Endpoint() == firstEndpoint && view.selectedReady &&
+							   view.selectedFrame == expected;
+					},
+					"Repeated switching lost the retained GPU preview");
+			}
+			if (const auto directory = QaDirectory("SIMXR_TABS_QA_DIR"); !directory.empty())
+			{
+				test.renderer.RequestScreenshot(directory / "tabs-1280.bmp");
+				frame();
+				test.window.Resize(800, 600);
+				for (int index = 0; index < 4; ++index)
+					frame();
+				test.renderer.RequestScreenshot(directory / "tabs-800.bmp");
+				frame();
+			}
+			ImGui::ClosePopupsExceptModals();
+			frame();
+			auto* tabWindow = FindPanel("Applications");
+			Require(tabWindow, "GPU tab bar is missing");
+			auto* bar = ImGui::GetCurrentContext()->TabBars.GetByKey(tabWindow->GetID("Applications"));
+			Require(bar, "GPU tab bar state is missing");
+			ImGuiID firstTab = 0;
+			ImVec2 hover{};
+			for (auto& item : bar->Tabs)
+				if (std::string_view(ImGui::TabBarGetTabName(bar, &item)).find("###application-2") !=
+					std::string_view::npos)
+				{
+					firstTab = item.ID;
+					hover = {bar->BarRect.Min.x + item.Offset + item.Width - ImGui::GetFontSize() * .5f -
+								 bar->FramePadding.x,
+							 (bar->BarRect.Min.y + bar->BarRect.Max.y) / 2};
+				}
+			Require(firstTab, "First GPU tab is missing");
+			SDL_Event motion{};
+			motion.type = SDL_EVENT_MOUSE_MOTION;
+			motion.motion.windowID = SDL_GetWindowID(test.window.Native());
+			motion.motion.which = TestMouse;
+			motion.motion.x = hover.x;
+			motion.motion.y = hover.y;
+			Require(SDL_PushEvent(&motion), "Cannot hover the GPU tab close button");
+			frame();
+			frame();
+			const auto exportPath = std::filesystem::path(firstEndpoint).parent_path() / "closing-export.ppm";
+			Require(tabs.ActiveRuntime().RequestExport(exportPath.string()),
+					"Cannot start GPU export before tab close");
+			Require(tabs.ActiveRuntime().ImageExport().Busy(), "GPU export was not pending at tab close");
+			const auto beforeClose = tabs.Count();
+			ImGui::ActivateItemByID(ImGui::GetIDWithSeed("#CLOSE", nullptr, firstTab));
+			frame();
+			Eventually(
+				[&]
+				{
+					frame();
+					return tabs.Count() == beforeClose - 1;
+				},
+				"GPU tab did not close after its export");
+			std::ifstream exported(exportPath, std::ios::binary);
+			std::string magic;
+			std::getline(exported, magic);
+			Require(exported && magic == "P6", "Closing a tab interrupted its accepted GPU export");
+			tabs.OpenApplication(second);
+			Eventually(
+				[&]
+				{
+					frame();
+					return tabs.ActiveRuntime().Endpoint() == secondEndpoint &&
+						   tabs.ActiveRuntime().Snapshot().selectedReady;
+				},
+				"Closing the exporting tab interrupted the other GPU application");
+		}
+	}
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Vulkan validation errors with two GPU tabs");
+	std::cout << "PASS native GPU tabs, background history and exact retained preview\n";
+}
+
+void CheckApplicationTabs()
+{
+	using namespace simxr;
+	using namespace std::chrono_literals;
+	struct Fixture
+	{
+		ExtensionRegistry extensions{SimulationExtensions()};
+		Runtime engine{extensions};
+		Runtime::InstanceRef instance;
+		Runtime::SessionRef session;
+		FrameSchedulerConfig configuration;
+		control::ControlService service{engine};
+		std::unique_ptr<control::LocalControlServer> server;
+		std::string endpoint;
+		Fixture(const std::string& suffix)
+		{
+			XrInstanceCreateInfo create{XR_TYPE_INSTANCE_CREATE_INFO};
+			create.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
+			std::strcpy(create.applicationInfo.applicationName, "Tab fixture");
+			Require(engine.CreateInstance(&create, instance) == XR_SUCCESS &&
+						engine.CreateSession(instance, session) == XR_SUCCESS,
+					"Create tab runtime");
+			configuration.mode = ExecutionMode::Deterministic;
+			configuration.epoch = RuntimeTime{1s};
+			const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr,
+										   XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
+			Require(session->Ready(configuration.epoch) == XR_SUCCESS &&
+						session->Begin(begin, configuration) == XR_SUCCESS,
+					"Start tab runtime");
+			endpoint = (std::filesystem::temp_directory_path() /
+						("simxr-tabs-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+						 suffix + ".sock"))
+						   .string();
+			server = std::make_unique<control::LocalControlServer>(service, endpoint);
+		}
+		void Submit()
+		{
+			FramePrediction frame;
+			Require(session->WaitFrame(frame) == XR_SUCCESS && session->BeginFrame() == XR_SUCCESS &&
+						session->EndFrame(frame) == XR_SUCCESS,
+					"Submit tab fixture frame");
+		}
+	};
+	Fixture first{"-one"}, second{"-two"}, third{"-three"}, fourth{"-four"};
+	first.Submit();
+	second.Submit();
+	third.Submit();
+	fourth.Submit();
+	const auto directory =
+		std::filesystem::temp_directory_path() /
+		("simxr-tabs-settings-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+	std::filesystem::create_directories(directory);
+	const auto* previous = std::getenv("SIMXR_COMPANION_SETTINGS");
+	const std::optional<std::string> saved = previous ? std::optional<std::string>{previous} : std::nullopt;
+	const auto* previousData = std::getenv("SIMXR_DATA_DIR");
+	const std::optional<std::string> savedData = previousData ? std::optional<std::string>{previousData} : std::nullopt;
+	const auto* previousEndpoint = std::getenv("SIMXR_CONTROL_SOCKET");
+	const std::optional<std::string> savedEndpoint =
+		previousEndpoint ? std::optional<std::string>{previousEndpoint} : std::nullopt;
+	struct RestoreSettings
+	{
+		std::filesystem::path directory;
+		std::optional<std::string> previous;
+		std::optional<std::string> data, endpoint;
+		~RestoreSettings()
+		{
+			if (previous)
+				::setenv("SIMXR_COMPANION_SETTINGS", previous->c_str(), 1);
+			else
+				::unsetenv("SIMXR_COMPANION_SETTINGS");
+			if (data)
+				::setenv("SIMXR_DATA_DIR", data->c_str(), 1);
+			else
+				::unsetenv("SIMXR_DATA_DIR");
+			if (endpoint)
+				::setenv("SIMXR_CONTROL_SOCKET", endpoint->c_str(), 1);
+			else
+				::unsetenv("SIMXR_CONTROL_SOCKET");
+			std::error_code ignored;
+			std::filesystem::remove_all(directory, ignored);
+		}
+	} restore{directory, saved, savedData, savedEndpoint};
+	Require(::setenv("SIMXR_COMPANION_SETTINGS", (directory / "settings.json").c_str(), 1) == 0,
+			"Set isolated tab recording directory");
+	Require(::setenv("SIMXR_DATA_DIR", directory.c_str(), 1) == 0 &&
+				::setenv("SIMXR_CONTROL_SOCKET", second.endpoint.c_str(), 1) == 0,
+			"Set isolated running-app discovery");
+	Interaction test;
+	{
+		ApplicationTabs tabs{test.processes, test.renderer, test.window, false, "", true};
+		const auto frame = [&]
+		{
+			Eventually(
+				[&]
+				{
+					return test.PollEvents() && test.renderer.BeginFrame();
+				},
+				"Tab UI frame admission stalled");
+			tabs.Draw();
+			Require(test.renderer.Render(tabs.ReadyWaits(),
+										 [&](VkCommandBuffer command)
+										 {
+											 tabs.RecordTransfers(command);
+										 }),
+					"Tab UI frame was not rendered");
+			tabs.Submitted(test.renderer.SubmittedFrames());
+		};
+		const auto closeTab = [&](std::string_view suffix)
+		{
+			frame();
+			auto* window = FindPanel("Applications");
+			Require(window, "Application tab bar is missing");
+			auto* bar = ImGui::GetCurrentContext()->TabBars.GetByKey(window->GetID("Applications"));
+			Require(bar, "Application tab bar state is missing");
+			ImVec2 hover{};
+			bool found = false;
+			for (auto& item : bar->Tabs)
+				if (std::string_view(ImGui::TabBarGetTabName(bar, &item)).find(suffix) != std::string_view::npos)
+				{
+					found = true;
+					hover = {bar->BarRect.Min.x + item.Offset + item.Width - ImGui::GetFontSize() * .5f -
+								 bar->FramePadding.x,
+							 (bar->BarRect.Min.y + bar->BarRect.Max.y) / 2};
+				}
+			Require(found, "Application tab to close is missing");
+			SDL_Event event{};
+			event.type = SDL_EVENT_MOUSE_MOTION;
+			event.motion.windowID = SDL_GetWindowID(test.window.Native());
+			event.motion.which = TestMouse;
+			event.motion.x = hover.x;
+			event.motion.y = hover.y;
+			Require(SDL_PushEvent(&event), "Cannot hover the application close button");
+			frame();
+			frame();
+			event = {};
+			event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+			event.button.windowID = SDL_GetWindowID(test.window.Native());
+			event.button.which = TestMouse;
+			event.button.button = SDL_BUTTON_LEFT;
+			event.button.down = true;
+			Require(SDL_PushEvent(&event), "Cannot press the application close button");
+			frame();
+			event.type = SDL_EVENT_MOUSE_BUTTON_UP;
+			event.button.down = false;
+			Require(SDL_PushEvent(&event), "Cannot release the application close button");
+			frame();
+		};
+		const RunningApp app1{first.endpoint, "Player one"}, app2{second.endpoint, "Player two"};
+		tabs.OpenApplication(app1);
+		Eventually(
+			[&]
+			{
+				frame();
+				return tabs.ActiveRuntime().Snapshot().sessionRunning;
+			},
+			"First tab did not connect");
+		Eventually(
+			[&]
+			{
+				frame();
+				return tabs.ActiveRuntime().History().Size() != 0;
+			},
+			"First tab has no history");
+		tabs.ActiveRuntime().StartRecording();
+		Eventually(
+			[&]
+			{
+				frame();
+				return tabs.ActiveRuntime().Snapshot().recording;
+			},
+			"First tab did not start recording");
+		closeTab("###application-2");
+		const auto& closePopup = ImGui::GetCurrentContext()->OpenPopupStack;
+		Require(!closePopup.empty() && closePopup.back().Window, "Closing a recording tab did not ask for confirmation");
+		ImGui::ActivateItemByID(closePopup.back().Window->GetID("Cancel"));
+		frame();
+		Require(tabs.ActiveRuntime().Snapshot().recording, "Cancelling tab closure stopped its recording");
+		auto* toolbar = FindPanel("Top bar");
+		Require(toolbar, "Application picker toolbar is missing");
+		ImGui::ActivateItemByID(toolbar->GetID("##App picker"));
+		frame();
+		frame();
+		const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+		Require(!popups.empty() && popups.back().Window, "Application picker did not open");
+		const auto connect = ImHashStr("Connect", 0, ImHashStr(second.endpoint.c_str(), 0, popups.back().Window->ID));
+		Eventually([&] { ImGui::ActivateItemByID(connect); frame();
+			return tabs.ActiveRuntime().Endpoint() == second.endpoint; }, "Picker did not open the discovered application");
+		Eventually(
+			[&]
+			{
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == second.endpoint &&
+					   tabs.ActiveRuntime().Snapshot().sessionRunning;
+			},
+			"Second tab did not connect");
+		{
+			std::atomic<std::uint32_t> delivered{0};
+			std::atomic<unsigned> stops{0};
+			struct RumbleState
+			{
+				std::atomic<std::uint32_t>& delivered;
+				std::atomic<unsigned>& stops;
+			} rumble{delivered, stops};
+			SDL_VirtualJoystickDesc gamepad{};
+			SDL_INIT_INTERFACE(&gamepad);
+			gamepad.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+			gamepad.naxes = SDL_GAMEPAD_AXIS_COUNT;
+			gamepad.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+			gamepad.axis_mask = (1u << SDL_GAMEPAD_AXIS_COUNT) - 1;
+			gamepad.button_mask = (1u << SDL_GAMEPAD_BUTTON_COUNT) - 1;
+			gamepad.name = "SimXR tab input QA";
+			gamepad.userdata = &rumble;
+			gamepad.Rumble = [](void* data, Uint16 left, Uint16 right)
+			{
+				auto& state = *static_cast<RumbleState*>(data);
+				const auto previous = state.delivered.exchange((std::uint32_t(left) << 16) | right);
+				if (previous && !left && !right)
+					++state.stops;
+				return true;
+			};
+			const auto joystick = SDL_AttachVirtualJoystick(&gamepad);
+			Require(joystick, "Attach tab input test gamepad");
+			struct Detach
+			{
+				SDL_JoystickID id;
+				Window& window;
+				~Detach()
+				{
+					if (id)
+					{
+						SDL_DetachVirtualJoystick(id);
+						window.PollEvents();
+					}
+				}
+			} detach{joystick, test.window};
+			test.PollEvents();
+			test.window.ReadGamepad(GamepadBindings{});
+			Require(test.window.GamepadIdentity() == joystick, "Open tab input test gamepad");
+			{
+				RuntimePanels retiring{test.renderer, first.endpoint, &test.window};
+				Require(test.window.CapturePointer(true), "Capture the foreground tab's pointer");
+				Require(test.window.Rumble({10000, 20000}) && delivered.load() == ((10000u << 16) | 20000u),
+						"Start the foreground tab's rumble");
+				retiring.Poll(false);
+				Require(SDL_GetWindowRelativeMouseMode(test.window.Native()) && delivered.load() == ((10000u << 16) | 20000u),
+						"A background session change disturbed foreground input");
+			}
+			Require(SDL_GetWindowRelativeMouseMode(test.window.Native()) && delivered.load() == ((10000u << 16) | 20000u),
+					"Closing a background runtime disturbed foreground input");
+			tabs.OpenApplication(app1);
+			frame();
+			Require(!SDL_GetWindowRelativeMouseMode(test.window.Native()) && delivered.load() == 0,
+					"Switching tabs did not release the previous tab's pointer and rumble");
+			tabs.OpenApplication(app2);
+			Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == second.endpoint; },
+					   "Return after foreground input switch");
+			Require(SDL_ShowWindow(test.window.Native()) && SDL_RaiseWindow(test.window.Native()),
+					"Show the tab haptic test window");
+			Eventually([&] { frame(); return test.window.Focused(); }, "Tab haptic test window did not receive focus");
+			const auto action = reinterpret_cast<XrAction>(1);
+			const std::array left{HapticDevice::LeftController}, right{HapticDevice::RightController};
+			XrHapticVibration vibration{XR_TYPE_HAPTIC_VIBRATION, nullptr, XR_INFINITE_DURATION, 160, .25f};
+			Require(second.session->Haptics().Apply(left, action, XR_NULL_PATH, vibration, second.configuration.epoch, true) == XR_SUCCESS,
+					"Send the foreground application's haptic event");
+			Eventually([&] { frame(); return delivered.load() == (16384u << 16); },
+					   "Foreground application rumble did not reach the gamepad");
+			vibration.amplitude = .75f;
+			Require(first.session->Haptics().Apply(right, action, XR_NULL_PATH, vibration, first.configuration.epoch, true) == XR_SUCCESS,
+					"Send a background application's haptic event");
+			for (int index = 0; index < 4; ++index)
+				frame();
+			Require(delivered.load() == (16384u << 16), "Background application drove the gamepad");
+			const auto beforeSwitch = stops.load();
+			tabs.OpenApplication(app1);
+			Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == first.endpoint; },
+					   "Switch to the other haptic application");
+			Require(stops.load() > beforeSwitch, "Tab switching did not stop the previous application's rumble");
+			Eventually([&] { frame(); return delivered.load() == 49151u; },
+					   "New foreground application's rumble did not reach the gamepad");
+			tabs.OpenApplication(app2);
+			Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == second.endpoint; },
+					   "Restore the second tab after haptic test");
+			Require(SDL_HideWindow(test.window.Native()), "Hide the tab haptic test window");
+			Require(test.window.Rumble({}) && SDL_DetachVirtualJoystick(joystick), "Detach the tab input test gamepad");
+			detach.id = 0;
+			test.PollEvents();
+		}
+		tabs.ActiveRuntime().StartRecording();
+		Eventually([&] { frame(); return tabs.ActiveRuntime().Snapshot().recording; },
+				   "Second tab did not start its independent recording");
+		const auto count = tabs.Count();
+		for (int index = 0; index < 4; ++index)
+		{
+			first.Submit();
+			second.Submit();
+			frame();
+		}
+		tabs.OpenApplication(app1);
+		Eventually(
+			[&]
+			{
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == first.endpoint && tabs.ActiveRuntime().History().Size() >= 5;
+			},
+			"Background tab lost its frame history");
+		Require(tabs.Count() == count, "Opening an existing application created a duplicate tab");
+		Require(tabs.ActiveRuntime().Snapshot().recording, "Switching tabs stopped the background recording");
+		tabs.ActiveRuntime().StopRecording();
+		Eventually(
+			[&]
+			{
+				frame();
+				return !tabs.ActiveRuntime().Snapshot().recording && !tabs.ActiveRuntime().Snapshot().recordingBusy &&
+					   std::holds_alternative<TakeSel>(tabs.ActiveWorkspace().State().selection);
+			},
+			"Background recording did not stop and save");
+		tabs.ActiveRuntime().LookAt(0);
+		const auto selected = tabs.ActiveRuntime().Snapshot().time.cursor;
+		tabs.OpenApplication(app2);
+		Eventually(
+			[&]
+			{
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == second.endpoint;
+			},
+			"Select second tab");
+		Require(tabs.ActiveRuntime().Snapshot().recording, "Second recording stopped when the first one stopped");
+		Require(tabs.ActiveRuntime().Snapshot().time.following, "Historical selection leaked into another tab");
+		tabs.OpenApplication(app1);
+		Eventually(
+			[&]
+			{
+				frame();
+				return tabs.ActiveRuntime().Endpoint() == first.endpoint;
+			},
+			"Return to first tab");
+		Require(!tabs.ActiveRuntime().Snapshot().time.following &&
+					tabs.ActiveRuntime().Snapshot().time.cursor == selected,
+				"Switching tabs discarded the historical cursor");
+		ImGui::ClosePopupsExceptModals();
+		closeTab("###application-3");
+		const auto& closingPopup = ImGui::GetCurrentContext()->OpenPopupStack;
+		Require(!closingPopup.empty() && closingPopup.back().Window,
+				"Closing a background recording did not ask for confirmation");
+		ImGui::ActivateItemByID(closingPopup.back().Window->GetID("Stop and close"));
+		frame();
+		Eventually(
+			[&]
+			{
+				frame();
+				return tabs.Count() == count - 1;
+			},
+			"Closing a recording tab did not stop and detach it");
+		std::size_t takes = 0;
+		for (const auto& entry : std::filesystem::directory_iterator(directory / "recordings"))
+			if (entry.path().extension() == ".simxrtake")
+				++takes;
+		Require(takes == 2, "Independent recordings did not create two distinct archives");
+		second.Submit();
+		Require(tabs.ActiveRuntime().Endpoint() == first.endpoint, "Closing another tab changed the active application");
+		const RunningApp app3{third.endpoint, "Player three"}, app4{fourth.endpoint, "Player four"};
+		tabs.OpenApplication(app3);
+		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == third.endpoint &&
+									 tabs.ActiveRuntime().Snapshot().sessionRunning; }, "Third tab did not connect");
+		tabs.OpenApplication(app4);
+		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == fourth.endpoint &&
+									 tabs.ActiveRuntime().Snapshot().sessionRunning; }, "Fourth tab did not connect");
+		tabs.ActiveRuntime().Pause();
+		Eventually([&] { frame(); return tabs.ActiveRuntime().Snapshot().manual; }, "Fourth player did not pause");
+		third.Submit();
+		tabs.OpenApplication(app3);
+		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == third.endpoint &&
+									 tabs.ActiveRuntime().History().Size() >= 2; }, "Third tab lost background history");
+		Require(!tabs.ActiveRuntime().Snapshot().manual, "Pausing one player paused another player");
+		tabs.OpenApplication(app4);
+		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == fourth.endpoint; }, "Return to fourth player");
+		Require(tabs.ActiveRuntime().Snapshot().manual, "Paused state did not stay with the fourth player");
+		tabs.ActiveRuntime().ResumeLive();
+		Eventually([&] { frame(); return !tabs.ActiveRuntime().Snapshot().manual; }, "Fourth player did not resume");
+		HeadsetHostOptions discovery;
+		discovery.executable = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "headset_host_service_tests";
+		discovery.discover = true;
+		tabs.ActiveRuntime().ConnectHeadset(discovery);
+		Eventually([&] { frame(); return tabs.ActiveRuntime().HeadsetStatus().phase == HeadsetHostPhase::Running; },
+				   "Fourth player did not start headset detection");
+		tabs.OpenApplication(app3);
+		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == third.endpoint; }, "Return to third player");
+		bool rejected = false;
+		try
+		{
+			tabs.ActiveRuntime().ConnectHeadset(discovery);
+		}
+		catch (const std::runtime_error&)
+		{
+			rejected = true;
+		}
+		Require(rejected, "A second tab claimed the headset while the first was still using it");
+		tabs.OpenApplication(app4);
+		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == fourth.endpoint; }, "Return to headset owner");
+		Require(tabs.ActiveRuntime().HeadsetStatus().phase == HeadsetHostPhase::Running,
+				"Switching tabs stopped the owning headset host");
+		tabs.ActiveRuntime().DisconnectHeadset();
+		Eventually([&] { frame(); return tabs.ActiveRuntime().HeadsetStatus().phase == HeadsetHostPhase::Exited; },
+				   "Headset owner did not stop cleanly");
+		tabs.OpenApplication(app3);
+		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == third.endpoint; }, "Return to third player");
+		tabs.ActiveRuntime().ConnectHeadset(discovery);
+		Eventually([&] { frame(); return tabs.ActiveRuntime().HeadsetStatus().phase == HeadsetHostPhase::Running; },
+				   "A different tab could not detect the released headset");
+		tabs.ActiveRuntime().DisconnectHeadset();
+		Eventually([&] { frame(); return tabs.ActiveRuntime().HeadsetStatus().phase == HeadsetHostPhase::Exited; },
+				   "Second headset detection did not stop cleanly");
+		Require(tabs.Count() == count + 1, "Opening four applications changed the wrong tab");
+		tabs.OpenApplication(app1);
+		Eventually([&] { frame(); return tabs.ActiveRuntime().Endpoint() == first.endpoint; }, "Return to first player");
+		Require(!tabs.ActiveRuntime().Snapshot().time.following && tabs.ActiveRuntime().Snapshot().time.cursor == selected,
+				"Other tabs changed the first player's inspection cursor");
+		ImGui::ClosePopupsExceptModals();
+		frame();
+		auto* tabWindow = FindPanel("Applications");
+		Require(tabWindow, "Application tabs disappeared");
+		auto* bar = ImGui::GetCurrentContext()->TabBars.GetByKey(tabWindow->GetID("Applications"));
+		Require(bar, "Application tab bar disappeared");
+		const auto beforeAdd = tabs.Count();
+		ImGui::ActivateItemByID(ImHashStr("+", 0, bar->ID));
+		Eventually([&] { frame(); return tabs.Count() == beforeAdd + 1 && tabs.ActiveRuntime().Endpoint().empty(); },
+				   "Add tab did not open a fresh application workspace");
+		frame();
+		const auto& addPopups = ImGui::GetCurrentContext()->OpenPopupStack;
+		Require(!addPopups.empty() && addPopups.back().Window, "Add tab did not open the application picker");
+		const auto reconnect = ImHashStr("Connect", 0, ImHashStr(second.endpoint.c_str(), 0, addPopups.back().Window->ID));
+		Eventually([&] { ImGui::ActivateItemByID(reconnect); frame();
+			return tabs.ActiveRuntime().Endpoint() == second.endpoint && tabs.ActiveRuntime().Snapshot().sessionRunning; },
+			"Fresh tab did not connect the selected running application");
+		Require(tabs.Count() == beforeAdd + 1, "Connecting from a fresh tab created another blank tab");
+		tabs.ActiveWorkspace().SetScale(1.5f);
+		test.window.Resize(800, 600);
+		for (int index = 0; index < 4; ++index)
+			frame();
+		for (const auto* name : {"Applications", "Top bar", "Image area", "Timeline"})
+		{
+			const auto* panel = FindPanel(name);
+			Require(panel && panel->Pos.x >= 0 && panel->Pos.x + panel->Size.x <= 801,
+					"Application tabs or shell overflowed the narrow enlarged window");
+		}
+		const auto* header = FindPanel("Top bar");
+		const auto* headerTabs = FindPanel("Applications");
+		Require(headerTabs->ParentWindow == header && headerTabs->Pos.y >= header->Pos.y &&
+					headerTabs->Pos.y + headerTabs->Size.y <= header->Pos.y + header->Size.y &&
+					headerTabs->Pos.x + headerTabs->Size.x < header->Pos.x + header->Size.x,
+				"Application tabs and actions do not share the compact top bar");
+		if (const auto output = QaDirectory("SIMXR_TABS_QA_DIR"); !output.empty())
+		{
+			test.renderer.RequestScreenshot(output / "tabs-800-large.bmp");
+			frame();
+		}
+		tabs.ActiveWorkspace().SetScale(1.f);
+		test.window.Resize(1280, 720);
+		for (int index = 0; index < 4; ++index)
+			frame();
+		if (const auto output = QaDirectory("SIMXR_TABS_QA_DIR"); !output.empty())
+		{
+			test.renderer.RequestScreenshot(output / "tabs-1280x720.bmp");
+			frame();
+		}
+		test.window.Resize(1920, 1080);
+		for (int index = 0; index < 4; ++index)
+			frame();
+		if (const auto output = QaDirectory("SIMXR_TABS_QA_DIR"); !output.empty())
+		{
+			test.renderer.RequestScreenshot(output / "tabs-1920.bmp");
+			frame();
+		}
+	}
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Vulkan validation errors during tab interaction");
+	std::cout << "PASS independent tabs, background history and historical selection\n";
+}
+
 void CheckLiveHaptics()
 {
 	using namespace simxr;
@@ -6436,12 +8182,1153 @@ void CheckLiveHaptics()
 }
 #endif
 
+void CheckTabSnapshotBudget(ApplicationTabs& tabs, Window& window, const std::vector<RunningApp>& apps,
+							const std::function<void()>& frame,
+							const std::function<void(const std::function<bool()>&, const char*)>& wait)
+{
+	Require(apps.size() >= 3, "Snapshot pressure needs at least three live applications");
+	const auto selectHistorical = [&](const RunningApp& app) -> RuntimePanels&
+	{
+		tabs.OpenApplication(app);
+		wait(
+			[&]
+			{
+				return tabs.ActiveRuntime().Endpoint() == app.endpoint && tabs.ActiveRuntime().Snapshot().selectedReady;
+			},
+			"Snapshot pressure tab did not render");
+		auto& runtime = tabs.ActiveRuntime();
+		std::optional<std::size_t> selected;
+		std::uint64_t expected = 0;
+		wait(
+			[&]
+			{
+				const auto view = runtime.Snapshot();
+				if (!view.selectedReady || view.selectedReader)
+					return false;
+				const auto& history = runtime.History();
+				for (std::size_t index = history.Size(); index-- > 0;)
+					if (history.At(index).epoch == view.epoch && history.At(index).identity == view.selectedIdentity)
+					{
+						selected = index;
+						expected = view.selectedFrame;
+						return true;
+					}
+				return false;
+			},
+			"Snapshot pressure has no cached live frame");
+		runtime.LookAt(*selected);
+		try
+		{
+			wait(
+				[&]
+				{
+					const auto view = runtime.Snapshot();
+					return view.selectedReady && view.selectedReader && view.selectedFrame == expected;
+				},
+				"Snapshot pressure could not retain the selected frame");
+		}
+		catch (...)
+		{
+			const auto view = runtime.Snapshot();
+			std::cerr << "Snapshot selection " << app.name << " expected=" << expected
+					  << " actual=" << view.selectedFrame << " ready=" << view.selectedReady
+					  << " reader=" << view.selectedReader << " notice=" << view.notice << " error=" << view.error
+					  << '\n';
+			throw;
+		}
+		return runtime;
+	};
+	auto& first = selectHistorical(apps[0]);
+	auto& second = selectHistorical(apps[1]);
+	ImGui::ActivateItemByID(FindPanel("Top bar")->GetID("Settings"));
+	frame();
+	frame();
+	auto* preferences = FindPanel("Preference contents");
+	Require(preferences && preferences->Active, "Snapshot budget preferences did not open");
+	const auto slider = preferences->GetID("Snapshots (MiB)");
+	ImGui::ActivateItemByID(slider);
+	ImGui::GetCurrentContext()->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
+	frame();
+	auto& io = ImGui::GetIO();
+	io.AddKeyEvent(ImGuiMod_Ctrl, true);
+	io.AddKeyEvent(ImGuiKey_A, true);
+	frame();
+	io.AddKeyEvent(ImGuiKey_A, false);
+	io.AddKeyEvent(ImGuiMod_Ctrl, false);
+	io.AddInputCharactersUTF8("128");
+	frame();
+	io.AddKeyEvent(ImGuiKey_Enter, true);
+	frame();
+	io.AddKeyEvent(ImGuiKey_Enter, false);
+	wait(
+		[&]
+		{
+			return simxr::SnapshotBudget::MiB() == 128;
+		},
+		"Snapshot budget did not shrink to 128 MiB");
+	auto* settings = FindPanel("Workspace settings");
+	Require(settings, "Snapshot budget preferences disappeared");
+	ImGui::ActivateItemByID(settings->GetID("Close"));
+	frame();
+	const auto shrinkStart = std::chrono::steady_clock::now();
+	bool reported = false;
+	wait(
+		[&]
+		{
+			if (!reported && std::chrono::steady_clock::now() - shrinkStart > std::chrono::seconds(2))
+			{
+				reported = true;
+				std::cerr << "Snapshot charges after shrink: first=" << first.SnapshotChargeBytes()
+						  << " second=" << second.SnapshotChargeBytes()
+						  << " total=" << PreviewTexture::TotalSnapshotChargeBytes()
+						  << " first reader=" << first.Snapshot().selectedReader
+						  << " second reader=" << second.Snapshot().selectedReader << '\n';
+			}
+			return first.SnapshotChargeBytes() == (64ull << 20) && second.SnapshotChargeBytes() == (64ull << 20) &&
+				   PreviewTexture::TotalSnapshotChargeBytes() == (128ull << 20);
+		},
+		"Shrinking the shared budget did not retain the two selected images");
+	tabs.OpenApplication(apps[2]);
+	wait(
+		[&]
+		{
+			const auto state = tabs.ActiveRuntime().Snapshot();
+			return tabs.ActiveRuntime().Endpoint() == apps[2].endpoint &&
+				   state.notice.find("Snapshot memory is full") != std::string::npos;
+		},
+		"Third application did not report shared snapshot pressure");
+	Require(!tabs.ActiveRuntime().Snapshot().selectedReady &&
+				PreviewTexture::TotalSnapshotChargeBytes() == (128ull << 20),
+			"Shared budget admitted an image beyond its charged capacity");
+	frame();
+	auto* tabWindow = FindPanel("Applications");
+	Require(tabWindow, "Snapshot pressure tab bar is missing");
+	auto* bar = ImGui::GetCurrentContext()->TabBars.GetByKey(tabWindow->GetID("Applications"));
+	Require(bar, "Snapshot pressure tab bar state is missing");
+	ImGuiID id = 0;
+	ImVec2 hover{};
+	for (auto& item : bar->Tabs)
+		if (std::string_view(ImGui::TabBarGetTabName(bar, &item)).find("###application-2") != std::string_view::npos)
+		{
+			id = item.ID;
+			hover = {bar->BarRect.Min.x + item.Offset + item.Width - ImGui::GetFontSize() * .5f - bar->FramePadding.x,
+					 (bar->BarRect.Min.y + bar->BarRect.Max.y) / 2};
+		}
+	Require(id, "Snapshot pressure first tab is missing");
+	SDL_Event motion{};
+	motion.type = SDL_EVENT_MOUSE_MOTION;
+	motion.motion.windowID = SDL_GetWindowID(window.Native());
+	motion.motion.which = TestMouse;
+	motion.motion.x = hover.x;
+	motion.motion.y = hover.y;
+	Require(SDL_PushEvent(&motion), "Cannot hover the snapshot pressure close button");
+	frame();
+	frame();
+	const auto beforeClose = tabs.Count();
+	ImGui::ActivateItemByID(ImGui::GetIDWithSeed("#CLOSE", nullptr, id));
+	frame();
+	wait(
+		[&]
+		{
+			return tabs.Count() == beforeClose - 1 && tabs.ActiveRuntime().Endpoint() == apps[2].endpoint &&
+				   tabs.ActiveRuntime().Snapshot().selectedReady;
+		},
+		"Third application did not recover after a snapshot owner closed");
+	Require(second.SnapshotChargeBytes() == (64ull << 20) &&
+				PreviewTexture::TotalSnapshotChargeBytes() <= (128ull << 20),
+			"Snapshot recovery lost the other selected image or exceeded the shared budget");
+}
+
+void CheckPortableReplayClose(ApplicationTabs& tabs, Interaction& test, const std::vector<RunningApp>& apps,
+							  const std::function<void()>& frame,
+							  const std::function<void(const std::function<bool()>&, const char*)>& wait)
+{
+	tabs.OpenApplication(apps.front());
+	wait(
+		[&]
+		{
+			const auto view = tabs.ActiveRuntime().Snapshot();
+			return tabs.ActiveRuntime().Endpoint() == apps.front().endpoint && view.sessionRunning &&
+				   view.setup.has_value();
+		},
+		"Replay application is not ready to record");
+	auto& runtime = tabs.ActiveRuntime();
+	auto& workspace = tabs.ActiveWorkspace();
+	runtime.StartRecording();
+	wait(
+		[&]
+		{
+			return runtime.Snapshot().recording;
+		},
+		"Replay recording did not start");
+	const auto firstFrame = runtime.Snapshot().latestFrame;
+	wait(
+		[&]
+		{
+			return runtime.Snapshot().latestFrame >= firstFrame + 120;
+		},
+		"Replay recording did not span enough application frames");
+	const auto setup = runtime.Snapshot().setup;
+	Require(setup.has_value(), "Replay recording lost its device state");
+	auto pose = setup->values.tracking.head;
+	pose.pose.position.x += .01f;
+	ManualTransaction edit;
+	edit.commands = {simxr::TakeControl{simxr::ControlChannel::Head, false}, simxr::SetHeadPose{pose}};
+	ManualInputController input;
+	const auto target = runtime.Snapshot();
+	input.SetTarget({target.endpoint, target.session, target.generation});
+	wait(
+		[&]
+		{
+			const auto state = input.Snapshot();
+			Require(state.error.empty(), state.error.c_str());
+			return state.observation != 0;
+		},
+		"Replay input worker did not observe the session");
+	Require(input.Submit(edit), "Replay input was not accepted");
+	try
+	{
+		wait(
+			[&]
+			{
+				const auto view = runtime.Snapshot();
+				const auto state = input.Snapshot();
+				Require(state.error.empty(), state.error.c_str());
+				return view.recordedChanges > 0 && view.setup &&
+					   std::abs(view.setup->values.tracking.head.pose.position.x - pose.pose.position.x) < .001f;
+			},
+			"Replay recording did not capture an applied input");
+	}
+	catch (...)
+	{
+		const auto view = runtime.Snapshot();
+		const auto state = input.Snapshot();
+		std::cerr << "Replay input: changes=" << view.recordedChanges << " expected=" << pose.pose.position.x
+				  << " actual=" << (view.setup ? view.setup->values.tracking.head.pose.position.x : 0)
+				  << " pending=" << state.editPending << " error=" << state.error << '\n';
+		throw;
+	}
+	Require(input.Submit(ReleaseManualInputs{}), "Replay input release was not accepted");
+	wait(
+		[&]
+		{
+			const auto state = input.Snapshot();
+			Require(state.error.empty(), state.error.c_str());
+			return !state.editPending;
+		},
+		"Replay input release did not complete");
+	runtime.StopRecording();
+	wait(
+		[&]
+		{
+			return !runtime.Snapshot().recordingBusy && std::holds_alternative<TakeSel>(workspace.State().selection);
+		},
+		"Replay recording was not saved");
+	const auto saved = std::get<TakeSel>(workspace.State().selection).id;
+	ImGui::ClosePopupsExceptModals();
+	runtime.RequestReplay(OpenSavedRecording(saved));
+	wait(
+		[&]
+		{
+			return workspace.State().timeline.playing && runtime.Snapshot().manual;
+		},
+		"Saved recording did not enter replay");
+	auto* timeline = FindPanel("Timeline");
+	Require(timeline, "Replay timeline is missing");
+	ImGui::ActivateItemByID(timeline->GetID("Pause"));
+	frame();
+	wait(
+		[&]
+		{
+			return workspace.State().timeline.playing && workspace.State().timeline.playbackPaused;
+		},
+		"Saved replay did not pause for the close check");
+	tabs.OpenApplication(apps[1]);
+	wait(
+		[&]
+		{
+			return tabs.ActiveRuntime().Endpoint() == apps[1].endpoint && tabs.ActiveRuntime().Snapshot().selectedReady;
+		},
+		"Foreground application lost its preview");
+	CheckReplayTabClose(tabs, test, runtime, workspace, apps.front().endpoint, apps[1].endpoint, frame);
+}
+
+void CheckPortableLiveTabs(const std::vector<std::string>& endpoints, const std::filesystem::path& directory)
+{
+	Require(endpoints.size() == 2 || endpoints.size() == 4, "Live tab test requires two or four endpoints");
+	Require(std::filesystem::is_directory(directory), "Live tab test requires an existing output directory");
+	Interaction test;
+	{
+		ApplicationTabs tabs{test.processes, test.renderer, test.window, false, "", true};
+		const auto frame = [&]
+		{
+			Eventually(
+				[&]
+				{
+					return test.PollEvents() && test.renderer.BeginFrame();
+				},
+				"Live tab UI stalled");
+			tabs.Draw();
+			Require(test.renderer.Render(tabs.ReadyWaits(),
+										 [&](VkCommandBuffer command)
+										 {
+											 tabs.RecordTransfers(command);
+										 }),
+					"Live tab frame was not rendered");
+			tabs.Submitted(test.renderer.SubmittedFrames());
+		};
+		const auto wait = [&](auto condition, const char* message)
+		{
+			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+			while (true)
+			{
+				frame();
+				if (condition())
+					return;
+				Require(std::chrono::steady_clock::now() < deadline, message);
+			}
+		};
+		std::vector<RunningApp> apps;
+		for (std::size_t index = 0; index < endpoints.size(); ++index)
+		{
+			apps.push_back({endpoints[index], "Live player " + std::to_string(index + 1)});
+			tabs.OpenApplication(apps.back());
+			wait(
+				[&]
+				{
+					const auto view = tabs.ActiveRuntime().Snapshot();
+					return tabs.ActiveRuntime().Endpoint() == endpoints[index] && view.sessionRunning;
+				},
+				"Live application did not connect");
+		}
+		if (std::getenv("SIMXR_TABS_LIVE_GATE"))
+			for (int index = 3; index <= 5; ++index)
+				for (const auto& app : apps)
+				{
+					const auto root = std::filesystem::path(app.endpoint).parent_path();
+					const auto name = "rendering." + std::to_string(index);
+					wait(
+						[&]
+						{
+							return std::filesystem::exists(root / (name + ".ready"));
+						},
+						"Live producer did not reach its frame gate");
+					std::ofstream release(root / (name + ".continue"));
+					Require(bool(release), "Cannot release live producer frame");
+				}
+		for (int pass = 0; pass < 3; ++pass)
+			for (const auto& app : apps)
+			{
+				tabs.OpenApplication(app);
+				wait(
+					[&]
+					{
+						return tabs.ActiveRuntime().Endpoint() == app.endpoint &&
+							   tabs.ActiveRuntime().Snapshot().selectedReady &&
+							   tabs.ActiveRuntime().History().Size() >= 2;
+					},
+					"Switching lost a live preview or background history");
+			}
+		if (std::getenv("SIMXR_TABS_BUDGET_QA"))
+			CheckTabSnapshotBudget(tabs, test.window, apps, frame, wait);
+		else if (std::getenv("SIMXR_TABS_PORTABLE_REPLAY_QA"))
+			CheckPortableReplayClose(tabs, test, apps, frame, wait);
+		else
+		{
+			tabs.OpenApplication(apps.front());
+			wait(
+				[&]
+				{
+					return tabs.ActiveRuntime().Endpoint() == endpoints.front();
+				},
+				"Select first live tab");
+			tabs.ActiveRuntime().Pause();
+			wait(
+				[&]
+				{
+					return tabs.ActiveRuntime().Snapshot().manual;
+				},
+				"First live application did not pause");
+			tabs.OpenApplication(apps[1]);
+			wait(
+				[&]
+				{
+					return tabs.ActiveRuntime().Endpoint() == endpoints[1] &&
+						   tabs.ActiveRuntime().Snapshot().selectedReady;
+				},
+				"Second live tab lost its preview");
+			Require(!tabs.ActiveRuntime().Snapshot().manual, "Pausing one live application paused another");
+			tabs.OpenApplication(apps.front());
+			wait(
+				[&]
+				{
+					return tabs.ActiveRuntime().Endpoint() == endpoints.front();
+				},
+				"Return to paused live tab");
+			Require(tabs.ActiveRuntime().Snapshot().manual, "Paused state did not stay with its live application");
+			tabs.ActiveRuntime().ResumeLive();
+			wait(
+				[&]
+				{
+					return !tabs.ActiveRuntime().Snapshot().manual && tabs.ActiveRuntime().Snapshot().selectedReady;
+				},
+				"First live application did not resume");
+			std::optional<std::size_t> historyIndex;
+			std::uint64_t expectedFrame = 0;
+			wait(
+				[&]
+				{
+					const auto view = tabs.ActiveRuntime().Snapshot();
+					if (!view.selectedReady || view.selectedReader)
+						return false;
+					const auto& history = tabs.ActiveRuntime().History();
+					for (std::size_t index = history.Size(); index-- > 0;)
+						if (history.At(index).epoch == view.epoch &&
+							history.At(index).identity == view.selectedIdentity)
+						{
+							historyIndex = index;
+							expectedFrame = view.selectedFrame;
+							return true;
+						}
+					return false;
+				},
+				"Live image was not cached after releasing its reader");
+			tabs.ActiveRuntime().LookAt(*historyIndex);
+			wait(
+				[&]
+				{
+					const auto view = tabs.ActiveRuntime().Snapshot();
+					return view.selectedReady && view.selectedReader && view.selectedFrame == expectedFrame;
+				},
+				"Historical live image is not available for export");
+			ImGui::ClosePopupsExceptModals();
+			frame();
+			auto* window = FindPanel("Applications");
+			Require(window, "Live application tab bar is missing");
+			auto* bar = ImGui::GetCurrentContext()->TabBars.GetByKey(window->GetID("Applications"));
+			Require(bar, "Live application tab bar state is missing");
+			ImGuiID id = 0;
+			ImVec2 hover{};
+			for (auto& item : bar->Tabs)
+				if (std::string_view(ImGui::TabBarGetTabName(bar, &item)).find("###application-2") !=
+					std::string_view::npos)
+				{
+					id = item.ID;
+					hover = {bar->BarRect.Min.x + item.Offset + item.Width - ImGui::GetFontSize() * .5f -
+								 bar->FramePadding.x,
+							 (bar->BarRect.Min.y + bar->BarRect.Max.y) / 2};
+				}
+			Require(id, "First live tab is missing");
+			SDL_Event motion{};
+			motion.type = SDL_EVENT_MOUSE_MOTION;
+			motion.motion.windowID = SDL_GetWindowID(test.window.Native());
+			motion.motion.which = TestMouse;
+			motion.motion.x = hover.x;
+			motion.motion.y = hover.y;
+			Require(SDL_PushEvent(&motion), "Cannot hover the live tab close button");
+			frame();
+			frame();
+			const auto exportPath = directory / "closing-export.ppm";
+			Require(tabs.ActiveRuntime().RequestExport(PathText(exportPath)) &&
+						tabs.ActiveRuntime().ImageExport().Busy(),
+					"Cannot start a live image export before tab closure");
+			const auto beforeClose = tabs.Count();
+			ImGui::ActivateItemByID(ImGui::GetIDWithSeed("#CLOSE", nullptr, id));
+			frame();
+			wait(
+				[&]
+				{
+					return tabs.Count() == beforeClose - 1;
+				},
+				"Live tab did not close after its export");
+			std::ifstream output(exportPath, std::ios::binary);
+			std::string magic;
+			std::getline(output, magic);
+			Require(output && magic == "P6", "Closing the live tab interrupted its export");
+			for (std::size_t index = 1; index < apps.size(); ++index)
+			{
+				tabs.OpenApplication(apps[index]);
+				wait(
+					[&]
+					{
+						return tabs.ActiveRuntime().Endpoint() == endpoints[index] &&
+							   tabs.ActiveRuntime().Snapshot().sessionRunning &&
+							   tabs.ActiveRuntime().Snapshot().selectedReady;
+					},
+					"Closing one tab interrupted another live application");
+			}
+		}
+	}
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Vulkan validation errors in live tab workflow");
+	std::cout << (std::getenv("SIMXR_TABS_BUDGET_QA") ? "PASS shared tab snapshot budget\n"
+				  : std::getenv("SIMXR_TABS_PORTABLE_REPLAY_QA")
+					  ? "PASS portable replay close\n"
+					  : "PASS portable live tabs, input-independent pause, preview and close\n");
+}
+
 } // namespace
 
-int main()
+static void CheckDistributionOnboarding()
+{
+	IgnoreRealPointer();
+	Interaction test(true);
+	const auto resize = [&](int width, int height)
+	{
+		const auto rebuilds = test.renderer.RebuildCount();
+		test.window.Resize(width, height);
+		Eventually([&] { test.Frame(); return test.renderer.RebuildCount() > rebuilds; },
+				   "Distribution UI resize did not rebuild the swapchain");
+	};
+	resize(1280, 720);
+	for (unsigned frame = 0; frame < 4; ++frame)
+		test.Frame();
+	const auto directory = QaDirectory("SIMXR_UI_QA_DIR");
+	if (!directory.empty())
+	{
+		test.renderer.RequestScreenshot(directory / "distribution-empty.bmp");
+		test.Frame();
+	}
+	auto* preview = FindPanel("Image area");
+	Require(preview, "Disconnected preview is missing");
+	ImGui::ActivateItemByID(preview->GetID("Add application"));
+	for (unsigned frame = 0; frame < 3; ++frame)
+		test.Frame();
+	auto* profile = FindPanel("Launch profiles");
+	Require(profile && profile->Active, "Add application did not open the launch editor");
+	auto* form = FindPanel("Profile form");
+	Require(form && !form->ScrollbarX, "Launch editor overflows horizontally");
+	if (!directory.empty())
+	{
+		test.renderer.RequestScreenshot(directory / "distribution-profile.bmp");
+		test.Frame();
+	}
+	test.workspace.SetScale(1.5f);
+	for (unsigned frame = 0; frame < 4; ++frame)
+		test.Frame();
+	Require(!form->ScrollbarX, "Enlarged launch editor overflows horizontally");
+	if (!directory.empty())
+	{
+		test.renderer.RequestScreenshot(directory / "distribution-profile-large.bmp");
+		test.Frame();
+	}
+	resize(1920, 1080);
+	Require(!form->ScrollbarX, "Large-screen launch editor overflows horizontally");
+	if (!directory.empty())
+	{
+		test.renderer.RequestScreenshot(directory / "distribution-profile-1080.bmp");
+		test.Frame();
+	}
+	test.workspace.SetScale(1);
+	resize(760, 600);
+	Require(!form->ScrollbarX, "Narrow launch editor overflows horizontally");
+	if (!directory.empty())
+	{
+		test.renderer.RequestScreenshot(directory / "distribution-profile-narrow.bmp");
+		test.Frame();
+	}
+#ifdef __linux__
+	resize(1280, 720);
+	for (unsigned frame = 0; frame < 3; ++frame)
+		test.Frame();
+	ImGui::ActivateItemByID(ImHashStr("Runtime and script", 0, ImHashStr("1", 0, form->ID)));
+	for (unsigned frame = 0; frame < 3; ++frame)
+		test.Frame();
+	ImGui::ActivateItemByID(ImHashStr("Steam launch options", 0, ImHashStr("1", 0, form->ID)));
+	for (unsigned frame = 0; frame < 3; ++frame)
+		test.Frame();
+	const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+	Require(popups.size() >= 2 && popups.back().Window, "Steam launch options did not open");
+	if (!directory.empty())
+	{
+		test.renderer.RequestScreenshot(directory / "distribution-steam.bmp");
+		test.Frame();
+	}
+#endif
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Distribution onboarding produced Vulkan validation errors");
+	std::cout << "PASS distribution onboarding\n";
+}
+
+static void CheckUpdateStartup()
+{
+	Require(std::getenv("SIMXR_COMPANION_SETTINGS"), "Update startup check requires isolated settings");
+	Require(ValidReleaseRepository(simxr::ReleaseRepository), "Update startup check needs a configured repository");
+	CompanionSettings settings;
+	settings.autoUpdateCheck = true;
+	SaveSettings(CompanionSettingsPath(), settings);
+	IgnoreRealPointer();
+	Interaction test(true);
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(12);
+	for (;;)
+	{
+		test.Frame();
+		const auto* notice = FindPanel("##Notices");
+		if (notice && notice->Active)
+			break;
+		Require(std::chrono::steady_clock::now() < deadline, "Automatic update notice did not appear");
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	if (const auto directory = std::getenv("SIMXR_DIALOG_QA_DIR"))
+	{
+		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "update-startup-notice.bmp");
+		test.Frame();
+	}
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Update startup produced Vulkan validation errors");
+	std::cout << "PASS automatic update startup notice\n";
+}
+
+static void CheckProfileCopyButton(const std::filesystem::path& executable)
+{
+	IgnoreRealPointer();
+	Interaction test;
+	CompanionSettings settings;
+	LaunchProfile profile;
+	profile.name = "Saved profile";
+	profile.executable = PathText(std::filesystem::absolute(executable));
+	settings.profiles.push_back(profile);
+	LaunchProfilesDialog editor;
+	editor.Edit(settings, 0);
+	bool open = true, changed = false;
+	test.extraDraw = [&] { editor.Draw(settings, {}, open, changed); };
+	for (unsigned frame = 0; frame < 3; ++frame)
+		test.Frame();
+	auto* form = FindPanel("Profile form");
+	Require(form, "Profile copy form missing");
+	ImGui::ActivateItemByID(ImHashStr("Copy launch command", 0, ImHashStr("1", 0, form->ID)));
+	test.Frame();
+	Require(editor.TakeCopyCommandRequest(), "Saved profile copy command was not requested");
+	Require(!editor.TakeCopyCommandRequest(), "Profile copy request was not consumed");
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Profile copy produced Vulkan validation errors");
+}
+
+static void CheckProfileClipboard(const std::filesystem::path& executable)
+{
+	Require(std::getenv("SIMXR_COMPANION_SETTINGS"), "Profile clipboard check requires isolated settings");
+	CompanionSettings settings;
+	LaunchProfile profile;
+	profile.name = "Saved ' profile";
+	profile.executable = PathText(std::filesystem::absolute(executable));
+	settings.profiles.push_back(profile);
+	settings.activeProfile = profile.name;
+	SaveSettings(CompanionSettingsPath(), settings);
+	IgnoreRealPointer();
+	Interaction test(true);
+	for (unsigned frame = 0; frame < 3; ++frame)
+		test.Frame();
+	auto* preview = FindPanel("Image area");
+	Require(preview, "Profile clipboard preview missing");
+	ImGui::ActivateItemByID(preview->GetID("Add application"));
+	for (unsigned frame = 0; frame < 3; ++frame)
+		test.Frame();
+	auto* names = FindPanel("Profile names");
+	Require(names, "Profile list missing");
+	const int index = 0;
+	ImGui::ActivateItemByID(ImHashStr("##Profile", 0, ImHashData(&index, sizeof(index), names->ID)));
+	for (unsigned frame = 0; frame < 3; ++frame)
+		test.Frame();
+	auto* form = FindPanel("Profile form");
+	Require(form, "Profile clipboard form missing");
+	ImGui::ActivateItemByID(ImHashStr("Copy launch command", 0, ImHashStr("3", 0, form->ID)));
+	test.Frame();
+	const auto* base = SDL_GetBasePath();
+	Require(base, "Cannot locate simulator for clipboard check");
+#ifdef _WIN32
+	const auto expected = ProfileLaunchCommand(Utf8Path(base) / "simxr_companion.exe", profile.name,
+										   LaunchCommandShell::PowerShell);
+#else
+	const auto expected = ProfileLaunchCommand(Utf8Path(base) / "simxr_companion", profile.name,
+										   LaunchCommandShell::Posix);
+#endif
+	char* clipboard = SDL_GetClipboardText();
+	const bool copied = clipboard && expected == clipboard;
+	SDL_free(clipboard);
+	Require(copied, "Profile command did not reach the clipboard");
+	Require(LoadSettings(CompanionSettingsPath()).profiles.front() == profile, "Copied profile was not saved");
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Profile clipboard produced Vulkan validation errors");
+}
+
+static void CheckHeadsetLaunchProfile()
+{
+	Interaction test(true);
+	CompanionSettings settings;
+	LaunchProfile profile;
+	profile.name = "Headset launch";
+	profile.executable = "game.exe";
+	profile.arguments = {"", "line one\nline two"};
+	profile.environment = {{"SIMXR_WIDTH", "64"}, {"KEEP", "unchanged"}};
+	settings.profiles.push_back(profile);
+	LaunchProfilesDialog editor;
+	editor.Edit(settings, 0);
+	bool open = true, changed = false, launched = false;
+	std::optional<std::array<HeadsetEyeSize, 2>> eyes = std::array<HeadsetEyeSize, 2>{{{2048, 2160}, {2200, 2300}}};
+	test.extraDraw = [&] { launched |= editor.Draw(settings, {}, open, changed, eyes); };
+	for (unsigned frame = 0; frame < 3; ++frame)
+		test.Frame();
+	Require(settings.profiles.front() == profile && !changed, "Headset discovery changed launch settings without a click");
+	auto* form = FindPanel("Profile form");
+	Require(form, "Headset launch profile form missing");
+	const auto activate = [&]
+	{
+		ImGui::ActivateItemByID(ImHashStr("Use headset size", 0, ImHashStr("1", 0, form->ID)));
+		for (unsigned frame = 0; frame < 3; ++frame)
+			test.Frame();
+	};
+	activate();
+	Require(!form->ScrollbarX, "Headset launch settings overflow horizontally");
+	if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
+	{
+		test.renderer.RequestScreenshot(directory / "headset-launch-profile.bmp");
+		test.Frame();
+	}
+	const auto saved = settings.profiles.front();
+	const auto environment = std::map<std::string, std::string>(saved.environment.begin(), saved.environment.end());
+	Require(changed && !launched && saved.arguments == profile.arguments && saved.environment.size() == 3 &&
+		environment.at("SIMXR_WIDTH") == "2200" && environment.at("SIMXR_HEIGHT") == "2300" &&
+		environment.at("KEEP") == "unchanged", "Headset sizes were not saved exactly or changed unrelated launch fields");
+	changed = false;
+	eyes = std::array<HeadsetEyeSize, 2>{{{9000, 2160}, {2200, 2300}}};
+	test.Frame();
+	activate();
+	Require(!changed && settings.profiles.front() == saved, "Unsupported headset recommendation was silently clamped");
+	eyes.reset();
+	test.Frame();
+	activate();
+	Require(!changed && settings.profiles.front() == saved && !launched, "Disconnected headset changed saved launch dimensions");
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Headset launch editor produced Vulkan validation errors");
+}
+
+static void CheckHeadsetRestartProfile()
+{
+	Interaction test(true);
+	CompanionSettings settings;
+	LaunchProfile profile;
+	profile.name = "Replacement game";
+#ifdef _WIN32
+	profile.executable = PathText(Utf8Path(SDL_GetBasePath()) / "companion_interaction_tests.exe");
+#else
+	profile.executable = PathText(Utf8Path(SDL_GetBasePath()) / "companion_interaction_tests");
+#endif
+	Require(PathProblem(profile.executable, PathKind::Executable).empty(), ("Restart test executable is invalid: " + profile.executable).c_str());
+	profile.environment = {{"KEEP", "unchanged"}};
+	settings.profiles.push_back(profile);
+	LaunchProfilesDialog editor;
+	editor.Edit(settings, 0);
+	LaunchSnapshot process{LaunchState::Running, "Original game", {}, 42};
+	bool open = true, changed = false, canRestart = false;
+	std::optional<std::array<HeadsetEyeSize, 2>> eyes = std::array<HeadsetEyeSize, 2>{{{2048, 2160}, {2200, 2300}}};
+	test.extraDraw = [&]
+	{
+		ImGui::PushID("restart-editor");
+		Require(!editor.Draw(settings, process, open, changed, eyes, canRestart), "Restart accidentally requested an ordinary launch");
+		ImGui::PopID();
+	};
+	for (unsigned frame = 0; frame < 3; ++frame)
+		test.Frame();
+	auto* form = FindPanel("Profile form");
+	Require(form, "Restart profile form missing");
+	ImGui::SetScrollY(form, form->ScrollMax.y);
+	test.Frame(); test.Frame();
+	const auto activate = [&](const char* label)
+	{
+		ImGui::ActivateItemByID(ImHashStr(label, 0, ImHashStr("1", 0, form->ID)));
+		test.Frame(); test.Frame();
+	};
+	activate("Restart with headset settings");
+	Require(!editor.TakeRestartRequest(), "Unowned app allowed restart");
+	canRestart = true;
+	test.Frame();
+	activate("Restart with headset settings");
+	auto* review = FindPanel("Restart application?");
+	Require(review && review->Active, "Restart review did not open");
+	Require(!editor.TakeRestartRequest(), "Restart executed before confirmation");
+	if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
+	{
+		test.renderer.RequestScreenshot(directory / "headset-restart-review.bmp");
+		test.Frame();
+	}
+	test.workspace.SetScale(1.25f);
+	test.Frame(); test.Frame(); test.Frame();
+	Require(!review->ScrollbarX && review->Pos.x >= 0 && review->Pos.y >= 0 &&
+		review->Pos.x + review->Size.x <= ImGui::GetIO().DisplaySize.x &&
+		review->Pos.y + review->Size.y <= ImGui::GetIO().DisplaySize.y, "Enlarged restart review exceeds the viewport");
+	if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
+	{
+		test.renderer.RequestScreenshot(directory / "headset-restart-review-enlarged.bmp");
+		test.Frame();
+	}
+	process.process = 43;
+	ImGui::ActivateItemByID(review->GetID("Restart"));
+	test.Frame(); test.Frame();
+	Require(!editor.TakeRestartRequest(), "Changed process accepted stale restart review");
+	ImGui::ActivateItemByID(review->GetID("Keep running"));
+	test.Frame(); test.Frame();
+	Require(!editor.TakeRestartRequest(), "Keep running requested restart");
+	activate("Restart with headset settings");
+	eyes = std::array<HeadsetEyeSize, 2>{{{3000, 3000}, {3000, 3000}}};
+	ImGui::ActivateItemByID(review->GetID("Restart"));
+	test.Frame(); test.Frame();
+	const auto request = editor.TakeRestartRequest();
+	Require(request && request->process == 43, "Confirmed restart lost original process identity");
+	const auto environment = std::map<std::string, std::string>(request->profile.environment.begin(), request->profile.environment.end());
+	Require(environment.at("SIMXR_WIDTH") == "2200" && environment.at("SIMXR_HEIGHT") == "2300" && environment.at("KEEP") == "unchanged",
+		"Restart changed reviewed dimensions or unrelated environment");
+	Require(!editor.TakeRestartRequest() && !changed && settings.profiles.front() == profile, "Restart replayed a request or changed saved settings");
+	process.restartPending = true;
+	canRestart = false;
+	eyes.reset();
+	test.Frame();
+	ImGui::SetScrollY(form, form->ScrollMax.y);
+	test.Frame(); test.Frame();
+	activate("Cancel restart");
+	Require(editor.TakeRestartCancellation() && !editor.TakeRestartCancellation(), "Pending restart cancellation was lost or repeated");
+	Require(!form->ScrollbarX, "Restart controls overflow horizontally");
+	test.renderer.WaitIdle();
+	Require(test.validation->errors.load() == 0, "Restart editor produced Vulkan validation errors");
+}
+
+static void CheckPhysicalHeadsetPage()
+{
+	Interaction test;
+	PhysicalHeadsetPage page;
+	std::string conflict;
+	HeadsetHostSnapshot host;
+	ObservedSetup game;
+	game.appTrackersKnown = true;
+	game.appBodyExtensions = std::array{false, false, false};
+	bool available = true;
+	std::optional<HeadsetPageRequest> request;
+	float width = 400;
+	test.extraDraw = [&]
+	{
+		ImGui::SetNextWindowPos({20, 20}, ImGuiCond_Always);
+		ImGui::SetNextWindowSize({width, 620}, ImGuiCond_Always);
+		ImGui::Begin("Headset QA", nullptr, ImGuiWindowFlags_NoSavedSettings);
+		request = page.Draw(host, available, conflict, &game);
+		Require(ImGui::GetCurrentWindow()->DC.CursorMaxPos.x <= ImGui::GetCurrentWindow()->InnerRect.Max.x + 1,
+				"Physical headset controls overflow the inspector width");
+		ImGui::End();
+	};
+	test.Frame(); test.Frame();
+	auto* window = ImGui::FindWindowByName("Headset QA");
+	const auto activate = [&](const char* label)
+	{
+		ImGui::ActivateItemByID(ImHashStr(label, 0, ImHashStr("physical-headset", 0, window->ID)));
+		test.Frame();
+	};
+	activate("Connect");
+	Require(request && request->connect && request->options.runtimeManifest.empty() && !request->options.localEyeHeight,
+			"Connect defaults to the system runtime without fabricating LOCAL calibration");
+	Require(!page.BodyEnabled() && !request->options.body, "Body forwarding must default to Off");
+	const auto selectBody = [&](int index, const char* label)
+	{
+		activate("##body-provider");
+		test.Frame();
+		const auto& popups = ImGui::GetCurrentContext()->OpenPopupStack;
+		Require(!popups.empty() && popups.back().Window, "Body provider menu did not open");
+		const auto seed = ImHashData(&index, sizeof(index), popups.back().Window->ID);
+		ImGui::ActivateItemByID(ImHashStr(label, 0, seed));
+		test.Frame(); test.Frame();
+	};
+	const std::array labels{"FB upper body", "META full body", "BD without arms", "BD full body"};
+	for (int provider = 0; provider < 4; ++provider)
+	{
+		selectBody(provider + 1, labels[provider]);
+		activate("Connect");
+		Require(page.BodyEnabled() && request && request->options.body == static_cast<simxr::BodyJointSet>(provider),
+				"Selected body joint set did not reach Connect");
+	}
+	selectBody(0, "Body: Off");
+	activate("Connect");
+	Require(!page.BodyEnabled() && request && !request->options.body, "Off retained the previous body provider");
+	available = false;
+	activate("Connect");
+	Require(!request, "Unavailable target allowed connection");
+	activate("Detect headset");
+	Require(request && request->connect && request->options.discover && request->options.endpoint.empty() &&
+		!request->options.takeOver && !request->options.alignment, "Targetless discovery claimed game input");
+	host.phase = HeadsetHostPhase::Running;
+	host.discovering = true;
+	host.recommendedEyes = std::array<HeadsetEyeSize, 2>{{{2048, 2160}, {2200, 2300}}};
+	activate("Re-align");
+	Require(!request, "Discovery allowed input realignment");
+	available = true;
+	activate("Connect");
+	Require(request && request->connect && !request->options.discover && !request->options.takeOver,
+		"Detected headset cannot connect directly to the running game");
+	available = false;
+	activate("Stop detection");
+	Require(request && !request->connect, "Discovery cannot be stopped without a game");
+	host = {};
+
+	available = true;
+	activate("Calibrate LOCAL height");
+	activate("Connect");
+	Require(request && request->options.localEyeHeight == 1.7f, "Explicit LOCAL calibration was not forwarded");
+	activate("Custom runtime");
+	activate("Connect");
+	Require(!request, "Custom runtime without a manifest allowed connection");
+	activate("Custom runtime");
+	conflict = "Headset input is owned by a rig (source 81).";
+	activate("Take over and connect");
+	Require(request && request->connect && request->options.takeOver, "Explicit takeover action must forward authorization");
+	conflict.clear();
+	activate("Connect");
+	Require(request && !request->options.takeOver, "Normal connect must not retain previous takeover authorization");
+	host.phase = HeadsetHostPhase::Running;
+	activate("Re-align");
+	Require(!request, "Re-align requires acknowledged input readiness");
+	host.input = HeadsetInputState::Ready;
+	activate("Re-align");
+	Require(request && request->realign && !request->connect, "Re-align must request a distinct controlled reconnect");
+	activate("Disconnect");
+	Require(request && !request->connect, "Running host cannot be disconnected");
+	host.phase = HeadsetHostPhase::Stopping;
+	activate("Disconnect");
+	Require(!request, "Stopping host accepted a duplicate request");
+	host.phase = HeadsetHostPhase::Exited;
+	selectBody(4, "BD full body");
+	host.bodySupport[2] = false;
+	host.phase = HeadsetHostPhase::Failed;
+	host.error = "The selected runtime has no usable headset. Check its connection and retry.";
+	conflict = "Headset input is owned by a rig (source 81).";
+	for (const float scale : {1.f, 1.5f})
+	{
+		test.workspace.SetScale(scale);
+		width = scale == 1 ? 400 : 320 * scale;
+		test.Frame(); test.Frame();
+		if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
+		{
+			test.renderer.RequestScreenshot(directory / (scale == 1 ? "headset-controls.bmp" : "headset-controls-enlarged.bmp"));
+			test.Frame();
+		}
+		ImGui::SetScrollY(window, window->ScrollMax.y);
+		test.Frame(); test.Frame();
+		activate("Take over and connect");
+		Require(request && request->options.takeOver && request->options.body == simxr::BodyJointSet::FullBodyBD,
+				"Scrolled body takeover must remain reachable at every scale");
+		if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
+		{
+			test.renderer.RequestScreenshot(directory / (scale == 1 ? "headset-body-takeover.bmp" : "headset-body-takeover-enlarged.bmp"));
+			test.Frame();
+		}
+		ImGui::SetScrollY(window, 0);
+		test.Frame(); test.Frame();
+	}
+	conflict.clear();
+	host.phase = HeadsetHostPhase::Running;
+	host.error.clear();
+	for (const float scale : {1.f, 1.5f})
+	{
+		test.workspace.SetScale(scale);
+		width = scale == 1 ? 400 : 320 * scale;
+		for (const auto mode : {HeadsetOutputState::Live, HeadsetOutputState::Inspection,
+			HeadsetOutputState::Hidden, HeadsetOutputState::Waiting})
+		{
+			host.output = mode;
+			host.input = mode == HeadsetOutputState::Inspection ? HeadsetInputState::Suspended : HeadsetInputState::Ready;
+			test.Frame(); test.Frame();
+			if (const auto directory = QaDirectory("SIMXR_UI_QA_DIR"); !directory.empty())
+			{
+				const auto name = "headset-output-" + std::to_string(static_cast<unsigned>(mode)) +
+					(scale == 1 ? "-normal.bmp" : "-enlarged.bmp");
+				test.renderer.RequestScreenshot(directory / name);
+				test.Frame();
+			}
+		}
+	}
+	Require(test.validation->errors == 0, "Physical headset page produced Vulkan validation errors");
+}
+
+static void CheckArchiveRecordingUi()
+{
+	using namespace simxr;
+	using namespace simxr::app;
+	Require(std::getenv("SIMXR_COMPANION_SETTINGS"), "Recording QA needs isolated settings");
+	Interaction test;
+	Runtime engine{ExtensionRegistry{std::span<const ExtensionDefinition>{}}};
+	Runtime::InstanceRef instance;
+	Runtime::SessionRef session;
+	XrInstanceCreateInfo create{XR_TYPE_INSTANCE_CREATE_INFO};
+	create.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
+	std::strcpy(create.applicationInfo.applicationName, "Archive recording UI");
+	Require(engine.CreateInstance(&create, instance) == XR_SUCCESS && engine.CreateSession(instance, session) == XR_SUCCESS,
+		"Create archive UI session");
+	FrameSchedulerConfig config;
+	config.mode = ExecutionMode::RealTime;
+	const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
+	Require(session->Ready(config.epoch) == XR_SUCCESS && session->Begin(begin, config) == XR_SUCCESS, "Begin archive UI session");
+	control::ControlService service{engine};
+#ifdef _WIN32
+	const auto endpoint = std::string(R"(\\.\pipe\SimXR.Control.)") +
+		std::to_string(GetCurrentProcessId()) + ".archive-ui";
+#else
+	const auto endpoint = (CompanionSettingsPath().parent_path() / "capture.sock").string();
+#endif
+	control::LocalControlServer server{service, endpoint};
+	const auto game = engine.Game().Register(SIMXR_GAME_CAN_RESET);
+	Require(game && engine.Game().Publish(game, "checkpoint:start"), "Publish UI SDK origin");
+	RecordingPanel panel;
+	panel.SetTarget({endpoint, 1, session->Snapshot().generation.value});
+	test.extraDraw = [&]
+	{
+		ImGui::SetNextWindowPos({30, 50}, ImGuiCond_Always);
+		ImGui::SetNextWindowSize({500, 250}, ImGuiCond_Always);
+		ImGui::Begin("Recording fixture");
+		panel.Poll(true);
+		if (ImGui::Button("Record")) panel.RequestStart();
+		ImGui::SameLine();
+		if (ImGui::Button("Stop")) panel.RequestStop();
+		panel.DrawPopovers(true);
+		ImGui::End();
+	};
+	std::uint64_t frameId = 0;
+	std::string lastTake;
+	for (const auto scale : {1.f, 1.5f})
+	{
+		test.workspace.SetScale(scale);
+		test.Frame();
+		ImGui::ActivateItemByID(FindPanel("Recording fixture")->GetID("Record"));
+		test.Frame();
+		Eventually([&] { test.Frame(); return panel.Snapshot().phase == RecordingCapturePhase::Capturing; }, "UI capture did not start");
+		++frameId;
+		CommandTransaction edit{frameId, {CommandSourceKind::Manual, 987}, {FrameId{frameId}, {}},
+			CommandLatePolicy::Reject, {TakeControl{ControlChannel::Head}, SetHeadPose{PoseSample{}}}};
+		Require(session->Commands().Submit(edit).result == CommandResult::Queued, "Queue UI recorded input");
+		FramePrediction prediction;
+		Require(session->WaitFrame(prediction) == XR_SUCCESS && session->BeginFrame() == XR_SUCCESS && session->EndFrame(prediction) == XR_SUCCESS,
+			"Apply UI recorded input");
+		for (unsigned event = 0; event < 20; ++event)
+			Require(engine.Game().Publish(game, "checkpoint:target event " + std::to_string(event) +
+				" · 日本語 · Recorded gameplay telemetry remains readable in a bounded panel."), "Publish UI SDK evidence");
+		++frameId;
+		CommandTransaction tail{frameId, {CommandSourceKind::Manual, 987}, {FrameId{frameId}, {}},
+			CommandLatePolicy::Reject, {SetHeadPose{PoseSample{}}}};
+		Require(session->Commands().Submit(tail).result == CommandResult::Queued, "Queue second UI input boundary");
+		Require(session->WaitFrame(prediction) == XR_SUCCESS && session->BeginFrame() == XR_SUCCESS && session->EndFrame(prediction) == XR_SUCCESS,
+			"Apply second UI input boundary");
+		ImGui::ActivateItemByID(FindPanel("Recording fixture")->GetID("Stop"));
+		test.Frame();
+		Eventually([&] { test.Frame(); return !panel.Snapshot().busy; }, "UI capture did not finish");
+		test.Frame();
+		Require(panel.Snapshot().phase == RecordingCapturePhase::Complete && panel.Snapshot().error.empty() && panel.Snapshot().transactions == 2, "UI archive failed");
+		const auto saved = panel.TakeSaved();
+		if (saved) lastTake = *saved;
+		Require(saved && std::filesystem::exists(Utf8Path(*saved) / "input.simxr"), "UI omitted saved archive notification");
+		Require(ImGui::IsPopupOpen(FindPanel("Recording fixture")->GetID("Recorded take"), ImGuiPopupFlags_AnyPopupLevel), "Saved take popup missing");
+		if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
+		{
+			test.renderer.RequestScreenshot(std::filesystem::path(directory) / (scale == 1 ? "take-saved.bmp" : "take-saved-enlarged.bmp"));
+			test.Frame();
+			test.renderer.WaitIdle();
+		}
+		auto* popup = ImGui::GetCurrentContext()->OpenPopupStack.back().Window;
+		ImGui::ActivateItemByID(popup->GetID("Done"));
+		test.Frame();
+	}
+	Require(test.validation->errors.load() == 0, "Archive UI Vulkan validation errors");
+	test.extraDraw = {};
+	test.workspace.SetScale(1);
+	test.workspace.ShowLibrary(true);
+	test.workspace.Select(TakeSel{lastTake});
+	for (int frame = 0; frame < 30; ++frame) test.Frame();
+	if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
+	{
+		test.renderer.RequestScreenshot(std::filesystem::path(directory) / "archive-library.bmp");
+		test.Frame();
+	}
+	Eventually([&]
+	{
+		test.Frame();
+		const auto* events = FindPanel("SDK events");
+		return events && events->Active;
+	}, "SDK evidence inspector did not load its journal page");
+	for (const auto scale : {1.f, 1.5f})
+	{
+		test.workspace.SetScale(scale);
+		test.Frame();
+		ImGui::SetScrollY(FindPanel("Inspector"), FindPanel("Inspector")->ScrollMax.y);
+		test.Frame();
+		ImGui::SetScrollY(FindPanel("Inspector"), FindPanel("Inspector")->ScrollMax.y);
+		test.Frame();
+		if (const auto directory = std::getenv("SIMXR_UI_QA_DIR"))
+		{
+			test.renderer.RequestScreenshot(std::filesystem::path(directory) /
+				(scale == 1 ? "sdk-evidence.bmp" : "sdk-evidence-enlarged.bmp"));
+			test.Frame();
+			test.renderer.WaitIdle();
+		}
+	}
+	test.workspace.SetScale(1);
+	test.Frame();
+	ImGui::SetScrollY(FindPanel("Inspector"), FindPanel("Inspector")->ScrollMax.y);
+	test.Frame();
+	ImGui::ActivateItemByID(FindPanel("Inspector")->GetID("Next events"));
+	test.Frame();
+	Eventually([&]
+	{
+		test.Frame();
+		return FindPanel("SDK events")->ScrollMax.y < 2 * ImGui::GetFontSize();
+	}, "SDK inspector did not load the final four-event page");
+	ImGui::ActivateItemByID(FindPanel("Inspector")->GetID("First events"));
+	test.Frame();
+	Eventually([&]
+	{
+		test.Frame();
+		return FindPanel("SDK events")->ScrollMax.y > 8 * ImGui::GetFontSize();
+	}, "SDK inspector did not return to its first page");
+	const auto evidence = automation::ReadRecordingEvidence(Utf8Path(lastTake));
+	Require(!evidence.entries.empty() && evidence.entries.front().first && evidence.entries.front().last,
+		"UI SDK evidence has no surrounding recorded range");
+	ImGui::ActivateItemByID(FindPanel("Inspector")->GetID("Use nearby range"));
+	test.Frame();
+	ImGui::SetScrollY(FindPanel("Inspector"), 0);
+	test.Frame();
+	test.renderer.WaitIdle();
+	const auto editable = CompanionSettingsPath().parent_path() / "recordings" /
+		("Range " + std::to_string(evidence.entries.front().first->value) + "-" +
+		 std::to_string(evidence.entries.front().last->value) + ".luau");
+	Require(!std::filesystem::exists(editable), "Range UI fixture needs a fresh output name");
+	ImGui::ActivateItemByID(FindPanel("Inspector")->GetID("Export editable rig"));
+	Eventually([&]
+	{
+		test.Frame();
+		const auto selected = std::get_if<TakeSel>(&test.workspace.State().selection);
+		return selected && selected->id == PathText(editable);
+	}, "Archive range export did not select the editable rig");
+	Require(std::filesystem::exists(editable) && !OpenSavedRecording(PathText(editable)).path.empty(),
+		"Archive UI did not save a reopenable editable range");
+	Require(test.validation->errors.load() == 0, "Archive range UI Vulkan validation errors");
+	std::cout << "PASS archive recording controls, automatic persistence and normal/enlarged completion popup\n";
+}
+int main(int argc, char** argv)
 {
 	try
 	{
+#ifdef _WIN32
+		if (argc == 2 && std::string_view(argv[1]).starts_with("--update-worker="))
+		{
+			const auto response = simxr::app::windows::FetchLatestReleaseDirect(std::string_view(argv[1]).substr(16));
+			_setmode(_fileno(stdout), _O_BINARY);
+			std::cout.write(response.data(), static_cast<std::streamsize>(response.size()));
+			return std::cout ? 0 : 1;
+		}
+#else
+		(void)argc;
+#endif
+#ifdef __linux__
+		if (std::getenv("SIMXR_TAB_LAUNCH_FIXTURE"))
+			return RunTabLaunchFixture();
+		if (std::getenv("SIMXR_TAB_LAUNCH_QA"))
+		{
+			CheckTabLaunches();
+			return 0;
+		}
+#endif
 		{
 			RuntimeView view;
 			view.connected = view.sessionAvailable = true;
@@ -6485,17 +9372,62 @@ int main()
 			Require(editor.Create(settings, source), "Long launch profile could not be saved");
 			check(settings.profiles.front());
 			editor.Edit(settings, static_cast<int>(settings.profiles.size()));
-			Require(editor.Selected() == -1 && editor.Profile() == simxr::app::LaunchProfile{},
+			simxr::app::LaunchProfile newProfile;
+			newProfile.useBundledRuntime = true;
+			Require(editor.Selected() == -1 && editor.Profile() == newProfile,
 				"A retired launch-profile index did not open a new draft");
 		}
 
 
+		if (std::getenv("SIMXR_DISTRIBUTION_QA"))
+		{
+			CheckDistributionOnboarding();
+			CheckProfileCopyButton(argv[0]);
+			CheckProfileClipboard(argv[0]);
+			return 0;
+		}
+		if (std::getenv("SIMXR_HEADSET_LAUNCH_QA"))
+		{
+			CheckHeadsetLaunchProfile();
+			CheckHeadsetRestartProfile();
+			return 0;
+		}
 		if (std::getenv("SIMXR_RIG_POINTER_QA"))
 		{
 			CheckRigPointer();
 			return 0;
 		}
+		if (const auto* first = std::getenv("SIMXR_TABS_LIVE_FIRST"))
+		{
+			const auto* second = std::getenv("SIMXR_TABS_LIVE_SECOND");
+			Require(*first && second && *second, "Two live tab endpoints are required");
+			std::vector<std::string> endpoints{first, second};
+			if (const auto* third = std::getenv("SIMXR_TABS_LIVE_THIRD"))
+			{
+				const auto* fourth = std::getenv("SIMXR_TABS_LIVE_FOURTH");
+				Require(*third && fourth && *fourth, "Both additional live tab endpoints are required");
+				endpoints.emplace_back(third);
+				endpoints.emplace_back(fourth);
+			}
+			CheckPortableLiveTabs(endpoints, QaDirectory("SIMXR_TABS_LIVE_DIRECTORY"));
+			return 0;
+		}
 #ifdef __linux__
+		if (std::getenv("SIMXR_TABS_QA"))
+		{
+			CheckApplicationTabs();
+			return 0;
+		}
+		if (const auto first = std::getenv("SIMXR_TABS_GPU_FIRST"))
+		{
+			const auto second = std::getenv("SIMXR_TABS_GPU_SECOND");
+			Require(second && *second, "Two GPU tab endpoints are required");
+			if (std::getenv("SIMXR_TABS_INPUT_QA"))
+				CheckGpuTabInput(first, second);
+			else
+				CheckMultiGpuTabs(first, second);
+			return 0;
+		}
 		if (const auto endpoint = std::getenv("SIMXR_UI_PILOT_ENDPOINT"))
 		{
 			PilotLiveRuntime(endpoint);
@@ -6525,8 +9457,7 @@ int main()
 					failure = choice.discoveryError;
 				ImGui::End();
 			};
-			for (unsigned frame = 0; frame < 4; ++frame)
-				test.Frame();
+			Eventually([&] { test.Frame(); return !failure.empty(); }, "Picker hid a discovery failure");
 			Require(!failure.empty(), "Picker hid a discovery failure");
 			if (const auto path = std::getenv("SIMXR_DISCOVERY_QA_SCREENSHOT"))
 			{
@@ -6554,6 +9485,21 @@ int main()
 			std::cout << "PASS fixed shell, toolbar actions, focus restore and timeline edges at normal, folded and narrow enlarged layouts\n";
 			return 0;
 		}
+		if (std::getenv("SIMXR_RECORDING_ARCHIVE_QA"))
+		{
+			CheckArchiveRecordingUi();
+			return 0;
+		}
+		if (std::getenv("SIMXR_HEADSET_PAGE_QA"))
+		{
+			CheckPhysicalHeadsetPage();
+			return 0;
+		}
+		if (std::getenv("SIMXR_TRACKER_COLLECTION_QA"))
+		{
+			CheckExpandedTrackerUi();
+			return 0;
+		}
 		if (std::getenv("SIMXR_DEVICE_HEADER_QA"))
 		{
 			ConfigureObservedDevices();
@@ -6568,7 +9514,12 @@ int main()
 			CheckTimelineWorkflow(test);
 			return 0;
 		}
-		if (std::getenv("SIMXR_BUDGET_QA"))
+		if (std::getenv("SIMXR_UPDATE_STARTUP_QA"))
+		{
+			CheckUpdateStartup();
+			return 0;
+		}
+		if (std::getenv("SIMXR_BUDGET_QA") || std::getenv("SIMXR_MCP_UI_QA") || std::getenv("SIMXR_UPDATE_UI_QA"))
 		{
 			Interaction test;
 			CheckPreferences(test);
@@ -6785,8 +9736,8 @@ int main()
 					test.Frame();
 				auto* form = FindPanel("Profile form");
 				Require(form, "Launch profile form missing");
-				test.Click({form->DC.CursorStartPos.x + 20,
-					form->DC.CursorStartPos.y + ImGui::GetFrameHeightWithSpacing() + ImGui::GetFrameHeight() / 2});
+				ImGui::ActivateItemByID(ImHashStr("##Name", 0, ImHashStr("1", 0, form->ID)));
+				test.Frame();
 				auto& io = ImGui::GetIO();
 				io.AddKeyEvent(ImGuiMod_Ctrl, true);
 				io.AddKeyEvent(ImGuiKey_A, true);
@@ -6860,6 +9811,9 @@ int main()
 		}
 		Require(validation->errors.load() == 0, "Vulkan validation errors during interaction or teardown");
 		CheckShell();
+#ifdef __linux__
+		CheckApplicationTabs();
+#endif
 		ConfigureObservedDevices();
 		CheckSpatialWidgetLifecycle();
 		CheckDocumentTreeIdentity();

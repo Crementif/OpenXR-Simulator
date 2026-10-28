@@ -1,7 +1,7 @@
 #include "Pch.h"
-#include "app/widgets/Theme.h"
 #include "app/services/PlayerRig.h"
 #include "app/widgets/SpatialEditor.h"
+#include "app/widgets/Theme.h"
 #include <cmath>
 
 namespace simxr::app
@@ -35,10 +35,10 @@ bool SpatialEditor::DrawPreview(Selection& selection, ImVec2 minimum, ImVec2 max
 								(maximum.y <= clipMaximum.y ? 46 * ImGui::GetFontSize() / 16 : 0)};
 	const float scale = ImGui::GetFontSize() / 16, radius = 10 * scale;
 	bool hovered = gizmo.hovered || gizmo.active;
-	std::array<ImVec2, 6> arrows;
+	std::array<ImVec2, MaxTrackerDevices + 2> arrows;
 	std::size_t arrowCount = 0;
 	if (visibleMax.x - visibleMin.x > 4 * radius && visibleMax.y - visibleMin.y > 4 * radius)
-		for (int device = 1; device < 7; ++device)
+		for (int device = 1; device < static_cast<int>(MaxTrackerDevices + 3); ++device)
 		{
 			if (!scene.available[device])
 				continue;

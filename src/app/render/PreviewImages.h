@@ -29,6 +29,10 @@ class PreviewImages
 	PreviewImages(UiRenderer& renderer, RuntimePanelRequests& requests);
 	~PreviewImages();
 	void SetScope(PanelScope scope);
+	void SetCapacity(std::size_t capacity) noexcept;
+	void BeginRetirement();
+	bool RetirementComplete() const;
+	void PreserveUnfinished() noexcept;
 	void Retained(const control::Message& message, bool preview, bool thumbnail = false);
 	void Shared(std::uint64_t id, const RuntimeReply& reply);
 	void ShareFailed(std::uint64_t id);
@@ -40,6 +44,8 @@ class PreviewImages
 	void SelectImage(std::uint64_t id);
 	bool SelectFrame(PanelScope scope, std::uint64_t frame);
 	void ClearSelection();
+	void ReleaseLive();
+	void ReleaseInactive();
 	void ReleaseSelected();
 	// Shows the newest live image instead of a chosen one.
 	void ShowLive(bool enabled) noexcept;
@@ -48,6 +54,7 @@ class PreviewImages
 	std::optional<PreviewImageSummary> Selected() const;
 	std::vector<PreviewImageSummary> Images() const;
 	std::size_t ReadyCount() const;
+	std::uint64_t SnapshotChargeBytes() const;
 	void BeginFrame();
 	void DrawSelected(float width, std::optional<std::size_t> slice = {}, ImVec4 crop = {0, 0, 1, 1},
 					  bool correctProportions = true);
@@ -74,6 +81,8 @@ class PreviewImages
 		bool live = false, thumbnail = false;
 	};
 	std::optional<PendingImage> m_pending;
+	std::optional<std::size_t> m_capacity;
+	std::size_t Capacity() const noexcept;
 	Image* Find(std::uint64_t id) const;
 	PreviewImageSummary Summary(const Image& image) const;
 	UiRenderer& m_renderer;
@@ -83,6 +92,7 @@ class PreviewImages
 	PreviewHistory m_history;
 	std::uint64_t m_nextImage = 1, m_selectedImage = 0, m_selectedCapture = 0;
 	bool m_live = true;
+	bool m_memoryBlocked = false, m_retiring = false;
 	std::uint64_t m_selectedFrame = 0;
 	std::string m_error;
 };

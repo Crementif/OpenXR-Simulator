@@ -1,9 +1,9 @@
 #include "Pch.h"
-#include "app/widgets/Theme.h"
 #include "app/pages/DeviceControlPanel.h"
 #include "app/services/PlayerRig.h"
 #include "app/widgets/Controls.h"
 #include "app/widgets/InputPad.h"
+#include "app/widgets/Theme.h"
 #include <imgui_internal.h>
 
 namespace simxr::app
@@ -62,6 +62,8 @@ std::optional<SimulationEdit> DeviceControlPanel::EndInputFrame()
 				controls.stick = {};
 		}
 		controls.connected = m_authoredTracking.controllers[hand].connected;
+		controls.physicalProfile.clear();
+		controls.triggerClick.reset();
 		release.commands.emplace_back(TakeControl{channel, false});
 		release.commands.emplace_back(SetControllerControls{hand, controls});
 	}
@@ -162,6 +164,8 @@ void DeviceControlPanel::DrawInputPad(std::uint32_t hand)
 	if ((!clear && !changed) || !CanControl(channel))
 		return;
 	controls.connected = controller.connected;
+	controls.physicalProfile.clear();
+	controls.triggerClick.reset();
 	ApplyOwned(hand ? ControlChannel::RightControls : ControlChannel::LeftControls,
 			   SetControllerControls{hand, controls});
 	auto& edit = std::get<ManualTransaction>(*m_edit);
@@ -201,7 +205,25 @@ void DeviceControlPanel::DrawController(std::uint32_t hand, const std::function<
 				  SwitchValue(controller.connected, true)))
 			ApplyOwned(channel, SetControllerPose{hand, controller});
 		ImGui::EndDisabled();
-		ImGui::TextUnformatted("Interaction profile path");
+		if (m_observed)
+		{
+			const auto& physical = m_observed->values.input.controllers[hand].physicalProfile;
+			if (!physical.empty())
+			{
+				ImGui::TextWrapped("Physical: %s", physical.c_str());
+				if (m_observed->controllerProfiles)
+				{
+					const auto& effective = (*m_observed->controllerProfiles)[hand];
+					ImGui::TextWrapped("Game: %s", effective.empty() ? "No active binding" : effective.c_str());
+				}
+				else
+					ImGui::TextUnformatted("Game: Unavailable");
+				if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+					ImGui::SetTooltip("Profile from the game's latest action synchronization. It may differ if the "
+									  "game uses fallback bindings.");
+			}
+		}
+		ImGui::TextUnformatted("Simulated profile path");
 		DrawOwner(ControlChannel::Profiles);
 		ImGui::BeginDisabled(!CanControl(ControlChannel::Profiles));
 		auto& profile = m_controllerProfiles[hand];

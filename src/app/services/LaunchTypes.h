@@ -2,7 +2,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -21,9 +23,20 @@ struct LaunchProfile
 	std::string headsetProfile;
 	std::string rig;
 	std::string privateProtonPrefix;
+	bool useBundledRuntime = false;
 	bool operator==(const LaunchProfile&) const = default;
 };
 void ValidateLaunchProfile(const LaunchProfile& profile);
+LaunchProfile ResolveLaunchProfile(LaunchProfile profile, const std::filesystem::path& applicationDirectory);
+std::string LinuxSteamRuntimeOption(const std::filesystem::path& manifest);
+enum class LaunchCommandShell
+{
+	Posix,
+	PowerShell
+};
+std::string ProfileLaunchCommand(const std::filesystem::path& executable, std::string_view profile,
+								 LaunchCommandShell shell);
+std::string DecodeProfileLaunchName(std::string_view encoded);
 
 enum class LaunchState
 {
@@ -40,5 +53,6 @@ struct LaunchSnapshot
 	std::string detail;
 	std::uint64_t process = 0;
 	int exitCode = 0;
+	bool restartPending = false;
 };
 } // namespace simxr::app

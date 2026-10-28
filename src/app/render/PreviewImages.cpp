@@ -4,6 +4,7 @@
 #include "graphics/SnapshotBudget.h"
 
 #include <cstdio>
+#include <limits>
 
 namespace simxr::app
 {
@@ -31,7 +32,8 @@ PreviewImages::~PreviewImages()
 	std::uint64_t completed = 0;
 	try
 	{
-		m_renderer.WaitIdle();
+		if (!m_retiring)
+			m_renderer.WaitIdle();
 		completed = m_renderer.CompletedFrames();
 	}
 	catch (const std::exception& error)
@@ -40,6 +42,53 @@ PreviewImages::~PreviewImages()
 	}
 	for (auto& image : m_images)
 		image->texture->ObserveCompletion(completed);
+}
+void PreviewImages::BeginRetirement()
+{
+	if (m_retiring)
+		return;
+	m_retiring = true;
+	if (m_pending)
+	{
+		m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId,
+						   U64(m_pending->message, tag::ImageReaderId));
+		m_pending.reset();
+	}
+	for (auto& image : m_images)
+		image->release = true;
+	m_selectedImage = 0;
+	m_history.BeginRetirement();
+}
+bool PreviewImages::RetirementComplete() const
+{
+	return m_retiring && m_images.empty() && m_history.RetirementComplete() && !m_requests.Has(Work::Release) &&
+		   !m_requests.Has(Work::Retain) && !m_requests.Has(Work::Preview) &&
+		   !m_requests.Has(Work::PastPreview) && !m_requests.Has(Work::Thumbnail);
+}
+void PreviewImages::PreserveUnfinished() noexcept
+{
+	std::uint64_t completed = 0;
+	try
+	{
+		completed = m_renderer.CompletedFrames();
+	}
+	catch (...)
+	{
+	}
+	for (auto& image : m_images)
+		image->texture->PreserveUnfinished(completed);
+	m_images.clear();
+	m_history.PreserveRetired();
+}
+void PreviewImages::SetCapacity(std::size_t capacity) noexcept
+{
+	if (m_capacity != capacity)
+		m_memoryBlocked = false;
+	m_capacity = capacity;
+}
+std::size_t PreviewImages::Capacity() const noexcept
+{
+	return m_capacity.value_or(SnapshotBudget::Capacity());
 }
 PreviewImages::Image* PreviewImages::Find(std::uint64_t id) const
 {
@@ -96,7 +145,7 @@ bool PreviewImages::SelectFrame(PanelScope scope, std::uint64_t frame)
 			image->session == scope.session && image->generation == scope.generation)
 		{
 			m_selectedImage = image->id;
-			return true;
+			return image->reader != 0;
 		}
 	return false;
 }
@@ -111,6 +160,35 @@ void PreviewImages::SelectImage(std::uint64_t id)
 void PreviewImages::ClearSelection()
 {
 	m_selectedImage = 0;
+}
+void PreviewImages::ReleaseLive()
+{
+	if (m_pending && m_pending->live)
+	{
+		m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId,
+						   U64(m_pending->message, tag::ImageReaderId));
+		m_pending.reset();
+	}
+	for (auto& image : m_images)
+		if (image->live && !image->exporting)
+		{
+			image->release = true;
+			if (m_selectedImage == image->id)
+				m_selectedImage = 0;
+		}
+}
+void PreviewImages::ReleaseInactive()
+{
+	ReleaseLive();
+	if (m_pending && m_pending->thumbnail)
+	{
+		m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId,
+						   U64(m_pending->message, tag::ImageReaderId));
+		m_pending.reset();
+	}
+	for (auto& image : m_images)
+		if (image->thumbnail && !image->exporting)
+			image->release = true;
 }
 void PreviewImages::ReleaseSelected()
 {
@@ -173,6 +251,18 @@ std::size_t PreviewImages::ReadyCount() const
 						 {
 							 return image->texture->Ready() && !image->release;
 						 });
+}
+std::uint64_t PreviewImages::SnapshotChargeBytes() const
+{
+	std::uint64_t bytes = 0;
+	for (const auto& image : m_images)
+	{
+		const auto charge = image->texture->SnapshotChargeBytes();
+		if (charge > std::numeric_limits<std::uint64_t>::max() - bytes)
+			return std::numeric_limits<std::uint64_t>::max();
+		bytes += charge;
+	}
+	return bytes;
 }
 bool PreviewImages::HasPendingLive() const
 {
@@ -248,6 +338,11 @@ void PreviewImages::Submitted(std::uint64_t serial)
 }
 void PreviewImages::Retained(const wire::Message& message, bool preview, bool thumbnail)
 {
+	if (m_retiring)
+	{
+		m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId, U64(message, tag::ImageReaderId));
+		return;
+	}
 	if (preview && !Boolean(message, tag::ImageAvailable))
 	{
 		if (m_pending && m_pending->live)
@@ -279,6 +374,13 @@ void PreviewImages::Retained(const wire::Message& message, bool preview, bool th
 		throw;
 	}
 	const auto capture = U64(message, tag::CaptureId);
+	if (Capacity() == 0)
+	{
+		m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId, reader);
+		if (!std::exchange(m_memoryBlocked, true))
+			m_error = "Snapshot memory is too small for this application's images.";
+		return;
+	}
 	const auto tickField = message.Find(tag::ImageTick);
 	const auto imageTick = tickField ? tickField->AsU64() : std::nullopt;
 	for (const auto& image : m_images)
@@ -302,7 +404,7 @@ void PreviewImages::Retained(const wire::Message& message, bool preview, bool th
 				m_selectedImage = image->id;
 			return;
 		}
-	if (m_images.size() >= SnapshotBudget::Capacity())
+	if (m_images.size() >= Capacity())
 	{
 		std::optional<PendingImage> prepared;
 		try
@@ -332,6 +434,28 @@ void PreviewImages::Retained(const wire::Message& message, bool preview, bool th
 		if (!description)
 			throw std::runtime_error("Runtime omitted the retained image description");
 		const auto imageDescription = wire::DecodeImageDescription(*description);
+		if (!PreviewTexture::CanReserveSnapshot(imageDescription.allocationSize))
+		{
+			PendingImage pending{message, preview, thumbnail};
+			if (preview)
+				ReleaseLive();
+			for (auto& cached : m_images)
+				if (!cached->exporting && !cached->release && cached->texture->Ready() &&
+					(cached->id != m_selectedImage || (preview && m_live)))
+				{
+					cached->release = true;
+					if (cached->id == m_selectedImage)
+						m_selectedImage = 0;
+				}
+			if (m_pending)
+				m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId,
+								   U64(m_pending->message, tag::ImageReaderId));
+			m_pending = std::move(pending);
+			if (!std::exchange(m_memoryBlocked, true))
+				m_error = "Snapshot memory is full. Increase the snapshot budget or release an image.";
+			return;
+		}
+		m_memoryBlocked = false;
 		prepared->texture = std::make_unique<PreviewTexture>(m_renderer.DeviceAccess(), imageDescription);
 		if (const auto target = message.Find(tag::Target))
 		{
@@ -389,6 +513,8 @@ void PreviewImages::Shared(std::uint64_t id, const RuntimeReply& reply)
 	if (auto image = Find(id))
 	{
 		image->delivery = U64(reply.packet.message, tag::DeliveryId);
+		if (image->release)
+			return;
 		try
 		{
 			const auto description = reply.packet.message.Find(tag::ImageDescriptor);
@@ -428,12 +554,21 @@ void PreviewImages::ProtectExports(std::span<const std::uint64_t> images)
 }
 void PreviewImages::Poll()
 {
+	m_history.Poll();
+	if (m_pending && Capacity() == 0)
+	{
+		m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId,
+						   U64(m_pending->message, tag::ImageReaderId));
+		m_pending.reset();
+		if (!std::exchange(m_memoryBlocked, true))
+			m_error = "Snapshot memory is too small for this application's images.";
+	}
 	std::size_t retained = std::count_if(m_images.begin(), m_images.end(),
 										 [](const auto& image)
 										 {
 											 return !image->release;
 										 });
-	const auto capacity = SnapshotBudget::Capacity();
+	const auto capacity = Capacity();
 	const auto cacheLimit = capacity > 2 ? capacity - 2 : 1;
 	for (auto& image : m_images)
 		if (retained > cacheLimit && !image->exporting && image->id != m_selectedImage && !image->release &&
@@ -511,7 +646,7 @@ void PreviewImages::Poll()
 			m_selectedImage = 0;
 		iterator = m_images.erase(iterator);
 	}
-	if (m_pending && m_images.size() < SnapshotBudget::Capacity())
+	if (m_pending && m_images.size() < Capacity())
 	{
 		auto pending = std::move(*m_pending);
 		m_pending.reset();

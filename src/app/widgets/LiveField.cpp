@@ -38,6 +38,7 @@ void DrawLiveField(bool pending, std::string_view rejection)
 bool FieldActions(const char* id, const FieldValue& value)
 {
 	bool changed = false;
+	const auto item = ImGui::GetCurrentContext()->LastItemData;
 	const bool hovered = ImGui::IsItemHovered();
 	const bool editable = !(ImGui::GetItemFlags() & (ImGuiItemFlags_Disabled | ImGuiItemFlags_ReadOnly));
 	if (value.modified)
@@ -56,23 +57,41 @@ bool FieldActions(const char* id, const FieldValue& value)
 			changed = true;
 		}
 	};
-	if (hovered && value.modified && ImGui::IsMouseClicked(ImGuiMouseButton_Middle))
-		reset(value.reset);
 	const auto& io = ImGui::GetIO();
-	// macOS reports Shift+wheel as horizontal.
-	const float wheel = io.MouseWheel != 0 ? io.MouseWheel : io.KeyShift ? io.MouseWheelH : 0;
-	if (editable && hovered && io.KeyCtrl && wheel != 0 && value.nudge && !ImGui::IsAnyItemActive())
+	const bool rightReleased = hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right);
+	if (rightReleased && io.KeyShift && value.modified)
+		reset(value.reset);
+	// Claim wheel input while hovered so a value edit does not also scroll its parent.
+	if (editable && hovered && value.nudge && !ImGui::IsAnyItemActive())
 	{
-		value.nudge(wheel * (io.KeyShift ? .1f : 1));
-		changed = true;
+		ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+		if (io.KeyShift)
+			ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelX);
+		// macOS reports Shift+wheel as horizontal.
+		const float wheel = io.MouseWheel != 0 ? io.MouseWheel : io.KeyShift ? io.MouseWheelH : 0;
+		if (wheel != 0)
+		{
+			value.nudge(wheel * (io.KeyCtrl ? .1f : io.KeyShift ? 10.f : 1.f));
+			changed = true;
+		}
 	}
-	if (ImGui::BeginPopupContextItem(id))
+	if (rightReleased && !io.KeyShift)
+		ImGui::OpenPopup(id);
+	if (ImGui::BeginPopup(id))
 	{
-		if (ImGui::MenuItem("Reset", "Middle-click", false, editable && value.modified && value.reset))
+		if (value.quaternionView)
+		{
+			if (ImGui::MenuItem("Euler angles", nullptr, !*value.quaternionView))
+				*value.quaternionView = false;
+			if (ImGui::MenuItem("Quaternion", nullptr, *value.quaternionView))
+				*value.quaternionView = true;
+			ImGui::Separator();
+		}
+		if (ImGui::MenuItem("Reset value", "Shift+Right-click", false, editable && value.modified && value.reset))
 			reset(value.reset);
 		if (value.group && value.resetGroup)
 		{
-			const std::string label = std::string("Reset ") + value.group;
+			const std::string label = std::string("Reset entire ") + value.group;
 			if (ImGui::MenuItem(label.c_str(), nullptr, false, editable))
 				reset(value.resetGroup);
 		}
@@ -88,6 +107,7 @@ bool FieldActions(const char* id, const FieldValue& value)
 		}
 		ImGui::EndPopup();
 	}
+	ImGui::GetCurrentContext()->LastItemData = item;
 	return changed;
 }
 FieldValue NumberValue(float& value, float fallback, float step, float minimum, float maximum, const char* format)

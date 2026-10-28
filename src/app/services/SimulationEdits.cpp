@@ -1,9 +1,10 @@
 #include "app/services/SimulationEdits.h"
-#include "math/Math.h"
 #include "Pch.h"
 #include "control/ControlSchema.h"
 #include "control/SimulationControl.h"
+#include "math/Math.h"
 #include "simulation/BodyModel.h"
+#include "simulation/ViewConfiguration.h"
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -177,15 +178,35 @@ std::optional<TrackingSnapshot> ReadInspectionTracking(const control::Message& s
 	result.gaze = sample(Member(*tracking, "gaze"));
 	const auto controllers = Elements(Member(*tracking, "controllers")),
 			   trackers = Elements(Member(*tracking, "trackers"));
-	if (controllers.size() != 2 || trackers.size() != 4)
+	if (controllers.size() != 2 || trackers.size() > MaxTrackerDevices)
 		throw std::runtime_error("Invalid historical device count");
 	for (std::size_t hand = 0; hand < 2; ++hand)
 		result.controllers[hand] = {sample(Member(controllers[hand], "sample")),
 									Boolean(Member(controllers[hand], "connected"))};
-	for (std::size_t slot = 0; slot < 4; ++slot)
+	result.trackers.resize(trackers.size());
+	for (std::size_t slot = 0; slot < trackers.size(); ++slot)
 	{
 		result.trackers[slot].pose = sample(Member(trackers[slot], "sample"));
-		result.trackers[slot].device.connected = Boolean(Member(Member(trackers[slot], "device"), "connected"));
+		const auto device = Member(trackers[slot], "device");
+		auto& value = result.trackers[slot].device;
+		value.identity.value = Unsigned(Member(device, "id"));
+		value.connected = Boolean(Member(device, "connected"));
+		value.tracked = Boolean(Member(device, "tracked"));
+		if (const auto path = FindMember(device, "source_path"))
+			value.sourcePath = TrackerSourcePath{NodeData(*path, wire::InspectionType::Text).AsText().value_or("")};
+		if (const auto flags = FindMember(device, "flags"))
+			value.poseFlags = Unsigned(*flags);
+		const std::string role(NodeData(Member(device, "role"), wire::InspectionType::Text).AsText().value_or(""));
+		bool known = false;
+		for (unsigned index = 0; index <= static_cast<unsigned>(TrackerRole::Keyboard); ++index)
+			if (role == BodyModel::TrackerRolePath(static_cast<TrackerRole>(index)))
+			{
+				value.role = static_cast<TrackerRole>(index);
+				known = true;
+				break;
+			}
+		if (!known || !value.identity.value)
+			throw std::runtime_error("Invalid historical tracker identity or role");
 	}
 	const auto proportions = Member(*tracking, "proportions");
 	result.proportions = {Number(Member(proportions, "height")), Number(Member(proportions, "shoulder_width")),
@@ -201,6 +222,52 @@ std::optional<TrackingSnapshot> ReadInspectionTracking(const control::Message& s
 		result.body.joints[joint] = sample(Member(joints[joint], "sample"));
 	return result;
 }
+ManualTransaction PrepareHeadsetRelease(const ObservedSetup& observed, std::optional<CommandSource> manualSource,
+										bool takeOver, bool trackers, bool body)
+{
+	ManualTransaction release;
+	release.label = "Connect physical headset";
+	for (const auto channel :
+		 {ControlChannel::Head, ControlChannel::Views, ControlChannel::LeftPose, ControlChannel::RightPose,
+		  ControlChannel::LeftControls, ControlChannel::RightControls, ControlChannel::Trackers, ControlChannel::Body})
+	{
+		if ((channel == ControlChannel::Trackers && !trackers) || (channel == ControlChannel::Body && !body))
+			continue;
+		const auto owner = observed.owners[static_cast<std::size_t>(channel)];
+		if (!owner)
+			continue;
+		if (owner != manualSource)
+		{
+			if (takeOver)
+				continue;
+			const char* source = "another source";
+			switch (owner->kind)
+			{
+			case CommandSourceKind::Manual:
+				source = "another manual controller";
+				break;
+			case CommandSourceKind::Mcp:
+				source = "MCP";
+				break;
+			case CommandSourceKind::Rig:
+				source = "a rig";
+				break;
+			case CommandSourceKind::Sequence:
+				source = "a sequence";
+				break;
+			case CommandSourceKind::Device:
+				source = "another device";
+				break;
+			}
+			throw std::runtime_error(std::string("Headset input is owned by ") + source + " (source " +
+									 std::to_string(owner->id) +
+									 "). Release these controls or choose Take over and connect.");
+		}
+		release.commands.push_back(ReleaseControl{channel});
+	}
+	return release;
+}
+
 ObservedSetup ReadObservedSetup(const control::Message& state)
 {
 	NextObservedFrame(state);
@@ -211,9 +278,43 @@ ObservedSetup ReadObservedSetup(const control::Message& state)
 	ObservedSetup result;
 	auto& values = result.values;
 	result.frame = Unsigned(Member(root, "frame_id"));
+	if (const auto profiles = FindMember(root, "controller_profiles"))
+	{
+		const auto paths = Elements(*profiles);
+		if (paths.size() != 2)
+			throw std::runtime_error("Invalid effective controller profile count");
+		result.controllerProfiles.emplace();
+		for (std::size_t hand = 0; hand < paths.size(); ++hand)
+			(*result.controllerProfiles)[hand] =
+				NodeData(paths[hand], wire::InspectionType::Text).AsText().value_or("");
+	}
 	if (const auto trackers = FindMember(root, "tracker_interaction"))
+	{
 		result.appTrackers = Boolean(*trackers);
+		result.appTrackersKnown = true;
+	}
+	if (const auto body = FindMember(root, "body_extensions"))
+		result.appBodyExtensions = std::array{Boolean(Member(*body, "fb")),
+			Boolean(Member(*body, "meta_full")), Boolean(Member(*body, "bd"))};
 	values.tracking.head = ReadSample(Member(config, "head"));
+	if (const auto eyes = FindMember(config, "eye_views"); eyes && !Null(*eyes))
+	{
+		auto& views = values.tracking.eyeViews.emplace();
+		views.spaceRevision = Unsigned(Member(*eyes, "space_revision"));
+		const auto observations = Elements(Member(*eyes, "eyes"));
+		if (!views.spaceRevision || observations.size() != views.poses.size())
+			throw std::runtime_error("Invalid physical eye configuration");
+		for (std::size_t eye = 0; eye < observations.size(); ++eye)
+		{
+			views.poses[eye] = ReadSample(Member(observations[eye], "pose"));
+			const auto fov = Elements(Member(observations[eye], "fov"));
+			if (fov.size() != 4)
+				throw std::runtime_error("Invalid physical eye field of view");
+			views.fovs[eye] = {Number(fov[0]), Number(fov[1]), Number(fov[2]), Number(fov[3])};
+			if (!ValidViewFieldOfView(views.fovs[eye]))
+				throw std::runtime_error("Invalid physical eye projection");
+		}
+	}
 	values.tracking.focused = Boolean(Member(config, "focused"));
 	const auto hands = Elements(Member(config, "controllers"));
 	if (hands.size() != 2)
@@ -222,10 +323,16 @@ ObservedSetup ReadObservedSetup(const control::Message& state)
 	{
 		values.tracking.controllers[index] = {ReadSample(Member(hands[index], "pose")),
 											  Boolean(Member(hands[index], "connected"))};
+		if (const auto aim = FindMember(hands[index], "aim"); aim && !Null(*aim))
+			values.tracking.controllers[index].aim = ReadSample(*aim);
 		values.input.preferredProfiles[index] =
 			std::string(NodeData(Member(hands[index], "profile"), wire::InspectionType::Text).AsText().value_or(""));
 		const auto controls = Member(hands[index], "controls");
 		auto& out = values.input.controllers[index];
+		if (const auto profile = FindMember(controls, "physical_profile"))
+			out.physicalProfile = NodeData(*profile, wire::InspectionType::Text).AsText().value_or("");
+		if (const auto click = FindMember(controls, "trigger_click"); click && !Null(*click))
+			out.triggerClick = Boolean(*click);
 		for (const auto& [name, field] : {std::pair{"trigger", &ControllerControls::trigger},
 										  {"grip", &ControllerControls::grip},
 										  {"grip_force", &ControllerControls::gripForce},
@@ -320,14 +427,19 @@ ObservedSetup ReadObservedSetup(const control::Message& state)
 		values.views.outerFov[eye] = {Number(fov[eye * 4]), Number(fov[eye * 4 + 1]), Number(fov[eye * 4 + 2]),
 									  Number(fov[eye * 4 + 3])};
 	const auto trackers = Elements(Member(config, "trackers"));
-	if (trackers.size() != values.tracking.trackers.size())
+	if (trackers.size() > MaxTrackerDevices)
 		throw std::runtime_error("Unsupported tracker configuration");
+	values.tracking.trackers.resize(trackers.size());
 	for (std::size_t index = 0; index < trackers.size(); ++index)
 	{
 		const auto& node = trackers[index];
 		auto& out = values.tracking.trackers[index];
 		out.identity.value = Unsigned(Member(node, "id"));
+		if (const auto path = FindMember(node, "source_path"))
+			out.sourcePath = TrackerSourcePath{NodeData(*path, wire::InspectionType::Text).AsText().value_or("")};
 		out.role = ReadEnum(Member(node, "role"), TrackerRole::Keyboard);
+		if (const auto flags = FindMember(node, "flags"))
+			out.poseFlags = Unsigned(*flags);
 		out.connected = Boolean(Member(node, "connected"));
 		out.tracked = Boolean(Member(node, "tracked"));
 		const auto anchor = FindMember(node, "anchor"), pose = FindMember(node, "pose_override");

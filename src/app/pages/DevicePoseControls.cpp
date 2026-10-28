@@ -4,6 +4,7 @@
 #include "app/services/PlayerRig.h"
 #include "app/services/SpatialMath.h"
 #include "app/widgets/Controls.h"
+#include "app/widgets/Theme.h"
 #include <cmath>
 #include <cstdio>
 #include <imgui_internal.h>
@@ -57,29 +58,13 @@ void DeviceControlPanel::DrawExactPose(int device)
 	}
 	if (!m_exactAnchor)
 		base = IdentityPose();
-	const float right = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
 	FieldLabel("Relative to");
 	const std::string relative = std::string(m_exactAnchor ? follows : "World") + "##Relative";
 	if (ImGui::SmallButton(relative.c_str()))
 		m_exactAnchor = !m_exactAnchor;
 	ImGui::SetItemTooltip("%s", m_exactAnchor ? "Click for world coordinates"
 											  : "Click for coordinates relative to what the device follows");
-	// Rotation as angles to edit, or as the raw quaternion to read and copy.
-	static constexpr const char* forms[] = {"Angles", "Quaternion"};
-	static constexpr const char* formTips[] = {"Yaw, pitch and roll in degrees",
-											   "Read-only rotation as x, y, z, w."};
 	bool& quaternion = m_quaternionView[static_cast<std::size_t>(device)];
-	// Segments share the width equally, so size both for the longer label.
-	const float formWidth = (ImGui::CalcTextSize("Quaternion").x + ImGui::GetStyle().FramePadding.x * 2) * 2;
-	// Right-aligned beside the frame switch, or on its own row in a narrow inspector.
-	ImGui::SameLine();
-	if (ImGui::GetCursorPosX() + formWidth > right)
-		ImGui::NewLine();
-	ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), right - formWidth));
-	ImGui::PushID("Rotation form");
-	if (const int form = Segmented(forms, quaternion ? 1 : 0, formWidth, formTips); form >= 0)
-		quaternion = form == 1;
-	ImGui::PopID();
 	const auto worldPose = [device](const PlayerRig& rig)
 	{
 		return device == 0	? rig.Head()
@@ -104,7 +89,6 @@ void DeviceControlPanel::DrawExactPose(int device)
 	};
 	auto angles = toDegrees(pose.orientation);
 	const auto fallbackAngles = toDegrees(fallback.orientation);
-	const float width = (ImGui::GetContentRegionAvail().x - 2 * ImGui::GetStyle().ItemSpacing.x) / 3;
 	// Resets only this device's pose; controls and connection stay.
 	const auto reset = [this, device]
 	{
@@ -125,6 +109,7 @@ void DeviceControlPanel::DrawExactPose(int device)
 	char quaternionText[80];
 	std::snprintf(quaternionText, sizeof(quaternionText), "Quaternion: x %.4f, y %.4f, z %.4f, w %.4f", q.x, q.y, q.z,
 				  q.w);
+	const float width = (ImGui::GetContentRegionAvail().x - 2 * ImGui::GetStyle().ItemSpacing.x) / 3;
 	const auto value = [&](float& number, float fallbackNumber, float step, float limit, const char* format)
 	{
 		auto result = NumberValue(number, fallbackNumber, step, -limit, limit, format);
@@ -133,8 +118,9 @@ void DeviceControlPanel::DrawExactPose(int device)
 		result.groupText = poseText.str();
 		return result;
 	};
+	constexpr ImU32 axisColors[] = {theme::AxisTextX, theme::AxisTextY, theme::AxisTextZ, theme::Text};
 	static constexpr const char* positionIds[] = {"##X", "##Y", "##Z"};
-	static constexpr const char* positionFormats[] = {"X %.2f m", "Y %.2f m", "Z %.2f m"};
+	static constexpr const char* positionFormats[] = {"X %.3f m", "Y %.3f m", "Z %.3f m"};
 	float* positions[] = {&pose.position.x, &pose.position.y, &pose.position.z};
 	const float fallbackPositions[] = {fallback.position.x, fallback.position.y, fallback.position.z};
 	bool edited = false;
@@ -143,10 +129,13 @@ void DeviceControlPanel::DrawExactPose(int device)
 		if (axis)
 			ImGui::SameLine();
 		ImGui::SetNextItemWidth(width);
-		edited |= Field(positionIds[axis],
-						ImGui::DragFloat(positionIds[axis], positions[axis], .005f, 0, 0, positionFormats[axis]), true,
+		ImGui::PushStyleColor(ImGuiCol_Text, axisColors[axis]);
+		const bool moved = ImGui::DragFloat(positionIds[axis], positions[axis], .005f, 0, 0, positionFormats[axis]);
+		ImGui::PopStyleColor();
+		edited |= Field(positionIds[axis], moved, true,
 						value(*positions[axis], fallbackPositions[axis], .01f, 100, "%.4f"));
-		ImGui::SetItemTooltip("X right, Y up, Z back.\nMiddle-click resets. Ctrl+wheel nudges.");
+		ImGui::SetItemTooltip("X right, Y up, Z back.\nShift+right-click resets. "
+							  "Wheel adjusts, Shift faster, Ctrl slower.");
 	}
 	bool turned = false;
 	if (quaternion)
@@ -154,14 +143,21 @@ void DeviceControlPanel::DrawExactPose(int device)
 		float components[] = {q.x, q.y, q.z, q.w};
 		static constexpr const char* componentIds[] = {"##Qx", "##Qy", "##Qz", "##Qw"};
 		static constexpr const char* componentFormats[] = {"x %.4f", "y %.4f", "z %.4f", "w %.4f"};
-		const float quarter = (ImGui::GetContentRegionAvail().x - 3 * ImGui::GetStyle().ItemSpacing.x) / 4;
+		const float available = ImGui::GetContentRegionAvail().x;
+		const float spacing = ImGui::GetStyle().ItemSpacing.x;
+		const float minimumWidth = ImGui::CalcTextSize("x -0.0000").x + ImGui::GetStyle().FramePadding.x * 2;
+		const int columns = available >= minimumWidth * 4 + spacing * 3 ? 4
+						  : available >= minimumWidth * 2 + spacing ? 2 : 1;
+		const float componentWidth = (available - spacing * (columns - 1)) / columns;
 		for (int component = 0; component < 4; ++component)
 		{
-			if (component)
+			if (component % columns)
 				ImGui::SameLine();
-			ImGui::SetNextItemWidth(quarter);
+			ImGui::SetNextItemWidth(componentWidth);
+			ImGui::PushStyleColor(ImGuiCol_Text, axisColors[component]);
 			ImGui::InputScalar(componentIds[component], ImGuiDataType_Float, &components[component], nullptr, nullptr,
 							   componentFormats[component], ImGuiInputTextFlags_ReadOnly);
+			ImGui::PopStyleColor();
 			FieldValue copy;
 			char text[24];
 			std::snprintf(text, sizeof(text), "%.6f", components[component]);
@@ -169,14 +165,16 @@ void DeviceControlPanel::DrawExactPose(int device)
 			copy.group = "pose";
 			copy.resetGroup = reset;
 			copy.groupText = poseText.str();
+			copy.quaternionView = &quaternion;
 			FieldActions((m_fieldScope + componentIds[component]).c_str(), copy);
-			ImGui::SetItemTooltip("Read only. Use Angles to change the rotation.");
+			ImGui::SetItemTooltip("Read only. Right-click to copy or switch to Euler angles.");
 		}
 	}
 	else
 	{
+		constexpr ImU32 rotationColors[] = {theme::AxisTextY, theme::AxisTextX, theme::AxisTextZ};
 		static constexpr const char* angleIds[] = {"##Yaw", "##Pitch", "##Roll"};
-		static constexpr const char* angleFormats[] = {"Yaw %.0f\u00b0", "Pitch %.0f\u00b0", "Roll %.0f\u00b0"};
+		static constexpr const char* angleFormats[] = {"Yaw %.1f\u00b0", "Pitch %.1f\u00b0", "Roll %.1f\u00b0"};
 		for (int axis = 0; axis < 3; ++axis)
 		{
 			if (axis)
@@ -184,11 +182,15 @@ void DeviceControlPanel::DrawExactPose(int device)
 			ImGui::SetNextItemWidth(width);
 			const float limit = axis == 1 ? 89.9f : 180.0f;
 			auto& angle = angles[static_cast<std::size_t>(axis)];
-			turned |= Field(angleIds[axis],
-							ImGui::DragFloat(angleIds[axis], &angle, .5f, -limit, limit, angleFormats[axis],
-											 ImGuiSliderFlags_AlwaysClamp),
-							true, value(angle, fallbackAngles[static_cast<std::size_t>(axis)], 1, limit, "%.1f"));
-			ImGui::SetItemTooltip("%s\nMiddle-click resets. Ctrl+wheel nudges.", quaternionText);
+			auto angleValue = value(angle, fallbackAngles[static_cast<std::size_t>(axis)], 1, limit, "%.1f");
+			angleValue.quaternionView = &quaternion;
+			ImGui::PushStyleColor(ImGuiCol_Text, rotationColors[axis]);
+			const bool rotated = ImGui::DragFloat(angleIds[axis], &angle, .5f, -limit, limit, angleFormats[axis],
+												 ImGuiSliderFlags_AlwaysClamp);
+			ImGui::PopStyleColor();
+			turned |= Field(angleIds[axis], rotated, true, angleValue);
+			ImGui::SetItemTooltip("%s\nShift+right-click resets. Wheel adjusts, Shift faster, Ctrl slower.",
+								  quaternionText);
 		}
 	}
 	if (turned)
@@ -243,10 +245,10 @@ void DeviceControlPanel::DrawPlayer()
 	DrawOwner(ControlChannel::Body);
 	DrawBodyPoses();
 	FieldLabel("Walk speed");
-	ImGui::SliderFloat("##Walk speed", &m_playerRig.walkSpeed, .1f, 5.0f, "%.1f m/s");
+	ImGui::SliderFloat("##Walk speed", &m_playerRig.walkSpeed, .1f, 5.0f, "%.2f m/s");
 	// Walk speed only paces piloting; it is not sent to the app.
-	FieldActions("Walk speed", NumberValue(m_playerRig.walkSpeed, 1, .1f, .1f, 5, "%.1f"));
-	ImGui::SetItemTooltip("Piloting speed.\nMiddle-click for 1 m/s. Ctrl+wheel nudges.");
+	FieldActions("Walk speed", NumberValue(m_playerRig.walkSpeed, 1, .1f, .1f, 5, "%.2f"));
+	ImGui::SetItemTooltip("Piloting speed.\nShift+right-click for 1 m/s. Wheel adjusts, Shift faster, Ctrl slower.");
 	DrawOwner(ControlChannel::Head);
 	ImGui::BeginDisabled(!CanControl(ControlChannel::Head) || ScenarioActive(ControlChannel::Head) ||
 						 ((m_observed->bodyRootAvailable || m_observed->bodyOverridesAvailable) &&
@@ -254,7 +256,7 @@ void DeviceControlPanel::DrawPlayer()
 	const float defaultHeight = m_observed ? m_observed->values.proportions.height : 1.7f;
 	FieldLabel("Height");
 	bool changed =
-		Field("##Player height", ImGui::DragFloat("##Player height", &m_playerRig.height, .01f, .4f, 2.2f, "%.2f m"),
+		Field("##Player height", ImGui::DragFloat("##Player height", &m_playerRig.height, .01f, .4f, 2.2f, "%.3f m"),
 			  true, NumberValue(m_playerRig.height, defaultHeight, .01f, .4f, 2.2f));
 	FieldLabel("Floor (m)");
 	FieldValue floor;
@@ -273,6 +275,7 @@ void DeviceControlPanel::DrawPlayer()
 	ImGui::PushID("Player position");
 	const float gap = ImGui::GetStyle().ItemInnerSpacing.x, width = (ImGui::CalcItemWidth() - gap * 2) / 3;
 	bool dragged = false;
+	constexpr ImU32 axisColors[] = {theme::AxisTextX, theme::AxisTextY, theme::AxisTextZ};
 	static constexpr const char* ids[] = {"##X", "##Y", "##Z"};
 	static constexpr const char* formats[] = {"X  %.2f", "Y  %.2f", "Z  %.2f"};
 	float* axes[] = {&m_playerRig.position.x, &m_playerRig.position.y, &m_playerRig.position.z};
@@ -281,7 +284,9 @@ void DeviceControlPanel::DrawPlayer()
 		if (axis)
 			ImGui::SameLine(0, gap);
 		ImGui::SetNextItemWidth(width);
+		ImGui::PushStyleColor(ImGuiCol_Text, axisColors[axis]);
 		dragged |= ImGui::DragFloat(ids[axis], axes[axis], .01f, 0, 0, formats[axis]);
+		ImGui::PopStyleColor();
 	}
 	ImGui::PopID();
 	ImGui::EndGroup();

@@ -44,6 +44,8 @@ struct CompanionSettings
 	std::uint32_t snapshotBudgetMiB = SnapshotBudget::DefaultMiB;
 	PilotBindings pilotBindings = DefaultPilotBindings();
 	bool remoteMouseDrag = false;
+	bool mcpEnabled = false;
+	bool autoUpdateCheck = false;
 	GamepadBindings gamepadBindings;
 	float inspectorWidth = 340, timelineHeight = 132;
 	// railCollapsed is no longer used; it stays so older builds can read the file.
@@ -68,6 +70,8 @@ void ResetLayout(CompanionSettings& settings);
 void RememberRecentApp(CompanionSettings& settings, LaunchProfile launch, std::int64_t lastUsed);
 CompanionSettings LoadSettings(const std::filesystem::path& path);
 void SaveSettings(const std::filesystem::path& path, const CompanionSettings& settings);
+CompanionSettings SaveSettingsIfUnchanged(const std::filesystem::path& path, const CompanionSettings& expected,
+										   const CompanionSettings& settings);
 // Window layout text is bounded to 8 MiB and cannot contain NUL. A missing
 // file loads as empty; other I/O failures throw. Saves require an absolute path.
 std::string LoadWindowLayout(const std::filesystem::path& path);

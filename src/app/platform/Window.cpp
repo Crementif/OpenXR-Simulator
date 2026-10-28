@@ -1,5 +1,7 @@
 #include "app/platform/Window.h"
 #include "Pch.h"
+#include "app/services/Utf8Path.h"
+#include "simxr/Version.h"
 
 #include <SDL3/SDL.h>
 #include <cmath>
@@ -45,9 +47,11 @@ static void ShowInitialWindow(SDL_Window* window)
 
 Window::Window(bool hidden)
 {
+	SDL_SetAppMetadata("OpenXR Simulator", simxr::Version, "org.openxrsimulator.OpenXRSimulator");
 	constexpr auto subsystems = SDL_INIT_VIDEO | SDL_INIT_GAMEPAD;
 	if (!SDL_InitSubSystem(subsystems))
-		throw std::runtime_error(std::string("SDL video/gamepad initialization failed: ") + SDL_GetError());
+		throw std::runtime_error(std::string("Unable to initialize the desktop window: ") + SDL_GetError() +
+			"\n\nCheck that a desktop session and display connection are available.");
 	try
 	{
 		const float scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
@@ -58,7 +62,15 @@ Window::Window(bool hidden)
 		m_window =
 			SDL_CreateWindow("OpenXR Simulator", static_cast<int>(1280 * scale), static_cast<int>(800 * scale), flags);
 		if (!m_window)
-			throw std::runtime_error(std::string("SDL Vulkan window unavailable: ") + SDL_GetError());
+			throw std::runtime_error(std::string("Unable to open a Vulkan window: ") + SDL_GetError() +
+				"\n\nOpenXR Simulator requires a working desktop session and a Vulkan-compatible graphics driver.");
+		if (const auto* base = SDL_GetBasePath())
+		{
+			const auto path = PathText(Utf8Path(base) / "openxr-simulator.bmp");
+			std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> icon(SDL_LoadBMP(path.c_str()), SDL_DestroySurface);
+			if (icon && !SDL_SetWindowIcon(m_window, icon.get()))
+				SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Cannot set application icon: %s", SDL_GetError());
+		}
 		if (!hidden)
 			ShowInitialWindow(m_window);
 	}

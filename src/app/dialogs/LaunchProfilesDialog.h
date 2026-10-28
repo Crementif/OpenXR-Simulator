@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/services/CompanionSettings.h"
+#include "app/services/HeadsetHost.h"
 #include "app/services/LaunchTypes.h"
 
 #include <cstdint>
@@ -11,6 +12,11 @@
 
 namespace simxr::app
 {
+struct LaunchRestartRequest
+{
+	LaunchProfile profile;
+	std::uint64_t process = 0;
+};
 // The launch profile editor: profiles on the left, the selected one's form on
 // the right. Valid edits are stored as they are made.
 class LaunchProfilesDialog
@@ -30,8 +36,12 @@ class LaunchProfilesDialog
 	{
 		return m_selected;
 	}
-	// Returns true when Test launch was pressed. Sets changed when settings must be saved.
-	bool Draw(CompanionSettings& settings, const LaunchSnapshot& process, bool& open, bool& changed);
+	// Returns true when Launch was pressed. Sets changed when settings must be saved.
+	bool Draw(CompanionSettings& settings, const LaunchSnapshot& process, bool& open, bool& changed,
+			  const std::optional<std::array<HeadsetEyeSize, 2>>& eyes = {}, bool canRestart = false);
+	std::optional<LaunchRestartRequest> TakeRestartRequest();
+	bool TakeRestartCancellation();
+	bool TakeCopyCommandRequest();
 
   private:
 	struct Variable
@@ -46,24 +56,36 @@ class LaunchProfilesDialog
 		Manifest,
 		PrivateProtonPrefix
 	};
+	enum class RuntimeChoice
+	{
+		Bundled,
+		System,
+		Custom
+	};
 	struct FileResult;
 	void Load(const LaunchProfile& profile);
 	void RefreshSelection(const CompanionSettings& settings);
 	void BrowsePath(Browse browse, bool folder, const char* start);
+	void ApplyExecutableDefaults();
 	bool TakePath();
 	std::string NameProblem(const CompanionSettings& settings) const;
 	std::string EnvironmentProblem() const;
 	// Stores the form when it is valid; returns true when settings changed.
 	bool Store(CompanionSettings& settings);
 	void DrawList(CompanionSettings& settings, bool& changed);
-	bool DrawForm(CompanionSettings& settings, const LaunchSnapshot& process, bool& changed);
-	bool PathField(const char* label, std::vector<char>& buffer, PathKind kind, Browse browse, bool optional);
+	bool DrawForm(CompanionSettings& settings, const LaunchSnapshot& process, bool& changed,
+				  const std::optional<std::array<HeadsetEyeSize, 2>>& eyes, bool canRestart);
+	bool PathField(const char* label, std::vector<char>& buffer, PathKind kind, Browse browse);
+	std::optional<LaunchRestartRequest> m_restartReview, m_restartRequest;
+	bool m_cancelRestart = false;
+	bool m_copyCommand = false;
 	int m_selected = -1;
 	std::uint64_t m_form = 0;
 	std::string m_storedName, m_problem, m_browseProblem;
 	std::vector<char> m_name;
 	std::vector<char> m_executable, m_workingDirectory, m_manifest, m_rig, m_privateProtonPrefix;
 	std::vector<char> m_headset;
+	RuntimeChoice m_runtimeChoice = RuntimeChoice::Bundled;
 	std::vector<char> m_arguments;
 	std::vector<std::string> m_originalArguments;
 	std::vector<Variable> m_environment;

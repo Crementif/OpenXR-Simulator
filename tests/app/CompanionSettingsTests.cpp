@@ -3,10 +3,12 @@
 #include "app/services/ProcessLauncher.h"
 #include "app/services/ProcessSupervisor.h"
 #include "app/services/RunningApps.h"
+#include "app/services/Utf8Path.h"
 #include "simulation/HeadsetProfiles.h"
 #include <cmath>
 
 #include <chrono>
+#include <atomic>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -74,6 +76,175 @@ void Profiles()
 	Require(generic && generic->eye[0].angleLeft == 0 &&
 				std::abs(simxr::ProfileViews(*generic).outerFov[0].angleLeft + 0.7853982f) < 0.00001f,
 			"Generic preserves legacy zero-angle sentinel and native symmetric fallback");
+}
+void BundledRuntimeSelection()
+{
+	Directory directory;
+	const auto first = directory.path / u8"installation 日本語";
+	const auto second = directory.path / u8"moved 日本語";
+	std::filesystem::create_directory(first);
+	std::ofstream(first / "openxr_simulator.json") << "{}";
+	LaunchProfile profile;
+	profile.name = "Bundled";
+	profile.useBundledRuntime = true;
+	profile.privateProtonPrefix = "private-prefix";
+	ValidateLaunchProfile(profile);
+	const auto resolved = ResolveLaunchProfile(profile, first);
+	Require(std::filesystem::path(std::u8string(resolved.runtimeManifest.begin(), resolved.runtimeManifest.end())) ==
+				first / "openxr_simulator.json",
+			"Bundled runtime resolves beside the application");
+	Require(profile.useBundledRuntime && profile.runtimeManifest.empty(),
+			"Resolving a profile does not replace its portable selection");
+	std::filesystem::rename(first, second);
+	const auto moved = ResolveLaunchProfile(profile, second);
+	Require(std::filesystem::path(std::u8string(moved.runtimeManifest.begin(), moved.runtimeManifest.end())) ==
+				second / "openxr_simulator.json",
+			"Bundled runtime follows a moved installation");
+	Reject([&] { ResolveLaunchProfile(profile, first); });
+	Reject([&] { ResolveLaunchProfile(profile, "relative"); });
+	profile.privateProtonPrefix.clear();
+	profile.useBundledRuntime = false;
+	Require(ResolveLaunchProfile(profile, {}) == profile, "Legacy system runtime selection stays unchanged");
+	profile.runtimeManifest = "custom-runtime.json";
+	Require(ResolveLaunchProfile(profile, {}) == profile, "Custom runtime selection stays unchanged");
+	profile.runtimeManifest.clear();
+	profile.useBundledRuntime = true;
+	CompanionSettings settings;
+	settings.profiles.push_back(profile);
+	settings.recent.push_back({profile, 123});
+	SaveSettings(directory.path / "settings", settings);
+	Require(LoadSettings(directory.path / "settings") == settings, "Portable runtime selection survives settings");
+	const auto settingsPath = directory.path / "settings";
+	const auto fullSize = std::filesystem::file_size(settingsPath);
+	const auto extensionSize = 4 * (3 + settings.profiles.size() + settings.recent.size());
+	std::filesystem::resize_file(settingsPath, fullSize - extensionSize);
+	settings.profiles.front().useBundledRuntime = false;
+	settings.recent.front().launch.useBundledRuntime = false;
+	Require(LoadSettings(settingsPath) == settings, "Older settings retain their original runtime selection");
+	profile.runtimeManifest = "simxr:bundled";
+	Reject([&] { ResolveLaunchProfile(profile, second); });
+	profile.useBundledRuntime = false;
+	settings.profiles = {profile};
+	settings.recent.clear();
+	SaveSettings(directory.path / "settings", settings);
+	Require(LoadSettings(directory.path / "settings") == settings &&
+				ResolveLaunchProfile(profile, {}) == profile,
+			"Legacy manifest text is never reinterpreted as a bundled runtime");
+}
+void SteamRuntimeOption()
+{
+	Directory directory;
+	const auto manifest = directory.path / u8"runtime ' 日本語 $(printf injected).json";
+	auto option = LinuxSteamRuntimeOption(manifest);
+	const auto marker = option.find("%command%");
+	Require(marker != std::string::npos, "Steam option retains the game command placeholder");
+#ifdef __linux__
+	option.replace(marker, std::string_view("%command%").size(),
+				   "/bin/sh -c 'printf \"%s\" \"$XR_RUNTIME_JSON\"'");
+	const auto output = directory.path / "actual";
+	Require(std::system((option + " > " + output.string()).c_str()) == 0,
+			"Steam option shell fixture failed");
+	std::ifstream input(output, std::ios::binary);
+	const std::string actual((std::istreambuf_iterator<char>(input)), {});
+	Require(actual == PathText(manifest), "Steam option did not preserve the literal Unicode manifest path");
+#endif
+	Reject([&] { LinuxSteamRuntimeOption("relative.json"); });
+	Reject([&] { LinuxSteamRuntimeOption(directory.path / "%command%.json"); });
+}
+void ProfileCommand()
+{
+	Directory directory;
+	const auto executable = directory.path / u8"program ' 日本語 $(touch injected)";
+	const std::string name = "--game '\\ \" 日本語 $(touch injected)";
+	const auto command = ProfileLaunchCommand(executable, name, LaunchCommandShell::Posix);
+#ifdef __linux__
+	{
+		std::ofstream script(executable);
+		script << "#!/bin/sh\nprintf '%s' \"$1\" > \"$SIMXR_COMMAND_RESULT\"\n";
+	}
+	Require(::chmod(executable.c_str(), 0700) == 0, "Make command fixture executable");
+	const auto result = directory.path / "result";
+	Require(::setenv("SIMXR_COMMAND_RESULT", result.c_str(), 1) == 0, "Set command fixture result");
+	Require(std::system(command.c_str()) == 0, "Run quoted launch command");
+	::unsetenv("SIMXR_COMMAND_RESULT");
+	std::ifstream input(result, std::ios::binary);
+	Require(std::string(std::istreambuf_iterator<char>(input), {}) == "--launch-profile=" + name,
+			"Launch command must pass the profile name literally");
+#endif
+	const auto powershell = ProfileLaunchCommand(executable, name, LaunchCommandShell::PowerShell);
+	Require(powershell.starts_with("& '") && powershell.find("''") != std::string::npos,
+			"PowerShell command quotes executable and profile");
+	const auto encoded = powershell.find("--launch-profile-hex=");
+	Require(encoded != std::string::npos && powershell.back() == '\'', "PowerShell uses a safe ASCII profile argument");
+	const auto begin = encoded + std::string_view("--launch-profile-hex=").size();
+	Require(DecodeProfileLaunchName(std::string_view(powershell).substr(begin, powershell.size() - begin - 1)) == name,
+			"PowerShell profile argument preserves quotes, backslashes and Unicode");
+	Reject([&] { DecodeProfileLaunchName("abc"); });
+	Reject([&] { DecodeProfileLaunchName("gh"); });
+	Reject([&] { DecodeProfileLaunchName("00"); });
+	Reject([&] { ProfileLaunchCommand("relative", name, LaunchCommandShell::Posix); });
+	Reject([&] { ProfileLaunchCommand(executable, "", LaunchCommandShell::Posix); });
+	Reject([&] { ProfileLaunchCommand(executable, std::string("a\0b", 3), LaunchCommandShell::Posix); });
+}
+void McpPreference()
+{
+	Directory directory;
+	const auto file = directory.path / "settings";
+	CompanionSettings settings;
+	Require(!LoadSettings(file).mcpEnabled, "MCP defaults to disabled");
+	settings.mcpEnabled = true;
+	SaveSettings(file, settings);
+	Require(LoadSettings(file) == settings, "MCP preference survives restart");
+	const auto size = std::filesystem::file_size(file);
+	std::filesystem::resize_file(file, size - 8);
+	settings.mcpEnabled = false;
+	Require(LoadSettings(file) == settings, "Earlier settings default MCP to disabled");
+	SaveSettings(file, settings);
+	Require(LoadSettings(file) == settings, "Disabled MCP preference is retained");
+}
+void UpdatePreference()
+{
+	Directory directory;
+	const auto file = directory.path / "settings";
+	CompanionSettings settings;
+	Require(!LoadSettings(file).autoUpdateCheck, "Automatic update checks default to off");
+	settings.autoUpdateCheck = true;
+	SaveSettings(file, settings);
+	Require(LoadSettings(file) == settings, "Update preference survives restart");
+	std::filesystem::resize_file(file, std::filesystem::file_size(file) - 8);
+	settings.autoUpdateCheck = false;
+	Require(LoadSettings(file) == settings, "Earlier settings default automatic updates to off");
+}
+void ConcurrentSettings()
+{
+	Directory directory;
+	const auto file = directory.path / "settings";
+	CompanionSettings baseline;
+	SaveSettings(file, baseline);
+	auto first = baseline, second = baseline;
+	first.profiles.push_back({"First"});
+	second.profiles.push_back({"Second"});
+	std::atomic<unsigned> saved = 0, rejected = 0;
+	const auto write = [&](const CompanionSettings& candidate)
+	{
+		try
+		{
+			SaveSettingsIfUnchanged(file, baseline, candidate);
+			++saved;
+		}
+		catch (const std::exception&)
+		{
+			++rejected;
+		}
+	};
+	std::thread a(write, std::cref(first)), b(write, std::cref(second));
+	a.join();
+	b.join();
+	Require(saved == 1 && rejected == 1, "Concurrent stale settings must not overwrite each other");
+	const auto actual = LoadSettings(file);
+	Require(actual == first || actual == second, "Concurrent settings retained neither complete update");
+	Reject([&] { SaveSettingsIfUnchanged(file, baseline, baseline); });
+	Require(LoadSettings(file) == actual, "Rejected stale settings must preserve the newer profile");
 }
 void Persistence()
 {
@@ -310,13 +481,16 @@ void Persistence()
 		});
 		Require(std::filesystem::is_directory(destination) && std::filesystem::is_empty(destination),
 			"Failed replacement preserves the destination");
+		auto lockPath = destination;
+		lockPath += ".lock";
 		std::size_t entries = 0;
 		for (const auto& entry : std::filesystem::directory_iterator(failed.path))
 		{
-			Require(entry.path() == destination, "Failed replacement removes its temporary file");
+			Require(entry.path() == destination || entry.path() == lockPath,
+					"Failed replacement removes its temporary file");
 			++entries;
 		}
-		Require(entries == 1, "Failed replacement preserves only its destination");
+		Require(entries == 2, "Failed replacement preserves the destination and settings lock");
 	}
 	std::ofstream(file, std::ios::binary | std::ios::app).put('x');
 	Reject(
@@ -483,6 +657,52 @@ void ProcessDescriptions(const std::filesystem::path& executable)
 } // namespace
 int main(int argc, char** argv)
 {
+	if (argc == 6 && std::string_view(argv[1]) == "--settings-race-fixture")
+	{
+		try
+		{
+			const auto baseline = LoadSettings(argv[2]);
+			auto candidate = baseline;
+			candidate.profiles.push_back({argv[5]});
+			std::ofstream(argv[3]).put('1');
+			const auto deadline = std::chrono::steady_clock::now() + 10s;
+			while (!std::filesystem::exists(argv[4]) && std::chrono::steady_clock::now() < deadline)
+				std::this_thread::sleep_for(5ms);
+			if (!std::filesystem::exists(argv[4]))
+				return 4;
+			SaveSettingsIfUnchanged(argv[2], baseline, candidate);
+			return 0;
+		}
+		catch (const std::exception& error)
+		{
+			std::cerr << error.what() << '\n';
+			return 3;
+		}
+	}
+	if (argc == 5 && std::string_view(argv[1]) == "--profile-fixture")
+	{
+		try
+		{
+			CompanionSettings settings;
+			LaunchProfile profile;
+			profile.name = "--game '\\ \" 日本語 $(touch injected)";
+			profile.executable = PathText(std::filesystem::absolute(argv[0]));
+			profile.arguments = {"--child", "argument with spaces"};
+			profile.workingDirectory = argv[3];
+			profile.runtimeManifest = PathText(std::filesystem::path(argv[3]) / "runtime.json");
+			profile.environment = {{"SIMXR_LAUNCH_TEST", "literal value"}};
+			profile.headsetProfile = "generic";
+			settings.profiles.push_back(profile);
+			SaveSettings(argv[2], settings);
+			std::cout << ProfileLaunchCommand(std::filesystem::absolute(argv[4]), profile.name, LaunchCommandShell::Posix);
+			return 0;
+		}
+		catch (const std::exception& error)
+		{
+			std::cerr << error.what() << '\n';
+			return 1;
+		}
+	}
 	if (argc >= 2 && std::string_view(argv[1]) == "--description-child")
 	{
 #ifdef __linux__
@@ -503,6 +723,12 @@ int main(int argc, char** argv)
 	try
 	{
 		Profiles();
+		BundledRuntimeSelection();
+		SteamRuntimeOption();
+		ProfileCommand();
+		McpPreference();
+		UpdatePreference();
+		ConcurrentSettings();
 		Persistence();
 #ifdef __linux__
 		Launch(std::filesystem::absolute(argv[0]));

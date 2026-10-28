@@ -1,10 +1,10 @@
 #include "../TestSupport.h"
-#include "math/Math.h"
 #include "app/services/SimulationEdits.h"
 #include "app/services/SpatialMath.h"
 #include "control/ControlSchema.h"
 #include "control/FrameInspection.h"
 #include "control/ImageInspection.h"
+#include "math/Math.h"
 #include "simulation/TrackingSystem.h"
 #include <cmath>
 #include <iostream>
@@ -120,6 +120,21 @@ void MetadataAndHistory()
 	message.fields.push_back(control::Field::Bytes(control::tag::Document, record->document));
 	const auto historical = ReadInspectionTracking(message);
 	Require(historical.has_value(), "Historical tracking was not decoded");
+	for (const auto count : {0u, 64u})
+	{
+		state.trackers.clear();
+		for (unsigned index = 0; index < count; ++index)
+			state.trackers.push_back({{100 + index}, TrackerRole::Unassigned});
+		frame.key.frame.value++;
+		frame.submission->tracking = TrackingSystem::Evaluate(RuntimeTime{Duration{11}}, state, BodyModel{});
+		const auto expanded = control::InspectFrame(store, {1}, frame);
+		control::Message input;
+		input.fields.push_back(control::Field::Bytes(control::tag::Document, expanded->document));
+		const auto decoded = ReadInspectionTracking(input);
+		Require(decoded && decoded->trackers.size() == count, "Historical tracking changed tracker count");
+		if (count)
+			Require(decoded->trackers.back().device.identity.value == 163, "Historical tracker identity lost");
+	}
 	Near(historical->head.pose.position.x, 4);
 	Near(historical->controllers[1].pose.pose.position.z, 1.5f);
 	Near(historical->body.joints[static_cast<std::size_t>(BodyJoint::Root)].pose.position.x, 4);

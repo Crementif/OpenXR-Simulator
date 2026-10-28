@@ -19,8 +19,8 @@ static std::string LoadScript(const std::filesystem::path& path)
 		throw std::invalid_argument("Rig script path is empty or contains a NUL character");
 	std::error_code error;
 	const auto size = std::filesystem::file_size(path, error);
-	if (error || !size || size > wire::MaxPayload)
-		throw std::runtime_error("Cannot read the script. Choose a nonempty file up to 1 MiB.");
+	if (error || !size || size > automation::MaxRigSourceBytes)
+		throw std::runtime_error("Cannot read the script. Choose a nonempty file up to 64 MiB.");
 	std::string source(static_cast<std::size_t>(size), '\0');
 	std::ifstream input(path, std::ios::binary);
 	if (!input.read(source.data(), static_cast<std::streamsize>(source.size())) ||
@@ -74,7 +74,7 @@ RigController::~RigController()
 	m_transport.reset();
 }
 void RigController::Start(RigTarget target, std::string source, std::string name, const ScriptOptions& options,
-						  bool replay)
+						  bool replay, std::filesystem::path archive, std::optional<std::uint64_t> expectedProcess)
 {
 	if (IsActive())
 		throw std::runtime_error("Stop the current rig before starting another");
@@ -87,18 +87,43 @@ void RigController::Start(RigTarget target, std::string source, std::string name
 	run.generation = target.generation;
 	run.seed = options.seed;
 	run.source = std::move(source);
+	run.recordingArchive = std::move(archive);
 	run.name = name;
 	run.deadline = std::chrono::seconds(std::clamp(options.deadlineSeconds, 1, 3600));
 	run.memoryLimit = static_cast<std::size_t>(std::clamp(options.memoryMiB, 1, 512)) * 1024 * 1024;
 	m_runner.Join();
 	m_transport.emplace(target.endpoint, "simxr_companion_rig",
-						static_cast<std::uint64_t>(wire::Capability::SimulationCommands));
+						static_cast<std::uint64_t>(wire::Capability::SimulationCommands), expectedProcess);
 	m_runner.Start(std::move(run));
 	m_script = std::move(name);
 	m_target = std::move(target);
 	m_recordingReplay = replay;
+	m_owner.reset();
 	++m_runId;
 	m_error.clear();
+}
+std::uint64_t RigController::RunSource(RigTarget target, std::string source, std::string name,
+									   const ScriptOptions& options, const std::shared_ptr<AutomationOwner>& owner,
+									   std::uint64_t expectedProcess)
+{
+	if (!owner || !owner->active.load())
+		throw std::runtime_error("The MCP automation session is closed");
+	if (!expectedProcess)
+		throw std::invalid_argument("The runtime process identity is unavailable");
+	Start(std::move(target), std::move(source), std::move(name), options, false, {}, expectedProcess);
+	m_owner = owner;
+	if (!owner->active.load())
+		m_runner.Cancel();
+	return m_runId;
+}
+bool RigController::OwnedBy(const std::shared_ptr<AutomationOwner>& owner, std::uint64_t run) const noexcept
+{
+	return owner && owner->active.load() && m_owner == owner && m_runId == run && run != 0;
+}
+void RigController::CancelDisconnected()
+{
+	if (m_owner && !m_owner->active.load() && IsActive())
+		m_runner.Cancel();
 }
 void RigController::RunScript(RigTarget target, const std::string& path, const ScriptOptions& options)
 {
@@ -115,7 +140,11 @@ void RigController::ReplayRecording(RigTarget target, const std::string& path, s
 {
 	try
 	{
-		Start(std::move(target), LoadScript(Utf8Path(path)), path, ScriptOptions{seed}, true);
+		const auto file = Utf8Path(path);
+		if (std::filesystem::is_directory(file))
+			Start(std::move(target), {}, path, ScriptOptions{seed, 3600}, true, file);
+		else
+			Start(std::move(target), LoadScript(file), path, ScriptOptions{seed}, true);
 	}
 	catch (const std::exception& error)
 	{

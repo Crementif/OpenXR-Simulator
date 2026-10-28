@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <stop_token>
 #include <vector>
 
 namespace simxr::app
@@ -23,7 +24,8 @@ struct RunningApp
 // companion is attached to. Each endpoint gets a bare connect probe with the
 // timeout: nothing is sent, so discovery never takes control, and sockets
 // left behind by ended processes are skipped.
-std::vector<RunningApp> DiscoverRunningApps(std::chrono::milliseconds timeout = std::chrono::milliseconds(150));
+std::vector<RunningApp> DiscoverRunningApps(std::chrono::milliseconds timeout = std::chrono::milliseconds(150),
+											std::stop_token stop = {});
 // The executable, arguments, working folder and environment needed to relaunch.
 // Unavailable when process details cannot be read or represented without truncation.
 std::optional<LaunchProfile> DescribeProcess(std::uint64_t process);

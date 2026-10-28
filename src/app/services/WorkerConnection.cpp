@@ -42,8 +42,9 @@ control::Message WorkerConnection::Request(control::OpCode code, std::vector<con
 	}
 }
 #endif
-WorkerConnection::WorkerConnection(std::string endpoint, std::string name, std::uint64_t required)
-	: m_endpoint(std::move(endpoint)), m_name(std::move(name)), m_required(required)
+WorkerConnection::WorkerConnection(std::string endpoint, std::string name, std::uint64_t required,
+								   std::optional<std::uint64_t> expectedProcess)
+	: m_endpoint(std::move(endpoint)), m_name(std::move(name)), m_required(required), m_expectedProcess(expectedProcess)
 {
 }
 WorkerConnection::~WorkerConnection() = default;
@@ -63,6 +64,12 @@ control::Message WorkerConnection::Exchange(control::OpCode code, std::vector<co
 	if (!m_client)
 	{
 		m_client = std::make_unique<control::LocalControlClient>(m_endpoint, std::chrono::milliseconds{50});
+		if (m_expectedProcess && m_client->PeerProcess() != *m_expectedProcess)
+		{
+			m_failed = true;
+			m_client->Close();
+			throw std::runtime_error("Runtime endpoint belongs to a different process");
+		}
 		auto hello =
 			Request(control::OpCode::Hello, {control::Field::Text(control::tag::ClientName, m_name),
 											 control::Field::U64(control::tag::RequiredCapabilities, m_required)});
@@ -73,6 +80,8 @@ control::Message WorkerConnection::Exchange(control::OpCode code, std::vector<co
 			m_client->Close();
 			throw std::runtime_error("Runtime did not negotiate the required worker capabilities");
 		}
+		const auto capabilities = hello.Find(control::tag::Capabilities);
+		m_capabilities = capabilities ? capabilities->AsU64().value_or(0) : 0;
 	}
 	return Request(code, std::move(fields));
 #else

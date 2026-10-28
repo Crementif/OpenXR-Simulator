@@ -48,7 +48,7 @@ void UiRenderer::Initialize(Window& owner, bool enableValidation, std::shared_pt
 	debug.pfnUserCallback = Report;
 	debug.pUserData = gpu.validation.get();
 	VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
-	application.pApplicationName = "OpenXR Simulator Companion";
+	application.pApplicationName = "OpenXR Simulator";
 	application.apiVersion = VK_API_VERSION_1_1;
 	VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
 	if (enableValidation)
@@ -71,7 +71,11 @@ void UiRenderer::Initialize(Window& owner, bool enableValidation, std::shared_pt
 	info.pApplicationInfo = &application;
 	info.enabledExtensionCount = static_cast<std::uint32_t>(extensions.size());
 	info.ppEnabledExtensionNames = extensions.data();
-	CheckResult(vkCreateInstance(&info, nullptr, &gpu.instance));
+	const auto instanceResult = vkCreateInstance(&info, nullptr, &gpu.instance);
+	if (instanceResult == VK_ERROR_INCOMPATIBLE_DRIVER)
+		throw std::runtime_error("Vulkan could not find a compatible graphics driver.\n\n"
+			"Install or update the graphics driver for your GPU, then try again.");
+	CheckResult(instanceResult);
 	if (enableValidation)
 	{
 		auto create = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(
@@ -108,7 +112,8 @@ void UiRenderer::Initialize(Window& owner, bool enableValidation, std::shared_pt
 			break;
 	}
 	if (!gpu.physical)
-		throw std::runtime_error("No Vulkan graphics/presentation queue for this SDL surface");
+		throw std::runtime_error("No Vulkan graphics device can present to this display.\n\n"
+			"Check your graphics driver and display connection, then try again.");
 	VkPhysicalDeviceProperties properties;
 	vkGetPhysicalDeviceProperties(gpu.physical, &properties);
 	m_adapter = properties.deviceName;

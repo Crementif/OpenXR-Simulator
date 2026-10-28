@@ -18,7 +18,7 @@ struct PanelReply
 class RuntimePanelRequests
 {
   public:
-	void Connect(std::string path);
+	void Connect(std::string path, std::optional<std::uint64_t> expectedProcess = {});
 	void Disconnect();
 	void Close() noexcept;
 	RuntimeConnectionSnapshot Snapshot() const;

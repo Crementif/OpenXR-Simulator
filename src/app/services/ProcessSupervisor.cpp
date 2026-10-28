@@ -23,6 +23,66 @@ LaunchSnapshot LaunchObservation::Read() const
 	std::lock_guard lock(m_mutex);
 	return m_snapshot;
 }
+bool LaunchObservation::RequestClose()
+{
+	std::lock_guard lock(m_mutex);
+	if (m_snapshot.state != LaunchState::Running || m_closeRequested || m_closeDelivered)
+		return false;
+	m_closeRequested = true;
+	m_snapshot.detail = "Close requested; waiting for the app to exit";
+	return true;
+}
+bool LaunchObservation::RequestRestart(std::uint64_t process, LaunchProfile profile)
+{
+	std::lock_guard lock(m_mutex);
+	if (!process || m_snapshot.process != process || m_snapshot.state != LaunchState::Running ||
+		m_restart || m_closeRequested || m_closeDelivered)
+		return false;
+	m_restart = std::move(profile);
+	m_restartDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	m_closeRequested = true;
+	m_snapshot.restartPending = true;
+	m_snapshot.detail = "Restart requested; waiting for the app to exit";
+	return true;
+}
+bool LaunchObservation::CancelRestart()
+{
+	std::lock_guard lock(m_mutex);
+	if (!m_restart)
+		return false;
+	m_restart.reset();
+	m_closeRequested = false;
+	m_snapshot.restartPending = false;
+	m_snapshot.detail = "Restart cancelled; a delivered close request cannot be undone";
+	return true;
+}
+void LaunchObservation::ExpireRestart()
+{
+	std::lock_guard lock(m_mutex);
+	if (m_restart && std::chrono::steady_clock::now() >= m_restartDeadline)
+	{
+		m_restart.reset();
+		m_closeRequested = false;
+		m_snapshot.restartPending = false;
+		m_snapshot.detail = "Restart cancelled: the app did not exit within ten seconds";
+	}
+}
+bool LaunchObservation::TakeCloseRequest()
+{
+	std::lock_guard lock(m_mutex);
+	if (!std::exchange(m_closeRequested, false))
+		return false;
+	m_closeDelivered = true;
+	return true;
+}
+void LaunchObservation::CloseFailed(std::string_view detail)
+{
+	std::lock_guard lock(m_mutex);
+	m_closeDelivered = false;
+	m_restart.reset();
+	m_snapshot.restartPending = false;
+	m_snapshot.detail.assign(detail.substr(0, 1024));
+}
 void LaunchObservation::Running(std::uint64_t process)
 {
 	std::lock_guard lock(m_mutex);
@@ -30,20 +90,37 @@ void LaunchObservation::Running(std::uint64_t process)
 	m_snapshot.state = LaunchState::Running;
 	m_snapshot.detail = "The app is running. Open Connection to connect.";
 }
-void LaunchObservation::Exited(int code)
+std::optional<LaunchProfile> LaunchObservation::Exited(int code)
 {
 	std::array<char, 32> digits;
 	const auto converted = std::to_chars(digits.data(), digits.data() + digits.size(), code);
 	std::lock_guard lock(m_mutex);
+	if (m_restart && std::chrono::steady_clock::now() < m_restartDeadline)
+	{
+		auto profile = std::move(m_restart);
+		m_restart.reset();
+		m_snapshot.state = LaunchState::Starting;
+		m_snapshot.process = 0;
+		m_snapshot.profile = profile->name;
+		m_snapshot.restartPending = false;
+		m_closeRequested = m_closeDelivered = false;
+		m_snapshot.detail = "Previous app exited; launching replacement";
+		return profile;
+	}
+	m_restart.reset();
+	m_snapshot.restartPending = false;
 	m_snapshot.state = LaunchState::Exited;
 	m_snapshot.exitCode = code;
 	m_snapshot.detail = "Process exited with code ";
 	m_snapshot.detail.append(digits.data(), converted.ptr);
+	return {};
 }
 void LaunchObservation::Failed(std::string_view detail) noexcept
 {
 	std::lock_guard lock(m_mutex);
 	m_snapshot.state = LaunchState::Failed;
+	m_restart.reset();
+	m_snapshot.restartPending = false;
 	m_snapshot.detail.assign(detail.substr(0, 1024));
 }
 class ProcessSupervisor::Job
@@ -62,10 +139,27 @@ class ProcessSupervisor::Job
 				m_process = ChildProcess::Launch(m_profile);
 				m_observation->Running(m_process->Id());
 			}
+			m_observation->ExpireRestart();
+			if (m_observation->TakeCloseRequest())
+			{
+				try
+				{
+					m_process->RequestClose();
+				}
+				catch (const std::exception& error)
+				{
+					m_observation->CloseFailed(error.what());
+				}
+			}
 			if (const auto exit = m_process->PollExit())
 			{
-				m_observation->Exited(*exit);
-				m_finished = true;
+				if (auto replacement = m_observation->Exited(*exit))
+				{
+					m_process.reset();
+					m_profile = std::move(*replacement);
+				}
+				else
+					m_finished = true;
 			}
 		}
 		catch (const std::exception& error)

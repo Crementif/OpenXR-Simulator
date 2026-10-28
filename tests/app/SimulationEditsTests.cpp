@@ -1,8 +1,8 @@
 #include "../TestSupport.h"
-#include "math/Math.h"
 #include "app/services/SimulationEdits.h"
 #include "control/ControlSchema.h"
 #include "control/SimulationControl.h"
+#include "math/Math.h"
 #include "simulation/CommandScheduler.h"
 #include <cmath>
 #include <numbers>
@@ -16,11 +16,11 @@ using namespace simxr;
 namespace wire = simxr::control;
 namespace app = simxr::app;
 
-wire::Message Observation(const CommandScheduler& scheduler)
+wire::Message Observation(const CommandScheduler& scheduler, std::optional<std::array<std::string, 2>> profiles = {})
 {
 	wire::Message result;
-	result.fields.push_back(
-		wire::Field::Bytes(wire::tag::Document, wire::SimulationState(scheduler.Snapshot()).Encode()));
+	result.fields.push_back(wire::Field::Bytes(
+		wire::tag::Document, wire::SimulationState(scheduler.Snapshot(), false, {}, {}, profiles).Encode()));
 	// Manual display ticks need not match admitted application frame identities.
 	result.fields.push_back(wire::Field::Bytes(
 		wire::tag::Pipeline, wire::EncodeFields(std::array{wire::Field::U64(wire::tag::NextAdmission, 900)})));
@@ -114,11 +114,19 @@ void PreserveObservedConfiguration()
 {
 	CommandConfiguration initial;
 	initial.views.ipd = 0.071f;
+	initial.tracking.controllers[0].aim = PoseSample{XrPosef{EulerAngles(.2f, .3f, 0), {1, 2, 3}}, ValidPoseFlags};
+	initial.tracking.eyeViews.emplace();
+	initial.tracking.eyeViews->spaceRevision = 9007199254740993ULL;
+	initial.tracking.eyeViews->poses[0] = PoseSample{XrPosef{EulerAngles(.1f, 0, 0), {-.04f, 1.6f, 0}}, ValidPoseFlags};
+	initial.tracking.eyeViews->poses[1].flags = 0;
+	initial.tracking.eyeViews->fovs[1] = {-.6f, .9f, .7f, -.8f};
 	initial.views.outerWidth = 1728;
 	initial.views.insetHeight = 640;
 	initial.views.outerFov[1].angleRight = 0.61f;
 	initial.input.preferredProfiles[1] = "/interaction_profiles/valve/index_controller";
 	initial.input.controllers[0].gripForce = 0.63f;
+	initial.input.controllers[0].physicalProfile = "/interaction_profiles/htc/vive_controller";
+	initial.input.controllers[0].triggerClick = false;
 	initial.input.controllers[0].thumbrestTouch = true;
 	initial.input.controllers[0].trackpad = {0.3f, -0.2f};
 	initial.tracking.body.controls[0].offset = XrVector3f{0.1f, 0.2f, 0.3f};
@@ -130,6 +138,25 @@ void PreserveObservedConfiguration()
 	Apply(scheduler, 1);
 	const auto state = Observation(scheduler);
 	const auto observed = app::ReadObservedSetup(state);
+	Require(observed.values.input.controllers[0].physicalProfile == initial.input.controllers[0].physicalProfile &&
+				observed.values.input.controllers[0].triggerClick == false && !observed.controllerProfiles,
+			"Observed physical inputs are retained without inventing an effective profile");
+	const std::array<std::string, 2> profiles{"/interaction_profiles/khr/simple_controller", ""};
+	const auto resolved = app::ReadObservedSetup(Observation(scheduler, profiles));
+	Require(resolved.controllerProfiles == profiles &&
+				resolved.values.input.controllers[0].physicalProfile != (*resolved.controllerProfiles)[0],
+			"Physical and effective profiles remain distinct, including an unbound hand");
+	Require(observed.values.tracking.controllers[0].aim &&
+				observed.values.tracking.controllers[0].aim->pose.position.z == 3 &&
+				observed.values.tracking.controllers[0].aim->flags == ValidPoseFlags &&
+				!observed.values.tracking.controllers[1].aim,
+			"Companion preserves independent aim without fabricating absent aim");
+	const auto& eyes = observed.values.tracking.eyeViews;
+	Require(eyes && eyes->spaceRevision == 9007199254740993ULL && eyes->poses[0].pose.position.x == -.04f &&
+				eyes->poses[0].flags == ValidPoseFlags && eyes->poses[1].flags == 0 &&
+				eyes->fovs[1].angleRight == .9f &&
+				eyes->poses[0].pose.orientation.x == initial.tracking.eyeViews->poses[0].pose.orientation.x,
+			"Companion preserves physical eye pose, validity, asymmetric FOV and exact space revision");
 	Require(observed.bodyOverridesAvailable && observed.trackerAttachmentsAvailable,
 			"Hidden configuration is not exposed for safe editing");
 	Require(observed.values.input.preferredProfiles == initial.input.preferredProfiles,
@@ -189,16 +216,32 @@ void PreserveObservedConfiguration()
 			Require(app::ObservedDevicePose(after, ControlChannel::Head).flags == TrackedPoseFlags,
 					"Recovery did not restore tracking");
 	}
+	auto hand = observed.values.tracking.controllers[0];
+	hand.aim.reset();
+	edit.commands = {SetEyeViews{}, TakeControl{ControlChannel::LeftPose}, SetControllerPose{0, hand}};
+	scheduler.Submit(wire::DecodeSimulationTransaction(
+		app::EncodeSimulationEdit(edit, 1, 1, 4, Observation(scheduler)).message, 55));
+	Apply(scheduler, 5);
+	const auto cleared = app::ReadObservedSetup(Observation(scheduler));
+	Require(!cleared.values.tracking.eyeViews && !cleared.values.tracking.controllers[0].aim,
+			"Removing physical view and aim observations cannot retain stale companion state");
 }
 void SourceKindRange()
 {
 	for (const auto kind : {std::uint64_t{4}, std::uint64_t{1} << 32, std::numeric_limits<std::uint64_t>::max()})
 	{
 		wire::Message receipt;
-		receipt.fields.push_back(wire::Field::Bytes(wire::tag::Document,
-			wire::InspectionValue::Object({{"source", wire::InspectionValue::Object({
-				{"kind", wire::InspectionValue::Unsigned(kind)}, {"id", wire::InspectionValue::Unsigned(1)}})}}).Encode()));
-		Rejected([&] { app::SimulationEditSource(receipt); });
+		receipt.fields.push_back(wire::Field::Bytes(
+			wire::tag::Document,
+			wire::InspectionValue::Object(
+				{{"source", wire::InspectionValue::Object({{"kind", wire::InspectionValue::Unsigned(kind)},
+														   {"id", wire::InspectionValue::Unsigned(1)}})}})
+				.Encode()));
+		Rejected(
+			[&]
+			{
+				app::SimulationEditSource(receipt);
+			});
 	}
 }
 
@@ -261,11 +304,51 @@ void FirstPublicationAndStateFailures()
 			app::EncodeSimulationEdit(app::ReleaseManualInputs{}, 0, 4, 0, {});
 		});
 }
+void GameExtensionObservation()
+{
+	CommandScheduler scheduler;
+	scheduler.Start();
+	Apply(scheduler, 1);
+	const auto legacy = app::ReadObservedSetup(Observation(scheduler));
+	Require(!legacy.appTrackersKnown && !legacy.appBodyExtensions,
+			"Absent extension reports must remain unknown");
+	for (unsigned mask = 0; mask < 8; ++mask)
+	{
+		const std::array enabled{(mask & 1) != 0, (mask & 2) != 0, (mask & 4) != 0};
+		wire::Message message;
+		message.fields.push_back(wire::Field::Bytes(wire::tag::Document,
+			wire::SimulationState(scheduler.Snapshot(), false, mask != 0, {}, {}, enabled).Encode()));
+		const auto observed = app::ReadObservedSetup(message);
+		Require(observed.appTrackersKnown && observed.appTrackers == (mask != 0) &&
+				observed.appBodyExtensions == enabled,
+				"Game extension flags changed across inspection encoding and decoding");
+	}
+}
+void ExpandedObservedTrackers()
+{
+	for (const auto count : {0u, 64u})
+	{
+		CommandConfiguration config;
+		config.tracking.trackers.clear();
+		for (unsigned index = 0; index < count; ++index)
+			config.tracking.trackers.push_back({{100 + index}, TrackerRole::Unassigned});
+		CommandScheduler scheduler;
+		scheduler.Start(0, config);
+		Apply(scheduler, 1);
+		const auto observed = app::ReadObservedSetup(Observation(scheduler));
+		Require(observed.values.tracking.trackers.size() == count, "Observed setup changed tracker inventory size");
+		if (count)
+			Require(observed.values.tracking.trackers.back().identity.value == 163,
+					"Observed setup truncated tracker identities");
+	}
+}
 } // namespace
 int main()
 {
 	try
 	{
+		GameExtensionObservation();
+		ExpandedObservedTrackers();
 		ObservedFrameScheduling();
 		DirectPiloting();
 		PreserveObservedConfiguration();

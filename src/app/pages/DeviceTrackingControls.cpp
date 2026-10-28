@@ -1,10 +1,10 @@
-#include "math/Math.h"
 #include "Pch.h"
-#include "app/widgets/Theme.h"
 #include "app/pages/DeviceControlPanel.h"
 #include "app/services/PlayerRig.h"
 #include "app/services/SpatialMath.h"
 #include "app/widgets/Controls.h"
+#include "app/widgets/Theme.h"
+#include "math/Math.h"
 #include "simulation/BodyModel.h"
 #include <imgui.h>
 #include <numbers>
@@ -35,16 +35,16 @@ void DeviceControlPanel::DrawBody()
 	const BodyProportions defaults;
 	FieldLabel("Height");
 	bool proportionsEdited =
-		Field("##Height", ImGui::SliderFloat("##Height", &m_authoredProportions.height, 0.5f, 2.5f, "%.2f m"), true,
+		Field("##Height", ImGui::SliderFloat("##Height", &m_authoredProportions.height, 0.5f, 2.5f, "%.3f m"), true,
 			  NumberValue(m_authoredProportions.height, defaults.height, .01f, .5f, 2.5f));
 	FieldLabel("Shoulder width");
 	proportionsEdited |=
 		Field("##Shoulder width",
-			  ImGui::SliderFloat("##Shoulder width", &m_authoredProportions.shoulderWidth, 0.1f, 0.8f, "%.2f m"), true,
+			  ImGui::SliderFloat("##Shoulder width", &m_authoredProportions.shoulderWidth, 0.1f, 0.8f, "%.3f m"), true,
 			  NumberValue(m_authoredProportions.shoulderWidth, defaults.shoulderWidth, .01f, .1f, .8f));
 	FieldLabel("Hip width");
 	proportionsEdited |=
-		Field("##Hip width", ImGui::SliderFloat("##Hip width", &m_authoredProportions.hipWidth, 0.1f, 0.8f, "%.2f m"),
+		Field("##Hip width", ImGui::SliderFloat("##Hip width", &m_authoredProportions.hipWidth, 0.1f, 0.8f, "%.3f m"),
 			  true, NumberValue(m_authoredProportions.hipWidth, defaults.hipWidth, .01f, .1f, .8f));
 	if (proportionsEdited && !m_edit)
 		ApplyOwned(ControlChannel::Proportions, SetBodyProportions{m_authoredProportions});
@@ -58,11 +58,15 @@ void DeviceControlPanel::DrawGaze()
 	auto& gaze = m_authoredTracking.gaze;
 	const GazeInput defaults;
 	FieldLabel("Yaw");
-	bool edited = Field("##Yaw", ImGui::SliderAngle("##Yaw", &gaze.yaw, -90, 90), true,
-						AngleValue(gaze.yaw, defaults.yaw, -90, 90));
+	ImGui::PushStyleColor(ImGuiCol_Text, theme::AxisTextY);
+	const bool yawEdited = ImGui::SliderAngle("##Yaw", &gaze.yaw, -90, 90, "%.1f°");
+	ImGui::PopStyleColor();
+	bool edited = Field("##Yaw", yawEdited, true, AngleValue(gaze.yaw, defaults.yaw, -90, 90));
 	FieldLabel("Pitch");
-	edited |= Field("##Pitch", ImGui::SliderAngle("##Pitch", &gaze.pitch, -90, 90), true,
-					AngleValue(gaze.pitch, defaults.pitch, -90, 90));
+	ImGui::PushStyleColor(ImGuiCol_Text, theme::AxisTextX);
+	const bool pitchEdited = ImGui::SliderAngle("##Pitch", &gaze.pitch, -90, 90, "%.1f°");
+	ImGui::PopStyleColor();
+	edited |= Field("##Pitch", pitchEdited, true, AngleValue(gaze.pitch, defaults.pitch, -90, 90));
 	edited |= Field("Gaze available", ImGui::Checkbox("Gaze available", &gaze.available), false,
 					SwitchValue(gaze.available, defaults.available));
 	edited |= Field("Gaze tracked", ImGui::Checkbox("Gaze tracked", &gaze.tracked), false,
@@ -76,29 +80,54 @@ void DeviceControlPanel::DrawTrackers()
 	if (m_observed && !m_observed->trackerAttachmentsAvailable)
 		ImGui::TextUnformatted("Trackers unavailable");
 	DrawOwner(ControlChannel::Trackers);
-	// One chip per tracker, named by its role.
-	ImGui::PushID("Tracker chips");
-	const float right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
-	for (int slot = 0; slot < static_cast<int>(m_authoredTracking.trackers.size()); ++slot)
+	if (m_authoredTracking.trackers.empty())
 	{
-		const auto& device = m_authoredTracking.trackers[static_cast<std::size_t>(slot)];
-		const char* name = TrackerRoleName(device.role);
-		const float chip = ImGui::CalcTextSize(name).x + ImGui::GetStyle().FramePadding.x * 2;
-		if (slot && ImGui::GetItemRectMax().x + 2 + chip <= right)
-			ImGui::SameLine(0, 2);
-		const bool current = slot == m_selectedTracker;
-		ImGui::PushStyleColor(ImGuiCol_Button, current ? theme::Accent : theme::SurfaceRaised);
-		ImGui::PushStyleColor(ImGuiCol_Text, device.connected ? theme::Text : theme::TextDim);
-		ImGui::PushID(slot);
-		if (ImGui::Button(name) && !current)
+		ImGui::TextDisabled("No trackers");
+		return;
+	}
+	m_selectedTracker = std::clamp(m_selectedTracker, 0, static_cast<int>(m_authoredTracking.trackers.size() - 1));
+	if (m_authoredTracking.trackers.size() > 8)
+	{
+		const auto name = [&](std::size_t index)
 		{
-			SelectDevice(DeviceSel{DevicePage::Trackers, static_cast<unsigned>(slot)});
+			const auto& device = m_authoredTracking.trackers[index];
+			return std::string(TrackerRoleName(device.role)) + " #" + std::to_string(device.identity.value);
+		};
+		ImGui::SetNextItemWidth(-1);
+		if (ImGui::BeginCombo("##Tracker device", name(m_selectedTracker).c_str()))
+		{
+			for (std::size_t index = 0; index < m_authoredTracking.trackers.size(); ++index)
+				if (ImGui::Selectable(name(index).c_str(), index == static_cast<std::size_t>(m_selectedTracker)))
+					SelectDevice(DeviceSel{DevicePage::Trackers, static_cast<unsigned>(index)});
+			ImGui::EndCombo();
+		}
+	}
+	else
+	{
+		// One chip per tracker, named by its role.
+		ImGui::PushID("Tracker chips");
+		const float right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+		for (int slot = 0; slot < static_cast<int>(m_authoredTracking.trackers.size()); ++slot)
+		{
+			const auto& device = m_authoredTracking.trackers[static_cast<std::size_t>(slot)];
+			const char* name = TrackerRoleName(device.role);
+			const float chip = ImGui::CalcTextSize(name).x + ImGui::GetStyle().FramePadding.x * 2;
+			if (slot && ImGui::GetItemRectMax().x + 2 + chip <= right)
+				ImGui::SameLine(0, 2);
+			const bool current = slot == m_selectedTracker;
+			ImGui::PushStyleColor(ImGuiCol_Button, current ? theme::Accent : theme::SurfaceRaised);
+			ImGui::PushStyleColor(ImGuiCol_Text, device.connected ? theme::Text : theme::TextDim);
+			ImGui::PushID(slot);
+			if (ImGui::Button(name) && !current)
+			{
+				SelectDevice(DeviceSel{DevicePage::Trackers, static_cast<unsigned>(slot)});
+			}
+			ImGui::PopID();
+			ImGui::PopStyleColor(2);
+			ImGui::SetItemTooltip("Tracker %d%s", slot + 1, device.connected ? "" : " (disconnected)");
 		}
 		ImGui::PopID();
-		ImGui::PopStyleColor(2);
-		ImGui::SetItemTooltip("Tracker %d%s", slot + 1, device.connected ? "" : " (disconnected)");
 	}
-	ImGui::PopID();
 	const auto slot = static_cast<std::size_t>(m_selectedTracker);
 	auto& tracker = m_authoredTracking.trackers[slot];
 	ImGui::BeginDisabled(!CanControl(ControlChannel::Trackers) || ScenarioActive(ControlChannel::Trackers) ||
@@ -193,8 +222,8 @@ void DeviceControlPanel::DrawViews()
 	ImGui::BeginDisabled(!CanControl(ControlChannel::Views));
 	FieldLabel("IPD");
 	const ViewSettings defaults;
-	bool edited = Field("##IPD", ImGui::SliderFloat("##IPD", &m_authoredViews.ipd, 0.04f, 0.09f, "%.3f m"), true,
-						NumberValue(m_authoredViews.ipd, defaults.ipd, .001f, .04f, .09f, "%.3f"));
+	bool edited = Field("##IPD", ImGui::SliderFloat("##IPD", &m_authoredViews.ipd, 0.04f, 0.09f, "%.4f m"), true,
+						NumberValue(m_authoredViews.ipd, defaults.ipd, .001f, .04f, .09f, "%.4f"));
 	FieldLabel("Inset angle");
 	float maximum = std::numbers::pi_v<float> / 2;
 	for (const auto& fov : m_authoredViews.outerFov)
@@ -203,7 +232,7 @@ void DeviceControlPanel::DrawViews()
 	const float minimumDegrees = std::min(.1f, maximumDegrees);
 	edited |= Field(
 		"##Inset half angle",
-		ImGui::SliderAngle("##Inset half angle", &m_authoredViews.insetHalfAngle, minimumDegrees, maximumDegrees), true,
+		ImGui::SliderAngle("##Inset half angle", &m_authoredViews.insetHalfAngle, minimumDegrees, maximumDegrees, "%.1f°"), true,
 		AngleValue(m_authoredViews.insetHalfAngle, std::min(defaults.insetHalfAngle, maximum), minimumDegrees,
 				   maximumDegrees));
 	if (edited && !m_edit)

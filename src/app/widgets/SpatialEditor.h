@@ -1,7 +1,7 @@
 #pragma once
-#include "app/services/UndoStack.h"
 #include "app/services/ShellState.h"
 #include "app/services/SimulationEdits.h"
+#include "app/services/UndoStack.h"
 #include "app/widgets/SpatialWidgets.h"
 #include <array>
 #include <cstdint>
@@ -36,12 +36,12 @@ class SpatialEditor
 	{
 		return m_rotationBallRect;
 	}
-	const std::array<ShellRect, 7>& MarkerRects() const
+	const std::array<ShellRect, MaxTrackerDevices + 3>& MarkerRects() const
 	{
 		return m_markerRects;
 	}
 	ShellRect RigViewRect() const;
-	std::array<ShellRect, 7> RigDevicePoints() const;
+	std::array<ShellRect, MaxTrackerDevices + 3> RigDevicePoints() const;
 	bool Expanded() const
 	{
 		return m_view.expanded;
@@ -67,7 +67,7 @@ class SpatialEditor
 	static ControlChannel DeviceChannel(int device);
 	void PrepareSelection(const Selection& selection);
 	SpatialScene LiveScene() const;
-	std::array<bool, 7> EditableDevices(const SpatialScene& scene) const;
+	std::array<bool, MaxTrackerDevices + 3> EditableDevices(const SpatialScene& scene) const;
 	void EditPose(int device, XrPosef pose, bool final);
 	void Submit(bool final);
 	void ApplyResult(const SpatialEditResult& result, int device, XrPosef pose);
@@ -84,9 +84,9 @@ class SpatialEditor
 	int m_selected = -1;
 	std::string m_error;
 	ShellRect m_rotationBallRect;
-	std::array<ShellRect, 7> m_markerRects{};
+	std::array<ShellRect, MaxTrackerDevices + 3> m_markerRects{};
 	RigViewState m_view;
-	std::array<ArcballState, 7> m_arcballs;
+	std::array<ArcballState, MaxTrackerDevices + 3> m_arcballs;
 	std::array<GizmoState, 4> m_previewGizmos;
 };
 } // namespace simxr::app

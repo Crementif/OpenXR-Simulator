@@ -2,6 +2,9 @@
 #include "Pch.h"
 #include "app/platform/windows/LaunchSupport.h"
 #include "app/platform/windows/PrivateProtonRuntime.h"
+#ifdef SIMXR_MANIFEST_ALIAS
+#include "app/platform/windows/ManifestAlias.h"
+#endif
 
 #include <cwchar>
 #include <filesystem>
@@ -73,7 +76,16 @@ class ChildEnvironment
 		else
 		{
 			if (!profile.runtimeManifest.empty())
-				environment[L"XR_RUNTIME_JSON"] = windows::Wide(profile.runtimeManifest);
+			{
+				const auto original = windows::Wide(profile.runtimeManifest);
+				auto selected = windows::LoaderManifestPath(original);
+#ifdef SIMXR_MANIFEST_ALIAS
+				if (selected == original && std::filesystem::path(original).is_absolute() &&
+					!std::ranges::all_of(original, [](wchar_t character) { return character <= 0x7f; }))
+					selected = windows::PrepareManifestAlias(original);
+#endif
+				environment[L"XR_RUNTIME_JSON"] = std::move(selected);
+			}
 			const auto runtime = environment.find(L"XR_RUNTIME_JSON");
 			if (runtime != environment.end() && !runtime->second.empty())
 				RequireRuntimeOverride();
@@ -144,6 +156,43 @@ std::unique_ptr<ChildProcess> ChildProcess::Launch(const LaunchProfile& profile)
 std::uint64_t ChildProcess::Id() const noexcept
 {
 	return m_state->identity;
+}
+struct WindowCloseRequest
+{
+	DWORD process;
+	bool posted = false;
+	DWORD error = ERROR_SUCCESS;
+	static BOOL CALLBACK Visit(HWND window, LPARAM parameter)
+	{
+		auto& request = *reinterpret_cast<WindowCloseRequest*>(parameter);
+		DWORD process = 0;
+		GetWindowThreadProcessId(window, &process);
+		if (process != request.process)
+			return TRUE;
+		if (!PostMessageW(window, WM_CLOSE, 0, 0))
+		{
+			request.error = GetLastError();
+			return FALSE;
+		}
+		request.posted = true;
+		return TRUE;
+	}
+};
+void ChildProcess::RequestClose()
+{
+	if (PollExit())
+		return;
+	WindowCloseRequest request{m_state->identity};
+	const auto enumerated = EnumWindows(WindowCloseRequest::Visit, reinterpret_cast<LPARAM>(&request));
+	if (request.error != ERROR_SUCCESS)
+	{
+		SetLastError(request.error);
+		throw windows::Error("Cannot request child window close");
+	}
+	if (!enumerated)
+		throw windows::Error("Cannot enumerate child windows");
+	if (!request.posted && !PollExit())
+		throw std::runtime_error("The launched app has no closeable window; close it manually");
 }
 std::optional<int> ChildProcess::PollExit()
 {

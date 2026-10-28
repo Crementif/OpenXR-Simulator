@@ -7,12 +7,38 @@
 #include <fcntl.h>
 #include <linux/fs.h>
 #include <sys/syscall.h>
+#include <sys/file.h>
 #include <stdexcept>
 #include <system_error>
 #include <unistd.h>
 
 namespace simxr::app
 {
+SettingsFileLock::SettingsFileLock(const std::filesystem::path& path)
+{
+	if (!path.is_absolute())
+		throw std::invalid_argument("Companion settings destination must be absolute");
+	std::filesystem::create_directories(path.parent_path());
+	auto lockPath = path;
+	lockPath += ".lock";
+	const int descriptor = ::open(lockPath.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+	if (descriptor < 0)
+		throw std::system_error(errno, std::generic_category(), "Cannot open settings lock");
+	while (::flock(descriptor, LOCK_EX) != 0)
+	{
+		if (errno == EINTR)
+			continue;
+		const auto error = errno;
+		::close(descriptor);
+		throw std::system_error(error, std::generic_category(), "Cannot lock settings");
+	}
+	m_handle = descriptor;
+}
+SettingsFileLock::~SettingsFileLock()
+{
+	if (m_handle >= 0)
+		::close(static_cast<int>(m_handle));
+}
 static std::filesystem::path Absolute(const char* value)
 {
 	std::filesystem::path path(value);

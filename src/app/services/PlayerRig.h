@@ -4,6 +4,7 @@
 #include <array>
 #include <optional>
 #include <span>
+#include <vector>
 
 namespace simxr::app
 {
@@ -120,8 +121,8 @@ class PlayerRig
 	float m_headYaw = 0, m_headPitch = 0;
 	XrQuaternionf m_headRoll{0, 0, 0, 1};
 	std::array<AnchoredPose, 2> m_hands;
-	std::array<TrackerAttachment, 4> m_trackers;
-	std::array<TrackerDevice, 4> m_trackerDevices = TrackingState{}.trackers;
+	std::vector<TrackerAttachment> m_trackers = std::vector<TrackerAttachment>(4);
+	std::vector<TrackerDevice> m_trackerDevices = TrackingState{}.trackers;
 	BodyControls m_body;
 	BodyProportions m_proportions;
 	bool m_bodyRoot = true;

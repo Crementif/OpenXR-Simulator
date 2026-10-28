@@ -84,7 +84,7 @@ void RuntimeSession::ChooseSession(PanelSession session)
 	m_debugger.ChooseSession(session);
 	ScopeChanged();
 }
-void RuntimeSession::Poll(bool piloting)
+void RuntimeSession::Poll(bool piloting, bool foreground)
 {
 	const auto connection = m_requests.Snapshot();
 	if (connection.state == RuntimeConnectionState::Failed)
@@ -103,6 +103,12 @@ void RuntimeSession::Poll(bool piloting)
 	for (const auto& reply : m_requests.Poll())
 		try
 		{
+			if (!foreground && (reply.task.kind == Work::Preview || reply.task.kind == Work::Thumbnail))
+			{
+				m_requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId,
+								   U64(reply.response.packet.message, tag::ImageReaderId));
+				continue;
+			}
 			Reply(reply);
 		}
 		catch (const std::exception& error)
@@ -115,13 +121,14 @@ void RuntimeSession::Poll(bool piloting)
 		m_debugger.Poll();
 		const auto selected = m_debugger.Selected();
 		const auto now = Clock::now();
-		if (!m_time.following && m_time.epoch == m_debugger.Scope().epoch && m_time.cursor.session == selected.id &&
+		if (foreground && !m_time.following && m_time.epoch == m_debugger.Scope().epoch && m_time.cursor.session == selected.id &&
 			m_time.cursor.run == selected.generation && m_time.cursor.frame &&
 			m_unavailablePreview != m_time.cursor.frame && !m_workspace.SelectedId() &&
-			(!m_preview.SelectedId() || !PastState()) && !m_requests.Has(Work::PastPreview) &&
-			Supports(wire::Capability::ContinuousPreviews))
+			!m_requests.Has(Work::PastPreview) && Supports(wire::Capability::ContinuousPreviews))
 		{
-			if (!m_preview.SelectFrame(m_debugger.Scope(), m_time.cursor.frame) || !PastState())
+			const auto image = m_preview.Selected();
+			if ((!image || !image->reader || !PastState()) &&
+				(!m_preview.SelectFrame(m_debugger.Scope(), m_time.cursor.frame) || !PastState()))
 			{
 				auto fields = m_debugger.SessionFields();
 				fields.push_back(wire::Field::U64(tag::FrameId, m_time.cursor.frame, true));
@@ -129,7 +136,7 @@ void RuntimeSession::Poll(bool piloting)
 			}
 		}
 		m_history.SetScope(m_debugger.Scope());
-		if (selected.id && selected.running && Supports(wire::Capability::LiveHaptics) && now >= m_nextHaptics &&
+		if (foreground && selected.id && selected.running && Supports(wire::Capability::LiveHaptics) && now >= m_nextHaptics &&
 			!m_requests.Has(Work::Haptics))
 		{
 			m_requests.Send(wire::OpCode::ReadHaptics, Work::Haptics, m_debugger.SessionFields());
@@ -177,7 +184,7 @@ void RuntimeSession::Poll(bool piloting)
 			m_requests.Send(wire::OpCode::Capture, Work::Capture, std::move(fields), capture->id);
 			m_nextCapture = now + std::chrono::milliseconds(100);
 		}
-		if (selected.id && Supports(wire::Capability::ContinuousPreviews) && !m_requests.Has(Work::PastPreview) &&
+		if (foreground && selected.id && Supports(wire::Capability::ContinuousPreviews) && !m_requests.Has(Work::PastPreview) &&
 			!m_requests.Has(Work::Thumbnail) && !m_preview.HasPendingThumbnail())
 		{
 			const auto wanted = m_preview.History().MissingThumbnail();
@@ -190,7 +197,7 @@ void RuntimeSession::Poll(bool piloting)
 				m_requests.Send(wire::OpCode::RetainPreview, Work::Thumbnail, std::move(fields), wanted->frame.frame);
 			}
 		}
-		if (m_preview.ShowingLive() && selected.id && now >= m_nextPreview && !m_requests.Has(Work::Preview) &&
+		if (foreground && m_preview.ShowingLive() && selected.id && now >= m_nextPreview && !m_requests.Has(Work::Preview) &&
 			!m_preview.HasPendingLive() && Supports(wire::Capability::LivePreview))
 		{
 			m_requests.Send(wire::OpCode::RetainPreview, Work::Preview, m_debugger.SessionFields());
@@ -263,11 +270,11 @@ void RuntimeSession::Poll(bool piloting)
 		if (!error.empty())
 			Notify("Runtime request failed", std::move(error));
 }
-void RuntimeSession::ConnectEndpoint(std::string endpoint)
+void RuntimeSession::ConnectEndpoint(std::string endpoint, std::optional<std::uint64_t> expectedProcess)
 {
 	m_endpoint = endpoint;
 	m_failure.clear();
-	m_requests.Connect(std::move(endpoint));
+	m_requests.Connect(std::move(endpoint), expectedProcess);
 }
 void RuntimeSession::Disconnect()
 {
@@ -322,7 +329,9 @@ void RuntimeSession::ConfigureSnapshots(std::uint32_t budgetMiB)
 {
 	SnapshotBudget::Configure(budgetMiB);
 	const auto& status = m_debugger.Status();
-	SnapshotBudget::ObserveImageBytes(U64(status, tag::SnapshotImageBytes));
+	const auto capacity = SnapshotBudget::CapacityFor(budgetMiB, U64(status, tag::SnapshotImageBytes));
+	m_preview.SetCapacity(capacity);
+	m_workspace.SetCapacity(capacity);
 	if (!Connected() || !Supports(wire::Capability::SnapshotPins) || m_debugger.Pending() ||
 		U32(status, tag::SnapshotBudgetMiB) == budgetMiB)
 		return;

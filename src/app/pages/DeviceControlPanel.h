@@ -62,8 +62,8 @@ class DeviceControlPanel
 	void DrawOwner(ControlChannel channel, bool takeover = true);
 	// A failure scenario of this channel is active; its fields are read only meanwhile.
 	bool ScenarioActive(ControlChannel channel) const;
-	// The page's Tracked / Lost / Off switch over its failure scenarios.
-	void DrawTracking(DevicePage page, float titleWidth);
+	// Compact device state menu beside the page title.
+	void DrawTracking(DevicePage page);
 	void ReloadRecoveredChannel(ControlChannel channel);
 	void DrawPlayer();
 	void DrawAnchor(std::size_t hand);
@@ -96,7 +96,7 @@ class DeviceControlPanel
 	bool InputField(const char* key, bool changed);
 	bool m_replaceOwner = false, m_exactAnchor = false;
 	// Per device page: the rotation shown as a quaternion instead of angles.
-	std::array<bool, 7> m_quaternionView{};
+	std::array<bool, MaxTrackerDevices + 3> m_quaternionView{};
 	bool m_configurationLoaded = false;
 	std::optional<ObservedSetup> m_observed;
 	std::string m_observationError;

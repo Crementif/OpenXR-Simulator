@@ -329,16 +329,19 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 	ImGui::BeginDisabled(!enabled);
 	bool fieldEdited = false, fieldActive = false, fieldFinished = false;
 	const std::array<std::pair<const char*, const char*>, 3> labels{
-		std::pair{"##Yaw", "Yaw %.0f°"}, {"##Pitch", "Pitch %.0f°"}, {"##Roll", "Roll %.0f°"}};
+		std::pair{"##Yaw", "Yaw %.1f°"}, {"##Pitch", "Pitch %.1f°"}, {"##Roll", "Roll %.1f°"}};
+	constexpr ImU32 angleColors[] = {theme::AxisTextY, theme::AxisTextX, theme::AxisTextZ};
 	for (std::size_t index = 0; index < labels.size(); ++index)
 	{
 		if (row && index)
 			ImGui::SameLine();
 		ImGui::SetNextItemWidth(field);
 		float* value = index == 0 ? &angles.x : index == 1 ? &angles.y : &angles.z;
+		ImGui::PushStyleColor(ImGuiCol_Text, angleColors[index]);
 		fieldEdited |=
 			ImGui::DragFloat(labels[index].first, value, .5f, index == 1 ? -89.9f : -180.0f,
 							 index == 1 ? 89.9f : 180.0f, labels[index].second, ImGuiSliderFlags_AlwaysClamp);
+		ImGui::PopStyleColor();
 		fieldActive |= ImGui::IsItemActive();
 		if (ImGui::IsItemActive())
 			state.activeField = ImGui::GetItemID();
@@ -350,7 +353,7 @@ SpatialEditResult RotationOrb(const char* id, ArcballState& state, XrQuaternionf
 			fieldEdited = true;
 			fieldFinished = true;
 		}
-		ImGui::SetItemTooltip("%s\nMiddle-click resets. Ctrl+wheel nudges.",
+		ImGui::SetItemTooltip("%s\nShift+right-click resets. Wheel adjusts, Shift faster, Ctrl slower.",
 							  index == 0   ? "Turn left or right relative to what it follows"
 							  : index == 1 ? "Tilt up or down"
 										   : "Roll around its pointing axis");

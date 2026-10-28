@@ -2,9 +2,28 @@
 #include "Pch.h"
 
 #include <limits>
+#include <filesystem>
 
 namespace simxr::app::windows
 {
+// An ASCII short path lets narrow-stream OpenXR loaders open Unicode manifests
+// without copying the runtime or changing the manifest's relative DLL path.
+std::wstring LoaderManifestPath(const std::wstring& path)
+{
+	if (!std::filesystem::path(path).is_absolute() ||
+		std::ranges::all_of(path, [](wchar_t character) { return character <= 0x7f; }))
+		return path;
+	const auto required = GetShortPathNameW(path.c_str(), nullptr, 0);
+	if (!required || required > 32768)
+		return path;
+	std::wstring result(required, L'\0');
+	const auto written = GetShortPathNameW(path.c_str(), result.data(), required);
+	if (!written || written >= required)
+		return path;
+	result.resize(written);
+	return std::ranges::all_of(result, [](wchar_t character) { return character <= 0x7f; }) ? result : path;
+}
+
 std::wstring Wide(std::string_view value)
 {
 	if (value.empty())

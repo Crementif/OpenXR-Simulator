@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <imgui.h>
 #include <imgui_impl_vulkan.h>
+#include <limits>
 #include <mutex>
 #include <thread>
 
@@ -66,7 +67,11 @@ struct PreviewHistory::Resources
 	{
 		std::uint64_t bytes = display ? display->allocationSize : 0;
 		for (const auto& chunk : chunks)
+		{
+			if (chunk->allocationSize > std::numeric_limits<std::uint64_t>::max() - bytes)
+				return std::numeric_limits<std::uint64_t>::max();
 			bytes += chunk->allocationSize;
+		}
 		return bytes;
 	}
 };
@@ -122,16 +127,7 @@ PreviewHistory::~PreviewHistory()
 	if (m_retired)
 	{
 		std::fputs("Preview history completion unknown; preserving its images\n", stderr);
-		auto& preserved = Resources::PreservedRings();
-		std::lock_guard lock(preserved.mutex);
-		while (m_retired)
-		{
-			auto ring = std::move(m_retired);
-			m_retired = std::move(ring->next);
-			preserved.bytes += ring->Bytes();
-			ring->next = std::move(preserved.rings);
-			preserved.rings = std::move(ring);
-		}
+		PreserveRetired();
 	}
 #endif
 }
@@ -200,11 +196,12 @@ bool PreviewHistory::Prepare(const control::ImageDescription& description)
 		m_error = "Preview history needs a blittable, filterable preview format";
 		return false;
 	}
-	std::uint64_t preserved = PreviewTexture::PreservedBytes() + Bytes();
+	std::uint64_t preserved = std::min(m_budget, PreviewTexture::PreservedBytes());
+	preserved += std::min(Bytes(), m_budget - preserved);
 	{
 		auto& rings = Resources::PreservedRings();
 		std::lock_guard lock(rings.mutex);
-		preserved += rings.bytes;
+		preserved += std::min(rings.bytes, m_budget - preserved);
 	}
 	const auto available = m_budget > preserved ? m_budget - preserved : 0;
 	auto resources = std::make_unique<Resources>();
@@ -513,6 +510,9 @@ void PreviewHistory::Submitted(std::uint64_t serial)
 {
 	if (!m_resources)
 		return;
+#if defined(__linux__) || defined(_WIN32)
+	const bool used = !m_sampled.empty() || m_copy.has_value() || m_display.has_value() || m_recorded;
+#endif
 	for (const auto slot : m_sampled)
 		m_lastUse[slot] = serial;
 	m_sampled.clear();
@@ -531,11 +531,51 @@ void PreviewHistory::Submitted(std::uint64_t serial)
 		m_display.reset();
 	}
 #if defined(__linux__) || defined(_WIN32)
-	m_resources->lastUse = serial;
+	if (used)
+		m_resources->lastUse = serial;
 	if (m_recorded)
 	{
 		m_resources->initialized = m_resources->chunks.size();
 		m_resources->displayInitialized = true;
+	}
+	m_recorded = false;
+#endif
+}
+void PreviewHistory::Poll()
+{
+	CollectRetired();
+}
+void PreviewHistory::BeginRetirement()
+{
+	if (m_copy)
+		m_shots[m_copy->slot] = m_copy->previous;
+	m_copy.reset();
+	m_display.reset();
+	m_sampled.clear();
+	m_recorded = false;
+	m_pendingDescription.reset();
+	Retire();
+}
+bool PreviewHistory::RetirementComplete() const noexcept
+{
+	return !m_resources && !m_retired;
+}
+void PreviewHistory::PreserveRetired() noexcept
+{
+	Retire();
+#if defined(__linux__) || defined(_WIN32)
+	auto& preserved = Resources::PreservedRings();
+	std::lock_guard lock(preserved.mutex);
+	while (m_retired)
+	{
+		auto ring = std::move(m_retired);
+		m_retired = std::move(ring->next);
+		const auto bytes = ring->Bytes();
+		preserved.bytes = bytes > std::numeric_limits<std::uint64_t>::max() - preserved.bytes
+							  ? std::numeric_limits<std::uint64_t>::max()
+							  : preserved.bytes + bytes;
+		ring->next = std::move(preserved.rings);
+		preserved.rings = std::move(ring);
 	}
 #endif
 }
@@ -567,7 +607,12 @@ std::uint64_t PreviewHistory::Bytes() const noexcept
 {
 	std::uint64_t bytes = m_resources ? m_resources->Bytes() : 0;
 	for (const auto* ring = m_retired.get(); ring; ring = ring->next.get())
-		bytes += ring->Bytes();
+	{
+		const auto charge = ring->Bytes();
+		if (charge > std::numeric_limits<std::uint64_t>::max() - bytes)
+			return std::numeric_limits<std::uint64_t>::max();
+		bytes += charge;
+	}
 	return bytes;
 }
 } // namespace simxr::app

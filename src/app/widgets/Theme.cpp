@@ -41,6 +41,7 @@ void Apply(ImGuiStyle& style)
 	colors[ImGuiCol_ScrollbarBg] = Vec(Fade(Bg, 0));
 	colors[ImGuiCol_ScrollbarGrab] = Vec(SurfaceRaised);
 	colors[ImGuiCol_ModalWindowDimBg] = Vec(Fade(Bg, .6f));
+	style.DisabledAlpha = .75f;
 	style.WindowPadding = {14, 12};
 	style.FramePadding = {8, 5};
 	style.FrameRounding = Radius;

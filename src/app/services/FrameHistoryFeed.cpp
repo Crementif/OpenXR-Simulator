@@ -6,19 +6,41 @@
 
 namespace simxr::app
 {
+static std::size_t InputBudget(const HistoryStore& history)
+{
+	constexpr std::size_t budget = 64 * 1024 * 1024;
+	if (history.RetainedBytes() >= budget)
+		throw std::length_error("Timeline records exceed the CPU history budget");
+	return budget - history.RetainedBytes();
+}
+FrameHistoryFeed::FrameHistoryFeed() : m_input(32768, InputBudget(m_history)) {}
+std::size_t FrameHistoryFeed::RetainedBytes() const noexcept
+{
+	return m_history.RetainedBytes() + m_input.RetainedBytes();
+}
 static InputSample ReadInput(const control::Message& applied)
 {
 	using namespace panel;
 	namespace tag = control::tag;
 	InputSample sample;
-	TrackerDevices trackers;
+	TrackerDevices trackers(4);
+	bool collection = false;
 	std::uint32_t trackerSlots = 0, devices = 0;
 	// Fields 1-11 are input commands; the named fields follow at higher tags.
 	for (const auto& field : applied.fields)
 	{
-		if (field.tag > 11)
+		if (field.tag > 11 && field.tag != tag::TrackerCollection)
 			continue;
 		const auto command = control::DecodeSimulationCommand(field);
+		if (field.tag == tag::TrackerCollection)
+		{
+			const auto* value = std::get_if<SetTrackers>(&command);
+			if (!value || collection || trackerSlots)
+				throw std::runtime_error("Invalid or mixed tracker inventory");
+			trackers = value->value;
+			collection = true;
+			continue;
+		}
 		std::uint32_t bit = 0;
 		if (const auto* head = std::get_if<SetHeadPose>(&command))
 		{
@@ -37,6 +59,8 @@ static InputSample ReadInput(const control::Message& applied)
 		}
 		else if (const auto* body = std::get_if<SetBodyControls>(&command))
 		{
+			if (body->observation)
+				sample.bodyObservation = std::make_shared<const BodyObservation>(*body->observation);
 			bit = 32;
 			auto shared = body->value;
 			sample.bodyRoot = std::exchange(shared.rootPose, std::nullopt);
@@ -47,7 +71,7 @@ static InputSample ReadInput(const control::Message& applied)
 			sample.gaze = gaze->value;
 			bit = 64;
 		}
-		else if (const auto* tracker = std::get_if<SetTracker>(&command); tracker && tracker->index < trackers.size())
+		else if (const auto* tracker = std::get_if<SetTracker>(&command); tracker && !collection && tracker->index < 4)
 		{
 			bit = 128u << tracker->index;
 			trackers[tracker->index] = tracker->value;
@@ -59,8 +83,8 @@ static InputSample ReadInput(const control::Message& applied)
 			throw std::runtime_error("Frame history repeats a device input");
 		devices |= bit;
 	}
-	sample.complete = devices == (1u << 11) - 1;
-	if (trackerSlots == (1u << trackers.size()) - 1)
+	sample.complete = collection ? devices == 127 : devices == (1u << 11) - 1;
+	if (collection || trackerSlots == 15)
 		sample.trackers = std::make_shared<const TrackerDevices>(trackers);
 	if (const auto* context = applied.Find(tag::InputContext))
 		sample.context = std::make_shared<const std::vector<std::byte>>(context->value);
@@ -172,6 +196,7 @@ void FrameHistoryFeed::Append(const control::Message& message, const control::Me
 			auto sample = ReadInput(Nested(applied));
 			sample.identity = {m_scope.session, m_scope.generation, id};
 			sample.epoch = m_scope.epoch;
+			sample.runtimeTime = RuntimeTime{Duration{timestamp}};
 			for (std::size_t hand = 0; hand < 2; ++hand)
 				hands[hand] = static_cast<std::uint8_t>(std::lround(Intensity(sample.controls[hand]) * 255));
 			constexpr auto Pointing = 1u << static_cast<int>(ControlChannel::Head) |

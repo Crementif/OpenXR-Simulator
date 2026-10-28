@@ -19,6 +19,8 @@ class ChildProcess
 	ChildProcess& operator=(const ChildProcess&) = delete;
 	std::uint64_t Id() const noexcept;
 	std::optional<int> PollExit();
+	// Requests normal shutdown; callers must still observe actual process exit.
+	void RequestClose();
 
   private:
 	ChildProcess();

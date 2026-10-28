@@ -19,6 +19,10 @@ void InspectionWorkspace::SetScope(PanelScope scope, bool clearSelection)
 	if (clearSelection)
 		m_selectedLocal = m_selectedId = 0;
 }
+void InspectionWorkspace::SetCapacity(std::size_t capacity) noexcept
+{
+	m_capacity = capacity;
+}
 InspectionCapture* InspectionWorkspace::Find(std::uint64_t id)
 {
 	const auto found = std::find_if(m_captures.begin(), m_captures.end(),
@@ -39,7 +43,7 @@ bool InspectionWorkspace::Add(std::uint64_t id, std::uint64_t frame)
 			capture->frame = frame;
 		return true;
 	}
-	if (m_captures.size() >= SnapshotBudget::Capacity())
+	if (m_captures.size() >= m_capacity.value_or(SnapshotBudget::Capacity()))
 	{
 		const auto oldest = std::find_if(m_captures.begin(), m_captures.end(),
 										 [&](const auto& capture)

@@ -52,10 +52,10 @@ struct SpatialScene
 {
 	static SpatialScene FromTracking(const TrackingSnapshot& tracking);
 	XrPosef root{};
-	std::array<XrPosef, 7> devices{};
-	std::array<bool, 7> available{};
+	std::array<XrPosef, MaxTrackerDevices + 3> devices{};
+	std::array<bool, MaxTrackerDevices + 3> available{};
 	// Marker letters; trackers use their role letter.
-	std::array<char, 7> labels{'H', 'L', 'R', 'T', 'T', 'T', 'T'};
+	std::array<char, MaxTrackerDevices + 3> labels{'H', 'L', 'R', 'T', 'T', 'T', 'T'};
 	BodySample body;
 	std::optional<XrPosef> gaze;
 	std::optional<FrameView> eye;
@@ -75,11 +75,12 @@ struct RigViewState
 	int joint = -1;
 	// Last drawn layout: the widget rectangle and each device's projected point.
 	ImVec2 minimum{}, size{};
-	std::array<ImVec2, 7> points{};
+	std::array<ImVec2, MaxTrackerDevices + 3> points{};
 };
 // header: the fraction of the view height covered by the view buttons.
 FrameView RigCamera(const RigViewState& state, const SpatialScene& scene, float aspect, float header = 0);
 SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& scene, int& selected,
-						  const std::array<bool, 7>& editable, ImVec2 size, const SpatialScene* ghost = nullptr);
+						  const std::array<bool, MaxTrackerDevices + 3>& editable, ImVec2 size,
+						  const SpatialScene* ghost = nullptr);
 ImU32 DeviceColor(int device, float alpha = 1);
 } // namespace simxr::app

@@ -14,6 +14,7 @@ namespace simxr::app::windows
 std::wstring Wide(std::string_view value);
 std::string Utf8(std::wstring_view value);
 std::string Environment(const char* key);
+std::wstring LoaderManifestPath(const std::wstring& path);
 std::wstring Quote(std::wstring_view argument);
 std::runtime_error Error(const char* operation, DWORD code = GetLastError());
 class Handle

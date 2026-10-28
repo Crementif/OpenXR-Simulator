@@ -25,6 +25,37 @@ static std::filesystem::path DataDirectory(const LaunchProfile& profile)
 	throw std::runtime_error("Launch attachment needs an explicit absolute SIMXR_DATA_DIR or HOME");
 }
 
+std::optional<std::filesystem::path> LaunchRuntimeDataDirectory(const LaunchProfile& profile)
+{
+	try
+	{
+		auto path = DataDirectory(profile);
+		if (path.is_relative())
+			path = std::filesystem::path(profile.workingDirectory) / path;
+		if (!path.is_absolute())
+			return {};
+		return path;
+	}
+	catch (const std::exception&)
+	{
+		return {};
+	}
+}
+
+std::string LaunchRuntimeEndpoint(const LaunchProfile& profile, std::uint64_t process)
+{
+	if (const auto custom = Environment(profile, "SIMXR_CONTROL_SOCKET"); !custom.empty())
+	{
+		if (!std::filesystem::path(custom).is_absolute())
+			throw std::invalid_argument("The launched runtime endpoint must be absolute");
+		return custom;
+	}
+	const auto directory = DataDirectory(profile);
+	if (!directory.is_absolute())
+		throw std::invalid_argument("The launched runtime data directory must be absolute");
+	return (directory / ("control." + std::to_string(process) + ".sock")).string();
+}
+
 void LaunchAttachment::Initialize(const LaunchProfile& profile)
 {
 	m_customEndpoint = Environment(profile, "SIMXR_CONTROL_SOCKET");
@@ -42,7 +73,8 @@ void LaunchAttachment::Initialize(const LaunchProfile& profile)
 	if (error && error != std::errc::no_such_file_or_directory)
 		throw std::filesystem::filesystem_error("Cannot enumerate launch endpoints", m_directory, error);
 	if (!m_customEndpoint.empty() &&
-		(!std::filesystem::path(m_customEndpoint).is_absolute() || std::filesystem::exists(m_customEndpoint)))
+		(!std::filesystem::path(m_customEndpoint).is_absolute() ||
+		 (std::filesystem::exists(m_customEndpoint) && m_customEndpoint != m_replacedEndpoint)))
 		throw std::runtime_error("Launch attachment requires a new absolute local control endpoint");
 }
 std::string LaunchAttachment::ExpectedEndpoint(std::uint64_t process) const

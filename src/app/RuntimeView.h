@@ -1,8 +1,9 @@
 #pragma once
 
-#include "app/services/ShellState.h"
 #include "app/services/SessionView.h"
+#include "app/services/ShellState.h"
 
+#include "simulation/TrackingTypes.h"
 #include <array>
 #include <cstdint>
 
@@ -12,11 +13,11 @@ namespace simxr::app
 struct RuntimeView : SessionView
 {
 	ShellRect rotationBall, rigView;
-	std::array<ShellRect, 7> markers{};
+	std::array<ShellRect, MaxTrackerDevices + 3> markers{};
 	// Device points in the rig view, as zero-size rectangles for hit tests and QA.
-	std::array<ShellRect, 7> rigDevices{};
+	std::array<ShellRect, MaxTrackerDevices + 3> rigDevices{};
 	bool rigExpanded = false;
-	bool recording = false, recordingBusy = false, recordingOverflow = false;
+	bool recording = false, recordingBusy = false, recordingOverflow = false, recordingStopping = false;
 	std::uint64_t recordedChanges = 0;
 };
 } // namespace simxr::app

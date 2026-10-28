@@ -262,6 +262,20 @@ void ConnectionAndHandles()
 	Require(connection.Connect(server.Path()) == 0 && connection.Submit(Packet(wire::OpCode::Sessions)) == 0,
 			"Closed asynchronous connection reopened admission");
 }
+void ExpectedPeerIdentity()
+{
+	Directory directory;
+	wire::test::Fixture fixture;
+	wire::LocalControlServer server{fixture.service, (directory.path / "peer.sock").string()};
+	app::RuntimeConnection connection;
+	connection.Connect(server.Path(), static_cast<std::uint64_t>(::getpid()) + 1);
+	Eventually([&] { return connection.Snapshot().state == app::RuntimeConnectionState::Failed; },
+			   "A connection to a different process was accepted");
+	Require(connection.Snapshot().detail.find("different process") != std::string::npos,
+			"Peer identity failure was not reported");
+	const auto epoch = connection.Connect(server.Path(), static_cast<std::uint64_t>(::getpid()));
+	Connected(connection, epoch);
+}
 void BoundedQueueAndExactRetry()
 {
 	Directory directory;
@@ -401,7 +415,7 @@ void ResponsiveShutdownAndDeadline()
 					"Deadline discarded diagnostic/Hello or silently resubmitted queued work");
 			Require(replies[0].error == "Control request 3 (opcode " +
 											std::to_string(static_cast<std::uint16_t>(wire::OpCode::RetainImage)) +
-											") exceeded the 60 ms exchange deadline; connection closed" &&
+											") exceeded the 60 ms exchange deadline. Connection closed" &&
 						connection.Snapshot().detail == replies[0].error,
 					"Deadline omitted the stalled request identity, opcode or overall deadline");
 		}
@@ -549,6 +563,7 @@ int main()
 	{
 #if defined(__linux__)
 		ConnectionAndHandles();
+		ExpectedPeerIdentity();
 		BoundedQueueAndExactRetry();
 		ReconnectRejectsStaleReplies();
 		ResponsiveShutdownAndDeadline();

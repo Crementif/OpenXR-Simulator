@@ -47,6 +47,10 @@ class PreviewHistory
 	void Draw(const PreviewShot& shot, float width, ImVec4 crop = {0, 0, 1, 1});
 	void DrawThumbnail(const PreviewShot& shot, ImVec2 minimum, ImVec2 maximum, ImVec4 crop);
 	void BeginFrame();
+	void Poll();
+	void BeginRetirement();
+	bool RetirementComplete() const noexcept;
+	void PreserveRetired() noexcept;
 	void Record(VkCommandBuffer command);
 	void Submitted(std::uint64_t serial);
 	std::uint64_t Bytes() const noexcept;

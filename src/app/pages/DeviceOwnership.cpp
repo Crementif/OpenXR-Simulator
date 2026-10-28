@@ -67,9 +67,8 @@ void DeviceControlPanel::DrawOwnership()
 		m_edit = ReleaseManualInputs{};
 	ImGui::TextUnformatted("Input sources");
 }
-void DeviceControlPanel::DrawTracking(DevicePage page, float titleWidth)
+void DeviceControlPanel::DrawTracking(DevicePage page)
 {
-	// A device's failure scenarios as one switch: lost tracking, or the device gone.
 	std::optional<FailureScenario> lost, off;
 	switch (page)
 	{
@@ -113,29 +112,43 @@ void DeviceControlPanel::DrawTracking(DevicePage page, float titleWidth)
 	const int last = static_cast<int>(labels.size()) - 1;
 	const int current = active(off) ? last : active(lost) ? 1 : 0;
 	const auto channel = ScenarioInputChannel(*off);
-	float labelWidth = 0;
-	for (const auto* label : labels)
-		labelWidth = std::max(labelWidth, ImGui::CalcTextSize(label).x);
-	const auto& style = ImGui::GetStyle();
-	const float width = (labelWidth + style.FramePadding.x * 2) * labels.size();
-	const float available = ImGui::GetContentRegionAvail().x;
-	if (titleWidth + width + ImGui::GetFrameHeight() + style.ItemSpacing.x * 2 <= available)
-		ImGui::SameLine(ImGui::GetCursorPosX() + available - ImGui::GetFrameHeight() - style.ItemSpacing.x - width);
-	ImGui::BeginDisabled(!m_configurationLoaded || !CanControl(channel));
+	const bool ready = m_configurationLoaded && CanControl(channel);
+	const float height = ImGui::GetFrameHeight();
+	const float width = height + ImGui::CalcTextSize(labels[current]).x + ImGui::GetStyle().FramePadding.x;
+	const float available = ImGui::GetContentRegionAvail().x - height - ImGui::GetStyle().ItemSpacing.x;
+	const Icon icon = current == last ? Icon::Close : current == 1 ? Icon::Warning : Icon::Live;
+	const ImU32 tint = current == last ? theme::TextDim : current == 1 ? theme::Warn : theme::Ok;
 	ImGui::PushID("Tracking");
-	int choice = -1;
-	if (width <= available)
-		choice = Segmented(labels, current, width, tips);
-	else
+	ImGui::PushID(static_cast<int>(page));
+	ImGui::BeginDisabled(!ready);
+	if (IconButton("Device state", icon, nullptr, ImGui::IsPopupOpen("State"),
+				   width <= available ? labels[current] : nullptr, tint))
+		ImGui::OpenPopup("State");
+	ImGui::EndDisabled();
+	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
 	{
-		ImGui::SetNextItemWidth(available);
-		int selected = current;
-		if (ImGui::Combo("##State", &selected, labels.data(), static_cast<int>(labels.size())))
-			choice = selected;
-		ImGui::SetItemTooltip("%s", tips[current]);
+		const char* hint = !m_configurationLoaded ? "Waiting for runtime values."
+						 : !ready ? "Another source controls this device."
+								  : "Change connection and tracking state.";
+		ImGui::SetTooltip("%s. %s", labels[current], hint);
+	}
+	int choice = -1;
+	ImGui::SetNextWindowPos({ImGui::GetItemRectMin().x, ImGui::GetItemRectMax().y + ImGui::GetStyle().ItemSpacing.y},
+							ImGuiCond_Appearing);
+	if (ImGui::BeginPopup("State"))
+	{
+		ImGui::BeginDisabled(!ready);
+		for (int index = 0; index < static_cast<int>(labels.size()); ++index)
+		{
+			if (ImGui::MenuItem(labels[index], nullptr, current == index))
+				choice = index;
+			ImGui::SetItemTooltip("%s", tips[index]);
+		}
+		ImGui::EndDisabled();
+		ImGui::EndPopup();
 	}
 	ImGui::PopID();
-	ImGui::EndDisabled();
+	ImGui::PopID();
 	if (choice < 0 || choice == current || !CanControl(channel))
 		return;
 	std::vector<SimulationCommand> commands{TakeControl{channel, false}};

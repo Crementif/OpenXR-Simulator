@@ -3,6 +3,8 @@
 #include "app/platform/FileStorage.h"
 #include "app/services/RecordingController.h"
 #include "app/services/Utf8Path.h"
+#include "automation/RecordingArchive.h"
+#include "automation/RecordingRange.h"
 
 #include <fstream>
 #include <stdexcept>
@@ -86,6 +88,14 @@ bool LibraryCatalog::Delete(std::string path)
 {
 	return Submit({LibraryAction::Delete, std::move(path), {}});
 }
+bool LibraryCatalog::ExportRange(std::string path, std::string name, std::uint64_t first, std::uint64_t last)
+{
+	return Submit({LibraryAction::ExportRange, std::move(path), std::move(name), first, last});
+}
+bool LibraryCatalog::ReadEvidence(std::string path, std::uint64_t cursor)
+{
+	return Submit({LibraryAction::Evidence, std::move(path), {}, cursor});
+}
 bool LibraryCatalog::Busy() const
 {
 	std::lock_guard lock(m_mutex);
@@ -98,7 +108,7 @@ std::optional<LibraryResult> LibraryCatalog::TakeResult()
 	m_changed.notify_all();
 	return result;
 }
-void LibraryCatalog::Scan(LibraryResult& result, std::stop_token stop) const
+void LibraryCatalog::Scan(LibraryResult& result, std::stop_token stop)
 {
 	std::vector<LibraryEntry> entries;
 	constexpr std::size_t capacity = 512;
@@ -112,7 +122,8 @@ void LibraryCatalog::Scan(LibraryResult& result, std::stop_token stop) const
 		{
 			if (stop.stop_requested())
 				return;
-			if (file.path().extension() != ".luau" || !file.is_regular_file())
+			const bool archive = file.path().extension() == ".simxrtake" && file.is_directory() && !file.is_symlink();
+			if (!archive && (file.path().extension() != ".luau" || !file.is_regular_file()))
 				continue;
 			if (entries.size() == capacity)
 			{
@@ -122,9 +133,52 @@ void LibraryCatalog::Scan(LibraryResult& result, std::stop_token stop) const
 			LibraryEntry entry;
 			entry.path = PathText(file.path());
 			entry.name = PathText(file.path().stem());
-			entry.modified = file.last_write_time();
-			entry.bytes = file.file_size();
-			ReadEntry(entry, file.path());
+			entry.archive = archive;
+			if (archive)
+			{
+				entry.take = true;
+				try
+				{
+					const auto input = file.path() / "input.simxr";
+					entry.modified = std::filesystem::last_write_time(input);
+					entry.bytes = std::filesystem::file_size(input);
+					const auto cached = std::ranges::find_if(m_archiveCache,
+															 [&](const auto& previous)
+															 {
+																 return previous.path == entry.path &&
+																		previous.bytes == entry.bytes &&
+																		previous.modified == entry.modified;
+															 });
+					if (cached != m_archiveCache.end())
+					{
+						entries.push_back(*cached);
+						continue;
+					}
+					automation::RecordingArchiveReader reader(file.path());
+					entry.seed = reader.State().origin.seed;
+					entry.firstFrame = entry.lastFrame = reader.State().origin.originFrame.value;
+					while (const auto page = reader.Next(stop))
+					{
+						if (stop.stop_requested())
+							return;
+						for (const auto& transaction : page->recording.transactions)
+							if (transaction.phase == "applied")
+								entry.lastFrame = std::max(entry.lastFrame, transaction.frame.value);
+					}
+					if (!reader.State().complete)
+						entry.error = "Take is still recording or incomplete";
+				}
+				catch (const std::exception& error)
+				{
+					entry.error = error.what();
+				}
+			}
+			else
+			{
+				entry.modified = file.last_write_time();
+				entry.bytes = file.file_size();
+				ReadEntry(entry, file.path());
+			}
 			entries.push_back(std::move(entry));
 		}
 		if (result.limited)
@@ -135,6 +189,10 @@ void LibraryCatalog::Scan(LibraryResult& result, std::stop_token stop) const
 					  {
 						  return a.modified == b.modified ? a.path < b.path : a.modified > b.modified;
 					  });
+	m_archiveCache.clear();
+	for (const auto& entry : entries)
+		if (entry.archive && entry.error.empty())
+			m_archiveCache.push_back(entry);
 	result.entries = std::move(entries);
 }
 void LibraryCatalog::Run(std::stop_token stop)
@@ -167,21 +225,51 @@ void LibraryCatalog::Run(std::stop_token stop)
 					throw std::invalid_argument("Invalid library file path");
 				const auto source = Utf8Path(result.path);
 				const auto status = std::filesystem::symlink_status(source);
-				if (!std::filesystem::is_regular_file(status) && !std::filesystem::is_symlink(status))
+				const bool archive = source.extension() == ".simxrtake" && std::filesystem::is_directory(status);
+				if (!std::filesystem::is_regular_file(status) && !std::filesystem::is_symlink(status) && !archive)
 					throw std::runtime_error("The selected file is missing or is a directory");
-				if (job.action == LibraryAction::Rename)
+				if (job.action == LibraryAction::Evidence)
+				{
+					if (!archive)
+						throw std::runtime_error("SDK evidence requires an archive");
+					result.evidence = automation::ReadRecordingEvidence(source, job.first, stop);
+				}
+				else if (job.action == LibraryAction::Rename)
 				{
 					if (!ValidName(job.name))
 						throw std::invalid_argument("Choose a valid file name without path separators");
-					const auto destination = source.parent_path() / Utf8Path(job.name + ".luau");
+					const auto destination =
+						source.parent_path() / Utf8Path(job.name + (archive ? ".simxrtake" : ".luau"));
 					result.renamed = PathText(destination);
 					RenameFileWithoutReplacing(source, destination);
 				}
+				else if (job.action == LibraryAction::ExportRange)
+				{
+					if (!archive || !ValidName(job.name))
+						throw std::invalid_argument("Choose an archive and a valid output name");
+					const auto destination = source.parent_path() / Utf8Path(job.name + ".luau");
+					const auto range =
+						automation::ReadRecordingRange(source, FrameId{job.first}, FrameId{job.last}, stop);
+					if (stop.stop_requested())
+						throw std::runtime_error("Range export cancelled");
+					SaveRecording(destination, range, false);
+					result.renamed = PathText(destination);
+				}
+				else if (archive)
+				{
+					for (const auto& child : std::filesystem::directory_iterator(source))
+						if (child.path().filename() != "input.simxr" || !child.is_regular_file() || child.is_symlink())
+							throw std::runtime_error("Take folder contains other files; remove it manually");
+					std::filesystem::remove(source / "input.simxr");
+					if (!std::filesystem::remove(source))
+						throw std::runtime_error("Cannot remove take folder");
+				}
 				else if (!std::filesystem::remove(source))
 					throw std::runtime_error("The selected file no longer exists");
-				result.changed = true;
+				result.changed = job.action != LibraryAction::Evidence;
 			}
-			Scan(result, stop);
+			if (job.action != LibraryAction::Evidence)
+				Scan(result, stop);
 		}
 		catch (...)
 		{

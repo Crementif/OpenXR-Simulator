@@ -111,6 +111,7 @@ struct ShellState
 	bool library = false;
 	// Set by an empty-state button; the top bar opens its app picker.
 	bool openAppPicker = false;
+	bool addApplication = false;
 };
 // Returning to the live edge ends a frame selection (and, with range, a range
 // selection) and shows the device page that was open before.

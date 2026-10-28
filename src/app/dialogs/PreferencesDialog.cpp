@@ -1,5 +1,7 @@
 #include "app/dialogs/PreferencesDialog.h"
 #include "Pch.h"
+#include "simxr/Version.h"
+#include "app/platform/PackageDocumentation.h"
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
@@ -8,7 +10,8 @@ namespace simxr::app
 {
 bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirty, std::uint64_t keptBytes,
 							 std::uint64_t keptBudget, std::uint64_t ramBytes, std::uint64_t ramBudget,
-							 const std::string& historyError)
+							 const std::string& historyError, std::uint64_t tabSnapshots, std::uint64_t allSnapshots,
+							 McpUiState* mcp, UpdateUiState* update)
 {
 	const bool wasOpen = open;
 	const auto& io = ImGui::GetIO();
@@ -24,7 +27,7 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 	const auto* viewport = ImGui::GetMainViewport();
 	const auto available = viewport->WorkSize;
 	ImGui::SetNextWindowPos(viewport->GetWorkCenter(), ImGuiCond_Always, {.5f, .5f});
-	ImGui::SetNextWindowSize({std::min(620 * settings.scale, available.x), std::min(500 * settings.scale, available.y)},
+	ImGui::SetNextWindowSize({std::min(620 * settings.scale, available.x), std::min(650 * settings.scale, available.y)},
 							 ImGuiCond_FirstUseEver);
 	ImGui::SetNextWindowSizeConstraints(
 		{std::min(400 * settings.scale, available.x), std::min(260 * settings.scale, available.y)}, available);
@@ -39,67 +42,77 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 	const float contentHeight = std::max(1.0f, ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing());
 	if (ImGui::BeginChild("Preference contents", {0, contentHeight}))
 	{
-		const float labelWidth =
-			std::max(ImGui::CalcTextSize("History GPU (MiB)").x, ImGui::CalcTextSize("Kept previews").x);
-		ImGui::PushItemWidth(
-			std::max(1.f, ImGui::GetContentRegionAvail().x - labelWidth - ImGui::GetStyle().ItemInnerSpacing.x));
-		if (ImGui::SliderFloat("UI scale", &settings.scale, 0.75f, 2.5f, "%.2f"))
-			dirty = true;
-		int budget = static_cast<int>(settings.snapshotBudgetMiB);
-		if (ImGui::SliderInt("Snapshots (MiB)", &budget, SnapshotBudget::MinMiB, SnapshotBudget::MaxMiB))
+		if (ImGui::BeginTabBar("Preference pages", ImGuiTabBarFlags_FittingPolicyScroll))
 		{
-			settings.snapshotBudgetMiB = static_cast<std::uint32_t>(budget);
-			dirty = true;
-		}
-		int history = static_cast<int>(settings.previewBudgetMiB);
-		if (ImGui::InputInt("History GPU (MiB)", &history, 64, 256))
-		{
-			settings.previewBudgetMiB = static_cast<std::uint32_t>(std::clamp(history, int(FramePreviewHistory::MinMiB),
-																			  int(FramePreviewHistory::MaxMiB))) /
-										4 * 4;
-			dirty = true;
-		}
-		ImGui::SetItemTooltip("Memory for recent frames: 64 to 16384 MiB. Changes are saved automatically.\n"
-							  "About one stereo preview per 4 MiB. Timeline thumbnails use another 32 MiB.");
-		int ram = static_cast<int>(settings.previewRamMiB);
-		if (ImGui::InputInt("History RAM (MiB)", &ram, 64, 256))
-		{
-			settings.previewRamMiB = static_cast<std::uint32_t>(std::clamp(ram, 64, 16384)) / 4 * 4;
-			dirty = true;
-		}
-		ImGui::SetItemTooltip("Older frames are compressed with H.264 in RAM. When memory fills, "
-							  "the oldest frames are removed. Changes are saved automatically.");
-		if (keptBudget)
-		{
-			const auto usage = std::to_string(keptBytes >> 20) + " / " + std::to_string(keptBudget >> 20) + " MiB";
-			ImGui::ProgressBar(static_cast<float>(keptBytes) / static_cast<float>(keptBudget),
-							   {ImGui::CalcItemWidth(), 0}, usage.c_str());
-			ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
-			ImGui::TextUnformatted("GPU used");
-			ImGui::SetItemTooltip(
-				"Keep every frame until memory fills, then remove the oldest.");
-		}
-		if (ramBudget)
-		{
-			const auto usage = std::to_string(ramBytes >> 20) + " / " + std::to_string(ramBudget >> 20) + " MiB";
-			ImGui::ProgressBar(static_cast<float>(ramBytes) / static_cast<float>(ramBudget),
-							   {ImGui::CalcItemWidth(), 0}, usage.c_str());
-			ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
-			ImGui::TextUnformatted("RAM used");
-		}
-		if (!historyError.empty())
-			ImGui::TextWrapped("History: %s", historyError.c_str());
-		ImGui::PopItemWidth();
-		if (ImGui::Button("Reset layout"))
-		{
-			ResetLayout(settings);
-			dirty = true;
-		}
-		ImGui::SetItemTooltip("Restore panel sizes and visibility.\n"
-							  "Hide the timeline with Ctrl+T, the inspector with Ctrl+I. F11 shows only the image.");
-		if (ImGui::BeginTabBar("Preference pages"))
-		{
-			if (ImGui::BeginTabItem("Keyboard & mouse"))
+			if (ImGui::BeginTabItem("General"))
+			{
+				const float labelWidth =
+					std::max(ImGui::CalcTextSize("History GPU (MiB)").x, ImGui::CalcTextSize("Kept previews").x);
+				ImGui::PushItemWidth(
+					std::max(1.f, ImGui::GetContentRegionAvail().x - labelWidth - ImGui::GetStyle().ItemInnerSpacing.x));
+				if (ImGui::SliderFloat("UI scale", &settings.scale, 0.75f, 2.5f, "%.2f"))
+					dirty = true;
+				int budget = static_cast<int>(settings.snapshotBudgetMiB);
+				if (ImGui::SliderInt("Snapshots (MiB)", &budget, SnapshotBudget::MinMiB, SnapshotBudget::MaxMiB))
+				{
+					settings.snapshotBudgetMiB = static_cast<std::uint32_t>(budget);
+					dirty = true;
+				}
+				ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+				ImGui::TextWrapped("App snapshots: %llu MiB. All apps: %llu / %u MiB",
+								   static_cast<unsigned long long>(tabSnapshots >> 20),
+								   static_cast<unsigned long long>(allSnapshots >> 20), settings.snapshotBudgetMiB);
+				ImGui::PopStyleColor();
+				ImGui::SetItemTooltip("Estimated memory reserved for snapshot copies, including copies still retiring.");
+				int history = static_cast<int>(settings.previewBudgetMiB);
+				if (ImGui::InputInt("History GPU (MiB)", &history, 64, 256))
+				{
+					settings.previewBudgetMiB = static_cast<std::uint32_t>(std::clamp(history, int(FramePreviewHistory::MinMiB),
+																					  int(FramePreviewHistory::MaxMiB))) /
+												4 * 4;
+					dirty = true;
+				}
+				ImGui::SetItemTooltip("Memory for recent frames: 64 to 16384 MiB. Changes are saved automatically.\n"
+									  "About one stereo preview per 4 MiB. Timeline thumbnails use another 32 MiB.");
+				int ram = static_cast<int>(settings.previewRamMiB);
+				if (ImGui::InputInt("History RAM (MiB)", &ram, 64, 256))
+				{
+					settings.previewRamMiB = static_cast<std::uint32_t>(std::clamp(ram, 64, 16384)) / 4 * 4;
+					dirty = true;
+				}
+				ImGui::SetItemTooltip("Older frames are compressed with H.264 in RAM. When memory fills, "
+									  "the oldest frames are removed. Changes are saved automatically.");
+				if (keptBudget)
+				{
+					const auto usage = std::to_string(keptBytes >> 20) + " / " + std::to_string(keptBudget >> 20) + " MiB";
+					ImGui::ProgressBar(static_cast<float>(keptBytes) / static_cast<float>(keptBudget),
+									   {ImGui::CalcItemWidth(), 0}, usage.c_str());
+					ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+					ImGui::TextUnformatted("GPU used");
+					ImGui::SetItemTooltip(
+						"Keep every frame until memory fills, then remove the oldest.");
+				}
+				if (ramBudget)
+				{
+					const auto usage = std::to_string(ramBytes >> 20) + " / " + std::to_string(ramBudget >> 20) + " MiB";
+					ImGui::ProgressBar(static_cast<float>(ramBytes) / static_cast<float>(ramBudget),
+									   {ImGui::CalcItemWidth(), 0}, usage.c_str());
+					ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+					ImGui::TextUnformatted("RAM used");
+				}
+				if (!historyError.empty())
+					ImGui::TextWrapped("History: %s", historyError.c_str());
+				ImGui::PopItemWidth();
+				if (ImGui::Button("Reset layout"))
+				{
+					ResetLayout(settings);
+					dirty = true;
+				}
+				ImGui::SetItemTooltip("Restore panel sizes and visibility.\n"
+									  "Hide the timeline with Ctrl+T, the inspector with Ctrl+I. F11 shows only the image.");
+				ImGui::EndTabItem();
+			}
+			if (ImGui::BeginTabItem("Keys & mouse"))
 			{
 				keyboardVisible = true;
 				overBinding = DrawKeyboard(settings, dirty);
@@ -108,6 +121,123 @@ bool PreferencesDialog::Draw(CompanionSettings& settings, bool& open, bool& dirt
 			if (ImGui::BeginTabItem("Gamepad"))
 			{
 				DrawGamepad(settings, dirty);
+				ImGui::EndTabItem();
+			}
+			if (ImGui::BeginTabItem("MCP"))
+			{
+				if (!mcp || !mcp->available)
+					ImGui::TextWrapped("MCP controls are unavailable in this session.");
+				else
+				{
+					if (ImGui::Checkbox("Enable MCP on startup", &settings.mcpEnabled))
+						dirty = true;
+					ImGui::SetItemTooltip("Start the local MCP service with the simulator. Changes take effect now.");
+					if (mcp->stopping)
+						ImGui::TextUnformatted("Status: stopping");
+					else if (mcp->listening)
+					{
+						ImGui::Text("Status: listening (%zu client %s)", mcp->sessions,
+									mcp->sessions == 1 ? "session" : "sessions");
+						ImGui::SetItemTooltip("Sessions may remain listed until they are closed or expire.");
+						if (mcp->startedForSession)
+							ImGui::TextWrapped("Enabled for this session.");
+						if (!mcp->discoverable)
+							ImGui::TextWrapped("This development endpoint is not discoverable by the connector.");
+						if (ImGui::Button("Stop MCP"))
+						{
+							dirty |= settings.mcpEnabled;
+							settings.mcpEnabled = false;
+							mcp->stopRequested = true;
+						}
+					}
+					else
+					{
+						ImGui::TextUnformatted(mcp->error.empty() ? "Status: off" : "Status: unavailable");
+						if (!mcp->error.empty())
+							ImGui::TextWrapped("%s", mcp->error.c_str());
+						if (ImGui::Button(mcp->error.empty() ? "Start MCP" : "Retry MCP"))
+						{
+							dirty |= !settings.mcpEnabled;
+							settings.mcpEnabled = true;
+							mcp->retryRequested = true;
+						}
+					}
+					ImGui::SetNextItemWidth(std::max(1.f, std::min(240 * settings.scale, ImGui::GetContentRegionAvail().x -
+						ImGui::CalcTextSize("Client").x - ImGui::GetStyle().ItemInnerSpacing.x)));
+					ImGui::Combo("Client", &m_mcpClient, "Generic JSON\0Codex\0");
+					const auto& configuration = m_mcpClient == 1 ? mcp->codexConfiguration : mcp->configuration;
+					ImGui::BeginDisabled(configuration.empty());
+					if (ImGui::Button("Copy MCP configuration"))
+						m_clipboardError = SDL_SetClipboardText(configuration.c_str()) ? "" : SDL_GetError();
+					ImGui::EndDisabled();
+					ImGui::SetItemTooltip("Copy a configuration targeting this app executable and its connector.");
+					if (!mcp->configurationError.empty())
+						ImGui::TextWrapped("%s", mcp->configurationError.c_str());
+					if (!m_clipboardError.empty())
+						ImGui::TextWrapped("Clipboard: %s", m_clipboardError.c_str());
+					if (!mcp->httpConfiguration.empty() && ImGui::TreeNode("Advanced HTTP"))
+					{
+						ImGui::TextWrapped("Direct HTTP is local to this computer.");
+						if (ImGui::Button("Copy HTTP connection"))
+							m_clipboardError = SDL_SetClipboardText(mcp->httpConfiguration.c_str()) ? "" : SDL_GetError();
+						ImGui::SetItemTooltip("Includes a private credential. Share it only with trusted clients.");
+						ImGui::TreePop();
+					}
+				}
+				ImGui::EndTabItem();
+			}
+			if (ImGui::BeginTabItem("About"))
+			{
+				ImGui::TextUnformatted("OpenXR Simulator");
+				ImGui::Text("Version %s", simxr::Version);
+				ImGui::TextWrapped("A launcher and simulator for OpenXR applications.");
+				ImGui::TextWrapped("MIT license. Bundled dependencies retain their own licenses.");
+				if (ImGui::Button("Documentation"))
+					m_urlError = OpenPackageDocument(PackageDocument::Guide);
+				const auto right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+				const auto licenseWidth = ImGui::CalcTextSize("Licenses").x + 2 * ImGui::GetStyle().FramePadding.x;
+				if (right - ImGui::GetItemRectMax().x >= licenseWidth + ImGui::GetStyle().ItemSpacing.x)
+					ImGui::SameLine();
+				if (ImGui::Button("Licenses"))
+					m_urlError = OpenPackageDocument(PackageDocument::Licenses);
+				if (ValidReleaseRepository(simxr::ReleaseRepository))
+				{
+					if (ImGui::Button("Releases"))
+					{
+						const auto url = "https://github.com/" + std::string(simxr::ReleaseRepository) + "/releases";
+						m_urlError = SDL_OpenURL(url.c_str()) ? "" : SDL_GetError();
+					}
+				}
+				else
+					ImGui::TextWrapped("Release repository is not configured for this build.");
+				if (ImGui::Checkbox("Check for updates at startup", &settings.autoUpdateCheck))
+					dirty = true;
+				ImGui::SetItemTooltip("Contact the configured GitHub repository when the simulator starts.");
+				if (!update)
+					ImGui::TextWrapped("Update checks are unavailable in this session.");
+				else
+				{
+					ImGui::BeginDisabled(update->result.status == UpdateStatus::Checking);
+					if (ImGui::Button("Check for updates"))
+						update->checkRequested = true;
+					ImGui::EndDisabled();
+					switch (update->result.status)
+					{
+					case UpdateStatus::Idle: break;
+					case UpdateStatus::Checking: ImGui::TextUnformatted("Checking for updates…"); break;
+					case UpdateStatus::Current: ImGui::TextUnformatted("No newer release found."); break;
+					case UpdateStatus::Available:
+						ImGui::Text("Version %s is available.", update->result.version.c_str());
+						if (ImGui::Button("Open release"))
+							m_urlError = SDL_OpenURL(update->result.releaseUrl.c_str()) ? "" : SDL_GetError();
+						break;
+					case UpdateStatus::Unavailable:
+						ImGui::TextWrapped("Update check unavailable: %s", update->result.error.c_str());
+						break;
+					}
+				}
+				if (!m_urlError.empty())
+					ImGui::TextWrapped("Cannot open link: %s", m_urlError.c_str());
 				ImGui::EndTabItem();
 			}
 			ImGui::EndTabBar();

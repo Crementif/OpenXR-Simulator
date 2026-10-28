@@ -3,6 +3,7 @@
 #include "app/services/RuntimePanelRequests.h"
 
 #include <map>
+#include <optional>
 #include <span>
 
 namespace simxr::app
@@ -22,6 +23,7 @@ class InspectionWorkspace
   public:
 	explicit InspectionWorkspace(RuntimePanelRequests& requests);
 	void SetScope(PanelScope scope, bool clearSelection = true);
+	void SetCapacity(std::size_t capacity) noexcept;
 	bool Add(std::uint64_t capture, std::uint64_t frame);
 	// Remote eviction stops new reads but preserves already-retained CPU data.
 	void MarkUnavailable(std::uint64_t capture);
@@ -47,6 +49,7 @@ class InspectionWorkspace
 	void ReleaseInspection(InspectionCapture& capture);
 	RuntimePanelRequests& m_requests;
 	PanelScope m_scope;
+	std::optional<std::size_t> m_capacity;
 	std::vector<InspectionCapture> m_captures;
 	std::map<std::uint64_t, control::Message> m_revisions;
 	std::uint64_t m_nextLocal = 1, m_selectedLocal = 0, m_selectedId = 0;

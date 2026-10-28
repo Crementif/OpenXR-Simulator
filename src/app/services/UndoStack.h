@@ -50,7 +50,10 @@ class UndoStack
 	{
 		State before;
 		std::array<bool, ControlChannelCount> channels{};
-		std::array<bool, 4> trackers{};
+		std::array<bool, MaxTrackerDevices> trackers{};
+		std::array<TrackerIdentity, MaxTrackerDevices> trackerIdentities{};
+		std::array<TrackerSourcePath, MaxTrackerDevices> trackerSources{};
+		bool trackerCollection = false;
 		std::chrono::steady_clock::time_point time;
 		std::string label;
 		std::string description;

@@ -163,7 +163,8 @@ void ManualInputController::RunChecked()
 												  {
 													  return std::holds_alternative<SetHeadPose>(command) ||
 															 std::holds_alternative<SetControllerPose>(command) ||
-															 std::holds_alternative<SetTracker>(command);
+															 std::holds_alternative<SetTracker>(command) ||
+															 std::holds_alternative<SetTrackers>(command);
 												  });
 					}
 				}

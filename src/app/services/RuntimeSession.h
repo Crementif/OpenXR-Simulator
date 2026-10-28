@@ -33,7 +33,7 @@ class RuntimeSession
 	RuntimeSession& operator=(const RuntimeSession&) = delete;
 
 	// Exchanges requests and replies; piloting raises the live preview rate.
-	void Poll(bool piloting);
+	void Poll(bool piloting, bool foreground = true);
 	SessionView View() const;
 	// True once after the selected session, run or connection changed.
 	bool TakeScopeChanged();
@@ -70,7 +70,7 @@ class RuntimeSession
 	void MarkHistoryFrame(std::size_t historyIndex, bool enabled);
 	bool RequestExport(std::string path);
 
-	void ConnectEndpoint(std::string endpoint);
+	void ConnectEndpoint(std::string endpoint, std::optional<std::uint64_t> expectedProcess = {});
 	void Disconnect();
 	void RefreshEndpoints();
 	const std::vector<std::string>& Endpoints() const noexcept

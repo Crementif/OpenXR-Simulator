@@ -142,13 +142,25 @@ void PreviewPanel::DrawEmpty(ShellState& shell, const RuntimeView& view)
 	};
 	if (!view.connected)
 	{
-		DrawIcon(draw, Icon::App, {center.x, center.y - 48 * unit}, 40 * unit, theme::TextDim);
+		DrawIcon(draw, Icon::App, {center.x, center.y - 72 * unit}, 40 * unit, theme::TextDim);
+		line("OpenXR Simulator", center.y - 44 * unit, theme::Text);
 		line("Launch or connect an OpenXR app", center.y - 14 * unit, theme::Text);
-		const char* label = "Open app";
-		const float width = ImGui::CalcTextSize(label).x + ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x;
+		const auto& style = ImGui::GetStyle();
+		const float addWidth = ImGui::CalcTextSize("Add application").x + style.FramePadding.x * 2;
+		const float connectWidth = ImGui::CalcTextSize("Connect").x + style.FramePadding.x * 2;
+		const bool stacked = addWidth + style.ItemSpacing.x + connectWidth > available.x;
+		const float width = stacked ? std::max(addWidth, connectWidth) : addWidth + style.ItemSpacing.x + connectWidth;
 		ImGui::SetCursorScreenPos({center.x - width / 2, center.y + 16 * unit});
-		if (IconButton("Open app", Icon::App, "Launch or connect an OpenXR app", false, label))
+		if (ImGui::Button("Add application"))
+			shell.addApplication = true;
+		ImGui::SetItemTooltip("Choose an application to launch with OpenXR Simulator");
+		if (!stacked)
+			ImGui::SameLine();
+		else
+			ImGui::SetCursorScreenPos({center.x - connectWidth / 2, ImGui::GetCursorScreenPos().y});
+		if (ImGui::Button("Connect"))
 			shell.openAppPicker = true;
+		ImGui::SetItemTooltip("Find or connect to an application that is already running");
 		return;
 	}
 	if (!view.time.following)

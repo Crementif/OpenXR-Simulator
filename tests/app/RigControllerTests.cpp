@@ -9,6 +9,11 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace app = simxr::app;
 namespace automation = simxr::automation;
@@ -128,6 +133,24 @@ static void Check(const std::filesystem::path& root, const std::string& endpoint
 	}
 	Require(Read(root / "shutdown.json").find("saved at shutdown") != std::string::npos,
 			"Destruction abandoned accepted report bytes");
+	const auto owner = std::make_shared<app::AutomationOwner>();
+	const auto other = std::make_shared<app::AutomationOwner>();
+#ifdef _WIN32
+	const auto process = static_cast<std::uint64_t>(GetCurrentProcessId());
+#else
+	const auto process = static_cast<std::uint64_t>(getpid());
+#endif
+	const auto owned = rigs.RunSource(target, "while true do end", "mcp.luau", {}, owner, process);
+	Require(rigs.OwnedBy(owner, owned) && !rigs.OwnedBy(other, owned), "Run ownership escaped its MCP session");
+	owner->active.store(false);
+	rigs.CancelDisconnected();
+	Require(Finished(rigs).phase == automation::RigPhase::Cancelled, "Disconnected owner left a running rig");
+	const auto wrongPeer = rigs.RunSource(target, "simxr.checkpoint('wrong peer', true)", "wrong.luau", {},
+		other, process + 1);
+	const auto rejected = Finished(rigs);
+	Require(rigs.OwnedBy(other, wrongPeer) && rejected.phase == automation::RigPhase::Failed &&
+		rejected.error.find("different process") != std::string::npos,
+		"Rig worker accepted a different runtime endpoint process");
 }
 int main()
 {

@@ -7,11 +7,13 @@
 
 namespace simxr::app
 {
-std::vector<RunningApp> DiscoverRunningApps(std::chrono::milliseconds timeout)
+std::vector<RunningApp> DiscoverRunningApps(std::chrono::milliseconds timeout, std::stop_token stop)
 {
 	std::vector<RunningApp> apps;
 	for (auto& endpoint : DiscoverRuntimeEndpoints())
 	{
+		if (stop.stop_requested())
+			break;
 		auto app = ProbeRunningApp(endpoint, timeout);
 		if (!app)
 			continue;

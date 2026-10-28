@@ -19,7 +19,8 @@ static int ResizeEndpoint(ImGuiInputTextCallbackData* data)
 	data->Buf = endpoint.data();
 	return 0;
 }
-void ConnectionDialog::Draw(RuntimeSession& session, bool* open)
+void ConnectionDialog::Draw(RuntimeSession& session, bool* open, const std::function<void(std::string)>& connect,
+							const std::function<void()>& disconnect)
 {
 	const auto selected = session.Debugger().Selected();
 	ImGui::SetNextWindowSize({600, 400}, ImGuiCond_FirstUseEver);
@@ -34,14 +35,14 @@ void ConnectionDialog::Draw(RuntimeSession& session, bool* open)
 	{
 		ImGui::SameLine();
 		if (ImGui::Button("Disconnect"))
-			session.Disconnect();
+			disconnect();
 	}
 	if (session.Endpoints().empty())
 		ImGui::TextUnformatted("No applications");
 	for (const auto& path : session.Endpoints())
 	{
 		if (ImGui::Selectable(PathText(Utf8Path(path).filename()).c_str(), path == session.Endpoint()))
-			session.ConnectEndpoint(path);
+			connect(path);
 		ImGui::SetItemTooltip("%s", path.c_str());
 	}
 	if (!state.detail.empty())
@@ -59,7 +60,7 @@ void ConnectionDialog::Draw(RuntimeSession& session, bool* open)
 		ImGui::InputText("##Endpoint", m_endpoint.data(), m_endpoint.size(), ImGuiInputTextFlags_CallbackResize,
 						 ResizeEndpoint, &m_endpoint);
 		if (ImGui::Button("Connect to endpoint"))
-			session.ConnectEndpoint(m_endpoint.data());
+			connect(m_endpoint.data());
 		ImGui::TextWrapped("Queued: %zu. Replies: %zu. Exchange: %s", state.queued, state.ready,
 						   state.inFlight ? "pending" : "idle");
 	}

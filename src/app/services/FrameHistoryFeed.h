@@ -10,6 +10,8 @@ namespace simxr::app
 class FrameHistoryFeed
 {
   public:
+	FrameHistoryFeed();
+	std::size_t RetainedBytes() const noexcept;
 	void SetScope(PanelScope scope);
 	// Returns why a page was skipped. A skipped page is never requested again;
 	// the next accepted frame starts with a gap instead. An undecodable identity

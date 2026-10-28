@@ -1,10 +1,10 @@
 #include "app/widgets/SpatialEditor.h"
-#include "math/Math.h"
 #include "Pch.h"
-#include "app/widgets/Theme.h"
 #include "app/services/ManualInputController.h"
 #include "app/services/PlayerRig.h"
 #include "app/widgets/Controls.h"
+#include "app/widgets/Theme.h"
+#include "math/Math.h"
 #include "simulation/TrackingSystem.h"
 
 namespace simxr::app
@@ -22,7 +22,7 @@ int SpatialEditor::SelectedDevice(const Selection& selection)
 		case DevicePage::Right:
 			return 2;
 		case DevicePage::Trackers:
-			return 3 + static_cast<int>(std::min(device->slot, 3u));
+			return 3 + static_cast<int>(std::min(device->slot, static_cast<unsigned>(MaxTrackerDevices - 1)));
 		default:
 			break;
 		}
@@ -115,10 +115,21 @@ void SpatialEditor::Observe(const ManualInputSnapshot& snapshot, bool piloting)
 	m_observation = snapshot.observation;
 	try
 	{
-		m_observed = ReadObservedSetup(snapshot.state);
+		auto observed = ReadObservedSetup(snapshot.state);
+		const bool changed =
+			!m_observed ||
+			!std::equal(observed.values.tracking.trackers.begin(), observed.values.tracking.trackers.end(),
+						m_observed->values.tracking.trackers.begin(), m_observed->values.tracking.trackers.end(),
+						[](const auto& a, const auto& b)
+						{
+							return a.identity == b.identity;
+						});
+		if (changed)
+			Cancel();
+		m_observed = std::move(observed);
 		if (first)
 			m_rig.Reset(*m_observed);
-		else if (!piloting && !Active() && !snapshot.posePending)
+		else if (changed || (!piloting && !Active() && !snapshot.posePending))
 			m_rig.Observe(*m_observed);
 		m_error = snapshot.error;
 	}
@@ -180,7 +191,7 @@ SpatialScene SpatialEditor::LiveScene() const
 	tracking.body.rootPose = m_rig.Root();
 	for (std::size_t hand = 0; hand < 2; ++hand)
 		tracking.controllers[hand].pose.pose = m_rig.Hand(hand);
-	for (std::size_t slot = 0; slot < 4; ++slot)
+	for (std::size_t slot = 0; slot < tracking.trackers.size(); ++slot)
 	{
 		tracking.trackers[slot].jointOffset.reset();
 		tracking.trackers[slot].poseOverride = m_rig.Tracker(slot);
@@ -189,17 +200,17 @@ SpatialScene SpatialEditor::LiveScene() const
 		TrackingSystem::Evaluate(RuntimeTime{Duration{1}}, tracking, BodyModel{m_observed->values.proportions}));
 	scene.root = m_rig.Root();
 	scene.eye = m_lookingBack ? std::nullopt : m_eye;
-	for (std::size_t slot = 0; slot < 4; ++slot)
+	for (std::size_t slot = 0; slot < tracking.trackers.size(); ++slot)
 		scene.labels[slot + 3] = TrackerRoleLetter(m_rig.TrackerDeviceAt(slot).role);
 	scene.attachable = AttachableJoints();
 	return scene;
 }
-std::array<bool, 7> SpatialEditor::EditableDevices(const SpatialScene& scene) const
+std::array<bool, MaxTrackerDevices + 3> SpatialEditor::EditableDevices(const SpatialScene& scene) const
 {
-	std::array<bool, 7> result{};
+	std::array<bool, MaxTrackerDevices + 3> result{};
 	if (!Editable() || m_lookingBack)
 		return result;
-	for (int device = 0; device < 7; ++device)
+	for (int device = 0; device < static_cast<int>(MaxTrackerDevices + 3); ++device)
 	{
 		const auto channel = DeviceChannel(device);
 		const auto owner = m_observed->owners[static_cast<std::size_t>(channel)];
@@ -213,7 +224,8 @@ std::array<bool, 7> SpatialEditor::EditableDevices(const SpatialScene& scene) co
 }
 void SpatialEditor::EditPose(int device, XrPosef pose, bool final)
 {
-	if (!Editable() || device < 0 || device >= 7 || !EditableDevices(LiveScene())[device])
+	if (!Editable() || device < 0 || device >= static_cast<int>(MaxTrackerDevices + 3) ||
+		!EditableDevices(LiveScene())[device])
 		return;
 	if (device == 0)
 		m_rig.SetHeadWorld(pose);
@@ -291,7 +303,8 @@ void SpatialEditor::DrawPlacement(Selection& selection)
 	auto scene = LiveScene();
 	const auto editable = EditableDevices(scene);
 	const int selected = SelectedDevice(selection);
-	if (selected >= 0)
+	if (selected >= 0 &&
+		(selected < 3 || static_cast<std::size_t>(selected - 3) < m_observed->values.tracking.trackers.size()))
 	{
 		SectionLabel("Rotation");
 		XrQuaternionf reference = m_rig.Root().orientation;
@@ -330,9 +343,9 @@ ShellRect SpatialEditor::RigViewRect() const
 {
 	return {m_view.minimum.x, m_view.minimum.y, m_view.size.x, m_view.size.y};
 }
-std::array<ShellRect, 7> SpatialEditor::RigDevicePoints() const
+std::array<ShellRect, MaxTrackerDevices + 3> SpatialEditor::RigDevicePoints() const
 {
-	std::array<ShellRect, 7> result{};
+	std::array<ShellRect, MaxTrackerDevices + 3> result{};
 	for (std::size_t device = 0; device < result.size(); ++device)
 		result[device] = {m_view.points[device].x, m_view.points[device].y, 0, 0};
 	return result;

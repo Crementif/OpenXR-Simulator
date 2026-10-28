@@ -1,11 +1,13 @@
 #include "app/services/InputHistory.h"
 #include "Pch.h"
 #include "control/SimulationControl.h"
+#include "simulation/BodyObservation.h"
 
 #include <cmath>
 #include <limits>
 #include <stdexcept>
 #include <tuple>
+#include <type_traits>
 
 namespace simxr::app
 {
@@ -24,7 +26,8 @@ static bool Same(const PoseSample& a, const PoseSample& b)
 }
 static bool Same(const ControllerPose& a, const ControllerPose& b)
 {
-	return a.connected == b.connected && Same(a.pose, b.pose);
+	return a.connected == b.connected && Same(a.pose, b.pose) && a.aim.has_value() == b.aim.has_value() &&
+		   (!a.aim || Same(*a.aim, *b.aim));
 }
 static bool Same(const ControllerControls& a, const ControllerControls& b)
 {
@@ -33,7 +36,7 @@ static bool Same(const ControllerControls& a, const ControllerControls& b)
 		return std::tie(c.trigger, c.grip, c.gripForce, c.stick.x, c.stick.y, c.trackpad.x, c.trackpad.y,
 						c.trackpadForce, c.primary, c.secondary, c.menu, c.back, c.thumbClick, c.trackpadClick,
 						c.primaryTouch, c.secondaryTouch, c.triggerTouch, c.thumbTouch, c.trackpadTouch,
-						c.thumbrestTouch, c.connected);
+						c.thumbrestTouch, c.connected, c.triggerClick, c.physicalProfile);
 	};
 	return values(a) == values(b);
 }
@@ -76,15 +79,51 @@ static bool Same(const BodyControls& a, const BodyControls& b)
 			return false;
 	return true;
 }
+static bool Same(const BodyObservation& a, const BodyObservation& b)
+{
+	if (a.jointSet != b.jointSet || a.requestedTime != b.requestedTime || a.returnedTime != b.returnedTime ||
+		a.located != b.located || a.active != b.active || a.allJointPosesTracked != b.allJointPosesTracked ||
+		a.confidence != b.confidence || a.skeletonRevision != b.skeletonRevision ||
+		a.skeleton.has_value() != b.skeleton.has_value())
+		return false;
+	for (std::size_t index = 0; index < BodyJointCount; ++index)
+	{
+		if (!Same(a.joints[index], b.joints[index],
+				  [](const ObservedBodyJoint& x, const ObservedBodyJoint& y)
+				  {
+					  return x.flags == y.flags && Same(x.pose, y.pose);
+				  }))
+			return false;
+		if (a.skeleton && !Same((*a.skeleton)[index], (*b.skeleton)[index],
+								[](const SkeletonJoint& x, const SkeletonJoint& y)
+								{
+									return x.joint == y.joint && x.parent == y.parent && Same(x.bindPose, y.bindPose);
+								}))
+			return false;
+	}
+	return true;
+}
+static bool SameObservation(const InputSample& a, const InputSample& b)
+{
+	return a.bodyObservation == b.bodyObservation ||
+		   (a.bodyObservation && b.bodyObservation && Same(*a.bodyObservation, *b.bodyObservation));
+}
+static SetBodyControls BodyCommand(const InputSample& sample)
+{
+	SetBodyControls result{BodyOf(sample)};
+	if (sample.bodyObservation)
+		result.observation = NormalizeBodyObservation(*sample.bodyObservation);
+	return result;
+}
 static bool Same(const TrackerDevice& a, const TrackerDevice& b)
 {
-	return a.identity == b.identity && a.role == b.role && a.connected == b.connected && a.tracked == b.tracked &&
-		   a.anchor == b.anchor && Same(a.poseOverride, b.poseOverride, SamePose) &&
-		   Same(a.jointOffset, b.jointOffset, SamePose);
+	return a.identity == b.identity && a.sourcePath == b.sourcePath && a.poseFlags == b.poseFlags && a.role == b.role &&
+		   a.connected == b.connected && a.tracked == b.tracked && a.anchor == b.anchor &&
+		   Same(a.poseOverride, b.poseOverride, SamePose) && Same(a.jointOffset, b.jointOffset, SamePose);
 }
 static bool Same(const TrackerDevices& a, const TrackerDevices& b)
 {
-	return std::equal(a.begin(), a.end(), b.begin(),
+	return std::equal(a.begin(), a.end(), b.begin(), b.end(),
 					  [](const TrackerDevice& x, const TrackerDevice& y)
 					  {
 						  return Same(x, y);
@@ -103,7 +142,7 @@ static std::vector<SimulationCommand> ContextCommands(const InputSample& sample)
 	if (!sample.context)
 		throw std::invalid_argument("This run did not record its view/profile context");
 	const auto fields = control::DecodeFields(*sample.context);
-	if (fields.error != control::DecodeError::None || fields.fields.size() != 5)
+	if (fields.error != control::DecodeError::None || (fields.fields.size() != 5 && fields.fields.size() != 6))
 		throw std::invalid_argument("Invalid recorded input context");
 	std::vector<SimulationCommand> commands;
 	std::uint32_t seen = 0;
@@ -119,21 +158,26 @@ static std::vector<SimulationCommand> ContextCommands(const InputSample& sample)
 			bit = 4u << profile->hand;
 		else if (std::holds_alternative<SetReferenceSpaces>(command))
 			bit = 16;
+		else if (std::holds_alternative<SetEyeViews>(command))
+			bit = 32;
 		if (!bit || (seen & bit))
 			throw std::invalid_argument("Missing or duplicate recorded context command");
 		seen |= bit;
 		commands.push_back(std::move(command));
 	}
+	if ((seen & 31) != 31)
+		throw std::invalid_argument("Missing recorded view/profile context");
+	if (!(seen & 32))
+		commands.push_back(SetEyeViews{});
 	return commands;
 }
 // Keeps one block per run of equal values; 32k frames of a still body cost one copy.
-template <typename T> static void Share(std::shared_ptr<const T>& value, std::shared_ptr<const T>& previous)
+template <typename T> static void Share(std::shared_ptr<const T>& value, const std::shared_ptr<const T>& previous)
 {
 	if (!value)
 		return;
 	if (previous && previous != value && Same(*previous, *value))
 		value = previous;
-	previous = value;
 }
 BodyControls BodyOf(const InputSample& sample)
 {
@@ -150,17 +194,116 @@ float Intensity(const ControllerControls& controls)
 		value = 1;
 	return std::clamp(value, 0.f, 1.f);
 }
-InputHistory::InputHistory(std::size_t capacity) : m_samples(std::max<std::size_t>(capacity, 1)) {}
+static std::size_t ProfileBytes(const InputSample& sample)
+{
+	std::size_t bytes = 0;
+	for (const auto& controls : sample.controls)
+		bytes += controls.physicalProfile.capacity() + 1;
+	return bytes;
+}
+InputHistory::InputHistory(std::size_t capacity, std::size_t byteBudget) : m_byteBudget(byteBudget)
+{
+	if (byteBudget < sizeof(InputSample) * 2)
+		throw std::invalid_argument("Input history budget is too small");
+	// Leave at least half the budget for variable device data.
+	m_samples.resize(std::min(std::max<std::size_t>(capacity, 1), byteBudget / (2 * sizeof(InputSample))));
+	m_bytes = m_samples.capacity() * sizeof(InputSample);
+}
+std::size_t InputHistory::RetainedBytes() const noexcept
+{
+	return m_bytes;
+}
+std::size_t InputHistory::ByteBudget() const noexcept
+{
+	return m_byteBudget;
+}
+void InputHistory::Retain(const void* identity, std::size_t bytes)
+{
+	if (!identity)
+		return;
+	// Include an allowance for the shared control block and ordered-map node.
+	const auto [entry, inserted] = m_blocks.try_emplace(identity, Block{bytes + 128, 0});
+	if (inserted)
+		m_bytes += entry->second.bytes;
+	++entry->second.references;
+}
+void InputHistory::Release(const void* identity) noexcept
+{
+	if (!identity)
+		return;
+	const auto entry = m_blocks.find(identity);
+	if (--entry->second.references == 0)
+	{
+		m_bytes -= entry->second.bytes;
+		m_blocks.erase(entry);
+	}
+}
+void InputHistory::ReleaseSample(const InputSample& sample) noexcept
+{
+	Release(sample.body.get());
+	Release(sample.bodyObservation.get());
+	Release(sample.trackers.get());
+	Release(sample.context.get());
+	m_bytes -= ProfileBytes(sample);
+}
+void InputHistory::Evict() noexcept
+{
+	auto& oldest = m_samples[(m_next - m_size) % m_samples.size()];
+	ReleaseSample(oldest);
+	oldest = {};
+	--m_size;
+}
 std::uint64_t InputHistory::Append(InputSample sample)
 {
+	if (sample.trackers && sample.trackers->size() > MaxTrackerDevices)
+		throw std::invalid_argument("Tracker inventory exceeds capacity");
 	if (m_next == std::numeric_limits<std::uint64_t>::max())
 		throw std::overflow_error("Input history sequence exhausted");
-	Share(sample.body, m_body);
-	Share(sample.trackers, m_trackers);
-	Share(sample.context, m_context);
+	if (m_size)
+	{
+		const auto& previous = m_samples[(m_next - 1) % m_samples.size()];
+		Share(sample.body, previous.body);
+		Share(sample.bodyObservation, previous.bodyObservation);
+		Share(sample.trackers, previous.trackers);
+		Share(sample.context, previous.context);
+	}
+	const std::array blocks{
+		std::pair<const void*, std::size_t>{sample.body.get(), sizeof(BodyControls)},
+		std::pair<const void*, std::size_t>{sample.bodyObservation.get(), sizeof(BodyObservation)},
+		std::pair<const void*, std::size_t>{
+			sample.trackers.get(),
+			sizeof(TrackerDevices) + (sample.trackers ? sample.trackers->capacity() * sizeof(TrackerDevice) : 0)},
+		std::pair<const void*, std::size_t>{
+			sample.context.get(), sizeof(std::vector<std::byte>) + (sample.context ? sample.context->capacity() : 0)}};
+	// Prepare ledger allocations before changing the ring; failed admission leaves it intact.
+	std::size_t retained = 0;
+	try
+	{
+		for (const auto& [identity, bytes] : blocks)
+		{
+			Retain(identity, bytes);
+			++retained;
+		}
+	}
+	catch (...)
+	{
+		for (std::size_t index = 0; index < retained; ++index)
+			Release(blocks[index].first);
+		throw;
+	}
+	m_bytes += ProfileBytes(sample);
+	while (m_size && (m_size == m_samples.size() || m_bytes > m_byteBudget))
+		Evict();
+	static_assert(std::is_nothrow_move_assignable_v<InputSample>);
 	const auto sequence = m_next++;
+	if (m_bytes > m_byteBudget)
+	{
+		// A single record cannot fit. Keep its sequence unavailable, rather than exceed the budget.
+		ReleaseSample(sample);
+		return sequence;
+	}
 	m_samples[sequence % m_samples.size()] = std::move(sample);
-	m_size = std::min(m_size + 1, m_samples.size());
+	++m_size;
 	return sequence;
 }
 const InputSample* InputHistory::Find(std::uint64_t sequence) const noexcept
@@ -174,9 +317,8 @@ void InputHistory::Clear() noexcept
 	// Sequence numbers keep rising so stale references never resolve.
 	m_size = 0;
 	std::fill(m_samples.begin(), m_samples.end(), InputSample{});
-	m_body.reset();
-	m_trackers.reset();
-	m_context.reset();
+	m_blocks.clear();
+	m_bytes = m_samples.capacity() * sizeof(InputSample);
 }
 automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& samples)
 {
@@ -190,15 +332,24 @@ automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& 
 		if (sample->identity.session != origin.identity.session || sample->identity.run != origin.identity.run ||
 			sample->seed != origin.seed || sample->epoch != origin.epoch)
 			throw std::invalid_argument("The range spans more than one run");
+		if (sample->trackers && sample->trackers->size() > MaxTrackerDevices)
+			throw std::invalid_argument("Tracker inventory exceeds capacity");
 		if (!sample->context)
 			throw std::invalid_argument("This run did not record its view/profile context");
 		if (!sample->complete || !sample->body || !sample->trackers || !sample->gaze)
 			throw std::invalid_argument("Some device input is missing. Choose a range with complete input.");
 	}
 	automation::InputRecording take;
-	take.version = 2;
+	take.version = std::ranges::any_of(samples,
+									   [](const InputSample* sample)
+									   {
+										   return bool(sample->bodyObservation);
+									   })
+					   ? 4
+					   : 3;
 	take.seed = origin.seed;
 	take.originFrame = FrameId{origin.identity.frame};
+	take.originRuntimeTime = origin.runtimeTime;
 	take.initialScenarios = origin.scenarios;
 	take.initialScenarios[static_cast<std::size_t>(FailureScenario::Recenter)] = false;
 	auto& initial = take.initial;
@@ -208,10 +359,9 @@ automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& 
 		initial.push_back(SetControllerPose{hand, origin.poses[hand]});
 		initial.push_back(SetControllerControls{hand, origin.controls[hand]});
 	}
-	initial.push_back(SetBodyControls{BodyOf(origin)});
+	initial.push_back(BodyCommand(origin));
 	initial.push_back(SetGaze{*origin.gaze});
-	for (std::uint32_t index = 0; index < origin.trackers->size(); ++index)
-		initial.push_back(SetTracker{index, (*origin.trackers)[index]});
+	initial.push_back(SetTrackers{*origin.trackers});
 	for (auto& command : ContextCommands(origin))
 		initial.push_back(std::move(command));
 
@@ -227,7 +377,7 @@ automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& 
 			throw std::invalid_argument("The range has missing input frames. Select a continuous range");
 		if (a.scenarios != b.scenarios || !Same(a.head, b.head) || !Same(a.poses, b.poses) ||
 			!Same(a.controls, b.controls) || !Same(*a.gaze, *b.gaze) || !Same(a.bodyRoot, b.bodyRoot, SamePose) ||
-			(a.body != b.body && !Same(*a.body, *b.body)) ||
+			(a.body != b.body && !Same(*a.body, *b.body)) || !SameObservation(a, b) ||
 			(a.trackers != b.trackers && !Same(*a.trackers, *b.trackers)) ||
 			(a.context != b.context && *a.context != *b.context))
 			changed.push_back(index);
@@ -243,6 +393,7 @@ automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& 
 		transaction.id = take.transactions.size() + 1;
 		transaction.phase = "applied";
 		transaction.frame = FrameId{sample.identity.frame};
+		transaction.runtimeTime = sample.runtimeTime;
 		if (!Same(previous->head, sample.head))
 			transaction.commands.push_back(SetHeadPose{sample.head});
 		for (std::uint32_t hand = 0; hand < 2; ++hand)
@@ -255,32 +406,37 @@ automation::InputRecording TakeFromInput(const std::vector<const InputSample*>& 
 		if (!Same(*previous->gaze, *sample.gaze))
 			transaction.commands.push_back(SetGaze{*sample.gaze});
 		if (!Same(previous->bodyRoot, sample.bodyRoot, SamePose) ||
-			(previous->body != sample.body && !Same(*previous->body, *sample.body)))
-			transaction.commands.push_back(SetBodyControls{BodyOf(sample)});
-		for (std::uint32_t slot = 0; slot < sample.trackers->size(); ++slot)
-			if (!Same((*previous->trackers)[slot], (*sample.trackers)[slot]))
-				transaction.commands.push_back(SetTracker{slot, (*sample.trackers)[slot]});
-		if (previous->context != sample.context && *previous->context != *sample.context)
+			(previous->body != sample.body && !Same(*previous->body, *sample.body)) ||
+			!SameObservation(*previous, sample))
+			transaction.commands.push_back(BodyCommand(sample));
+		if (!Same(*previous->trackers, *sample.trackers))
+			transaction.commands.push_back(SetTrackers{*sample.trackers});
+		const auto recenter = static_cast<std::size_t>(FailureScenario::Recenter);
+		const bool recentered = sample.scenarios[recenter] && !previous->scenarios[recenter];
+		// Frame context already contains the recenter result. Recomputing it from
+		// the final head pose can change an origin established earlier in the frame.
+		if (recentered || (previous->context != sample.context && *previous->context != *sample.context))
 			for (auto& command : ContextCommands(sample))
 				transaction.commands.push_back(std::move(command));
 		for (std::size_t index = 0; index < sample.scenarios.size(); ++index)
-			if (previous->scenarios[index] != sample.scenarios[index])
+			if (index != recenter && previous->scenarios[index] != sample.scenarios[index])
 				transaction.commands.push_back(
 					SetScenario{static_cast<FailureScenario>(index), sample.scenarios[index]});
+		previous = &sample;
 		if (transaction.commands.empty())
 			continue;
 		take.transactions.push_back(std::move(transaction));
-		previous = &sample;
 	}
 	// The take lasts to the range's end, so a still tail is replayed too
 	// instead of releasing the devices early.
 	const auto& last = *samples.back();
-	if (previous != &last)
+	if (take.transactions.empty() || take.transactions.back().frame.value != last.identity.frame)
 	{
 		automation::RecordedTransaction transaction;
 		transaction.id = take.transactions.size() + 1;
 		transaction.phase = "applied";
 		transaction.frame = FrameId{last.identity.frame};
+		transaction.runtimeTime = last.runtimeTime;
 		transaction.commands.push_back(SetHeadPose{last.head});
 		take.transactions.push_back(std::move(transaction));
 	}

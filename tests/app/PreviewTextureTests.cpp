@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <array>
 #include <iostream>
+#include <limits>
 
 namespace simxr::tests
 {
@@ -507,6 +508,60 @@ void BoundAndRollback(const app::VulkanDeviceAccess& access)
 	for (auto& texture : textures)
 		texture = std::make_unique<app::PreviewTexture>(access, description);
 }
+void MixedSnapshotBudget(const app::VulkanDeviceAccess& access)
+{
+	const auto previous = SnapshotBudget::MiB();
+	SnapshotBudget::Configure(192);
+	Require(SnapshotBudget::CapacityFor(1024, 16ull << 20) == 16 &&
+				SnapshotBudget::CapacityFor(1024, 32ull << 20) == 8,
+			"An application's image size changed another application's capacity");
+	Require(!app::PreviewTexture::CanReserveSnapshot(std::numeric_limits<std::uint64_t>::max()),
+			"Oversized image charge overflowed the shared byte budget");
+	auto small = Description(access);
+	auto large = small;
+	small.allocationSize = 16ull << 20;
+	large.allocationSize = 32ull << 20;
+	{
+		auto first = std::make_unique<app::PreviewTexture>(access, small);
+		auto second = std::make_unique<app::PreviewTexture>(access, large);
+		Require(first->SnapshotChargeBytes() == (64ull << 20) && second->SnapshotChargeBytes() == (128ull << 20) &&
+					app::PreviewTexture::TotalSnapshotChargeBytes() == (192ull << 20),
+				"Different image sizes were not charged to the shared byte budget");
+		bool rejected = false;
+		try
+		{
+			app::PreviewTexture overflow(access, small);
+		}
+		catch (const std::runtime_error&)
+		{
+			rejected = true;
+		}
+		Require(rejected, "Mixed image sizes exceeded the shared byte budget");
+		first.reset();
+		Require(app::PreviewTexture::TotalSnapshotChargeBytes() == (128ull << 20),
+				"Retired texture did not return its byte charge");
+		auto replacement = std::make_unique<app::PreviewTexture>(access, small);
+		SnapshotBudget::Configure(128);
+		Require(app::PreviewTexture::TotalSnapshotChargeBytes() == (192ull << 20),
+				"Shrinking the budget discarded live charges");
+	}
+	Require(app::PreviewTexture::TotalSnapshotChargeBytes() == 0, "Snapshot byte charges leaked after retirement");
+	SnapshotBudget::Configure(previous);
+}
+void PreserveUnknownCompletion(app::UiRenderer& renderer)
+{
+	const auto previousCharge = app::PreviewTexture::TotalSnapshotChargeBytes();
+	const auto previousPreserved = app::PreviewTexture::PreservedBytes();
+	auto texture = HistorySource(renderer, {64, 48}, VK_FORMAT_R8G8B8A8_UNORM);
+	const auto charge = texture->SnapshotChargeBytes();
+	Require(texture->UseForCopy() != VK_NULL_HANDLE, "Expected an imported image for retirement");
+	texture->Submitted(std::numeric_limits<std::uint64_t>::max());
+	texture->PreserveUnfinished(renderer.CompletedFrames());
+	texture.reset();
+	Require(app::PreviewTexture::TotalSnapshotChargeBytes() == previousCharge + charge &&
+				app::PreviewTexture::PreservedBytes() > previousPreserved,
+			"Unknown GPU completion released its image or byte reservation");
+}
 } // namespace simxr::tests
 int main()
 {
@@ -526,8 +581,10 @@ int main()
 			}
 			DisplayImageIdentity(renderer);
 			BoundAndRollback(access);
+			MixedSnapshotBudget(access);
 			HistoryLifetime(renderer);
 			ScreenshotFiles(renderer, window);
+			PreserveUnknownCompletion(renderer);
 		}
 		Require(validation->errors.load() == 0, "Preview texture lifetime produced Vulkan validation errors");
 		std::cout << "PASS display-image identity, preview texture bounds, native rollback, unsent retirement and "

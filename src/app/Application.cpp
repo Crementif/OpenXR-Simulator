@@ -2,11 +2,14 @@
 #include "Pch.h"
 #include "app/RuntimePanels.h"
 #include "app/WorkspacePanels.h"
+#include "app/mcp/McpHost.h"
 #include "app/platform/Window.h"
 #include "app/qa/RuntimeSmoke.h"
 #include "app/render/UiRenderer.h"
 #include "app/services/ProcessSupervisor.h"
+#include "app/services/HeadlessApplications.h"
 #include "app/services/Utf8Path.h"
+#include "app/shell/ApplicationTabs.h"
 #ifdef SIMXR_COMPANION_PROOF
 #include "app/render/ProofConsumer.h"
 #endif
@@ -22,8 +25,51 @@ Application::Application(ApplicationOptions options) : m_options(std::move(optio
 
 int Application::Run()
 {
+	std::optional<LaunchProfile> startupProfile;
+	if (m_options.launchProfile)
+	{
+		const auto settings = LoadSettings(CompanionSettingsPath());
+		const auto profile = std::ranges::find(settings.profiles, *m_options.launchProfile, &LaunchProfile::name);
+		if (profile == settings.profiles.end())
+			throw std::runtime_error("Saved launch profile not found: " + *m_options.launchProfile);
+		startupProfile = *profile;
+	}
+	std::unique_ptr<McpInstanceRegistration> startupRegistration;
+	if (m_options.mcpBootstrapDescriptor != -2)
+		startupRegistration = std::make_unique<McpInstanceRegistration>(m_options.mcpBootstrapDescriptor);
+	else if (!m_options.mcpPort && !m_options.smokeFrames && !m_options.runtimeSmoke && m_options.proofDescriptor < 0)
+	{
+		try
+		{
+			if (LoadSettings(CompanionSettingsPath()).mcpEnabled)
+				startupRegistration = std::make_unique<McpInstanceRegistration>(-1);
+		}
+		catch (const std::exception&)
+		{
+			// The workspace reports settings errors, and the MCP status reports reservation errors.
+		}
+	}
 	auto validation = std::make_shared<ValidationLog>();
 	ProcessSupervisor processes;
+	if (m_options.windowless)
+	{
+		HeadlessApplications applications(processes);
+		McpHost mcp(false, m_options.mcpPort, std::move(m_options.mcpToken),
+					m_options.mcpBootstrapDescriptor, std::move(startupRegistration), true);
+		mcp.Poll(applications);
+		if (!mcp.State().listening)
+			throw std::runtime_error("Windowless MCP startup failed: " + mcp.State().error);
+		std::optional<std::chrono::steady_clock::time_point> shutdownAt;
+		while (!shutdownAt || std::chrono::steady_clock::now() < *shutdownAt)
+		{
+			applications.Poll();
+			mcp.Poll(applications);
+			if (applications.ShutdownRequested() && !shutdownAt)
+				shutdownAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
+		return 0;
+	}
 	std::uint64_t submitted = 0;
 	std::uint32_t rebuilds = 0;
 	bool proofFinished = m_options.proofDescriptor < 0;
@@ -39,12 +85,23 @@ int Application::Run()
 		if (m_options.proofDescriptor >= 0)
 			throw std::runtime_error("FD companion proof is available only in the Linux build");
 #endif
-		WorkspacePanels workspace(processes,
-								  !m_options.smokeFrames && !m_options.runtimeSmoke && m_options.proofDescriptor < 0,
-								  m_options.controlSocket);
-		std::optional<RuntimePanels> panels;
+		std::unique_ptr<ApplicationTabs> tabs;
 		if (m_options.proofDescriptor < 0)
-			panels.emplace(renderer, workspace.InitialEndpoint(), &window);
+			tabs = std::make_unique<ApplicationTabs>(processes, renderer, window,
+													!m_options.smokeFrames && !m_options.runtimeSmoke,
+													m_options.controlSocket, !m_options.smokeFrames && !m_options.runtimeSmoke);
+		if (startupProfile)
+			tabs->LaunchApplication(*startupProfile);
+		std::unique_ptr<McpHost> mcp;
+		if (tabs && !m_options.smokeFrames && !m_options.runtimeSmoke && m_options.proofDescriptor < 0)
+		{
+			const bool preference = tabs->ActiveWorkspace().McpEnabled();
+			mcp = std::make_unique<McpHost>(preference, m_options.mcpPort, std::move(m_options.mcpToken),
+											m_options.mcpBootstrapDescriptor, std::move(startupRegistration));
+			mcp->Poll(*tabs);
+			if (m_options.mcpBootstrapDescriptor >= 0 && !mcp->State().listening)
+				throw std::runtime_error("MCP bootstrap failed: " + mcp->State().error);
+		}
 		std::optional<RuntimeSmoke> runtimeSmoke;
 		if (m_options.runtimeSmoke)
 			runtimeSmoke.emplace(m_options.imageExport);
@@ -69,8 +126,20 @@ int Application::Run()
 						event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
 						lastInput = std::chrono::steady_clock::now();
 				});
-			if (window.TakeFocusLost() && panels)
-				panels->FocusLost();
+			if (window.TakeFocusLost() && tabs)
+				tabs->FocusLost();
+			if (mcp && tabs)
+			{
+				auto& workspace = tabs->ActiveWorkspace();
+				auto& ui = workspace.McpState();
+				mcp->SetPreference(workspace.McpEnabled());
+				if (std::exchange(ui.stopRequested, false))
+					mcp->StopForSession();
+				if (std::exchange(ui.retryRequested, false))
+					mcp->Retry();
+				mcp->Poll(*tabs);
+				ui = mcp->State();
+			}
 			if (!running)
 				break;
 			if ((m_options.smokeFrames || m_options.proofDescriptor >= 0 || m_options.runtimeSmoke) &&
@@ -91,7 +160,7 @@ int Application::Run()
 #endif
 			const auto now = std::chrono::steady_clock::now();
 			const bool interactive =
-				(panels && panels->PilotActive()) || now - lastInput < std::chrono::milliseconds(500);
+				(tabs && tabs->PilotActive()) || now - lastInput < std::chrono::milliseconds(500);
 			const auto interval = std::chrono::nanoseconds(1000000000 / (interactive ? 60 : 30));
 			// Poll native events while pacing; queued ImGui input is consumed only by an admitted frame.
 			if (now - lastFrame < interval)
@@ -105,13 +174,11 @@ int Application::Run()
 				continue;
 			}
 			lastFrame = now;
-			if (panels)
+			if (tabs)
 			{
-				panels->Poll();
-				workspace.BeginFrame(*panels);
-				workspace.Draw(*panels);
+				tabs->Draw();
 				if (runtimeSmoke)
-					runtimeSmoke->Poll(*panels, renderer);
+					runtimeSmoke->Poll(tabs->ActiveRuntime(), renderer);
 			}
 			else
 			{
@@ -147,8 +214,8 @@ int Application::Run()
 				captureRequested = true;
 			}
 			std::vector<VkSemaphore> waits;
-			if (panels)
-				waits = panels->ReadyWaits();
+			if (tabs)
+				waits = tabs->ReadyWaits();
 #ifdef SIMXR_COMPANION_PROOF
 			if (proof)
 				waits = proof->ReadyWaits();
@@ -159,14 +226,14 @@ int Application::Run()
 				rendered = renderer.Render(waits,
 										   [&](VkCommandBuffer command)
 										   {
-											   if (panels)
-												   panels->RecordTransfers(command);
+												   if (tabs)
+													   tabs->RecordTransfers(command);
 										   });
 			}
 			catch (...)
 			{
-				if (panels)
-					panels->Submitted(renderer.SubmittedFrames());
+				if (tabs)
+					tabs->Submitted(renderer.SubmittedFrames());
 				throw;
 			}
 			if (!rendered)
@@ -177,8 +244,8 @@ int Application::Run()
 			if (captureRequested)
 				captureCompleted = true;
 			const auto frame = renderer.SubmittedFrames();
-			if (panels)
-				panels->Submitted(frame);
+			if (tabs)
+				tabs->Submitted(frame);
 			if (m_options.runtimeSmoke && runtimeFinished && (m_options.screenshot.empty() || captureCompleted))
 			{
 				running = false;
@@ -206,7 +273,9 @@ int Application::Run()
 					  "device destroyed; normalReadback=0");
 		if (!proofFinished)
 			throw std::runtime_error("Proof consumer closed before all retained images were sampled");
-		workspace.Finish();
+		mcp.reset();
+		if (tabs)
+			tabs->Finish();
 		submitted = renderer.SubmittedFrames();
 		rebuilds = renderer.RebuildCount();
 	}

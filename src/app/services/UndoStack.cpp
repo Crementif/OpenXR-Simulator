@@ -22,6 +22,7 @@ void UndoStack::Record(const ObservedSetup& before, const ManualTransaction& edi
 											 std::holds_alternative<SetBodyControls>(command) ||
 											 std::holds_alternative<SetGaze>(command) ||
 											 std::holds_alternative<SetTracker>(command) ||
+											 std::holds_alternative<SetTrackers>(command) ||
 											 std::holds_alternative<SetBodyProportions>(command);
 								  });
 	if (!pose)
@@ -74,6 +75,14 @@ void UndoStack::Record(const ObservedSetup& before, const ManualTransaction& edi
 				{
 					m_authored->tracking.trackers.at(value.index) = value.value;
 					entry.trackers.at(value.index) = true;
+					entry.trackerIdentities.at(value.index) = value.value.identity;
+					entry.trackerSources.at(value.index) = value.value.sourcePath;
+					remember(ControlChannel::Trackers);
+				}
+				else if constexpr (std::is_same_v<T, SetTrackers>)
+				{
+					m_authored->tracking.trackers = value.value;
+					entry.trackerCollection = true;
 					remember(ControlChannel::Trackers);
 				}
 				else if constexpr (std::is_same_v<T, SetBodyProportions>)
@@ -150,13 +159,16 @@ std::string UndoStack::Describe(const State& before, const State& after)
 		if (pose || a.connected != b.connected)
 			note(hand ? "Right hand" : "Left hand", pose);
 	}
-	for (std::size_t slot = 0; slot < from.trackers.size(); ++slot)
+	if (from.trackers.size() != to.trackers.size())
+		note("Tracker inventory", false);
+	for (std::size_t slot = 0; slot < std::min(from.trackers.size(), to.trackers.size()); ++slot)
 	{
 		const auto& a = from.trackers[slot];
 		const auto& b = to.trackers[slot];
 		const bool pose = a.anchor != b.anchor || movedOptional(a.poseOverride, b.poseOverride) ||
 						  movedOptional(a.jointOffset, b.jointOffset);
-		if (pose || a.connected != b.connected || a.tracked != b.tracked || a.role != b.role)
+		if (pose || a.poseFlags != b.poseFlags || a.identity != b.identity || a.sourcePath != b.sourcePath ||
+			a.connected != b.connected || a.tracked != b.tracked || a.role != b.role)
 			note("Tracker " + std::to_string(slot + 1), pose);
 	}
 	if (from.gaze.yaw != to.gaze.yaw || from.gaze.pitch != to.gaze.pitch || from.gaze.available != to.gaze.available ||
@@ -181,7 +193,8 @@ std::optional<ManualTransaction> UndoStack::Undo(const ObservedSetup& current, s
 	steps = std::min(steps, m_entries.size());
 	State restored = m_authored.value_or(State{current.values.tracking, current.values.proportions});
 	std::array<bool, ControlChannelCount> channels{};
-	std::array<bool, 4> trackers{};
+	std::array<bool, MaxTrackerDevices> trackers{};
+	bool trackerCollection = false;
 	// Walk backward so the oldest selected edit supplies each channel's original value.
 	for (std::size_t index = m_entries.size(); index > m_entries.size() - steps; --index)
 	{
@@ -202,13 +215,24 @@ std::optional<ManualTransaction> UndoStack::Undo(const ObservedSetup& current, s
 		restore(ControlChannel::Body, restored.tracking.body, entry.before.tracking.body);
 		restore(ControlChannel::Gaze, restored.tracking.gaze, entry.before.tracking.gaze);
 		restore(ControlChannel::Proportions, restored.proportions, entry.before.proportions);
-		for (std::size_t slot = 0; slot < trackers.size(); ++slot)
-			if (entry.trackers[slot])
-			{
-				restored.tracking.trackers[slot] = entry.before.tracking.trackers[slot];
-				trackers[slot] = true;
-				channels[static_cast<std::size_t>(ControlChannel::Trackers)] = true;
-			}
+		if (entry.trackerCollection)
+		{
+			restored.tracking.trackers = entry.before.tracking.trackers;
+			trackerCollection = true;
+			channels[static_cast<std::size_t>(ControlChannel::Trackers)] = true;
+		}
+		else
+			for (std::size_t slot = 0; slot < trackers.size(); ++slot)
+				if (entry.trackers[slot])
+				{
+					if (slot >= restored.tracking.trackers.size() || slot >= entry.before.tracking.trackers.size() ||
+						restored.tracking.trackers[slot].identity != entry.trackerIdentities[slot] ||
+						restored.tracking.trackers[slot].sourcePath != entry.trackerSources[slot])
+						return {};
+					restored.tracking.trackers[slot] = entry.before.tracking.trackers[slot];
+					trackers[slot] = true;
+					channels[static_cast<std::size_t>(ControlChannel::Trackers)] = true;
+				}
 	}
 	for (std::size_t channel = 0; channel < channels.size(); ++channel)
 		if (channels[channel] && current.owners[channel] && current.owners[channel] != source)
@@ -234,14 +258,17 @@ std::optional<ManualTransaction> UndoStack::Undo(const ObservedSetup& current, s
 				SetControllerPose{hand, restored.tracking.controllers[hand]});
 	if (channels[static_cast<std::size_t>(ControlChannel::Body)] && !current.bodyRootAvailable)
 		restored.tracking.body.rootPose.reset();
-	restore(ControlChannel::Body, SetBodyControls{restored.tracking.body});
+	restore(ControlChannel::Body, SetBodyControls{restored.tracking.body, restored.tracking.bodyObservation});
 	restore(ControlChannel::Gaze, SetGaze{restored.tracking.gaze});
 	if (channels[static_cast<std::size_t>(ControlChannel::Trackers)])
 	{
 		result.commands.emplace_back(TakeControl{ControlChannel::Trackers, false});
-		for (std::uint32_t slot = 0; slot < trackers.size(); ++slot)
-			if (trackers[slot])
-				result.commands.emplace_back(SetTracker{slot, restored.tracking.trackers[slot]});
+		if (trackerCollection)
+			result.commands.emplace_back(SetTrackers{restored.tracking.trackers});
+		else
+			for (std::uint32_t slot = 0; slot < trackers.size(); ++slot)
+				if (trackers[slot])
+					result.commands.emplace_back(SetTracker{slot, restored.tracking.trackers[slot]});
 	}
 	restore(ControlChannel::Proportions, SetBodyProportions{restored.proportions});
 	if (result.commands.empty())

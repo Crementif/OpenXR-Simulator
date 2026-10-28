@@ -71,6 +71,8 @@ class HistoryStore
 	{
 		return m_frames.size();
 	}
+	// Reserved frame, bucket and run-index storage.
+	std::size_t RetainedBytes() const noexcept;
 	// Changes when clear or a new segment can replace an identity lookup.
 	std::uint64_t IdentityRevision() const noexcept
 	{

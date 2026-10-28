@@ -338,11 +338,36 @@ CompanionSettings LoadSettings(const std::filesystem::path& path)
 		result.previewRamMiB = reader.Number();
 	}
 	if (!reader.Empty())
+	{
+		if (reader.Number() != 11)
+			throw std::runtime_error("Unknown launch runtime settings version");
+		if (reader.Count(32) != result.profiles.size())
+			throw std::runtime_error("Launch runtime profile count mismatch");
+		for (auto& profile : result.profiles)
+			profile.useBundledRuntime = reader.Count(1) != 0;
+		if (reader.Count(MaxRecentApps) != result.recent.size())
+			throw std::runtime_error("Launch runtime recent app count mismatch");
+		for (auto& recent : result.recent)
+			recent.launch.useBundledRuntime = reader.Count(1) != 0;
+	}
+	if (!reader.Empty())
+	{
+		if (reader.Number() != 12)
+			throw std::runtime_error("Unknown MCP settings version");
+		result.mcpEnabled = reader.Count(1) != 0;
+	}
+	if (!reader.Empty())
+	{
+		if (reader.Number() != 13)
+			throw std::runtime_error("Unknown update settings version");
+		result.autoUpdateCheck = reader.Count(1) != 0;
+	}
+	if (!reader.Empty())
 		throw std::runtime_error("Unexpected trailing companion settings data");
 	ValidateSettings(result);
 	return result;
 }
-void SaveSettings(const std::filesystem::path& path, const CompanionSettings& settings)
+static void WriteSettings(const std::filesystem::path& path, const CompanionSettings& settings)
 {
 	ValidateSettings(settings);
 	if (!path.is_absolute())
@@ -420,6 +445,30 @@ void SaveSettings(const std::filesystem::path& path, const CompanionSettings& se
 	Put(bytes, settings.previewBudgetMiB);
 	Put(bytes, std::uint32_t{10});
 	Put(bytes, settings.previewRamMiB);
+	const bool bundled = std::ranges::any_of(settings.profiles,
+											 [](const LaunchProfile& profile) { return profile.useBundledRuntime; }) ||
+		std::ranges::any_of(settings.recent,
+							[](const RecentApp& recent) { return recent.launch.useBundledRuntime; });
+	if (bundled || settings.mcpEnabled || settings.autoUpdateCheck)
+	{
+		Put(bytes, std::uint32_t{11});
+		Put(bytes, static_cast<std::uint32_t>(settings.profiles.size()));
+		for (const auto& profile : settings.profiles)
+			Put(bytes, static_cast<std::uint32_t>(profile.useBundledRuntime));
+		Put(bytes, static_cast<std::uint32_t>(settings.recent.size()));
+		for (const auto& recent : settings.recent)
+			Put(bytes, static_cast<std::uint32_t>(recent.launch.useBundledRuntime));
+	}
+	if (settings.mcpEnabled || settings.autoUpdateCheck)
+	{
+		Put(bytes, std::uint32_t{12});
+		Put(bytes, static_cast<std::uint32_t>(settings.mcpEnabled));
+	}
+	if (settings.autoUpdateCheck)
+	{
+		Put(bytes, std::uint32_t{13});
+		Put(bytes, std::uint32_t{1});
+	}
 	if (bytes.size() > s_maxFile)
 		throw std::invalid_argument("Companion settings exceed the file budget");
 	std::filesystem::create_directories(path.parent_path());
@@ -443,6 +492,20 @@ void SaveSettings(const std::filesystem::path& path, const CompanionSettings& se
 		std::filesystem::remove(temporary, ignored);
 		throw;
 	}
+}
+void SaveSettings(const std::filesystem::path& path, const CompanionSettings& settings)
+{
+	const SettingsFileLock lock(path);
+	WriteSettings(path, settings);
+}
+CompanionSettings SaveSettingsIfUnchanged(const std::filesystem::path& path, const CompanionSettings& expected,
+										   const CompanionSettings& settings)
+{
+	const SettingsFileLock lock(path);
+	if (LoadSettings(path) != expected)
+		throw std::runtime_error("Settings changed in another simulator window. Reopen this window before saving.");
+	WriteSettings(path, settings);
+	return LoadSettings(path);
 }
 std::string LoadWindowLayout(const std::filesystem::path& path)
 {

@@ -1,8 +1,8 @@
 #pragma once
 
-#include "app/services/ShellState.h"
 #include "app/services/LibraryCatalog.h"
 #include "app/services/RigController.h"
+#include "app/services/ShellState.h"
 #include "app/widgets/Icons.h"
 
 #include <array>
@@ -28,6 +28,8 @@ class Library
   public:
 	Library();
 	void Refresh();
+	void Advance(Selection& selection, RigController& rigs);
+	bool Busy() const;
 	// The list: search, play buttons and opening a script by path. A click selects the entry's page;
 	// a script's play button returns its run.
 	std::optional<ScriptRun> DrawBrowser(Selection& selection, RuntimePanels& runtime, RigController& rigs);
@@ -38,9 +40,10 @@ class Library
 	void Poll(Selection& selection, RigController& rigs);
 	const LibraryEntry* Find(const std::string& path) const;
 	void DrawTake(Selection& selection, const std::string& path, RuntimePanels& runtime, RigController& rigs);
+	void DrawEvidence(const LibraryEntry& entry, bool changing);
 	void DrawScript(Selection& selection, const std::string& path, RuntimePanels& runtime, RigController& rigs);
 	// Name, rename, delete and close; false once the file is gone or the page closed.
-	bool DrawHeader(Selection& selection, const std::string& path, Icon kind);
+	bool DrawHeader(Selection& selection, const std::string& path, Icon kind, bool changing = true);
 	void Play(const LibraryEntry& entry, RuntimePanels& runtime);
 	std::filesystem::path m_takes, m_scripts;
 	std::vector<LibraryEntry> m_entries;
@@ -51,6 +54,13 @@ class Library
 	std::array<char, 1024> m_rename{};
 	std::array<char, 2048> m_open{};
 	std::string m_error, m_scanError, m_report;
+	std::string m_rangePath;
+	std::array<char, 128> m_rangeName{};
+	std::uint64_t m_rangeFirst = 0, m_rangeLast = 0;
+	std::optional<automation::RecordingEvidence> m_evidence;
+	bool m_evidenceRequested = false;
+	std::size_t m_evidenceSelected = 0;
+	std::filesystem::file_time_type m_evidenceModified{};
 	ScriptOptions m_options;
 	std::optional<ScriptRun> m_run;
 };

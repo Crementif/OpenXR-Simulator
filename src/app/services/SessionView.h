@@ -51,7 +51,7 @@ struct SessionView
 	bool connected = false, sessionAvailable = false, sessionRunning = false, manual = false;
 	bool historyFull = false, selectedPinned = false;
 	std::string connectionState;
-	std::uint64_t epoch = 0, session = 0, generation = 0, appliedPilotUpdates = 0, latestFrame = 0;
+	std::uint64_t epoch = 0, session = 0, generation = 0, runtimeProcess = 0, appliedPilotUpdates = 0, latestFrame = 0;
 	std::uint64_t selectedEpoch = 0, selectedFrame = 0, selectedCapture = 0, selectedReader = 0, inspectedFrame = 0,
 				  selectedImageCapture = 0;
 	std::size_t images = 0, captures = 0;

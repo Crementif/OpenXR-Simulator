@@ -3,9 +3,9 @@
 
 namespace simxr::app
 {
-void RuntimePanelRequests::Connect(std::string path)
+void RuntimePanelRequests::Connect(std::string path, std::optional<std::uint64_t> expectedProcess)
 {
-	m_connection.Connect(std::move(path));
+	m_connection.Connect(std::move(path), expectedProcess);
 }
 void RuntimePanelRequests::Disconnect()
 {

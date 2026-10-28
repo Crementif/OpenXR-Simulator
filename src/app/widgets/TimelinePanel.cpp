@@ -405,7 +405,7 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 		ImGui::EndPopup();
 	}
 	ImGui::SameLine();
-	ImGui::BeginDisabled(!state.sessionAvailable);
+	ImGui::BeginDisabled(!state.sessionAvailable || state.recordingStopping);
 	char elapsed[32] = "";
 	if (state.recording && shell.timeline.recordingSince)
 	{
@@ -416,7 +416,7 @@ bool TimelinePanel::Draw(RuntimePanels& runtime, ShellState& shell, bool folded)
 					  static_cast<long long>(seconds % 60));
 	}
 	if (state.recording ? IconButton("Stop recording", Icon::Stop, "Stop recording and save the take (Ctrl+R)", false,
-									 elapsed, theme::Record)
+									 state.recordingStopping ? "Saving…" : elapsed, theme::Record)
 						: IconButton("Rec", Icon::Record, "Record inputs (Ctrl+R)", false, nullptr, theme::Record))
 	{
 		if (state.recording)

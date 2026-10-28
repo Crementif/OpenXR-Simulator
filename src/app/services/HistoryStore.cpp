@@ -29,6 +29,13 @@ HistoryStore::HistoryStore(std::size_t capacity)
 	while (m_leaves < capacity)
 		m_leaves *= 2;
 	m_buckets.resize(m_leaves * 2);
+	// One run per frame, plus the pending append before the oldest run retires.
+	m_segments.reserve(capacity + 1);
+}
+std::size_t HistoryStore::RetainedBytes() const noexcept
+{
+	return m_frames.capacity() * sizeof(HistoryFrame) + m_buckets.capacity() * sizeof(HistoryBucket) +
+		   m_segments.capacity() * sizeof(Segment);
 }
 void HistoryStore::Clear() noexcept
 {

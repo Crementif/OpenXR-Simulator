@@ -1,7 +1,7 @@
 #include "app/services/PlayerRig.h"
-#include "math/Math.h"
 #include "Pch.h"
 #include "app/services/SpatialMath.h"
+#include "math/Math.h"
 #include "simulation/BodyModel.h"
 #include <cmath>
 #include <numbers>
@@ -333,7 +333,11 @@ void PlayerRig::Reset(const ObservedSetup& observed)
 		position = root->position;
 		facing = Yaw(root->orientation);
 	}
+	if (observed.values.tracking.trackers.size() > MaxTrackerDevices)
+		throw std::invalid_argument("Tracker inventory exceeds capacity");
+	m_trackerDevices = observed.values.tracking.trackers;
 	m_hands = {};
+	m_trackers.resize(observed.values.tracking.trackers.size());
 	for (std::size_t slot = 0; slot < m_trackers.size(); ++slot)
 		m_trackers[slot] = {BodyModel::TrackerJoint(observed.values.tracking.trackers[slot].role), IdentityPose()};
 	m_ready = true;
@@ -379,12 +383,25 @@ void PlayerRig::Observe(const ObservedSetup& observed)
 }
 void PlayerRig::ObserveTrackers(const ObservedSetup& observed)
 {
-	for (std::size_t slot = 0; slot < m_trackers.size(); ++slot)
+	if (observed.values.tracking.trackers.size() > MaxTrackerDevices)
+		throw std::invalid_argument("Tracker inventory exceeds capacity");
+	std::vector<TrackerAttachment> attachments;
+	attachments.reserve(observed.values.tracking.trackers.size());
+	for (const auto& device : observed.values.tracking.trackers)
 	{
-		const auto& device = observed.values.tracking.trackers[slot];
-		m_trackerDevices[slot] = device;
-		auto& tracker = m_trackers[slot];
+		const auto previous = std::find_if(m_trackerDevices.begin(), m_trackerDevices.end(),
+										   [&](const auto& value)
+										   {
+											   return value.identity == device.identity;
+										   });
 		const auto joint = device.anchor.value_or(BodyModel::TrackerJoint(device.role));
+		TrackerAttachment tracker{joint, IdentityPose()};
+		if (previous != m_trackerDevices.end())
+		{
+			const auto index = static_cast<std::size_t>(previous - m_trackerDevices.begin());
+			if (index < m_trackers.size())
+				tracker = m_trackers[index];
+		}
 		if (device.jointOffset)
 			tracker = {joint, *device.jointOffset};
 		else if (!device.poseOverride)
@@ -393,8 +410,12 @@ void PlayerRig::ObserveTrackers(const ObservedSetup& observed)
 			tracker.offset = *device.poseOverride;
 		else
 			tracker = {joint, RelativePose(*device.poseOverride, JointPose(joint))};
+		attachments.push_back(tracker);
 	}
+	m_trackerDevices = observed.values.tracking.trackers;
+	m_trackers = std::move(attachments);
 }
+
 void PlayerRig::Preset(std::size_t hand, HandPreset preset)
 {
 	const float side = hand ? 1.0f : -1.0f;
@@ -433,8 +454,10 @@ void PlayerRig::ResetBody()
 void PlayerRig::ResetTracker(std::size_t slot)
 {
 	const auto identity = m_trackerDevices.at(slot).identity;
-	m_trackerDevices.at(slot) = TrackingState{}.trackers.at(slot);
-	m_trackerDevices.at(slot).identity = identity;
+	const auto role = m_trackerDevices.at(slot).role;
+	const auto sourcePath = m_trackerDevices.at(slot).sourcePath;
+	m_trackerDevices.at(slot) = TrackerDevice{identity, role};
+	m_trackerDevices.at(slot).sourcePath = sourcePath;
 	SnapTracker(slot);
 }
 void PlayerRig::ResetAll()
@@ -500,6 +523,7 @@ ManualTransaction PlayerRig::Transaction(const ObservedSetup& observed, std::opt
 	if (allowed(ControlChannel::Trackers) && observed.trackerAttachmentsAvailable)
 	{
 		bool claimed = false;
+		auto devices = m_trackerDevices;
 		for (std::uint32_t slot = 0; slot < m_trackers.size(); ++slot)
 		{
 			const auto& attachment = m_trackers[slot];
@@ -515,8 +539,12 @@ ManualTransaction PlayerRig::Transaction(const ObservedSetup& observed, std::opt
 				tracker.anchor = attachment.joint;
 			tracker.jointOffset = attachment.joint ? std::optional{attachment.offset} : std::nullopt;
 			tracker.poseOverride = attachment.joint ? std::nullopt : std::optional{Tracker(slot)};
-			result.commands.emplace_back(SetTracker{slot, tracker});
+			devices[slot] = tracker;
+			if (devices.size() <= 4)
+				result.commands.emplace_back(SetTracker{slot, tracker});
 		}
+		if (claimed && devices.size() > 4)
+			result.commands.emplace_back(SetTrackers{std::move(devices)});
 	}
 	return result;
 }

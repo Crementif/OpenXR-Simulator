@@ -1,10 +1,10 @@
-#include "app/services/UndoStack.h"
 #include "../TestSupport.h"
-#include "math/Math.h"
-#include <algorithm>
 #include "app/services/PlayerRig.h"
+#include "app/services/UndoStack.h"
+#include "math/Math.h"
 #include "simulation/CommandScheduler.h"
 #include "simulation/TrackingSystem.h"
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 
@@ -147,9 +147,10 @@ void BodyPoses()
 		const auto evaluated = TrackingSystem::Evaluate(RuntimeTime{Duration{1}}, tracking, model);
 		for (std::size_t hand = 0; hand < 2; ++hand)
 		{
-			const auto palm = evaluated.body.joints[static_cast<std::size_t>(hand ? BodyJoint::RightHandPalm
-																				  : BodyJoint::LeftHandPalm)]
-								  .pose.position;
+			const auto palm =
+				evaluated.body
+					.joints[static_cast<std::size_t>(hand ? BodyJoint::RightHandPalm : BodyJoint::LeftHandPalm)]
+					.pose.position;
 			Require(Distance(evaluated.controllers[hand].pose.pose.position, palm) < .03f,
 					"Posed hand is not on the posed palm");
 			if (pose == BodyPose::TPose)
@@ -187,12 +188,101 @@ void JointOffsetsFollowBody()
 		tracking.body.rootPose = XrPosef{EulerAngles(.7f, 0, 0), {2, 0, -3}};
 		const auto frame = TrackingSystem::Evaluate(RuntimeTime{Duration{1}}, tracking, BodyModel{});
 		const auto joint = *tracking.trackers[0].anchor;
-		SamePose(frame.trackers[0].pose.pose,
-				 Compose(frame.body.joints[static_cast<std::size_t>(joint)].pose, offset));
+		SamePose(frame.trackers[0].pose.pose, Compose(frame.body.joints[static_cast<std::size_t>(joint)].pose, offset));
 		observed.values.tracking = frame.input;
 		rig.Reset(observed);
 		SamePose(rig.Tracker(0), frame.trackers[0].pose.pose);
 	}
+}
+void ExpandedRig()
+{
+	ObservedSetup observed;
+	observed.values.tracking.trackers.clear();
+	for (std::size_t index = 0; index < MaxTrackerDevices; ++index)
+	{
+		TrackerDevice device{{100 + index}, TrackerRole::Unassigned};
+		device.sourcePath = TrackerSourcePath{"htcx:/device/" + std::to_string(index)};
+		device.poseOverride = XrPosef{{0, 0, 0, 1}, {static_cast<float>(index), 1, 0}};
+		observed.values.tracking.trackers.push_back(device);
+	}
+	PlayerRig rig;
+	rig.Reset(observed);
+	rig.AttachTracker(63, std::nullopt);
+	std::reverse(observed.values.tracking.trackers.begin(), observed.values.tracking.trackers.end());
+	rig.Observe(observed);
+	Require(rig.TrackerDeviceAt(0).identity.value == 163 && !rig.TrackerAt(0).joint,
+			"Tracker attachment followed a slot instead of its identity");
+	SamePose(rig.Tracker(0), *observed.values.tracking.trackers[0].poseOverride);
+	rig.ResetTracker(63);
+	Require(rig.TrackerDeviceAt(63).sourcePath.View() == "htcx:/device/0",
+			"Reset erased physical device provenance");
+	const auto edit = rig.Transaction(observed, std::nullopt, true);
+	Require(edit.commands.size() < 64 && std::holds_alternative<SetTrackers>(edit.commands.back()) &&
+				std::get<SetTrackers>(edit.commands.back()).value.size() == 64,
+			"Whole rig update exceeded the command bound or truncated trackers");
+	observed.values.tracking.trackers.clear();
+	rig.Observe(observed);
+	rig.ResetAll();
+	const auto empty = rig.Transaction(observed, std::nullopt, true);
+	Require(std::none_of(empty.commands.begin(), empty.commands.end(),
+						 [](const auto& command)
+						 {
+							 return std::holds_alternative<SetTracker>(command);
+						 }),
+			"Empty rig retained tracker slots");
+}
+void TrackerCollectionUndo()
+{
+	ObservedSetup original;
+	original.values.tracking.trackers.clear();
+	for (std::size_t index = 0; index < MaxTrackerDevices; ++index)
+		original.values.tracking.trackers.push_back({{100 + index}, TrackerRole::Unassigned});
+	UndoStack undo;
+	undo.Observe(original);
+	ManualTransaction edit;
+	auto moved = original.values.tracking.trackers.back();
+	moved.poseOverride = XrPosef{{0, 0, 0, 1}, {3, 2, 1}};
+	edit.commands = {SetTracker{63, moved}};
+	undo.Record(original, edit);
+	auto current = original;
+	current.values.tracking.trackers[63] = moved;
+	undo.Observe(current);
+	const auto restored = undo.Undo(current, std::nullopt);
+	Require(restored && std::get<SetTracker>(restored->commands.back()).index == 63 &&
+				!std::get<SetTracker>(restored->commands.back()).value.poseOverride,
+			"Expanded tracker slot could not be undone");
+	undo.Observe(original);
+	edit.commands = {SetTrackers{}};
+	undo.Record(original, edit);
+	current.values.tracking.trackers.clear();
+	undo.Observe(current);
+	Require(undo.Changes().back().label != "No change", "Inventory removal had no change description");
+	const auto collection = undo.Undo(current, std::nullopt);
+	Require(collection && std::get<SetTrackers>(collection->commands.back()).value.size() == MaxTrackerDevices,
+			"Collection undo did not restore removed devices");
+	undo.Observe(original);
+	auto reversed = original.values.tracking.trackers;
+	std::reverse(reversed.begin(), reversed.end());
+	edit.commands = {SetTrackers{reversed}};
+	undo.Record(original, edit);
+	edit.commands = {SetTrackers{}};
+	undo.Record(original, edit);
+	const auto grouped = undo.Undo(current, std::nullopt, 2);
+	Require(grouped && std::get<SetTrackers>(grouped->commands.back()).value.front().identity.value == 100 &&
+				std::get<SetTrackers>(grouped->commands.back()).value.back().identity.value == 163,
+			"Grouped topology undo did not restore the oldest ordered inventory");
+	undo.Observe(original);
+	edit.commands = {SetTracker{63, moved}};
+	undo.Record(original, edit);
+	current = original;
+	current.values.tracking.trackers.back().identity.value = 900;
+	undo.Observe(current);
+	Require(!undo.Undo(current, std::nullopt) && !undo.Empty(),
+			"Slot undo overwrote another device after topology changed");
+	current.values.tracking.trackers.clear();
+	undo.Observe(current);
+	Require(!undo.Undo(current, std::nullopt) && !undo.Empty(),
+			"Slot undo consumed history after the device was removed");
 }
 void RapidUndo()
 {
@@ -244,10 +334,12 @@ void HistoryUndo()
 	const auto restore = undo.Undo(original, std::nullopt, 2);
 	Require(restore.has_value(), "Undo to a history entry produced nothing");
 	const auto state = Applied(*restore);
-	Require(std::none_of(restore->commands.begin(), restore->commands.end(), [](const auto& command)
-	{
-		return std::holds_alternative<SetHeadPose>(command);
-	}), "Undoing two steps also rewrote the step before them");
+	Require(std::none_of(restore->commands.begin(), restore->commands.end(),
+						 [](const auto& command)
+						 {
+							 return std::holds_alternative<SetHeadPose>(command);
+						 }),
+			"Undoing two steps also rewrote the step before them");
 	SamePose(state.controllers[1].pose.pose, original.values.tracking.controllers[1].pose.pose);
 	Require(undo.Changes().size() == 1 && undo.Changes()[0].label == "Head moved",
 			"Undo to an entry kept the undone changes");
@@ -273,15 +365,15 @@ void UndoOwnershipAndScope()
 	current.values.tracking.trackers[3].connected = false;
 	undo.Observe(current);
 	Require(undo.Changes()[1].label == changes[1].label,
-		"A later runtime observation changed an earlier edit's description");
+			"A later runtime observation changed an earlier edit's description");
 	const CommandSource other{CommandSourceKind::Rig, 2};
 	current.owners[static_cast<std::size_t>(ControlChannel::Trackers)] = other;
 	Require(!undo.Undo(current, std::nullopt, 2) && undo.Changes().size() == 2,
-		"Blocked undo discarded history or partially restored a grouped edit");
+			"Blocked undo discarded history or partially restored a grouped edit");
 	current.owners[static_cast<std::size_t>(ControlChannel::Trackers)].reset();
 	current.scenarios[static_cast<std::size_t>(FailureScenario::GazeUnavailable)] = true;
 	Require(!undo.Undo(current, std::nullopt, 2) && undo.Changes().size() == 2,
-		"Undo overwrote an active failure scenario or discarded blocked history");
+			"Undo overwrote an active failure scenario or discarded blocked history");
 	current.scenarios = {};
 	current.owners[static_cast<std::size_t>(ControlChannel::Head)] = other;
 	const auto restore = undo.Undo(current, std::nullopt, 2);
@@ -291,7 +383,8 @@ void UndoOwnershipAndScope()
 	{
 		if (const auto value = std::get_if<SetTracker>(&command))
 			Require(value->index == 1 && value->value.anchor == before.values.tracking.trackers[1].anchor &&
-				!value->value.poseOverride, "Undo restored the wrong tracker slot");
+						!value->value.poseOverride,
+					"Undo restored the wrong tracker slot");
 		if (const auto value = std::get_if<SetGaze>(&command))
 			Require(value->value.yaw == 0 && value->value.pitch == 0, "Undo lost the oldest selected gaze state");
 	}
@@ -304,7 +397,7 @@ void UndoOwnershipAndScope()
 	current.owners[static_cast<std::size_t>(ControlChannel::Head)].reset();
 	const auto next = undo.Undo(current, std::nullopt);
 	Require(next && Applied(*next).head.pose.position.x == 7,
-		"Selective undo replaced unrelated authored state with an older snapshot");
+			"Selective undo replaced unrelated authored state with an older snapshot");
 }
 
 void Undo()
@@ -349,6 +442,8 @@ int main()
 		BodyPoses();
 		JointOffsetsFollowBody();
 		Undo();
+		ExpandedRig();
+		TrackerCollectionUndo();
 		RapidUndo();
 		HistoryUndo();
 		UndoOwnershipAndScope();

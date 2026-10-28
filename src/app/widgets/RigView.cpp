@@ -1,8 +1,8 @@
-#include "math/Math.h"
 #include "Pch.h"
-#include "app/widgets/Theme.h"
 #include "app/widgets/Controls.h"
 #include "app/widgets/SpatialWidgets.h"
+#include "app/widgets/Theme.h"
+#include "math/Math.h"
 #include <ImGuizmo.h>
 #include <cmath>
 #include <numbers>
@@ -27,6 +27,8 @@ static float Yaw(XrQuaternionf q)
 }
 SpatialScene SpatialScene::FromTracking(const TrackingSnapshot& tracking)
 {
+	if (tracking.trackers.size() > MaxTrackerDevices)
+		throw std::invalid_argument("Tracker inventory exceeds capacity");
 	SpatialScene scene;
 	scene.root = tracking.body.joints[static_cast<std::size_t>(BodyJoint::Root)].pose;
 	scene.devices[0] = tracking.head.pose;
@@ -37,8 +39,9 @@ SpatialScene SpatialScene::FromTracking(const TrackingSnapshot& tracking)
 		scene.available[hand + 1] = tracking.controllers[hand].connected &&
 									(tracking.controllers[hand].pose.flags & ValidPoseFlags) == ValidPoseFlags;
 	}
-	for (std::size_t slot = 0; slot < 4; ++slot)
+	for (std::size_t slot = 0; slot < tracking.trackers.size(); ++slot)
 	{
+		scene.labels[slot + 3] = 'T';
 		scene.devices[slot + 3] = tracking.trackers[slot].pose.pose;
 		scene.available[slot + 3] = tracking.trackers[slot].device.connected &&
 									(tracking.trackers[slot].pose.flags & ValidPoseFlags) == ValidPoseFlags;
@@ -58,7 +61,8 @@ FrameView RigCamera(const RigViewState& state, const SpatialScene& scene, float 
 	const float extent = std::tan(.55f), below = 1 - std::clamp(header, 0.0f, .5f);
 	const float horizontal = std::atan(extent * aspect / below);
 	const float up = std::atan(extent * (1 + 2 * (1 - below) / below));
-	const bool device = state.focus >= 0 && state.focus < 7 && scene.available[state.focus];
+	const bool device =
+		state.focus >= 0 && state.focus < static_cast<int>(MaxTrackerDevices + 3) && scene.available[state.focus];
 	const auto target =
 		device ? scene.devices[state.focus].position : Compose(scene.root, {{0, 0, 0, 1}, {0, .9f, 0}}).position;
 	return {{rotation,
@@ -66,7 +70,8 @@ FrameView RigCamera(const RigViewState& state, const SpatialScene& scene, float 
 			{-horizontal, horizontal, up, -.55f}};
 }
 SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& scene, int& selected,
-						  const std::array<bool, 7>& editable, ImVec2 size, const SpatialScene* ghost)
+						  const std::array<bool, MaxTrackerDevices + 3>& editable, ImVec2 size,
+						  const SpatialScene* ghost)
 {
 	state.drawnFrame = ImGui::GetFrameCount();
 	if (!scene.eye)
@@ -82,7 +87,7 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 	state.points = {};
 	ImGui::PushID(id);
 	// A hand or tracker page orbits that device; a new focus starts from its own distance.
-	const int focus = selected >= 1 && selected < 7 ? selected : -1;
+	const int focus = selected >= 1 && selected < static_cast<int>(MaxTrackerDevices + 3) ? selected : -1;
 	if (focus != state.focus)
 	{
 		state.focus = focus;
@@ -345,7 +350,7 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 				}
 			}
 		};
-		for (int device = 0; device < 7; ++device)
+		for (int device = 0; device < static_cast<int>(MaxTrackerDevices + 3); ++device)
 			if (device != selected)
 				renderDevice(device);
 		if (selected >= 0)
@@ -410,7 +415,7 @@ SpatialEditResult RigView(const char* id, RigViewState& state, SpatialScene& sce
 	if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
 	{
 		bool hit = false;
-		for (int device = 0; device < 7; ++device)
+		for (int device = 0; device < static_cast<int>(MaxTrackerDevices + 3); ++device)
 		{
 			const auto [point, behind] = project(scene.devices[device].position);
 			if (scene.available[device] && !behind &&

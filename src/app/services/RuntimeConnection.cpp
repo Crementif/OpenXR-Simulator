@@ -34,7 +34,7 @@ bool RuntimeConnection::Current(std::uint64_t epoch)
 	return !m_stopping && m_requested && m_snapshot.epoch == epoch;
 }
 void RuntimeConnection::ConnectionState(std::uint64_t epoch, RuntimeConnectionState state, std::string detail,
-										std::optional<control::ControlPacket> hello, std::string appName)
+										std::optional<control::ControlPacket> hello, std::string appName, std::uint64_t peerProcess)
 {
 	control::ControlPacket previous;
 	std::lock_guard lock(m_mutex);
@@ -43,6 +43,7 @@ void RuntimeConnection::ConnectionState(std::uint64_t epoch, RuntimeConnectionSt
 	m_snapshot.state = state;
 	m_snapshot.detail = std::move(detail);
 	m_snapshot.appName = std::move(appName);
+	m_snapshot.peerProcess = state == RuntimeConnectionState::Connected ? peerProcess : 0;
 	if (hello)
 		previous = std::exchange(m_snapshot.hello, std::move(*hello));
 }
@@ -118,6 +119,7 @@ void RuntimeConnection::RunChecked()
 	{
 		Queued request;
 		std::string path;
+		std::optional<std::uint64_t> expectedProcess;
 		bool connect = false, newEpoch = false, failed = false;
 		{
 			std::unique_lock lock(m_mutex);
@@ -137,6 +139,7 @@ void RuntimeConnection::RunChecked()
 				newEpoch = true;
 				connect = m_requested;
 				path = m_snapshot.path;
+				expectedProcess = m_expectedProcess;
 			}
 			else
 			{
@@ -174,6 +177,8 @@ void RuntimeConnection::RunChecked()
 							throw;
 					}
 				}
+				if (expectedProcess && client->PeerProcess() != *expectedProcess)
+					throw std::runtime_error("Runtime endpoint belongs to a different process");
 				control::ControlPacket hello;
 				hello.message.opcode = static_cast<std::uint16_t>(control::OpCode::Hello);
 				hello.message.fields = {control::Field::Text(control::tag::ClientName, "simxr companion")};
@@ -195,7 +200,8 @@ void RuntimeConnection::RunChecked()
 				}
 				ConnectionState(
 					activeEpoch, accepted ? RuntimeConnectionState::Connected : RuntimeConnectionState::Failed,
-					accepted ? "" : "Runtime rejected control protocol Hello", std::move(response), std::move(appName));
+					accepted ? "" : "Runtime rejected control protocol Hello", std::move(response), std::move(appName),
+					accepted ? client->PeerProcess() : 0);
 				if (!accepted)
 					client.reset();
 			}
@@ -255,7 +261,7 @@ RuntimeConnection::~RuntimeConnection()
 {
 	Close();
 }
-std::uint64_t RuntimeConnection::Connect(std::string path)
+std::uint64_t RuntimeConnection::Connect(std::string path, std::optional<std::uint64_t> expectedProcess)
 {
 	std::vector<Queued> requests;
 	std::vector<RuntimeReply> replies;
@@ -269,8 +275,10 @@ std::uint64_t RuntimeConnection::Connect(std::string path)
 	m_replies.swap(replies);
 	hello = std::move(m_snapshot.hello);
 	m_snapshot.path = std::move(path);
+	m_expectedProcess = expectedProcess;
 	m_snapshot.detail.clear();
 	m_snapshot.appName.clear();
+	m_snapshot.peerProcess = 0;
 	m_snapshot.state = RuntimeConnectionState::Connecting;
 	m_snapshot.inFlight = false;
 	m_requested = true;
@@ -290,6 +298,7 @@ void RuntimeConnection::Disconnect(std::optional<std::uint64_t> expectedEpoch)
 	m_replies.swap(replies);
 	hello = std::move(m_snapshot.hello);
 	m_requested = false;
+	m_snapshot.peerProcess = 0;
 	m_snapshot.state = RuntimeConnectionState::Disconnected;
 	m_snapshot.inFlight = false;
 	m_snapshot.detail.clear();

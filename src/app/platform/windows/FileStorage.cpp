@@ -9,6 +9,31 @@
 
 namespace simxr::app
 {
+SettingsFileLock::SettingsFileLock(const std::filesystem::path& path)
+{
+	if (!path.is_absolute())
+		throw std::invalid_argument("Companion settings destination must be absolute");
+	std::filesystem::create_directories(path.parent_path());
+	auto lockPath = path;
+	lockPath += L".lock";
+	const HANDLE handle = CreateFileW(lockPath.c_str(), GENERIC_READ | GENERIC_WRITE,
+									 FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (handle == INVALID_HANDLE_VALUE)
+		throw windows::Error("Cannot open settings lock");
+	OVERLAPPED overlap{};
+	if (!LockFileEx(handle, LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, &overlap))
+	{
+		const auto failure = windows::Error("Cannot lock settings");
+		CloseHandle(handle);
+		throw failure;
+	}
+	m_handle = reinterpret_cast<std::intptr_t>(handle);
+}
+SettingsFileLock::~SettingsFileLock()
+{
+	if (m_handle != -1)
+		CloseHandle(reinterpret_cast<HANDLE>(m_handle));
+}
 static std::filesystem::path Absolute(const std::string& value)
 {
 	auto path = Utf8Path(value);

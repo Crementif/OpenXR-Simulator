@@ -2,6 +2,7 @@
 #include "Pch.h"
 
 #include <cerrno>
+#include <csignal>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -123,6 +124,14 @@ std::unique_ptr<ChildProcess> ChildProcess::Launch(const LaunchProfile& profile)
 std::uint64_t ChildProcess::Id() const noexcept
 {
 	return static_cast<std::uint64_t>(m_state->process);
+}
+void ChildProcess::RequestClose()
+{
+	if (PollExit())
+		return;
+	// The unreaped child retains its PID until this owner observes exit.
+	if (::kill(m_state->process, SIGTERM) != 0 && errno != ESRCH)
+		throw std::runtime_error(std::string("Cannot request child close: ") + std::strerror(errno));
 }
 std::optional<int> ChildProcess::PollExit()
 {

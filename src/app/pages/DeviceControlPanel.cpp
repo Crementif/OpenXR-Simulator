@@ -31,7 +31,8 @@ void DeviceControlPanel::CancelEditing()
 }
 void DeviceControlPanel::SelectDevice(const DeviceSel& device)
 {
-	const unsigned slot = device.page == DevicePage::Trackers ? std::min(device.slot, 3u) : 0;
+	const unsigned slot =
+		device.page == DevicePage::Trackers ? std::min(device.slot, static_cast<unsigned>(MaxTrackerDevices - 1)) : 0;
 	if (!m_selection || m_selection->page != device.page || m_selection->slot != slot)
 	{
 		CancelEditing();
@@ -72,7 +73,8 @@ bool DeviceControlPanel::CanReset(DevicePage page) const
 	case DevicePage::Gaze:
 		return allowed(ControlChannel::Gaze);
 	case DevicePage::Trackers:
-		return allowed(ControlChannel::Trackers) && m_observed->trackerAttachmentsAvailable;
+		return allowed(ControlChannel::Trackers) && m_observed->trackerAttachmentsAvailable &&
+			   !m_observed->values.tracking.trackers.empty();
 	}
 	return false;
 }
@@ -191,7 +193,6 @@ std::optional<SimulationEdit> DeviceControlPanel::DrawHeader(const Selection& se
 	const bool ready = m_configurationLoaded && m_playerRig.Ready() && CanReset(page);
 	const float right = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
 	PageTitle(icons[static_cast<int>(page)], titles[static_cast<int>(page)]);
-	const float titleWidth = ImGui::GetItemRectSize().x;
 	if (page == DevicePage::Player)
 	{
 		const float width = ImGui::CalcTextSize("Reset all").x + ImGui::GetStyle().FramePadding.x * 2;
@@ -204,6 +205,11 @@ std::optional<SimulationEdit> DeviceControlPanel::DrawHeader(const Selection& se
 	}
 	else
 	{
+		if (showState && (page != DevicePage::Trackers || !m_authoredTracking.trackers.empty()))
+		{
+			ImGui::SameLine();
+			DrawTracking(page);
+		}
 		ImGui::SameLine(right - ImGui::GetFrameHeight());
 		ImGui::BeginDisabled(!ready);
 		const std::string tip =
@@ -211,8 +217,6 @@ std::optional<SimulationEdit> DeviceControlPanel::DrawHeader(const Selection& se
 		if (IconButton("Reset page", Icon::ResetPose, tip.c_str()))
 			ResetPage(page);
 		ImGui::EndDisabled();
-		if (showState)
-			DrawTracking(page, titleWidth);
 	}
 	ImGui::Dummy({0, ImGui::GetStyle().ItemSpacing.y / 2});
 	return std::exchange(m_edit, {});
@@ -268,7 +272,8 @@ void DeviceControlPanel::ResetPage(DevicePage page)
 			ApplyOwned(ControlChannel::Gaze, SetGaze{GazeInput{}});
 		return;
 	case DevicePage::Trackers:
-		m_playerRig.ResetTracker(static_cast<std::size_t>(m_selectedTracker));
+		if (static_cast<std::size_t>(m_selectedTracker) < m_authoredTracking.trackers.size())
+			m_playerRig.ResetTracker(static_cast<std::size_t>(m_selectedTracker));
 		break;
 	}
 	auto commands = PlayerEdit(true).commands;
@@ -342,7 +347,15 @@ void DeviceControlPanel::LoadObservedSettings()
 	if (!m_observed)
 		return;
 	const auto& values = m_observed->values;
-	if (!m_rigPiloting)
+	const bool topologyChanged = !std::equal(values.tracking.trackers.begin(), values.tracking.trackers.end(),
+											 m_authoredTracking.trackers.begin(), m_authoredTracking.trackers.end(),
+											 [](const auto& a, const auto& b)
+											 {
+												 return a.identity == b.identity;
+											 });
+	if (topologyChanged)
+		CancelEditing();
+	if (!m_rigPiloting || topologyChanged)
 		m_playerRig.Observe(*m_observed);
 	m_authoredTracking = values.tracking;
 	m_authoredControls = values.input.controllers;
@@ -363,6 +376,14 @@ void DeviceControlPanel::ObserveState(const control::Message& state)
 	{
 		const auto previous = m_observed ? m_observed->scenarios : ScenarioState{};
 		auto observed = ReadObservedSetup(state);
+		const bool topologyChanged =
+			!m_observed ||
+			!std::equal(observed.values.tracking.trackers.begin(), observed.values.tracking.trackers.end(),
+						m_observed->values.tracking.trackers.begin(), m_observed->values.tracking.trackers.end(),
+						[](const auto& a, const auto& b)
+						{
+							return a.identity == b.identity;
+						});
 		for (const auto& profile : observed.values.input.preferredProfiles)
 			if (profile.size() >= m_controllerProfiles.front().size())
 				throw std::runtime_error("Interaction profile path is too long");
@@ -371,7 +392,7 @@ void DeviceControlPanel::ObserveState(const control::Message& state)
 			if (previous[index] && !m_observed->scenarios[index])
 				ReloadRecoveredChannel(ScenarioInputChannel(static_cast<FailureScenario>(index)));
 		m_observationError.clear();
-		if (!m_configurationLoaded)
+		if (!m_configurationLoaded || topologyChanged)
 			LoadObservedSettings();
 	}
 	catch (const std::exception& error)

@@ -60,7 +60,7 @@ void WorkspacePanels::PickTab(Selection picked, bool overlay)
 
 void WorkspacePanels::StoreCrop(const std::optional<ImVec4>& crop)
 {
-	auto stored = std::ranges::find(m_settings.crops, m_settings.activeProfile, &PreviewCrop::profile);
+	auto stored = std::ranges::find(m_settings.crops, m_workspaceProfile, &PreviewCrop::profile);
 	if (!crop)
 	{
 		if (stored != m_settings.crops.end())
@@ -70,7 +70,7 @@ void WorkspacePanels::StoreCrop(const std::optional<ImVec4>& crop)
 		}
 		return;
 	}
-	const PreviewCrop value{m_settings.activeProfile, crop->x, crop->y, crop->z, crop->w};
+	const PreviewCrop value{m_workspaceProfile, crop->x, crop->y, crop->z, crop->w};
 	if (stored != m_settings.crops.end() && *stored == value)
 		return;
 	if (stored != m_settings.crops.end())
@@ -178,7 +178,7 @@ bool WorkspacePanels::Divider(const char* id, ShellRect strip, bool vertical, fl
 void WorkspacePanels::DrawShell(RuntimePanels& runtime)
 {
 	const auto* viewport = ImGui::GetMainViewport();
-	const auto origin = ImGui::GetStyle().WindowPadding;
+	const ImVec2 origin{0, 0};
 	ImGui::SetNextWindowPos(viewport->WorkPos);
 	ImGui::SetNextWindowSize(viewport->WorkSize);
 	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {0, 0});
@@ -186,9 +186,8 @@ void WorkspacePanels::DrawShell(RuntimePanels& runtime)
 				 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
 					 ImGuiWindowFlags_NoBringToFrontOnFocus);
 	ImGui::PopStyleVar();
-	// Inset the main regions while letting the timeline reach the shell's left and bottom edges.
-	const float scale = m_settings.scale, width = ImGui::GetContentRegionAvail().x - origin.x * 2;
-	const float height = ImGui::GetContentRegionAvail().y - origin.y * 2;
+	const float scale = m_settings.scale, width = ImGui::GetContentRegionAvail().x;
+	const float height = ImGui::GetContentRegionAvail().y;
 	ImGui::SetCursorPos(origin);
 	ImGui::BeginChild("Top bar", {width, 40 * scale}, 0, ImGuiWindowFlags_NoScrollbar);
 	DrawToolbar(runtime);
@@ -255,16 +254,21 @@ void WorkspacePanels::DrawShell(RuntimePanels& runtime)
 		contains(m_shell.preview, ImGui::GetIO().MousePos) && !contains(m_shell.inspector, ImGui::GetIO().MousePos))
 		m_drawer = false;
 	runtime.HudFolded() = m_settings.hudFolded;
-	if (m_cropProfile != m_settings.activeProfile)
+	if (m_cropProfile != m_workspaceProfile)
 	{
 		runtime.CancelPreviewInteraction();
-		const auto crop = std::ranges::find(m_settings.crops, m_settings.activeProfile, &PreviewCrop::profile);
+		const auto crop = std::ranges::find(m_settings.crops, m_workspaceProfile, &PreviewCrop::profile);
 		runtime.PreviewCrop() = crop == m_settings.crops.end()
 									? std::nullopt
 									: std::optional<ImVec4>(ImVec4{crop->x0, crop->y0, crop->x1, crop->y1});
-		m_cropProfile = m_settings.activeProfile;
+		m_cropProfile = m_workspaceProfile;
 	}
 	runtime.DrawPreview(m_shell);
+	if (std::exchange(m_shell.addApplication, false))
+	{
+		m_profiles.Edit(m_settings, -1);
+		m_showLaunch = true;
+	}
 	if (std::exchange(m_settings.hudFolded, runtime.HudFolded()) != m_settings.hudFolded)
 		m_dirty = true;
 	StoreCrop(runtime.PreviewCrop());

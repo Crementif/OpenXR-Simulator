@@ -7,7 +7,7 @@
 
 namespace simxr::app
 {
-static std::optional<LaunchedSession> UniqueSession(const control::Message& message, const std::string& endpoint)
+static std::optional<LaunchedSession> UniqueSession(const control::Message& message, const std::string& endpoint, std::uint64_t process)
 {
 	const auto* error = message.Find(control::tag::Error);
 	if (!error || error->AsU32() != static_cast<std::uint32_t>(control::ErrorCode::Ok))
@@ -37,13 +37,13 @@ static std::optional<LaunchedSession> UniqueSession(const control::Message& mess
 			throw std::runtime_error("Invalid launched session identity");
 		if (selected)
 			throw std::runtime_error("The app has several XR sessions. Choose one.");
-		selected = LaunchedSession{endpoint, *id->AsU64(), *generation->AsU64()};
+		selected = LaunchedSession{endpoint, *id->AsU64(), *generation->AsU64(), process};
 	}
 	return selected;
 }
 
-LaunchAttachment::LaunchAttachment(RuntimeConnection& discovery, const LaunchProfile& profile)
-	: m_discovery(discovery), m_deadline(std::chrono::steady_clock::now() + std::chrono::seconds{30})
+LaunchAttachment::LaunchAttachment(RuntimeConnection& discovery, const LaunchProfile& profile, std::string replacedEndpoint)
+	: m_discovery(discovery), m_replacedEndpoint(std::move(replacedEndpoint)), m_deadline(std::chrono::steady_clock::now() + std::chrono::seconds{30})
 {
 	Initialize(profile);
 }
@@ -79,12 +79,14 @@ std::optional<LaunchedSession> LaunchAttachment::Poll()
 		return {};
 	if (const auto* waiting = std::get_if<WaitingForEndpoint>(&m_state))
 	{
+		if (std::chrono::steady_clock::now() < m_retryAfter)
+			return {};
 		const auto endpoint = ExpectedEndpoint(waiting->process);
-		if (m_previous.contains(endpoint))
+		if (m_previous.contains(endpoint) && endpoint != m_replacedEndpoint)
 			throw std::runtime_error("Refusing to attach a launch to a pre-existing endpoint");
 		if (!EndpointExists(endpoint))
 			return {};
-		m_state = Connecting{endpoint, m_discovery.Connect(endpoint)};
+		m_state = Connecting{endpoint, m_discovery.Connect(endpoint, waiting->process), waiting->process};
 	}
 	const auto connection = m_discovery.Snapshot();
 	if (const auto* connecting = std::get_if<Connecting>(&m_state))
@@ -92,10 +94,20 @@ std::optional<LaunchedSession> LaunchAttachment::Poll()
 		if (connection.epoch != connecting->epoch)
 			throw std::runtime_error("Launch discovery connection changed unexpectedly");
 		if (connection.state == RuntimeConnectionState::Failed)
+		{
+			if (connecting->endpoint == m_replacedEndpoint)
+			{
+				const auto process = connecting->process;
+				m_discovery.Disconnect(connecting->epoch);
+				m_retryAfter = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+				m_state = WaitingForEndpoint{process};
+				return {};
+			}
 			throw std::runtime_error("Cannot connect to the launched runtime: " + connection.detail);
+		}
 		if (connection.state != RuntimeConnectionState::Connected)
 			return {};
-		m_state = WaitingForSession{connecting->endpoint, connecting->epoch, {}};
+		m_state = WaitingForSession{connecting->endpoint, connecting->epoch, connecting->process, {}};
 	}
 	auto& waiting = std::get<WaitingForSession>(m_state);
 	if (connection.epoch != waiting.epoch)
@@ -109,7 +121,7 @@ std::optional<LaunchedSession> LaunchAttachment::Poll()
 		waiting.request.reset();
 		if (!reply.error.empty())
 			throw std::runtime_error(reply.error);
-		if (auto session = UniqueSession(reply.packet.message, waiting.endpoint))
+		if (auto session = UniqueSession(reply.packet.message, waiting.endpoint, waiting.process))
 		{
 			const auto epoch = waiting.epoch;
 			m_state = Complete{};

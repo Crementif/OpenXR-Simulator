@@ -8,11 +8,11 @@
 
 namespace simxr::app
 {
-void WorkspacePanels::DrawAppPicker(RuntimePanels& runtime, const RuntimeView& view, float maximumWidth)
+void WorkspacePanels::DrawAppPicker(RuntimePanels& runtime, const RuntimeView& view, float maximumWidth, bool compact)
 {
 	const auto state = m_shell.session.state;
 	const auto slash = view.endpoint.find_last_of("/\\");
-	const std::string label = !view.connected ? (m_profiles.Selected() >= 0 ? m_settings.activeProfile : "Apps")
+	const std::string label = !view.connected ? (!m_workspaceProfile.empty() ? m_workspaceProfile : "Apps")
 							  : view.endpoint == m_launchedEndpoint && !m_launchedName.empty()	 ? m_launchedName
 							  : view.endpoint == m_connectedEndpoint && !m_connectedName.empty() ? m_connectedName
 							  : !view.appName.empty()
@@ -38,12 +38,15 @@ void WorkspacePanels::DrawAppPicker(RuntimePanels& runtime, const RuntimeView& v
 		if (ImGui::MenuItem("Cancel pending", "Shift+F7"))
 			runtime.CancelPending();
 	};
-	const auto choice = m_picker.Draw(m_settings, view, label, dot, tooltip,
-									  std::exchange(m_shell.openAppPicker, false), session, maximumWidth);
+	auto choice = m_picker.Draw(m_settings, view, label, dot, tooltip,
+									  std::exchange(m_shell.openAppPicker, false), session, maximumWidth, compact);
+	if (choice.connect && m_openRunning && m_openRunning(*choice.connect))
+		choice.connect.reset();
 	if (!choice.discoveryError.empty())
 		m_notices.Push({"Application discovery failed", choice.discoveryError});
-	if (choice.connect || choice.connectEndpoint || choice.disconnect)
+	if (choice.connect || choice.disconnect)
 	{
+		CancelRestart();
 		m_attachment.reset();
 		m_launchError.clear();
 		m_launchedEndpoint.clear();
@@ -55,13 +58,7 @@ void WorkspacePanels::DrawAppPicker(RuntimePanels& runtime, const RuntimeView& v
 #endif
 	}
 	if (choice.connect)
-	{
-		m_connectedEndpoint = choice.connect->endpoint;
-		m_connectedName = choice.connect->name;
-		runtime.ConnectEndpoint(choice.connect->endpoint);
-		if (auto launch = DescribeProcess(choice.connect->process))
-			Remember(std::move(*launch));
-	}
+		ConnectApp(runtime, *choice.connect);
 	if (choice.launchProfile)
 	{
 		const auto index = *choice.launchProfile;
@@ -92,6 +89,16 @@ void WorkspacePanels::DrawAppPicker(RuntimePanels& runtime, const RuntimeView& v
 		m_showConnection = true;
 	if (choice.disconnect)
 		runtime.Disconnect();
+}
+
+void WorkspacePanels::ConnectApp(RuntimePanels& runtime, const RunningApp& app)
+{
+	m_workspaceProfile.clear();
+	m_connectedEndpoint = app.endpoint;
+	m_connectedName = app.name;
+	runtime.ConnectEndpoint(app.endpoint);
+	if (auto launch = DescribeProcess(app.process))
+		Remember(std::move(*launch));
 }
 
 void WorkspacePanels::DrawHistory(RuntimePanels& runtime)
@@ -215,7 +222,15 @@ void WorkspacePanels::DrawToolbar(RuntimePanels& runtime)
 	const float reserved =
 		actions + style.ItemSpacing.x + (m_shell.session.state == RunState::Failed ? button + style.ItemSpacing.x : 0);
 	ImGui::SetCursorPosY(std::max(0.0f, (ImGui::GetWindowHeight() - button) / 2));
-	DrawAppPicker(runtime, snapshot, std::max(1.f, ImGui::GetContentRegionAvail().x - reserved));
+	DrawAppPicker(runtime, snapshot, std::max(1.f, ImGui::GetContentRegionAvail().x - reserved), bool(m_tabBar));
+	if (m_tabBar)
+	{
+		ImGui::SameLine();
+		const float tabsWidth = std::max(1.f, ImGui::GetContentRegionAvail().x - reserved);
+		ImGui::BeginChild("Applications", {tabsWidth, button + style.ItemSpacing.y}, 0, ImGuiWindowFlags_NoScrollbar);
+		m_tabBar();
+		ImGui::EndChild();
+	}
 	if (m_shell.session.state == RunState::Failed && !m_shell.session.error.empty())
 	{
 		ImGui::SameLine();

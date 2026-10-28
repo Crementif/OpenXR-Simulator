@@ -5,6 +5,8 @@
 #include "app/pages/DeviceControlPanel.h"
 #include "app/pages/FramePage.h"
 #include "app/pages/RangePage.h"
+#include "app/pages/PhysicalHeadsetPage.h"
+#include "app/services/HeadsetHost.h"
 #include "app/services/PilotBindings.h"
 #include "app/services/PlayerRig.h"
 #include "app/services/RuntimeSession.h"
@@ -24,6 +26,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -47,7 +50,7 @@ class RuntimePanels
 	void ConfigureSnapshots(std::uint32_t budgetMiB);
 	void ConfigurePreviews(std::uint32_t budgetMiB, std::uint32_t ramMiB);
 	void ConfigurePilot(const PilotBindings& keys, const GamepadBindings& gamepad, bool remoteMouseDrag = false);
-	void Poll();
+	void Poll(bool foreground = true);
 	// Builds this UI frame's view; drawers read it until the next BeginFrame.
 	const RuntimeView& BeginFrame();
 	const RuntimeView& View() const;
@@ -89,6 +92,7 @@ class RuntimePanels
 	const InputHistory& InputSamples() const;
 	const PreviewHistory& KeptPreviews() const;
 	std::uint64_t PreviewBytes() const;
+	std::uint64_t SnapshotChargeBytes() const;
 	std::uint64_t PreviewBudget() const;
 	std::uint64_t PreviewRamBytes() const;
 	std::uint64_t PreviewRamBudget() const;
@@ -104,12 +108,23 @@ class RuntimePanels
 	std::vector<UndoStack::Change> Changes() const;
 	void UndoChanges(std::size_t count);
 	void FocusLost();
+	void Deactivate();
+	void BeginRetirement();
+	bool RetirementComplete() const;
+	void PreserveUnfinished() noexcept;
+	void Notify(std::string title, std::string detail = {});
 	void CancelPreviewInteraction();
 	std::string Endpoint() const;
 	const std::vector<std::string>& Endpoints() const;
 	void RefreshEndpoints();
-	void ConnectEndpoint(std::string endpoint);
+	void ConnectEndpoint(std::string endpoint, std::optional<std::uint64_t> expectedProcess = {});
+	void SetEndpointOpenHandler(std::function<bool(const std::string&)> open);
 	void Disconnect();
+	// Uses the current selected run, never caller-supplied target identities.
+	void ConnectHeadset(HeadsetHostOptions options);
+	void SetHeadsetAdmission(std::function<bool()> available);
+	void DisconnectHeadset();
+	HeadsetHostSnapshot HeadsetStatus() const;
 	void SetLive(bool enabled);
 	void ResumeLive();
 	void StopRecording();
@@ -118,6 +133,7 @@ class RuntimePanels
 	std::vector<std::uint64_t> CaptureIds() const;
 	bool RequestExport(std::string path);
 	const ImageExportTask& ImageExport() const noexcept;
+	bool Exporting() const;
 	void InspectSelected();
 	bool CanReplay() const;
 	void RequestReplay(automation::SavedRecording recording);
@@ -130,7 +146,10 @@ class RuntimePanels
 
   private:
 	RuntimeView Build() const;
+	void PollRecording();
 	bool CanRecord() const;
+	void PollHeadsetPreparation();
+	void DrawHeadsetControls();
 	void DrawPastDevice(const Selection& selection);
 	void SubmitEdit(const SimulationEdit& edit);
 	void StopPilot();
@@ -147,8 +166,22 @@ class RuntimePanels
 		bool releaseQueued = false;
 	};
 	std::optional<ReplayPreparation> m_replayPreparation;
+	struct HeadsetPreparation
+	{
+		HeadsetHostOptions options;
+		PanelScope scope;
+		std::optional<CommandSource> source;
+		std::uint64_t observation;
+		std::chrono::steady_clock::time_point deadline;
+	};
+	std::optional<HeadsetPreparation> m_headsetPreparation;
 	RuntimeSession m_session;
+	HeadsetHost m_headset;
+	PhysicalHeadsetPage m_headsetPage;
 	Window* m_window = nullptr;
+	bool m_foreground = false;
+	std::function<bool()> m_headsetAvailable;
+	std::function<bool(const std::string&)> m_openEndpoint;
 	std::uint32_t m_gamepad = 0;
 	bool m_rumbleFailed = false;
 	RuntimeView m_view;

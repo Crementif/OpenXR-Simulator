@@ -105,14 +105,14 @@ static void SectionGap()
 void FieldLabel(const char* label)
 {
 	ImGui::AlignTextToFramePadding();
-	ImGui::TextDisabled("%s", label);
+	ImGui::TextColored(theme::Vec(theme::TextLabel), "%s", label);
 	ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetFontSize() * 6.5f));
 	ImGui::SetNextItemWidth(-FLT_MIN);
 }
 void SectionLabel(const char* label)
 {
 	SectionGap();
-	ImGui::PushFont(nullptr, ImGui::GetFontSize() * .78f);
+	ImGui::PushFont(nullptr, ImGui::GetFontSize() * .85f);
 	ImGui::PushStyleColor(ImGuiCol_Text, theme::TextDim);
 	ImGui::TextUnformatted(Capitals(label).c_str());
 	ImGui::PopStyleColor();
@@ -121,7 +121,7 @@ void SectionLabel(const char* label)
 bool Section(const char* label, ImGuiTreeNodeFlags flags)
 {
 	SectionGap();
-	ImGui::PushFont(nullptr, ImGui::GetFontSize() * .78f);
+	ImGui::PushFont(nullptr, ImGui::GetFontSize() * .85f);
 	ImGui::PushStyleColor(ImGuiCol_Text, theme::TextDim);
 	ImGui::PushStyleColor(ImGuiCol_HeaderHovered, theme::Fade(theme::Text, .05f));
 	ImGui::PushStyleColor(ImGuiCol_HeaderActive, theme::Fade(theme::Text, .08f));

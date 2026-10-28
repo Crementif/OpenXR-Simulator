@@ -32,7 +32,7 @@ class FramePage
 	}
 	void DrawExpanded(ImVec2 size);
 	ShellRect RigViewRect() const;
-	std::array<ShellRect, 7> RigDevicePoints() const;
+	std::array<ShellRect, MaxTrackerDevices + 3> RigDevicePoints() const;
 	void Draw(ShellState& shell, const RuntimeView& view);
 
   private:

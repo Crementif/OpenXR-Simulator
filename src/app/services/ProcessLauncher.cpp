@@ -11,10 +11,15 @@ namespace simxr::app
 ProcessLauncher::ProcessLauncher(ProcessSupervisor& supervisor) : m_supervisor(supervisor)
 {
 }
-ProcessLauncher::~ProcessLauncher() = default;
+ProcessLauncher::~ProcessLauncher()
+{
+	CancelRestart();
+}
 bool ProcessLauncher::Launch(LaunchProfile profile)
 {
 	ValidateLaunchProfile(profile);
+	if (profile.useBundledRuntime)
+		throw std::invalid_argument("Resolve the bundled runtime before launching");
 	if (profile.name.empty())
 		throw std::invalid_argument("Launch profile needs a name");
 	if (profile.executable.empty())
@@ -28,6 +33,27 @@ bool ProcessLauncher::Launch(LaunchProfile profile)
 	}
 	m_observation = m_supervisor.Submit(std::move(profile));
 	return true;
+}
+
+bool ProcessLauncher::RequestClose()
+{
+	std::lock_guard lock(m_mutex);
+	return m_observation && m_observation->RequestClose();
+}
+bool ProcessLauncher::Restart(std::uint64_t expectedProcess, LaunchProfile profile)
+{
+	ValidateLaunchProfile(profile);
+	if (profile.useBundledRuntime)
+		throw std::invalid_argument("Resolve the bundled runtime before restarting");
+	if (profile.name.empty() || profile.executable.empty())
+		throw std::invalid_argument("Restart needs a named launch profile and executable");
+	std::lock_guard lock(m_mutex);
+	return m_observation && m_observation->RequestRestart(expectedProcess, std::move(profile));
+}
+bool ProcessLauncher::CancelRestart()
+{
+	std::lock_guard lock(m_mutex);
+	return m_observation && m_observation->CancelRestart();
 }
 LaunchSnapshot ProcessLauncher::Snapshot() const
 {

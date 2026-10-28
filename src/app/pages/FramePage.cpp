@@ -149,9 +149,9 @@ ShellRect FramePage::RigViewRect() const
 {
 	return {m_rigView.minimum.x, m_rigView.minimum.y, m_rigView.size.x, m_rigView.size.y};
 }
-std::array<ShellRect, 7> FramePage::RigDevicePoints() const
+std::array<ShellRect, MaxTrackerDevices + 3> FramePage::RigDevicePoints() const
 {
-	std::array<ShellRect, 7> result{};
+	std::array<ShellRect, MaxTrackerDevices + 3> result{};
 	for (std::size_t device = 0; device < result.size(); ++device)
 		result[device] = {m_rigView.points[device].x, m_rigView.points[device].y, 0, 0};
 	return result;

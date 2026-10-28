@@ -41,11 +41,16 @@ class PreviewTexture
 	void Submitted(std::uint64_t serial);
 	void ObserveCompletion(std::uint64_t serial);
 	bool CanRetire(std::uint64_t completed);
+	// On timeout, retain the native owner if GPU completion remains unknown.
+	void PreserveUnfinished(std::uint64_t completed) noexcept;
 	// The private copy, for a GPU copy recorded into this frame's UI commands;
 	// marks the texture as used by this frame like Draw does.
 	VkImage UseForCopy();
 	// Bytes held by textures preserved for the process lifetime.
 	static std::uint64_t PreservedBytes();
+	std::uint64_t SnapshotChargeBytes() const;
+	static std::uint64_t TotalSnapshotChargeBytes();
+	static bool CanReserveSnapshot(std::uint64_t imageBytes);
 
   private:
 	struct State;

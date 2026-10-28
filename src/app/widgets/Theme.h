@@ -11,7 +11,8 @@ inline constexpr ImU32 Surface = IM_COL32(26, 30, 37, 255);
 inline constexpr ImU32 SurfaceRaised = IM_COL32(35, 40, 51, 255);
 inline constexpr ImU32 Line = IM_COL32(44, 50, 61, 255);
 inline constexpr ImU32 Text = IM_COL32(230, 233, 239, 255);
-inline constexpr ImU32 TextDim = IM_COL32(139, 147, 161, 255);
+inline constexpr ImU32 TextLabel = IM_COL32(197, 204, 216, 255);
+inline constexpr ImU32 TextDim = IM_COL32(170, 179, 194, 255);
 inline constexpr ImU32 Accent = IM_COL32(47, 143, 163, 255);
 inline constexpr ImU32 Paused = IM_COL32(240, 164, 58, 255);
 inline constexpr ImU32 Past = IM_COL32(76, 141, 255, 255);
@@ -27,6 +28,10 @@ inline constexpr ImU32 Ink = IM_COL32(14, 20, 27, 255);
 inline constexpr ImU32 AxisX = IM_COL32(229, 72, 77, 255);
 inline constexpr ImU32 AxisY = IM_COL32(61, 190, 122, 255);
 inline constexpr ImU32 AxisZ = IM_COL32(76, 141, 255, 255);
+// Brighter axis variants for small text, including disabled numeric controls.
+inline constexpr ImU32 AxisTextX = IM_COL32(255, 145, 150, 255);
+inline constexpr ImU32 AxisTextY = IM_COL32(126, 223, 170, 255);
+inline constexpr ImU32 AxisTextZ = IM_COL32(145, 185, 255, 255);
 
 inline constexpr float ControlHeight = 28;
 inline constexpr float Radius = 4;

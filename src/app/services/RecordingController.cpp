@@ -3,6 +3,8 @@
 #include "app/platform/FileStorage.h"
 #include "app/services/Utf8Path.h"
 #include "app/services/WorkerConnection.h"
+#include "automation/RecordingArchive.h"
+#include "automation/RigTypes.h"
 #include "control/ControlSchema.h"
 
 #include <charconv>
@@ -240,10 +242,15 @@ automation::SavedRecording OpenSavedRecording(const std::string& path)
 {
 	if (path.empty() || path.find('\0') != std::string::npos)
 		throw std::invalid_argument("Invalid recording path");
+	if (std::filesystem::is_directory(Utf8Path(path)))
+	{
+		automation::RecordingArchiveReader archive(Utf8Path(path));
+		return {path, archive.State().origin.seed};
+	}
 	std::error_code error;
 	const auto size = std::filesystem::file_size(Utf8Path(path), error);
-	if (error || size == 0 || size > control::MaxPayload)
-		throw std::runtime_error("Cannot read the recording. Choose a nonempty file up to 1 MiB.");
+	if (error || size == 0 || size > automation::MaxRigSourceBytes)
+		throw std::runtime_error("Cannot read the recording. Choose a nonempty file up to 64 MiB.");
 	std::ifstream input(Utf8Path(path), std::ios::binary);
 	if (!input)
 		throw std::runtime_error("Cannot open saved recording");
@@ -266,7 +273,9 @@ automation::SavedRecording OpenSavedRecording(const std::string& path)
 		seedLine.remove_suffix(1);
 	constexpr std::string_view prefix = "-- Launch simxr_runner with --seed ";
 	if ((!signature.starts_with("-- OpenXR Simulator recorded inputs, schema 1.") &&
-		 !signature.starts_with("-- OpenXR Simulator recorded inputs, schema 2.")) ||
+		 !signature.starts_with("-- OpenXR Simulator recorded inputs, schema 2.") &&
+		 !signature.starts_with("-- OpenXR Simulator recorded inputs, schema 3.") &&
+		 !signature.starts_with("-- OpenXR Simulator recorded inputs, schema 4.")) ||
 		!seedLine.starts_with(prefix))
 		throw std::runtime_error("This is not a saved simulator recording. Open other Luau scripts in Rigs.");
 	const auto text = std::string_view(seedLine).substr(prefix.size());

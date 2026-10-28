@@ -34,15 +34,20 @@ struct ObservedSetup
 	std::array<std::optional<CommandSource>, ControlChannelCount> owners;
 	ScenarioState scenarios{};
 	std::uint64_t frame = 0;
+	std::optional<std::array<std::string, 2>> controllerProfiles;
 	bool trackerAttachmentsAvailable = true;
 	bool bodyOverridesAvailable = true;
 	bool bodyRootAvailable = true;
 	// The app enabled tracker interaction; absent from older runtimes.
 	bool appTrackers = false;
-	std::array<bool, 4> boundTrackers{};
+	bool appTrackersKnown = false;
+	std::optional<std::array<bool, 3>> appBodyExtensions;
+	std::array<bool, MaxTrackerDevices> boundTrackers{};
 };
 std::optional<TrackingSnapshot> ReadInspectionTracking(const control::Message& state);
 ObservedSetup ReadObservedSetup(const control::Message& state);
+ManualTransaction PrepareHeadsetRelease(const ObservedSetup& observed, std::optional<CommandSource> manualSource,
+										bool takeOver = false, bool trackers = false, bool body = false);
 ControlChannel ScenarioInputChannel(FailureScenario scenario);
 
 std::optional<CommandSource> SimulationEditSource(const control::Message& receipt);
