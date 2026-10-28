@@ -28,6 +28,18 @@ async def wait_state(path, predicate, timeout=5):
         await asyncio.sleep(.02)
     raise AssertionError(f"State did not arrive: {path}")
 
+
+def retained_image(result, transport, layer, eye):
+    assert not result.isError and any(item.type == 'image' for item in result.content), result
+    metadata = json.loads(next(item.text for item in result.content if item.type == 'text').splitlines()[-1])
+    assert metadata['transport'] == transport and metadata['layer'] == layer and metadata['eye'] == eye, metadata
+    assert int(metadata['frame']['frame_id']) > 0 and int(metadata['frame']['generation']) > 0, metadata
+    image = Image.open(BytesIO(base64.b64decode(next(item.data for item in result.content if item.type == 'image')))).convert('RGB')
+    assert image.width > 0 and image.height > 0 and max(image.size) <= 1280, image.size
+    assert abs(image.width / image.height - metadata['width'] / metadata['height']) < .01, (image.size, metadata)
+    return image
+
+
 async def test(data):
     env = dict(os.environ, XR_RUNTIME_JSON=str(ROOT / 'bin/openxr_simulator.json'),
                SIMXR_DATA_DIR=str(data), SIMXR_PROBE_FRAMES='300', SIMXR_PROBE_INTERACTIVE='1',
@@ -45,28 +57,27 @@ async def test(data):
                     assert {'run_pose_sequence', 'set_controller_pose', 'hold_controller_inputs'} <= names
                     assert 'enable_wheel_sweep' not in names
                     result = await session.call_tool('set_head_pose', {'x': .8, 'y': 1.8, 'yaw_deg': 30})
-                    assert not result.isError
+                    assert not result.isError and json.loads(result.content[0].text)['ok'], result
+                    await wait_state(data / 'probe_state.json', lambda s: abs(s['headX']-.8)<.0001)
                     result = await session.call_tool('hold_controller_inputs', {'hand': 1, 'trigger': .4})
-                    assert not result.isError
+                    assert not result.isError and json.loads(result.content[0].text)['ok'], result
+                    await wait_state(data / 'probe_state.json', lambda s: abs(s['trigger']-.4)<.0001)
                     result = await session.call_tool('set_controller_pose', {'hand': 1, 'posX': .35, 'posY': -.3, 'posZ': -.4})
-                    assert not result.isError
+                    assert not result.isError and json.loads(result.content[0].text)['ok'], result
                     observed = await wait_state(data / 'probe_state.json',
                         lambda s: abs(s['headX']-.8)<.0001 and abs(s['trigger']-.4)<.0001 and abs(s['handX']-.35)<.0001)
                     result = await session.call_tool('capture_screenshot', {'eye': 'both', 'layer': 'all', 'timeout': 3})
-                    assert not result.isError and any(item.type == 'image' for item in result.content)
-                    image = Image.open(BytesIO(base64.b64decode(next(item.data for item in result.content if item.type=='image')))).convert('RGB')
-                    assert image.size==(128,48)
-                    assert image.getpixel((96,24))[0]>230 and image.getpixel((96,24))[2]<20
-                    assert image.getpixel((124,4))[2]>230 and image.getpixel((124,4))[0]<20
+                    image = retained_image(result, 'retained_preview', 'all', 'both')
+                    center = image.getpixel((image.width * 3 // 4, image.height // 2))
+                    corner = image.getpixel((image.width * 97 // 100, image.height * 8 // 100))
+                    assert center[0] > 230 and center[2] < 20 and corner[2] > 230 and corner[0] < 20
                     result = await session.call_tool('capture_screenshot', {'eye': 'right', 'layer': 'projection', 'timeout': 3})
-                    assert not result.isError
-                    image = Image.open(BytesIO(base64.b64decode(next(item.data for item in result.content if item.type=='image')))).convert('RGB')
-                    assert image.size==(64,48) and image.getpixel((32,24))[2]>230
+                    image = retained_image(result, 'retained_capture', 'projection', 'right')
+                    assert image.getpixel((image.width // 2, image.height // 2))[2] > 230
                     result = await session.call_tool('capture_screenshot', {'eye': 'both', 'layer': 'quad', 'timeout': 3})
-                    assert not result.isError
-                    image = Image.open(BytesIO(base64.b64decode(next(item.data for item in result.content if item.type=='image')))).convert('RGB')
-                    assert image.size==(128,48)
-                    assert max(image.getpixel((32,24)))<20 and image.getpixel((96,24))[0]>230
+                    image = retained_image(result, 'retained_capture', 'quad', 'both')
+                    assert max(image.getpixel((image.width // 4, image.height // 2))) < 20
+                    assert image.getpixel((image.width * 3 // 4, image.height // 2))[0] > 230
                     result = await session.call_tool('get_projection_log', {'max_entries': 2})
                     assert not result.isError
                     entries = json.loads(result.content[0].text)['entries']

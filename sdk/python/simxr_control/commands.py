@@ -1,7 +1,16 @@
 """Typed, editable simulator commands shared by SDK, MCP and recorded rigs."""
 from enum import IntEnum
 import math
+import re
 from .protocol import Field, Tag, ProtocolError, decode_fields
+from .body_observation import encode_observation, decode_observation
+
+
+def _source_path(value):
+    if not isinstance(value, str) or (value and (
+            len(value) >= 288 or re.fullmatch(r'[a-z0-9_-]+:/[!-~]+', value) is None)):
+        raise ProtocolError('Invalid namespaced physical tracker path')
+    return value
 
 
 class SourceKind(IntEnum):
@@ -9,6 +18,7 @@ class SourceKind(IntEnum):
     MCP = 1
     RIG = 2
     SEQUENCE = 3  # Runtime-owned playback; clients cannot claim this source kind.
+    DEVICE = 4  # Native attachment-owned input; ordinary command clients cannot claim it.
 
 
 class LatePolicy(IntEnum):
@@ -49,7 +59,7 @@ class Scenario(IntEnum):
 
 _KINDS = {'take_control': 1, 'release_control': 2, 'head_pose': 3, 'controller_pose': 4,
           'controller_controls': 5, 'body': 6, 'gaze': 7, 'tracker': 8, 'views': 9,
-          'proportions': 10, 'controller_profile': 11, 'scenario': 12, 'reference_spaces': 13}
+          'proportions': 10, 'controller_profile': 11, 'scenario': 12, 'reference_spaces': 13, 'eye_views': 14, 'trackers': 15}
 _CONTROL_FLOATS = ('trigger', 'grip', 'grip_force', 'stick_x', 'stick_y', 'trackpad_x', 'trackpad_y', 'trackpad_force')
 _CONTROL_BOOLS = ('primary', 'secondary', 'menu', 'back', 'thumb_click', 'trackpad_click',
                   'primary_touch', 'secondary_touch', 'trigger_touch', 'thumb_touch', 'trackpad_touch', 'thumbrest_touch', 'connected')
@@ -104,17 +114,26 @@ def _encode_command(command, index=1):
         allow('position', 'orientation', 'flags')
         f = [_pose(command), Field.u64(Tag.USAGE, _uint(command.get('flags', 15), 15), True)]
         if kind == 'controller_pose':
-            allow('hand', 'connected')
+            allow('hand', 'connected', 'aim')
             f += [Field.u32(Tag.LAYER, _uint(command.get('hand', 0), 1), True),
                   Field.boolean(Tag.ENABLED, command.get('connected', True), True)]
+            if command.get('aim') is not None:
+                aim = command['aim']
+                if not isinstance(aim, dict) or set(aim) - {'position', 'orientation', 'flags'}:
+                    raise ProtocolError('Invalid aim pose fields')
+                f.append(Field.nested(Tag.AIM_POSE, [_pose(aim), Field.u64(Tag.USAGE, _uint(aim.get('flags', 15), 15), True)], True))
     elif kind == 'controller_controls':
-        allow('hand', *_CONTROL_FLOATS, *_CONTROL_BOOLS)
+        allow('hand', 'trigger_click', 'physical_profile', *_CONTROL_FLOATS, *_CONTROL_BOOLS)
         values = [Field.f32(i + 1, command.get(name, 0.0), True) for i, name in enumerate(_CONTROL_FLOATS)]
         values += [Field.boolean(i + 9, command.get(name, name == 'connected'), True)
                    for i, name in enumerate(_CONTROL_BOOLS)]
+        if command.get('trigger_click') is not None:
+            values.append(Field.boolean(22, command['trigger_click'], True))
         f = [Field.u32(Tag.LAYER, _uint(command.get('hand', 0), 1), True), Field.nested(Tag.CONTROLS, values, True)]
+        if command.get('physical_profile'):
+            f.append(Field.text(Tag.DETAIL, command['physical_profile'], True))
     elif kind == 'body':
-        allow('active', 'confidence', 'preset', 'controls', 'joints', 'root_pose')
+        allow('active', 'confidence', 'preset', 'controls', 'joints', 'root_pose', 'observation', 'observation_origin')
         controls = command.get('controls', [{} for _ in range(5)])
         if not isinstance(controls, list) or len(controls) != 5:
             raise ProtocolError('Body controls requires five entries')
@@ -146,24 +165,65 @@ def _encode_command(command, index=1):
             if not isinstance(root, dict) or set(root) - {'position', 'orientation'}:
                 raise ProtocolError('Invalid body root pose')
             f.append(_pose(root))
+        if 'observation' in command:
+            f.append(encode_observation(command['observation']))
+        if 'observation_origin' in command:
+            origin = _uint(command['observation_origin'], 2**63 - 1)
+            if not origin or 'observation' not in command:
+                raise ProtocolError('Body replay timing requires an observation and positive anchor')
+            f.append(Field.i64(Tag.BODY_OBSERVATION_ORIGIN, origin, True))
     elif kind == 'gaze':
         allow('yaw', 'pitch', 'available', 'tracked')
         f = [_floats(Tag.VALUES, [command.get('yaw', 0), command.get('pitch', 0)], 2),
              Field.boolean(Tag.ENABLED, command.get('available', True), True),
              Field.boolean(Tag.RUNNING, command.get('tracked', True), True)]
     elif kind == 'tracker':
-        allow('index', 'identity', 'role', 'connected', 'tracked', 'anchor', 'position', 'orientation', 'joint_offset')
-        f = [Field.u32(Tag.LAYER, _uint(command.get('index', 0), 3), True),
+        allow('index', 'identity', 'role', 'connected', 'tracked', 'anchor', 'position', 'orientation', 'joint_offset', 'flags', 'source_path')
+        f = [Field.u32(Tag.LAYER, _uint(command.get('index', 0), 63), True),
              Field.u64(Tag.SOURCE, _uint(command['identity'], 2**64 - 1), True),
              Field.u32(Tag.KIND, _uint(command.get('role', 4), 17), True),
              Field.boolean(Tag.ENABLED, command.get('connected', True), True),
              Field.boolean(Tag.RUNNING, command.get('tracked', True), True)]
+        source_path = _source_path(command.get('source_path', ''))
+        if source_path:
+            f.append(Field.text(Tag.DETAIL, source_path, True))
+        if command.get('flags', 15) != 15:
+            f.append(Field.u64(Tag.USAGE, _uint(command['flags'], 15), True))
         if command.get('anchor') is not None:
             f.append(Field.u32(Tag.CHANNEL, _uint(command['anchor'], 83), True))
         if 'position' in command or 'orientation' in command:
             f.append(_pose(command))
         if command.get('joint_offset') is not None:
             f.append(_pose(command['joint_offset'], Tag.JOINT_OFFSET))
+    elif kind == 'trackers':
+        allow('devices')
+        devices = command.get('devices')
+        if not isinstance(devices, list) or len(devices) > 64:
+            raise ProtocolError('Expected at most 64 tracker devices')
+        f = []
+        for slot, device in enumerate(devices):
+            if not isinstance(device, dict) or device.get('kind', 'tracker') != 'tracker':
+                raise ProtocolError('Expected a tracker device')
+            if 'index' in device and device['index'] != slot:
+                raise ProtocolError('Invalid tracker collection index')
+            item = _encode_command(dict(device, kind='tracker', index=slot))
+            payload = decode_fields(item.value)[Tag.VALUES]
+            f.append(Field.nested(slot + 1, list(decode_fields(payload.value).values()), True))
+    elif kind == 'eye_views':
+        allow('enabled', 'space_revision', 'left', 'right')
+        enabled = command.get('enabled', True)
+        f = [Field.boolean(1, enabled, True)]
+        if enabled:
+            f.append(Field.u64(2, _uint(command.get('space_revision', 0), 2**64 - 1), True))
+            for index, name in enumerate(('left', 'right'), 3):
+                eye = command[name]
+                if set(eye) - {'position', 'orientation', 'flags', 'fov'}:
+                    raise ProtocolError('Unknown eye observation field')
+                f.append(Field.nested(index, [_pose(eye),
+                    Field.u64(Tag.USAGE, _uint(eye.get('flags', 15), 15), True),
+                    _floats(Tag.VALUES, eye['fov'], 4)], True))
+        elif any(key in command for key in ('space_revision', 'left', 'right')):
+            raise ProtocolError('Cleared eye views contain observations')
     elif kind == 'views':
         allow('ipd', 'inset_half_angle', 'outer_fov', 'outer_width', 'outer_height', 'inset_width', 'inset_height')
         fov = command.get('outer_fov', [-0.9, 0.9, 0.9, -0.9] * 2)
@@ -219,14 +279,27 @@ def decode_command(record):
         if kind == 'take_control': c['replace'] = f[Tag.TAKE_CONTROL].as_bool()
     elif kind in ('head_pose', 'controller_pose'):
         pose(); c['flags'] = f[Tag.USAGE].as_u64()
-        if kind == 'controller_pose': c.update(hand=f[Tag.LAYER].as_u32(), connected=f[Tag.ENABLED].as_bool())
+        if kind == 'controller_pose':
+            c.update(hand=f[Tag.LAYER].as_u32(), connected=f[Tag.ENABLED].as_bool())
+            if Tag.AIM_POSE in f:
+                aim = decode_fields(f[Tag.AIM_POSE].value)
+                values = [v.as_f32() for v in decode_fields(aim[Tag.POSE].value).values()]
+                c['aim'] = dict(orientation=values[:4], position=values[4:], flags=aim[Tag.USAGE].as_u64())
     elif kind == 'controller_controls':
         controls = decode_fields(f[Tag.CONTROLS].value)
         c['hand'] = f[Tag.LAYER].as_u32()
         c.update({name: controls[i + 1].as_f32() for i, name in enumerate(_CONTROL_FLOATS)})
         c.update({name: controls[i + 9].as_bool() for i, name in enumerate(_CONTROL_BOOLS)})
+        if 22 in controls: c['trigger_click'] = controls[22].as_bool()
+        if Tag.DETAIL in f: c['physical_profile'] = f[Tag.DETAIL].as_text()
     elif kind == 'body':
         c.update(active=f[Tag.ENABLED].as_bool(), confidence=f[Tag.VALUES].as_f32(), preset=f[Tag.KIND].as_u32(), controls=[], joints=[])
+        if Tag.BODY_OBSERVATION in f:
+            c['observation'] = decode_observation(f[Tag.BODY_OBSERVATION])
+        if Tag.BODY_OBSERVATION_ORIGIN in f:
+            c['observation_origin'] = f[Tag.BODY_OBSERVATION_ORIGIN].as_i64()
+            if c['observation_origin'] <= 0 or 'observation' not in c:
+                raise ProtocolError('Body replay timing requires an observation and positive anchor')
         if Tag.POSE in f:
             values = floats(Tag.POSE)
             c['root_pose'] = {'orientation': values[:4], 'position': values[4:]}
@@ -248,11 +321,34 @@ def decode_command(record):
         c.update(yaw=values[0], pitch=values[1], available=f[Tag.ENABLED].as_bool(), tracked=f[Tag.RUNNING].as_bool())
     elif kind == 'tracker':
         c.update(index=f[Tag.LAYER].as_u32(), identity=f[Tag.SOURCE].as_u64(), role=f[Tag.KIND].as_u32(), connected=f[Tag.ENABLED].as_bool(), tracked=f[Tag.RUNNING].as_bool())
+        if Tag.USAGE in f: c['flags'] = f[Tag.USAGE].as_u64()
+        if Tag.DETAIL in f: c['source_path'] = _source_path(f[Tag.DETAIL].as_text())
         if Tag.CHANNEL in f: c['anchor'] = f[Tag.CHANNEL].as_u32()
         if Tag.POSE in f: pose()
         if Tag.JOINT_OFFSET in f:
             v = floats(Tag.JOINT_OFFSET)
             c['joint_offset'] = dict(orientation=v[:4], position=v[4:])
+    elif kind == 'trackers':
+        if len(f) > 64 or list(f) != list(range(1, len(f) + 1)):
+            raise ProtocolError('Invalid tracker collection indexes')
+        c['devices'] = []
+        for slot, entry in enumerate(f.values()):
+            payload = decode_fields(entry.value)
+            if payload[Tag.LAYER].as_u32() != slot:
+                raise ProtocolError('Invalid tracker collection index')
+            item = Field.nested(1, [Field.u32(Tag.KIND, _KINDS['tracker'], True),
+                                   Field.nested(Tag.VALUES, list(payload.values()), True)], True)
+            device = decode_command({'encoding': 'simxr-command-v1-hex', 'data': item.value.hex()})
+            c['devices'].append(device)
+    elif kind == 'eye_views':
+        c['enabled'] = f[1].as_bool()
+        if c['enabled']:
+            c['space_revision'] = f[2].as_u64()
+            for index, name in enumerate(('left', 'right'), 3):
+                eye = decode_fields(f[index].value)
+                values = [v.as_f32() for v in decode_fields(eye[Tag.POSE].value).values()]
+                c[name] = dict(orientation=values[:4], position=values[4:], flags=eye[Tag.USAGE].as_u64(),
+                    fov=[v.as_f32() for v in decode_fields(eye[Tag.VALUES].value).values()])
     elif kind == 'views':
         v = floats(Tag.VALUES)
         c.update(ipd=v[0], inset_half_angle=v[1], outer_fov=v[2:], outer_width=f[Tag.WIDTH].as_u32(), outer_height=f[Tag.HEIGHT].as_u32(), inset_width=f[Tag.DEPTH].as_u32(), inset_height=f[Tag.ARRAY_LAYERS].as_u32())

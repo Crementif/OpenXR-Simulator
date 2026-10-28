@@ -91,6 +91,7 @@ class RigRuntime
 	std::vector<std::byte> Revision(std::uint64_t revision);
 	void ReleaseInspection(std::uint64_t inspection);
 	std::vector<std::byte> State();
+	FrameId CurrentFrame();
 	void ReleaseInputs();
 	void Export(std::uint64_t capture, const std::string& path, std::optional<ScriptCaptureTarget> target,
 				std::optional<std::uint32_t> arraySlice);

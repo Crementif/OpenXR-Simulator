@@ -4,10 +4,14 @@
 
 #include <array>
 #include <cstdint>
+#include <string_view>
 #include <vector>
 
 namespace simxr
 {
+// Launch resolution overrides use the same bounded dimensions on every platform.
+std::uint32_t ParseLaunchRenderExtent(std::string_view value);
+
 enum class ViewLayout
 {
 	Stereo,
@@ -62,6 +66,8 @@ struct ViewQuerySnapshot
 	bool gazeActive = false;
 	std::vector<XrFovf> fieldsOfView;
 };
+
+bool ValidViewFieldOfView(XrFovf fov) noexcept;
 
 class ViewConfiguration
 {

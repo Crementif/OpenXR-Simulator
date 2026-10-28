@@ -24,6 +24,28 @@ struct FrameSchedulerConfig
 	std::uint32_t manualPermitLimit = 8;
 };
 
+// Process-local correlation. HostTime is never serialized to another process.
+struct FrameClockMapping
+{
+	SessionGeneration generation;
+	std::uint64_t revision = 0;
+	HostTime hostAnchor;
+	RuntimeTime runtimeAnchor;
+	RuntimeTime Map(HostTime time) const;
+};
+
+// Native OS instant corresponds to this bounded interval on the runtime timeline.
+// Unlike FrameClockMapping, this value contains no process-local clock objects.
+struct FrameNativeClockMapping
+{
+	SessionGeneration generation;
+	std::uint64_t revision = 0;
+	NativeClockDomain domain;
+	std::int64_t nativeNanoseconds = 0;
+	RuntimeTime runtimeBefore, runtimeAfter;
+	std::int64_t resolutionNanoseconds = 0;
+};
+
 struct FramePipelineState
 {
 	bool running = false;
@@ -65,6 +87,22 @@ class FrameScheduler
 	XrResult BeginFrame();
 	XrResult EndFrame(FramePrediction& prediction);
 	FramePipelineState Snapshot() const;
+	// Predictions are already mapped to this clock revision. One attachment owns
+	// the latest-value slot; no transport or physical-runtime call runs here.
+	// commitDisplay runs under this mutex, must not reenter the scheduler, and
+	// may only queue CPU-owned display state. False leaves scheduler pacing unchanged.
+	bool PublishExternalPrediction(SessionGeneration generation, std::uint64_t clockRevision, std::uint64_t attachment,
+								   std::uint64_t sequence, RuntimeTime target, Duration period,
+								   const std::function<bool()>& commitDisplay = {});
+	void ReleaseExternalPrediction(std::uint64_t attachment);
+
+	// No mapping while stopped, paused, or using deterministic/unpaced time.
+	std::optional<FrameClockMapping> ClockMapping() const;
+	std::optional<FrameNativeClockMapping> NativeClockMapping() const;
+	std::optional<std::uint64_t> LiveInputClockRevision() const;
+	// CPU-only admission, under the scheduler lock; must not reenter the scheduler.
+	bool WithClockRevision(SessionGeneration generation, std::uint64_t revision, const std::function<void()>& admit);
+	std::optional<RuntimeTime> MapHostTime(HostTime time, SessionGeneration generation, std::uint64_t revision) const;
 
   private:
 	std::shared_ptr<Clock> m_clock;
@@ -80,8 +118,18 @@ class FrameScheduler
 	DisplayTick m_hostTick;
 	FramePipelineState m_state;
 	std::uint64_t m_revision = 0;
+	std::uint64_t m_clockRevision = 0;
 	std::uint64_t m_policyRevision = 0;
 	std::uint64_t m_nextFrame = 1;
 	DisplayTick m_nextAdmission;
+	struct ExternalPrediction
+	{
+		std::uint64_t attachment = 0, sequence = 0, consumed = 0;
+		RuntimeTime target;
+		Duration period;
+		HostTime expires;
+	};
+	std::optional<ExternalPrediction> m_external;
+	RuntimeTime m_lastPrediction;
 };
 } // namespace simxr

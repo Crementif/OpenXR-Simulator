@@ -33,6 +33,7 @@ class SimulationConnection
 	bool OwnsSequenceCapture(const SnapshotRecord& capture) const noexcept;
 
   private:
+	Message DispatchLiveInput(const Message& request, const ControlSession& binding, Message response);
 	std::optional<CommandSource> Source(std::optional<CommandSourceKind> requested) const;
 	CommandSource RequestSource(const Message& request) const;
 	void Track(const std::shared_ptr<Session>& session, CommandSource source);
@@ -47,5 +48,8 @@ class SimulationConnection
 	std::optional<CommandSourceKind> m_kind;
 	std::vector<Use> m_uses;
 	SequenceControl m_sequences;
+	std::shared_ptr<Session> m_liveSession;
+	SessionGeneration m_liveGeneration;
+	std::uint64_t m_attachment = 0;
 };
 } // namespace simxr::control

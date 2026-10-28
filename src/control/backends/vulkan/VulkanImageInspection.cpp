@@ -244,9 +244,18 @@ class VulkanControlDelivery final : public ImageDelivery
 class VulkanImageExport final : public ImageExport
 {
   public:
-	VulkanImageExport(std::shared_ptr<VulkanImageReadback> native, ImageDescription description, std::uint64_t bytes)
-		: m_native(std::move(native)), m_description(std::move(description)), m_bytes(bytes)
+	VulkanImageExport(std::shared_ptr<VulkanImageReadback> native, ImageDescription description, std::uint64_t bytes,
+					  std::optional<std::uint32_t> layer, std::optional<ImageRegion> region)
+		: m_native(std::move(native)), m_description(std::move(description)), m_bytes(bytes), m_layer(layer), m_region(region)
 	{
+	}
+	std::optional<ImageRegion> Region() const noexcept override
+	{
+		return m_region;
+	}
+	std::optional<std::uint32_t> SourceLayer() const noexcept override
+	{
+		return m_layer;
 	}
 	ImageDescription Description() const override
 	{
@@ -274,6 +283,8 @@ class VulkanImageExport final : public ImageExport
 	const std::shared_ptr<VulkanImageReadback> m_native;
 	const ImageDescription m_description;
 	const std::uint64_t m_bytes;
+	const std::optional<std::uint32_t> m_layer;
+	const std::optional<ImageRegion> m_region;
 };
 class VulkanImageReader final : public ImageReader
 {
@@ -309,6 +320,16 @@ class VulkanImageReader final : public ImageReader
 	}
 	std::shared_ptr<ImageExport> Export(std::optional<std::uint32_t> layer) const override
 	{
+		return ExportSelected(layer, {});
+	}
+	std::shared_ptr<ImageExport> ExportRegion(std::optional<std::uint32_t> layer, const ImageRegion& region) const override
+	{
+		return ExportSelected(layer, region);
+	}
+
+  private:
+	std::shared_ptr<ImageExport> ExportSelected(std::optional<std::uint32_t> layer, std::optional<ImageRegion> region) const
+	{
 		return Translate(
 			[&]() -> std::shared_ptr<ImageExport>
 			{
@@ -321,6 +342,21 @@ class VulkanImageReader final : public ImageReader
 					if (!description.views.empty())
 						description.views = {description.views.at(*layer)};
 				}
+				bool resize = false;
+				if (region)
+				{
+					const auto& selected = *region;
+					if (!selected.width || !selected.height || !selected.outputWidth || !selected.outputHeight ||
+						selected.x > description.width || selected.y > description.height ||
+						selected.width > description.width - selected.x || selected.height > description.height - selected.y ||
+						description.width > INT32_MAX || description.height > INT32_MAX ||
+						selected.outputWidth > INT32_MAX || selected.outputHeight > INT32_MAX)
+						throw std::invalid_argument("Invalid image export region");
+					resize = selected.width != selected.outputWidth || selected.height != selected.outputHeight;
+					description.width = selected.outputWidth;
+					description.height = selected.outputHeight;
+					description.views.clear();
+				}
 				const auto pixelBytes = ColorPixelBytes(description.format);
 				if (!pixelBytes)
 					throw ImageInspectionError(ErrorCode::UnsupportedCommand,
@@ -331,13 +367,15 @@ class VulkanImageReader final : public ImageReader
 					throw ImageInspectionError(ErrorCode::Capacity, "Image exceeds explicit export byte limit");
 				const auto bytes =
 					std::uint64_t{description.width} * description.height * description.arrayLayers * pixelBytes;
-				auto charge = ReserveExport(bytes, m_frame->Collector());
-				auto native = m_frame->Export(layer, std::move(charge));
-				return std::make_shared<VulkanImageExport>(std::move(native), std::move(description), bytes);
+				const auto scratchLimit = resize ? std::max<std::uint64_t>(bytes * 2, 4ULL * 1024 * 1024) : 0;
+				if (scratchLimit > limit - bytes)
+					throw ImageInspectionError(ErrorCode::Capacity, "Resized export exceeds bounded byte capacity");
+				auto charge = ReserveExport(bytes + scratchLimit, m_frame->Collector());
+				auto native = m_frame->Export(layer, std::move(charge), region);
+				return std::make_shared<VulkanImageExport>(std::move(native), std::move(description), bytes, layer, region);
 			});
 	}
 
-  private:
 	const std::shared_ptr<const VulkanInspectionFrame> m_frame;
 	const ImageDescription m_description;
 };

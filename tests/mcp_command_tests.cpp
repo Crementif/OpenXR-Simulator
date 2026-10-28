@@ -9,6 +9,7 @@
 #include "TestSupport.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 
@@ -27,6 +28,23 @@ static void WriteCommand(const fs::path& path, const char* json) {
     file << json;
     file.close();
     Check(file.good(), "command file was written");
+}
+
+static void CheckLaunchResolution()
+{
+	const auto* width = std::getenv("SIMXR_WIDTH");
+	const auto* height = std::getenv("SIMXR_HEIGHT");
+	const std::string oldWidth = width ? width : "", oldHeight = height ? height : "";
+	Check(_putenv_s("SIMXR_WIDTH", "2048") == 0 && _putenv_s("SIMXR_HEIGHT", "2300") == 0,
+		"set per-instance launch resolution");
+	simxr::windows::WindowsRuntimeInput launched;
+	Check(_putenv_s("SIMXR_WIDTH", "4096") == 0 && _putenv_s("SIMXR_HEIGHT", "4096") == 0,
+		"change environment after instance creation");
+	const auto snapshot = launched.Snapshot();
+	Check(snapshot.views.outerWidth == 2048 && snapshot.views.outerHeight == 2300,
+		"Windows launch resolution was ignored or changed after creation");
+	Check(_putenv_s("SIMXR_WIDTH", oldWidth.c_str()) == 0 && _putenv_s("SIMXR_HEIGHT", oldHeight.c_str()) == 0,
+		"restore launch environment");
 }
 
 static void CheckInputOwners(mcp::WindowsLegacyChannel& channel, const fs::path& data)
@@ -136,6 +154,7 @@ int main() {
         const mcp::WheelSweepCommand enabled = takeWheel();
         Check(enabled.valid && enabled.enabled && enabled.radius > 0.239f && enabled.freqHz > 0.299f,
               "JSON boolean true and wheel geometry parse");
+        CheckLaunchResolution();
         CheckInputOwners(channel, data);
     }
     fs::remove_all(root);

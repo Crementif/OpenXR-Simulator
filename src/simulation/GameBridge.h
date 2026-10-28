@@ -1,5 +1,7 @@
 #pragma once
 
+#include "platform/Clock.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -34,10 +36,33 @@ struct GameBridgeSnapshot
 	std::string telemetry;
 	std::size_t queued = 0, delivered = 0;
 };
+enum class GameObservationKind
+{
+	Registered,
+	Telemetry,
+	Unregistered,
+	Closed
+};
+struct GameObservation
+{
+	std::uint64_t sequence = 0, game = 0, revision = 0;
+	std::uint32_t capabilities = 0;
+	GameObservationKind kind = GameObservationKind::Telemetry;
+	std::optional<NativeClockSample> time;
+	std::string payload;
+};
+struct GameObservationPage
+{
+	std::uint64_t floor = 0, offset = 0, next = 0, total = 0;
+	bool gap = false, failed = false;
+	std::vector<GameObservation> observations;
+	GameBridgeSnapshot state;
+};
 class GameBridge
 {
   public:
-	GameBridge();
+	explicit GameBridge(std::size_t observationCapacity = 1024);
+	GameObservationPage Observations(std::optional<std::uint64_t> offset = {}, std::size_t count = 16) const;
 	std::uint64_t Register(std::uint32_t capabilities);
 	void Close() noexcept;
 	void Unregister(std::uint64_t game) noexcept;
@@ -52,6 +77,10 @@ class GameBridge
 	bool FillApi(std::uint32_t version, SimxrGameBridgeApi& api) noexcept;
 
   private:
+	void Observe(GameObservation observation) noexcept;
+	std::vector<std::optional<GameObservation>> m_observations;
+	std::uint64_t m_observationNext = 0;
+	bool m_observationFailed = false;
 	mutable std::mutex m_mutex;
 	GameBridgeSnapshot m_state;
 	bool m_closed = false;

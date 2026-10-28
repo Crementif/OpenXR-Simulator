@@ -326,28 +326,38 @@ static const char* Name(SnapshotAdmission value)
 // The applied device input and action activity of one frame, so the companion
 // can draw input over time and cut takes from any range. Fields 1-5 are head and
 // hands, 6 body, 7 gaze and 8-11 the tracker slots; body overrides stay sparse.
-static Field EncodeAppliedInput(const FrameSubmissionState& submission)
+static Field EncodeAppliedInput(const FrameSubmissionState& submission, bool trackerCollections, bool bodyObservations)
 {
 	const auto& applied = *submission.commands;
 	const auto& configuration = applied.configuration;
 	const auto& tracking = configuration.tracking;
+	if (tracking.bodyObservation && !bodyObservations)
+		throw ControlRequestError{ErrorCode::UnsupportedField, "Body observations require protocol minor 11"};
+	if (!trackerCollections && tracking.trackers.size() != 4)
+		throw ControlRequestError{ErrorCode::UnsupportedField,
+								  "Tracker inventory requires collection transport support"};
 	std::vector<Field> fields{EncodeSimulationCommand(SetHeadPose{tracking.head}, 1),
 							  EncodeSimulationCommand(SetControllerPose{0, tracking.controllers[0]}, 2),
 							  EncodeSimulationCommand(SetControllerPose{1, tracking.controllers[1]}, 3),
 							  EncodeSimulationCommand(SetControllerControls{0, configuration.input.controllers[0]}, 4),
 							  EncodeSimulationCommand(SetControllerControls{1, configuration.input.controllers[1]}, 5),
-							  EncodeSimulationCommand(SetBodyControls{tracking.body}, 6),
+							  EncodeSimulationCommand(SetBodyControls{tracking.body, tracking.bodyObservation}, 6),
 							  EncodeSimulationCommand(SetGaze{tracking.gaze}, 7)};
-	for (std::uint32_t slot = 0; slot < tracking.trackers.size(); ++slot)
-		fields.push_back(
-			EncodeSimulationCommand(SetTracker{slot, tracking.trackers[slot]}, static_cast<std::uint16_t>(8 + slot)));
-	fields.push_back(
-		Nested(tag::InputContext,
-			   {EncodeSimulationCommand(SetViewSettings{configuration.views}, 1),
-				EncodeSimulationCommand(SetBodyProportions{configuration.proportions}, 2),
-				EncodeSimulationCommand(SetControllerProfile{0, configuration.input.preferredProfiles[0]}, 3),
-				EncodeSimulationCommand(SetControllerProfile{1, configuration.input.preferredProfiles[1]}, 4),
-				EncodeSimulationCommand(SetReferenceSpaces{configuration.referenceSpaces}, 5)}));
+	if (trackerCollections)
+		fields.push_back(EncodeSimulationCommand(SetTrackers{tracking.trackers}, tag::TrackerCollection));
+	else
+		for (std::uint32_t slot = 0; slot < tracking.trackers.size(); ++slot)
+			fields.push_back(EncodeSimulationCommand(SetTracker{slot, tracking.trackers[slot]},
+													 static_cast<std::uint16_t>(8 + slot)));
+	std::vector<Field> context{
+		EncodeSimulationCommand(SetViewSettings{configuration.views}, 1),
+		EncodeSimulationCommand(SetBodyProportions{configuration.proportions}, 2),
+		EncodeSimulationCommand(SetControllerProfile{0, configuration.input.preferredProfiles[0]}, 3),
+		EncodeSimulationCommand(SetControllerProfile{1, configuration.input.preferredProfiles[1]}, 4),
+		EncodeSimulationCommand(SetReferenceSpaces{configuration.referenceSpaces}, 5)};
+	if (tracking.eyeViews)
+		context.push_back(EncodeSimulationCommand(SetEyeViews{tracking.eyeViews}, 6));
+	fields.push_back(Nested(tag::InputContext, context));
 	fields.push_back(Field::U64(tag::Seed, applied.seed));
 	std::uint32_t scenarios = 0, owned = 0, active = 0;
 	for (std::size_t index = 0; index < applied.scenarios.size(); ++index)
@@ -365,7 +375,7 @@ static Field EncodeAppliedInput(const FrameSubmissionState& submission)
 	fields.push_back(Field::U32(tag::ActiveActions, active));
 	return Nested(tag::AppliedInput, std::move(fields));
 }
-static Field EncodeFrameMetadata(const FrameRecord& frame)
+static Field EncodeFrameMetadata(const FrameRecord& frame, bool trackerCollections = false, bool bodyObservations = false)
 {
 	std::vector<Field> fields{
 		Field::U64(tag::Generation, frame.key.generation.value), Field::U64(tag::FrameId, frame.key.frame.value),
@@ -387,7 +397,7 @@ static Field EncodeFrameMetadata(const FrameRecord& frame)
 				fields.push_back(Field::I64(tag::CompositorGpuTime, gpu));
 		}
 		if (submission.commands && submission.commands->configurationAvailable)
-			fields.push_back(EncodeAppliedInput(submission));
+			fields.push_back(EncodeAppliedInput(submission, trackerCollections, bodyObservations));
 	}
 	return Nested(tag::Frame, std::move(fields));
 }
@@ -579,7 +589,7 @@ void EncodeDebugOperation(Message& response, const DebugOperation& operation)
 		outstanding.push_back(EncodeFrameKey(static_cast<std::uint16_t>(outstanding.size() + 1), key));
 	response.fields.push_back(Nested(tag::Outstanding, std::move(outstanding)));
 }
-void EncodeCaptureMetadata(Message& response, const SnapshotRecord& capture)
+void EncodeCaptureMetadata(Message& response, const SnapshotRecord& capture, bool trackerCollections)
 {
 	response.fields.push_back(Field::U64(tag::CaptureId, capture.id.value));
 	response.fields.push_back(Field::Text(tag::Phase, Name(capture.phase)));
@@ -589,7 +599,7 @@ void EncodeCaptureMetadata(Message& response, const SnapshotRecord& capture)
 	response.fields.push_back(
 		Field::Bool(tag::ImageAvailable, capture.phase == SnapshotPhase::Ready && capture.output != nullptr));
 	if (capture.metadata)
-		response.fields.push_back(EncodeFrameMetadata(*capture.metadata));
+		response.fields.push_back(EncodeFrameMetadata(*capture.metadata, trackerCollections, response.minor >= 11));
 	else if (capture.frame)
 		response.fields.push_back(EncodeFrameKey(tag::Frame, *capture.frame));
 	if (capture.display)
@@ -603,7 +613,8 @@ void EncodeDebugAdmission(Message& response, const DebugSubmission& admitted)
 		response.fields.push_back(Field::U64(tag::OperationId, admitted.operation.value));
 	response.fields.push_back(Field::Bool(tag::Duplicate, admitted.result == DebugAdmission::Duplicate));
 }
-void EncodeFrameHistory(Message& response, const FrameHistorySnapshot& history, std::uint64_t after, std::size_t count)
+void EncodeFrameHistory(Message& response, const FrameHistorySnapshot& history, std::uint64_t after, std::size_t count,
+						bool trackerCollections)
 {
 	std::vector<Field> frames;
 	frames.reserve(std::min(count, history.frames.size()));
@@ -614,7 +625,7 @@ void EncodeFrameHistory(Message& response, const FrameHistorySnapshot& history, 
 		if (frame->key.generation != history.generation || frame->key.frame.value <= after ||
 			frame->stage == FrameStage::Issued || frame->stage == FrameStage::Begun)
 			continue;
-		auto encoded = EncodeFrameMetadata(*frame);
+		auto encoded = EncodeFrameMetadata(*frame, trackerCollections, response.minor >= 11);
 		// Each frame is one TLV; reserve room for the response metadata.
 		const auto size = encoded.value.size() + 8;
 		if (size > budget - bytes)

@@ -22,7 +22,8 @@ enum class CommandSourceKind
 	Manual,
 	Mcp,
 	Rig,
-	Sequence
+	Sequence,
+	Device
 };
 struct CommandSource
 {
@@ -92,6 +93,9 @@ struct SetControllerControls
 struct SetBodyControls
 {
 	BodyControls value;
+	std::optional<BodyObservation> observation;
+	// Replay maps this recorded runtime boundary to the actual application boundary.
+	std::optional<RuntimeTime> observationOrigin;
 };
 struct SetGaze
 {
@@ -102,9 +106,17 @@ struct SetTracker
 	std::uint32_t index = 0;
 	TrackerDevice value;
 };
+struct SetTrackers
+{
+	std::vector<TrackerDevice> value;
+};
 struct SetViewSettings
 {
 	ViewSettings value;
+};
+struct SetEyeViews
+{
+	std::optional<StereoEyeViews> value;
 };
 struct SetBodyProportions
 {
@@ -124,9 +136,10 @@ struct SetReferenceSpaces
 {
 	ReferenceSpaceState value;
 };
-using SimulationCommand = std::variant<TakeControl, ReleaseControl, SetHeadPose, SetControllerPose,
-									   SetControllerControls, SetBodyControls, SetGaze, SetTracker, SetViewSettings,
-									   SetBodyProportions, SetControllerProfile, SetScenario, SetReferenceSpaces>;
+using SimulationCommand =
+	std::variant<TakeControl, ReleaseControl, SetHeadPose, SetControllerPose, SetControllerControls, SetBodyControls,
+				 SetGaze, SetTracker, SetViewSettings, SetBodyProportions, SetControllerProfile, SetScenario,
+				 SetReferenceSpaces, SetEyeViews, SetTrackers>;
 enum class CommandLatePolicy
 {
 	Reject,
@@ -145,6 +158,8 @@ struct CommandTransaction
 	CommandTarget target;
 	CommandLatePolicy latePolicy = CommandLatePolicy::Reject;
 	std::vector<SimulationCommand> commands;
+	// Optional observed inputs that must still match at the application boundary.
+	std::vector<SimulationCommand> expected;
 };
 enum class CommandResult
 {
@@ -160,6 +175,15 @@ enum class CommandResult
 	NotFound,
 	Released
 };
+struct LiveInputCorrelation
+{
+	std::uint64_t connection = 0, sequence = 0;
+	RuntimeTime observedTime, targetTime;
+	std::array<RuntimeTime, 2> controlsObservedTime;
+	std::uint64_t clockRevision = 0;
+	std::optional<RuntimeTime> trackersObservedTime;
+};
+struct CommandRecordingOrigin;
 struct CommandOutcome
 {
 	CommandTransaction transaction;
@@ -173,6 +197,10 @@ struct CommandOutcome
 	// Release events have no client transaction ID. Cleanup between boundaries
 	// follows appliedFrame; cleanup during a boundary precedes its snapshot.
 	bool afterFrame = false;
+	std::optional<LiveInputCorrelation> liveInput;
+	std::optional<RuntimeTime> appliedRuntimeTime;
+	// Shared by publication history and the recorder; captures the underlying state after a release.
+	std::shared_ptr<const CommandRecordingOrigin> releaseState;
 };
 struct CommandConfiguration
 {
@@ -219,12 +247,14 @@ struct CommandRecordingOrigin
 	ScenarioState scenarios{};
 	FrameId frame;
 	SimulationTime time;
+	std::optional<RuntimeTime> runtimeTime;
 };
 struct CommandRecording
 {
-	std::uint32_t version = 2;
-	bool active = false, overflow = false;
-	std::size_t total = 0;
+	std::uint32_t version = 3;
+	bool active = false, overflow = false, drain = false;
+	std::size_t total = 0, floor = 0;
+	std::uint64_t identity = 0;
 	CommandRecordingOrigin origin;
 	std::vector<CommandOutcome> transactions;
 };

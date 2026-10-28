@@ -118,13 +118,26 @@ void ImageLifetimesAndReplay()
 {
 	wire::test::Fixture fixture;
 	Client client(fixture.service), other(fixture.service), legacy(fixture.service, true, 1),
+		oldRegion(fixture.service, true, 15),
 		noFd(fixture.service, false);
 	Require(Error(legacy.Retain(fixture.capture)) == wire::ErrorCode::UnsupportedCommand,
 			"Old minor accessed image delivery");
 	const auto retained = client.Retain(fixture.capture);
 	Require(Error(retained) == wire::ErrorCode::Ok && fixture.state->retains == 1, "Retain ready exact image");
 	const auto image = Id(retained, tag::ImageReaderId);
-	Require(Id(client.Retain(fixture.capture), tag::ImageReaderId) == image && fixture.state->retains == 1,
+	const auto oldImage = Id(oldRegion.Retain(fixture.capture), tag::ImageReaderId);
+	const std::vector<wire::Field> regionFields{wire::Field::U32(1, 0, true), wire::Field::U32(2, 0, true),
+		wire::Field::U32(3, 2, true), wire::Field::U32(4, 2, true), wire::Field::U32(5, 1, true),
+		wire::Field::U32(6, 1, true)};
+	const auto region = wire::Field::Bytes(tag::ImageRegion, wire::EncodeFields(regionFields), true);
+	Require(Error(oldRegion.Call(wire::OpCode::StartExport,
+		{wire::Field::U64(tag::ImageReaderId, oldImage), region})) == wire::ErrorCode::UnsupportedField,
+		"Old negotiated protocol accepted image region export");
+	Require(Error(client.Call(wire::OpCode::StartExport,
+		{wire::Field::U64(tag::ImageReaderId, image), region})) == wire::ErrorCode::UnsupportedCommand,
+		"Provider without image region support did not reject it explicitly");
+	Require(fixture.state->exports == 0, "Unsupported image region created an export");
+	Require(Id(client.Retain(fixture.capture), tag::ImageReaderId) == image && fixture.state->retains == 2,
 			"Same source did not reuse immutable reader");
 	Require(Error(other.Call(wire::OpCode::ImageInfo, {wire::Field::U64(tag::ImageReaderId, image)})) ==
 				wire::ErrorCode::NotFound,

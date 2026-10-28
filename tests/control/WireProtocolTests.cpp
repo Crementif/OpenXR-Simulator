@@ -383,6 +383,15 @@ void SimulationCommandBoundaries()
 						  Field::Bytes(tag::Commands, EncodeFields(std::array{encoded}))};
 	Require(DecodeSimulationTransaction(transaction, 17).commands.size() == 1,
 			"A valid bounded command transaction was rejected");
+	const auto expected = EncodeSimulationCommand(simxr::SetHeadPose{});
+	transaction.fields.push_back(Field::Bytes(tag::ExpectedInputs, EncodeFields(std::array{expected}), true));
+	Require(DecodeSimulationTransaction(transaction, 17).expected.size() == 1,
+			"Conditional simulation input did not round-trip");
+	transaction.minor = 16;
+	RequireThrows<std::invalid_argument>([&] { DecodeSimulationTransaction(transaction, 17); },
+		"Preconditions were accepted from a pre-1.17 request");
+	transaction.minor = ProtocolMinor;
+	transaction.fields.pop_back();
 	auto commandWithGap = encoded;
 	commandWithGap.tag = 2;
 	transaction.fields.back() = Field::Bytes(tag::Commands, EncodeFields(std::array{commandWithGap}));

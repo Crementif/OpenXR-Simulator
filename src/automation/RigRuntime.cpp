@@ -4,6 +4,7 @@
 #include "automation/RigProgress.h"
 #include "control/ControlSchema.h"
 #include "control/DebugProtocol.h"
+#include "control/InspectionDocument.h"
 #include "control/SimulationControl.h"
 
 #include <filesystem>
@@ -414,6 +415,38 @@ void RigRuntime::ReleaseInspection(std::uint64_t inspection)
 std::vector<std::byte> RigRuntime::State()
 {
 	return Document(Call(control::OpCode::SimulationStatus, Source()));
+}
+FrameId RigRuntime::CurrentFrame()
+{
+	const auto decode = [](std::span<const std::byte> bytes)
+	{
+		auto fields = wire::DecodeFields(bytes);
+		if (fields.error != wire::DecodeError::None)
+			throw std::runtime_error("Malformed simulation frame document");
+		wire::Message message;
+		message.fields = std::move(fields.fields);
+		return message;
+	};
+	const auto root = decode(State());
+	const auto kind = root.Find(2);
+	const auto data = root.Find(3);
+	if (!kind || kind->AsU32() != static_cast<std::uint32_t>(wire::InspectionType::Object) || !data)
+		throw std::runtime_error("Simulation state is not an object");
+	const auto members = decode(data->value);
+	for (const auto& member : members.fields)
+	{
+		const auto child = decode(member.value);
+		const auto name = child.Find(1);
+		if (!name || name->AsText() != "frame_id")
+			continue;
+		const auto type = child.Find(2);
+		const auto value = child.Find(3);
+		if (!type || type->AsU32() != static_cast<std::uint32_t>(wire::InspectionType::Unsigned) || !value ||
+			!value->AsU64())
+			throw std::runtime_error("Simulation frame is not an exact unsigned integer");
+		return FrameId{*value->AsU64()};
+	}
+	return FrameId{};
 }
 void RigRuntime::ReleaseInputs()
 {

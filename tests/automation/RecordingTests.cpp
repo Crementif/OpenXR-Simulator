@@ -1,10 +1,11 @@
 #include "../TestSupport.h"
-#include "math/Math.h"
 #include "automation/Recording.h"
 #include "control/ControlSchema.h"
 #include "control/SimulationControl.h"
+#include "math/Math.h"
 #include "runtime/Session.h"
 #include "simulation/CommandRecorder.h"
+#include "simulation/CommandState.h"
 
 #include <cmath>
 #include <iostream>
@@ -37,6 +38,105 @@ wire::Message Page(const CommandRecorder& recorder, std::size_t offset, std::siz
 					   wire::Field::U64(wire::tag::Length, recording.transactions.size()),
 					   wire::Field::Bool(wire::tag::End, offset + recording.transactions.size() == recording.total)};
 	return response;
+}
+static BodyObservation RecordedBody()
+{
+	BodyObservation body;
+	body.jointSet = BodyJointSet::UpperBodyFB;
+	body.located = true;
+	body.active = true;
+	body.confidence = .75f;
+	body.requestedTime = {Duration{9007199254740993LL}};
+	body.returnedTime = RuntimeTime{Duration{9007199254740991LL}};
+	body.skeletonRevision = 0;
+	body.skeleton.emplace();
+	for (const auto joint : BodyModel::JointMap(body.jointSet))
+	{
+		const auto index = static_cast<std::size_t>(joint);
+		body.joints[index] = ObservedBodyJoint{IdentityPose(), ValidPoseFlags};
+		body.joints[index]->pose.position.x = static_cast<float>(index);
+		(*body.skeleton)[index] = SkeletonJoint{joint, {}, IdentityPose()};
+	}
+	return body;
+}
+static void BodyRecordingSchema()
+{
+	CommandRecorder recorder;
+	recorder.Start({});
+	Require(recorder.Snapshot().version == 3, "Authored recordings retain schema 3");
+	CommandOutcome outcome;
+	outcome.result = CommandResult::Applied;
+	outcome.appliedFrame = FrameId{1};
+	outcome.transaction.id = 1;
+	outcome.transaction.commands = {SetBodyControls{{}, RecordedBody()}};
+	outcome.appliedRuntimeTime = RuntimeTime{Duration{9007199254741000LL}};
+	Rejected([&]
+	{
+		recorder.ObservePrepared(std::span{&outcome, 1}, [&](bool)
+		{
+			Require(recorder.Snapshot().version == 3 && recorder.Snapshot().total == 0,
+				"Recorder cannot expose a partial schema upgrade during reservation");
+			throw std::bad_alloc{};
+		});
+	}, "Failed observation publication must propagate");
+	Require(recorder.Snapshot().version == 3 && recorder.Snapshot().total == 0,
+		"Failed publication changed recording version or transactions");
+	Require(recorder.Observe(outcome), "Record body command");
+	recorder.Stop();
+	const auto recorded = recorder.Snapshot();
+	Require(recorded.version == 4 && recorded.total == 1, "Body command promotes recording schema atomically");
+	const auto page = rigs::DecodeRecordingPage(Page(recorder, 0, 16));
+	const auto& command = std::get<SetBodyControls>(page.recording.transactions[0].commands[0]);
+	Require(page.recording.version == 4 && command.observation &&
+		wire::EncodeSimulationCommand(command).value == wire::EncodeSimulationCommand(outcome.transaction.commands[0]).value,
+		"Schema-4 command survives recording transport without losing body metadata");
+	rigs::RecordingCollection collection;
+	collection.Append(page);
+	Require(collection.Complete() && collection.Recording().version == 4, "Collect complete schema-4 take");
+	recorder.Start({}, true);
+	Require(recorder.Observe(outcome), "Record body in draining window");
+	recorder.Acknowledge(1);
+	Require(recorder.Snapshot().version == 4 && recorder.Snapshot().floor == 1 &&
+			recorder.Snapshot().transactions.empty(), "Acknowledging body data downgraded its archive schema");
+	Require(recorder.Observe(outcome), "Reuse retired body slot");
+	const auto retained = recorder.Snapshot();
+	Require(retained.total == 2 && retained.floor == 1 && retained.transactions.size() == 1 &&
+			wire::EncodeSimulationCommand(retained.transactions[0].transaction.commands[0]).value ==
+			wire::EncodeSimulationCommand(outcome.transaction.commands[0]).value &&
+			retained.transactions[0].appliedRuntimeTime == outcome.appliedRuntimeTime,
+			"Draining changed observed body metadata or replay clock anchor");
+	recorder.Stop();
+	CommandRecordingOrigin origin;
+	origin.configuration.tracking.bodyObservation = RecordedBody();
+	origin.runtimeTime = RuntimeTime{Duration{9007199254741000LL}};
+	recorder.Start(origin);
+	recorder.Stop();
+	Require(recorder.Snapshot().version == 4, "Observed recording origin selects schema 4");
+	const auto initial = rigs::DecodeRecordingPage(Page(recorder, 0, 16)).recording;
+	const auto body = std::find_if(initial.initial.begin(), initial.initial.end(), [](const auto& value)
+	{
+		const auto* command = std::get_if<SetBodyControls>(&value);
+		return command && command->observation;
+	});
+	Require(body != initial.initial.end() && std::get<SetBodyControls>(*body).observation->returnedTime ==
+		origin.configuration.tracking.bodyObservation->returnedTime, "Recording origin preserves exact body sample time");
+	Require(rigs::EditableRig(initial).find("9007199254740993") != std::string::npos,
+		"Schema-4 editable export preserves exact observation time");
+	Require(initial.originRuntimeTime == origin.runtimeTime && page.recording.transactions[0].runtimeTime == outcome.appliedRuntimeTime &&
+		rigs::EditableRig(initial).find("observation_origin = \"9007199254741000\"") != std::string::npos,
+		"Recorded runtime boundary is missing from replay export");
+	auto missingAnchor = initial;
+	missingAnchor.originRuntimeTime.reset();
+	Rejected([&] { rigs::EditableRig(missingAnchor); }, "Unanchored observed replay must fail explicitly");
+	auto invalid = initial;
+	invalid.version = 3;
+	Rejected([&] { rigs::ReplayInitialCommands(invalid); }, "Old-schema body origin must not replay silently");
+	CommandRecorder full(1);
+	full.Start({});
+	CommandOutcome authored = outcome;
+	authored.transaction.commands = {SetBodyControls{}};
+	Require(full.Observe(authored) && !full.Observe(outcome) && full.Snapshot().version == 3,
+		"Rejected overflow body command must not upgrade stored schema");
 }
 void CollectionIdentityAndRollback()
 {
@@ -128,6 +228,26 @@ void CollectionIdentityAndRollback()
 	Require(recording.seed == std::numeric_limits<std::uint64_t>::max() && recording.originFrame.value == origin &&
 				recording.transactions.size() == 19 && recording.transactions.back().frame.value == origin + 19,
 			"Full-width recording identity or final page lost");
+	auto physical = recording;
+	physical.version = 3;
+	physical.transactions.front().id = 0;
+	physical.transactions.front().liveInput =
+		LiveInputCorrelation{std::numeric_limits<std::uint64_t>::max(),
+							 7,
+							 RuntimeTime{Duration{100}},
+							 RuntimeTime{Duration{110}},
+							 {RuntimeTime{Duration{90}}, RuntimeTime{Duration{100}}},
+							 19};
+	physical.transactions.front().liveInput->trackersObservedTime = RuntimeTime{Duration{80}};
+	const auto physicalScript = rigs::EditableRig(physical);
+	Require(physicalScript.find("-- Tracker observation runtime ns: 80") != std::string::npos,
+			"Editable export discarded tracker observation time");
+	Require(physicalScript.find("-- Physical input: connection 18446744073709551615; sequence 7; clock_revision 19") !=
+					std::string::npos &&
+				physicalScript.find("-- Original runtime ns: observed 100; target 110; controls 90, 100") !=
+					std::string::npos &&
+				physicalScript.find("-- Original frame " + std::to_string(origin + 1)) != std::string::npos,
+			"Editable export discarded exact physical-input provenance");
 	const auto script = rigs::EditableRig(recording);
 	Require(script.find("frame_add(baseFrame, \"19\")") != std::string::npos &&
 				script.find("kind = \"gaze\"") != std::string::npos && script.find("tonumber") == std::string::npos,
@@ -176,7 +296,7 @@ void ReleaseEventExport()
 	recorder.Observe(held);
 	recorder.Stop();
 	auto recording = rigs::DecodeRecordingPage(Page(recorder, 0, 16)).recording;
-	Require(recording.version == 2 && recording.transactions[1].afterFrame &&
+	Require(recording.version == 3 && recording.transactions[1].afterFrame &&
 				recording.transactions[1].phase == "released",
 			"Decoder lost release timing");
 	const auto script = rigs::EditableRig(recording);
@@ -482,7 +602,7 @@ void ExportRequirements()
 			invalid.total = 1;
 			break;
 		case 3:
-			invalid.version = 3;
+			invalid.version = 5;
 			break;
 		case 4:
 			invalid.total = 1;
@@ -497,6 +617,83 @@ void ExportRequirements()
 			"Incomplete or invalid recording exported");
 	}
 }
+void TrackerCollectionRecording()
+{
+	CommandRecording source;
+	source.origin.configuration.tracking.trackers.clear();
+	for (std::size_t index = 0; index < MaxTrackerDevices; ++index)
+		source.origin.configuration.tracking.trackers.push_back({{100 + index}, TrackerRole::Unassigned});
+	source.origin.configuration.tracking.trackers.back().sourcePath = TrackerSourcePath{"htcx:/device/physical_163"};
+	wire::Message page;
+	page.fields.push_back(wire::Field::Bytes(wire::tag::Document, wire::SimulationRecording(source).Encode()));
+	auto restored = rigs::DecodeRecordingPage(page).recording;
+	Require(restored.version == 3, "Tracker recording did not use schema 3");
+	const auto initial = rigs::ReplayInitialCommands(restored);
+	CommandState state;
+	CommandTransaction transaction;
+	transaction.source = {CommandSourceKind::Rig, 1};
+	transaction.commands = initial;
+	Require(state.Apply(transaction, {}, {Duration{1}}) == CommandResult::Applied &&
+				state.Merge({}).tracking.trackers.size() == MaxTrackerDevices &&
+				state.Merge({}).tracking.trackers.back().identity.value == 163 &&
+				state.Merge({}).tracking.trackers.back().sourcePath.View() == "htcx:/device/physical_163",
+			"Recorded collection origin did not restore the complete inventory");
+	Require(rigs::EditableRig(restored).find("htcx:/device/physical_163") != std::string::npos &&
+			 rigs::EditableRig(restored).find("identity = \"163\"") != std::string::npos,
+			"Editable rig omitted the last tracker");
+	for (std::uint32_t version : {1u, 2u})
+	{
+		restored.version = version;
+		Rejected(
+			[&]
+			{
+				(void)rigs::EditableRig(restored);
+			},
+			"Legacy schema accepted a collection command");
+		CommandRecording legacy;
+		legacy.version = version;
+		page.fields.front().value = wire::SimulationRecording(legacy).Encode();
+		const auto old = rigs::DecodeRecordingPage(page).recording;
+		Require(old.version == version && !rigs::EditableRig(old).empty(), "Legacy recording stopped exporting");
+	}
+}
+void TrackerCollectionCodec()
+{
+	SetTrackers collection;
+	for (std::size_t index = 0; index < MaxTrackerDevices; ++index)
+		collection.value.push_back({{100 + index}, TrackerRole::Unassigned});
+	collection.value.back().poseFlags = XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+	collection.value.back().sourcePath = TrackerSourcePath{"htcx:/device/physical_163"};
+	const auto encoded = wire::EncodeSimulationCommand(collection);
+	const auto decoded = std::get<SetTrackers>(wire::DecodeSimulationCommand(encoded));
+	Require(decoded.value.size() == MaxTrackerDevices && decoded.value.back().identity.value == 163 &&
+				decoded.value.back().sourcePath.View() == "htcx:/device/physical_163" &&
+				decoded.value.back().poseFlags == XR_SPACE_LOCATION_ORIENTATION_VALID_BIT,
+			"Tracker collection codec truncated identities");
+	Require(wire::EncodeSimulationCommand(decoded).value == encoded.value, "Tracker collection codec changed fields");
+	Require(std::get<SetTrackers>(wire::DecodeSimulationCommand(wire::EncodeSimulationCommand(SetTrackers{})))
+				.value.empty(),
+			"Empty collection gained default devices");
+	collection.value.push_back({{999}, TrackerRole::Unassigned});
+	Rejected(
+		[&]
+		{
+			(void)wire::EncodeSimulationCommand(collection);
+		},
+		"Oversized collection encoded");
+	auto corrupt = encoded;
+	auto envelope = wire::DecodeFields(corrupt.value).fields;
+	auto entries = wire::DecodeFields(envelope[1].value).fields;
+	entries[1].tag = 65;
+	envelope[1].value = wire::EncodeFields(entries);
+	corrupt.value = wire::EncodeFields(envelope);
+	Rejected(
+		[&]
+		{
+			(void)wire::DecodeSimulationCommand(corrupt);
+		},
+		"Sparse tracker collection decoded");
+}
 void RejectLossyCommandDecoding()
 {
 	SetReferenceSpaces spaces;
@@ -506,14 +703,19 @@ void RejectLossyCommandDecoding()
 	const auto available = wire::EncodeSimulationCommand(SetReferenceSpaces{});
 	const auto availableFields = wire::DecodeFields(available.value).fields;
 	spaceFields[1] = availableFields[1];
-	spaceFields[1].value = wire::EncodeFields([&]
-	{
-		auto payload = wire::DecodeFields(spaceFields[1].value).fields;
-		payload[2] = wire::Field::Bool(3, false, true);
-		return payload;
-	}());
+	spaceFields[1].value = wire::EncodeFields(
+		[&]
+		{
+			auto payload = wire::DecodeFields(spaceFields[1].value).fields;
+			payload[2] = wire::Field::Bool(3, false, true);
+			return payload;
+		}());
 	encodedSpaces.value = wire::EncodeFields(spaceFields);
-	Rejected([&] { (void)wire::DecodeSimulationCommand(encodedSpaces); },
+	Rejected(
+		[&]
+		{
+			(void)wire::DecodeSimulationCommand(encodedSpaces);
+		},
 		"Unavailable bounds silently discarded nonzero dimensions");
 	auto encoded = wire::EncodeSimulationCommand(SetGaze{});
 	auto fields = wire::DecodeFields(encoded.value).fields;
@@ -554,11 +756,14 @@ int main()
 {
 	try
 	{
+		BodyRecordingSchema();
 		CollectionIdentityAndRollback();
 		ReleaseEventExport();
 		ScenarioOriginAndSharedCoreReplay();
 		ReferenceSpaceOriginReplay();
 		ExportRequirements();
+		TrackerCollectionRecording();
+		TrackerCollectionCodec();
 		RejectLossyCommandDecoding();
 		std::cout << "PASS recording pages, transactional collection and editable export bounds\n";
 		return 0;

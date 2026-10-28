@@ -18,6 +18,7 @@ class WindowsClock final : public Clock
 	WindowsClock();
 	~WindowsClock() override;
 	HostTime Now() const override;
+	std::optional<NativeClockSample> NativeSample() const override;
 	void WaitUntil(std::condition_variable& changed, std::unique_lock<std::mutex>& lock, HostTime deadline) override;
 	void Wake() override;
 	std::shared_ptr<Clock> IndependentWaiter() const override;

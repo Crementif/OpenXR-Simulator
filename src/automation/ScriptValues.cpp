@@ -2,6 +2,7 @@
 #include "Pch.h"
 
 #include "control/SimulationControl.h"
+#include "simulation/BodyObservation.h"
 
 #include <charconv>
 #include <cmath>
@@ -206,10 +207,15 @@ static ControllerControls ReadControls(lua_State* state, int table)
 	controls.primaryTouch = BoolField(state, table, "primary_touch", false);
 	controls.secondaryTouch = BoolField(state, table, "secondary_touch", false);
 	controls.triggerTouch = BoolField(state, table, "trigger_touch", false);
+	lua_getfield(state, table, "trigger_click");
+	if (!lua_isnil(state, -1))
+		controls.triggerClick = BoolField(state, table, "trigger_click", false);
+	lua_pop(state, 1);
 	controls.thumbTouch = BoolField(state, table, "thumb_touch", false);
 	controls.trackpadTouch = BoolField(state, table, "trackpad_touch", false);
 	controls.thumbrestTouch = BoolField(state, table, "thumbrest_touch", false);
 	controls.connected = BoolField(state, table, "connected", true);
+	controls.physicalProfile = StringField(state, table, "physical_profile", "");
 	return controls;
 }
 static BodyControls ReadBody(lua_State* state, int table)
@@ -277,12 +283,119 @@ static BodyControls ReadBody(lua_State* state, int table)
 	lua_pop(state, 1);
 	return body;
 }
+static bool HasField(lua_State* state, int table, const char* key)
+{
+	lua_getfield(state, table, key);
+	const bool present = !lua_isnil(state, -1);
+	lua_pop(state, 1);
+	return present;
+}
+static RuntimeTime BodyTime(lua_State* state, int table, const char* key)
+{
+	const auto value = IntegerField(state, table, key, 0);
+	if (value > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+		throw std::invalid_argument("Observed body time exceeds signed nanoseconds");
+	return {Duration{static_cast<std::int64_t>(value)}};
+}
+static int BodyArraySize(lua_State* state, int table)
+{
+	if (!lua_istable(state, table))
+		throw std::invalid_argument("Observed body joints require an array");
+	const int count = lua_objlen(state, table);
+	if (count > static_cast<int>(BodyJointCount))
+		throw std::invalid_argument("Observed body joints exceed capacity");
+	int entries = 0;
+	lua_pushnil(state);
+	while (lua_next(state, table))
+	{
+		const double key = lua_tonumber(state, -2);
+		if (lua_type(state, -2) != LUA_TNUMBER || !std::isfinite(key) || key < 1 || key > count ||
+			std::floor(key) != key || !lua_istable(state, -1))
+			throw std::invalid_argument("Observed body joints require contiguous table entries");
+		++entries;
+		lua_pop(state, 1);
+	}
+	if (entries != count)
+		throw std::invalid_argument("Observed body joint array contains holes");
+	return count;
+}
+static BodyObservation ReadObservation(lua_State* state, int table)
+{
+	if (!lua_istable(state, table) || !HasField(state, table, "joint_set") ||
+		!HasField(state, table, "requested_time") || !HasField(state, table, "located"))
+		throw std::invalid_argument("Observed body requires a joint set, requested time and located flag");
+	BodyObservation body;
+	const auto jointSet = IndexField(state, table, "joint_set", 0);
+	if (jointSet > static_cast<std::uint32_t>(BodyJointSet::FullBodyBD))
+		throw std::invalid_argument("Unknown observed body joint set");
+	body.jointSet = static_cast<BodyJointSet>(jointSet);
+	body.requestedTime = BodyTime(state, table, "requested_time");
+	body.located = BoolField(state, table, "located", false);
+	if (HasField(state, table, "returned_time"))
+		body.returnedTime = BodyTime(state, table, "returned_time");
+	if (HasField(state, table, "active"))
+		body.active = BoolField(state, table, "active", false);
+	if (HasField(state, table, "all_joint_poses_tracked"))
+		body.allJointPosesTracked = BoolField(state, table, "all_joint_poses_tracked", false);
+	if (HasField(state, table, "confidence"))
+		body.confidence = FloatField(state, table, "confidence", 0);
+	if (HasField(state, table, "skeleton_revision"))
+		body.skeletonRevision = IndexField(state, table, "skeleton_revision", 0);
+	for (const bool skeleton : {false, true})
+	{
+		lua_getfield(state, table, skeleton ? "skeleton" : "joints");
+		if (skeleton && lua_isnil(state, -1))
+		{
+			lua_pop(state, 1);
+			continue;
+		}
+		const auto array = lua_absindex(state, -1);
+		const int count = BodyArraySize(state, array);
+		if (skeleton)
+			body.skeleton.emplace();
+		for (int index = 1; index <= count; ++index)
+		{
+			lua_rawgeti(state, array, index);
+			const auto child = lua_absindex(state, -1);
+			const auto joint = IndexField(state, child, "joint", std::numeric_limits<std::uint32_t>::max());
+			if (joint >= BodyJointCount || !HasField(state, child, "position") ||
+				!HasField(state, child, "orientation"))
+				throw std::invalid_argument("Observed body joint requires an identity and complete pose fields");
+			const auto pose = Pose(state, child);
+			if (skeleton)
+			{
+				if ((*body.skeleton)[joint])
+					throw std::invalid_argument("Duplicate skeleton joint");
+				SkeletonJoint value{static_cast<BodyJoint>(joint), {}, pose.pose};
+				if (HasField(state, child, "parent"))
+				{
+					const auto parent = IndexField(state, child, "parent", 0);
+					if (parent >= BodyJointCount)
+						throw std::invalid_argument("Invalid observed skeleton parent");
+					value.parent = static_cast<BodyJoint>(parent);
+				}
+				(*body.skeleton)[joint] = value;
+			}
+			else
+			{
+				if (body.joints[joint] || !HasField(state, child, "flags"))
+					throw std::invalid_argument("Duplicate body joint or missing validity flags");
+				body.joints[joint] = ObservedBodyJoint{pose.pose, pose.flags};
+			}
+			lua_pop(state, 1);
+		}
+		lua_pop(state, 1);
+	}
+	return NormalizeBodyObservation(std::move(body));
+}
 static TrackerDevice ReadTracker(lua_State* state, int table)
 {
 	TrackerDevice tracker{{IntegerField(state, table, "identity", 0)},
 						  static_cast<TrackerRole>(IndexField(state, table, "role", 4)),
 						  BoolField(state, table, "connected", true),
 						  BoolField(state, table, "tracked", true)};
+	tracker.poseFlags = IntegerField(state, table, "flags", TrackedPoseFlags);
+	tracker.sourcePath = TrackerSourcePath{StringField(state, table, "source_path", {})};
 	lua_getfield(state, table, "anchor");
 	if (!lua_isnil(state, -1))
 	{
@@ -350,17 +463,89 @@ SimulationCommand Command(lua_State* state, int index)
 	if (kind == "head_pose")
 		return SetHeadPose{Pose(state, table)};
 	if (kind == "controller_pose")
-		return SetControllerPose{IndexField(state, table, "hand", 0),
-								 {Pose(state, table), BoolField(state, table, "connected", true)}};
+	{
+		ControllerPose value{Pose(state, table), BoolField(state, table, "connected", true)};
+		lua_getfield(state, table, "aim");
+		if (!lua_isnil(state, -1))
+		{
+			if (!lua_istable(state, -1))
+				throw std::invalid_argument("Expected an aim pose table");
+			value.aim = Pose(state, lua_absindex(state, -1));
+		}
+		lua_pop(state, 1);
+		return SetControllerPose{IndexField(state, table, "hand", 0), value};
+	}
 	if (kind == "controller_controls")
 		return SetControllerControls{IndexField(state, table, "hand", 0), ReadControls(state, table)};
 	if (kind == "gaze")
 		return SetGaze{{FloatField(state, table, "yaw", 0), FloatField(state, table, "pitch", 0),
 						BoolField(state, table, "available", true), BoolField(state, table, "tracked", true)}};
 	if (kind == "body")
-		return SetBodyControls{ReadBody(state, table)};
+	{
+		SetBodyControls result{ReadBody(state, table)};
+		lua_getfield(state, table, "observation");
+		if (!lua_isnil(state, -1))
+			result.observation = ReadObservation(state, lua_absindex(state, -1));
+		lua_pop(state, 1);
+		if (HasField(state, table, "observation_origin"))
+		{
+			result.observationOrigin = BodyTime(state, table, "observation_origin");
+			if (!result.observation || result.observationOrigin->value.count() <= 0)
+				throw std::invalid_argument("Body replay timing requires an observation and positive anchor");
+		}
+		return result;
+	}
+	if (kind == "trackers")
+	{
+		lua_getfield(state, table, "devices");
+		if (!lua_istable(state, -1) || lua_objlen(state, -1) > static_cast<int>(MaxTrackerDevices))
+			throw std::invalid_argument("Invalid tracker collection");
+		const int count = lua_objlen(state, -1);
+		int entries = 0;
+		lua_pushnil(state);
+		while (lua_next(state, -2))
+		{
+			const double key = lua_type(state, -2) == LUA_TNUMBER ? lua_tonumber(state, -2) : 0;
+			if (key < 1 || key > count || std::floor(key) != key)
+				throw std::invalid_argument("Invalid tracker collection index");
+			++entries;
+			lua_pop(state, 1);
+		}
+		if (entries != count)
+			throw std::invalid_argument("Sparse tracker collection");
+		SetTrackers result;
+		for (int i = 1; i <= count; ++i)
+		{
+			lua_rawgeti(state, -1, i);
+			if (!lua_istable(state, -1))
+				throw std::invalid_argument("Invalid tracker collection entry");
+			result.value.push_back(ReadTracker(state, lua_absindex(state, -1)));
+			lua_pop(state, 1);
+		}
+		lua_pop(state, 1);
+		return result;
+	}
 	if (kind == "tracker")
 		return SetTracker{IndexField(state, table, "index", 0), ReadTracker(state, table)};
+	if (kind == "eye_views")
+	{
+		if (!BoolField(state, table, "enabled", true))
+			return SetEyeViews{};
+		StereoEyeViews views;
+		views.spaceRevision = IntegerField(state, table, "space_revision", 0);
+		for (std::size_t eye = 0; eye < 2; ++eye)
+		{
+			lua_getfield(state, table, eye == 0 ? "left" : "right");
+			if (!lua_istable(state, -1))
+				throw std::invalid_argument("Expected an eye observation table");
+			const auto child = lua_absindex(state, -1);
+			views.poses[eye] = Pose(state, child);
+			const auto fov = Vector(state, child, "fov", {-.9f, .9f, .9f, -.9f});
+			views.fovs[eye] = {fov[0], fov[1], fov[2], fov[3]};
+			lua_pop(state, 1);
+		}
+		return SetEyeViews{views};
+	}
 	if (kind == "views")
 		return SetViewSettings{ReadViews(state, table)};
 	if (kind == "proportions")

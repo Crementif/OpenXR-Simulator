@@ -4,6 +4,7 @@
 #define XR_USE_GRAPHICS_API_OPENGL
 #include "Pch.h"
 #include "WindowsRuntimeModule.h"
+#include "platform/windows/InstallUse.h"
 #include <windows.h>
 #include <GL/gl.h>
 #include <GL/glext.h>
@@ -960,6 +961,12 @@ static int Run(std::span<const std::string> arguments)
 
 int wmain(int argc, wchar_t** argv)
 {
+	simxr::windows::InstallUse installUse;
+	if (!installUse.Ready())
+	{
+		std::fputs("OpenXR Simulator installation is being updated or removed. Try again.\n", stderr);
+		return 1;
+	}
 	try
 	{
 		return simxr::probe::Run(simxr::probe::WindowsArguments(argc, argv));

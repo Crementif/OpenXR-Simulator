@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
 #include <numbers>
 #include <stdexcept>
 #include <windows.h>
@@ -15,6 +16,14 @@
 namespace simxr::windows
 {
 namespace settings = simxr::legacy::settings;
+
+WindowsRuntimeInput::WindowsRuntimeInput()
+{
+	if (const auto* width = std::getenv("SIMXR_WIDTH"))
+		m_renderWidth = ParseLaunchRenderExtent(width);
+	if (const auto* height = std::getenv("SIMXR_HEIGHT"))
+		m_renderHeight = ParseLaunchRenderExtent(height);
+}
 
 static double UptimeSeconds()
 {
@@ -168,6 +177,10 @@ RuntimeInputSnapshot WindowsRuntimeInput::SnapshotLocked(double uptimeSeconds) c
 	}
 	const auto configuration = settings::ReadState();
 	settings::GetRenderResolution(output.views.outerWidth, output.views.outerHeight);
+	if (m_renderWidth)
+		output.views.outerWidth = *m_renderWidth;
+	if (m_renderHeight)
+		output.views.outerHeight = *m_renderHeight;
 	output.views.ipd = m_ipd.value_or(std::clamp(configuration.ipdMeters, 0.0f, .2f));
 	if (m_fov)
 		output.views.outerFov = *m_fov;

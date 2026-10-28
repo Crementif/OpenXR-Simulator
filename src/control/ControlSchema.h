@@ -66,7 +66,10 @@ inline constexpr std::uint16_t Error = 1, Detail = 2, Session = 3, Generation = 
 							   CompositorGpuTime = 202, JointOffset = 203, InputContext = 204, CompletionKind = 205,
 							   Haptics = 206, PreviewFrames = 207, PreviewBytes = 208, PreviewBudget = 209,
 							   PreviewFrameIds = 210, PreviewRamBudget = 211, PreviewRamBytes = 212, PreviewError = 213,
-							   MediaType = 214, FirstFrame = 215, LastFrame = 216;
+							   MediaType = 214, FirstFrame = 215, LastFrame = 216, AimPose = 217, AttachmentId = 218,
+							   SampleSequence = 219, ObservedTime = 220, PredictionTime = 221, MaxSampleAgeMs = 222,
+							   ClockDomain = 223, ClockRevision = 224, NativeTime = 225, RuntimeTimeBefore = 226,
+							   RuntimeTimeAfter = 227, ClockResolution = 228, SourceAge = 229, TrackerCollection = 230, BodyObservation = 231, BodyObservationOrigin = 232, RecordingId = 233, RecordingDrain = 234, ImageRegion = 235, ExpectedInputs = 236;
 }
 
 enum class Capability : std::uint64_t
@@ -100,7 +103,16 @@ enum class Capability : std::uint64_t
 	LiveHaptics = 1ULL << 26,
 	ContinuousPreviews = 1ULL << 27,
 	ConfigurablePreviews = 1ULL << 28,
-	VideoExport = 1ULL << 29
+	VideoExport = 1ULL << 29,
+	LiveInput = 1ULL << 30,
+	ExternalDisplayTiming = 1ULL << 31,
+	TrackerCollections = 1ULL << 32,
+	BodyObservations = 1ULL << 33,
+	BodyReplayTiming = 1ULL << 34,
+	LiveBodyInput = 1ULL << 35,
+	RecordingDrain = 1ULL << 36,
+	GameObservations = 1ULL << 37,
+	ImageRegionExport = 1ULL << 38
 };
 
 // Wire values are explicit and independent of the core's enum representation.

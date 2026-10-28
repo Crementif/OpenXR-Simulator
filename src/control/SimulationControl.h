@@ -17,7 +17,9 @@ InspectionValue SimulationOutcome(const CommandOutcome& outcome, bool includeCom
 // trackerInteraction reports whether the app enabled XR_HTCX_vive_tracker_interaction, when known.
 InspectionValue SimulationState(const CommandSchedulerSnapshot& state, bool includeCommands = false,
 								std::optional<bool> trackerInteraction = {},
-								std::span<const std::uint64_t> boundTrackers = {});
+								std::span<const std::uint64_t> boundTrackers = {},
+								std::optional<std::array<std::string, 2>> controllerProfiles = {},
+								std::optional<std::array<bool, 3>> bodyExtensions = {});
 InspectionValue SimulationRecording(const CommandRecording& recording);
 const char* SimulationResultName(CommandResult result);
 } // namespace simxr::control

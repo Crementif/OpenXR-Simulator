@@ -132,6 +132,22 @@ std::optional<PresentationTick> PresentationController::Advance(RuntimeTime now,
 																std::optional<SessionGeneration> generation,
 																const ImageTransform& transform)
 {
+	return AdvanceAt(now, generation, transform, false);
+}
+
+std::optional<PresentationTick> PresentationController::AdvanceExternal(RuntimeTime target,
+																		SessionGeneration generation,
+																		const ImageTransform& transform,
+																		const std::function<bool()>& current)
+{
+	return AdvanceAt(target, generation, transform, true, current);
+}
+
+std::optional<PresentationTick> PresentationController::AdvanceAt(RuntimeTime now,
+																  std::optional<SessionGeneration> generation,
+																  const ImageTransform& transform, bool exact,
+																  const std::function<bool()>& current)
+{
 	std::vector<Observation> observed;
 	DisplayTick tick;
 	RuntimeTime time;
@@ -142,9 +158,15 @@ std::optional<PresentationTick> PresentationController::Advance(RuntimeTime now,
 			return {};
 		tick.value =
 			static_cast<std::uint64_t>((now.value - m_timeline->Epoch().value).count() / m_timeline->Period().count());
-		if (m_latest && tick <= m_latest->tick)
-			return {};
-		time = m_timeline->TimeAt(tick);
+		time = exact ? now : m_timeline->TimeAt(tick);
+		if (m_latest)
+		{
+			if (time <= m_latest->time)
+				return {};
+			if (m_latest->tick.value == std::numeric_limits<std::uint64_t>::max())
+				throw std::overflow_error("Presentation identity exhausted");
+			tick.value = std::max(tick.value, m_latest->tick.value + 1);
+		}
 		revision = m_revision;
 		observed.reserve(m_entries.size() + (m_liveClear ? 1 : 0));
 		for (const auto& entry : m_entries)
@@ -209,6 +231,10 @@ std::optional<PresentationTick> PresentationController::Advance(RuntimeTime now,
 		next.reprojectionSubmissionTime = image.submissionTime;
 		next.reprojectionCompletionLatency = image.completionLatency;
 	}
+	// GPU observation/transform may have outlived a physical opportunity or
+	// attachment. Validate outside the presentation lock before publishing it.
+	if (current && !current())
+		return {};
 	{
 		std::lock_guard lock(m_mutex);
 		if (!m_running || revision != m_revision || (m_latest && tick <= m_latest->tick))

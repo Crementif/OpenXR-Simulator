@@ -45,5 +45,6 @@ struct FramePrediction
 	DisplayTick displayTick;
 	RuntimeTime displayTime;
 	Duration displayPeriod{};
+	std::uint64_t clockRevision = 0;
 };
 } // namespace simxr

@@ -12,8 +12,9 @@ static constexpr std::array s_sequence{tag::Session,	tag::Generation, tag::Sourc
 									   tag::SequenceId, tag::Offset,	 tag::Length};
 static constexpr std::array s_sequenceCapture{tag::Session, tag::Generation, tag::CaptureId};
 static constexpr std::array s_simulation{tag::Session,	 tag::Generation, tag::TransactionId, tag::ApplyFrame,
-										 tag::ApplyTime, tag::LatePolicy, tag::SourceKind,	  tag::Commands};
+										 tag::ApplyTime, tag::LatePolicy, tag::SourceKind,	  tag::Commands, tag::ExpectedInputs};
 static constexpr std::array s_simulationStatus{tag::Session, tag::Generation, tag::TransactionId, tag::SourceKind};
+static constexpr std::array s_gameObservations{tag::Session, tag::Generation, tag::Offset, tag::Length};
 static constexpr std::array s_game{tag::Session,   tag::Generation,	 tag::GameId, tag::GameKind,
 								   tag::CommandId, tag::OperationId, tag::Detail};
 static constexpr std::array s_diagnostics{tag::Session, tag::Generation, tag::Offset, tag::Length, tag::FrameId};
@@ -22,10 +23,22 @@ static constexpr std::array s_imageHistory{tag::Session, tag::Generation, tag::L
 static constexpr std::array s_beginImageWindow{tag::Session, tag::Generation, tag::Target};
 static constexpr std::array s_frameHistory{tag::Session, tag::Generation, tag::Offset, tag::Length};
 static constexpr std::array s_projectionHistory{tag::Session, tag::Generation, tag::Length};
+static constexpr std::array s_startRecording{tag::Session, tag::Generation, tag::SourceKind, tag::RecordingDrain};
+static constexpr std::array s_stopRecording{tag::Session, tag::Generation, tag::SourceKind, tag::RecordingId};
+static constexpr std::array s_readRecording{tag::Session, tag::Generation, tag::SourceKind,
+											tag::Offset,  tag::Length,	   tag::RecordingId};
+static constexpr std::array s_ackRecording{tag::Session, tag::Generation, tag::RecordingId, tag::Offset};
 static constexpr std::array s_recording{tag::Session, tag::Generation, tag::SourceKind, tag::Offset, tag::Length};
 static constexpr std::array s_previewBudget{tag::Session, tag::Generation, tag::PreviewBudget, tag::PreviewRamBudget};
 static constexpr std::array s_video{tag::Session, tag::Generation, tag::FirstFrame, tag::LastFrame};
 static constexpr std::array s_preview{tag::Session, tag::Generation, tag::FrameId};
+static constexpr std::array s_liveInput{
+	tag::Session,		 tag::Generation,	  tag::AttachmentId, tag::SampleSequence, tag::ObservedTime,
+	tag::PredictionTime, tag::MaxSampleAgeMs, tag::Commands,	 tag::ClockRevision,  tag::Enabled};
+static constexpr std::array s_displayPrediction{tag::Session,		 tag::Generation,	 tag::AttachmentId,
+												tag::SampleSequence, tag::ClockRevision, tag::PredictionTime,
+												tag::Period};
+static constexpr std::array s_liveAttachment{tag::Session, tag::Generation, tag::AttachmentId};
 static constexpr std::array s_common{tag::Session, tag::Generation};
 static constexpr std::array s_hello{tag::ClientName, tag::RequiredCapabilities, tag::OptionalCapabilities};
 static constexpr std::array s_submit{tag::Session,			 tag::Generation,		tag::Lease,	 tag::CommandId,
@@ -44,7 +57,7 @@ static constexpr std::array s_windowImage{tag::ImageWindowId, tag::FrameId};
 static constexpr std::array s_image{tag::ImageReaderId};
 static constexpr std::array s_share{tag::ImageReaderId, tag::DeviceUuid, tag::DriverUuid, tag::CompletionKind};
 static constexpr std::array s_delivery{tag::DeliveryId};
-static constexpr std::array s_startExport{tag::ImageReaderId, tag::Layer};
+static constexpr std::array s_startExport{tag::ImageReaderId, tag::Layer, tag::ImageRegion};
 static constexpr std::array s_exportId{tag::ExportId};
 static constexpr std::array s_readExport{tag::ExportId, tag::Offset, tag::Length};
 static constexpr std::array s_schemas{
@@ -88,14 +101,21 @@ static constexpr std::array s_schemas{
 	RequestSchema{OpCode::StopSequence, RequestDomain::Simulation, 5, s_sequence},
 	RequestSchema{OpCode::ReleaseSequenceCapture, RequestDomain::Inspection, 5, s_sequenceCapture},
 	RequestSchema{OpCode::SubmitSimulation, RequestDomain::Simulation, 4, s_simulation},
+	RequestSchema{OpCode::AttachLiveInput, RequestDomain::Simulation, 8, s_common},
+	RequestSchema{OpCode::SubmitLiveInput, RequestDomain::Simulation, 8, s_liveInput},
+	RequestSchema{OpCode::DetachLiveInput, RequestDomain::Simulation, 8, s_liveAttachment},
+	RequestSchema{OpCode::ReadLiveClock, RequestDomain::Simulation, 8, s_liveAttachment},
+	RequestSchema{OpCode::PublishDisplayPrediction, RequestDomain::Simulation, 9, s_displayPrediction},
 	RequestSchema{OpCode::ReadHaptics, RequestDomain::Simulation, 6, s_common},
 	RequestSchema{OpCode::SimulationStatus, RequestDomain::Simulation, 4, s_simulationStatus},
 	RequestSchema{OpCode::CancelSimulation, RequestDomain::Simulation, 4, s_simulationStatus},
 	RequestSchema{OpCode::ReleaseControl, RequestDomain::Simulation, 4, s_recording},
-	RequestSchema{OpCode::StartRecording, RequestDomain::Simulation, 4, s_recording},
-	RequestSchema{OpCode::StopRecording, RequestDomain::Simulation, 4, s_recording},
-	RequestSchema{OpCode::ReadRecording, RequestDomain::Simulation, 4, s_recording},
+	RequestSchema{OpCode::StartRecording, RequestDomain::Simulation, 4, s_startRecording},
+	RequestSchema{OpCode::StopRecording, RequestDomain::Simulation, 4, s_stopRecording},
+	RequestSchema{OpCode::ReadRecording, RequestDomain::Simulation, 4, s_readRecording},
+	RequestSchema{OpCode::AcknowledgeRecording, RequestDomain::Simulation, 14, s_ackRecording},
 	RequestSchema{OpCode::ReadDiagnostics, RequestDomain::Simulation, 4, s_diagnostics},
+	RequestSchema{OpCode::ReadGameObservations, RequestDomain::Game, 15, s_gameObservations},
 	RequestSchema{OpCode::GameStatus, RequestDomain::Game, 4, s_game},
 	RequestSchema{OpCode::SubmitGame, RequestDomain::Game, 4, s_game},
 	RequestSchema{OpCode::GameOperation, RequestDomain::Game, 4, s_game}};

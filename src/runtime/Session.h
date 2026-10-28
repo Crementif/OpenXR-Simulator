@@ -26,6 +26,7 @@
 #include <openxr/openxr.h>
 #include <optional>
 #include <span>
+#include <thread>
 #include <vector>
 
 namespace simxr
@@ -115,6 +116,10 @@ class Session
 	void PublishTracking(RuntimeTime time, TrackingState state, const ViewSettings& settings = {}, FrameId frame = {});
 	XrResult PublishInput(InputSnapshot input);
 	CommandScheduler& Commands();
+	CommandResult SubmitLiveInput(SessionGeneration generation, CommandSource source, const LiveInputSample& sample);
+	bool SubmitDisplayPrediction(SessionGeneration generation, CommandSource source, std::uint64_t attachment,
+								 std::uint64_t sequence, std::uint64_t clockRevision, RuntimeTime target,
+								 Duration period);
 	// Serializes CPU-only control mutation against Begin/End/Close. The callback
 	// may access Commands/ReleaseCommandSource, but must not change lifecycle,
 	// perform I/O, wait for GPU work or reenter a generation gate.
@@ -125,7 +130,7 @@ class Session
 	XrResult ConfigureCommands(std::uint64_t seed, std::optional<CommandConfiguration> initial = {},
 							   bool overrideInitial = true);
 	CommandConfiguration CommandConfigurationSnapshot() const;
-	void StartCommandRecording();
+	void StartCommandRecording(bool drain = false);
 	XrResult LocateViews(const XrViewLocateInfo& info, XrViewState* state, std::uint32_t capacity, std::uint32_t* count,
 						 XrView* views);
 	XrViewConfigurationType ActiveViewConfiguration() const;
@@ -138,6 +143,7 @@ class Session
 	bool WithDebugGeneration(SessionGeneration generation, const std::function<void()>& work,
 							 bool requireRunning = true);
 	void Transition(XrSessionState state, RuntimeTime time);
+	void WatchLiveInput(std::stop_token stop);
 	XrSession m_handle;
 	std::shared_ptr<Instance> m_instanceOwner;
 	Instance& m_instance;
@@ -156,5 +162,8 @@ class Session
 	SpaceSystem m_spaces;
 	BodyTracking m_body;
 	std::uint64_t m_revision = 0;
+	bool m_liveInputFailed = false;
+	std::optional<CommandSource> m_externalDisplaySource;
+	std::jthread m_liveInputWorker;
 };
 } // namespace simxr

@@ -7,15 +7,17 @@
 #include "graphics/backends/vulkan/VulkanNativePreservation.h"
 
 #include <cstdio>
+#include <limits>
 #include <stdexcept>
 #include <thread>
 
 namespace simxr::control
 {
-static FramePool& ConsumerBudget()
+static FramePool& ConsumerBudget(bool companion)
 {
 	static FramePool s_budget{SnapshotBudget::Capacity};
-	return s_budget;
+	static FramePool s_companion{SnapshotBudget::MaxCapacity};
+	return companion ? s_companion : s_budget;
 }
 static bool Rejected(VkResult result)
 {
@@ -75,12 +77,13 @@ struct VulkanImageConsumer::State
 	VkSemaphore sampleReady = VK_NULL_HANDLE;
 	VkFence retirement = VK_NULL_HANDLE;
 	bool prepared = false, submitted = false, markerSubmitted = false, markerUnknown = false, idle = false,
-		 cancelled = false, failed = false;
+		 cancelled = false, failed = false, companionAdmission = false;
 	State(std::shared_ptr<VulkanDevice> owner, std::span<const char* const> extensions, std::uint32_t api,
-		  ImageCompletionKind kind, bool timelineEnabled)
-		: slot(ConsumerBudget().Reserve()), device(std::move(owner)), external(device, extensions, api, timelineEnabled)
+		  ImageCompletionKind kind, bool timelineEnabled, bool companion)
+		: slot(ConsumerBudget(companion).Reserve()), device(std::move(owner)),
+		  external(device, extensions, api, timelineEnabled), companionAdmission(companion)
 	{
-		if (!slot || !ConsumerBudget().Consume(slot))
+		if (!slot || !ConsumerBudget(companion).Consume(slot))
 			throw VulkanError(VK_ERROR_OUT_OF_POOL_MEMORY, "Native consumer snapshot budget exhausted");
 		if (kind == ImageCompletionKind::Timeline)
 			timelineCompletion = external.CreateExportableTimeline();
@@ -170,8 +173,9 @@ struct VulkanImageConsumer::State
 };
 
 VulkanImageConsumer::VulkanImageConsumer(std::shared_ptr<VulkanDevice> device, std::span<const char* const> extensions,
-										 std::uint32_t api, ImageCompletionKind completion, bool timelineEnabled)
-	: m_state(std::make_unique<State>(std::move(device), extensions, api, completion, timelineEnabled))
+										 std::uint32_t api, ImageCompletionKind completion, bool timelineEnabled,
+										 bool companionAdmission)
+	: m_state(std::make_unique<State>(std::move(device), extensions, api, completion, timelineEnabled, companionAdmission))
 {
 }
 VulkanImageConsumer::~VulkanImageConsumer()
@@ -230,8 +234,9 @@ void VulkanImageConsumer::Import(const ImageDescription& description,
 	if ((description.completionKind == ImageCompletionKind::Timeline) != bool(m_state->timelineCompletion))
 		throw std::invalid_argument("Delivered image changed its consumer completion kind");
 	const auto native = NativeDescription(description);
-	SnapshotBudget::ObserveImageBytes(description.allocationSize);
-	if (ConsumerBudget().InUse() > ConsumerBudget().Capacity())
+	if (!m_state->companionAdmission)
+		SnapshotBudget::ObserveImageBytes(description.allocationSize);
+	if (ConsumerBudget(m_state->companionAdmission).InUse() > ConsumerBudget(m_state->companionAdmission).Capacity())
 		throw VulkanError(VK_ERROR_OUT_OF_POOL_MEMORY, "Snapshot image exceeds current retention capacity");
 	// TransferHandle has shared ownership. Duplicate into independent native RAII
 	// before a Vulkan helper consumes its own successful import ownership.
@@ -378,8 +383,11 @@ const ImageDescription& VulkanImageConsumer::Description() const
 }
 std::uint64_t VulkanImageConsumer::AllocatedBytes() const noexcept
 {
-	return (m_state->image ? m_state->image->allocationSize : 0) +
-		   (m_state->imported ? m_state->imported->Image()->allocationSize : 0);
+	const auto owned = m_state->image ? m_state->image->allocationSize : 0;
+	const auto imported = m_state->imported ? m_state->imported->Image()->allocationSize : 0;
+	return imported > std::numeric_limits<std::uint64_t>::max() - owned
+			   ? std::numeric_limits<std::uint64_t>::max()
+			   : owned + imported;
 }
 const VulkanImage& VulkanImageConsumer::Image() const
 {

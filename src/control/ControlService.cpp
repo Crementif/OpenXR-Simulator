@@ -159,6 +159,24 @@ std::uint64_t ControlService::ServiceCapabilities(std::uint16_t minor) const
 		capabilities |= static_cast<std::uint64_t>(Capability::PoseSequences);
 	if (minor >= 7 && m_images)
 		capabilities |= static_cast<std::uint64_t>(Capability::VideoExport);
+	if (minor >= 15)
+		capabilities |= static_cast<std::uint64_t>(Capability::GameObservations);
+	if (minor >= 16 && m_images)
+		capabilities |= static_cast<std::uint64_t>(Capability::ImageRegionExport);
+	if (minor >= 14)
+		capabilities |= static_cast<std::uint64_t>(Capability::RecordingDrain);
+	if (minor >= 13)
+		capabilities |= static_cast<std::uint64_t>(Capability::LiveBodyInput);
+	if (minor >= 12)
+		capabilities |= static_cast<std::uint64_t>(Capability::BodyReplayTiming);
+	if (minor >= 11)
+		capabilities |= static_cast<std::uint64_t>(Capability::BodyObservations);
+	if (minor >= 10)
+		capabilities |= static_cast<std::uint64_t>(Capability::TrackerCollections);
+	if (minor >= 9)
+		capabilities |= static_cast<std::uint64_t>(Capability::ExternalDisplayTiming);
+	if (minor >= 8)
+		capabilities |= static_cast<std::uint64_t>(Capability::LiveInput);
 	if (minor >= 6)
 		capabilities |= static_cast<std::uint64_t>(Capability::LiveHaptics);
 	return capabilities;
@@ -200,6 +218,48 @@ Message ControlService::DispatchGame(Client& client, const Message& request)
 	InspectionValue document;
 	switch (static_cast<OpCode>(request.opcode))
 	{
+	case OpCode::ReadGameObservations:
+	{
+		const auto count = request.Find(tag::Length) ? RequireRequestU64(request, tag::Length) : 16;
+		if (count > 16)
+			throw ControlRequestError{ErrorCode::Invalid, "Game observation page exceeds 16 records"};
+		const auto offset =
+			request.Find(tag::Offset) ? std::optional{RequireRequestU64(request, tag::Offset)} : std::nullopt;
+		const auto page = m_runtime.Game().Observations(offset, static_cast<std::size_t>(count));
+		std::vector<InspectionValue> records;
+		static constexpr std::array kinds{"registered", "telemetry", "unregistered", "closed"};
+		for (const auto& observation : page.observations)
+		{
+			auto time = InspectionValue::Null();
+			if (observation.time)
+				time = InspectionValue::Object(
+					{{"domain", InspectionValue::Unsigned(static_cast<std::uint32_t>(observation.time->domain))},
+					 {"nanoseconds", InspectionValue::Signed(observation.time->nanoseconds)},
+					 {"resolution", InspectionValue::Signed(observation.time->resolutionNanoseconds)}});
+			records.push_back(InspectionValue::Object(
+				{{"sequence", InspectionValue::Unsigned(observation.sequence)},
+				 {"game_id", InspectionValue::Unsigned(observation.game)},
+				 {"revision", InspectionValue::Unsigned(observation.revision)},
+				 {"capabilities", InspectionValue::Unsigned(observation.capabilities)},
+				 {"kind", InspectionValue::Text(kinds.at(static_cast<std::size_t>(observation.kind)))},
+				 {"observed_time", std::move(time)},
+				 {"payload", InspectionValue::Text(observation.payload)}}));
+		}
+		document = InspectionValue::Object(
+			{{"schema", InspectionValue::Unsigned(1)},
+			 {"floor", InspectionValue::Unsigned(page.floor)},
+			 {"offset", InspectionValue::Unsigned(page.offset)},
+			 {"next", InspectionValue::Unsigned(page.next)},
+			 {"total", InspectionValue::Unsigned(page.total)},
+			 {"gap", InspectionValue::Boolean(page.gap)},
+			 {"failed", InspectionValue::Boolean(page.failed)},
+			 {"state", InspectionValue::Object({{"game_id", InspectionValue::Unsigned(page.state.game)},
+												{"revision", InspectionValue::Unsigned(page.state.revision)},
+												{"capabilities", InspectionValue::Unsigned(page.state.capabilities)},
+												{"telemetry", InspectionValue::Text(page.state.telemetry)}})},
+			 {"observations", InspectionValue::Array(std::move(records))}});
+		break;
+	}
 	case OpCode::GameStatus:
 	{
 		const auto game = m_runtime.Game().Snapshot();
@@ -365,7 +425,7 @@ Message ControlService::DispatchFrame(Client& client, const Message& request, co
 		const auto history = session->History().Snapshot();
 		if (history.generation.value != RequireRequestU64(request, tag::Generation))
 			throw ControlRequestError{ErrorCode::StaleGeneration, "Frame history belongs to another run"};
-		EncodeFrameHistory(response, history, after, static_cast<std::size_t>(count));
+		EncodeFrameHistory(response, history, after, static_cast<std::size_t>(count), client.requests.Minor() >= 10);
 		return response;
 	}
 	case OpCode::ReadProjectionHistory:
@@ -468,6 +528,19 @@ Message ControlService::DispatchFrame(Client& client, const Message& request, co
 		response.fields.push_back(Field::U64(tag::Session, binding.id.value));
 		response.fields.push_back(Field::U64(tag::Generation, display.generation.value));
 		response.fields.push_back(EncodeDisplayTick(tag::Display, selected));
+		// Age belongs to the original game prediction, not a newer reprojected image.
+		std::int64_t sourceAge = -1;
+		if (selected.metadata)
+		{
+			const auto mapping = session->Scheduler().NativeClockMapping();
+			const auto& prediction = selected.metadata->prediction;
+			if (mapping && mapping->generation == display.generation && mapping->revision == prediction.clockRevision &&
+				prediction.displayTime.value.count() > 0)
+				sourceAge = mapping->runtimeAfter > prediction.displayTime
+								? (mapping->runtimeAfter.value - prediction.displayTime.value).count()
+								: 0;
+		}
+		response.fields.push_back(Field::I64(tag::SourceAge, sourceAge));
 		response.fields.push_back(Field::Bool(tag::ImageAvailable, selected.output != nullptr));
 		if (!selected.output)
 			return response;
@@ -545,7 +618,7 @@ Message ControlService::DispatchFrame(Client& client, const Message& request, co
 			throw ControlRequestError{ErrorCode::NotFound, "Snapshot is absent or released"};
 		held.capture = std::move(capture);
 		const auto& value = *held.capture;
-		EncodeCaptureMetadata(response, value);
+		EncodeCaptureMetadata(response, value, client.requests.Minor() >= 10);
 		return response;
 	}
 	default:
@@ -765,9 +838,37 @@ Message ControlService::Dispatch(Client& client, const Message& request, HeldRea
 	}
 	if (schema.domain == RequestDomain::Game)
 	{
+		std::optional<FrameNativeClockMapping> mapping;
 		if (request.Find(tag::Session) || request.Find(tag::Generation))
-			Resolve(client, request, held);
-		return DispatchGame(client, request);
+		{
+			const auto& binding = Resolve(client, request, held);
+			if (request.opcode == static_cast<std::uint16_t>(OpCode::ReadGameObservations) &&
+				!binding.session->WithCommandGeneration({RequireRequestU64(request, tag::Generation)},
+														[&]
+														{
+															mapping = binding.session->Scheduler().NativeClockMapping();
+														}))
+				throw ControlRequestError{ErrorCode::StaleGeneration, "Session changed before SDK clock observation"};
+		}
+		auto result = DispatchGame(client, request);
+		if (request.opcode == static_cast<std::uint16_t>(OpCode::ReadGameObservations))
+		{
+			if (request.Find(tag::Session))
+			{
+				result.fields.push_back(Field::U64(tag::Session, RequireRequestU64(request, tag::Session)));
+				result.fields.push_back(Field::U64(tag::Generation, RequireRequestU64(request, tag::Generation)));
+			}
+			if (mapping)
+			{
+				result.fields.push_back(Field::U32(tag::ClockDomain, static_cast<std::uint32_t>(mapping->domain)));
+				result.fields.push_back(Field::U64(tag::ClockRevision, mapping->revision));
+				result.fields.push_back(Field::I64(tag::NativeTime, mapping->nativeNanoseconds));
+				result.fields.push_back(Field::I64(tag::RuntimeTimeBefore, mapping->runtimeBefore.value.count()));
+				result.fields.push_back(Field::I64(tag::RuntimeTimeAfter, mapping->runtimeAfter.value.count()));
+				result.fields.push_back(Field::I64(tag::ClockResolution, mapping->resolutionNanoseconds));
+			}
+		}
+		return result;
 	}
 	const auto& binding = Resolve(client, request, held);
 	const auto& session = binding.session;

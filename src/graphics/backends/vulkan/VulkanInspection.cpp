@@ -410,10 +410,10 @@ class VulkanInspectionQueue
 	std::shared_ptr<VulkanInspectionWork> Readback(std::shared_ptr<VulkanImage> source,
 												   std::shared_ptr<FrameReservation> sourceBudget,
 												   std::optional<std::uint32_t> layer,
-												   std::shared_ptr<const void> owner)
+												   std::shared_ptr<const void> owner, std::optional<ImageRegion> region)
 	{
 		return VulkanInspectionWork::Readback(m_device, ReserveWork(), std::move(source), std::move(sourceBudget),
-											  layer, std::move(owner));
+												  layer, std::move(owner), region);
 	}
 	std::shared_ptr<VulkanInspectionWork> Delivery(std::shared_ptr<VulkanImage> source,
 												   std::shared_ptr<FrameReservation> sourceBudget,
@@ -1019,13 +1019,14 @@ std::shared_ptr<const VulkanImagePixels> VulkanImageReadback::Pixels()
 }
 
 std::shared_ptr<VulkanImageReadback> VulkanInspectionFrame::Export(std::optional<std::uint32_t> layer,
-																   std::shared_ptr<const void> retirementOwner) const
+																			   std::shared_ptr<const void> retirementOwner,
+																			   std::optional<ImageRegion> region) const
 {
 	if (PollCompletion() != CompletionStatus::Complete)
 		throw VulkanError(VK_NOT_READY, "Inspection image is not ready for explicit export");
 	auto sourceBudget = m_resources->Budget();
 	auto work = m_resources->Queue()->Readback(m_resources->Image(), std::move(sourceBudget), layer,
-											   std::move(retirementOwner));
+													   std::move(retirementOwner), region);
 	auto result = std::shared_ptr<VulkanImageReadback>(new VulkanImageReadback(m_resources->Queue(), work));
 	CheckVulkan(m_resources->Queue()->Submit(work), "Submit explicit export on owned inspection queue");
 	return result;

@@ -35,7 +35,7 @@ struct LocalControlClient::State
 	std::unique_ptr<native::Channel> pipe;
 	std::unique_ptr<Exchange> pending;
 	std::chrono::milliseconds timeout;
-	std::uint64_t next = 1;
+	std::uint64_t next = 1, peerProcess = 0;
 	State(const std::string& path, std::chrono::milliseconds timeout) : timeout(timeout)
 	{
 		if (timeout.count() <= 0 || timeout > std::chrono::hours{24})
@@ -62,6 +62,10 @@ struct LocalControlClient::State
 		}
 		pipe = std::make_unique<native::Channel>(std::move(connected));
 		pipe->Authenticate(false, native::TokenSid(GetCurrentProcess()));
+		ULONG process = 0;
+		if (!GetNamedPipeServerProcessId(pipe->Value(), &process) || !process)
+			throw native::Error("Query control pipe peer process failed");
+		peerProcess = process;
 	}
 	std::unique_ptr<Exchange> Close() noexcept
 	{
@@ -157,6 +161,10 @@ LocalControlClient::LocalControlClient(std::string path, std::chrono::millisecon
 LocalControlClient::~LocalControlClient()
 {
 	Close();
+}
+std::uint64_t LocalControlClient::PeerProcess() const noexcept
+{
+	return m_state->peerProcess;
 }
 ControlPacket LocalControlClient::Request(ControlPacket request)
 {

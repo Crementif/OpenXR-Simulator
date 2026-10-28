@@ -1,12 +1,31 @@
 #include "presentation/FrameScheduler.h"
 #include "Pch.h"
+#include "platform/ClockConversion.h"
 
 #include <limits>
 #include <new>
 #include <stdexcept>
+#include <utility>
 
 namespace simxr
 {
+RuntimeTime FrameClockMapping::Map(HostTime time) const
+{
+	const auto difference = HostTimeDifference(time, hostAnchor).count();
+	using Scale = std::ratio_divide<HostTime::duration::period, Duration::period>;
+	std::int64_t elapsed = 0;
+	if (!std::in_range<std::int64_t>(difference) || difference == std::numeric_limits<std::int64_t>::min() ||
+		(difference && !ScalePositiveTime(difference < 0 ? -difference : difference, Scale::num, Scale::den, elapsed)))
+		throw std::overflow_error("Host sample interval is unrepresentable");
+	if (difference < 0)
+		elapsed = -elapsed;
+	const auto anchor = runtimeAnchor.value.count();
+	if (anchor <= 0 || (elapsed > 0 && anchor > std::numeric_limits<std::int64_t>::max() - elapsed) ||
+		(elapsed < 0 && elapsed <= -anchor))
+		throw std::overflow_error("Host sample is outside the runtime time range");
+	return {Duration{anchor + elapsed}};
+}
+
 FrameScheduler::FrameScheduler(std::shared_ptr<Clock> clock)
 	: m_clock(std::move(clock)), m_timeline(m_config.epoch, m_config.period)
 {
@@ -27,6 +46,7 @@ void FrameScheduler::Start(const FrameSchedulerConfig& config, SessionGeneration
 	const auto hostEpoch = config.hostEpoch ? *config.hostEpoch : m_clock->Now();
 	std::lock_guard lock(m_mutex);
 	++m_revision;
+	++m_clockRevision;
 	m_config = config;
 	m_generation = generation;
 	m_lastFeedback = {};
@@ -37,6 +57,8 @@ void FrameScheduler::Start(const FrameSchedulerConfig& config, SessionGeneration
 	++m_policyRevision;
 	m_nextFrame = 1;
 	m_nextAdmission = {};
+	m_external.reset();
+	m_lastPrediction = {};
 	m_state = {};
 	m_state.running = true;
 	m_state.cadence = config.cadence;
@@ -52,18 +74,18 @@ void FrameScheduler::ObserveCompletion(FrameKey key, const FramePrediction& pred
 		key.frame.value >= m_nextFrame)
 		return;
 	m_lastFeedback = key.frame;
-	if (prediction.displayPeriod != m_config.period * m_state.cadence ||
-		prediction.displayTime.value < prediction.displayPeriod)
+	const auto period = m_external ? m_external->period : m_config.period;
+	if (prediction.displayPeriod != period * m_state.cadence || prediction.displayTime.value < prediction.displayPeriod)
 		return;
 	const auto admission = prediction.displayTime.value - prediction.displayPeriod;
 	if (observed.value < admission)
 		return;
 	const auto completionDelay = observed.value - admission;
-	const bool slow = completionDelay > m_config.period;
+	const bool slow = completionDelay > period;
 	m_slowFrames = slow ? m_slowFrames + 1 : 0;
 	if (!slow)
 		++m_fastFrames;
-	else if (completionDelay - m_config.period > m_config.period)
+	else if (completionDelay - period > period)
 		m_fastFrames = 0;
 	// Completion is observed at display ticks. At half rate, the second tick
 	// cannot distinguish slow work from polling jitter, so it is neutral.
@@ -85,7 +107,9 @@ void FrameScheduler::Stop()
 {
 	std::lock_guard lock(m_mutex);
 	++m_revision;
+	++m_clockRevision;
 	m_state = {};
+	m_external.reset();
 	m_clock->Wake();
 	m_changed.notify_all();
 }
@@ -95,7 +119,9 @@ FramePipelineState FrameScheduler::Pause()
 	std::lock_guard lock(m_mutex);
 	if (m_state.running && !m_state.paused)
 	{
+		++m_clockRevision;
 		m_state.paused = true;
+		m_external.reset();
 		m_lastFeedback = {m_nextFrame - 1};
 		m_slowFrames = m_fastFrames = 0;
 		m_state.permits = 0;
@@ -178,6 +204,7 @@ XrResult FrameScheduler::Resume(HostTime anchor, DisplayTick boundary)
 	{
 		return XR_ERROR_RUNTIME_FAILURE;
 	}
+	++m_clockRevision;
 	m_hostEpoch = anchor;
 	m_hostTick = boundary;
 	m_nextAdmission = boundary;
@@ -189,6 +216,46 @@ XrResult FrameScheduler::Resume(HostTime anchor, DisplayTick boundary)
 	m_clock->Wake();
 	m_changed.notify_all();
 	return XR_SUCCESS;
+}
+
+bool FrameScheduler::PublishExternalPrediction(SessionGeneration generation, std::uint64_t clockRevision,
+											   std::uint64_t attachment, std::uint64_t sequence, RuntimeTime target,
+											   Duration period, const std::function<bool()>& commitDisplay)
+{
+	std::lock_guard lock(m_mutex);
+	if (!m_state.running || m_state.paused || m_config.mode != ExecutionMode::RealTime || generation != m_generation ||
+		clockRevision != m_clockRevision || !attachment || !sequence || period < std::chrono::milliseconds(1) ||
+		period > std::chrono::milliseconds(100))
+		return false;
+	const auto now = m_clock->Now();
+	const auto runtimeNow =
+		FrameClockMapping{m_generation, m_clockRevision, m_hostEpoch, m_timeline.TimeAt(m_hostTick)}.Map(now);
+	if (target <= runtimeNow || target.value - runtimeNow.value > period * 4 || now > HostTime::max() - period * 4)
+		return false;
+	if (m_external && now >= m_external->expires)
+		m_external.reset();
+	if (m_external &&
+		(m_external->attachment != attachment || sequence <= m_external->sequence || target <= m_external->target))
+		return false;
+	m_clock->Wake();
+	if (commitDisplay && !commitDisplay())
+		return false;
+	const auto consumed = m_external ? m_external->consumed : 0;
+	m_external = ExternalPrediction{attachment, sequence, consumed, target, period, now + period * 4};
+	++m_policyRevision;
+	m_changed.notify_all();
+	return true;
+}
+
+void FrameScheduler::ReleaseExternalPrediction(std::uint64_t attachment)
+{
+	std::lock_guard lock(m_mutex);
+	if (!m_external || m_external->attachment != attachment)
+		return;
+	m_external.reset();
+	++m_policyRevision;
+	m_clock->Wake();
+	m_changed.notify_all();
 }
 
 XrResult FrameScheduler::WaitFrame(FramePrediction& prediction,
@@ -216,7 +283,29 @@ XrResult FrameScheduler::WaitFrame(FramePrediction& prediction,
 				return XR_ERROR_SESSION_NOT_RUNNING;
 			auto admission = m_nextAdmission;
 			const auto policy = m_policyRevision;
-			if (!m_state.paused && m_config.mode == ExecutionMode::RealTime)
+			std::optional<ExternalPrediction> external;
+			if (m_external)
+			{
+				const auto now = m_clock->Now();
+				if (now >= m_external->expires)
+					m_external.reset();
+				else
+				{
+					const auto runtimeNow =
+						FrameClockMapping{m_generation, m_clockRevision, m_hostEpoch, m_timeline.TimeAt(m_hostTick)}
+							.Map(now);
+					const auto& pulse = *m_external;
+					if (pulse.target > m_lastPrediction && pulse.target > runtimeNow &&
+						(!pulse.consumed || pulse.sequence - pulse.consumed >= m_state.cadence))
+						external = pulse;
+					else
+					{
+						m_clock->WaitUntil(m_changed, lock, pulse.expires);
+						continue;
+					}
+				}
+			}
+			if (!external && !m_state.paused && m_config.mode == ExecutionMode::RealTime)
 			{
 				const auto elapsed =
 					std::chrono::duration_cast<Duration>(HostTimeDifference(m_clock->Now(), m_hostEpoch));
@@ -256,14 +345,22 @@ XrResult FrameScheduler::WaitFrame(FramePrediction& prediction,
 			if (m_nextFrame == std::numeric_limits<std::uint64_t>::max() ||
 				admission.value > std::numeric_limits<std::uint64_t>::max() - m_state.cadence)
 				throw std::overflow_error("Frame identities exhausted");
-			const DisplayTick display{admission.value + m_state.cadence};
+			const DisplayTick display =
+				external ? m_timeline.TickAtOrAfter(external->target) : DisplayTick{admission.value + m_state.cadence};
 			const FramePrediction candidate{
-				{m_nextFrame}, display, m_timeline.TimeAt(display), m_config.period * m_state.cadence};
+				{m_nextFrame},
+				display,
+				external ? external->target : m_timeline.TimeAt(display),
+				(external ? external->period : m_config.period) * m_state.cadence,
+				m_config.mode == ExecutionMode::RealTime && !m_state.paused ? m_clockRevision : 0};
 			if (reserve)
 				reserve(candidate);
 			prediction = candidate;
 			++m_nextFrame;
-			m_nextAdmission = display;
+			m_nextAdmission = std::max(m_nextAdmission, display);
+			m_lastPrediction = candidate.displayTime;
+			if (external)
+				m_external->consumed = external->sequence;
 			m_state.waited = prediction;
 			if (m_state.paused)
 				--m_state.permits;
@@ -314,6 +411,62 @@ XrResult FrameScheduler::EndFrame(FramePrediction& prediction)
 	prediction = *m_state.begun;
 	m_state.begun.reset();
 	return XR_SUCCESS;
+}
+
+std::optional<FrameClockMapping> FrameScheduler::ClockMapping() const
+{
+	std::lock_guard lock(m_mutex);
+	if (!m_state.running || m_state.paused || m_config.mode != ExecutionMode::RealTime)
+		return {};
+	return FrameClockMapping{m_generation, m_clockRevision, m_hostEpoch, m_timeline.TimeAt(m_hostTick)};
+}
+
+std::optional<std::uint64_t> FrameScheduler::LiveInputClockRevision() const
+{
+	std::lock_guard lock(m_mutex);
+	if (!m_state.running || m_state.paused)
+		return {};
+	return m_config.mode == ExecutionMode::RealTime ? m_clockRevision : 0;
+}
+bool FrameScheduler::WithClockRevision(SessionGeneration generation, std::uint64_t revision,
+									   const std::function<void()>& admit)
+{
+	std::lock_guard lock(m_mutex);
+	if (!m_state.running || m_state.paused || generation != m_generation ||
+		revision != (m_config.mode == ExecutionMode::RealTime ? m_clockRevision : 0))
+		return false;
+	admit();
+	return true;
+}
+
+std::optional<FrameNativeClockMapping> FrameScheduler::NativeClockMapping() const
+{
+	const auto mapping = ClockMapping();
+	if (!mapping)
+		return {};
+	const auto sample = m_clock->NativeSample();
+	if (!sample)
+		return {};
+	if (sample->before > sample->after || sample->nanoseconds <= 0 || sample->resolutionNanoseconds <= 0)
+		throw std::invalid_argument("Invalid native clock sample");
+	const auto before = mapping->Map(sample->before);
+	const auto after = mapping->Map(sample->after);
+	const auto current = ClockMapping();
+	if (!current || current->generation != mapping->generation || current->revision != mapping->revision)
+		return {};
+	return FrameNativeClockMapping{
+		mapping->generation,		  mapping->revision, sample->domain, sample->nanoseconds, before, after,
+		sample->resolutionNanoseconds};
+}
+
+std::optional<RuntimeTime> FrameScheduler::MapHostTime(HostTime time, SessionGeneration generation,
+													   std::uint64_t revision) const
+{
+	std::lock_guard lock(m_mutex);
+	if (!m_state.running || m_state.paused || m_config.mode != ExecutionMode::RealTime || generation != m_generation ||
+		revision != m_clockRevision)
+		return {};
+	return FrameClockMapping{m_generation, m_clockRevision, m_hostEpoch, m_timeline.TimeAt(m_hostTick)}.Map(time);
 }
 
 FramePipelineState FrameScheduler::Snapshot() const

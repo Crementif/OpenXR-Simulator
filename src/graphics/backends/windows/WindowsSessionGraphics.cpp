@@ -194,8 +194,6 @@ template <typename Backend> class WindowsFrameSubmission final : public FrameSub
 					}
 					if (!request.reservation)
 					{
-						if (request.preview)
-							return XR_ERROR_LIMIT_REACHED;
 						continue;
 					}
 					result = request.depth

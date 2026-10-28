@@ -40,12 +40,7 @@ class SessionBinding:
             raise RuntimeError('Compatibility connection closed')
         if self._client is not None:
             return True
-        try:
-            sdk = importlib.import_module('simxr_control')
-        except ModuleNotFoundError as error:
-            if error.name == 'simxr_control':
-                return False
-            raise
+        sdk = importlib.import_module('simxr_control')
         paths = sdk.discover(self._directory)
         if not paths:
             return False
@@ -195,10 +190,10 @@ class LegacyControl:
                     return self._sequence.call(name, arguments)
                 from simxr_control.compatibility import HeadPoseEdit, parse_edit
                 edit = parse_edit(name, arguments)
-                document = self._binding.observe()
                 blocked = self._admission.settle(self._binding)
                 if blocked is not None:
                     return blocked
+                document = self._binding.observe()
                 configuration = document.get('configuration')
                 if configuration is None and not isinstance(edit, HeadPoseEdit):
                     raise ValueError('No applied configuration is available; allow the first application frame before this update')

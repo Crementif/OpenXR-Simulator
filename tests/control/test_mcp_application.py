@@ -192,6 +192,47 @@ class ApplicationTests(unittest.TestCase):
         self.assertEqual(json.loads(result[0].text), self.legacy.result)
         self.assertFalse((self.root / "head_pose_command.json").exists())
 
+    def test_compatibility_reads_state_after_prior_transaction_settles(self):
+        from legacy_control import LegacyControl
+        from simxr_control import Session
+
+        tools = LegacyControl(self.root)
+        binding = Mock()
+        binding.connect.return_value = True
+        binding.session = Session(1, 1)
+        tools._binding = binding
+        tools._sequence = Mock()
+        tools._admission = Mock()
+        state = {'frame_id': 9, 'configuration': {'head': {
+            'position': [0, 0, 0], 'orientation': [0, 0, 0, 1]}}}
+
+        def settle(_binding):
+            state['frame_id'] = 10
+            state['configuration']['head']['orientation'] = [0, 2**-.5, 0, 2**-.5]
+            return None
+
+        binding.observe.side_effect = lambda: json.loads(json.dumps(state))
+        binding.client.schedule.return_value = {'phase': 'queued', 'transaction_id': 2}
+        tools._admission.settle.side_effect = settle
+        tools._admission.accepted.return_value = {'ok': True}
+        try:
+            result = tools.call('set_controller_pose', {'hand': 0, 'posX': 0, 'posY': 0, 'posZ': -1})
+            self.assertTrue(result['ok'])
+            scheduled = binding.client.schedule.call_args
+            command = scheduled.args[1][1]
+            self.assertAlmostEqual(command['position'][0], -1, places=6)
+            self.assertAlmostEqual(command['position'][2], 0, places=6)
+            self.assertEqual(scheduled.kwargs['frame'], 11)
+
+            binding.observe.reset_mock()
+            tools._admission.settle.side_effect = None
+            tools._admission.settle.return_value = {'ok': False, 'phase': 'queued'}
+            result = tools.call('set_controller_pose', {'hand': 0})
+            self.assertFalse(result['ok'])
+            binding.observe.assert_not_called()
+        finally:
+            tools.close()
+
     def test_fallback_encodes_without_retaining_mutable_arguments(self):
         arguments = {"left_eye": {"left_deg": -30}, "right_eye": {"right_deg": 35}}
         edit = encode_file_edit("set_fov", arguments, "posix")

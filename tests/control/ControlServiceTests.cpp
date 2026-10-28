@@ -247,10 +247,12 @@ struct Fixture
 	wire::ControlService service{runtime, 2};
 	FramePool pool{8};
 	FrameSchedulerConfig config;
-	explicit Fixture(bool capture = true, bool begin = true)
+	explicit Fixture(bool capture = true, bool begin = true, std::span<const char* const> enabled = {})
 	{
 		XrInstanceCreateInfo info{XR_TYPE_INSTANCE_CREATE_INFO};
 		info.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
+		info.enabledExtensionCount = static_cast<std::uint32_t>(enabled.size());
+		info.enabledExtensionNames = enabled.data();
 		std::strcpy(info.applicationInfo.applicationName, "Control service tests");
 		Require(runtime.CreateInstance(&info, instance) == XR_SUCCESS &&
 					runtime.CreateSession(instance, session, clock) == XR_SUCCESS,
@@ -352,6 +354,40 @@ void LiveHaptics()
 	request.minor = 5;
 	Require(Error(f.service.Handle(old.connection, request)) == wire::ErrorCode::UnsupportedCommand,
 		"Older protocol rejects live haptic operation");
+}
+
+void LiveInputNegotiation()
+{
+	Fixture f;
+	Client current(f.service), previous(f.service);
+	current.Hello();
+	current.Discover();
+	const auto attached = current.Call(wire::OpCode::AttachLiveInput, current.Common());
+	Require(Error(attached) == wire::ErrorCode::Ok && U64(attached, wire::tag::AttachmentId),
+		"Current protocol admits native attachment");
+	f.Restart();
+	current.Discover();
+	const auto restarted = current.Call(wire::OpCode::AttachLiveInput, current.Common());
+	Require(Error(restarted) == wire::ErrorCode::Ok &&
+		U64(restarted, wire::tag::AttachmentId) > U64(attached, wire::tag::AttachmentId),
+		"Restart retires the old attachment and permits a new identity");
+	auto hello = previous.Request(wire::OpCode::Hello);
+	hello.minor = 7;
+	const auto response = f.service.Handle(previous.connection, hello);
+	Require(!(U64(response, wire::tag::Capabilities) & static_cast<std::uint64_t>(wire::Capability::LiveInput)),
+		"Previous minor cannot advertise live input");
+	Require(Error(previous.Call(wire::OpCode::AttachLiveInput, current.Common())) == wire::ErrorCode::UnsupportedCommand,
+		"Previous minor cannot admit live input");
+	f.service.Disconnect(previous.connection);
+	Client inputOnly(f.service);
+	auto inputHello = inputOnly.Request(wire::OpCode::Hello);
+	inputHello.minor = 8;
+	const auto inputResponse = f.service.Handle(inputOnly.connection, inputHello);
+	Require((U64(inputResponse, wire::tag::Capabilities) & static_cast<std::uint64_t>(wire::Capability::LiveInput)) &&
+		!(U64(inputResponse, wire::tag::Capabilities) & static_cast<std::uint64_t>(wire::Capability::ExternalDisplayTiming)),
+		"Minor eight retains live input without advertising physical timing");
+	Require(Error(inputOnly.Call(wire::OpCode::PublishDisplayPrediction, current.Common())) == wire::ErrorCode::UnsupportedCommand,
+		"Older negotiation cannot submit physical display predictions");
 }
 
 void ContinuousFrameHistory()
@@ -482,6 +518,60 @@ void NegotiationPublicationRollback()
 	Require(exhausted && failures > 0, "Hello publication allocation failure was not exercised");
 #endif
 }
+void BodyObservationNegotiation()
+{
+	Fixture fixture;
+	Client legacy(fixture.service), current(fixture.service);
+	const auto capability = static_cast<std::uint64_t>(wire::Capability::BodyObservations);
+	auto required = legacy.Request(wire::OpCode::Hello, {wire::Field::U64(wire::tag::RequiredCapabilities, capability)});
+	required.minor = 10;
+	Require(Error(fixture.service.Handle(legacy.connection, required)) == wire::ErrorCode::UnsupportedCommand,
+		"Old protocol cannot require body observation support");
+	auto hello = legacy.Request(wire::OpCode::Hello);
+	hello.minor = 10;
+	const auto old = fixture.service.Handle(legacy.connection, hello);
+	Require(Error(old) == wire::ErrorCode::Ok && !(U64(old, wire::tag::Capabilities) & capability),
+		"Legacy negotiation must not advertise body observations");
+	const auto fresh = current.Call(wire::OpCode::Hello, {wire::Field::U64(wire::tag::RequiredCapabilities, capability)});
+	Require(Error(fresh) == wire::ErrorCode::Ok && (U64(fresh, wire::tag::Capabilities) & capability),
+		"Current protocol negotiates body observations explicitly");
+}
+void BodyReplayNegotiation()
+{
+	Fixture fixture;
+	const auto capability = static_cast<std::uint64_t>(wire::Capability::BodyReplayTiming);
+	for (const auto minor : {11, 12, 13, 14})
+	{
+		Client client(fixture.service);
+		auto hello = client.Request(wire::OpCode::Hello);
+		hello.minor = minor;
+		const auto response = fixture.service.Handle(client.connection, hello);
+		Require(Error(response) == wire::ErrorCode::Ok &&
+			bool(U64(response, wire::tag::Capabilities) & capability) == (minor >= 12),
+			"Body replay timing capability leaked to an older protocol");
+		Require(bool(U64(response, wire::tag::Capabilities) & static_cast<std::uint64_t>(wire::Capability::RecordingDrain)) == (minor >= 14),
+			"Recording drain capability escaped its protocol version");
+		Require(bool(U64(response, wire::tag::Capabilities) & static_cast<std::uint64_t>(wire::Capability::LiveBodyInput)) == (minor >= 13),
+			"Live body capability leaked to an older protocol");
+		if (minor < 14)
+		{
+			client.Discover();
+			auto fields = client.Common();
+			fields.push_back(wire::Field::Bool(wire::tag::RecordingDrain, true, true));
+			Require(Error(client.Call(wire::OpCode::StartRecording, fields)) == wire::ErrorCode::UnsupportedField &&
+				!fixture.session->Commands().Recorder().Snapshot({}, 0).active,
+				"Old connection silently started a legacy recording instead of drain mode");
+			Require(Error(client.Call(wire::OpCode::AcknowledgeRecording, client.Common())) == wire::ErrorCode::UnsupportedCommand,
+				"Old connection admitted recording acknowledgement");
+		}
+		fixture.service.Disconnect(client.connection);
+	}
+	Client required(fixture.service);
+	auto request = required.Request(wire::OpCode::Hello, {wire::Field::U64(wire::tag::RequiredCapabilities, capability)});
+	request.minor = 11;
+	Require(Error(fixture.service.Handle(required.connection, request)) == wire::ErrorCode::UnsupportedCommand,
+		"Old connection accepted required body replay timing");
+}
 void NegotiationAndReplay()
 {
 	Fixture f;
@@ -509,7 +599,15 @@ void NegotiationAndReplay()
 					 static_cast<std::uint64_t>(wire::Capability::ProjectionHistory) |
 					 static_cast<std::uint64_t>(wire::Capability::FrameHistory) |
 					 static_cast<std::uint64_t>(wire::Capability::PoseSequences) |
-					 static_cast<std::uint64_t>(wire::Capability::LiveHaptics)) &&
+					 static_cast<std::uint64_t>(wire::Capability::LiveHaptics) |
+                     static_cast<std::uint64_t>(wire::Capability::LiveInput) |
+                     static_cast<std::uint64_t>(wire::Capability::ExternalDisplayTiming) |
+                     static_cast<std::uint64_t>(wire::Capability::TrackerCollections) |
+                     static_cast<std::uint64_t>(wire::Capability::BodyObservations) |
+                     static_cast<std::uint64_t>(wire::Capability::BodyReplayTiming) |
+                     static_cast<std::uint64_t>(wire::Capability::LiveBodyInput) |
+                     static_cast<std::uint64_t>(wire::Capability::RecordingDrain) |
+                     static_cast<std::uint64_t>(wire::Capability::GameObservations)) &&
 				response.Find(wire::tag::PayloadLimit)->AsU32() == wire::MaxPayload,
 			"Hello negotiation/capability limits changed");
 	Require(wire::Encode(f.service.Handle(client.connection, hello)) == wire::Encode(response),
@@ -578,6 +676,29 @@ void LegacyMinorNegotiation()
 					 static_cast<std::uint64_t>(wire::Capability::LiveHaptics))) &&
 		Error(previous.Call(wire::OpCode::UploadSequence)) == wire::ErrorCode::UnsupportedCommand,
 		"Minor four advertised or admitted sequence control");
+}
+
+void ConditionalInputNegotiation()
+{
+	Fixture fixture;
+	Client client(fixture.service);
+	auto hello = client.Request(wire::OpCode::Hello);
+	hello.minor = 16;
+	Require(Error(fixture.service.Handle(client.connection, hello)) == wire::ErrorCode::Ok,
+			"Negotiate previous control protocol");
+	client.Discover();
+	auto fields = client.Common();
+	fields.push_back(wire::Field::U64(wire::tag::TransactionId, 1));
+	fields.push_back(wire::Field::U64(wire::tag::ApplyFrame, 1));
+	fields.push_back(wire::Field::U32(wire::tag::LatePolicy, 0));
+	fields.push_back(wire::Field::U32(wire::tag::SourceKind, static_cast<std::uint32_t>(CommandSourceKind::Mcp)));
+	const auto command = wire::EncodeSimulationCommand(SetHeadPose{});
+	fields.push_back(wire::Field::Bytes(wire::tag::Commands, wire::EncodeFields(std::array{command}), true));
+	fields.push_back(wire::Field::Bytes(wire::tag::ExpectedInputs, wire::EncodeFields(std::array{command}), true));
+	const auto response = client.Call(wire::OpCode::SubmitSimulation, std::move(fields));
+	Require(Error(response) == wire::ErrorCode::UnsupportedField && response.minor == 16 &&
+				fixture.session->Commands().Snapshot().pending == 0,
+			"An upgraded packet bypassed the negotiated precondition version");
 }
 
 void LeaseOwnerRetirementAndRollback()
@@ -937,6 +1058,104 @@ void GenerationAndTeardown()
 			"Closed service accepted late connection or message");
 }
 
+void GameBodyExtensionReport()
+{
+	const std::array extensions{XR_FB_BODY_TRACKING_EXTENSION_NAME, XR_META_BODY_TRACKING_FULL_BODY_EXTENSION_NAME,
+		XR_BD_BODY_TRACKING_EXTENSION_NAME};
+	for (const bool enabled : {false, true})
+	{
+		Fixture fixture(false, true, enabled ? std::span<const char* const>(extensions) : std::span<const char* const>{});
+		Client client(fixture.service);
+		client.Hello();
+		client.Discover();
+		const auto response = client.Call(wire::OpCode::SimulationStatus, client.Common());
+		Require(Error(response) == wire::ErrorCode::Ok, "Read game extension state through production service");
+		const auto members = Nested(Nested(response, wire::tag::Document), 3);
+		bool found = false;
+		for (const auto& field : members.fields)
+		{
+			const auto member = Nested(members, field.tag);
+			if (Text(member, 1) != "body_extensions")
+				continue;
+			const auto providers = Nested(member, 3);
+			Require(providers.fields.size() == 3, "Game body report omitted a provider");
+			for (const auto& provider : providers.fields)
+			{
+				const auto value = Nested(providers, provider.tag);
+				Require(value.Find(3) && value.Find(3)->AsBool() == enabled,
+						"Game body report used advertised support instead of instance enablement");
+			}
+			found = true;
+		}
+		Require(found, "Game body extension report missing");
+	}
+}
+void DrainingRecordingTransport()
+{
+	Fixture fixture;
+	Client owner(fixture.service), other(fixture.service);
+	owner.Hello();
+	other.Hello();
+	owner.Discover();
+	other.Discover();
+	auto start = owner.Common();
+	start.push_back(wire::Field::Bool(wire::tag::RecordingDrain, true, true));
+	Require(Error(owner.Call(wire::OpCode::StartRecording, start)) == wire::ErrorCode::Ok,
+		"Start negotiated drain recording");
+	auto& recorder = fixture.session->Commands().Recorder();
+	const auto identity = recorder.Snapshot({}, 0).identity;
+	Require(identity && recorder.Snapshot({}, 0).drain, "Drain start did not create an identified window");
+	const auto fields = [&](Client& client, std::uint64_t id, std::size_t through)
+	{
+		auto values = client.Common();
+		values.push_back(wire::Field::U64(wire::tag::RecordingId, id, true));
+		values.push_back(wire::Field::U64(wire::tag::Offset, through, true));
+		return values;
+	};
+	Require(Error(owner.Call(wire::OpCode::ReadRecording, owner.Common())) == wire::ErrorCode::Invalid,
+		"Drain read guessed the current recording identity");
+	for (std::size_t round = 0; round < 80; ++round)
+	{
+		for (std::size_t index = 0; index < 16; ++index)
+		{
+			CommandOutcome outcome;
+			outcome.transaction.id = round * 16 + index + 1;
+			outcome.result = CommandResult::Applied;
+			Require(recorder.Observe(outcome), "Drained transport window overflowed");
+		}
+		const auto offset = round * 16;
+		const auto page = owner.Call(wire::OpCode::ReadRecording, fields(owner, identity, offset));
+		Require(Error(page) == wire::ErrorCode::Ok && U64(page, wire::tag::Offset) == offset &&
+			U64(page, wire::tag::Length) == 16, "Drain page lost its absolute offset beyond 1024");
+		Require(Error(other.Call(wire::OpCode::AcknowledgeRecording, fields(other, identity, offset + 16))) == wire::ErrorCode::Busy &&
+			recorder.Snapshot({}, 0).floor == offset, "Foreign reader retired the owner's recording");
+		Require(Error(owner.Call(wire::OpCode::AcknowledgeRecording, fields(owner, identity, offset + 17))) == wire::ErrorCode::Invalid,
+			"Future acknowledgement retired unpublished outcomes");
+		auto ack = owner.Request(wire::OpCode::AcknowledgeRecording, fields(owner, identity, offset + 16));
+		Require(Error(fixture.service.Handle(owner.connection, ack)) == wire::ErrorCode::Ok &&
+			Error(fixture.service.Handle(owner.connection, ack)) == wire::ErrorCode::Ok &&
+			Error(owner.Call(wire::OpCode::AcknowledgeRecording, fields(owner, identity, offset + 16))) == wire::ErrorCode::Ok,
+			"Acknowledgement was not retry-safe");
+	}
+	Require(recorder.Snapshot({}, 0).floor == 1280 && recorder.Snapshot().transactions.empty(),
+		"Acknowledged transport pages remained retained");
+	Require(Error(owner.Call(wire::OpCode::ReadRecording, fields(owner, identity, 0))) == wire::ErrorCode::NotFound,
+		"Evicted page silently read unrelated ring entries");
+	auto stop = owner.Common();
+	stop.push_back(wire::Field::U64(wire::tag::RecordingId, identity, true));
+	Require(Error(owner.Call(wire::OpCode::StopRecording, stop)) == wire::ErrorCode::Ok &&
+		Error(owner.Call(wire::OpCode::AcknowledgeRecording, fields(owner, identity, 1280))) == wire::ErrorCode::Ok,
+		"Stopped recording lost final-drain ownership");
+	Require(Error(owner.Call(wire::OpCode::StartRecording, start)) == wire::ErrorCode::Ok &&
+		recorder.Snapshot({}, 0).identity != identity, "New take reused its recording identity");
+	Require(Error(owner.Call(wire::OpCode::AcknowledgeRecording, fields(owner, identity, 0))) == wire::ErrorCode::Conflict &&
+		Error(owner.Call(wire::OpCode::StopRecording, stop)) == wire::ErrorCode::Conflict && recorder.Snapshot({}, 0).active,
+		"Delayed old-take acknowledgement or stop mutated a new take");
+	fixture.service.Disconnect(owner.connection);
+	Require(!recorder.Snapshot({}, 0).active &&
+		Error(other.Call(wire::OpCode::StartRecording, other.Common())) == wire::ErrorCode::Ok,
+		"Disconnect did not stop and release drain ownership");
+}
 void RecordingOwnershipAcrossGenerations()
 {
 	Fixture fixture;
@@ -1775,18 +1994,24 @@ int main()
 {
 	try
 	{
+		GameBodyExtensionReport();
 		LiveHaptics();
+		LiveInputNegotiation();
 		ContinuousFrameHistory();
+		BodyObservationNegotiation();
+		BodyReplayNegotiation();
 		NegotiationAndReplay();
 		NegotiationPublicationRollback();
 		RecordingPagesShrinkBeforeEncoding();
 		LegacyMinorNegotiation();
+		ConditionalInputNegotiation();
 		OwnershipAndExactClear();
 		LeaseOwnerRetirementAndRollback();
 		HistoricalInspectionAfterSessionDestroy();
 		InspectionResponseAllocationRollback();
 		CapabilityAndValidation();
 		GenerationAndTeardown();
+		DrainingRecordingTransport();
 		RecordingOwnershipAcrossGenerations();
 		BeforeFirstGeneration();
 		DestroyedLeaseCapacityRecovery();

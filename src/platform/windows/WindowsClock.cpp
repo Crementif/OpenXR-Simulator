@@ -1,5 +1,6 @@
 #include "platform/windows/WindowsClock.h"
 #include "Pch.h"
+#include "platform/ClockConversion.h"
 
 #include <limits>
 #include <stdexcept>
@@ -7,25 +8,6 @@
 
 namespace simxr
 {
-static bool ScalePositiveTime(std::int64_t value, std::int64_t numerator, std::int64_t denominator,
-							  std::int64_t& output) noexcept
-{
-	if (value <= 0 || numerator <= 0 || denominator <= 0)
-		return false;
-	const auto whole = static_cast<std::uint64_t>(value / denominator);
-	const auto remainder = static_cast<std::uint64_t>(value % denominator);
-	const auto scale = static_cast<std::uint64_t>(numerator);
-	const auto maximum = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
-	if (whole > maximum / scale || remainder > std::numeric_limits<std::uint64_t>::max() / scale)
-		return false;
-	const auto fractional = remainder * scale / static_cast<std::uint64_t>(denominator);
-	const auto integral = whole * scale;
-	if (fractional > maximum - integral)
-		return false;
-	output = static_cast<std::int64_t>(integral + fractional);
-	return true;
-}
-
 XrResult PerformanceCounterToTime(std::int64_t counter, XrTime& time) noexcept
 {
 	LARGE_INTEGER frequency{};
@@ -71,6 +53,11 @@ WindowsClock::~WindowsClock() = default;
 HostTime WindowsClock::Now() const
 {
 	return std::chrono::steady_clock::now();
+}
+
+std::optional<NativeClockSample> WindowsClock::NativeSample() const
+{
+	return ReadNativeClockSample();
 }
 
 void WindowsClock::WaitUntil(std::condition_variable& changed, std::unique_lock<std::mutex>& lock, HostTime deadline)

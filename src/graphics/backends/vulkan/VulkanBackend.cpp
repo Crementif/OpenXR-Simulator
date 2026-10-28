@@ -439,7 +439,7 @@ XrResult VulkanBackend::Prepare(const CompositionPlan& plan, const VulkanImageRe
 XrResult VulkanBackend::PrepareRetained(const CompositionPlan& plan, std::span<const VulkanRetainedSource> sources,
 										std::shared_ptr<VulkanFrame>& output)
 {
-	if (!m_state->device->HasNativeOwner() || sources.size() != plan.draws.size())
+	if (sources.size() != plan.draws.size())
 		return XR_ERROR_VALIDATION_FAILURE;
 	return PrepareComposition(plan, {}, sources, output, {}, 2);
 }

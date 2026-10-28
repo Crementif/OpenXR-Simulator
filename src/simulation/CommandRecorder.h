@@ -12,10 +12,12 @@ class CommandRecorder
 {
   public:
 	explicit CommandRecorder(std::size_t capacity = 1024);
-	void Start(const CommandRecordingOrigin& origin);
+	void Start(const CommandRecordingOrigin& origin, bool drain = false);
+	// Retire the exclusive prefix only after the consumer has persisted it.
+	void Acknowledge(std::size_t through);
 	void Stop();
 	void Fail();
-	CommandRecording Snapshot(std::size_t offset = 0, std::size_t count = 128) const;
+	CommandRecording Snapshot(std::optional<std::size_t> offset = {}, std::size_t count = 128) const;
 	// Records normalized acknowledged outcomes, including rejected/cancelled work.
 	// Full history stops recording explicitly; no overwrite or silent drop.
 	bool Observe(const CommandOutcome& outcome);
@@ -31,5 +33,6 @@ class CommandRecorder
 	std::mutex m_mutationMutex;
 	mutable std::mutex m_mutex;
 	CommandRecording m_state;
+	std::vector<std::optional<CommandOutcome>> m_slots;
 };
 } // namespace simxr

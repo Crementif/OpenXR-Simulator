@@ -11,6 +11,7 @@
 #include "Pch.h"
 #include "WindowsPendingDelivery.h"
 #include "WindowsRuntimeModule.h"
+#include "platform/windows/InstallUse.h"
 #include <atomic>
 #include <bit>
 #include <charconv>
@@ -124,6 +125,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityF
 	else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
 	{
 		printf("  [warn] Vulkan %s: %s\n", isValidation ? "validation" : "loader", msg);
+		s_warn++;
 	}
 	return VK_FALSE;
 }
@@ -1232,10 +1234,27 @@ static int Run(std::span<const std::string> arguments, WindowsPendingDelivery* p
 							clearRect(base, declared);
 						// Same square in both eyes, offset 20px horizontally: real, known
 						// disparity for a stereo checker to find.
-						const float mark[4] = {0.95f, 0.9f, 0.25f, 1.0f};
-						const std::int32_t cx = declared.offset.x + viewRect.extent.width / 2 + (eye == 0 ? 10 : -10);
-						const std::int32_t cy = declared.offset.y + viewRect.extent.height / 2;
-						clearRect(mark, VkRect2D{{cx - 100, cy - 100}, {200, 200}});
+						if (EnvOn("XR_PROBE_STEREO_TEXTURE") && f < 120)
+						{
+							const int tileWidth = viewRect.extent.width / 16, tileHeight = viewRect.extent.height / 12;
+							for (int row = 0; row < 12; ++row)
+								for (int column = 1; column < 15; ++column)
+								{
+									const auto seed = static_cast<unsigned>(row * 31 + column * 73 + 11);
+									const float color[4] = {.15f + ((seed * 17) % 65) / 100.f,
+										.15f + ((seed * 37) % 65) / 100.f, .15f + ((seed * 53) % 65) / 100.f, 1.f};
+									clearRect(color, VkRect2D{{declared.offset.x + column * tileWidth + (eye == 0 ? 10 : -10),
+										declared.offset.y + row * tileHeight}, {static_cast<std::uint32_t>(tileWidth),
+										static_cast<std::uint32_t>(tileHeight)}});
+								}
+						}
+						else
+						{
+							const float mark[4] = {0.95f, 0.9f, 0.25f, 1.0f};
+							const std::int32_t cx = declared.offset.x + viewRect.extent.width / 2 + (eye == 0 ? 10 : -10);
+							const std::int32_t cy = declared.offset.y + viewRect.extent.height / 2;
+							clearRect(mark, VkRect2D{{cx - 100, cy - 100}, {200, 200}});
+						}
 					}
 					else
 					{
@@ -1557,6 +1576,12 @@ static int Run(std::span<const std::string> arguments, WindowsPendingDelivery* p
 
 int wmain(int argc, wchar_t** argv)
 {
+	simxr::windows::InstallUse installUse;
+	if (!installUse.Ready())
+	{
+		std::fputs("OpenXR Simulator installation is being updated or removed. Try again.\n", stderr);
+		return 1;
+	}
 	try
 	{
 		const auto arguments = simxr::probe::WindowsArguments(argc, argv);

@@ -9,25 +9,12 @@ import importlib
 import base64
 import math
 import re
-from pathlib import Path
-import sys
 import threading
 import uuid
 
 
 def _sdk():
-    try:
-        return importlib.import_module('simxr_control')
-    except ModuleNotFoundError as error:
-        if error.name != 'simxr_control':
-            raise
-        checkout = Path(__file__).resolve().parents[1] / 'sdk' / 'python'
-        if not (checkout / 'simxr_control' / '__init__.py').is_file():
-            raise
-        location = str(checkout)
-        if location not in sys.path:
-            sys.path.insert(0, location)
-        return importlib.import_module('simxr_control')
+    return importlib.import_module('simxr_control')
 
 
 _MAX_U64 = 2**64 - 1
@@ -169,6 +156,9 @@ TOOL_DEFINITIONS = [
     _tool('simulation_diagnostics', 'Read bounded observed frame milestones and diagnostics. Performance misses are distinct from API errors; reads do not advance frames.',
           {**_SESSION, 'after': {**_GENERATION, 'description': 'Diagnostic sequence cursor.'},
            'count': {'type': 'integer', 'minimum': 0, 'maximum': 256}, 'frame': _ID}, list(_SESSION)),
+    _tool('game_bridge_observations', 'Read timestamped public SDK telemetry and lifecycle observations. A gap means older evidence was evicted; reads do not advance game or XR frames.',
+          {**_GAME, 'offset': {**_GENERATION, 'description': 'Exclusive journal cursor from the previous page, or zero for the oldest requested evidence.'},
+           'count': {'type': 'integer', 'minimum': 0, 'maximum': 16}}, ['connection']),
     _tool('game_bridge_status', 'Inspect the optional cooperating game bridge, actual supported reset/step/custom capabilities and latest bounded telemetry.', _GAME, ['connection']),
     _tool('game_bridge_command', 'Queue an explicitly supported game command. A queued response does not mean it executed; the game acknowledges it at its own safe update point.',
           {**_GAME, 'game': _ID, 'command_id': _ID, 'kind': {'type': 'integer', 'minimum': 1, 'maximum': 3},
@@ -417,6 +407,8 @@ class DebugTools:
                 elif name == 'debug_save_video':
                     record = client.save_video(session, args['first_frame'], args['last_frame'], args['path'],
                                                timeout=args.get('timeout', 120), overwrite=args.get('overwrite', False))
+                elif name == 'game_bridge_observations':
+                    record = client.game_observations(session, offset=args.get('offset'), count=args.get('count', 16))
                 elif name == 'game_bridge_status':
                     record = client.game_status(session)
                 elif name == 'game_bridge_command':

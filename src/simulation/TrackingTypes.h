@@ -1,12 +1,16 @@
 #pragma once
 
+#include "simulation/TrackerSourcePath.h"
+
 #include "Types.h"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <openxr/openxr.h>
+#include <optional>
+#include <string_view>
+#include <vector>
 
 namespace simxr
 {
@@ -35,6 +39,8 @@ struct ControllerPose
 {
 	PoseSample pose;
 	bool connected = true;
+	// Absence preserves legacy grip-as-aim input; a present invalid sample is tracking loss.
+	std::optional<PoseSample> aim;
 };
 
 enum class BodyJoint
@@ -136,6 +142,8 @@ enum class BodyJointSet
 	FullBodyBD
 };
 
+inline constexpr std::array<std::string_view, 4> BodyJointSetNames{"fb-upper", "meta-full", "bd-without-arms", "bd-full"};
+
 enum class BodyControl
 {
 	Hips,
@@ -190,6 +198,28 @@ struct SkeletonJoint
 	XrPosef bindPose;
 };
 
+struct ObservedBodyJoint
+{
+	XrPosef pose{{0, 0, 0, 1}, {0, 0, 0}};
+	XrSpaceLocationFlags flags = 0;
+};
+using ObservedBodySkeleton = std::array<std::optional<SkeletonJoint>, BodyJointCount>;
+// Runtime-estimated body data in simulator world coordinates. Missing schema joints
+// remain absent; this value does not contain generated rig fallback poses.
+struct BodyObservation
+{
+	BodyJointSet jointSet = BodyJointSet::UpperBodyFB;
+	RuntimeTime requestedTime;
+	std::optional<RuntimeTime> returnedTime;
+	bool located = false;
+	std::optional<bool> active;
+	std::optional<bool> allJointPosesTracked;
+	std::optional<float> confidence;
+	std::optional<std::uint32_t> skeletonRevision;
+	std::array<std::optional<ObservedBodyJoint>, BodyJointCount> joints;
+	std::optional<ObservedBodySkeleton> skeleton;
+};
+
 struct BodySample
 {
 	bool active = false;
@@ -230,6 +260,8 @@ enum class TrackerRole
 	Keyboard
 };
 
+inline constexpr std::size_t MaxTrackerDevices = 64;
+
 struct TrackerIdentity
 {
 	std::uint64_t value = 0;
@@ -245,12 +277,21 @@ struct TrackerDevice
 	std::optional<BodyJoint> anchor{};
 	std::optional<XrPosef> poseOverride{};
 	std::optional<XrPosef> jointOffset{};
+	XrSpaceLocationFlags poseFlags = TrackedPoseFlags;
+	TrackerSourcePath sourcePath;
 };
 
 struct TrackerSample
 {
 	TrackerDevice device;
 	PoseSample pose;
+};
+
+struct StereoEyeViews
+{
+	std::array<PoseSample, 2> poses;
+	std::array<XrFovf, 2> fovs{{{-0.9f, 0.9f, 0.9f, -0.9f}, {-0.9f, 0.9f, 0.9f, -0.9f}}};
+	std::uint64_t spaceRevision = 0;
 };
 
 struct TrackingState
@@ -262,10 +303,12 @@ struct TrackingState
 	GazeInput gaze;
 	BodyControls body;
 	bool focused = true;
-	std::array<TrackerDevice, 4> trackers{{{{1}, TrackerRole::Waist, true, true, BodyJoint::Hips},
-										   {{2}, TrackerRole::Chest, true, true, BodyJoint::Chest},
-										   {{3}, TrackerRole::LeftFoot, true, true, BodyJoint::LeftFootAnkle},
-										   {{4}, TrackerRole::RightFoot, true, true, BodyJoint::RightFootAnkle}}};
+	std::vector<TrackerDevice> trackers{{{1}, TrackerRole::Waist, true, true, BodyJoint::Hips},
+										{{2}, TrackerRole::Chest, true, true, BodyJoint::Chest},
+										{{3}, TrackerRole::LeftFoot, true, true, BodyJoint::LeftFootAnkle},
+										{{4}, TrackerRole::RightFoot, true, true, BodyJoint::RightFootAnkle}};
+	std::optional<StereoEyeViews> eyeViews;
+	std::optional<BodyObservation> bodyObservation;
 };
 
 struct TrackingSnapshot
@@ -275,7 +318,8 @@ struct TrackingSnapshot
 	std::array<ControllerPose, 2> controllers;
 	PoseSample gaze;
 	BodySample body;
-	std::array<TrackerSample, 4> trackers;
+	// Four legacy devices by default; published inventories may contain up to MaxTrackerDevices.
+	std::vector<TrackerSample> trackers = std::vector<TrackerSample>(4);
 	TrackingState input;
 	BodyProportions proportions;
 };

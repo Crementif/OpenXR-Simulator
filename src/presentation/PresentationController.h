@@ -116,12 +116,20 @@ class PresentationController
 	using ImageTransform = std::function<PresentationImage(const PresentationTick&)>;
 	std::optional<PresentationTick> Advance(RuntimeTime now, std::optional<SessionGeneration> generation = {},
 											const ImageTransform& transform = {});
+	// Physical opportunities preserve their exact target time, including multiple
+	// opportunities within one virtual interval. Tick remains a unique image identity.
+	std::optional<PresentationTick> AdvanceExternal(RuntimeTime target, SessionGeneration generation,
+													const ImageTransform& transform = {},
+													const std::function<bool()>& current = {});
 	void Stop() noexcept;
 	std::size_t PollRetired();
 	PresentationSnapshot Snapshot() const;
 	std::vector<PresentationSubmission> Retain() const;
 
   private:
+	std::optional<PresentationTick> AdvanceAt(RuntimeTime now, std::optional<SessionGeneration> generation,
+											  const ImageTransform& transform, bool exact,
+											  const std::function<bool()>& current = {});
 	struct Entry
 	{
 		PresentationSubmission submission;

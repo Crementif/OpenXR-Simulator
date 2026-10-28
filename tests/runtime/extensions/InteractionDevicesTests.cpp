@@ -10,8 +10,148 @@
 #include <cstring>
 #include <iostream>
 
+static void CheckTrackerInventory()
+{
+	using namespace simxr;
+	const std::array extensions{XR_HTCX_VIVE_TRACKER_INTERACTION_EXTENSION_NAME};
+	EnabledExtensions enabled(extensions);
+	ActionRegistry registry(reinterpret_cast<XrInstance>(300), enabled);
+	EventQueue events;
+	TrackerInteraction trackers(registry, enabled, events);
+	const auto initialEvents = events.Observe();
+	const auto watermark = initialEvents.empty() ? 0 : initialEvents.back().sequence;
+	TrackingSnapshot snapshot;
+	snapshot.time = {Duration{10}};
+	snapshot.trackers.clear();
+	for (std::size_t index = 0; index < MaxTrackerDevices; ++index)
+	{
+		TrackerSample sample;
+		sample.device = {{501 + index}, TrackerRole::Unassigned};
+		sample.pose = {IdentityPose(), TrackedPoseFlags, snapshot.time};
+		sample.pose.pose.position.x = static_cast<float>(index);
+		snapshot.trackers.push_back(sample);
+	}
+	snapshot.trackers.back().pose.flags = XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+	std::vector<XrPath> changed;
+	Require(trackers.Publish(snapshot, &changed) == XR_SUCCESS, "Expanded tracker inventory publication failed");
+	std::uint32_t count = 0;
+	Require(trackers.Enumerate(0, &count, nullptr) == XR_SUCCESS && count == MaxTrackerDevices,
+			"Expanded inventory was truncated");
+	std::vector<XrViveTrackerPathsHTCX> paths(count, {XR_TYPE_VIVE_TRACKER_PATHS_HTCX});
+	Require(trackers.Enumerate(4, &count, paths.data()) == XR_ERROR_SIZE_INSUFFICIENT && count == MaxTrackerDevices,
+			"Expanded inventory hid the required capacity");
+	Require(trackers.Enumerate(count, &count, paths.data()) == XR_SUCCESS, "Expanded inventory enumeration failed");
+	for (std::size_t index = 0; index < paths.size(); ++index)
+		Require(registry.PathString(paths[index].persistentPath) == BodyModel::TrackerPersistentPath({501 + index}) &&
+					paths[index].rolePath == XR_NULL_PATH,
+				"Expanded inventory lost persistent identity or invented an unassigned role");
+	const auto arrivals = events.Observe(watermark);
+	Require(arrivals.size() == MaxTrackerDevices, "Expanded inventory lost connection events");
+	for (std::size_t index = 0; index < arrivals.size(); ++index)
+	{
+		const auto* arrival = std::get_if<TrackerConnectedEvent>(&arrivals[index].event);
+		Require(arrival && arrival->persistentPath == paths[index].persistentPath,
+				"Connection event was associated with the wrong device");
+	}
+	InputSnapshot input;
+	input.devices.push_back(
+		{{InputDeviceKind::EyeGaze, 0}, {"/user/eyes_ext"}, "/interaction_profiles/ext/eye_gaze_interaction"});
+	trackers.ContributeInput(snapshot, input);
+	Require(input.devices.size() == MaxTrackerDevices + 1 && InputState::Validate(input) == XR_SUCCESS,
+			"Expanded tracker actions lost devices or unrelated gaze");
+	Require(trackers.Pose(snapshot, {564}).flags == XR_SPACE_LOCATION_ORIENTATION_VALID_BIT &&
+				trackers.Pose(snapshot, {564}).pose.position.x == 63,
+			"Tracker identity lookup lost partial tracking validity");
+	auto invalid = snapshot;
+	invalid.time = {Duration{100}};
+	invalid.trackers.push_back({{{900}, TrackerRole::Unassigned}, {IdentityPose(), TrackedPoseFlags}});
+	Require(trackers.Publish(invalid) == XR_ERROR_LIMIT_REACHED && trackers.Paths().size() == MaxTrackerDevices,
+			"Over-capacity inventory changed published devices");
+	bool rejected = false;
+	try
+	{
+		trackers.ContributeInput(invalid, input);
+	}
+	catch (const std::invalid_argument&)
+	{
+		rejected = true;
+	}
+	Require(rejected && input.devices.size() == MaxTrackerDevices + 1,
+			"Over-capacity input changed the existing device batch");
+	invalid = snapshot;
+	invalid.trackers.back().device.identity = invalid.trackers.front().device.identity;
+	Require(trackers.Publish(invalid) == XR_ERROR_VALIDATION_FAILURE, "Duplicate expanded identity accepted");
+	std::reverse(snapshot.trackers.begin(), snapshot.trackers.end());
+	snapshot.time = {Duration{11}};
+	Require(trackers.Publish(snapshot, &changed) == XR_SUCCESS && changed.empty() &&
+				events.Observe(arrivals.back().sequence).empty(),
+			"Reordering devices changed identity or repeated arrivals");
+	snapshot.trackers.front().device.role = TrackerRole::Camera;
+	snapshot.time = {Duration{12}};
+	Require(trackers.Publish(snapshot, &changed) == XR_SUCCESS && !changed.empty(),
+			"Role assignment beyond the fourth device was lost");
+	const auto assigned = trackers.Paths().back();
+	Require(assigned.identity.value == 564 && assigned.persistentPath == paths.back().persistentPath &&
+				registry.PathString(assigned.rolePath) == BodyModel::TrackerRolePath(TrackerRole::Camera),
+			"Role assignment replaced persistent identity");
+	invalid = snapshot;
+	invalid.trackers[1].device.role = TrackerRole::Camera;
+	Require(trackers.Publish(invalid) == XR_SUCCESS && trackers.Paths().back().rolePath == assigned.rolePath,
+			"Shared role rejected independently identified devices");
+	const auto sharedPaths = trackers.Paths();
+	Require(sharedPaths.size() == MaxTrackerDevices &&
+			sharedPaths[62].rolePath == sharedPaths[63].rolePath &&
+			sharedPaths[62].persistentPath != sharedPaths[63].persistentPath,
+			"Shared-role enumeration hid a role or collapsed persistent paths");
+	trackers.ContributeInput(invalid, input);
+	const auto cameraPath = BodyModel::TrackerRolePath(TrackerRole::Camera);
+	const auto selectedCamera = [&]()
+	{
+		std::uint64_t selected = 0;
+		for (const auto& device : input.devices)
+			if (std::ranges::find(device.userPaths, cameraPath) != device.userPaths.end())
+			{
+				Require(!selected, "Shared role mapped to multiple action devices");
+				selected = device.identity.value;
+			}
+		return selected;
+	};
+	Require(InputState::Validate(input) == XR_SUCCESS && selectedCamera() == 563,
+			"Shared role did not select the lowest connected identity");
+	std::reverse(invalid.trackers.begin(), invalid.trackers.end());
+	trackers.ContributeInput(invalid, input);
+	Require(selectedCamera() == 563, "Enumeration order changed role selection");
+	for (auto& tracker : invalid.trackers)
+		if (tracker.device.identity.value == 563)
+			tracker.device.connected = false;
+	trackers.ContributeInput(invalid, input);
+	Require(InputState::Validate(input) == XR_SUCCESS && selectedCamera() == 564,
+			"Shared role did not transfer when its selected device disconnected");
+	snapshot.trackers.erase(snapshot.trackers.begin());
+	snapshot.time = {Duration{13}};
+	Require(trackers.Publish(snapshot, &changed) == XR_SUCCESS &&
+				std::ranges::find(changed, assigned.persistentPath) != changed.end(),
+			"Removed device did not invalidate its persistent path");
+	trackers.ContributeInput(snapshot, input);
+	Require(input.devices.size() == MaxTrackerDevices &&
+				std::ranges::none_of(input.devices,
+									 [](const InputDevice& device)
+									 {
+										 return device.identity == InputDeviceId{InputDeviceKind::Tracker, 564};
+									 }),
+			"Removed tracker retained an action source");
+	snapshot.trackers.clear();
+	snapshot.time = {Duration{14}};
+	Require(trackers.Publish(snapshot) == XR_SUCCESS && trackers.Enumerate(0, &count, nullptr) == XR_SUCCESS &&
+				count == 0,
+			"Empty inventory kept phantom trackers");
+	trackers.ContributeInput(snapshot, input);
+	Require(input.devices.size() == 1 && input.devices.front().identity.kind == InputDeviceKind::EyeGaze,
+			"Empty tracker inventory removed unrelated input");
+}
 int main()
 {
+	CheckTrackerInventory();
 	using namespace simxr;
 	const std::array extensions{XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME, XR_HTCX_VIVE_TRACKER_INTERACTION_EXTENSION_NAME};
 	EnabledExtensions enabled(extensions);

@@ -4,7 +4,6 @@
 #include "simulation/BodyModel.h"
 
 #include <stdexcept>
-#include <tuple>
 
 namespace simxr
 {
@@ -36,7 +35,10 @@ XrResult TrackerInteraction::Publish(const TrackingSnapshot& snapshot, std::vect
 		return XR_ERROR_FUNCTION_UNSUPPORTED;
 	if (snapshot.time.value.count() <= 0)
 		return XR_ERROR_TIME_INVALID;
+	if (snapshot.trackers.size() > MaxTrackerDevices)
+		return XR_ERROR_LIMIT_REACHED;
 	std::vector<TrackerPathState> next;
+	next.reserve(snapshot.trackers.size());
 	for (const auto& sample : snapshot.trackers)
 	{
 		TrackerPathState paths{sample.device.identity, XR_NULL_PATH, XR_NULL_PATH, sample.device.connected};
@@ -64,13 +66,6 @@ XrResult TrackerInteraction::Publish(const TrackingSnapshot& snapshot, std::vect
 		{
 			return XR_ERROR_VALIDATION_FAILURE;
 		}
-		if (paths.connected && paths.rolePath &&
-			std::any_of(next.begin(), next.end(),
-						[&](const auto& value)
-						{
-							return value.connected && value.rolePath == paths.rolePath;
-						}))
-			return XR_ERROR_VALIDATION_FAILURE;
 		next.push_back(paths);
 	}
 	std::sort(next.begin(), next.end(),
@@ -78,13 +73,13 @@ XrResult TrackerInteraction::Publish(const TrackingSnapshot& snapshot, std::vect
 			  {
 				  return a.identity.value < b.identity.value;
 			  });
+	std::vector<TrackerConnectedEvent> connected;
+	connected.reserve(next.size());
 	std::lock_guard lock(m_mutex);
 	if (snapshot.time < m_time)
 		return XR_ERROR_TIME_INVALID;
 	std::vector<XrPath> changed;
 	// Stage notifications while changed-path storage can still allocate.
-	std::array<TrackerConnectedEvent, std::tuple_size_v<decltype(snapshot.trackers)>> connected{};
-	std::size_t connectedCount = 0;
 	auto remember = [&](const TrackerPathState& paths)
 	{
 		for (auto path : {paths.persistentPath, paths.rolePath})
@@ -107,7 +102,7 @@ XrResult TrackerInteraction::Publish(const TrackingSnapshot& snapshot, std::vect
 		if (previous != m_paths.end())
 			remember(*previous);
 		if (paths.connected || (previous != m_paths.end() && previous->rolePath != paths.rolePath))
-			connected[connectedCount++] = {paths.persistentPath, paths.rolePath};
+			connected.push_back({paths.persistentPath, paths.rolePath});
 	}
 	for (const auto& previous : m_paths)
 		if (std::none_of(next.begin(), next.end(),
@@ -120,8 +115,8 @@ XrResult TrackerInteraction::Publish(const TrackingSnapshot& snapshot, std::vect
 	m_time = snapshot.time;
 	if (changedPaths)
 		*changedPaths = std::move(changed);
-	for (std::size_t index = 0; index < connectedCount; ++index)
-		m_events.Push(connected[index]);
+	for (const auto& event : connected)
+		m_events.Push(event);
 	return XR_SUCCESS;
 }
 
@@ -159,6 +154,8 @@ XrResult TrackerInteraction::Enumerate(std::uint32_t capacity, std::uint32_t* co
 
 void TrackerInteraction::ContributeInput(const TrackingSnapshot& snapshot, InputSnapshot& input) const
 {
+	if (snapshot.trackers.size() > MaxTrackerDevices)
+		throw std::invalid_argument("Tracker inventory exceeds capacity");
 	auto previous = std::move(input.devices);
 	input.devices.clear();
 	for (const auto& device : previous)
@@ -175,7 +172,16 @@ void TrackerInteraction::ContributeInput(const TrackingSnapshot& snapshot, Input
 						   true,
 						   {}};
 		auto role = BodyModel::TrackerRolePath(sample.device.role);
-		if (!role.empty())
+		// A shared role selects one connected device; persistent paths remain independent.
+		const bool selected = sample.device.connected &&
+							  std::none_of(snapshot.trackers.begin(), snapshot.trackers.end(),
+										   [&](const TrackerSample& other)
+										   {
+											   return other.device.connected &&
+													  other.device.role == sample.device.role &&
+													  other.device.identity.value < sample.device.identity.value;
+										   });
+		if (!role.empty() && selected)
 			device.userPaths.emplace_back(role);
 		if (auto old = std::find_if(previous.begin(), previous.end(),
 									[&](const auto& value)

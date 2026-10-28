@@ -2,6 +2,7 @@
 #include "Pch.h"
 #include "runtime/validation/Path.h"
 #include "simulation/TrackingSystem.h"
+#include "simulation/BodyObservation.h"
 
 #include <stdexcept>
 #include <type_traits>
@@ -65,9 +66,18 @@ ControlChannel CommandState::ChannelFor(const SetGaze&)
 	return ControlChannel::Gaze;
 }
 
+ControlChannel CommandState::ChannelFor(const SetTrackers&)
+{
+	return ControlChannel::Trackers;
+}
 ControlChannel CommandState::ChannelFor(const SetTracker&)
 {
 	return ControlChannel::Trackers;
+}
+
+ControlChannel CommandState::ChannelFor(const SetEyeViews&)
+{
+	return ControlChannel::Views;
 }
 
 ControlChannel CommandState::ChannelFor(const SetViewSettings&)
@@ -110,6 +120,25 @@ void CommandState::ApplyScenarios(CommandConfiguration& config) const
 	}
 	if (m_scenarios[Index(FailureScenario::BodyUnavailable)])
 		config.tracking.body.active = false;
+	if (auto& observed = config.tracking.bodyObservation)
+	{
+		const bool unavailable = m_scenarios[Index(FailureScenario::BodyUnavailable)];
+		if (unavailable || m_scenarios[Index(FailureScenario::BodyUntracked)])
+		{
+			for (auto& joint : observed->joints)
+				if (joint)
+					joint->flags &= unavailable ? 0 : ValidPoseFlags;
+			if (observed->allJointPosesTracked)
+				observed->allJointPosesTracked = false;
+			if (unavailable)
+			{
+				if (observed->active)
+					observed->active = false;
+				if (observed->confidence)
+					observed->confidence = 0;
+			}
+		}
+	}
 	if (m_scenarios[Index(FailureScenario::GazeUntracked)])
 		config.tracking.gaze.tracked = false;
 	if (m_scenarios[Index(FailureScenario::GazeUnavailable)])
@@ -143,13 +172,19 @@ CommandConfiguration CommandState::MergeOverrides(const CommandConfiguration& ba
 			result.input.controllers[hand] = values.input.controllers[hand];
 	}
 	if (overrides[Index(ControlChannel::Body)])
+	{
 		result.tracking.body = values.tracking.body;
+		result.tracking.bodyObservation = values.tracking.bodyObservation;
+	}
 	if (overrides[Index(ControlChannel::Gaze)])
 		result.tracking.gaze = values.tracking.gaze;
 	if (overrides[Index(ControlChannel::Trackers)])
 		result.tracking.trackers = values.tracking.trackers;
 	if (overrides[Index(ControlChannel::Views)])
+	{
 		result.views = values.views;
+		result.tracking.eyeViews = values.tracking.eyeViews;
+	}
 	if (overrides[Index(ControlChannel::Proportions)])
 		result.proportions = values.proportions;
 	if (overrides[Index(ControlChannel::Profiles)])
@@ -168,14 +203,11 @@ void CommandState::Normalize(CommandConfiguration& value, RuntimeTime time)
 {
 	if (!NormalizeReferenceSpaces(value.referenceSpaces))
 		throw std::invalid_argument("Invalid reference-space origin");
-	for (const auto& tracker : value.tracking.trackers)
-		if (static_cast<unsigned>(tracker.role) > static_cast<unsigned>(TrackerRole::Keyboard))
-			throw std::invalid_argument("Invalid tracker role");
 	const BodyModel model(value.proportions);
 	const auto normalized = TrackingSystem::Evaluate(time, value.tracking, model);
 	value.tracking = normalized.input;
 	const ViewConfiguration validatedViews(ViewLayout::StereoWithInset, value.views);
-	if (value.input.devices.size() > 16 || XR_FAILED(InputState::Validate(value.input)))
+	if (value.input.devices.size() > MaxTrackerDevices + 1 || XR_FAILED(InputState::Validate(value.input)))
 		throw std::invalid_argument("Invalid command input");
 	for (const auto& device : value.input.devices)
 	{
@@ -270,7 +302,7 @@ class CommandState::Mutation
 };
 
 CommandState::CommandState(std::optional<CommandConfiguration> initial)
-	: m_values(initial.value_or(CommandConfiguration{}))
+	: m_values(initial ? std::move(*initial) : CommandConfiguration{})
 {
 	Normalize(m_values, {Duration{1}});
 	m_overrides.fill(initial.has_value());
@@ -308,6 +340,7 @@ void CommandState::Set(const SetControllerControls& command)
 void CommandState::Set(const SetBodyControls& command)
 {
 	m_values.tracking.body = command.value;
+	m_values.tracking.bodyObservation = command.observation;
 }
 void CommandState::Set(const SetGaze& command)
 {
@@ -318,6 +351,16 @@ void CommandState::Set(const SetTracker& command)
 	if (command.index >= m_values.tracking.trackers.size())
 		throw std::invalid_argument("Invalid tracker");
 	m_values.tracking.trackers[command.index] = command.value;
+}
+void CommandState::Set(const SetTrackers& command)
+{
+	if (command.value.size() > MaxTrackerDevices)
+		throw std::invalid_argument("Tracker inventory exceeds capacity");
+	m_values.tracking.trackers = command.value;
+}
+void CommandState::Set(const SetEyeViews& command)
+{
+	m_values.tracking.eyeViews = command.value;
 }
 void CommandState::Set(const SetViewSettings& command)
 {
@@ -346,6 +389,8 @@ void CommandState::Set(const SetReferenceSpaces& command)
 
 void CommandState::NormalizeAcknowledged(SimulationCommand& command, const CommandConfiguration& configuration)
 {
+	if (auto* eyes = std::get_if<SetEyeViews>(&command))
+		eyes->value = configuration.tracking.eyeViews;
 	if (auto* head = std::get_if<SetHeadPose>(&command))
 		head->value = configuration.tracking.head;
 	if (auto* pose = std::get_if<SetControllerPose>(&command))
@@ -353,9 +398,14 @@ void CommandState::NormalizeAcknowledged(SimulationCommand& command, const Comma
 	if (auto* gaze = std::get_if<SetGaze>(&command))
 		gaze->value = configuration.tracking.gaze;
 	if (auto* body = std::get_if<SetBodyControls>(&command))
+	{
 		body->value = configuration.tracking.body;
+		body->observation = configuration.tracking.bodyObservation;
+	}
 	if (auto* tracker = std::get_if<SetTracker>(&command))
 		tracker->value = configuration.tracking.trackers[tracker->index];
+	if (auto* trackers = std::get_if<SetTrackers>(&command))
+		trackers->value = configuration.tracking.trackers;
 	if (auto* spaces = std::get_if<SetReferenceSpaces>(&command))
 		spaces->value = configuration.referenceSpaces;
 }
@@ -371,6 +421,13 @@ CommandResult CommandState::Apply(CommandTransaction& transaction, const Command
 		Mutation mutate(candidate, transaction.source, time);
 		for (auto& command : acknowledged)
 		{
+			if (auto* body = std::get_if<SetBodyControls>(&command); body && body->observationOrigin)
+			{
+				if (!body->observation)
+					throw std::invalid_argument("Body replay anchor requires an observation");
+				body->observation = RebaseBodyObservation(*body->observation, *body->observationOrigin, time);
+				body->observationOrigin.reset();
+			}
 			const auto result = std::visit(mutate, command);
 			if (result != CommandResult::Applied)
 				return result;

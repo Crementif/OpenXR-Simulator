@@ -6,6 +6,9 @@
 #include "presentation/DebugController.h"
 #include "runtime/Instance.h"
 #include "runtime/Session.h"
+#ifdef SIMXR_HEADSET_PROJECTION
+#include "headset/HeadsetProjection.h"
+#endif
 
 #include <cmath>
 #include <cstdio>
@@ -484,6 +487,62 @@ class CompositorExercise
 		m_sources.push_back({reinterpret_cast<XrSwapchain>(identity), std::move(image), colors});
 		Paint(m_device, m_sources.back());
 	}
+#ifdef SIMXR_HEADSET_PROJECTION
+	void HeadsetProjection()
+	{
+		Add(1, {{{.25f, .5f, .75f, 1}, {.75f, .25f, .5f, 1}, {0, 0, 0, 1}, {0, 0, 0, 1}}});
+		auto target = Target();
+		target.eyes[0].worldPose.pose.orientation = EulerAngles(.15f, 0, 0);
+		target.eyes[1].worldPose.pose.orientation = EulerAngles(-.1f, 0, 0);
+		auto layer = Projection(m_sources.front());
+		for (std::size_t eye = 0; eye < 2; ++eye)
+			layer.views[eye].worldPose = target.eyes[eye].worldPose;
+		CompositionPlan initialPlan;
+		auto original = Render(Frame({layer}), target, initialPlan);
+		const std::vector<FrameView> views(original->Views().begin(), original->Views().end());
+		auto input = original->RetainImage();
+		auto budget = original->Reservation();
+		original.reset();
+		Require(input && budget && budget->Consumed(), "Retain completed private headset source");
+		const std::array<std::array<XrFovf, 2>, 3> configurations{
+			{{Fov(-2, 2, 2, -2), Fov(-.5f, .5f, .5f, -.5f)},
+			 {Fov(-.5f, 1.5f, 1.5f, -.5f), Fov(-1.5f, .5f, .5f, -1.5f)},
+			 {Fov(), Fov()}}};
+		for (std::size_t index = 0; index < configurations.size(); ++index)
+		{
+			CompositionPlan plan;
+			Require(headset::PrepareHeadsetProjection(views, {32, 24}, {static_cast<std::int32_t>(40 + index * 8), 32},
+													  configurations[index], plan) == XR_SUCCESS,
+					"Prepare production headset FOV mapping");
+			const std::array<VulkanRetainedSource, 2> sources{{{input, budget}, {input, budget}}};
+			std::shared_ptr<VulkanFrame> mapped;
+			const auto prepared = m_backend.PrepareRetained(plan, sources, mapped);
+			if (prepared != XR_SUCCESS)
+				std::fprintf(stderr, "headset mapping prepare result=%d\n", prepared);
+			Require(prepared == XR_SUCCESS, "Prepare headset mapping on the shared compositor");
+			const auto submitted = m_backend.Submit(mapped);
+			if (submitted != XR_SUCCESS)
+				std::fprintf(stderr, "headset mapping submit result=%d\n", submitted);
+			Require(submitted == XR_SUCCESS, "Submit headset mapping on the shared compositor");
+			Drain();
+			Require(mapped->PollCompletion() == CompletionStatus::Complete, "Headset mapping did not complete");
+			if (m_verify)
+				Verify(m_device, *mapped, plan, Colors(), "headset-fixed-fov");
+			Require(mapped->Views()[0].pose.orientation.y == views[0].pose.orientation.y &&
+						mapped->Views()[1].fov.angleLeft == configurations[index][1].angleLeft,
+					"Mapped GPU output changed projection metadata");
+			mapped.reset();
+			m_backend.RetireCompleted();
+			Require(m_backend.Reservations().InUse() == 1, "Mapped image retained an obsolete output reservation");
+		}
+		input.reset();
+		budget.reset();
+		m_sources.clear();
+		m_backend.RetireCompleted();
+		Require(m_backend.Close() == XR_SUCCESS, "Headset mapping retained native resources after close");
+		std::puts("case=headset-fixed-fov nativeShader=true cantedEyes=true resize=true retainedSource=true PASS");
+	}
+#endif
 	void ReservedPreparation()
 	{
 		m_backend.RetireCompleted();
@@ -1355,7 +1414,7 @@ static void Benchmark(CompositorDevice& device, const VulkanBinding& binding)
 	Require(backend.Close() == XR_SUCCESS, "Benchmark retained native resources");
 }
 
-static int Run(bool verify, bool benchmark)
+static int Run(bool verify, bool headsetOnly, bool benchmark)
 {
 	simxr::probe::Instance instance;
 	instance.Create();
@@ -1369,6 +1428,17 @@ static int Run(bool verify, bool benchmark)
 	{
 		const VulkanBinding binding{instance.handle, device.m_physical, device.m_native, device.m_family,
 									device.m_index};
+#ifdef SIMXR_HEADSET_PROJECTION
+		if (headsetOnly)
+		{
+			VulkanBackend backend(binding, 2);
+			CompositorExercise exercise(device, backend, verify);
+			exercise.HeadsetProjection();
+			return 0;
+		}
+#else
+		(void)headsetOnly;
+#endif
 		if (benchmark)
 		{
 			Benchmark(device, binding);
@@ -1403,12 +1473,15 @@ static int Run(bool verify, bool benchmark)
 
 int main(int argc, char** argv)
 {
-	bool verify = false;
-	bool benchmark = false;
+	bool verify = false, headsetOnly = false, benchmark = false;
 	for (int index = 1; index < argc; ++index)
 	{
 		if (std::strcmp(argv[index], "--verify-pixels") == 0)
 			verify = true;
+#ifdef SIMXR_HEADSET_PROJECTION
+		else if (std::strcmp(argv[index], "--headset-projection-only") == 0)
+			headsetOnly = true;
+#endif
 		else if (std::strcmp(argv[index], "--benchmark") == 0)
 			benchmark = true;
 		else
@@ -1419,7 +1492,7 @@ int main(int argc, char** argv)
 	}
 	try
 	{
-		const int result = simxr::probe::Run(verify, benchmark);
+		const int result = simxr::probe::Run(verify, headsetOnly, benchmark);
 		simxr::probe::Require(simxr::probe::s_validationErrors.load() == 0, "Validation errors after native teardown");
 		if (!result)
 			std::printf("Production Vulkan compositor PASS pixelReadback=%s validationErrors=0\n",

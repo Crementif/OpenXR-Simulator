@@ -2,12 +2,33 @@
 #include "Pch.h"
 #include "math/Math.h"
 
+#include <charconv>
 #include <cmath>
 #include <numbers>
 #include <stdexcept>
 
 namespace simxr
 {
+std::uint32_t ParseLaunchRenderExtent(std::string_view value)
+{
+	if (value.empty())
+		throw std::invalid_argument("Invalid SIMXR_WIDTH or SIMXR_HEIGHT");
+	std::int64_t extent;
+	const auto parsed = std::from_chars(value.data(), value.data() + value.size(), extent);
+	if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size())
+		throw std::invalid_argument("Invalid SIMXR_WIDTH or SIMXR_HEIGHT");
+	return static_cast<std::uint32_t>(std::clamp<std::int64_t>(extent, 16, 8192));
+}
+
+bool ValidViewFieldOfView(XrFovf fov) noexcept
+{
+	const auto halfPi = std::numbers::pi_v<float> / 2;
+	return std::isfinite(fov.angleLeft) && std::isfinite(fov.angleRight) && std::isfinite(fov.angleDown) &&
+		   std::isfinite(fov.angleUp) && std::abs(fov.angleLeft) < halfPi && std::abs(fov.angleRight) < halfPi &&
+		   std::abs(fov.angleDown) < halfPi && std::abs(fov.angleUp) < halfPi && fov.angleLeft < fov.angleRight &&
+		   fov.angleDown < fov.angleUp;
+}
+
 static std::pair<float, float> InsetRange(float center, float minimum, float maximum, double halfAngle)
 {
 	const auto clamped = std::clamp(static_cast<double>(center), static_cast<double>(minimum) + halfAngle,
@@ -34,11 +55,7 @@ ViewConfiguration::ViewConfiguration(ViewLayout layout, const ViewSettings& sett
 		throw std::invalid_argument("Invalid view settings");
 	for (const auto& fov : settings.outerFov)
 	{
-		const auto halfPi = std::numbers::pi_v<float> / 2;
-		if (!std::isfinite(fov.angleLeft) || !std::isfinite(fov.angleRight) || !std::isfinite(fov.angleDown) ||
-			!std::isfinite(fov.angleUp) || std::abs(fov.angleLeft) >= halfPi || std::abs(fov.angleRight) >= halfPi ||
-			std::abs(fov.angleDown) >= halfPi || std::abs(fov.angleUp) >= halfPi || fov.angleLeft >= fov.angleRight ||
-			fov.angleDown >= fov.angleUp ||
+		if (!ValidViewFieldOfView(fov) ||
 			(layout == ViewLayout::StereoWithInset &&
 			 (2.0 * settings.insetHalfAngle > static_cast<double>(fov.angleRight) - fov.angleLeft ||
 			  2.0 * settings.insetHalfAngle > static_cast<double>(fov.angleUp) - fov.angleDown)))
@@ -67,28 +84,41 @@ LocatedViews ViewConfiguration::Locate(const TrackingSnapshot& snapshot, bool fo
 						(snapshot.gaze.flags & TrackedPoseFlags) == TrackedPoseFlags;
 	float horizontal = 0;
 	float vertical = 0;
-	if (result.gazeActive)
-	{
-		auto relative = RelativePose(snapshot.gaze.pose, snapshot.head.pose);
-		auto direction = Rotate(relative.orientation, {0, 0, -1});
-		horizontal = std::atan2(direction.x, -direction.z);
-		vertical = std::atan2(direction.y, -direction.z);
-	}
 	for (auto description : Describe())
 	{
-		PoseSample eye = snapshot.head;
-		if (m_settings.ipd != 0 && !(eye.flags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
-			eye.flags &= ~(XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_POSITION_TRACKED_BIT);
-		if (m_settings.ipd != 0 && !(eye.flags & XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT))
-			eye.flags &= ~XR_SPACE_LOCATION_POSITION_TRACKED_BIT;
-		eye.pose =
-			Compose(snapshot.head.pose, {{0, 0, 0, 1}, {(description.eye == 0 ? -0.5f : 0.5f) * m_settings.ipd, 0, 0}});
-		eye.flags = FinitePoseFlags(eye.pose, eye.flags);
-		auto fov = m_settings.outerFov[description.eye];
+		PoseSample eye;
+		XrFovf fov;
+		if (snapshot.input.eyeViews)
+		{
+			eye = snapshot.input.eyeViews->poses[description.eye];
+			fov = snapshot.input.eyeViews->fovs[description.eye];
+		}
+		else
+		{
+			eye = snapshot.head;
+			if (m_settings.ipd != 0 && !(eye.flags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
+				eye.flags &= ~(XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_POSITION_TRACKED_BIT);
+			if (m_settings.ipd != 0 && !(eye.flags & XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT))
+				eye.flags &= ~XR_SPACE_LOCATION_POSITION_TRACKED_BIT;
+			eye.pose = Compose(snapshot.head.pose,
+							   {{0, 0, 0, 1}, {(description.eye == 0 ? -0.5f : 0.5f) * m_settings.ipd, 0, 0}});
+			eye.flags = FinitePoseFlags(eye.pose, eye.flags);
+			fov = m_settings.outerFov[description.eye];
+		}
+		if (result.gazeActive)
+		{
+			const auto direction = Rotate(RelativePose(snapshot.gaze.pose, eye.pose).orientation, {0, 0, -1});
+			horizontal = std::atan2(direction.x, -direction.z);
+			vertical = std::atan2(direction.y, -direction.z);
+		}
+
 		if (description.role == ViewRole::Inset)
 		{
-			const auto [left, right] = InsetRange(horizontal, fov.angleLeft, fov.angleRight, m_settings.insetHalfAngle);
-			const auto [down, up] = InsetRange(vertical, fov.angleDown, fov.angleUp, m_settings.insetHalfAngle);
+			const auto halfAngle = std::min({static_cast<double>(m_settings.insetHalfAngle),
+											 (static_cast<double>(fov.angleRight) - fov.angleLeft) / 2,
+											 (static_cast<double>(fov.angleUp) - fov.angleDown) / 2});
+			const auto [left, right] = InsetRange(horizontal, fov.angleLeft, fov.angleRight, halfAngle);
+			const auto [down, up] = InsetRange(vertical, fov.angleDown, fov.angleUp, halfAngle);
 			fov = {left, right, up, down};
 		}
 		result.views.push_back({description, eye, fov});

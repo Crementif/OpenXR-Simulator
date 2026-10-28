@@ -47,10 +47,12 @@ PresentationPolicy VirtualDisplay::Policy() const
 	return m_policy;
 }
 std::optional<PresentationTick> VirtualDisplay::AdvanceTick(RuntimeTime time,
-															std::optional<SessionGeneration> generation)
+															std::optional<SessionGeneration> generation, bool exact,
+															const std::function<bool()>& current)
 {
 	if (m_policy == PresentationPolicy::Repeat)
-		return m_controller.Advance(time, generation);
+		return exact ? m_controller.AdvanceExternal(time, *generation, {}, current)
+					 : m_controller.Advance(time, generation);
 	const auto reproject = [this](const PresentationTick& baseline)
 	{
 		PoseSample head;
@@ -67,7 +69,8 @@ std::optional<PresentationTick> VirtualDisplay::AdvanceTick(RuntimeTime time,
 		}
 		return m_reprojection.Process(baseline, head);
 	};
-	return m_controller.Advance(time, generation, reproject);
+	return exact ? m_controller.AdvanceExternal(time, *generation, reproject, current)
+				 : m_controller.Advance(time, generation, reproject);
 }
 
 void VirtualDisplay::Start(SessionGeneration generation, const DisplayTimeline& timeline, ExecutionMode mode,
@@ -80,6 +83,8 @@ void VirtualDisplay::Start(SessionGeneration generation, const DisplayTimeline& 
 	{
 		std::lock_guard lock(m_mutex);
 		m_timeline = timeline;
+		m_generation = generation;
+		m_external.reset();
 		m_mode = mode;
 		m_hostEpoch = anchor;
 		m_hostTick = {};
@@ -104,6 +109,7 @@ void VirtualDisplay::StopLocked() noexcept
 	{
 		std::lock_guard lock(m_mutex);
 		m_active = false;
+		m_external.reset();
 		m_changed.notify_all();
 		try
 		{
@@ -134,6 +140,7 @@ bool VirtualDisplay::Pause()
 		if (!m_active)
 			return false;
 		m_paused = true;
+		m_external.reset();
 		m_changed.notify_all();
 		try
 		{
@@ -195,10 +202,60 @@ bool VirtualDisplay::Paused() const
 
 DisplayTick VirtualDisplay::NextTick() const
 {
+	std::optional<DisplayTimeline> timeline;
+	{
+		std::lock_guard lock(m_mutex);
+		timeline = m_timeline;
+	}
 	const auto latest = m_controller.Snapshot().latest;
-	if (latest && latest->tick.value == std::numeric_limits<std::uint64_t>::max())
-		throw std::overflow_error("Virtual display tick exhausted");
-	return {latest ? latest->tick.value + 1 : 0};
+	if (!latest || !timeline)
+		return {};
+	auto next = timeline->TickAtOrAfter(latest->time);
+	if (timeline->TimeAt(next) <= latest->time)
+	{
+		if (next.value == std::numeric_limits<std::uint64_t>::max())
+			throw std::overflow_error("Virtual display tick exhausted");
+		++next.value;
+	}
+	return next;
+}
+
+bool VirtualDisplay::PublishExternalPrediction(SessionGeneration generation, std::uint64_t attachment,
+											   std::uint64_t sequence, RuntimeTime target, Duration period)
+{
+	std::lock_guard lock(m_mutex);
+	if (!m_active || m_paused || m_mode != ExecutionMode::RealTime || generation != m_generation || !attachment ||
+		!sequence || period < std::chrono::milliseconds(1) || period > std::chrono::milliseconds(100))
+		return false;
+	const auto now = m_clock->Now();
+	const auto elapsed = std::chrono::duration_cast<Duration>(HostTimeDifference(now, m_hostEpoch));
+	const auto anchor = m_timeline->TimeAt(m_hostTick).value;
+	if (elapsed.count() < 0 || elapsed > Duration::max() - anchor)
+		return false;
+	const RuntimeTime runtimeNow{anchor + elapsed};
+	if (target <= runtimeNow || target.value - runtimeNow.value > period * 4 || now > HostTime::max() - period * 4)
+		return false;
+	if (m_external && now >= m_external->expires)
+		m_external.reset();
+	if (m_external &&
+		(m_external->attachment != attachment || sequence <= m_external->sequence || target <= m_external->target))
+		return false;
+	m_waiter->Wake();
+	const auto consumed = m_external ? m_external->consumed : 0;
+	m_external = ExternalPrediction{attachment, sequence,		  consumed,
+									target,		now + period * 4, now + (target.value - runtimeNow.value)};
+	m_changed.notify_all();
+	return true;
+}
+
+void VirtualDisplay::ReleaseExternalPrediction(std::uint64_t attachment)
+{
+	std::lock_guard lock(m_mutex);
+	if (!m_external || m_external->attachment != attachment)
+		return;
+	m_external.reset();
+	m_waiter->Wake();
+	m_changed.notify_all();
 }
 
 std::optional<PresentationTick> VirtualDisplay::Step()
@@ -280,6 +337,36 @@ void VirtualDisplay::Run() noexcept
 		std::unique_lock lock(m_mutex);
 		while (m_active && !m_paused)
 		{
+			if (m_external)
+			{
+				if (m_clock->Now() >= m_external->expires)
+					m_external.reset();
+				else if (m_external->sequence != m_external->consumed)
+				{
+					const auto pulse = *m_external;
+					const auto target = pulse.target;
+					const auto generation = m_generation;
+					m_external->consumed = m_external->sequence;
+					if (m_clock->Now() >= m_external->targetHost)
+						continue;
+					lock.unlock();
+					AdvanceTick(target, generation, true,
+								[&]
+								{
+									std::lock_guard state(m_mutex);
+									return m_active && !m_paused && m_generation == generation && m_external &&
+										   m_external->attachment == pulse.attachment &&
+										   m_external->sequence == pulse.sequence && m_clock->Now() < pulse.targetHost;
+								});
+					lock.lock();
+					continue;
+				}
+				else
+				{
+					m_waiter->WaitUntil(m_changed, lock, m_external->expires);
+					continue;
+				}
+			}
 			const auto timeline = *m_timeline;
 			const auto anchor = m_hostEpoch;
 			const auto anchorTick = m_hostTick;
@@ -307,7 +394,7 @@ void VirtualDisplay::Run() noexcept
 			if (anchor > HostTime::max() - std::chrono::duration_cast<HostTime::duration>(offset))
 				throw std::overflow_error("Virtual display host deadline exhausted");
 			const auto deadline = anchor + offset;
-			while (m_active && !m_paused && m_clock->Now() < deadline)
+			while (m_active && !m_paused && !m_external && m_clock->Now() < deadline)
 				m_waiter->WaitUntil(m_changed, lock, deadline);
 		}
 	}

@@ -20,7 +20,8 @@ XrResult InputState::Validate(const InputSnapshot& snapshot)
 		for (float value : {controller.stick.x, controller.stick.y, controller.trackpad.x, controller.trackpad.y})
 			if (!std::isfinite(value) || value < -1 || value > 1)
 				return false;
-		return true;
+		return controller.physicalProfile.empty() || (IsValidXrPath(controller.physicalProfile) &&
+													  controller.physicalProfile.starts_with("/interaction_profiles/"));
 	};
 	for (const auto& controller : snapshot.controllers)
 		if (!validControls(controller))
@@ -96,7 +97,9 @@ void InputState::ReleaseControls(std::array<bool, 2> hands)
 		if (hands[hand])
 		{
 			const bool connected = m_snapshot.controllers[hand].connected;
+			auto profile = std::move(m_snapshot.controllers[hand].physicalProfile);
 			m_snapshot.controllers[hand] = {};
+			m_snapshot.controllers[hand].physicalProfile = std::move(profile);
 			m_snapshot.controllers[hand].connected = connected;
 		}
 	if (m_snapshot.revision != std::numeric_limits<std::uint64_t>::max())

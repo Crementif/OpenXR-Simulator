@@ -223,10 +223,19 @@ class Client:
     def release_image(self, image_reader):
         return self.request(OpCode.RELEASE_IMAGE, [Field.u64(Tag.IMAGE_READER_ID, image_reader, True)])
 
-    def start_export(self, image_reader, layer=None):
+    def start_export(self, image_reader, layer=None, *, region=None):
         fields = [Field.u64(Tag.IMAGE_READER_ID, image_reader, True)]
         if layer is not None:
             fields.append(Field.u32(Tag.LAYER, layer, True))
+        if region is not None:
+            if self.hello.get('minor', 0) < 16 or not self.hello.get('capabilities', 0) & Capability.IMAGE_REGION_EXPORT:
+                raise ProtocolError('The runtime does not support image region export')
+            if (not isinstance(region, (tuple, list)) or len(region) != 6 or
+                    any(type(value) is not int or not 0 <= value < 2**32 for value in region) or
+                    any(value == 0 for value in region[2:])):
+                raise ValueError('Region must contain x, y, width, height, output width and output height')
+            fields.append(Field.nested(Tag.IMAGE_REGION,
+                                       [Field.u32(index + 1, value, True) for index, value in enumerate(region)], True))
         return self.request(OpCode.START_EXPORT, fields)
 
     def start_video_export(self, session, first_frame, last_frame):
@@ -371,17 +380,49 @@ class Client:
         return self.request(OpCode.RELEASE_SEQUENCE_CAPTURE,
                             self._session(session) + [Field.u64(Tag.CAPTURE_ID, capture, True)])
 
-    def start_recording(self, session, *, source=1):
-        return self.request(OpCode.START_RECORDING, self._session(session) + [Field.u32(Tag.SOURCE_KIND, source)])
+    def _recording_identity(self, recording_id):
+        if not self.hello['capabilities'] & Capability.RECORDING_DRAIN:
+            raise ProtocolError('Recording drain is unavailable')
+        if type(recording_id) is not int or not 0 < recording_id < 2**64:
+            raise ProtocolError('Recording identity must be a positive uint64')
+        return [Field.u64(Tag.RECORDING_ID, recording_id, True)]
 
-    def stop_recording(self, session, *, source=1):
-        return self.request(OpCode.STOP_RECORDING, self._session(session) + [Field.u32(Tag.SOURCE_KIND, source)])
+    def start_recording(self, session, *, source=1, drain=False):
+        if type(drain) is not bool:
+            raise ProtocolError('Recording drain must be Boolean')
+        fields = self._session(session) + [Field.u32(Tag.SOURCE_KIND, source)]
+        if drain:
+            if not self.hello['capabilities'] & Capability.RECORDING_DRAIN:
+                raise ProtocolError('Recording drain is unavailable')
+            fields.append(Field.boolean(Tag.RECORDING_DRAIN, True, True))
+        return self.request(OpCode.START_RECORDING, fields)
 
-    def read_recording(self, session, *, offset=0, count=16):
-        if type(offset) is not int or not 0 <= offset <= 1024 or type(count) is not int or not 0 <= count <= 16:
-            raise ProtocolError('Recording pages require offset in [0,1024], count in [0,16]')
-        return self.request(OpCode.READ_RECORDING, self._session(session) + [
-            Field.u64(Tag.OFFSET, offset), Field.u64(Tag.LENGTH, count)])
+    def stop_recording(self, session, *, source=1, recording_id=None):
+        fields = self._session(session) + [Field.u32(Tag.SOURCE_KIND, source)]
+        if recording_id is not None:
+            fields += self._recording_identity(recording_id)
+        return self.request(OpCode.STOP_RECORDING, fields)
+
+    def read_recording(self, session, *, offset=0, count=16, recording_id=None):
+        fields = self._session(session)
+        if recording_id is not None:
+            fields += self._recording_identity(recording_id)
+        maximum = 2**64 - 1 if recording_id is not None else 1024
+        if (offset is None and recording_id is None) or (offset is not None and
+                (type(offset) is not int or not 0 <= offset <= maximum)) or type(count) is not int or not 0 <= count <= 16:
+            raise ProtocolError('Invalid recording offset or page count (maximum 16)')
+        if offset is not None:
+            fields.append(Field.u64(Tag.OFFSET, offset))
+        fields.append(Field.u64(Tag.LENGTH, count))
+        return self.request(OpCode.READ_RECORDING, fields)
+
+    def acknowledge_recording(self, session, recording_id, through):
+        """Retire an exclusive prefix after persisting its complete pages."""
+        fields = self._session(session) + self._recording_identity(recording_id)
+        if type(through) is not int or not 0 <= through < 2**64:
+            raise ProtocolError('Recording acknowledgement must be a uint64 offset')
+        fields.append(Field.u64(Tag.OFFSET, through, True))
+        return self.request(OpCode.ACKNOWLEDGE_RECORDING, fields)
 
     def wait_simulation(self, session, transaction, *, source=1, timeout=5.0, interval=0.01):
         deadline = time.monotonic() + timeout
@@ -423,6 +464,18 @@ class Client:
             fields.append(Field.u64(Tag.FRAME_ID, frame))
         return self.request(OpCode.READ_DIAGNOSTICS, fields)
 
+
+    def game_observations(self, session=None, *, offset=None, count=16):
+        """Read a bounded journal page; inspect gap before accepting continuity."""
+        if not self.hello['capabilities'] & Capability.GAME_OBSERVATIONS:
+            raise ProtocolError('Runtime does not support game observation history')
+        if (type(count) is not int or not 0 <= count <= 16
+                or (offset is not None and (type(offset) is not int or not 0 <= offset < 2**64))):
+            raise ProtocolError('Game observations require a uint64 cursor and count in [0,16]')
+        fields = (self._session(session) if session is not None else []) + [Field.u64(Tag.LENGTH, count)]
+        if offset is not None:
+            fields.append(Field.u64(Tag.OFFSET, offset))
+        return self.request(OpCode.READ_GAME_OBSERVATIONS, fields)
 
     def game_status(self, session=None):
         return self.request(OpCode.GAME_STATUS, self._session(session) if session is not None else [])

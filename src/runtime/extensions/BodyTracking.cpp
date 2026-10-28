@@ -19,6 +19,36 @@ static std::size_t Index(BodyJoint joint)
 	return static_cast<std::size_t>(joint);
 }
 
+static bool SameObservedSkeleton(const std::optional<BodyObservation>& first,
+								 const std::optional<BodyObservation>& second)
+{
+	if (first.has_value() != second.has_value())
+		return false;
+	if (!first)
+		return true;
+	if (first->jointSet != second->jointSet || first->skeletonRevision != second->skeletonRevision ||
+		first->skeleton.has_value() != second->skeleton.has_value())
+		return false;
+	if (!first->skeleton)
+		return true;
+	for (std::size_t index = 0; index < BodyJointCount; ++index)
+	{
+		const auto& a = (*first->skeleton)[index];
+		const auto& b = (*second->skeleton)[index];
+		if (a.has_value() != b.has_value())
+			return false;
+		if (!a)
+			continue;
+		if (a->joint != b->joint || a->parent != b->parent ||
+			a->bindPose.position.x != b->bindPose.position.x || a->bindPose.position.y != b->bindPose.position.y ||
+			a->bindPose.position.z != b->bindPose.position.z || a->bindPose.orientation.x != b->bindPose.orientation.x ||
+			a->bindPose.orientation.y != b->bindPose.orientation.y || a->bindPose.orientation.z != b->bindPose.orientation.z ||
+			a->bindPose.orientation.w != b->bindPose.orientation.w)
+			return false;
+	}
+	return true;
+}
+
 BodyTracking::BodyTracking(XrSession owner, const TrackingSystem& tracking, const SpaceSystem& spaces,
 						   const EnabledExtensions& enabled, const BodyTrackingCapabilities& capabilities)
 	: m_owner(owner), m_tracking(tracking), m_spaces(spaces), m_enabled(enabled), m_capabilities(capabilities)
@@ -112,7 +142,7 @@ XrResult BodyTracking::QueryAt(XrSpace base, XrTime time, std::optional<Query>& 
 
 TrackingSnapshot BodyTracking::Calibrated(TrackingSnapshot snapshot, const std::optional<float>& height)
 {
-	if (!height)
+	if (!height || snapshot.input.bodyObservation)
 		return snapshot;
 	auto proportions = snapshot.proportions;
 	const double scale = static_cast<double>(*height) / proportions.height;
@@ -176,7 +206,10 @@ XrResult BodyTracking::LocateFB(XrBodyTrackerFB handle, const XrBodyJointsLocate
 	if (query)
 	{
 		query->snapshot = Calibrated(std::move(query->snapshot), tracker->state.heightOverride);
-		if (!tracker->lastProportions || *tracker->lastProportions != query->snapshot.proportions)
+		const auto& observed = query->snapshot.input.bodyObservation;
+		const bool sourceChanged = tracker->lastQuery &&
+			!SameObservedSkeleton(observed, tracker->lastQuery->snapshot.input.bodyObservation);
+		if (!tracker->lastProportions || *tracker->lastProportions != query->snapshot.proportions || sourceChanged)
 		{
 			if (tracker->state.skeletonRevision == std::numeric_limits<std::uint32_t>::max())
 				return XR_ERROR_RUNTIME_FAILURE;
@@ -184,11 +217,14 @@ XrResult BodyTracking::LocateFB(XrBodyTrackerFB handle, const XrBodyJointsLocate
 			tracker->lastProportions = query->snapshot.proportions;
 		}
 		active = query->snapshot.body.active && Has(query->base.flags, ValidPoseFlags);
+		if (query->snapshot.input.bodyObservation)
+			for (const auto joint : mapping)
+				active &= Has(InBase(query->snapshot.body.joints[Index(joint)], query->base).flags, ValidPoseFlags);
 		tracker->lastQuery = *query;
 	}
 	locations->isActive = active ? XR_TRUE : XR_FALSE;
 	locations->confidence = active ? query->snapshot.body.confidence : 0;
-	locations->time = query ? query->snapshot.time.value.count() : 0;
+	locations->time = query ? query->snapshot.body.sampleTime.value.count() : 0;
 	locations->skeletonChangedCount = tracker->state.skeletonRevision;
 	for (std::size_t index = 0; index < mapping.size(); ++index)
 	{
@@ -257,6 +293,25 @@ XrResult BodyTracking::SkeletonFB(XrBodyTrackerFB handle, XrBodySkeletonFB* skel
 				   : Calibrated(TrackingSystem::Evaluate({Duration{1}}, TrackingState{}, BodyModel{}),
 								tracker->state.heightOverride);
 		query = Query{std::move(snapshot), {IdentityPose(), TrackedPoseFlags}, {Duration{1}}};
+	}
+	if (const auto& observed = query->snapshot.input.bodyObservation)
+	{
+		if (!observed->skeleton)
+			return XR_ERROR_RUNTIME_FAILURE;
+		std::array<XrBodySkeletonJointFB, BodyJointCount> joints{};
+		for (std::size_t index = 0; index < mapping.size(); ++index)
+		{
+			const auto& joint = (*observed->skeleton)[Index(mapping[index])];
+			if (!joint)
+				return XR_ERROR_RUNTIME_FAILURE;
+			auto parent = joint->parent;
+			while (parent && std::find(mapping.begin(), mapping.end(), *parent) == mapping.end())
+				parent = (*observed->skeleton)[Index(*parent)]->parent;
+			const auto parentIndex = parent ? static_cast<std::int32_t>(std::find(mapping.begin(), mapping.end(), *parent) - mapping.begin()) : -1;
+			joints[index] = {static_cast<std::int32_t>(index), parentIndex, joint->bindPose};
+		}
+		std::copy_n(joints.begin(), mapping.size(), skeleton->joints);
+		return XR_SUCCESS;
 	}
 	if (!Has(query->base.flags, ValidPoseFlags))
 		return XR_ERROR_RUNTIME_FAILURE;

@@ -1,6 +1,7 @@
 #include "Pch.h"
 #include "control/ControlSchema.h"
 #include "control/SimulationControl.h"
+#include "simulation/BodyObservation.h"
 
 #include <cmath>
 #include <initializer_list>
@@ -23,7 +24,9 @@ enum class SimulationCommandKind : std::uint32_t
 	BodyProportions = 10,
 	ControllerProfile = 11,
 	Scenario = 12,
-	ReferenceSpaces = 13
+	ReferenceSpaces = 13,
+	EyeViews = 14,
+	Trackers = 15
 };
 struct CommandPayload
 {
@@ -140,12 +143,14 @@ static Field EncodeControllerControls(const ControllerControls& controls)
 							 controls.connected};
 	for (const auto value : buttons)
 		fields.push_back(Field::Bool(static_cast<std::uint16_t>(fields.size() + 1), value, true));
+	if (controls.triggerClick)
+		fields.push_back(Field::Bool(22, *controls.triggerClick, true));
 	return EncodeNested(tag::Controls, fields);
 }
 static ControllerControls DecodeControllerControls(const Field& field)
 {
 	const auto fields = DecodeOrderedFields(field);
-	if (fields.size() != 21)
+	if (fields.size() != 21 && fields.size() != 22)
 		throw std::invalid_argument("Invalid controller controls");
 	ControllerControls controls;
 	const std::array values{&controls.trigger, &controls.grip,		 &controls.gripForce,  &controls.stick.x,
@@ -159,6 +164,8 @@ static ControllerControls DecodeControllerControls(const Field& field)
 							 &controls.connected};
 	for (std::size_t index = 0; index < buttons.size(); ++index)
 		*buttons[index] = RequireValue(fields[index + values.size()].AsBool());
+	if (fields.size() == 22)
+		controls.triggerClick = RequireValue(fields[21].AsBool());
 	return controls;
 }
 static std::vector<Field> EncodeBodyControls(const BodyControls& body)
@@ -228,6 +235,93 @@ static BodyControls DecodeBodyControls(const Message& payload)
 	}
 	return body;
 }
+static std::vector<Field> DecodeBodyJoints(const Field& field)
+{
+	auto decoded = DecodeFields(field.value);
+	if (decoded.error != DecodeError::None || decoded.fields.size() > BodyJointCount)
+		throw std::invalid_argument("Invalid body joint collection");
+	std::uint16_t previous = 0;
+	for (const auto& entry : decoded.fields)
+	{
+		if (entry.tag <= previous || entry.tag > BodyJointCount)
+			throw std::invalid_argument("Invalid body joint identity or order");
+		previous = entry.tag;
+	}
+	return std::move(decoded.fields);
+}
+static Field EncodeBodyObservation(const BodyObservation& value)
+{
+	const auto body = NormalizeBodyObservation(value);
+	std::vector<Field> fields{Field::U32(1, static_cast<std::uint32_t>(body.jointSet), true),
+							  Field::I64(2, body.requestedTime.value.count(), true),
+							  Field::Bool(4, body.located, true)};
+	if (body.returnedTime)
+		fields.push_back(Field::I64(3, body.returnedTime->value.count(), true));
+	if (body.active)
+		fields.push_back(Field::Bool(5, *body.active, true));
+	if (body.allJointPosesTracked)
+		fields.push_back(Field::Bool(6, *body.allJointPosesTracked, true));
+	if (body.confidence)
+		fields.push_back(Field::F32(7, *body.confidence, true));
+	if (body.skeletonRevision)
+		fields.push_back(Field::U32(8, *body.skeletonRevision, true));
+	std::vector<Field> joints;
+	for (std::size_t index = 0; index < BodyJointCount; ++index)
+		if (const auto& joint = body.joints[index])
+			joints.push_back(
+				EncodeNested(static_cast<std::uint16_t>(index + 1), EncodePoseSample({joint->pose, joint->flags})));
+	fields.push_back(EncodeNested(9, joints));
+	if (body.skeleton)
+	{
+		joints.clear();
+		for (std::size_t index = 0; index < BodyJointCount; ++index)
+			if (const auto& joint = (*body.skeleton)[index])
+			{
+				std::vector<Field> rest{EncodePose(joint->bindPose)};
+				if (joint->parent)
+					rest.push_back(Field::U32(tag::Channel, static_cast<std::uint32_t>(*joint->parent), true));
+				joints.push_back(EncodeNested(static_cast<std::uint16_t>(index + 1), rest));
+			}
+		fields.push_back(EncodeNested(10, joints));
+	}
+	return EncodeNested(tag::BodyObservation, fields);
+}
+static BodyObservation DecodeBodyObservation(const Field& field)
+{
+	const auto fields = DecodePayload(field, {1, 2, 3, 4, 5, 6, 7, 8, 9, 10});
+	BodyObservation result;
+	result.jointSet = static_cast<BodyJointSet>(ReadU32(fields, 1));
+	result.requestedTime = {Duration{RequireValue(RequireField(fields, 2).AsI64())}};
+	result.located = ReadBoolean(fields, 4);
+	if (const auto* time = fields.Find(3))
+		result.returnedTime = RuntimeTime{Duration{RequireValue(time->AsI64())}};
+	if (fields.Find(5))
+		result.active = ReadBoolean(fields, 5);
+	if (fields.Find(6))
+		result.allJointPosesTracked = ReadBoolean(fields, 6);
+	if (const auto* confidence = fields.Find(7))
+		result.confidence = ReadFloat(*confidence);
+	if (fields.Find(8))
+		result.skeletonRevision = ReadU32(fields, 8);
+	for (const auto& entry : DecodeBodyJoints(RequireField(fields, 9)))
+	{
+		const auto joint = DecodePoseSample(DecodePayload(entry, {tag::Pose, tag::Usage}));
+		result.joints[entry.tag - 1] = ObservedBodyJoint{joint.pose, joint.flags};
+	}
+	if (const auto* skeleton = fields.Find(10))
+	{
+		result.skeleton.emplace();
+		for (const auto& entry : DecodeBodyJoints(*skeleton))
+		{
+			const auto joint = DecodePayload(entry, {tag::Pose, tag::Channel});
+			SkeletonJoint rest{static_cast<BodyJoint>(entry.tag - 1), {}, DecodePose(RequireField(joint, tag::Pose))};
+			if (joint.Find(tag::Channel))
+				rest.parent = static_cast<BodyJoint>(ReadU32(joint, tag::Channel));
+			(*result.skeleton)[entry.tag - 1] = rest;
+		}
+	}
+	return NormalizeBodyObservation(std::move(result));
+}
 static CommandPayload EncodeCommand(const TakeControl& command)
 {
 	return {SimulationCommandKind::TakeControl,
@@ -248,16 +342,27 @@ static CommandPayload EncodeCommand(const SetControllerPose& command)
 	auto fields = EncodePoseSample(command.value.pose);
 	fields.push_back(Field::U32(tag::Layer, command.hand, true));
 	fields.push_back(Field::Bool(tag::Enabled, command.value.connected, true));
+	if (command.value.aim)
+		fields.push_back(EncodeNested(tag::AimPose, EncodePoseSample(*command.value.aim)));
 	return {SimulationCommandKind::ControllerPose, std::move(fields)};
 }
 static CommandPayload EncodeCommand(const SetControllerControls& command)
 {
-	return {SimulationCommandKind::ControllerControls,
-			{Field::U32(tag::Layer, command.hand, true), EncodeControllerControls(command.value)}};
+	std::vector<Field> fields{Field::U32(tag::Layer, command.hand, true), EncodeControllerControls(command.value)};
+	if (!command.value.physicalProfile.empty())
+		fields.push_back(Field::Text(tag::Detail, command.value.physicalProfile, true));
+	return {SimulationCommandKind::ControllerControls, std::move(fields)};
 }
 static CommandPayload EncodeCommand(const SetBodyControls& command)
 {
-	return {SimulationCommandKind::BodyControls, EncodeBodyControls(command.value)};
+	if (command.observationOrigin && (!command.observation || command.observationOrigin->value.count() <= 0))
+		throw std::invalid_argument("Body replay timing requires an observation and positive anchor");
+	auto fields = EncodeBodyControls(command.value);
+	if (command.observation)
+		fields.push_back(EncodeBodyObservation(*command.observation));
+	if (command.observationOrigin)
+		fields.push_back(Field::I64(tag::BodyObservationOrigin, command.observationOrigin->value.count(), true));
+	return {SimulationCommandKind::BodyControls, std::move(fields)};
 }
 static CommandPayload EncodeCommand(const SetGaze& command)
 {
@@ -273,6 +378,10 @@ static CommandPayload EncodeCommand(const SetTracker& command)
 		Field::U32(tag::Layer, command.index, true), Field::U64(tag::Source, tracker.identity.value, true),
 		Field::U32(tag::Kind, static_cast<std::uint32_t>(tracker.role), true),
 		Field::Bool(tag::Enabled, tracker.connected, true), Field::Bool(tag::Running, tracker.tracked, true)};
+	if (!tracker.sourcePath.View().empty())
+		fields.push_back(Field::Text(tag::Detail, tracker.sourcePath.View(), true));
+	if (tracker.poseFlags != TrackedPoseFlags)
+		fields.push_back(Field::U64(tag::Usage, tracker.poseFlags, true));
 	if (tracker.anchor)
 		fields.push_back(Field::U32(tag::Channel, static_cast<std::uint32_t>(*tracker.anchor), true));
 	if (tracker.jointOffset)
@@ -280,6 +389,33 @@ static CommandPayload EncodeCommand(const SetTracker& command)
 	if (tracker.poseOverride)
 		fields.push_back(EncodePose(*tracker.poseOverride));
 	return {SimulationCommandKind::Tracker, std::move(fields)};
+}
+static CommandPayload EncodeCommand(const SetTrackers& command)
+{
+	if (command.value.size() > MaxTrackerDevices)
+		throw std::invalid_argument("Tracker inventory exceeds capacity");
+	std::vector<Field> entries;
+	for (std::size_t index = 0; index < command.value.size(); ++index)
+		entries.push_back(
+			EncodeNested(static_cast<std::uint16_t>(index + 1),
+						 EncodeCommand(SetTracker{static_cast<std::uint32_t>(index), command.value[index]}).fields));
+	return {SimulationCommandKind::Trackers, std::move(entries)};
+}
+static CommandPayload EncodeCommand(const SetEyeViews& command)
+{
+	std::vector<Field> fields{Field::Bool(1, command.value.has_value(), true)};
+	if (command.value)
+	{
+		fields.push_back(Field::U64(2, command.value->spaceRevision, true));
+		for (std::size_t eye = 0; eye < 2; ++eye)
+		{
+			auto pose = EncodePoseSample(command.value->poses[eye]);
+			const auto& fov = command.value->fovs[eye];
+			pose.push_back(EncodeFloats(tag::Values, {fov.angleLeft, fov.angleRight, fov.angleUp, fov.angleDown}));
+			fields.push_back(EncodeNested(static_cast<std::uint16_t>(eye + 3), pose));
+		}
+	}
+	return {SimulationCommandKind::EyeViews, std::move(fields)};
 }
 static CommandPayload EncodeCommand(const SetViewSettings& command)
 {
@@ -335,6 +471,25 @@ Field EncodeSimulationCommand(const SimulationCommand& command, std::uint16_t in
 	return EncodeNested(index, {Field::U32(tag::Kind, static_cast<std::uint32_t>(payload.kind), true),
 								EncodeNested(tag::Values, payload.fields)});
 }
+static TrackerDevice DecodeTracker(const Message& fields)
+{
+	TrackerDevice tracker;
+	tracker.identity = {ReadU64(fields, tag::Source)};
+	tracker.role = static_cast<TrackerRole>(ReadU32(fields, tag::Kind));
+	tracker.connected = ReadBoolean(fields, tag::Enabled);
+	tracker.tracked = ReadBoolean(fields, tag::Running);
+	if (const auto source = fields.Find(tag::Detail))
+		tracker.sourcePath = TrackerSourcePath{RequireValue(source->AsText())};
+	if (fields.Find(tag::Usage))
+		tracker.poseFlags = ReadU64(fields, tag::Usage);
+	if (fields.Find(tag::Channel))
+		tracker.anchor = static_cast<BodyJoint>(ReadU32(fields, tag::Channel));
+	if (const auto* pose = fields.Find(tag::Pose))
+		tracker.poseOverride = DecodePose(*pose);
+	if (const auto* offset = fields.Find(tag::JointOffset))
+		tracker.jointOffset = DecodePose(*offset);
+	return tracker;
+}
 SimulationCommand DecodeSimulationCommand(const Field& field)
 {
 	const auto command = DecodePayload(field, {tag::Kind, tag::Values});
@@ -357,19 +512,36 @@ SimulationCommand DecodeSimulationCommand(const Field& field)
 		return SetHeadPose{DecodePoseSample(DecodePayload(payload, {tag::Pose, tag::Usage}))};
 	case SimulationCommandKind::ControllerPose:
 	{
-		const auto fields = DecodePayload(payload, {tag::Pose, tag::Usage, tag::Layer, tag::Enabled});
-		return SetControllerPose{ReadU32(fields, tag::Layer),
-								 {DecodePoseSample(fields), ReadBoolean(fields, tag::Enabled)}};
+		const auto fields = DecodePayload(payload, {tag::Pose, tag::Usage, tag::Layer, tag::Enabled, tag::AimPose});
+		ControllerPose value{DecodePoseSample(fields), ReadBoolean(fields, tag::Enabled)};
+		if (const auto* aim = fields.Find(tag::AimPose))
+			value.aim = DecodePoseSample(DecodePayload(*aim, {tag::Pose, tag::Usage}));
+		return SetControllerPose{ReadU32(fields, tag::Layer), value};
 	}
 	case SimulationCommandKind::ControllerControls:
 	{
-		const auto fields = DecodePayload(payload, {tag::Layer, tag::Controls});
-		return SetControllerControls{ReadU32(fields, tag::Layer),
-									 DecodeControllerControls(RequireField(fields, tag::Controls))};
+		const auto fields = DecodePayload(payload, {tag::Layer, tag::Controls, tag::Detail});
+		auto controls = DecodeControllerControls(RequireField(fields, tag::Controls));
+		if (const auto profile = fields.Find(tag::Detail))
+			controls.physicalProfile = RequireValue(profile->AsText());
+		return SetControllerControls{ReadU32(fields, tag::Layer), std::move(controls)};
 	}
 	case SimulationCommandKind::BodyControls:
-		return SetBodyControls{DecodeBodyControls(DecodePayload(
-			payload, {tag::Enabled, tag::Values, tag::Kind, tag::Controls, tag::Proportions, tag::Pose}))};
+	{
+		const auto fields =
+			DecodePayload(payload, {tag::Enabled, tag::Values, tag::Kind, tag::Controls, tag::Proportions, tag::Pose,
+									tag::BodyObservation, tag::BodyObservationOrigin});
+		SetBodyControls result{DecodeBodyControls(fields)};
+		if (const auto* body = fields.Find(tag::BodyObservation))
+			result.observation = DecodeBodyObservation(*body);
+		if (const auto* origin = fields.Find(tag::BodyObservationOrigin))
+		{
+			result.observationOrigin = RuntimeTime{Duration{RequireValue(origin->AsI64())}};
+			if (!result.observation || result.observationOrigin->value.count() <= 0)
+				throw std::invalid_argument("Body replay timing requires an observation and positive anchor");
+		}
+		return result;
+	}
 	case SimulationCommandKind::Gaze:
 	{
 		const auto fields = DecodePayload(payload, {tag::Values, tag::Enabled, tag::Running});
@@ -378,20 +550,50 @@ SimulationCommand DecodeSimulationCommand(const Field& field)
 	}
 	case SimulationCommandKind::Tracker:
 	{
-		const auto fields = DecodePayload(payload, {tag::Layer, tag::Source, tag::Kind, tag::Enabled, tag::Running,
-													tag::Channel, tag::Pose, tag::JointOffset});
-		TrackerDevice tracker;
-		tracker.identity = {ReadU64(fields, tag::Source)};
-		tracker.role = static_cast<TrackerRole>(ReadU32(fields, tag::Kind));
-		tracker.connected = ReadBoolean(fields, tag::Enabled);
-		tracker.tracked = ReadBoolean(fields, tag::Running);
-		if (fields.Find(tag::Channel))
-			tracker.anchor = static_cast<BodyJoint>(ReadU32(fields, tag::Channel));
-		if (const auto* pose = fields.Find(tag::Pose))
-			tracker.poseOverride = DecodePose(*pose);
-		if (const auto* offset = fields.Find(tag::JointOffset))
-			tracker.jointOffset = DecodePose(*offset);
+		const auto fields =
+			DecodePayload(payload, {tag::Layer, tag::Source, tag::Kind, tag::Enabled, tag::Running, tag::Channel,
+									tag::Pose, tag::JointOffset, tag::Usage, tag::Detail});
+		auto tracker = DecodeTracker(fields);
 		return SetTracker{ReadU32(fields, tag::Layer), std::move(tracker)};
+	}
+	case SimulationCommandKind::Trackers:
+	{
+		const auto entries = DecodeOrderedFields(payload);
+		if (entries.size() > MaxTrackerDevices)
+			throw std::invalid_argument("Tracker inventory exceeds capacity");
+		SetTrackers result;
+		result.value.reserve(entries.size());
+		for (std::size_t index = 0; index < entries.size(); ++index)
+		{
+			const auto fields =
+				DecodePayload(entries[index], {tag::Layer, tag::Source, tag::Kind, tag::Enabled, tag::Running,
+											   tag::Channel, tag::Pose, tag::JointOffset, tag::Usage, tag::Detail});
+			if (ReadU32(fields, tag::Layer) != index)
+				throw std::invalid_argument("Invalid tracker collection index");
+			result.value.push_back(DecodeTracker(fields));
+		}
+		return result;
+	}
+	case SimulationCommandKind::EyeViews:
+	{
+		const auto fields = DecodePayload(payload, {1, 2, 3, 4});
+		if (!ReadBoolean(fields, 1))
+		{
+			if (fields.fields.size() != 1)
+				throw std::invalid_argument("Cleared eye views contain observations");
+			return SetEyeViews{};
+		}
+		StereoEyeViews views;
+		views.spaceRevision = ReadU64(fields, 2);
+		for (std::size_t eye = 0; eye < 2; ++eye)
+		{
+			const auto pose = DecodePayload(RequireField(fields, static_cast<std::uint16_t>(eye + 3)),
+											{tag::Pose, tag::Usage, tag::Values});
+			views.poses[eye] = DecodePoseSample(pose);
+			const auto fov = DecodeFloats<4>(RequireField(pose, tag::Values));
+			views.fovs[eye] = {fov[0], fov[1], fov[2], fov[3]};
+		}
+		return SetEyeViews{views};
 	}
 	case SimulationCommandKind::ViewSettings:
 	{
@@ -464,6 +666,16 @@ CommandTransaction DecodeSimulationTransaction(const Message& request, std::uint
 	transaction.commands.reserve(commands.size());
 	for (const auto& command : commands)
 		transaction.commands.push_back(DecodeSimulationCommand(command));
+	if (const auto* expected = request.Find(tag::ExpectedInputs))
+	{
+		if (request.minor < 17 || expected->value.size() > 4096)
+			throw std::invalid_argument("Expected inputs require protocol minor 17 and a bounded payload");
+		const auto fields = DecodeOrderedFields(*expected);
+		if (fields.empty() || fields.size() > 3)
+			throw std::invalid_argument("Expected inputs require one to three entries");
+		for (const auto& field : fields)
+			transaction.expected.push_back(DecodeSimulationCommand(field));
+	}
 	return transaction;
 }
 } // namespace simxr::control

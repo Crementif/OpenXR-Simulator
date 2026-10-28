@@ -44,13 +44,28 @@ class CommandIdentityBuilder
 		if (value.eyeGazeSampleTime)
 			Add(value.eyeGazeSampleTime->value.count());
 	}
+	void Add(const std::vector<TrackerDevice>& value)
+	{
+		Add(value.size());
+		for (const auto& tracker : value)
+			Add(tracker);
+	}
 	void Add(const ControllerPose& value)
 	{
 		Add(value.pose);
 		Add(value.connected);
+		Add(value.aim.has_value());
+		if (value.aim)
+			Add(*value.aim);
 	}
 	void Add(const ControllerControls& value)
 	{
+		Add(value.physicalProfile.size());
+		for (unsigned char character : value.physicalProfile)
+			Add(character);
+		Add(value.triggerClick.has_value());
+		if (value.triggerClick)
+			Add(*value.triggerClick);
 		for (float component : {value.trigger, value.grip, value.gripForce, value.stick.x, value.stick.y,
 								value.trackpad.x, value.trackpad.y, value.trackpadForce})
 			Add(component);
@@ -86,6 +101,52 @@ class CommandIdentityBuilder
 			}
 		}
 	}
+	void Add(const std::optional<BodyObservation>& value)
+	{
+		Add(value.has_value());
+		if (!value)
+			return;
+		Add(value->jointSet);
+		Add(value->requestedTime.value.count());
+		Add(value->returnedTime.has_value());
+		if (value->returnedTime)
+			Add(value->returnedTime->value.count());
+		Add(value->located);
+		Add(value->active.has_value());
+		if (value->active)
+			Add(*value->active);
+		Add(value->allJointPosesTracked.has_value());
+		if (value->allJointPosesTracked)
+			Add(*value->allJointPosesTracked);
+		Add(value->confidence.has_value());
+		if (value->confidence)
+			Add(*value->confidence);
+		Add(value->skeletonRevision.has_value());
+		if (value->skeletonRevision)
+			Add(*value->skeletonRevision);
+		for (const auto& joint : value->joints)
+		{
+			Add(joint.has_value());
+			if (joint)
+			{
+				Add(joint->pose);
+				Add(joint->flags);
+			}
+		}
+		Add(value->skeleton.has_value());
+		if (value->skeleton)
+			for (const auto& joint : *value->skeleton)
+			{
+				Add(joint.has_value());
+				if (!joint)
+					continue;
+				Add(joint->joint);
+				Add(joint->parent.has_value());
+				if (joint->parent)
+					Add(*joint->parent);
+				Add(joint->bindPose);
+			}
+	}
 	void Add(const GazeInput& value)
 	{
 		Add(value.yaw);
@@ -96,6 +157,10 @@ class CommandIdentityBuilder
 	void Add(const TrackerDevice& value)
 	{
 		Add(value.identity.value);
+		Add(value.poseFlags);
+		Add(value.sourcePath.View().size());
+		for (const unsigned char character : value.sourcePath.View())
+			Add(character);
 		Add(value.role);
 		Add(value.connected);
 		Add(value.tracked);
@@ -108,6 +173,22 @@ class CommandIdentityBuilder
 		Add(value.poseOverride.has_value());
 		if (value.poseOverride)
 			Add(*value.poseOverride);
+	}
+	void Add(const std::optional<StereoEyeViews>& value)
+	{
+		Add(value.has_value());
+		if (!value)
+			return;
+		Add(value->spaceRevision);
+		for (std::size_t eye = 0; eye < 2; ++eye)
+		{
+			Add(value->poses[eye]);
+			const auto& fov = value->fovs[eye];
+			Add(fov.angleLeft);
+			Add(fov.angleRight);
+			Add(fov.angleUp);
+			Add(fov.angleDown);
+		}
 	}
 	void Add(const ViewSettings& value)
 	{
@@ -163,45 +244,92 @@ static std::vector<std::uint64_t> RequestWords(const CommandTransaction& transac
 	identity.Add(transaction.target.time.has_value());
 	if (transaction.target.time)
 		identity.Add(transaction.target.time->value.count());
-	identity.Add(transaction.commands.size());
-	for (const auto& command : transaction.commands)
+	for (const auto* group : {&transaction.commands, &transaction.expected})
 	{
-		identity.Add(command.index());
-		std::visit(
-			[&](const auto& value)
-			{
-				using T = std::decay_t<decltype(value)>;
-				if constexpr (std::is_same_v<T, TakeControl>)
+		identity.Add(group->size());
+		for (const auto& command : *group)
+		{
+			identity.Add(command.index());
+			std::visit(
+				[&](const auto& value)
 				{
-					identity.Add(value.channel);
-					identity.Add(value.replace);
-				}
-				else if constexpr (std::is_same_v<T, ReleaseControl>)
-					identity.Add(value.channel);
-				else if constexpr (std::is_same_v<T, SetScenario>)
-				{
-					identity.Add(value.scenario);
-					identity.Add(value.enabled);
-				}
-				else if constexpr (std::is_same_v<T, SetControllerProfile>)
-				{
-					identity.Add(value.hand);
-					identity.Add(value.path.size());
-					for (unsigned char c : value.path)
-						identity.Add(c);
-				}
-				else
-				{
-					if constexpr (std::is_same_v<T, SetControllerPose> || std::is_same_v<T, SetControllerControls>)
+					using T = std::decay_t<decltype(value)>;
+					if constexpr (std::is_same_v<T, TakeControl>)
+					{
+						identity.Add(value.channel);
+						identity.Add(value.replace);
+					}
+					else if constexpr (std::is_same_v<T, ReleaseControl>)
+						identity.Add(value.channel);
+					else if constexpr (std::is_same_v<T, SetScenario>)
+					{
+						identity.Add(value.scenario);
+						identity.Add(value.enabled);
+					}
+					else if constexpr (std::is_same_v<T, SetControllerProfile>)
+					{
 						identity.Add(value.hand);
-					if constexpr (std::is_same_v<T, SetTracker>)
-						identity.Add(value.index);
-					identity.Add(value.value);
-				}
-			},
-			command);
+						identity.Add(value.path.size());
+						for (unsigned char c : value.path)
+							identity.Add(c);
+					}
+					else
+					{
+						if constexpr (std::is_same_v<T, SetControllerPose> || std::is_same_v<T, SetControllerControls>)
+							identity.Add(value.hand);
+						if constexpr (std::is_same_v<T, SetTracker>)
+							identity.Add(value.index);
+						identity.Add(value.value);
+						if constexpr (std::is_same_v<T, SetBodyControls>)
+						{
+							identity.Add(value.observation);
+							identity.Add(value.observationOrigin.has_value());
+							if (value.observationOrigin)
+								identity.Add(value.observationOrigin->value.count());
+						}
+					}
+				},
+				command);
+		}
 	}
 	return std::move(identity).Finish();
+}
+static bool ExpectedInputsMatch(const CommandState& state, const CommandConfiguration& baseline,
+	RuntimeTime time, const std::vector<SimulationCommand>& expected)
+{
+	if (expected.empty())
+		return true;
+	AppliedCommandSnapshot snapshot;
+	state.Capture(snapshot, baseline, time);
+	CommandTransaction wanted, actual;
+	for (const auto& input : expected)
+	{
+		if (const auto* head = std::get_if<SetHeadPose>(&input))
+		{
+			auto expectedPose = head->value;
+			auto currentPose = snapshot.configuration.tracking.head;
+			expectedPose.sampleTime = currentPose.sampleTime = {};
+			expectedPose.eyeGazeSampleTime.reset();
+			currentPose.eyeGazeSampleTime.reset();
+			wanted.commands.push_back(SetHeadPose{expectedPose});
+			actual.commands.push_back(SetHeadPose{currentPose});
+		}
+		else if (const auto* controls = std::get_if<SetControllerControls>(&input))
+		{
+			if (controls->hand >= snapshot.configuration.input.controllers.size())
+				return false;
+			wanted.commands.push_back(*controls);
+			actual.commands.push_back(SetControllerControls{controls->hand, snapshot.configuration.input.controllers[controls->hand]});
+		}
+		else if (const auto* views = std::get_if<SetViewSettings>(&input))
+		{
+			wanted.commands.push_back(*views);
+			actual.commands.push_back(SetViewSettings{snapshot.configuration.views});
+		}
+		else
+			return false;
+	}
+	return RequestWords(wanted) == RequestWords(actual);
 }
 static std::optional<CommandOutcome> ReleaseOutcome(CommandSource source,
 													const std::array<bool, ControlChannelCount>& channels,
@@ -222,21 +350,42 @@ static std::optional<CommandOutcome> ReleaseOutcome(CommandSource source,
 			outcome.transaction.commands.push_back(ReleaseControl{static_cast<ControlChannel>(index)});
 	return outcome;
 }
+static std::shared_ptr<const CommandRecordingOrigin> ReleaseState(const CommandState& state,
+																  const CommandConfiguration& baseline, FrameId frame,
+																  SimulationTime time, RuntimeTime runtimeTime)
+{
+	auto origin = state.RecordingOrigin(baseline, runtimeTime);
+	origin.frame = frame;
+	origin.time = time;
+	origin.runtimeTime = runtimeTime;
+	return std::make_shared<const CommandRecordingOrigin>(std::move(origin));
+}
+static bool HasRelease(const CommandOutcome& outcome)
+{
+	return outcome.result == CommandResult::Applied &&
+		   std::any_of(outcome.transaction.commands.begin(), outcome.transaction.commands.end(),
+					   [](const auto& command)
+					   {
+						   return std::holds_alternative<ReleaseControl>(command);
+					   });
+}
 static bool ValidSource(CommandSource source)
 {
 	return source.id && (source.kind == CommandSourceKind::Manual || source.kind == CommandSourceKind::Mcp ||
-						 source.kind == CommandSourceKind::Rig);
+						 source.kind == CommandSourceKind::Rig || source.kind == CommandSourceKind::Device);
 }
 
 class CommandScheduler::PreparedCommandBoundary
 {
   public:
 	PreparedCommandBoundary(const CommandScheduler& scheduler, FrameId frame, SimulationTime time,
-							RuntimeTime runtimeTime, const CommandConfiguration& baseline)
-		: m_state(scheduler.m_state), m_pending(scheduler.m_pending), m_outcomes(scheduler.m_outcomes),
-		  m_snapshots(scheduler.m_applied), m_snapshot(std::make_shared<AppliedCommandSnapshot>()),
-		  m_historyCapacity(scheduler.m_historyCapacity), m_sequence(scheduler.m_sequence),
-		  m_replacedSequence(scheduler.m_replacedSequence)
+							RuntimeTime runtimeTime, const CommandConfiguration& baseline,
+							LiveInputClock::time_point now, std::optional<std::uint64_t> clockRevision)
+		: m_state(scheduler.m_state), m_baseline(baseline), m_pending(scheduler.m_pending),
+		  m_outcomes(scheduler.m_outcomes), m_snapshots(scheduler.m_applied),
+		  m_snapshot(std::make_shared<AppliedCommandSnapshot>()), m_historyCapacity(scheduler.m_historyCapacity),
+		  m_sequence(scheduler.m_sequence), m_replacedSequence(scheduler.m_replacedSequence),
+		  m_liveInput(scheduler.m_liveInput)
 	{
 		if (scheduler.m_revision == std::numeric_limits<std::uint64_t>::max())
 			throw std::overflow_error("Command revisions exhausted");
@@ -263,6 +412,7 @@ class CommandScheduler::PreparedCommandBoundary
 			auto outcome = *command;
 			outcome.appliedFrame = frame;
 			outcome.appliedTime = time;
+			outcome.appliedRuntimeTime = runtimeTime;
 			outcome.result = CommandResult::Applied;
 			if (target.frame && *target.frame < frame)
 			{
@@ -272,11 +422,15 @@ class CommandScheduler::PreparedCommandBoundary
 					outcome.effectiveTarget = CommandTarget{frame, {}};
 			}
 			if (outcome.result == CommandResult::Applied)
-				outcome.result = m_state.Apply(outcome.transaction, baseline, runtimeTime);
+				outcome.result = ExpectedInputsMatch(m_state, baseline, runtimeTime, outcome.transaction.expected)
+					? m_state.Apply(outcome.transaction, baseline, runtimeTime) : CommandResult::Conflict;
+			if (HasRelease(outcome))
+				outcome.releaseState = ReleaseState(m_state, baseline, frame, time, runtimeTime);
 			m_snapshot->outcomes.push_back(outcome);
 			AppendHistory(std::move(outcome));
 			command = m_pending.erase(command);
 		}
+		ApplyLiveInput(frame, time, runtimeTime, baseline, now, clockRevision);
 		ApplySequence(frame, time, runtimeTime, baseline);
 		m_state.Capture(*m_snapshot, baseline, runtimeTime);
 		m_snapshots.push_back(m_snapshot);
@@ -297,13 +451,16 @@ class CommandScheduler::PreparedCommandBoundary
 	void Commit(CommandScheduler& scheduler) noexcept
 	{
 		static_assert(std::is_nothrow_swappable_v<std::optional<PoseSequenceExecution>>);
+		static_assert(std::is_nothrow_swappable_v<std::optional<CommandConfiguration>>);
 		m_state.Swap(scheduler.m_state);
+		m_baseline.swap(scheduler.m_baseline);
 		m_pending.swap(scheduler.m_pending);
 		m_outcomes.swap(scheduler.m_outcomes);
 		m_snapshots.swap(scheduler.m_applied);
 		scheduler.m_revision = m_snapshot->revision;
 		scheduler.m_sequence.swap(m_sequence);
 		scheduler.m_replacedSequence.swap(m_replacedSequence);
+		std::swap(scheduler.m_liveInput, m_liveInput);
 	}
 
 	void MarkRecordingOverrun(bool overrun) noexcept
@@ -328,7 +485,42 @@ class CommandScheduler::PreparedCommandBoundary
 	{
 		const auto channels = m_state.ReleaseSource(source);
 		if (auto outcome = ReleaseOutcome(source, channels, m_snapshot->frame, m_snapshot->time, false))
+		{
+			outcome->appliedRuntimeTime = m_snapshot->runtimeTime;
+			outcome->releaseState =
+				ReleaseState(m_state, *m_baseline, m_snapshot->frame, m_snapshot->time, m_snapshot->runtimeTime);
 			m_snapshot->outcomes.push_back(std::move(*outcome));
+		}
+	}
+	void ApplyLiveInput(FrameId frame, SimulationTime time, RuntimeTime runtimeTime,
+						const CommandConfiguration& baseline, LiveInputClock::time_point now,
+						std::optional<std::uint64_t> clockRevision)
+	{
+		const auto owner = m_liveInput.Status().owner;
+		if (!owner)
+			return;
+		for (const auto& outcome : m_snapshot->outcomes)
+			if (outcome.transaction.source == *owner && outcome.result == CommandResult::Applied)
+				for (const auto& command : outcome.transaction.commands)
+					if (const auto* release = std::get_if<ReleaseControl>(&command);
+						release &&
+						(static_cast<std::size_t>(release->channel) < 5 || release->channel == ControlChannel::Views ||
+						 release->channel == ControlChannel::Trackers || release->channel == ControlChannel::Body))
+					{
+						m_liveInput.Reset();
+						return;
+					}
+		auto outcome = m_liveInput.Prepare(frame, time, m_state.OwnedChannels(*owner), now, clockRevision);
+		if (!outcome)
+			return;
+		outcome->appliedRuntimeTime = runtimeTime;
+		outcome->result = m_state.Apply(outcome->transaction, baseline, runtimeTime);
+		if (HasRelease(*outcome))
+			outcome->releaseState = ReleaseState(m_state, baseline, frame, time, runtimeTime);
+		if (outcome->result != CommandResult::Applied)
+			m_liveInput.Reset();
+		m_snapshot->outcomes.push_back(*outcome);
+		AppendHistory(std::move(*outcome));
 	}
 	void ApplySequence(FrameId frame, SimulationTime time, RuntimeTime runtimeTime,
 					   const CommandConfiguration& baseline)
@@ -382,7 +574,10 @@ class CommandScheduler::PreparedCommandBoundary
 								   std::move(prepared.commands)};
 			outcome.appliedFrame = frame;
 			outcome.appliedTime = time;
+			outcome.appliedRuntimeTime = runtimeTime;
 			result = outcome.result = m_state.Apply(outcome.transaction, baseline, runtimeTime);
+			if (HasRelease(outcome))
+				outcome.releaseState = ReleaseState(m_state, baseline, frame, time, runtimeTime);
 			m_snapshot->outcomes.push_back(outcome);
 			AppendHistory(std::move(outcome));
 		}
@@ -394,6 +589,7 @@ class CommandScheduler::PreparedCommandBoundary
 				SequenceCaptureIntent{m_sequence->Status().id, frame, m_sequence->Status().owner};
 	}
 	CommandState m_state;
+	std::optional<CommandConfiguration> m_baseline;
 	std::deque<CommandOutcome> m_pending;
 	std::deque<CommandOutcome> m_outcomes;
 	std::deque<std::shared_ptr<const AppliedCommandSnapshot>> m_snapshots;
@@ -401,6 +597,7 @@ class CommandScheduler::PreparedCommandBoundary
 	std::size_t m_historyCapacity;
 	std::optional<PoseSequenceExecution> m_sequence;
 	std::optional<CommandSource> m_replacedSequence;
+	LiveInputSlot m_liveInput;
 };
 
 CommandScheduler::CommandScheduler(std::size_t pendingCapacity, std::size_t historyCapacity)
@@ -415,6 +612,7 @@ void CommandScheduler::Start(std::uint64_t seed, std::optional<CommandConfigurat
 	CommandState prepared(std::move(initial));
 	std::lock_guard lock(m_mutex);
 	m_state.Swap(prepared);
+	m_baseline.reset();
 	m_seed = seed;
 	m_revision = 0;
 	m_closed = false;
@@ -422,6 +620,7 @@ void CommandScheduler::Start(std::uint64_t seed, std::optional<CommandConfigurat
 	m_outcomes.clear();
 	m_sources.clear();
 	m_applied.clear();
+	m_liveInput.Reset();
 	m_sequence.reset();
 	m_replacedSequence.reset();
 	m_recorder.Stop();
@@ -433,11 +632,33 @@ void CommandScheduler::Close()
 	for (auto& pending : m_pending)
 		pending.result = CommandResult::Cancelled;
 	m_state.ClearOwnership();
+	m_liveInput.Reset();
 	if (m_sequence)
 		m_sequence->Cancel();
 	m_replacedSequence.reset();
 	m_closed = true;
 	m_recorder.Stop();
+}
+CommandResult CommandScheduler::SubmitLiveInput(CommandSource source, const LiveInputSample& sample,
+												LiveInputClock::time_point now)
+{
+	std::lock_guard lock(m_mutex);
+	if (m_closed)
+		return CommandResult::Closed;
+	if (const auto owner = m_liveInput.Status().owner;
+		owner && !LiveInputSlot::HasChannels(m_state.OwnedChannels(*owner)))
+		m_liveInput.Reset();
+	return m_liveInput.Write(source, sample, m_state.OwnedChannels(source), now);
+}
+void CommandScheduler::AcknowledgeLiveInput()
+{
+	std::lock_guard lock(m_mutex);
+	m_liveInput.AcknowledgeControls();
+}
+LiveInputStatus CommandScheduler::LiveInputState() const
+{
+	std::lock_guard lock(m_mutex);
+	return m_liveInput.Status();
 }
 CommandOutcome CommandScheduler::Submit(CommandTransaction transaction)
 {
@@ -450,7 +671,7 @@ CommandOutcome CommandScheduler::Submit(CommandTransaction transaction)
 	}
 	auto& request = outcome.transaction;
 	if (!request.id || !ValidSource(request.source) || request.commands.empty() || request.commands.size() > 64 ||
-		request.target.frame.has_value() == request.target.time.has_value() ||
+		request.target.frame.has_value() == request.target.time.has_value() || request.expected.size() > 3 ||
 		(request.target.frame && !request.target.frame->value) ||
 		(request.target.time && request.target.time->value.count() < 0) ||
 		(request.latePolicy != CommandLatePolicy::Reject && request.latePolicy != CommandLatePolicy::RescheduleNext))
@@ -459,6 +680,22 @@ CommandOutcome CommandScheduler::Submit(CommandTransaction transaction)
 		return outcome;
 	}
 	// Variable-sized command data is bounded before retaining or fingerprinting it.
+	for (const auto& input : request.expected)
+	{
+		if (const auto* controls = std::get_if<SetControllerControls>(&input))
+		{
+			if (controls->hand >= 2 || controls->value.physicalProfile.size() > 255)
+			{
+				outcome.result = CommandResult::Invalid;
+				return outcome;
+			}
+		}
+		else if (!std::holds_alternative<SetHeadPose>(input) && !std::holds_alternative<SetViewSettings>(input))
+		{
+			outcome.result = CommandResult::Invalid;
+			return outcome;
+		}
+	}
 	for (const auto& command : request.commands)
 		if (const auto* profile = std::get_if<SetControllerProfile>(&command); profile && profile->path.size() > 255)
 		{
@@ -467,7 +704,7 @@ CommandOutcome CommandScheduler::Submit(CommandTransaction transaction)
 		}
 	const auto same = [&](const auto& value)
 	{
-		return value.transaction.source.kind != CommandSourceKind::Sequence &&
+		return !value.liveInput && value.transaction.source.kind != CommandSourceKind::Sequence &&
 			   value.transaction.source.id == request.source.id && value.transaction.id == request.id;
 	};
 	for (const auto* records : {&m_pending, &m_outcomes})
@@ -586,6 +823,17 @@ CommandResult CommandScheduler::Cancel(CommandSource source, std::uint64_t id)
 std::array<bool, ControlChannelCount> CommandScheduler::ReleaseSource(CommandSource source, bool retire)
 {
 	std::lock_guard lock(m_mutex);
+	return ReleaseSourceCommandsLocked(source, retire);
+}
+std::array<bool, ControlChannelCount> CommandScheduler::ExpireLiveInput(LiveInputClock::time_point now)
+{
+	std::lock_guard lock(m_mutex);
+	const auto owner = m_liveInput.Status().owner;
+	return owner && m_liveInput.Expired(now) ? ReleaseSourceCommandsLocked(*owner, false)
+											 : std::array<bool, ControlChannelCount>{};
+}
+std::array<bool, ControlChannelCount> CommandScheduler::ReleaseSourceCommandsLocked(CommandSource source, bool retire)
+{
 	try
 	{
 		auto pending = m_pending;
@@ -670,14 +918,25 @@ std::optional<PoseSequenceStatus> CommandScheduler::PoseSequenceStatusFor(Comman
 std::array<bool, ControlChannelCount> CommandScheduler::ReleaseSourceLocked(CommandSource source) noexcept
 {
 	const auto channels = m_state.ReleaseSource(source);
+	if (m_liveInput.Status().owner == source)
+		m_liveInput.Reset();
 	try
 	{
 		const auto latest = m_applied.empty() ? nullptr : m_applied.back();
 		if (auto outcome = ReleaseOutcome(source, channels, latest ? latest->frame : FrameId{},
 										  latest ? latest->time : SimulationTime{}, true))
+		{
+			if (m_baseline)
+			{
+				const auto runtimeTime = latest ? latest->runtimeTime : RuntimeTime{Duration{1}};
+				outcome->appliedRuntimeTime = runtimeTime;
+				outcome->releaseState =
+					ReleaseState(m_state, *m_baseline, outcome->appliedFrame, outcome->appliedTime, runtimeTime);
+			}
 			m_recorder.Observe(*outcome);
+		}
 	}
-	catch (const std::bad_alloc&)
+	catch (...)
 	{
 		m_recorder.Fail();
 	}
@@ -704,7 +963,8 @@ std::array<bool, ControlChannelCount> CommandScheduler::StopPoseSequence(Command
 	std::lock_guard lock(m_mutex);
 	return StopPoseSequenceLocked(owner);
 }
-void CommandScheduler::StartRecording(const CommandConfiguration& baseline, const ReferenceSpaceState& spaces)
+void CommandScheduler::StartRecording(const CommandConfiguration& baseline, const ReferenceSpaceState& spaces,
+									  bool drain)
 {
 	std::lock_guard lock(m_mutex);
 	if (m_closed)
@@ -717,8 +977,11 @@ void CommandScheduler::StartRecording(const CommandConfiguration& baseline, cons
 	{
 		origin.frame = latest->frame;
 		origin.time = latest->time;
+		origin.runtimeTime = latest->runtimeTime;
 	}
-	m_recorder.Start(origin);
+	std::optional<CommandConfiguration> retainedBaseline{baseline};
+	m_recorder.Start(origin, drain);
+	m_baseline.swap(retainedBaseline);
 }
 
 CommandConfiguration CommandScheduler::Merge(const CommandConfiguration& baseline) const
@@ -741,7 +1004,8 @@ CommandRecorder& CommandScheduler::Recorder()
 std::shared_ptr<const AppliedCommandSnapshot>
 CommandScheduler::Apply(FrameId frame, SimulationTime time, RuntimeTime runtimeTime,
 						const CommandConfiguration& baseline,
-						const std::function<void(const std::shared_ptr<const AppliedCommandSnapshot>&)>& reserve)
+						const std::function<void(const std::shared_ptr<const AppliedCommandSnapshot>&)>& reserve,
+						LiveInputClock::time_point now, std::optional<std::uint64_t> clockRevision)
 {
 	std::lock_guard lock(m_mutex);
 	if (m_closed || !frame.value || runtimeTime.value.count() <= 0 || time.value.count() < 0)
@@ -755,7 +1019,7 @@ CommandScheduler::Apply(FrameId frame, SimulationTime time, RuntimeTime runtimeT
 	}
 	if (!m_applied.empty() && time < m_applied.back()->time)
 		throw std::invalid_argument("Simulation time moved backward");
-	PreparedCommandBoundary prepared(*this, frame, time, runtimeTime, baseline);
+	PreparedCommandBoundary prepared(*this, frame, time, runtimeTime, baseline, now, clockRevision);
 	const auto reserveAndCommit = [&](bool recorded)
 	{
 		// The external reservation is the last throwing operation. Both the

@@ -84,7 +84,8 @@ class PendingOutput final : public FrameOutput
 FramePrediction Submit(wire::test::Fixture& fixture, std::shared_ptr<const FrameOutput> output)
 {
 	FramePrediction prediction;
-	Require(fixture.session->Scheduler().GrantPermits() == XR_SUCCESS &&
+	Require((!fixture.session->Scheduler().Snapshot().paused ||
+			 fixture.session->Scheduler().GrantPermits() == XR_SUCCESS) &&
 				fixture.session->WaitFrame(prediction) == XR_SUCCESS && fixture.session->BeginFrame() == XR_SUCCESS,
 			"Issue CPU live-preview frame without capture reservation");
 	if (!output)
@@ -330,6 +331,36 @@ void CompleteSelectionAndClear()
 			"Selected clear mutated old immutable live reader");
 	Require(fixture.state->reads == 0, "Live selection/clear performed implicit readback");
 }
+void SourceAge()
+{
+	wire::test::Fixture fixture(ExecutionMode::RealTime);
+	Client client(fixture.service);
+	const auto resume = [&]
+	{
+		Require(fixture.session->Scheduler().Resume(std::chrono::steady_clock::now(),
+													fixture.session->Scheduler().Snapshot().nextAdmission) ==
+					XR_SUCCESS,
+				"Resume age fixture");
+	};
+	resume();
+	auto prediction = Submit(fixture, NewOutput(fixture, CompletionStatus::Complete));
+	Through(fixture, prediction.displayTick);
+	const auto first = client.Preview().message.Find(tag::SourceAge)->AsI64();
+	Require(first && *first >= 0, "Live prediction omitted mapped source age");
+	std::this_thread::sleep_for(std::chrono::milliseconds(60));
+	fixture.session->Display().Step();
+	const auto repeated = client.Preview().message.Find(tag::SourceAge)->AsI64();
+	Require(repeated && *repeated >= *first + 30000000, "Display repeat reset original game-frame age");
+	fixture.session->Scheduler().Pause();
+	Require(client.Preview().message.Find(tag::SourceAge)->AsI64() == -1, "Paused frame retained a live age");
+	resume();
+	Require(client.Preview().message.Find(tag::SourceAge)->AsI64() == -1, "Clock rebase relabelled an old prediction");
+	prediction = Submit(fixture, NewOutput(fixture, CompletionStatus::Complete));
+	Through(fixture, prediction.displayTick);
+	const auto fresh = client.Preview().message.Find(tag::SourceAge)->AsI64();
+	Require(fresh && *fresh >= 0, "New frame did not recover after clock rebase");
+}
+
 void ValidationAndRollback()
 {
 	wire::test::Fixture fixture;
@@ -364,7 +395,8 @@ void ValidationAndRollback()
 			"Full table rejected already retained selection");
 	const auto next = Submit(fixture, NewOutput(fixture, CompletionStatus::Complete));
 	Through(fixture, next.displayTick);
-	Require(Error(client.Preview()) == wire::ErrorCode::Capacity && fixture.state->retains == SnapshotBudget::Capacity() + 1,
+	Require(Error(client.Preview()) == wire::ErrorCode::Capacity &&
+				fixture.state->retains == SnapshotBudget::Capacity() + 1,
 			"Live reader table capacity was checked after native provider retention");
 	client.Call(wire::OpCode::ReleaseImage, {wire::Field::U64(tag::ImageReaderId, readers.front())});
 	Require(Error(client.Preview()) == wire::ErrorCode::Ok && fixture.state->retains == SnapshotBudget::Capacity() + 2,
@@ -382,6 +414,7 @@ int main()
 		ReaderReleasePreservesImageTick();
 		SelectionLifetimeAndNoAdmission();
 		CompleteSelectionAndClear();
+		SourceAge();
 		ValidationAndRollback();
 		std::cout << "PASS live-preview selected-source CPU service contracts; no GPU qualification\n";
 		return 0;

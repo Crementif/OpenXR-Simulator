@@ -2,6 +2,7 @@
 
 #include "graphics/FrameOutput.h"
 #include "graphics/FramePool.h"
+#include "graphics/ImageRegion.h"
 #include "graphics/SharedImageTypes.h"
 #include "graphics/backends/vulkan/VulkanExternal.h"
 
@@ -126,7 +127,8 @@ class VulkanInspectionFrame final : public FrameOutput
 	// This submits on the owned inspection queue. No host XR call is required,
 	// including after the borrowed application device has been destroyed.
 	std::shared_ptr<VulkanImageReadback> Export(std::optional<std::uint32_t> layer = {},
-												std::shared_ptr<const void> retirementOwner = {}) const;
+										std::shared_ptr<const void> retirementOwner = {},
+										std::optional<ImageRegion> region = {}) const;
 	// Weak queue callback: collection keeps no queue alive and submits no work.
 	std::function<void()> Collector() const;
 	ImageCompletionKind CompletionKind() const noexcept;

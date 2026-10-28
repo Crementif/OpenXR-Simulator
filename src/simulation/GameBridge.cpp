@@ -54,10 +54,55 @@ static bool Terminal(GameCommandPhase phase)
 	return phase != GameCommandPhase::Queued && phase != GameCommandPhase::Delivered;
 }
 
-GameBridge::GameBridge()
+GameBridge::GameBridge(std::size_t observationCapacity)
 {
+	if (!observationCapacity || observationCapacity > 4096)
+		throw std::invalid_argument("Game observation capacity must be in [1, 4096]");
+	m_observations.resize(observationCapacity);
 	m_commands.reserve(128);
 	m_sources.reserve(64);
+}
+void GameBridge::Observe(GameObservation observation) noexcept
+{
+	if (m_observationNext == std::numeric_limits<std::uint64_t>::max())
+	{
+		m_observationFailed = true;
+		return;
+	}
+	observation.sequence = m_observationNext;
+	observation.game = m_state.game;
+	observation.revision = m_state.revision;
+	observation.capabilities = m_state.capabilities;
+	try
+	{
+		observation.time = ReadNativeClockSample();
+	}
+	catch (...)
+	{
+		// Keep the event, but do not invent a timestamp when correlation fails.
+	}
+	m_observations[m_observationNext % m_observations.size()] = std::move(observation);
+	++m_observationNext;
+}
+GameObservationPage GameBridge::Observations(std::optional<std::uint64_t> offset, std::size_t count) const
+{
+	if (count > 16)
+		throw std::invalid_argument("Game observation pages contain at most 16 records");
+	std::lock_guard lock(m_mutex);
+	GameObservationPage page;
+	page.state = m_state;
+	page.total = m_observationNext;
+	page.floor = page.total > m_observations.size() ? page.total - m_observations.size() : 0;
+	if (offset && *offset > page.total)
+		throw std::invalid_argument("Game observation offset is beyond the journal");
+	page.offset = std::max(offset.value_or(page.floor), page.floor);
+	page.gap = offset && *offset < page.floor;
+	page.failed = m_observationFailed;
+	page.next = page.offset + std::min<std::uint64_t>(count, page.total - page.offset);
+	page.observations.reserve(static_cast<std::size_t>(page.next - page.offset));
+	for (auto cursor = page.offset; cursor < page.next; ++cursor)
+		page.observations.push_back(*m_observations[cursor % m_observations.size()]);
+	return page;
 }
 std::uint64_t GameBridge::Register(std::uint32_t capabilities)
 {
@@ -72,11 +117,22 @@ std::uint64_t GameBridge::Register(std::uint32_t capabilities)
 	m_commands.clear();
 	m_sources.clear();
 	m_lastGame = m_state.game;
+	GameObservation registered;
+	registered.kind = GameObservationKind::Registered;
+	Observe(std::move(registered));
 	return m_state.game;
 }
 void GameBridge::Close() noexcept
 {
 	std::lock_guard lock(m_mutex);
+	if (m_closed)
+		return;
+	if (m_state.game)
+	{
+		GameObservation closed;
+		closed.kind = GameObservationKind::Closed;
+		Observe(std::move(closed));
+	}
 	m_closed = true;
 	for (auto& command : m_commands)
 		if (!Terminal(command.phase))
@@ -87,8 +143,11 @@ void GameBridge::Close() noexcept
 void GameBridge::Unregister(std::uint64_t game) noexcept
 {
 	std::lock_guard lock(m_mutex);
-	if (m_state.game != game)
+	if (!game || m_state.game != game)
 		return;
+	GameObservation unregistered;
+	unregistered.kind = GameObservationKind::Unregistered;
+	Observe(std::move(unregistered));
 	for (auto& command : m_commands)
 		if (!Terminal(command.phase))
 			command.phase = GameCommandPhase::Interrupted;
@@ -191,8 +250,11 @@ bool GameBridge::Publish(std::uint64_t game, std::string telemetry)
 	std::lock_guard lock(m_mutex);
 	if (!game || m_state.game != game || m_state.revision == std::numeric_limits<std::uint64_t>::max())
 		return false;
+	GameObservation observation;
+	observation.payload = telemetry;
 	m_state.telemetry = std::move(telemetry);
 	++m_state.revision;
+	Observe(std::move(observation));
 	return true;
 }
 void GameBridge::Disconnect(std::uint64_t source, bool retire) noexcept

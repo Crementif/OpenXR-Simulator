@@ -5,7 +5,7 @@ import struct
 import math
 
 MAGIC = 0x32525853
-MAJOR, MINOR = 1, 7
+MAJOR, MINOR = 1, 16
 HEADER = struct.Struct('<IHHHHIQII')
 TLV = struct.Struct('<HHI')
 MAX_PAYLOAD, MAX_FIELDS = 1024 * 1024, 256
@@ -63,6 +63,13 @@ class OpCode(IntEnum):
     READ_FRAME_HISTORY = 48
     CONFIGURE_PREVIEWS = 50
     START_VIDEO_EXPORT = 51
+    ATTACH_LIVE_INPUT = 52
+    SUBMIT_LIVE_INPUT = 53
+    DETACH_LIVE_INPUT = 54
+    READ_LIVE_CLOCK = 55
+    PUBLISH_DISPLAY_PREDICTION = 56
+    ACKNOWLEDGE_RECORDING = 57
+    READ_GAME_OBSERVATIONS = 58
 
 
 class ErrorCode(IntEnum):
@@ -112,6 +119,15 @@ class Capability(IntFlag):
     CONTINUOUS_PREVIEWS = 1 << 27
     CONFIGURABLE_PREVIEWS = 1 << 28
     VIDEO_EXPORT = 1 << 29
+    LIVE_INPUT = 1 << 30
+    EXTERNAL_DISPLAY_TIMING = 1 << 31
+    TRACKER_COLLECTIONS = 1 << 32
+    BODY_OBSERVATIONS = 1 << 33
+    BODY_REPLAY_TIMING = 1 << 34
+    LIVE_BODY_INPUT = 1 << 35
+    RECORDING_DRAIN = 1 << 36
+    GAME_OBSERVATIONS = 1 << 37
+    IMAGE_REGION_EXPORT = 1 << 38
 
 
 class CommandKind(IntEnum):
@@ -241,6 +257,25 @@ class Tag(IntEnum):
     MEDIA_TYPE = 214
     FIRST_FRAME = 215
     LAST_FRAME = 216
+    AIM_POSE = 217
+    ATTACHMENT_ID = 218
+    SAMPLE_SEQUENCE = 219
+    OBSERVED_TIME = 220
+    PREDICTION_TIME = 221
+    MAX_SAMPLE_AGE_MS = 222
+    CLOCK_DOMAIN = 223
+    CLOCK_REVISION = 224
+    NATIVE_TIME = 225
+    RUNTIME_TIME_BEFORE = 226
+    RUNTIME_TIME_AFTER = 227
+    CLOCK_RESOLUTION = 228
+    SOURCE_AGE = 229
+    TRACKER_COLLECTION = 230
+    BODY_OBSERVATION = 231
+    BODY_OBSERVATION_ORIGIN = 232
+    RECORDING_ID = 233
+    RECORDING_DRAIN = 234
+    IMAGE_REGION = 235
     PREVIEW_BUDGET = 209
     PREVIEW_FRAME_IDS = 210
     FRAMES = 196
@@ -457,7 +492,7 @@ class Message:
 
 _TEXT = {Tag.MEDIA_TYPE, Tag.PREVIEW_ERROR, Tag.PRESENTATION_POLICY, Tag.DETAIL, Tag.CLIENT_NAME, Tag.PHASE, Tag.PROGRESS, Tag.STAGE, Tag.OUTPUT_DISPOSITION, Tag.DROP_REASON, Tag.KIND,
          Tag.RETENTION_RESULT, Tag.REVISION_KIND, Tag.PRODUCER_PHASE, Tag.CONSUMER_PHASE}
-_BOOL = {Tag.ADVANCE_DISPLAY, Tag.REPROJECTED, Tag.RUNNING, Tag.CLOSED, Tag.MANUAL, Tag.DUPLICATE, Tag.WAIT_PENDING, Tag.PAUSED, Tag.IMAGE_AVAILABLE, Tag.RELEASED, Tag.DEDICATED, Tag.END, Tag.TAKE_CONTROL, Tag.ENABLED, Tag.OVERFLOW, Tag.RECORDING, Tag.RESCHEDULED, Tag.LOOP}
+_BOOL = {Tag.RECORDING_DRAIN, Tag.ADVANCE_DISPLAY, Tag.REPROJECTED, Tag.RUNNING, Tag.CLOSED, Tag.MANUAL, Tag.DUPLICATE, Tag.WAIT_PENDING, Tag.PAUSED, Tag.IMAGE_AVAILABLE, Tag.RELEASED, Tag.DEDICATED, Tag.END, Tag.TAKE_CONTROL, Tag.ENABLED, Tag.OVERFLOW, Tag.RECORDING, Tag.RESCHEDULED, Tag.LOOP}
 _U32 = {Tag.SNAPSHOT_BUDGET_MIB, Tag.OWNERSHIP, Tag.ACTIVE_ACTIONS, Tag.ERROR, Tag.MINOR, Tag.PAYLOAD_LIMIT, Tag.LOOKAHEAD, Tag.COMMAND_KIND, Tag.CAPTURE_KIND,
         Tag.LAYER, Tag.VIEW, Tag.LAYER_COUNT, Tag.PERMITS, Tag.FORMAT, Tag.WIDTH, Tag.HEIGHT,
         Tag.DEPTH, Tag.ARRAY_LAYERS, Tag.MIP_LEVELS, Tag.SAMPLES, Tag.USAGE, Tag.TILING, Tag.IMAGE_TYPE,
@@ -509,11 +544,17 @@ def to_dict(fields, *, context=None):
             value = field.as_u64() if context == Tag.RETENTION else field.as_bool()
         elif tag == Tag.APPLIED_INPUT:
             entries = decode_fields(field.value)
-            commands = [entry for identity, entry in entries.items() if 1 <= identity <= 11]
-            value = to_dict(entry for identity, entry in entries.items() if identity > 11)
+            commands = [entry for identity, entry in entries.items() if 1 <= identity <= 11 or identity == Tag.TRACKER_COLLECTION]
+            value = to_dict(entry for identity, entry in entries.items() if identity > 11 and identity != Tag.TRACKER_COLLECTION)
             value['commands'] = _decode_commands(commands)
         elif tag == Tag.INPUT_CONTEXT:
             value = _decode_commands(decode_fields(field.value).values())
+        elif tag == Tag.IMAGE_REGION:
+            components = _ordered_fields(field.value)
+            if len(components) != 6:
+                raise ProtocolError('Image region requires six components')
+            value = dict(zip(('x', 'y', 'width', 'height', 'output_width', 'output_height'),
+                             (component.as_u32() for component in components)))
         elif tag == Tag.IMAGE_VIEWS:
             value = []
             for entry in _ordered_fields(field.value):

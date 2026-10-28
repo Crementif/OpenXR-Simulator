@@ -1,6 +1,8 @@
 #include "simulation/TrackingSystem.h"
 #include "Pch.h"
 #include "math/Math.h"
+#include "simulation/ViewConfiguration.h"
+#include "simulation/BodyObservation.h"
 
 #include <cmath>
 #include <numbers>
@@ -30,7 +32,10 @@ TrackingSnapshot TrackingSystem::Evaluate(RuntimeTime time, const TrackingState&
 {
 	if (time.value.count() <= 0 || !std::isfinite(state.gaze.yaw) || !std::isfinite(state.gaze.pitch))
 		throw std::invalid_argument("Invalid tracking time or gaze");
+	if (state.trackers.size() > MaxTrackerDevices)
+		throw std::invalid_argument("Tracker inventory exceeds capacity");
 	TrackingSnapshot snapshot;
+	snapshot.trackers.resize(state.trackers.size());
 	snapshot.time = time;
 	snapshot.input = state;
 	if (state.body.rootPose)
@@ -40,13 +45,29 @@ TrackingSnapshot TrackingSystem::Evaluate(RuntimeTime time, const TrackingState&
 	snapshot.proportions = body.Proportions();
 	snapshot.head = Normalize(state.head, time);
 	snapshot.input.head = snapshot.head;
+	if (snapshot.input.eyeViews)
+		for (std::size_t eye = 0; eye < 2; ++eye)
+		{
+			if (!ValidViewFieldOfView(snapshot.input.eyeViews->fovs[eye]))
+				throw std::invalid_argument("Invalid observed eye field of view");
+			snapshot.input.eyeViews->poses[eye] = Normalize(snapshot.input.eyeViews->poses[eye], time);
+		}
 	for (std::size_t index = 0; index < snapshot.controllers.size(); ++index)
 	{
 		snapshot.controllers[index] = state.controllers[index];
 		auto& controller = snapshot.controllers[index];
 		controller.pose = Normalize(controller.pose, time);
+		if (controller.aim)
+		{
+			controller.aim = Normalize(*controller.aim, time);
+			snapshot.input.controllers[index].aim = controller.aim;
+		}
 		if (!controller.connected || !state.focused)
+		{
 			controller.pose.flags = 0;
+			if (controller.aim)
+				controller.aim->flags = 0;
+		}
 		snapshot.input.controllers[index].pose = Normalize(state.controllers[index].pose, time);
 	}
 	for (auto& override : snapshot.input.body.joints)
@@ -68,7 +89,13 @@ TrackingSnapshot TrackingSystem::Evaluate(RuntimeTime time, const TrackingState&
 		if (snapshot.gaze.flags & ValidPoseFlags)
 			snapshot.gaze.eyeGazeSampleTime = time;
 	}
-	snapshot.body = body.Evaluate(snapshot.head, snapshot.input.body, time, state.focused);
+	if (state.bodyObservation)
+	{
+		snapshot.input.bodyObservation = NormalizeBodyObservation(*state.bodyObservation);
+		snapshot.body = EvaluateBodyObservation(*snapshot.input.bodyObservation, state.focused);
+	}
+	else
+		snapshot.body = body.Evaluate(snapshot.head, snapshot.input.body, time, state.focused);
 	auto trackerHead = snapshot.head;
 	trackerHead.flags = TrackedPoseFlags;
 	auto trackerControls = snapshot.input.body;
@@ -78,22 +105,24 @@ TrackingSnapshot TrackingSystem::Evaluate(RuntimeTime time, const TrackingState&
 	for (auto& joint : trackerControls.joints)
 		if (joint)
 			joint->tracked = true;
-	auto trackerBody = body.Evaluate(trackerHead, trackerControls, time, state.focused);
+	auto trackerBody = state.bodyObservation ? snapshot.body : body.Evaluate(trackerHead, trackerControls, time, state.focused);
 	for (std::size_t index = 0; index < snapshot.trackers.size(); ++index)
 	{
 		const auto& device = state.trackers[index];
 		if (!device.identity.value)
 			throw std::invalid_argument("Missing tracker identity");
+		if (static_cast<unsigned>(device.role) > static_cast<unsigned>(TrackerRole::Keyboard))
+			throw std::invalid_argument("Invalid tracker role");
 		for (std::size_t previous = 0; previous < index; ++previous)
 		{
 			const auto& other = state.trackers[previous];
 			if (other.identity == device.identity ||
-				(other.connected && device.connected && other.role == device.role &&
-				 device.role != TrackerRole::Unassigned))
-				throw std::invalid_argument("Duplicate tracker identity or connected role");
+				(!device.sourcePath.View().empty() && other.sourcePath == device.sourcePath))
+				throw std::invalid_argument("Duplicate tracker identity or physical source");
 		}
 		auto& tracker = snapshot.trackers[index];
 		tracker.device = device;
+		(void)Normalize({XrPosef{{0, 0, 0, 1}, {}}, device.poseFlags}, time);
 		if (device.poseOverride && device.jointOffset)
 			throw std::invalid_argument("Tracker cannot have both world and joint-relative poses");
 		if (device.jointOffset)
@@ -109,6 +138,7 @@ TrackingSnapshot TrackingSystem::Evaluate(RuntimeTime time, const TrackingState&
 			tracker.pose.pose = Compose(tracker.pose.pose, *snapshot.input.trackers[index].jointOffset);
 		if (device.poseOverride)
 			tracker.pose = Normalize({*device.poseOverride, TrackedPoseFlags}, time);
+		tracker.pose.flags &= device.poseFlags;
 		if (!device.connected || !state.focused)
 			tracker.pose.flags = 0;
 		else if (!device.tracked)

@@ -123,6 +123,8 @@ XrResult Session::Begin(const XrSessionBeginInfo& info, const FrameSchedulerConf
 	++m_revision;
 	m_interaction.Reset();
 	publication.Commit();
+	m_liveInputFailed = false;
+	m_externalDisplaySource.reset();
 	m_state.running = true;
 	m_state.lastIssued = {};
 	m_state.lastSubmitted = {};
@@ -159,7 +161,10 @@ XrResult Session::End(RuntimeTime time)
 	m_publication.Stop();
 	Transition(XR_SESSION_STATE_IDLE, time);
 	Transition(XR_SESSION_STATE_EXITING, time);
+	m_liveInputWorker.request_stop();
 	lock.unlock();
+	if (m_liveInputWorker.joinable())
+		m_liveInputWorker.join();
 	m_display.Stop();
 	retiredHistory = m_captures.Images().Clear();
 	return XR_SUCCESS;
@@ -216,7 +221,10 @@ void Session::Close(std::optional<SessionGeneration> expectedGeneration)
 	m_body.Clear();
 	m_spaces.Clear();
 	m_instance.Events().RemoveSession(m_handle);
+	m_liveInputWorker.request_stop();
 	lock.unlock();
+	if (m_liveInputWorker.joinable())
+		m_liveInputWorker.join();
 	m_display.Stop();
 	retiredHistory = m_captures.Images().Clear();
 	m_captures.Retire();
@@ -506,6 +514,8 @@ XrResult Session::SyncActions(const XrActionsSyncInfo& info,
 	const auto result = m_interaction.Sync(info, input, m_state.time, m_state.state == XR_SESSION_STATE_FOCUSED);
 	if (XR_SUCCEEDED(result))
 		m_interaction.PublishProfileChange(m_publication.TakeProfileChange(), m_state.running);
+	if (result == XR_SUCCESS)
+		m_publication.Commands().AcknowledgeLiveInput();
 	return result;
 }
 
@@ -759,6 +769,12 @@ void Session::StopPoseSequence(CommandSource source)
 void Session::ReleaseCommandSource(CommandSource source, bool retire)
 {
 	std::lock_guard lock(m_mutex);
+	if (m_externalDisplaySource == source)
+	{
+		m_scheduler.ReleaseExternalPrediction(source.id);
+		m_display.ReleaseExternalPrediction(source.id);
+		m_externalDisplaySource.reset();
+	}
 	if (m_publication.ReleaseSource(source, retire) && m_state.running &&
 		(m_state.state == XR_SESSION_STATE_VISIBLE || m_state.state == XR_SESSION_STATE_SYNCHRONIZED))
 		Transition(XR_SESSION_STATE_FOCUSED, m_state.time);
@@ -777,12 +793,12 @@ XrResult Session::ConfigureCommands(std::uint64_t seed, std::optional<CommandCon
 	return XR_SUCCESS;
 }
 
-void Session::StartCommandRecording()
+void Session::StartCommandRecording(bool drain)
 {
 	std::scoped_lock lock(m_mutex, m_publicationMutex);
 	if (m_state.closed || !m_state.running)
 		throw std::logic_error("Cannot record a stopped session");
-	m_publication.StartRecording(m_spaces.RecordingState(m_state.time));
+	m_publication.StartRecording(m_spaces.RecordingState(m_state.time), drain);
 }
 
 CommandConfiguration Session::CommandConfigurationSnapshot() const
@@ -826,9 +842,11 @@ XrResult Session::LocateViews(const XrViewLocateInfo& info, XrViewState* state, 
 	if (info.viewConfigurationType != active)
 		return XR_ERROR_VALIDATION_FAILURE;
 	const RuntimeTime time{Duration{info.displayTime}};
-	auto sample = m_publication.Tracking().Sample(time).value_or(TrackingSnapshot{});
+	auto sample = m_publication.Tracking().Sample(time);
+	if (!sample)
+		sample.emplace();
 	ViewQuerySnapshot query;
-	const auto result = simxr::LocateViews(m_spaces, m_publication.ConfigurationAt(time), sample, info, state, capacity,
+	const auto result = simxr::LocateViews(m_spaces, m_publication.ConfigurationAt(time), *sample, info, state, capacity,
 										   count, views, &m_instance.Extensions(), &query);
 	if (XR_SUCCEEDED(result) && capacity)
 		m_publication.RecordViewQuery(std::move(query));

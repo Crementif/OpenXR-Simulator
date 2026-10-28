@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <optional>
 #include <string>
@@ -12,6 +13,9 @@
 
 namespace simxr::automation
 {
+// Local source files are independent of the per-message IPC payload budget.
+inline constexpr std::size_t MaxRigSourceBytes = 64 * 1024 * 1024;
+
 enum class RigPhase
 {
 	Idle,
@@ -42,6 +46,7 @@ struct RigOptions
 	std::string source, name = "rig.luau";
 	std::chrono::milliseconds deadline{30000};
 	std::size_t memoryLimit = 64 * 1024 * 1024;
+	std::filesystem::path recordingArchive;
 };
 // The transport belongs to this runner and is called only on its worker. It
 // must bound each exchange and preserve retry identity after a timeout.

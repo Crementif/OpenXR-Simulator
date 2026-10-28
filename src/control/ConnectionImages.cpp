@@ -93,6 +93,31 @@ static Field Nested(std::uint16_t name, std::vector<Field> fields)
 {
 	return Field::Bytes(name, EncodeFields(fields));
 }
+static ImageRegion ReadRegion(const Field& field)
+{
+	const auto decoded = DecodeFields(field.value);
+	if (decoded.error != DecodeError::None)
+		throw ConnectionImages::RequestFailure{ErrorCode::Invalid, "Invalid image region"};
+	Message message;
+	message.fields = decoded.fields;
+	constexpr std::array<std::uint16_t, 6> known{1, 2, 3, 4, 5, 6};
+	if (message.ValidateFields(known))
+		throw ConnectionImages::RequestFailure{ErrorCode::UnsupportedField, "Unknown image region field"};
+	return {U32(message, 1), U32(message, 2), U32(message, 3), U32(message, 4), U32(message, 5), U32(message, 6)};
+}
+static Field EncodeRegion(const ImageRegion& region)
+{
+	return Nested(tag::ImageRegion, {Field::U32(1, region.x, true), Field::U32(2, region.y, true),
+		Field::U32(3, region.width, true), Field::U32(4, region.height, true),
+		Field::U32(5, region.outputWidth, true), Field::U32(6, region.outputHeight, true)});
+}
+static void ExportSelection(Message& response, const ImageExport& value)
+{
+	if (const auto layer = value.SourceLayer())
+		response.fields.push_back(Field::U32(tag::Layer, *layer));
+	if (const auto region = value.Region())
+		response.fields.push_back(EncodeRegion(*region));
+}
 static Field Key(std::uint16_t name, FrameKey key)
 {
 	return Nested(name, {Field::U64(tag::Generation, key.generation.value), Field::U64(tag::FrameId, key.frame.value)});
@@ -303,13 +328,18 @@ Message ConnectionImages::Dispatch(const ControlPacket& incoming, ControlPacket&
 			throw RequestFailure{ErrorCode::UnsupportedCommand, "Image export unavailable for this image"};
 		m_exports.CheckCapacity();
 		const auto layer = request.Find(tag::Layer) ? std::optional{U32(request, tag::Layer)} : std::nullopt;
-		auto readback = image->value->Export(layer);
+		const auto* regionField = request.Find(tag::ImageRegion);
+		if (regionField && minor < 16)
+			throw RequestFailure{ErrorCode::UnsupportedField, "Image region export requires protocol minor 16"};
+		auto readback = regionField ? image->value->ExportRegion(layer, ReadRegion(*regionField))
+									: image->value->Export(layer);
 		if (!readback)
 			throw RequestFailure{ErrorCode::Internal, "Image provider returned no export"};
 		publication.m_retired.m_value = readback;
 		const auto entry = m_exports.Add(std::move(readback), image->source, image->id);
 		publication.Track(ResourceKind::Export, entry->id);
 		response.fields.push_back(Field::U64(tag::ExportId, entry->id));
+		ExportSelection(response, *entry->value);
 		response.fields.push_back(EncodeImageDescription(entry->value->Description()));
 		response.fields.push_back(Field::U64(tag::TotalBytes, entry->value->ByteSize()));
 		response.fields.push_back(Field::Text(tag::Phase, CompletionName(entry->value->PollCompletion())));
@@ -337,6 +367,7 @@ Message ConnectionImages::Dispatch(const ControlPacket& incoming, ControlPacket&
 	Source(response, entry->source);
 	response.fields.push_back(Field::U64(tag::ImageReaderId, entry->reader));
 	response.fields.push_back(Field::U64(tag::ExportId, entry->id));
+	ExportSelection(response, *entry->value);
 	if (entry->value->MediaType() == "image/raw")
 		response.fields.push_back(EncodeImageDescription(entry->value->Description()));
 	else

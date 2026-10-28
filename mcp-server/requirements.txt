@@ -1,3 +1,4 @@
+# Third-party dependencies only; install simxr-control separately or install the MCP package.
 mcp>=1.0.0,<2
 Pillow>=10.0.0
 numpy>=1.24.0

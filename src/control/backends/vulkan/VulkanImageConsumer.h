@@ -18,7 +18,7 @@ class VulkanImageConsumer
   public:
 	VulkanImageConsumer(std::shared_ptr<VulkanDevice> device, std::span<const char* const> enabledExtensions,
 						std::uint32_t apiVersion, ImageCompletionKind completion = ImageCompletionKind::Fence,
-						bool timelineEnabled = false);
+						bool timelineEnabled = false, bool companionAdmission = false);
 	~VulkanImageConsumer();
 	VulkanImageConsumer(const VulkanImageConsumer&) = delete;
 	VulkanImageConsumer& operator=(const VulkanImageConsumer&) = delete;

@@ -1,18 +1,22 @@
 #include "../TestSupport.h"
-#include "math/Math.h"
 #include "automation/Recording.h"
-#include "automation/RigRunner.h"
+#include "automation/RecordingArchive.h"
+#include "automation/RecordingRange.h"
 #include "automation/RigProgress.h"
 #include "automation/RigReport.h"
+#include "automation/RigRunner.h"
 #include "control/ControlSchema.h"
 #include "control/ControlService.h"
 #include "control/InspectionDocument.h"
 #include "control/SimulationControl.h"
+#include "math/Math.h"
 #include "runtime/Runtime.h"
+#include "simulation/BodyModel.h"
 
 #include <algorithm>
 #include <atomic>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 #include <limits>
 #include <locale>
@@ -23,13 +27,14 @@ namespace wire = control;
 
 struct Fixture
 {
+	FramePool pool{8};
 	Runtime runtime{ExtensionRegistry{std::span<const ExtensionDefinition>{}}};
 	Runtime::InstanceRef instance;
 	Runtime::SessionRef session;
 	wire::ControlService service{runtime};
 	wire::ConnectionId connection;
 	std::uint64_t request = 0;
-	Fixture()
+	explicit Fixture(bool capture = false)
 	{
 		XrInstanceCreateInfo create{XR_TYPE_INSTANCE_CREATE_INFO};
 		std::strcpy(create.applicationInfo.applicationName, "Luau runner integration");
@@ -37,6 +42,8 @@ struct Fixture
 		Require(runtime.CreateInstance(&create, instance) == XR_SUCCESS &&
 					runtime.CreateSession(instance, session) == XR_SUCCESS,
 				"Fixture create");
+		if (capture)
+			Require(session->ConfigureCapturePool(pool) == XR_SUCCESS, "Configure replay capture pool");
 		FrameSchedulerConfig config;
 		config.mode = ExecutionMode::Deterministic;
 		XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
@@ -155,41 +162,81 @@ void CheckResumeClearsSteps()
 	Require(deadline, "Resume left a step permit that bypassed a later pause");
 }
 
+void CheckSteppedExecutionPhase()
+{
+	Fixture fixture;
+	std::atomic<bool> entered = false, release = false;
+	automation::RigRunner runner([&](auto opcode, auto fields)
+	{
+		if (opcode == wire::OpCode::SimulationStatus && !entered.exchange(true))
+			Eventually([&] { return release.load(); }, "State interception was not released");
+		return fixture.Exchange(opcode, std::move(fields));
+	});
+	runner.Start(fixture.Options("simxr.state()\nsimxr.state()\nwhile true do end"));
+	try
+	{
+		Eventually([&] { return entered.load(); }, "Rig did not enter its first binding");
+		runner.Pause();
+		release = true;
+		Eventually([&] { return runner.Snapshot().phase == automation::RigPhase::Paused; },
+			"Rig did not reach a paused binding");
+		runner.Step();
+		Eventually([&] { return runner.Snapshot().phase == automation::RigPhase::Running; },
+			"Stepped Luau execution was reported as paused");
+		runner.Cancel();
+		runner.Join();
+		Require(runner.Snapshot().phase == automation::RigPhase::Cancelled, "Stepped run did not cancel");
+	}
+	catch (...)
+	{
+		release = true;
+		runner.Cancel();
+		runner.Join();
+		throw;
+	}
+}
+
 void CheckCleanupFailures()
 {
-	for (const auto failed : {wire::OpCode::ReleaseImageWindow, wire::OpCode::ReleaseInspection,
-		wire::OpCode::Relinquish})
+	for (const auto failed :
+		 {wire::OpCode::ReleaseImageWindow, wire::OpCode::ReleaseInspection, wire::OpCode::Relinquish})
 	{
 		Fixture fixture;
 		bool attempted = false, inputsReleased = false;
-		automation::RigRunner runner([&](auto opcode, auto fields)
-		{
-			if (opcode == wire::OpCode::ReleaseControl)
-				inputsReleased = true;
-			if (opcode == failed)
+		automation::RigRunner runner(
+			[&](auto opcode, auto fields)
 			{
-				attempted = true;
-				wire::Message response;
-				response.fields = {wire::Field::U32(wire::tag::Error, static_cast<std::uint32_t>(wire::ErrorCode::Internal)),
-					wire::Field::Text(wire::tag::Detail, "injected cleanup failure")};
-				return response;
-			}
-			if (opcode == wire::OpCode::BeginImageWindow || opcode == wire::OpCode::InspectFrame)
-			{
-				wire::Message response;
-				response.fields = {wire::Field::U32(wire::tag::Error, 0),
-					wire::Field::U64(opcode == wire::OpCode::BeginImageWindow ? wire::tag::ImageWindowId : wire::tag::InspectionId, 42),
-					wire::Field::Bytes(wire::tag::Document, wire::InspectionValue::Object({}).Encode())};
-				return response;
-			}
-			return fixture.Exchange(opcode, std::move(fields));
-		});
-		runner.Start(fixture.Options(failed == wire::OpCode::ReleaseImageWindow ? "simxr.begin_image_window()" :
-			failed == wire::OpCode::ReleaseInspection ? "simxr.inspect('7')" : "simxr.pause()"));
+				if (opcode == wire::OpCode::ReleaseControl)
+					inputsReleased = true;
+				if (opcode == failed)
+				{
+					attempted = true;
+					wire::Message response;
+					response.fields = {
+						wire::Field::U32(wire::tag::Error, static_cast<std::uint32_t>(wire::ErrorCode::Internal)),
+						wire::Field::Text(wire::tag::Detail, "injected cleanup failure")};
+					return response;
+				}
+				if (opcode == wire::OpCode::BeginImageWindow || opcode == wire::OpCode::InspectFrame)
+				{
+					wire::Message response;
+					response.fields = {
+						wire::Field::U32(wire::tag::Error, 0),
+						wire::Field::U64(opcode == wire::OpCode::BeginImageWindow ? wire::tag::ImageWindowId
+																				  : wire::tag::InspectionId,
+										 42),
+						wire::Field::Bytes(wire::tag::Document, wire::InspectionValue::Object({}).Encode())};
+					return response;
+				}
+				return fixture.Exchange(opcode, std::move(fields));
+			});
+		runner.Start(fixture.Options(failed == wire::OpCode::ReleaseImageWindow	 ? "simxr.begin_image_window()"
+									 : failed == wire::OpCode::ReleaseInspection ? "simxr.inspect('7')"
+																				 : "simxr.pause()"));
 		runner.Join();
 		Require(attempted && inputsReleased && runner.Snapshot().phase == automation::RigPhase::Failed &&
-			runner.Snapshot().error.find("injected cleanup failure") != std::string::npos,
-			"Failed resource cleanup was hidden or prevented remaining cleanup");
+					runner.Snapshot().error.find("injected cleanup failure") != std::string::npos,
+				"Failed resource cleanup was hidden or prevented remaining cleanup");
 	}
 }
 
@@ -197,20 +244,22 @@ void CheckScriptValueBoundaries()
 {
 	Fixture fixture;
 	unsigned submissions = 0;
-	automation::RigRunner runner([&](auto opcode, auto fields)
-	{
-		if (opcode == wire::OpCode::SubmitSimulation)
-			++submissions;
-		if (opcode == wire::OpCode::SimulationStatus)
+	automation::RigRunner runner(
+		[&](auto opcode, auto fields)
 		{
-			wire::Message response;
-			const auto document = wire::EncodeFields(std::vector{wire::Field::Text(1, ""), wire::Field::U32(2, 999),
-				wire::Field::Bytes(3, {})});
-			response.fields = {wire::Field::U32(wire::tag::Error, 0), wire::Field::Bytes(wire::tag::Document, document)};
-			return response;
-		}
-		return fixture.Exchange(opcode, std::move(fields));
-	});
+			if (opcode == wire::OpCode::SubmitSimulation)
+				++submissions;
+			if (opcode == wire::OpCode::SimulationStatus)
+			{
+				wire::Message response;
+				const auto document = wire::EncodeFields(
+					std::vector{wire::Field::Text(1, ""), wire::Field::U32(2, 999), wire::Field::Bytes(3, {})});
+				response.fields = {wire::Field::U32(wire::tag::Error, 0),
+								   wire::Field::Bytes(wire::tag::Document, document)};
+				return response;
+			}
+			return fixture.Exchange(opcode, std::move(fields));
+		});
 	runner.Start(fixture.Options(R"(
 local ok, detail = pcall(simxr.state)
 assert(not ok and string.find(detail, 'Unknown inspection value type'))
@@ -230,7 +279,7 @@ end
 )"));
 	runner.Join();
 	Require(runner.Snapshot().phase == automation::RigPhase::Complete && submissions == 0,
-		"Malformed inspection, tracker anchor or nonrepresentable float escaped script validation");
+			"Malformed inspection, tracker anchor or nonrepresentable float escaped script validation");
 }
 
 void CheckReportText()
@@ -245,21 +294,24 @@ void CheckReportText()
 		for (std::size_t index = 0; index < invalid.size(); ++index)
 			expected += replacement;
 		Require(automation::SerializeRigJson(snapshot).find("\"error\":\"" + expected + "\"") != std::string::npos &&
-			automation::SerializeRigJunit(snapshot).find("message=\"" + expected + "\"") != std::string::npos,
-			"Invalid script UTF-8 corrupted a report");
+					automation::SerializeRigJunit(snapshot).find("message=\"" + expected + "\"") != std::string::npos,
+				"Invalid script UTF-8 corrupted a report");
 	}
 	automation::RigSnapshot snapshot;
 	snapshot.phase = automation::RigPhase::Failed;
 	snapshot.error = "\xc3\xa9\xf0\x9f\x98\x80";
 	Require(automation::SerializeRigJson(snapshot).find(snapshot.error) != std::string::npos &&
-		automation::SerializeRigJunit(snapshot).find(snapshot.error) != std::string::npos,
-		"Report damaged valid Unicode");
+				automation::SerializeRigJunit(snapshot).find(snapshot.error) != std::string::npos,
+			"Report damaged valid Unicode");
 	snapshot.error = "\xef\xbf\xbf\r\n\t";
 	Require(automation::SerializeRigJunit(snapshot).find(replacement + "&#13;&#10;&#9;") != std::string::npos,
-		"JUnit contains a forbidden XML character or loses attribute whitespace");
+			"JUnit contains a forbidden XML character or loses attribute whitespace");
 	struct GroupedNumbers : std::numpunct<char>
 	{
-		std::string do_grouping() const override { return "\3"; }
+		std::string do_grouping() const override
+		{
+			return "\3";
+		}
 	};
 	const auto previous = std::locale();
 	std::locale::global(std::locale{previous, new GroupedNumbers});
@@ -272,7 +324,11 @@ void CheckReportText()
 void CheckInputRecording()
 {
 	Fixture fixture;
-	automation::RigRunner runner([&](auto opcode, auto fields) { return fixture.Exchange(opcode, std::move(fields)); });
+	automation::RigRunner runner(
+		[&](auto opcode, auto fields)
+		{
+			return fixture.Exchange(opcode, std::move(fields));
+		});
 	runner.Start(fixture.Options(R"(
 assert(simxr.start_input_recording().active)
 local transaction = simxr.schedule({frame="1", commands={
@@ -289,11 +345,182 @@ assert(not pcall(function() simxr.read_input_recording(0, 17) end))
 	runner.Start(fixture.Options("simxr.start_input_recording() error('injected recording script failure')"));
 	runner.Join();
 	Require(runner.Snapshot().phase == automation::RigPhase::Failed &&
-		!fixture.session->Commands().Recorder().Snapshot(0, 0).active,
-		"Failed rig left input recording active");
+				!fixture.session->Commands().Recorder().Snapshot(0, 0).active,
+			"Failed rig left input recording active");
 	runner.Start(fixture.Options("simxr.start_input_recording() simxr.stop_input_recording()"));
 	runner.Join();
 	Require(runner.Snapshot().phase == automation::RigPhase::Complete, "Input recording ownership survived cleanup");
+}
+
+void CheckRecordedPlaytestOutcome()
+{
+	struct ArchiveDirectory
+	{
+		std::filesystem::path path =
+			std::filesystem::temp_directory_path() /
+			("simxr-sdk-playtest-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+		ArchiveDirectory()
+		{
+			Require(std::filesystem::create_directory(path), "Create private playtest directory");
+		}
+		~ArchiveDirectory()
+		{
+			std::error_code ignored;
+			std::filesystem::remove_all(path, ignored);
+		}
+	} directory;
+	Fixture captured;
+	std::unique_ptr<automation::RecordingArchiveWriter> archive;
+	automation::RigRunner recorder(
+		[&](auto opcode, auto fields)
+		{
+			if (opcode == wire::OpCode::StartRecording)
+				fields.push_back(wire::Field::Bool(wire::tag::RecordingDrain, true));
+			if (opcode == wire::OpCode::StopRecording)
+				fields.push_back(wire::Field::U64(wire::tag::RecordingId, archive->State().identity));
+			auto result = captured.Exchange(opcode, std::move(fields));
+			if (opcode == wire::OpCode::StartRecording)
+				archive = std::make_unique<automation::RecordingArchiveWriter>(directory.path / "take", result);
+			if (opcode == wire::OpCode::StopRecording)
+			{
+				auto fields =
+					std::vector{wire::Field::U64(wire::tag::Session, 1),
+								wire::Field::U64(wire::tag::Generation, captured.session->Snapshot().generation.value),
+								wire::Field::U64(wire::tag::RecordingId, archive->State().identity),
+								wire::Field::U64(wire::tag::Offset, 0), wire::Field::U64(wire::tag::Length, 16)};
+				const auto page = captured.Exchange(wire::OpCode::ReadRecording, std::move(fields));
+				Require(archive->Append(page) == 3, "SDK playtest archive lost captured input");
+				archive->Finish(result);
+			}
+			return result;
+		});
+	BodyObservation recordedBody;
+	recordedBody.jointSet = BodyJointSet::WithoutArmsBD;
+	recordedBody.located = true;
+	recordedBody.allJointPosesTracked = false;
+	recordedBody.requestedTime = RuntimeTime{Duration{100}};
+	for (const auto joint : BodyModel::JointMap(recordedBody.jointSet))
+		recordedBody.joints[static_cast<std::size_t>(joint)] = ObservedBodyJoint{IdentityPose(), ValidPoseFlags};
+	const auto bodyCommand = automation::EditableCommand(SetBodyControls{{}, recordedBody, RuntimeTime{Duration{120}}});
+	auto captureScript = std::string{R"(
+simxr.start_input_recording()
+local origin = simxr.schedule({frame="1", commands={
+    {kind="take_control", channel="head"},
+    {kind="take_control", channel="left_controls"},
+    {kind="take_control", channel="body"},
+    {kind="head_pose", position={0.25, 1.7, 0}},
+    BODY_COMMAND
+}})
+simxr.await_transaction(origin)
+local pressed = simxr.schedule({frame="2", commands={
+    {kind="controller_controls", hand=0, primary=true},
+}})
+simxr.await_transaction(pressed)
+local released = simxr.schedule({frame="3", commands={
+    {kind="controller_controls", hand=0, primary=false},
+}})
+simxr.await_transaction(released)
+simxr.stop_input_recording()
+)"};
+	captureScript.replace(captureScript.find("BODY_COMMAND"), std::string_view("BODY_COMMAND").size(), bodyCommand);
+	recorder.Start(captured.Options(std::move(captureScript)));
+	recorder.Join();
+	Require(recorder.Snapshot().phase == automation::RigPhase::Complete, recorder.Snapshot().error.c_str());
+	Require(archive && archive->State().complete, "SDK playtest archive did not finish");
+	archive.reset();
+	auto original = automation::ReadRecordingRange(directory.path / "take", FrameId{1}, FrameId{3});
+	Require(original.originFrame == FrameId{1} && original.transactions.size() == 2,
+			"Trim did not fold the captured prefix into the editable rig origin");
+	Require(original.originRuntimeTime.has_value(), "Trimmed application boundary has no runtime clock");
+
+	for (unsigned mode = 0; mode < 3; ++mode)
+	{
+		const bool edit = mode == 1, rejectReset = mode == 2;
+		auto recording = original;
+		if (edit)
+			for (auto& command : recording.initial)
+				if (auto* head = std::get_if<SetHeadPose>(&command))
+					head->value.pose.position.x = .75f;
+		Fixture replay(true);
+		SimxrGameBridgeApi api{};
+		api.size = sizeof(api);
+		Require(replay.runtime.Game().FillApi(1, api), "Replay game API unavailable");
+		const auto game = api.registerGame(api.context, SIMXR_GAME_CAN_RESET);
+		Require(game != 0, "Replay game registration failed");
+		bool reset = false, hit = false, bodyVerified = false;
+		unsigned presses = 0, advancedFrames = 0;
+		automation::RigRunner runner(
+			[&](auto opcode, auto fields)
+			{
+				wire::Message request;
+				request.requestId = wire::RequestId{++replay.request};
+				request.opcode = static_cast<std::uint16_t>(opcode);
+				request.fields = std::move(fields);
+				auto result = replay.service.Handle(replay.connection, request);
+				SimxrGameCommand command{};
+				if (api.poll(api.context, game, &command))
+				{
+					Require(command.kind == SIMXR_GAME_RESET &&
+								std::string_view(command.payload, command.payloadLength) == "checkpoint:target",
+							"Replay reset the wrong game checkpoint");
+					reset = !rejectReset;
+					hit = false;
+					presses = 0;
+					Require(api.publish(api.context, game, "miss", 4) &&
+								api.complete(api.context, game, command.id, rejectReset ? 0 : 1, nullptr, 0),
+							"Game reset acknowledgement failed");
+				}
+				// Run the simulated game only when the real debugger admits a frame.
+				if (replay.session->Scheduler().Snapshot().permits)
+				{
+					FramePrediction prediction;
+					Require(replay.session->WaitFrame(prediction) == XR_SUCCESS &&
+								replay.session->BeginFrame() == XR_SUCCESS,
+							"Replay frame admission failed");
+					++advancedFrames;
+					const auto applied = replay.session->Commands().At(prediction.id);
+					Require(reset && applied, "Replay advanced before the game's acknowledged reset");
+					if (const auto& body = applied->configuration.tracking.bodyObservation; body && !bodyVerified)
+					{
+						Require(body->requestedTime.value.count() == applied->runtimeTime.value.count() - 20,
+								"Generated replay failed to preserve body observation age in the new runtime clock");
+						bodyVerified = true;
+					}
+
+					if (applied->configuration.input.controllers[0].primary)
+					{
+						++presses;
+						hit |= applied->configuration.tracking.head.pose.position.x > .5f;
+					}
+					Require(api.publish(api.context, game, hit ? "hit" : "miss", hit ? 3 : 4),
+							"Game outcome publication failed");
+					Require(replay.session->EndFrame(prediction) == XR_SUCCESS, "Replay frame completion failed");
+				}
+				return result;
+			});
+		auto script = std::string{R"(
+local operation, game = simxr.game_command(1, "checkpoint:target")
+simxr.await_game(game, operation)
+)"} + automation::EditableRig(recording);
+		script += "\nsimxr.checkpoint('game outcome', simxr.game_state().telemetry == ";
+		script += edit ? "'hit')\n" : "'miss')\n";
+		auto options = replay.Options(std::move(script));
+		options.seed = recording.seed;
+		runner.Start(std::move(options));
+		runner.Join();
+		if (rejectReset)
+		{
+			Require(runner.Snapshot().phase == automation::RigPhase::Failed && !reset && advancedFrames == 0 &&
+						presses == 0 && runner.Snapshot().checkpoints.empty(),
+					"Rejected game reset still replayed or reported success");
+			api.unregisterGame(api.context, game);
+			continue;
+		}
+		Require(runner.Snapshot().phase == automation::RigPhase::Complete, runner.Snapshot().error.c_str());
+		Require(reset && bodyVerified && presses == 1 && hit == edit && runner.Snapshot().checkpoints.back().passed,
+				"Edited playtest did not change the SDK outcome or duplicated the button press");
+		api.unregisterGame(api.context, game);
+	}
 }
 
 void CheckLeaseRenewal()
@@ -315,12 +542,13 @@ void CheckLeaseRenewal()
 					std::this_thread::sleep_for(std::chrono::milliseconds{40});
 				return fixture.Exchange(opcode, std::move(fields));
 			});
-		auto options = fixture.Options("simxr.pause() for i = 1, 55 do simxr." + std::string(binding) + "() end simxr.resume()");
+		auto options =
+			fixture.Options("simxr.pause() for i = 1, 55 do simxr." + std::string(binding) + "() end simxr.resume()");
 		options.deadline = std::chrono::seconds{6};
 		runner.Start(std::move(options));
 		runner.Join();
 		Require(runner.Snapshot().phase == automation::RigPhase::Complete && renewals >= 2,
-			"Active rig lost its lease during status polling");
+				"Active rig lost its lease during status polling");
 	}
 }
 
@@ -389,53 +617,57 @@ void CheckImageWindowCleanup()
 		std::size_t releasedWindows = 0, releasedImages = 0, releasedExports = 0;
 		std::atomic<bool> begun = false;
 		constexpr std::uint64_t window = 9007199254740993ULL;
-		automation::RigRunner runner([&](auto opcode, auto fields)
-		{
-			wire::Message response;
-			response.fields.push_back(wire::Field::U32(wire::tag::Error, 0));
-			if (opcode == wire::OpCode::BeginImageWindow)
+		automation::RigRunner runner(
+			[&](auto opcode, auto fields)
 			{
-				begun = true;
-				response.fields.push_back(wire::Field::U64(wire::tag::ImageWindowId, window));
-				const auto document = wire::InspectionValue::Object({{"phase", wire::InspectionValue::Text("complete")}}).Encode();
-				response.fields.push_back(wire::Field::Bytes(wire::tag::Document,
-					mode == 0 ? std::span<const std::byte>{} : std::span<const std::byte>{document}));
-			}
-			else if (opcode == wire::OpCode::RetainWindowImage || opcode == wire::OpCode::ReleaseImageWindow)
-			{
-				wire::Message request;
-				request.fields = std::move(fields);
-				Require(!request.Find(wire::tag::Session) &&
-					request.Find(wire::tag::ImageWindowId)->AsU64() == window,
-					"Window operation lost its exact connection-owned identity");
-				if (opcode == wire::OpCode::ReleaseImageWindow)
-					++releasedWindows;
+				wire::Message response;
+				response.fields.push_back(wire::Field::U32(wire::tag::Error, 0));
+				if (opcode == wire::OpCode::BeginImageWindow)
+				{
+					begun = true;
+					response.fields.push_back(wire::Field::U64(wire::tag::ImageWindowId, window));
+					const auto document =
+						wire::InspectionValue::Object({{"phase", wire::InspectionValue::Text("complete")}}).Encode();
+					response.fields.push_back(
+						wire::Field::Bytes(wire::tag::Document, mode == 0 ? std::span<const std::byte>{}
+																		  : std::span<const std::byte>{document}));
+				}
+				else if (opcode == wire::OpCode::RetainWindowImage || opcode == wire::OpCode::ReleaseImageWindow)
+				{
+					wire::Message request;
+					request.fields = std::move(fields);
+					Require(!request.Find(wire::tag::Session) &&
+								request.Find(wire::tag::ImageWindowId)->AsU64() == window,
+							"Window operation lost its exact connection-owned identity");
+					if (opcode == wire::OpCode::ReleaseImageWindow)
+						++releasedWindows;
+					else
+						response.fields.push_back(wire::Field::U64(wire::tag::ImageReaderId, 41));
+				}
+				else if (opcode == wire::OpCode::StartExport)
+				{
+					response.fields.push_back(wire::Field::U64(wire::tag::ExportId, 42));
+					response.fields.push_back(wire::Field::U64(wire::tag::TotalBytes, 4));
+				}
+				else if (opcode == wire::OpCode::ExportInfo)
+					response.fields.push_back(wire::Field::Text(wire::tag::Phase, "complete"));
+				else if (opcode == wire::OpCode::ReleaseImage)
+					++releasedImages;
+				else if (opcode == wire::OpCode::ReleaseExport)
+					++releasedExports;
 				else
-					response.fields.push_back(wire::Field::U64(wire::tag::ImageReaderId, 41));
-			}
-			else if (opcode == wire::OpCode::StartExport)
-			{
-				response.fields.push_back(wire::Field::U64(wire::tag::ExportId, 42));
-				response.fields.push_back(wire::Field::U64(wire::tag::TotalBytes, 4));
-			}
-			else if (opcode == wire::OpCode::ExportInfo)
-				response.fields.push_back(wire::Field::Text(wire::tag::Phase, "complete"));
-			else if (opcode == wire::OpCode::ReleaseImage)
-				++releasedImages;
-			else if (opcode == wire::OpCode::ReleaseExport)
-				++releasedExports;
-			else
-				Require(opcode == wire::OpCode::ReleaseControl || opcode == wire::OpCode::Status,
-						"Unexpected window cleanup operation");
-			return response;
-		});
+					Require(opcode == wire::OpCode::ReleaseControl || opcode == wire::OpCode::Status,
+							"Unexpected window cleanup operation");
+				return response;
+			});
 		automation::RigOptions options;
 		options.session = wire::ControlSessionId{1};
 		options.generation = 1;
 		options.source = "local document, window = simxr.begin_image_window({target='quad_layers'})\n"
-			"assert(window == '9007199254740993' and document.phase == 'complete')\n";
-		options.source += mode == 2 ? "simxr.release_image_window(window)"
-			: mode == 3 ? "while true do end" : "simxr.export_window_image(window, '7', '')";
+						 "assert(window == '9007199254740993' and document.phase == 'complete')\n";
+		options.source += mode == 2	  ? "simxr.release_image_window(window)"
+						  : mode == 3 ? "while true do end"
+									  : "simxr.export_window_image(window, '7', '')";
 		runner.Start(std::move(options));
 		if (mode == 3)
 		{
@@ -445,11 +677,12 @@ void CheckImageWindowCleanup()
 			runner.Cancel();
 		}
 		runner.Join();
-		Require(releasedWindows == 1 && releasedImages == (mode == 1 ? 1 : 0) &&
-			releasedExports == (mode == 1 ? 1 : 0), "Window/export ownership leaked or was released twice");
-		Require(runner.Snapshot().phase == (mode == 2 ? automation::RigPhase::Complete :
-			mode == 3 ? automation::RigPhase::Cancelled : automation::RigPhase::Failed),
-			"Window cleanup test did not exercise its expected result");
+		Require(releasedWindows == 1 && releasedImages == (mode == 1 ? 1 : 0) && releasedExports == (mode == 1 ? 1 : 0),
+				"Window/export ownership leaked or was released twice");
+		Require(runner.Snapshot().phase == (mode == 2	? automation::RigPhase::Complete
+											: mode == 3 ? automation::RigPhase::Cancelled
+														: automation::RigPhase::Failed),
+				"Window cleanup test did not exercise its expected result");
 	}
 }
 
@@ -490,6 +723,8 @@ void CheckEditableCommands()
 	controls.primaryTouch = controls.secondaryTouch = controls.triggerTouch = true;
 	controls.thumbTouch = controls.trackpadTouch = controls.thumbrestTouch = true;
 	controls.connected = false;
+	controls.triggerClick = false;
+	controls.physicalProfile = "/interaction_profiles/valve/index_controller";
 	auto& body = configuration.tracking.body;
 	body.active = false;
 	body.confidence = .625f;
@@ -501,6 +736,7 @@ void CheckEditableCommands()
 	body.joints[7] = BodyJointOverride{std::nullopt, false};
 	auto& tracker = configuration.tracking.trackers[2];
 	tracker.identity.value = std::numeric_limits<std::uint64_t>::max();
+	tracker.poseFlags = XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
 	tracker.poseOverride = XrPosef{{0, 0, 0, 1}, {3, 2, 1}};
 	tracker.anchor.reset();
 	tracker.connected = tracker.tracked = false;
@@ -509,10 +745,20 @@ void CheckEditableCommands()
 	attached.anchor = BodyJoint::Chest;
 	attached.jointOffset = XrPosef{EulerAngles(.2f, .3f, -.1f), {.1f, -.2f, .3f}};
 	configuration.views.ipd = .071f;
+	configuration.tracking.controllers[1].aim = PoseSample{};
+	configuration.tracking.controllers[1].aim->pose.position = {3, 2, 1};
+	configuration.tracking.controllers[1].aim->flags = ValidPoseFlags;
 	configuration.views.outerWidth = 321;
 	configuration.views.insetHalfAngle = .275f;
 	configuration.views.outerFov[1] = {-.6f, .7f, .8f, -.9f};
-	std::vector<SimulationCommand> expected{TakeControl{ControlChannel::Head, true},
+	StereoEyeViews observed;
+	observed.spaceRevision = std::numeric_limits<std::uint64_t>::max();
+	observed.poses[0].pose = {EulerAngles(.1f, .2f, .3f), {-.04f, 1.65f, .01f}};
+	observed.poses[0].flags = TrackedPoseFlags;
+	observed.fovs[1] = {-.7f, .6f, .8f, -.9f};
+	std::vector<SimulationCommand> expected{SetEyeViews{observed},
+											SetEyeViews{},
+											TakeControl{ControlChannel::Head, true},
 											ReleaseControl{ControlChannel::Gaze},
 											SetHeadPose{configuration.tracking.head},
 											SetControllerPose{1, configuration.tracking.controllers[1]},
@@ -525,6 +771,42 @@ void CheckEditableCommands()
 											SetBodyProportions{{1.9f, .4f, .3f}},
 											SetControllerProfile{1, "/quote\"/slash\\/line\n/Grüße"},
 											SetScenario{FailureScenario::Hidden, false}};
+	SetTrackers collection;
+	for (std::size_t index = 0; index < MaxTrackerDevices; ++index)
+		collection.value.push_back({{100 + index}, TrackerRole::Unassigned});
+	collection.value.back().sourcePath = TrackerSourcePath{"htcx:/device/stable"};
+	expected.push_back(collection);
+	expected.push_back(SetTrackers{});
+	for (const auto set :
+		 {BodyJointSet::UpperBodyFB, BodyJointSet::FullBodyMETA, BodyJointSet::WithoutArmsBD, BodyJointSet::FullBodyBD})
+	{
+		BodyObservation observation;
+		observation.jointSet = set;
+		observation.requestedTime = {Duration{9007199254740993LL}};
+		observation.located = true;
+		const bool fb = set == BodyJointSet::UpperBodyFB || set == BodyJointSet::FullBodyMETA;
+		if (fb)
+		{
+			observation.active = false;
+			observation.confidence = 0;
+			observation.returnedTime = RuntimeTime{Duration{9007199254740991LL}};
+			observation.skeletonRevision = 0;
+			observation.skeleton.emplace();
+		}
+		else
+			observation.allJointPosesTracked = false;
+		for (const auto joint : BodyModel::JointMap(set))
+		{
+			const auto index = static_cast<std::size_t>(joint);
+			observation.joints[index] =
+				ObservedBodyJoint{IdentityPose(), fb ? 0 : XR_SPACE_LOCATION_ORIENTATION_VALID_BIT};
+			observation.joints[index]->pose.position.x = static_cast<float>(index);
+			if (fb)
+				(*observation.skeleton)[index] = SkeletonJoint{joint, {}, IdentityPose()};
+		}
+		expected.push_back(SetBodyControls{{}, observation});
+		expected.push_back(SetBodyControls{{}, observation, RuntimeTime{Duration{9007199254740993LL}}});
+	}
 	std::string script = "simxr.schedule({frame=\"1\", commands={\n";
 	for (const auto& command : expected)
 		script += automation::EditableCommand(command) + ",\n";
@@ -560,20 +842,100 @@ void CheckEditableCommands()
 				"Editable command table changed semantic command data");
 }
 
+void CheckBodyReplayTransport()
+{
+	Fixture fixture;
+	BodyObservation body;
+	body.jointSet = BodyJointSet::WithoutArmsBD;
+	body.requestedTime = {Duration{9007199254740973LL}};
+	body.located = true;
+	body.allJointPosesTracked = false;
+	for (const auto joint : BodyModel::JointMap(body.jointSet))
+		body.joints[static_cast<std::size_t>(joint)] = ObservedBodyJoint{IdentityPose(), ValidPoseFlags};
+	std::shared_ptr<const AppliedCommandSnapshot> applied;
+	automation::RigRunner runner(
+		[&](auto opcode, auto fields)
+		{
+			auto response = fixture.Exchange(opcode, std::move(fields));
+			if (opcode == wire::OpCode::SubmitSimulation)
+				applied = fixture.session->Commands().Snapshot().applied;
+			return response;
+		});
+	const auto command =
+		automation::EditableCommand(SetBodyControls{{}, body, RuntimeTime{Duration{9007199254740993LL}}});
+	runner.Start(fixture.Options("simxr.schedule({frame='1', commands={{kind='take_control',channel='body'}, " +
+								 command + "}})"));
+	runner.Join();
+	Require(runner.Snapshot().phase == automation::RigPhase::Complete && applied &&
+				applied->configuration.tracking.bodyObservation &&
+				applied->configuration.tracking.bodyObservation->requestedTime.value.count() ==
+					applied->runtimeTime.value.count() - 20,
+			"Luau/transport/application boundary lost the recorded body sample age");
+}
+void CheckMalformedBodyObservations()
+{
+	BodyObservation body;
+	body.jointSet = BodyJointSet::UpperBodyFB;
+	body.requestedTime = {Duration{1}};
+	body.located = true;
+	body.active = false;
+	body.confidence = 0;
+	body.returnedTime = RuntimeTime{};
+	body.skeletonRevision = 0;
+	body.skeleton.emplace();
+	for (const auto joint : BodyModel::JointMap(body.jointSet))
+	{
+		const auto index = static_cast<std::size_t>(joint);
+		body.joints[index] = ObservedBodyJoint{IdentityPose(), 0};
+		(*body.skeleton)[index] = SkeletonJoint{joint, {}, IdentityPose()};
+	}
+	for (const auto mutation :
+		 {"b.joint_set = 256", "b.requested_time = '9223372036854775808'", "b.requested_time = 9007199254740994",
+		  "b.joints[1].flags = nil", "b.joints[1] = nil", "b.joints.extra = {}",
+		  "b.joints[2].joint = b.joints[1].joint", "b.skeleton[1].parent = 256",
+		  "b.skeleton[1].parent = b.skeleton[1].joint", "b.skeleton[2].joint = b.skeleton[1].joint", "b.active = nil"})
+	{
+		bool submitted = false;
+		automation::RigRunner runner(
+			[&](auto opcode, auto)
+			{
+				submitted |= opcode == wire::OpCode::SubmitSimulation;
+				wire::Message response;
+				response.fields.push_back(wire::Field::U32(wire::tag::Error, 0));
+				return response;
+			});
+		automation::RigOptions options;
+		options.session = wire::ControlSessionId{1};
+		options.generation = 1;
+		options.source = "local command = " + automation::EditableCommand(SetBodyControls{{}, body}) +
+						 "; local b = command.observation; " + mutation +
+						 "; simxr.schedule({frame='1', commands={command}})";
+		runner.Start(std::move(options));
+		runner.Join();
+		Require(runner.Snapshot().phase == automation::RigPhase::Failed && !submitted,
+				"Malformed observed body reached submission");
+	}
+}
+
 void CheckUnreportedCompatibility()
 {
 	Fixture fixture;
-	automation::RigRunner runner([&](auto opcode, auto fields)
-	{
-		auto response = fixture.Exchange(opcode, std::move(fields));
-		std::erase_if(response.fields, [](const auto& field) { return field.tag == wire::tag::CompatibilityDeviations; });
-		return response;
-	});
+	automation::RigRunner runner(
+		[&](auto opcode, auto fields)
+		{
+			auto response = fixture.Exchange(opcode, std::move(fields));
+			std::erase_if(response.fields,
+						  [](const auto& field)
+						  {
+							  return field.tag == wire::tag::CompatibilityDeviations;
+						  });
+			return response;
+		});
 	runner.Start(fixture.Options("simxr.checkpoint('older runtime', true)"));
 	runner.Join();
 	Require(runner.Snapshot().phase == automation::RigPhase::Complete &&
-			runner.JsonReport().find("\"compatibility_deviations\":null") != std::string::npos &&
-			runner.JunitReport().find("value=\"unknown\"") != std::string::npos,
+				runner.JsonReport().find("\"compatibility_deviations\":null") != std::string::npos &&
+				runner.JunitReport().find("value=\"unknown\"") != std::string::npos,
 			"Older runtime was falsely reported as having no deviations");
 }
 
@@ -660,6 +1022,7 @@ simxr.checkpoint("fresh VM, persistent IDs", applied.applied_frame == "3")
 				"Restart reused transaction IDs or retained failed VM state");
 		CheckBindingPauseAndStep();
 		CheckResumeClearsSteps();
+		CheckSteppedExecutionPhase();
 		CheckCleanupFailures();
 		CheckScriptValueBoundaries();
 		CheckReportText();
@@ -667,8 +1030,11 @@ simxr.checkpoint("fresh VM, persistent IDs", applied.applied_frame == "3")
 		CheckImageWindowCleanup();
 		CheckLeaseRenewal();
 		CheckInputRecording();
+		CheckRecordedPlaytestOutcome();
 		CheckExactFrameArithmetic();
 		CheckEditableCommands();
+		CheckBodyReplayTransport();
+		CheckMalformedBodyObservations();
 		std::cout << "PASS Luau worker, exact shared input, cleanup, reports and cancellation\n";
 		return 0;
 	}

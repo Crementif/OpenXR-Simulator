@@ -5,6 +5,7 @@
 #include "Pch.h"
 #include "VulkanAdmissionChecks.h"
 #include "VulkanCreationChecks.h"
+#include "platform/linux/InstallUse.h"
 #include <atomic>
 #include <charconv>
 #include <cmath>
@@ -1315,14 +1316,6 @@ static int RunProbe()
 		XR(xrLocateSpace(hand, head, fs.predictedDisplayTime, &loc));
 		if (!interactive || frame < 4)
 			CHECK(std::fabs(loc.pose.position.x - .2f) < .0001f && std::fabs(loc.pose.position.z + .4f) < .0001f);
-		if (interactive)
-		{
-			std::ostringstream state;
-			state << "{\"frame\":" << frame << ",\"headX\":" << locatedHead.position.x
-				  << ",\"trigger\":" << value.currentState << ",\"handX\":" << loc.pose.position.x << '}';
-			WriteText(data / "probe_state.json.tmp", state.str());
-			std::filesystem::rename(data / "probe_state.json.tmp", data / "probe_state.json");
-		}
 		XrViewLocateFoveatedRenderingVARJO foveated{XR_TYPE_VIEW_LOCATE_FOVEATED_RENDERING_VARJO, nullptr,
 													static_cast<XrBool32>(frame == 1 ? XR_FALSE : XR_TRUE)};
 		XrViewLocateInfo locate{XR_TYPE_VIEW_LOCATE_INFO};
@@ -1344,8 +1337,19 @@ static int RunProbe()
 		CHECK(xrLocateViews(session, &locate, &vs, activeViewCount - 1, &count, views.data()) ==
 			  XR_ERROR_SIZE_INSUFFICIENT);
 		XR(xrLocateViews(session, &locate, &vs, activeViewCount, &count, views.data()));
-		CHECK(count == activeViewCount &&
-			  std::fabs(views[1].pose.position.x - views[0].pose.position.x - .064f) < .0001f);
+		CHECK(count == activeViewCount);
+		if (!interactive)
+			CHECK(std::fabs(views[1].pose.position.x - views[0].pose.position.x - .064f) < .0001f);
+		else
+		{
+			std::ostringstream state;
+			state << "{\"frame\":" << frame << ",\"headX\":" << locatedHead.position.x
+				  << ",\"trigger\":" << value.currentState << ",\"handX\":" << loc.pose.position.x
+				  << ",\"viewSpan\":" << views[1].pose.position.x - views[0].pose.position.x
+				  << ",\"leftFovRight\":" << views[0].fov.angleRight << '}';
+			WriteText(data / "probe_state.json.tmp", state.str());
+			std::filesystem::rename(data / "probe_state.json.tmp", data / "probe_state.json");
+		}
 		if (quadMode)
 		{
 			for (uint32_t eye = 0; eye < 2; ++eye)
@@ -1870,6 +1874,11 @@ static int RunProbe()
 
 int main(int argc, char** argv)
 {
+	if (!simxr::InstallationReady())
+	{
+		std::fputs("OpenXR Simulator installation is being updated or is no longer available. Try again.\n", stderr);
+		return 1;
+	}
 	using namespace simxr::probe;
 	for (int index = 1; index < argc; ++index)
 	{

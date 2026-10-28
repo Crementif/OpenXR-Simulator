@@ -9,7 +9,7 @@ namespace simxr
 {
 bool FrameCaptureRequest::IgnoreFailure(XrResult result) const noexcept
 {
-	return (history && !preview && (result == XR_ERROR_LIMIT_REACHED || result == XR_ERROR_OUT_OF_MEMORY)) ||
+	return (history && (result == XR_ERROR_LIMIT_REACHED || result == XR_ERROR_OUT_OF_MEMORY)) ||
 		   (image && (result == XR_ERROR_FEATURE_UNSUPPORTED || result == XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED));
 }
 
@@ -108,7 +108,7 @@ void FrameSubmission::PreparePreviewHistory()
 			1u, static_cast<std::uint32_t>(std::uint64_t{plan.height} * FramePreviewHistory::Extent / largest));
 	}
 	request.historyPool = m_session.PreviewHistory().Budget();
-	request.historyReservation = m_session.PreviewHistory().Reserve(m_key);
+	request.historyReservation = m_session.PreviewHistory().Reserve(m_key, false);
 	if (request.historyReservation)
 		request.reservation = m_backend.HistoryReservations().Reserve();
 	m_captures.push_back(std::move(request));
@@ -184,6 +184,16 @@ XrResult FrameSubmission::Execute(const XrFrameEndInfo& info, const SwapchainDes
 			return result;
 		}
 		trace("composition_prepared");
+		auto dropLive = [&]
+		{
+			m_prepared = {};
+			FramePrediction prediction;
+			const auto result =
+				m_session.EndFrame(prediction, &info, m_composition.layers, {}, {}, {}, FrameSubmissionPolicy::Live);
+			if (XR_SUCCEEDED(result))
+				m_session.PreviewHistory().Append(m_key, {}, false);
+			return result;
+		};
 		bool live = true;
 		if (info.layerCount)
 		{
@@ -194,7 +204,8 @@ XrResult FrameSubmission::Execute(const XrFrameEndInfo& info, const SwapchainDes
 			if (live)
 				m_reservation = m_backend.LiveReservations().Reserve();
 			if (!m_reservation)
-				return XR_ERROR_LIMIT_REACHED;
+				return live && m_session.Captures().RequestedTargets(m_key).empty() ? dropLive()
+																					: XR_ERROR_LIMIT_REACHED;
 			trace("producers_reserved");
 			result = PrepareCaptures();
 			if (XR_FAILED(result))
@@ -204,6 +215,8 @@ XrResult FrameSubmission::Execute(const XrFrameEndInfo& info, const SwapchainDes
 			trace("preview_reserved");
 			PrepareQuadHistory();
 			result = m_backend.Prepare(m_key, m_composition, m_reservation, m_captures, m_prepared);
+			if (result == XR_ERROR_LIMIT_REACHED && live && m_session.Captures().RequestedTargets(m_key).empty())
+				return dropLive();
 			if (XR_FAILED(result))
 				return result;
 		}

@@ -78,6 +78,7 @@ class VulkanSessionGraphics final
 	SwapchainWaits m_waits;
 	std::mutex m_closeMutex;
 	CloseStage m_closeStage = CloseStage::Pending;
+	XrResult m_closeResult = XR_SUCCESS;
 	bool m_closing = false;
 };
 } // namespace simxr

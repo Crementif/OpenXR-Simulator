@@ -42,7 +42,8 @@ class VulkanInspectionWork final : public GpuCompletion
 	static std::shared_ptr<VulkanInspectionWork>
 	Readback(std::shared_ptr<VulkanDevice> device, std::shared_ptr<FrameReservation> admission,
 			 std::shared_ptr<VulkanImage> source, std::shared_ptr<FrameReservation> sourceBudget,
-			 std::optional<std::uint32_t> layer, std::shared_ptr<const void> retirementOwner);
+			 std::optional<std::uint32_t> layer, std::shared_ptr<const void> retirementOwner,
+			 std::optional<ImageRegion> region);
 	static std::shared_ptr<VulkanInspectionWork>
 	Delivery(std::shared_ptr<VulkanDevice> device, const VulkanExternalDevice& external,
 			 std::shared_ptr<FrameReservation> admission, std::shared_ptr<VulkanImage> source,

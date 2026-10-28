@@ -63,7 +63,7 @@ class FramePreviewHistory
 		return m_ramBytes->load();
 	}
 	std::string Error() const;
-	std::shared_ptr<FrameReservation> Reserve(FrameKey key);
+	std::shared_ptr<FrameReservation> Reserve(FrameKey key, bool waitForSpace = true);
 	const FramePool& Budget() const noexcept
 	{
 		return m_budget;
@@ -81,7 +81,10 @@ class FramePreviewHistory
 		FramePreview preview;
 		RuntimeTime time;
 		Duration period;
-		std::optional<TrackingSnapshot> tracking;
+		TrackingSnapshot tracking;
+		bool hasTracking = false;
+		Entry();
+		std::uint64_t StateBytes() const noexcept;
 		std::weak_ptr<FrameReservation> admission;
 		std::shared_ptr<const ArchivedFrame> archive;
 		std::shared_ptr<std::atomic<std::uint64_t>> counter;

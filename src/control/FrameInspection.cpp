@@ -92,6 +92,9 @@ static InspectionValue InspectControls(const ControllerControls& value)
 									{"primary_touch", InspectionValue::Boolean(value.primaryTouch)},
 									{"secondary_touch", InspectionValue::Boolean(value.secondaryTouch)},
 									{"trigger_touch", InspectionValue::Boolean(value.triggerTouch)},
+									{"physical_profile", InspectionValue::Text(value.physicalProfile)},
+									{"trigger_click", value.triggerClick ? InspectionValue::Boolean(*value.triggerClick)
+																		 : InspectionValue::Null()},
 									{"thumb_touch", InspectionValue::Boolean(value.thumbTouch)},
 									{"trackpad_touch", InspectionValue::Boolean(value.trackpadTouch)},
 									{"thumbrest_touch", InspectionValue::Boolean(value.thumbrestTouch)},
@@ -330,6 +333,8 @@ static InspectionValue InspectTracker(const TrackerDevice& device)
 		 {"connected", InspectionValue::Boolean(device.connected)},
 		 {"tracked", InspectionValue::Boolean(device.tracked)},
 		 {"anchor", device.anchor ? InspectionValue::Text(JointName(*device.anchor)) : InspectionValue::Null()},
+		 {"flags", InspectionValue::Unsigned(device.poseFlags)},
+		 {"source_path", InspectionValue::Text(device.sourcePath.View())},
 		 {"joint_offset", device.jointOffset ? InspectPose(*device.jointOffset) : InspectionValue::Null()},
 		 {"pose_override", device.poseOverride ? InspectPose(*device.poseOverride) : InspectionValue::Null()}});
 }
@@ -375,7 +380,8 @@ static InspectionValue InspectBodyInput(const BodyControls& value)
 static InspectionValue InspectTrackedController(const ControllerPose& controller)
 {
 	return InspectionValue::Object({{"connected", InspectionValue::Boolean(controller.connected)},
-									{"sample", InspectPoseSample(controller.pose)}});
+									{"sample", InspectPoseSample(controller.pose)},
+									{"aim", controller.aim ? InspectPoseSample(*controller.aim) : InspectionValue{}}});
 }
 
 static InspectionValue InspectTrackingInput(const TrackingState& input)
@@ -400,11 +406,12 @@ static InspectionValue InspectTrackedBody(const BodySample& body, std::uint64_t 
 		joints.push_back(
 			InspectionValue::Object({{"joint", InspectionValue::Text(JointName(static_cast<BodyJoint>(index)))},
 									 {"sample", InspectPoseSample(body.joints[index])}}));
-	return InspectionValue::Object({{"active", InspectionValue::Boolean(body.active)},
-									{"confidence", InspectionValue::Float(body.confidence)},
-									{"sample_time", InspectionValue::Signed(body.sampleTime.value.count())},
-									{"skeleton", skeleton ? InspectionValue::Revision(skeleton) : InspectionValue::Null()},
-									{"joints", InspectionValue::Array(std::move(joints))}});
+	return InspectionValue::Object(
+		{{"active", InspectionValue::Boolean(body.active)},
+		 {"confidence", InspectionValue::Float(body.confidence)},
+		 {"sample_time", InspectionValue::Signed(body.sampleTime.value.count())},
+		 {"skeleton", skeleton ? InspectionValue::Revision(skeleton) : InspectionValue::Null()},
+		 {"joints", InspectionValue::Array(std::move(joints))}});
 }
 
 static InspectionValue InspectTrackedDevice(const TrackerSample& tracker)

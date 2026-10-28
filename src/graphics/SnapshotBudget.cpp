@@ -31,6 +31,11 @@ std::uint64_t SnapshotBudget::ImageBytes() noexcept
 }
 std::size_t SnapshotBudget::Capacity() noexcept
 {
-	return std::min<std::uint64_t>(MaxCapacity, std::uint64_t{MiB()} * 1024 * 1024 / ImageBytes() / 4);
+	return CapacityFor(MiB(), ImageBytes());
+}
+std::size_t SnapshotBudget::CapacityFor(std::uint32_t mib, std::uint64_t imageBytes) noexcept
+{
+	return std::min<std::uint64_t>(MaxCapacity, std::uint64_t{mib} * 1024 * 1024 /
+										 std::max<std::uint64_t>(imageBytes, 16 * 1024 * 1024) / 4);
 }
 } // namespace simxr

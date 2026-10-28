@@ -1,7 +1,9 @@
 #include "../TestSupport.h"
-#include "control/FrameInspection.h"
-#include "control/DebugProtocol.h"
+#include "control/ControlRequestError.h"
 #include "control/ControlSchema.h"
+#include "control/DebugProtocol.h"
+#include "control/FrameInspection.h"
+#include "control/SimulationControl.h"
 #include "simulation/TrackingSystem.h"
 
 #include <algorithm>
@@ -69,7 +71,10 @@ template <class F> void Capacity(F function)
 void CatalogTransactionsAndReaders()
 {
 	InspectionStore store{2, 2, 64};
-	const auto serialize = [](auto) { return std::vector<std::byte>(8); };
+	const auto serialize = [](auto)
+	{
+		return std::vector<std::byte>(8);
+	};
 	const FrameKey key{{1}, {1}};
 	auto first = store.Retain({1}, key, {{"shape", {std::byte{1}}}, {"shape", {std::byte{1}}}}, serialize);
 	Require(first->id == 1 && first->revisions[0] == first->revisions[1] && first->revisions[0]->id == 1,
@@ -79,7 +84,10 @@ void CatalogTransactionsAndReaders()
 	try
 	{
 		store.Retain({1}, {{1}, {2}}, {{"different", {std::byte{2}}}},
-					 [](auto) -> std::vector<std::byte> { throw std::runtime_error("serialization failed"); });
+					 [](auto) -> std::vector<std::byte>
+					 {
+						 throw std::runtime_error("serialization failed");
+					 });
 	}
 	catch (const std::runtime_error&)
 	{
@@ -90,9 +98,17 @@ void CatalogTransactionsAndReaders()
 	Require(second->id == 2 && second->revisions[0] == first->revisions[0] && second->revisions[1]->id == 2,
 			"Failed publication consumed IDs or existing revision changed");
 	Require(store.Release(1) && !store.Read(1) && !store.Release(1), "Logical inspection release failed");
-	Capacity([&] { store.Retain({1}, {{1}, {3}}, {}, serialize); });
+	Capacity(
+		[&]
+		{
+			store.Retain({1}, {{1}, {3}}, {}, serialize);
+		});
 	first.reset();
-	Capacity([&] { store.Retain({1}, {{1}, {3}}, {{"third", {std::byte{3}}}}, serialize); });
+	Capacity(
+		[&]
+		{
+			store.Retain({1}, {{1}, {3}}, {{"third", {std::byte{3}}}}, serialize);
+		});
 	Require(!store.Read(3), "Revision capacity failure published a frame");
 	Require(store.Release(2), "Release second reader");
 	auto third = store.Retain({1}, {{1}, {3}}, {{"shape", {std::byte{1}}}}, serialize);
@@ -102,7 +118,15 @@ void CatalogTransactionsAndReaders()
 	second.reset();
 	third.reset();
 	store.Release(3);
-	Capacity([&] { store.Retain({1}, {{1}, {4}}, {}, [](auto) { return std::vector<std::byte>(65); }); });
+	Capacity(
+		[&]
+		{
+			store.Retain({1}, {{1}, {4}}, {},
+						 [](auto)
+						 {
+							 return std::vector<std::byte>(65);
+						 });
+		});
 	bool serializedOversizedFeatures = false;
 	Capacity(
 		[&]
@@ -194,8 +218,8 @@ FrameRecord Fixture()
 	const auto space = reinterpret_cast<XrSpace>(0xabcdefab12345678ULL);
 	const PoseSample pose{{{0, 0, 0, 1}, {0, 1, 0}}, TrackedPoseFlags, {117ns}};
 	ProjectionLayerDescription projection;
-	projection.space = {space, XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT, pose,
-		XR_REFERENCE_SPACE_TYPE_LOCAL, pose.pose};
+	projection.space = {space, XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT, pose, XR_REFERENCE_SPACE_TYPE_LOCAL,
+						pose.pose};
 	ProjectionViewDescription view{
 		pose.pose,
 		pose,
@@ -229,7 +253,7 @@ void FrameStateAndRevisions()
 	};
 	const auto root = bodyRoot(first->document);
 	Require(Find(Fields(Member(Member(root, "position"), "x")), 3).AsU32() == std::bit_cast<std::uint32_t>(2.f) &&
-			Find(Fields(Member(Member(root, "orientation"), "y")), 3).AsU32() == std::bit_cast<std::uint32_t>(1.f),
+				Find(Fields(Member(Member(root, "orientation"), "y")), 3).AsU32() == std::bit_cast<std::uint32_t>(1.f),
 			"Historical body root pose was not preserved");
 	const auto original = first->document;
 	frame.key.frame.value++;
@@ -239,7 +263,8 @@ void FrameStateAndRevisions()
 	frame.submission->tracking->input.body.rootPose.reset();
 	auto second = InspectFrame(store, {7}, frame);
 	Require(Find(Fields(bodyRoot(second->document)), 2).AsU32() == static_cast<std::uint32_t>(InspectionType::Null) &&
-			bodyRoot(first->document) == root, "Absent body root or retained historical pose changed");
+				bodyRoot(first->document) == root,
+			"Absent body root or retained historical pose changed");
 	Require(first->document == original && Unsigned(Member(second->document, "view_settings")) == viewRevision &&
 				Unsigned(Member(Member(second->document, "actions"), "dictionary")) == actionRevision &&
 				Unsigned(Member(Member(Member(second->document, "tracking"), "body"), "skeleton")) == skeletonRevision,
@@ -286,7 +311,8 @@ void DepthEncodingPreservesNonfiniteBits()
 		{
 			const auto value = Fields(Member(depth, name));
 			Require(Find(value, 2).AsU32() == static_cast<std::uint32_t>(InspectionType::Float) &&
-					Find(value, 3).AsU32() == bits, "Historical depth changed a float's type, sign or NaN payload");
+						Find(value, 3).AsU32() == bits,
+					"Historical depth changed a float's type, sign or NaN payload");
 		}
 	}
 }
@@ -297,6 +323,9 @@ void FrameHistoryBytePages()
 	history.generation = {1};
 	history.capacity = 128;
 	auto applied = std::make_shared<AppliedCommandSnapshot>();
+	applied->configuration.tracking.eyeViews.emplace();
+	applied->configuration.tracking.eyeViews->spaceRevision = 9;
+	applied->configuration.tracking.eyeViews->poses[0].pose.position.x = -.04f;
 	for (auto& joint : applied->configuration.tracking.body.joints)
 		joint = BodyJointOverride{XrPosef{{0, 0, 0, 1}, {0, 0, 0}}, true};
 	auto frame = Fixture();
@@ -321,10 +350,39 @@ void FrameHistoryBytePages()
 			const auto fields = Fields(entry.value);
 			Require(Find(fields, tag::FrameId).AsU64() == ++after, "Frame pagination skipped or repeated history");
 			Require(!Find(fields, tag::AppliedInput).value.empty(), "Frame pagination dropped input metadata");
+			const auto input = Fields(Find(fields, tag::AppliedInput).value);
+			const auto context = Fields(Find(input, tag::InputContext).value);
+			const auto eyes = std::get<SetEyeViews>(DecodeSimulationCommand(Find(context, 6)));
+			Require(eyes.value && eyes.value->spaceRevision == 9 && eyes.value->poses[0].pose.position.x == -.04f,
+					"Historical input context preserves applied physical eye geometry");
 		}
 		++pages;
 	}
 	Require(pages > 1, "Large frame history did not exercise byte pagination");
+	for (const auto count : {5u, 0u})
+	{
+		applied->configuration.tracking.trackers.resize(count);
+		if (count)
+			applied->configuration.tracking.trackers.back() = {{5}, TrackerRole::Unassigned};
+		Message response;
+		bool rejected = false;
+		try
+		{
+			EncodeFrameHistory(response, history, 0, 1);
+		}
+		catch (const ControlRequestError& error)
+		{
+			rejected = error.error == ErrorCode::UnsupportedField;
+		}
+		Require(rejected && !response.Find(tag::Frames),
+				"Legacy frame transport silently truncated a changed tracker inventory");
+		EncodeFrameHistory(response, history, 0, 1, true);
+		const auto frames = Fields(response.Find(tag::Frames)->value);
+		const auto metadata = Fields(frames.front().value);
+		const auto input = Fields(Find(metadata, tag::AppliedInput).value);
+		const auto collection = std::get<SetTrackers>(DecodeSimulationCommand(Find(input, tag::TrackerCollection)));
+		Require(collection.value.size() == count, "Collection frame transport changed tracker count");
+	}
 }
 void ProjectionHistoryBoundaries()
 {
@@ -339,26 +397,28 @@ void ProjectionHistoryBoundaries()
 		frame.key.frame.value += index;
 		auto projection = std::get<ProjectionLayerDescription>(frame.submission->layers->layers.front());
 		projection.views.resize(4, projection.views.front());
-		frame.submission->layers = std::make_shared<const FrameLayers>(frame.submission->displayTime,
-			frame.submission->blendMode, std::vector<LayerDescription>{projection, QuadLayerDescription{}, projection});
+		frame.submission->layers = std::make_shared<const FrameLayers>(
+			frame.submission->displayTime, frame.submission->blendMode,
+			std::vector<LayerDescription>{projection, QuadLayerDescription{}, projection});
 		history.frames.push_back(std::make_shared<const FrameRecord>(std::move(frame)));
 	}
 	const auto document = InspectProjectionHistory(history, 3).Encode();
 	Require(Unsigned(Member(document, "generation")) == history.generation.value &&
-		Unsigned(Member(document, "evicted_frames")) == 7 && Unsigned(Member(document, "omitted_entries")) == 125,
-		"Projection history omitted its full-width identity or bounded retention evidence");
+				Unsigned(Member(document, "evicted_frames")) == 7 &&
+				Unsigned(Member(document, "omitted_entries")) == 125,
+			"Projection history omitted its full-width identity or bounded retention evidence");
 	const auto pages = Fields(Find(Fields(Member(document, "entries")), 3).value);
 	const auto entries = Fields(pages.front().value);
 	Require(entries.size() == 3 && Unsigned(Member(entries[0].value, "frame_id")) == first + 62 &&
-		Unsigned(Member(entries[0].value, "layer")) == 2 &&
-		Unsigned(Member(entries[1].value, "frame_id")) == first + 63 &&
-		Unsigned(Member(entries[1].value, "layer")) == 0 && Unsigned(Member(entries[2].value, "layer")) == 2,
-		"Projection history changed submitted frame/layer order or included a quad");
+				Unsigned(Member(entries[0].value, "layer")) == 2 &&
+				Unsigned(Member(entries[1].value, "frame_id")) == first + 63 &&
+				Unsigned(Member(entries[1].value, "layer")) == 0 && Unsigned(Member(entries[2].value, "layer")) == 2,
+			"Projection history changed submitted frame/layer order or included a quad");
 	const auto bounded = InspectProjectionHistory(history, 64).Encode();
 	Require(bounded.size() < MaxPayload - 1024, "Maximum projection history exceeds the wire response budget");
 	const auto raw = Field::U64(1, 0xf0e1d2c3b4a59687ULL).value;
 	Require(std::search(bounded.begin(), bounded.end(), raw.begin(), raw.end()) == bounded.end(),
-		"Projection history exposed a native source handle");
+			"Projection history exposed a native source handle");
 	for (const auto count : {0U, 65U})
 	{
 		bool rejected = false;

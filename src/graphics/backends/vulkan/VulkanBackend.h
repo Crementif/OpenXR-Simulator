@@ -58,6 +58,8 @@ class VulkanBackend
 							   std::shared_ptr<FrameReservation> reservation = {});
 #endif
 	// One completed GENERAL-layout source per draw, with its retained budget.
+	// On a borrowed binding, the caller must retire all mapped frames and source
+	// readers before destroying the native device, just as for Prepare().
 	XrResult PrepareRetained(const CompositionPlan& plan, std::span<const VulkanRetainedSource> sources,
 							 std::shared_ptr<VulkanFrame>& output);
 	XrResult PrepareCapture(const LayerImageDescription& source, const VulkanImageResolver& resolve,

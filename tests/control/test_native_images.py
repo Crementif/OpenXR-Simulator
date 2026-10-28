@@ -208,6 +208,23 @@ def main():
                                 error.record)
                         time.sleep(0.005)
                 observer.release_export(recovered)
+                for output_width, output_height in ((32, 24), (16, 12)):
+                    region = (5, 7, 32, 24, output_width, output_height)
+                    reduced = observer.start_export(other_reader, layer=0, region=region)['export_id']
+                    deadline = time.monotonic() + 5
+                    while True:
+                        status = observer.export_info(reduced)
+                        require(status['phase'] != 'failed' and time.monotonic() < deadline, status)
+                        if status['phase'] == 'complete':
+                            break
+                        time.sleep(0.005)
+                    require(status['image_region'] == dict(zip(
+                        ('x', 'y', 'width', 'height', 'output_width', 'output_height'), region)), status)
+                    require(status['total_bytes'] == output_width * output_height * 4, status)
+                    actual = observer.read_export(reduced, 0, status['total_bytes'])['bytes']
+                    require(actual == b'\xff\x00\x00\xff' * (output_width * output_height),
+                            'Retained region export changed pixels after application device destruction')
+                    require(observer.release_export(reduced)['released'], 'Release region export')
                 observer.release_image(other_reader)
                 for consumer, gate, prefix in consumers:
                     gate.touch()

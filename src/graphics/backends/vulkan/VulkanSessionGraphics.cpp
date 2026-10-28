@@ -291,7 +291,7 @@ XrResult VulkanSessionGraphics::FinishClose()
 {
 	std::lock_guard lock(m_closeMutex);
 	if (m_closeStage == CloseStage::Closed)
-		return XR_SUCCESS;
+		return m_closeResult;
 	if (m_closeStage != CloseStage::Drained)
 		return XR_ERROR_CALL_ORDER_INVALID;
 	for (const auto handle : m_swapchains.Children(m_session.get()))
@@ -299,11 +299,14 @@ XrResult VulkanSessionGraphics::FinishClose()
 	const auto result = m_backend->Close();
 	if (XR_FAILED(result))
 		return result;
+	const auto validation = m_validation;
 	m_observer.reset();
 	m_inspection.reset();
 	m_validation.reset();
 	m_backend.reset();
 	m_closeStage = CloseStage::Closed;
-	return XR_SUCCESS;
+	if (validation && validation->errors.load())
+		m_closeResult = XR_ERROR_RUNTIME_FAILURE;
+	return m_closeResult;
 }
 } // namespace simxr

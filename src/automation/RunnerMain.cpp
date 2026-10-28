@@ -4,6 +4,9 @@
 #include "automation/RigRunner.h"
 #include "control/ControlSchema.h"
 #include "simxr/Version.h"
+#if defined(__linux__)
+#include "platform/linux/InstallUse.h"
+#endif
 #if defined(__linux__) || defined(_WIN32)
 #include "control/LocalControlClient.h"
 #endif
@@ -45,8 +48,8 @@ static std::string ReadRig(const std::string& path)
 	{
 		input.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
 		const auto count = static_cast<std::size_t>(input.gcount());
-		if (count > simxr::control::MaxPayload - source.size())
-			throw std::length_error("Rig source exceeds 1 MiB");
+		if (count > simxr::automation::MaxRigSourceBytes - source.size())
+			throw std::length_error("Rig source exceeds 64 MiB");
 		source.append(bytes.data(), count);
 	}
 	if (input.bad() || !input.eof())
@@ -217,6 +220,13 @@ int simxr::automation::RunRunner(int argc, char** argv)
 #if !defined(_WIN32)
 int main(int argc, char** argv)
 {
+#if defined(__linux__)
+	if (!simxr::InstallationReady())
+	{
+		std::fputs("OpenXR Simulator installation is being updated or is no longer available. Try again.\n", stderr);
+		return 1;
+	}
+#endif
 	return simxr::automation::RunRunner(argc, argv);
 }
 #endif

@@ -52,6 +52,21 @@ def run():
             with Client(path) as observer:
                 status = observer.game_status()
                 assert json.loads(status['document']['telemetry'])['reset_count'] == 1, status
+                journal = observer.game_observations(offset=0)['document']
+                assert not journal['gap'] and not journal['failed'], journal
+                events = journal['observations']
+                assert [event['kind'] for event in events] == ['registered', 'telemetry'], events
+                assert events[1]['game_id'] == int(game) and events[1]['revision'] == 1, events
+                assert json.loads(events[1]['payload'])['reset_count'] == 1, events
+                for event in events:
+                    assert event['observed_time']['domain'] in (1, 2), event
+                    assert event['observed_time']['nanoseconds'] > 0, event
+                    assert event['observed_time']['resolution'] > 0, event
+                mcp_journal = tools.call('game_bridge_observations', {**common, 'offset': '0', 'count': 16})
+                assert mcp_journal['ok'] and len(mcp_journal['document']['observations']) == 2, mcp_journal
+                assert int(mcp_journal['document']['next']) == journal['next'], mcp_journal
+                tail = observer.game_observations(offset=journal['next'])['document']
+                assert not tail['gap'] and tail['observations'] == [], tail
                 try:
                     observer.game_operation(None, int(game), int(queued['operation_id']))
                     raise AssertionError('Another connection read a private game operation')

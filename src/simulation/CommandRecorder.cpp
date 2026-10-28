@@ -1,7 +1,9 @@
 #include "simulation/CommandRecorder.h"
 #include "Pch.h"
 
+#include <limits>
 #include <stdexcept>
+#include <type_traits>
 
 namespace simxr
 {
@@ -10,17 +12,24 @@ CommandRecorder::CommandRecorder(std::size_t capacity) : m_capacity(capacity)
 	if (!capacity || capacity > 4096)
 		throw std::invalid_argument("Invalid command recording capacity");
 }
-void CommandRecorder::Start(const CommandRecordingOrigin& origin)
+void CommandRecorder::Start(const CommandRecordingOrigin& origin, bool drain)
 {
 	std::lock_guard mutation(m_mutationMutex);
 	CommandRecording prepared;
 	prepared.active = true;
+	prepared.drain = drain;
 	prepared.origin = origin;
-	prepared.transactions.reserve(m_capacity);
+	if (origin.configuration.tracking.bodyObservation)
+		prepared.version = 4;
+	std::vector<std::optional<CommandOutcome>> slots(m_capacity);
 	std::lock_guard lock(m_mutex);
 	if (m_state.active)
 		throw std::logic_error("Command recording is already active");
+	if (m_state.identity == std::numeric_limits<std::uint64_t>::max())
+		throw std::overflow_error("Recording identities exhausted");
+	prepared.identity = m_state.identity + 1;
 	m_state = std::move(prepared);
+	m_slots.swap(slots);
 }
 void CommandRecorder::Stop()
 {
@@ -38,20 +47,32 @@ void CommandRecorder::Fail()
 		m_state.overflow = true;
 	}
 }
-
-CommandRecording CommandRecorder::Snapshot(std::size_t offset, std::size_t count) const
+void CommandRecorder::Acknowledge(std::size_t through)
+{
+	std::lock_guard mutation(m_mutationMutex);
+	std::lock_guard lock(m_mutex);
+	if (!m_state.drain || through > m_state.total)
+		throw std::invalid_argument("Invalid recording acknowledgement");
+	while (m_state.floor < through)
+	{
+		m_slots[m_state.floor % m_slots.size()].reset();
+		++m_state.floor;
+	}
+}
+CommandRecording CommandRecorder::Snapshot(std::optional<std::size_t> offset, std::size_t count) const
 {
 	if (count > 256)
 		throw std::invalid_argument("Command recording page exceeds 256 entries");
 	std::lock_guard lock(m_mutex);
-	CommandRecording result;
-	result.active = m_state.active;
-	result.overflow = m_state.overflow;
-	result.origin = m_state.origin;
-	result.total = m_state.transactions.size();
-	const auto begin = std::min(offset, m_state.transactions.size());
-	const auto end = begin + std::min(count, m_state.transactions.size() - begin);
-	result.transactions.assign(m_state.transactions.begin() + begin, m_state.transactions.begin() + end);
+	const auto start = offset.value_or(m_state.floor);
+	if (start < m_state.floor)
+		throw std::out_of_range("Recording offset has already been acknowledged");
+	CommandRecording result = m_state;
+	const auto begin = std::min(start, m_state.total);
+	const auto length = std::min(count, m_state.total - begin);
+	result.transactions.reserve(length);
+	for (std::size_t index = begin; index < begin + length; ++index)
+		result.transactions.push_back(*m_slots[index % m_slots.size()]);
 	return result;
 }
 bool CommandRecorder::Observe(const CommandOutcome& outcome)
@@ -67,37 +88,43 @@ bool CommandRecorder::Observe(std::span<const CommandOutcome> outcomes, const st
 								   commit();
 						   });
 }
-
 bool CommandRecorder::ObservePrepared(std::span<const CommandOutcome> outcomes, const std::function<void(bool)>& commit)
 {
 	std::lock_guard mutation(m_mutationMutex);
 	std::vector<CommandOutcome> prepared;
-	bool active = false;
-	bool overflow = false;
+	bool active = false, overflow = false;
+	std::size_t count = 0;
+	std::uint32_t version = 3;
 	{
 		std::lock_guard lock(m_mutex);
 		active = m_state.active;
+		version = m_state.version;
 		overflow = m_state.overflow;
 		if (active)
 		{
-			prepared = m_state.transactions;
-			const auto previousCount = prepared.size();
-			const auto remaining = m_capacity - previousCount;
-			const auto count = std::min(remaining, outcomes.size());
-			prepared.insert(prepared.end(), outcomes.begin(), outcomes.begin() + count);
+			const auto remaining = m_slots.size() - (m_state.total - m_state.floor);
+			count = std::min({remaining, outcomes.size(), std::numeric_limits<std::size_t>::max() - m_state.total});
 			overflow = count < outcomes.size();
-			for (auto index = previousCount; index < prepared.size(); ++index)
-				prepared[index].recordingOverrun = overflow;
 		}
 	}
-	// Do not hold the snapshot mutex while calling external reservation code.
-	// Mutation serialization keeps the prepared transaction current until commit.
+	// Prepare only new outcomes. Reservation failure leaves retained entries unchanged.
+	prepared.assign(outcomes.begin(), outcomes.begin() + count);
+	for (auto& outcome : prepared)
+	{
+		outcome.recordingOverrun = overflow;
+		for (const auto& command : outcome.transaction.commands)
+			if (const auto* body = std::get_if<SetBodyControls>(&command); body && body->observation)
+				version = 4;
+	}
 	if (commit)
 		commit(!overflow);
 	if (active)
 	{
+		static_assert(std::is_nothrow_move_constructible_v<CommandOutcome>);
 		std::lock_guard lock(m_mutex);
-		m_state.transactions.swap(prepared);
+		for (auto& outcome : prepared)
+			m_slots[m_state.total++ % m_slots.size()].emplace(std::move(outcome));
+		m_state.version = version;
 		m_state.active = !overflow;
 		m_state.overflow = overflow;
 	}

@@ -7,6 +7,7 @@
 #include "graphics/backends/vulkan/VulkanSessionGraphics.h"
 #include "graphics/backends/vulkan/VulkanSwapchain.h"
 #include "platform/linux/LinuxRuntime.h"
+#include "platform/linux/InstallUse.h"
 #include "presentation/FrameScheduler.h"
 #include "runtime/DispatchTable.h"
 #include "runtime/EntryPoints.h"
@@ -1088,6 +1089,8 @@ static XrResult XRAPI_PTR RunXrGetInstanceProcAddr(XrInstance iHandle, const cha
 extern "C" __attribute__((visibility("default"))) XrResult XRAPI_CALL
 xrNegotiateLoaderRuntimeInterface(const XrNegotiateLoaderInfo* loader, XrNegotiateRuntimeRequest* runtime)
 {
+	if (!simxr::InstallationReady())
+		return XR_ERROR_INITIALIZATION_FAILED;
 	if (!loader || !runtime || loader->structType != XR_LOADER_INTERFACE_STRUCT_LOADER_INFO ||
 		loader->structVersion != XR_LOADER_INFO_STRUCT_VERSION || loader->structSize != sizeof(*loader) ||
 		runtime->structType != XR_LOADER_INTERFACE_STRUCT_RUNTIME_REQUEST ||
@@ -1108,6 +1111,8 @@ extern "C" __attribute__((visibility("default"))) int simxrGetGameBridgeApi(std:
 {
 	try
 	{
+		if (!simxr::InstallationReady())
+			return 0;
 		if (!api || version != SIMXR_GAME_BRIDGE_VERSION || api->size < sizeof(*api))
 			return 0;
 		Host().StartControlEndpoint();

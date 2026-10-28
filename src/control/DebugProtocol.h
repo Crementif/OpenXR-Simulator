@@ -13,7 +13,8 @@ struct SessionSnapshot;
 }
 namespace simxr::control
 {
-void EncodeFrameHistory(Message& response, const FrameHistorySnapshot& history, std::uint64_t after, std::size_t count);
+void EncodeFrameHistory(Message& response, const FrameHistorySnapshot& history, std::uint64_t after, std::size_t count,
+						bool trackerCollections = false);
 std::optional<std::vector<std::string>> DecodeCompatibilityDeviations(const Message& status);
 Field EncodeCaptureTarget(CaptureTarget target);
 CaptureTarget DecodeCaptureTarget(const Message& request);
@@ -24,5 +25,5 @@ void EncodeDebugAdmission(Message& response, const DebugSubmission& submission);
 void EncodeDebuggerStatus(Message& response, const DebugControllerSnapshot& debugger, const SessionSnapshot& session,
 						  const PresentationSnapshot& display, std::uint64_t capabilities);
 void EncodeDebugOperation(Message& response, const DebugOperation& operation);
-void EncodeCaptureMetadata(Message& response, const SnapshotRecord& capture);
+void EncodeCaptureMetadata(Message& response, const SnapshotRecord& capture, bool trackerCollections = false);
 } // namespace simxr::control

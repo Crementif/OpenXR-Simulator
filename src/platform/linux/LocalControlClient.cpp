@@ -87,7 +87,7 @@ struct LocalControlClient::State
 	Descriptor socket;
 	Descriptor stopping;
 	std::chrono::milliseconds timeout;
-	std::uint64_t next = 1;
+	std::uint64_t next = 1, peerProcess = 0;
 	std::unique_ptr<Exchange> pending;
 	State(std::string path, std::chrono::milliseconds timeout) : timeout(timeout)
 	{
@@ -121,6 +121,9 @@ struct LocalControlClient::State
 		socklen_t size = sizeof(peer);
 		if (::getsockopt(socket.value, SOL_SOCKET, SO_PEERCRED, &peer, &size) != 0 || peer.uid != ::geteuid())
 			throw std::runtime_error("Control peer belongs to another user");
+		if (peer.pid <= 0)
+			throw std::runtime_error("Control peer process identity is unavailable");
+		peerProcess = static_cast<std::uint64_t>(peer.pid);
 	}
 	std::unique_ptr<Exchange> Close()
 	{
@@ -272,6 +275,10 @@ LocalControlClient::LocalControlClient(std::string path, std::chrono::millisecon
 LocalControlClient::~LocalControlClient()
 {
 	Close();
+}
+std::uint64_t LocalControlClient::PeerProcess() const noexcept
+{
+	return m_state->peerProcess;
 }
 ControlPacket LocalControlClient::Request(ControlPacket request)
 {

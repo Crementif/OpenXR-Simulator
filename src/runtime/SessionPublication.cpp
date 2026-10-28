@@ -78,11 +78,13 @@ void SessionPublication::FrameBoundary::Reserve(
 	if (m_applied)
 		throw std::logic_error("Frame publication was already reserved");
 	const SimulationTime time{prediction.displayTime.value - m_epoch.value};
-	m_applied = m_owner.m_commands.Apply(prediction.id, time, prediction.displayTime, m_baseline,
-										 [&](const auto& applied)
-										 {
-											 reserveHistory(*applied);
-										 });
+	m_applied = m_owner.m_commands.Apply(
+		prediction.id, time, prediction.displayTime, m_baseline,
+		[&](const auto& applied)
+		{
+			reserveHistory(*applied);
+		},
+		LiveInputClock::now(), prediction.clockRevision);
 }
 
 const AppliedCommandSnapshot& SessionPublication::FrameBoundary::Applied() const
@@ -143,6 +145,16 @@ bool SessionPublication::ReleaseSource(CommandSource source, bool retire)
 {
 	return ReleaseChannels(m_commands.ReleaseSource(source, retire));
 }
+bool SessionPublication::ExpireLiveInput(LiveInputClock::time_point now)
+{
+	const auto channels = m_commands.ExpireLiveInput(now);
+	return std::any_of(channels.begin(), channels.end(),
+					   [](bool owned)
+					   {
+						   return owned;
+					   }) &&
+		   ReleaseChannels(channels);
+}
 void SessionPublication::StopPoseSequence(CommandSource source)
 {
 	ReleaseChannels(m_commands.StopPoseSequence(source));
@@ -166,7 +178,7 @@ bool SessionPublication::ReleaseChannels(const std::array<bool, ControlChannelCo
 	return restoreFocus;
 }
 
-void SessionPublication::StartRecording(const ReferenceSpaceState& spaces)
+void SessionPublication::StartRecording(const ReferenceSpaceState& spaces, bool drain)
 {
 	auto baseline = m_baseline;
 	auto observed = m_input.Snapshot();
@@ -175,7 +187,7 @@ void SessionPublication::StartRecording(const ReferenceSpaceState& spaces)
 	// Native publication may report the scenario-induced focus state. Preserve
 	// the underlying focused origin rather than baking that failure into it.
 	baseline.tracking.focused = m_sessionOverride || baseline.tracking.focused;
-	m_commands.StartRecording(baseline, spaces);
+	m_commands.StartRecording(baseline, spaces, drain);
 }
 
 CommandConfiguration SessionPublication::ConfigurationSnapshot(const FramePrediction& lastIssued) const
@@ -329,8 +341,10 @@ ViewConfiguration SessionPublication::ConfigurationAt(RuntimeTime time) const
 
 LocatedViews SessionPublication::ViewsAt(RuntimeTime time, bool foveated) const
 {
-	const auto sample = m_tracking.Sample(time).value_or(TrackingSnapshot{});
-	return ConfigurationAt(time).Locate(sample, foveated);
+	auto sample = m_tracking.Sample(time);
+	if (!sample)
+		sample.emplace();
+	return ConfigurationAt(time).Locate(*sample, foveated);
 }
 
 XrResult SessionPublication::ValidatePoseAction(XrAction action, XrPath subaction) const
@@ -359,7 +373,11 @@ PoseSample SessionPublication::ActionPose(XrAction action, XrPath subaction, Run
 		{
 		case InputDeviceKind::Controller:
 			if (source.device.value < sample->controllers.size())
-				return sample->controllers[source.device.value].pose;
+			{
+				const auto& controller = sample->controllers[source.device.value];
+				return source.binding.component == "/input/aim/pose" && controller.aim ? *controller.aim
+																					   : controller.pose;
+			}
 			break;
 		case InputDeviceKind::EyeGaze:
 			return m_gaze.Pose(*sample);

@@ -1,7 +1,9 @@
-#include "automation/Recording.h"
 #include "Pch.h"
+#include "automation/Recording.h"
+#include "automation/RigTypes.h"
 
 #include "control/SimulationControl.h"
+#include "simulation/BodyObservation.h"
 
 #include <charconv>
 #include <cmath>
@@ -135,6 +137,13 @@ static std::string Format(const SetControllerPose& command)
 	table.Pose(command.value.pose.pose);
 	table.Integer("flags", command.value.pose.flags);
 	table.Boolean("connected", command.value.connected);
+	if (command.value.aim)
+	{
+		CommandTable aim;
+		aim.Pose(command.value.aim->pose);
+		aim.Integer("flags", command.value.aim->flags);
+		table.Raw("aim", aim.Finish());
+	}
 	return table.Finish();
 }
 static std::string Format(const SetControllerControls& command)
@@ -159,15 +168,70 @@ static std::string Format(const SetControllerControls& command)
 	table.Boolean("primary_touch", controls.primaryTouch);
 	table.Boolean("secondary_touch", controls.secondaryTouch);
 	table.Boolean("trigger_touch", controls.triggerTouch);
+	if (!controls.physicalProfile.empty())
+		table.Text("physical_profile", controls.physicalProfile);
+	if (controls.triggerClick)
+		table.Boolean("trigger_click", *controls.triggerClick);
 	table.Boolean("thumb_touch", controls.thumbTouch);
 	table.Boolean("trackpad_touch", controls.trackpadTouch);
 	table.Boolean("thumbrest_touch", controls.thumbrestTouch);
 	table.Boolean("connected", controls.connected);
 	return table.Finish();
 }
+static std::string FormatObservation(const BodyObservation& source)
+{
+	const auto body = NormalizeBodyObservation(source);
+	CommandTable table;
+	table.Integer("joint_set", static_cast<std::uint32_t>(body.jointSet));
+	table.Integer("requested_time", body.requestedTime.value.count());
+	if (body.returnedTime)
+		table.Integer("returned_time", body.returnedTime->value.count());
+	table.Boolean("located", body.located);
+	if (body.active)
+		table.Boolean("active", *body.active);
+	if (body.allJointPosesTracked)
+		table.Boolean("all_joint_poses_tracked", *body.allJointPosesTracked);
+	if (body.confidence)
+		table.Float("confidence", *body.confidence);
+	if (body.skeletonRevision)
+		table.Integer("skeleton_revision", *body.skeletonRevision);
+	std::string joints = "{";
+	for (std::size_t index = 0; index < BodyJointCount; ++index)
+		if (const auto& joint = body.joints[index])
+		{
+			CommandTable entry;
+			entry.Integer("joint", index);
+			entry.Pose(joint->pose);
+			entry.Integer("flags", joint->flags);
+			joints += entry.Finish() + ", ";
+		}
+	table.Raw("joints", joints + '}');
+	if (body.skeleton)
+	{
+		std::string skeleton = "{";
+		for (const auto& joint : *body.skeleton)
+			if (joint)
+			{
+				CommandTable entry;
+				entry.Integer("joint", static_cast<std::uint32_t>(joint->joint));
+				if (joint->parent)
+					entry.Integer("parent", static_cast<std::uint32_t>(*joint->parent));
+				entry.Pose(joint->bindPose);
+				skeleton += entry.Finish() + ", ";
+			}
+		table.Raw("skeleton", skeleton + '}');
+	}
+	return table.Finish();
+}
 static std::string Format(const SetBodyControls& command)
 {
+	if (command.observationOrigin && (!command.observation || command.observationOrigin->value.count() <= 0))
+		throw std::invalid_argument("Body replay timing requires an observation and positive anchor");
 	CommandTable table("body");
+	if (command.observationOrigin)
+		table.Integer("observation_origin", command.observationOrigin->value.count());
+	if (command.observation)
+		table.Raw("observation", FormatObservation(*command.observation));
 	const auto& body = command.value;
 	table.Boolean("active", body.active);
 	if (body.rootPose)
@@ -216,6 +280,10 @@ static std::string Format(const SetTracker& command)
 	CommandTable table("tracker");
 	table.Integer("index", command.index);
 	table.Integer("identity", command.value.identity.value);
+	if (!command.value.sourcePath.View().empty())
+		table.Text("source_path", command.value.sourcePath.View());
+	if (command.value.poseFlags != TrackedPoseFlags)
+		table.Integer("flags", command.value.poseFlags);
 	table.Integer("role", static_cast<std::uint32_t>(command.value.role));
 	table.Boolean("connected", command.value.connected);
 	table.Boolean("tracked", command.value.tracked);
@@ -229,6 +297,34 @@ static std::string Format(const SetTracker& command)
 	}
 	if (command.value.poseOverride)
 		table.Pose(*command.value.poseOverride);
+	return table.Finish();
+}
+static std::string Format(const SetTrackers& command)
+{
+	CommandTable table("trackers");
+	std::string entries = "{";
+	for (std::size_t index = 0; index < command.value.size(); ++index)
+		entries += Format(SetTracker{static_cast<std::uint32_t>(index), command.value[index]}) + ", ";
+	table.Raw("devices", entries + '}');
+	return table.Finish();
+}
+static std::string Format(const SetEyeViews& command)
+{
+	CommandTable table("eye_views");
+	table.Boolean("enabled", command.value.has_value());
+	if (command.value)
+	{
+		table.Integer("space_revision", command.value->spaceRevision);
+		for (std::size_t eye = 0; eye < 2; ++eye)
+		{
+			CommandTable value;
+			value.Pose(command.value->poses[eye].pose);
+			value.Integer("flags", command.value->poses[eye].flags);
+			const auto& fov = command.value->fovs[eye];
+			value.Raw("fov", Vector({fov.angleLeft, fov.angleRight, fov.angleUp, fov.angleDown}));
+			table.Raw(eye == 0 ? "left" : "right", value.Finish());
+		}
+	}
 	return table.Finish();
 }
 static std::string Format(const SetViewSettings& command)
@@ -295,6 +391,18 @@ std::string EditableCommand(const SimulationCommand& command)
 		},
 		command);
 }
+SimulationCommand ReplayCommand(SimulationCommand command, std::optional<RuntimeTime> origin)
+{
+	if (auto* body = std::get_if<SetBodyControls>(&command); body && body->observation)
+	{
+		if (!origin || origin->value.count() <= 0)
+			throw std::invalid_argument("Observed body replay requires its recorded runtime boundary");
+		if (body->observationOrigin)
+			throw std::invalid_argument("Recorded body command must contain resolved timestamps");
+		body->observationOrigin = origin;
+	}
+	return command;
+}
 std::vector<SimulationCommand> ReplayInitialCommands(const InputRecording& recording)
 {
 	if (recording.initial.size() + s_channelNames.size() + s_scenarioNames.size() > 64)
@@ -309,6 +417,10 @@ std::vector<SimulationCommand> ReplayInitialCommands(const InputRecording& recor
 		throw std::invalid_argument("Recording requires one exact reference-space origin");
 	for (const auto& command : recording.initial)
 	{
+		if (const auto* body = std::get_if<SetBodyControls>(&command); body && body->observation && recording.version < 4)
+			throw std::invalid_argument("Body observations require recording schema 4");
+		if (recording.version < 3 && std::holds_alternative<SetTrackers>(command))
+			throw std::invalid_argument("Tracker collections require recording schema 3");
 		if (const auto* spaces = std::get_if<SetReferenceSpaces>(&command))
 		{
 			auto normalized = spaces->value;
@@ -323,7 +435,8 @@ std::vector<SimulationCommand> ReplayInitialCommands(const InputRecording& recor
 	commands.reserve(s_channelNames.size() + recording.initial.size() + s_scenarioNames.size());
 	for (std::size_t channel = 0; channel < s_channelNames.size(); ++channel)
 		commands.push_back(TakeControl{static_cast<ControlChannel>(channel)});
-	commands.insert(commands.end(), recording.initial.begin(), recording.initial.end());
+	for (const auto& command : recording.initial)
+		commands.push_back(ReplayCommand(command, recording.originRuntimeTime));
 	for (std::size_t index = 0; index < s_scenarioNames.size(); ++index)
 	{
 		const auto scenario = static_cast<FailureScenario>(index);
@@ -336,7 +449,7 @@ std::vector<SimulationCommand> ReplayInitialCommands(const InputRecording& recor
 
 std::string EditableRig(const InputRecording& recording)
 {
-	if ((recording.version != 1 && recording.version != 2) || recording.active || recording.overflow ||
+	if ((recording.version < 1 || recording.version > 4) || recording.active || recording.overflow ||
 		recording.total != recording.transactions.size() || recording.total > 1024 ||
 		recording.initial.size() + s_channelNames.size() + s_scenarioNames.size() > 64)
 		throw std::invalid_argument("Export requires a stopped, complete supported recording");
@@ -344,8 +457,8 @@ std::string EditableRig(const InputRecording& recording)
 	std::string script;
 	const auto line = [&](std::string value)
 	{
-		if (value.size() >= control::MaxPayload - script.size())
-			throw std::length_error("Editable rig exceeds the runner's one-MiB source limit");
+		if (value.size() >= MaxRigSourceBytes - script.size())
+			throw std::length_error("Editable rig exceeds the runner's 64-MiB source limit");
 		script += value + '\n';
 	};
 	line("-- OpenXR Simulator recorded inputs, schema " + std::to_string(recording.version) +
@@ -379,16 +492,24 @@ std::string EditableRig(const InputRecording& recording)
 	std::map<std::uint64_t, std::vector<const RecordedTransaction*>> frames;
 	for (const auto& transaction : recording.transactions)
 	{
+		for (const auto& command : transaction.commands)
+		{
+			if (const auto* body = std::get_if<SetBodyControls>(&command); body && body->observation && recording.version < 4)
+				throw std::invalid_argument("Body observations require recording schema 4");
+			if (recording.version < 3 && std::holds_alternative<SetTrackers>(command))
+				throw std::invalid_argument("Tracker collections require recording schema 3");
+		}
 		if (transaction.commands.empty() || transaction.commands.size() > 64)
 			throw std::invalid_argument("Recorded transaction has an invalid command count");
 		const bool released = transaction.phase == "released";
 		if ((transaction.afterFrame && !released) ||
-			(released && (recording.version != 2 || transaction.id != 0 ||
-						  !std::all_of(transaction.commands.begin(), transaction.commands.end(),
-									   [](const auto& command)
-									   {
-										   return std::holds_alternative<ReleaseControl>(command);
-									   }))))
+			(released && (recording.version < 2 || transaction.id != 0 ||
+						  !std::all_of(
+							  transaction.commands.begin(), transaction.commands.end(),
+							  [](const auto& command)
+							  {
+								  return std::holds_alternative<ReleaseControl>(command);
+							  }))))
 			throw std::invalid_argument("Malformed recorded release event");
 		if (transaction.phase != "applied" && !released)
 		{
@@ -418,9 +539,23 @@ std::string EditableRig(const InputRecording& recording)
 		line("    local pending = {}");
 		for (const auto* transaction : transactions)
 		{
+			line("    -- Original frame " + std::to_string(transaction->frame.value) + "; transaction " +
+				 std::to_string(transaction->id) + "; after_frame " + (transaction->afterFrame ? "true" : "false"));
+			if (const auto& live = transaction->liveInput)
+			{
+				line("    -- Physical input: connection " + std::to_string(live->connection) + "; sequence " +
+					 std::to_string(live->sequence) + "; clock_revision " + std::to_string(live->clockRevision));
+				line("    -- Original runtime ns: observed " + std::to_string(live->observedTime.value.count()) +
+					 "; target " + std::to_string(live->targetTime.value.count()) + "; controls " +
+					 std::to_string(live->controlsObservedTime[0].value.count()) + ", " +
+					 std::to_string(live->controlsObservedTime[1].value.count()));
+				if (live->trackersObservedTime)
+					line("    -- Tracker observation runtime ns: " +
+						 std::to_string(live->trackersObservedTime->value.count()));
+			}
 			line("    table.insert(pending, simxr.schedule({frame = target, commands = {");
 			for (const auto& command : transaction->commands)
-				line("        " + EditableCommand(command) + ",");
+				line("        " + EditableCommand(ReplayCommand(command, transaction->runtimeTime)) + ",");
 			line("    }}))");
 		}
 		line("    advance(target)");

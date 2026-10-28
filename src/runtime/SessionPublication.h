@@ -66,11 +66,12 @@ class SessionPublication
 	void Configure(std::uint64_t seed, std::optional<CommandConfiguration> initial, bool overrideInitial);
 	void Stop();
 	bool ReleaseSource(CommandSource source, bool retire);
+	bool ExpireLiveInput(LiveInputClock::time_point now);
 	void StopPoseSequence(CommandSource source);
 	void PublishTracking(RuntimeTime time, TrackingState state, const ViewSettings& settings, bool focused);
 	XrResult PublishInput(InputSnapshot input);
 	CommandConfiguration ConfigurationSnapshot(const FramePrediction& lastIssued) const;
-	void StartRecording(const ReferenceSpaceState& spaces);
+	void StartRecording(const ReferenceSpaceState& spaces, bool drain = false);
 	void CaptureFrame(FrameId frame, FrameSubmissionState& submission) const;
 	void RecordViewQuery(ViewQuerySnapshot query);
 	bool TakeProfileChange() noexcept;

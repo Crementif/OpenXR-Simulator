@@ -156,7 +156,8 @@ static XrResult Devices(ActionRegistry& registry, const InputSnapshot& input, st
 	for (std::size_t hand = 0; hand < 2; ++hand)
 		inputs.push_back({{InputDeviceKind::Controller, hand},
 						  {hand == 0 ? "/user/hand/left" : "/user/hand/right"},
-						  input.preferredProfiles[hand],
+						  input.controllers[hand].physicalProfile.empty() ? input.preferredProfiles[hand]
+																		  : input.controllers[hand].physicalProfile,
 						  input.controllers[hand].connected,
 						  true,
 						  input.controllers[hand]});
@@ -193,7 +194,9 @@ static ActionStateValue ReadSource(const ControllerControls& input, const Action
 	if (path.starts_with("/input/trigger"))
 	{
 		value.scalar = input.trigger;
-		value.boolean = path.ends_with("/touch") ? input.triggerTouch : input.trigger > 0.5f;
+		value.boolean = path.ends_with("/touch")   ? input.triggerTouch
+						: path.ends_with("/click") ? input.triggerClick.value_or(input.trigger > 0.5f)
+												   : input.trigger > 0.5f;
 	}
 	else if (path.starts_with("/input/squeeze"))
 	{
@@ -1266,6 +1269,22 @@ XrResult ActionSyncState::BoundSources(XrAction handle, std::vector<XrPath>& pat
 				if (std::find(paths.begin(), paths.end(), binding.source) == paths.end())
 					paths.push_back(binding.source);
 	return XR_SUCCESS;
+}
+
+std::optional<std::array<std::string, 2>> ActionSyncState::ControllerProfiles() const
+{
+	std::lock_guard lock(m_mutex);
+	if (!m_attached)
+		return {};
+	std::array<std::string, 2> result;
+	for (const auto& [user, profile] : m_snapshot.profiles)
+	{
+		const auto path = m_registry.PathString(user);
+		if (!path || (*path != "/user/hand/left" && *path != "/user/hand/right"))
+			continue;
+		result[*path == "/user/hand/right" ? 1 : 0] = m_registry.PathString(profile).value_or("");
+	}
+	return result;
 }
 
 XrResult ActionSyncState::CurrentProfile(XrPath userPath, XrPath& profile) const

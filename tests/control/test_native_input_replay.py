@@ -53,7 +53,7 @@ def main(probe, executable):
                 wait_file(data / 'recording.9.ready', host)
                 client.stop_recording(session)
                 recording = collect_recording(client, session)
-                require(recording['version'] == 2 and recording['total'] == 3, recording)
+                require(recording['version'] == 3 and recording['total'] == 3, recording)
                 require(recording['transactions'][1]['phase'] == 'released' and
                         recording['transactions'][1]['after_frame'], recording)
                 client.release_control(session)

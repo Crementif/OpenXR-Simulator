@@ -2,6 +2,7 @@
 
 #include "control/ControlPacket.h"
 #include "graphics/FrameOutput.h"
+#include "graphics/ImageRegion.h"
 #include "graphics/SharedImageTypes.h"
 
 #include <array>
@@ -74,6 +75,14 @@ class ImageDelivery : public PacketExposure
 class ImageExport : public GpuCompletion
 {
   public:
+	virtual std::optional<ImageRegion> Region() const noexcept
+	{
+		return {};
+	}
+	virtual std::optional<std::uint32_t> SourceLayer() const noexcept
+	{
+		return {};
+	}
 	virtual std::string_view MediaType() const noexcept
 	{
 		return "image/raw";
@@ -96,6 +105,12 @@ class ImageReader : public GpuCompletion
 	virtual std::shared_ptr<ImageDelivery> Share(const ImageDeviceIdentity& identity,
 												 const std::shared_ptr<TransferHandle>& consumer) const = 0;
 	virtual std::shared_ptr<ImageExport> Export(std::optional<std::uint32_t> layer) const = 0;
+	virtual std::shared_ptr<ImageExport> ExportRegion(std::optional<std::uint32_t> layer, const ImageRegion& region) const
+	{
+		(void)layer;
+		(void)region;
+		throw ImageInspectionError(ErrorCode::UnsupportedCommand, "Image region export unavailable");
+	}
 };
 
 class ImageInspectionProvider

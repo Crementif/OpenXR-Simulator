@@ -160,8 +160,6 @@ XrResult VulkanFrameSubmission::PrepareCaptures(std::span<const FrameCaptureRequ
 			}
 			if (!request.reservation)
 			{
-				if (request.preview)
-					return XR_ERROR_LIMIT_REACHED;
 				continue;
 			}
 			Capture capture{request.target, request.image ? request.image->source : XR_NULL_HANDLE, {}, {}};
@@ -187,8 +185,6 @@ XrResult VulkanFrameSubmission::PrepareCaptures(std::span<const FrameCaptureRequ
 			if (request.history &&
 				!capture.transfer->Output()->PromoteCaptureBudget(*request.historyPool, request.historyReservation))
 			{
-				if (request.preview)
-					return XR_ERROR_LIMIT_REACHED;
 				continue;
 			}
 			output.output = capture.transfer->Output();

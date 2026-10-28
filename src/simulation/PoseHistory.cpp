@@ -48,22 +48,46 @@ static float InterpolateAngle(float a, float b, float fraction)
 
 static bool Continuous(const TrackingSnapshot& a, const TrackingSnapshot& b)
 {
+	// Keep runtime estimates and their original sample time/skeleton together.
+	if (a.input.bodyObservation || b.input.bodyObservation)
+		return false;
 	if (a.body.skeletonRevision != b.body.skeletonRevision || a.input.focused != b.input.focused ||
 		a.head.flags != b.head.flags || a.input.gaze.available != b.input.gaze.available ||
 		a.input.gaze.tracked != b.input.gaze.tracked || a.input.body.active != b.input.body.active ||
 		a.input.body.preset != b.input.body.preset ||
 		a.input.body.rootPose.has_value() != b.input.body.rootPose.has_value())
 		return false;
+	if (a.input.eyeViews.has_value() != b.input.eyeViews.has_value())
+		return false;
+	if (a.input.eyeViews)
+	{
+		if (a.input.eyeViews->spaceRevision != b.input.eyeViews->spaceRevision)
+			return false;
+		for (std::size_t eye = 0; eye < 2; ++eye)
+		{
+			const auto& first = a.input.eyeViews->fovs[eye];
+			const auto& second = b.input.eyeViews->fovs[eye];
+			if (a.input.eyeViews->poses[eye].flags != b.input.eyeViews->poses[eye].flags ||
+				first.angleLeft != second.angleLeft || first.angleRight != second.angleRight ||
+				first.angleDown != second.angleDown || first.angleUp != second.angleUp)
+				return false;
+		}
+	}
 	for (std::size_t index = 0; index < a.controllers.size(); ++index)
 		if (a.controllers[index].connected != b.controllers[index].connected ||
-			a.controllers[index].pose.flags != b.controllers[index].pose.flags)
+			a.controllers[index].pose.flags != b.controllers[index].pose.flags ||
+			a.controllers[index].aim.has_value() != b.controllers[index].aim.has_value() ||
+			(a.controllers[index].aim && a.controllers[index].aim->flags != b.controllers[index].aim->flags))
 			return false;
+	if (a.trackers.size() != b.trackers.size() || a.trackers.size() != a.input.trackers.size() ||
+		b.trackers.size() != b.input.trackers.size())
+		return false;
 	for (std::size_t index = 0; index < a.trackers.size(); ++index)
 	{
 		const auto& first = a.trackers[index].device;
 		const auto& second = b.trackers[index].device;
-		if (first.identity != second.identity || first.role != second.role || first.connected != second.connected ||
-			first.tracked != second.tracked || first.anchor != second.anchor ||
+		if (first.identity != second.identity || first.sourcePath != second.sourcePath || first.role != second.role || first.connected != second.connected ||
+			first.tracked != second.tracked || first.poseFlags != second.poseFlags || first.anchor != second.anchor ||
 			first.poseOverride.has_value() != second.poseOverride.has_value() ||
 			first.jointOffset.has_value() != second.jointOffset.has_value())
 			return false;
@@ -91,6 +115,8 @@ PoseHistory::PoseHistory(std::size_t capacity) : m_capacity(capacity)
 
 void PoseHistory::Push(TrackingSnapshot snapshot, bool replaceCurrent)
 {
+	if (snapshot.trackers.size() > MaxTrackerDevices)
+		throw std::invalid_argument("Tracker history exceeds capacity");
 	std::lock_guard lock(m_mutex);
 	if (replaceCurrent && !m_samples.empty() && snapshot.time == m_samples.back().time)
 	{
@@ -123,9 +149,18 @@ std::optional<TrackingSnapshot> PoseHistory::Sample(RuntimeTime time) const
 											  static_cast<double>((right->time.value - left->time.value).count()));
 	auto input = left->input;
 	input.head.pose = Interpolate(input.head.pose, right->input.head.pose, fraction);
+	if (input.eyeViews)
+		for (std::size_t eye = 0; eye < 2; ++eye)
+			input.eyeViews->poses[eye].pose =
+				Interpolate(input.eyeViews->poses[eye].pose, right->input.eyeViews->poses[eye].pose, fraction);
 	for (std::size_t index = 0; index < input.controllers.size(); ++index)
+	{
 		input.controllers[index].pose.pose =
 			Interpolate(input.controllers[index].pose.pose, right->input.controllers[index].pose.pose, fraction);
+		if (input.controllers[index].aim)
+			input.controllers[index].aim->pose =
+				Interpolate(input.controllers[index].aim->pose, right->input.controllers[index].aim->pose, fraction);
+	}
 	for (std::size_t index = 0; index < input.trackers.size(); ++index)
 		if (input.trackers[index].poseOverride)
 			input.trackers[index].poseOverride =

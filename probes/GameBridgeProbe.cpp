@@ -4,24 +4,56 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <charconv>
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <dlfcn.h>
+#endif
 #include <filesystem>
 #include <stdexcept>
 #include <thread>
 
-int main(int argc, char** argv)
+#if defined(_WIN32)
+static bool s_closeRequested = false;
+static LRESULT CALLBACK GameWindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
+	if (message == WM_CLOSE)
+	{
+		s_closeRequested = true;
+		return 0;
+	}
+	return DefWindowProcW(window, message, wparam, lparam);
+}
+int wmain(int argc, wchar_t** argv)
+#else
+int main(int argc, char** argv)
+#endif
+{
+#if defined(_WIN32)
+	HMODULE library = nullptr;
+#else
 	void* library = nullptr;
+#endif
 	try
 	{
 		if (argc != 4)
 			throw std::invalid_argument("Expected runtime library, endpoint and stop marker");
+#if defined(_WIN32)
+		if (!SetEnvironmentVariableW(L"SIMXR_CONTROL_SOCKET", argv[2]))
+			throw std::runtime_error("Set endpoint environment failed");
+		library = LoadLibraryW(argv[1]);
+		if (!library)
+			throw std::runtime_error("Cannot load runtime library: " + std::to_string(GetLastError()));
+		const auto getApi = reinterpret_cast<PFN_simxrGetGameBridgeApi>(GetProcAddress(library, "simxrGetGameBridgeApi"));
+#else
 		if (setenv("SIMXR_CONTROL_SOCKET", argv[2], 1) != 0)
 			throw std::runtime_error("Set endpoint environment failed");
 		library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
 		if (!library)
 			throw std::runtime_error(dlerror());
 		const auto getApi = reinterpret_cast<PFN_simxrGetGameBridgeApi>(dlsym(library, "simxrGetGameBridgeApi"));
+#endif
 		SimxrGameBridgeApi api{};
 		api.size = sizeof(api);
 		if (!getApi || !getApi(SIMXR_GAME_BRIDGE_VERSION, &api) || api.version != SIMXR_GAME_BRIDGE_VERSION ||
@@ -33,10 +65,44 @@ int main(int argc, char** argv)
 			throw std::runtime_error("Native game bridge registration failed");
 		std::puts("READY game safe-update fixture; no XR instance or graphics device");
 		std::fflush(stdout);
-		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10};
-		unsigned resets = 0;
-		while (!std::filesystem::exists(argv[3]))
+		int timeoutSeconds = 10;
+		if (const auto* configured = std::getenv("SIMXR_GAME_PROBE_SECONDS"))
 		{
+			const std::string_view value{configured};
+			const auto parsed = std::from_chars(value.data(), value.data() + value.size(), timeoutSeconds);
+			if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || timeoutSeconds < 1 || timeoutSeconds > 90)
+				throw std::invalid_argument("Invalid game probe timeout");
+		}
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{timeoutSeconds};
+		unsigned resets = 0;
+#if defined(_WIN32)
+		WNDCLASSW windowClass{};
+		windowClass.lpfnWndProc = GameWindowProc;
+		windowClass.hInstance = GetModuleHandleW(nullptr);
+		windowClass.lpszClassName = L"SimxrGameProbeWindow";
+		if (!RegisterClassW(&windowClass))
+			throw std::runtime_error("Cannot register game probe window");
+		const auto window = CreateWindowExW(0, windowClass.lpszClassName, L"SimXR Game Probe", WS_OVERLAPPED,
+			CW_USEDEFAULT, CW_USEDEFAULT, 100, 100, nullptr, nullptr, windowClass.hInstance, nullptr);
+		if (!window)
+			throw std::runtime_error("Cannot create game probe window");
+#endif
+		while (!std::filesystem::exists(std::filesystem::path{argv[3]})
+#if defined(_WIN32)
+			   && !s_closeRequested
+#endif
+		)
+		{
+#if defined(_WIN32)
+			MSG message{};
+			while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+			{
+				TranslateMessage(&message);
+				DispatchMessageW(&message);
+			}
+			if (s_closeRequested)
+				break;
+#endif
 			if (std::chrono::steady_clock::now() >= deadline)
 				throw std::runtime_error("Game fixture timed out");
 			SimxrGameCommand command{};
@@ -58,8 +124,14 @@ int main(int argc, char** argv)
 		api.unregisterGame(api.context, game);
 		if (!api.shutdown(api.context))
 			throw std::runtime_error("Explicit runtime shutdown failed");
+#if defined(_WIN32)
+		DestroyWindow(window);
+		if (!FreeLibrary(library))
+			throw std::runtime_error("Cannot unload runtime library");
+#else
 		if (dlclose(library) != 0)
 			throw std::runtime_error(dlerror());
+#endif
 		library = nullptr;
 		std::puts("PASS native optional C ABI, game update acknowledgement and shutdown without XR/GPU");
 		return 0;

@@ -43,7 +43,9 @@ class CommandState
 	static ControlChannel ChannelFor(const SetBodyControls& command);
 	static ControlChannel ChannelFor(const SetGaze& command);
 	static ControlChannel ChannelFor(const SetTracker& command);
+	static ControlChannel ChannelFor(const SetTrackers& command);
 	static ControlChannel ChannelFor(const SetViewSettings& command);
+	static ControlChannel ChannelFor(const SetEyeViews& command);
 	static ControlChannel ChannelFor(const SetBodyProportions& command);
 	static ControlChannel ChannelFor(const SetControllerProfile& command);
 	static ControlChannel ChannelFor(const SetScenario& command);
@@ -61,7 +63,9 @@ class CommandState
 	void Set(const SetBodyControls& command);
 	void Set(const SetGaze& command);
 	void Set(const SetTracker& command);
+	void Set(const SetTrackers& command);
 	void Set(const SetViewSettings& command);
+	void Set(const SetEyeViews& command);
 	void Set(const SetBodyProportions& command);
 	void Set(const SetControllerProfile& command);
 	void Set(const SetScenario& command);

@@ -1,6 +1,7 @@
 #include "automation/RigRunner.h"
 #include "Pch.h"
 
+#include "automation/RecordingPlayback.h"
 #include "automation/RigReport.h"
 #include "automation/ScriptEngine.h"
 
@@ -15,8 +16,13 @@ void RigRunner::Run()
 	try
 	{
 		m_runtime.ObserveCompatibility();
-		ScriptEngine engine{m_runtime, m_progress, m_options};
-		engine.Execute();
+		if (!m_options.recordingArchive.empty())
+			ReplayRecordingArchive(m_options.recordingArchive, m_options.seed, m_runtime, m_progress);
+		else
+		{
+			ScriptEngine engine{m_runtime, m_progress, m_options};
+			engine.Execute();
+		}
 	}
 	catch (const std::exception& failure)
 	{
@@ -45,8 +51,10 @@ RigRunner::~RigRunner()
 }
 void RigRunner::Start(RigOptions options)
 {
-	if (!options.session.value || !options.generation || options.source.empty() ||
-		options.source.size() > control::MaxPayload || options.name.size() > 1024 ||
+	if (!options.session.value || !options.generation || (options.source.empty() == options.recordingArchive.empty()) ||
+		options.source.size() > MaxRigSourceBytes || options.name.size() > 1024 ||
+		options.recordingArchive.native().find(std::filesystem::path::value_type{}) !=
+			std::filesystem::path::string_type::npos ||
 		options.memoryLimit < 1024 * 1024 || options.memoryLimit > 512 * 1024 * 1024 || options.deadline.count() <= 0 ||
 		options.deadline > std::chrono::hours{1})
 		throw std::invalid_argument("Invalid bounded rig options");

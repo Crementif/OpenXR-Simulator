@@ -274,7 +274,8 @@ std::shared_ptr<VulkanInspectionWork> VulkanInspectionWork::Import(std::shared_p
 std::shared_ptr<VulkanInspectionWork>
 VulkanInspectionWork::Readback(std::shared_ptr<VulkanDevice> deviceOwner, std::shared_ptr<FrameReservation> admission,
 							   std::shared_ptr<VulkanImage> source, std::shared_ptr<FrameReservation> sourceBudget,
-							   std::optional<std::uint32_t> layer, std::shared_ptr<const void> retirementOwner)
+							   std::optional<std::uint32_t> layer, std::shared_ptr<const void> retirementOwner,
+							   std::optional<ImageRegion> region)
 {
 	const auto& image = *source;
 	const auto pixelBytes = ColorPixelBytes(image.format);
@@ -283,18 +284,26 @@ VulkanInspectionWork::Readback(std::shared_ptr<VulkanDevice> deviceOwner, std::s
 	if (layer && *layer >= image.layers)
 		throw std::invalid_argument("Invalid inspection export layer");
 	const auto layers = layer ? 1U : image.layers;
+	const auto selection = region.value_or(ImageRegion{0, 0, image.extent.width, image.extent.height,
+		image.extent.width, image.extent.height});
+	if (!selection.width || !selection.height || !selection.outputWidth || !selection.outputHeight ||
+		selection.x > image.extent.width || selection.y > image.extent.height ||
+		selection.width > image.extent.width - selection.x || selection.height > image.extent.height - selection.y ||
+		image.extent.width > INT32_MAX || image.extent.height > INT32_MAX ||
+		selection.outputWidth > INT32_MAX || selection.outputHeight > INT32_MAX)
+		throw std::invalid_argument("Invalid inspection export region");
+	const bool resize = selection.width != selection.outputWidth || selection.height != selection.outputHeight;
 	constexpr std::uint64_t limit = 512ULL * 1024 * 1024;
-	if (!image.extent.width || !image.extent.height || !layers ||
-		image.extent.width > limit / pixelBytes / image.extent.height / layers)
+	if (!layers || selection.outputWidth > limit / pixelBytes / selection.outputHeight / layers)
 		throw VulkanError(VK_ERROR_OUT_OF_HOST_MEMORY, "Inspection export exceeds bounded byte capacity");
-	const auto bytes = std::uint64_t{image.extent.width} * image.extent.height * layers * pixelBytes;
+	const auto bytes = std::uint64_t{selection.outputWidth} * selection.outputHeight * layers * pixelBytes;
 	auto work =
 		std::shared_ptr<VulkanInspectionWork>(new VulkanInspectionWork(std::move(deviceOwner), std::move(admission)));
 	work->m_native->retirementOwner = std::move(retirementOwner);
 	work->m_native->image = source;
 	work->m_native->sourceSlot = std::move(sourceBudget);
 	work->m_native->pixelFormat = image.format;
-	work->m_native->pixelExtent = image.extent;
+	work->m_native->pixelExtent = {selection.outputWidth, selection.outputHeight};
 	work->m_native->layers = layers;
 	work->m_native->bytes = bytes;
 	const auto device = image.device->binding.device;
@@ -320,13 +329,47 @@ VulkanInspectionWork::Readback(std::shared_ptr<VulkanDevice> deviceOwner, std::s
 	CheckVulkan(vkAllocateMemory(device, &memory, nullptr, &work->m_native->memory), "Allocate explicit export buffer");
 	CheckVulkan(vkBindBufferMemory(device, work->m_native->buffer, work->m_native->memory, 0),
 				"Bind explicit export buffer");
+	std::shared_ptr<VulkanImage> resized;
+	if (resize)
+	{
+		VkFormatProperties properties{};
+		vkGetPhysicalDeviceFormatProperties(image.device->binding.physicalDevice, image.format, &properties);
+		const auto required = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT;
+		if ((properties.optimalTilingFeatures & required) != required || image.samples != VK_SAMPLE_COUNT_1_BIT)
+			throw VulkanError(VK_ERROR_FORMAT_NOT_SUPPORTED, "Image format does not support GPU resize");
+		const auto scratchLimit = std::max<std::uint64_t>(bytes * 2, 4ULL * 1024 * 1024);
+		resized = VulkanImage::Create(image.device, image.format, {selection.outputWidth, selection.outputHeight},
+			layers, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, 1, VK_SAMPLE_COUNT_1_BIT,
+			scratchLimit);
+		work->m_native->sourceImage = source;
+		work->m_native->image = resized;
+	}
 	VulkanImageBarrier(work->m_native->commands->command, image, VK_IMAGE_LAYOUT_GENERAL,
 					   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
 					   VK_ACCESS_TRANSFER_READ_BIT);
+	if (resized)
+	{
+		VulkanImageBarrier(work->m_native->commands->command, *resized, VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+		VkImageBlit blit{};
+		blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, layer.value_or(0), layers};
+		blit.srcOffsets[0] = {static_cast<std::int32_t>(selection.x), static_cast<std::int32_t>(selection.y), 0};
+		blit.srcOffsets[1] = {static_cast<std::int32_t>(selection.x + selection.width),
+			static_cast<std::int32_t>(selection.y + selection.height), 1};
+		blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, layers};
+		blit.dstOffsets[1] = {static_cast<std::int32_t>(selection.outputWidth),
+			static_cast<std::int32_t>(selection.outputHeight), 1};
+		vkCmdBlitImage(work->m_native->commands->command, image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			resized->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
+		VulkanImageBarrier(work->m_native->commands->command, *resized, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+	}
 	VkBufferImageCopy copy{};
-	copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, layer.value_or(0), layers};
-	copy.imageExtent = {image.extent.width, image.extent.height, 1};
-	vkCmdCopyImageToBuffer(work->m_native->commands->command, image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+	copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, resized ? 0U : layer.value_or(0), layers};
+	if (!resized)
+		copy.imageOffset = {static_cast<std::int32_t>(selection.x), static_cast<std::int32_t>(selection.y), 0};
+	copy.imageExtent = {selection.outputWidth, selection.outputHeight, 1};
+	vkCmdCopyImageToBuffer(work->m_native->commands->command, resized ? resized->image : image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
 						   work->m_native->buffer, 1, &copy);
 	VulkanImageBarrier(work->m_native->commands->command, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
 					   VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT);

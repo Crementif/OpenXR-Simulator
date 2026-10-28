@@ -26,6 +26,8 @@ struct State
 	std::atomic<unsigned> readersDestroyed{0}, deliveriesDestroyed{0}, exportsDestroyed{0};
 	std::atomic<CompletionStatus> exportPhase{CompletionStatus::Pending}, consumerPhase{CompletionStatus::Pending};
 	std::atomic<std::uint64_t> nextImage{1};
+	ImageCompletionKind completionKind = ImageCompletionKind::Fence;
+	std::vector<FrameView> views;
 	std::function<void()> onReaderDestroyed;
 };
 inline ImageDescription Description()
@@ -231,6 +233,8 @@ class Provider final : public ImageInspectionProvider
 		++state->retains;
 		auto data = std::make_shared<Data>();
 		data->source = std::move(output);
+		data->description.completionKind = state->completionKind;
+		data->description.views = state->views;
 		return std::make_shared<Reader>(state, std::move(data));
 	}
 
@@ -247,7 +251,7 @@ struct Fixture
 	std::shared_ptr<Provider> provider = std::make_shared<Provider>(state);
 	ControlService service{runtime, 16, provider};
 	CaptureId capture;
-	Fixture()
+	explicit Fixture(ExecutionMode mode = ExecutionMode::Deterministic)
 	{
 		XrInstanceCreateInfo create{XR_TYPE_INSTANCE_CREATE_INFO};
 		std::strcpy(create.applicationInfo.applicationName, "CPU image endpoint fixture");
@@ -257,7 +261,7 @@ struct Fixture
 					session->ConfigureCapturePool(pool) == XR_SUCCESS,
 				"Create CPU image fixture");
 		FrameSchedulerConfig config;
-		config.mode = ExecutionMode::Deterministic;
+		config.mode = mode;
 		const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
 		Require(session->Ready(config.epoch) == XR_SUCCESS && session->Begin(begin, config) == XR_SUCCESS &&
 					session->Display().Pause(),

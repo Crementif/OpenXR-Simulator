@@ -84,8 +84,8 @@ struct VulkanInspectionDevice::Native
 		}
 		if (instance)
 			vkDestroyInstance(instance, nullptr);
-		if (validation)
-			validation->liveOwnedDevices.fetch_sub(1);
+		if (validation && validation->liveOwnedDevices.fetch_sub(1) == 1)
+			std::fprintf(stderr, "SimXR inspection validation: all owned devices retired\n");
 	}
 };
 

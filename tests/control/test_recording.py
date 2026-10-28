@@ -2,14 +2,50 @@
 from copy import deepcopy
 from pathlib import Path
 import sys
+import subprocess
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'sdk/python'))
 from simxr_control import Session, ProtocolError, collect_recording, to_luau, encode_command, decode_command
 from simxr_control import recording as implementation
-from simxr_control.protocol import Field, Tag, decode_fields, encode_fields
+from simxr_control.protocol import Field, Tag, decode_fields, encode_fields, to_dict
 from simxr_control.commands import Scenario
+from simxr_control.body_observation import JOINT_SETS
+
+from simxr_control import Client
+from simxr_control.protocol import Capability, OpCode
+
+
+class RecordingDrainClientTests(unittest.TestCase):
+    def test_explicit_identity_and_absolute_offsets(self):
+        client = Client.__new__(Client)
+        client.hello = {'capabilities': Capability.RECORDING_DRAIN}
+        client.request = lambda opcode, fields: (opcode, {field.tag: field for field in fields})
+        opcode, fields = client.start_recording(SESSION, drain=True)
+        self.assertEqual(opcode, OpCode.START_RECORDING)
+        self.assertTrue(fields[Tag.RECORDING_DRAIN].as_bool())
+        opcode, fields = client.read_recording(SESSION, recording_id=7, offset=54000)
+        self.assertEqual(fields[Tag.RECORDING_ID].as_u64(), 7)
+        self.assertEqual(fields[Tag.OFFSET].as_u64(), 54000)
+        _, fields = client.read_recording(SESSION, recording_id=7, offset=None)
+        self.assertNotIn(Tag.OFFSET, fields)
+        opcode, fields = client.acknowledge_recording(SESSION, 7, 54016)
+        self.assertEqual(opcode, OpCode.ACKNOWLEDGE_RECORDING)
+        self.assertEqual(fields[Tag.OFFSET].as_u64(), 54016)
+        _, fields = client.stop_recording(SESSION, recording_id=7)
+        self.assertEqual(fields[Tag.RECORDING_ID].as_u64(), 7)
+        for invalid in (0, -1, True, 2**64):
+            with self.assertRaises(ProtocolError):
+                client.acknowledge_recording(SESSION, invalid, 0)
+        with self.assertRaises(ProtocolError):
+            client.read_recording(SESSION, offset=54000)
+        client.hello = {'capabilities': 0}
+        with self.assertRaises(ProtocolError):
+            client.start_recording(SESSION, drain=True)
+        with self.assertRaises(ProtocolError):
+            client.acknowledge_recording(SESSION, 7, 0)
+
 
 U64_MAX = 2**64 - 1
 SESSION = Session(71, 23)
@@ -46,6 +82,252 @@ def page(document, offset=0, end=True, **changes):
     return value
 
 
+class ReleaseSnapshotTests(unittest.TestCase):
+    def document(self):
+        entry = outcome(frame=11, commands=[dict(kind='release_control', channel=0)])
+        entry.update(after_frame=False, applied_runtime_time=2**53 + 17,
+                     release_state=dict(schema=1, frame=11, runtime_time=2**53 + 17,
+                                        initial_commands=[encoded(dict(kind='eye_views', enabled=False))],
+                                        scenarios=[]))
+        return recording([entry], version=3)
+
+    def test_optional_snapshot_and_exact_anchor(self):
+        document = self.document()
+        implementation._validate_document(document)
+        collected = collect_recording(Pages([page(document)]), SESSION)
+        self.assertEqual(collected['transactions'][0]['release_state'],
+                         document['transactions'][0]['release_state'])
+        del document['transactions'][0]['release_state']
+        implementation._validate_document(document)
+
+    def test_invalid_snapshot(self):
+        for field, value in [('schema', True), ('schema', 2), ('frame', 12),
+                             ('runtime_time', 2**53 + 18), ('runtime_time', None),
+                             ('initial_commands', None), ('scenarios', [0, 0]),
+                             ('scenarios', [len(Scenario)]), ('scenarios', [True])]:
+            with self.subTest(field=field, value=value):
+                document = self.document()
+                document['transactions'][0]['release_state'][field] = value
+                with self.assertRaises(ProtocolError):
+                    implementation._validate_document(document)
+        document = self.document()
+        document['transactions'][0]['commands'] = [encoded(dict(kind='head_pose'))]
+        with self.assertRaises(ProtocolError):
+            implementation._validate_document(document)
+
+
+class EyeCommandTests(unittest.TestCase):
+    def test_trigger_click_roundtrip(self):
+        for value in (False, True):
+            command = dict(kind='controller_controls', hand=0, trigger=.25, trigger_click=value,
+                           physical_profile='/interaction_profiles/valve/index_controller')
+            decoded = decode_command(encoded(command))
+            self.assertIs(decoded['trigger_click'], value)
+            self.assertEqual(decoded['physical_profile'], command['physical_profile'])
+            self.assertEqual(decoded['trigger'], .25)
+        self.assertNotIn('trigger_click', decode_command(encoded(dict(kind='controller_controls'))))
+
+    def test_eye_command_roundtrip(self):
+        eye = dict(position=[-.03125, 1.5, 0], orientation=[0, 0, 0, 1], flags=15,
+                   fov=[-.5, .75, .75, -.5])
+        command = dict(kind='eye_views', enabled=True, space_revision=U64_MAX,
+                       left=eye, right=dict(eye, flags=0))
+        self.assertEqual(decode_command(encoded(command)), command)
+        clear = dict(kind='eye_views', enabled=False)
+        self.assertEqual(decode_command(encoded(clear)), clear)
+        with self.assertRaises(ProtocolError):
+            encode_command(dict(clear, left=eye))
+
+
+class TrackerCollectionTests(unittest.TestCase):
+    def test_collection_roundtrip_and_luau(self):
+        devices = [dict(identity=100 + slot, role=4, position=[slot, 1, 0]) for slot in range(64)]
+        command = dict(kind='trackers', devices=devices)
+        decoded = decode_command(encoded(command))
+        self.assertEqual(len(decoded['devices']), 64)
+        self.assertEqual(decoded['devices'][-1]['identity'], 163)
+        self.assertEqual(encoded(decoded), encoded(command))
+        self.assertEqual(decode_command(encoded(dict(kind='trackers', devices=[])))['devices'], [])
+        event = outcome(commands=[command])
+        event["after_frame"] = False
+        document = recording([event], version=3)
+        script = to_luau(document)
+        self.assertIn('["kind"] = "trackers"', script)
+        self.assertIn('["identity"] = 163', script)
+        for version in (1, 2):
+            with self.assertRaises(ProtocolError):
+                to_luau(dict(document, version=version))
+
+    def test_tracker_source_path(self):
+        path = 'htcx:/device/physical_163'
+        command = dict(kind='tracker', identity=163, source_path=path)
+        self.assertEqual(decode_command(encoded(command))['source_path'], path)
+        collection = dict(kind='trackers', devices=[command])
+        self.assertEqual(decode_command(encoded(collection))['devices'][0]['source_path'], path)
+        self.assertNotIn('source_path', decode_command(encoded(dict(kind='tracker', identity=1))))
+        for invalid in ('missing_namespace', 'htcx:/', 'htcx:/bad space', 'htcx:/bad\0path', 'htcx:/' + 'a' * 282):
+            with self.assertRaises(ProtocolError):
+                encode_command(dict(command, source_path=invalid))
+
+    def test_tracker_partial_validity(self):
+        for flags in (0, 1, 2, 5, 10):
+            command = dict(kind='tracker', identity=123, flags=flags)
+            self.assertEqual(decode_command(encoded(command))['flags'], flags)
+            collection = dict(kind='trackers', devices=[command])
+            self.assertEqual(decode_command(encoded(collection))['devices'][0]['flags'], flags)
+        self.assertNotIn('flags', decode_command(encoded(dict(kind='tracker', identity=123))))
+        with self.assertRaises(ProtocolError):
+            encode_command(dict(kind='tracker', identity=123, flags=16))
+
+    def test_applied_frame_collection(self):
+        command = dict(kind='trackers', devices=[dict(identity=100 + i) for i in range(64)])
+        applied = Field.nested(Tag.APPLIED_INPUT, [encode_command(command, Tag.TRACKER_COLLECTION)])
+        result = to_dict([applied])['applied_input']['commands']
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['devices'][-1]['identity'], 163)
+
+    def test_collection_bounds_and_indexes(self):
+        for devices in (None, {}, [dict(identity=i + 1) for i in range(65)],
+                        [dict(identity=1, index=1)], [dict(kind='trackers', devices=[])]):
+            with self.assertRaises(ProtocolError):
+                encode_command(dict(kind='trackers', devices=devices))
+        command = encode_command(dict(kind='trackers', devices=[dict(identity=1), dict(identity=2)]))
+        outer = decode_fields(command.value)
+        entries = list(decode_fields(outer[Tag.VALUES].value).values())
+        entries[1] = Field.nested(3, list(decode_fields(entries[1].value).values()), True)
+        outer[Tag.VALUES] = Field.nested(Tag.VALUES, entries, True)
+        with self.assertRaises(ProtocolError):
+            decode_command(dict(encoding='simxr-command-v1-hex', data=encode_fields(list(outer.values())).hex()))
+
+
+class BodyObservationTests(unittest.TestCase):
+    @staticmethod
+    def sample(joint_set=0, located=True):
+        body = dict(joint_set=joint_set, requested_time=2**53 + 1, located=located,
+                    joints=[dict(joint=j, position=[j, 0, 0], orientation=[0, 0, 0, 1], flags=0)
+                            for j in sorted(JOINT_SETS[joint_set])])
+        if located:
+            if joint_set < 2:
+                body.update(returned_time=0, active=False, confidence=0, skeleton_revision=0,
+                            skeleton=[dict(joint=j, position=[0, 0, 0], orientation=[0, 0, 0, 1])
+                                      for j in sorted(JOINT_SETS[joint_set])])
+            else:
+                body['all_joint_poses_tracked'] = False
+                body['joints'][0]['flags'] = 1
+        return body
+
+    def test_roundtrip_and_recording_schema(self):
+        for joint_set in range(4):
+            for located in (False, True):
+                body = self.sample(joint_set, located)
+                command = dict(kind='body', observation=body)
+                decoded = decode_command(encoded(command))
+                self.assertEqual(decoded['observation'], body)
+                event = dict(outcome(commands=[command]), after_frame=False, applied_runtime_time=2**53 + 7)
+                document = recording([event], version=4, origin_runtime_time=2**53 + 3)
+                script = to_luau(document)
+                self.assertIn('["requested_time"] = "9007199254740993"', script)
+                self.assertIn('["observation_origin"] = "9007199254740999"', script)
+                unanchored = deepcopy(document)
+                del unanchored['transactions'][0]['applied_runtime_time']
+                with self.assertRaises(ProtocolError):
+                    to_luau(unanchored)
+                for version in (1, 2, 3):
+                    invalid = deepcopy(document)
+                    invalid['version'] = version
+                    with self.assertRaises(ProtocolError):
+                        to_luau(invalid)
+                document['initial_commands'].append(encoded(command))
+                self.assertIn('["observation"]', to_luau(document))
+                document['version'] = 3
+                with self.assertRaises(ProtocolError):
+                    to_luau(document)
+
+    def test_replay_anchor(self):
+        command = dict(kind='body', observation=self.sample(), observation_origin=2**53 + 1)
+        decoded = decode_command(encoded(command))
+        self.assertEqual(decoded['observation_origin'], 2**53 + 1)
+        self.assertEqual(encode_command(decoded).value, encode_command(command).value)
+        for origin in (0, -1, 2**63, float(2**53), True):
+            with self.assertRaises(ProtocolError):
+                encode_command(dict(command, observation_origin=origin))
+        with self.assertRaises(ProtocolError):
+            encode_command(dict(kind='body', observation_origin=1))
+
+    def test_malformed_edits(self):
+        mutations = [lambda b: b.update(joint_set=256),
+                     lambda b: b.update(requested_time=2**63),
+                     lambda b: b.update(requested_time=float(2**53)),
+                     lambda b: b.update(active=None),
+                     lambda b: b.update(confidence=float('nan')),
+                     lambda b: b['joints'].pop(),
+                     lambda b: b['joints'].append(b['joints'][0]),
+                     lambda b: b['joints'][0].pop('flags'),
+                     lambda b: b['joints'][0].update(flags=15),
+                     lambda b: b['joints'][0].update(orientation=[0, 0, 0, 0]),
+                     lambda b: b['joints'][0].update(orientation=[0, 0, 0, 2]),
+                     lambda b: b['skeleton'][0].update(parent=256),
+                     lambda b: b['skeleton'][0].update(parent=b['skeleton'][0]['joint']),
+                     lambda b: b.update(all_joint_poses_tracked=False)]
+        for mutate in mutations:
+            body = self.sample()
+            mutate(body)
+            with self.assertRaises(ProtocolError):
+                encode_command(dict(kind='body', observation=body))
+
+    def test_malformed_wire_observation(self):
+        outer = encode_command(dict(kind='body', observation=self.sample()))
+        wrapper = decode_fields(outer.value)
+        payload = decode_fields(wrapper[Tag.VALUES].value)
+        baseline = decode_fields(payload[Tag.BODY_OBSERVATION].value)
+        for mutation in ('width', 'unknown', 'missing_flags', 'order', 'duplicate', 'cycle'):
+            fields = dict(baseline)
+            if mutation == 'width':
+                fields[2] = Field.u32(2, 1, True)
+            elif mutation == 'unknown':
+                fields[11] = Field.u32(11, 0, True)
+            else:
+                tag = 10 if mutation == 'cycle' else 9
+                entries = list(decode_fields(fields[tag].value).values())
+                if mutation == 'order':
+                    entries.reverse()
+                elif mutation == 'duplicate':
+                    entries.append(entries[0])
+                else:
+                    parts = decode_fields(entries[0].value)
+                    if mutation == 'missing_flags':
+                        del parts[Tag.USAGE]
+                    else:
+                        parts[Tag.CHANNEL] = Field.u32(Tag.CHANNEL, entries[0].tag - 1, True)
+                    entries[0] = Field.nested(entries[0].tag, list(parts.values()), True)
+                if mutation == 'duplicate':
+                    # Construct invalid bytes directly: encode_fields also rejects duplicate tags.
+                    fields[tag] = Field.binary(tag, fields[tag].value + encode_fields([entries[0]]), True)
+                else:
+                    fields[tag] = Field.nested(tag, entries, True)
+            changed = dict(payload)
+            changed[Tag.BODY_OBSERVATION] = Field.nested(Tag.BODY_OBSERVATION, list(fields.values()), True)
+            envelope = dict(wrapper)
+            envelope[Tag.VALUES] = Field.nested(Tag.VALUES, list(changed.values()), True)
+            record = dict(encoding='simxr-command-v1-hex', data=encode_fields(envelope.values()).hex())
+            with self.assertRaises(ProtocolError):
+                decode_command(record)
+
+    def test_native_wire_fixtures(self):
+        if NATIVE_CODEC is None:
+            self.skipTest('Native codec executable not supplied')
+        rows = subprocess.check_output([NATIVE_CODEC, '--python-fixtures'], text=True).splitlines()
+        self.assertEqual(len(rows), 4)
+        for joint_set, data in enumerate(rows):
+            decoded = decode_command(dict(encoding='simxr-command-v1-hex', data=data))
+            body = decoded['observation']
+            self.assertEqual(body['joint_set'], joint_set)
+            self.assertEqual(body['requested_time'], 2**53 + 1)
+            self.assertEqual(decoded['observation_origin'], 2**53 + 1)
+            self.assertEqual({j['joint'] for j in body['joints']}, JOINT_SETS[joint_set])
+            self.assertEqual(encode_command(decoded).value.hex(), data)
+
+
 class Pages:
     def __init__(self, pages):
         self.pages = pages
@@ -57,6 +339,27 @@ class Pages:
 
 
 class RecordingTests(unittest.TestCase):
+    def test_live_input_remains_editable_with_observed_edge_timestamps(self):
+        event = outcome(identity=0, commands=[{'kind': 'controller_controls', 'primary': True}])
+        event['after_frame'] = False
+        event['source']['kind'] = 4
+        event['live_input'] = dict(connection=23, sequence=7, observed_time=100, target_time=110,
+                                   controls_observed_time=[90, 100], clock_revision=19, trackers_observed_time=80)
+        document = recording([event], version=2)
+        script = to_luau(document)
+        self.assertIn('-- Tracker observation runtime ns: 80', script)
+        self.assertIn('["primary"] = true', script)
+        self.assertIn('-- Original frame 11; transaction 0; after_frame false', script)
+        self.assertIn('-- Physical input: connection 23; sequence 7; clock_revision 19', script)
+        self.assertIn('-- Original runtime ns: observed 100; target 110; controls 90, 100', script)
+        self.assertIn('simxr.frame_add(baseFrame, "1")', script)
+        self.assertEqual(document['transactions'][0]['live_input']['controls_observed_time'], [90, 100])
+        for field, value in (('connection', 0), ('target_time', 99), ('clock_revision', -1), ('trackers_observed_time', 0), ('trackers_observed_time', 101), ('controls_observed_time', [101, 100])):
+            invalid = deepcopy(document)
+            invalid['transactions'][0]['live_input'][field] = value
+            with self.assertRaises(ProtocolError):
+                to_luau(invalid)
+
     def test_source_release_timing_and_validation(self):
         release = outcome(identity=0, frame=11, phase='released',
                           commands=[{'kind': 'release_control', 'channel': 'left_controls'}])
@@ -135,6 +438,9 @@ class RecordingTests(unittest.TestCase):
             {'kind': 'release_control', 'channel': 'gaze'},
             {'kind': 'head_pose', 'orientation': [0, 1, 0, 0], 'position': [1, 2, 3], 'flags': 3},
             {'kind': 'controller_pose', 'hand': 1, 'position': [-1, 2, -3], 'connected': False},
+            {'kind': 'controller_pose', 'hand': 0, 'flags': 0,
+             'aim': {'position': [3, 4, 5], 'orientation': [0, 1, 0, 0], 'flags': 15}},
+            {'kind': 'controller_pose', 'hand': 0, 'aim': {'flags': 0}},
             {'kind': 'controller_controls', 'hand': 1, 'trigger': .75, 'trackpad_force': .25,
              'primary': True, 'thumbrest_touch': True, 'connected': False},
             {'kind': 'body'},
@@ -282,7 +588,7 @@ class RecordingTests(unittest.TestCase):
             to_luau(source)
         with patch.object(implementation, '_MAX_RECORDING_BYTES', 1), self.assertRaises(ProtocolError):
             collect_recording(Pages([page(recording())]), SESSION)
-        with patch.object(implementation, 'MAX_PAYLOAD', 1), self.assertRaises(ProtocolError):
+        with patch.object(implementation, '_MAX_RIG_SOURCE_BYTES', 1), self.assertRaises(ProtocolError):
             to_luau(recording())
 
     def test_initial_scenarios_restore_persistent_state_and_clear_other_failures(self):
@@ -314,5 +620,9 @@ class RecordingTests(unittest.TestCase):
             to_luau(source)
 
 
+NATIVE_CODEC = None
 if __name__ == '__main__':
+    if len(sys.argv) == 3 and sys.argv[1] == '--native-codec':
+        NATIVE_CODEC = sys.argv[2]
+        sys.argv = sys.argv[:1]
     unittest.main()

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <mutex>
 #include <openxr/openxr.h>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,8 @@ struct ControllerControls
 	bool trackpadTouch = false;
 	bool thumbrestTouch = false;
 	bool connected = true;
+	std::optional<bool> triggerClick;
+	std::string physicalProfile;
 };
 
 enum class InputDeviceKind

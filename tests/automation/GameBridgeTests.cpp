@@ -1,17 +1,81 @@
 #include "../TestSupport.h"
 #include "control/ControlSchema.h"
 #include "control/ControlService.h"
+#include "control/InspectionDocument.h"
 #include "runtime/Runtime.h"
 
 #include <cstring>
 #include <iostream>
+#include <limits>
 
 using namespace simxr;
 namespace wire = control;
+static void CheckObservationJournal()
+{
+	GameBridge bridge(4);
+	const auto game = bridge.Register(SIMXR_GAME_CAN_RESET);
+	Require(game && bridge.Observations().observations.front().kind == GameObservationKind::Registered,
+			"Journal omitted game registration");
+	for (unsigned index = 0; index < 8; ++index)
+		Require(bridge.Publish(game, std::to_string(index)), "Journal publication failed");
+	const auto stale = bridge.Observations(0, 2);
+	Require(stale.gap && !stale.failed && stale.floor == 5 && stale.offset == 5 && stale.next == 7 &&
+				stale.total == 9 && stale.observations.size() == 2,
+			"Evicted SDK evidence was not reported as a bounded gap");
+	Require(stale.observations[0].payload == "4" && stale.observations[0].revision == 5 &&
+				stale.observations[1].payload == "5",
+			"Journal coalesced successive telemetry values");
+	const auto tail = bridge.Observations(stale.next);
+	Require(!tail.gap && tail.next == 9 && tail.observations.size() == 2,
+			"Journal cursor duplicated or skipped retained observations");
+	for (const auto& event : tail.observations)
+		Require(event.time && event.time->nanoseconds > 0 && event.time->resolutionNanoseconds > 0 &&
+					event.game == game && event.kind == GameObservationKind::Telemetry,
+				"SDK observation lacks native clock identity");
+	Require(tail.observations[0].time->domain == tail.observations[1].time->domain &&
+				tail.observations[0].time->nanoseconds <= tail.observations[1].time->nanoseconds,
+			"Serialized observation timestamps went backward");
+	const auto cursor = bridge.Observations({}, 0).total;
+	Require(!bridge.Publish(game + 1, "wrong game") && bridge.Observations({}, 0).total == cursor,
+			"Rejected SDK publication changed journal identity");
+	const auto operation = bridge.Submit(game, 1, 1, SIMXR_GAME_RESET, "checkpoint");
+	SimxrGameCommand command{};
+	Require(operation && bridge.Poll(game, command) && bridge.Complete(game, command.id, false, "reset failed"),
+			"SDK failure setup");
+	bridge.Unregister(game);
+	const auto events = bridge.Observations(cursor);
+	Require(events.observations.size() == 1 && events.observations[0].kind == GameObservationKind::Unregistered,
+			"Journal omitted disconnect or exposed private command results");
+	const auto next = bridge.Register(SIMXR_GAME_CAN_STEP);
+	Require(next != game, "Game identity reused");
+	bridge.Close();
+	const auto closed = bridge.Observations(events.next);
+	Require(closed.observations.size() == 2 && closed.observations[0].game == next &&
+				closed.observations[1].kind == GameObservationKind::Closed && stale.observations[0].payload == "4",
+			"Registration reset journal cursors or mutated a retained page");
+	const auto total = bridge.Observations({}, 0).total;
+	bridge.Close();
+	bridge.Unregister(0);
+	Require(bridge.Observations({}, 0).total == total, "Repeated close invented lifecycle events");
+	for (const auto offset : {total + 1, std::numeric_limits<std::uint64_t>::max()})
+	{
+		bool rejected = false;
+		try
+		{
+			(void)bridge.Observations(offset);
+		}
+		catch (const std::invalid_argument&)
+		{
+			rejected = true;
+		}
+		Require(rejected, "Future journal cursor accepted");
+	}
+}
 int main()
 {
 	try
 	{
+		CheckObservationJournal();
 		Runtime runtime{ExtensionRegistry{std::span<const ExtensionDefinition>{}}};
 		XrInstanceCreateInfo create{XR_TYPE_INSTANCE_CREATE_INFO};
 		std::strcpy(create.applicationInfo.applicationName, "Optional game bridge");
@@ -83,6 +147,30 @@ int main()
 				"Unsupported game step advertised");
 		Require(api.publish(api.context, game, "level:ready", 11), "Game telemetry publication");
 		Require(!api.publish(api.context, game, "\xc0\x80", 2), "Invalid UTF-8 accepted");
+		const auto observed = call(wire::OpCode::ReadGameObservations,
+								   {wire::Field::U64(wire::tag::Offset, 0), wire::Field::U64(wire::tag::Length, 16)});
+		Require(observed.Find(wire::tag::Error)->AsU32() == 0 && observed.Find(wire::tag::Document) &&
+					wire::DecodeFields(observed.Find(wire::tag::Document)->value).error == wire::DecodeError::None,
+				"Production protocol failed to serialize SDK observations");
+		Require(call(wire::OpCode::ReadGameObservations, {wire::Field::U64(wire::tag::Length, 17)})
+						.Find(wire::tag::Error)
+						->AsU32() != 0,
+				"Unbounded SDK page accepted");
+		const auto legacy = *service.Connect();
+		wire::Message oldRequest;
+		oldRequest.minor = 14;
+		oldRequest.opcode = static_cast<std::uint16_t>(wire::OpCode::Hello);
+		oldRequest.requestId = wire::RequestId{1};
+		const auto oldHello = service.Handle(legacy, oldRequest);
+		Require(!(*oldHello.Find(wire::tag::Capabilities)->AsU64() &
+				  static_cast<std::uint64_t>(wire::Capability::GameObservations)),
+				"Old protocol advertised SDK journal");
+		oldRequest.opcode = static_cast<std::uint16_t>(wire::OpCode::ReadGameObservations);
+		oldRequest.requestId = wire::RequestId{2};
+		Require(service.Handle(legacy, oldRequest).Find(wire::tag::Error)->AsU32() != 0,
+				"SDK journal bypassed protocol negotiation");
+		service.Disconnect(legacy);
+
 		const auto pending = runtime.Game().Submit(game, 99, 1, SIMXR_GAME_COMMAND, "pending");
 		Require(pending.has_value(), "Pending game request");
 		runtime.Game().Disconnect(99);

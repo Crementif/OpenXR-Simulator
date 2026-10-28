@@ -17,8 +17,10 @@ class RecordingControl
 {
   public:
 	RecordingControl();
-	ErrorCode Start(ConnectionId connection, const std::shared_ptr<Session>& session);
-	ErrorCode Stop(ConnectionId connection, const std::shared_ptr<Session>& session);
+	ErrorCode Start(ConnectionId connection, const std::shared_ptr<Session>& session, bool drain = false);
+	ErrorCode Stop(ConnectionId connection, const std::shared_ptr<Session>& session, std::uint64_t identity = 0);
+	ErrorCode Acknowledge(ConnectionId connection, const std::shared_ptr<Session>& session, std::uint64_t identity,
+						  std::size_t through);
 	void Disconnect(ConnectionId connection, const std::shared_ptr<Session>& session) noexcept;
 
   private:

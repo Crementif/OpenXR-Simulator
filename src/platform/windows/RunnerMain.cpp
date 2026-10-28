@@ -1,5 +1,6 @@
 #include "automation/RunnerMain.h"
 #include "Pch.h"
+#include "platform/windows/InstallUse.h"
 
 #include <cstdio>
 #include <limits>
@@ -26,6 +27,12 @@ static std::string Utf8(std::wstring_view value)
 
 int wmain(int argc, wchar_t** argv)
 {
+	simxr::windows::InstallUse installUse;
+	if (!installUse.Ready())
+	{
+		std::fputs("OpenXR Simulator installation is being updated or removed. Try again.\n", stderr);
+		return 1;
+	}
 	try
 	{
 		std::vector<std::string> values;

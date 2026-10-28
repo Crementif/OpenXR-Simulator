@@ -35,6 +35,12 @@ class VirtualDisplay
 	bool Pause();
 	bool Resume(HostTime hostAnchor, DisplayTick boundary);
 	bool Paused() const;
+	// Queue only; the existing display worker performs all image observation and
+	// publication. Clock-domain validation belongs to the session coordinator.
+	bool PublishExternalPrediction(SessionGeneration generation, std::uint64_t attachment, std::uint64_t sequence,
+								   RuntimeTime target, Duration period);
+	void ReleaseExternalPrediction(std::uint64_t attachment);
+
 	DisplayTick NextTick() const;
 	std::optional<PresentationTick> Step();
 	PresentationAdmission Submit(PresentationSubmission submission, const std::function<void()>& commit = {});
@@ -51,7 +57,8 @@ class VirtualDisplay
 	std::size_t PollRetired();
 
   private:
-	std::optional<PresentationTick> AdvanceTick(RuntimeTime time, std::optional<SessionGeneration> generation = {});
+	std::optional<PresentationTick> AdvanceTick(RuntimeTime time, std::optional<SessionGeneration> generation = {},
+												bool exact = false, const std::function<bool()>& current = {});
 	void StopLocked() noexcept;
 	void Run() noexcept;
 	std::shared_ptr<Clock> m_clock;
@@ -67,6 +74,14 @@ class VirtualDisplay
 	bool m_paused = false;
 	ExecutionMode m_mode = ExecutionMode::RealTime;
 	std::optional<DisplayTimeline> m_timeline;
+	SessionGeneration m_generation;
+	struct ExternalPrediction
+	{
+		std::uint64_t attachment = 0, sequence = 0, consumed = 0;
+		RuntimeTime target;
+		HostTime expires, targetHost;
+	};
+	std::optional<ExternalPrediction> m_external;
 	HostTime m_hostEpoch;
 	DisplayTick m_hostTick;
 	std::thread m_worker;

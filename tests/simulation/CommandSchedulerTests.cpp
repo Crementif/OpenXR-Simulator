@@ -16,7 +16,7 @@ namespace
 {
 thread_local bool failCommandAllocation = false;
 thread_local int commandAllocationCountdown = -1;
-}
+} // namespace
 void* operator new(std::size_t size)
 {
 	if (std::exchange(failCommandAllocation, false) ||
@@ -89,8 +89,8 @@ CommandConfiguration SequenceBaseline()
 	baseline.tracking.head = {{EulerAngles(.4f, -.2f, .3f), {1, 2, 3}}, TrackedPoseFlags};
 	for (std::size_t hand = 0; hand < 2; ++hand)
 	{
-		baseline.tracking.controllers[hand].pose =
-			{Compose(baseline.tracking.head.pose, {{0, 0, 0, 1}, {hand ? .2f : -.2f, -.3f, -.4f}}), TrackedPoseFlags};
+		baseline.tracking.controllers[hand].pose = {
+			Compose(baseline.tracking.head.pose, {{0, 0, 0, 1}, {hand ? .2f : -.2f, -.3f, -.4f}}), TrackedPoseFlags};
 		baseline.input.controllers[hand].grip = .2f;
 	}
 	return baseline;
@@ -103,36 +103,40 @@ void ScheduledPoseSequence()
 	scheduler.StartRecording(baseline, {});
 	const auto admitted = scheduler.StartPoseSequence(Mcp, SequenceProgram());
 	Require(admitted && admitted->active && admitted->result == CommandResult::Queued &&
-		!scheduler.StartPoseSequence(Manual, SequenceProgram()), "Sequence admission did not preserve exclusive ownership");
+				!scheduler.StartPoseSequence(Manual, SequenceProgram()),
+			"Sequence admission did not preserve exclusive ownership");
 	const auto first = Tick(scheduler, 1, baseline);
 	Require(first->configuration.tracking.head.pose.position.x == 4 &&
-		first->configuration.input.controllers[1].trigger == .7f &&
-		first->configuration.input.controllers[1].grip == .2f && first->sequenceCapture &&
-		first->sequenceCapture->frame == FrameId{1} && first->sequenceCapture->sequence == admitted->id,
-		"Sequence changed sparse fields or lost its exact capture intent");
+				first->configuration.input.controllers[1].trigger == .7f &&
+				first->configuration.input.controllers[1].grip == .2f && first->sequenceCapture &&
+				first->sequenceCapture->frame == FrameId{1} && first->sequenceCapture->sequence == admitted->id,
+			"Sequence changed sparse fields or lost its exact capture intent");
 	const auto identity = CommandSource{CommandSourceKind::Sequence, admitted->id};
 	Require(first->owners[0] == identity && first->outcomes.size() == 1 &&
-		first->outcomes[0].transaction.source == identity, "Sequence bypassed shared command ownership/history");
+				first->outcomes[0].transaction.source == identity,
+			"Sequence bypassed shared command ownership/history");
 	scheduler.Submit(Request(1, 2, {TakeControl{ControlChannel::Head}, SetHeadPose{Pose(99)}}));
 	const auto second = Tick(scheduler, 2, baseline);
 	const auto expectedHead = XrPosef{EulerAngles(.4f, .25f, .3f), {4, 2, 3}};
 	const auto expectedHand = Compose(expectedHead, {{0, 0, 0, 1}, {.2f, -.3f, -.4f}});
 	Require(second->outcomes[0].result == CommandResult::Conflict && !second->sequenceCapture &&
-		std::abs(second->configuration.tracking.head.pose.orientation.y - expectedHead.orientation.y) < .00001f &&
-		std::abs(second->configuration.tracking.controllers[1].pose.pose.position.z - expectedHand.position.z) < .00001f,
-		"Sequence lost partial angles, head-local controller motion or ownership arbitration");
+				std::abs(second->configuration.tracking.head.pose.orientation.y - expectedHead.orientation.y) <
+					.00001f &&
+				std::abs(second->configuration.tracking.controllers[1].pose.pose.position.z - expectedHand.position.z) <
+					.00001f,
+			"Sequence lost partial angles, head-local controller motion or ownership arbitration");
 	const auto completed = scheduler.PoseSequenceStatusFor(Mcp);
 	Require(completed && !completed->active && completed->groups == 2 && completed->origin == FrameId{1} &&
-		completed->lastFrame == FrameId{2} && completed->result == CommandResult::Applied,
-		"Sequence completion lacks exact applied frame evidence");
+				completed->lastFrame == FrameId{2} && completed->result == CommandResult::Applied,
+			"Sequence completion lacks exact applied frame evidence");
 	const auto recording = scheduler.Recorder().Snapshot();
 	Require(recording.transactions.size() == 3 && recording.transactions[2].transaction.source == identity,
-		"Expanded sequence commands did not enter the existing recorder");
+			"Expanded sequence commands did not enter the existing recorder");
 	scheduler.ReleaseSource(Mcp, true);
 	const auto released = Tick(scheduler, 3, baseline);
 	Require(!released->owners[0] && released->configuration.tracking.head.pose.position.x == 1 &&
-		scheduler.PoseSequenceStatusFor(Mcp)->result == CommandResult::Cancelled,
-		"Connection retirement left sequence input ownership alive");
+				scheduler.PoseSequenceStatusFor(Mcp)->result == CommandResult::Cancelled,
+			"Connection retirement left sequence input ownership alive");
 }
 void PoseSequenceReservationRollback()
 {
@@ -144,25 +148,30 @@ void PoseSequenceReservationRollback()
 	bool rejected = false;
 	try
 	{
-		scheduler.Apply({1}, {Duration{10}}, {Duration{110}}, baseline, [](const auto& prepared)
-		{
-			Require(prepared->sequenceCapture.has_value(), "Sequence was absent from the prospective boundary");
-			throw std::bad_alloc{};
-		});
+		scheduler.Apply({1}, {Duration{10}}, {Duration{110}}, baseline,
+						[](const auto& prepared)
+						{
+							Require(prepared->sequenceCapture.has_value(),
+									"Sequence was absent from the prospective boundary");
+							throw std::bad_alloc{};
+						});
 	}
 	catch (const std::bad_alloc&)
 	{
 		rejected = true;
 	}
 	Require(rejected && scheduler.PoseSequenceStatusFor(Mcp)->origin == FrameId{} &&
-		scheduler.PoseSequenceStatusFor(Mcp)->groups == 0 && scheduler.Recorder().Snapshot().transactions.empty() &&
-		!scheduler.Snapshot().applied, "Failed reservation advanced sequence, ownership or recording");
+				scheduler.PoseSequenceStatusFor(Mcp)->groups == 0 &&
+				scheduler.Recorder().Snapshot().transactions.empty() && !scheduler.Snapshot().applied,
+			"Failed reservation advanced sequence, ownership or recording");
 	Require(Tick(scheduler, 1, baseline)->sequenceCapture.has_value(), "Retry lost first sequence capture intent");
 	Tick(scheduler, 2, baseline);
 	Require(Tick(scheduler, 3, baseline)->sequenceCapture.has_value() &&
-		scheduler.PoseSequenceStatusFor(Mcp)->groups == 3, "Loop boundary lost a step or capture intent");
+				scheduler.PoseSequenceStatusFor(Mcp)->groups == 3,
+			"Loop boundary lost a step or capture intent");
 	Require(Tick(scheduler, 3, baseline)->sequenceCapture.has_value() &&
-		scheduler.PoseSequenceStatusFor(Mcp)->groups == 3, "Repeated frame advanced playback twice");
+				scheduler.PoseSequenceStatusFor(Mcp)->groups == 3,
+			"Repeated frame advanced playback twice");
 	PoseSequenceStep impossible;
 	impossible.frame = {UINT64_MAX};
 	rejected = false;
@@ -175,22 +184,23 @@ void PoseSequenceReservationRollback()
 		rejected = true;
 	}
 	Require(rejected && scheduler.PoseSequenceStatusFor(Mcp)->id == admitted->id &&
-		scheduler.PoseSequenceStatusFor(Mcp)->active, "Invalid replacement abandoned active sequence");
+				scheduler.PoseSequenceStatusFor(Mcp)->active,
+			"Invalid replacement abandoned active sequence");
 	PoseSequenceStep sparse;
 	sparse.controllers[1] = ControllerPosePatch{};
 	sparse.controllers[1]->grip = .8f;
 	sparse.capture = true;
-	const auto replacement = scheduler.StartPoseSequence(Mcp,
-		std::make_shared<const PoseSequence>(std::vector{sparse}, false));
+	const auto replacement =
+		scheduler.StartPoseSequence(Mcp, std::make_shared<const PoseSequence>(std::vector{sparse}, false));
 	Require(replacement && replacement->id != admitted->id, "Replacement reused execution identity");
 	const auto replaced = Tick(scheduler, 4, baseline);
 	Require(replaced->sequenceCapture->sequence == replacement->id &&
-		replaced->owners[0] == CommandSource{CommandSourceKind::Sequence, replacement->id},
-		"Replacement conflicted with its predecessor or lost capture identity");
+				replaced->owners[0] == CommandSource{CommandSourceKind::Sequence, replacement->id},
+			"Replacement conflicted with its predecessor or lost capture identity");
 	Require(replaced->configuration.tracking.head.pose.position.x == 4 &&
-		replaced->configuration.input.controllers[1].trigger == .7f &&
-		replaced->configuration.input.controllers[1].grip == .8f,
-		"Sparse replacement dropped values established by the preceding sequence");
+				replaced->configuration.input.controllers[1].trigger == .7f &&
+				replaced->configuration.input.controllers[1].grip == .8f,
+			"Sparse replacement dropped values established by the preceding sequence");
 	scheduler.StopPoseSequence(Mcp);
 	Require(!Tick(scheduler, 5, baseline)->owners[0], "Stopped sequence kept its input channels");
 }
@@ -203,20 +213,23 @@ void PoseSequenceFailureAndCaptureOnly()
 	scheduler.StartPoseSequence(Mcp, SequenceProgram());
 	const auto conflict = Tick(scheduler, 1, baseline);
 	Require(scheduler.PoseSequenceStatusFor(Mcp)->result == CommandResult::Conflict &&
-		conflict->configuration.tracking.head.pose.position.x == 9 && !conflict->sequenceCapture &&
-		!conflict->owners[1], "Failed sequence partially acquired input or emitted capture intent");
+				conflict->configuration.tracking.head.pose.position.x == 9 && !conflict->sequenceCapture &&
+				!conflict->owners[1],
+			"Failed sequence partially acquired input or emitted capture intent");
 	scheduler.ReleaseSource(Manual);
 	scheduler.StartPoseSequence(Mcp, SequenceProgram(true));
 	Tick(scheduler, 2, baseline);
 	const auto late = Tick(scheduler, 4, baseline);
 	Require(scheduler.PoseSequenceStatusFor(Mcp)->result == CommandResult::Late && !late->sequenceCapture &&
-		!late->owners[0], "Missed sequence frame was silently retimed");
+				!late->owners[0],
+			"Missed sequence frame was silently retimed");
 	PoseSequenceStep capture;
 	capture.capture = true;
 	scheduler.StartPoseSequence(Mcp, std::make_shared<const PoseSequence>(std::vector{capture}, false));
 	const auto captured = Tick(scheduler, 5, baseline);
 	Require(captured->sequenceCapture && captured->outcomes.empty() && !captured->owners[0] &&
-		!scheduler.PoseSequenceStatusFor(Mcp)->active, "Capture-only sequence took unrelated input ownership");
+				!scheduler.PoseSequenceStatusFor(Mcp)->active,
+			"Capture-only sequence took unrelated input ownership");
 	scheduler.Close();
 	Require(!scheduler.StartPoseSequence(Mcp, SequenceProgram()), "Closed scheduler accepted a sequence");
 	scheduler.Start();
@@ -233,29 +246,35 @@ void SequenceLocalControllerFollowing()
 	step.controllers[1]->position[0] = .8f;
 	step.controllers[1]->grip = .6f;
 	step.controllers[1]->primary = true;
-	const auto admitted = scheduler.StartPoseSequence(Mcp,
-		std::make_shared<const PoseSequence>(std::vector{step}, false));
+	const auto admitted =
+		scheduler.StartPoseSequence(Mcp, std::make_shared<const PoseSequence>(std::vector{step}, false));
 	Tick(scheduler, 1, baseline);
 	baseline.tracking.head.pose = {EulerAngles(.7f, .2f, 0), {6, 3, 4}};
 	const auto moved = Tick(scheduler, 2, baseline);
 	const auto expected = Compose(baseline.tracking.head.pose, {{0, 0, 0, 1}, {.8f, -.3f, -.4f}});
 	Require(!scheduler.PoseSequenceStatusFor(Mcp)->active && !moved->owners[0] &&
-		std::abs(moved->configuration.tracking.controllers[1].pose.pose.position.x - expected.position.x) < .00001f &&
-		std::abs(moved->configuration.tracking.controllers[1].pose.pose.position.z - expected.position.z) < .00001f,
-		"Completed local controller patch stopped following the independently controlled head");
+				std::abs(moved->configuration.tracking.controllers[1].pose.pose.position.x - expected.position.x) <
+					.00001f &&
+				std::abs(moved->configuration.tracking.controllers[1].pose.pose.position.z - expected.position.z) <
+					.00001f,
+			"Completed local controller patch stopped following the independently controlled head");
 	const auto& controls = moved->configuration.input.controllers[1];
 	Require(controls.grip == .6f && controls.gripForce == .6f && controls.primary && controls.primaryTouch,
-		"Legacy sequence controls lost their derived action fields");
-	Require(scheduler.Submit(Request(1, 3, {TakeControl{ControlChannel::Head}},
-		{CommandSourceKind::Sequence, admitted->id})).result == CommandResult::Invalid,
+			"Legacy sequence controls lost their derived action fields");
+	Require(
+		scheduler
+				.Submit(Request(1, 3, {TakeControl{ControlChannel::Head}}, {CommandSourceKind::Sequence, admitted->id}))
+				.result == CommandResult::Invalid,
 		"External commands impersonated a runtime sequence");
-	Require(scheduler.Submit(Request(1, 3, {TakeControl{ControlChannel::RightPose, true}},
-		{CommandSourceKind::Manual, admitted->id})).result == CommandResult::Queued,
-		"Sequence history consumed a caller transaction identity");
+	Require(scheduler
+					.Submit(Request(1, 3, {TakeControl{ControlChannel::RightPose, true}},
+									{CommandSourceKind::Manual, admitted->id}))
+					.result == CommandResult::Queued,
+			"Sequence history consumed a caller transaction identity");
 	const auto takeover = Tick(scheduler, 3, baseline);
 	Require(scheduler.PoseSequenceStatusFor(Mcp)->result == CommandResult::Conflict &&
-		takeover->owners[2] == CommandSource{CommandSourceKind::Manual, admitted->id} && !takeover->owners[4],
-		"Explicit takeover left the sequence's other channels held");
+				takeover->owners[2] == CommandSource{CommandSourceKind::Manual, admitted->id} && !takeover->owners[4],
+			"Explicit takeover left the sequence's other channels held");
 }
 
 void SequenceTransfersCallerChannels()
@@ -267,10 +286,10 @@ void SequenceTransfersCallerChannels()
 	const auto sequence = commands.StartPoseSequence(Mcp, SequenceProgram());
 	const auto applied = Tick(commands, 2, SequenceBaseline());
 	Require(applied->configuration.tracking.head.pose.position.x == 4 &&
-		applied->owners[0] == CommandSource{CommandSourceKind::Sequence, sequence->id} &&
-		applied->outcomes[0].result == CommandResult::Applied &&
-		std::get<TakeControl>(applied->outcomes[0].transaction.commands[0]).replace,
-		"Sequence conflicted with its caller's earlier one-shot control instead of recording ownership transfer");
+				applied->owners[0] == CommandSource{CommandSourceKind::Sequence, sequence->id} &&
+				applied->outcomes[0].result == CommandResult::Applied &&
+				std::get<TakeControl>(applied->outcomes[0].transaction.commands[0]).replace,
+			"Sequence conflicted with its caller's earlier one-shot control instead of recording ownership transfer");
 }
 
 void SequenceCaptureIssueRollback()
@@ -280,7 +299,7 @@ void SequenceCaptureIssueRollback()
 	FramePool pool(1);
 	SessionCaptureCoordinator captures(history);
 	Require(captures.Configure(FramePool(pool), false, {}, false, false) == XR_SUCCESS,
-		"Configure sequence capture rollback");
+			"Configure sequence capture rollback");
 	captures.Start(generation);
 	CommandScheduler commands;
 	commands.Start();
@@ -290,36 +309,41 @@ void SequenceCaptureIssueRollback()
 	try
 	{
 		commands.Apply(prediction.id, {Duration{10}}, prediction.displayTime, SequenceBaseline(),
-			[&](const auto& applied)
-			{
-				auto capture = captures.PrepareSequenceCapture(applied->sequenceCapture);
-				Require(capture.Record()->reservation.result == SnapshotAdmission::Accepted && pool.InUse() == 1,
-					"Sequence did not reserve before history admission");
-				failCommandAllocation = true;
-				history.Issue(prediction, {}, capture.Record());
-			});
+					   [&](const auto& applied)
+					   {
+						   auto capture = captures.PrepareSequenceCapture(applied->sequenceCapture);
+						   Require(capture.Record()->reservation.result == SnapshotAdmission::Accepted &&
+									   pool.InUse() == 1,
+								   "Sequence did not reserve before history admission");
+						   failCommandAllocation = true;
+						   history.Issue(prediction, {}, capture.Record());
+					   });
 	}
 	catch (const std::bad_alloc&)
 	{
 		rejected = true;
 	}
 	Require(rejected && pool.InUse() == 0 && captures.Snapshots().Snapshot().captures.empty() &&
-		!commands.At(prediction.id) && !commands.PoseSequenceStatusFor(Mcp)->origin.value &&
-		!history.Find({generation, prediction.id}), "Failed issue leaked a ticket or advanced sequence/history");
+				!commands.At(prediction.id) && !commands.PoseSequenceStatusFor(Mcp)->origin.value &&
+				!history.Find({generation, prediction.id}),
+			"Failed issue leaked a ticket or advanced sequence/history");
 	commands.Apply(prediction.id, {Duration{10}}, prediction.displayTime, SequenceBaseline(),
-		[&](const auto& applied)
-		{
-			auto capture = captures.PrepareSequenceCapture(applied->sequenceCapture);
-			history.Issue(prediction,
-				[&](auto issued, auto cancelled)
-				{
-					capture.Bind(std::move(issued), std::move(cancelled));
-				}, capture.Record());
-		});
+				   [&](const auto& applied)
+				   {
+					   auto capture = captures.PrepareSequenceCapture(applied->sequenceCapture);
+					   history.Issue(
+						   prediction,
+						   [&](auto issued, auto cancelled)
+						   {
+							   capture.Bind(std::move(issued), std::move(cancelled));
+						   },
+						   capture.Record());
+				   });
 	const auto issued = history.Find({generation, prediction.id});
 	Require(issued->sequenceCapture && issued->sequenceCapture->request.owner == Mcp &&
-		captures.Snapshots().Read(issued->sequenceCapture->reservation.id)->frame == issued->key && pool.InUse() == 1,
-		"Retry failed to bind the exact sequence frame");
+				captures.Snapshots().Read(issued->sequenceCapture->reservation.id)->frame == issued->key &&
+				pool.InUse() == 1,
+			"Retry failed to bind the exact sequence frame");
 }
 
 void AllocationFreeSpaceCommit()
@@ -606,6 +630,70 @@ void SourceReleaseRecordingFailure()
 	}
 	throw std::runtime_error("Source release allocation sweep did not complete");
 }
+void RecordedReleaseState()
+{
+	for (const bool reject : {false, true})
+	{
+		CommandScheduler scheduler;
+		CommandConfiguration baseline;
+		baseline.tracking.head = Pose(9);
+		baseline.input.controllers[0].trigger = .2f;
+		scheduler.StartRecording(baseline, {});
+		ControllerControls controls;
+		controls.trigger = .75f;
+		scheduler.Submit(Request(1, 1,
+								 {TakeControl{ControlChannel::Head}, SetHeadPose{Pose(4)},
+								  TakeControl{ControlChannel::LeftControls}, SetControllerControls{0, controls}}));
+		scheduler.Submit(Request(
+			1, 1, {TakeControl{ControlChannel::RightPose}, SetScenario{FailureScenario::RightDisconnected, true}},
+			Mcp));
+		Tick(scheduler, 1, baseline);
+		scheduler.Submit(Request(2, 2, {ReleaseControl{ControlChannel::Head}}));
+		auto next = baseline;
+		next.tracking.head = Pose(15);
+		bool failed = false;
+		try
+		{
+			scheduler.Apply({2}, {Duration{20}}, {Duration{120}}, next,
+							[&](const auto&)
+							{
+								if (reject)
+									throw std::bad_alloc{};
+							});
+		}
+		catch (const std::bad_alloc&)
+		{
+			failed = true;
+		}
+		Require(failed == reject, "Release reservation result differs");
+		if (!reject)
+		{
+			const auto explicitRelease = scheduler.Recorder().Snapshot().transactions.back();
+			Require(explicitRelease.releaseState &&
+						explicitRelease.releaseState->configuration.tracking.head.pose.position.x == 15 &&
+						explicitRelease.releaseState->configuration.input.controllers[0].trigger == .75f,
+					"Explicit release omitted its exact post-transaction state");
+		}
+		else
+			Require(scheduler.Recorder().Snapshot().total == 2, "Failed boundary recorded speculative release state");
+		scheduler.ReleaseSource(Manual);
+		const auto released = scheduler.Recorder().Snapshot().transactions.back();
+		Require(released.result == CommandResult::Released && released.afterFrame && released.releaseState &&
+					released.releaseState->runtimeTime == released.appliedRuntimeTime &&
+					released.releaseState->frame == FrameId{reject ? 1u : 2u},
+				"Source release lost its boundary anchor");
+		const auto& state = *released.releaseState;
+		Require(state.configuration.tracking.head.pose.position.x == (reject ? 9 : 15) &&
+					state.configuration.input.controllers[0].trigger == 0 &&
+					state.scenarios[static_cast<std::size_t>(FailureScenario::RightDisconnected)] &&
+					state.configuration.tracking.controllers[1].connected,
+				"Release snapshot used an uncommitted baseline or baked in another owner's scenario");
+		next.tracking.head = Pose(22);
+		Tick(scheduler, 3, next);
+		Require(state.configuration.tracking.head.pose.position.x == (reject ? 9 : 15),
+				"Later boundary mutated a retained release snapshot");
+	}
+}
 void SequenceReleaseRecording()
 {
 	for (bool stop : {false, true})
@@ -642,6 +730,8 @@ void SequenceReleaseRecording()
 		Require(release.result == CommandResult::Released && release.afterFrame == stop &&
 					release.appliedFrame == FrameId{stop ? 1u : 2u},
 				"Sequence release lost boundary timing");
+		Require(release.releaseState && release.releaseState->runtimeTime == release.appliedRuntimeTime,
+				"Sequence cleanup omitted its fallback state or runtime anchor");
 		Require(stop || std::none_of(release.transaction.commands.begin(), release.transaction.commands.end(),
 									 [](const auto& command)
 									 {
@@ -807,7 +897,7 @@ void BodyViewsScenariosRecording()
 	auto movedRoot = first;
 	std::get<SetBodyControls>(movedRoot.commands[1]).value.rootPose = XrPosef{{0, 0, 0, 1}, {2, 0, 0}};
 	Require(scheduler.Submit(movedRoot).result == CommandResult::Conflict,
-		"Changed body root reused an existing command identity");
+			"Changed body root reused an existing command identity");
 	const auto applied = Tick(scheduler, 1);
 	Require(applied->outcomes[0].result == CommandResult::Applied &&
 				applied->configuration.tracking.head.pose.position.x == 6,
@@ -842,6 +932,90 @@ void BodyViewsScenariosRecording()
 			"Recording overflow explicit");
 	Require(!tiny.Snapshot().active && tiny.Snapshot().overflow && tiny.Snapshot().transactions.size() == 1,
 			"Overflow never silently overwrites");
+}
+void DrainingRecording()
+{
+	CommandRecorder recorder(8);
+	recorder.Start({}, true);
+	std::size_t consumed = 0;
+	for (std::size_t index = 0; index < 54000; ++index)
+	{
+		CommandOutcome outcome;
+		outcome.transaction.id = index + 1;
+		outcome.result = CommandResult::Applied;
+		Require(recorder.Observe(outcome), "Promptly drained recording overflowed");
+		if ((index + 1) % 8 != 0)
+			continue;
+		const auto page = recorder.Snapshot();
+		Require(page.drain && page.active && !page.overflow && page.floor == consumed && page.total == index + 1 &&
+					page.transactions.size() == 8,
+				"Recording window counters changed across wraparound");
+		for (const auto& value : page.transactions)
+			Require(value.transaction.id == ++consumed, "Draining reordered or lost an outcome");
+		recorder.Acknowledge(consumed);
+		recorder.Acknowledge(consumed); // Retried acknowledgement is idempotent.
+		Require(recorder.Snapshot().transactions.empty(), "Acknowledgement retained old outcomes");
+	}
+	bool stale = false, future = false;
+	try
+	{
+		recorder.Snapshot(0);
+	}
+	catch (const std::out_of_range&)
+	{
+		stale = true;
+	}
+	try
+	{
+		recorder.Acknowledge(consumed + 1);
+	}
+	catch (const std::invalid_argument&)
+	{
+		future = true;
+	}
+	Require(stale && future, "Recording accepted an evicted read or future acknowledgement");
+	CommandOutcome outcome;
+	outcome.transaction.id = consumed + 1;
+	bool rolledBack = false;
+	try
+	{
+		recorder.ObservePrepared(std::span{&outcome, 1},
+								 [&](bool complete)
+								 {
+									 Require(complete && recorder.Snapshot().total == consumed,
+											 "Prepared recording leaked before publication");
+									 throw std::runtime_error("reservation failure");
+								 });
+	}
+	catch (const std::runtime_error&)
+	{
+		rolledBack = true;
+	}
+	Require(rolledBack && recorder.Snapshot().total == consumed && recorder.Observe(outcome),
+			"Recording failed to roll back or retry a rejected publication");
+	recorder.Stop();
+	Require(!recorder.Snapshot().active && recorder.Snapshot().transactions.size() == 1,
+			"Stopping discarded the unacknowledged tail");
+	recorder.Acknowledge(++consumed);
+	Require(recorder.Snapshot().transactions.empty(), "Stopped recording tail could not be acknowledged");
+	recorder.Start({}, true);
+	for (unsigned index = 0; index < 8; ++index)
+		Require(recorder.Observe(outcome), "Bounded window filled too early");
+	Require(!recorder.Observe(outcome) && recorder.Snapshot().overflow && !recorder.Snapshot().active &&
+				recorder.Snapshot().total == 8,
+			"Slow consumer silently overwrote its retained recording");
+	recorder.Start({});
+	bool legacy = false;
+	try
+	{
+		recorder.Acknowledge(0);
+	}
+	catch (const std::invalid_argument&)
+	{
+		legacy = true;
+	}
+	Require(legacy && !recorder.Snapshot().drain && recorder.Snapshot().floor == 0 && recorder.Snapshot().total == 0,
+			"Restart retained an old cursor or allowed legacy recording acknowledgement");
 }
 void AdmissionRollback()
 {
@@ -1300,6 +1474,36 @@ void SessionBoundary()
 			"Close releases command ownership");
 	Require(record->submission->commands->seed == 999, "Retained applied state survives session close");
 }
+void ConditionalAppliedInputs()
+{
+	CommandScheduler scheduler;
+	scheduler.Start();
+	CommandConfiguration baseline;
+	baseline.tracking.head = Pose(0);
+	const auto observed = Tick(scheduler, 1, baseline);
+	const CommandSource other{CommandSourceKind::Mcp, 303};
+	auto head = Request(1, 2, {TakeControl{ControlChannel::Head}, SetHeadPose{Pose(7)}}, other);
+	auto dependent = Request(1, 2, {TakeControl{ControlChannel::LeftControls}, SetControllerControls{0, {}}}, Mcp);
+	dependent.expected.push_back(SetHeadPose{observed->configuration.tracking.head});
+	Require(scheduler.Submit(head).result == CommandResult::Queued, "Queue concurrent head edit");
+	Require(scheduler.Submit(dependent).result == CommandResult::Queued, "Queue dependent controller edit");
+	Require(scheduler.Submit(dependent).result == CommandResult::Queued, "Identical conditional retry");
+	auto changed = dependent;
+	std::get<SetHeadPose>(changed.expected[0]).value.pose.position.x += 1;
+	Require(scheduler.Submit(changed).result == CommandResult::Conflict, "Changed precondition must conflict on retry");
+	const auto applied = Tick(scheduler, 2, baseline);
+	Require(applied->outcomes.size() == 2 && applied->outcomes[0].result == CommandResult::Applied &&
+				applied->outcomes[1].result == CommandResult::Conflict && !applied->owners[static_cast<std::size_t>(ControlChannel::LeftControls)],
+			"Changed head must reject the complete dependent edit");
+	auto control = Request(2, 3, {TakeControl{ControlChannel::LeftControls}, SetControllerControls{0, {}}}, Mcp);
+	control.expected.push_back(SetControllerControls{0, applied->configuration.input.controllers[0]});
+	Require(scheduler.Submit(control).result == CommandResult::Queued, "Queue edit against baseline controls");
+	baseline.input.controllers[0].trigger = .5f;
+	const auto updated = Tick(scheduler, 3, baseline);
+	Require(updated->outcomes.size() == 1 && updated->outcomes[0].result == CommandResult::Conflict &&
+				updated->configuration.input.controllers[0].trigger == .5f,
+			"Changed UI baseline must reject the complete dependent edit");
+}
 } // namespace
 int main()
 {
@@ -1307,6 +1511,7 @@ int main()
 	{
 		AllocationFreeSpaceCommit();
 		AtomicCommandState();
+		ConditionalAppliedInputs();
 		ScheduledPoseSequence();
 		SequenceLocalControllerFollowing();
 		SequenceCaptureIssueRollback();
@@ -1318,12 +1523,14 @@ int main()
 		SourceReleaseRecording();
 		SourceReleaseRecordingFailure();
 		SequenceReleaseRecording();
+		RecordedReleaseState();
 		RecordingOutcomeConsistency();
 		ControllerProfilePathValidation();
 		LateAdmissionRollback();
 		Transactions();
 		TimeLateCancelBounds();
 		BodyViewsScenariosRecording();
+		DrainingRecording();
 		AdmissionRollback();
 		RefinedBoundary();
 		ScenarioRecoveryInSession();

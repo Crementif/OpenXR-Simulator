@@ -19,5 +19,6 @@ class SnapshotBudget
 	static std::uint32_t MiB() noexcept;
 	static std::uint64_t ImageBytes() noexcept;
 	static std::size_t Capacity() noexcept;
+	static std::size_t CapacityFor(std::uint32_t mib, std::uint64_t imageBytes) noexcept;
 };
 } // namespace simxr

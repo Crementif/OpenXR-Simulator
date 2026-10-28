@@ -28,6 +28,7 @@ struct RuntimeInputSnapshot
 class WindowsRuntimeInput
 {
   public:
+	WindowsRuntimeInput();
 	RuntimeInputSnapshot Snapshot() const;
 	RuntimeInputSnapshot Poll(std::chrono::nanoseconds period, mcp::WindowsLegacyChannel& files);
 	mcp::HeadPoseCommand Head() const;
@@ -39,6 +40,7 @@ class WindowsRuntimeInput
 	mcp::HeadPoseCommand m_head;
 	std::optional<std::array<XrFovf, 2>> m_fov;
 	std::optional<float> m_ipd;
+	std::optional<std::uint32_t> m_renderWidth, m_renderHeight;
 	mcp::PoseSweepCommand m_sweep;
 	double m_sweepStart = 0;
 	legacy::LegacyControllerMotion m_controllers;

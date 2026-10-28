@@ -49,16 +49,6 @@ static std::filesystem::path ReadDataDirectory()
 	return std::filesystem::path(home ? home : ".") / ".local/share/OpenXR-Simulator";
 }
 
-static std::uint32_t RenderExtent(const char* text)
-{
-	const std::string_view value(text);
-	std::int64_t extent;
-	const auto parsed = std::from_chars(value.data(), value.data() + value.size(), extent);
-	if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size())
-		throw std::invalid_argument("Invalid SIMXR_WIDTH or SIMXR_HEIGHT");
-	return static_cast<std::uint32_t>(std::clamp<std::int64_t>(extent, 16, 8192));
-}
-
 const ExtensionRegistry& LinuxRuntime::Extensions()
 {
 	static constexpr std::array<std::string_view, 4> s_vulkanCommands{
@@ -102,9 +92,9 @@ LinuxInstance::LinuxInstance(Runtime::InstanceRef instance, const std::filesyste
 		views = ProfileViews(*profile);
 	}
 	if (const auto* value = std::getenv("SIMXR_WIDTH"))
-		views.outerWidth = RenderExtent(value);
+		views.outerWidth = ParseLaunchRenderExtent(value);
 	if (const auto* value = std::getenv("SIMXR_HEIGHT"))
-		views.outerHeight = RenderExtent(value);
+		views.outerHeight = ParseLaunchRenderExtent(value);
 	m_input.SetViews(views);
 }
 LinuxInstance::~LinuxInstance()

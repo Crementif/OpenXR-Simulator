@@ -4,6 +4,17 @@
 
 namespace simxr
 {
+FramePreviewHistory::Entry::Entry()
+{
+	tracking.trackers.reserve(MaxTrackerDevices);
+	tracking.input.trackers.reserve(MaxTrackerDevices);
+}
+std::uint64_t FramePreviewHistory::Entry::StateBytes() const noexcept
+{
+	return sizeof(Entry) + 128 + tracking.trackers.capacity() * sizeof(TrackerSample) +
+		   tracking.input.trackers.capacity() * sizeof(TrackerDevice);
+}
+
 FramePreviewHistory::FramePreviewHistory()
 	: m_worker(
 		  [this]
@@ -69,7 +80,7 @@ std::shared_ptr<FramePreviewHistory::Entry> FramePreviewHistory::EvictRaw()
 	}
 	return {};
 }
-std::shared_ptr<FrameReservation> FramePreviewHistory::Reserve(FrameKey key)
+std::shared_ptr<FrameReservation> FramePreviewHistory::Reserve(FrameKey key, bool waitForSpace)
 {
 	auto reservation = m_budget.Reserve();
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -88,6 +99,8 @@ std::shared_ptr<FrameReservation> FramePreviewHistory::Reserve(FrameKey key)
 			// A budget shrink or slow encoder can leave completed frames awaiting archival.
 			// Keep the next application frame intact while the worker releases their GPU slots.
 			std::unique_lock lock(m_mutex);
+			if (!waitForSpace || m_admissionClosed || m_stopping || !m_error.empty() || std::chrono::steady_clock::now() >= deadline)
+				return {};
 			m_changed.wait_for(lock, std::chrono::milliseconds(1));
 		}
 		reservation = m_budget.Reserve();
@@ -126,9 +139,24 @@ std::shared_ptr<FrameReservation> FramePreviewHistory::Reserve(FrameKey key)
 void FramePreviewHistory::Append(FrameKey key, std::shared_ptr<const FrameOutput> output, bool clear,
 								 const TrackingSnapshot* tracking, RuntimeTime time, Duration period)
 {
+	if (tracking &&
+		(tracking->trackers.size() > MaxTrackerDevices || tracking->input.trackers.size() > MaxTrackerDevices))
+		throw std::invalid_argument("Preview tracker inventory exceeds capacity");
 	{
 		std::lock_guard lock(m_mutex);
 		auto found = m_frames.find(key);
+		if (!output && !clear)
+		{
+			if (found != m_frames.end())
+			{
+				if (found->second->preview.submitted)
+					throw std::logic_error("Duplicate preview publication");
+				std::erase(m_recent, found->second);
+				m_frames.erase(found);
+			}
+			m_changed.notify_one();
+			return;
+		}
 		if (found == m_frames.end())
 		{
 			if (!clear)
@@ -143,14 +171,19 @@ void FramePreviewHistory::Append(FrameKey key, std::shared_ptr<const FrameOutput
 		entry.preview = {key, std::move(output), true, clear};
 		entry.time = time;
 		entry.period = period;
-		static_assert(std::is_nothrow_copy_assignable_v<TrackingSnapshot>);
-		// Fixed-size state is reserved with the entry, before native submission.
+		static_assert(std::is_nothrow_copy_assignable_v<BodyControls>);
+		static_assert(std::is_nothrow_copy_assignable_v<TrackerDevice>);
+		static_assert(std::is_nothrow_copy_assignable_v<TrackerSample>);
+		// Both tracker vectors retain admitted capacity; every other member is fixed-size.
 		if (tracking)
+		{
 			entry.tracking = *tracking;
+			entry.hasTracking = true;
+		}
 		if (clear)
 		{
 			entry.counter = m_ramBytes;
-			entry.charge = sizeof(Entry) + 128;
+			entry.charge = entry.StateBytes();
 			m_ramBytes->fetch_add(entry.charge);
 		}
 	}
@@ -212,9 +245,9 @@ std::shared_ptr<const TrackingSnapshot> FramePreviewHistory::Tracking(FrameKey k
 {
 	std::lock_guard lock(m_mutex);
 	const auto found = m_frames.find(key);
-	if (found == m_frames.end() || !found->second->tracking)
+	if (found == m_frames.end() || !found->second->hasTracking)
 		return {};
-	return {found->second, &*found->second->tracking};
+	return {found->second, &found->second->tracking};
 }
 std::vector<PreviewClipFrame> FramePreviewHistory::RetainRange(FrameKey first, FrameKey last) const
 {
@@ -260,8 +293,8 @@ FramePreview FramePreviewHistory::Find(FrameKey key)
 	}
 	// A reader pins the same charged entry as the image's CPU state. Never store
 	// this alias inside Entry itself, which would create an ownership cycle.
-	if (entry->tracking)
-		result.tracking = {entry, &*entry->tracking};
+	if (entry->hasTracking)
+		result.tracking = {entry, &entry->tracking};
 	return result;
 }
 void FramePreviewHistory::Run() noexcept
@@ -329,7 +362,7 @@ void FramePreviewHistory::Run() noexcept
 						std::lock_guard lock(m_mutex);
 						encode->archive = std::move(archive);
 						encode->counter = m_ramBytes;
-						encode->charge = sizeof(Entry) + 128 + (encode->archive ? encode->archive->Bytes() : 0);
+						encode->charge = encode->StateBytes() + (encode->archive ? encode->archive->Bytes() : 0);
 						m_ramBytes->fetch_add(encode->charge);
 						released = std::move(encode->preview.output);
 						m_recent.pop_front();

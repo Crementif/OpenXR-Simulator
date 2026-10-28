@@ -19,6 +19,84 @@ def require(condition, message):
         raise AssertionError(message)
 
 
+def check_multiple_gpu_tabs(probe, interaction, count=2, input_test=False, portable=False, budget_test=False,
+                            replay_close=False):
+    hosts = []
+    with tempfile.TemporaryDirectory(prefix='simxr-multi-gpu-') as temporary:
+        root = Path(temporary)
+        try:
+            for index in range(count):
+                data = root / str(index)
+                data.mkdir()
+                environment = dict(os.environ, SIMXR_DATA_DIR=str(data), SIMXR_PROBE_CONTROL='1',
+                                   SIMXR_PROBE_RETAIN_CONTROL='1', SIMXR_PROBE_GPU_INSPECTION='1',
+                                   SIMXR_PROBE_RENDER_GATE='1')
+                if input_test:
+                    environment.update(SIMXR_PROBE_FRAMES='12', SIMXR_PROBE_INTERACTIVE='1')
+                environment.pop('SIMXR_CONTROL_SOCKET', None)
+                host = subprocess.Popen([probe], env=environment, stdout=subprocess.PIPE,
+                                        stderr=subprocess.STDOUT, text=True)
+                hosts.append((host, data))
+                wait_file(data / 'control.ready', host)
+            for host, data in hosts:
+                (data / 'control.continue').touch()
+                wait_file(data / 'rendering.3.ready', host)
+            endpoints = [data / f'control.{host.pid}.sock' for host, data in hosts]
+            for endpoint in endpoints:
+                with Client(endpoint) as observer:
+                    session, = observer.sessions()
+                    needed = Capability.GPU_PREVIEW | Capability.LIVE_PREVIEW
+                    if observer.status(session)['capabilities'] & needed != needed:
+                        print('SKIP: production owned GPU preview capability unavailable')
+                        return 77
+            environment = dict(os.environ, SIMXR_TABS_GPU_FIRST=str(endpoints[0]),
+                               SIMXR_TABS_GPU_SECOND=str(endpoints[1]),
+                               SIMXR_COMPANION_SETTINGS=str(root / 'settings.json'), SIMXR_DATA_DIR=str(root))
+            if portable:
+                environment.pop('SIMXR_TABS_GPU_FIRST')
+                environment.pop('SIMXR_TABS_GPU_SECOND')
+                environment.update(SIMXR_TABS_LIVE_FIRST=str(endpoints[0]), SIMXR_TABS_LIVE_SECOND=str(endpoints[1]),
+                                   SIMXR_TABS_LIVE_DIRECTORY=str(root), SIMXR_TABS_LIVE_GATE='1')
+                if budget_test:
+                    environment['SIMXR_TABS_BUDGET_QA'] = '1'
+            if input_test:
+                environment['SIMXR_TABS_INPUT_QA'] = '1'
+            if replay_close:
+                environment['SIMXR_TABS_REPLAY_CLOSE_QA'] = '1'
+            if count == 4:
+                prefix = 'SIMXR_TABS_LIVE_' if portable else 'SIMXR_TABS_GPU_'
+                environment.update({prefix + 'THIRD': str(endpoints[2]), prefix + 'FOURTH': str(endpoints[3])})
+            environment.pop('SIMXR_CONTROL_SOCKET', None)
+            result = subprocess.run([interaction], env=environment, capture_output=True, text=True,
+                                    timeout=35 if budget_test else 30 if input_test else 18)
+            output = result.stdout + result.stderr
+            require(result.returncode == 0, output)
+            marker = ('PASS shared tab snapshot budget' if budget_test else 'PASS portable live tabs' if portable else
+                      'PASS tab gamepad input ownership' if input_test else 'PASS native GPU tabs')
+            require(marker in output and output.count('normalReadback=0') >= count, output)
+            if replay_close:
+                require('PASS background replay tab close' in output, output)
+            require('VUID-' not in output and 'preserving' not in output, output)
+            print(output)
+            for host, data in hosts:
+                for gate in range(6, 15 if input_test else 7):
+                    (data / f'rendering.{gate}.continue').touch()
+            for host, data in hosts:
+                wait_file(data / 'control.destroyed', host)
+                (data / 'control.retained.continue').touch()
+                host_output = host.communicate(timeout=10)[0]
+                require(host.returncode == 0 and 'VUID-' not in host_output and 'preserving' not in host_output,
+                        host_output)
+            return 0
+        finally:
+            for host, _ in hosts:
+                if host.poll() is None:
+                    host.kill()
+                    host.wait()
+                if host.stdout:
+                    host.stdout.close()
+
+
 def check_arguments(companion):
     environment = dict(os.environ, SDL_VIDEODRIVER='simxr-unavailable')
     for arguments, option in [(['--connect', '--runtime-smoke'], '--connect'),
@@ -40,6 +118,10 @@ def check_arguments(companion):
 
 
 def main():
+    if '--multi-tab' in sys.argv[3:]:
+        return check_multiple_gpu_tabs(sys.argv[1], sys.argv[2], 4 if '--four-tab' in sys.argv[3:] else 2,
+                                       '--tab-input' in sys.argv[3:], '--portable-tabs' in sys.argv[3:],
+                                       '--budget-tabs' in sys.argv[3:], '--replay-close' in sys.argv[3:])
     if '--check-cli' in sys.argv[3:] or '--cli-only' in sys.argv[3:]:
         check_arguments(sys.argv[2])
     if '--cli-only' in sys.argv[3:]:

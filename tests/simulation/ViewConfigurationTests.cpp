@@ -52,6 +52,24 @@ void InsetBoundaries()
 
 int main()
 {
+	Require(simxr::ParseLaunchRenderExtent("2048") == 2048 &&
+		simxr::ParseLaunchRenderExtent("2300") == 2300 &&
+		simxr::ParseLaunchRenderExtent("-1") == 16 &&
+		simxr::ParseLaunchRenderExtent("99999") == 8192,
+		"Launch extent parsing changed its shared bounds");
+	for (const auto* invalid : {"", "2048x", " 2048", "+2048", "18446744073709551616"})
+	{
+		bool rejected = false;
+		try
+		{
+			(void)simxr::ParseLaunchRenderExtent(invalid);
+		}
+		catch (const std::invalid_argument&)
+		{
+			rejected = true;
+		}
+		Require(rejected, "Malformed launch extent accepted");
+	}
 	InsetBoundaries();
 	using namespace simxr;
 	TrackingSystem tracking;

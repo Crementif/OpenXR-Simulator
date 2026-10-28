@@ -65,7 +65,7 @@ void RigProgress::Check(bool bindingBoundary)
 		throw std::runtime_error("Rig cancelled");
 	if (m_paused && m_permits)
 		--m_permits;
-	m_result.phase = m_paused ? RigPhase::Paused : RigPhase::Running;
+	m_result.phase = RigPhase::Running;
 }
 void RigProgress::Finish(RigPhase phase, std::string error)
 {
