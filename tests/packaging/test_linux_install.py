@@ -51,6 +51,27 @@ def main():
                     unavailable = run([str(program), "--help"], env, 1)
                     assert "being updated" in unavailable.stderr, (name, unavailable.stderr)
             fcntl.flock(exclusive, fcntl.LOCK_UN)
+
+        # Hold the executable before replacement, then enter its old mapping with
+        # the current installation path as argv[0], as in an upgrade/start race.
+        binary = prefix / "bin" / "simxr_companion"
+        for removed in (False, True):
+            descriptor = os.open(binary, os.O_RDONLY)
+            retired = binary.with_suffix(".retired")
+            try:
+                binary.rename(retired)
+                shutil.copy2(stage / "bin" / binary.name, binary)
+                if removed:
+                    retired.unlink()
+                stale = subprocess.run([sys.executable, "-c",
+                    'import os,sys; os.execve(int(sys.argv[1]), [sys.argv[2], "--version"], os.environ)',
+                    str(descriptor), str(binary)], env=env, pass_fds=(descriptor,),
+                    capture_output=True, text=True, timeout=30)
+                assert stale.returncode == 1 and "being updated" in stale.stderr, stale
+                assert "simxr_companion" in run([str(binary), "--version"], env).stdout
+            finally:
+                os.close(descriptor)
+                retired.unlink(missing_ok=True)
         desktop = data / "applications" / "openxr-simulator.desktop"
         run(["desktop-file-validate", str(desktop)], env)
         text = desktop.read_text()

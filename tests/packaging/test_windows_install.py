@@ -1,3 +1,4 @@
+import argparse
 import ctypes
 import hashlib
 import json
@@ -50,8 +51,15 @@ def wait_for_uninstall(prefix, log):
 
 
 def main():
-    setup = Path(sys.argv[1]).resolve()
-    stage = Path(sys.argv[2]).resolve()
+    parser = argparse.ArgumentParser(description="Exercise the native Windows installation lifecycle")
+    parser.add_argument("setup", type=Path)
+    parser.add_argument("stage", type=Path)
+    parser.add_argument("--previous-setup", type=Path,
+                        help="Install an older package first, then verify replacement and user-file preservation")
+    args = parser.parse_args()
+    setup = args.setup.resolve(strict=True)
+    stage = args.stage.resolve(strict=True)
+    previous_setup = args.previous_setup.resolve(strict=True) if args.previous_setup else None
     app_id = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{E638AA20-956C-43A5-83AF-8E6ED5A33472}_is1"
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, app_id):
@@ -88,11 +96,17 @@ def main():
             run([str(setup), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", f"/DIR={unmanaged}"], 7, env)
             assert (unmanaged / "keep.txt").read_text() == "preserve"
             run(common + ["/CLOSEAPPLICATIONS"], 1, env)
-            run(common, env=env)
+            run([str(previous_setup)] + common[1:] if previous_setup else common, env=env)
             assert uninstall.exists() and programs.exists() and not desktop.exists()
             user_file = prefix / "user-created" / "notes.txt"
             user_file.parent.mkdir()
             user_file.write_text("preserve extra files")
+            if previous_setup:
+                assert digest(runtime) != digest(stage / "bin" / runtime_name), "Previous runtime must differ"
+                run(common, env=env)
+                assert user_file.read_text() == "preserve extra files"
+                assert data.read_text() == "preserve settings and recordings"
+                assert all(registry_value(root_key, view) == previous for root_key, view, previous in runtimes)
             for file in ("bin/simxr_companion.exe", "bin/simxr_mcp_connector.exe", "bin/simxr_runner.exe",
                          f"bin/{runtime_name}", "bin/openxr_simulator.json"):
                 assert digest(prefix / file) == digest(stage / file), file

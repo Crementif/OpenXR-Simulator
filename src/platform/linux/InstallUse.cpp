@@ -5,7 +5,6 @@
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/stat.h>
-#include <sys/sysmacros.h>
 #include <unistd.h>
 
 namespace simxr
@@ -58,12 +57,14 @@ InstallUse::InstallUse() noexcept
 		while (std::getline(maps, line))
 		{
 			unsigned long long start = 0, end = 0, inode = 0;
-			unsigned deviceMajor = 0, deviceMinor = 0;
-			if (std::sscanf(line.c_str(), "%llx-%llx %*s %*s %x:%x %llu", &start, &end,
-							&deviceMajor, &deviceMinor, &inode) != 5 || address < start || address >= end)
+			if (std::sscanf(line.c_str(), "%llx-%llx %*s %*s %*s %llu", &start, &end, &inode) != 3 ||
+				address < start || address >= end)
 				continue;
-			m_ready = inode == current.st_ino && deviceMajor == major(current.st_dev) &&
-					  deviceMinor == minor(current.st_dev);
+			// Btrfs subvolumes can report different devices in stat and maps.
+			// The kernel link also distinguishes renamed or deleted old mappings.
+			std::ostringstream mapping;
+			mapping << "/proc/self/map_files/" << std::hex << start << '-' << end;
+			m_ready = inode == current.st_ino && std::filesystem::read_symlink(mapping.str()) == binary;
 			return;
 		}
 	}
