@@ -44,7 +44,6 @@ class VulkanSubmission final : public GpuCompletion
 		std::shared_ptr<const void> pipeline;
 		std::unique_ptr<VulkanCommands> commands;
 		std::shared_ptr<FrameGpuTiming> timing;
-		std::vector<VkImageView> sourceViews;
 		std::vector<std::shared_ptr<VulkanImage>> sources;
 		// Source CPU readers may disappear before this submission reaches its fence.
 		std::vector<std::shared_ptr<FrameReservation>> sourceBudgets;
@@ -57,6 +56,7 @@ class VulkanSubmission final : public GpuCompletion
 		VkSemaphore nativeReady = VK_NULL_HANDLE;
 		std::uint64_t nativeReadyValue = 0;
 #endif
+		// Borrowed from the output allocation's cache.
 		std::array<VkImageView, 2> outputViews{};
 		std::array<VkFramebuffer, 2> framebuffers{};
 	};

@@ -64,20 +64,6 @@ struct VulkanBackend::Pipeline
 	}
 };
 
-static VkImageView View(const VulkanImage& image, std::uint32_t slice,
-						VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT)
-{
-	VkImageViewCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-	info.image = image.image;
-	info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-	info.format = image.format;
-	info.subresourceRange = {aspect, 0, image.mipLevels, slice, 1};
-	VkImageView result;
-	CheckVulkan(vkCreateImageView(image.device->binding.device, &info, nullptr, &result),
-				"Create compositor image view");
-	return result;
-}
-
 std::shared_ptr<VulkanBackend::Pipeline> VulkanBackend::CreatePipeline(std::shared_ptr<VulkanDevice> device,
 																	   bool multisampledDepth)
 {
@@ -522,16 +508,8 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 	const auto native = m_state->device->binding.device;
 	for (std::uint32_t eye = 0; eye < outputLayers; ++eye)
 	{
-		resources.outputViews[eye] = View(*resources.output, eye);
-		VkFramebufferCreateInfo framebuffer{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-		framebuffer.renderPass = pipeline->pass;
-		framebuffer.attachmentCount = 1;
-		framebuffer.pAttachments = &resources.outputViews[eye];
-		framebuffer.width = plan.width;
-		framebuffer.height = plan.height;
-		framebuffer.layers = 1;
-		CheckVulkan(vkCreateFramebuffer(native, &framebuffer, nullptr, &resources.framebuffers[eye]),
-					"Create private eye framebuffer");
+		resources.outputViews[eye] = resources.output->View(eye);
+		resources.framebuffers[eye] = resources.output->Framebuffer(pipeline->pass, eye);
 	}
 	std::vector<VkDescriptorSet> sets(plan.draws.size());
 	if (!sets.empty())
@@ -553,7 +531,6 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 		allocate.pSetLayouts = layouts.data();
 		CheckVulkan(vkAllocateDescriptorSets(native, &allocate, sets.data()), "Allocate compositor draw descriptors");
 	}
-	resources.sourceViews.reserve(plan.draws.size());
 	resources.sources.reserve(plan.draws.size());
 	resources.sourceBudgets.reserve(retained.size() + plan.draws.size());
 	std::vector<std::pair<std::shared_ptr<VulkanImage>, std::shared_ptr<VulkanImage>>> resolved;
@@ -625,8 +602,7 @@ XrResult VulkanBackend::PrepareComposition(const CompositionPlan& plan, const Vu
 			  (depth ? VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT : VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)))
 			return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
 		const auto view =
-			View(*image, draw.source.arraySlice, depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT);
-		resources.sourceViews.push_back(view);
+			image->View(draw.source.arraySlice, depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT);
 		if (std::find(resources.sources.begin(), resources.sources.end(), image) == resources.sources.end())
 			resources.sources.push_back(image);
 		const VkDescriptorImageInfo sampled{VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
@@ -799,7 +775,7 @@ XrResult VulkanBackend::PrepareImageCopy(const LayerImageDescription& descriptio
 	SnapshotBudget::ObserveImageBytes(resources.external->Descriptor().allocationSize);
 	m_state->images.push_back(resources.output);
 	resources.sync = m_state->syncPool->Acquire();
-	resources.outputViews[0] = View(*resources.output, 0);
+	resources.outputViews[0] = resources.output->View(0);
 	VulkanImageBarrier(resources.commands->command, *image, image->ApplicationLayout(),
 					   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
 					   VK_ACCESS_TRANSFER_READ_BIT);
@@ -894,7 +870,7 @@ XrResult VulkanBackend::PrepareNativeCopy(std::shared_ptr<VulkanImage> source, V
 	m_state->images.push_back(resources.output);
 	resources.sync = m_state->syncPool->Acquire();
 	for (std::uint32_t eye = 0; eye < source->layers; ++eye)
-		resources.outputViews[eye] = View(*resources.output, eye);
+		resources.outputViews[eye] = resources.output->View(eye);
 	VkImageMemoryBarrier acquire{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
 	acquire.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
 	acquire.oldLayout = VK_IMAGE_LAYOUT_GENERAL;

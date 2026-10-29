@@ -8,15 +8,6 @@ VulkanSubmission::Resources::Resources(std::shared_ptr<VulkanDevice> owner) : de
 
 VulkanSubmission::Resources::~Resources()
 {
-	const auto native = device->binding.device;
-	for (auto framebuffer : framebuffers)
-		if (framebuffer)
-			vkDestroyFramebuffer(native, framebuffer, nullptr);
-	for (auto view : sourceViews)
-		vkDestroyImageView(native, view, nullptr);
-	for (auto view : outputViews)
-		if (view)
-			vkDestroyImageView(native, view, nullptr);
 	device->RecycleCommands(std::move(commands));
 }
 
@@ -165,10 +156,6 @@ void VulkanSubmission::ReleaseSources()
 {
 	if (!NativeIdle())
 		return;
-	const auto native = m_resources->device->binding.device;
-	for (auto view : m_resources->sourceViews)
-		vkDestroyImageView(native, view, nullptr);
-	m_resources->sourceViews.clear();
 	m_resources->sources.clear();
 	m_resources->sourceBudgets.clear();
 #ifdef _WIN32

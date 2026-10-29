@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
+#include <vector>
 
 namespace simxr
 {
@@ -52,6 +54,10 @@ class VulkanImage
 	std::function<void()> retired;
 	VkImageAspectFlags Aspect() const;
 	VkImageLayout ApplicationLayout() const;
+	// Single-slice views and framebuffers are cached on the allocation owner and destroyed with it,
+	// after every lease and the GPU uses those leases retain.
+	VkImageView View(std::uint32_t slice, VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT) const;
+	VkFramebuffer Framebuffer(VkRenderPass pass, std::uint32_t slice) const;
 
   private:
 	friend class VulkanExternalDevice;
@@ -61,7 +67,23 @@ class VulkanImage
 	// A fresh image lifetime and retirement observer over a retained allocation.
 	static std::shared_ptr<VulkanImage> Lease(std::shared_ptr<VulkanImage> allocation);
 	explicit VulkanImage(std::shared_ptr<VulkanDevice> device);
+	const VulkanImage& Owner() const noexcept;
 	std::shared_ptr<VulkanImage> m_allocation;
+	struct CachedView
+	{
+		std::uint32_t slice;
+		VkImageAspectFlags aspect;
+		VkImageView view;
+	};
+	struct CachedFramebuffer
+	{
+		VkRenderPass pass;
+		std::uint32_t slice;
+		VkFramebuffer framebuffer;
+	};
+	mutable std::mutex m_cacheMutex;
+	mutable std::vector<CachedView> m_views;
+	mutable std::vector<CachedFramebuffer> m_framebuffers;
 };
 
 void VulkanImageBarrier(VkCommandBuffer command, const VulkanImage& image, VkImageLayout previous, VkImageLayout next,

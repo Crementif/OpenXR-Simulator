@@ -131,6 +131,10 @@ std::shared_ptr<VulkanImage> VulkanImage::Lease(std::shared_ptr<VulkanImage> all
 
 VulkanImage::~VulkanImage()
 {
+	for (const auto& cached : m_framebuffers)
+		vkDestroyFramebuffer(device->binding.device, cached.framebuffer, nullptr);
+	for (const auto& cached : m_views)
+		vkDestroyImageView(device->binding.device, cached.view, nullptr);
 	if (image && !m_allocation)
 		vkDestroyImage(device->binding.device, image, nullptr);
 	if (memory && !m_allocation)
@@ -166,6 +170,56 @@ VkImageLayout VulkanImage::ApplicationLayout() const
 {
 	return (Aspect() & VK_IMAGE_ASPECT_DEPTH_BIT) ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
 												  : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+}
+
+const VulkanImage& VulkanImage::Owner() const noexcept
+{
+	const auto* owner = this;
+	while (owner->m_allocation)
+		owner = owner->m_allocation.get();
+	return *owner;
+}
+
+VkImageView VulkanImage::View(std::uint32_t slice, VkImageAspectFlags aspect) const
+{
+	const auto& owner = Owner();
+	std::lock_guard lock(owner.m_cacheMutex);
+	for (const auto& cached : owner.m_views)
+		if (cached.slice == slice && cached.aspect == aspect)
+			return cached.view;
+	VkImageViewCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+	info.image = owner.image;
+	info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	info.format = owner.format;
+	info.subresourceRange = {aspect, 0, owner.mipLevels, slice, 1};
+	owner.m_views.reserve(owner.m_views.size() + 1);
+	VkImageView view;
+	CheckVulkan(vkCreateImageView(owner.device->binding.device, &info, nullptr, &view), "Create cached image view");
+	owner.m_views.push_back({slice, aspect, view});
+	return view;
+}
+
+VkFramebuffer VulkanImage::Framebuffer(VkRenderPass pass, std::uint32_t slice) const
+{
+	const auto view = View(slice);
+	const auto& owner = Owner();
+	std::lock_guard lock(owner.m_cacheMutex);
+	for (const auto& cached : owner.m_framebuffers)
+		if (cached.pass == pass && cached.slice == slice)
+			return cached.framebuffer;
+	VkFramebufferCreateInfo info{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+	info.renderPass = pass;
+	info.attachmentCount = 1;
+	info.pAttachments = &view;
+	info.width = owner.extent.width;
+	info.height = owner.extent.height;
+	info.layers = 1;
+	owner.m_framebuffers.reserve(owner.m_framebuffers.size() + 1);
+	VkFramebuffer framebuffer;
+	CheckVulkan(vkCreateFramebuffer(owner.device->binding.device, &info, nullptr, &framebuffer),
+				"Create cached framebuffer");
+	owner.m_framebuffers.push_back({pass, slice, framebuffer});
+	return framebuffer;
 }
 
 void VulkanImageBarrier(VkCommandBuffer command, const VulkanImage& image, VkImageLayout previous, VkImageLayout next,
