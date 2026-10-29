@@ -2,12 +2,11 @@
 import math
 import os
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 import time
 
-from test_native_quad import export, require, wait_file
+from native_support import probe_environment, running_probe, export, require, wait_file
 from simxr_control import Client
 from simxr_control.protocol import Capability
 
@@ -70,18 +69,15 @@ def verify_pixels(client, reader, views, yaw):
 def run(probe, policy):
     with tempfile.TemporaryDirectory(prefix='sx-rotate-') as temporary:
         data = Path(temporary)
-        environment = dict(os.environ, SIMXR_DATA_DIR=temporary, SIMXR_DETERMINISTIC='0',
+        environment = probe_environment(data, SIMXR_DETERMINISTIC='0',
                            SIMXR_WIDTH=str(WIDTH), SIMXR_HEIGHT=str(HEIGHT), SIMXR_PROBE_CONTROL='1',
                            SIMXR_PROBE_GPU_INSPECTION='1', SIMXR_PROBE_RECORDING='1',
                            SIMXR_PROBE_RENDER_GATE='1', SIMXR_PROBE_WORLD_PROJECTION='1',
                            SIMXR_PROBE_INTERACTIVE='1', SIMXR_PROBE_FRAMES='6',
                            SIMXR_PRESENTATION_POLICY=policy)
-        environment.pop('SIMXR_CONTROL_SOCKET', None)
         if policy == 'repeat':
             environment.pop('SIMXR_PRESENTATION_POLICY')
-        host = subprocess.Popen([probe], env=environment, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True)
-        try:
+        with running_probe([probe], environment) as host:
             wait_file(data / 'control.ready', host)
             with Client(data / f'control.{host.pid}.sock') as client:
                 session, = client.sessions()
@@ -158,15 +154,6 @@ def run(probe, policy):
             output = host.communicate(timeout=15)[0]
             require(host.returncode == 0, output)
             require('Validation Error' not in output, output)
-        except Exception:
-            if host.poll() is None:
-                host.kill()
-            print(host.communicate()[0], file=sys.stderr)
-            raise
-        finally:
-            if host.poll() is None:
-                host.kill()
-                host.wait()
 
 
 if __name__ == '__main__':

@@ -300,6 +300,9 @@ if(BUILD_TESTING)
         set_tests_properties(windows_update_timeout PROPERTIES TIMEOUT 25)
     endif()
     if(Python3_Interpreter_FOUND)
+        add_test(NAME mcp_test_support COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/app/test_mcp_support.py")
+        set_tests_properties(mcp_test_support PROPERTIES TIMEOUT 30)
         add_test(NAME mcp_connector_cancellation COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/app/test_mcp_connector_queue.py" "$<TARGET_FILE:simxr_mcp_connector>")
         set_tests_properties(mcp_connector_cancellation PROPERTIES TIMEOUT 30)
@@ -362,7 +365,17 @@ if(BUILD_TESTING)
         set_tests_properties(preview_texture PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
     endif()
     if(SIMXR_BUILD_AUTOMATION)
-        add_executable(companion_interaction_tests tests/app/CompanionInteractionTests.cpp)
+        add_executable(companion_interaction_tests
+            tests/app/CompanionInteractionTests.cpp
+            tests/app/interaction/Fixture.cpp
+            tests/app/interaction/Shell.cpp
+            tests/app/interaction/Rig.cpp
+            tests/app/interaction/Preview.cpp
+            tests/app/interaction/Input.cpp
+            tests/app/interaction/History.cpp
+            tests/app/interaction/Launch.cpp
+            tests/app/interaction/Tabs.cpp
+        )
         simxr_configure_target(companion_interaction_tests app/UiPch.h)
         target_link_libraries(companion_interaction_tests PRIVATE simxr_app)
         add_dependencies(companion_interaction_tests headset_host_service_tests)

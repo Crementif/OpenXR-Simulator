@@ -48,13 +48,15 @@ void VideoExport::Run(std::vector<PreviewClipFrame> frames) noexcept
 				if (!frame.output || !frame.output->CanArchive())
 					throw std::runtime_error("Vulkan H.264 encoding is unavailable for this clip.");
 				const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-				while (frame.output->PollCompletion() == CompletionStatus::Pending)
+				auto completion = frame.output->PollCompletion();
+				while (completion == CompletionStatus::Pending)
 				{
 					if (m_stop || std::chrono::steady_clock::now() >= deadline)
 						throw std::runtime_error("A video frame did not finish rendering.");
 					std::this_thread::sleep_for(std::chrono::milliseconds(2));
+					completion = frame.output->PollCompletion();
 				}
-				if (frame.output->PollCompletion() != CompletionStatus::Complete)
+				if (completion != CompletionStatus::Complete)
 					throw std::runtime_error("A video frame failed to render.");
 				frame.archive = frame.output->Archive();
 			}

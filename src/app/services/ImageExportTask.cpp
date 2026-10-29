@@ -1,6 +1,6 @@
 #include "app/services/ImageExportTask.h"
 #include "Pch.h"
-#include "app/platform/FileStorage.h"
+#include "app/services/ImageExport.h"
 #include "app/services/Utf8Path.h"
 #include "control/ImageInspection.h"
 #include "graphics/ColorPixels.h"
@@ -10,44 +10,6 @@ namespace simxr::app
 namespace wire = control;
 namespace tag = wire::tag;
 using namespace panel;
-static std::byte DisplayByte(float value, bool linear)
-{
-	if (!(value > 0))
-		return std::byte{0};
-	if (value >= 1)
-		return std::byte{255};
-	if (linear)
-		value = value <= 0.0031308f ? value * 12.92f : 1.055f * std::pow(value, 1.0f / 2.4f) - 0.055f;
-	return static_cast<std::byte>(std::lround(value * 255.0f));
-}
-
-static void WritePpm(std::ostream& file, const ImageExportMetadata& image, std::span<const std::byte> bytes)
-{
-	const auto height = static_cast<std::uint64_t>(image.height) * image.slices;
-	file << "P6\n# session=" << image.session << " generation=" << image.generation << " frame=" << image.frame
-		 << " capture=" << image.capture << "\n# target=" << image.target << " layer=" << image.layer
-		 << " view=" << image.view << " slices=" << image.slices << " slice_height=" << image.height
-		 << " format=" << image.format << " alpha=omitted\n";
-	const auto pixelBytes = ColorPixelBytes(image.format);
-	const bool linear = pixelBytes > 4 || image.format == static_cast<uint32_t>(ColorFormat::Rgb10A2Unorm);
-	if (linear)
-		file << "# conversion=linear-clamped-srgb\n";
-	file << image.width << ' ' << height << "\n255\n";
-	std::array<std::byte, 12288> rgb;
-	for (std::size_t offset = 0; offset < bytes.size();)
-	{
-		const auto pixels = std::min(rgb.size() / 3, (bytes.size() - offset) / pixelBytes);
-		for (std::size_t pixel = 0; pixel < pixels; ++pixel)
-		{
-			const auto color = DecodeColorPixel(image.format, bytes.subspan(offset + pixel * pixelBytes, pixelBytes));
-			for (std::size_t channel = 0; channel < 3; ++channel)
-				rgb[pixel * 3 + channel] = DisplayByte(color[channel], linear);
-		}
-		file.write(reinterpret_cast<const char*>(rgb.data()), static_cast<std::streamsize>(pixels * 3));
-		offset += pixels * pixelBytes;
-	}
-}
-
 ImageExportWriter::ImageExportWriter()
 	: m_worker(
 		  [this]
@@ -71,8 +33,9 @@ bool ImageExportWriter::Save(std::string path, std::vector<std::byte> bytes, Ima
 		throw std::invalid_argument("Invalid explicit export destination or byte capacity");
 	// Native path conversion can allocate or fail; finish it before admission.
 	auto destination = Utf8Path(path);
-	const bool ppm = destination.extension() == ".ppm";
-	if (ppm)
+	const auto extension = destination.extension();
+	const bool image = extension == ".png" || extension == ".jpg" || extension == ".jpeg";
+	if (image)
 	{
 		const auto pixelBytes = ColorPixelBytes(metadata.format);
 		// Division avoids overflow from untrusted dimensions before any file is opened.
@@ -81,19 +44,19 @@ bool ImageExportWriter::Save(std::string path, std::vector<std::byte> bytes, Ima
 			bytes.size() / pixelBytes / metadata.width / metadata.height != metadata.slices ||
 			static_cast<std::uint64_t>(metadata.width) * metadata.height * metadata.slices != bytes.size() / pixelBytes)
 			throw std::invalid_argument(
-				"PPM export requires a supported color image, exact dimensions and frame identity");
+				"Image export requires a supported color image, exact dimensions and frame identity");
 	}
-	else if (destination.extension() == ".mp4")
+	else if (extension == ".mp4")
 	{
 		if (bytes.size() < 12 || std::memcmp(bytes.data() + 4, "ftyp", 4) != 0)
 			throw std::invalid_argument("The export is not an MP4 video");
 	}
-	else if (destination.extension() != ".rgba")
-		throw std::invalid_argument("Use .ppm for an image, .rgba for raw pixels or .mp4 for video");
+	else if (extension != ".rgba")
+		throw std::invalid_argument("Use .png or .jpg for an image, .rgba for raw pixels or .mp4 for video");
 	std::lock_guard lock(m_mutex);
 	if (m_stopping || m_busy || m_result)
 		return false;
-	m_job.emplace(Job{std::move(path), std::move(destination), std::move(bytes), metadata, ppm});
+	m_job.emplace(Job{std::move(path), std::move(destination), std::move(bytes), metadata, image});
 	m_busy = true;
 	m_result.reset();
 	m_changed.notify_all();
@@ -126,38 +89,35 @@ void ImageExportWriter::Run() noexcept
 			job = std::move(m_job);
 			m_job.reset();
 		}
-		auto status = ImageExportWriteResult::Status::OpenFailed;
-		std::filesystem::path temporary;
+		auto status = ImageExportWriteResult::Status::Failed;
+		std::string error;
 		try
 		{
-			temporary = CreatePrivateTemporaryFile(job->destination);
-			std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
-			if (file.is_open())
+			if (job->image)
 			{
-				status = ImageExportWriteResult::Status::WriteFailed;
-				file.imbue(std::locale::classic());
-				if (job->ppm)
-					WritePpm(file, job->metadata, job->bytes);
-				else
-					file.write(reinterpret_cast<const char*>(job->bytes.data()),
-							   static_cast<std::streamsize>(job->bytes.size()));
-				file.close();
-				if (file)
-				{
-					CommitTemporaryFile(temporary, job->destination);
-					status = ImageExportWriteResult::Status::Saved;
-				}
+				ImageEncodingPermit permit;
+				const auto& image = job->metadata;
+				const auto height = static_cast<std::uint64_t>(image.height) * image.slices;
+				if (height > FileImageLimits.dimension)
+					throw std::invalid_argument("Image height exceeds the encoding limit");
+				auto encoded = EncodeImage(job->bytes, image.format, image.width, static_cast<std::uint32_t>(height),
+					job->destination.extension() == ".png", 85, FileImageLimits);
+				SaveExportFile(job->destination, encoded.bytes, true);
 			}
+			else
+				SaveExportFile(job->destination, job->bytes, true);
+			status = ImageExportWriteResult::Status::Saved;
+		}
+		catch (const std::exception& failure)
+		{
+			error = failure.what();
 		}
 		catch (...)
 		{
-			// Preserve the open/write failure and publish it through the joined worker.
+			error = "Export failed";
 		}
-		std::error_code ignored;
-		if (!temporary.empty())
-			std::filesystem::remove(temporary, ignored);
 		std::lock_guard lock(m_mutex);
-		m_result.emplace(ImageExportWriteResult{status, std::move(job->path)});
+		m_result.emplace(ImageExportWriteResult{status, std::move(job->path), std::move(error)});
 		m_busy = false;
 	}
 }
@@ -178,7 +138,7 @@ void ImageExportTask::ResetEpoch()
 		m_succeeded = false;
 	}
 	m_id = m_offset = m_size = 0;
-	m_requested = false;
+	m_requested = m_ready = false;
 	m_bytes.clear();
 	m_metadata = {};
 }
@@ -240,6 +200,7 @@ bool ImageExportTask::Handle(const PanelTask& task, const wire::Message& message
 			m_id = U64(message, tag::ExportId);
 			m_size = U64(message, tag::TotalBytes);
 			m_offset = 0;
+			m_ready = false;
 			m_metadata = {};
 			if (const auto description = message.Find(tag::ImageDescriptor))
 			{
@@ -276,11 +237,7 @@ bool ImageExportTask::Handle(const PanelTask& task, const wire::Message& message
 					throw std::runtime_error("Invalid export size");
 				m_size = size;
 				m_bytes.reserve(static_cast<std::size_t>(m_size));
-				m_requests.Send(wire::OpCode::ReadExport, PanelWork::ExportRead,
-								{wire::Field::U64(tag::ExportId, m_id, true),
-								 wire::Field::U64(tag::Offset, m_offset, true),
-								 wire::Field::U64(tag::Length, wire::MaxPayload - 4096, true)},
-								m_id);
+				m_ready = true;
 			}
 			else if (phase == "failed")
 				Abort(Text(message, tag::Detail).empty() ? "Export failed" : Text(message, tag::Detail));
@@ -325,17 +282,21 @@ void ImageExportTask::Poll()
 			m_succeeded = true;
 			m_detail = "Saved " + result->path;
 			break;
-		case ImageExportWriteResult::Status::OpenFailed:
-			m_detail = "Cannot open export destination";
-			break;
-		case ImageExportWriteResult::Status::WriteFailed:
-			m_detail = "File write failed";
+		case ImageExportWriteResult::Status::Failed:
+			m_detail = result->error;
 			break;
 		}
 	}
 	if (m_requests.Snapshot().state == RuntimeConnectionState::Connected && m_id &&
 		!m_requests.Has(PanelWork::ExportInfo) && !m_requests.Has(PanelWork::ExportRead))
-		m_requests.Send(wire::OpCode::ExportInfo, PanelWork::ExportInfo, {wire::Field::U64(tag::ExportId, m_id, true)},
-						m_id);
+	{
+		if (m_ready)
+			m_requests.Send(wire::OpCode::ReadExport, PanelWork::ExportRead,
+				{wire::Field::U64(tag::ExportId, m_id, true), wire::Field::U64(tag::Offset, m_offset, true),
+				 wire::Field::U64(tag::Length, wire::MaxPayload - 4096, true)}, m_id);
+		else
+			m_requests.Send(wire::OpCode::ExportInfo, PanelWork::ExportInfo,
+				{wire::Field::U64(tag::ExportId, m_id, true)}, m_id);
+	}
 }
 } // namespace simxr::app

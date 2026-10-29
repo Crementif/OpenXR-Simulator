@@ -10,9 +10,6 @@
 #endif
 #include <windows.h>
 #else
-#include <fcntl.h>
-#include <linux/fs.h>
-#include <sys/syscall.h>
 #include <unistd.h>
 #endif
 
@@ -24,24 +21,6 @@ std::uint64_t WindowsLegacyProcessId()
 	return GetCurrentProcessId();
 #else
 	return static_cast<std::uint64_t>(getpid());
-#endif
-}
-
-bool ClaimWindowsLegacyCommand(const std::filesystem::path& source, const std::filesystem::path& destination)
-{
-#ifdef _WIN32
-	if (MoveFileW(source.c_str(), destination.c_str()))
-		return true;
-	const auto error = GetLastError();
-	if (error == ERROR_FILE_NOT_FOUND || error == ERROR_ALREADY_EXISTS || error == ERROR_FILE_EXISTS)
-		return false;
-	throw std::system_error(static_cast<int>(error), std::system_category(), "Claim Windows compatibility command");
-#else
-	if (syscall(SYS_renameat2, AT_FDCWD, source.c_str(), AT_FDCWD, destination.c_str(), RENAME_NOREPLACE) == 0)
-		return true;
-	if (errno == ENOENT || errno == EEXIST)
-		return false;
-	throw std::system_error(errno, std::generic_category(), "Claim compatibility fixture command");
 #endif
 }
 
@@ -156,22 +135,4 @@ void WindowsLegacyOutput::Abort() noexcept
 	std::filesystem::remove(m_temporary, ignored);
 }
 
-std::string ReadWindowsLegacyDocument(const std::filesystem::path& path)
-{
-	if (!std::filesystem::is_regular_file(std::filesystem::symlink_status(path)))
-		throw std::invalid_argument("Compatibility command must be a regular file");
-	const auto size = std::filesystem::file_size(path);
-	if (size > 64 * 1024)
-		throw std::invalid_argument("Compatibility command exceeds 64 KiB");
-	std::ifstream input;
-	input.exceptions(std::ios::badbit | std::ios::failbit);
-	input.open(path, std::ios::binary);
-	std::string document(static_cast<std::size_t>(size), '\0');
-	input.read(document.data(), static_cast<std::streamsize>(document.size()));
-	if (input.peek() != std::char_traits<char>::eof())
-		throw std::runtime_error("Compatibility command changed while reading");
-	input.clear();
-	input.close();
-	return document;
-}
 } // namespace mcp

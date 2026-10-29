@@ -29,6 +29,7 @@ class ScriptEngine
 	static void* Allocate(void* context, void* pointer, std::size_t oldSize, std::size_t newSize);
 	static void Interrupt(lua_State* state, int gc);
 	template <int (ScriptEngine::*Handler)(lua_State*)> static int Binding(lua_State* state);
+	int Wait(lua_State* state);
 	int FrameAdd(lua_State* state);
 	int FrameBefore(lua_State* state);
 	int Schedule(lua_State* state);
@@ -47,6 +48,7 @@ class ScriptEngine
 	int ExportHistory(lua_State* state);
 	int BeginImageWindow(lua_State* state);
 	int ImageWindow(lua_State* state);
+	int AnalyzeImageWindow(lua_State* state);
 	int ExportWindowImage(lua_State* state);
 	int ReleaseImageWindow(lua_State* state);
 	int ProjectionHistory(lua_State* state);
@@ -54,6 +56,7 @@ class ScriptEngine
 	int Revision(lua_State* state);
 	int ReleaseInspection(lua_State* state);
 	int StepDisplay(lua_State* state);
+	int AdvanceToFrame(lua_State* state);
 	int State(lua_State* state);
 	int ReleaseInputs(lua_State* state);
 	int Export(lua_State* state);

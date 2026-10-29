@@ -52,6 +52,7 @@ struct ImageDescription
 };
 Field EncodeImageDescription(const ImageDescription& description, bool external = false);
 ImageDescription DecodeImageDescription(const Field& field);
+Field EncodeImageRegion(const ImageRegion& region, bool required = false);
 
 class ImageInspectionError : public std::runtime_error
 {

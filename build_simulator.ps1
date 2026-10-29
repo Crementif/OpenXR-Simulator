@@ -47,9 +47,7 @@ Enter-VsDevShell -VsInstallPath $vsRoot -SkipAutomaticLocation -DevCmdArguments 
 if ($Clean -and (Test-Path -LiteralPath $build)) { Remove-Item -LiteralPath $build -Recurse -Force }
 
 Write-Host '==> Configuring' -ForegroundColor Cyan
-cmake -S $root -B $build -G Ninja -DCMAKE_BUILD_TYPE=Release `
-    -DSIMXR_BUILD_RUNTIME=ON -DSIMXR_BUILD_COMPANION=ON -DSIMXR_BUILD_AUTOMATION=ON `
-    "-DSIMXR_OUTPUT_DIRECTORY:PATH=$output"
+cmake --preset release -S $root -B $build
 if ($LASTEXITCODE -ne 0) { throw "cmake configure failed ($LASTEXITCODE)" }
 
 Write-Host '==> Building' -ForegroundColor Cyan

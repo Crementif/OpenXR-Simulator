@@ -3,6 +3,8 @@
 
 #include "automation/RigProgress.h"
 #include "control/ControlSchema.h"
+#include "control/ExportReader.h"
+#include "control/IncidentSample.h"
 #include "control/DebugProtocol.h"
 #include "control/InspectionDocument.h"
 #include "control/SimulationControl.h"
@@ -57,9 +59,9 @@ static control::Field EncodeTarget(ScriptCaptureTarget target)
 							 control::Field::U32(tag::View, target.view)};
 	return control::Field::Bytes(tag::Target, control::EncodeFields(fields));
 }
-static void PollAgain()
+void RigRuntime::PollAgain()
 {
-	std::this_thread::sleep_for(std::chrono::milliseconds{2});
+	m_progress.WaitUntil(std::chrono::steady_clock::now() + std::chrono::milliseconds{2});
 }
 
 class RigRuntime::RemoteResource
@@ -123,6 +125,11 @@ RigRuntime::Fields RigRuntime::Source() const
 control::Message RigRuntime::Call(control::OpCode opcode, Fields fields)
 {
 	m_progress.Check();
+	RenewLease();
+	return Exchange(opcode, std::move(fields));
+}
+void RigRuntime::RenewLease()
+{
 	const auto now = std::chrono::steady_clock::now();
 	if (m_lease && now >= m_nextRenew)
 	{
@@ -131,7 +138,20 @@ control::Message RigRuntime::Call(control::OpCode opcode, Fields fields)
 		Exchange(control::OpCode::Renew, std::move(renewal));
 		m_nextRenew = now + std::chrono::seconds{1};
 	}
-	return Exchange(opcode, std::move(fields));
+}
+void RigRuntime::Wait(std::chrono::milliseconds duration)
+{
+	if (duration.count() < 0 || duration > std::chrono::hours{1})
+		throw std::invalid_argument("Rig wait must be between zero and one hour");
+	const auto target = std::chrono::steady_clock::now() + duration;
+	for (;;)
+	{
+		m_progress.Check();
+		RenewLease();
+		if (std::chrono::steady_clock::now() >= target)
+			return;
+		m_progress.WaitUntil(m_lease ? std::min(target, m_nextRenew) : target);
+	}
 }
 control::Message RigRuntime::Exchange(control::OpCode opcode, Fields fields)
 {
@@ -291,6 +311,26 @@ ScriptCapture RigRuntime::Capture(std::uint64_t capture)
 	result.imageAvailable = *available->AsBool();
 	return result;
 }
+void RigRuntime::AdvanceToFrame(FrameId target)
+{
+	auto current = CurrentFrame();
+	while (current < target)
+	{
+		m_progress.Check(true);
+		if (const auto step = StepApplication({}); step.capture)
+			ReleaseCapture(*step.capture);
+		current = CurrentFrame();
+		for (;;)
+		{
+			const auto displayed = StepDisplay();
+			if (displayed.capture)
+				ReleaseCapture(*displayed.capture);
+			if (displayed.frame && *displayed.frame >= current)
+				break;
+			m_progress.Check();
+		}
+	}
+}
 ScriptStep RigRuntime::StepDisplay()
 {
 	return CaptureStep(control::CommandKind::DisplayStep);
@@ -379,6 +419,29 @@ void RigRuntime::ExportWindowImage(std::uint64_t window, std::uint64_t frame, co
 			 {control::Field::U64(tag::ImageWindowId, window, true), control::Field::U64(tag::FrameId, frame, true)});
 	ExportImage(Number(response, tag::ImageReaderId), path, arraySlice);
 }
+control::IncidentSample RigRuntime::SampleWindowImage(std::uint64_t window, std::uint64_t frame,
+	std::optional<std::array<XrRect2Di, 2>> rectangles)
+{
+	const auto image = Number(Call(control::OpCode::RetainWindowImage,
+		{control::Field::U64(tag::ImageWindowId, window, true), control::Field::U64(tag::FrameId, frame, true)}), tag::ImageReaderId);
+	RemoteResource reader{*this, control::OpCode::ReleaseImage, tag::ImageReaderId, image};
+	const auto info = Call(control::OpCode::ImageInfo, {control::Field::U64(tag::ImageReaderId, image, true)});
+	const auto* descriptor = info.Find(tag::ImageDescriptor);
+	if (!descriptor)
+		throw std::runtime_error("Runtime omitted the incident image description");
+	const auto description = control::DecodeImageDescription(*descriptor);
+	if (!rectangles)
+	{
+		if (description.width > INT32_MAX || description.height > INT32_MAX)
+			throw std::runtime_error("Incident image exceeds native coordinates");
+		const XrRect2Di full{{0, 0}, {static_cast<int>(description.width), static_cast<int>(description.height)}};
+		rectangles = std::array{full, full};
+	}
+	return control::ReadIncidentSample([&](auto opcode, auto fields)
+	{
+		return opcode == control::OpCode::ReleaseExport ? Exchange(opcode, std::move(fields)) : Call(opcode, std::move(fields));
+	}, [&] { PollAgain(); }, image, description, *rectangles);
+}
 void RigRuntime::ReleaseImageWindow(std::uint64_t window)
 {
 	Call(control::OpCode::ReleaseImageWindow, {control::Field::U64(tag::ImageWindowId, window, true)});
@@ -415,14 +478,13 @@ FrameId RigRuntime::CurrentFrame()
 {
 	const auto decode = [](std::span<const std::byte> bytes)
 	{
-		auto fields = wire::DecodeFields(bytes);
+		auto fields = wire::DecodeFieldViews(bytes);
 		if (fields.error != wire::DecodeError::None)
 			throw std::runtime_error("Malformed simulation frame document");
-		wire::Message message;
-		message.fields = std::move(fields.fields);
-		return message;
+		return fields;
 	};
-	const auto root = decode(State());
+	const auto state = State();
+	const auto root = decode(state);
 	const auto kind = root.Find(2);
 	const auto data = root.Find(3);
 	if (!kind || kind->AsU32() != static_cast<std::uint32_t>(wire::InspectionType::Object) || !data)
@@ -463,45 +525,26 @@ void RigRuntime::ExportImage(std::uint64_t image, const std::string& path, std::
 	Fields exportFields{control::Field::U64(tag::ImageReaderId, image, true)};
 	if (arraySlice)
 		exportFields.push_back(control::Field::U32(tag::Layer, *arraySlice));
-	const auto start = Call(control::OpCode::StartExport, std::move(exportFields));
-	const auto exported = Number(start, tag::ExportId);
-	RemoteResource ticket{*this, control::OpCode::ReleaseExport, tag::ExportId, exported};
-	const auto total = Number(start, tag::TotalBytes);
-	for (;;)
+	control::ExportReader exported([&](auto opcode, auto fields)
 	{
-		const auto info = Call(control::OpCode::ExportInfo, {control::Field::U64(tag::ExportId, exported, true)});
-		const auto phase = Text(info, tag::Phase);
-		if (phase == "complete")
-			break;
-		if (phase != "pending")
-			throw std::runtime_error("Explicit export failed");
-		PollAgain();
-	}
+		return opcode == control::OpCode::ReleaseExport ? Exchange(opcode, std::move(fields))
+			: Call(opcode, std::move(fields));
+	},
+		std::move(exportFields), [&] { PollAgain(); });
 	const std::u8string utf8Path{path.begin(), path.end()};
 	std::ofstream output(std::filesystem::path{utf8Path}, std::ios::binary | std::ios::trunc);
 	if (!output)
 		throw std::runtime_error("Cannot open explicit export path");
-	std::uint64_t offset = 0;
-	while (offset < total)
+	exported.Read([&](std::span<const std::byte> bytes)
 	{
-		const auto chunk =
-			Call(control::OpCode::ReadExport,
-				 {control::Field::U64(tag::ExportId, exported, true), control::Field::U64(tag::Offset, offset, true),
-				  control::Field::U64(tag::Length, control::MaxPayload - 4096, true)});
-		const auto* bytes = chunk.Find(tag::Bytes);
-		if (!bytes || bytes->value.empty() || Number(chunk, tag::Offset) != offset ||
-			bytes->value.size() > total - offset)
-			throw std::runtime_error("Invalid export chunk");
-		output.write(reinterpret_cast<const char*>(bytes->value.data()),
-					 static_cast<std::streamsize>(bytes->value.size()));
+		output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
 		if (!output)
 			throw std::runtime_error("Explicit export write failed");
-		offset += bytes->value.size();
-	}
+	});
 	output.close();
 	if (!output)
 		throw std::runtime_error("Explicit export close failed");
-	ticket.Release();
+	exported.Release();
 	reader.Release();
 }
 void RigRuntime::ReleaseCapture(std::uint64_t capture)

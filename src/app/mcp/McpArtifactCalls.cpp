@@ -2,6 +2,8 @@
 #include "app/mcp/McpArtifactCalls.h"
 #include "app/mcp/McpApplication.h"
 #include "app/mcp/McpDebug.h"
+#include "app/mcp/McpSequence.h"
+#include "control/ControlSchema.h"
 
 namespace simxr::app::mcp
 {
@@ -69,51 +71,51 @@ void ArtifactCalls::End() noexcept
 }
 void ArtifactCalls::Disconnect() noexcept
 {
-	try
-	{
-		(void)m_debug.Call(m_app, "debug_disconnect", {{"connection", m_connection}}, std::make_shared<McpCancellation>());
-	}
-	catch (...)
-	{
-	}
+	m_debug.Disconnect(m_connection);
 }
-Json ArtifactCalls::Call(const char* name, Json arguments)
+control::Message ArtifactCalls::Request(control::OpCode opcode, std::vector<control::Field> fields,
+	std::optional<std::string_view> program)
 {
 	const auto active = Begin();
 	try
 	{
-		Check();
-		auto result = m_debug.Call(m_app, name, std::move(arguments), active);
+		auto result = m_debug.Request(m_app, m_connection, opcode, std::move(fields), active, program);
 		End();
 		Check();
-		if (!result)
-			throw std::runtime_error(m_operation + " was interrupted");
-		auto data = Json::parse(result->at("content").at(0).at("text").get<std::string>());
-		if (result->value("isError", true))
-			throw ArtifactError(data.value("detail", data.value("error", m_operation + " failed")), data.value("code", 0u));
-		return data;
-	}
-	catch (...)
-	{
-		End();
-		throw;
-	}
-}
-std::vector<std::byte> ArtifactCalls::Read(std::uint64_t ticket, std::uint64_t offset, std::uint64_t length)
-{
-	const auto active = Begin();
-	try
-	{
-		Check();
-		auto result = m_debug.ReadArtifact(m_app, m_connection, ticket, offset, length, active);
-		End();
-		Check();
+		const auto code = *result.Find(control::tag::Error)->AsU32();
+		if (code)
+		{
+			const auto* detail = result.Find(control::tag::Detail);
+			throw ArtifactError(detail && detail->AsText() ? std::string(*detail->AsText()) : m_operation + " failed", code);
+		}
 		return result;
 	}
 	catch (...)
 	{
 		End();
+		Check();
 		throw;
 	}
+}
+Json ArtifactCalls::Sequence(control::OpCode opcode, std::vector<control::Field> fields,
+	std::optional<std::string_view> program)
+{
+	const auto response = Request(opcode, fields, program);
+	try
+	{
+		return SequenceDocument(response, {opcode, std::move(fields)});
+	}
+	catch (...)
+	{
+		Disconnect();
+		throw;
+	}
+}
+std::vector<std::byte> ArtifactCalls::Read(std::uint64_t ticket, std::uint64_t offset, std::uint64_t length)
+{
+	auto response = Request(control::OpCode::ReadExport,
+		{control::Field::U64(control::tag::ExportId, ticket, true), control::Field::U64(control::tag::Offset, offset, true),
+		 control::Field::U64(control::tag::Length, length, true)});
+	return std::move(response.Find(control::tag::Bytes)->value);
 }
 }

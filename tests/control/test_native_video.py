@@ -1,14 +1,13 @@
 """Real Vulkan H.264 MP4 export, independently decoded using test-only FFmpeg tools."""
 import importlib.util
 import json
-import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
-import time
 
-from test_native_quad import require, wait_file
+
+from native_support import probe_environment, running_probe, require, wait_file
 from simxr_control import Client, Capability, ControlError
 
 
@@ -34,12 +33,11 @@ def main(probe, destination):
     destination.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='simxr-video-') as temporary:
         data = Path(temporary)
-        environment = dict(os.environ, SIMXR_DATA_DIR=temporary, SIMXR_PROBE_CONTROL='1',
+        environment = probe_environment(data, SIMXR_PROBE_CONTROL='1',
             SIMXR_PROBE_RETAIN_CONTROL='1', SIMXR_PROBE_GPU_INSPECTION='1', SIMXR_PROBE_RECORDING='1',
             SIMXR_PROBE_DYNAMIC_COLOR='1', SIMXR_PROBE_FRAMES='24', SIMXR_WIDTH='64', SIMXR_HEIGHT='48')
-        environment.pop('SIMXR_CONTROL_SOCKET', None)
-        host = subprocess.Popen([probe], env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        try:
+
+        with running_probe([probe], environment) as host:
             wait_file(data / 'control.ready', host)
             with Client(data / f'control.{host.pid}.sock') as client:
                 session, = client.sessions()
@@ -81,10 +79,6 @@ def main(probe, destination):
             (destination / 'native.log').write_text(output)
             require(host.returncode == 0 and 'VUID-' not in output and 'Vulkan validation error' not in output, output)
             print('PASS MP4 export: clear, recent and archived frames, exact ordering, independent decoding and teardown')
-        finally:
-            if host.poll() is None:
-                host.kill()
-                print(host.communicate()[0], file=sys.stderr)
 
 if __name__ == '__main__':
     main(sys.argv[1], sys.argv[2])

@@ -185,7 +185,7 @@ SimulationRequest PrepareSimulation(const std::string& name, const Json& argumen
 	return result;
 }
 
-Json SimulationReply(const wire::Message& message)
+Json SimulationDocument(const wire::Message& message)
 {
 	const auto* error = message.Find(tag::Error);
 	const auto code = error ? error->AsU32() : std::nullopt;
@@ -197,7 +197,7 @@ Json SimulationReply(const wire::Message& message)
 		if (const auto* detail = message.Find(tag::Detail))
 			if (const auto text = detail->AsText())
 				failure["detail"] = std::string(*text);
-		return Result(failure, true);
+		return failure;
 	}
 	Json result = {{"ok", true}};
 	if (const auto* phase = message.Find(tag::Phase))
@@ -213,6 +213,11 @@ Json SimulationReply(const wire::Message& message)
 				result[name] = *flag;
 	if (const auto* document = message.Find(tag::Document))
 		result["document"] = InspectionJson(document->value);
-	return Result(result);
+	return result;
+}
+Json SimulationReply(const wire::Message& message)
+{
+	const auto result = SimulationDocument(message);
+	return Result(result, !result.at("ok").get<bool>());
 }
 } // namespace simxr::app::mcp

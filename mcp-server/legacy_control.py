@@ -1,9 +1,4 @@
-"""Compatibility tool names backed by acknowledged simulator transactions.
-
-Only absent discovery selects the file adapter. A selected command endpoint
-owns its source until explicit close; uncertain exchanges never fall back or
-silently repeat a potentially admitted edit.
-"""
+"""Compatibility names backed by acknowledged simulator transactions."""
 import importlib
 import threading
 
@@ -61,7 +56,7 @@ class SessionBinding:
         self._client = client
         return True
 
-    def observe(self):
+    def validate_session(self):
         sessions = self._client.sessions()
         if sessions != [self._session]:
             # A previously accepted command belongs to the original generation.
@@ -69,6 +64,9 @@ class SessionBinding:
             # acknowledgement to a newly started session.
             self.close()
             raise RuntimeError('Compatibility session changed; create a new control binding explicitly')
+
+    def observe(self):
+        self.validate_session()
         status = self._client.simulation_status(self._session)
         document = status.get('document')
         if not isinstance(document, dict):
@@ -105,6 +103,7 @@ class TransactionAdmission:
     def settle(self, binding):
         if self._pending is None:
             return None
+        binding.validate_session()
         outcome = binding.client.simulation_status(binding.session, self._pending)
         phase = self._phase(outcome)
         if self._identity(outcome) != self._pending:
@@ -172,7 +171,7 @@ class LegacyControl:
                 self._binding.close()
 
     def call(self, name, arguments):
-        """None selects the older file adapter only when no command endpoint exists."""
+        """Return None only for tools owned by another domain."""
         from pose_sequence import TOOLS as SEQUENCE_TOOLS
         if name not in TOOLS | SEQUENCE_TOOLS:
             return None
@@ -183,9 +182,7 @@ class LegacyControl:
                     if failed is not None:
                         return failed
                 if not self._binding.connect():
-                    if name in SEQUENCE_TOOLS and name != 'run_pose_sequence':
-                        raise RuntimeError('Acknowledged sequence control is unavailable')
-                    return None
+                    raise RuntimeError('No runtime control endpoint found; start or select a running simulator')
                 if name in SEQUENCE_TOOLS:
                     return self._sequence.call(name, arguments)
                 from simxr_control.compatibility import HeadPoseEdit, parse_edit

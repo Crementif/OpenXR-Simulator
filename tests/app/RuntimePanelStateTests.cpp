@@ -1,6 +1,7 @@
 #include "../TestSupport.h"
 #include "app/services/DebuggerPanelController.h"
 #include "app/services/ImageExportTask.h"
+#include "app/services/ImageExport.h"
 #include "app/services/InspectionWorkspace.h"
 #include "app/services/TimelineHistory.h"
 #include "graphics/SnapshotBudget.h"
@@ -428,6 +429,44 @@ void FileWorkerAndChunkValidation()
 		}
 	} cleanup{directory};
 	const std::vector<std::byte> expected{std::byte{0}, std::byte{0xff}, std::byte{0x31}, std::byte{0x80}};
+	const auto protectedFile = directory / "protected.bin";
+	for (unsigned failure = 0; failure < 4; ++failure)
+	{
+		app::SaveExportFile(protectedFile, expected, true);
+		if (failure == 3)
+			std::filesystem::remove(protectedFile);
+		bool rejected = false;
+		try
+		{
+			app::SaveExportFile(protectedFile, [&](std::ostream& output)
+			{
+				output << "partial export";
+				if (failure == 0)
+					throw std::runtime_error("Transfer interrupted");
+				if (failure == 1)
+					output.setstate(std::ios::badbit);
+				if (failure == 3)
+					app::SaveExportFile(protectedFile, expected, true);
+			}, failure != 3, [&]
+			{
+				if (failure == 2)
+					throw std::runtime_error("Cancelled before publication");
+			});
+		}
+		catch (const std::exception&)
+		{
+			rejected = true;
+		}
+		Require(rejected && Read(protectedFile) == expected,
+			"Failed or racing export replaced the destination");
+		for (const auto& entry : std::filesystem::directory_iterator(directory))
+			Require(entry.path() == protectedFile, "Failed export left a temporary file");
+	}
+	app::SaveExportFile(protectedFile, [](std::ostream& output)
+	{
+		output << "complete";
+	}, true);
+	Require(Read(protectedFile).size() == 8, "Streaming export did not publish its completed file");
 	{
 		app::ImageExportWriter writer;
 		Require(writer.Save(PathString(directory / "exact.rgba"), expected), "Admit explicit CPU file job");
@@ -446,48 +485,15 @@ void FileWorkerAndChunkValidation()
 					Read(directory / "exact.rgba") == expected,
 				"Export worker changed RGBA bytes");
 		const app::ImageExportMetadata metadata{7, 8, 9, 10, 1, 1, 1, 37, 2, 3, 4};
-		Require(writer.Save(PathString(directory / "frame.ppm"), expected, metadata), "Admit viewable image");
-		Eventually([&] { result = writer.TakeResult(); return result.has_value(); }, "PPM write did not settle");
-		const auto ppm = Read(directory / "frame.ppm");
-		const std::string header = "P6\n# session=7 generation=8 frame=9 capture=10\n"
-			"# target=2 layer=3 view=4 slices=1 slice_height=1 format=37 alpha=omitted\n1 1\n255\n";
-		Require(result->status == app::ImageExportWriteResult::Status::Saved && ppm.size() == header.size() + 3 &&
-			std::equal(header.begin(), header.end(), reinterpret_cast<const char*>(ppm.data())) &&
-			std::equal(expected.begin(), expected.begin() + 3, ppm.begin() + header.size()),
-			"Viewable export lost exact RGB, dimensions or frame/target identity");
-		struct ColorCase
+		for (const auto* extension : {".png", ".jpg", ".jpeg"})
 		{
-			uint32_t format;
-			std::vector<std::byte> bytes;
-			std::array<std::byte, 3> rgb;
-		};
-		const std::array colorCases{
-			ColorCase{44, {std::byte{0x31}, std::byte{255}, std::byte{0}, std::byte{128}},
-				{std::byte{0}, std::byte{255}, std::byte{0x31}}},
-			ColorCase{97, {std::byte{0}, std::byte{0xb8}, std::byte{0}, std::byte{0x38},
-				std::byte{0}, std::byte{0x40}, std::byte{0}, std::byte{0x34}},
-				{std::byte{0}, std::byte{188}, std::byte{255}}},
-			ColorCase{109, {std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0xbf},
-				std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0x3f},
-				std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0x40},
-				std::byte{0}, std::byte{0}, std::byte{0x80}, std::byte{0x3e}},
-				{std::byte{0}, std::byte{188}, std::byte{255}}},
-			ColorCase{64, {std::byte{0}, std::byte{0}, std::byte{0xf8}, std::byte{0x7f}},
-				{std::byte{0}, std::byte{188}, std::byte{255}}}};
-		for (const auto& color : colorCases)
-		{
-			auto image = metadata;
-			image.format = color.format;
-			const auto destination = directory / (std::to_string(color.format) + ".ppm");
-			Require(simxr::ColorPixelBytes(color.format) == color.bytes.size(), "Export pixel stride mismatch");
-			if (color.format == 97 || color.format == 109)
-				Require(simxr::DecodeColorPixel(color.format, color.bytes) == std::array{-0.5f, 0.5f, 2.0f, 0.25f},
-					"Float decode clamped HDR values or lost alpha");
-			Require(writer.Save(PathString(destination), color.bytes, image), "Admit HDR/BGRA PPM");
-			Eventually([&] { result = writer.TakeResult(); return result.has_value(); }, "HDR/BGRA write did not settle");
-			const auto output = Read(destination);
-			Require(result->status == app::ImageExportWriteResult::Status::Saved && output.size() > 3 &&
-				std::equal(color.rgb.begin(), color.rgb.end(), output.end() - 3), "HDR/BGRA display conversion mismatch");
+			const auto destination = directory / (std::string("frame") + extension);
+			Require(writer.Save(PathString(destination), expected, metadata), "Admit encoded image");
+			Eventually([&] { result = writer.TakeResult(); return result.has_value(); }, "Image write did not settle");
+			const auto encoded = app::EncodeImage(expected, metadata.format, 1, 1,
+				std::string_view{extension} == ".png", 85);
+			Require(result->status == app::ImageExportWriteResult::Status::Saved && Read(destination) == encoded.bytes,
+				"File writer did not use the shared image encoder");
 		}
 		if (std::filesystem::exists("/dev/full"))
 		{
@@ -495,7 +501,7 @@ void FileWorkerAndChunkValidation()
 			std::filesystem::create_directory(full);
 			Require(writer.Save(PathString(full), expected), "Admit failing atomic publication");
 			Eventually([&] { result = writer.TakeResult(); return result.has_value(); }, "Write failure did not settle");
-			Require(result->status == app::ImageExportWriteResult::Status::WriteFailed, "Atomic publication failure reported success");
+			Require(result->status == app::ImageExportWriteResult::Status::Failed, "Atomic publication failure reported success");
 		}
 
 		bool rejected = false;
@@ -503,13 +509,13 @@ void FileWorkerAndChunkValidation()
 		{
 			auto wrong = metadata;
 			wrong.width = 2;
-			writer.Save(PathString(directory / "bad.ppm"), expected, wrong);
+			writer.Save(PathString(directory / "bad.png"), expected, wrong);
 		}
 		catch (const std::invalid_argument&)
 		{
 			rejected = true;
 		}
-		Require(rejected && !std::filesystem::exists(directory / "bad.ppm"),
+		Require(rejected && !std::filesystem::exists(directory / "bad.png"),
 			"Mismatched image dimensions wrote a misleading artifact");
 		const auto unicode = directory / app::Utf8Path("目-étude.rgba");
 		Require(writer.Save(PathString(unicode), expected), "Admit UTF-8 destination");
@@ -531,7 +537,7 @@ void FileWorkerAndChunkValidation()
 				return result.has_value();
 			},
 			"File worker did not publish failure");
-		Require(result->status == app::ImageExportWriteResult::Status::OpenFailed && !writer.Busy(),
+		Require(result->status == app::ImageExportWriteResult::Status::Failed && !writer.Busy(),
 				"File open failure became a success or stranded admission");
 	}
 	{
@@ -837,6 +843,7 @@ void ActualConnectionAndDebugger()
 		},
 		"Exact source reader was not retained");
 	fixture.state->exportPhase = simxr::CompletionStatus::Complete;
+	unsigned infoReplies = 0, readReplies = 0;
 	const auto destination = directory / "endpoint.rgba";
 	Require(exporter.Request(reader, destination.string()), "Admit explicit export exchange");
 	Require(!exporter.Request(reader, destination.string()), "A second export bypassed single-job admission");
@@ -848,6 +855,15 @@ void ActualConnectionAndDebugger()
 			{
 				Require(reply.response.error.empty() && app::panel::U32(reply.response.packet.message, tag::Error) == 0,
 						"Explicit export exchange failed");
+				if (reply.task.kind == app::PanelWork::ExportInfo)
+					++infoReplies;
+				if (reply.task.kind == app::PanelWork::ExportRead && ++readReplies == 1)
+				{
+					auto& message = reply.response.packet.message;
+					message.Find(tag::Bytes)->value.resize(2);
+					*message.Find(tag::Length) = wire::Field::U64(tag::Length, 2);
+					*message.Find(tag::End) = wire::Field::Bool(tag::End, false);
+				}
 				if (!exporter.Handle(reply.task, reply.response.packet.message))
 					debugger.Handle(reply.task, reply.response.packet.message);
 			}
@@ -855,7 +871,8 @@ void ActualConnectionAndDebugger()
 			return !exporter.Busy() && exporter.Succeeded();
 		},
 		"Export owner did not finish exact endpoint bytes");
-	Require(Read(destination) == wire::test::Pixels() && fixture.state->reads == 1 && fixture.state->shares == 0,
+	Require(infoReplies == 1 && readReplies == 2, "Chunked export repeated completion polling");
+	Require(Read(destination) == wire::test::Pixels() && fixture.state->reads == readReplies && fixture.state->shares == 0,
 			"Explicit export substituted bytes or entered the GPU sharing path");
 	Require(!debugger.Status().fields.empty(), "Reconnect status-reset regression requires an observed status");
 	requests.Release(wire::OpCode::ReleaseImage, tag::ImageReaderId, reader);

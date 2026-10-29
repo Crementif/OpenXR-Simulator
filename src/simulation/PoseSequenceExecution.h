@@ -38,10 +38,10 @@ class PoseSequenceExecution
 	bool HasControl(const std::array<bool, ControlChannelCount>& owned) const noexcept;
 	const PoseSequenceStatus& Status() const noexcept;
 	CommandSource Source() const noexcept;
+	std::shared_ptr<const PoseSequence> Program() const noexcept;
 
   private:
 	void Initialize(FrameId frame, const CommandConfiguration& initial);
-	void Patch(const PoseSequenceStep& step);
 	std::vector<SimulationCommand> Commands() const;
 	std::shared_ptr<const PoseSequence> m_program;
 	PoseSequencePlayback m_playback;
@@ -50,7 +50,7 @@ class PoseSequenceExecution
 	PoseSample m_head;
 	std::array<ControllerPose, 2> m_controllers;
 	std::array<ControllerControls, 2> m_controls;
-	std::array<XrPosef, 2> m_local;
+	std::array<XrPosef, 2> m_local{};
 	std::array<float, 3> m_angles{};
 	bool m_started = false;
 };

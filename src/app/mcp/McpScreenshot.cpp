@@ -3,10 +3,16 @@
 #include "app/mcp/McpApplication.h"
 #include "app/mcp/McpDebug.h"
 #include "app/mcp/McpImage.h"
-#include "app/mcp/McpImageEncode.h"
+#include "app/services/ImageExport.h"
 #include "app/mcp/StereoConsistency.h"
 #include "app/mcp/McpStereoAnalysis.h"
 #include "app/mcp/McpTransientDebug.h"
+#include "app/mcp/McpSimulation.h"
+#include "app/mcp/McpImageCache.h"
+#include "app/services/RuntimePanelProtocol.h"
+#include "control/DebugProtocol.h"
+#include "control/ImageInspection.h"
+#include "control/ExportReader.h"
 #include "control/ProtocolTypes.h"
 #include "graphics/ColorPixels.h"
 #include "math/Math.h"
@@ -14,6 +20,21 @@
 namespace simxr::app::mcp
 {
 using Json = nlohmann::json;
+namespace wire = control;
+namespace tag = control::tag;
+
+static std::uint64_t Identifier(const wire::Message& message, std::uint16_t tag)
+{
+	const auto value = panel::U64(message, tag);
+	if (!value)
+		throw TransientError("Runtime omitted a capture identifier");
+	return value;
+}
+static FrameKey CaptureFrame(const wire::Message& message)
+{
+	const auto frame = panel::Nested(message.Find(tag::Frame));
+	return {{Identifier(frame, tag::Generation)}, {Identifier(frame, tag::FrameId)}};
+}
 using namespace std::chrono_literals;
 
 static std::atomic<unsigned> s_screenshots{0};
@@ -136,7 +157,22 @@ static Json Error(const std::string& text)
 	return {{"content", Json::array({{{"type", "text"}, {"text", Json({{"ok", false}, {"error", text}}).dump()}}})},
 		{"isError", true}};
 }
-static std::optional<Json> Capture(McpApplication& application, const Json& arguments,
+struct CaptureResult
+{
+	Json document;
+	Json images = Json::array();
+	std::array<std::uint64_t, 4> scope{};
+};
+static std::optional<Json> CaptureReply(std::optional<CaptureResult> result)
+{
+	if (!result)
+		return {};
+	Json content = Json::array({{{"type", "text"}, {"text", result->document.dump()}}});
+	for (auto& image : result->images)
+		content.push_back(std::move(image));
+	return Json{{"content", std::move(content)}, {"isError", !result->document.value("ok", false)}};
+}
+static std::optional<CaptureResult> Capture(McpApplication& application, const Json& arguments,
 	const std::shared_ptr<McpCancellation>& cancellation, CaptureMode mode)
 {
 	try
@@ -190,10 +226,10 @@ static std::optional<Json> Capture(McpApplication& application, const Json& argu
 			return {};
 		ScreenshotPermit permit;
 		TransientDebug calls(application, cancellation, timeout, "Screenshot");
-		const auto opened = calls.Data("debug_connect", {{"application_id", target}});
-		const auto connection = opened.at("connection").get<std::string>();
-		const Json common = {{"connection", connection}};
-		Json retained;
+		const auto opened = calls.Connect(target.get_ref<const std::string&>());
+		const auto connection = opened.id;
+		wire::Message retained;
+		std::optional<FrameKey> compositionFrame;
 		Json composition = nullptr;
 		if (layer == "all")
 		{
@@ -201,7 +237,7 @@ static std::optional<Json> Capture(McpApplication& application, const Json& argu
 			{
 				try
 				{
-					retained = calls.Data("debug_retain_preview", common);
+					retained = calls.Request(connection, wire::OpCode::RetainPreview, {});
 					break;
 				}
 				catch (const TransientError& error)
@@ -212,77 +248,90 @@ static std::optional<Json> Capture(McpApplication& application, const Json& argu
 					calls.Wait();
 				}
 			}
-			if (!retained.value("image_available", false))
+			if (!panel::Boolean(retained, tag::ImageAvailable))
 				throw TransientError("The current display is clear; no screenshot is available");
 		}
 		else
 		{
-			const auto lease = calls.Data("debug_acquire", common).at("lease").get<std::string>();
+			const auto lease = Identifier(calls.Request(connection, wire::OpCode::Acquire, {}), tag::Lease);
 			auto renewal = std::chrono::steady_clock::now() + 1s;
 			const auto maintainLease = [&]
 			{
 				if (std::chrono::steady_clock::now() >= renewal)
 				{
-					calls.Data("debug_renew", {{"connection", connection}, {"lease", lease}});
+					calls.Request(connection, wire::OpCode::Renew, {wire::Field::U64(tag::Lease, lease, true)});
 					renewal = std::chrono::steady_clock::now() + 1s;
 				}
 			};
-			const auto submitted = calls.Data("debug_start_image_recording", {{"connection", connection}, {"lease", lease},
-				{"command_id", "1"}, {"target", layer == "projection" ? "projection_layers" : "quad_layers"},
-				{"capacity", 1}, {"frames", "1"}});
-			const auto operation = submitted.at("operation_id").get<std::string>();
-			Json operationState;
+			const auto submitted = calls.Request(connection, wire::OpCode::Submit,
+				{wire::Field::U64(tag::Lease, lease, true), wire::Field::U64(tag::CommandId, 1, true),
+				 wire::Field::U32(tag::CommandKind, static_cast<std::uint32_t>(wire::CommandKind::StartImageRecording), true),
+				 wire::EncodeCaptureTarget({layer == "projection" ? CaptureKind::ProjectionLayers : CaptureKind::QuadLayers, 0, 0}),
+				 wire::Field::U32(tag::Capacity, 1, true), wire::Field::U64(tag::Length, 1, true)});
+			const auto operation = Identifier(submitted, tag::OperationId);
+			wire::Message operationState;
 			for (;;)
 			{
 				maintainLease();
-				operationState = calls.Data("debug_operation", {{"connection", connection}, {"operation", operation}});
-				const auto phase = operationState.at("phase").get<std::string>();
+				operationState = calls.Request(connection, wire::OpCode::Operation, {wire::Field::U64(tag::OperationId, operation, true)});
+				const auto phase = panel::Text(operationState, tag::Phase);
 				if (phase != "queued" && phase != "pending")
 				{
-					if (phase != "complete" || operationState.value("progress", "") != "recording_started")
-						throw TransientError("Filtered capture could not start: " + operationState.value("progress", phase));
+					if (phase != "complete" || panel::Text(operationState, tag::Progress) != "recording_started")
+						throw TransientError("Filtered capture could not start: " + panel::Text(operationState, tag::Progress, phase.c_str()));
 					break;
 				}
 				calls.Wait();
 			}
-			const auto& captures = operationState.at("captures");
-			if (!captures.is_array() || captures.size() != 1 || !captures[0].is_string())
+			const auto captures = panel::Nested(operationState.Find(tag::Captures));
+			if (captures.fields.size() != 1 || !captures.fields[0].AsU64() || !*captures.fields[0].AsU64())
 				throw TransientError("Filtered capture did not reserve exactly one frame");
-			const auto capture = captures[0].get<std::string>();
+			const auto capture = *captures.fields[0].AsU64();
 			for (;;)
 			{
 				maintainLease();
-				const auto status = calls.Data("debug_capture", {{"connection", connection}, {"capture", capture}});
-				const auto phase = status.at("phase").get<std::string>();
+				const auto status = calls.Request(connection, wire::OpCode::Capture, {wire::Field::U64(tag::CaptureId, capture, true)});
+				const auto phase = panel::Text(status, tag::Phase);
 				if (phase == "ready")
 					break;
 				if (phase != "reserved" && phase != "issued" && phase != "begun" && phase != "gpu_pending")
 					throw TransientError("Filtered capture is unavailable: " + phase);
 				calls.Wait();
 			}
-			const auto inspection = calls.Data("debug_inspect", {{"connection", connection}, {"capture", capture}});
-			const auto revision = inspection.at("document").at("view_settings").get<std::string>();
-			const auto views = calls.Data("debug_revision", {{"connection", connection}, {"revision", revision}});
-			if (views.at("kind") != "view_settings_v1")
-				throw TransientError("Captured view settings have an unexpected format");
-			const auto& settings = views.at("document");
-			composition = {{"frame", inspection.at("frame")}, {"ipd", settings.at("ipd")}, {"fovs", settings.at("outer_fov")}};
-			retained = calls.Data("debug_retain_image", {{"connection", connection}, {"capture", capture}});
-			calls.Data("debug_relinquish", {{"connection", connection}, {"lease", lease}});
+			const auto inspection = calls.Request(connection, wire::OpCode::InspectFrame, {wire::Field::U64(tag::CaptureId, capture, true)});
+			if (Identifier(inspection, tag::CaptureId) != capture || !panel::U64(inspection, tag::InspectionId) || !inspection.Find(tag::Document))
+				throw TransientError("Runtime returned an invalid frame inspection");
+			compositionFrame = CaptureFrame(inspection);
+			const auto document = InspectionJson(inspection.Find(tag::Document)->value, true);
+			const auto& revision = document.at("view_settings");
+			if (!revision.is_number_unsigned() || revision == 0)
+				throw TransientError("Runtime omitted the captured view settings revision");
+			const auto revisionId = revision.get<std::uint64_t>();
+			const auto views = calls.Request(connection, wire::OpCode::FeatureRevision, {wire::Field::U64(tag::RevisionId, revisionId, true)});
+			if (Identifier(views, tag::RevisionId) != revisionId || panel::Text(views, tag::RevisionKind) != "view_settings_v1" || !views.Find(tag::Document))
+				throw TransientError("Captured view settings have an unexpected identity or format");
+			const auto settings = InspectionJson(views.Find(tag::Document)->value);
+			composition = {{"ipd", settings.at("ipd")}, {"fovs", settings.at("outer_fov")}};
+			retained = calls.Request(connection, wire::OpCode::RetainImage, {wire::Field::U64(tag::CaptureId, capture, true)});
+			calls.Request(connection, wire::OpCode::Relinquish, {wire::Field::U64(tag::Lease, lease, true)});
 		}
-		const auto image = retained.at("image").get<std::string>();
-		const auto info = calls.Data("debug_image_info", {{"connection", connection}, {"image", image}});
-		const auto frame = info.at("frame");
-		if ((!composition.is_null() && composition.at("frame") != frame) ||
-			(retained.contains("frame") && retained.at("frame") != frame))
+		const auto image = Identifier(retained, tag::ImageReaderId);
+		const auto info = calls.Request(connection, wire::OpCode::ImageInfo, {wire::Field::U64(tag::ImageReaderId, image, true)});
+		const auto frameKey = CaptureFrame(info);
+		if (frameKey.generation.value != opened.generation || (compositionFrame && *compositionFrame != frameKey) ||
+			(retained.Find(tag::Frame) && CaptureFrame(retained) != frameKey))
 			throw TransientError("Screenshot image and composition belong to different frames");
-		const auto& description = info.at("image_description");
-		const auto width = description.at("width").get<std::uint32_t>();
-		const auto height = description.at("height").get<std::uint32_t>();
-		const auto layers = description.at("array_layers").get<std::uint32_t>();
-		const auto sourceFormat = description.at("format").get<std::uint32_t>();
+		const Json frame = {{"generation", std::to_string(frameKey.generation.value)}, {"frame_id", std::to_string(frameKey.frame.value)}};
+		if (compositionFrame)
+			composition["frame"] = frame;
+		const auto* descriptor = info.Find(tag::ImageDescriptor);
+		if (!descriptor)
+			throw TransientError("Runtime omitted the screenshot image description");
+		const auto source = wire::DecodeImageDescription(*descriptor);
+		const auto width = source.width, height = source.height;
+		const auto sourceFormat = source.format;
 		const auto pixelSize = ColorPixelBytes(sourceFormat);
-		if (!width || !height || layers < 2 || !pixelSize)
+		if (!width || !height || source.arrayLayers < 2 || !pixelSize)
 			throw TransientError("Screenshot requires a supported stereo image");
 		const auto scale = std::min({1.0, double(maxWidth) / width,
 			(mode == CaptureMode::Consistency ? 480.0 : mode == CaptureMode::Validation ? 640.0 : 4096.0) / height,
@@ -297,46 +346,32 @@ static std::optional<Json> Capture(McpApplication& application, const Json& argu
 		{
 			if ((eye == "left" && index != 0) || (eye == "right" && index != 1))
 				continue;
-			Json request = {{"connection", connection}, {"image", image}, {"layer", index}};
+			std::vector<wire::Field> fields{wire::Field::U64(tag::ImageReaderId, image, true), wire::Field::U32(tag::Layer, index)};
 			if (resized)
-				request["region"] = {{"x", 0}, {"y", 0}, {"width", width}, {"height", height},
-					{"output_width", outputWidth}, {"output_height", outputHeight}};
-			const auto exported = calls.Data("debug_start_export", request);
-			const auto ticket = exported.at("export").get<std::string>();
-			Json exportStatus;
-			for (;;)
-			{
-				exportStatus = calls.Data("debug_export_info", {{"connection", connection}, {"export", ticket}});
-				const auto phase = exportStatus.at("phase").get<std::string>();
-				if (phase == "complete")
-					break;
-				if (phase != "pending")
-					throw TransientError("Screenshot image export failed: " + phase);
-				calls.Wait();
-			}
+				fields.push_back(wire::EncodeImageRegion({0, 0, width, height, outputWidth, outputHeight}, true));
+			control::ExportReader exported(
+				[&](auto opcode, auto fields) { return calls.Request(connection, opcode, std::move(fields)); },
+				std::move(fields), [&] { calls.Wait(); });
+			const auto& exportStatus = exported.Info();
 			if (mode != CaptureMode::Screenshot)
 			{
-				std::uint64_t ticketValue = 0;
-				const auto parsed = std::from_chars(ticket.data(), ticket.data() + ticket.size(), ticketValue);
-				if (parsed.ec != std::errc{} || parsed.ptr != ticket.data() + ticket.size() || !ticketValue)
-					throw TransientError("Invalid screenshot export identifier");
-				const auto& output = exportStatus.at("image_description");
-				const auto outputFormat = output.at("format").get<std::uint32_t>();
+				const auto* outputDescriptor = exportStatus.Find(tag::ImageDescriptor);
+				if (!outputDescriptor)
+					throw TransientError("Runtime omitted the stereo export description");
+				const auto output = wire::DecodeImageDescription(*outputDescriptor);
+				const auto outputFormat = output.format;
 				const auto outputPixelSize = ColorPixelBytes(outputFormat);
-				if (output.at("width") != outputWidth || output.at("height") != outputHeight ||
-					output.at("array_layers") != 1 || !outputPixelSize)
+				if (output.width != outputWidth || output.height != outputHeight || output.arrayLayers != 1 || !outputPixelSize)
 					throw TransientError("Stereo export has unexpected dimensions or format");
 				const auto total = std::uint64_t{outputWidth} * outputHeight * outputPixelSize;
-				if (exportStatus.at("total_bytes") != std::to_string(total))
+				if (total > MaxImageInput || panel::U64(exportStatus, tag::TotalBytes) != total)
 					throw TransientError("Stereo export has an unexpected byte count");
 				std::vector<std::byte> pixels;
 				pixels.reserve(static_cast<std::size_t>(total));
-				while (pixels.size() < total)
+				exported.Read([&](std::span<const std::byte> bytes)
 				{
-					const auto length = std::min<std::uint64_t>(control::MaxPayload - 4096, total - pixels.size());
-					const auto bytes = calls.Read(connection, ticketValue, pixels.size(), length);
 					pixels.insert(pixels.end(), bytes.begin(), bytes.end());
-				}
+				});
 				auto& sample = decoded[index];
 				const auto pixelCount = std::size_t{outputWidth} * outputHeight;
 				sample.resize(pixelCount * (mode == CaptureMode::Consistency ? 3 : 1));
@@ -353,37 +388,33 @@ static std::optional<Json> Capture(McpApplication& application, const Json& argu
 						for (std::size_t component = 0; component < 3; ++component)
 							sample[position * 3 + component] = static_cast<std::uint8_t>(std::lround(255 * channel(color[component])));
 				}
-				calls.Data("debug_release_export", {{"connection", connection}, {"export", ticket}});
+				exported.Release();
 				continue;
 			}
-			const auto rendered = calls.Call("debug_render_export", {{"connection", connection}, {"export", ticket},
-				{"format", format}, {"quality", quality}});
-			const auto& content = rendered.at("content");
-			if (!content.is_array() || content.size() != 2 || content[1].value("type", "") != "image")
-				throw TransientError("Image encoder returned an invalid screenshot");
-			const auto encoded = content[1].at("data").get_ref<const std::string&>().size();
+			const auto rendered = calls.Render(connection, {exported.Id(), format == "png", static_cast<int>(quality)});
+			const auto encoded = rendered->data.size();
 			if (encoded > 12 * 1024 * 1024 - encodedBytes)
 				throw TransientError("Screenshot exceeds the combined response size limit");
 			encodedBytes += encoded;
-			const auto imageInfo = Json::parse(content[0].at("text").get<std::string>());
 			eyes.push_back({{"eye", index == 0 ? "left" : "right"}, {"width", outputWidth}, {"height", outputHeight},
-				{"lossy", imageInfo.at("lossy")}});
-			images.push_back(content[1]);
-			calls.Data("debug_release_export", {{"connection", connection}, {"export", ticket}});
+				{"lossy", rendered->lossy}});
+			images.push_back({{"type", "image"}, {"mimeType", rendered->mediaType}, {"data", rendered->data}});
+			exported.Release();
 		}
-		calls.Data("debug_release_image", {{"connection", connection}, {"image", image}});
+		calls.Request(connection, wire::OpCode::ReleaseImage, {wire::Field::U64(tag::ImageReaderId, image, true)});
 		if (mode == CaptureMode::Validation)
 		{
 			auto result = AnalyzeStereo(decoded[0], decoded[1], outputWidth, outputHeight, width, [&] { calls.Check(); });
 			result["ok"] = true;
 			result["application_id"] = target;
-			result["session"] = opened.at("session");
+			result["session"] = std::to_string(opened.session);
 			result["frame"] = frame;
 			result["composition"] = std::move(composition);
-			return Json{{"content", Json::array({{{"type", "text"}, {"text", result.dump()}}})}, {"isError", false}};
+			return CaptureResult{std::move(result)};
 		}
 		if (mode == CaptureMode::Consistency)
 		{
+			const auto description = ImageDocument(info).at("image_description");
 			const auto frusta = CaptureFrusta(description);
 			StereoConsistencyReport report;
 			if (frusta)
@@ -396,9 +427,9 @@ static std::optional<Json> Capture(McpApplication& application, const Json& argu
 			auto& document = report.document;
 			document["ok"] = true;
 			document["application_id"] = target;
-			document["session"] = opened.at("session");
-			document["runtime_process_id"] = opened.at("runtime_process_id");
-			document["runtime_epoch"] = opened.at("runtime_epoch");
+			document["session"] = std::to_string(opened.session);
+			document["runtime_process_id"] = std::to_string(opened.process);
+			document["runtime_epoch"] = std::to_string(opened.epoch);
 			document["frame"] = frame;
 			document["image_views"] = description.at("source_views");
 			document["frusta_source"] = frusta ? "captured_image_views" : "unavailable";
@@ -407,7 +438,7 @@ static std::optional<Json> Capture(McpApplication& application, const Json& argu
 			document["resized"] = resized;
 			document["analysis_source_format"] = sourceFormat;
 			document["analysis_pixels"] = "RGB8 clamped; nearest-neighbour GPU reduction when resized";
-			Json content = Json::array({{{"type", "text"}, {"text", document.dump()}}});
+			Json content = Json::array();
 			if (!report.sheet.empty())
 			{
 				ImageEncodingPermit encoder;
@@ -418,34 +449,32 @@ static std::optional<Json> Capture(McpApplication& application, const Json& argu
 				calls.Check();
 				content.push_back({{"type", "image"}, {"mimeType", encoded.mediaType}, {"data", EncodeBase64(encoded.bytes)}});
 			}
-			return Json{{"content", std::move(content)}, {"isError", false}};
+			return CaptureResult{std::move(document), std::move(content), {opened.session, opened.generation, opened.process, opened.epoch}};
 		}
-		Json metadata = {{"ok", true}, {"application_id", target}, {"session", opened.at("session")},
+		Json metadata = {{"ok", true}, {"application_id", target}, {"session", std::to_string(opened.session)},
 			{"frame", frame}, {"layer", layer}, {"eye", eye}, {"format", format}, {"resized", resized},
 			{"source_width", width}, {"source_height", height}, {"eyes", std::move(eyes)}};
 		if (!composition.is_null())
 			metadata["composition"] = std::move(composition);
-		if (retained.contains("display"))
-			metadata["display"] = retained.at("display");
-		if (retained.contains("document"))
-			metadata["tracking"] = retained.at("document");
-		Json content = Json::array({{{"type", "text"}, {"text", metadata.dump()}}});
-		for (auto& value : images)
-			content.push_back(std::move(value));
-		return Json{{"content", std::move(content)}, {"isError", false}};
+		const auto preview = ImageDocument(retained);
+		if (preview.contains("display"))
+			metadata["display"] = preview.at("display");
+		if (preview.contains("document"))
+			metadata["tracking"] = preview.at("document");
+		return CaptureResult{std::move(metadata), std::move(images)};
 	}
 	catch (const std::exception& error)
 	{
 		if (cancellation->Requested())
 			return {};
-		return Error(error.what());
+		return CaptureResult{Json{{"ok", false}, {"error", error.what()}}};
 	}
 }
 
 std::optional<Json> CaptureScreenshot(McpApplication& application, const Json& arguments,
 	const std::shared_ptr<McpCancellation>& cancellation)
 {
-	return Capture(application, arguments, cancellation, CaptureMode::Screenshot);
+	return CaptureReply(Capture(application, arguments, cancellation, CaptureMode::Screenshot));
 }
 
 std::optional<Json> ValidateStereo(McpApplication& application, const Json& arguments,
@@ -460,7 +489,7 @@ std::optional<Json> ValidateStereo(McpApplication& application, const Json& argu
 	request["eye"] = "both";
 	request["layer"] = "projection";
 	request["max_width"] = 640;
-	return Capture(application, request, cancellation, CaptureMode::Validation);
+	return CaptureReply(Capture(application, request, cancellation, CaptureMode::Validation));
 }
 
 std::optional<Json> CaptureStereoConsistency(McpApplication& application, const Json& arguments,
@@ -520,34 +549,25 @@ std::optional<Json> CaptureStereoConsistency(McpApplication& application, const 
 		Json samples = Json::array();
 		std::optional<Json> worst, image;
 		double worstScore = -1;
-		std::string session, generation, process, epoch;
+		std::optional<std::array<std::uint64_t, 4>> scope;
 		bool incomplete = false;
 		for (unsigned index = 0; index < frames; ++index)
 		{
 			const auto started = std::chrono::steady_clock::now();
-			const auto result = Capture(application, request, cancellation, CaptureMode::Consistency);
+			auto result = Capture(application, request, cancellation, CaptureMode::Consistency);
 			if (!result || cancellation->Requested())
 				return {};
-			const auto& content = result->at("content");
-			auto document = Json::parse(content.at(0).at("text").get<std::string>());
-			if (result->value("isError", true))
+			auto document = std::move(result->document);
+			if (!document.value("ok", false))
 			{
 				incomplete = true;
 				samples.push_back({{"index", index}, {"ok", false}, {"error", document.value("error", "Capture failed")}});
 			}
 			else
 			{
-				const auto currentSession = document.at("session").get<std::string>();
-				const auto currentGeneration = document.at("frame").at("generation").get<std::string>();
-				const auto currentProcess = document.at("runtime_process_id").get<std::string>();
-				const auto currentEpoch = document.at("runtime_epoch").get<std::string>();
-				if (!session.empty() && (session != currentSession || generation != currentGeneration ||
-					process != currentProcess || epoch != currentEpoch))
+				if (scope && *scope != result->scope)
 					throw std::runtime_error("The selected XR session changed during stereo sampling");
-				session = currentSession;
-				generation = currentGeneration;
-				process = currentProcess;
-				epoch = currentEpoch;
+				scope = result->scope;
 				document["index"] = index;
 				samples.push_back(document);
 				const auto score = document.value("score", 0.0);
@@ -555,7 +575,7 @@ std::optional<Json> CaptureStereoConsistency(McpApplication& application, const 
 				{
 					worst = std::move(document);
 					worstScore = score;
-					image = content.size() > 1 ? std::optional<Json>(content[1]) : std::nullopt;
+					image = result->images.empty() ? std::nullopt : std::optional<Json>(std::move(result->images[0]));
 				}
 			}
 			if (index + 1 < frames)

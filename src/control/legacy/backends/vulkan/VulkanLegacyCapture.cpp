@@ -48,11 +48,10 @@ struct VulkanLegacyCapture::Job
 	bool hasProjection = false;
 	std::uint32_t quadLayers = 0;
 	std::optional<LegacyScreenshot> image;
-	std::function<bool(LegacyScreenshot&)> complete;
 };
 
 VulkanLegacyCapture::VulkanLegacyCapture(std::shared_ptr<VulkanDevice> device, std::shared_ptr<Session> session,
-										 std::shared_ptr<LegacyCaptureChannel> files,
+										 std::shared_ptr<LegacyFileChannel> files,
 										 std::shared_ptr<flicker::Diagnostics> diagnostics)
 	: m_device(std::move(device)), m_session(std::move(session)), m_files(std::move(files)),
 	  m_diagnostics(std::move(diagnostics))
@@ -150,9 +149,6 @@ void VulkanLegacyCapture::Submit(const XrFrameEndInfo& frame, const CompositionP
 	if (m_closed)
 		return;
 	PollJobs();
-	auto requests = m_files->TakeRequests();
-	if (requests.capture)
-		m_request = RequestState{std::move(*requests.capture), m_session->Snapshot().lastSubmitted};
 	bool hasProjection = false;
 	XrExtent2Di outputExtent{static_cast<std::int32_t>(composition.width),
 							 static_cast<std::int32_t>(composition.height)};
@@ -162,7 +158,6 @@ void VulkanLegacyCapture::Submit(const XrFrameEndInfo& frame, const CompositionP
 		if (frame.layers[index]->type == XR_TYPE_COMPOSITION_LAYER_PROJECTION)
 		{
 			const auto& projection = *reinterpret_cast<const XrCompositionLayerProjection*>(frame.layers[index]);
-			RecordProjection(projection, frame.displayTime);
 			const auto firstEye = m_request && m_request->selection.eye == "right" ? 1u : 0u;
 			if (projection.viewCount > firstEye)
 				outputExtent = projection.views[firstEye].subImage.imageRect.extent;
@@ -171,10 +166,7 @@ void VulkanLegacyCapture::Submit(const XrFrameEndInfo& frame, const CompositionP
 		if (frame.layers[index]->type == XR_TYPE_COMPOSITION_LAYER_QUAD)
 			++quadLayers;
 	}
-	if (m_request || requests.projectionLog)
-		DumpProjection();
-	auto submit =
-		[&](const RequestState& request, XrExtent2Di extent, std::function<bool(LegacyScreenshot&)> complete = {})
+	auto submit = [&](const RequestState& request, XrExtent2Di extent)
 	{
 		if ((!hasProjection && !quadLayers) || m_jobs.size() >= s_maxCaptureJobs ||
 			(request.selection.layer == "projection" && !hasProjection) ||
@@ -185,7 +177,6 @@ void VulkanLegacyCapture::Submit(const XrFrameEndInfo& frame, const CompositionP
 			return false;
 		job->hasProjection = hasProjection;
 		job->quadLayers = request.selection.layer == "projection" ? 0 : quadLayers;
-		job->complete = std::move(complete);
 		m_jobs.push_back(std::move(job));
 		auto& submitted = *m_jobs.back();
 		const auto result = submitted.readback->Submit();
@@ -200,15 +191,6 @@ void VulkanLegacyCapture::Submit(const XrFrameEndInfo& frame, const CompositionP
 	};
 	if (m_request && submit(*m_request, outputExtent))
 		m_request.reset();
-	if (requests.frameCapture)
-	{
-		auto& request = *requests.frameCapture;
-		if (submit({std::move(request.selection), m_session->Snapshot().lastSubmitted},
-				   {static_cast<std::int32_t>(composition.width), static_cast<std::int32_t>(composition.height)},
-				   std::move(request.complete)) &&
-			request.submitted)
-			request.submitted();
-	}
 }
 
 void VulkanLegacyCapture::CompleteImage(Job& job)
@@ -274,7 +256,7 @@ void VulkanLegacyCapture::PollJobs()
 				}
 				CompleteImage(job);
 			}
-			if (!(job.complete ? job.complete(*job.image) : m_files->SaveScreenshot(*job.image)))
+			if (!m_files->SaveScreenshot(*job.image))
 			{
 				if (!m_files->Status().closed)
 					return;
@@ -304,56 +286,6 @@ void VulkanLegacyCapture::Log(std::string_view message) noexcept
 	catch (...)
 	{
 	}
-}
-
-void VulkanLegacyCapture::RecordProjection(const XrCompositionLayerProjection& projection, XrTime time)
-{
-	if (projection.viewCount < 2)
-		return;
-	auto& record = m_projectionHistory[m_projectionHead];
-	record.frame = m_session->Snapshot().lastSubmitted;
-	record.time = time;
-	record.pose = projection.views[0].pose;
-	for (std::size_t eye = 0; eye < record.fov.size(); ++eye)
-	{
-		record.fov[eye] = projection.views[eye].fov;
-		record.rect[eye] = projection.views[eye].subImage.imageRect;
-	}
-	m_projectionHead = (m_projectionHead + 1) % m_projectionHistory.size();
-	m_projectionCount = std::min(m_projectionCount + 1, m_projectionHistory.size());
-}
-
-void VulkanLegacyCapture::DumpProjection()
-{
-	std::ostringstream output;
-	output.imbue(std::locale::classic());
-	output << "{\"entries\":[";
-	for (std::size_t index = 0; index < m_projectionCount; ++index)
-	{
-		const auto& record =
-			m_projectionHistory[(m_projectionHead + m_projectionHistory.size() - m_projectionCount + index) %
-								m_projectionHistory.size()];
-		if (index)
-			output << ',';
-		output << "{\"frame\":" << record.frame.value << ",\"displayTime\":" << record.time
-			   << ",\"pose\":{\"x\":" << record.pose.position.x << ",\"y\":" << record.pose.position.y
-			   << ",\"z\":" << record.pose.position.z << ",\"qx\":" << record.pose.orientation.x
-			   << ",\"qy\":" << record.pose.orientation.y << ",\"qz\":" << record.pose.orientation.z
-			   << ",\"qw\":" << record.pose.orientation.w << '}';
-		for (std::size_t eye = 0; eye < record.fov.size(); ++eye)
-		{
-			const auto& fov = record.fov[eye];
-			const auto& rect = record.rect[eye];
-			const auto* name = eye ? "right" : "left";
-			output << ",\"" << name << "_fov\":{\"aL\":" << fov.angleLeft << ",\"aR\":" << fov.angleRight
-				   << ",\"aU\":" << fov.angleUp << ",\"aD\":" << fov.angleDown << "},\"" << name << "_rect\":["
-				   << rect.offset.x << ',' << rect.offset.y << ',' << rect.extent.width << ',' << rect.extent.height
-				   << ']';
-		}
-		output << '}';
-	}
-	output << "]}";
-	m_files->Publish(LegacyOutputFile::ProjectionLog, output.str());
 }
 
 VkResult VulkanLegacyCapture::Close(std::uint64_t timeout)
@@ -398,7 +330,7 @@ VkResult VulkanLegacyCapture::Close(std::uint64_t timeout)
 			return VK_TIMEOUT;
 	}
 	const auto remaining = std::max(deadline - Clock::now(), Clock::duration::zero());
-	return m_files->FinishCaptures(std::chrono::duration_cast<std::chrono::milliseconds>(remaining)) ? VK_SUCCESS
+	return m_files->DrainScreenshots(std::chrono::duration_cast<std::chrono::milliseconds>(remaining)) ? VK_SUCCESS
 																									 : VK_TIMEOUT;
 }
 } // namespace simxr

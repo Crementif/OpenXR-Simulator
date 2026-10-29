@@ -11,6 +11,8 @@ import traceback
 import winreg
 
 
+from packaging_support import registry_value
+
 def run(command, expected=0, env=None, timeout=180):
     result = subprocess.run(command, capture_output=True, text=True, timeout=timeout, env=env,
                             creationflags=subprocess.CREATE_NO_WINDOW)
@@ -23,14 +25,6 @@ def shell_folder(identity):
     result = ctypes.windll.shell32.SHGetFolderPathW(None, identity, None, 0, value)
     assert result == 0, result
     return Path(value.value)
-
-
-def registry_value(root, view):
-    try:
-        with winreg.OpenKey(root, r"SOFTWARE\Khronos\OpenXR\1", 0, winreg.KEY_READ | view) as key:
-            return winreg.QueryValueEx(key, "ActiveRuntime")
-    except FileNotFoundError:
-        return None
 
 
 def digest(path):

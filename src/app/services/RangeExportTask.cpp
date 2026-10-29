@@ -1,6 +1,6 @@
 #include "app/services/RangeExportTask.h"
 #include "app/UiPch.h"
-#include "app/platform/FileStorage.h"
+#include "app/services/ImageExport.h"
 #include "app/services/RuntimeSession.h"
 #include "app/services/Utf8Path.h"
 
@@ -8,12 +8,8 @@ namespace simxr::app
 {
 static void WriteRangeMetadata(const std::vector<HistoryFrame>& frames, const std::filesystem::path& destination)
 {
-	const auto temporary = CreatePrivateTemporaryFile(destination);
-	try
+	SaveExportFile(destination, [&](std::ostream& output)
 	{
-		std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-		if (!output)
-			throw std::runtime_error("Cannot open frame metadata temporary file");
 		output.imbue(std::locale::classic());
 		output << "epoch,session,run,frame,run_seconds,display_interval_ms,snapshot,preview,dropped\n";
 		for (const auto& frame : frames)
@@ -21,20 +17,9 @@ static void WriteRangeMetadata(const std::vector<HistoryFrame>& frames, const st
 				   << frame.identity.frame << ',' << frame.runSeconds << ',' << frame.frameMilliseconds << ','
 				   << bool(frame.flags & HistorySnapshot) << ',' << bool(frame.flags & HistoryPreview) << ','
 				   << bool(frame.flags & HistoryDropped) << '\n';
-		if (!output)
-			throw std::runtime_error("Cannot write frame metadata");
-		output.close();
-		if (!output)
-			throw std::runtime_error("Cannot close frame metadata file");
-		CommitTemporaryFile(temporary, destination);
-	}
-	catch (...)
-	{
-		std::error_code ignored;
-		std::filesystem::remove(temporary, ignored);
-		throw;
-	}
+	}, true);
 }
+
 RangeExportTask::RangeExportTask(RuntimeSession& session) : m_session(session) {}
 RangeExportTask::Protection::Protection(PreviewImages& preview, std::span<const std::uint64_t> images)
 	: m_preview(preview)
@@ -85,7 +70,7 @@ bool RangeExportTask::Start(FrameIdentity first, FrameIdentity last, std::uint64
 			{
 				images.push_back(image.id);
 				m_queue.push_back({image.reader, prefix + "-frame-" + std::to_string(image.frame) + "-image-" +
-													 std::to_string(image.id) + ".ppm"});
+													 std::to_string(image.id) + ".png"});
 			}
 		m_path = path;
 		m_epoch = m_session.Epoch();

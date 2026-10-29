@@ -31,7 +31,6 @@ class Diagnostics
 	void ObserveUi(const uint8_t* bgra, uint32_t width, uint32_t height, uint32_t pitchBytes, uint64_t generation,
 				   uint64_t frame, const UiFrameInfo& info) noexcept;
 	DiagnosticsStatus Status() const;
-	bool NeedsPixels() const noexcept;
 	void Close();
 
   private:
@@ -43,7 +42,6 @@ class Diagnostics
 	template <typename Observation> void ApplyObservation(Observation&& observation) noexcept;
 	DiagnosticsStatus Snapshot() const;
 	void Run() noexcept;
-	void PollRequests();
 	void TriggerCapture(uint64_t frame);
 	void FlushStatus(const DiagnosticsStatus& status);
 	void RecordError(const char* message, ErrorKind kind = ErrorKind::File) noexcept;

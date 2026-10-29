@@ -167,7 +167,7 @@ class SimulationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='simxr-compatibility-') as directory:
             path, marker = Path(directory) / 'control.123.sock', Path(directory) / 'start'
             tools = module.LegacyControl(directory)
-            self.assertIsNone(tools.call('set_head_pose', {}))
+            self.assertFalse(tools.call('set_head_pose', {})['ok'])
             host = subprocess.Popen([HOST, str(path), str(marker)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             try:
                 wait_for(path.exists, host)
@@ -325,10 +325,24 @@ class SimulationTests(unittest.TestCase):
                     result = subprocess.run(base + flags, capture_output=True, text=True, timeout=5)
                     self.assertNotEqual(result.returncode, 0, result.stdout)
                     self.assertIn(detail, result.stderr)
-            script.write_bytes(b' ' * (1024 * 1024 + 1))
+            nested = root
+            while len(str(nested).encode('utf-8')) < 1024:
+                nested /= 'nested-' + 'x' * 100
+                nested.mkdir()
+            long_script = nested / 'rig.luau'
+            long_script.write_text('simxr.checkpoint("valid source", true)')
+            result = subprocess.run(base[:-1] + [str(long_script)], capture_output=True, text=True, timeout=5)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn('Rig name exceeds 1024 bytes', result.stderr)
+            script.write_text('')
             result = subprocess.run(base, capture_output=True, text=True, timeout=5)
             self.assertNotEqual(result.returncode, 0, result.stdout)
-            self.assertIn('Rig source exceeds 1 MiB', result.stderr)
+            self.assertIn('Invalid bounded rig options', result.stderr)
+            with script.open('wb') as source:
+                source.truncate(64 * 1024 * 1024 + 1)
+            result = subprocess.run(base, capture_output=True, text=True, timeout=5)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn('Rig source exceeds 64 MiB', result.stderr)
             result = subprocess.run(base[:-1] + [str(root)], capture_output=True, text=True, timeout=5)
             self.assertNotEqual(result.returncode, 0, result.stdout)
             self.assertRegex(result.stderr, r'Cannot (open|read) rig:')

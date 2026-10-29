@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify saved and connector-started MCP enablement in the real app."""
 
-import json
+
 import os
 from pathlib import Path
 import signal
@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 
-from test_mcp_connector import Client, eventually
+from mcp_support import Client, discovery_record, eventually
 
 
 def main():
@@ -31,11 +31,7 @@ def main():
                 processes.append(manual)
                 groups.append(manual.pid)
 
-                def record(directory):
-                    files = list(directory.glob("*.json"))
-                    return json.loads(files[0].read_text()) if len(files) == 1 else None
-
-                current = eventually(lambda: record(root / "enabled"))
+                current = eventually(lambda: discovery_record(root / 'enabled'))
                 assert current["process_id"] == manual.pid
                 bridge = subprocess.Popen([connector, "--app", app, "--windowless"], env=enabled_env, stdin=subprocess.PIPE,
                                           stdout=subprocess.PIPE, stderr=log, text=True, bufsize=1,
@@ -46,7 +42,7 @@ def main():
                 params = {"protocolVersion": "2025-11-25", "capabilities": {},
                           "clientInfo": {"name": "test", "version": "1"}}
                 assert "result" in client.rpc("initialize", params)
-                assert record(root / "enabled")["process_id"] == manual.pid
+                assert discovery_record(root / 'enabled')["process_id"] == manual.pid
                 bridge.stdin.close()
                 assert bridge.wait(timeout=15) == 0 and manual.poll() is None
                 os.killpg(manual.pid, signal.SIGTERM)
@@ -61,7 +57,7 @@ def main():
                 groups.append(bootstrap.pid)
                 client = Client(bootstrap)
                 assert "result" in client.rpc("initialize", params)
-                boot_record = eventually(lambda: record(root / "bootstrap"))
+                boot_record = eventually(lambda: discovery_record(root / 'bootstrap'))
                 groups.append(int(boot_record["process_id"]))
                 saved = subprocess.check_output([helper, "--read-settings", str(settings)], env=env, text=True)
                 assert saved.strip() == "0", "Connector startup must not change the saved preference"

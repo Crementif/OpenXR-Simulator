@@ -74,6 +74,14 @@ template <int (ScriptEngine::*Handler)(lua_State*)> int ScriptEngine::Binding(lu
 	}
 	luaL_error(state, "%s", engine.m_bindingError.c_str());
 }
+int ScriptEngine::Wait(lua_State* state)
+{
+	const auto milliseconds = Integer(state, 1);
+	if (milliseconds > 3600000)
+		throw std::invalid_argument("Rig wait must be between zero and 3600000 milliseconds");
+	m_runtime.Wait(std::chrono::milliseconds{milliseconds});
+	return 0;
+}
 int ScriptEngine::FrameAdd(lua_State* state)
 {
 	const auto frame = Integer(state, 1);
@@ -300,6 +308,11 @@ int ScriptEngine::ReleaseInspection(lua_State* state)
 	m_runtime.ReleaseInspection(Integer(state, 1));
 	return 0;
 }
+int ScriptEngine::AdvanceToFrame(lua_State* state)
+{
+	m_runtime.AdvanceToFrame(FrameId{Integer(state, 1)});
+	return 0;
+}
 int ScriptEngine::StepDisplay(lua_State* state)
 {
 	const auto step = m_runtime.StepDisplay();
@@ -420,9 +433,11 @@ void ScriptEngine::Execute()
 		lua_pushcfunction(state, function, name);
 		lua_setfield(state, -2, name);
 	};
+	bind("wait", Binding<&ScriptEngine::Wait>);
 	bind("frame_add", Binding<&ScriptEngine::FrameAdd>);
 	bind("frame_before", Binding<&ScriptEngine::FrameBefore>);
 	bind("step_display", Binding<&ScriptEngine::StepDisplay>);
+	bind("advance_to_frame", Binding<&ScriptEngine::AdvanceToFrame>);
 	bind("schedule", Binding<&ScriptEngine::Schedule>);
 	bind("await_transaction", Binding<&ScriptEngine::AwaitTransaction>);
 	bind("pause", Binding<&ScriptEngine::Pause>);
@@ -441,6 +456,7 @@ void ScriptEngine::Execute()
 	bind("export_history", Binding<&ScriptEngine::ExportHistory>);
 	bind("begin_image_window", Binding<&ScriptEngine::BeginImageWindow>);
 	bind("image_window", Binding<&ScriptEngine::ImageWindow>);
+	bind("analyze_image_window", Binding<&ScriptEngine::AnalyzeImageWindow>);
 	bind("export_window_image", Binding<&ScriptEngine::ExportWindowImage>);
 	bind("release_image_window", Binding<&ScriptEngine::ReleaseImageWindow>);
 	bind("revision", Binding<&ScriptEngine::Revision>);

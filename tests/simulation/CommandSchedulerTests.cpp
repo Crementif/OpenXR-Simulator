@@ -95,6 +95,38 @@ CommandConfiguration SequenceBaseline()
 	}
 	return baseline;
 }
+void SequenceRetirementOutsideAdmission()
+{
+	for (int operation = 0; operation < 6; ++operation)
+	{
+		CommandScheduler scheduler;
+		scheduler.Start();
+		bool retired = false;
+		PoseSequenceStep step;
+		step.head = HeadPosePatch{};
+		auto program = std::shared_ptr<const PoseSequence>(new PoseSequence(std::vector{step}, false),
+			[&](const PoseSequence* value)
+			{
+				// Reenter admission to detect destruction while its mutex is held.
+				const auto status = scheduler.PoseSequenceStatusFor(Mcp);
+				(void)status;
+				retired = true;
+				delete value;
+			});
+		scheduler.StartPoseSequence(Mcp, std::move(program));
+		switch (operation)
+		{
+		case 0: Tick(scheduler, 1, SequenceBaseline()); break;
+		case 1: scheduler.StartPoseSequence(Mcp, SequenceProgram()); break;
+		case 2: scheduler.StopPoseSequence(Mcp); break;
+		case 3: scheduler.ReleaseSource(Mcp, true); break;
+		case 4: scheduler.Close(); break;
+		case 5: scheduler.Start(); break;
+		}
+		Require(retired, "Sequence lifecycle did not retire its program storage");
+	}
+}
+
 void ScheduledPoseSequence()
 {
 	CommandScheduler scheduler;
@@ -234,6 +266,32 @@ void PoseSequenceFailureAndCaptureOnly()
 	Require(!scheduler.StartPoseSequence(Mcp, SequenceProgram()), "Closed scheduler accepted a sequence");
 	scheduler.Start();
 	Require(!scheduler.PoseSequenceStatusFor(Mcp), "Session restart inherited an old sequence");
+}
+
+void SequenceSparseControls()
+{
+	CommandScheduler scheduler;
+	scheduler.Start();
+	auto baseline = SequenceBaseline();
+	auto& original = baseline.input.controllers[0];
+	original.trigger = .8f;
+	original.triggerTouch = true;
+	original.primary = original.primaryTouch = true;
+	original.gripForce = .9f;
+	original.trackpad = {.3f, .4f};
+	PoseSequenceStep step;
+	step.head = HeadPosePatch{};
+	step.controllers[0] = ControllerPosePatch{};
+	step.controllers[0]->trigger = 0;
+	step.controllers[0]->primary = false;
+	scheduler.StartPoseSequence(Mcp, std::make_shared<const PoseSequence>(std::vector{step}, false));
+	const auto applied = Tick(scheduler, 1, baseline);
+	const auto& controls = applied->configuration.input.controllers[0];
+	Require(applied->owners[3] && !applied->owners[0] && !applied->owners[1] && !applied->owners[2] &&
+			!applied->owners[4], "Sparse zero/false controls acquired incorrect channels");
+	Require(controls.trigger == 0 && !controls.triggerTouch && !controls.primary && !controls.primaryTouch &&
+			controls.grip == .2f && controls.gripForce == .9f && controls.trackpad.x == .3f &&
+			controls.trackpad.y == .4f, "Sparse sequence patch changed unrelated controls or lost explicit releases");
 }
 
 void SequenceLocalControllerFollowing()
@@ -1511,8 +1569,10 @@ int main()
 		AllocationFreeSpaceCommit();
 		AtomicCommandState();
 		ConditionalAppliedInputs();
+		SequenceRetirementOutsideAdmission();
 		ScheduledPoseSequence();
 		SequenceLocalControllerFollowing();
+		SequenceSparseControls();
 		SequenceCaptureIssueRollback();
 		SequenceTransfersCallerChannels();
 		PoseSequenceReservationRollback();

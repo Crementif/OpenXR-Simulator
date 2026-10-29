@@ -1,9 +1,11 @@
 #include "app/mcp/McpPch.h"
 #include "app/mcp/McpImageSave.h"
+#include "app/mcp/McpImage.h"
+#include "app/services/RuntimePanelProtocol.h"
+#include "control/ImageInspection.h"
 #include "app/mcp/McpApplication.h"
 #include "app/mcp/McpArtifactCalls.h"
-#include "app/mcp/McpImageEncode.h"
-#include "app/platform/FileStorage.h"
+#include "app/services/ImageExport.h"
 #include "app/services/Utf8Path.h"
 #include "control/ProtocolTypes.h"
 #include "graphics/ColorPixels.h"
@@ -11,6 +13,8 @@
 namespace simxr::app::mcp
 {
 using Json = nlohmann::json;
+namespace wire = control;
+namespace tag = control::tag;
 
 static Json Error(const std::string& message)
 {
@@ -32,25 +36,9 @@ Json ImageSaveDefinition()
 			{"overwrite", {{"type", "boolean"}}}}},
 			{"required", Json::array({"connection", "export", "path"})}, {"additionalProperties", false}}}};
 }
-static std::uint64_t Identifier(const Json& value, const char* label)
-{
-	if (value.is_number_integer() && value > 0 && value <= ((1ULL << 53) - 1))
-		return value.get<std::uint64_t>();
-	if (!value.is_string())
-		throw std::invalid_argument(std::string(label) + " must be a decimal string or safe integer");
-	const auto& text = value.get_ref<const std::string&>();
-	if (text.empty() || text.size() > 20 || text.front() == '0')
-		throw std::invalid_argument(std::string(label) + " must be a canonical nonzero integer");
-	std::uint64_t number = 0;
-	const auto parsed = std::from_chars(text.data(), text.data() + text.size(), number);
-	if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() || !number)
-		throw std::invalid_argument(std::string(label) + " must be a canonical nonzero integer");
-	return number;
-}
 std::optional<Json> SaveImage(McpApplication& app, McpDebug& debug, const Json& arguments,
 	const std::shared_ptr<McpCancellation>& cancellation)
 {
-	std::filesystem::path temporary;
 	try
 	{
 		if (!arguments.is_object())
@@ -67,7 +55,7 @@ std::optional<Json> SaveImage(McpApplication& app, McpDebug& debug, const Json& 
 		if (connection.empty() || connection.size() > 256 || connection.find('\0') != std::string::npos ||
 			path.empty() || path.size() > 4096 || path.find('\0') != std::string::npos)
 			throw std::invalid_argument("Invalid connection or path");
-		const auto ticket = Identifier(arguments.at("export"), "export");
+		const auto ticket = ImageId(arguments, "export");
 		const auto destination = Utf8Path(path);
 		auto extension = PathText(destination.extension());
 		for (auto& ch : extension)
@@ -93,25 +81,24 @@ std::optional<Json> SaveImage(McpApplication& app, McpDebug& debug, const Json& 
 			return {};
 		ImageEncodingPermit permit;
 		ArtifactCalls calls(app, debug, connection, cancellation, timeout, "Image save");
-		Json request = {{"connection", connection}, {"export", std::to_string(ticket)}};
+		std::vector<wire::Field> request{wire::Field::U64(tag::ExportId, ticket, true)};
 		if (arguments.contains("session"))
 		{
-			request["session"] = arguments.at("session");
-			request["generation"] = arguments.at("generation");
+			request.push_back(wire::Field::U64(tag::Session, ImageId(arguments, "session"), true));
+			request.push_back(wire::Field::U64(tag::Generation, ImageId(arguments, "generation"), true));
 		}
-		auto info = calls.Call("debug_export_info", std::move(request));
-		if (info.value("phase", "") != "complete" || !info.contains("image_description"))
-			throw std::runtime_error("Export must be a completed raw image; poll debug_export_info first");
-		const auto& image = info.at("image_description");
-		const auto width = image.at("width").get<std::uint32_t>();
-		const auto height = image.at("height").get<std::uint32_t>();
-		const auto format = image.at("format").get<std::uint32_t>();
+		const auto info = calls.Request(wire::OpCode::ExportInfo, std::move(request));
+		const auto* description = info.Find(tag::ImageDescriptor);
+		if (panel::Text(info, tag::Phase) != "complete" || !description)
+			throw std::runtime_error("Export must be a completed raw image");
+		const auto image = wire::DecodeImageDescription(*description);
+		const auto width = image.width, height = image.height, format = image.format;
 		const auto pixelBytes = ColorPixelBytes(format);
-		const auto total = Identifier(info.at("total_bytes"), "total_bytes");
-		if (!pixelBytes || !width || !height || width > 4096 || height > 4096 ||
-			image.at("array_layers") != 1 || std::uint64_t{width} * height > MaxImageInput / pixelBytes ||
+		const auto total = panel::U64(info, tag::TotalBytes);
+		if (!pixelBytes || !width || !height || width > FileImageLimits.dimension || height > FileImageLimits.dimension ||
+			image.arrayLayers != 1 || std::uint64_t{width} * height > FileImageLimits.inputBytes / pixelBytes ||
 			total != std::uint64_t{width} * height * pixelBytes)
-			throw std::runtime_error("Choose a supported single-layer image within the 32 MiB encoding limit");
+			throw std::runtime_error("Choose a supported single-layer image within the 512 MiB file encoding limit");
 		std::vector<std::byte> pixels;
 		pixels.reserve(static_cast<std::size_t>(total));
 		while (pixels.size() < total)
@@ -123,37 +110,21 @@ std::optional<Json> SaveImage(McpApplication& app, McpDebug& debug, const Json& 
 			pixels.insert(pixels.end(), bytes.begin(), bytes.end());
 		}
 		calls.Check();
-		const auto encoded = EncodeImage(pixels, format, width, height, png, quality);
+		const auto encoded = EncodeImage(pixels, format, width, height, png, quality, FileImageLimits);
 		calls.Check();
-		temporary = CreatePrivateTemporaryFile(destination);
-		std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-		if (!output)
-			throw std::runtime_error("Cannot open temporary image file");
-		output.write(reinterpret_cast<const char*>(encoded.bytes.data()), static_cast<std::streamsize>(encoded.bytes.size()));
-		if (!output)
-			throw std::runtime_error("Cannot write temporary image file");
-		output.close();
-		if (!output)
-			throw std::runtime_error("Cannot close temporary image file");
-		calls.Check();
-		if (overwrite)
-			CommitTemporaryFile(temporary, destination);
-		else
-			RenameFileWithoutReplacing(temporary, destination);
-		temporary.clear();
-		info["path"] = PathText(destination);
-		info["media_type"] = encoded.mediaType;
-		info["lossy"] = encoded.lossy;
-		info["encoded_bytes"] = std::to_string(encoded.bytes.size());
-		return Json{{"content", Json::array({{{"type", "text"}, {"text", info.dump()}}})}, {"isError", false}};
+		SaveExportFile(destination, encoded.bytes, overwrite, [&]
+		{
+			calls.Check();
+		});
+		auto result = ImageDocument(info);
+		result["path"] = PathText(destination);
+		result["media_type"] = encoded.mediaType;
+		result["lossy"] = encoded.lossy;
+		result["encoded_bytes"] = std::to_string(encoded.bytes.size());
+		return Json{{"content", Json::array({{{"type", "text"}, {"text", result.dump()}}})}, {"isError", false}};
 	}
 	catch (const std::exception& error)
 	{
-		if (!temporary.empty())
-		{
-			std::error_code ignored;
-			std::filesystem::remove(temporary, ignored);
-		}
 		if (cancellation->Requested())
 			return {};
 		return Error(error.what());

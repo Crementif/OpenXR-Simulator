@@ -14,11 +14,12 @@ import signal
 import subprocess
 import sys
 import tempfile
-import time
+
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'app'))
-from test_mcp_connector import Client, eventually
-from test_linux_portable import reap_children
+from mcp_support import Client, eventually
+
+from packaging_support import reap_children
 
 
 def main():

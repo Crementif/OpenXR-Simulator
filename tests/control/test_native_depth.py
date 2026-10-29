@@ -4,9 +4,9 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-import time
 
-from test_native_quad import export, require, wait_file
+
+from native_support import probe_environment, running_probe, export, require, wait_file
 from simxr_control import Capability, Client, CommandKind, TargetKind
 from simxr_control.errors import ControlError
 from simxr_control.protocol import ErrorCode
@@ -20,13 +20,11 @@ def release(client, lease, capture):
 def main():
     with tempfile.TemporaryDirectory(prefix='sx-depth-') as temporary:
         data = Path(temporary)
-        environment = dict(os.environ, SIMXR_DATA_DIR=temporary, SIMXR_PROBE_CONTROL='1',
+        environment = probe_environment(data, SIMXR_PROBE_CONTROL='1',
                            SIMXR_PROBE_RETAIN_CONTROL='1', SIMXR_PROBE_GPU_INSPECTION='1',
                            SIMXR_PROBE_DEPTH='1', SIMXR_PROBE_FRAMES='5')
-        environment.pop('SIMXR_CONTROL_SOCKET', None)
-        host = subprocess.Popen([sys.argv[1]], env=environment, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True)
-        try:
+
+        with running_probe([sys.argv[1]], environment) as host:
             wait_file(data / 'control.ready', host)
             with Client(data / f'control.{host.pid}.sock') as client:
                 session, = client.sessions()
@@ -147,14 +145,6 @@ def main():
                 print(output)
             print('PASS: exact cropped depth, finite/reversed ranges and honest infinite-range limitation after device destruction')
             return 0
-        finally:
-            if host.poll() is None:
-                host.kill()
-                host.wait()
-            remaining = host.stdout.read() if not host.stdout.closed else ''
-            if remaining:
-                print(remaining, file=sys.stderr)
-            host.stdout.close()
 
 
 if __name__ == '__main__':

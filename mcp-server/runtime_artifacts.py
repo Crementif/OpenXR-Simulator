@@ -7,8 +7,6 @@ import json
 import os
 from pathlib import Path
 import re
-import threading
-import uuid
 
 
 class CaptureFailed(RuntimeError):
@@ -19,10 +17,8 @@ class Artifact(Enum):
     SETTINGS = "settings.json"
     STATUS = "runtime_status.json"
     FRAME_INFO = "frame_info.json"
-    PROJECTION = "projection_log.json"
     FLICKER = "flicker_status.json"
     UI_FLICKER = "ui_flicker_status.json"
-    SCREENSHOT = "screenshot_status.json"
 
 
 @dataclass(frozen=True)
@@ -80,36 +76,17 @@ def _pid_alive(pid):
 
 
 class RuntimeArtifacts:
-    """Own one configured directory; never redirect an in-flight workflow.
+    """Read bounded artifacts from one configured runtime directory."""
 
-    Command publication is atomic and uses a unique temporary per call. Close
-    revokes new publications; the application drains admitted calls before close.
-    Artifact readers never follow an incident outside this directory.
-    """
-
-    SCREENSHOTS = (
-        "screenshot.png",
-        "screenshot.bmp",
-        "screenshot.jpg",
-        "screenshot.jpeg",
-    )
-    MAX_IMAGE_BYTES = 512 * 1024 * 1024
     MAX_DOCUMENT_BYTES = 1024 * 1024
     MAX_LOG_BYTES = 64 * 1024 * 1024
 
-    def __init__(self, directory, *, platform=None):
-        self._platform = os.name if platform is None else platform
+    def __init__(self, directory):
         self._directory = Path(directory)
-        self._lock = threading.Lock()
-        self._closed = False
 
     @property
     def directory(self):
         return self._directory
-
-    def close(self):
-        with self._lock:
-            self._closed = True
 
     def _local(self, name):
         if (
@@ -143,74 +120,6 @@ class RuntimeArtifacts:
         if len(data) > maximum:
             raise ValueError(f"Runtime artifact exceeds its {maximum}-byte bound")
         return data
-
-    def publish(self, name, payload):
-        encoded = json.dumps(payload, allow_nan=False).encode("utf-8")
-        if len(encoded) > 64 * 1024:
-            raise ValueError("Compatibility command exceeds 64 KiB")
-        self.publish_bytes(name, encoded)
-
-    def publish_bytes(self, name, encoded):
-        if len(encoded) > 64 * 1024:
-            raise ValueError("Compatibility command exceeds 64 KiB")
-        destination = self._local(name)
-        temporary = destination.with_name(
-            destination.name + ".mcp." + uuid.uuid4().hex + ".tmp"
-        )
-        with self._lock:
-            if self._closed:
-                raise RuntimeError("Runtime artifact access closed")
-        self._directory.mkdir(parents=True, exist_ok=True)
-        try:
-            with temporary.open("wb") as output:
-                output.write(encoded)
-            with self._lock:
-                if self._closed:
-                    raise RuntimeError("Runtime artifact access closed")
-                temporary.replace(destination)
-        finally:
-            temporary.unlink(missing_ok=True)
-
-    def remove(self, name):
-        self._local(name).unlink(missing_ok=True)
-
-    def _screenshot_names(self, layer):
-        if layer == "quad" and self._platform == "nt":
-            # Windows publishes the isolated quad separately. Do not consume a
-            # composite file that becomes visible before the side quad does.
-            return ("screenshot_quad.bmp",)
-        # Linux publishes its requested layer through the ordinary filename.
-        return self.SCREENSHOTS
-
-    def clear_screenshots(self, layer="all"):
-        for name in self._screenshot_names(layer):
-            self.remove(name)
-        self.remove(Artifact.SCREENSHOT.value)
-
-    def screenshot(self, requested_at, layer="all"):
-        status_path = self._local(Artifact.SCREENSHOT.value)
-        try:
-            status_fresh = status_path.stat().st_mtime >= requested_at
-        except OSError:
-            status_fresh = False
-        if status_fresh:
-            status = self.read_json(Artifact.SCREENSHOT, {})
-            if (
-                isinstance(status, dict)
-                and status.get("layer") == layer
-                and status.get("success") is False
-            ):
-                reason = str(status.get("error", "unknown failure"))[:2048]
-                raise CaptureFailed(f"Runtime capture failed: {reason}")
-        for name in self._screenshot_names(layer):
-            path = self._local(name)
-            try:
-                if path.stat().st_mtime < requested_at - 0.5:
-                    continue
-                return self._read_bytes(path, self.MAX_IMAGE_BYTES)
-            except OSError:
-                continue
-        return None
 
     def log_snapshot(self):
         candidates = []
@@ -249,6 +158,3 @@ class RuntimeArtifacts:
         path = Path(value).resolve()
         path.relative_to(self._directory.resolve())
         return path
-
-    def preview_count(self, directory):
-        return sum(1 for _ in directory.glob("frame*_preview.bmp"))

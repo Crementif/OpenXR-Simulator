@@ -20,6 +20,7 @@ class RigProgress
 	void Step();
 	void Cancel();
 	void Check(bool bindingBoundary = false);
+	void WaitUntil(std::chrono::steady_clock::time_point target);
 	void Finish(RigPhase phase, std::string error);
 	bool Cancelled() const;
 	void SetCompatibility(std::optional<std::vector<std::string>> deviations);
@@ -27,6 +28,7 @@ class RigProgress
 	void CaptureRetained();
 	void Checkpoint(RigCheckpoint checkpoint);
 	void Print(std::string line);
+	RigPhase Phase() const;
 	RigSnapshot Snapshot() const;
 
   private:

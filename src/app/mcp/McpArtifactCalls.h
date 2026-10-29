@@ -1,12 +1,16 @@
 #pragma once
 
+#include "control/ControlPacket.h"
+
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -36,7 +40,10 @@ class ArtifactCalls
 	ArtifactCalls(const ArtifactCalls&) = delete;
 	ArtifactCalls& operator=(const ArtifactCalls&) = delete;
 	void Check() const;
-	nlohmann::json Call(const char* name, nlohmann::json arguments);
+	control::Message Request(control::OpCode opcode, std::vector<control::Field> fields,
+		std::optional<std::string_view> program = {});
+	nlohmann::json Sequence(control::OpCode opcode, std::vector<control::Field> fields,
+		std::optional<std::string_view> program = {});
 	std::vector<std::byte> Read(std::uint64_t ticket, std::uint64_t offset, std::uint64_t length);
 
   private:

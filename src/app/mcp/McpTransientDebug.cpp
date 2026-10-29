@@ -1,10 +1,10 @@
 #include "app/mcp/McpPch.h"
 #include "app/mcp/McpTransientDebug.h"
 #include "app/mcp/McpApplication.h"
+#include "control/ControlSchema.h"
 
 namespace simxr::app::mcp
 {
-using Json = nlohmann::json;
 using namespace std::chrono_literals;
 
 TransientDebug::TransientDebug(McpApplication& application, std::shared_ptr<McpCancellation> cancellation,
@@ -69,74 +69,97 @@ void TransientDebug::End() noexcept
 	std::lock_guard lock(m_mutex);
 	m_active.reset();
 }
-Json TransientDebug::CheckResult(std::optional<Json> result)
+McpConnection TransientDebug::Connect(const std::string& application)
 {
+	const auto cancellation = Begin();
+	std::optional<McpConnection> result;
+	try
+	{
+		Check();
+		result = m_debug.Connect(m_application, application, cancellation);
+	}
+	catch (...)
+	{
+		End();
+		Check();
+		throw;
+	}
+	End();
 	Check();
 	if (!result)
 		throw TransientError(m_operation + " operation was interrupted");
-	if (result->value("isError", true))
-	{
-		const auto value = Json::parse(result->at("content").at(0).at("text").get<std::string>());
-		throw TransientError(value.value("detail", value.value("error", m_operation + " operation failed")), value.value("code", 0u));
-	}
 	return std::move(*result);
 }
-Json TransientDebug::Call(const std::string& name, Json arguments)
+std::shared_ptr<const CachedImage> TransientDebug::Render(const std::string& connection, const ImageRenderRequest& request)
 {
 	const auto cancellation = Begin();
-	std::optional<Json> result;
+	ImageRenderResult result;
 	try
 	{
 		Check();
-		result = m_debug.Call(m_application, name, arguments, cancellation);
+		result = m_debug.Render(m_application, connection, request, cancellation);
 	}
 	catch (...)
 	{
 		End();
-		throw;
-	}
-	End();
-	return CheckResult(std::move(result));
-}
-Json TransientDebug::Data(const std::string& name, Json arguments)
-{
-	const auto result = Call(name, std::move(arguments));
-	return Json::parse(result.at("content").at(0).at("text").get<std::string>());
-}
-Json TransientDebug::Application(const std::string& name, Json arguments)
-{
-	const auto cancellation = Begin();
-	std::optional<Json> result;
-	try
-	{
 		Check();
-		result = m_application.Call(name, std::move(arguments), cancellation);
-	}
-	catch (...)
-	{
-		End();
-		throw;
-	}
-	End();
-	const auto checked = CheckResult(std::move(result));
-	return Json::parse(checked.at("content").at(0).at("text").get<std::string>());
-}
-std::vector<std::byte> TransientDebug::Read(const std::string& connection, std::uint64_t ticket, std::uint64_t offset, std::uint64_t length)
-{
-	const auto cancellation = Begin();
-	std::vector<std::byte> bytes;
-	try
-	{
-		Check();
-		bytes = m_debug.ReadArtifact(m_application, connection, ticket, offset, length, cancellation);
-	}
-	catch (...)
-	{
-		End();
 		throw;
 	}
 	End();
 	Check();
-	return bytes;
+	CheckResponse(result.info);
+	return std::move(result.image);
 }
+ApplicationSnapshot TransientDebug::Application(const std::string& application)
+{
+	const auto cancellation = Begin();
+	std::optional<ApplicationSnapshot> result;
+	try
+	{
+		Check();
+		result = m_application.Lookup(application, cancellation);
+	}
+	catch (...)
+	{
+		End();
+		Check();
+		throw;
+	}
+	End();
+	Check();
+	if (!result)
+		throw TransientError(m_operation + " operation was interrupted");
+	return std::move(*result);
+}
+
+control::Message TransientDebug::Request(const std::string& connection, control::OpCode opcode, std::vector<control::Field> fields)
+{
+	const auto cancellation = Begin();
+	control::Message response;
+	try
+	{
+		Check();
+		response = m_debug.Request(m_application, connection, opcode, std::move(fields), cancellation);
+	}
+	catch (...)
+	{
+		End();
+		Check();
+		throw;
+	}
+	End();
+	Check();
+	CheckResponse(response);
+	return response;
+}
+void TransientDebug::CheckResponse(const control::Message& response)
+{
+	const auto code = *response.Find(control::tag::Error)->AsU32();
+	if (code)
+	{
+		const auto* detail = response.Find(control::tag::Detail);
+		throw TransientError(detail && detail->AsText() ? std::string(*detail->AsText()) : m_operation + " failed", code);
+	}
+}
+
 }

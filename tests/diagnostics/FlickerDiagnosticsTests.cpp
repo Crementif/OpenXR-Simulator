@@ -1,6 +1,7 @@
 #include "../TestSupport.h"
 #include "diagnostics/FlickerArtifacts.h"
 #include "diagnostics/FlickerMonitors.h"
+#include "diagnostics/IncidentAnalysis.h"
 #include "diagnostics/platform/ArtifactFile.h"
 #include "flicker_detector.h"
 #include "json.h"
@@ -13,7 +14,7 @@
 #include <iostream>
 #include <limits>
 
-namespace
+namespace flicker::tests
 {
 using namespace flicker;
 namespace fs = std::filesystem;
@@ -59,6 +60,37 @@ std::vector<uint8_t> Gray(uint32_t width, uint32_t height, uint8_t brightness, u
 			std::fill_n(pixel, 3, brightness);
 		}
 	return pixels;
+}
+
+void SamplePixelOrders()
+{
+	constexpr uint32_t width = 640, height = 200, pitch = width * 4 + 16;
+	std::vector<uint8_t> rgba(pitch * height, 0xBA), bgra(pitch * height, 0xCD);
+	for (uint32_t y = 0; y < height; ++y)
+		for (uint32_t x = 0; x < width; ++x)
+		{
+			const auto offset = size_t(y) * pitch + x * 4;
+			rgba[offset] = bgra[offset + 2] = x < width / 2 ? 255 : 0;
+			rgba[offset + 1] = bgra[offset + 1] = static_cast<uint8_t>(y);
+			rgba[offset + 2] = bgra[offset] = x < width / 2 ? 0 : 255;
+			rgba[offset + 3] = bgra[offset + 3] = static_cast<uint8_t>(x);
+		}
+	const auto compare = [](const Sample& first, const Sample& second)
+	{
+		Require(first.frame == second.frame && first.width == second.width && first.height == second.height &&
+			*first.pixels == *second.pixels, "RGBA and BGRA produce identical retained samples including alpha");
+		Require(first.metrics.mean == second.metrics.mean && first.metrics.meanLeft == second.metrics.meanLeft &&
+			first.metrics.meanRight == second.metrics.meanRight &&
+			first.metrics.brightFractionLeft == second.metrics.brightFractionLeft &&
+			first.metrics.brightFractionRight == second.metrics.brightFractionRight,
+			"Channel conversion preserves brightness metrics");
+		Require(first.metrics.meanLeft > first.metrics.meanRight, "Red is brighter than blue in sampled luminance");
+	};
+	compare(Downsample(rgba.data(), width, height, pitch, 7, PixelOrder::Rgba),
+		Downsample(bgra.data(), width, height, pitch, 7));
+	const int32_t rectangles[2][4]{{-10, 20, 300, 160}, {330, 20, 320, 160}};
+	compare(CropUi(rgba.data(), width, height, pitch, rectangles, 9, PixelOrder::Rgba),
+		CropUi(bgra.data(), width, height, pitch, rectangles, 9));
 }
 
 void ClassificationAndDrain()
@@ -146,14 +178,18 @@ void ProjectionAndUiSignals()
 	Require(ui.Snapshot().consecutiveMissingAfterProjection == 1 &&
 				ui.Snapshot().maxConsecutiveMissingAfterProjection == 2 && ui.Snapshot().missingAfterProjection == 3,
 			"Separated UI failures inflated the consecutive maximum or lost the cumulative count");
+	Require(!preview.Submission(306, 1, 1).incident, "Restored projection is not anomalous");
+	Require(preview.Submission(307, 0, 1).incident.has_value(),
+		"Projection monitoring recovers without CPU preview samples");
+	Require(ui.Observe(nullptr, 0, 0, 0, 0, 309, info).incident.has_value(),
+		"UI monitoring recovers without CPU samples");
+
 	UiMonitor absent("absent");
-	absent.Capture();
-	Require(absent.NeedsPixels(), "Manual UI capture requests pixels before its first observed frame");
 	const auto fullFrame = Gray(8, 4, 80);
 	for (uint64_t frame = 1; frame <= 12; ++frame)
 		absent.Observe(fullFrame.data(), 8, 4, 32, frame, frame, {});
-	Require(!absent.NeedsPixels() && absent.Snapshot().uiSamples == 0,
-			"Missing UI rectangles retire bounded readback demand without fabricating samples");
+	Require(absent.Snapshot().uiSamples == 0,
+			"Missing UI rectangles do not fabricate samples");
 
 	UiMonitor cropped("cropped");
 	info.composed = true;
@@ -175,6 +211,77 @@ void ProjectionAndUiSignals()
 	cropped.Observe(pixels.data(), 8, 4, 32, 2, 3, info);
 	Require(cropped.Snapshot().uiSamples == 2 && cropped.Snapshot().observedFrames == 3,
 			"Duplicate UI generation still records structural counters");
+}
+
+void StreamingAnalysis()
+{
+	IncidentAnalysis analysis(false);
+	auto pixels = Gray(8, 4, 80);
+	auto bytes = std::as_bytes(std::span(pixels));
+	auto observe = [&](uint64_t frame)
+	{
+		return analysis.Observe(frame, bytes, 8, 4, 0, PixelOrder::Rgba);
+	};
+	observe(1);
+	observe(2);
+	analysis.Skip(3);
+	observe(4);
+	observe(6);
+	observe(7);
+	Require(analysis.Counts().observations == 5 && analysis.Counts().skipped == 1 &&
+		analysis.Counts().temporalPairs == 2 && analysis.Counts().gaps == 1,
+		"Unavailable frames and gaps must break temporal comparisons");
+	bool rejected = false;
+	try
+	{
+		analysis.Observe(8, bytes.first(bytes.size() - 1), 8, 4, 32, PixelOrder::Rgba);
+	}
+	catch (const std::invalid_argument&)
+	{
+		rejected = true;
+	}
+	Require(rejected && analysis.Counts().observations == 5, "Truncated images must not advance analysis");
+	observe(8);
+	Require(analysis.Counts().temporalPairs == 3 && analysis.Counts().gaps == 1,
+		"Rejected input must not break frame continuity");
+	bool detected = false;
+	for (uint64_t frame = 9; frame < 80; ++frame)
+	{
+		std::fill(pixels.begin(), pixels.end(), frame % 2 ? 80 : 200);
+		detected |= !observe(frame).reason.empty();
+	}
+	Require(detected, "Streaming analysis must return anomaly events without retaining a report");
+
+	IncidentAnalysis ui(true);
+	const auto missing = ui.Observe(1, bytes, 8, 4, 32, PixelOrder::Rgba);
+	Require(missing.skipped && missing.reason == "missing_eye" && ui.Counts().observations == 0,
+		"UI analysis must report absent eye rectangles");
+	const std::array<std::array<int32_t, 4>, 2> rectangles{{{0, 0, 4, 4}, {4, 0, 4, 4}}};
+	ui.Observe(2, bytes, 8, 4, 32, PixelOrder::Rgba, rectangles);
+	Require(ui.Counts().observations == 1 && ui.Counts().temporalPairs == 0 && ui.Counts().skipped == 1,
+		"A missing eye must not become a temporal sample");
+}
+
+void AnalysisWithoutArtifacts()
+{
+	PreviewMonitor preview({});
+	UiMonitor ui({});
+	UiFrameInfo info;
+	info.rects[0][2] = info.rects[1][2] = 4;
+	info.rects[0][3] = info.rects[1][3] = 4;
+	info.rects[1][0] = 4;
+	for (uint64_t frame = 1; frame <= 20; ++frame)
+	{
+		auto pixels = Gray(8, 4, frame % 2 ? 80 : 200);
+		const auto composed = preview.Preview(Downsample(pixels.data(), 8, 4, 32, frame), frame);
+		const auto overlay = ui.Observe(pixels.data(), 8, 4, 32, frame, frame, info);
+		Require(!composed.incident && !composed.sample && !overlay.incident && !overlay.sample,
+			"Analysis without an artifact directory does not construct discarded captures");
+	}
+	Require(preview.Snapshot().incidents.anomalyCount > 0 && ui.Snapshot().incidents.anomalyCount > 0,
+		"Analysis still detects flicker without artifact capture");
+	Require(preview.Snapshot().incidents.lastReason == "ALTERNATING_VISIBLE_FRAMES" &&
+		ui.Snapshot().incidents.lastReason == "ALTERNATING_UI_REGION", "Analysis preserves anomaly reasons");
 }
 
 void BoundedArtifacts()
@@ -225,74 +332,56 @@ void IncidentLimits()
 {
 	IncidentCapture capture("capture");
 	const auto sample = Downsample(Gray(8, 4, 80).data(), 8, 4, 32, 0);
-	const auto first = capture.Begin("TEST", 0, false, {});
+	const auto first = capture.Begin("TEST", 0, {});
 	Require(first.incident.has_value(), "Frame zero can start an incident");
-	Require(!capture.NeedsPixels(), "Automatic incidents do not request native readback");
 	for (uint64_t frame = 1; frame <= 12; ++frame)
 	{
 		auto next = sample;
 		next.frame = frame;
 		Require(capture.Continue(next).has_value(), "Incident retains its twelve trailing samples");
 	}
-	Require(!capture.Begin("TEST", 20, false, {}).incident, "Frame zero incident participates in cooldown");
+	Require(!capture.Begin("TEST", 20, {}).incident, "Frame zero incident participates in cooldown");
 	for (uint64_t index = 1; index <= 40; ++index)
 	{
-		const auto incident = capture.Begin("MANUAL_CAPTURE", index * 1000, true, {});
-		Require(incident.incident.has_value() == (index < 40), "Manual capture preserves the forty-incident limit");
-		Require(capture.NeedsPixels() == (index < 40), "Only accepted manual incidents request pixels");
+		const auto incident = capture.Begin("TEST", index * 1000, {});
+		Require(incident.incident.has_value() == (index < 40), "Automatic capture preserves the forty-incident limit");
 		for (uint64_t after = 0; after < 12; ++after)
 		{
 			auto next = sample;
 			next.frame = index * 1000 + after;
 			capture.Continue(next);
 		}
-		Require(!capture.NeedsPixels(), "Trailing sample completion releases readback demand");
 	}
 	Require(capture.Statistics().incidentCount == 40, "Capture limit is retained across completed incidents");
+
+	IncidentCapture sparse("sparse");
+	Require(sparse.Begin("TEST", 1, {}).incident.has_value(), "Sparse incident begins");
+	auto late = sample;
+	late.frame = 14;
+	Require(!sparse.Continue(late), "Pixels after the trailing frame window do not extend an incident");
+	Require(!sparse.Begin("TEST", 20, {}).incident, "Missing pixels do not bypass incident cooldown");
+	Require(sparse.Begin("TEST", 301, {}).incident.has_value(), "Sparse capture recovers after cooldown");
+	Require(sparse.Begin("TEST", 601, {}).incident.has_value(), "No-pixel capture cannot block later incidents");
 }
 
-void ManualCaptureAndRecovery()
+void IncidentRecovery()
 {
 	Directory directory;
-	Diagnostics diagnostics(directory.Path());
-	Require(!diagnostics.NeedsPixels(), "Ordinary diagnostics does not require a CPU preview");
-	diagnostics.ObserveSubmission(42, 1, 1);
+	const auto capture = [&]
 	{
-		std::ofstream request(directory.Path() / "flicker_capture_request.json");
-		request << "{}";
-	}
-	Eventually(
-		[&]
-		{
-			return diagnostics.Status().preview.incidents.incidentCount == 1;
-		},
-		"Worker polls manual requests without frame activity");
-	Require(diagnostics.NeedsPixels(), "Manual request enables explicit pixel collection");
-	diagnostics.Close();
-	Require(!diagnostics.NeedsPixels(), "Close revokes pending readback demand");
-	const auto status = diagnostics.Status();
-	Require(!fs::exists(directory.Path() / "flicker_capture_request.json"), "Manual request is consumed");
-	Require(json::Object(ReadJson(status.preview.incidents.lastDirectory / "incident.json").c_str()).String("reason") ==
-				"MANUAL_CAPTURE",
-			"Accepted manual artifact is drained on Close");
-
-	{
-		Diagnostics replacement(directory.Path());
-		replacement.ObserveSubmission(42, 1, 1);
-		{
-			std::ofstream request(directory.Path() / "flicker_capture_request.json");
-			request << "{}";
-		}
-		Eventually(
-			[&]
-			{
-				return replacement.Status().preview.incidents.incidentCount == 1;
-			},
-			"Replacement diagnostics accepts a new capture");
-		replacement.Close();
-		Require(replacement.Status().preview.incidents.lastDirectory != status.preview.incidents.lastDirectory,
-				"A recreated instance cannot overwrite a previous instance incident at the same frame");
-	}
+		Diagnostics diagnostics(directory.Path());
+		for (uint64_t frame = 1; frame <= 5; ++frame)
+			diagnostics.ObserveSubmission(frame, 1, 1);
+		diagnostics.ObserveSubmission(6, 0, 0);
+		diagnostics.Close();
+		const auto incident = diagnostics.Status().preview.incidents;
+		Require(incident.incidentCount == 1 &&
+			json::Object(ReadJson(incident.lastDirectory / "incident.json").c_str()).String("reason") ==
+				"MISSING_PROJECTION_LAYER", "Close drains an automatic incident without pixel readback");
+		return incident.lastDirectory;
+	};
+	const auto first = capture();
+	Require(capture() != first, "Recreated diagnostics cannot overwrite an incident at the same frame");
 
 	const auto blocked = directory.Path() / "blocked";
 	{
@@ -407,17 +496,21 @@ void ConcurrentCloseAndIndependentLifetime()
 	Require(first.Status().closed && second.Status().preview.totalSubmissions == 1,
 			"Concurrent closure is idempotent and owners do not share classifier state");
 }
-} // namespace
+}
 
 int main()
 {
+	using namespace flicker::tests;
 	try
 	{
+		SamplePixelOrders();
 		ClassificationAndDrain();
 		ProjectionAndUiSignals();
+		AnalysisWithoutArtifacts();
+		StreamingAnalysis();
 		BoundedArtifacts();
 		IncidentLimits();
-		ManualCaptureAndRecovery();
+		IncidentRecovery();
 		ArtifactFilesAndPruning();
 		ConcurrentCloseAndIndependentLifetime();
 		Require(!ValidPixels(reinterpret_cast<const uint8_t*>(1), UINT32_MAX, 2, 0),

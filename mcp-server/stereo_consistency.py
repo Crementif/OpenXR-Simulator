@@ -748,7 +748,7 @@ def watch(count: int, interval: float, out_dir: Path, directory: Optional[Path] 
             entry = {"index": index, "time": time.strftime("%H:%M:%S")}
             sheet = None
             try:
-                data, metadata = workflow.capture(source="stereo_consistency")
+                data, metadata = workflow.capture()
                 if data is None:
                     raise TimeoutError("No projection screenshot arrived")
                 frusta = captured_frusta(metadata, frusta_from_fov)

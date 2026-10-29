@@ -1,23 +1,29 @@
--- Run against a connected simulator: simxr_runner --socket PATH --rig pose_sweep.luau --seed 0
--- This schedules simulator input; deterministic game simulation needs a cooperating game.
+-- Positions are simulation-space metres; angles are radians. Speed follows application frames.
+local config = {
+    position = {0, 1.7, 0},
+    yaw = math.rad(30), pitch = math.rad(15), roll = math.rad(15),
+    framesPerCycle = 120, cycles = 1,
+}
+
 simxr.pause()
-for sample = 0, 15 do
+for sample = 0, config.framesPerCycle * config.cycles do
+    local phase = 2 * math.pi * sample / config.framesPerCycle
+    local yaw = config.yaw * math.sin(phase) / 2
+    local pitch = config.pitch * math.sin(2 * phase) / 2
+    local roll = config.roll * math.sin(3 * phase) / 2
+    local sy, cy = math.sin(yaw), math.cos(yaw)
+    local sx, cx = math.sin(pitch), math.cos(pitch)
+    local sz, cz = math.sin(roll), math.cos(roll)
     local frame = simxr.frame_add(simxr.state().frame_id or "0", "1")
     local transaction = simxr.schedule({frame=frame, commands={
         {kind="take_control", channel="head"},
-        {kind="head_pose", position={math.sin(sample * math.pi / 8) * 0.2, 1.7, 0}},
+        {kind="head_pose", position=config.position, orientation={
+            cy*sx*cz + sy*cx*sz, sy*cx*cz - cy*sx*sz,
+            cy*cx*sz - sy*sx*cz, cy*cx*cz + sy*sx*sz,
+        }},
     }})
-    while simxr.frame_before(simxr.state().frame_id or "0", frame) do
-        local capture = simxr.step()
-        if capture then simxr.release_capture(capture) end
-        local applied = simxr.state().frame_id
-        repeat
-            local displayCapture, progress, source = simxr.step_display()
-            if displayCapture then simxr.release_capture(displayCapture) end
-        until source and not simxr.frame_before(source, applied)
-    end
-    local applied = simxr.await_transaction(transaction)
-    simxr.checkpoint("head sample " .. sample, applied.applied_frame == frame)
+    simxr.advance_to_frame(frame)
+    assert(simxr.await_transaction(transaction).applied_frame == frame)
 end
 simxr.release_inputs()
 simxr.resume()

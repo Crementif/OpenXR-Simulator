@@ -1,11 +1,12 @@
 #include "control/SequenceControl.h"
 #include "Pch.h"
 #include "control/ControlRequestError.h"
+#include "control/DebugProtocol.h"
 #include "control/ControlSchema.h"
 #include "control/ControlSessions.h"
 #include "control/SimulationControl.h"
 #include "control/WireProtocol.h"
-#include "control/legacy/LegacyInput.h"
+#include "simulation/PoseSequence.h"
 #include "runtime/Session.h"
 
 namespace simxr::control
@@ -41,35 +42,6 @@ static AdmissionDescription DescribeAdmission(SnapshotAdmission value)
 		return {"invalid", XR_ERROR_VALIDATION_FAILURE};
 	}
 	throw std::invalid_argument("Unknown sequence capture admission");
-}
-static const char* PhaseName(SnapshotPhase value)
-{
-	switch (value)
-	{
-	case SnapshotPhase::Reserved:
-		return "reserved";
-	case SnapshotPhase::Issued:
-		return "issued";
-	case SnapshotPhase::Begun:
-		return "begun";
-	case SnapshotPhase::GpuPending:
-		return "gpu_pending";
-	case SnapshotPhase::Ready:
-		return "ready";
-	case SnapshotPhase::Clear:
-		return "clear";
-	case SnapshotPhase::Empty:
-		return "empty";
-	case SnapshotPhase::Unavailable:
-		return "unavailable";
-	case SnapshotPhase::Discarded:
-		return "discarded";
-	case SnapshotPhase::Cancelled:
-		return "cancelled";
-	case SnapshotPhase::Failed:
-		return "failed";
-	}
-	throw std::invalid_argument("Unknown sequence capture phase");
 }
 
 InspectionValue SequenceControl::Upload(const Message& request, const ControlSession& binding)
@@ -141,8 +113,7 @@ InspectionValue SequenceControl::Start(const Message& request, const ControlSess
 	{
 		try
 		{
-			std::istringstream input(m_bytes);
-			auto program = std::make_shared<const PoseSequence>(LegacyInput::ReadSequence(input, *loop));
+			auto program = std::make_shared<const PoseSequence>(PoseSequence::Parse(m_bytes, *loop));
 			status = binding.session->Commands().StartPoseSequence(source, std::move(program));
 		}
 		catch (const std::length_error&)
@@ -207,7 +178,7 @@ InspectionValue SequenceControl::Read(const Message& request, const ControlSessi
 			{
 				held.push_back(std::move(*record));
 				const auto& capture = held.back();
-				phase = PhaseName(capture.phase);
+				phase = SnapshotPhaseName(capture.phase);
 				result = capture.result;
 				if (capture.phase == SnapshotPhase::GpuPending && capture.output)
 				{

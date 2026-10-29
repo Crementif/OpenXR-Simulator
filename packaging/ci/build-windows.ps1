@@ -58,10 +58,9 @@ $licenseText = [System.IO.File]::ReadAllText((Join-Path $deps 'OpenXR-SDK\LICENS
 
 $build = Join-Path $work 'simulator-build'
 $packages = Join-Path $work 'packages'
-Run-Native 'cmake' @('-S', $root, '-B', $build, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release',
-    '-DBUILD_TESTING=ON', '-DSIMXR_BUILD_RUNTIME=ON', '-DSIMXR_BUILD_COMPANION=ON',
-    '-DSIMXR_BUILD_AUTOMATION=ON', '-DSIMXR_BUILD_PROBES=ON', '-DSIMXR_BUILD_HEADSET=ON',
-    "-DCMAKE_PREFIX_PATH=$openxr", '-DCMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP=TRUE', "-DSIMXR_OUTPUT_DIRECTORY=$build\bin",
+Run-Native 'cmake' @('--preset', 'release', '-S', $root, '-B', $build,
+    '-DSIMXR_BUILD_PROBES=ON', '-DSIMXR_BUILD_HEADSET=ON',
+    "-DCMAKE_PREFIX_PATH=$openxr", '-DCMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP=TRUE',
     "-DSIMXR_VULKAN_INCLUDE_DIR=$deps\Vulkan-Headers\include", "-DSIMXR_VULKAN_LIBRARY=$vulkanLibrary",
     "-DSIMXR_OPENGL_INCLUDE_DIR=$deps\gl", "-DSIMXR_OPENXR_LOADER_LICENSE_FILE=$license",
     "-DSIMXR_RELEASE_REPOSITORY=$env:SIMXR_RELEASE_REPOSITORY")

@@ -2,8 +2,6 @@
 """Native Windows MCP discovery and independent-process integration."""
 
 from concurrent.futures import ThreadPoolExecutor
-import ctypes
-from ctypes import wintypes
 import json
 import msvcrt
 import os
@@ -12,26 +10,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
 
-from test_mcp_connector import Client, eventually
-
-
-kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
-kernel.OpenProcess.restype = wintypes.HANDLE
-kernel.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
-kernel.WaitForSingleObject.restype = wintypes.DWORD
-kernel.TerminateProcess.argtypes = (wintypes.HANDLE, wintypes.UINT)
-kernel.TerminateProcess.restype = wintypes.BOOL
-kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
-
-
-def process_handle(pid):
-    handle = kernel.OpenProcess(0x00100000 | 0x0001 | 0x1000, False, pid)
-    if not handle:
-        raise ctypes.WinError(ctypes.get_last_error())
-    return handle
+from mcp_support import Client, discovery_record, eventually, kernel, process_handle
 
 
 def main():
@@ -68,13 +48,7 @@ def main():
                 for client in clients:
                     client.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
-                def record():
-                    files = list(discovery.glob("*.json"))
-                    if len(files) != 1:
-                        return None
-                    return json.loads(files[0].read_text(encoding="utf-8"))
-
-                initial = eventually(record)
+                initial = eventually(lambda: discovery_record(discovery))
                 pid = int(initial["process_id"])
                 app_handle = process_handle(pid)
                 assert kernel.WaitForSingleObject(app_handle, 0) == 0x102
@@ -111,7 +85,7 @@ def main():
                                              startupinfo=startup, close_fds=True, stdout=subprocess.PIPE,
                                              stderr=subprocess.PIPE, timeout=10)
                     assert invalid.returncode != 0 and b"Invalid MCP bootstrap reservation" in invalid.stderr
-                assert record()["process_id"] == pid
+                assert discovery_record(discovery)["process_id"] == pid
 
                 wrong_identity = dict(initial, index="0" if initial["index"] != "0" else "1")
                 next(discovery.glob("*.json")).write_text(json.dumps(wrong_identity), encoding="utf-8")
@@ -131,7 +105,7 @@ def main():
                 manual = subprocess.Popen([str(app), "--mcp"], env=env, stdin=subprocess.DEVNULL,
                                           stdout=log, stderr=subprocess.STDOUT,
                                           creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
-                eventually(lambda: record() and record()["process_id"] == manual.pid)
+                eventually(lambda: discovery_record(discovery) and discovery_record(discovery)["process_id"] == manual.pid)
                 clients[1].wait_notification("notifications/tools/list_changed")
                 assert "result" in clients[1].rpc("tools/list")
                 connectors[1].stdin.close()

@@ -14,14 +14,14 @@ find_package(Threads REQUIRED)
 
 option(SIMXR_ENABLE_PCH "Use private precompiled headers" OFF)
 option(SIMXR_BUILD_RUNTIME "Build the OpenXR runtime" ON)
-option(SIMXR_BUILD_PROBES "Build native graphics compatibility probes" ON)
+option(SIMXR_BUILD_PROBES "Build native graphics compatibility probes" OFF)
 option(SIMXR_BUILD_AUTOMATION "Build Luau rig runtime and headless runner" ON)
-option(SIMXR_BUILD_COMPANION "Build the separate SDL3/Vulkan companion" OFF)
-option(SIMXR_BUILD_HEADSET "Build the native OpenXR headset host" ${SIMXR_BUILD_COMPANION})
+option(SIMXR_BUILD_COMPANION "Build the separate SDL3/Vulkan companion" ON)
+option(SIMXR_BUILD_HEADSET "Build the native OpenXR headset host" OFF)
 set(SIMXR_SANITIZER "" CACHE STRING "Sanitizer: address, thread, or empty")
 set_property(CACHE SIMXR_SANITIZER PROPERTY STRINGS "" address thread)
 set(SIMXR_MCP_TEST_PYTHON "" CACHE FILEPATH "Optional Python interpreter with the MCP SDK for stdio integration tests")
-set(SIMXR_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/bin" CACHE PATH "Simulator binary/manifest output directory")
+set(SIMXR_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/bin")
 
 add_library(simxr_openxr_headers INTERFACE)
 target_include_directories(simxr_openxr_headers INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/include")
@@ -99,10 +99,12 @@ endif()
 
 add_library(simxr_control STATIC
     src/control/VideoExport.cpp
+    src/control/ExportReader.cpp
+    src/control/IncidentSample.cpp
     src/control/legacy/LegacyCaptureImage.cpp
     src/control/legacy/LegacyInput.cpp
-    src/control/legacy/WindowsLegacyChannel.cpp
-    src/control/legacy/WindowsLegacyCapture.cpp
+    src/platform/windows/WindowsRuntimeFiles.cpp
+    src/platform/windows/WindowsRuntimeStatus.cpp
     src/control/legacy/WindowsLegacyFiles.cpp
     src/control/legacy/WindowsLegacyFormat.cpp
     src/control/HapticObservation.cpp
@@ -216,14 +218,16 @@ add_library(simxr_connection STATIC
     src/app/services/RuntimePanelRequests.cpp
     src/app/services/DebuggerPanelController.cpp
     src/app/services/InspectionWorkspace.cpp
-    src/app/services/ImageExportTask.cpp)
+    src/app/services/ImageExportTask.cpp
+    src/app/services/ImageExport.cpp)
 if(WIN32)
     target_sources(simxr_connection PRIVATE src/app/platform/windows/LaunchAttachment.cpp)
 else()
     target_sources(simxr_connection PRIVATE src/app/platform/LaunchAttachment.cpp)
 endif()
 simxr_configure_target(simxr_connection)
-target_link_libraries(simxr_connection PUBLIC simxr_control PRIVATE simxr_app_platform)
+target_link_libraries(simxr_connection PUBLIC simxr_control PRIVATE simxr_app_platform simxr_graphics)
+target_include_directories(simxr_connection SYSTEM PRIVATE "${PROJECT_SOURCE_DIR}/third_party/stb")
 
 add_library(simxr_recording_controller STATIC src/app/services/RecordingCapture.cpp src/app/services/RecordingController.cpp src/app/services/LibraryCatalog.cpp)
 simxr_configure_target(simxr_recording_controller)
@@ -349,9 +353,10 @@ if(SIMXR_BUILD_RUNTIME OR SIMXR_BUILD_PROBES OR SIMXR_BUILD_COMPANION OR SIMXR_B
     endif()
     add_library(simxr_vulkan_control STATIC src/control/backends/vulkan/VulkanImageInspection.cpp
         src/control/backends/vulkan/VulkanControlHandle.cpp
-        src/control/backends/vulkan/VulkanImageConsumer.cpp
-        src/control/legacy/backends/vulkan/VulkanLegacyCapture.cpp
-        src/control/legacy/backends/vulkan/WindowsVulkanCaptureChannel.cpp)
+        src/control/backends/vulkan/VulkanImageConsumer.cpp)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_sources(simxr_vulkan_control PRIVATE src/control/legacy/backends/vulkan/VulkanLegacyCapture.cpp)
+    endif()
     simxr_configure_target(simxr_vulkan_control)
     target_link_libraries(simxr_vulkan_control PUBLIC simxr_control simxr_vulkan simxr_diagnostics)
 
@@ -376,6 +381,7 @@ add_library(simxr_diagnostics STATIC
     src/flicker_detector.cpp
     src/diagnostics/FlickerSample.cpp
     src/diagnostics/FlickerMonitors.cpp
+    src/diagnostics/IncidentAnalysis.cpp
     src/diagnostics/platform/ArtifactFile.cpp
     src/diagnostics/platform/RenderDocCapture.cpp
     src/diagnostics/FlickerArtifacts.cpp)
@@ -614,8 +620,8 @@ if(BUILD_TESTING)
     target_link_libraries(action_registry_tests PRIVATE simxr_core)
     simxr_add_test(runtime_tests tests/runtime/RuntimeTests.cpp runtime)
     target_link_libraries(runtime_tests PRIVATE simxr_core)
-    simxr_add_test(windows_legacy_channel_tests tests/control/WindowsLegacyChannelTests.cpp windows_legacy_channel)
-    target_link_libraries(windows_legacy_channel_tests PRIVATE simxr_control)
+    simxr_add_test(windows_runtime_files_tests tests/platform/WindowsRuntimeFilesTests.cpp windows_runtime_files)
+    target_link_libraries(windows_runtime_files_tests PRIVATE simxr_control)
     simxr_add_test(flicker_diagnostics_tests tests/diagnostics/FlickerDiagnosticsTests.cpp flicker_diagnostics)
     target_link_libraries(flicker_diagnostics_tests PRIVATE simxr_diagnostics simxr_core)
     simxr_add_test(legacy_capture_image_tests tests/control/LegacyCaptureImageTests.cpp legacy_capture_image)
@@ -672,8 +678,8 @@ if(BUILD_TESTING)
         simxr_add_test(ui_input_polling_tests tests/ui_input_polling_tests.cpp ui_input_polling)
         target_link_libraries(ui_resolution_tests PRIVATE simxr_core)
         target_link_libraries(ui_input_polling_tests PRIVATE simxr_core)
-        simxr_add_test(mcp_command_tests tests/mcp_command_tests.cpp mcp_commands)
-        target_link_libraries(mcp_command_tests PRIVATE simxr_control)
+        simxr_add_test(windows_runtime_input_tests tests/simulation/WindowsRuntimeInputTests.cpp windows_runtime_input)
+        target_link_libraries(windows_runtime_input_tests PRIVATE simxr_control)
     endif()
 endif()
 
@@ -778,35 +784,34 @@ if(SIMXR_BUILD_PROBES)
     include(cmake/SimxrOpenXrLoader.cmake)
     if(SIMXR_OPENXR_LOADER_TARGET)
         if(WIN32)
-            add_executable(xr_probe_d3d11 probe/xr_probe_windows.cpp)
+            add_executable(xr_probe_d3d11 probes/xr_probe_windows.cpp)
             simxr_configure_target(xr_probe_d3d11)
             simxr_set_output_directory(xr_probe_d3d11)
             target_link_libraries(xr_probe_d3d11 PRIVATE ${SIMXR_OPENXR_LOADER_TARGET} simxr_opengl_headers d3d11 dxgi)
-            add_executable(xr_probe_d3d12 probe/xr_probe_windows.cpp)
+            add_executable(xr_probe_d3d12 probes/xr_probe_windows.cpp)
             simxr_configure_target(xr_probe_d3d12)
             simxr_set_output_directory(xr_probe_d3d12)
             target_compile_definitions(xr_probe_d3d12 PRIVATE SIMXR_PROBE_D3D12)
             target_link_libraries(xr_probe_d3d12 PRIVATE ${SIMXR_OPENXR_LOADER_TARGET} simxr_opengl_headers d3d12 dxgi)
-            add_executable(xr_probe_opengl probe/xr_probe_windows.cpp)
+            add_executable(xr_probe_opengl probes/xr_probe_windows.cpp)
             simxr_configure_target(xr_probe_opengl)
             simxr_set_output_directory(xr_probe_opengl)
             target_compile_definitions(xr_probe_opengl PRIVATE SIMXR_PROBE_OPENGL)
             target_link_libraries(xr_probe_opengl PRIVATE ${SIMXR_OPENXR_LOADER_TARGET} simxr_opengl_headers opengl32 gdi32 user32)
-            add_executable(xr_probe probe/xr_probe.cpp
-                src/control/legacy/WindowsLegacyFiles.cpp src/platform/windows/WindowsRuntimePaths.cpp)
+            add_executable(xr_probe probes/xr_probe.cpp)
             simxr_configure_target(xr_probe)
             simxr_set_output_directory(xr_probe)
-            target_link_libraries(xr_probe PRIVATE ${SIMXR_OPENXR_LOADER_TARGET} d3d12 dxgi)
+            target_link_libraries(xr_probe PRIVATE ${SIMXR_OPENXR_LOADER_TARGET} simxr_control d3d12 dxgi)
             find_library(SIMXR_VULKAN_LIBRARY NAMES vulkan-1 HINTS "$ENV{VULKAN_SDK}/Lib" REQUIRED)
-            add_executable(xr_probe_vk probe/xr_probe_vk.cpp)
+            add_executable(xr_probe_vk probes/xr_probe_vk.cpp)
             simxr_configure_target(xr_probe_vk)
             simxr_set_output_directory(xr_probe_vk)
             target_include_directories(xr_probe_vk PRIVATE "${SIMXR_VULKAN_INCLUDE_DIR}")
             target_link_libraries(xr_probe_vk PRIVATE ${SIMXR_OPENXR_LOADER_TARGET} "${SIMXR_VULKAN_LIBRARY}")
-            target_sources(xr_probe_vk PRIVATE probe/WindowsPendingDelivery.cpp)
+            target_sources(xr_probe_vk PRIVATE probes/WindowsPendingDelivery.cpp)
             target_link_libraries(xr_probe_vk PRIVATE simxr_vulkan_control simxr_probe_vulkan)
             foreach(probe xr_probe_d3d11 xr_probe_d3d12 xr_probe_opengl xr_probe_vk)
-                target_sources(${probe} PRIVATE probe/WindowsRuntimeModule.cpp)
+                target_sources(${probe} PRIVATE probes/WindowsRuntimeModule.cpp)
                 target_link_libraries(${probe} PRIVATE simxr_install_use)
                 if(MINGW)
                     target_link_options(${probe} PRIVATE -municode)
@@ -821,29 +826,29 @@ if(SIMXR_BUILD_PROBES)
                     add_test(NAME windows_${binding}_unload COMMAND xr_probe_${binding}
                         --verify-unload "$<TARGET_FILE:openxr_simulator>")
                     set_tests_properties(windows_${binding}_unload PROPERTIES TIMEOUT 90
-                        ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;XR_PROBE_FRAMES=12")
+                        ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_PROBE_FRAMES=12")
                 endforeach()
                 add_test(NAME windows_vulkan_pending_unload COMMAND xr_probe_vk
                     --verify-pending-unload "$<TARGET_FILE:openxr_simulator>")
                 add_test(NAME windows_vulkan_gated_unload COMMAND xr_probe_vk
                     --verify-gated-unload "$<TARGET_FILE:openxr_simulator>")
                 set_tests_properties(windows_vulkan_pending_unload windows_vulkan_gated_unload PROPERTIES TIMEOUT 120
-                    ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;XR_PROBE_FRAMES=12")
+                    ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_PROBE_FRAMES=12")
                 set_tests_properties(windows_d3d12_loader windows_vulkan_loader windows_vulkan_loader_v1 PROPERTIES TIMEOUT 60)
                 set_tests_properties(windows_d3d12_loader windows_vulkan_loader PROPERTIES
                     ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json")
                 set_tests_properties(windows_vulkan_loader_v1 PROPERTIES
-                    ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;XR_PROBE_VK_ENABLE1=1")
+                    ENVIRONMENT "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json;SIMXR_PROBE_ENABLE1=1")
             endif()
         else()
             find_library(SIMXR_VULKAN_LIBRARY NAMES vulkan libvulkan.so.1 REQUIRED)
-            add_executable(xr_probe_linux probe/xr_probe_linux.cpp probe/VulkanCreationChecks.cpp
-                probe/VulkanAdmissionChecks.cpp)
+            add_executable(xr_probe_linux probes/xr_probe_linux.cpp probes/VulkanCreationChecks.cpp
+                probes/VulkanAdmissionChecks.cpp)
             simxr_configure_target(xr_probe_linux)
             simxr_set_output_directory(xr_probe_linux)
             target_include_directories(xr_probe_linux PRIVATE "${SIMXR_VULKAN_INCLUDE_DIR}")
             target_link_libraries(xr_probe_linux PRIVATE ${SIMXR_OPENXR_LOADER_TARGET}
-                "${SIMXR_VULKAN_LIBRARY}" Threads::Threads ${CMAKE_DL_LIBS} simxr_install_use)
+                "${SIMXR_VULKAN_LIBRARY}" Threads::Threads ${CMAKE_DL_LIBS} simxr_install_use simxr_control)
             if(BUILD_TESTING AND SIMXR_BUILD_RUNTIME)
                 foreach(probe_mode IN ITEMS default v1 threaded bgra body devices quad close_retry creation_rollback native_admission)
                     if(probe_mode STREQUAL "default")
@@ -855,7 +860,7 @@ if(SIMXR_BUILD_PROBES)
                     set(probe_environment "XR_RUNTIME_JSON=${SIMXR_OUTPUT_DIRECTORY}/openxr_simulator.json"
                         "SIMXR_DATA_DIR=${CMAKE_BINARY_DIR}/probe-${probe_mode}" "SIMXR_DETERMINISTIC=1")
                     if(probe_mode STREQUAL "v1")
-                        list(APPEND probe_environment "SIMXR_PROBE_V1=1")
+                        list(APPEND probe_environment "SIMXR_PROBE_ENABLE1=1")
                     elseif(probe_mode STREQUAL "threaded")
                         list(APPEND probe_environment "SIMXR_PROBE_THREADED=1" "SIMXR_PROBE_FRAMES=128")
                     elseif(probe_mode STREQUAL "quad")

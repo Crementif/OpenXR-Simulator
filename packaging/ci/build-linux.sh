@@ -11,11 +11,8 @@ fi
 mkdir -p "$work"
 python3 "$root/tests/packaging/test_linux_abi.py"
 python3 "$root/packaging/ci/fetch-deps.py" --platform linux --output "$work/deps"
-cmake -S "$root" -B "$work/build" -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
-    -DSIMXR_BUILD_RUNTIME=ON -DSIMXR_BUILD_COMPANION=ON -DSIMXR_BUILD_AUTOMATION=ON \
+cmake --preset release -S "$root" -B "$work/build" \
     -DSIMXR_BUILD_PROBES=ON -DSIMXR_BUILD_HEADSET=ON \
-    "-DSIMXR_OUTPUT_DIRECTORY=$work/build/bin" \
     "-DSIMXR_VULKAN_INCLUDE_DIR=$work/deps/Vulkan-Headers/include" \
     "-DSIMXR_RELEASE_REPOSITORY=${SIMXR_RELEASE_REPOSITORY:-}"
 cmake --build "$work/build" --parallel "${SIMXR_CI_JOBS:-4}" --target \

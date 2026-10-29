@@ -9,14 +9,10 @@ import sys
 import tempfile
 import time
 
+from native_support import require, wait_file
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'sdk/python'))
 from simxr_control import Capability, Client
-from test_native_quad import wait_file
-
-
-def require(condition, message):
-    if not condition:
-        raise AssertionError(message)
 
 
 def check_multiple_gpu_tabs(probe, interaction, count=2, input_test=False, portable=False, budget_test=False,
@@ -88,6 +84,22 @@ def check_multiple_gpu_tabs(probe, interaction, count=2, input_test=False, porta
                 require(host.returncode == 0 and 'VUID-' not in host_output and 'preserving' not in host_output,
                         host_output)
             return 0
+        except BaseException:
+            for host, data in hosts:
+                if host.poll() is not None:
+                    print(f"Probe {data.name} exited {host.returncode}:\n{host.communicate()[0]}", flush=True)
+                else:
+                    try:
+                        with Client(data / f'control.{host.pid}.sock') as observer:
+                            session, = observer.sessions()
+                            state = observer.simulation_status(session)['document']
+                            recent = [(item['phase'], item.get('target_frame'), item.get('applied_frame'))
+                                      for item in state.get('transactions', [])[-4:]]
+                            print(f"Probe {data.name}: frame={state.get('frame_id')} pending={state.get('pending')} "
+                                  f"recent (phase, target, applied)={recent}", flush=True)
+                    except Exception as error:
+                        print(f"Probe state unavailable: {error}", flush=True)
+            raise
         finally:
             for host, _ in hosts:
                 if host.poll() is None:
@@ -138,7 +150,7 @@ def main():
     companion = None
     with tempfile.TemporaryDirectory(prefix='simxr-companion-runtime-') as temporary:
         data = Path(temporary)
-        export_path = data / 'frame-é.ppm'
+        export_path = data / 'frame-é.png'
         screenshot_path = data / 'companion-é.bmp'
         environment = dict(os.environ, SIMXR_DATA_DIR=temporary, SIMXR_PROBE_CONTROL='1',
                            SIMXR_PROBE_RETAIN_CONTROL='1', SIMXR_PROBE_GPU_INSPECTION='1')
@@ -210,7 +222,7 @@ def main():
                     return 77
                 if failed_export:
                     require(companion.returncode == 1 and
-                            'Runtime smoke export failed: Cannot open image export destination' in output and
+                            'Runtime smoke export failed:' in output and
                             'PASS companion production controls' not in output,
                             'An existing destination directory was accepted as a successful export\n' + output)
                     require(export_path.is_dir(), 'Failed export changed the destination directory')
@@ -222,12 +234,11 @@ def main():
                 wait_file(data / 'control.destroyed', host)
                 require(not observer.sessions(), 'Public XR sessions survived teardown')
                 if pixels:
-                    ppm = export_path.read_bytes()
-                    header, source = ppm.split(b'\n255\n', 1)
-                    require(header.startswith(b'P6\n# session=') and b'frame=4 capture=' in header and
-                            b'target=2 layer=0 view=0 slices=1 slice_height=48' in header and
-                            header.endswith(b'\n64 48'),
-                            'Viewable companion export lost frame identity or dimensions')
+                    from PIL import Image
+                    with Image.open(export_path) as image:
+                        require(image.format == 'PNG' and image.size == (64, 48),
+                                'Companion export lost its image format or dimensions')
+                        source = image.convert('RGB').tobytes()
                     expected = (137, 188, 225) if midtone and srgb else (
                         (64, 128, 191) if midtone else (255, 0, 0))
                     require(len(source) == 64 * 48 * 3 and
@@ -245,7 +256,7 @@ def main():
                         destination = Path(destination) / ('srgb' if srgb else 'unorm') if midtone else Path(destination)
                         destination.mkdir(parents=True, exist_ok=True)
                         shutil.copy(screenshot_path, destination / 'companion.bmp')
-                        shutil.copy(export_path, destination / 'frame.ppm')
+                        shutil.copy(export_path, destination / 'frame.png')
                     require(matching > 2000,
                             f'Actual companion window did not show display-encoded RGB {display}: {matching}')
                     print(f'PASS unchanged source bytes and actual display-encoded window pixels: {matching}')

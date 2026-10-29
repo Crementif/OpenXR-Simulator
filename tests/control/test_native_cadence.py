@@ -6,7 +6,7 @@ import sys
 import tempfile
 import time
 
-from test_native_quad import require
+from native_support import require
 from simxr_control import Client
 
 

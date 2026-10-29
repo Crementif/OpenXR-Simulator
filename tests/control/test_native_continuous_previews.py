@@ -1,13 +1,10 @@
 """Every accepted image survives pause/step until bounded oldest eviction."""
-import os
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 import time
 
-from test_native_quad import export, require, wait_file
-from test_native_filtered_capture import command
+from native_support import probe_environment, running_probe, export, require, wait_file, command
 from simxr_control import Capability, Client, CommandKind, ControlError, ErrorCode
 
 
@@ -30,14 +27,11 @@ def retain(client, session, frame, states=None):
 def main(probe):
     with tempfile.TemporaryDirectory(prefix='simxr-continuous-') as temporary:
         data = Path(temporary)
-        environment = dict(os.environ, SIMXR_DATA_DIR=temporary, SIMXR_PROBE_CONTROL='1',
+        environment = probe_environment(data, SIMXR_PROBE_CONTROL='1',
                            SIMXR_PROBE_RETAIN_CONTROL='1', SIMXR_PROBE_GPU_INSPECTION='1',
                            SIMXR_PROBE_RECORDING='1', SIMXR_PROBE_DYNAMIC_COLOR='1',
                            SIMXR_PROBE_FRAMES='302', SIMXR_WIDTH='64', SIMXR_HEIGHT='48')
-        environment.pop('SIMXR_CONTROL_SOCKET', None)
-        host = subprocess.Popen([probe], env=environment, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True)
-        try:
+        with running_probe([probe], environment) as host:
             wait_file(data / 'control.ready', host)
             with Client(data / f'control.{host.pid}.sock') as client:
                 session, = client.sessions()
@@ -124,14 +118,6 @@ def main(probe):
             output = host.communicate(timeout=15)[0]
             require(host.returncode == 0 and 'VUID-' not in output and 'Vulkan validation error' not in output, output)
             print('PASS 301 strict steps with live budget growth/shrink and more than 256 frames: every image, pause survival, exact pixels, H.264 decode, bounded bytes, GPU teardown')
-        except Exception:
-            if host.poll() is not None:
-                print(host.communicate()[0], file=sys.stderr)
-            raise
-        finally:
-            if host.poll() is None:
-                host.kill()
-                print(host.communicate()[0], file=sys.stderr)
 
 
 if __name__ == '__main__':

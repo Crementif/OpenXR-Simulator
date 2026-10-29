@@ -13,10 +13,9 @@ import subprocess
 import sys
 import tempfile
 from urllib.parse import urlsplit
-
 from PIL import Image
 
-from test_mcp_connector import Client, eventually
+from mcp_support import Client, discovery_record, eventually
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "sdk/python"))
 from simxr_control import Client as NativeClient, decode_command
@@ -41,20 +40,15 @@ def main():
                                       text=True, bufsize=1, start_new_session=True)
             try:
                 client = Client(bridge)
-                result = client.rpc("initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
-                                                   "clientInfo": {"name": "test", "version": "1"}})
+                result = client.initialize('test')
                 assert "result" in result, result
-                client.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
                 names = {tool["name"] for tool in client.rpc("tools/list")["result"]["tools"]}
                 assert "simulator_shutdown" in names
                 expect_luau = os.environ.get("SIMXR_EXPECT_MCP_LUAU", "1") == "1"
                 assert ("simulator_luau_run" in names) == expect_luau
 
-                def record():
-                    files = list(discovery.glob("*.json"))
-                    return json.loads(files[0].read_text()) if len(files) == 1 else None
-
-                app_pid = int(eventually(record)["process_id"])
+                app_pid = int(eventually(lambda: discovery_record(discovery))["process_id"])
                 assert b"--windowless" in Path(f"/proc/{app_pid}/cmdline").read_bytes().split(b"\0")
                 maps = Path(f"/proc/{app_pid}/maps").read_text()
                 assert "libvulkan_lvp" not in maps and "libvulkan_radeon" not in maps
@@ -90,10 +84,9 @@ def main():
                                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log,
                                                 text=True, bufsize=1, start_new_session=True)
                 other = Client(other_bridge)
-                init = other.rpc("initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
-                                                "clientInfo": {"name": "other", "version": "1"}})
+                init = other.initialize('other')
                 assert "result" in init, init
-                other.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
                 assert other.tool("debug_status", {"connection": debug})["error"]
                 other_open = other.tool("debug_connect", {"application_id": application_id})
                 assert not other_open["error"], other_open
@@ -226,8 +219,8 @@ def main():
                                                     {"connection": debug, "export": ticket}})
                         assert duplicate_link["result"]["content"][1]["uri"] == link["uri"]
                         url = urlsplit(link["uri"])
-                        discovery_record = record()
-                        assert url.hostname == "127.0.0.1" and url.port == discovery_record["port"]
+                        download_record = discovery_record(discovery)
+                        assert url.hostname == "127.0.0.1" and url.port == download_record["port"]
 
                         def download(headers, selected=url, response_headers=None):
                             connection = http.client.HTTPConnection(selected.hostname, selected.port, timeout=30)
@@ -239,7 +232,7 @@ def main():
                             connection.close()
                             return status, body
 
-                        authorization = {"Authorization": "Bearer " + discovery_record["token"]}
+                        authorization = {"Authorization": "Bearer " + download_record["token"]}
                         assert download({})[0] == 401
                         assert download(dict(authorization, Origin="https://attacker.example"))[0] == 403
                         assert download(dict(authorization, **{"MCP-Session-Id": "wrong"}))[0] == 404
@@ -368,6 +361,18 @@ def main():
                                         "arguments": {"connection": debug, "export": reduced_ticket,
                                                       "format": image_format, "quality": 85}})
                                     assert repeated["result"] == rendered["result"], repeated
+                                    scoped = dict(common, export=reduced_ticket, format=image_format, quality=85)
+                                    mismatched = dict(scoped, generation=str(int(common["generation"]) + 1))
+                                    assert client.tool("debug_render_export", mismatched)["error"]
+                                    incomplete = dict(scoped)
+                                    del incomplete["generation"]
+                                    assert client.tool("debug_render_export", incomplete)["error"]
+                                    valid_scope = client.rpc("tools/call", {"name": "debug_render_export", "arguments": scoped})
+                                    assert valid_scope["result"] == rendered["result"], valid_scope
+                                    foreign = other.rpc("tools/call", {"name": "debug_render_export",
+                                        "arguments": {"connection": other_debug, "export": reduced_ticket,
+                                                      "format": image_format, "quality": 85}})
+                                    assert foreign["result"]["isError"], foreign
                                     with Image.open(BytesIO(encoded)) as picture:
                                         assert picture.size == (output_width, output_height)
                                         if image_format == "png":

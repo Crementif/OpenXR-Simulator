@@ -1,64 +1,27 @@
 """Explicit GPU export analysis of the real Linux VARJO quad-view path."""
-import os
+
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 import time
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'sdk/python'))
+from native_support import probe_environment, running_probe, export, require, wait_file
 from simxr_control import Capability, Client, CommandKind, TargetKind
-
-
-def require(condition, detail):
-    if not condition:
-        raise AssertionError(detail)
-
-
-def wait_file(path, host):
-    deadline = time.monotonic() + 15
-    while not path.exists():
-        if host.poll() is not None:
-            raise AssertionError(host.communicate()[0])
-        require(time.monotonic() < deadline, f'Native boundary missing: {path.name}')
-        time.sleep(0.005)
-
-
-def export(client, reader, layer):
-    identity = client.start_export(reader, layer=layer)['export_id']
-    try:
-        deadline = time.monotonic() + 5
-        status = client.export_info(identity)
-        while status['phase'] == 'pending':
-            require(time.monotonic() < deadline, 'GPU export did not complete')
-            time.sleep(0.005)
-            status = client.export_info(identity)
-        require(status['phase'] == 'complete', status)
-        pixels = bytearray()
-        while len(pixels) < status['total_bytes']:
-            chunk = client.read_export(identity, len(pixels), 64001)
-            require(chunk['offset'] == len(pixels) and chunk['bytes'], 'Invalid export chunk')
-            pixels.extend(chunk['bytes'])
-        return status, pixels
-    finally:
-        client.release_export(identity)
 
 
 def main():
     foveated = "--foveated" in sys.argv[2:]
     with tempfile.TemporaryDirectory(prefix='simxr-native-quad-') as temporary:
         data = Path(temporary)
-        environment = dict(os.environ, SIMXR_DATA_DIR=temporary, SIMXR_PROBE_CONTROL='1',
+        environment = probe_environment(data, SIMXR_PROBE_CONTROL='1',
                            SIMXR_PROBE_RETAIN_CONTROL='1', SIMXR_PROBE_GPU_INSPECTION='1',
                            SIMXR_PROBE_QUAD='1')
         if foveated:
             environment.update(SIMXR_PROBE_FOVEATED='1', SIMXR_PROBE_FRAMES='4')
         else:
             environment.pop('SIMXR_PROBE_FOVEATED', None)
-        environment.pop('SIMXR_CONTROL_SOCKET', None)
-        host = subprocess.Popen([sys.argv[1], '--quad'], env=environment,
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        try:
+
+        with running_probe([sys.argv[1], '--quad'], environment) as host:
             wait_file(data / 'control.ready', host)
             with Client(data / f'control.{host.pid}.sock') as client:
                 session, = client.sessions()
@@ -197,14 +160,6 @@ def main():
                 print(output)
             print('PASS: actual four-view composition and exact selected inset/outer RGBA after app-device destruction')
             return 0
-        finally:
-            if host.poll() is None:
-                host.kill()
-                host.wait()
-            remaining = host.stdout.read() if not host.stdout.closed else ""
-            if remaining:
-                print(remaining, file=sys.stderr)
-            host.stdout.close()
 
 
 if __name__ == '__main__':

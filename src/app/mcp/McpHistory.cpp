@@ -303,6 +303,17 @@ HistoryRequest PrepareHistory(const std::string& name, const Json& arguments, st
 	}
 	return request;
 }
+Json ProjectionHistoryDocument(const wire::Message& message, std::uint32_t count, std::uint64_t generation)
+{
+	const auto* document = message.Find(tag::Document);
+	if (!document)
+		throw std::runtime_error("Runtime omitted projection history");
+	auto value = InspectionJson(document->value);
+	if (!value.is_object() || value.value("generation", "") != std::to_string(generation) ||
+		!value.contains("entries") || !value["entries"].is_array() || value["entries"].size() > count)
+		throw std::runtime_error("Runtime returned invalid projection history");
+	return value;
+}
 Json HistoryReply(const wire::Message& message, const HistoryRequest& request, std::uint64_t generation)
 {
 	const auto* error = message.Find(tag::Error);
@@ -318,16 +329,7 @@ Json HistoryReply(const wire::Message& message, const HistoryRequest& request, s
 		return Result(failure, true);
 	}
 	if (request.opcode == wire::OpCode::ReadProjectionHistory)
-	{
-		const auto* document = message.Find(tag::Document);
-		if (!document)
-			throw std::runtime_error("Runtime omitted projection history");
-		auto value = InspectionJson(document->value);
-		if (!value.is_object() || value.value("generation", "") != std::to_string(generation) ||
-			!value.contains("entries") || !value["entries"].is_array() || value["entries"].size() > request.count)
-			throw std::runtime_error("Runtime returned invalid projection history");
-		return Result({{"ok", true}, {"document", std::move(value)}});
-	}
+		return Result({{"ok", true}, {"document", ProjectionHistoryDocument(message, request.count, generation)}});
 	const auto frames = Nested(message.Find(tag::Frames));
 	if (frames.fields.size() > request.count)
 		throw std::runtime_error("Runtime returned too many historical frames");

@@ -23,11 +23,10 @@ struct ImageExportWriteResult
 	enum class Status
 	{
 		Saved,
-		OpenFailed,
-		WriteFailed
+		Failed
 	};
 	Status status;
-	std::string path;
+	std::string path, error;
 };
 class ImageExportWriter
 {
@@ -45,7 +44,7 @@ class ImageExportWriter
 		std::filesystem::path destination;
 		std::vector<std::byte> bytes;
 		ImageExportMetadata metadata;
-		bool ppm = false;
+		bool image = false;
 	};
 	void Run() noexcept;
 	mutable std::mutex m_mutex;
@@ -81,7 +80,7 @@ class ImageExportTask
 	RuntimePanelRequests& m_requests;
 	ImageExportWriter m_writer;
 	std::uint64_t m_id = 0, m_offset = 0, m_size = 0;
-	bool m_requested = false, m_succeeded = false, m_video = false;
+	bool m_requested = false, m_succeeded = false, m_video = false, m_ready = false;
 	std::vector<std::byte> m_bytes;
 	std::string m_path, m_detail;
 	ImageExportMetadata m_metadata;

@@ -6,13 +6,10 @@ import sys
 import tempfile
 import time
 
+from native_support import require
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'sdk/python'))
 from simxr_control import Client, Capability, CommandKind, TargetKind
-
-
-def require(condition, message):
-    if not condition:
-        raise AssertionError(message)
 
 
 def main():

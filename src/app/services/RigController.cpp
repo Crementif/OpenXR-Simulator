@@ -197,7 +197,7 @@ bool RigController::MatchesTarget(const RigTarget& target) const noexcept
 }
 bool RigController::IsActive() const
 {
-	const auto phase = m_runner.Snapshot().phase;
+	const auto phase = m_runner.Phase();
 	return phase == automation::RigPhase::Running || phase == automation::RigPhase::Paused;
 }
 std::string RigController::SaveReport(const std::string& path, bool junit)

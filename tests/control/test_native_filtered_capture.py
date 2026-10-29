@@ -1,33 +1,23 @@
 """Projection/quad composition captures retain exact GPU output through source teardown."""
-import os
+
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 
-from test_native_quad import export, require, wait_file
+from native_support import probe_environment, running_probe, command, export, require, wait_file
 from simxr_control import Capability, Client, CommandKind, TargetKind
 from simxr_control.errors import ControlError
 from simxr_control.protocol import ErrorCode
 
 
-def command(client, lease, kind, **values):
-    result = client.wait(lease.session, client.submit(lease, kind, **values)['operation_id'])
-    require(result['phase'] == 'complete', result)
-    client.acknowledge(lease, result['command_id'])
-    return result
-
-
 def main():
     with tempfile.TemporaryDirectory(prefix='sx-filter-') as temporary:
         data = Path(temporary)
-        environment = dict(os.environ, SIMXR_DATA_DIR=temporary, SIMXR_PROBE_CONTROL='1',
+        environment = probe_environment(data, SIMXR_PROBE_CONTROL='1',
                            SIMXR_PROBE_RETAIN_CONTROL='1', SIMXR_PROBE_GPU_INSPECTION='1',
                            SIMXR_WIDTH='64', SIMXR_HEIGHT='48')
-        environment.pop('SIMXR_CONTROL_SOCKET', None)
-        host = subprocess.Popen([sys.argv[1]], env=environment, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True)
-        try:
+
+        with running_probe([sys.argv[1]], environment) as host:
             wait_file(data / 'control.ready', host)
             with Client(data / f'control.{host.pid}.sock') as client:
                 session, = client.sessions()
@@ -87,10 +77,6 @@ def main():
                 require(host.returncode == 0, output)
                 require('VUID-' not in output and 'Vulkan validation error' not in output, output)
             print('PASS exact projection/quad GPU composition and retained output after application-device teardown')
-        finally:
-            if host.poll() is None:
-                host.kill()
-                host.communicate()
 
 
 if __name__ == '__main__':

@@ -8,7 +8,7 @@ import tempfile
 import threading
 import time
 
-from test_native_quad import require, wait_file
+from native_support import require, wait_file
 from simxr_control import Client, TargetKind, record_frames
 import simxr_control.frame_recording as recording
 

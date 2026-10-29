@@ -7,7 +7,6 @@
 #include <optional>
 #include <string>
 #include <thread>
-#include <unordered_set>
 
 #include <nlohmann/json.hpp>
 
@@ -36,7 +35,6 @@ class McpFlickerMonitor
 	std::thread m_worker;
 	std::shared_ptr<McpCancellation> m_cancellation;
 	nlohmann::json m_status = nullptr, m_options = nullptr;
-	std::unordered_set<std::string> m_retired;
 	bool m_closed = false;
 };
 }

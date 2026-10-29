@@ -36,10 +36,12 @@ void ImageCache::Insert(std::string key, std::shared_ptr<const CachedImage> imag
 		image->mediaType.size() > m_maxBytes - key.size() - image->data.size() || !m_maxEntries)
 		return;
 	const auto bytes = key.size() + image->data.size() + image->mediaType.size();
+	std::list<Entry> retired;
+	retired.push_front({std::move(key), std::move(image), bytes});
 	std::lock_guard lock(m_mutex);
 	for (auto it = m_entries.begin(); it != m_entries.end(); ++it)
 	{
-		if (it->key == key)
+		if (it->key == retired.front().key)
 		{
 			m_entries.splice(m_entries.begin(), m_entries, it);
 			return;
@@ -48,9 +50,9 @@ void ImageCache::Insert(std::string key, std::shared_ptr<const CachedImage> imag
 	while (!m_entries.empty() && (m_entries.size() >= m_maxEntries || m_bytes > m_maxBytes - bytes))
 	{
 		m_bytes -= m_entries.back().bytes;
-		m_entries.pop_back();
+		retired.splice(retired.end(), m_entries, std::prev(m_entries.end()));
 	}
-	m_entries.push_front({std::move(key), std::move(image), bytes});
+	m_entries.splice(m_entries.begin(), retired, retired.begin());
 	m_bytes += bytes;
 }
 } // namespace simxr::app::mcp

@@ -1,7 +1,6 @@
 """MCP owner/routing/concurrency tests. CPU files are compatibility fixtures."""
 
 import asyncio
-import base64
 import importlib.util
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO, StringIO
@@ -21,10 +20,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "mcp-server"))
 sys.path.insert(0, str(ROOT / "sdk/python"))
 from mcp_application import McpApplication
-from runtime_artifacts import RuntimeArtifacts
 from tool_catalog import tool_definitions
 from tool_results import ImageResult, TextResult
-from file_commands import encode_file_edit
 
 HOST = None
 
@@ -76,7 +73,7 @@ class ApplicationTests(unittest.TestCase):
         self.debug = DebugFixture()
         self.legacy = LegacyFixture()
         self.app = McpApplication(
-            self.root, debug=self.debug, legacy=self.legacy, platform="posix"
+            self.root, debug=self.debug, legacy=self.legacy
         )
         self.addCleanup(self.directory.cleanup)
         self.addCleanup(self.app.close)
@@ -233,50 +230,67 @@ class ApplicationTests(unittest.TestCase):
         finally:
             tools.close()
 
-    def test_fallback_encodes_without_retaining_mutable_arguments(self):
-        arguments = {"left_eye": {"left_deg": -30}, "right_eye": {"right_deg": 35}}
-        edit = encode_file_edit("set_fov", arguments, "posix")
-        arguments["left_eye"]["left_deg"] = -80
-        self.assertAlmostEqual(
-            json.loads(edit.document)["left"]["aL"], -30 * 3.141592653589793 / 180
-        )
-        with self.assertRaises(AttributeError):
-            edit.document = b"changed"
-        result = self.app.call("set_head_pose", {"x": 4, "yaw_deg": 90})
-        self.assertIn("queued", result[0].text)
-        payload = json.loads((self.root / "head_pose_command.json").read_text())
-        self.assertEqual(payload["x"], 4)
-        self.assertAlmostEqual(payload["yaw"], 3.141592653589793 / 2)
-        self.assertNotIn("roll", payload)
-        self.assertEqual(list(self.root.glob("*.tmp")), [])
+    def test_projection_requires_native_history_and_preserves_existing_files(self):
+        from simxr_control import Capability, Session
 
-    def test_atomic_fallback_publication_is_valid_under_concurrent_edits(self):
-        with ThreadPoolExecutor(max_workers=8) as workers:
-            list(
-                workers.map(
-                    lambda value: self.app.call("set_ipd", {"ipd_mm": value}),
-                    range(60, 68),
-                )
-            )
-        self.assertIn(
-            json.loads((self.root / "ipd_command.json").read_text())["ipd_mm"],
-            range(60, 68),
-        )
-        self.assertEqual(list(self.root.glob("*.tmp")), [])
+        saved = self.root / "projection_log.json"
+        saved.write_text('{"entries": []}')
+        with patch("simxr_control.discover", return_value=[]):
+            with self.assertRaisesRegex(RuntimeError, "No runtime control endpoint"):
+                self.app.call("get_projection_log", {})
+        session = Session(1, 1)
+        endpoint = Mock()
+        endpoint.sessions.return_value = [session]
+        endpoint.status.return_value = {"capabilities": Capability(0)}
+        with patch("simxr_control.discover", return_value=["chosen.sock"]), \
+             patch("simxr_control.Client", return_value=endpoint):
+            with self.assertRaisesRegex(RuntimeError, "does not support projection history"):
+                self.app.call("get_projection_log", {})
+            endpoint.status.return_value = {"capabilities": Capability.PROJECTION_HISTORY}
+            endpoint.projection_history.return_value = {"document": {"entries": [], "count": 0}}
+            result = json.loads(self.app.call("get_projection_log", {"max_entries": 2})[0].text)
+            self.assertEqual(result["entries"], [])
+            self.assertEqual(result["transport"], "frame_history")
+            endpoint.projection_history.assert_called_once_with(session, count=2)
+        self.assertEqual(saved.read_text(), '{"entries": []}')
+        self.assertEqual(list(self.root.iterdir()), [saved])
 
-    def test_conflicting_capture_does_not_replace_request_and_close_interrupts_wait(
-        self,
-    ):
+    def test_controls_without_endpoint_fail_without_writing_commands(self):
+        from legacy_control import LegacyControl, TOOLS
+        from pose_sequence import TOOLS as SEQUENCE_TOOLS
+
+        app = McpApplication(self.root, debug=self.debug, legacy=LegacyControl(self.root))
+        self.addCleanup(app.close)
+        with patch("simxr_control.discover", return_value=[]):
+            for name in TOOLS | SEQUENCE_TOOLS:
+                with self.subTest(name=name):
+                    result = json.loads(app.call(name, {})[0].text)
+                    self.assertFalse(result["ok"])
+                    self.assertIn("No runtime control endpoint", result["error"])
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def block_capture(self):
+        entered = threading.Event()
+
+        def capture(eye, timeout, wait, layer):
+            entered.set()
+            wait(30)
+            raise AssertionError("Capture wait was not interrupted")
+
+        active = patch.object(self.app._capture._retained, "capture", side_effect=capture)
+        active.start()
+        self.addCleanup(active.stop)
+        return entered
+
+    def test_conflicting_capture_and_close_interrupts_wait(self):
+        entered = self.block_capture()
         with ThreadPoolExecutor(max_workers=2) as workers:
             pending = workers.submit(
                 self.app.call, "capture_screenshot", {"timeout": 30}
             )
-            marker = self.root / "screenshot_request.json"
-            wait_for(marker.exists)
-            original = marker.read_bytes()
+            wait_for(entered.is_set)
             conflict = self.app.call("validate_stereo", {"timeout": 30})
             self.assertIn("already owns", conflict[0].text)
-            self.assertEqual(marker.read_bytes(), original)
             # Another independent domain remains available while capture waits.
             self.assertIn("session_state", self.app.call("get_frame_info", {})[0].text)
             started = time.monotonic()
@@ -287,12 +301,13 @@ class ApplicationTests(unittest.TestCase):
         self.assertEqual((self.debug.closed, self.legacy.closed), (1, 1))
 
     def test_async_event_loop_and_status_remain_responsive_during_capture(self):
+        entered = self.block_capture()
         async def scenario():
             pending = asyncio.create_task(
                 self.app.call_async("capture_screenshot", {"timeout": 30})
             )
             for _ in range(200):
-                if (self.root / "screenshot_request.json").exists():
+                if entered.is_set():
                     break
                 await asyncio.sleep(0.005)
             else:
@@ -308,28 +323,25 @@ class ApplicationTests(unittest.TestCase):
         asyncio.run(scenario())
 
     def test_cancelled_async_waiter_does_not_release_capture_worker_ownership(self):
+        entered = self.block_capture()
         async def scenario():
-            marker = self.root / "screenshot_request.json"
             pending = asyncio.create_task(
                 self.app.call_async("capture_screenshot", {"timeout": 30})
             )
             for _ in range(200):
-                if marker.exists():
+                if entered.is_set():
                     break
                 await asyncio.sleep(0.005)
             else:
                 self.fail("Async capture was never admitted")
-            original = marker.read_bytes()
             pending.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await pending
             conflict = await self.app.call_async("capture_screenshot", {"timeout": 1})
             self.assertIn("already owns", conflict[0].text)
-            self.assertEqual(marker.read_bytes(), original)
             # The worker, rather than the cancelled coroutine, retains the lane
             # and admission. Joined close interrupts its wait and drains it.
             await asyncio.wait_for(asyncio.to_thread(self.app.close), 1)
-            self.assertEqual(marker.read_bytes(), original)
             self.assertIn("closed", self.app.call("capture_screenshot", {})[0].text)
 
         asyncio.run(scenario())
@@ -468,110 +480,28 @@ class ApplicationTests(unittest.TestCase):
             self.assertIn("error", result)
             json.dumps(result, allow_nan=False)
 
-    def test_runtime_capture_failure_is_reported_without_waiting_for_pixels(self):
-        (self.root / "screenshot_status.json").write_text(
-            json.dumps({"layer": "quad", "success": False, "error": "stale failure"})
-        )
-        with ThreadPoolExecutor(max_workers=1) as workers:
-            pending = workers.submit(
-                self.app.call, "capture_screenshot", {"timeout": 3, "layer": "quad"}
-            )
-            wait_for((self.root / "screenshot_request.json").exists)
-            temporary = self.root / "screenshot_status.json.tmp"
-            temporary.write_text(
-                json.dumps(
-                    {
-                        "layer": "quad",
-                        "success": False,
-                        "error": "Unsupported HDR quad format",
-                    }
-                )
-            )
-            temporary.replace(self.root / "screenshot_status.json")
-            result = pending.result(timeout=1)
-        self.assertIn(
-            "Runtime capture failed: Unsupported HDR quad format", result[0].text
-        )
-        self.assertNotIn("timeout", result[0].text.lower())
-        self.assertFalse((self.root / "screenshot.bmp").exists())
+    def test_capture_without_endpoint_does_not_publish_requests(self):
+        with patch("simxr_control.discover", return_value=[]):
+            for tool in ("capture_screenshot", "capture_flicker_window", "capture_ui_flicker_window"):
+                with self.subTest(tool=tool):
+                    result = self.app.call(tool, {})
+                    self.assertIn("No runtime control endpoint", result[0].text)
+        self.assertEqual(list(self.root.iterdir()), [])
 
     @unittest.skipUnless(importlib.util.find_spec("PIL"), "Pillow is not installed")
-    def test_screenshot_pixels_are_processed_without_another_file_request(self):
+    def test_retained_eye_is_not_cropped_twice(self):
         from PIL import Image
 
         buffer = BytesIO()
         Image.new("RGB", (4, 2), (255, 0, 0)).save(buffer, format="BMP")
-        data = buffer.getvalue()
-        with ThreadPoolExecutor(max_workers=1) as workers:
-            pending = workers.submit(
-                self.app.call, "capture_screenshot", {"timeout": 2}
-            )
-            wait_for((self.root / "screenshot_request.json").exists)
-            temporary = self.root / "screenshot.bmp.tmp"
-            temporary.write_bytes(data)
-            temporary.replace(self.root / "screenshot.bmp")
-            result = pending.result(timeout=2)
-        self.assertIn("Screenshot captured", result[0].text)
+        with patch.object(self.app._capture._retained, "capture",
+                          return_value=(buffer.getvalue(), {"transport": "retained_preview"})) as capture:
+            result = self.app.call("capture_screenshot", {"eye": "left"})
+        self.assertEqual(capture.call_args.args[0], "left")
         self.assertIsInstance(result[1], ImageResult)
         with Image.open(BytesIO(result[1].data)) as converted:
             self.assertEqual(converted.size, (4, 2))
-        self.assertFalse((self.root / "screenshot.bmp").exists())
-        # The workflow never deletes a request marker it does not own. Its
-        # runtime, not the MCP reader, acknowledges staging/removal.
-        self.assertTrue((self.root / "screenshot_request.json").exists())
-
-    @unittest.skipUnless(importlib.util.find_spec("PIL"), "Pillow is not installed")
-    def test_quad_capture_uses_quad_pixels_and_all_uses_composite(self):
-        from PIL import Image
-
-        def publish(name, color):
-            encoded = BytesIO()
-            Image.new("RGB", (8, 4), color).save(encoded, format="BMP")
-            temporary = self.root / (name + ".tmp")
-            temporary.write_bytes(encoded.getvalue())
-            temporary.replace(self.root / name)
-
-        windows = McpApplication(
-            self.root, debug=DebugFixture(), legacy=LegacyFixture(), platform="nt"
-        )
-        self.addCleanup(windows.close)
-
-        def capture(layer, *, quad=True, application=windows):
-            marker = self.root / "screenshot_request.json"
-            marker.unlink(missing_ok=True)
-            with ThreadPoolExecutor(max_workers=1) as workers:
-                pending = workers.submit(
-                    application.call,
-                    "capture_screenshot",
-                    {"layer": layer, "timeout": 2},
-                )
-                wait_for(marker.exists)
-                publish("screenshot.bmp", (255, 0, 0))
-                if layer == "quad" and application is windows:
-                    # The composite may be visible before its quad side image.
-                    # A Windows quad request must not return that composite.
-                    time.sleep(0.15)
-                    self.assertFalse(pending.done())
-                if quad:
-                    publish("screenshot_quad.bmp", (0, 255, 0))
-                result = pending.result(timeout=2)
-            with Image.open(BytesIO(result[1].data)) as image:
-                return image.getpixel((0, 0))
-
-        publish("screenshot_quad.bmp", (0, 0, 255))  # Stale before request.
-        quad_color = capture("quad")
-        self.assertGreater(quad_color[1], 250)
-        self.assertLess(quad_color[0], 5)
-        self.assertFalse((self.root / "screenshot_quad.bmp").exists())
-        composite_color = capture("all")
-        self.assertGreater(composite_color[0], 250)
-        self.assertLess(composite_color[1], 5)
-        self.assertTrue((self.root / "screenshot_quad.bmp").exists())
-        # A Linux quad writer uses the ordinary filename. The old side image is
-        # ignored and cannot override its new result.
-        fallback_color = capture("quad", quad=False, application=self.app)
-        self.assertGreater(fallback_color[0], 250)
-        self.assertLess(fallback_color[1], 5)
+        self.assertEqual(list(self.root.iterdir()), [])
 
     def test_retained_incident_publishes_only_after_window_release(self):
         from retained_incident import RetainedIncident
@@ -662,26 +592,10 @@ class ApplicationTests(unittest.TestCase):
             item for item in tool_definitions("posix") if item["name"] == "debug_step"
         )
         self.assertNotIn("must_not_leak", again["inputSchema"]["required"])
-        self.assertNotIn("enable_wheel_sweep", {item["name"] for item in first})
-        self.assertIn(
-            "enable_wheel_sweep", {item["name"] for item in tool_definitions("nt")}
+        self.assertNotIn("set_headset_profile", {item["name"] for item in first})
+        self.assertNotIn(
+            "set_headset_profile", {item["name"] for item in tool_definitions("nt")}
         )
-
-    def test_artifact_bounds_and_close_revoke_publication(self):
-        artifacts = RuntimeArtifacts(self.root)
-        artifacts.publish("head_pose_command.json", {"x": 2})
-        artifacts.close()
-        with self.assertRaises(RuntimeError):
-            artifacts.publish("head_pose_command.json", {"x": 3})
-        with self.assertRaises(ValueError):
-            artifacts.publish_bytes("../escape.json", b"{}")
-        with self.assertRaises(ValueError):
-            artifacts.publish_bytes("too_large.json", bytes(64 * 1024 + 1))
-        self.assertEqual(
-            json.loads((self.root / "head_pose_command.json").read_text())["x"], 2
-        )
-        self.assertEqual(list(self.root.glob("*.tmp")), [])
-
 
 @unittest.skipUnless(HOST, "C++ endpoint host was not supplied")
 class EndpointTests(unittest.TestCase):
@@ -742,7 +656,7 @@ class EndpointTests(unittest.TestCase):
 @unittest.skipUnless(importlib.util.find_spec("mcp"), "MCP SDK is not installed")
 class StdioTests(unittest.TestCase):
     @unittest.skipUnless(importlib.util.find_spec("PIL"), "Pillow is not installed")
-    def test_real_mcp_stdio_control_and_concurrent_compatibility_capture(self):
+    def test_real_mcp_stdio_control_and_unsupported_capture(self):
         if not HOST:
             self.skipTest("C++ endpoint host was not supplied")
         from mcp import ClientSession, StdioServerParameters
@@ -819,34 +733,12 @@ class StdioTests(unittest.TestCase):
                             self.assertFalse(
                                 (directory / "screenshot_request.json").exists()
                             )
-                            capture = asyncio.create_task(
-                                client.call_tool("capture_screenshot", {"timeout": 3})
-                            )
-                            await asyncio.to_thread(
-                                wait_for, (directory / "screenshot_request.json").exists
-                            )
-                            status = await asyncio.wait_for(
-                                call("debug_status", common), 0.5
-                            )
+                            result = await asyncio.wait_for(
+                                client.call_tool("capture_screenshot", {"timeout": 3}), 2)
+                            self.assertIn("does not support screenshot capture", result.content[0].text)
+                            self.assertFalse((directory / "screenshot_request.json").exists())
+                            status = await asyncio.wait_for(call("debug_status", common), 0.5)
                             self.assertTrue(status["ok"], status)
-                            self.assertFalse(capture.done())
-                            encoded = BytesIO()
-                            Image.new("RGB", (8, 4), (255, 0, 0)).save(
-                                encoded, format="BMP"
-                            )
-                            temporary_image = directory / "screenshot.bmp.tmp"
-                            temporary_image.write_bytes(encoded.getvalue())
-                            temporary_image.replace(directory / "screenshot.bmp")
-                            result = await asyncio.wait_for(capture, 2)
-                            self.assertFalse(result.isError, result)
-                            jpeg = next(
-                                item for item in result.content if item.type == "image"
-                            )
-                            self.assertEqual(jpeg.mimeType, "image/jpeg")
-                            with Image.open(
-                                BytesIO(base64.b64decode(jpeg.data))
-                            ) as image:
-                                self.assertEqual(image.size, (8, 4))
                             await call(
                                 "debug_disconnect",
                                 {"connection": connected["connection"]},

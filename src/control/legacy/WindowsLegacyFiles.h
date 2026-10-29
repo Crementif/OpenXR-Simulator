@@ -10,8 +10,6 @@
 namespace mcp
 {
 std::uint64_t WindowsLegacyProcessId();
-bool ClaimWindowsLegacyCommand(const std::filesystem::path& source, const std::filesystem::path& destination);
-std::string ReadWindowsLegacyDocument(const std::filesystem::path& path);
 
 class WindowsLegacyOutput
 {

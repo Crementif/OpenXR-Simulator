@@ -12,7 +12,8 @@ from PIL import Image
 source = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(source / 'mcp-server'))
 import stereo_consistency as reference
-import test_stereo_consistency as fixture
+sys.path.insert(0, str(source / "tests"))
+import stereo_scene as fixture
 
 
 def run(executable, root, name, left, right, expected, kind='', mode=''):
@@ -34,7 +35,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='simxr-stereo-reference-') as temporary:
         root = Path(temporary)
         for name, shadow, verdict, kind in fixture.CASES:
-            left, right = fixture._render(shadow)
+            left, right = fixture.render(shadow)
             expected, _ = reference.analyze_pair(left, right, frusta=fixture.FRUSTA, want_images=False)
             actual, sheet = run(executable, root, name, left, right, verdict, kind or '')
             assert actual['verdict'] == expected.verdict, (name, actual, expected)
@@ -44,7 +45,7 @@ def main():
                 assert actual['regions'][0]['nature'] == expected.regions[0].nature, (name, actual, expected)
             with Image.frombytes('RGBA', (964, 624), sheet.read_bytes()) as image:
                 assert image.getbbox()[2:] == (964, 624), name
-        left, right = fixture._render(None)
+        left, right = fixture.render(None)
         mismatch, _ = run(executable, root, 'mismatch', left, right, 'PASS', mode='mismatch')
         assert any('frusta' in note for note in mismatch['notes']), mismatch
         identical, _ = run(executable, root, 'identical', left, left, 'PASS', mode='identical')

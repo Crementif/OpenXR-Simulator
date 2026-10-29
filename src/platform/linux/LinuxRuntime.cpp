@@ -97,16 +97,10 @@ const LegacyInput& LinuxInstance::Input() const noexcept
 {
 	return m_input;
 }
-bool LinuxInstance::PollCommands(FrameId submitted)
+bool LinuxInstance::AdvanceSequence(FrameId submitted)
 {
-	auto commands = m_files->TakeCommands();
-	static constexpr std::array s_kinds{LegacyInputCommand::HeadPose, LegacyInputCommand::Ipd, LegacyInputCommand::Fov,
-										LegacyInputCommand::ControllerPose, LegacyInputCommand::ControllerHold};
-	for (std::size_t index = 0; index < s_kinds.size(); ++index)
-		if (commands.input[index])
-			m_input.Apply(s_kinds[index], *commands.input[index]);
-	if (commands.sequence)
-		m_input.StartSequence(std::move(*commands.sequence), submitted);
+	if (auto sequence = m_files->TakeSequence())
+		m_input.StartSequence(std::move(*sequence), submitted);
 	return m_input.AdvanceSequence(submitted);
 }
 void LinuxInstance::PublishStatus(const Runtime::SessionRef& current,

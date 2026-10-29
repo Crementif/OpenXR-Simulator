@@ -32,20 +32,19 @@ class IncidentCapture
 {
   public:
 	explicit IncidentCapture(std::filesystem::path sessionDirectory);
-	IncidentUpdate Begin(std::string_view reason, uint64_t frame, bool manual, const std::deque<Sample>& history);
+	IncidentUpdate Begin(std::string_view reason, uint64_t frame, const std::deque<Sample>& history);
 	std::optional<SampleArtifact> Continue(const Sample& sample);
-	void SkipSample(uint64_t frame);
 	const IncidentStatistics& Statistics() const;
-	bool NeedsPixels() const;
 
   private:
+	void Expire(uint64_t frame);
+
 	const std::filesystem::path m_sessionDirectory;
 	IncidentStatistics m_statistics;
 	std::filesystem::path m_activeDirectory;
 	uint64_t m_lastIncidentFrame = 0;
 	std::optional<uint64_t> m_lastProcessedFrame;
 	uint32_t m_postFramesRemaining = 0;
-	bool m_manual = false;
 };
 
 class PreviewMonitor
@@ -55,10 +54,8 @@ class PreviewMonitor
 	IncidentUpdate Submission(uint64_t frame, uint32_t projectionLayers, uint32_t totalLayers);
 	IncidentUpdate Preview(Sample sample, uint64_t generation);
 	IncidentUpdate Paint(uint64_t generation, bool paintedPreview);
-	IncidentUpdate Capture();
 	PreviewStatistics Snapshot() const;
 	bool AcceptsGeneration(uint64_t generation) const;
-	bool NeedsPixels() const;
 	uint64_t Frame() const;
 	bool TakeDirty();
 
@@ -77,11 +74,9 @@ class UiMonitor
 {
   public:
 	explicit UiMonitor(std::filesystem::path sessionDirectory);
-	IncidentUpdate Observe(const uint8_t* bgra, uint32_t width, uint32_t height, uint32_t pitchBytes,
-						   uint64_t generation, uint64_t frame, const UiFrameInfo& info);
-	IncidentUpdate Capture();
+	IncidentUpdate Observe(const uint8_t* pixels, uint32_t width, uint32_t height, uint32_t pitchBytes,
+						   uint64_t generation, uint64_t frame, const UiFrameInfo& info, PixelOrder order = PixelOrder::Bgra);
 	UiStatistics Snapshot() const;
-	bool NeedsPixels() const;
 	bool TakeDirty();
 
   private:

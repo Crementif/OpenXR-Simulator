@@ -606,6 +606,7 @@ CommandScheduler::CommandScheduler(std::size_t pendingCapacity, std::size_t hist
 void CommandScheduler::Start(std::uint64_t seed, std::optional<CommandConfiguration> initial)
 {
 	CommandState prepared(std::move(initial));
+	std::optional<PoseSequenceExecution> retired;
 	std::lock_guard lock(m_mutex);
 	m_state.Swap(prepared);
 	m_baseline.reset();
@@ -617,13 +618,16 @@ void CommandScheduler::Start(std::uint64_t seed, std::optional<CommandConfigurat
 	m_sources.clear();
 	m_applied.clear();
 	m_liveInput.Reset();
-	m_sequence.reset();
+	retired.swap(m_sequence);
 	m_replacedSequence.reset();
 	m_recorder.Stop();
 }
 void CommandScheduler::Close()
 {
+	std::shared_ptr<const PoseSequence> retired;
 	std::lock_guard lock(m_mutex);
+	if (m_sequence)
+		retired = m_sequence->Program();
 	// Teardown does not allocate or claim that previously applied work was undone.
 	for (auto& pending : m_pending)
 		pending.result = CommandResult::Cancelled;
@@ -818,12 +822,18 @@ CommandResult CommandScheduler::Cancel(CommandSource source, std::uint64_t id)
 }
 std::array<bool, ControlChannelCount> CommandScheduler::ReleaseSource(CommandSource source, bool retire)
 {
+	std::shared_ptr<const PoseSequence> retired;
 	std::lock_guard lock(m_mutex);
+	if (m_sequence)
+		retired = m_sequence->Program();
 	return ReleaseSourceCommandsLocked(source, retire);
 }
 std::array<bool, ControlChannelCount> CommandScheduler::ExpireLiveInput(LiveInputClock::time_point now)
 {
+	std::shared_ptr<const PoseSequence> retired;
 	std::lock_guard lock(m_mutex);
+	if (m_sequence)
+		retired = m_sequence->Program();
 	const auto owner = m_liveInput.Status().owner;
 	return owner && m_liveInput.Expired(now) ? ReleaseSourceCommandsLocked(*owner, false)
 											 : std::array<bool, ControlChannelCount>{};
@@ -886,6 +896,7 @@ std::optional<PoseSequenceStatus> CommandScheduler::StartPoseSequence(CommandSou
 {
 	if (!ValidSource(owner) || !program)
 		throw std::invalid_argument("Invalid sequence source or program");
+	std::optional<PoseSequenceExecution> retired;
 	std::lock_guard lock(m_mutex);
 	if (m_closed)
 		return {};
@@ -902,7 +913,8 @@ std::optional<PoseSequenceStatus> CommandScheduler::StartPoseSequence(CommandSou
 	PoseSequenceExecution prepared(m_nextSequence, owner, std::move(program), m_state.OwnedChannels(previousSource));
 	if (m_sequence && m_sequence->Status().origin.value)
 		m_replacedSequence = m_sequence->Source();
-	m_sequence = std::move(prepared);
+	retired.swap(m_sequence);
+	m_sequence.emplace(std::move(prepared));
 	++m_nextSequence;
 	return m_sequence->Status();
 }
@@ -956,7 +968,10 @@ std::array<bool, ControlChannelCount> CommandScheduler::StopPoseSequenceLocked(C
 }
 std::array<bool, ControlChannelCount> CommandScheduler::StopPoseSequence(CommandSource owner)
 {
+	std::shared_ptr<const PoseSequence> retired;
 	std::lock_guard lock(m_mutex);
+	if (m_sequence)
+		retired = m_sequence->Program();
 	return StopPoseSequenceLocked(owner);
 }
 void CommandScheduler::StartRecording(const CommandConfiguration& baseline, const ReferenceSpaceState& spaces,
@@ -1003,6 +1018,8 @@ CommandScheduler::Apply(FrameId frame, SimulationTime time, RuntimeTime runtimeT
 						const std::function<void(const std::shared_ptr<const AppliedCommandSnapshot>&)>& reserve,
 						LiveInputClock::time_point now, std::optional<std::uint64_t> clockRevision)
 {
+	// Retire replaced state after releasing admission, including reservation failure.
+	std::optional<PreparedCommandBoundary> prepared;
 	std::lock_guard lock(m_mutex);
 	if (m_closed || !frame.value || runtimeTime.value.count() <= 0 || time.value.count() < 0)
 		throw std::invalid_argument("Invalid command boundary");
@@ -1015,17 +1032,17 @@ CommandScheduler::Apply(FrameId frame, SimulationTime time, RuntimeTime runtimeT
 	}
 	if (!m_applied.empty() && time < m_applied.back()->time)
 		throw std::invalid_argument("Simulation time moved backward");
-	PreparedCommandBoundary prepared(*this, frame, time, runtimeTime, baseline, now, clockRevision);
+	prepared.emplace(*this, frame, time, runtimeTime, baseline, now, clockRevision);
 	const auto reserveAndCommit = [&](bool recorded)
 	{
 		// The external reservation is the last throwing operation. Both the
 		// recorder and scheduler retain their previous state if it fails.
-		prepared.MarkRecordingOverrun(!recorded);
+		prepared->MarkRecordingOverrun(!recorded);
 		if (reserve)
-			reserve(prepared.Snapshot());
-		prepared.Commit(*this);
+			reserve(prepared->Snapshot());
+		prepared->Commit(*this);
 	};
-	m_recorder.ObservePrepared(prepared.Outcomes(), reserveAndCommit);
-	return prepared.Snapshot();
+	m_recorder.ObservePrepared(prepared->Outcomes(), reserveAndCommit);
+	return prepared->Snapshot();
 }
 } // namespace simxr

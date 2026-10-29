@@ -10,7 +10,7 @@
 #include "app/mcp/McpLogs.h"
 #include "app/mcp/McpImage.h"
 #include "app/mcp/McpImageCache.h"
-#include "app/mcp/McpImageEncode.h"
+#include "app/services/ImageExport.h"
 #include "app/mcp/McpImageSave.h"
 #include "app/mcp/McpScreenshot.h"
 #include "app/mcp/McpSequence.h"
@@ -48,6 +48,13 @@ struct McpDebug::Entry
 	std::uint16_t minor = 0;
 	bool gameOnly = false, launched = false;
 
+	std::shared_ptr<wire::LocalControlClient> Client()
+	{
+		std::lock_guard lock(owner);
+		if (closed.load() || !client)
+			throw std::runtime_error("Control connection is closed");
+		return client;
+	}
 	void Close() noexcept
 	{
 		if (closed.exchange(true))
@@ -160,7 +167,7 @@ static Json IdList(const wire::Field* field)
 	}
 	return result;
 }
-static Json DebugReply(const wire::Message& message, bool metadataOnly = false)
+Json McpDebug::Document(const wire::Message& message, bool metadataOnly)
 {
 	const auto* error = message.Find(tag::Error);
 	const auto code = error ? error->AsU32() : std::nullopt;
@@ -170,7 +177,7 @@ static Json DebugReply(const wire::Message& message, bool metadataOnly = false)
 	{
 		Json failure = {{"ok", false}, {"error", "Runtime rejected the request"}, {"code", *code}};
 		AddText(failure, message, tag::Detail, "detail");
-		return Result(failure, true);
+		return failure;
 	}
 	Json value = {{"ok", true}};
 	if (metadataOnly)
@@ -269,7 +276,7 @@ static Json DebugReply(const wire::Message& message, bool metadataOnly = false)
 			data["captures"] = IdList(captures);
 		value["retention"] = std::move(data);
 	}
-	return Result(value);
+	return value;
 }
 
 Json McpDebug::Definitions()
@@ -396,37 +403,30 @@ bool McpDebug::Handles(const std::string& name)
 		mcp::HistoryHandles(name);
 }
 
-static Json Status(const Json& toolResult)
+static Json DebugReply(const wire::Message& message, bool metadataOnly = false)
 {
-	if (!toolResult.is_object() || toolResult.value("isError", true))
-		throw std::runtime_error("The selected application is unavailable");
-	return Json::parse(toolResult.at("content").at(0).at("text").get<std::string>());
+	const auto value = McpDebug::Document(message, metadataOnly);
+	return Result(value, !value.at("ok").get<bool>());
 }
-static void ValidateTarget(const Json& status, const std::string& application, const std::string& endpoint,
-						   std::uint64_t process, std::uint64_t session, std::uint64_t generation, std::uint64_t epoch)
+
+static void ValidateTarget(const ApplicationSnapshot& status, const std::string& endpoint,
+	std::uint64_t process, std::uint64_t session, std::uint64_t generation, std::uint64_t epoch)
 {
-	if (status.value("application_id", "") != application || !status.value("connected", false) ||
-		!status.value("session_running", false) || status.value("endpoint", "") != endpoint ||
-		status.value("runtime_process_id", "") != std::to_string(process) ||
-		status.value("runtime_epoch", "") != std::to_string(epoch) ||
-		status.value("session_id", "") != std::to_string(session) ||
-		status.value("generation", "") != std::to_string(generation))
+	if (!status.connected || !status.running || status.endpoint != endpoint || status.runtimeProcess != process ||
+		status.runtimeEpoch != epoch || status.session != session || status.generation != generation)
 		throw std::runtime_error("Application process or XR session changed; open a new debugger connection");
 }
-static void ValidateGameTarget(const Json& status, const std::string& application, const std::string& endpoint,
-							   std::uint64_t process, std::uint64_t epoch, bool launched)
+static void ValidateGameTarget(const ApplicationSnapshot& status, const std::string& endpoint,
+	std::uint64_t process, std::uint64_t epoch, bool launched)
 {
-	if (status.value("application_id", "") != application || status.value("restart_pending", false))
+	if (status.launch.restartPending)
 		throw std::runtime_error("The selected game process changed; open a new bridge connection");
 	if (launched)
 	{
-		if (status.value("launch_state", "") != "running" || status.value("process_id", "") != std::to_string(process) ||
-			status.value("launch_endpoint", "") != endpoint)
+		if (status.launch.state != LaunchState::Running || status.launch.process != process || status.launchEndpoint != endpoint)
 			throw std::runtime_error("The selected game process changed; open a new bridge connection");
 	}
-	else if (!status.value("connected", false) || status.value("endpoint", "") != endpoint ||
-			 status.value("runtime_process_id", "") != std::to_string(process) ||
-			 status.value("runtime_epoch", "") != std::to_string(epoch))
+	else if (!status.connected || status.endpoint != endpoint || status.runtimeProcess != process || status.runtimeEpoch != epoch)
 		throw std::runtime_error("The selected runtime changed; open a new bridge connection");
 }
 
@@ -490,44 +490,148 @@ void McpDebug::Close() noexcept
 		entry->Close();
 }
 
-std::vector<std::byte> McpDebug::ReadArtifact(McpApplication& application, const std::string& connection,
-												std::uint64_t ticket, std::uint64_t offset, std::uint64_t length,
-												const std::shared_ptr<McpCancellation>& requestedCancellation)
+std::optional<McpConnection> McpDebug::Connect(McpApplication& application, const std::string& target,
+	const std::shared_ptr<McpCancellation>& cancellation, bool gameOnly)
 {
-	if (!ticket || !length || length > wire::MaxPayload - 4096)
-		throw std::invalid_argument("Invalid artifact range");
+	auto response = application.Lookup(target, cancellation);
+	if (!response)
+		return {};
+	const auto& status = *response;
+	if (!gameOnly && (!status.connected || !status.running))
+		throw std::runtime_error("Select a connected application with one running XR session");
+	if (!cancellation->TryAdmit())
+		return {};
+	auto entry = std::make_shared<Entry>();
+	entry->application = target;
+	entry->gameOnly = gameOnly;
+	entry->launched = gameOnly && status.launch.state == LaunchState::Running &&
+		!status.launchEndpoint.empty();
+	if (entry->launched)
+	{
+		entry->endpoint = status.launchEndpoint;
+		entry->process = status.launch.process;
+	}
+	else
+	{
+		if (!status.connected)
+			throw std::runtime_error("Select a running launched game or connected runtime");
+		entry->endpoint = status.endpoint;
+		entry->process = status.runtimeProcess;
+		entry->epoch = status.runtimeEpoch;
+	}
+	if (!gameOnly)
+	{
+		entry->session = status.session;
+		entry->generation = status.generation;
+	}
+	else
+		ValidateGameTarget(status, entry->endpoint, entry->process, entry->epoch, entry->launched);
+	if (!entry->process || (!entry->launched && !entry->epoch) || (!gameOnly && (!entry->session || !entry->generation)))
+		throw std::runtime_error("Application has an invalid process or session identity");
+	const auto identity = NewMcpIdentifier();
+	{
+		std::lock_guard lock(m_mutex);
+		if (m_closed)
+			throw std::runtime_error("MCP session is closed");
+		if (m_entries.size() >= 8 || !m_entries.emplace(identity, entry).second)
+			throw std::runtime_error("Debugger connection capacity reached");
+	}
+	std::shared_ptr<wire::LocalControlClient> client;
+	try
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+		for (;;)
+		{
+			if (entry->closed.load())
+				throw std::runtime_error("MCP session is closed");
+			try
+			{
+				client = std::make_shared<wire::LocalControlClient>(entry->endpoint, std::chrono::milliseconds(50));
+				break;
+			}
+			catch (const wire::ControlConnectTimeout&)
+			{
+				if (std::chrono::steady_clock::now() >= deadline)
+					throw;
+			}
+		}
+		if (client->PeerProcess() != entry->process)
+			throw std::runtime_error("Runtime endpoint belongs to a different process");
+		{
+			std::lock_guard lock(entry->owner);
+			if (entry->closed.load())
+				throw std::runtime_error("MCP session is closed");
+			entry->client = client;
+		}
+		const auto hello = Exchange(client, wire::OpCode::Hello,
+			{wire::Field::Text(tag::ClientName, "OpenXR Simulator MCP"),
+			 wire::Field::U64(tag::RequiredCapabilities, gameOnly ? 0 : static_cast<std::uint64_t>(wire::Capability::DebugCommands))});
+		const auto* error = hello.Find(tag::Error);
+		if (!error || error->AsU32() != 0)
+			throw std::runtime_error("Runtime did not negotiate debugger capabilities");
+		if (entry->closed.load())
+			throw std::runtime_error("MCP session is closed");
+		entry->capabilities = U64(hello, tag::Capabilities);
+		entry->minor = hello.minor;
+		if (gameOnly)
+		{
+			auto latest = application.Lookup(target, std::make_shared<McpCancellation>());
+			if (!latest)
+				throw std::runtime_error("The selected game is unavailable");
+			ValidateGameTarget(*latest, entry->endpoint, entry->process, entry->epoch, entry->launched);
+			if (entry->closed.load() || cancellation->Requested())
+				throw std::runtime_error("Game bridge connection was cancelled");
+		}
+		return McpConnection{identity, entry->process, entry->epoch, entry->session, entry->generation, entry->capabilities};
+	}
+	catch (...)
+	{
+		Disconnect(identity);
+		throw;
+	}
+}
+
+void McpDebug::Disconnect(const std::string& connection) noexcept
+{
+	std::shared_ptr<Entry> entry;
+	{
+		std::lock_guard lock(m_mutex);
+		const auto found = m_entries.find(connection);
+		if (found == m_entries.end())
+			return;
+		entry = std::move(found->second);
+		m_entries.erase(found);
+	}
+	entry->Close();
+}
+std::shared_ptr<McpDebug::Entry> McpDebug::FindConnection(const std::string& connection)
+{
 	std::shared_ptr<Entry> entry;
 	{
 		std::lock_guard lock(m_mutex);
 		const auto found = m_entries.find(connection);
 		if (m_closed || found == m_entries.end())
-			throw std::runtime_error("Artifact connection is closed");
+			throw std::runtime_error("Control connection is closed");
 		entry = found->second;
 	}
-	const auto retire = [&]
-	{
-		{
-			std::lock_guard lock(m_mutex);
-			const auto found = m_entries.find(connection);
-			if (found != m_entries.end() && found->second == entry)
-				m_entries.erase(found);
-		}
-		entry->Close();
-	};
-	const auto cancellation = requestedCancellation ? requestedCancellation : std::make_shared<McpCancellation>();
+	return entry;
+}
+std::unique_lock<std::timed_mutex> McpDebug::LockConnection(McpApplication& application, const std::string& connection,
+	const std::shared_ptr<Entry>& entry, const std::shared_ptr<McpCancellation>& cancellation)
+{
 	if (cancellation->Requested())
-		throw std::runtime_error("Artifact read was cancelled");
+		throw std::runtime_error("Control request was cancelled");
 	try
 	{
-		auto status = application.Call("simulator_application_status", {{"application_id", entry->application}}, cancellation);
+		auto status = application.Lookup(entry->application, cancellation);
 		if (!status)
-			throw std::runtime_error("Artifact application is unavailable");
-		ValidateTarget(Status(*status), entry->application, entry->endpoint,
+			throw std::runtime_error("Control application is unavailable");
+		ValidateTarget(*status, entry->endpoint,
 			entry->process, entry->session, entry->generation, entry->epoch);
 	}
 	catch (...)
 	{
-		retire();
+		Disconnect(connection);
 		throw;
 	}
 	std::unique_lock operation(entry->exchange, std::defer_lock);
@@ -535,42 +639,270 @@ std::vector<std::byte> McpDebug::ReadArtifact(McpApplication& application, const
 	while (!operation.try_lock_for(std::chrono::milliseconds(50)))
 	{
 		if (cancellation->Requested())
-			throw std::runtime_error("Artifact read was cancelled");
+			throw std::runtime_error("Control request was cancelled");
 		if (std::chrono::steady_clock::now() >= deadline)
-			throw std::runtime_error("Artifact connection is busy");
+			throw std::runtime_error("Control connection is busy");
 	}
-	if (cancellation->Requested())
-		throw std::runtime_error("Artifact read was cancelled");
-	std::shared_ptr<wire::LocalControlClient> client;
+	if (!cancellation->TryAdmit())
+		throw std::runtime_error("Control request was cancelled");
+	return operation;
+}
+
+static void ValidateExportRead(const wire::Message& response, std::uint64_t offset, std::uint64_t length)
+{
+	const auto* error = response.Find(tag::Error);
+	if (!error || !error->AsU32())
+		throw DebugTransportFailure("Control response omitted its error code");
+	if (*error->AsU32())
+		return;
+	const auto* bytes = response.Find(tag::Bytes);
+	const auto* returnedOffset = response.Find(tag::Offset);
+	const auto* returnedLength = response.Find(tag::Length);
+	if (!bytes || !returnedOffset || returnedOffset->AsU64() != offset || !returnedLength ||
+		returnedLength->AsU64() != length || bytes->value.size() != length)
+		throw DebugTransportFailure("Runtime returned an invalid artifact range");
+}
+
+control::Message McpDebug::Request(McpApplication& application, const std::string& connection,
+	wire::OpCode opcode, std::vector<wire::Field> fields,
+	const std::shared_ptr<McpCancellation>& requestedCancellation, std::optional<std::string_view> program)
+{
+	const bool imageWindow = opcode == wire::OpCode::BeginImageWindow || opcode == wire::OpCode::ReadImageWindow ||
+		opcode == wire::OpCode::RetainWindowImage || opcode == wire::OpCode::ReleaseImageWindow;
+	const bool sequence = opcode == wire::OpCode::UploadSequence || opcode == wire::OpCode::StartSequence ||
+		opcode == wire::OpCode::ReadSequence || opcode == wire::OpCode::StopSequence || opcode == wire::OpCode::ReleaseSequenceCapture;
+	const bool debugger = opcode == wire::OpCode::Acquire || opcode == wire::OpCode::Renew ||
+		opcode == wire::OpCode::Relinquish || opcode == wire::OpCode::Submit || opcode == wire::OpCode::Operation;
+	if (opcode != wire::OpCode::ReadExport && opcode != wire::OpCode::ExportInfo &&
+		opcode != wire::OpCode::StartVideoExport && opcode != wire::OpCode::ReleaseExport &&
+		opcode != wire::OpCode::Capture && opcode != wire::OpCode::RetainImage && opcode != wire::OpCode::ImageInfo &&
+		opcode != wire::OpCode::ReleaseImage && opcode != wire::OpCode::StartExport && !sequence &&
+		opcode != wire::OpCode::Status && opcode != wire::OpCode::ReadProjectionHistory &&
+		opcode != wire::OpCode::SimulationStatus && opcode != wire::OpCode::ReadDiagnostics && !imageWindow && !debugger &&
+		opcode != wire::OpCode::RetainPreview && opcode != wire::OpCode::InspectFrame && opcode != wire::OpCode::FeatureRevision)
+		throw std::invalid_argument("Unsupported control request");
+	if (program && (opcode != wire::OpCode::StartSequence || program->size() > 512 * 1024 || program->find('\0') != std::string_view::npos))
+		throw std::invalid_argument("Sequence program must be JSONL text of at most 512 KiB without NUL bytes");
+	wire::Message request;
+	request.fields = std::move(fields);
+	const auto* session = request.Find(tag::Session);
+	const auto* generation = request.Find(tag::Generation);
+	const auto offset = opcode == wire::OpCode::ReadExport ? U64(request, tag::Offset) : 0;
+	const auto length = opcode == wire::OpCode::ReadExport ? U64(request, tag::Length) : 0;
+	if (opcode == wire::OpCode::ReadExport && (!U64(request, tag::ExportId) || !length || length > wire::MaxPayload - 4096))
+		throw std::invalid_argument("Invalid artifact range");
+	const auto entry = FindConnection(connection);
+	if (entry->gameOnly)
+		throw std::invalid_argument("This connection only supports game bridge tools");
+	if (bool(session) != bool(generation))
+		throw std::invalid_argument("Supply both session and generation, or omit both");
+	if (session && (session->AsU64() != entry->session || generation->AsU64() != entry->generation))
+		throw std::invalid_argument("Session or generation does not match this debugger connection");
+	if (sequence || debugger || opcode == wire::OpCode::BeginImageWindow || opcode == wire::OpCode::Capture ||
+		opcode == wire::OpCode::RetainImage || opcode == wire::OpCode::RetainPreview || opcode == wire::OpCode::InspectFrame ||
+		opcode == wire::OpCode::StartVideoExport ||
+		opcode == wire::OpCode::Status || opcode == wire::OpCode::ReadProjectionHistory ||
+		opcode == wire::OpCode::SimulationStatus || opcode == wire::OpCode::ReadDiagnostics)
 	{
-		std::lock_guard lock(entry->owner);
-		if (entry->closed.load() || !entry->client)
-			throw std::runtime_error("Artifact connection is closed");
-		client = entry->client;
+		if (!session)
+		{
+			request.fields.push_back(wire::Field::U64(tag::Session, entry->session, true));
+			request.fields.push_back(wire::Field::U64(tag::Generation, entry->generation, true));
+		}
 	}
+	else
+		std::erase_if(request.fields, [](const auto& field)
+		{
+			return field.tag == tag::Session || field.tag == tag::Generation;
+		});
+	const auto cancellation = requestedCancellation ? requestedCancellation : std::make_shared<McpCancellation>();
+	if (opcode == wire::OpCode::StartVideoExport &&
+		!(entry->capabilities & static_cast<std::uint64_t>(wire::Capability::VideoExport)))
+		throw std::runtime_error("The connected runtime does not support video export");
+	if (sequence && !(entry->capabilities & static_cast<std::uint64_t>(wire::Capability::PoseSequences)))
+		throw std::runtime_error("The connected runtime does not support pose sequences");
+	if (opcode == wire::OpCode::StartExport && request.Find(tag::ImageRegion) &&
+		!(entry->capabilities & static_cast<std::uint64_t>(wire::Capability::ImageRegionExport)))
+		throw std::runtime_error("The connected runtime does not support image region export");
+	if (((sequence && opcode != wire::OpCode::ReleaseSequenceCapture) ||
+		opcode == wire::OpCode::SimulationStatus || opcode == wire::OpCode::ReadDiagnostics) && !request.Find(tag::SourceKind))
+		request.fields.push_back(wire::Field::U32(tag::SourceKind, static_cast<std::uint32_t>(CommandSourceKind::Mcp)));
+	for (const auto& [operation, capability] : {std::pair{wire::OpCode::ReadProjectionHistory, wire::Capability::ProjectionHistory},
+		{wire::OpCode::SimulationStatus, wire::Capability::SimulationCommands}, {wire::OpCode::ReadDiagnostics, wire::Capability::FrameDiagnostics}})
+		if (opcode == operation && !(entry->capabilities & static_cast<std::uint64_t>(capability)))
+			throw std::runtime_error("The connected runtime does not support this diagnostic operation");
+	auto operation = LockConnection(application, connection, entry, cancellation);
+	const auto client = entry->Client();
 	wire::Message response;
 	try
 	{
-		response = Exchange(client, wire::OpCode::ReadExport,
-			{wire::Field::U64(tag::ExportId, ticket, true), wire::Field::U64(tag::Offset, offset, true),
-			 wire::Field::U64(tag::Length, length, true)});
+		if (program)
+		{
+			std::size_t offset = 0;
+			do
+			{
+				if (cancellation->Requested())
+					throw DebugTransportFailure("Sequence upload was cancelled");
+				const auto length = std::min<std::size_t>(256 * 1024, program->size() - offset);
+				mcp::SequenceRequest chunk{wire::OpCode::UploadSequence,
+					{wire::Field::U64(tag::Session, entry->session, true), wire::Field::U64(tag::Generation, entry->generation, true),
+					 wire::Field::U32(tag::SourceKind, static_cast<std::uint32_t>(CommandSourceKind::Mcp)),
+					 wire::Field::U64(tag::ProgramId, U64(request, tag::ProgramId), true),
+					 wire::Field::U64(tag::Offset, offset, true), wire::Field::U64(tag::TotalBytes, program->size(), true),
+					 wire::Field::Bytes(tag::Bytes, std::as_bytes(std::span(program->data() + offset, length)), true)}};
+				const auto uploaded = Exchange(client, chunk.opcode, chunk.fields);
+				try
+				{
+					if (!mcp::SequenceDocument(uploaded, chunk).at("ok").get<bool>())
+						return uploaded;
+				}
+				catch (const std::exception& error)
+				{
+					throw DebugTransportFailure(error.what());
+				}
+				offset += length;
+			} while (offset < program->size());
+			if (cancellation->Requested())
+				throw DebugTransportFailure("Sequence upload was cancelled");
+		}
+		response = Exchange(client, opcode, std::move(request.fields));
 		const auto* error = response.Find(tag::Error);
 		if (!error || !error->AsU32())
-			throw DebugTransportFailure("Artifact response omitted its error code");
-		if (*error->AsU32())
-			throw std::runtime_error("Artifact export is unavailable or released");
-		const auto* bytes = response.Find(tag::Bytes);
-		const auto* returnedOffset = response.Find(tag::Offset);
-		const auto* returnedLength = response.Find(tag::Length);
-		if (!bytes || !returnedOffset || returnedOffset->AsU64() != offset || !returnedLength ||
-			returnedLength->AsU64() != length ||
-			bytes->value.size() != length)
-			throw DebugTransportFailure("Runtime returned an invalid artifact range");
-		return bytes->value;
+			throw DebugTransportFailure("Control response omitted its error code");
+		if (opcode == wire::OpCode::ReadExport)
+			ValidateExportRead(response, offset, length);
+		return response;
 	}
 	catch (const DebugTransportFailure&)
 	{
-		retire();
+		Disconnect(connection);
+		throw;
+	}
+}
+
+std::vector<std::byte> McpDebug::ReadArtifact(McpApplication& application, const std::string& connection,
+	std::uint64_t ticket, std::uint64_t offset, std::uint64_t length,
+	const std::shared_ptr<McpCancellation>& cancellation)
+{
+	auto response = Request(application, connection, wire::OpCode::ReadExport,
+		{wire::Field::U64(tag::ExportId, ticket, true), wire::Field::U64(tag::Offset, offset, true),
+		 wire::Field::U64(tag::Length, length, true)}, cancellation);
+	if (response.Find(tag::Error)->AsU32() != 0)
+		throw std::runtime_error("Artifact export is unavailable or released");
+	return std::move(response.Find(tag::Bytes)->value);
+}
+
+mcp::ImageRenderResult McpDebug::Render(McpApplication& application, const std::string& connection,
+	const mcp::ImageRenderRequest& render, const std::shared_ptr<McpCancellation>& cancellation)
+{
+	if (!render.ticket || render.quality < 1 || render.quality > 100 || bool(render.session) != bool(render.generation))
+		throw std::invalid_argument("Invalid image render request");
+	const auto entry = FindConnection(connection);
+	if (entry->gameOnly)
+		throw std::invalid_argument("This connection only supports game bridge tools");
+	if (render.session && (render.session != entry->session || render.generation != entry->generation))
+		throw std::invalid_argument("Session or generation does not match this debugger connection");
+	auto operation = LockConnection(application, connection, entry, cancellation);
+	const auto client = entry->Client();
+	try
+	{
+		mcp::ImageRenderResult result{Exchange(client, wire::OpCode::ExportInfo,
+			{wire::Field::U64(tag::ExportId, render.ticket, true)}), {}};
+		const auto& info = result.info;
+		const auto* error = info.Find(tag::Error);
+		if (!error || !error->AsU32())
+			throw DebugTransportFailure("Control response omitted its error code");
+		if (*error->AsU32())
+			return result;
+		if (U64(info, tag::ExportId) != render.ticket)
+			throw DebugTransportFailure("Runtime returned a different image export");
+		const auto metadata = mcp::ImageDocument(info);
+		if (metadata.value("phase", "") != "complete")
+			throw std::runtime_error("Export is not complete; poll debug_export_info first");
+		const auto* descriptor = info.Find(tag::ImageDescriptor);
+		if (!descriptor)
+			throw std::runtime_error("This export is not a raw image");
+		const auto description = wire::DecodeImageDescription(*descriptor);
+		const auto pixelBytes = ColorPixelBytes(description.format);
+		const auto total = U64(info, tag::TotalBytes);
+		if (!pixelBytes || !description.width || !description.height || description.arrayLayers != 1 ||
+			description.width > 4096 || description.height > 4096 ||
+			std::uint64_t{description.width} * description.height > MaxImageInput / pixelBytes ||
+			total != std::uint64_t{description.width} * description.height * pixelBytes)
+			throw std::runtime_error("Choose a supported single-layer image within the 32 MiB encoding limit");
+		const auto check = [&]
+		{
+			if (cancellation->Requested() || entry->closed.load())
+				throw std::runtime_error("Image rendering was interrupted");
+		};
+		check();
+		std::string cacheKey;
+		// An export ticket is connection-owned; validate it above before sharing
+		// encoded content identified by the immutable source and selection.
+		if (metadata.contains("frame") && metadata.contains("target") && metadata.contains("capture") &&
+			metadata.contains("image_description"))
+		{
+			const auto* tickField = info.Find(tag::ImageTick);
+			const auto tick = tickField ? tickField->AsU64() : std::optional<std::uint64_t>{};
+			// A live display can change while the submitted frame stays the same.
+			if (mcp::CacheableImageSource(metadata.at("target").at("kind").get<std::uint32_t>(), tickField != nullptr, tick.has_value()))
+			{
+				// Older providers can omit the selected layer or region. In that
+				// case reuse only this validated ticket, not another export.
+				const bool selectionKnown = metadata.contains("layer") && metadata.contains("region");
+				const Json key = Json::array({entry->application, entry->endpoint, entry->process, entry->epoch,
+					entry->session, entry->generation, metadata.at("frame"), metadata.at("target"), metadata.at("capture"),
+					tick ? Json(std::to_string(*tick)) : Json(nullptr), metadata.value("layer", Json(nullptr)),
+					metadata.value("region", Json(nullptr)), metadata.at("image_description"), render.png, render.quality,
+					selectionKnown ? Json(nullptr) : Json(connection), selectionKnown ? Json(nullptr) : Json(render.ticket)});
+				cacheKey = key.dump();
+				if (const auto cached = s_imageCache.Find(cacheKey))
+				{
+					operation.unlock();
+					check();
+					result.image = cached;
+					return result;
+				}
+			}
+		}
+		ImageEncodingPermit permit;
+		std::vector<std::byte> pixels;
+		pixels.reserve(static_cast<std::size_t>(total));
+		while (pixels.size() < total)
+		{
+			check();
+			const auto offset = pixels.size();
+			const auto length = std::min<std::uint64_t>(wire::MaxPayload - 4096, total - offset);
+			auto chunk = Exchange(client, wire::OpCode::ReadExport,
+				{wire::Field::U64(tag::ExportId, render.ticket, true), wire::Field::U64(tag::Offset, offset, true),
+				 wire::Field::U64(tag::Length, length, true)});
+			ValidateExportRead(chunk, offset, length);
+			if (chunk.Find(tag::Error)->AsU32() != 0)
+			{
+				result.info = std::move(chunk);
+				return result;
+			}
+			const auto& bytes = chunk.Find(tag::Bytes)->value;
+			pixels.insert(pixels.end(), bytes.begin(), bytes.end());
+		}
+		operation.unlock();
+		check();
+		const auto encoded = EncodeImage(pixels, description.format, description.width, description.height, render.png, render.quality);
+		check();
+		auto image = std::make_shared<mcp::CachedImage>();
+		image->mediaType = encoded.mediaType;
+		image->lossy = encoded.lossy;
+		image->encodedBytes = encoded.bytes.size();
+		image->data = mcp::EncodeBase64(encoded.bytes);
+		check();
+		if (!cacheKey.empty())
+			s_imageCache.Insert(std::move(cacheKey), image);
+		result.image = std::move(image);
+		return result;
+	}
+	catch (const DebugTransportFailure&)
+	{
+		Disconnect(connection);
 		throw;
 	}
 }
@@ -606,123 +938,77 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 			return mcp::ValidateStereo(application, arguments, cancellation);
 		if (name == "analyze_stereo_consistency")
 			return mcp::CaptureStereoConsistency(application, arguments, cancellation);
+		if (name == "debug_render_export")
+		{
+			const auto render = mcp::PrepareImageRender(arguments);
+			const auto rendered = Render(application, Text(arguments, "connection"), render, cancellation);
+			if (cancellation->Requested())
+				return {};
+			auto metadata = mcp::ImageDocument(rendered.info);
+			if (!metadata.at("ok").get<bool>())
+				return Result(metadata, true);
+			const auto& image = *rendered.image;
+			metadata["media_type"] = image.mediaType;
+			metadata["lossy"] = image.lossy;
+			metadata["encoded_bytes"] = image.encodedBytes;
+			if (image.lossy && render.png)
+				metadata["conversion"] = "clamped to 8-bit RGBA";
+			return Json{{"content", Json::array({{{"type", "text"}, {"text", metadata.dump()}},
+				{{"type", "image"}, {"mimeType", image.mediaType}, {"data", image.data}}})}, {"isError", false}};
+		}
 		if (name == "debug_save_video")
 			return mcp::SaveVideo(application, *this, arguments, cancellation);
 		if (name == "debug_save_image")
 			return mcp::SaveImage(application, *this, arguments, cancellation);
 		if (name == "capture_pose_sequence")
 			return mcp::CaptureSequence(application, *this, arguments, cancellation);
+		if (mcp::SequenceHandles(name))
+		{
+			identity = Text(arguments, "connection");
+			if (arguments.contains("session") != arguments.contains("generation"))
+				throw std::invalid_argument("Supply both session and generation, or omit both");
+			auto request = mcp::PrepareSequence(name, arguments,
+				arguments.contains("session") ? Number(arguments, "session") : 0,
+				arguments.contains("generation") ? Number(arguments, "generation") : 0);
+			if (!arguments.contains("session"))
+				std::erase_if(request.fields, [](const auto& field) { return field.tag == tag::Session || field.tag == tag::Generation; });
+			const auto response = Request(application, identity, request.opcode, request.fields, cancellation,
+				arguments.contains("program") ? std::optional<std::string_view>{arguments.at("program").get_ref<const std::string&>()} : std::nullopt);
+			try
+			{
+				return mcp::SequenceReply(response, request);
+			}
+			catch (...)
+			{
+				Disconnect(identity);
+				throw;
+			}
+		}
 		if (mcp::DiagnosticsHandles(name))
 			return mcp::RunDiagnostics(application, name, arguments, cancellation);
 		if (mcp::IncidentHandles(name))
 			return mcp::CaptureIncident(application, name, arguments, cancellation);
 		if (name == "debug_connect" || name == "game_bridge_connect")
 		{
-			const bool gameOnly = name == "game_bridge_connect";
 			Keys(arguments, {"application_id"});
 			const auto target = Text(arguments, "application_id");
-			auto response = application.Call("simulator_application_status", {{"application_id", target}}, cancellation);
-			if (!response)
+			const bool gameOnly = name == "game_bridge_connect";
+			const auto opened = Connect(application, target, cancellation, gameOnly);
+			if (!opened)
 				return {};
-			const auto status = Status(*response);
-			if (!gameOnly && (!status.value("connected", false) || !status.value("session_running", false)))
-				throw std::runtime_error("Select a connected application with one running XR session");
-			if (!cancellation->TryAdmit())
-				return {};
-			entry = std::make_shared<Entry>();
-			entry->application = target;
-			entry->gameOnly = gameOnly;
-			entry->launched = gameOnly && status.value("launch_state", "") == "running" &&
-				!status.value("launch_endpoint", "").empty();
-			if (entry->launched)
-			{
-				entry->endpoint = status.at("launch_endpoint").get<std::string>();
-				entry->process = Number(status, "process_id");
-			}
+			Json result = {{"ok", true}, {"connection", opened->id}, {"application_id", target},
+				{"capabilities", std::to_string(opened->capabilities)}};
+			if (gameOnly)
+				result["process_id"] = std::to_string(opened->process);
 			else
 			{
-				if (!status.value("connected", false))
-					throw std::runtime_error("Select a running launched game or connected runtime");
-				entry->endpoint = status.at("endpoint").get<std::string>();
-				entry->process = Number(status, "runtime_process_id");
-				entry->epoch = Number(status, "runtime_epoch");
+				result["runtime_process_id"] = std::to_string(opened->process);
+				result["runtime_epoch"] = std::to_string(opened->epoch);
+				result["session"] = std::to_string(opened->session);
+				result["generation"] = std::to_string(opened->generation);
+				result["sessions"] = Json::array({{{"session", result["session"]}, {"generation", result["generation"]}}});
 			}
-			if (!gameOnly)
-			{
-				entry->session = Number(status, "session_id");
-				entry->generation = Number(status, "generation");
-			}
-			else
-				ValidateGameTarget(status, target, entry->endpoint, entry->process, entry->epoch, entry->launched);
-			identity = NewMcpIdentifier();
-			{
-				std::lock_guard lock(m_mutex);
-				if (m_closed)
-					throw std::runtime_error("MCP session is closed");
-				if (m_entries.size() >= 8 || !m_entries.emplace(identity, entry).second)
-					throw std::runtime_error("Debugger connection capacity reached");
-			}
-			std::shared_ptr<wire::LocalControlClient> client;
-			try
-			{
-				const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-				for (;;)
-				{
-					if (entry->closed.load())
-						throw std::runtime_error("MCP session is closed");
-					try
-					{
-						client = std::make_shared<wire::LocalControlClient>(entry->endpoint, std::chrono::milliseconds(50));
-						break;
-					}
-					catch (const wire::ControlConnectTimeout&)
-					{
-						if (std::chrono::steady_clock::now() >= deadline)
-							throw;
-					}
-				}
-				if (client->PeerProcess() != entry->process)
-					throw std::runtime_error("Runtime endpoint belongs to a different process");
-				{
-					std::lock_guard lock(entry->owner);
-					if (entry->closed.load())
-						throw std::runtime_error("MCP session is closed");
-					entry->client = client;
-				}
-				const auto hello = Exchange(client, wire::OpCode::Hello,
-					{wire::Field::Text(tag::ClientName, "OpenXR Simulator MCP"),
-					 wire::Field::U64(tag::RequiredCapabilities, gameOnly ? 0 : static_cast<std::uint64_t>(wire::Capability::DebugCommands))});
-				const auto* error = hello.Find(tag::Error);
-				if (!error || error->AsU32() != 0)
-					throw std::runtime_error("Runtime did not negotiate debugger capabilities");
-				if (entry->closed.load())
-					throw std::runtime_error("MCP session is closed");
-				entry->capabilities = U64(hello, tag::Capabilities);
-				entry->minor = hello.minor;
-				if (gameOnly)
-				{
-					auto latest = application.Call("simulator_application_status", {{"application_id", target}},
-						std::make_shared<McpCancellation>());
-					if (!latest)
-						throw std::runtime_error("The selected game is unavailable");
-					ValidateGameTarget(Status(*latest), target, entry->endpoint, entry->process, entry->epoch, entry->launched);
-					if (entry->closed.load() || cancellation->Requested())
-						throw std::runtime_error("Game bridge connection was cancelled");
-					return Result({{"ok", true}, {"connection", identity}, {"application_id", target},
-						{"process_id", std::to_string(entry->process)}, {"capabilities", std::to_string(entry->capabilities)}});
-				}
-				return Result({{"ok", true}, {"connection", identity}, {"application_id", target},
-							   {"runtime_process_id", std::to_string(entry->process)}, {"runtime_epoch", std::to_string(entry->epoch)},
-							   {"session", std::to_string(entry->session)}, {"generation", std::to_string(entry->generation)},
-							   {"sessions", Json::array({{{"session", std::to_string(entry->session)},
-																 {"generation", std::to_string(entry->generation)}}})},
-							   {"capabilities", std::to_string(entry->capabilities)}});
-			}
-			catch (...)
-			{
-				retire();
-				throw;
-			}
+			return Result(result);
 		}
 
 		identity = Text(arguments, "connection");
@@ -748,15 +1034,15 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 		}
 		if (entry->gameOnly && !mcp::GameHandles(name))
 			throw std::invalid_argument("This connection only supports game bridge tools");
-		auto status = application.Call("simulator_application_status", {{"application_id", entry->application}}, cancellation);
-		if (!status)
-			return {};
 		try
 		{
+			const auto status = application.Lookup(entry->application, cancellation);
+			if (!status)
+				return {};
 			if (entry->gameOnly)
-				ValidateGameTarget(Status(*status), entry->application, entry->endpoint, entry->process, entry->epoch, entry->launched);
+				ValidateGameTarget(*status, entry->endpoint, entry->process, entry->epoch, entry->launched);
 			else
-				ValidateTarget(Status(*status), entry->application, entry->endpoint,
+				ValidateTarget(*status, entry->endpoint,
 							   entry->process, entry->session, entry->generation, entry->epoch);
 		}
 		catch (...)
@@ -826,125 +1112,6 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 		{
 			if (name == "debug_start_video_export" && !(entry->capabilities & static_cast<std::uint64_t>(wire::Capability::VideoExport)))
 				throw std::runtime_error("The connected runtime does not support video export");
-			if (name == "debug_render_export")
-			{
-				const auto render = mcp::PrepareImageRender(arguments);
-				if (!cancellation->TryAdmit())
-					return {};
-				std::vector<std::byte> pixels;
-				Json metadata;
-				wire::ImageDescription description;
-				std::string cacheKey;
-				try
-				{
-					const auto info = Exchange(client, wire::OpCode::ExportInfo,
-						{wire::Field::U64(tag::ExportId, render.ticket, true)});
-					const auto reply = mcp::ImageReply(info);
-					if (reply.value("isError", true))
-						return reply;
-					metadata = Json::parse(reply.at("content").at(0).at("text").get<std::string>());
-					if (metadata.value("phase", "") != "complete")
-						return Failure("Export is not complete; poll debug_export_info first");
-					const auto* descriptor = info.Find(tag::ImageDescriptor);
-					if (!descriptor)
-						return Failure("This export is not a raw image");
-					description = wire::DecodeImageDescription(*descriptor);
-					const auto pixelBytes = ColorPixelBytes(description.format);
-					const auto total = U64(info, tag::TotalBytes);
-					if (!pixelBytes || !description.width || !description.height || description.arrayLayers != 1 ||
-						description.width > 4096 || description.height > 4096 ||
-						std::uint64_t{description.width} * description.height > mcp::MaxImageInput / pixelBytes ||
-						total != std::uint64_t{description.width} * description.height * pixelBytes)
-						return Failure("Choose a supported single-layer image within the 32 MiB encoding limit");
-					// An export ticket is connection-owned; validate it above before sharing
-					// encoded content identified by the immutable source and selection.
-					if (metadata.contains("frame") && metadata.contains("target") && metadata.contains("capture") &&
-						metadata.contains("image_description"))
-					{
-						const auto* tickField = info.Find(tag::ImageTick);
-						const auto tick = tickField ? tickField->AsU64() : std::optional<std::uint64_t>{};
-						// A live display can change while the submitted frame stays the same.
-						if (mcp::CacheableImageSource(metadata.at("target").at("kind").get<std::uint32_t>(), tickField != nullptr, tick.has_value()))
-						{
-							// Older providers can omit the selected layer or region. In that
-							// case reuse only this validated ticket, not another export.
-							const bool selectionKnown = metadata.contains("layer") && metadata.contains("region");
-							const Json key = Json::array({entry->application, entry->endpoint, entry->process, entry->epoch,
-								entry->session, entry->generation, metadata.at("frame"), metadata.at("target"), metadata.at("capture"),
-								tick ? Json(std::to_string(*tick)) : Json(nullptr), metadata.value("layer", Json(nullptr)),
-								metadata.value("region", Json(nullptr)), metadata.at("image_description"), render.png, render.quality,
-								selectionKnown ? Json(nullptr) : Json(identity), selectionKnown ? Json(nullptr) : Json(render.ticket)});
-							cacheKey = key.dump();
-							if (const auto cached = s_imageCache.Find(cacheKey))
-							{
-								operation.unlock();
-								if (cancellation->Requested())
-									return {};
-								metadata["media_type"] = cached->mediaType;
-								metadata["lossy"] = cached->lossy;
-								metadata["encoded_bytes"] = cached->encodedBytes;
-								if (cached->lossy && render.png)
-									metadata["conversion"] = "clamped to 8-bit RGBA";
-								return Json{{"content", Json::array({{{"type", "text"}, {"text", metadata.dump()}},
-									{{"type", "image"}, {"mimeType", cached->mediaType}, {"data", cached->data}}})}, {"isError", false}};
-							}
-						}
-					}
-					mcp::ImageEncodingPermit permit;
-					pixels.reserve(static_cast<std::size_t>(total));
-					while (pixels.size() < total)
-					{
-						if (cancellation->Requested())
-							return {};
-						const auto offset = pixels.size();
-						const auto length = std::min<std::uint64_t>(wire::MaxPayload - 4096, total - offset);
-						const auto chunk = Exchange(client, wire::OpCode::ReadExport,
-							{wire::Field::U64(tag::ExportId, render.ticket, true), wire::Field::U64(tag::Offset, offset, true),
-							 wire::Field::U64(tag::Length, length, true)});
-						const auto* error = chunk.Find(tag::Error);
-						const auto code = error ? error->AsU32() : std::nullopt;
-						if (!code)
-							throw DebugTransportFailure("Runtime omitted its image error code; connection closed");
-						if (*code)
-							return mcp::ImageReply(chunk);
-						const auto* data = chunk.Find(tag::Bytes);
-						if (!data || U64(chunk, tag::Offset) != offset || U64(chunk, tag::Length) != length ||
-							data->value.size() != length)
-							throw DebugTransportFailure("Runtime returned an invalid image chunk; connection closed");
-						pixels.insert(pixels.end(), data->value.begin(), data->value.end());
-					}
-					operation.unlock();
-					if (cancellation->Requested())
-						return {};
-					const auto encoded = mcp::EncodeImage(pixels, description.format, description.width, description.height,
-																	 render.png, render.quality);
-					if (cancellation->Requested())
-						return {};
-					auto image = std::make_shared<mcp::CachedImage>();
-					image->mediaType = encoded.mediaType;
-					image->lossy = encoded.lossy;
-					image->encodedBytes = encoded.bytes.size();
-					image->data = mcp::EncodeBase64(encoded.bytes);
-					if (cancellation->Requested())
-						return {};
-					if (!cacheKey.empty())
-						s_imageCache.Insert(std::move(cacheKey), image);
-					metadata["media_type"] = image->mediaType;
-					metadata["lossy"] = image->lossy;
-					metadata["encoded_bytes"] = image->encodedBytes;
-					if (image->lossy && render.png)
-						metadata["conversion"] = "clamped to 8-bit RGBA";
-					return Json{{"content", Json::array({{{"type", "text"}, {"text", metadata.dump()}},
-						{{"type", "image"}, {"mimeType", image->mediaType}, {"data", image->data}}})},
-						{"isError", false}};
-				}
-				catch (...)
-				{
-					if (operation.owns_lock())
-						retire();
-					throw;
-				}
-			}
 			if (arguments.contains("region") && !(entry->capabilities & static_cast<std::uint64_t>(wire::Capability::ImageRegionExport)))
 				throw std::runtime_error("The connected runtime does not support image region export");
 			auto request = mcp::PrepareImage(name, arguments, entry->session, entry->generation);
@@ -968,50 +1135,6 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 				throw;
 			}
 		}
-		if (mcp::SequenceHandles(name))
-		{
-			if (!(entry->capabilities & static_cast<std::uint64_t>(wire::Capability::PoseSequences)))
-				throw std::runtime_error("The connected runtime does not support pose sequences");
-			auto request = mcp::PrepareSequence(name, arguments, entry->session, entry->generation);
-			if (!cancellation->TryAdmit())
-				return {};
-			try
-			{
-				if (name == "run_pose_sequence" && arguments.contains("program"))
-				{
-					const auto& program = arguments.at("program").get_ref<const std::string&>();
-					std::size_t offset = 0;
-					do
-					{
-						if (cancellation->Requested())
-						{
-							retire();
-							return {};
-						}
-						const auto length = std::min<std::size_t>(256 * 1024, program.size() - offset);
-						auto chunk = mcp::PrepareSequence("upload_pose_sequence", {{"connection", identity},
-							{"program_id", arguments.at("program_id")}, {"offset", offset},
-							{"total_bytes", program.size()}, {"data", program.substr(offset, length)}}, entry->session, entry->generation);
-						const auto uploaded = mcp::SequenceReply(Exchange(client, chunk.opcode, chunk.fields), chunk);
-						if (uploaded.value("isError", true))
-							return uploaded;
-						offset += length;
-					} while (offset < program.size());
-					if (cancellation->Requested())
-					{
-						retire();
-						return {};
-					}
-				}
-				const auto response = Exchange(client, request.opcode, request.fields);
-				return mcp::SequenceReply(response, request);
-			}
-			catch (...)
-			{
-				retire();
-				throw;
-			}
-		}
 		if (mcp::CompatibilityHandles(name))
 		{
 			if (!(entry->capabilities & static_cast<std::uint64_t>(wire::Capability::SimulationCommands)))
@@ -1019,15 +1142,19 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 			if (entry->minor < 17)
 				throw std::runtime_error("Compatibility controls require runtime control protocol 1.17");
 			const auto transaction = Number(arguments, "transaction_id");
-			const auto read = [&](Json requestArguments)
+			const auto read = [&](std::optional<std::uint64_t> id = {})
 			{
-				auto request = mcp::PrepareSimulation("simulation_status", requestArguments, entry->session, entry->generation);
+				std::vector<wire::Field> fields{wire::Field::U64(tag::Session, entry->session, true),
+					wire::Field::U64(tag::Generation, entry->generation, true),
+					wire::Field::U32(tag::SourceKind, static_cast<std::uint32_t>(CommandSourceKind::Mcp))};
+				if (id)
+					fields.push_back(wire::Field::U64(tag::TransactionId, *id, true));
 				try
 				{
-					const auto result = mcp::SimulationReply(Exchange(client, request.opcode, std::move(request.fields)));
-					if (result.value("isError", true))
+					const auto result = mcp::SimulationDocument(Exchange(client, wire::OpCode::SimulationStatus, std::move(fields)));
+					if (!result.at("ok").get<bool>())
 						throw DebugTransportFailure("Could not read simulation state; the connection was closed");
-					return Json::parse(result.at("content").at(0).at("text").get<std::string>());
+					return result;
 				}
 				catch (...)
 				{
@@ -1041,7 +1168,7 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 					continue;
 				if (saved != Json{{"name", name}, {"arguments", arguments}})
 					throw std::invalid_argument("Transaction ID was already used for different compatibility arguments");
-				auto result = read({{"connection", identity}, {"transaction_id", std::to_string(transaction)}});
+				auto result = read(transaction);
 				result["transaction_id"] = std::to_string(transaction);
 				result["replayed_receipt"] = true;
 				return Result(result);
@@ -1050,7 +1177,7 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 				throw std::invalid_argument("Transaction ID is retired; use a new increasing ID");
 			if (entry->compatibilityPending)
 			{
-				const auto prior = read({{"connection", identity}, {"transaction_id", std::to_string(*entry->compatibilityPending)}});
+				const auto prior = read(*entry->compatibilityPending);
 				const auto phase = prior.value("phase", "");
 				if (phase == "queued" || phase == "rescheduled")
 					throw std::runtime_error("The previous input edit is pending; advance the application frame and retry explicitly");
@@ -1060,35 +1187,39 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 			}
 			if (cancellation->Requested())
 				return {};
-			const auto observed = read({{"connection", identity}});
+			const auto observed = read();
 			const auto& document = observed.at("document");
 			if (Number(document, "pending", true))
 				throw std::runtime_error("Simulation transactions are pending; wait for them before editing applied state");
 			const auto frame = Number(document, "frame_id", true);
 			if (frame == UINT64_MAX)
 				throw std::runtime_error("Simulation frame identity is exhausted");
-			auto commands = mcp::CompatibilityCommands(name, arguments, document.at("configuration"));
+			const auto commands = mcp::CompatibilityCommands(name, arguments, document.at("configuration"));
 			const auto expected = mcp::CompatibilityExpectedInputs(name, arguments, document.at("configuration"));
-			auto request = mcp::PrepareSimulation("simulation_schedule", {{"connection", identity},
-				{"transaction_id", std::to_string(transaction)}, {"frame", std::to_string(frame + 1)},
-				{"late_policy", "reschedule_next"}, {"commands", std::move(commands)}}, entry->session, entry->generation);
-			if (!expected.empty())
+			std::vector<wire::Field> fields{wire::Field::U64(tag::Session, entry->session, true),
+				wire::Field::U64(tag::Generation, entry->generation, true),
+				wire::Field::U32(tag::SourceKind, static_cast<std::uint32_t>(CommandSourceKind::Mcp)),
+				wire::Field::U64(tag::TransactionId, transaction, true), wire::Field::U64(tag::ApplyFrame, frame + 1, true),
+				wire::Field::U32(tag::LatePolicy, static_cast<std::uint32_t>(CommandLatePolicy::RescheduleNext))};
+			const auto encode = [&](std::uint16_t tagValue, const auto& values)
 			{
-				std::vector<wire::Field> fields;
-				for (const auto& command : expected)
-					fields.push_back(wire::EncodeSimulationCommand(mcp::SimulationCommandFromJson(command),
-						static_cast<std::uint16_t>(fields.size() + 1)));
-				request.fields.push_back(wire::Field::Bytes(tag::ExpectedInputs, wire::EncodeFields(fields), true));
-			}
+				std::vector<wire::Field> encoded;
+				for (const auto& command : values)
+					encoded.push_back(wire::EncodeSimulationCommand(command, static_cast<std::uint16_t>(encoded.size() + 1)));
+				fields.push_back(wire::Field::Bytes(tagValue, wire::EncodeFields(encoded), true));
+			};
+			encode(tag::Commands, commands);
+			if (!expected.empty())
+				encode(tag::ExpectedInputs, expected);
+			(void)wire::EncodeFields(fields);
 			if (!cancellation->TryAdmit())
 				return {};
 			try
 			{
-				auto result = mcp::SimulationReply(Exchange(client, request.opcode, std::move(request.fields)));
-				if (!result.value("isError", true))
+				auto result = mcp::SimulationDocument(Exchange(client, wire::OpCode::SubmitSimulation, std::move(fields)));
+				if (result.at("ok").get<bool>())
 				{
-					const auto data = Json::parse(result.at("content").at(0).at("text").get<std::string>());
-					const auto phase = data.value("phase", "");
+					const auto phase = result.value("phase", "");
 					if (phase == "queued" || phase == "rescheduled")
 					{
 						entry->compatibilityPending = transaction;
@@ -1098,7 +1229,7 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 							entry->compatibilityRequests.pop_front();
 					}
 				}
-				return result;
+				return Result(result, !result.at("ok").get<bool>());
 			}
 			catch (...)
 			{
@@ -1334,6 +1465,8 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 	}
 	catch (const std::exception& error)
 	{
+		if ((mcp::SequenceHandles(name) || name == "debug_render_export") && cancellation->Requested())
+			return {};
 		return Failure(error.what());
 	}
 }

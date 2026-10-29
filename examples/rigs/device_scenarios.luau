@@ -4,15 +4,7 @@ simxr.pause()
 local function apply(commands)
     local target = simxr.frame_add(simxr.state().frame_id or "0", "1")
     local transaction = simxr.schedule({frame=target, commands=commands})
-    while simxr.frame_before(simxr.state().frame_id or "0", target) do
-        local capture = simxr.step()
-        local applied = simxr.state().frame_id
-        if capture then simxr.release_capture(capture) end
-        repeat
-            local displayCapture, progress, source = simxr.step_display()
-            if displayCapture then simxr.release_capture(displayCapture) end
-        until source and not simxr.frame_before(source, applied)
-    end
+    simxr.advance_to_frame(target)
     simxr.await_transaction(transaction)
     return simxr.state().configuration
 end

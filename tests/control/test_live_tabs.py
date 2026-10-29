@@ -54,7 +54,7 @@ def main():
     output.mkdir(parents=False, exist_ok=False)
     environment = dict(os.environ)
     for name in list(environment):
-        if name.startswith(('SIMXR_PROBE_', 'XR_PROBE_', 'SIMXR_TABS_')) or (
+        if name.startswith(('SIMXR_PROBE_', 'SIMXR_PROBE_', 'SIMXR_TABS_')) or (
                 name.startswith('SIMXR_') and name.endswith('_QA')):
             environment.pop(name)
     environment.update(XR_RUNTIME_JSON=str(runtime), SIMXR_VULKAN_VALIDATION='1', SIMXR_UI_VALIDATION='1',
@@ -67,12 +67,12 @@ def main():
         environment['SIMXR_TABS_BUDGET_QA'] = '1'
     if args.replay_close:
         environment['SIMXR_TABS_PORTABLE_REPLAY_QA'] = '1'
-    for name in ('SIMXR_DETERMINISTIC', 'SIMXR_CONTROL_SOCKET', 'XR_PROBE_REQUIRE_INPUT', 'XR_PROBE_RESIZE'):
+    for name in ('SIMXR_DETERMINISTIC', 'SIMXR_CONTROL_SOCKET', 'SIMXR_PROBE_REQUIRE_INPUT', 'SIMXR_PROBE_RESIZE'):
         environment.pop(name, None)
     environment['PATH'] = os.pathsep.join((str(probe.parent), str(interaction.parent), str(runtime.parent),
                                           environment.get('PATH', '')))
     if os.name == 'nt':
-        environment.update(XR_PROBE_FRAMES=str(args.frames), XR_PROBE_SESSIONS='1')
+        environment.update(SIMXR_PROBE_FRAMES=str(args.frames), SIMXR_PROBE_SESSIONS='1')
     else:
         environment.update(SIMXR_PROBE_FRAMES=str(args.frames), SIMXR_PROBE_INTERACTIVE='1',
                            SIMXR_PROBE_GPU_INSPECTION='1')

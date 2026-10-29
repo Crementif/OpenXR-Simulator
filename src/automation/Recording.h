@@ -81,6 +81,7 @@ class RecordingCollection
 // failures are restored; consumed recenter triggers are cleared, never repeated.
 std::vector<SimulationCommand> ReplayInitialCommands(const InputRecording& recording);
 SimulationCommand ReplayCommand(SimulationCommand command, std::optional<RuntimeTime> origin);
+std::optional<FrameId> ReplayFrame(const RecordedTransaction& transaction, FrameId origin, std::uint64_t version);
 std::string EditableRig(const InputRecording& recording);
 std::string EditableCommand(const SimulationCommand& command);
 } // namespace simxr::automation

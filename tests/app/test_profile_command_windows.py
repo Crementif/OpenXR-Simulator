@@ -13,7 +13,7 @@ import tempfile
 import time
 import zipfile
 
-from test_mcp_discovery_windows import kernel
+from mcp_support import kernel
 
 
 class ProcessEntry(ctypes.Structure):
@@ -156,7 +156,6 @@ def main():
             error_log.close()
             if errors:
                 raise RuntimeError('; '.join(errors))
-
 
 
 if __name__ == '__main__':

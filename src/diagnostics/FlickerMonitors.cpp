@@ -20,22 +20,20 @@ IncidentCapture::IncidentCapture(std::filesystem::path sessionDirectory)
 {
 }
 
-IncidentUpdate IncidentCapture::Begin(std::string_view reason, uint64_t frame, bool manual,
-									  const std::deque<Sample>& history)
+IncidentUpdate IncidentCapture::Begin(std::string_view reason, uint64_t frame, const std::deque<Sample>& history)
 {
-	if (!manual)
-		++m_statistics.anomalyCount;
+	Expire(frame);
+	++m_statistics.anomalyCount;
 	m_statistics.lastReason = reason;
 	IncidentUpdate update;
-	update.anomaly = !manual;
+	update.anomaly = true;
+	if (m_sessionDirectory.empty())
+		return update;
 	const bool coolingDown = m_statistics.incidentCount != 0 && frame >= m_lastIncidentFrame &&
 							 frame - m_lastIncidentFrame < s_incidentCooldownFrames;
 	if (!m_activeDirectory.empty())
-	{
-		m_manual |= manual;
 		return update;
-	}
-	if ((!manual && coolingDown) || m_statistics.incidentCount >= s_maxIncidentsPerSession)
+	if (coolingDown || m_statistics.incidentCount >= s_maxIncidentsPerSession)
 		return update;
 
 	IncidentPacket packet;
@@ -47,7 +45,6 @@ IncidentUpdate IncidentCapture::Begin(std::string_view reason, uint64_t frame, b
 	m_lastIncidentFrame = frame;
 	++m_statistics.incidentCount;
 	m_postFramesRemaining = s_postIncidentFrames;
-	m_manual = manual;
 	m_lastProcessedFrame.reset();
 	if (!history.empty())
 		m_lastProcessedFrame = history.back().frame;
@@ -55,8 +52,15 @@ IncidentUpdate IncidentCapture::Begin(std::string_view reason, uint64_t frame, b
 	return update;
 }
 
+void IncidentCapture::Expire(uint64_t frame)
+{
+	if (frame >= m_lastIncidentFrame && frame - m_lastIncidentFrame > s_postIncidentFrames)
+		m_activeDirectory.clear();
+}
+
 std::optional<SampleArtifact> IncidentCapture::Continue(const Sample& sample)
 {
+	Expire(sample.frame);
 	if (m_activeDirectory.empty() || m_lastProcessedFrame == sample.frame)
 		return {};
 	SampleArtifact artifact{m_activeDirectory, sample};
@@ -69,20 +73,6 @@ std::optional<SampleArtifact> IncidentCapture::Continue(const Sample& sample)
 const IncidentStatistics& IncidentCapture::Statistics() const
 {
 	return m_statistics;
-}
-
-void IncidentCapture::SkipSample(uint64_t frame)
-{
-	if (!NeedsPixels() || m_lastProcessedFrame == frame)
-		return;
-	m_lastProcessedFrame = frame;
-	if (--m_postFramesRemaining == 0)
-		m_activeDirectory.clear();
-}
-
-bool IncidentCapture::NeedsPixels() const
-{
-	return m_manual && !m_activeDirectory.empty();
 }
 
 PreviewMonitor::PreviewMonitor(std::filesystem::path sessionDirectory) : m_capture(std::move(sessionDirectory)) {}
@@ -111,7 +101,7 @@ IncidentUpdate PreviewMonitor::Submission(uint64_t frame, uint32_t projectionLay
 	{
 		++statistics.projectionPresenceTransitions;
 		if (!hasProjection && statistics.projectionSubmissions >= 5)
-			update = m_capture.Begin("MISSING_PROJECTION_LAYER", frame, false, m_history);
+			update = m_capture.Begin("MISSING_PROJECTION_LAYER", frame, m_history);
 	}
 	m_projectionInitialized = true;
 	m_lastHadProjection = hasProjection;
@@ -166,7 +156,7 @@ IncidentUpdate PreviewMonitor::Preview(Sample current, uint64_t generation)
 		++statistics.visiblePreviewSamples;
 	IncidentUpdate update;
 	if (!reason.empty())
-		update = m_capture.Begin(reason, current.frame, false, m_history);
+		update = m_capture.Begin(reason, current.frame, m_history);
 	update.sample = m_capture.Continue(current);
 	m_dirty |= statistics.previewSamples % 15 == 0 || !reason.empty();
 	statistics.metrics = metrics;
@@ -191,26 +181,15 @@ IncidentUpdate PreviewMonitor::Paint(uint64_t generation, bool paintedPreview)
 	{
 		++statistics.failedPaints;
 		if (statistics.successfulPaints >= 5)
-			update = m_capture.Begin("PREVIEW_PAINT_FAILURE", statistics.lastFrame, false, m_history);
+			update = m_capture.Begin("PREVIEW_PAINT_FAILURE", statistics.lastFrame, m_history);
 	}
 	m_dirty |= !paintedPreview || statistics.paintAttempts % 15 == 0;
 	return update;
 }
 
-IncidentUpdate PreviewMonitor::Capture()
-{
-	m_dirty = true;
-	return m_capture.Begin("MANUAL_CAPTURE", m_statistics.lastFrame, true, m_history);
-}
-
 bool PreviewMonitor::AcceptsGeneration(uint64_t generation) const
 {
 	return generation != 0 && generation != m_lastGeneration;
-}
-
-bool PreviewMonitor::NeedsPixels() const
-{
-	return m_capture.NeedsPixels();
 }
 
 uint64_t PreviewMonitor::Frame() const
@@ -232,8 +211,8 @@ bool PreviewMonitor::TakeDirty()
 
 UiMonitor::UiMonitor(std::filesystem::path sessionDirectory) : m_capture(std::move(sessionDirectory)) {}
 
-IncidentUpdate UiMonitor::Observe(const uint8_t* bgra, uint32_t width, uint32_t height, uint32_t pitchBytes,
-								  uint64_t generation, uint64_t frame, const UiFrameInfo& info)
+IncidentUpdate UiMonitor::Observe(const uint8_t* pixels, uint32_t width, uint32_t height, uint32_t pitchBytes,
+								  uint64_t generation, uint64_t frame, const UiFrameInfo& info, PixelOrder order)
 {
 	auto& statistics = m_statistics;
 	statistics.lastFrame = frame;
@@ -273,10 +252,10 @@ IncidentUpdate UiMonitor::Observe(const uint8_t* bgra, uint32_t width, uint32_t 
 	std::optional<Sample> current;
 	const bool validRects =
 		info.rects[0][2] > 0 && info.rects[0][3] > 0 && info.rects[1][2] > 0 && info.rects[1][3] > 0;
-	if (ValidPixels(bgra, width, height, pitchBytes) && validRects && generation != 0 && generation != m_lastGeneration)
+	if (ValidPixels(pixels, width, height, pitchBytes) && validRects && generation != 0 && generation != m_lastGeneration)
 	{
 		m_lastGeneration = generation;
-		current = CropUi(bgra, width, height, pitchBytes ? pitchBytes : width * 4, info.rects, frame);
+		current = CropUi(pixels, width, height, pitchBytes ? pitchBytes : width * 4, info.rects, frame, order);
 		if (!m_history.empty())
 			CalculateTemporal(*current, m_history.back());
 		++statistics.uiSamples;
@@ -294,7 +273,7 @@ IncidentUpdate UiMonitor::Observe(const uint8_t* bgra, uint32_t width, uint32_t 
 
 	IncidentUpdate update;
 	if (!reason.empty())
-		update = m_capture.Begin(reason, frame, false, m_history);
+		update = m_capture.Begin(reason, frame, m_history);
 	if (current)
 	{
 		update.sample = m_capture.Continue(*current);
@@ -302,19 +281,8 @@ IncidentUpdate UiMonitor::Observe(const uint8_t* bgra, uint32_t width, uint32_t 
 		statistics.hasMetrics = true;
 		Remember(m_history, std::move(*current));
 	}
-	else if (ValidPixels(bgra, width, height, pitchBytes) && generation != 0 && generation != m_lastGeneration)
-	{
-		m_lastGeneration = generation;
-		m_capture.SkipSample(frame);
-	}
 	m_dirty |= statistics.observedFrames % 15 == 0 || !reason.empty();
 	return update;
-}
-
-IncidentUpdate UiMonitor::Capture()
-{
-	m_dirty = true;
-	return m_capture.Begin("MANUAL_UI_CAPTURE", m_statistics.lastFrame, true, m_history);
 }
 
 UiStatistics UiMonitor::Snapshot() const
@@ -322,11 +290,6 @@ UiStatistics UiMonitor::Snapshot() const
 	auto snapshot = m_statistics;
 	snapshot.incidents = m_capture.Statistics();
 	return snapshot;
-}
-
-bool UiMonitor::NeedsPixels() const
-{
-	return m_capture.NeedsPixels();
 }
 
 bool UiMonitor::TakeDirty()

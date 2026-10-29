@@ -1,15 +1,19 @@
 #include "app/mcp/McpPch.h"
 #include "app/mcp/McpVideoSave.h"
+#include "app/mcp/McpImage.h"
+#include "app/services/RuntimePanelProtocol.h"
 #include "app/mcp/McpArtifactCalls.h"
 #include "app/mcp/McpApplication.h"
 #include "app/mcp/McpDebug.h"
-#include "app/platform/FileStorage.h"
+#include "app/services/ImageExport.h"
 #include "app/services/Utf8Path.h"
 #include "control/ProtocolTypes.h"
 
 namespace simxr::app::mcp
 {
 using Json = nlohmann::json;
+namespace wire = control;
+namespace tag = control::tag;
 using namespace std::chrono_literals;
 
 static std::atomic<unsigned> s_videoSaves{0};
@@ -48,7 +52,6 @@ Json VideoSaveDefinition()
 std::optional<Json> SaveVideo(McpApplication& app, McpDebug& debug, const Json& arguments,
 	const std::shared_ptr<McpCancellation>& cancellation)
 {
-	std::filesystem::path temporary;
 	try
 	{
 		if (!arguments.is_object()) throw std::invalid_argument("Arguments must be an object");
@@ -72,67 +75,66 @@ std::optional<Json> SaveVideo(McpApplication& app, McpDebug& debug, const Json& 
 		if (!cancellation->TryAdmit()) return {};
 		VideoSavePermit permit;
 		ArtifactCalls calls(app, debug, connection, cancellation, timeout, "Video save");
-		std::string ticket;
+		std::uint64_t ticket = 0;
 		try
 		{
-			Json request = {{"connection", connection}, {"first_frame", arguments.at("first_frame")}, {"last_frame", arguments.at("last_frame")}};
+			const auto first = ImageId(arguments, "first_frame"), last = ImageId(arguments, "last_frame");
+			if (last < first || last - first >= 1000000)
+				throw std::invalid_argument("Select one to one million ordered frames");
+			std::vector<wire::Field> request{wire::Field::U64(tag::FirstFrame, first, true),
+				wire::Field::U64(tag::LastFrame, last, true)};
 			if (arguments.contains("session"))
 			{
-				request["session"] = arguments.at("session");
-				request["generation"] = arguments.at("generation");
+				request.push_back(wire::Field::U64(tag::Session, ImageId(arguments, "session"), true));
+				request.push_back(wire::Field::U64(tag::Generation, ImageId(arguments, "generation"), true));
 			}
-			const auto start = calls.Call("debug_start_video_export", request);
-			ticket = start.at("export").get<std::string>();
-			std::uint64_t ticketId = 0;
-			const auto parsed = std::from_chars(ticket.data(), ticket.data() + ticket.size(), ticketId);
-			if (parsed.ec != std::errc{} || parsed.ptr != ticket.data() + ticket.size() || !ticketId) throw std::runtime_error("Invalid video export identity");
-			Json info;
+			ticket = panel::U64(calls.Request(wire::OpCode::StartVideoExport, std::move(request)), tag::ExportId);
+			if (!ticket)
+				throw std::runtime_error("Invalid video export identity");
+			wire::Message info;
 			for (;;)
 			{
-				info = calls.Call("debug_export_info", {{"connection", connection}, {"export", ticket}});
-				const auto phase = info.at("phase").get<std::string>();
-				if (phase == "complete") break;
-				if (phase != "pending") throw std::runtime_error(info.value("detail", "Video export failed"));
+				info = calls.Request(wire::OpCode::ExportInfo, {wire::Field::U64(tag::ExportId, ticket, true)});
+				const auto phase = panel::Text(info, tag::Phase);
+				if (phase == "complete")
+					break;
+				if (phase != "pending")
+					throw std::runtime_error(panel::Text(info, tag::Detail, "Video export failed"));
 				std::this_thread::sleep_for(20ms);
 			}
-			const auto text = info.at("total_bytes").get<std::string>();
-			std::uint64_t total = 0;
-			const auto size = std::from_chars(text.data(), text.data() + text.size(), total);
-			if (size.ec != std::errc{} || size.ptr != text.data() + text.size() || !total || total > 512ULL * 1024 * 1024 || info.value("media_type", "") != "video/mp4")
+			const auto total = panel::U64(info, tag::TotalBytes);
+			if (!total || total > 512ULL * 1024 * 1024 || panel::Text(info, tag::MediaType) != "video/mp4")
 				throw std::runtime_error("Invalid MP4 export description");
-			temporary = CreatePrivateTemporaryFile(destination);
-			std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-			if (!output) throw std::runtime_error("Cannot open temporary video file");
-			for (std::uint64_t offset = 0; offset < total;)
+			SaveExportFile(destination, [&](std::ostream& output)
 			{
+				for (std::uint64_t offset = 0; offset < total;)
+				{
+					calls.Check();
+					const auto length = std::min<std::uint64_t>(control::MaxPayload - 4096, total - offset);
+					const auto bytes = calls.Read(ticket, offset, length);
+					output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+					if (!output)
+						throw std::runtime_error("Cannot write video export");
+					offset += bytes.size();
+				}
+			}, overwrite, [&]
+			{
+				calls.Request(wire::OpCode::ReleaseExport, {wire::Field::U64(tag::ExportId, ticket, true)});
+				ticket = 0;
 				calls.Check();
-				const auto length = std::min<std::uint64_t>(control::MaxPayload - 4096, total - offset);
-				const auto bytes = calls.Read(ticketId, offset, length);
-				output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-				if (!output) throw std::runtime_error("Cannot write temporary video file");
-				offset += bytes.size();
-			}
-			output.close();
-			if (!output) throw std::runtime_error("Cannot close temporary video file");
-			calls.Call("debug_release_export", {{"connection", connection}, {"export", ticket}});
-			ticket.clear();
-			calls.Check();
-			if (overwrite) CommitTemporaryFile(temporary, destination);
-			else RenameFileWithoutReplacing(temporary, destination);
-			temporary.clear();
+			});
 			const Json result = {{"ok", true}, {"path", PathText(destination)}, {"bytes", std::to_string(total)},
 				{"first_frame", arguments.at("first_frame")}, {"last_frame", arguments.at("last_frame")}};
 			return Json{{"content", Json::array({{{"type", "text"}, {"text", result.dump()}}})}, {"isError", false}};
 		}
 		catch (...)
 		{
-			if (!ticket.empty()) { try { calls.Call("debug_release_export", {{"connection", connection}, {"export", ticket}}); } catch (...) {} }
+			if (ticket) { try { calls.Request(wire::OpCode::ReleaseExport, {wire::Field::U64(tag::ExportId, ticket, true)}); } catch (...) {} }
 			throw;
 		}
 	}
 	catch (const std::exception& error)
 	{
-		if (!temporary.empty()) { std::error_code ignored; std::filesystem::remove(temporary, ignored); }
 		if (cancellation->Requested()) return {};
 		return Error(error.what());
 	}

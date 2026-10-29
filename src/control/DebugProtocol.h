@@ -16,6 +16,7 @@ namespace simxr::control
 void EncodeFrameHistory(Message& response, const FrameHistorySnapshot& history, std::uint64_t after, std::size_t count,
 						bool trackerCollections = false);
 std::optional<std::vector<std::string>> DecodeCompatibilityDeviations(const Message& status);
+const char* SnapshotPhaseName(SnapshotPhase phase);
 Field EncodeCaptureTarget(CaptureTarget target);
 CaptureTarget DecodeCaptureTarget(const Message& request);
 Field EncodeFrameKey(std::uint16_t tag, FrameKey frame);

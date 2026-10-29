@@ -3,7 +3,6 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import json
-import os
 import threading
 from artifact_workflows import (
     CaptureWorkflow,
@@ -13,7 +12,6 @@ from artifact_workflows import (
     WorkflowClosed,
 )
 from debug_control import DebugTools, TOOL_DEFINITIONS
-from file_commands import FileEdit, encode_file_edit
 from legacy_control import LegacyControl
 from runtime_artifacts import CaptureFailed, RuntimeArtifacts, simulator_directory
 from runtime_diagnostics import RuntimeDiagnostics
@@ -31,11 +29,9 @@ class McpApplication:
     MAX_ACTIVE = 16
     WORKERS = 4
 
-    def __init__(self, directory=None, *, debug=None, legacy=None, platform=None):
-        self._platform = os.name if platform is None else platform
+    def __init__(self, directory=None, *, debug=None, legacy=None):
         self._artifacts = RuntimeArtifacts(
             simulator_directory() if directory is None else directory,
-            platform=self._platform,
         )
         self._debug = DebugTools() if debug is None else debug
         self._legacy = (
@@ -139,12 +135,6 @@ class McpApplication:
             handler = self._handlers.get(name)
             if handler is not None:
                 return handler(arguments)
-            edit = encode_file_edit(name, arguments, self._platform)
-            if isinstance(edit, FileEdit):
-                self._artifacts.publish_bytes(edit.filename, edit.document)
-                return [TextResult(edit.reply)]
-            if isinstance(edit, TextResult):
-                return [edit]
             return [TextResult(f"Unknown tool: {name}")]
         except (WorkflowBusy, WorkflowClosed, CaptureFailed) as error:
             return [TextResult(str(error))]
@@ -184,5 +174,4 @@ class McpApplication:
                 try:
                     self._debug.close()
                 finally:
-                    self._artifacts.close()
                     self._stopped = True

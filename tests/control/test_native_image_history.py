@@ -1,15 +1,13 @@
 """GPU history survives recycling/eviction and cannot starve live rendering."""
 from contextlib import ExitStack
 import json
-import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import time
 
-from test_native_quad import export, require, wait_file
-from test_native_filtered_capture import command
+from native_support import probe_environment, running_probe, export, require, wait_file, command
 from simxr_control import Capability, Client, CommandKind, TargetKind
 from simxr_control.errors import ControlError
 from simxr_control.protocol import ErrorCode
@@ -33,14 +31,12 @@ from debug_control import DebugTools
 def main():
     with tempfile.TemporaryDirectory(prefix='sx-history-') as temporary:
         data = Path(temporary)
-        environment = dict(os.environ, SIMXR_DATA_DIR=temporary, SIMXR_PROBE_CONTROL='1',
+        environment = probe_environment(data, SIMXR_PROBE_CONTROL='1',
                            SIMXR_PROBE_RETAIN_CONTROL='1', SIMXR_PROBE_GPU_INSPECTION='1',
                            SIMXR_PROBE_RECORDING='1', SIMXR_PROBE_DYNAMIC_COLOR='1',
                            SIMXR_PROBE_FRAMES='36', SIMXR_WIDTH='64', SIMXR_HEIGHT='48')
-        environment.pop('SIMXR_CONTROL_SOCKET', None)
-        host = subprocess.Popen([sys.argv[1]], env=environment, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True)
-        try:
+
+        with running_probe([sys.argv[1]], environment) as host:
             wait_file(data / 'control.ready', host)
             with ExitStack() as stack:
                 clients = [stack.enter_context(Client(data / f'control.{host.pid}.sock')) for _ in range(3)]
@@ -134,11 +130,6 @@ def main():
             require(host.returncode == 0, output)
             require('VUID-' not in output and 'Vulkan validation error' not in output, output)
             print('PASS GPU history: exact old pixels, bounded pressure/recovery, independent capture budget, teardown')
-        finally:
-            if host.poll() is None:
-                host.kill()
-                output = host.communicate()[0]
-                print(output, file=sys.stderr)
 
 
 if __name__ == '__main__':

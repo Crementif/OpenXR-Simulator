@@ -399,23 +399,11 @@ void WriteArtifact(const Artifact& artifact)
 				{
 					WriteText(packet.directory / "incident.json",
 							  BuildStatusJson(value.statistics, nullptr, packet.triggerFrame));
-					WriteText(
-						packet.directory / "LLM_REVIEW.md",
-						"# OpenXR Simulator visible-preview flicker incident\n\n"
-						"The packet contains the composed CPU preview surface. Review paired `color_L` and `color_R` "
-						"frames for flashes, missing-eye frames, alternation and frozen output. "
-						"Submission context is in `incident.json` and `flicker_status.json`.\n");
 				}
 				else
 				{
 					WriteText(packet.directory / "incident.json",
 							  BuildUiStatusJson(value.statistics, nullptr, packet.triggerFrame));
-					WriteText(
-						packet.directory / "LLM_REVIEW.md",
-						"# OpenXR Simulator UI-only flicker incident\n\n"
-						"Images are cropped to the submitted quad in each eye. Review `color_L` and `color_R` for UI "
-						"presence/absence alternation. Structural and composition counters are in `incident.json` "
-						"and `ui_flicker_status.json`.\n");
 				}
 				for (const auto& sample : packet.history)
 					SaveSample({packet.directory, sample});
@@ -432,11 +420,6 @@ void WritePreviewStatus(const std::filesystem::path& directory, const Diagnostic
 void WriteUiStatus(const std::filesystem::path& directory, const DiagnosticsStatus& status)
 {
 	WriteText(directory / "ui_flicker_status.json", BuildUiStatusJson(status.ui, &status));
-}
-
-bool ConsumeRequest(const std::filesystem::path& path)
-{
-	return std::filesystem::remove(path);
 }
 
 void PruneArtifacts(const std::filesystem::path& directory, std::string_view activeSession)

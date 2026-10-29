@@ -44,12 +44,12 @@ class StatusFiles final
 	}
 	void Flush()
 	{
-		const auto marker = std::to_string(++m_flush);
-		Require(m_channel->Publish(LegacyOutputFile::ProjectionLog, marker), "Queue status writer marker");
+		const auto marker = "status-flush-" + std::to_string(++m_flush);
+		Require(m_channel->Log(marker), "Queue status writer marker");
 		Eventually(
 			[&]
 			{
-				return Read("projection_log.json") == marker;
+				return Read(("openxr_simulator." + std::to_string(getpid()) + ".log").c_str()).ends_with(marker + "\n");
 			},
 			"Status writer did not reach marker");
 	}
@@ -138,7 +138,9 @@ void CheckDeterministicAndInstanceLifetime()
 {
 	StatusFiles files;
 	LegacyInput input;
-	input.Apply(LegacyInputCommand::HeadPose, R"({"x":0.25,"yaw":0.5})");
+	std::string sequence(R"({"frame":0,"head":{"x":0.25,"yaw":0.5}})");
+	input.StartSequence(PoseSequence::Parse(sequence, false), {});
+	input.AdvanceSequence({0});
 	const auto now = LinuxRuntimeStatus::Clock::time_point{1000ms};
 	auto session = RunningSession(7, 1);
 	{

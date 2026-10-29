@@ -154,7 +154,7 @@ std::optional<automation::SavedRecording> RangePage::Draw(const RangeSel& range,
 	if (ImGui::Button("Export frames"))
 		m_export.Start(range.first, range.last, range.epoch, m_path.data());
 	ImGui::EndDisabled();
-	ImGui::SetItemTooltip("Saves frame timing as CSV and kept snapshots as PPM next to it");
+	ImGui::SetItemTooltip("Saves frame timing as CSV and kept snapshots as PNG next to it");
 	if (!m_export.Metadata().empty())
 		ImGui::TextWrapped("%s", m_export.Metadata().c_str());
 	if (!m_export.Images().empty())

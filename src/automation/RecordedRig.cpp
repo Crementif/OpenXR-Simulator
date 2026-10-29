@@ -442,6 +442,40 @@ std::vector<SimulationCommand> ReplayInitialCommands(const InputRecording& recor
 	return commands;
 }
 
+std::optional<FrameId> ReplayFrame(const RecordedTransaction& transaction, FrameId origin, std::uint64_t version)
+{
+	if (version < 1 || version > 4 || transaction.commands.empty() || transaction.commands.size() > 64)
+		throw std::invalid_argument("Malformed recorded transaction");
+	for (const auto& command : transaction.commands)
+	{
+		if (const auto* body = std::get_if<SetBodyControls>(&command); body && body->observation && version < 4)
+			throw std::invalid_argument("Body observations require recording schema 4");
+		if (version < 3 && std::holds_alternative<SetTrackers>(command))
+			throw std::invalid_argument("Tracker collections require recording schema 3");
+	}
+	const bool released = transaction.phase == "released";
+	if ((transaction.afterFrame && !released) ||
+		(released && (version < 2 || transaction.id ||
+			!std::ranges::all_of(transaction.commands, [](const auto& command)
+			{
+				return std::holds_alternative<ReleaseControl>(command);
+			}))))
+		throw std::invalid_argument("Malformed recorded release event");
+	if (transaction.phase != "applied" && !released)
+	{
+		constexpr std::array phases{"queued", "late", "rescheduled", "conflict", "cancelled",
+			"invalid", "capacity", "closed", "not_found"};
+		if (std::find(phases.begin(), phases.end(), transaction.phase) == phases.end())
+			throw std::invalid_argument("Unknown recorded transaction phase");
+		return {};
+	}
+	if (transaction.frame < origin || (transaction.frame == origin && !transaction.afterFrame))
+		throw std::invalid_argument("Applied recording transaction precedes its origin");
+	if (transaction.afterFrame && transaction.frame.value == std::numeric_limits<std::uint64_t>::max())
+		throw std::overflow_error("Recorded release exceeds the frame range");
+	return FrameId{transaction.frame.value + (transaction.afterFrame ? 1 : 0)};
+}
+
 std::string EditableRig(const InputRecording& recording)
 {
 	if ((recording.version < 1 || recording.version > 4) || recording.active || recording.overflow ||
@@ -462,69 +496,24 @@ std::string EditableRig(const InputRecording& recording)
 	line("assert(simxr.seed == " + Quote(std::to_string(recording.seed)) + ", \"Recording seed differs\")");
 	line("simxr.pause()");
 	line("local baseFrame = simxr.frame_add(simxr.state().frame_id or \"0\", \"1\")");
-	line("local function presentThrough(appliedFrame)");
-	line("    repeat");
-	line("        local capture, progress, sourceFrame = simxr.step_display()");
-	line("        if capture then simxr.release_capture(capture) end");
-	line("    until sourceFrame and not simxr.frame_before(sourceFrame, appliedFrame)");
-	line("end");
-	line("local function advance(target)");
-	line("    while simxr.frame_before(simxr.state().frame_id or \"0\", target) do");
-	line("        local capture = simxr.step()");
-	line("        if capture then simxr.release_capture(capture) end");
-	line("        local appliedFrame = simxr.state().frame_id or \"0\"");
-	line("        presentThrough(appliedFrame)");
-	line("    end");
-	line("end");
 	line("local initialCommands = {");
 	line("    -- Restore persistent failures; do not repeat the origin's consumed recenter event.");
 	for (const auto& command : initialCommands)
 		line("    " + EditableCommand(command) + ",");
 	line("}");
 	line("local initial = simxr.schedule({frame = baseFrame, commands = initialCommands})");
-	line("advance(baseFrame)");
+	line("simxr.advance_to_frame(baseFrame)");
 	line("simxr.await_transaction(initial)");
 	std::map<std::uint64_t, std::vector<const RecordedTransaction*>> frames;
 	for (const auto& transaction : recording.transactions)
 	{
-		for (const auto& command : transaction.commands)
+		const auto frame = ReplayFrame(transaction, recording.originFrame, recording.version);
+		if (!frame)
 		{
-			if (const auto* body = std::get_if<SetBodyControls>(&command); body && body->observation && recording.version < 4)
-				throw std::invalid_argument("Body observations require recording schema 4");
-			if (recording.version < 3 && std::holds_alternative<SetTrackers>(command))
-				throw std::invalid_argument("Tracker collections require recording schema 3");
-		}
-		if (transaction.commands.empty() || transaction.commands.size() > 64)
-			throw std::invalid_argument("Recorded transaction has an invalid command count");
-		const bool released = transaction.phase == "released";
-		if ((transaction.afterFrame && !released) ||
-			(released && (recording.version < 2 || transaction.id != 0 ||
-						  !std::all_of(
-							  transaction.commands.begin(), transaction.commands.end(),
-							  [](const auto& command)
-							  {
-								  return std::holds_alternative<ReleaseControl>(command);
-							  }))))
-			throw std::invalid_argument("Malformed recorded release event");
-		if (transaction.phase != "applied" && !released)
-		{
-			constexpr std::array phases{"queued",  "late",	   "rescheduled", "conflict", "cancelled",
-										"invalid", "capacity", "closed",	  "not_found"};
-			if (std::find(phases.begin(), phases.end(), transaction.phase) == phases.end())
-				throw std::invalid_argument("Unknown recorded transaction phase");
 			line("-- Observed transaction " + std::to_string(transaction.id) + ": " + transaction.phase);
 			continue;
 		}
-		if (transaction.frame < recording.originFrame ||
-			(transaction.frame == recording.originFrame && !transaction.afterFrame))
-			throw std::invalid_argument("Applied transaction precedes recording origin");
-		auto relative = transaction.frame.value - recording.originFrame.value;
-		if (transaction.afterFrame)
-		{
-			if (relative == std::numeric_limits<std::uint64_t>::max())
-				throw std::overflow_error("Release event exceeds replay frame range");
-			++relative;
-		}
+		const auto relative = frame->value - recording.originFrame.value;
 		frames[relative].push_back(&transaction);
 	}
 	for (const auto& [relative, transactions] : frames)
@@ -553,7 +542,7 @@ std::string EditableRig(const InputRecording& recording)
 				line("        " + EditableCommand(ReplayCommand(command, transaction->runtimeTime)) + ",");
 			line("    }}))");
 		}
-		line("    advance(target)");
+		line("    simxr.advance_to_frame(target)");
 		line("    for _, id in pending do simxr.await_transaction(id) end");
 		line("end");
 	}

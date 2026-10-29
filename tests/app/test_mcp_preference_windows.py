@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """Check saved and connector-started MCP enablement on native Windows."""
 
-import json
+
 import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 
-from test_mcp_connector import Client, eventually
-from test_mcp_discovery_windows import kernel, process_handle
+from mcp_support import Client, discovery_record, eventually, kernel, process_handle
 
 
 def main():
@@ -31,11 +30,7 @@ def main():
                                                stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
                 processes.append(app_process)
 
-                def record(directory):
-                    files = list(directory.glob("*.json"))
-                    return json.loads(files[0].read_text(encoding="utf-8")) if len(files) == 1 else None
-
-                initial = eventually(lambda: record(root / "enabled"))
+                initial = eventually(lambda: discovery_record(root / 'enabled'))
                 assert initial["process_id"] == app_process.pid
                 connector_process = subprocess.Popen([connector, "--app", app], env=enabled_env, stdin=subprocess.PIPE,
                                                      stdout=subprocess.PIPE, stderr=log, text=True, encoding="utf-8",
@@ -44,7 +39,7 @@ def main():
                 params = {"protocolVersion": "2025-11-25", "capabilities": {},
                           "clientInfo": {"name": "test", "version": "1"}}
                 assert "result" in Client(connector_process).rpc("initialize", params)
-                assert record(root / "enabled")["process_id"] == app_process.pid
+                assert discovery_record(root / 'enabled')["process_id"] == app_process.pid
                 connector_process.stdin.close()
                 assert connector_process.wait(timeout=15) == 0 and app_process.poll() is None
                 app_process.terminate()
@@ -57,7 +52,7 @@ def main():
                                         bufsize=1, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
                 processes.append(boot)
                 assert "result" in Client(boot).rpc("initialize", params)
-                boot_record = eventually(lambda: record(root / "bootstrap"))
+                boot_record = eventually(lambda: discovery_record(root / 'bootstrap'))
                 boot_handle = process_handle(int(boot_record["process_id"]))
                 saved = subprocess.check_output([helper, "--read-settings", str(settings)], env=env, text=True)
                 assert saved.strip() == "0", "Connector startup must not change the saved preference"

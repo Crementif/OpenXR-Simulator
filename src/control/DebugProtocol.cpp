@@ -215,7 +215,7 @@ static const char* Name(DebugProgress value)
 	}
 	throw ControlRequestError{ErrorCode::Internal, "Unknown operation progress"};
 }
-static const char* Name(SnapshotPhase value)
+const char* SnapshotPhaseName(SnapshotPhase value)
 {
 	switch (value)
 	{
@@ -590,7 +590,7 @@ void EncodeDebugOperation(Message& response, const DebugOperation& operation)
 void EncodeCaptureMetadata(Message& response, const SnapshotRecord& capture, bool trackerCollections)
 {
 	response.fields.push_back(Field::U64(tag::CaptureId, capture.id.value));
-	response.fields.push_back(Field::Text(tag::Phase, Name(capture.phase)));
+	response.fields.push_back(Field::Text(tag::Phase, SnapshotPhaseName(capture.phase)));
 	response.fields.push_back(Field::Bool(tag::Pinned, capture.pinned));
 	response.fields.push_back(Field::I64(tag::Result, capture.result));
 	response.fields.push_back(EncodeCaptureTarget(capture.target));

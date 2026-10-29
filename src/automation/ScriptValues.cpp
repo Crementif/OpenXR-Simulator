@@ -582,15 +582,19 @@ void PushIntegerField(lua_State* state, const char* name, std::uint64_t value)
 	PushInteger(state, value);
 	lua_setfield(state, -2, name);
 }
-void PushInspection(lua_State* state, std::span<const std::byte> bytes, unsigned depth)
+static void PushNode(lua_State* state, std::span<const std::byte> bytes, unsigned depth, bool named)
 {
 	if (depth > 32)
 		throw std::runtime_error("Inspection nesting exceeds the rig limit");
-	auto fields = wire::DecodeFields(bytes);
-	if (fields.error != wire::DecodeError::None || fields.fields.size() < 3)
+	auto node = wire::DecodeFieldViews(bytes);
+	if (node.error != wire::DecodeError::None || node.fields.size() < 3)
 		throw std::runtime_error("Malformed inspection document");
-	wire::Message node;
-	node.fields = std::move(fields.fields);
+	const auto* name = node.Find(1);
+	const auto label = name ? name->AsText() : std::nullopt;
+	if (!label || (named && label->empty()) || (!named && !label->empty()))
+		throw std::runtime_error("Invalid inspection member name");
+	if (named)
+		lua_pushlstring(state, label->data(), label->size());
 	const auto* kind = node.Find(2);
 	const auto* data = node.Find(3);
 	if (!kind || !kind->AsU32() || !data)
@@ -635,38 +639,31 @@ void PushInspection(lua_State* state, std::span<const std::byte> bytes, unsigned
 	case wire::InspectionType::Object:
 	{
 		lua_newtable(state);
-		const auto children = wire::DecodeFields(data->value);
+		const auto children = wire::DecodeFieldViews(data->value);
 		if (children.error != wire::DecodeError::None)
 			throw std::runtime_error("Invalid inspection object");
 		for (const auto& child : children.fields)
 		{
-			wire::Message entry;
-			const auto decoded = wire::DecodeFields(child.value);
-			entry.fields = decoded.fields;
-			const auto* nameField = entry.Find(1);
-			if (!nameField || !nameField->AsText())
-				throw std::runtime_error("Invalid inspection member name");
-			const std::string name{*nameField->AsText()};
-			PushInspection(state, child.value, depth + 1);
-			lua_setfield(state, -2, name.c_str());
+			PushNode(state, child.value, depth + 1, true);
+			lua_rawset(state, -3);
 		}
 		break;
 	}
 	case wire::InspectionType::Array:
 	{
 		lua_newtable(state);
-		const auto pages = wire::DecodeFields(data->value);
+		const auto pages = wire::DecodeFieldViews(data->value);
 		int index = 1;
 		if (pages.error != wire::DecodeError::None)
 			throw std::runtime_error("Invalid inspection array");
 		for (const auto& page : pages.fields)
 		{
-			const auto children = wire::DecodeFields(page.value);
+			const auto children = wire::DecodeFieldViews(page.value);
 			if (children.error != wire::DecodeError::None)
 				throw std::runtime_error("Invalid inspection array page");
 			for (const auto& child : children.fields)
 			{
-				PushInspection(state, child.value, depth + 1);
+				PushNode(state, child.value, depth + 1, false);
 				lua_rawseti(state, -2, index++);
 			}
 		}
@@ -675,5 +672,9 @@ void PushInspection(lua_State* state, std::span<const std::byte> bytes, unsigned
 	default:
 		throw std::runtime_error("Unknown inspection value type");
 	}
+}
+void PushInspection(lua_State* state, std::span<const std::byte> bytes, unsigned depth)
+{
+	PushNode(state, bytes, depth, false);
 }
 } // namespace simxr::automation::script

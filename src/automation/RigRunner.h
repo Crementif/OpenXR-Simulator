@@ -8,6 +8,8 @@
 
 namespace simxr::automation
 {
+void ValidateRigOptions(const RigOptions& options);
+
 class RigRunner
 {
   public:
@@ -21,6 +23,7 @@ class RigRunner
 	void Step();
 	void Cancel();
 	void Join();
+	RigPhase Phase() const;
 	RigSnapshot Snapshot() const;
 	std::string JsonReport() const;
 	std::string JunitReport() const;

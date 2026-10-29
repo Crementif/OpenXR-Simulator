@@ -2,7 +2,6 @@
 """Exercise cold start, competing connectors and discovery after an app restart."""
 
 from concurrent.futures import ThreadPoolExecutor
-import json
 import os
 from pathlib import Path
 import signal
@@ -13,7 +12,7 @@ import sys
 import tempfile
 import time
 
-from test_mcp_connector import Client, eventually
+from mcp_support import Client, discovery_record, eventually
 
 
 def check_failed_start(connector, root, env):
@@ -85,13 +84,7 @@ def main():
                 for client in clients:
                     client.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
-                def record():
-                    files = list(discovery.glob("*.json"))
-                    if len(files) != 1:
-                        return None
-                    return json.loads(files[0].read_text())
-
-                initial = eventually(record)
+                initial = eventually(lambda: discovery_record(discovery))
                 app_pid = int(initial["process_id"])
                 groups.append(app_pid)
                 assert os.getsid(app_pid) == app_pid and os.getpgid(app_pid) == app_pid
@@ -139,7 +132,7 @@ def main():
                 manual = subprocess.Popen([app, "--hidden", "--mcp"], env=env, stdout=log,
                                           stderr=subprocess.STDOUT, start_new_session=True)
                 groups.append(manual.pid)
-                eventually(lambda: record() and record()["process_id"] == manual.pid)
+                eventually(lambda: discovery_record(discovery) and discovery_record(discovery)["process_id"] == manual.pid)
                 clients[1].wait_notification("notifications/tools/list_changed")
                 names = {tool["name"] for tool in clients[1].rpc("tools/list")["result"]["tools"]}
                 assert "simulator_launch_application" in names

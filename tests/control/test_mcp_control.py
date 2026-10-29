@@ -114,12 +114,6 @@ class FakeClient:
     def release_image(self, image):
         return self._call('release_image', image)
 
-    def delivery_info(self, delivery):
-        return {**self._call('delivery_info', delivery), 'delivery_id': delivery, 'pool_generation': 2**64 - 1}
-
-    def release_delivery(self, delivery):
-        return self._call('release_delivery', delivery)
-
     def start_export(self, image, layer=None):
         return {**self._call('start_export', image, layer=layer), 'export_id': 2**63 + 4, 'phase': 'pending'}
 
@@ -135,14 +129,6 @@ class FakeClient:
 
     def acknowledge(self, lease, through):
         return self._call('acknowledge', lease, through)
-
-    def retry(self):
-        self.calls.append(('retry', (), {}))
-        if not self.pending:
-            raise ValueError('No unfinished exchange')
-        self.pending = False
-        return {'error': 0, 'operation_id': 88}
-
 
 class AdapterTests(unittest.TestCase):
     def setUp(self):
@@ -188,6 +174,9 @@ class AdapterTests(unittest.TestCase):
 
     def test_schemas_require_explicit_mutation_identity(self):
         definitions = {definition['name']: definition for definition in adapter.TOOL_DEFINITIONS}
+        for name in ('debug_retry', 'debug_delivery_info', 'debug_release_delivery'):
+            self.assertNotIn(name, definitions)
+            self.assertEqual(self.tools.call(name, {})['error'], 'unsupported_tool')
         for name in ('debug_pause', 'debug_step', 'debug_strict_admission', 'debug_display_step',
                      'debug_resume', 'debug_cancel', 'debug_release'):
             self.assertTrue({'connection', 'session', 'generation', 'lease', 'command_id'} <=
@@ -311,10 +300,6 @@ class AdapterTests(unittest.TestCase):
                              'invalid_arguments')
         self.assertTrue(self.tools.call('debug_release_export', {'connection': self.connection, 'export': export})['ok'])
         self.assertTrue(self.tools.call('debug_release_image', {'connection': self.connection, 'image': image})['ok'])
-        delivery = self.tools.call('debug_delivery_info', {'connection': self.connection, 'delivery': '18446744073709551615'})
-        self.assertEqual(delivery['delivery_id'], str(2**64 - 1))
-        self.assertEqual(delivery['pool_generation'], str(2**64 - 1))
-        self.assertTrue(self.tools.call('debug_release_delivery', {'connection': self.connection, 'delivery': delivery['delivery_id']})['ok'])
         self.assertEqual(self.tools.call('debug_share_image', {'connection': self.connection})['error'], 'unsupported_tool')
         self.assertNotIn('submit', [call[0] for call in self.client.calls])
 
@@ -354,17 +339,18 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(response['time'], str(2**60))
         self.assertEqual(response['count'], 17)
 
-    def test_timeout_and_retry_never_resubmits(self):
+    def test_timeout_disconnects_without_resubmission(self):
         self.client.timeout_next = True
         result = self.tools.call('debug_step', {**self.leased, 'command_id': 19})
         self.assertFalse(result['ok'])
-        self.assertEqual(result['error'], 'unfinished')
+        self.assertEqual(result['error'], 'timeout')
         self.assertEqual(result['request_id'], '99')
-        self.assertTrue(result['retry_needed'])
-        retried = self.tools.call('debug_retry', {'connection': self.connection})
-        self.assertTrue(retried['ok'])
-        self.assertEqual(retried['operation_id'], '88')
-        self.assertEqual([call[0] for call in self.client.calls], ['submit', 'retry'])
+        self.assertTrue(result['reconnect_needed'])
+        self.assertTrue(self.client.closed)
+        self.assertEqual(self.tools.call('debug_status', self.common)['error'], 'not_found')
+        self.assertEqual([call[0] for call in self.client.calls], ['submit'])
+
+    def test_runtime_errors(self):
         self.client.fail_next = ControlError({'error': int(ErrorCode.STALE_GENERATION), 'detail': 'generation changed'})
         failed = self.tools.call('debug_status', self.common)
         self.assertEqual(failed['error'], 'control_error')
@@ -399,7 +385,7 @@ class AdapterTests(unittest.TestCase):
         self.assertTrue(all(client.closed for client in self.created))
         self.assertEqual(self.tools.call('debug_connect', {})['error'], 'closed')
 
-    def test_connect_timeout_and_discovery_retry(self):
+    def test_connect_timeout_releases_capacity(self):
         attempts = []
 
         def factory(*args, **kwargs):
@@ -414,15 +400,13 @@ class AdapterTests(unittest.TestCase):
         tools = adapter.DebugTools(max_connections=1, client_factory=factory)
         try:
             negotiation = tools.call('debug_connect', {})
-            self.assertFalse(negotiation['retry_needed'])
             self.assertTrue(negotiation['reconnect_needed'])
             discovery = tools.call('debug_connect', {})
-            self.assertEqual(discovery['error'], 'unfinished')
-            self.assertTrue(discovery['retry_needed'])
-            self.assertIn('connection', discovery)
-            self.assertTrue(tools.call('debug_retry', {'connection': discovery['connection']})['ok'])
+            self.assertEqual(discovery['error'], 'timeout')
+            self.assertTrue(discovery['reconnect_needed'])
+            self.assertNotIn('connection', discovery)
             self.assertEqual(len(attempts), 2)
-            self.assertEqual(tools.call('debug_connect', {})['error'], 'capacity')
+            self.assertEqual(tools.call('debug_connect', {})['error'], 'timeout')
         finally:
             tools.close()
         self.assertEqual(self.tools.call('debug_connect', {'timeout': 2**4096})['error'], 'invalid_arguments')

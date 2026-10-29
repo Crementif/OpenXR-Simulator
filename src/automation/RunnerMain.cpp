@@ -128,6 +128,7 @@ int simxr::automation::RunRunner(int argc, char** argv)
 			throw std::invalid_argument("--session and --generation must be supplied together");
 		options.source = ReadRig(script);
 		options.name = "@" + script;
+		ValidateRigOptions(options);
 #if defined(__linux__) || defined(_WIN32)
 		namespace wire = simxr::control;
 		wire::LocalControlClient client(socket, std::chrono::milliseconds{50});
@@ -186,9 +187,9 @@ int simxr::automation::RunRunner(int argc, char** argv)
 		std::signal(SIGTERM, Interrupt);
 		for (;;)
 		{
-			const auto state = runner.Snapshot();
-			if (state.phase != simxr::automation::RigPhase::Running &&
-				state.phase != simxr::automation::RigPhase::Paused)
+			const auto phase = runner.Phase();
+			if (phase != simxr::automation::RigPhase::Running &&
+				phase != simxr::automation::RigPhase::Paused)
 				break;
 			if (s_interrupted)
 				runner.Cancel();
@@ -199,7 +200,7 @@ int simxr::automation::RunRunner(int argc, char** argv)
 		std::puts(report.c_str());
 		Write(json, report);
 		Write(junit, runner.JunitReport());
-		return runner.Snapshot().phase == simxr::automation::RigPhase::Complete ? 0 : 1;
+		return runner.Phase() == simxr::automation::RigPhase::Complete ? 0 : 1;
 #else
 		throw std::runtime_error("Local runner transport is not implemented on this platform");
 #endif

@@ -47,15 +47,23 @@ RigRunner::~RigRunner()
 	Cancel();
 	Join();
 }
-void RigRunner::Start(RigOptions options)
+void ValidateRigOptions(const RigOptions& options)
 {
-	if (!options.session.value || !options.generation || (options.source.empty() == options.recordingArchive.empty()) ||
-		options.source.size() > MaxRigSourceBytes || options.name.size() > 1024 ||
+	if (options.name.size() > 1024 || options.name.find('\0') != std::string::npos)
+		throw std::invalid_argument("Rig name exceeds 1024 bytes or contains NUL");
+	if ((options.source.empty() == options.recordingArchive.empty()) ||
+		options.source.size() > MaxRigSourceBytes ||
 		options.recordingArchive.native().find(std::filesystem::path::value_type{}) !=
 			std::filesystem::path::string_type::npos ||
 		options.memoryLimit < 1024 * 1024 || options.memoryLimit > 512 * 1024 * 1024 || options.deadline.count() <= 0 ||
 		options.deadline > std::chrono::hours{1})
 		throw std::invalid_argument("Invalid bounded rig options");
+}
+void RigRunner::Start(RigOptions options)
+{
+	ValidateRigOptions(options);
+	if (!options.session.value || !options.generation)
+		throw std::invalid_argument("Rig requires a session and generation");
 	if (m_worker.joinable())
 		throw std::logic_error("Join the previous rig before starting another");
 	m_options = std::move(options);
@@ -95,6 +103,10 @@ void RigRunner::Join()
 {
 	if (m_worker.joinable())
 		m_worker.join();
+}
+RigPhase RigRunner::Phase() const
+{
+	return m_progress.Phase();
 }
 RigSnapshot RigRunner::Snapshot() const
 {

@@ -12,11 +12,11 @@ import sys
 import tempfile
 import time
 
-from test_mcp_connector import Client, eventually
+from mcp_support import Client, eventually
 
 if os.name == 'nt':
     from ctypes import wintypes
-    from test_mcp_discovery_windows import kernel, process_handle
+    from mcp_support import kernel, process_handle
 
     kernel.WaitNamedPipeW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD)
     kernel.WaitNamedPipeW.restype = wintypes.BOOL
@@ -99,10 +99,9 @@ def main():
             close_cancel_session = None
             try:
                 client = Client(bridge)
-                initialized = client.rpc('initialize', {'protocolVersion': '2025-11-25', 'capabilities': {},
-                    'clientInfo': {'name': 'game-test', 'version': '1'}})
+                initialized = client.initialize('game-test')
                 assert 'result' in initialized, initialized
-                client.send({'jsonrpc': '2.0', 'method': 'notifications/initialized'})
+
                 tools = {tool['name'] for tool in client.rpc('tools/list')['result']['tools']}
                 assert {'game_bridge_connect', 'game_bridge_status', 'game_bridge_observations',
                         'game_bridge_command', 'game_bridge_operation'} <= tools
@@ -156,9 +155,8 @@ def main():
                 second = subprocess.Popen(connector_command, env=env, stdin=subprocess.PIPE,
                                           stdout=subprocess.PIPE, stderr=log, text=True, encoding='utf-8', bufsize=1, **spawn_options)
                 other = Client(second)
-                assert 'result' in other.rpc('initialize', {'protocolVersion': '2025-11-25', 'capabilities': {},
-                    'clientInfo': {'name': 'other-game-test', 'version': '1'}})
-                other.send({'jsonrpc': '2.0', 'method': 'notifications/initialized'})
+                other.initialize('other-game-test')
+
                 assert other.tool('game_bridge_status', {'connection': connection})['error']
                 other_open = other.tool('game_bridge_connect', {'application_id': application})
                 assert not other_open['error'], other_open

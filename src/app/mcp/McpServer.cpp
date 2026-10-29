@@ -28,7 +28,6 @@ struct McpServer::Session
 	// Connector keys distinguish an early cancellation from a later reuse of the JSON-RPC ID.
 	std::unordered_set<std::string> earlyCancellations;
 	McpDebug debug;
-	McpFlickerMonitor flicker;
 	McpSequenceJobs sequenceJobs;
 	std::shared_ptr<AutomationOwner> automationOwner = std::make_shared<AutomationOwner>();
 	std::uint64_t artifactRevision = 0;
@@ -276,7 +275,6 @@ void McpServer::Stop() noexcept
 	}
 	for (const auto& [identity, session] : sessions)
 	{
-		session->flicker.Close();
 		session->sequenceJobs.Close();
 		session->debug.Close();
 	}
@@ -307,7 +305,6 @@ void McpServer::ReapExpired()
 	}
 	for (const auto& session : expired)
 	{
-		session->flicker.Close();
 		session->sequenceJobs.Close();
 		session->debug.Close();
 	}
@@ -373,7 +370,6 @@ void McpServer::DeleteSession(const httplib::Request& request, httplib::Response
 		for (const auto& [id, call] : session->calls)
 			call.cancellation->Cancel();
 	}
-	session->flicker.Close();
 	session->sequenceJobs.Close();
 	session->debug.Close();
 	response.status = 204;
@@ -771,7 +767,7 @@ void McpServer::Route(const httplib::Request& request, httplib::Response& respon
 			else
 			{
 				callResult = McpSequenceJobs::Handles(name) ? session->sequenceJobs.Call(m_application, session->debug, name, arguments, cancellation) :
-					McpFlickerMonitor::Handles(name) ? session->flicker.Call(m_application, name, arguments, cancellation) :
+					McpFlickerMonitor::Handles(name) ? m_application.MonitorCall(name, arguments, cancellation) :
 					McpDebug::Handles(name) ? session->debug.Call(m_application, name, arguments, cancellation) :
 					m_application.Call(name, arguments, cancellation, session->automationOwner);
 				if ((name == "debug_release_export" || name == "debug_disconnect") && callResult &&

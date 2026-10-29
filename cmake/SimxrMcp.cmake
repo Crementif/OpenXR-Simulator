@@ -22,13 +22,11 @@ add_library(simxr_mcp STATIC
     src/app/mcp/McpHistory.cpp
     src/app/mcp/McpLogs.cpp
     src/app/mcp/McpIncident.cpp
-    src/app/mcp/McpIncidentAnalysis.cpp
     src/app/mcp/McpIncidentSave.cpp
     src/app/mcp/McpIncidentIdentifier.cpp
     src/app/mcp/McpCompatibility.cpp
     src/app/mcp/McpImage.cpp
     src/app/mcp/McpImageCache.cpp
-    src/app/mcp/McpImageEncode.cpp
     src/app/mcp/McpImageSave.cpp
     src/app/mcp/McpInspectionJson.cpp
     src/app/mcp/McpScreenshot.cpp
@@ -61,9 +59,8 @@ endif()
 simxr_configure_target(simxr_mcp app/mcp/McpPch.h)
 target_include_directories(simxr_mcp SYSTEM PUBLIC "${simxr_httplib_SOURCE_DIR}"
     "${simxr_json_SOURCE_DIR}/single_include")
-target_include_directories(simxr_mcp SYSTEM PRIVATE "${PROJECT_SOURCE_DIR}/third_party/stb")
 target_include_directories(simxr_mcp PRIVATE "${SIMXR_VULKAN_INCLUDE_DIR}")
-target_link_libraries(simxr_mcp PUBLIC Threads::Threads PRIVATE simxr_app_platform simxr_control simxr_graphics simxr_diagnostics)
+target_link_libraries(simxr_mcp PUBLIC Threads::Threads PRIVATE simxr_app_platform simxr_connection simxr_control simxr_graphics simxr_diagnostics)
 if(WIN32)
     target_link_libraries(simxr_mcp PRIVATE ws2_32 bcrypt advapi32)
 endif()

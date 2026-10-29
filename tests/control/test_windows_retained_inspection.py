@@ -61,7 +61,7 @@ def main():
                             f'khronos_validation.log_filename = {(root / "validation.log").as_posix()}\n', encoding='utf-8')
         environment = dict(os.environ, XR_RUNTIME_JSON=manifest, SIMXR_DATA_DIR=temporary,
                            SIMXR_CONTROL_SOCKET=endpoint, SIMXR_VULKAN_VALIDATION='1',
-                           VK_LAYER_SETTINGS_PATH=str(root), XR_PROBE_FRAMES='1200', XR_PROBE_SLEEP_MS='5',
+                           VK_LAYER_SETTINGS_PATH=str(root), SIMXR_PROBE_FRAMES='1200', SIMXR_PROBE_SLEEP_MS='5',
                            DISABLE_XR_APILAYER_NOVENDOR_OBSMirror='1',
                            DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY='1')
         with output.open('wb') as log:

@@ -2,77 +2,15 @@
 """Exercise the native stdio bridge against real simulator processes."""
 
 import http.client
-import json
 import os
 from pathlib import Path
-import queue
 import signal
 import socket
 import subprocess
 import sys
 import tempfile
-import threading
-import time
 
-
-class Client:
-    def __init__(self, process):
-        self.process = process
-        self.incoming = queue.Queue()
-        self.notifications = []
-        self.next_id = 0
-        threading.Thread(target=self.read, daemon=True).start()
-
-    def read(self):
-        for line in self.process.stdout:
-            self.incoming.put(json.loads(line))
-
-    def send(self, message):
-        self.process.stdin.write(json.dumps(message) + "\n")
-        self.process.stdin.flush()
-
-    def rpc(self, method, params=None):
-        self.next_id += 1
-        identity = self.next_id
-        message = {"jsonrpc": "2.0", "id": identity, "method": method}
-        if params is not None:
-            message["params"] = params
-        self.send(message)
-        deadline = time.monotonic() + 20
-        while True:
-            item = self.incoming.get(timeout=max(.01, deadline - time.monotonic()))
-            if item.get("id") == identity:
-                return item
-            assert "id" not in item, item
-            self.notifications.append(item)
-
-    def tool(self, name, arguments):
-        result = self.rpc("tools/call", {"name": name, "arguments": arguments})
-        if "error" in result:
-            return result
-        result = result["result"]
-        return {"error": result.get("isError", False), "data": json.loads(result["content"][0]["text"])}
-
-    def wait_notification(self, method):
-        deadline = time.monotonic() + 15
-        while True:
-            for index, item in enumerate(self.notifications):
-                if item.get("method") == method:
-                    return self.notifications.pop(index)
-            item = self.incoming.get(timeout=max(.01, deadline - time.monotonic()))
-            assert "id" not in item, item
-            self.notifications.append(item)
-
-
-def eventually(check, timeout=20):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        result = check()
-        if result:
-            return result
-        time.sleep(.05)
-    raise AssertionError("Timed out waiting for simulator state")
-
+from mcp_support import Client, eventually
 
 def main():
     app, connector, probe = (str(Path(value).resolve()) for value in sys.argv[1:4])
@@ -115,10 +53,9 @@ def main():
                 bridge = subprocess.Popen([connector, "--port", str(port)], env=env, stdin=subprocess.PIPE,
                                           stdout=subprocess.PIPE, stderr=bridge_log, text=True, bufsize=1)
                 client = Client(bridge)
-                init = client.rpc("initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
-                                                  "clientInfo": {"name": "test", "version": "1"}})
+                init = client.initialize('test')
                 assert init["result"]["capabilities"]["tools"]["listChanged"]
-                client.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
                 names = {entry["name"] for entry in client.rpc("tools/list")["result"]["tools"]}
                 assert "simulator_launch_application" in names
                 launched = client.tool("simulator_launch_application", {"executable": probe,

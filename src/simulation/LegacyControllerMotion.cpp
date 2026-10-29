@@ -195,28 +195,6 @@ void LegacyControllerMotion::ApplyHoldEdit(const ControllerHoldEdit& edit)
 		Merge(hold.roll, edit.roll);
 	}
 }
-void LegacyControllerMotion::ApplyWheel(double seconds)
-{
-	if (!m_wheel.enabled)
-		return;
-	const auto elapsed = seconds - m_wheel.receivedSeconds;
-	m_wheelAngle =
-		static_cast<float>(m_wheel.amplitude * std::sin(2 * std::numbers::pi * m_wheel.frequencyHz * elapsed));
-	const auto cosine = std::cos(static_cast<double>(m_wheel.tilt)), sine = std::sin(static_cast<double>(m_wheel.tilt));
-	for (std::size_t hand = 0; hand < m_controllers.size(); ++hand)
-	{
-		auto& controller = m_controllers[hand];
-		const auto bearing = static_cast<double>(hand == 0 ? -m_wheel.spread : m_wheel.spread) + m_wheelAngle;
-		const auto along = std::sin(bearing), up = std::cos(bearing);
-		controller.local.position = {Coordinate(m_wheel.hub.x + m_wheel.radius * along),
-									 Coordinate(m_wheel.hub.y + m_wheel.radius * up * cosine),
-									 Coordinate(m_wheel.hub.z - m_wheel.radius * up * sine)};
-		controller.local.yaw = 0;
-		controller.local.pitch = -m_wheel.tilt;
-		controller.local.roll = m_wheelAngle;
-		Grip(controller, m_wheel.grip);
-	}
-}
 void LegacyControllerMotion::ApplyHolds()
 {
 	for (std::size_t hand = 0; hand < m_holds.size(); ++hand)
@@ -262,9 +240,6 @@ ControllerMotionResult LegacyControllerMotion::Update(const ControllerMotionFram
 		ApplyPose(*frame.pose);
 	if (frame.hold)
 		ApplyHoldEdit(*frame.hold);
-	if (frame.wheel)
-		m_wheel = *frame.wheel;
-	ApplyWheel(frame.wheelSeconds);
 	ApplyHolds();
 	m_head = frame.head;
 	return {SnapshotLocked(m_head), toggled};
@@ -273,7 +248,6 @@ ControllerMotionSnapshot LegacyControllerMotion::SnapshotLocked(ControllerHeadPo
 {
 	ControllerMotionSnapshot snapshot;
 	snapshot.animationEnabled = m_animationEnabled;
-	snapshot.wheelAngle = m_wheelAngle;
 	for (std::size_t hand = 0; hand < m_controllers.size(); ++hand)
 	{
 		const auto& controller = m_controllers[hand];

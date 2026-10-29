@@ -9,6 +9,8 @@ import sys
 import tempfile
 import time
 
+from native_support import require
+
 try:
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
@@ -17,11 +19,6 @@ except ImportError:
     raise SystemExit(77)
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def require(condition, detail):
-    if not condition:
-        raise AssertionError(detail)
 
 
 async def run():

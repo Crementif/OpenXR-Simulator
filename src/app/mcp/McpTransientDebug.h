@@ -1,6 +1,8 @@
 #pragma once
 
 #include "app/mcp/McpDebug.h"
+#include "app/mcp/McpImage.h"
+#include "app/services/ApplicationCatalog.h"
 
 #include <chrono>
 #include <memory>
@@ -26,15 +28,15 @@ class TransientDebug
 	~TransientDebug();
 	void Check();
 	void Wait();
-	nlohmann::json Call(const std::string& name, nlohmann::json arguments);
-	nlohmann::json Data(const std::string& name, nlohmann::json arguments);
-	nlohmann::json Application(const std::string& name, nlohmann::json arguments);
-	std::vector<std::byte> Read(const std::string& connection, std::uint64_t ticket, std::uint64_t offset, std::uint64_t length);
+	McpConnection Connect(const std::string& application);
+	control::Message Request(const std::string& connection, control::OpCode opcode, std::vector<control::Field> fields);
+	std::shared_ptr<const CachedImage> Render(const std::string& connection, const ImageRenderRequest& request);
+	ApplicationSnapshot Application(const std::string& application);
 
   private:
 	std::shared_ptr<McpCancellation> Begin();
 	void End() noexcept;
-	nlohmann::json CheckResult(std::optional<nlohmann::json> result);
+	void CheckResponse(const control::Message& response);
 	McpApplication& m_application;
 	std::shared_ptr<McpCancellation> m_cancellation;
 	std::chrono::steady_clock::time_point m_deadline;

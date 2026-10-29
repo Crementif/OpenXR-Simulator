@@ -10,7 +10,7 @@ import sys
 import tempfile
 import time
 
-from test_mcp_connector import Client
+from mcp_support import Client
 
 
 class WindowAttributes(ctypes.Structure):

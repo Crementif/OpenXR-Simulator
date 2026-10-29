@@ -22,4 +22,5 @@ HistoryRequest PrepareHistory(const std::string& name, const nlohmann::json& arg
 							  std::uint64_t session, std::uint64_t generation);
 nlohmann::json HistoryReply(const control::Message& message, const HistoryRequest& request,
 							std::uint64_t generation);
+nlohmann::json ProjectionHistoryDocument(const control::Message& message, std::uint32_t count, std::uint64_t generation);
 } // namespace simxr::app::mcp

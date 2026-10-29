@@ -1,25 +1,22 @@
 """Realtime reserved capture stream: refill, explicit overrun and GPU-safe cleanup."""
-import os
+
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 import time
 
-from test_native_quad import export, require, wait_file
+from native_support import probe_environment, running_probe, export, require, wait_file
 from simxr_control import Capability, Client, CommandKind
 
 
 def run(probe, overrun):
     with tempfile.TemporaryDirectory(prefix='sx-realtime-') as temporary:
         data = Path(temporary)
-        environment = dict(os.environ, SIMXR_DATA_DIR=temporary, SIMXR_PROBE_CONTROL='1',
+        environment = probe_environment(data, SIMXR_PROBE_CONTROL='1',
                            SIMXR_PROBE_RETAIN_CONTROL='1', SIMXR_PROBE_GPU_INSPECTION='1',
                            SIMXR_PROBE_RECORDING='1', SIMXR_PROBE_FRAMES='8')
-        environment.pop('SIMXR_CONTROL_SOCKET', None)
-        host = subprocess.Popen([probe], env=environment, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True)
-        try:
+
+        with running_probe([probe], environment) as host:
             wait_file(data / 'control.ready', host)
             with Client(data / f'control.{host.pid}.sock') as client:
                 session, = client.sessions()
@@ -100,14 +97,6 @@ def run(probe, overrun):
                 output = host.communicate(timeout=15)[0]
                 require(host.returncode == 0 and 'VUID-' not in output and 'Vulkan validation error' not in output, output)
                 print(f'PASS: real-time {"overrun at exact frame 5" if overrun else "consecutive capture/refill"}; no pacing change; GPU-safe teardown')
-        finally:
-            if host.poll() is None:
-                host.kill()
-                host.wait()
-            remaining = host.stdout.read() if not host.stdout.closed else ''
-            if remaining:
-                print(remaining, file=sys.stderr)
-            host.stdout.close()
 
 
 if __name__ == '__main__':

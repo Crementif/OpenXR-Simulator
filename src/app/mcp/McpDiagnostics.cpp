@@ -2,12 +2,15 @@
 #include "app/mcp/McpDiagnostics.h"
 #include "app/mcp/McpApplication.h"
 #include "app/mcp/McpTransientDebug.h"
+#include "app/mcp/McpHistory.h"
+#include "app/mcp/McpSimulation.h"
 #include "control/ControlSchema.h"
 
 namespace simxr::app::mcp
 {
 using Json = nlohmann::json;
 namespace wire = control;
+namespace tag = control::tag;
 
 static Json Result(const Json& value, bool error = false)
 {
@@ -38,15 +41,6 @@ Json DiagnosticsDefinitions()
 		tool("diagnose_issue", "Collect bounded runtime evidence and observed-state hints for the selected application. Hints are not proof of a cause.", issue, Json::array({"application_id", "symptoms"})),
 		tool("get_session_state", "Read the selected application's actual OpenXR session state.", common, Json::array({"application_id"})),
 		tool("get_head_tracking", "Read the selected application's configured simulator head pose; this is not an application-located tracking sample.", common, Json::array({"application_id"}))});
-}
-static std::uint64_t Capabilities(const Json& opened)
-{
-	const auto text = opened.at("capabilities").get<std::string>();
-	std::uint64_t value = 0;
-	const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
-	if (text.empty() || parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size())
-		throw std::runtime_error("Runtime returned invalid capability bits");
-	return value;
 }
 static const char* SessionState(std::int64_t state)
 {
@@ -89,12 +83,12 @@ std::optional<Json> RunDiagnostics(McpApplication& application, const std::strin
 		if (!cancellation->TryAdmit())
 			return {};
 		TransientDebug calls(application, cancellation, timeout, "Diagnostics");
-		const auto app = calls.Application("simulator_application_status", {{"application_id", selected}});
-		Json result = {{"ok", true}, {"application_id", selected}, {"application", app},
+		const auto app = calls.Application(selected.get_ref<const std::string&>());
+		Json result = {{"ok", true}, {"application_id", selected}, {"application", application.ApplicationDocument(app)},
 			{"sampling", "Runtime, projection and simulation data are sampled separately and may advance between reads."}};
 		if (name == "diagnose_issue")
 			result["symptoms"] = symptoms;
-		if (!app.value("connected", false) || !app.value("session_running", false))
+		if (!app.connected || !app.running)
 		{
 			result["runtime_available"] = false;
 			result["unavailable"] = "No connected running XR session; runtime state was not sampled.";
@@ -107,22 +101,21 @@ std::optional<Json> RunDiagnostics(McpApplication& application, const std::strin
 				result["observations"] = Json::array({"No connected running XR session is currently reported."});
 			return Result(result);
 		}
-		const auto opened = calls.Data("debug_connect", {{"application_id", selected}});
-		if (app.at("runtime_process_id") != opened.at("runtime_process_id") ||
-			app.at("runtime_epoch") != opened.at("runtime_epoch") ||
-			app.at("session_id") != opened.at("session") || app.at("generation") != opened.at("generation"))
+		const auto opened = calls.Connect(selected.get_ref<const std::string&>());
+		if (app.runtimeProcess != opened.process ||
+			app.runtimeEpoch != opened.epoch ||
+			app.session != opened.session || app.generation != opened.generation)
 			throw std::runtime_error("Application runtime or session changed during diagnostic collection; retry explicitly");
-		const auto connection = opened.at("connection").get<std::string>();
-		const Json common = {{"connection", connection}};
-		const auto capabilities = Capabilities(opened);
+		const auto connection = opened.id;
+		const auto capabilities = opened.capabilities;
 		const auto supports = [&](wire::Capability value) { return (capabilities & static_cast<std::uint64_t>(value)) != 0; };
 		result["runtime_available"] = true;
-		result["session"] = opened.at("session");
-		result["generation"] = opened.at("generation");
-		result["capabilities"] = opened.at("capabilities");
+		result["session"] = std::to_string(opened.session);
+		result["generation"] = std::to_string(opened.generation);
+		result["capabilities"] = std::to_string(opened.capabilities);
 		if (name != "get_projection_log" && name != "get_head_tracking")
 		{
-			const auto status = calls.Data("debug_status", common);
+			const auto status = McpDebug::Document(calls.Request(connection, wire::OpCode::Status, {}));
 			result["runtime"] = status;
 			if (status.contains("state") && status.at("state").is_number_integer())
 				result["session_state"] = SessionState(status.at("state").get<std::int64_t>());
@@ -130,7 +123,11 @@ std::optional<Json> RunDiagnostics(McpApplication& application, const std::strin
 		if (name == "get_projection_log" || name == "get_frame_info" || name == "get_diagnostics" || name == "diagnose_issue")
 		{
 			if (supports(wire::Capability::ProjectionHistory))
-				result["projection"] = calls.Data("debug_projection_history", {{"connection", connection}, {"count", name == "get_projection_log" ? count : 1}}).at("document");
+			{
+				const auto length = name == "get_projection_log" ? count : 1;
+				const auto response = calls.Request(connection, wire::OpCode::ReadProjectionHistory, {wire::Field::U64(tag::Length, length)});
+				result["projection"] = ProjectionHistoryDocument(response, length, opened.generation);
+			}
 			else
 				result["projection_unavailable"] = "The connected runtime does not advertise projection history.";
 		}
@@ -138,7 +135,7 @@ std::optional<Json> RunDiagnostics(McpApplication& application, const std::strin
 		{
 			if (supports(wire::Capability::SimulationCommands))
 			{
-				const auto simulation = calls.Data("simulation_status", common).at("document");
+				const auto simulation = SimulationDocument(calls.Request(connection, wire::OpCode::SimulationStatus, {})).at("document");
 				if (name == "get_head_tracking")
 					result["configured_head_pose"] = simulation.at("configuration").at("head");
 				else
@@ -152,17 +149,19 @@ std::optional<Json> RunDiagnostics(McpApplication& application, const std::strin
 			result["logs_unavailable"] = "Native driver validation and text logs are not included.";
 			if (supports(wire::Capability::FrameDiagnostics))
 			{
-				const auto bounds = calls.Data("simulation_diagnostics", {{"connection", connection}, {"count", 0}}).at("document");
+				const auto response = calls.Request(connection, wire::OpCode::ReadDiagnostics, {wire::Field::U64(tag::Length, 0)});
+				const auto* document = response.Find(tag::Document);
+				if (!document)
+					throw std::runtime_error("Runtime omitted diagnostic bounds");
+				const auto bounds = InspectionJson(document->value, true);
 				const auto& cursor = bounds.at("next");
-				const auto text = cursor.is_string() ? cursor.get<std::string>() :
-					cursor.is_number_unsigned() ? std::to_string(cursor.get<std::uint64_t>()) : std::string{};
-				std::uint64_t next = 0;
-				const auto parsed = std::from_chars(text.data(), text.data() + text.size(), next);
-				if (text.empty() || parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() || !next)
+				if (!cursor.is_number_unsigned() || cursor == 0)
 					throw std::runtime_error("Runtime returned invalid diagnostic cursor");
+				const auto next = cursor.get<std::uint64_t>();
 				const auto after = next > 65 ? next - 65 : 0;
-				result["diagnostics"] = calls.Data("simulation_diagnostics", {{"connection", connection}, {"after", std::to_string(after)}, {"count", 64}}).at("document");
-				result["diagnostic_cursor_sample"] = text;
+				result["diagnostics"] = SimulationDocument(calls.Request(connection, wire::OpCode::ReadDiagnostics,
+					{wire::Field::U64(tag::Offset, after), wire::Field::U64(tag::Length, 64)})).at("document");
+				result["diagnostic_cursor_sample"] = std::to_string(next);
 			}
 			else
 				result["diagnostics_unavailable"] = "The connected runtime does not advertise frame diagnostics.";

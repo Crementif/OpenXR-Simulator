@@ -155,12 +155,12 @@ SequenceRequest PrepareSequence(const std::string& name, const Json& args, std::
 		throw std::invalid_argument("Unknown sequence operation");
 	return result;
 }
-static void DecimalIdentities(Json& value)
+void DecimalSequenceIdentities(Json& value)
 {
 	if (value.is_array())
 	{
 		for (auto& item : value)
-			DecimalIdentities(item);
+			DecimalSequenceIdentities(item);
 	}
 	else if (value.is_object())
 	{
@@ -168,14 +168,21 @@ static void DecimalIdentities(Json& value)
 			"current_sequence", "program_id", "sequence_id", "capture_id", "id"};
 		for (auto it = value.begin(); it != value.end(); ++it)
 		{
-			if (names.contains(it.key()) && it->is_number_unsigned())
+			if (it->is_number_unsigned() && (names.contains(it.key()) || it->get<std::uint64_t>() > ((1ULL << 53) - 1)))
 				*it = std::to_string(it->get<std::uint64_t>());
 			else
-				DecimalIdentities(*it);
+				DecimalSequenceIdentities(*it);
 		}
 	}
 }
-Json SequenceReply(const wire::Message& response, const SequenceRequest& request)
+std::uint64_t SequenceInteger(const Json& object, const char* key, bool zero)
+{
+	const auto& value = object.at(key);
+	if (!value.is_number_unsigned() || (!zero && value == 0))
+		throw std::runtime_error(std::string("Invalid sequence integer: ") + key);
+	return value.get<std::uint64_t>();
+}
+Json SequenceDocument(const wire::Message& response, const SequenceRequest& request)
 {
 	const auto* error = response.Find(tag::Error);
 	if (!error || !error->AsU32())
@@ -186,14 +193,14 @@ Json SequenceReply(const wire::Message& response, const SequenceRequest& request
 		if (const auto* detail = response.Find(tag::Detail))
 			if (const auto text = detail->AsText())
 				failure["detail"] = std::string(*text);
-		return Result(failure, true);
+		return failure;
 	}
 	Json result = {{"ok", true}};
 	if (const auto* id = response.Find(tag::SequenceId))
 	{
 		if (!id->AsU64() || !*id->AsU64())
 			throw std::runtime_error("Runtime returned an invalid sequence identity");
-		result["sequence_id"] = std::to_string(*id->AsU64());
+		result["sequence_id"] = *id->AsU64();
 	}
 	if (const auto* released = response.Find(tag::Released))
 	{
@@ -206,8 +213,7 @@ Json SequenceReply(const wire::Message& response, const SequenceRequest& request
 		throw std::runtime_error("Runtime omitted the sequence document");
 	if (document)
 	{
-		result["document"] = InspectionJson(document->value);
-		DecimalIdentities(result["document"]);
+		result["document"] = InspectionJson(document->value, true);
 	}
 	const auto field = [&](std::uint16_t wanted)
 	{
@@ -223,24 +229,30 @@ Json SequenceReply(const wire::Message& response, const SequenceRequest& request
 		const auto total = field(tag::TotalBytes), offset = field(tag::Offset);
 		const auto bytes = std::find_if(request.fields.begin(), request.fields.end(),
 			[](const auto& item) { return item.tag == tag::Bytes; });
-		if (bytes == request.fields.end() || Number(data, "program_id") != field(tag::ProgramId) ||
-			Number(data, "total", true) != total || Number(data, "received", true) < offset + bytes->value.size() ||
-			Number(data, "received", true) > total || data.at("complete") != (Number(data, "received", true) == total))
+		if (bytes == request.fields.end() || SequenceInteger(data, "program_id") != field(tag::ProgramId) ||
+			SequenceInteger(data, "total", true) != total || SequenceInteger(data, "received", true) < offset + bytes->value.size() ||
+			SequenceInteger(data, "received", true) > total || data.at("complete") != (SequenceInteger(data, "received", true) == total))
 			throw std::runtime_error("Runtime returned an inconsistent sequence upload acknowledgement");
 	}
 	else if (request.opcode == wire::OpCode::StartSequence)
 	{
-		if (!result.contains("sequence_id") || Number(result.at("document"), "id") != Number(result, "sequence_id"))
+		if (!result.contains("sequence_id") || SequenceInteger(result.at("document"), "id") != SequenceInteger(result, "sequence_id"))
 			throw std::runtime_error("Runtime returned an inconsistent sequence execution identity");
 	}
 	else if (request.opcode == wire::OpCode::ReadSequence &&
-		Number(result.at("document"), "sequence_id") != field(tag::SequenceId))
+		SequenceInteger(result.at("document"), "sequence_id") != field(tag::SequenceId))
 		throw std::runtime_error("Runtime returned a different sequence history");
 	else if (request.opcode == wire::OpCode::StopSequence &&
-		Number(result.at("document"), "id") != field(tag::SequenceId))
+		SequenceInteger(result.at("document"), "id") != field(tag::SequenceId))
 		throw std::runtime_error("Runtime returned a different stopped sequence");
 	else if (request.opcode == wire::OpCode::ReleaseSequenceCapture && !result.contains("released"))
 		throw std::runtime_error("Runtime omitted sequence capture release status");
-	return Result(result);
+	return result;
+}
+Json SequenceReply(const wire::Message& response, const SequenceRequest& request)
+{
+	auto result = SequenceDocument(response, request);
+	DecimalSequenceIdentities(result);
+	return Result(result, !result.at("ok").get<bool>());
 }
 }

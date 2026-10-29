@@ -344,14 +344,15 @@ void FramePreviewHistory::Run() noexcept
 			if (encode)
 			{
 				const auto source = encode->preview.output;
-				if (source && source->PollCompletion() == CompletionStatus::Pending)
+				const auto completion = source ? source->PollCompletion() : CompletionStatus::Complete;
+				if (completion == CompletionStatus::Pending)
 				{
 					encode.reset();
 					retry = true;
 				}
 				if (encode)
 				{
-					if (source && source->PollCompletion() == CompletionStatus::Failed)
+					if (completion == CompletionStatus::Failed)
 						throw std::runtime_error("History source GPU work failed");
 					auto archive = source ? source->Archive() : nullptr;
 					worked = true;

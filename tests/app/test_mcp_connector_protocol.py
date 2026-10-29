@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 
-from test_mcp_connector import Client, eventually
+from mcp_support import Client, eventually
 
 
 def main():

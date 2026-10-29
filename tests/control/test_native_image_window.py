@@ -1,12 +1,10 @@
 """Atomic pre/post GPU windows retain exact frames beyond eviction and teardown."""
 from contextlib import ExitStack
-import os
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 
-from test_native_quad import export, require, wait_file
+from native_support import probe_environment, running_probe, export, require, wait_file
 from simxr_control import Capability, Client, TargetKind
 from simxr_control.errors import ControlError
 from simxr_control.protocol import ErrorCode
@@ -26,16 +24,14 @@ def main():
     target = TargetKind.QUAD_LAYERS if ui else None
     with tempfile.TemporaryDirectory(prefix='sx-window-') as temporary:
         data = Path(temporary)
-        environment = dict(os.environ, SIMXR_DATA_DIR=temporary, SIMXR_PROBE_CONTROL='1',
+        environment = probe_environment(data, SIMXR_PROBE_CONTROL='1',
                            SIMXR_PROBE_RETAIN_CONTROL='1', SIMXR_PROBE_GPU_INSPECTION='1',
                            SIMXR_PROBE_RECORDING='1', SIMXR_PROBE_DYNAMIC_COLOR='1',
                            SIMXR_PROBE_FRAMES='36', SIMXR_WIDTH='64', SIMXR_HEIGHT='48')
         if ui:
             environment['SIMXR_PROBE_MOVING_QUAD'] = '1'
-        environment.pop('SIMXR_CONTROL_SOCKET', None)
-        host = subprocess.Popen([sys.argv[1]], env=environment, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True)
-        try:
+
+        with running_probe([sys.argv[1]], environment) as host:
             wait_file(data / 'control.ready', host)
             with ExitStack() as stack:
                 client = stack.enter_context(Client(data / f'control.{host.pid}.sock'))
@@ -109,10 +105,6 @@ def main():
             require(host.returncode == 0, output)
             require('VUID-' not in output and 'Vulkan validation error' not in output, output)
             print('PASS GPU window: atomic pre/post frames, cancellation, bounded ownership, live preview, teardown')
-        finally:
-            if host.poll() is None:
-                host.kill()
-                print(host.communicate()[0])
 
 
 if __name__ == '__main__':

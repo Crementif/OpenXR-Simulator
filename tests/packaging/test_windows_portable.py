@@ -17,9 +17,11 @@ import winreg
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'app'))
-from test_mcp_connector import Client, eventually
-from test_mcp_discovery_windows import kernel, process_handle
-from test_windows_install import registry_value
+from mcp_support import Client, eventually
+
+from mcp_support import kernel, process_handle
+
+from packaging_support import registry_value
 
 
 def loaded_modules(pid):
@@ -118,7 +120,7 @@ def main():
                 handles.append(process_handle(int(json.loads(discovery.read_text(encoding='utf-8'))['process_id'])))
                 if not args.skip_xr:
                     launch = {'executable': str(binary / 'xr_probe_vk.exe'),
-                        'environment': {'XR_PROBE_FRAMES': '120000', 'XR_PROBE_SLEEP_MS': '1',
+                        'environment': {'SIMXR_PROBE_FRAMES': '120000', 'SIMXR_PROBE_SLEEP_MS': '1',
                             'DISABLE_XR_APILAYER_NOVENDOR_OBSMirror': '1',
                             'DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY': '1'}}
                     if args.manifest_alias_tool:

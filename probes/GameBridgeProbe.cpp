@@ -1,10 +1,10 @@
 #include "Pch.h"
+#include "ProbeEnvironment.h"
 
 #include <simxr/game_bridge.h>
 
 #include <cstdio>
 #include <cstdlib>
-#include <charconv>
 #if defined(_WIN32)
 #include <windows.h>
 #else
@@ -37,6 +37,7 @@ int main(int argc, char** argv)
 #endif
 	try
 	{
+		const auto timeoutSeconds = simxr::probe::EnvironmentCount("SIMXR_GAME_PROBE_SECONDS", 10, 1, 90);
 		if (argc != 4)
 			throw std::invalid_argument("Expected runtime library, endpoint and stop marker");
 #if defined(_WIN32)
@@ -65,14 +66,7 @@ int main(int argc, char** argv)
 			throw std::runtime_error("Native game bridge registration failed");
 		std::puts("READY game safe-update fixture; no XR instance or graphics device");
 		std::fflush(stdout);
-		int timeoutSeconds = 10;
-		if (const auto* configured = std::getenv("SIMXR_GAME_PROBE_SECONDS"))
-		{
-			const std::string_view value{configured};
-			const auto parsed = std::from_chars(value.data(), value.data() + value.size(), timeoutSeconds);
-			if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || timeoutSeconds < 1 || timeoutSeconds > 90)
-				throw std::invalid_argument("Invalid game probe timeout");
-		}
+
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{timeoutSeconds};
 		unsigned resets = 0;
 #if defined(_WIN32)

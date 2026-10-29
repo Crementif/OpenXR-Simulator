@@ -103,18 +103,12 @@ static ImageRegion ReadRegion(const Field& field)
 		throw ConnectionImages::RequestFailure{ErrorCode::UnsupportedField, "Unknown image region field"};
 	return {U32(message, 1), U32(message, 2), U32(message, 3), U32(message, 4), U32(message, 5), U32(message, 6)};
 }
-static Field EncodeRegion(const ImageRegion& region)
-{
-	return Nested(tag::ImageRegion, {Field::U32(1, region.x, true), Field::U32(2, region.y, true),
-		Field::U32(3, region.width, true), Field::U32(4, region.height, true),
-		Field::U32(5, region.outputWidth, true), Field::U32(6, region.outputHeight, true)});
-}
 static void ExportSelection(Message& response, const ImageExport& value)
 {
 	if (const auto layer = value.SourceLayer())
 		response.fields.push_back(Field::U32(tag::Layer, *layer));
 	if (const auto region = value.Region())
-		response.fields.push_back(EncodeRegion(*region));
+		response.fields.push_back(EncodeImageRegion(*region));
 }
 static Field Key(std::uint16_t name, FrameKey key)
 {

@@ -184,71 +184,6 @@ def tool_definitions(platform=None):
             inputSchema={"type": "object", "properties": {}},
         ),
         dict(
-            name="enable_wheel_sweep",
-            description=(
-                "Put BOTH controllers on a virtual steering wheel's RIM and rotate "
-                "them together on a sine, with the grip held. A one-shot controller "
-                "pose cannot test a VR steering wheel: the motion has to be "
-                "continuous and it has to be the SAME motion twice. This waveform is "
-                "generated inside the runtime, so it is a closed-form function of the "
-                "clock and two runs of the same command replay identically. Set the "
-                "hub/radius/tilt to the app's OWN wheel geometry so the hands land on "
-                'its rim rather than near it. Pass {"enabled": false} to stop and '
-                "hand the controllers back."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "enabled": {"type": "boolean", "default": True},
-                    "amplitude_deg": {
-                        "type": "number",
-                        "default": 80.0,
-                        "description": "Peak wheel rotation each way",
-                    },
-                    "freq_hz": {
-                        "type": "number",
-                        "default": 0.15,
-                        "description": "Sine frequency. Keep the PERIOD incommensurate with the interval of whatever log you are reading, or every sample lands at the same phase and the hook looks dead.",
-                    },
-                    "radius": {
-                        "type": "number",
-                        "default": 0.18,
-                        "description": "Rim radius in metres",
-                    },
-                    "tilt_deg": {
-                        "type": "number",
-                        "default": 20.0,
-                        "description": "Rake: 0 is a vertical wheel, 90 a flat one",
-                    },
-                    "hub_x": {
-                        "type": "number",
-                        "default": 0.0,
-                        "description": "Hub offset from the head, head-local metres",
-                    },
-                    "hub_y": {
-                        "type": "number",
-                        "default": -0.35,
-                        "description": "Negative is below the head",
-                    },
-                    "hub_z": {
-                        "type": "number",
-                        "default": -0.45,
-                        "description": "Negative is in front of the head",
-                    },
-                    "grip": {
-                        "type": "number",
-                        "default": 1.0,
-                        "description": "Squeeze axis value held while enabled; 0 releases both hands",
-                    },
-                    "spread_deg": {
-                        "type": "number",
-                        "default": 90.0,
-                        "description": "Hands at -/+ this bearing from the top: 90 is 9 and 3 o'clock",
-                    },
-                },
-            },
-        ),
-        dict(
             name="set_head_pose",
             description=(
                 "Set the simulator's head pose. Use a non-identity pose "
@@ -348,54 +283,6 @@ def tool_definitions(platform=None):
             },
         ),
         dict(
-            name="set_headset_profile",
-            description=(
-                "Apply a named headset preset (FOV + IPD together), using "
-                "the per-eye frustum each headset's runtime actually "
-                "reports. Useful for quickly testing whether the app "
-                "handles asymmetric lens profiles correctly. Available: "
-                "quest2, quest3, questpro, index, vivepro2, reverbg2, "
-                "psvr2, pico4, beyond, generic/default (revert)."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "enum": [
-                            "quest2",
-                            "quest3",
-                            "questpro",
-                            "index",
-                            "vivepro2",
-                            "reverbg2",
-                            "psvr2",
-                            "pico4",
-                            "beyond",
-                            "generic",
-                            "default",
-                            "clear",
-                        ],
-                    }
-                },
-                "required": ["name"],
-            },
-        ),
-        dict(
-            name="enable_anaglyph_preview",
-            description=(
-                "Toggle the simulator's anaglyph (red/cyan) stereo preview "
-                "overlay. When enabled, the preview window composites left "
-                "and right eyes into a single red/cyan image. Properly "
-                "converged stereo will appear (mostly) gray; broken IPD or "
-                "swapped eyes will show pronounced red/cyan ghosting."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {"enabled": {"type": "boolean", "default": True}},
-            },
-        ),
-        dict(
             name="get_projection_log",
             description=(
                 "Returns the recent projection-layer FOV / pose / image-rect "
@@ -406,27 +293,6 @@ def tool_definitions(platform=None):
             inputSchema={
                 "type": "object",
                 "properties": {"max_entries": {"type": "integer", "minimum": 1, "maximum": 64, "default": 20}},
-            },
-        ),
-        dict(
-            name="enable_pose_sweep",
-            description=(
-                "Auto-oscillate the simulator's head yaw / pitch / roll "
-                "on a sine wave. Forces the app through a continuous "
-                "range of orientations — any quaternion-handedness or "
-                "axis-flip bug produces a visible 'world wobbles wrong "
-                "direction' symptom within seconds. Each axis runs at "
-                "a different phase so the motion isn't degenerate."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "enabled": {"type": "boolean", "default": True},
-                    "yaw_amp_deg": {"type": "number", "default": 30.0},
-                    "pitch_amp_deg": {"type": "number", "default": 15.0},
-                    "roll_amp_deg": {"type": "number", "default": 15.0},
-                    "freq_hz": {"type": "number", "default": 0.25},
-                },
             },
         ),
         dict(
@@ -484,13 +350,6 @@ def tool_definitions(platform=None):
         ),
     ]
     if platform != "nt":
-        windows_only = {
-            "enable_wheel_sweep",
-            "set_headset_profile",
-            "enable_anaglyph_preview",
-            "enable_pose_sweep",
-        }
-        tools = [tool for tool in tools if tool["name"] not in windows_only]
         tools.extend(
             [
                 dict(

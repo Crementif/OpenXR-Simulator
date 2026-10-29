@@ -373,7 +373,7 @@ static XrResult XRAPI_PTR RunXrWaitFrame(XrSession sHandle, const XrFrameWaitInf
 			return XR_ERROR_HANDLE_INVALID;
 		s->graphics->PollCaptures();
 		std::lock_guard stateLock(Host().Mutex());
-		if (s->owner->PollCommands(s->core->Snapshot().lastSubmitted))
+		if (s->owner->AdvanceSequence(s->core->Snapshot().lastSubmitted))
 			s->graphics->RequestCapture({"both", "all"}, s->core->Snapshot().lastSubmitted);
 		const auto& input = s->owner->Input();
 		const auto tracking = input.Tracking(s->core->Snapshot().state == XR_SESSION_STATE_FOCUSED);

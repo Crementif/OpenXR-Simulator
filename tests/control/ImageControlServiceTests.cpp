@@ -126,10 +126,7 @@ void ImageLifetimesAndReplay()
 	Require(Error(retained) == wire::ErrorCode::Ok && fixture.state->retains == 1, "Retain ready exact image");
 	const auto image = Id(retained, tag::ImageReaderId);
 	const auto oldImage = Id(oldRegion.Retain(fixture.capture), tag::ImageReaderId);
-	const std::vector<wire::Field> regionFields{wire::Field::U32(1, 0, true), wire::Field::U32(2, 0, true),
-		wire::Field::U32(3, 2, true), wire::Field::U32(4, 2, true), wire::Field::U32(5, 1, true),
-		wire::Field::U32(6, 1, true)};
-	const auto region = wire::Field::Bytes(tag::ImageRegion, wire::EncodeFields(regionFields), true);
+	const auto region = wire::EncodeImageRegion({0, 0, 2, 2, 1, 1}, true);
 	Require(Error(oldRegion.Call(wire::OpCode::StartExport,
 		{wire::Field::U64(tag::ImageReaderId, oldImage), region})) == wire::ErrorCode::UnsupportedField,
 		"Old negotiated protocol accepted image region export");

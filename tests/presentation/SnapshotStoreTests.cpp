@@ -17,6 +17,7 @@ class Output final : public FrameOutput
   public:
 	CompletionStatus PollCompletion() const noexcept override
 	{
+		++polls;
 		if (store)
 			store->Read(id);
 		return status.load();
@@ -26,6 +27,7 @@ class Output final : public FrameOutput
 		if (store && destroyed)
 			*destroyed = store->Snapshot().retiring == 0;
 	}
+	mutable std::atomic<unsigned> polls{0};
 	std::atomic<CompletionStatus> status{CompletionStatus::Pending};
 	SnapshotStore* store = nullptr;
 	CaptureId id;
@@ -87,7 +89,9 @@ void CaptureHistory()
 	Require(history.Diagnostics().events.empty(), "Pending capture claimed a terminal result");
 	image->status = CompletionStatus::Complete;
 	store.Poll();
+	const auto completedPolls = image->polls.load();
 	store.Poll();
+	Require(image->polls == completedPolls, "Retained ready images were polled again");
 	Require(store.Release(capture.id), "Release traced capture");
 	image.reset();
 	const auto ready = history.Diagnostics().events;

@@ -20,9 +20,10 @@ add_library(simxr_automation STATIC
     src/automation/RigRuntime.cpp
     src/automation/RigReport.cpp
     src/automation/ScriptEngine.cpp
+    src/automation/ScriptAnalysis.cpp
     src/automation/ScriptValues.cpp)
 simxr_configure_target(simxr_automation)
-target_link_libraries(simxr_automation PUBLIC simxr_control simxr_recording PRIVATE Luau.Compiler Luau.VM)
+target_link_libraries(simxr_automation PUBLIC simxr_control simxr_recording PRIVATE simxr_diagnostics Luau.Compiler Luau.VM)
 add_library(simxr_rig_controller STATIC src/app/services/RigController.cpp src/app/services/LuauAutomation.cpp)
 simxr_configure_target(simxr_rig_controller)
 target_link_libraries(simxr_rig_controller PUBLIC simxr_automation simxr_connection PRIVATE simxr_app_platform)
@@ -48,6 +49,7 @@ if(BUILD_TESTING)
     endif()
     simxr_add_test(rig_runner_tests tests/automation/RigRunnerTests.cpp rig_runner)
     target_link_libraries(rig_runner_tests PRIVATE simxr_automation)
+    target_compile_definitions(rig_runner_tests PRIVATE SIMXR_RIG_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/examples/rigs")
     if(TARGET control_endpoint_host AND Python3_Interpreter_FOUND)
         add_test(NAME simulation_control COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/control/test_simulation_control.py" "$<TARGET_FILE:control_endpoint_host>"

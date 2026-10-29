@@ -45,10 +45,9 @@ class RetainedIncident:
         return result
 
     def capture(self, timeout, wait):
-        # Legacy fallback is allowed only before native window admission.
         try:
             if not self._binding.connect():
-                return None
+                raise CaptureFailed('No runtime control endpoint found')
             from simxr_control import Capability, TargetKind
             client, session = self._binding.client, self._binding.session
             if client.sessions() != [session]:
@@ -58,7 +57,7 @@ class RetainedIncident:
             if self._ui:
                 needed |= Capability.QUAD_IMAGE_HISTORY
             if client.status(session)['capabilities'] & needed != needed:
-                return None
+                raise CaptureFailed('The selected runtime does not support incident capture')
             root = self._directory / 'retained-incidents' / f'{session.id}-{session.generation}'
             root.mkdir(parents=True, exist_ok=True)
             if sum(1 for path in root.glob('incident_*') if path.is_dir()) >= 40:

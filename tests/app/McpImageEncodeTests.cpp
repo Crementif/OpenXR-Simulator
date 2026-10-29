@@ -5,7 +5,7 @@
 #include "app/mcp/McpFlickerCoverage.h"
 #include "app/mcp/McpIncidentSave.h"
 #include "app/mcp/McpImageCache.h"
-#include "app/mcp/McpImageEncode.h"
+#include "app/services/ImageExport.h"
 #include "app/mcp/McpStereoAnalysis.h"
 #include "control/ControlSchema.h"
 #include "graphics/ColorPixels.h"
@@ -16,6 +16,7 @@
 int main(int argc, char** argv)
 {
 	using namespace simxr;
+	using namespace simxr::app;
 	using namespace simxr::app::mcp;
 	{
 		using Json = nlohmann::json;
@@ -187,6 +188,27 @@ int main(int argc, char** argv)
 		Require(!byteBound.Find("a") && byteBound.Find("b"), "Image cache exceeded its byte budget");
 	}
 	{
+		ImageCache cache(1024, 1);
+		unsigned retired = 0;
+		const auto image = [&]
+		{
+			return std::shared_ptr<const CachedImage>(new CachedImage{"pixels", "png"},
+				[&](const CachedImage* value)
+				{
+					// Destruction must be able to reenter the cache after publication.
+					(void)cache.Find("replacement");
+					++retired;
+					delete value;
+				});
+		};
+		cache.Insert("original", image());
+		cache.Insert("replacement", std::make_shared<CachedImage>());
+		Require(retired == 1, "Cache eviction retained discarded storage");
+		cache.Insert("replacement", image());
+		Require(retired == 2, "Duplicate image storage was not released outside the cache lock");
+	}
+
+	{
 		ImageEncodingPermit first;
 		ImageEncodingPermit second;
 		bool rejected = false;
@@ -262,9 +284,39 @@ int main(int argc, char** argv)
 		tenBit[index] = static_cast<std::byte>((packed >> (index * 8)) & 0xff);
 	const auto rgb10 = EncodeImage(tenBit, static_cast<std::uint32_t>(ColorFormat::Rgb10A2Unorm), 1, 1, true, 85);
 	Require(rgb10.lossy && !rgb10.bytes.empty(), "10-bit to PNG conversion did not report lost precision");
+	const std::array bgra{std::byte{0x31}, std::byte{255}, std::byte{0}, std::byte{128}};
+	const auto swizzled = EncodeImage(bgra, static_cast<std::uint32_t>(ColorFormat::Bgra8Unorm), 1, 1, true, 85);
+	const std::array half{std::byte{0}, std::byte{0xb8}, std::byte{0}, std::byte{0x38},
+		std::byte{0}, std::byte{0x40}, std::byte{0}, std::byte{0x34}};
+	const auto hdr16 = EncodeImage(half, static_cast<std::uint32_t>(ColorFormat::Rgba16Float), 1, 1, true, 85);
 	if (argc == 2 && std::string_view(argv[1]) == "--fixtures")
 	{
 		std::printf("HDR:%s\nRGB10:%s\n", EncodeBase64(hdr.bytes).c_str(), EncodeBase64(rgb10.bytes).c_str());
+		std::printf("BGRA:%s\nHDR16:%s\n", EncodeBase64(swizzled.bytes).c_str(), EncodeBase64(hdr16.bytes).c_str());
+	}
+	std::array<std::byte, 256 * 4> byteColors{};
+	for (unsigned index = 0; index < 256; ++index)
+	{
+		byteColors[index * 4] = std::byte(index);
+		byteColors[index * 4 + 1] = std::byte(255 - index);
+		byteColors[index * 4 + 2] = std::byte((index * 73) & 255);
+		byteColors[index * 4 + 3] = std::byte((index * 31) & 255);
+	}
+	const auto reference = EncodeImage(byteColors, static_cast<std::uint32_t>(ColorFormat::Rgba8Unorm), 256, 1, false, 85);
+	for (const auto format : {ColorFormat::Rgba8Unorm, ColorFormat::Rgba8Srgb, ColorFormat::Bgra8Unorm, ColorFormat::Bgra8Srgb})
+	{
+		auto input = byteColors;
+		if (format == ColorFormat::Bgra8Unorm || format == ColorFormat::Bgra8Srgb)
+			for (unsigned index = 0; index < 256; ++index)
+				std::swap(input[index * 4], input[index * 4 + 2]);
+		const auto encoded = EncodeImage(input, static_cast<std::uint32_t>(format), 256, 1, true, 85);
+		Require(!encoded.lossy, "Eight-bit PNG lost precision");
+		if (argc == 2 && std::string_view(argv[1]) == "--fixtures")
+			std::printf("BYTES%u:%s\n", static_cast<unsigned>(format), EncodeBase64(encoded.bytes).c_str());
+		for (unsigned index = 0; index < 256; ++index)
+			input[index * 4 + 3] = std::byte{255};
+		Require(EncodeImage(input, static_cast<std::uint32_t>(format), 256, 1, false, 85).bytes == reference.bytes,
+			"JPEG changed with byte channel layout, sRGB flag or alpha");
 	}
 	bool rejected = false;
 	try

@@ -454,8 +454,10 @@ class EndpointTests(unittest.TestCase):
                     following = client.frame_history(session, after=2, count=2)
                     self.assertEqual([frame['frame_id'] for frame in following['frames']], [3, 4])
                     applied = following['frames'][-1]['applied_input']
-                    self.assertEqual(len(applied['commands']), 11)
-                    self.assertEqual(applied['commands'][0]['kind'], 'head_pose')
+                    self.assertEqual([c['kind'] for c in applied['commands']], [
+                        'head_pose', 'controller_pose', 'controller_pose', 'controller_controls',
+                        'controller_controls', 'body', 'gaze', 'trackers'])
+                    self.assertEqual(len(applied['commands'][-1]['devices']), 4)
                     self.assertEqual(applied['input_context'][-1]['kind'], 'reference_spaces')
                     self.assertIsInstance(applied['ownership'], int)
                     self.assertEqual(client.frame_history(session, after=4)['frames'], [])

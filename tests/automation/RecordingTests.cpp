@@ -579,6 +579,21 @@ void ReferenceSpaceOriginReplay()
 		"Recording without its reference origin was silently replayed");
 }
 
+void ReplayFrameLimits()
+{
+	const FrameId origin{UINT64_MAX - 2};
+	rigs::RecordedTransaction release{0, "released", FrameId{UINT64_MAX - 1},
+		{ReleaseControl{ControlChannel::Head}}, true};
+	Require(rigs::ReplayFrame(release, origin, 4) == FrameId{UINT64_MAX},
+		"Release timing lost precision at the final frame");
+	release.frame = FrameId{UINT64_MAX};
+	Rejected([&] { (void)rigs::ReplayFrame(release, origin, 4); },
+		"Relative replay arithmetic hid an overflowing release frame");
+	release.phase = "queued";
+	release.afterFrame = false;
+	Require(!rigs::ReplayFrame(release, origin, 4), "Queued outcomes must not replay");
+}
+
 void ExportRequirements()
 {
 	rigs::InputRecording recording;
@@ -759,6 +774,7 @@ int main()
 		ReleaseEventExport();
 		ScenarioOriginAndSharedCoreReplay();
 		ReferenceSpaceOriginReplay();
+		ReplayFrameLimits();
 		ExportRequirements();
 		TrackerCollectionRecording();
 		TrackerCollectionCodec();

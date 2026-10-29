@@ -34,7 +34,7 @@ class LinuxInstance final
 	LinuxInstance(const LinuxInstance&) = delete;
 	LinuxInstance& operator=(const LinuxInstance&) = delete;
 	const LegacyInput& Input() const noexcept;
-	bool PollCommands(FrameId submitted);
+	bool AdvanceSequence(FrameId submitted);
 	void PublishStatus(const Runtime::SessionRef& current = {},
 					   std::optional<LinuxRuntimeStatus::FrameCounts> submitted = {}) noexcept;
 	void Log(const std::string& message);

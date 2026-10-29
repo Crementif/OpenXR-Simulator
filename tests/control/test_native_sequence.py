@@ -1,27 +1,23 @@
 """Acknowledged real-time sequence playback and exact native capture tickets."""
 import json
-import os
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 import time
 
-from test_native_quad import export, require, wait_file
+from native_support import probe_environment, running_probe, export, require, wait_file
 from simxr_control import Capability, Client
 
 
 def main(probe):
     with tempfile.TemporaryDirectory(prefix='sx-seq-') as temporary:
         data = Path(temporary)
-        environment = dict(os.environ, SIMXR_DATA_DIR=temporary, SIMXR_PROBE_CONTROL='1',
+        environment = probe_environment(data, SIMXR_PROBE_CONTROL='1',
                            SIMXR_PROBE_RETAIN_CONTROL='1', SIMXR_PROBE_GPU_INSPECTION='1',
                            SIMXR_PROBE_RECORDING='1', SIMXR_PROBE_DYNAMIC_COLOR='1',
                            SIMXR_PROBE_CANONICAL_SEQUENCE='1', SIMXR_PROBE_FRAMES='8')
-        environment.pop('SIMXR_CONTROL_SOCKET', None)
-        host = subprocess.Popen([probe], env=environment, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True)
-        try:
+
+        with running_probe([probe], environment) as host:
             wait_file(data / 'control.ready', host)
             # The existing application probe asserts .3/.4/.5/.6 head positions. Supply
             # that motion exclusively through acknowledged control, with no sequence file.
@@ -84,14 +80,6 @@ def main(probe):
                 output = host.communicate(timeout=15)[0]
                 require(host.returncode == 0 and 'VUID-' not in output and 'Vulkan validation error' not in output, output)
                 print('PASS: canonical real-time sequence; exact red/green captures; no sequence file; GPU-safe release')
-        finally:
-            if host.poll() is None:
-                host.kill()
-                host.wait()
-            remaining = host.stdout.read() if not host.stdout.closed else ''
-            if remaining:
-                print(remaining, file=sys.stderr)
-            host.stdout.close()
 
 
 if __name__ == '__main__':

@@ -1,5 +1,7 @@
 #include "Pch.h"
 #include "app/mcp/McpHistory.h"
+#include "app/mcp/McpIncidentSave.h"
+#include "app/mcp/McpSequence.h"
 #include "app/mcp/McpSimulation.h"
 #include "control/ControlSchema.h"
 #include "control/DebugProtocol.h"
@@ -13,14 +15,88 @@ using Json = nlohmann::json;
 namespace wire = simxr::control;
 namespace tag = simxr::control::tag;
 
+static void IncidentArchiveRollback()
+{
+	const auto root = std::filesystem::temp_directory_path() /
+		("simxr-incident-rollback-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+	std::filesystem::create_directory(root);
+	try
+	{
+		for (const unsigned stop : {3u, 5u})
+		{
+			const auto archive = root / std::to_string(stop);
+			Json metadata = {{"window", {{"entries", Json::array({{{"frame_id", "1"}, {"phase", "ready"}}})}}}};
+			const std::vector<std::vector<std::byte>> frames{std::vector<std::byte>(320 * 104 * 4)};
+			unsigned checks = 0;
+			bool cancelled = false;
+			try
+			{
+				app::mcp::SaveIncident(archive, metadata, {}, frames, 320, 104, [&]
+				{
+					if (++checks == stop)
+						throw std::runtime_error("cancel archive");
+				});
+			}
+			catch (const std::runtime_error& error)
+			{
+				cancelled = std::string_view(error.what()) == "cancel archive";
+			}
+			Require(cancelled && !std::filesystem::exists(archive),
+					"Cancelled incident retained published files or temporary output");
+		}
+	}
+	catch (...)
+	{
+		std::filesystem::remove_all(root);
+		throw;
+	}
+	std::filesystem::remove(root);
+}
+
 int main()
 {
+	IncidentArchiveRollback();
+	const auto sequenceId = UINT64_MAX;
+	wire::Message sequenceResponse;
+	sequenceResponse.fields = {wire::Field::U32(tag::Error, 0), wire::Field::U64(tag::SequenceId, sequenceId),
+		wire::Field::Bytes(tag::Document, wire::InspectionValue::Object({
+			{"id", wire::InspectionValue::Unsigned(sequenceId)}, {"active", wire::InspectionValue::Boolean(true)}}).Encode())};
+	const app::mcp::SequenceRequest sequenceRequest{wire::OpCode::StartSequence, {}};
+	const auto sequence = app::mcp::SequenceDocument(sequenceResponse, sequenceRequest);
+	Require(sequence.at("sequence_id").is_number_unsigned() && sequence.at("sequence_id") == sequenceId &&
+		sequence.at("document").at("id") == sequenceId, "Internal sequence IDs preserve all 64 bits as integers");
+	const auto sequenceReply = app::mcp::SequenceReply(sequenceResponse, sequenceRequest);
+	const auto published = Json::parse(sequenceReply.at("content").at(0).at("text").get<std::string>());
+	Require(published.at("sequence_id") == std::to_string(sequenceId) &&
+		published.at("document").at("id") == std::to_string(sequenceId), "Public sequence IDs remain decimal strings");
+	for (const auto& invalidId : {wire::InspectionValue::Unsigned(sequenceId - 1), wire::InspectionValue::Signed(-1)})
+	{
+		sequenceResponse.fields.back() = wire::Field::Bytes(tag::Document,
+			wire::InspectionValue::Object({{"id", invalidId}}).Encode());
+		bool rejected = false;
+		try { (void)app::mcp::SequenceDocument(sequenceResponse, sequenceRequest); }
+		catch (const std::exception&) { rejected = true; }
+		Require(rejected, "Sequence response cannot substitute a different or signed execution ID");
+	}
 	const auto special = app::mcp::InspectionJson(wire::InspectionValue::Object({
 		{"far_z", wire::InspectionValue::Float(std::numeric_limits<float>::infinity())},
 		{"negative", wire::InspectionValue::Float(-std::numeric_limits<float>::infinity())},
 		{"unknown", wire::InspectionValue::Float(std::numeric_limits<float>::quiet_NaN())}}).Encode());
 	Require(special.at("far_z") == "Infinity" && special.at("negative") == "-Infinity" && special.at("unknown") == "NaN",
 		"Non-finite inspection values remain explicit in valid JSON");
+	wire::Message projection;
+	projection.fields = {wire::Field::Bytes(tag::Document, wire::InspectionValue::Object({
+		{"generation", wire::InspectionValue::Unsigned(UINT64_MAX)},
+		{"entries", wire::InspectionValue::Array({wire::InspectionValue::Object({})})}}).Encode())};
+	Require(app::mcp::ProjectionHistoryDocument(projection, 1, UINT64_MAX).at("generation") == std::to_string(UINT64_MAX),
+		"Projection metadata preserves its exact generation");
+	for (const auto& [count, generation] : {std::pair{0u, UINT64_MAX}, std::pair{1u, UINT64_MAX - 1}})
+	{
+		bool rejected = false;
+		try { (void)app::mcp::ProjectionHistoryDocument(projection, count, generation); }
+		catch (const std::exception&) { rejected = true; }
+		Require(rejected, "Projection diagnostics reject excess entries or a changed generation");
+	}
 	const Json arguments = {{"connection", "owner"}, {"after", "9007199254740992"}, {"count", 2}};
 	const auto request = app::mcp::PrepareHistory("debug_frame_history", arguments, 7, 8);
 	Require(request.after == 9007199254740992ULL && request.count == 2, "Exact cursor survives preparation");

@@ -8,7 +8,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
-#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -25,33 +24,10 @@ struct LegacyCaptureRequest
 	std::string layer = "projection";
 };
 
-struct LegacyFileCommands
-{
-	std::array<std::optional<std::string>, 5> input;
-	std::optional<LegacyInput::Sequence> sequence;
-};
-
-struct LegacyScreenshot;
-// One submitted frame only; the completion owns its frame-specific CPU metadata.
-struct LegacyFrameCapture
-{
-	LegacyCaptureRequest selection;
-	std::function<bool(LegacyScreenshot&)> complete;
-	std::function<void()> submitted;
-};
-
-struct LegacyFileRequests
-{
-	std::optional<LegacyCaptureRequest> capture;
-	bool projectionLog = false;
-	std::optional<LegacyFrameCapture> frameCapture;
-};
-
 enum class LegacyOutputFile
 {
 	RuntimeStatus,
-	FrameInfo,
-	ProjectionLog
+	FrameInfo
 };
 
 struct LegacyScreenshot
@@ -71,54 +47,31 @@ struct LegacyFileStatus
 	std::string detail;
 };
 
-// The GPU capture observer only exchanges CPU requests and completed images.
-// Platform file workers retain accepted bytes and perform all filesystem I/O.
-class LegacyCaptureChannel
-{
-  public:
-	virtual ~LegacyCaptureChannel() = default;
-	virtual LegacyFileRequests TakeRequests() = 0;
-	virtual bool Publish(LegacyOutputFile file, std::string document) = 0;
-	virtual bool SaveScreenshot(LegacyScreenshot& screenshot) = 0;
-	virtual bool DrainScreenshots(std::chrono::milliseconds timeout) = 0;
-	virtual bool FinishCaptures(std::chrono::milliseconds timeout)
-	{
-		return DrainScreenshots(timeout);
-	}
-	virtual bool Log(std::string message) = 0;
-	virtual LegacyFileStatus Status() const = 0;
-};
-
-class LegacyFileChannel : public LegacyCaptureChannel
+class LegacyFileChannel
 {
   public:
 	explicit LegacyFileChannel(std::filesystem::path directory, std::filesystem::path initialSequence = {});
-	~LegacyFileChannel() override;
-	LegacyFileCommands TakeCommands();
-	LegacyFileRequests TakeRequests() override;
-	bool Publish(LegacyOutputFile file, std::string document) override;
-	bool SaveScreenshot(LegacyScreenshot& screenshot) override;
-	bool DrainScreenshots(std::chrono::milliseconds timeout) override;
-	bool Log(std::string message) override;
-	LegacyFileStatus Status() const override;
+	~LegacyFileChannel();
+	std::optional<LegacyInput::Sequence> TakeSequence();
+	bool Publish(LegacyOutputFile file, std::string document);
+	bool SaveScreenshot(LegacyScreenshot& screenshot);
+	bool DrainScreenshots(std::chrono::milliseconds timeout);
+	bool Log(std::string message);
+	LegacyFileStatus Status() const;
 	void Close();
 
   private:
-	class Notifications;
 	void Run() noexcept;
-	void ReadCommand(std::size_t index);
 	void RecordError(std::string_view detail) noexcept;
 	void WriteFile(const char* filename, const std::string& document);
 	void WriteScreenshot(const LegacyScreenshot& screenshot);
 	void AppendLog(const std::vector<std::string>& messages);
 	std::filesystem::path m_directory;
-	std::unique_ptr<Notifications> m_notifications;
 	mutable std::mutex m_mutex;
 	std::mutex m_closeMutex;
 	std::condition_variable m_changed;
-	LegacyFileCommands m_commands;
-	LegacyFileRequests m_requests;
-	std::array<std::optional<std::string>, 3> m_outputs;
+	std::optional<LegacyInput::Sequence> m_sequence;
+	std::array<std::optional<std::string>, 2> m_outputs;
 	std::vector<LegacyScreenshot> m_screenshots;
 	std::vector<std::string> m_logs;
 	std::size_t m_screenshotCount = 0;

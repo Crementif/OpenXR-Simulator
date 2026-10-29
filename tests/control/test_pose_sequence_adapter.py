@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / 'mcp-server'))
 from legacy_control import LegacyControl
 from pose_sequence import CapturePersistenceError
 from simxr_control import Capability, ProtocolError
-from test_legacy_control import Endpoint
+from control_fixture import Endpoint
 
 
 class SequenceEndpoint(Endpoint):
@@ -175,9 +175,11 @@ class SequenceAdapterTests(unittest.TestCase):
         self.assertFalse(worker.is_alive())
         self.assertEqual(self.endpoint.closed, 1)
 
-    def test_absent_endpoint_only_falls_back_before_admission(self):
+    def test_absent_endpoint_never_falls_back(self):
         with patch('simxr_control.discover', return_value=[]):
-            self.assertIsNone(self.start())
+            result = self.start()
+            self.assertFalse(result['ok'])
+            self.assertIn('No runtime control endpoint', result['error'])
         self.endpoint.hello['capabilities'] = Capability.SIMULATION_COMMANDS
         result = self.start()
         self.assertFalse(result['ok'])

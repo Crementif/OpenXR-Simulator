@@ -5,6 +5,14 @@
 
 namespace simxr::control
 {
+Field EncodeImageRegion(const ImageRegion& region, bool required)
+{
+	const std::array fields{Field::U32(1, region.x, true), Field::U32(2, region.y, true),
+		Field::U32(3, region.width, true), Field::U32(4, region.height, true),
+		Field::U32(5, region.outputWidth, true), Field::U32(6, region.outputHeight, true)};
+	return Field::Bytes(tag::ImageRegion, EncodeFields(fields), required);
+}
+
 Field EncodeImageDescription(const ImageDescription& value, bool external)
 {
 	std::vector<Field> fields{Field::Bytes(tag::DeviceUuid, value.identity.device, true),

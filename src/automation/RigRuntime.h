@@ -4,12 +4,18 @@
 #include "control/ControlSchema.h"
 #include "simulation/CommandTypes.h"
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
+
+namespace simxr::control
+{
+struct IncidentSample;
+}
 
 namespace simxr::automation
 {
@@ -65,12 +71,14 @@ class RigRuntime
 	void Configure(control::ControlSessionId session, std::uint64_t generation);
 	std::string Cleanup();
 	void ObserveCompatibility();
+	void Wait(std::chrono::milliseconds duration);
 	std::uint64_t Schedule(CommandTarget target, CommandLatePolicy policy, std::vector<SimulationCommand> commands);
 	std::vector<std::byte> AwaitTransaction(std::uint64_t transaction);
 	void PauseApplication();
 	void ResumeApplication();
 	ScriptStep StepApplication(ScriptCaptureTarget target);
 	ScriptStep StepDisplay();
+	void AdvanceToFrame(FrameId target);
 	void StartImageRecording(ScriptCaptureTarget target, std::uint32_t capacity, std::uint64_t frames);
 	void StopImageRecording();
 	ScriptImageRecording ImageRecording();
@@ -87,6 +95,8 @@ class RigRuntime
 	std::vector<std::byte> ImageWindow(std::uint64_t window);
 	void ExportWindowImage(std::uint64_t window, std::uint64_t frame, const std::string& path,
 						   std::optional<std::uint32_t> arraySlice);
+	control::IncidentSample SampleWindowImage(std::uint64_t window, std::uint64_t frame,
+		std::optional<std::array<XrRect2Di, 2>> rectangles);
 	void ReleaseImageWindow(std::uint64_t window);
 	std::vector<std::byte> Revision(std::uint64_t revision);
 	void ReleaseInspection(std::uint64_t inspection);
@@ -114,6 +124,8 @@ class RigRuntime
 	std::chrono::steady_clock::time_point m_nextRenew;
 	std::vector<std::uint64_t> m_captures;
 	std::vector<std::uint64_t> m_inspections;
+	void RenewLease();
+	void PollAgain();
 	Fields Session() const;
 	Fields Source() const;
 	control::Message Call(control::OpCode opcode, Fields fields);

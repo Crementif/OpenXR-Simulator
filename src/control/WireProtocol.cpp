@@ -138,36 +138,71 @@ Field Field::Bytes(std::uint16_t tag, std::span<const std::byte> value, bool req
 		throw std::length_error("Control field exceeds payload bound");
 	return Field{tag, required, {value.begin(), value.end()}};
 }
-std::optional<std::uint64_t> Field::AsU64() const noexcept
+std::optional<std::uint64_t> FieldView::AsU64() const noexcept
 {
 	return value.size() == sizeof(std::uint64_t) ? std::optional{Read<std::uint64_t>(value)} : std::nullopt;
 }
-std::optional<std::uint32_t> Field::AsU32() const noexcept
+std::optional<std::uint32_t> FieldView::AsU32() const noexcept
 {
 	return value.size() == sizeof(std::uint32_t) ? std::optional{Read<std::uint32_t>(value)} : std::nullopt;
 }
-std::optional<std::int64_t> Field::AsI64() const noexcept
+std::optional<std::int64_t> FieldView::AsI64() const noexcept
 {
 	const auto integer = AsU64();
 	return integer ? std::optional{std::bit_cast<std::int64_t>(*integer)} : std::nullopt;
 }
-std::optional<float> Field::AsF32() const noexcept
+std::optional<float> FieldView::AsF32() const noexcept
 {
 	const auto integer = AsU32();
 	return integer ? std::optional{std::bit_cast<float>(*integer)} : std::nullopt;
 }
-std::optional<bool> Field::AsBool() const noexcept
+std::optional<bool> FieldView::AsBool() const noexcept
 {
 	return value.size() == 1 && std::to_integer<unsigned char>(value.front()) <= 1
 			   ? std::optional{value.front() == std::byte{1}}
 			   : std::nullopt;
 }
-std::optional<std::string_view> Field::AsText() const noexcept
+std::optional<std::string_view> FieldView::AsText() const noexcept
 {
 	if (!ValidText(value))
 		return {};
 	return value.empty() ? std::string_view{}
 						 : std::string_view{reinterpret_cast<const char*>(value.data()), value.size()};
+}
+std::optional<std::uint64_t> Field::AsU64() const noexcept
+{
+	return FieldView{tag, required, value}.AsU64();
+}
+std::optional<std::uint32_t> Field::AsU32() const noexcept
+{
+	return FieldView{tag, required, value}.AsU32();
+}
+std::optional<std::int64_t> Field::AsI64() const noexcept
+{
+	return FieldView{tag, required, value}.AsI64();
+}
+std::optional<float> Field::AsF32() const noexcept
+{
+	return FieldView{tag, required, value}.AsF32();
+}
+std::optional<bool> Field::AsBool() const noexcept
+{
+	return FieldView{tag, required, value}.AsBool();
+}
+std::optional<std::string_view> Field::AsText() const noexcept
+{
+	return FieldView{tag, required, value}.AsText();
+}
+const FieldView* FieldViewsResult::Find(std::uint16_t tag) const noexcept
+{
+	for (const auto& field : fields)
+		if (field.tag == tag)
+			return &field;
+	return nullptr;
+}
+Field* Message::Find(std::uint16_t tag) noexcept
+{
+	return const_cast<Field*>(std::as_const(*this).Find(tag));
 }
 const Field* Message::Find(std::uint16_t tag) const noexcept
 {
@@ -235,7 +270,7 @@ std::vector<std::byte> Encode(const Message& message)
 	return result;
 }
 
-FieldsResult DecodeFields(std::span<const std::byte> payload) noexcept
+template <class Result> static Result DecodeFieldStorage(std::span<const std::byte> payload) noexcept
 {
 	std::size_t count = 0;
 	const auto error = CheckFields(payload, count);
@@ -243,7 +278,8 @@ FieldsResult DecodeFields(std::span<const std::byte> payload) noexcept
 		return {{}, error};
 	try
 	{
-		std::vector<Field> result;
+		typename decltype(Result{}.fields)::value_type field;
+		decltype(Result{}.fields) result;
 		result.reserve(count);
 		std::size_t offset = 0;
 		while (offset < payload.size())
@@ -253,7 +289,13 @@ FieldsResult DecodeFields(std::span<const std::byte> payload) noexcept
 			const auto length = Read<std::uint32_t>(payload, offset + 4);
 			offset += s_fieldHeaderSize;
 			const auto value = payload.subspan(offset, length);
-			result.push_back(Field{tag, required, {value.begin(), value.end()}});
+			field.tag = tag;
+			field.required = required;
+			if constexpr (std::is_same_v<Result, FieldViewsResult>)
+				field.value = value;
+			else
+				field.value.assign(value.begin(), value.end());
+			result.push_back(std::move(field));
 			offset += length;
 		}
 		return {std::move(result), DecodeError::None};
@@ -262,6 +304,15 @@ FieldsResult DecodeFields(std::span<const std::byte> payload) noexcept
 	{
 		return {{}, DecodeError::AllocationFailure};
 	}
+}
+
+FieldsResult DecodeFields(std::span<const std::byte> payload) noexcept
+{
+	return DecodeFieldStorage<FieldsResult>(payload);
+}
+FieldViewsResult DecodeFieldViews(std::span<const std::byte> payload) noexcept
+{
+	return DecodeFieldStorage<FieldViewsResult>(payload);
 }
 
 DecodeResult Decode(std::span<const std::byte> bytes) noexcept

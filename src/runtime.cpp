@@ -20,11 +20,9 @@
 #include "control/ControlService.h"
 #include "control/LocalControlServer.h"
 #include "control/backends/vulkan/VulkanImageInspection.h"
-#include "control/legacy/WindowsLegacyCapture.h"
-#include "control/legacy/WindowsLegacyChannel.h"
+#include "platform/windows/WindowsRuntimeStatus.h"
+#include "platform/windows/WindowsRuntimeFiles.h"
 #include "control/legacy/WindowsRuntimeSettings.h"
-#include "control/legacy/backends/vulkan/VulkanLegacyCapture.h"
-#include "control/legacy/backends/vulkan/WindowsVulkanCaptureChannel.h"
 #include "flicker_detector.h"
 #include "graphics/LayerBuilder.h"
 #include "graphics/SwapchainAccess.h"
@@ -67,9 +65,8 @@ using Microsoft::WRL::ComPtr;
 
 static simxr::Runtime& RuntimeState();
 
-// File output is owned by the active instance's joined compatibility worker.
 static std::mutex s_logMutex;
-static std::weak_ptr<mcp::WindowsLegacyChannel> s_logChannel;
+static std::weak_ptr<simxr::windows::WindowsRuntimeFiles> s_logChannel;
 static const bool s_logVerbose = []()
 {
 	char value[16]{};
@@ -79,7 +76,7 @@ static const bool s_logVerbose = []()
 
 static void Log(const char* message)
 {
-	std::shared_ptr<mcp::WindowsLegacyChannel> files;
+	std::shared_ptr<simxr::windows::WindowsRuntimeFiles> files;
 	{
 		std::lock_guard lock(s_logMutex);
 		files = s_logChannel.lock();
@@ -119,8 +116,8 @@ struct Instance
 	XrInstance handle{XR_NULL_HANDLE};
 	std::shared_ptr<simxr::Instance> core;
 	std::shared_ptr<simxr::windows::WindowsRuntimeInput> input;
-	std::shared_ptr<mcp::WindowsLegacyChannel> compatibilityFiles;
-	std::shared_ptr<mcp::WindowsLegacyCapture> compatibilityCapture;
+	std::shared_ptr<simxr::windows::WindowsRuntimeFiles> runtimeFiles;
+	std::shared_ptr<simxr::windows::WindowsRuntimeStatus> runtimeStatus;
 	std::shared_ptr<flicker::Diagnostics> diagnostics;
 	bool closing = false;
 };
@@ -159,8 +156,8 @@ struct Session
 	XrSession handle{XR_NULL_HANDLE};
 	std::shared_ptr<simxr::Session> core;
 	std::shared_ptr<simxr::windows::WindowsRuntimeInput> input;
-	std::shared_ptr<mcp::WindowsLegacyChannel> compatibilityFiles;
-	std::shared_ptr<mcp::WindowsLegacyCapture> compatibilityCapture;
+	std::shared_ptr<simxr::windows::WindowsRuntimeFiles> runtimeFiles;
+	std::shared_ptr<simxr::windows::WindowsRuntimeStatus> runtimeStatus;
 	std::shared_ptr<flicker::Diagnostics> diagnostics;
 	std::optional<simxr::windows::WindowsLibrary> dxgiLibrary;
 	std::optional<simxr::windows::WindowsLibrary> d3dLibrary;
@@ -718,13 +715,13 @@ static XrResult XRAPI_PTR xrCreateInstance_runtime(const XrInstanceCreateInfo* c
 	}
 	const auto directory = simxr::windows::RuntimeDataDirectory();
 	native->diagnostics = std::make_shared<flicker::Diagnostics>(directory);
-	native->compatibilityFiles = std::make_shared<mcp::WindowsLegacyChannel>(directory);
-	native->compatibilityCapture = std::make_shared<mcp::WindowsLegacyCapture>(native->compatibilityFiles);
+	native->runtimeFiles = std::make_shared<simxr::windows::WindowsRuntimeFiles>(directory);
+	native->runtimeStatus = std::make_shared<simxr::windows::WindowsRuntimeStatus>(native->runtimeFiles);
 	ControlEndpoint().Start();
 	const auto attached = rt::State().instances.Attach(creation.core, std::move(native));
 	{
 		std::lock_guard lock(s_logMutex);
-		s_logChannel = attached->compatibilityFiles;
+		s_logChannel = attached->runtimeFiles;
 	}
 	{
 		std::lock_guard lock(rt::State().mutex);
@@ -763,8 +760,7 @@ static XrResult XRAPI_PTR xrDestroyInstance_runtime(XrInstance instance)
 	}
 	if (!RuntimeState().Game().Snapshot().game)
 		ControlEndpoint().Close();
-	native->compatibilityCapture->Close();
-	native->compatibilityFiles->Close();
+	native->runtimeFiles->Close();
 	native->diagnostics->Close();
 	simxr::StopVulkanImageDelivery();
 	const auto result = RuntimeState().DestroyInstance(instance);
@@ -1014,8 +1010,8 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
 	native.handle = creation.core;
 	native.core = creation.core.Shared();
 	native.input = owner->input;
-	native.compatibilityFiles = owner->compatibilityFiles;
-	native.compatibilityCapture = owner->compatibilityCapture;
+	native.runtimeFiles = owner->runtimeFiles;
+	native.runtimeStatus = owner->runtimeStatus;
 	native.diagnostics = owner->diagnostics;
 	std::optional<simxr::VulkanBinding> vulkanBinding;
 	auto publish = [&]() -> XrResult
@@ -1029,19 +1025,6 @@ static XrResult XRAPI_PTR xrCreateSession_runtime(XrInstance instance, const XrS
 														  validation && std::strcmp(validation, "1") == 0, graphics);
 			if (XR_FAILED(result))
 				return result;
-			graphics->SetObserver(std::make_unique<simxr::VulkanLegacyCapture>(
-				graphics->Device(), creation.core.Shared(),
-				std::make_shared<simxr::WindowsVulkanCaptureChannel>(
-					native.compatibilityFiles, native.compatibilityCapture, creation.core.Shared(),
-					[input = native.input]
-					{
-						return input->Head();
-					},
-					[input = native.input](const mcp::HeadPoseCommand& pose)
-					{
-						input->SetHead(pose);
-					}),
-				native.diagnostics));
 			native.vulkan = std::move(graphics);
 		}
 		else if (native.d3d11Device || native.d3d12Device || native.usesOpenGL)
@@ -1622,13 +1605,13 @@ static XrResult XRAPI_PTR xrWaitFrame_runtime(XrSession session, const XrFrameWa
 		return XR_ERROR_VALIDATION_FAILURE;
 	simxr::FramePrediction prediction;
 	const auto core = native->core;
-	const auto compatibilityFiles = native->compatibilityFiles;
+	const auto runtimeFiles = native->runtimeFiles;
 	const auto publishNative = [&](const simxr::FramePrediction& admitted) -> XrResult
 	{
 		std::lock_guard lifecycle(native->owner->lifecycleMutex);
 		if (native->owner->closing || rt::RetainNativeSession(session).Shared() != native.Shared())
 			return XR_ERROR_SESSION_LOST;
-		const auto input = native->input->Poll(admitted.displayPeriod, *compatibilityFiles);
+		const auto input = native->input->Poll(admitted.displayPeriod, *runtimeFiles);
 		core->PublishTracking(admitted.displayTime, input.tracking, input.views, admitted.id);
 
 		s->predictedDisplayPeriod = admitted.displayPeriod.count();
@@ -1657,7 +1640,7 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
 	if (!native)
 		return XR_ERROR_HANDLE_INVALID;
 	const auto core = native->core;
-	const auto compatibilityCapture = native->compatibilityCapture;
+	const auto runtimeStatus = native->runtimeStatus;
 	if (!info || info->type != XR_TYPE_FRAME_END_INFO || (info->layerCount && !info->layers))
 		return XR_ERROR_VALIDATION_FAILURE;
 	if (info->displayTime <= 0)
@@ -1742,12 +1725,16 @@ static XrResult XRAPI_PTR xrEndFrame_runtime(XrSession session, const XrFrameEnd
 			if (XR_SUCCEEDED(result))
 			{
 				const auto snapshot = core->Snapshot();
+				std::uint32_t projections = 0;
+				for (std::uint32_t layer = 0; layer < info->layerCount; ++layer)
+					if (info->layers[layer]->type == XR_TYPE_COMPOSITION_LAYER_PROJECTION)
+						++projections;
+				native->diagnostics->ObserveSubmission(snapshot.lastSubmitted.value, projections, info->layerCount);
 				const auto views = core->ViewsAt(simxr::RuntimeTime{simxr::Duration{info->displayTime}});
 				const auto width = views.views.empty() ? 0u : views.views.front().description.width * 2;
 				const auto height = views.views.empty() ? 0u : views.views.front().description.height;
-				compatibilityCapture->SetFrame(snapshot.lastSubmitted.value);
 				const auto head = native->input->Head();
-				compatibilityCapture->PublishStatus({snapshot.lastSubmitted.value, width, height, "RGBA8",
+				runtimeStatus->PublishStatus({snapshot.lastSubmitted.value, width, height, "RGBA8",
 													 SessionStateName(snapshot.state), head.yaw, head.pitch, head.roll,
 													 head.x, head.y, head.z});
 			}

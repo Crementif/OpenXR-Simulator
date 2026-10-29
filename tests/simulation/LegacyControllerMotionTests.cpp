@@ -9,9 +9,8 @@
 #include <numbers>
 #include <thread>
 
-namespace
+namespace simxr::legacy::tests
 {
-using namespace simxr::legacy;
 void Near(float actual, float expected, const char* message, float tolerance = 0.0001f)
 {
 	Require(std::abs(actual - expected) <= tolerance, message);
@@ -26,23 +25,7 @@ ControllerMotionFrame Frame(double seconds)
 {
 	ControllerMotionFrame frame;
 	frame.glideSeconds = seconds;
-	frame.wheelSeconds = seconds;
 	return frame;
-}
-void WheelAfterLongUptime()
-{
-	LegacyControllerMotion motion;
-	constexpr double origin = 10000000;
-	auto frame = Frame(origin);
-	frame.wheel = ControllerWheelSweep{};
-	frame.wheel->enabled = true;
-	frame.wheel->receivedSeconds = origin;
-	frame.wheel->frequencyHz = 1;
-	frame.wheel->amplitude = 1;
-	motion.Update(frame);
-	const auto next = motion.Update(Frame(origin + 1.0 / 128)).snapshot;
-	Near(next.wheelAngle, static_cast<float>(std::sin(2 * std::numbers::pi / 128)),
-		 "Long uptime quantized a subframe wheel update");
 }
 void FiniteGlideEndpoints()
 {
@@ -90,17 +73,7 @@ void FiniteMotionIntermediates()
 	Near(orientation.y, expectedOrientation.y, "Wide yaw changed orientation");
 	Near(orientation.z, expectedOrientation.z, "Wide yaw changed orientation");
 	Near(orientation.w, expectedOrientation.w, "Wide yaw changed orientation");
-	frame = Frame(0);
-	frame.wheel = ControllerWheelSweep{};
-	frame.wheel->enabled = true;
-	frame.wheel->frequencyHz = largest;
-	frame.wheelSeconds = largest;
-	const auto wheel = motion.Update(frame).snapshot;
-	const bool finiteWheel = std::isfinite(wheel.wheelAngle) && std::isfinite(wheel.hands[0].local.position.x);
-	std::cout << "Finite legacy intermediates: position=" << finitePosition << " orientation=" << finiteOrientation
-			  << " wheel=" << finiteWheel << " runtime yaw sin/cos=" << yawSine << '/' << yawCosine << std::endl;
-	Require(finitePosition && finiteOrientation && finiteWheel,
-			"Finite motion input overflowed a representable result");
+	Require(finitePosition && finiteOrientation, "Finite motion input overflowed a representable result");
 }
 void HeadSpaceAndTimedMoves()
 {
@@ -158,7 +131,7 @@ void HeadSpaceAndTimedMoves()
 	motion.Update(frame);
 	Position(motion.Update(Frame(6)).snapshot.hands[1].local.position, {9, 8, 7}, "Jump did not cancel an older glide");
 }
-void KeyboardFileWheelAndHoldPrecedence()
+void KeyboardFileAndHoldPrecedence()
 {
 	LegacyControllerMotion motion;
 	auto frame = Frame(1.25);
@@ -167,18 +140,11 @@ void KeyboardFileWheelAndHoldPrecedence()
 	frame.keyboard.translationDirection = {1, 1, 1};
 	frame.keyboard.hands[1].trigger = true;
 	frame.keyboard.hands[1].primary = true;
+	frame.keyboard.hands[0].grip = frame.keyboard.hands[1].grip = true;
 	frame.pose = ControllerPoseEdit{};
 	frame.pose->position = {9, 9, 9};
 	frame.pose->trigger = 0.2f;
 	frame.pose->primary = false;
-	frame.wheel = ControllerWheelSweep{};
-	frame.wheel->enabled = true;
-	frame.wheel->hub = {0, 0, 0};
-	frame.wheel->radius = 2;
-	frame.wheel->tilt = 0;
-	frame.wheel->amplitude = 0.3f;
-	frame.wheel->frequencyHz = 1;
-	frame.wheel->receivedSeconds = 1;
 	frame.hold = ControllerHoldEdit{};
 	frame.hold->hand = ControllerHand::Right;
 	frame.hold->grip = ControllerOverrideEdit<float>::Set(0);
@@ -188,11 +154,10 @@ void KeyboardFileWheelAndHoldPrecedence()
 	frame.hold->roll = ControllerOverrideEdit<float>::Set(-0.7f);
 	auto result = motion.Update(frame);
 	const auto right = result.snapshot.hands[1];
-	Near(result.snapshot.wheelAngle, 0.3f, "Wheel clock phase changed");
-	Position(right.local.position, {2 * std::cos(0.3f), -2 * std::sin(0.3f), 0}, "Wheel did not override file pose");
-	Near(right.local.yaw, 0.4f, "Sticky yaw did not override wheel orientation");
-	Near(right.local.roll, -0.7f, "Sticky roll did not override wheel roll");
-	Near(right.controls.grip, 0, "Forced-off hold did not override wheel grip");
+	Position(right.local.position, {9, 9, 9}, "File pose did not override keyboard movement");
+	Near(right.local.yaw, 0.4f, "Sticky yaw did not override file orientation");
+	Near(right.local.roll, -0.7f, "Sticky roll was not applied");
+	Near(right.controls.grip, 0, "Forced-off hold did not override keyboard grip");
 	Near(result.snapshot.hands[0].controls.grip, 1, "Right-hand hold affected the other hand");
 	Near(right.controls.trigger, 0.2f, "One-shot trigger did not override keyboard");
 	Require(right.controls.primary && !right.controls.triggerTouch, "Control aliases differ from thresholded controls");
@@ -200,30 +165,31 @@ void KeyboardFileWheelAndHoldPrecedence()
 
 	frame = Frame(1.5);
 	frame.keyboard.active = true;
+	frame.keyboard.hands[1].grip = true;
 	frame.hold = ControllerHoldEdit{};
 	frame.hold->hand = ControllerHand::Right;
 	frame.hold->grip = ControllerOverrideEdit<float>::Release();
 	result = motion.Update(frame);
-	Near(result.snapshot.hands[1].controls.grip, 1, "Released grip override did not return to wheel input");
+	Near(result.snapshot.hands[1].controls.grip, 1, "Released grip override did not return to keyboard input");
 	Near(result.snapshot.hands[1].controls.trigger, 0, "One-shot trigger became a sticky override");
 	Near(result.snapshot.hands[1].local.yaw, 0.4f, "Partial hold update cleared a different channel");
 	frame = Frame(1.75);
 	frame.keyboard.active = true;
+	frame.pose = ControllerPoseEdit{};
 	frame.hold = ControllerHoldEdit{};
 	frame.hold->clear = true;
 	result = motion.Update(frame);
-	Near(result.snapshot.hands[1].local.yaw, 0, "Clear did not return yaw ownership to the wheel");
-	Near(result.snapshot.hands[1].local.roll, -0.3f, "Clear did not return roll ownership to the wheel");
+	Near(result.snapshot.hands[1].local.yaw, 0, "Clear did not return yaw ownership to the pose input");
+	Near(result.snapshot.hands[1].local.roll, -0.7f, "Clear unexpectedly reset the last roll");
 	Require(!result.snapshot.hands[1].controls.primary, "Clear did not return buttons to keyboard state");
 
 	frame = Frame(2);
 	frame.keyboard.active = true;
-	frame.wheel = ControllerWheelSweep{}; // disable without resetting the last pose
 	frame.keyboard.translationDirection.x = 1;
 	frame.keyboard.frameSeconds = 1;
 	const auto before = motion.Snapshot().hands[1].local.position;
 	result = motion.Update(frame);
-	Near(result.snapshot.hands[1].local.position.x, before.x + 0.5f, "Disabled wheel still overrode keyboard movement");
+	Near(result.snapshot.hands[1].local.position.x, before.x + 0.5f, "Cleared holds blocked keyboard movement");
 	frame = Frame(2.5);
 	frame.hold = ControllerHoldEdit{};
 	frame.hold->thumbClick = ControllerOverrideEdit<bool>::Set(true);
@@ -288,11 +254,7 @@ void AtomicPublicationAndInvalidHand()
 	Require(rejected && motion.Snapshot().hands[1].controls.trigger == 0,
 			"An invalid hand partially published keyboard state");
 	frame = Frame(1);
-	frame.wheel = ControllerWheelSweep{};
-	frame.wheel->enabled = true;
-	frame.wheel->amplitude = 0;
-	frame.wheel->tilt = 0;
-	motion.Update(frame);
+	frame.keyboard.active = true;
 	std::atomic<bool> finished = false, inconsistent = false;
 	std::thread reader(
 		[&]
@@ -300,32 +262,29 @@ void AtomicPublicationAndInvalidHand()
 			do
 			{
 				const auto sample = motion.Snapshot();
-				if (std::abs(sample.hands[1].local.position.x - sample.hands[0].local.position.x - 0.36f) > 0.001f ||
-					sample.hands[0].controls.primary != sample.hands[1].controls.primary)
+				if (sample.hands[0].controls.primary != sample.hands[1].controls.primary)
 					inconsistent = true;
 			} while (!finished.load());
 		});
 	for (unsigned index = 0; index < 1000; ++index)
 	{
-		frame.wheel->hub.x = static_cast<float>(index);
-		frame.hold = ControllerHoldEdit{};
-		frame.hold->primary = ControllerOverrideEdit<bool>::Set(index % 2 != 0);
+		frame.keyboard.hands[0].primary = frame.keyboard.hands[1].primary = index % 2 != 0;
 		motion.Update(frame);
 	}
 	finished = true;
 	reader.join();
 	Require(!inconsistent, "An input reader observed only one side of a controller update");
 }
-} // namespace
+} // namespace simxr::legacy::tests
 int main()
 {
+	using namespace simxr::legacy::tests;
 	try
 	{
-		WheelAfterLongUptime();
 		FiniteMotionIntermediates();
 		FiniteGlideEndpoints();
 		HeadSpaceAndTimedMoves();
-		KeyboardFileWheelAndHoldPrecedence();
+		KeyboardFileAndHoldPrecedence();
 		AnimationEdgesAndReset();
 		AtomicPublicationAndInvalidHand();
 		std::cout << "Legacy controller motion tests passed\n";

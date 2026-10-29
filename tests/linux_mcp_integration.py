@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise real MCP stdio tools against the running loader/Vulkan probe."""
+import argparse
 import asyncio
 import base64
 from io import BytesIO
@@ -40,12 +41,12 @@ def retained_image(result, transport, layer, eye):
     return image
 
 
-async def test(data):
-    env = dict(os.environ, XR_RUNTIME_JSON=str(ROOT / 'bin/openxr_simulator.json'),
+async def test(data, binaries):
+    env = dict(os.environ, XR_RUNTIME_JSON=str(binaries / 'openxr_simulator.json'),
                SIMXR_DATA_DIR=str(data), SIMXR_PROBE_FRAMES='300', SIMXR_PROBE_INTERACTIVE='1',
                SIMXR_DETERMINISTIC='0')
     with (data / 'probe-output.log').open('w') as log:
-        probe = subprocess.Popen([str(ROOT / 'bin/xr_probe_linux')], env=env, stdout=log, stderr=subprocess.STDOUT)
+        probe = subprocess.Popen([str(binaries / 'xr_probe_linux')], env=env, stdout=log, stderr=subprocess.STDOUT)
         try:
             await wait_state(data / 'probe_state.json', lambda s: s['frame'] >= 4)
             server = StdioServerParameters(command=sys.executable,
@@ -55,7 +56,6 @@ async def test(data):
                     await session.initialize()
                     names = {tool.name for tool in (await session.list_tools()).tools}
                     assert {'run_pose_sequence', 'set_controller_pose', 'hold_controller_inputs'} <= names
-                    assert 'enable_wheel_sweep' not in names
                     result = await session.call_tool('set_head_pose', {'x': .8, 'y': 1.8, 'yaw_deg': 30})
                     assert not result.isError and json.loads(result.content[0].text)['ok'], result
                     await wait_state(data / 'probe_state.json', lambda s: abs(s['headX']-.8)<.0001)
@@ -93,5 +93,11 @@ async def test(data):
                 probe.wait(timeout=5)
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('build', type=Path, help='CMake build directory with SIMXR_BUILD_PROBES=ON')
+    binaries = parser.parse_args().build.resolve() / 'bin'
+    for name in ('openxr_simulator.json', 'xr_probe_linux'):
+        if not (binaries / name).is_file():
+            parser.error(f'Missing {binaries / name}; build the runtime and probes first')
     with tempfile.TemporaryDirectory(prefix='simxr-live-mcp-') as directory:
-        asyncio.run(test(Path(directory)))
+        asyncio.run(test(Path(directory), binaries))

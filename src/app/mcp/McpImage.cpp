@@ -16,7 +16,7 @@ static void Keys(const Json& object, std::initializer_list<std::string_view> all
 		if (std::find(allowed.begin(), allowed.end(), it.key()) == allowed.end())
 			throw std::invalid_argument("Unknown argument: " + it.key());
 }
-static std::uint64_t Number(const Json& object, const char* key, bool zero = false)
+std::uint64_t ImageId(const Json& object, const char* key, bool zero)
 {
 	const auto it = object.find(key);
 	if (it == object.end())
@@ -25,7 +25,7 @@ static std::uint64_t Number(const Json& object, const char* key, bool zero = fal
 	if (it->is_string())
 	{
 		const auto text = it->get<std::string>();
-		if (text.empty() || (text.size() > 1 && text.front() == '0'))
+		if (text.empty() || text.size() > 20 || (text.size() > 1 && text.front() == '0'))
 			throw std::invalid_argument(std::string(key) + " requires a canonical decimal integer");
 		const auto parsed = std::from_chars(text.data(), text.data() + text.size(), result);
 		if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size())
@@ -152,7 +152,14 @@ ImageRenderRequest PrepareImageRender(const Json& args)
 {
 	Keys(args, {"connection", "session", "generation", "export", "format", "quality"});
 	ImageRenderRequest result;
-	result.ticket = Number(args, "export");
+	result.ticket = ImageId(args, "export");
+	if (args.contains("session") != args.contains("generation"))
+		throw std::invalid_argument("Supply both session and generation, or omit both");
+	if (args.contains("session"))
+	{
+		result.session = ImageId(args, "session");
+		result.generation = ImageId(args, "generation");
+	}
 	if (const auto format = args.find("format"); format != args.end())
 	{
 		if (!format->is_string() || (*format != "jpeg" && *format != "png"))
@@ -161,7 +168,7 @@ ImageRenderRequest PrepareImageRender(const Json& args)
 	}
 	if (args.contains("quality"))
 	{
-		const auto quality = Number(args, "quality");
+		const auto quality = ImageId(args, "quality");
 		if (!args["quality"].is_number_integer() || quality > 100)
 			throw std::invalid_argument("quality must be an integer from 1 to 100");
 		result.quality = static_cast<int>(quality);
@@ -175,7 +182,7 @@ ImageRequest PrepareImage(const std::string& name, const Json& args, std::uint64
 	{
 		Keys(args, {"connection", "session", "generation", "capture"});
 		request.fields = {wire::Field::U64(tag::Session, session, true), wire::Field::U64(tag::Generation, generation, true),
-			wire::Field::U64(tag::CaptureId, Number(args, "capture"), true)};
+			wire::Field::U64(tag::CaptureId, ImageId(args, "capture"), true)};
 	}
 	else if (name == "debug_retain_preview")
 	{
@@ -183,7 +190,7 @@ ImageRequest PrepareImage(const std::string& name, const Json& args, std::uint64
 		request.opcode = wire::OpCode::RetainPreview;
 		request.fields = {wire::Field::U64(tag::Session, session, true), wire::Field::U64(tag::Generation, generation, true)};
 		if (args.contains("frame"))
-			request.fields.push_back(wire::Field::U64(tag::FrameId, Number(args, "frame"), true));
+			request.fields.push_back(wire::Field::U64(tag::FrameId, ImageId(args, "frame"), true));
 	}
 	else if (name == "debug_image_history" || name == "debug_retain_history" || name == "debug_begin_image_window")
 	{
@@ -208,13 +215,13 @@ ImageRequest PrepareImage(const std::string& name, const Json& args, std::uint64
 		}
 		if (name == "debug_image_history" && args.contains("count"))
 		{
-			const auto count = Number(args, "count");
+			const auto count = ImageId(args, "count");
 			if (!args["count"].is_number_integer() || count > 10)
 				throw std::invalid_argument("count must be an integer from 1 to 10");
 			request.fields.push_back(wire::Field::U64(tag::Length, count));
 		}
 		if (name == "debug_retain_history")
-			request.fields.push_back(wire::Field::U64(tag::FrameId, Number(args, "frame"), true));
+			request.fields.push_back(wire::Field::U64(tag::FrameId, ImageId(args, "frame"), true));
 	}
 	else if (name == "debug_image_window" || name == "debug_release_image_window" || name == "debug_retain_window_image")
 	{
@@ -224,14 +231,14 @@ ImageRequest PrepareImage(const std::string& name, const Json& args, std::uint64
 			Keys(args, {"connection", "session", "generation", "window"});
 		request.opcode = name == "debug_image_window" ? wire::OpCode::ReadImageWindow
 			: name == "debug_release_image_window" ? wire::OpCode::ReleaseImageWindow : wire::OpCode::RetainWindowImage;
-		request.fields.push_back(wire::Field::U64(tag::ImageWindowId, Number(args, "window"), true));
+		request.fields.push_back(wire::Field::U64(tag::ImageWindowId, ImageId(args, "window"), true));
 		if (name == "debug_retain_window_image")
-			request.fields.push_back(wire::Field::U64(tag::FrameId, Number(args, "frame"), true));
+			request.fields.push_back(wire::Field::U64(tag::FrameId, ImageId(args, "frame"), true));
 	}
 	else if (name == "debug_start_video_export")
 	{
 		Keys(args, {"connection", "session", "generation", "first_frame", "last_frame"});
-		const auto first = Number(args, "first_frame"), last = Number(args, "last_frame");
+		const auto first = ImageId(args, "first_frame"), last = ImageId(args, "last_frame");
 		if (last < first || last - first >= 1000000)
 			throw std::invalid_argument("Select one to one million ordered frames");
 		request.opcode = wire::OpCode::StartVideoExport;
@@ -244,10 +251,10 @@ ImageRequest PrepareImage(const std::string& name, const Json& args, std::uint64
 			: std::initializer_list<std::string_view>{"connection", "session", "generation", "image"});
 		request.opcode = name == "debug_image_info" ? wire::OpCode::ImageInfo :
 			name == "debug_release_image" ? wire::OpCode::ReleaseImage : wire::OpCode::StartExport;
-		request.fields.push_back(wire::Field::U64(tag::ImageReaderId, Number(args, "image"), true));
+		request.fields.push_back(wire::Field::U64(tag::ImageReaderId, ImageId(args, "image"), true));
 		if (args.contains("layer"))
 		{
-			const auto layer = Number(args, "layer", true);
+			const auto layer = ImageId(args, "layer", true);
 			if (layer > UINT32_MAX || !args["layer"].is_number_integer())
 				throw std::invalid_argument("layer must be a uint32 integer");
 			request.fields.push_back(wire::Field::U32(tag::Layer, static_cast<std::uint32_t>(layer)));
@@ -258,17 +265,17 @@ ImageRequest PrepareImage(const std::string& name, const Json& args, std::uint64
 			if (!region.is_object())
 				throw std::invalid_argument("region must be an object");
 			Keys(region, {"x", "y", "width", "height", "output_width", "output_height"});
-			std::vector<wire::Field> values;
+			std::array<std::uint32_t, 6> values{};
+			std::size_t index = 0;
 			for (const auto* key : {"x", "y", "width", "height", "output_width", "output_height"})
 			{
-				const bool zero = values.size() < 2;
-				const auto value = Number(region, key, zero);
+				const bool zero = index < 2;
+				const auto value = ImageId(region, key, zero);
 				if (value > UINT32_MAX || !region.at(key).is_number_integer())
 					throw std::invalid_argument("Image region components must be uint32 integers");
-				values.push_back(wire::Field::U32(static_cast<std::uint16_t>(values.size() + 1),
-					static_cast<std::uint32_t>(value), true));
+				values[index++] = static_cast<std::uint32_t>(value);
 			}
-			request.fields.push_back(wire::Field::Bytes(tag::ImageRegion, wire::EncodeFields(values), true));
+			request.fields.push_back(wire::EncodeImageRegion({values[0], values[1], values[2], values[3], values[4], values[5]}, true));
 		}
 	}
 	else
@@ -277,11 +284,11 @@ ImageRequest PrepareImage(const std::string& name, const Json& args, std::uint64
 			: std::initializer_list<std::string_view>{"connection", "session", "generation", "export"});
 		request.opcode = name == "debug_export_info" ? wire::OpCode::ExportInfo :
 			name == "debug_release_export" ? wire::OpCode::ReleaseExport : wire::OpCode::ReadExport;
-		request.fields.push_back(wire::Field::U64(tag::ExportId, Number(args, "export"), true));
+		request.fields.push_back(wire::Field::U64(tag::ExportId, ImageId(args, "export"), true));
 		if (name == "debug_read_export")
 		{
-			const auto offset = args.contains("offset") ? Number(args, "offset", true) : 0;
-			const auto length = args.contains("length") ? Number(args, "length") : wire::MaxPayload - 4096;
+			const auto offset = args.contains("offset") ? ImageId(args, "offset", true) : 0;
+			const auto length = args.contains("length") ? ImageId(args, "length") : wire::MaxPayload - 4096;
 			if (length > wire::MaxPayload - 4096 || (args.contains("length") && !args["length"].is_number_integer()))
 				throw std::invalid_argument("length exceeds the bounded export range");
 			request.fields.push_back(wire::Field::U64(tag::Offset, offset, true));
@@ -290,7 +297,7 @@ ImageRequest PrepareImage(const std::string& name, const Json& args, std::uint64
 	}
 	return request;
 }
-Json ImageReply(const wire::Message& message)
+Json ImageDocument(const wire::Message& message)
 {
 	const auto* field = message.Find(tag::Error);
 	const auto code = field ? field->AsU32() : std::nullopt;
@@ -302,7 +309,7 @@ Json ImageReply(const wire::Message& message)
 		if (const auto* detail = message.Find(tag::Detail))
 			if (const auto text = detail->AsText())
 				result["detail"] = std::string(*text);
-		return Result(result, true);
+		return result;
 	}
 	Json result = {{"ok", true}};
 	if (const auto* layer = message.Find(tag::Layer))
@@ -463,6 +470,11 @@ Json ImageReply(const wire::Message& message)
 		result["encoding"] = "base64";
 		result["bytes"] = EncodeBase64(bytes->value);
 	}
-	return Result(result);
+	return result;
+}
+Json ImageReply(const wire::Message& message)
+{
+	auto document = ImageDocument(message);
+	return Result(document, !document.at("ok").get<bool>());
 }
 } // namespace simxr::app::mcp

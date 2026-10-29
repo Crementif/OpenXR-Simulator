@@ -142,7 +142,7 @@ static Json AppliedControls(const Json& configuration, int side)
 	input["hand"] = side;
 	return input;
 }
-nlohmann::json CompatibilityExpectedInputs(const std::string& name, const Json& arguments, const Json& configuration)
+std::vector<SimulationCommand> CompatibilityExpectedInputs(const std::string& name, const Json& arguments, const Json& configuration)
 {
 	Json expected = Json::array();
 	if (name == "set_controller_pose")
@@ -165,12 +165,14 @@ nlohmann::json CompatibilityExpectedInputs(const std::string& name, const Json& 
 			if (hand == -1 || hand == side)
 				expected.push_back(AppliedControls(configuration, side));
 	}
+	std::vector<SimulationCommand> result;
+	result.reserve(expected.size());
 	for (const auto& command : expected)
-		(void)SimulationCommandFromJson(command);
-	return expected;
+		result.push_back(SimulationCommandFromJson(command));
+	return result;
 }
 
-Json CompatibilityCommands(const std::string& name, const Json& arguments, const Json& configuration)
+std::vector<SimulationCommand> CompatibilityCommands(const std::string& name, const Json& arguments, const Json& configuration)
 {
 	if (!configuration.is_object())
 		throw std::invalid_argument("Applied configuration is unavailable; advance an application frame");
@@ -286,8 +288,10 @@ Json CompatibilityCommands(const std::string& name, const Json& arguments, const
 	}
 	else
 		throw std::invalid_argument("Unknown compatibility control");
+	std::vector<SimulationCommand> result;
+	result.reserve(commands.size());
 	for (const auto& command : commands)
-		(void)SimulationCommandFromJson(command);
-	return commands;
+		result.push_back(SimulationCommandFromJson(command));
+	return result;
 }
 }

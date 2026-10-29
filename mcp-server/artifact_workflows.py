@@ -16,7 +16,8 @@ from image_analysis import (
 from runtime_artifacts import Artifact
 from retained_screenshot import RetainedScreenshot
 from retained_incident import RetainedIncident
-from projection_history import ProjectionHistory
+from legacy_control import SessionBinding
+from debug_control import _json_result
 from tool_results import ImageResult, TextResult
 
 
@@ -29,7 +30,7 @@ class WorkflowClosed(RuntimeError):
 
 
 class RequestLane:
-    """One workflow owns its client and fallback artifact channel without a waiting backlog."""
+    """Reject overlapping requests to one capture owner."""
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -77,61 +78,63 @@ def captured_frusta(metadata, from_fov):
 
 class ProjectionWorkflow:
     def __init__(self, artifacts):
-        self._artifacts = artifacts
         self._lane = RequestLane()
-        self._history = ProjectionHistory(artifacts.directory)
+        self._binding = SessionBinding(artifacts.directory, require_commands=False)
 
     def close(self):
         self._lane.close()
 
     def disconnect(self):
-        self._history.close()
+        self._binding.close()
 
-    def read(self, timeout=2.5, count=64):
+    def read(self, count=64):
         with self._lane.admit():
-            document = self._history.read(count)
-            if document is not None:
-                return document
-            self._artifacts.remove(Artifact.PROJECTION.value)
-            self._artifacts.publish_bytes("projection_log_dump_request", b"")
-            deadline = time.monotonic() + _timeout(timeout)
-            while time.monotonic() < deadline:
-                document = self._artifacts.read_json(Artifact.PROJECTION)
-                if document is not None:
-                    return document
-                self._lane.wait(min(0.05, max(0.0, deadline - time.monotonic())))
-            return None
+            try:
+                if not self._binding.connect():
+                    raise RuntimeError('No runtime control endpoint found')
+                from simxr_control import Capability
+                client, session = self._binding.client, self._binding.session
+                self._binding.validate_session()
+                if not client.status(session)['capabilities'] & Capability.PROJECTION_HISTORY:
+                    raise RuntimeError('The selected runtime does not support projection history')
+                document = client.projection_history(session, count=count)['document']
+                entries = []
+                for record in document['entries']:
+                    views = record['projection']['views']
+                    entry = {'frame': str(record['frame_id']), 'displayTime': str(record['display_time']),
+                             'layer': record['layer'], 'ipd': record['ipd'], 'view_count': len(views),
+                             'projection': _json_result(record['projection'])}
+                    if views:
+                        pose = views[0]['pose_in_space']
+                        entry['pose'] = dict(pose['position'], **{'q' + key: value for key, value in pose['orientation'].items()})
+                    for name, view in zip(('left', 'right'), views):
+                        fov, rectangle = view['fov'], view['color']['rectangle']
+                        entry[name + '_fov'] = {short: fov[full] for short, full in
+                                               (('aL', 'left'), ('aR', 'right'), ('aU', 'up'), ('aD', 'down'))}
+                        entry[name + '_rect'] = [rectangle[key] for key in ('x', 'y', 'width', 'height')]
+                    entries.append(entry)
+                metadata = _json_result({key: value for key, value in document.items() if key != 'entries'})
+                return dict(metadata, count=len(entries), entries=entries, transport='frame_history', session=str(session.id))
+            except BaseException as error:
+                if self._binding.is_uncertain(error):
+                    self._binding.invalidate(error)
+                raise
 
     def tool(self, arguments):
         limit = int(arguments.get("max_entries", 20))
         if not 1 <= limit <= 64:
             raise ValueError("Projection log max_entries must be in [1,64]")
-        document = self.read(count=limit)
-        if document is None:
-            return [
-                TextResult(
-                    "Projection log was not produced — is the simulator currently rendering frames?"
-                )
-            ]
-        try:
-            entries = document.get("entries", [])
-            tail = entries[-limit:] if len(entries) > limit else entries
-            return [
-                TextResult(json.dumps(dict(document, count=len(tail), entries=tail), indent=2))
-            ]
-        except Exception as error:
-            return [TextResult(f"Failed to parse projection log: {error}")]
+        return [TextResult(json.dumps(self.read(count=limit), indent=2))]
 
 
 class CaptureWorkflow:
     """Own screenshot capture and analysis for the complete admitted request.
 
-    Multi-frame analysis keeps the client and fallback files in the same lane.
+    Multi-frame analysis retains ownership across its captures.
     Close interrupts waits without resubmitting a request.
     """
 
     def __init__(self, artifacts):
-        self._artifacts = artifacts
         self._lane = RequestLane()
         self._retained = RetainedScreenshot(artifacts.directory)
         self._capture_metadata = None
@@ -143,42 +146,17 @@ class CaptureWorkflow:
         # The application owner calls this after admitted workers have joined.
         self._retained.close()
 
-    def capture(self, timeout=5, *, eye="both", layer="projection", source="mcp"):
+    def capture(self, timeout=5, *, eye="both", layer="projection"):
         """Return pixels and their metadata under one complete request admission."""
         with self._lane.admit():
-            data = self._capture(timeout, eye, layer, source)
+            data = self._capture(timeout, eye, layer)
             return data, self._capture_metadata
 
-    def _capture(self, timeout, eye="both", layer="projection", source="mcp"):
+    def _capture(self, timeout, eye="both", layer="projection"):
         timeout = _timeout(timeout)
         self._capture_metadata = None
-        retained = self._retained.capture(eye, timeout, self._lane.wait, layer)
-        if retained is not None:
-            data, self._capture_metadata = retained
-            return data
-        self._capture_metadata = {"transport": "legacy_files", "eye": eye, "layer": layer}
-        self._artifacts.clear_screenshots(layer)
-        requested_at = time.time()
-        self._artifacts.publish(
-            "screenshot_request.json",
-            {
-                "timestamp": requested_at,
-                "eye": eye,
-                "include_ui": True,
-                "layer": layer,
-                "requested_by": source,
-            },
-        )
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            data = self._artifacts.screenshot(requested_at, layer)
-            if data:
-                self._artifacts.clear_screenshots(layer)
-                # The runtime owns acknowledgement/deletion of its request.
-                # Never delete a newer externally replaced request marker.
-                return data
-            self._lane.wait(min(0.1, max(0.0, deadline - time.monotonic())))
-        return None
+        data, self._capture_metadata = self._retained.capture(eye, timeout, self._lane.wait, layer)
+        return data
 
     def screenshot(self, arguments):
         eye = arguments.get("eye", "both")
@@ -191,8 +169,7 @@ class CaptureWorkflow:
                 return [TextResult(f"Failed to request screenshot: {error}")]
             if data:
                 try:
-                    canonical = self._capture_metadata is not None and self._capture_metadata["transport"] in ("retained_preview", "retained_capture")
-                    jpeg = to_jpeg(data, eye="both" if canonical else eye)
+                    jpeg = to_jpeg(data, eye="both")
                 except Exception as error:
                     return [
                         TextResult(
@@ -243,7 +220,7 @@ class CaptureWorkflow:
             worst, worst_sheet, lines = None, None, []
             for index in range(frames):
                 started = time.monotonic()
-                data = self._capture(timeout, source="stereo_consistency")
+                data = self._capture(timeout)
                 if data is None:
                     lines.append(f"[{index}] screenshot timeout")
                     continue
@@ -275,16 +252,13 @@ class CaptureWorkflow:
 
 
 class IncidentWorkflow:
-    """Own one preview/UI incident request until its new directory is observed."""
+    """Own a native preview/UI incident capture and its saved artifacts."""
 
     def __init__(self, artifacts, *, ui=False):
         self._artifacts = artifacts
         self._ui = ui
         self._retained = RetainedIncident(artifacts.directory, ui=ui)
         self._status = Artifact.UI_FLICKER if ui else Artifact.FLICKER
-        self._request = (
-            "ui_flicker_capture_request.json" if ui else "flicker_capture_request.json"
-        )
         self._lane = RequestLane()
 
     def close(self):
@@ -344,65 +318,5 @@ class IncidentWorkflow:
         timeout = max(1.0, min(_timeout(arguments.get("timeout", 5)), 15))
         frames = max(2, min(int(arguments.get("max_frames", 12)), 12))
         with self._lane.admit():
-            if self._retained is not None:
-                document = self._retained.capture(timeout, self._lane.wait)
-                if document is not None:
-                    return self._retained_result(document, frames)
-            previous = self._artifacts.read_json(self._status, {}).get(
-                "lastIncidentDirectory", ""
-            )
-            self._artifacts.publish(
-                self._request,
-                {
-                    "requestedUnixMs": int(time.time() * 1000),
-                    "source": "mcp-ui-only" if self._ui else "mcp",
-                },
-            )
-            deadline = time.monotonic() + timeout
-            directory, document = None, {}
-            while time.monotonic() < deadline:
-                document = self._artifacts.read_json(self._status, {})
-                current = document.get("lastIncidentDirectory", "")
-                if current and current != previous:
-                    try:
-                        candidate = self._artifacts.incident_directory(current)
-                        if self._artifacts.preview_count(candidate) >= 2:
-                            directory = candidate
-                            break
-                    except (OSError, ValueError):
-                        pass
-                self._lane.wait(0.1)
-            if directory is None:
-                detail = (
-                    "Timed out waiting for a UI-only burst. No valid quad rectangle may be visible."
-                    if self._ui
-                    else "Timed out waiting for a manual composed-preview burst. The simulator may not be rendering new D3D12 preview frames."
-                )
-                return [TextResult(detail)]
-            settle = min(deadline, time.monotonic() + 1)
-            while (
-                time.monotonic() < settle
-                and self._artifacts.preview_count(directory) < frames
-            ):
-                self._lane.wait(0.1)
-            sheet = build_flicker_contact_sheet(directory, frames)
-            result = [
-                TextResult(
-                    json.dumps(
-                        {
-                            "captureSource": (
-                                "openxr-simulator-ui-quad"
-                                if self._ui
-                                else "openxr-simulator-composed-preview"
-                            ),
-                            "incidentDirectory": str(directory),
-                            "framesAvailable": self._artifacts.preview_count(directory),
-                            "status": document,
-                        },
-                        indent=2,
-                    )
-                )
-            ]
-            if sheet:
-                result.append(ImageResult(sheet))
-            return result
+            document = self._retained.capture(timeout, self._lane.wait)
+            return self._retained_result(document, frames)

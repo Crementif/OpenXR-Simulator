@@ -1,11 +1,16 @@
 #include "app/mcp/McpPch.h"
 #include "app/mcp/McpIncident.h"
-#include "app/mcp/McpIncidentAnalysis.h"
+#include "diagnostics/IncidentAnalysis.h"
 #include "app/mcp/McpIncidentSave.h"
 #include "app/mcp/McpApplication.h"
 #include "app/mcp/McpImage.h"
-#include "app/mcp/McpImageEncode.h"
+#include "app/services/ImageExport.h"
 #include "app/mcp/McpTransientDebug.h"
+#include "app/mcp/McpSimulation.h"
+#include "app/services/RuntimePanelProtocol.h"
+#include "control/DebugProtocol.h"
+#include "control/ImageInspection.h"
+#include "control/IncidentSample.h"
 #include "control/ProtocolTypes.h"
 #include "control/ControlSchema.h"
 #include "graphics/ColorPixels.h"
@@ -13,8 +18,10 @@
 namespace simxr::app::mcp
 {
 using Json = nlohmann::json;
-static constexpr unsigned EyeWidth = 160, EyeHeight = 90, Header = 14;
-static constexpr unsigned CellWidth = EyeWidth * 2, CellHeight = EyeHeight + Header;
+namespace wire = control;
+namespace tag = control::tag;
+static constexpr unsigned EyeHeight = control::IncidentSample::Height, Header = 14;
+static constexpr unsigned CellWidth = control::IncidentSample::Width, CellHeight = EyeHeight + Header;
 static std::atomic<unsigned> s_incidents{0};
 
 class IncidentPermit
@@ -117,65 +124,196 @@ static Rectangle EyeRectangle(const Json& entry, unsigned eye, unsigned width, u
 		throw std::runtime_error("Historical UI rectangle is outside its exact frame");
 	return {static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y), static_cast<std::uint32_t>(w), static_cast<std::uint32_t>(h)};
 }
-static void RenderEye(TransientDebug& calls, const std::string& connection, const std::string& image,
-	unsigned eye, Rectangle rectangle, std::vector<std::byte>& sheet, unsigned sheetWidth, unsigned cellX, unsigned cellY)
+std::optional<IncidentCapture> CaptureIncident(McpApplication& application, const IncidentRequest& request,
+	const std::shared_ptr<McpCancellation>& cancellation)
 {
-	if (!rectangle.width)
-		return;
-	const auto scale = std::min({1.0, double(EyeWidth) / rectangle.width, double(EyeHeight) / rectangle.height});
-	const auto width = std::max(1u, static_cast<unsigned>(std::floor(rectangle.width * scale)));
-	const auto height = std::max(1u, static_cast<unsigned>(std::floor(rectangle.height * scale)));
-	const auto started = calls.Data("debug_start_export", {{"connection", connection}, {"image", image}, {"layer", eye},
-		{"region", {{"x", rectangle.x}, {"y", rectangle.y}, {"width", rectangle.width}, {"height", rectangle.height},
-			{"output_width", width}, {"output_height", height}}}});
-	const auto ticket = started.at("export").get<std::string>();
-	const auto ticketId = IncidentIdentifier(ticket, "export identifier");
-	Json status;
+	const auto& directory = request.directory;
+	const auto timeout = request.timeout;
+	const auto maximum = request.maximum;
+	const auto ui = request.ui, analyze = request.analyze, includeImage = request.includeImage;
+	const auto allowMissing = request.allowMissing;
+	if (request.application.empty() || request.application.size() > 256 ||
+		!std::isfinite(timeout) || timeout <= 0 || timeout > 30 || maximum < 2 || maximum > 12)
+		throw std::invalid_argument("Invalid incident capture options");
+	if (!cancellation->TryAdmit())
+		return {};
+	IncidentPermit permit;
+	TransientDebug calls(application, cancellation, timeout, "Incident capture");
+	const auto opened = calls.Connect(request.application);
+	const auto connection = opened.id;
+	const auto target = ui ? "quad_layers" : "composed_eyes";
+	const auto started = calls.Request(connection, wire::OpCode::BeginImageWindow,
+		{wire::EncodeCaptureTarget({ui ? CaptureKind::QuadLayers : CaptureKind::ComposedEyes, 0, 0})});
+	const auto window = panel::U64(started, tag::ImageWindowId);
+	if (!window)
+		throw std::runtime_error("Runtime omitted the incident window identity");
+	wire::Message windowInfo;
+	Json document;
 	for (;;)
 	{
-		status = calls.Data("debug_export_info", {{"connection", connection}, {"export", ticket}});
-		const auto phase = status.at("phase").get<std::string>();
+		windowInfo = calls.Request(connection, wire::OpCode::ReadImageWindow, {wire::Field::U64(tag::ImageWindowId, window, true)});
+		const auto* value = windowInfo.Find(tag::Document);
+		if (!value)
+			throw std::runtime_error("Runtime omitted the incident window document");
+		document = InspectionJson(value->value, true);
+		const auto phase = document.at("phase").get<std::string>();
 		if (phase == "complete")
-			break;
-		if (phase != "pending")
-			throw std::runtime_error("Incident frame export failed: " + phase);
+		{
+			bool pending = false;
+			for (const auto& entry : document.at("entries"))
+				pending |= entry.at("phase") == "pending";
+			if (!pending)
+				break;
+		}
+		else if (phase != "collecting")
+			throw std::runtime_error("Incident window was interrupted: " + phase);
 		calls.Wait();
 	}
-	const auto& description = status.at("image_description");
-	const auto format = description.at("format").get<std::uint32_t>();
-	const auto pixelSize = ColorPixelBytes(format);
-	const auto total = std::uint64_t{width} * height * pixelSize;
-	if (!pixelSize || description.at("width") != width || description.at("height") != height ||
-		description.at("array_layers") != 1 || status.at("total_bytes") != std::to_string(total))
-		throw std::runtime_error("Incident export has an unexpected shape or format");
-	std::vector<std::byte> pixels;
-	pixels.reserve(static_cast<std::size_t>(total));
-	while (pixels.size() < total)
-	{
-		const auto length = std::min<std::uint64_t>(control::MaxPayload - 4096, total - pixels.size());
-		const auto bytes = calls.Read(connection, ticketId, pixels.size(), length);
-		pixels.insert(pixels.end(), bytes.begin(), bytes.end());
-	}
-	const auto left = cellX + eye * EyeWidth + (EyeWidth - width) / 2;
-	const auto top = cellY + Header + (EyeHeight - height) / 2;
-	for (unsigned y = 0; y < height; ++y)
+	const auto& entries = document.at("entries");
+	if (!entries.is_array() || entries.size() < 2 || entries.size() > 24 ||
+		!document.at("generation").is_number_unsigned() || document.at("generation") != opened.generation ||
+		document.at("target") != target || document.at("pre_count") == 0 || document.at("post_count") != 12)
+		throw std::runtime_error("Incident window has incomplete or mismatched frame history");
+	for (const auto& entry : entries)
+		if (!allowMissing && entry.at("phase") != "ready" && entry.at("phase") != "clear")
+			throw std::runtime_error("Incident contains unavailable frame " + entry.at("frame_id").dump());
+	const auto count = std::min<std::size_t>(maximum, entries.size());
+	const auto sheetWidth = CellWidth * 2;
+	const auto sheetHeight = CellHeight * static_cast<unsigned>((count + 1) / 2);
+	const bool renderSheet = includeImage || !directory.empty();
+	std::vector<std::byte> sheet(renderSheet ? std::size_t{sheetWidth} * sheetHeight * 4 : 0, std::byte{0});
+	for (std::size_t index = 3; index < sheet.size(); index += 4)
+		sheet[index] = std::byte{0xff};
+	Json selectedFrames = Json::array();
+	std::vector<std::vector<std::byte>> archivedFrames;
+	std::optional<flicker::IncidentAnalysis> analysis;
+	Json events = Json::array(), skippedFrames = Json::array();
+	if (analyze)
+		analysis.emplace(ui);
+	if (!directory.empty())
+		archivedFrames.reserve(entries.size());
+	const auto iterations = directory.empty() && !analysis ? count : entries.size();
+	std::size_t selectedIndex = 0;
+	std::vector<std::byte> cell;
+	for (std::size_t index = 0; index < iterations; ++index)
 	{
 		calls.Check();
-		for (unsigned x = 0; x < width; ++x)
+		const auto sourceIndex = directory.empty() && !analysis ? index * (entries.size() - 1) / (count - 1) : index;
+		const bool selectedForSheet = selectedIndex < count &&
+			sourceIndex == selectedIndex * (entries.size() - 1) / (count - 1);
+		const auto& entry = entries.at(sourceIndex);
+		const auto& identity = entry.at("frame_id");
+		if (!identity.is_number_unsigned() || identity == 0)
+			throw std::runtime_error("Runtime returned an invalid incident frame identity");
+		const auto frameId = identity.get<std::uint64_t>();
+		const auto frame = std::to_string(frameId);
+		const bool clear = entry.at("phase") == "clear";
+		const bool missing = entry.at("phase") != "ready" && !clear;
+		cell.assign(std::size_t{CellWidth} * CellHeight * 4, std::byte{0});
+		for (std::size_t alpha = 3; alpha < cell.size(); alpha += 4)
+			cell[alpha] = std::byte{0xff};
+		if (renderSheet)
+			Label(cell, CellWidth, 4, 4, frame, clear);
+		std::array<std::array<std::int32_t, 4>, 2> analysisRectangles{};
+		if ((renderSheet || analysis) && !clear && !missing)
 		{
-			const auto color = DecodeColorPixel(format, std::span(pixels).subspan((std::size_t{y} * width + x) * pixelSize, pixelSize));
-			const auto offset = (std::size_t{top + y} * sheetWidth + left + x) * 4;
-			for (unsigned channel = 0; channel < 3; ++channel)
+			const auto retained = calls.Request(connection, wire::OpCode::RetainWindowImage,
+				{wire::Field::U64(tag::ImageWindowId, window, true), wire::Field::U64(tag::FrameId, frameId, true)});
+			const auto image = panel::U64(retained, tag::ImageReaderId);
+			if (!image)
+				throw std::runtime_error("Runtime omitted the incident image identity");
+			const auto info = calls.Request(connection, wire::OpCode::ImageInfo, {wire::Field::U64(tag::ImageReaderId, image, true)});
+			if (panel::Frame(info) != frameId || panel::U64(panel::Nested(info.Find(tag::Frame)), tag::Generation) != opened.generation ||
+				panel::U32(panel::Nested(info.Find(tag::Target)), tag::CaptureKind, UINT32_MAX) !=
+					static_cast<unsigned>(ui ? control::TargetKind::QuadLayers : control::TargetKind::ComposedEyes))
+				throw std::runtime_error("Incident image does not match its window frame or target");
+			const auto* descriptor = info.Find(tag::ImageDescriptor);
+			if (!descriptor)
+				throw std::runtime_error("Runtime omitted the incident image description");
+			const auto description = wire::DecodeImageDescription(*descriptor);
+			const auto width = description.width, height = description.height;
+			if (!width || !height || description.arrayLayers < 2)
+				throw std::runtime_error("Incident image is not stereo");
+			std::array<XrRect2Di, 2> rectangles{};
+			for (unsigned eye = 0; eye < 2; ++eye)
 			{
-				const auto value = std::isnan(color[channel]) ? 0.0f : std::clamp(color[channel], 0.0f, 1.0f);
-				sheet[offset + channel] = std::byte(static_cast<unsigned char>(std::lround(value * 255.0f)));
+				const auto rectangle = EyeRectangle(entry, eye, width, height, ui);
+				if (rectangle.x > INT32_MAX || rectangle.y > INT32_MAX || rectangle.width > INT32_MAX || rectangle.height > INT32_MAX)
+					throw std::runtime_error("Incident rectangle exceeds native coordinates");
+				rectangles[eye] = {{static_cast<int>(rectangle.x), static_cast<int>(rectangle.y)},
+					{static_cast<int>(rectangle.width), static_cast<int>(rectangle.height)}};
+			}
+			if (!rectangles[0].extent.width && !rectangles[1].extent.width)
+				throw std::runtime_error("Ready UI frame has no visible quad rectangle");
+			auto sample = control::ReadIncidentSample(
+				[&](auto opcode, auto fields) { return calls.Request(connection, opcode, std::move(fields)); },
+				[&] { calls.Wait(); }, image, description, rectangles);
+			analysisRectangles = sample.rectangles;
+			std::copy(sample.pixels.begin(), sample.pixels.end(), cell.begin() + std::size_t(Header) * CellWidth * 4);
+			calls.Request(connection, wire::OpCode::ReleaseImage, {wire::Field::U64(tag::ImageReaderId, image, true)});
+		}
+		if (analysis)
+		{
+			if (missing)
+			{
+				analysis->Skip(frameId);
+				skippedFrames.push_back({{"frame_id", frame}, {"reason", "image_unavailable"}});
+			}
+			else
+			{
+				auto observation = analysis->Observe(frameId,
+					std::span<const std::byte>(cell).subspan(std::size_t(Header) * CellWidth * 4),
+					CellWidth, EyeHeight, CellWidth * 4, flicker::PixelOrder::Rgba, analysisRectangles);
+				if (observation.skipped)
+					skippedFrames.push_back({{"frame_id", frame}, {"reason", std::move(observation.reason)}});
+				else if (!observation.reason.empty())
+					events.push_back({{"frame_id", frame}, {"reason", std::move(observation.reason)}});
 			}
 		}
+		if (selectedForSheet)
+		{
+			const auto cellX = static_cast<unsigned>(selectedIndex % 2) * CellWidth;
+			const auto cellY = static_cast<unsigned>(selectedIndex / 2) * CellHeight;
+			for (unsigned row = 0; renderSheet && row < CellHeight; ++row)
+				std::copy_n(cell.begin() + std::size_t(row) * CellWidth * 4, CellWidth * 4,
+					sheet.begin() + (std::size_t(cellY + row) * sheetWidth + cellX) * 4);
+			selectedFrames.push_back({{"frame_id", frame}, {"phase", entry.at("phase")}, {"cell", selectedIndex}});
+			++selectedIndex;
+		}
+		if (!directory.empty())
+			archivedFrames.push_back(std::move(cell));
 	}
-	calls.Data("debug_release_export", {{"connection", connection}, {"export", ticket}});
+	calls.Request(connection, wire::OpCode::ReleaseImageWindow, {wire::Field::U64(tag::ImageWindowId, window, true)});
+	Json metadata = {{"ok", true}, {"application_id", request.application}, {"session", std::to_string(opened.session)},
+		{"generation", std::to_string(opened.generation)}, {"runtime_process_id", std::to_string(opened.process)},
+		{"runtime_epoch", std::to_string(opened.epoch)}, {"transport", "retained_image_window"}, {"target", target},
+		{"window", InspectionJson(windowInfo.Find(tag::Document)->value)}, {"selected_frames", std::move(selectedFrames)}, {"columns", 2},
+		{"cell_width", CellWidth}, {"cell_height", CellHeight}, {"clear_marker", "amber square"}};
+	if (analysis)
+	{
+		const auto& counts = analysis->Counts();
+		const bool detected = !events.empty();
+		metadata["analysis"] = {{"mode", "on_demand_window"}, {"frames_analyzed", counts.observations},
+			{"frames_skipped", counts.skipped}, {"temporal_pairs", counts.temporalPairs}, {"frame_gaps", counts.gaps},
+			{"skipped_frames", std::move(skippedFrames)}, {"events", std::move(events)}, {"detected", detected},
+			{"verdict", detected ? "POSSIBLE_FLICKER" : counts.temporalPairs ? "NO_ANOMALY_OBSERVED" : "INCONCLUSIVE"},
+			{"limitations", ui ? "Pixel heuristics on cropped RGB8 thumbnails; frames missing either eye are skipped. No composition or continuous-monitor status is measured."
+				: "Pixel heuristics on reduced RGB8 thumbnails; no continuous-monitor or layer/paint status is measured."}};
+	}
+	std::optional<EncodedImage> encoded;
+	if (includeImage || !directory.empty())
+	{
+		ImageEncodingPermit encoder;
+		calls.Check();
+		encoded = EncodeImage(sheet, static_cast<std::uint32_t>(ColorFormat::Rgba8Unorm), sheetWidth, sheetHeight, false, 78);
+		calls.Check();
+		if (!directory.empty())
+			SaveIncident(directory, metadata, encoded->bytes, archivedFrames, CellWidth, CellHeight, [&] { calls.Check(); });
+	}
+	return IncidentCapture{std::move(metadata), includeImage ? std::move(encoded) : std::nullopt};
 }
 std::optional<Json> CaptureIncident(McpApplication& application, const std::string& name, const Json& arguments,
-	const std::shared_ptr<McpCancellation>& cancellation, bool allowMissing)
+	const std::shared_ptr<McpCancellation>& cancellation)
 {
 	try
 	{
@@ -206,145 +344,16 @@ std::optional<Json> CaptureIncident(McpApplication& application, const std::stri
 				throw std::invalid_argument("max_frames must be an integer from 2 to 12");
 			maximum = value.get<unsigned>();
 		}
-		if (!cancellation->TryAdmit())
+		const auto captured = CaptureIncident(application,
+			{.application = selected.get<std::string>(), .directory = directory, .timeout = timeout,
+			 .maximum = maximum, .ui = name == "capture_ui_flicker_window",
+			 .analyze = analyze, .includeImage = includeImage}, cancellation);
+		if (!captured)
 			return {};
-		IncidentPermit permit;
-		TransientDebug calls(application, cancellation, timeout, "Incident capture");
-		const auto opened = calls.Data("debug_connect", {{"application_id", selected}});
-		const auto connection = opened.at("connection").get<std::string>();
-		const bool ui = name == "capture_ui_flicker_window";
-		const auto target = ui ? "quad_layers" : "composed_eyes";
-		const auto started = calls.Data("debug_begin_image_window", {{"connection", connection}, {"target", target}});
-		const auto window = started.at("window").get<std::string>();
-		Json document;
-		for (;;)
-		{
-			document = calls.Data("debug_image_window", {{"connection", connection}, {"window", window}}).at("document");
-			const auto phase = document.at("phase").get<std::string>();
-			if (phase == "complete")
-			{
-				bool pending = false;
-				for (const auto& entry : document.at("entries"))
-					pending |= entry.at("phase") == "pending";
-				if (!pending)
-					break;
-			}
-			else if (phase != "collecting")
-				throw std::runtime_error("Incident window was interrupted: " + phase);
-			calls.Wait();
-		}
-		const auto& entries = document.at("entries");
-		if (!entries.is_array() || entries.size() < 2 || entries.size() > 24 || document.at("generation") != opened.at("generation") ||
-			document.at("target") != target || document.at("pre_count") == 0 || document.at("post_count") != 12)
-			throw std::runtime_error("Incident window has incomplete or mismatched frame history");
-		for (const auto& entry : entries)
-			if (!allowMissing && entry.at("phase") != "ready" && entry.at("phase") != "clear")
-				throw std::runtime_error("Incident contains unavailable frame " + entry.at("frame_id").get<std::string>());
-		const auto count = std::min<std::size_t>(maximum, entries.size());
-		const auto sheetWidth = CellWidth * 2;
-		const auto sheetHeight = CellHeight * static_cast<unsigned>((count + 1) / 2);
-		std::vector<std::byte> sheet(std::size_t{sheetWidth} * sheetHeight * 4, std::byte{0});
-		for (std::size_t index = 3; index < sheet.size(); index += 4)
-			sheet[index] = std::byte{0xff};
-		Json selectedFrames = Json::array();
-		std::vector<std::vector<std::byte>> archivedFrames;
-		std::optional<IncidentAnalysis> analysis;
-		if (analyze)
-			analysis.emplace(ui);
-		if (!directory.empty())
-			archivedFrames.reserve(entries.size());
-		const auto iterations = directory.empty() && !analysis ? count : entries.size();
-		std::size_t selectedIndex = 0;
-		for (std::size_t index = 0; index < iterations; ++index)
-		{
-			calls.Check();
-			const auto sourceIndex = directory.empty() && !analysis ? index * (entries.size() - 1) / (count - 1) : index;
-			const bool selectedForSheet = selectedIndex < count &&
-				sourceIndex == selectedIndex * (entries.size() - 1) / (count - 1);
-			const auto& entry = entries.at(sourceIndex);
-			const auto frame = entry.at("frame_id").get<std::string>();
-			(void)IncidentIdentifier(frame, "frame identifier");
-			const bool clear = entry.at("phase") == "clear";
-			const bool missing = entry.at("phase") != "ready" && !clear;
-			std::vector<std::byte> cell(std::size_t{CellWidth} * CellHeight * 4, std::byte{0});
-			for (std::size_t alpha = 3; alpha < cell.size(); alpha += 4)
-				cell[alpha] = std::byte{0xff};
-			Label(cell, CellWidth, 4, 4, frame, clear);
-			std::array<std::array<std::int32_t, 4>, 2> analysisRectangles{};
-			if (!clear && !missing)
-			{
-				const auto retained = calls.Data("debug_retain_window_image", {{"connection", connection}, {"window", window}, {"frame", frame}});
-				const auto image = retained.at("image").get<std::string>();
-				const auto info = calls.Data("debug_image_info", {{"connection", connection}, {"image", image}});
-				if (info.at("frame").at("frame_id") != frame || info.at("frame").at("generation") != opened.at("generation") ||
-					info.at("target").at("kind") != static_cast<unsigned>(ui ? control::TargetKind::QuadLayers : control::TargetKind::ComposedEyes))
-					throw std::runtime_error("Incident image does not match its window frame or target");
-				const auto& description = info.at("image_description");
-				const auto width = description.at("width").get<std::uint32_t>();
-				const auto height = description.at("height").get<std::uint32_t>();
-				if (!width || !height || description.at("array_layers").get<std::uint32_t>() < 2)
-					throw std::runtime_error("Incident image is not stereo");
-				bool visible = false;
-				for (unsigned eye = 0; eye < 2; ++eye)
-				{
-					const auto rectangle = EyeRectangle(entry, eye, width, height, ui);
-					visible |= rectangle.width != 0;
-					if (rectangle.width)
-					{
-						const auto scale = std::min({1.0, double(EyeWidth) / rectangle.width, double(EyeHeight) / rectangle.height});
-						const auto w = std::max(1u, static_cast<unsigned>(std::floor(rectangle.width * scale)));
-						const auto h = std::max(1u, static_cast<unsigned>(std::floor(rectangle.height * scale)));
-						analysisRectangles[eye] = {static_cast<std::int32_t>(eye * EyeWidth + (EyeWidth - w) / 2),
-							static_cast<std::int32_t>((EyeHeight - h) / 2), static_cast<std::int32_t>(w), static_cast<std::int32_t>(h)};
-					}
-					RenderEye(calls, connection, image, eye, rectangle, cell, CellWidth, 0, 0);
-				}
-				if (!visible)
-					throw std::runtime_error("Ready UI frame has no visible quad rectangle");
-				calls.Data("debug_release_image", {{"connection", connection}, {"image", image}});
-			}
-			if (analysis)
-			{
-				const auto frameId = IncidentIdentifier(frame, "frame identifier");
-				if (missing)
-					analysis->Skip(frameId);
-				else
-					analysis->Observe(frameId, cell, analysisRectangles);
-			}
-			if (selectedForSheet)
-			{
-				const auto cellX = static_cast<unsigned>(selectedIndex % 2) * CellWidth;
-				const auto cellY = static_cast<unsigned>(selectedIndex / 2) * CellHeight;
-				for (unsigned row = 0; row < CellHeight; ++row)
-					std::copy_n(cell.begin() + std::size_t(row) * CellWidth * 4, CellWidth * 4,
-						sheet.begin() + (std::size_t(cellY + row) * sheetWidth + cellX) * 4);
-				selectedFrames.push_back({{"frame_id", frame}, {"phase", entry.at("phase")}, {"cell", selectedIndex}});
-				++selectedIndex;
-			}
-			if (!directory.empty())
-				archivedFrames.push_back(std::move(cell));
-		}
-		calls.Data("debug_release_image_window", {{"connection", connection}, {"window", window}});
-		Json metadata = {{"ok", true}, {"application_id", selected}, {"session", opened.at("session")},
-			{"generation", opened.at("generation")}, {"runtime_process_id", opened.at("runtime_process_id")},
-			{"runtime_epoch", opened.at("runtime_epoch")}, {"transport", "retained_image_window"}, {"target", target},
-			{"window", document}, {"selected_frames", std::move(selectedFrames)}, {"columns", 2},
-			{"cell_width", CellWidth}, {"cell_height", CellHeight}, {"clear_marker", "amber square"}};
-		if (analysis)
-			metadata["analysis"] = analysis->Report();
-		std::optional<EncodedImage> encoded;
-		if (includeImage || !directory.empty())
-		{
-			ImageEncodingPermit encoder;
-			calls.Check();
-			encoded = EncodeImage(sheet, static_cast<std::uint32_t>(ColorFormat::Rgba8Unorm), sheetWidth, sheetHeight, false, 78);
-			calls.Check();
-			if (!directory.empty())
-				SaveIncident(directory, metadata, encoded->bytes, archivedFrames, CellWidth, CellHeight, [&] { calls.Check(); });
-		}
-		Json content = Json::array({{{"type", "text"}, {"text", metadata.dump()}}});
-		if (includeImage)
-			content.push_back({{"type", "image"}, {"mimeType", encoded->mediaType}, {"data", EncodeBase64(encoded->bytes)}});
+		Json content = Json::array({{{"type", "text"}, {"text", captured->metadata.dump()}}});
+		if (captured->image)
+			content.push_back({{"type", "image"}, {"mimeType", captured->image->mediaType},
+				{"data", EncodeBase64(captured->image->bytes)}});
 		return Json{{"content", std::move(content)}, {"isError", false}};
 	}
 	catch (const std::exception& error)

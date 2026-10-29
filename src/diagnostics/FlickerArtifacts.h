@@ -58,5 +58,4 @@ void WriteArtifact(const Artifact& artifact);
 void WritePreviewStatus(const std::filesystem::path& directory, const DiagnosticsStatus& status);
 void WriteUiStatus(const std::filesystem::path& directory, const DiagnosticsStatus& status);
 void PruneArtifacts(const std::filesystem::path& directory, std::string_view activeSession);
-bool ConsumeRequest(const std::filesystem::path& path);
 } // namespace flicker

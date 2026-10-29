@@ -12,8 +12,7 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/out/build/${presetName}",
       "cacheVariables": {
-        "BUILD_TESTING": "ON",
-        "SIMXR_OUTPUT_DIRECTORY": "${sourceDir}/out/build/${presetName}/bin"
+        "BUILD_TESTING": "ON"
       }
     },
     {
@@ -31,22 +30,7 @@
       }
     },
     {
-      "name": "pch",
-      "inherits": "release",
-      "cacheVariables": {
-        "SIMXR_ENABLE_PCH": "ON"
-      }
-    },
-    {
-      "name": "no-pch",
-      "inherits": "base",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "SIMXR_ENABLE_PCH": "OFF"
-      }
-    },
-    {
-      "name": "headless",
+      "name": "runtime",
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
@@ -71,7 +55,8 @@
         "CMAKE_CXX_COMPILER": "clang++",
         "SIMXR_SANITIZER": "thread",
         "SIMXR_BUILD_RUNTIME": "OFF",
-        "SIMXR_BUILD_PROBES": "OFF"
+        "SIMXR_BUILD_PROBES": "OFF",
+        "SIMXR_BUILD_COMPANION": "OFF"
       }
     }
   ],
@@ -85,16 +70,8 @@
       "configurePreset": "release"
     },
     {
-      "name": "pch",
-      "configurePreset": "pch"
-    },
-    {
-      "name": "no-pch",
-      "configurePreset": "no-pch"
-    },
-    {
-      "name": "headless",
-      "configurePreset": "headless"
+      "name": "runtime",
+      "configurePreset": "runtime"
     },
     {
       "name": "asan",
@@ -121,22 +98,8 @@
       }
     },
     {
-      "name": "pch",
-      "configurePreset": "pch",
-      "output": {
-        "outputOnFailure": true
-      }
-    },
-    {
-      "name": "no-pch",
-      "configurePreset": "no-pch",
-      "output": {
-        "outputOnFailure": true
-      }
-    },
-    {
-      "name": "headless",
-      "configurePreset": "headless",
+      "name": "runtime",
+      "configurePreset": "runtime",
       "output": {
         "outputOnFailure": true
       }

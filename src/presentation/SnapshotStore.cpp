@@ -645,7 +645,8 @@ void SnapshotStore::Poll() noexcept
 			if (!next)
 				return;
 			id = next->record.id;
-			output = next->record.output;
+			if (next->record.phase == SnapshotPhase::GpuPending)
+				output = next->record.output;
 			revision = next->revision;
 		}
 		const auto completion = output ? output->PollCompletion() : CompletionStatus::Complete;

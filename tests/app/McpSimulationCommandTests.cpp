@@ -75,9 +75,9 @@ int main()
 		const Json arguments = {{"name", profile.id}};
 		const auto commands = app::mcp::CompatibilityCommands("set_headset_profile", arguments, configuration);
 		const auto expected = app::mcp::CompatibilityExpectedInputs("set_headset_profile", arguments, configuration);
-		Require(commands.size() == 2 && expected.size() == 1 && expected[0].at("ipd") == .08,
+		Require(commands.size() == 2 && expected.size() == 1 && std::abs(std::get<SetViewSettings>(expected[0]).value.ipd - .08f) < .00001f,
 				"Profile edit takes view ownership and checks its observed baseline");
-		const auto command = SimulationCommandFromJson(commands[1]);
+		const auto& command = commands[1];
 		const auto& views = std::get<SetViewSettings>(command).value;
 		const auto preset = ProfileViews(profile);
 		Require(views.ipd == preset.ipd && views.outerFov[0].angleLeft == preset.outerFov[0].angleLeft &&

@@ -40,7 +40,10 @@ void RigProgress::Step()
 }
 void RigProgress::Cancel()
 {
-	m_cancelled = true;
+	{
+		std::lock_guard lock(m_mutex);
+		m_cancelled = true;
+	}
 	m_changed.notify_all();
 }
 void RigProgress::Check(bool bindingBoundary)
@@ -55,7 +58,7 @@ void RigProgress::Check(bool bindingBoundary)
 	while (m_paused && !m_permits && !Cancelled())
 	{
 		m_result.phase = RigPhase::Paused;
-		m_changed.wait_for(lock, std::chrono::milliseconds{20});
+		m_changed.wait_until(lock, m_deadline);
 		if (std::chrono::steady_clock::now() >= m_deadline)
 			throw std::runtime_error("Rig execution deadline exceeded while paused");
 	}
@@ -64,6 +67,14 @@ void RigProgress::Check(bool bindingBoundary)
 	if (m_paused && m_permits)
 		--m_permits;
 	m_result.phase = RigPhase::Running;
+}
+void RigProgress::WaitUntil(std::chrono::steady_clock::time_point target)
+{
+	{
+		std::unique_lock lock(m_mutex);
+		m_changed.wait_until(lock, std::min(target, m_deadline), [&] { return Cancelled(); });
+	}
+	Check();
 }
 void RigProgress::Finish(RigPhase phase, std::string error)
 {
@@ -114,6 +125,11 @@ void RigProgress::Print(std::string line)
 	if (m_result.output.size() == 256)
 		throw std::length_error("Rig output capacity exhausted");
 	m_result.output.push_back(std::move(line));
+}
+RigPhase RigProgress::Phase() const
+{
+	std::lock_guard lock(m_mutex);
+	return m_result.phase;
 }
 RigSnapshot RigProgress::Snapshot() const
 {

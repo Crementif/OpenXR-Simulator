@@ -2,7 +2,7 @@
 #include "Pch.h"
 
 #include "math/Math.h"
-#include "control/legacy/WindowsLegacyChannel.h"
+#include "platform/windows/WindowsRuntimeFiles.h"
 #include "control/legacy/WindowsRuntimeSettings.h"
 #include "platform/windows/WindowsClock.h"
 
@@ -18,11 +18,6 @@ WindowsRuntimeInput::WindowsRuntimeInput()
 		m_renderWidth = ParseLaunchRenderExtent(width);
 	if (const auto* height = std::getenv("SIMXR_HEIGHT"))
 		m_renderHeight = ParseLaunchRenderExtent(height);
-}
-
-static double UptimeSeconds()
-{
-	return static_cast<double>(GetTickCount64()) * .001;
 }
 
 static XrFovf EyeFov(const settings::EyeFov& eye)
@@ -79,80 +74,18 @@ static simxr::legacy::ControllerKeyboardSample PollControllerKeyboard(float fram
 	return input;
 }
 
-static simxr::legacy::ControllerOverrideEdit<float> DecodeHoldAxis(float value, float presentMinimum,
-																   float activeMinimum)
-{
-	using Edit = simxr::legacy::ControllerOverrideEdit<float>;
-	if (!(value >= presentMinimum))
-		return {};
-	if (value < activeMinimum)
-		return Edit::Release();
-	return Edit::Set(value);
-}
-
-static simxr::legacy::ControllerOverrideEdit<bool> DecodeHoldButton(float value)
-{
-	using Edit = simxr::legacy::ControllerOverrideEdit<bool>;
-	if (!(value >= -0.5f))
-		return {};
-	if (value < 0)
-		return Edit::Release();
-	return Edit::Set(value >= 0.5f);
-}
-
-static simxr::legacy::ControllerHoldEdit DecodeControllerHold(const mcp::ControllerHoldCommand& command)
-{
-	using namespace simxr::legacy;
-	ControllerHoldEdit edit;
-	if (command.hand >= 0)
-		edit.hand = command.hand == 0 ? ControllerHand::Left : ControllerHand::Right;
-	edit.clear = command.clear;
-	edit.trigger = DecodeHoldAxis(command.trigger, -0.5f, 0);
-	edit.grip = DecodeHoldAxis(command.grip, -0.5f, 0);
-	edit.primary = DecodeHoldButton(command.primary);
-	edit.secondary = DecodeHoldButton(command.secondary);
-	edit.menu = DecodeHoldButton(command.menu);
-	edit.thumbClick = DecodeHoldButton(command.thumbClick);
-	edit.stickX = DecodeHoldAxis(command.stickX, -1.5f, -1);
-	edit.stickY = DecodeHoldAxis(command.stickY, -1.5f, -1);
-	if (command.yaw != mcp::kHoldAngleUnset)
-		edit.yaw = ControllerOverrideEdit<float>::Set(command.yaw);
-	if (command.pitch != mcp::kHoldAngleUnset)
-		edit.pitch = ControllerOverrideEdit<float>::Set(command.pitch);
-	if (command.roll != mcp::kHoldAngleUnset)
-		edit.roll = ControllerOverrideEdit<float>::Set(command.roll);
-	return edit;
-}
-
-mcp::HeadPoseCommand WindowsRuntimeInput::Head() const
+RuntimeHeadPose WindowsRuntimeInput::Head() const
 {
 	std::lock_guard lock(m_mutex);
 	return m_head;
 }
 
-void WindowsRuntimeInput::SetHead(const mcp::HeadPoseCommand& pose)
-{
-	std::lock_guard lock(m_mutex);
-	const auto roll = pose.hasRoll ? pose.roll : m_head.roll;
-	m_head = pose;
-	m_head.roll = roll;
-}
-
-RuntimeInputSnapshot WindowsRuntimeInput::SnapshotLocked(double uptimeSeconds) const
+RuntimeInputSnapshot WindowsRuntimeInput::SnapshotLocked() const
 {
 	RuntimeInputSnapshot output;
 	output.head = m_head;
-	auto yaw = m_head.yaw, pitch = m_head.pitch, roll = m_head.roll;
-	if (m_sweep.enabled)
-	{
-		const double phase = 2 * std::numbers::pi * m_sweep.freqHz * (uptimeSeconds - m_sweepStart);
-		constexpr double radians = std::numbers::pi / 180;
-		yaw = static_cast<float>(m_sweep.yawAmpDeg * radians * std::sin(phase));
-		pitch = static_cast<float>(m_sweep.pitchAmpDeg * radians * std::sin(phase + 1));
-		roll = static_cast<float>(m_sweep.rollAmpDeg * radians * std::sin(phase + 2));
-	}
 	const XrVector3f position{m_head.x, m_head.y, m_head.z};
-	output.tracking.head.pose = {EulerAngles(yaw, pitch, roll), position};
+	output.tracking.head.pose = {EulerAngles(m_head.yaw, m_head.pitch, m_head.roll), position};
 	const auto controllers = m_controllers.Snapshot({position, m_head.yaw, m_head.pitch});
 	for (std::size_t hand = 0; hand < controllers.hands.size(); ++hand)
 	{
@@ -176,11 +109,9 @@ RuntimeInputSnapshot WindowsRuntimeInput::SnapshotLocked(double uptimeSeconds) c
 		output.views.outerWidth = *m_renderWidth;
 	if (m_renderHeight)
 		output.views.outerHeight = *m_renderHeight;
-	output.views.ipd = m_ipd.value_or(std::clamp(configuration.ipdMeters, 0.0f, .2f));
-	if (m_fov)
-		output.views.outerFov = *m_fov;
-	else if (configuration.useAsymmetricFov &&
-			 configuration.headsetProfile != settings::HeadsetProfile::GenericSymmetric)
+	output.views.ipd = std::clamp(configuration.ipdMeters, 0.0f, .2f);
+	if (configuration.useAsymmetricFov &&
+		configuration.headsetProfile != settings::HeadsetProfile::GenericSymmetric)
 	{
 		const auto& profile = settings::GetHeadsetSpec(configuration.headsetProfile);
 		for (std::size_t eye = 0; eye < output.views.outerFov.size(); ++eye)
@@ -199,16 +130,15 @@ RuntimeInputSnapshot WindowsRuntimeInput::SnapshotLocked(double uptimeSeconds) c
 RuntimeInputSnapshot WindowsRuntimeInput::Snapshot() const
 {
 	std::lock_guard lock(m_mutex);
-	return SnapshotLocked(UptimeSeconds());
+	return SnapshotLocked();
 }
 
-RuntimeInputSnapshot WindowsRuntimeInput::Poll(std::chrono::nanoseconds period, mcp::WindowsLegacyChannel& files)
+RuntimeInputSnapshot WindowsRuntimeInput::Poll(std::chrono::nanoseconds period, WindowsRuntimeFiles& files)
 {
 	XrTime counterTime;
 	if (XR_FAILED(ReadPerformanceTime(counterTime)))
 		throw std::runtime_error("Cannot read Windows input clock");
 	const double counterSeconds = static_cast<double>(counterTime) * 1e-9;
-	const double uptimeSeconds = UptimeSeconds();
 	std::lock_guard lock(m_mutex);
 	const double periodSec = std::chrono::duration<double>(period).count();
 
@@ -247,152 +177,10 @@ RuntimeInputSnapshot WindowsRuntimeInput::Poll(std::chrono::nanoseconds period, 
 		controllerFrame.keyboard = PollControllerKeyboard(deltaTime);
 	}
 
-	files.TakeWrittenScreenshot();
-
-	// MCP commands work regardless of window focus (file-based IPC).
-	// The joined worker already decoded and staged copied values.
-	{
-		const auto commands = files.TakeCommands();
-		const auto& cmd = commands.head;
-		if (cmd.valid)
-		{
-			m_head.x = cmd.x;
-			m_head.y = cmd.y;
-			m_head.z = cmd.z;
-			m_head.yaw = cmd.yaw;
-			m_head.pitch = cmd.pitch;
-			if (cmd.hasRoll)
-				m_head.roll = cmd.roll;
-			files.Acknowledge("head_pose", true);
-		}
-
-		const auto& fov = commands.fov;
-		if (fov.valid)
-		{
-			if (fov.clear)
-			{
-				m_fov.reset();
-			}
-			else
-			{
-				m_fov.emplace();
-				for (std::size_t i = 0; i < m_fov->size(); ++i)
-				{
-					(*m_fov)[i].angleLeft = fov.angleLeft[i];
-					(*m_fov)[i].angleRight = fov.angleRight[i];
-					(*m_fov)[i].angleUp = fov.angleUp[i];
-					(*m_fov)[i].angleDown = fov.angleDown[i];
-				}
-			}
-			files.Acknowledge("fov", true);
-		}
-
-		const auto& ipdCmd = commands.ipd;
-		if (ipdCmd.valid)
-		{
-			if (ipdCmd.clear)
-			{
-				m_ipd.reset();
-			}
-			else
-			{
-				m_ipd = ipdCmd.ipdMeters;
-			}
-			files.Acknowledge("ipd", true);
-		}
-
-		const auto& prof = commands.profile;
-		if (prof.valid)
-		{
-			const int idx = settings::FindHeadsetSpec(prof.name);
-			// "generic" carries no headset geometry, so it means the same as clearing.
-			const bool clear =
-				idx == 0 || std::strcmp(prof.name, "default") == 0 || std::strcmp(prof.name, "clear") == 0;
-			bool applied = true;
-			if (clear)
-			{
-				m_fov.reset();
-				m_ipd.reset();
-			}
-			else if (idx > 0)
-			{
-				const auto& spec = settings::kHeadsetSpecs[idx];
-				m_fov.emplace();
-				for (std::size_t eye = 0; eye < m_fov->size(); ++eye)
-					(*m_fov)[eye] = EyeFov(spec.eye[eye]);
-				m_ipd = spec.ipdMm * 0.001f;
-			}
-			else
-			{
-				applied = false;
-			}
-			files.Acknowledge("headset_profile", applied);
-		}
-
-		if (commands.anaglyph.valid)
-			files.Acknowledge("anaglyph", false);
-
-		const auto& sweep = commands.sweep;
-		if (sweep.valid)
-		{
-			m_sweep = sweep;
-			m_sweepStart = uptimeSeconds;
-			files.Acknowledge("pose_sweep", true);
-		}
-
-		const auto pose = commands.controllerPose;
-		if (pose.valid)
-		{
-			simxr::legacy::ControllerPoseEdit edit;
-			edit.hand = pose.hand == 0 ? simxr::legacy::ControllerHand::Left : simxr::legacy::ControllerHand::Right;
-			edit.position = {pose.posX, pose.posY, pose.posZ};
-			edit.yaw = pose.yaw;
-			edit.pitch = pose.pitch;
-			edit.duration = std::chrono::duration<double, std::milli>{pose.durationMs};
-			edit.receivedSeconds = counterSeconds;
-			if (pose.triggerSet)
-				edit.trigger = pose.trigger;
-			if (pose.buttonA >= 0)
-				edit.primary = pose.buttonA != 0;
-			controllerFrame.pose = edit;
-			files.Acknowledge("controller_pose", true);
-		}
-
-		const auto hold = commands.controllerHold;
-		if (hold.valid)
-		{
-			// Legacy selectors outside [0,1] target no hand; negative means both.
-			if (hold.hand < 2)
-				controllerFrame.hold = DecodeControllerHold(hold);
-			files.Acknowledge("controller_hold", true);
-		}
-
-		const auto wheel = commands.wheel;
-		if (wheel.valid)
-		{
-			constexpr float radians = std::numbers::pi_v<float> / 180;
-			simxr::legacy::ControllerWheelSweep edit;
-			edit.enabled = wheel.enabled;
-			edit.hub = {wheel.hubX, wheel.hubY, wheel.hubZ};
-			edit.radius = wheel.radius;
-			edit.tilt = wheel.tiltDeg * radians;
-			edit.amplitude = wheel.amplitudeDeg * radians;
-			edit.frequencyHz = wheel.freqHz;
-			edit.grip = wheel.grip;
-			edit.spread = wheel.spreadDeg * radians;
-			edit.receivedSeconds = uptimeSeconds;
-			controllerFrame.wheel = edit;
-			files.Acknowledge("wheel_sweep", true);
-		}
-	}
-
-	// Evaluation is atomic for action readers: keyboard -> file pose -> wheel
-	// -> held overrides. Shared pose history owns observable space velocities.
 	controllerFrame.head = {XrVector3f{m_head.x, m_head.y, m_head.z}, m_head.yaw, m_head.pitch};
-	controllerFrame.wheelSeconds = uptimeSeconds;
 	const auto controllers = m_controllers.Update(controllerFrame);
 	if (controllers.animationToggle)
 		files.Log(*controllers.animationToggle ? "[SimXR] Auto motion ENABLED" : "[SimXR] Auto motion DISABLED");
-	return SnapshotLocked(uptimeSeconds);
+	return SnapshotLocked();
 }
 } // namespace simxr::windows

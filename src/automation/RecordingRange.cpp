@@ -38,27 +38,10 @@ InputRecording ReadRecordingRange(const std::filesystem::path& directory, FrameI
 			throw std::runtime_error("Recording range export cancelled");
 		for (auto& transaction : page->recording.transactions)
 		{
-			if (transaction.commands.empty() || transaction.commands.size() > 64 ||
-				(transaction.afterFrame && transaction.phase != "released"))
-				throw std::runtime_error("Malformed recorded range transaction");
-			if (transaction.phase == "released" &&
-				(transaction.id || !std::ranges::all_of(transaction.commands,
-														[](const auto& command)
-														{
-															return std::holds_alternative<ReleaseControl>(command);
-														})))
-				throw std::runtime_error("Malformed recorded release event");
-			if (transaction.phase != "applied" && transaction.phase != "released")
-			{
-				constexpr std::array phases{"queued",  "late",	   "rescheduled", "conflict", "cancelled",
-											"invalid", "capacity", "closed",	  "not_found"};
-				if (std::find(phases.begin(), phases.end(), transaction.phase) == phases.end())
-					throw std::runtime_error("Unknown recorded transaction phase");
+			const auto frame = ReplayFrame(transaction, origin.originFrame, page->recording.version);
+			if (!frame)
 				continue;
-			}
-			if (transaction.afterFrame && transaction.frame.value == std::numeric_limits<std::uint64_t>::max())
-				throw std::overflow_error("Recorded release exceeds the frame range");
-			const auto effective = transaction.frame.value + (transaction.afterFrame ? 1 : 0);
+			const auto effective = frame->value;
 			if (effective < previous)
 				throw std::runtime_error("Recorded input frames are out of order");
 			previous = effective;

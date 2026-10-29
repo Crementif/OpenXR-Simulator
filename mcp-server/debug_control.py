@@ -113,10 +113,6 @@ TOOL_DEFINITIONS = [
           {'connection': _CONNECTION, 'image': _ID}),
     _tool('debug_release_image', 'Release an image reader; independent deliveries and exports remain retained.',
           {'connection': _CONNECTION, 'image': _ID}),
-    _tool('debug_delivery_info', 'Inspect an existing connection-owned native delivery without waiting on or advancing GPU work.',
-          {'connection': _CONNECTION, 'delivery': _ID}),
-    _tool('debug_release_delivery', 'Release a logical native delivery; backend ownership still follows actual completion.',
-          {'connection': _CONNECTION, 'delivery': _ID}),
     _tool('debug_start_export', 'Explicitly request a bounded GPU-to-CPU image export. Poll its ticket; creation does not return pixels.',
           {'connection': _CONNECTION, 'image': _ID,
            'layer': {'type': 'integer', 'minimum': 0, 'maximum': 2**32 - 1}}, ['connection', 'image']),
@@ -165,8 +161,6 @@ TOOL_DEFINITIONS = [
            'payload': {'type': 'string', 'default': ''}}, ['connection', 'game', 'command_id', 'kind']),
     _tool('game_bridge_operation', 'Read actual game-side acknowledgement. This bridge is not required for XR input or capture.',
           {**_GAME, 'game': _ID, 'operation': _ID}, ['connection', 'game', 'operation']),
-    _tool('debug_retry' , 'Finish this connection\'s unfinished SDK exchange without sending another command.',
-          {'connection': _CONNECTION}),
 ]
 _SCHEMAS = {tool['name']: tool['inputSchema'] for tool in TOOL_DEFINITIONS}
 _COMMAND_NAMES = {'debug_pause': 'PAUSE', 'debug_step': 'STEP', 'debug_strict_admission': 'STRICT_ADMISSION',
@@ -313,31 +307,28 @@ class DebugTools:
             return {'ok': True, 'connection': identity, 'hello': client.hello,
                     'sessions': [{'session': session.id, 'generation': session.generation} for session in sessions]}
         except BaseException as error:
-            if published and isinstance(error, sdk.ControlTimeout):
-                # Discovery may be unfinished after Hello succeeded. Keep its
-                # exact exchange and return the identity needed to finish it.
-                return self._failure(error, sdk, identity)
             with self._lock:
                 self._clients.pop(identity, None)
             if client is not None:
                 _safe_close(client)
             if isinstance(error, (KeyboardInterrupt, SystemExit)):
                 raise
-            result = self._failure(error, sdk)
-            if isinstance(error, sdk.ControlTimeout):
-                result['retry_needed'] = False
-                result['reconnect_needed'] = True
-            return result
+            return self._failure(error, sdk)
 
-    @staticmethod
-    def _failure(error, sdk, connection=None):
+    def _failure(self, error, sdk, connection=None):
         result = {'ok': False}
+        if isinstance(error, (sdk.ControlTimeout, sdk.ProtocolError, ConnectionError, OSError)) and not isinstance(error, BlockingIOError):
+            with self._lock:
+                client = self._clients.pop(connection, None)
+            if client is not None:
+                _safe_close(client)
+            result['reconnect_needed'] = True
         if connection is not None:
             result['connection'] = connection
         if isinstance(error, sdk.ControlError):
             result.update(error='control_error', code=int(error.code), record=error.record)
         elif isinstance(error, sdk.ControlTimeout):
-            result.update(error='unfinished', unfinished=True, request_id=error.request_id, retry_needed=True)
+            result.update(error='timeout', request_id=error.request_id, detail='Exchange interrupted; its outcome may be unknown')
         elif isinstance(error, sdk.ProtocolError):
             result.update(error='protocol_error', detail=str(error))
         elif isinstance(error, BlockingIOError):
@@ -379,16 +370,12 @@ class DebugTools:
                     client.close()
                 return {'ok': True, 'connection': identity, 'disconnected': True}
             client = self._lookup(identity)
-            if name == 'debug_retry':
-                record = client.retry()
-            elif name == 'debug_revision':
+            if name == 'debug_revision':
                 record = client.revision(args['revision'])
             elif name == 'debug_release_inspection':
                 record = client.release_inspection(args['inspection'])
             elif name in ('debug_image_info', 'debug_release_image'):
                 record = getattr(client, name.removeprefix('debug_'))(args['image'])
-            elif name in ('debug_delivery_info', 'debug_release_delivery'):
-                record = getattr(client, name.removeprefix('debug_'))(args['delivery'])
             elif name in ('debug_image_window', 'debug_release_image_window'):
                 record = getattr(client, name.removeprefix('debug_'))(args['window'])
             elif name == 'debug_retain_window_image':
@@ -488,7 +475,7 @@ class DebugTools:
                             extra['capture'] = args['capture']
                         record = client.submit(lease, getattr(sdk.CommandKind, _COMMAND_NAMES[name]), **extra)
             result = {**record, 'ok': True, 'connection': identity}
-            if name in ('debug_capture', 'debug_retry', 'debug_inspect', 'debug_revision'):
+            if name in ('debug_capture', 'debug_inspect', 'debug_revision'):
                 result.update(metadata_only='bytes' not in record, gpu_preview_supported=False)
             if name == 'debug_read_export':
                 result['metadata_only'] = False

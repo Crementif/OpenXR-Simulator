@@ -96,29 +96,13 @@ struct ControllerHoldEdit
 	ControllerOverrideEdit<bool> menu;
 	ControllerOverrideEdit<bool> thumbClick;
 };
-struct ControllerWheelSweep
-{
-	bool enabled = false;
-	XrVector3f hub{0, -0.35f, -0.45f};
-	float radius = 0.18f;
-	float tilt = 0.3490659f;
-	float amplitude = 1.3962634f;
-	float frequencyHz = 0.15f;
-	float grip = 1;
-	float spread = 1.5707963f;
-	double receivedSeconds = 0;
-};
 struct ControllerMotionFrame
 {
-	// Preserve the separate legacy clocks: QPC samples drive glides,
-	// while the wheel uses the native uptime sample with its existing phase.
 	double glideSeconds = 0;
-	double wheelSeconds = 0;
 	ControllerHeadPose head;
 	ControllerKeyboardSample keyboard;
 	std::optional<ControllerPoseEdit> pose;
 	std::optional<ControllerHoldEdit> hold;
-	std::optional<ControllerWheelSweep> wheel;
 };
 struct ControllerMotionSample
 {
@@ -130,7 +114,6 @@ struct ControllerMotionSnapshot
 {
 	std::array<ControllerMotionSample, 2> hands;
 	bool animationEnabled = false;
-	float wheelAngle = 0;
 };
 struct ControllerMotionResult
 {
@@ -186,16 +169,13 @@ class LegacyControllerMotion
 	std::optional<bool> ApplyKeyboard(const ControllerKeyboardSample& keyboard);
 	void ApplyPose(const ControllerPoseEdit& edit);
 	void ApplyHoldEdit(const ControllerHoldEdit& edit);
-	void ApplyWheel(double seconds);
 	void ApplyHolds();
 	ControllerMotionSnapshot SnapshotLocked(ControllerHeadPose head) const;
 	mutable std::mutex m_mutex;
 	std::array<Controller, 2> m_controllers;
 	std::array<Glide, 2> m_glides;
 	std::array<Hold, 2> m_holds;
-	ControllerWheelSweep m_wheel;
 	ControllerHeadPose m_head;
-	float m_wheelAngle = 0;
 	float m_animationSeconds = 0;
 	bool m_animationEnabled = false;
 	bool m_animationKeyDown = false;

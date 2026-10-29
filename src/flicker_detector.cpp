@@ -115,12 +115,6 @@ DiagnosticsStatus Diagnostics::Status() const
 	return Snapshot();
 }
 
-bool Diagnostics::NeedsPixels() const noexcept
-{
-	std::lock_guard lock(m_mutex);
-	return !m_closed && (m_preview.NeedsPixels() || m_ui.NeedsPixels());
-}
-
 void Diagnostics::RecordError(const char* message, ErrorKind kind) noexcept
 {
 	std::lock_guard lock(m_mutex);
@@ -141,7 +135,6 @@ void Diagnostics::Run() noexcept
 {
 	using Clock = std::chrono::steady_clock;
 	auto lastStatus = Clock::now() - std::chrono::milliseconds(250);
-	auto lastPoll = Clock::now() - std::chrono::milliseconds(500);
 	bool pruned = false;
 	for (;;)
 	{
@@ -213,11 +206,6 @@ void Diagnostics::Run() noexcept
 			}
 			if (closing)
 				continue;
-			if (Clock::now() - lastPoll >= std::chrono::milliseconds(500))
-			{
-				lastPoll = Clock::now();
-				PollRequests();
-			}
 			if (!pruned)
 			{
 				pruned = true;
@@ -230,7 +218,7 @@ void Diagnostics::Run() noexcept
 		}
 		catch (...)
 		{
-			RecordError("Unexpected diagnostic request failure");
+			RecordError("Unexpected diagnostic pruning failure");
 		}
 	}
 }
@@ -263,32 +251,6 @@ void Diagnostics::FlushStatus(const DiagnosticsStatus& status)
 	{
 		RecordError(error.what());
 	}
-}
-
-void Diagnostics::PollRequests()
-{
-	const bool previewRequested = ConsumeRequest(m_directory / "flicker_capture_request.json");
-	const bool uiRequested = ConsumeRequest(m_directory / "ui_flicker_capture_request.json");
-	const bool renderDocRequested = ConsumeRequest(m_directory / "renderdoc_capture_request.json");
-	uint64_t frame = 0;
-	{
-		std::lock_guard lock(m_mutex);
-		if (m_closed)
-			return;
-		if (previewRequested)
-		{
-			auto update = m_preview.Capture();
-			m_artifacts.Add(std::move(update), m_preview);
-		}
-		if (uiRequested)
-		{
-			auto update = m_ui.Capture();
-			m_artifacts.Add(std::move(update), m_ui);
-		}
-		frame = m_preview.Frame();
-	}
-	if (renderDocRequested)
-		TriggerCapture(frame);
 }
 
 void Diagnostics::Close()

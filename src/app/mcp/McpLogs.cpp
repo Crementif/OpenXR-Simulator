@@ -1,7 +1,6 @@
 #include "app/mcp/McpPch.h"
 #include "app/mcp/McpLogs.h"
 #include "app/mcp/McpApplication.h"
-#include "app/mcp/McpIncident.h"
 #include "app/mcp/McpLogFile.h"
 #include "app/mcp/McpTransientDebug.h"
 #include "app/services/Utf8Path.h"
@@ -91,16 +90,17 @@ std::optional<Json> LogCall(McpApplication& application, const Json& arguments, 
 		if (!cancellation->TryAdmit())
 			return {};
 		TransientDebug calls(application, cancellation, timeout, clear ? "Log clear" : "Log read");
-		const auto before = calls.Application("simulator_application_status", {{"application_id", selected}});
-		if (!before.value("connected", false))
+		const auto before = calls.Application(selected.get_ref<const std::string&>());
+		if (!before.connected)
 			throw std::runtime_error("The selected runtime is not connected");
-		const auto process = before.at("runtime_process_id").get<std::string>();
-		(void)IncidentIdentifier(process, "runtime process identifier");
+		if (!before.runtimeProcess)
+			throw std::runtime_error("The runtime process identifier is unavailable");
+		const auto process = std::to_string(before.runtimeProcess);
 		if (directory.empty())
 		{
-			if (!before.contains("inferred_runtime_data_directory") || !before.at("inferred_runtime_data_directory").is_string())
+			if (before.launchDataDirectory.empty())
 				throw std::runtime_error("Runtime data directory is unknown; supply directory explicitly");
-			directory = Utf8Path(before.at("inferred_runtime_data_directory").get<std::string>());
+			directory = Utf8Path(before.launchDataDirectory);
 			if (!directory.is_absolute())
 				throw std::runtime_error("Inferred runtime data directory is not absolute");
 		}
@@ -108,18 +108,18 @@ std::optional<Json> LogCall(McpApplication& application, const Json& arguments, 
 		calls.Check();
 		if (clear)
 		{
-			const auto current = calls.Application("simulator_application_status", {{"application_id", selected}});
-			if (!current.value("connected", false) || current.at("runtime_process_id") != before.at("runtime_process_id") ||
-				current.at("runtime_epoch") != before.at("runtime_epoch"))
+			const auto current = calls.Application(selected.get_ref<const std::string&>());
+			if (!current.connected || current.runtimeProcess != before.runtimeProcess ||
+				current.runtimeEpoch != before.runtimeEpoch)
 				throw std::runtime_error("The selected runtime changed before clearing logs; retry explicitly");
 			calls.Check();
 			const auto cleared = ClearLogFile(path);
 			try
 			{
 				calls.Check();
-				const auto after = calls.Application("simulator_application_status", {{"application_id", selected}});
-				if (!after.value("connected", false) || after.at("runtime_process_id") != before.at("runtime_process_id") ||
-					after.at("runtime_epoch") != before.at("runtime_epoch"))
+				const auto after = calls.Application(selected.get_ref<const std::string&>());
+				if (!after.connected || after.runtimeProcess != before.runtimeProcess ||
+					after.runtimeEpoch != before.runtimeEpoch)
 					throw std::runtime_error("The selected runtime changed");
 			}
 			catch (const std::exception& error)
@@ -127,19 +127,19 @@ std::optional<Json> LogCall(McpApplication& application, const Json& arguments, 
 				throw std::runtime_error(std::string("Log clear may have completed; ") + error.what());
 			}
 			return Result({{"ok", true}, {"application_id", selected}, {"runtime_process_id", process},
-				{"runtime_epoch", before.at("runtime_epoch")}, {"path", PathText(path)},
+				{"runtime_epoch", std::to_string(before.runtimeEpoch)}, {"path", PathText(path)},
 				{"directory_source", arguments.contains("directory") ? "explicit" : "inferred_from_launch"},
 				{"identity_verified", false}, {"cleared", cleared},
 				{"note", "The log is identified by process ID, not runtime epoch. Concurrent writes can add lines immediately; concurrent links or renames can change the affected file."}});
 		}
 		const auto snapshot = ReadLogFile(path);
 		calls.Check();
-		const auto after = calls.Application("simulator_application_status", {{"application_id", selected}});
-		if (!after.value("connected", false) || after.at("runtime_process_id") != before.at("runtime_process_id") ||
-			after.at("runtime_epoch") != before.at("runtime_epoch"))
+		const auto after = calls.Application(selected.get_ref<const std::string&>());
+		if (!after.connected || after.runtimeProcess != before.runtimeProcess ||
+			after.runtimeEpoch != before.runtimeEpoch)
 			throw std::runtime_error("The selected runtime changed while reading logs; retry explicitly");
 		Json result = {{"ok", true}, {"application_id", selected}, {"runtime_process_id", process},
-			{"runtime_epoch", before.at("runtime_epoch")}, {"path", PathText(path)},
+			{"runtime_epoch", std::to_string(before.runtimeEpoch)}, {"path", PathText(path)},
 			{"directory_source", arguments.contains("directory") ? "explicit" : "inferred_from_launch"},
 			{"identity_verified", false}, {"identity_note", "The log is named by process ID and may contain older data from a reused process ID; its runtime epoch is not recorded."},
 			{"available", snapshot.has_value()}, {"lines", Json::array()}};

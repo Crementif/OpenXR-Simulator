@@ -80,14 +80,13 @@ class RetainedScreenshot:
                     raise
 
     def capture(self, eye, timeout, wait, layer='all'):
-        """None selects legacy only before admission, for absent capability/discovery."""
         if eye not in ('both', 'left', 'right'):
             raise ValueError('Screenshot eye must be both, left or right')
         if layer not in ('all', 'projection', 'quad'):
             raise ValueError('Screenshot layer must be all, projection or quad')
         try:
             if not self._binding.connect():
-                return None
+                raise CaptureFailed('No runtime control endpoint found')
             from simxr_control import Capability, ControlError
             from simxr_control.protocol import ErrorCode
             client, session = self._binding.client, self._binding.session
@@ -97,7 +96,7 @@ class RetainedScreenshot:
             needed = Capability.IMAGE_EXPORT | (Capability.LIVE_PREVIEW if layer == 'all' else
                      Capability.IMAGE_RECORDING | Capability.FILTERED_COMPOSITION)
             if client.status(session)['capabilities'] & needed != needed:
-                return None
+                raise CaptureFailed('The selected runtime does not support screenshot capture')
             deadline = time.monotonic() + timeout
             if layer != 'all':
                 retained = self._retain_filtered(client, session, layer, deadline, wait)

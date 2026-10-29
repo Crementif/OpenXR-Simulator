@@ -50,7 +50,6 @@ class EmptyCatalog final : public simxr::app::ApplicationCatalog
 	}
 };
 
-#ifdef __linux__
 class ArtifactCatalog final : public simxr::app::ApplicationCatalog
 {
   public:
@@ -63,7 +62,7 @@ class ArtifactCatalog final : public simxr::app::ApplicationCatalog
 	std::vector<simxr::app::ApplicationSnapshot> Applications() const override
 	{
 		auto value = snapshot;
-		if (changeAfterFirst && reads.fetch_add(1) > 0)
+		if (reads.fetch_add(1) > 0 && changeAfterFirst)
 		{
 			value.session = 2;
 			value.generation = 2;
@@ -74,6 +73,56 @@ class ArtifactCatalog final : public simxr::app::ApplicationCatalog
 	bool RequestShutdown() override { return false; }
 };
 
+static void ApplicationLookups()
+{
+	using namespace std::chrono_literals;
+	ArtifactCatalog catalog;
+	catalog.snapshot.id = UINT64_MAX;
+	catalog.snapshot.runtimeEpoch = UINT64_MAX - 1;
+	catalog.snapshot.launchDataDirectory = "/tmp/runtime";
+	simxr::app::McpApplication application;
+	const auto id = application.ApplicationDocument(catalog.snapshot).at("application_id").get<std::string>();
+	auto lookup = std::async(std::launch::async, [&]
+	{
+		return application.Lookup(id, std::make_shared<simxr::app::McpCancellation>());
+	});
+	Eventually([&] { application.Poll(catalog); return lookup.wait_for(0ms) == std::future_status::ready; }, "Typed lookup completes");
+	const auto snapshot = lookup.get();
+	Require(snapshot && snapshot->id == UINT64_MAX && snapshot->runtimeEpoch == UINT64_MAX - 1 &&
+		snapshot->launchDataDirectory == catalog.snapshot.launchDataDirectory, "Typed lookup preserves snapshot values");
+	bool foreign = false;
+	try { application.Lookup("different-instance:1", std::make_shared<simxr::app::McpCancellation>()); }
+	catch (const std::invalid_argument&) { foreign = true; }
+	Require(foreign, "Typed lookup rejects another simulator instance");
+	catalog.snapshot.id = 1;
+	auto missing = std::async(std::launch::async, [&]
+	{
+		try { application.Lookup(id, std::make_shared<simxr::app::McpCancellation>()); }
+		catch (const std::runtime_error&) { return true; }
+		return false;
+	});
+	Eventually([&] { application.Poll(catalog); return missing.wait_for(0ms) == std::future_status::ready; }, "Removed lookup completes");
+	Require(missing.get(), "Typed lookup rejects a removed application");
+	const auto reads = catalog.reads.load();
+	auto cancellation = std::make_shared<simxr::app::McpCancellation>();
+	auto cancelled = std::async(std::launch::async, [&] { return application.Lookup(id, cancellation); });
+	Require(cancelled.wait_for(100ms) == std::future_status::timeout, "Typed lookup waits for the application thread");
+	cancellation->Cancel();
+	Require(cancelled.wait_for(500ms) == std::future_status::ready && !cancelled.get(), "Queued lookup cancellation wakes its caller");
+	application.Poll(catalog);
+	Require(catalog.reads == reads, "Cancelled lookup does not access the catalog");
+	auto closing = std::async(std::launch::async, [&]
+	{
+		try { application.Lookup(id, std::make_shared<simxr::app::McpCancellation>()); }
+		catch (const std::runtime_error& error) { return std::string(error.what()).find("shutting down") != std::string::npos; }
+		return false;
+	});
+	Require(closing.wait_for(100ms) == std::future_status::timeout, "Shutdown lookup is queued");
+	application.Close();
+	Require(closing.wait_for(500ms) == std::future_status::ready && closing.get(), "Close wakes a pending typed lookup");
+}
+
+#ifdef __linux__
 static void ArtifactLookupCancellation()
 {
 	using namespace std::chrono_literals;
@@ -103,6 +152,36 @@ static void ArtifactLookupCancellation()
 	Eventually([&] { application.Poll(catalog); return list.wait_for(0ms) == std::future_status::ready; }, "List fixture application");
 	const auto listing = list.get();
 	const auto app = Json::parse(listing->at("content").at(0).at("text").get<std::string>()).at("applications").at(0).at("application_id");
+	{
+		simxr::app::McpDebug bounded;
+		const auto open = [&]() -> std::optional<simxr::app::McpConnection>
+		{
+			auto pending = std::async(std::launch::async, [&]
+			{
+				try { return bounded.Connect(application, app.get<std::string>(), std::make_shared<simxr::app::McpCancellation>()); }
+				catch (const std::runtime_error&) { return std::optional<simxr::app::McpConnection>{}; }
+			});
+			Eventually([&] { application.Poll(catalog); return pending.wait_for(0ms) == std::future_status::ready; }, "Typed connection completes");
+			return pending.get();
+		};
+		++catalog.snapshot.runtimeProcess;
+		for (unsigned index = 0; index < 9; ++index)
+			Require(!open(), "Typed connection rejects the wrong runtime process");
+		--catalog.snapshot.runtimeProcess;
+		std::vector<std::string> connections;
+		for (unsigned index = 0; index < 8; ++index)
+		{
+			const auto opened = open();
+			Require(opened && !opened->id.empty() && opened->process == catalog.snapshot.runtimeProcess &&
+				opened->epoch == 1 && opened->session == 1 && opened->generation == 1,
+				"Failed connections release capacity and successful connections retain target metadata");
+			connections.push_back(opened->id);
+		}
+		Require(!open(), "Typed connections enforce the per-session capacity");
+		bounded.Disconnect(connections.front());
+		Require(open().has_value(), "Disconnect restores connection capacity");
+	}
+
 	simxr::app::McpDebug debug;
 	auto connect = std::async(std::launch::async, [&]
 	{
@@ -112,6 +191,28 @@ static void ArtifactLookupCancellation()
 	const auto opened = connect.get();
 	Require(opened && !opened->at("isError").get<bool>(), "Fixture debugger connected");
 	const auto connection = Json::parse(opened->at("content").at(0).at("text").get<std::string>()).at("connection").get<std::string>();
+	bool rejectedScope = false;
+	try
+	{
+		using namespace simxr::control;
+		debug.Request(application, connection, OpCode::ExportInfo,
+			{Field::U64(tag::ExportId, 1), Field::U64(tag::Session, 1), Field::U64(tag::Generation, 2)});
+	}
+	catch (const std::invalid_argument&)
+	{
+		rejectedScope = true;
+	}
+	Require(rejectedScope, "Typed artifact request accepted a different generation");
+	auto unavailable = std::async(std::launch::async, [&]
+	{
+		using namespace simxr::control;
+		return debug.Request(application, connection, OpCode::ExportInfo,
+			{Field::U64(tag::ExportId, UINT64_MAX)});
+	});
+	Eventually([&] { application.Poll(catalog); return unavailable.wait_for(0ms) == std::future_status::ready; },
+		"Typed artifact lookup did not finish");
+	Require(unavailable.get().Find(simxr::control::tag::Error)->AsU32() != 0,
+		"Typed artifact lookup hid the runtime rejection");
 	auto cancellation = std::make_shared<simxr::app::McpCancellation>();
 	auto read = std::async(std::launch::async, [&]
 	{
@@ -340,6 +441,7 @@ static void ExpectCancelled(std::future<HttpReply>& first, std::future<HttpReply
 int main()
 {
 	using namespace std::chrono_literals;
+	ApplicationLookups();
 #ifdef _WIN32
 	{
 		const auto original = std::filesystem::current_path();
@@ -399,12 +501,13 @@ int main()
 	simxr::app::McpApplication preflight;
 	EmptyCatalog catalog;
 	simxr::app::McpApplication delayed;
+	const auto delayedId = delayed.ApplicationDocument(simxr::app::ApplicationSnapshot{.id = 1}).at("application_id");
 	for (unsigned attempt = 0; attempt < 16; ++attempt)
 	{
 		auto timeout = std::make_shared<simxr::app::McpCancellation>();
 		auto screenshot = std::async(std::launch::async, [&]
 		{
-			return simxr::app::mcp::CaptureScreenshot(delayed, {{"application_id", "unavailable"}, {"timeout", .02}}, timeout);
+			return simxr::app::mcp::CaptureScreenshot(delayed, {{"application_id", delayedId}, {"timeout", .02}}, timeout);
 		});
 		Require(screenshot.wait_for(500ms) == std::future_status::ready, "Screenshot deadline interrupts queued application lookup");
 		const auto result = screenshot.get();
@@ -416,7 +519,7 @@ int main()
 		auto cancel = std::make_shared<simxr::app::McpCancellation>();
 		auto screenshot = std::async(std::launch::async, [&]
 		{
-			return simxr::app::mcp::CaptureScreenshot(delayed, {{"application_id", "unavailable"}, {"timeout", 5}}, cancel);
+			return simxr::app::mcp::CaptureScreenshot(delayed, {{"application_id", delayedId}, {"timeout", 5}}, cancel);
 		});
 		std::this_thread::sleep_for(20ms);
 		cancel->Cancel();
@@ -428,7 +531,7 @@ int main()
 		auto cancel = std::make_shared<simxr::app::McpCancellation>();
 		auto stereo = std::async(std::launch::async, [&]
 		{
-			return simxr::app::mcp::ValidateStereo(delayed, {{"application_id", "unavailable"}, {"timeout", 5}}, cancel);
+			return simxr::app::mcp::ValidateStereo(delayed, {{"application_id", delayedId}, {"timeout", 5}}, cancel);
 		});
 		std::this_thread::sleep_for(20ms);
 		cancel->Cancel();
@@ -440,7 +543,7 @@ int main()
 		auto cancel = std::make_shared<simxr::app::McpCancellation>();
 		auto diagnostics = std::async(std::launch::async, [&]
 		{
-			return simxr::app::mcp::RunDiagnostics(delayed, "get_diagnostics", {{"application_id", "unavailable"}}, cancel);
+			return simxr::app::mcp::RunDiagnostics(delayed, "get_diagnostics", {{"application_id", delayedId}}, cancel);
 		});
 		std::this_thread::sleep_for(20ms);
 		cancel->Cancel();

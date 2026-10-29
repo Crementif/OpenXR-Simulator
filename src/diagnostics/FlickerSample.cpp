@@ -8,6 +8,16 @@ static uint8_t Luma(const uint8_t* bgra)
 	return static_cast<uint8_t>((19u * bgra[0] + 183u * bgra[1] + 54u * bgra[2]) >> 8);
 }
 
+static uint8_t CopyPixel(uint8_t* destination, const uint8_t* source, PixelOrder order)
+{
+	const auto blue = order == PixelOrder::Bgra ? 0 : 2;
+	destination[0] = source[blue];
+	destination[1] = source[1];
+	destination[2] = source[2 - blue];
+	destination[3] = source[3];
+	return Luma(destination);
+}
+
 class EyeBrightness
 {
   public:
@@ -41,7 +51,7 @@ bool ValidPixels(const uint8_t* bgra, uint32_t width, uint32_t height, uint32_t 
 	return stride >= width * 4 && height <= std::numeric_limits<size_t>::max() / stride;
 }
 
-Sample Downsample(const uint8_t* bgra, uint32_t width, uint32_t height, uint32_t pitchBytes, uint64_t frame)
+Sample Downsample(const uint8_t* sourcePixels, uint32_t width, uint32_t height, uint32_t pitchBytes, uint64_t frame, PixelOrder order)
 {
 	Sample sample;
 	sample.frame = frame;
@@ -58,13 +68,12 @@ Sample Downsample(const uint8_t* bgra, uint32_t width, uint32_t height, uint32_t
 	for (uint32_t y = 0; y < sample.height; ++y)
 	{
 		const auto sourceY = static_cast<uint32_t>(static_cast<uint64_t>(y) * height / sample.height);
-		const auto* sourceRow = bgra + static_cast<size_t>(sourceY) * pitchBytes;
+		const auto* sourceRow = sourcePixels + static_cast<size_t>(sourceY) * pitchBytes;
 		auto* destinationRow = pixels->data() + static_cast<size_t>(y) * sample.width * 4;
 		for (uint32_t x = 0; x < sample.width; ++x)
 		{
 			const auto* source = sourceRow + sourceOffsets[x];
-			std::memcpy(destinationRow + static_cast<size_t>(x) * 4, source, 4);
-			const auto luma = Luma(source);
+			const auto luma = CopyPixel(destinationRow + static_cast<size_t>(x) * 4, source, order);
 			sum += luma / 255.0;
 			eyes[x < sample.width / 2 ? 0 : 1].Observe(luma);
 		}
@@ -78,8 +87,8 @@ Sample Downsample(const uint8_t* bgra, uint32_t width, uint32_t height, uint32_t
 	return sample;
 }
 
-Sample CropUi(const uint8_t* bgra, uint32_t width, uint32_t height, uint32_t pitchBytes, const int32_t rects[2][4],
-			  uint64_t frame)
+Sample CropUi(const uint8_t* sourcePixels, uint32_t width, uint32_t height, uint32_t pitchBytes, const int32_t rects[2][4],
+			  uint64_t frame, PixelOrder order)
 {
 	Sample sample;
 	sample.frame = frame;
@@ -101,13 +110,12 @@ Sample CropUi(const uint8_t* bgra, uint32_t width, uint32_t height, uint32_t pit
 		for (uint32_t y = 0; y < sample.height; ++y)
 		{
 			const auto sourceY = static_cast<size_t>(top + y * (bottom - top) / sample.height);
-			const auto* sourceRow = bgra + sourceY * pitchBytes;
+			const auto* sourceRow = sourcePixels + sourceY * pitchBytes;
 			auto* destinationRow = pixels->data() + (static_cast<size_t>(y) * sample.width + eye * 128) * 4;
 			for (size_t x = 0; x < sourceOffsets.size(); ++x)
 			{
 				const auto* source = sourceRow + sourceOffsets[x];
-				std::memcpy(destinationRow + x * 4, source, 4);
-				eyes[eye].Observe(Luma(source));
+				eyes[eye].Observe(CopyPixel(destinationRow + x * 4, source, order));
 			}
 		}
 	}

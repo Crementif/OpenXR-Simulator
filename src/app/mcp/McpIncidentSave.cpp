@@ -1,7 +1,6 @@
 #include "app/mcp/McpPch.h"
 #include "app/mcp/McpIncidentSave.h"
-#include "app/mcp/McpImageEncode.h"
-#include "app/platform/FileStorage.h"
+#include "app/services/ImageExport.h"
 #include "app/services/Utf8Path.h"
 #include "graphics/ColorPixels.h"
 
@@ -42,8 +41,6 @@ class IncidentFiles
 		if (m_complete)
 			return;
 		std::error_code ignored;
-		if (!m_temporary.empty())
-			std::filesystem::remove(m_temporary, ignored);
 		for (const auto& file : m_files)
 			std::filesystem::remove(file, ignored);
 		std::filesystem::remove(m_directory, ignored);
@@ -53,30 +50,20 @@ class IncidentFiles
 	{
 		check();
 		const auto destination = m_directory / name;
-		m_temporary = CreatePrivateTemporaryFile(destination);
-		std::ofstream output(m_temporary, std::ios::binary | std::ios::trunc);
-		if (!output)
-			throw std::runtime_error("Cannot open incident file");
-		output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-		output.close();
-		if (!output)
-			throw std::runtime_error("Cannot write or close incident file");
-		check();
 		m_files.push_back(destination);
 		try
 		{
-			RenameFileWithoutReplacing(m_temporary, destination);
+			SaveExportFile(destination, bytes, false, check);
 		}
 		catch (...)
 		{
 			m_files.pop_back();
 			throw;
 		}
-		m_temporary.clear();
 	}
 	void Complete() { m_complete = true; }
   private:
-	std::filesystem::path m_directory, m_temporary;
+	std::filesystem::path m_directory;
 	std::vector<std::filesystem::path> m_files;
 	bool m_complete = false;
 };

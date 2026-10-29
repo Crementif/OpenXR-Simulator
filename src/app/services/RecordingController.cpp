@@ -1,6 +1,6 @@
 #include "app/services/RecordingController.h"
 #include "Pch.h"
-#include "app/platform/FileStorage.h"
+#include "app/services/ImageExport.h"
 #include "app/services/Utf8Path.h"
 #include "app/services/WorkerConnection.h"
 #include "automation/RecordingArchive.h"
@@ -40,30 +40,9 @@ wire::Message RecordingController::Read(WorkerConnection& connection, const Job&
 void SaveRecording(const std::filesystem::path& destination, const automation::InputRecording& recording, bool replace)
 {
 	const auto script = automation::EditableRig(recording);
-	const auto temporary = CreatePrivateTemporaryFile(destination);
-	try
-	{
-		std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-		if (!output)
-			throw std::runtime_error("Cannot open recording temporary file");
-		output.write(script.data(), static_cast<std::streamsize>(script.size()));
-		if (!output)
-			throw std::runtime_error("Cannot write recording temporary file");
-		output.close();
-		if (!output)
-			throw std::runtime_error("Cannot close recording temporary file");
-		if (replace)
-			CommitTemporaryFile(temporary, destination);
-		else
-			RenameFileWithoutReplacing(temporary, destination);
-	}
-	catch (...)
-	{
-		std::error_code ignored;
-		std::filesystem::remove(temporary, ignored);
-		throw;
-	}
+	SaveExportFile(destination, std::as_bytes(std::span(script)), replace);
 }
+
 RecordingSnapshot RecordingController::Execute(WorkerConnection& connection, const Job& job)
 {
 	RecordingSnapshot result;

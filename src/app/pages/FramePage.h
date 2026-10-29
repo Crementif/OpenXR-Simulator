@@ -42,6 +42,6 @@ class FramePage
 	RigViewState m_rigView;
 	int m_device = -1;
 	bool m_active = false, m_invalidPose = false;
-	std::array<char, 512> m_exportFile{"snapshot.ppm"};
+	std::array<char, 512> m_exportFile{"snapshot.png"};
 };
 } // namespace simxr::app

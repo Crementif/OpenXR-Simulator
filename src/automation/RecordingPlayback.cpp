@@ -12,30 +12,6 @@ static std::uint64_t AddFrame(std::uint64_t frame, std::uint64_t offset)
 		throw std::overflow_error("Recording exceeds the replay frame range");
 	return frame + offset;
 }
-static std::optional<std::uint64_t> RelativeFrame(const RecordedTransaction& transaction, FrameId origin)
-{
-	if (transaction.commands.empty() || transaction.commands.size() > 64 ||
-		(transaction.afterFrame && transaction.phase != "released"))
-		throw std::runtime_error("Malformed recorded transaction");
-	if (transaction.phase == "released" &&
-		(transaction.id || !std::all_of(transaction.commands.begin(), transaction.commands.end(),
-										[](const auto& command)
-										{
-											return std::holds_alternative<ReleaseControl>(command);
-										})))
-		throw std::runtime_error("Malformed recorded release event");
-	if (transaction.phase != "applied" && transaction.phase != "released")
-	{
-		constexpr std::array phases{"queued",  "late",	   "rescheduled", "conflict", "cancelled",
-									"invalid", "capacity", "closed",	  "not_found"};
-		if (std::find(phases.begin(), phases.end(), transaction.phase) == phases.end())
-			throw std::runtime_error("Unknown recorded transaction phase");
-		return {};
-	}
-	if (transaction.frame < origin || (transaction.frame == origin && !transaction.afterFrame))
-		throw std::runtime_error("Applied recording transaction precedes its origin");
-	return AddFrame(transaction.frame.value - origin.value, transaction.afterFrame ? 1 : 0);
-}
 static RecordingArchiveState Validate(const std::filesystem::path& directory, RigProgress& progress)
 {
 	RecordingArchiveReader reader(directory);
@@ -47,15 +23,16 @@ static RecordingArchiveState Validate(const std::filesystem::path& directory, Ri
 		progress.Check(true);
 		for (const auto& transaction : page->recording.transactions)
 		{
-			const auto relative = RelativeFrame(transaction, reader.State().origin.originFrame);
-			if (!relative)
+			const auto frame = ReplayFrame(transaction, reader.State().origin.originFrame, page->recording.version);
+			if (!frame)
 				continue;
-			if (*relative < previous)
+			const auto relative = frame->value - reader.State().origin.originFrame.value;
+			if (relative < previous)
 				throw std::runtime_error("Recording applied frames are out of order");
-			group = *relative == previous ? group + 1 : 1;
+			group = relative == previous ? group + 1 : 1;
 			if (group > 256)
 				throw std::runtime_error("Recording exceeds the replay transaction window");
-			previous = *relative;
+			previous = relative;
 			for (const auto& command : transaction.commands)
 				(void)ReplayCommand(command, transaction.runtimeTime);
 		}
@@ -63,28 +40,6 @@ static RecordingArchiveState Validate(const std::filesystem::path& directory, Ri
 	if (!reader.State().complete)
 		throw std::runtime_error("Replay requires a complete recording archive");
 	return reader.State();
-}
-static void ReleaseStep(RigRuntime& runtime, const ScriptStep& step)
-{
-	if (step.capture)
-		runtime.ReleaseCapture(*step.capture);
-}
-static void Advance(RigRuntime& runtime, RigProgress& progress, std::uint64_t target)
-{
-	while (runtime.CurrentFrame().value < target)
-	{
-		progress.Check(true);
-		ReleaseStep(runtime, runtime.StepApplication({}));
-		const auto applied = runtime.CurrentFrame();
-		for (;;)
-		{
-			const auto displayed = runtime.StepDisplay();
-			ReleaseStep(runtime, displayed);
-			if (displayed.frame && *displayed.frame >= applied)
-				break;
-			progress.Check();
-		}
-	}
 }
 void ReplayRecordingArchive(const std::filesystem::path& directory, std::uint64_t seed, RigRuntime& runtime,
 							RigProgress& progress)
@@ -99,7 +54,7 @@ void ReplayRecordingArchive(const std::filesystem::path& directory, std::uint64_
 	const auto base = AddFrame(runtime.CurrentFrame().value, 1);
 	const auto initial =
 		runtime.Schedule({FrameId{base}, {}}, CommandLatePolicy::Reject, ReplayInitialCommands(reader.State().origin));
-	Advance(runtime, progress, base);
+	runtime.AdvanceToFrame(FrameId{base});
 	runtime.AwaitTransaction(initial);
 	std::vector<std::uint64_t> pending;
 	pending.reserve(256);
@@ -108,7 +63,7 @@ void ReplayRecordingArchive(const std::filesystem::path& directory, std::uint64_
 	{
 		if (pending.empty())
 			return;
-		Advance(runtime, progress, target);
+		runtime.AdvanceToFrame(FrameId{target});
 		for (const auto transaction : pending)
 			runtime.AwaitTransaction(transaction);
 		pending.clear();
@@ -118,10 +73,10 @@ void ReplayRecordingArchive(const std::filesystem::path& directory, std::uint64_
 		progress.Check(true);
 		for (auto& transaction : page->recording.transactions)
 		{
-			const auto relative = RelativeFrame(transaction, reader.State().origin.originFrame);
-			if (!relative)
+			const auto frame = ReplayFrame(transaction, reader.State().origin.originFrame, page->recording.version);
+			if (!frame)
 				continue;
-			const auto next = AddFrame(base, *relative);
+			const auto next = AddFrame(base, frame->value - reader.State().origin.originFrame.value);
 			if (next < target || (next == target && pending.size() == 256))
 				throw std::runtime_error("Recording changed its replay order or transaction window");
 			if (next != target)

@@ -6,6 +6,7 @@
 #include "automation/RigReport.h"
 #include "automation/RigRunner.h"
 #include "control/ControlSchema.h"
+#include "control/ExportReader.h"
 #include "control/ControlService.h"
 #include "control/InspectionDocument.h"
 #include "control/SimulationControl.h"
@@ -15,8 +16,11 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <future>
 #include <iostream>
 #include <limits>
 #include <locale>
@@ -81,6 +85,127 @@ struct Fixture
 		return options;
 	}
 };
+void CheckControllerBindingRigOwnership()
+{
+	Fixture fixture;
+	CommandTransaction transaction;
+	transaction.id = 1;
+	transaction.source = {CommandSourceKind::Manual, 71};
+	transaction.target.frame = FrameId{1};
+	transaction.commands = {TakeControl{ControlChannel::LeftControls}};
+	Require(fixture.session->Commands().Submit(transaction).result == CommandResult::Queued,
+			"Cannot acquire baseline controller ownership");
+	FramePrediction prediction;
+	Require(fixture.session->WaitFrame(prediction) == XR_SUCCESS &&
+			fixture.session->BeginFrame() == XR_SUCCESS && fixture.session->EndFrame(prediction) == XR_SUCCESS,
+			"Cannot publish owned input");
+	std::ifstream file(std::filesystem::path{SIMXR_RIG_EXAMPLES_DIR} / "controller_bindings.luau");
+	Require(file.is_open(), "Cannot open controller binding rig");
+	std::string source{std::istreambuf_iterator<char>{file}, {}};
+	automation::RigRunner runner([&](auto opcode, auto fields)
+	{
+		return fixture.Exchange(opcode, std::move(fields));
+	});
+	runner.Start(fixture.Options(std::move(source)));
+	runner.Join();
+	const auto result = runner.Snapshot();
+	Require(result.phase == automation::RigPhase::Failed && result.transactions == 0 &&
+			result.error.find("Release existing input owners") != std::string::npos,
+			"Controller binding rig did not reject a shared input session");
+	Require(fixture.session->Commands().At(prediction.id)->owners[3] == transaction.source,
+			"Rejected controller binding rig changed existing ownership");
+}
+
+void CheckSweepRigs()
+{
+	for (const auto* name : {"pose_sweep.luau", "wheel_sweep.luau"})
+	{
+		const bool wheel = std::string_view{name} == "wheel_sweep.luau";
+		std::ifstream file(std::filesystem::path{SIMXR_RIG_EXAMPLES_DIR} / name);
+		Require(file.is_open(), "Cannot open sweep rig");
+		std::string source{std::istreambuf_iterator<char>{file}, {}};
+		Require(!file.bad(), "Cannot read sweep rig");
+		Fixture fixture(true);
+		unsigned frames = 0;
+		automation::RigRunner runner([&](auto opcode, auto fields)
+		{
+			wire::Message request;
+			request.requestId = wire::RequestId{++fixture.request};
+			request.opcode = static_cast<std::uint16_t>(opcode);
+			request.fields = std::move(fields);
+			auto result = fixture.service.Handle(fixture.connection, request);
+			if (fixture.session->Scheduler().Snapshot().permits)
+			{
+				FramePrediction prediction;
+				Require(fixture.session->WaitFrame(prediction) == XR_SUCCESS &&
+					fixture.session->BeginFrame() == XR_SUCCESS, "Sweep frame admission failed");
+				const auto applied = fixture.session->Commands().At(prediction.id);
+				Require(applied && prediction.id.value == frames + 1, "Sweep skipped an application frame");
+				const auto& tracking = applied->configuration.tracking;
+				const auto orientation =
+					wheel ? tracking.controllers[1].pose.pose.orientation : tracking.head.pose.orientation;
+				const auto norm = orientation.x * orientation.x + orientation.y * orientation.y +
+					orientation.z * orientation.z + orientation.w * orientation.w;
+				Require(std::abs(norm - 1) < .0001f, "Sweep quaternion is not normalized");
+				Require(std::count_if(applied->owners.begin(), applied->owners.end(),
+					[](const auto& owner)
+					{
+						return owner.has_value();
+					}) == (wheel ? 4 : 1),
+					"Sweep took unrelated input channels");
+				if (wheel)
+				{
+					const auto left = tracking.controllers[0].pose.pose.position;
+					const auto right = tracking.controllers[1].pose.pose.position;
+					Require(std::abs(left.x + right.x) < .0001f &&
+						std::abs(left.y + right.y - 2.7f) < .0001f &&
+						std::abs(left.z + right.z + .9f) < .0001f,
+						"Wheel hands left opposite sides of the configured center");
+					const auto x = right.x, y = right.y - 1.35f, z = right.z + .45f;
+					Require(std::abs(x * x + y * y + z * z - .18f * .18f) < .0001f &&
+						std::abs(y * std::sin(.34906585f) + z * std::cos(.34906585f)) < .0001f,
+						"Wheel changed radius or left its tilted plane");
+					for (const auto& controller : applied->configuration.input.controllers)
+						Require(controller.grip == 1, "Wheel released grip during motion");
+					if (frames == 30)
+						Require(right.x > .03f && right.x < .032f && right.y < 1.19f && orientation.z > .6f,
+							"Wheel did not reach its configured steering amplitude");
+				}
+				else
+				{
+					Require(tracking.head.pose.position.x == 0 && tracking.head.pose.position.y == 1.7f &&
+						tracking.head.pose.position.z == 0, "Orientation sweep translated the head");
+					if (frames == 30)
+						Require(orientation.y > .25f && orientation.z < -.12f,
+							"Orientation sweep did not rotate yaw and roll");
+					if (frames == 15)
+						Require(orientation.x > .14f, "Orientation sweep did not rotate pitch");
+				}
+				++frames;
+				Require(fixture.session->EndFrame(prediction) == XR_SUCCESS, "Sweep frame completion failed");
+			}
+			return result;
+		});
+		auto options = fixture.Options(std::move(source));
+		options.deadline = std::chrono::seconds{10};
+		runner.Start(std::move(options));
+		runner.Join();
+		Require(runner.Snapshot().phase == automation::RigPhase::Complete, runner.Snapshot().error.c_str());
+		Require(frames == 121 && runner.Snapshot().transactions == frames, "Sweep cycle length changed");
+		FramePrediction cleanup;
+		Require(fixture.session->WaitFrame(cleanup) == XR_SUCCESS && fixture.session->BeginFrame() == XR_SUCCESS &&
+			fixture.session->EndFrame(cleanup) == XR_SUCCESS, "Sweep cleanup frame failed");
+		const auto applied = fixture.session->Commands().At(cleanup.id);
+		Require(applied && std::none_of(applied->owners.begin(), applied->owners.end(),
+			[](const auto& owner)
+			{
+				return owner.has_value();
+			}) &&
+			applied->configuration.input.controllers[0].grip == 0 &&
+			applied->configuration.input.controllers[1].grip == 0, "Sweep retained input after completion");
+	}
+}
+
 void CheckBindingPauseAndStep()
 {
 	Fixture fixture;
@@ -160,6 +285,69 @@ void CheckResumeClearsSteps()
 		deadline = std::string_view{failure.what()}.find("deadline") != std::string_view::npos;
 	}
 	Require(deadline, "Resume left a step permit that bypassed a later pause");
+}
+
+void CheckTimedWaits()
+{
+	for (unsigned mode = 0; mode < 3; ++mode)
+	{
+		automation::RigRunner runner([](auto opcode, auto)
+		{
+			Require(opcode == wire::OpCode::Status || opcode == wire::OpCode::ReleaseControl,
+				"An observational wait must not poll, acquire control, or step the application");
+			wire::Message response;
+			response.fields.push_back(wire::Field::U32(wire::tag::Error, 0));
+			return response;
+		});
+		automation::RigOptions options;
+		options.session = wire::ControlSessionId{1};
+		options.generation = 1;
+		options.deadline = mode == 1 ? std::chrono::milliseconds{50} : std::chrono::milliseconds{3000};
+		options.source = mode ? "print('waiting') simxr.wait(30000)" : "simxr.wait(40) simxr.wait(0)";
+		const auto started = std::chrono::steady_clock::now();
+		runner.Start(std::move(options));
+		if (mode == 2)
+		{
+			Eventually([&] { return !runner.Snapshot().output.empty(); }, "Rig did not reach its wait");
+			runner.Cancel();
+		}
+		auto joined = std::async(std::launch::async, [&] { runner.Join(); });
+		Require(joined.wait_for(std::chrono::seconds{1}) == std::future_status::ready,
+			"Cancellation or execution deadline did not interrupt the timed wait");
+		joined.get();
+		const auto result = runner.Snapshot();
+		Require(result.phase == (mode == 2 ? automation::RigPhase::Cancelled : mode == 1 ? automation::RigPhase::Failed
+			: automation::RigPhase::Complete), "Timed wait ended in the wrong phase");
+		if (!mode)
+			Require(std::chrono::steady_clock::now() - started >= std::chrono::milliseconds{40}, "Wait returned before its target");
+		if (mode == 1)
+			Require(result.error.find("deadline") != std::string::npos, "Timed wait failed for a reason other than its deadline");
+	}
+}
+
+void CheckPausedCancellation()
+{
+	automation::RigProgress progress;
+	automation::RigOptions options;
+	options.deadline = std::chrono::seconds{5};
+	progress.Start(options);
+	progress.Pause();
+	auto worker = std::async(std::launch::async, [&]
+	{
+		try
+		{
+			progress.Check(true);
+			return false;
+		}
+		catch (const std::runtime_error& error)
+		{
+			return std::string_view(error.what()) == "Rig cancelled";
+		}
+	});
+	Eventually([&] { return progress.Phase() == automation::RigPhase::Paused; }, "Progress did not pause");
+	progress.Cancel();
+	Require(worker.wait_for(std::chrono::seconds{1}) == std::future_status::ready && worker.get(),
+			"Paused cancellation waited for the execution deadline");
 }
 
 void CheckSteppedExecutionPhase()
@@ -261,6 +449,7 @@ void CheckScriptValueBoundaries()
 			return fixture.Exchange(opcode, std::move(fields));
 		});
 	runner.Start(fixture.Options(R"(
+for _, duration in {-1, 0.5, 3600001, math.huge} do assert(not pcall(simxr.wait, duration)) end
 local ok, detail = pcall(simxr.state)
 assert(not ok and string.find(detail, 'Unknown inspection value type'))
 for _, anchor in {'4294967296', '18446744073709551615'} do
@@ -524,7 +713,7 @@ simxr.await_game(game, operation)
 
 void CheckLeaseRenewal()
 {
-	for (const auto binding : {"state", "game_state"})
+	for (const auto binding : {"state", "game_state", "wait"})
 	{
 		Fixture fixture;
 		DebugControllerConfig config;
@@ -542,7 +731,8 @@ void CheckLeaseRenewal()
 				return fixture.Exchange(opcode, std::move(fields));
 			});
 		auto options =
-			fixture.Options("simxr.pause() for i = 1, 55 do simxr." + std::string(binding) + "() end simxr.resume()");
+			fixture.Options(std::string_view(binding) == "wait" ? "simxr.pause() simxr.wait(2200) simxr.resume()"
+			: "simxr.pause() for i = 1, 55 do simxr." + std::string(binding) + "() end simxr.resume()");
 		options.deadline = std::chrono::seconds{6};
 		runner.Start(std::move(options));
 		runner.Join();
@@ -551,10 +741,111 @@ void CheckLeaseRenewal()
 	}
 }
 
+void CheckWindowAnalysisGaps()
+{
+	using Value = wire::InspectionValue;
+	for (const bool ui : {false, true})
+	{
+		std::vector<Value> entries;
+		for (const auto frame : {1u, 2u, 4u, 5u})
+			entries.push_back(Value::Object({{"frame_id", Value::Unsigned(frame)},
+				{"phase", Value::Text(frame == 2 ? "expired" : ui && frame == 1 ? "ready" : "clear")},
+				{"quad_rectangles", Value::Array({Value::Object({}), Value::Object({{"width", Value::Unsigned(4)},
+					{"height", Value::Unsigned(4)}})})}}));
+		const auto document = Value::Object({{"phase", Value::Text("complete")},
+			{"target", Value::Text(ui ? "quad_layers" : "composed_eyes")}, {"entries", Value::Array(std::move(entries))}}).Encode();
+		automation::RigRunner runner([&](auto opcode, auto)
+		{
+			wire::Message response;
+			response.fields.push_back(wire::Field::U32(wire::tag::Error, 0));
+			if (opcode == wire::OpCode::ReadImageWindow)
+				response.fields.push_back(wire::Field::Bytes(wire::tag::Document, document));
+			else
+				Require(opcode == wire::OpCode::ReleaseControl || opcode == wire::OpCode::Status,
+					"Window analysis must not acquire control, step, or read unavailable pixels");
+			return response;
+		});
+		automation::RigOptions options;
+		options.session = wire::ControlSessionId{1};
+		options.generation = 1;
+		options.source = "local a = simxr.analyze_image_window('1') "
+			"assert(a.frame_gaps == 1 and not a.detected and #a.events == 0) ";
+		options.source += ui ? "assert(a.frames_analyzed == 0 and a.frames_skipped == 4 and a.temporal_pairs == 0) "
+			"assert(#a.skipped_frames == 4 and a.skipped_frames[1].reason == 'missing_eye')"
+			: "assert(a.frames_analyzed == 3 and a.frames_skipped == 1 and a.temporal_pairs == 1) "
+			"assert(#a.skipped_frames == 1 and a.skipped_frames[1].frame_id == '2')";
+		runner.Start(std::move(options));
+		runner.Join();
+		const auto result = runner.Snapshot();
+		Require(result.phase == automation::RigPhase::Complete, result.error.c_str());
+	}
+}
+
+void CheckExportReader()
+{
+	for (unsigned mode = 0; mode < 6; ++mode)
+	{
+		unsigned releases = 0, polls = 0, waits = 0, reads = 0;
+		std::size_t consumed = 0;
+		bool failed = false;
+		try
+		{
+			wire::ExportReader reader([&](auto opcode, auto fields)
+			{
+				wire::Message reply, request;
+				request.fields = std::move(fields);
+				if (opcode == wire::OpCode::StartExport)
+					reply.fields = {wire::Field::U64(wire::tag::ExportId, 4)};
+				else if (opcode == wire::OpCode::ReleaseExport)
+					++releases;
+				else if (opcode == wire::OpCode::ExportInfo)
+				{
+					++polls;
+					reply.fields = {wire::Field::Text(wire::tag::Phase, polls == 1 ? "pending" : "complete"),
+						wire::Field::U64(wire::tag::TotalBytes, 6)};
+				}
+				else if (opcode == wire::OpCode::ReadExport)
+				{
+					++reads;
+					const auto offset = *request.Find(wire::tag::Offset)->AsU64();
+					const auto length = *request.Find(wire::tag::Length)->AsU64();
+					Require(length == 6 - offset, "Export read must fit the remaining range");
+					std::vector<std::byte> bytes(mode == 1 ? 0 : mode == 2 ? length + 1 : 2, std::byte{7});
+					reply.fields = {wire::Field::U64(wire::tag::Offset, mode == 3 ? offset + 1 : offset),
+						wire::Field::Bytes(wire::tag::Bytes, bytes)};
+				}
+				return reply;
+			}, {}, [&]
+			{
+				++waits;
+				if (mode == 5)
+					throw std::runtime_error("cancelled");
+			});
+			reader.Read([&](auto bytes)
+			{
+				if (mode == 4)
+					throw std::runtime_error("sink failed");
+				consumed += bytes.size();
+			});
+			reader.Release();
+		}
+		catch (const std::runtime_error&)
+		{
+			failed = true;
+		}
+		Require(releases == 1 && waits == 1 && failed == (mode != 0),
+			"Export ticket cleanup failed during polling, reading, or consumption");
+		if (!mode)
+			Require(consumed == 6 && reads == 3 && polls == 2, "Partial chunks must complete without repolling metadata");
+	}
+}
+
 void CheckTemporaryResourceCleanup()
 {
-	for (const bool inspect : {false, true})
+	for (unsigned mode = 0; mode < 3; ++mode)
 	{
+		const bool inspect = mode == 1;
+		std::atomic<bool> pending = false;
 		std::size_t releasedImages = 0, releasedExports = 0, releasedInspections = 0;
 		automation::RigRunner runner(
 			[&](auto opcode, auto)
@@ -571,7 +862,9 @@ void CheckTemporaryResourceCleanup()
 					response.fields.push_back(wire::Field::U64(wire::tag::TotalBytes, 4));
 					break;
 				case wire::OpCode::ExportInfo:
-					response.fields.push_back(wire::Field::Text(wire::tag::Phase, "complete"));
+					response.fields.push_back(wire::Field::U64(wire::tag::TotalBytes, 4));
+					pending = true;
+					response.fields.push_back(wire::Field::Text(wire::tag::Phase, mode == 2 ? "pending" : "complete"));
 					break;
 				case wire::OpCode::ReleaseImage:
 					++releasedImages;
@@ -599,8 +892,16 @@ void CheckTemporaryResourceCleanup()
 		options.generation = 1;
 		options.source = inspect ? "simxr.inspect('7')" : "simxr.export('7', '')";
 		runner.Start(std::move(options));
+		if (mode == 2)
+		{
+			for (unsigned attempt = 0; attempt < 1000 && !pending; ++attempt)
+				std::this_thread::sleep_for(std::chrono::milliseconds{1});
+			Require(pending, "Export did not reach pending state before cancellation");
+			runner.Cancel();
+		}
 		runner.Join();
-		Require(runner.Snapshot().phase == automation::RigPhase::Failed, "Invalid resource operation succeeded");
+		Require(runner.Snapshot().phase == (mode == 2 ? automation::RigPhase::Cancelled : automation::RigPhase::Failed),
+			"Resource operation did not fail or cancel as expected");
 		if (inspect)
 			Require(releasedInspections == 1, "Malformed inspection leaked or double-released its reader");
 		else
@@ -649,7 +950,10 @@ void CheckImageWindowCleanup()
 					response.fields.push_back(wire::Field::U64(wire::tag::TotalBytes, 4));
 				}
 				else if (opcode == wire::OpCode::ExportInfo)
+				{
+					response.fields.push_back(wire::Field::U64(wire::tag::TotalBytes, 4));
 					response.fields.push_back(wire::Field::Text(wire::tag::Phase, "complete"));
+				}
 				else if (opcode == wire::OpCode::ReleaseImage)
 					++releasedImages;
 				else if (opcode == wire::OpCode::ReleaseExport)
@@ -943,6 +1247,8 @@ int main()
 	try
 	{
 		CheckUnreportedCompatibility();
+		CheckSweepRigs();
+		CheckControllerBindingRigOwnership();
 		Fixture fixture;
 		automation::RigRunner runner(
 			[&](auto opcode, auto fields)
@@ -1021,10 +1327,14 @@ simxr.checkpoint("fresh VM, persistent IDs", applied.applied_frame == "3")
 				"Restart reused transaction IDs or retained failed VM state");
 		CheckBindingPauseAndStep();
 		CheckResumeClearsSteps();
+		CheckTimedWaits();
+		CheckPausedCancellation();
 		CheckSteppedExecutionPhase();
 		CheckCleanupFailures();
 		CheckScriptValueBoundaries();
 		CheckReportText();
+		CheckWindowAnalysisGaps();
+		CheckExportReader();
 		CheckTemporaryResourceCleanup();
 		CheckImageWindowCleanup();
 		CheckLeaseRenewal();

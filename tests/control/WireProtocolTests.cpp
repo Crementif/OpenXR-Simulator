@@ -89,6 +89,11 @@ void TypedAndNestedRecords()
 					  Field::Text(7, text),
 					  Field::Bytes(8, EncodeFields(nested)),
 					  Field::Text(9, "")};
+	auto payload = message.Find(8);
+	const auto storage = payload->value.data();
+	auto moved = std::move(payload->value);
+	Require(moved.data() == storage && moved == EncodeFields(nested), "Taking owned field bytes copied or changed them");
+	payload->value = std::move(moved);
 	const auto encoded = Encode(message);
 	const auto decoded = Decode(encoded);
 	Require(decoded.message && decoded.message->minor == 42 && decoded.message->opcode == 0xbeef &&
@@ -346,8 +351,39 @@ void AdversarialLengths()
 		for (auto& byte : arbitrary)
 			byte = std::byte{static_cast<unsigned char>(random())};
 		const auto fields = DecodeFields(arbitrary);
+		const auto views = DecodeFieldViews(arbitrary);
+		Require(views.error == fields.error && views.fields.size() == fields.fields.size(),
+				"Borrowed decoder accepted different malformed input");
 		Require(fields.error != DecodeError::None || EncodeFields(fields.fields) == arbitrary,
 				"Arbitrary nested payload was not rejected or exactly preserved");
+	}
+}
+
+void BorrowedFields()
+{
+	const auto payload = EncodeFields(std::array{
+		Field::U64(1, UINT64_MAX, true), Field::I64(2, INT64_MIN), Field::Bool(3, false),
+		Field::Text(4, "nested text"), Field::Bytes(5, EncodeFields(std::array{Field::F32(1, .25f)}))});
+	const auto decoded = DecodeFieldViews(payload);
+	Require(decoded.error == DecodeError::None && decoded.fields.size() == 5 && decoded.Find(1)->required &&
+			decoded.Find(1)->AsU64() == UINT64_MAX && decoded.Find(2)->AsI64() == INT64_MIN &&
+			decoded.Find(3)->AsBool() == false && decoded.Find(4)->AsText() == "nested text" && !decoded.Find(6),
+			"Borrowed fields changed scalar decoding or metadata");
+	for (const auto& field : decoded.fields)
+		Require(field.value.data() >= payload.data() && field.value.data() + field.value.size() <= payload.data() + payload.size(),
+				"Borrowed decoder copied a field payload");
+	const auto nested = DecodeFieldViews(decoded.Find(5)->value);
+	Require(nested.error == DecodeError::None && nested.Find(1)->AsF32() == .25f &&
+			nested.Find(1)->value.data() >= payload.data() &&
+			nested.Find(1)->value.data() + 4 <= payload.data() + payload.size(),
+			"Nested view lost its backing payload");
+	for (std::size_t size = 0; size < payload.size(); ++size)
+	{
+		const auto prefix = std::span(payload).first(size);
+		const auto owned = DecodeFields(prefix);
+		const auto borrowed = DecodeFieldViews(prefix);
+		Require(owned.error == borrowed.error && owned.fields.size() == borrowed.fields.size(),
+				"Borrowed and owned decoders disagree on truncation");
 	}
 }
 
@@ -417,6 +453,7 @@ int main()
 		TextValidation();
 		AdversarialLengths();
 		SimulationCommandBoundaries();
+		BorrowedFields();
 		std::cout << "Wire protocol framing, typed fields, nested bounds and adversarial lengths passed\n";
 		return 0;
 	}
