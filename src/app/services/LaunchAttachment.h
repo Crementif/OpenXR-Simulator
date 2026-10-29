@@ -61,6 +61,7 @@ class LaunchAttachment
 	RuntimeConnection& m_discovery;
 	std::filesystem::path m_directory;
 	std::string m_customEndpoint, m_replacedEndpoint;
+	std::string m_lastFailure;
 	std::set<std::string> m_previous;
 	std::chrono::steady_clock::time_point m_deadline;
 	std::chrono::steady_clock::time_point m_retryAfter{};

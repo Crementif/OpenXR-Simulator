@@ -26,14 +26,18 @@ static XrFovf EyeFov(const settings::EyeFov& eye)
 	return {eye.angleLeft * radians, eye.angleRight * radians, eye.angleUp * radians, eye.angleDown * radians};
 }
 
-static simxr::legacy::ControllerKeyboardSample PollControllerKeyboard(float frameSeconds)
+static simxr::legacy::ControllerKeyboardSample PollControllerKeyboard(bool inputActive, float frameSeconds)
 {
+	simxr::legacy::ControllerKeyboardSample input;
+	input.active = true;
+	input.hands[1].thumbClick = false;
+	// An inactive window still supplies releases for its keyboard-owned controls.
+	if (!inputActive)
+		return input;
 	const auto down = [](int key)
 	{
 		return (GetAsyncKeyState(key) & 0x8000) != 0;
 	};
-	simxr::legacy::ControllerKeyboardSample input;
-	input.active = true;
 	input.frameSeconds = frameSeconds;
 	input.animationKeyDown = down('M');
 	input.resetRight = down(VK_NUMPAD5);
@@ -173,9 +177,8 @@ RuntimeInputSnapshot WindowsRuntimeInput::Poll(std::chrono::nanoseconds period, 
 		m_head.x += forward.x * forwardStep + right.x * rightStep;
 		m_head.y += forward.y * forwardStep + right.y * rightStep + upStep;
 		m_head.z += forward.z * forwardStep + right.z * rightStep;
-
-		controllerFrame.keyboard = PollControllerKeyboard(deltaTime);
 	}
+	controllerFrame.keyboard = PollControllerKeyboard(inputActive, static_cast<float>(periodSec));
 
 	controllerFrame.head = {XrVector3f{m_head.x, m_head.y, m_head.z}, m_head.yaw, m_head.pitch};
 	const auto controllers = m_controllers.Update(controllerFrame);

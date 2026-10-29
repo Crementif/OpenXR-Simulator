@@ -72,9 +72,19 @@ std::optional<LaunchedSession> LaunchAttachment::Poll()
 		return {};
 	if (std::chrono::steady_clock::now() >= m_deadline)
 		throw std::runtime_error("Launched application did not expose a unique running session before the attach "
-								 "deadline. Connect manually.");
+								 "deadline. Connect manually." +
+								 (m_lastFailure.empty() ? std::string{} : " Last discovery failure: " + m_lastFailure));
 	if (std::holds_alternative<WaitingForProcess>(m_state))
 		return {};
+	// Applications can replace a probing XR instance before starting their session.
+	// Only read-only discovery is retried, with the original process and deadline.
+	const auto retry = [&](std::uint64_t epoch, std::uint64_t process, const std::string& detail)
+	{
+		m_discovery.Disconnect(epoch);
+		m_lastFailure = detail;
+		m_retryAfter = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+		m_state = WaitingForEndpoint{process};
+	};
 	if (const auto* waiting = std::get_if<WaitingForEndpoint>(&m_state))
 	{
 		if (std::chrono::steady_clock::now() < m_retryAfter)
@@ -93,15 +103,8 @@ std::optional<LaunchedSession> LaunchAttachment::Poll()
 			throw std::runtime_error("Launch discovery connection changed unexpectedly");
 		if (connection.state == RuntimeConnectionState::Failed)
 		{
-			if (connecting->endpoint == m_replacedEndpoint)
-			{
-				const auto process = connecting->process;
-				m_discovery.Disconnect(connecting->epoch);
-				m_retryAfter = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
-				m_state = WaitingForEndpoint{process};
-				return {};
-			}
-			throw std::runtime_error("Cannot connect to the launched runtime: " + connection.detail);
+			retry(connecting->epoch, connecting->process, connection.detail);
+			return {};
 		}
 		if (connection.state != RuntimeConnectionState::Connected)
 			return {};
@@ -110,6 +113,11 @@ std::optional<LaunchedSession> LaunchAttachment::Poll()
 	auto& waiting = std::get<WaitingForSession>(m_state);
 	if (connection.epoch != waiting.epoch)
 		throw std::runtime_error("Launch discovery connection changed unexpectedly");
+	if (connection.state == RuntimeConnectionState::Failed)
+	{
+		retry(waiting.epoch, waiting.process, connection.detail);
+		return {};
+	}
 	if (connection.state != RuntimeConnectionState::Connected)
 		throw std::runtime_error("Launch discovery connection closed: " + connection.detail);
 	for (auto& reply : m_discovery.Poll())
@@ -118,7 +126,10 @@ std::optional<LaunchedSession> LaunchAttachment::Poll()
 			continue;
 		waiting.request.reset();
 		if (!reply.error.empty())
-			throw std::runtime_error(reply.error);
+		{
+			retry(waiting.epoch, waiting.process, reply.error);
+			return {};
+		}
 		if (auto session = UniqueSession(reply.packet.message, waiting.endpoint, waiting.process))
 		{
 			const auto epoch = waiting.epoch;

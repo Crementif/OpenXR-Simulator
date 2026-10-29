@@ -175,6 +175,73 @@ void ExistingEndpointAndChangedProcess()
 		},
 		"process identity changed");
 }
+void RecreatedEndpointBeforeSession()
+{
+	Directory directory;
+	app::RuntimeConnection discovery;
+	app::LaunchAttachment attachment{discovery, directory.Profile()};
+	attachment.Observe(Running());
+	RuntimeFixture probing;
+	probing.Listen(directory.Endpoint());
+	Eventually(
+		[&]
+		{
+			Require(!attachment.Poll(), "Probing instance attached without a running session");
+			return discovery.Snapshot().state == app::RuntimeConnectionState::Connected;
+		},
+		"Probing instance did not connect");
+	const auto firstEpoch = discovery.Snapshot().epoch;
+	probing.server.reset();
+	Eventually(
+		[&]
+		{
+			Require(!attachment.Poll(), "Retired probing instance attached");
+			return discovery.Snapshot().epoch != firstEpoch;
+		},
+		"Retired probing instance was not disconnected");
+	RuntimeFixture replacement;
+	replacement.Begin();
+	replacement.Listen(directory.Endpoint());
+	std::optional<app::LaunchedSession> result;
+	Eventually(
+		[&]
+		{
+			result = attachment.Poll();
+			return result.has_value();
+		},
+		"Replacement runtime did not attach automatically");
+	Require(result->process == Running().process && result->endpoint == directory.Endpoint() &&
+				result->generation == replacement.session->Snapshot().generation.value,
+			"Replacement attachment lost process or session identity");
+	Require(discovery.Snapshot().state == app::RuntimeConnectionState::Disconnected,
+			"Replacement attachment retained discovery resources");
+}
+
+void ExitWhileRetrying()
+{
+	Directory directory;
+	app::RuntimeConnection discovery;
+	{
+		app::LaunchAttachment attachment{discovery, directory.Profile()};
+		attachment.Observe(Running());
+		RuntimeFixture probing;
+		probing.Listen(directory.Endpoint());
+		Require(!attachment.Poll(), "Discovery attached synchronously");
+		probing.server.reset();
+		Eventually(
+			[&]
+			{
+				Require(!attachment.Poll(), "Retired endpoint attached");
+				return discovery.Snapshot().state == app::RuntimeConnectionState::Disconnected;
+			},
+			"Failed startup connection was not released for retry");
+		auto exited = Running();
+		exited.state = app::LaunchState::Exited;
+		Reject([&] { attachment.Observe(exited); }, "ended before attachment");
+	}
+	Require(discovery.Snapshot().state == app::RuntimeConnectionState::Disconnected,
+			"Exiting during discovery retained a connection");
+}
 void DiscoveryEpochOwnership()
 {
 	Directory directory;
@@ -238,6 +305,8 @@ int main()
 	{
 		FreshEndpointAndRunningSession();
 		ExistingEndpointAndChangedProcess();
+		RecreatedEndpointBeforeSession();
+		ExitWhileRetrying();
 		DiscoveryEpochOwnership();
 		DiscoveryFailures();
 		std::cout << "PASS explicit launch attachment, exact endpoint/session and discovery epoch ownership\n";
