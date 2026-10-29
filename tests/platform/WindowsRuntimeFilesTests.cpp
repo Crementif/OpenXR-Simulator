@@ -2,7 +2,7 @@
 #include "Pch.h"
 #include "platform/windows/WindowsRuntimeStatus.h"
 #include "control/legacy/WindowsLegacyFiles.h"
-#include "json.h"
+#include "Json.h"
 #include <iostream>
 
 namespace simxr::windows::tests

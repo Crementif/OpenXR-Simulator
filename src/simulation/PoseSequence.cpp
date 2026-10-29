@@ -1,6 +1,6 @@
 #include "simulation/PoseSequence.h"
 #include "Pch.h"
-#include "json.h"
+#include "Json.h"
 #include "math/Math.h"
 #include "simulation/InputState.h"
 

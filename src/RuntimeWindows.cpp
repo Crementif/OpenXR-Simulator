@@ -23,7 +23,7 @@
 #include "platform/windows/WindowsRuntimeStatus.h"
 #include "platform/windows/WindowsRuntimeFiles.h"
 #include "control/legacy/WindowsRuntimeSettings.h"
-#include "flicker_detector.h"
+#include "diagnostics/FlickerDetector.h"
 #include "graphics/LayerBuilder.h"
 #include "graphics/SwapchainAccess.h"
 #include "graphics/SwapchainWaits.h"

@@ -1,6 +1,6 @@
 #include "headset/RuntimeSelection.h"
 #include "Pch.h"
-#include "json.h"
+#include "Json.h"
 
 namespace simxr::headset
 {

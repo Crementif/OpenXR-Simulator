@@ -2,7 +2,7 @@
 #include "math/Math.h"
 #include "control/legacy/LegacyInput.h"
 #include "simulation/PoseSequence.h"
-#include "json.h"
+#include "Json.h"
 #include <limits>
 
 #include <cmath>

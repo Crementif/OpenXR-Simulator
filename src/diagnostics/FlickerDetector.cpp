@@ -1,4 +1,4 @@
-#include "flicker_detector.h"
+#include "diagnostics/FlickerDetector.h"
 #include "Pch.h"
 
 #include "diagnostics/platform/ArtifactFile.h"

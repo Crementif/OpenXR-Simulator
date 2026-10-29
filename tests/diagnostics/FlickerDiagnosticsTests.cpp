@@ -3,8 +3,8 @@
 #include "diagnostics/FlickerMonitors.h"
 #include "diagnostics/IncidentAnalysis.h"
 #include "diagnostics/platform/ArtifactFile.h"
-#include "flicker_detector.h"
-#include "json.h"
+#include "diagnostics/FlickerDetector.h"
+#include "Json.h"
 
 #include <algorithm>
 #include <array>

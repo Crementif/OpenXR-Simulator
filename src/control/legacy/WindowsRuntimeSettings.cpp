@@ -1,6 +1,6 @@
 #include "control/legacy/WindowsRuntimeSettings.h"
 #include "Pch.h"
-#include "json.h"
+#include "Json.h"
 
 namespace simxr::legacy::settings
 {

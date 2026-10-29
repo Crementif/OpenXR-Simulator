@@ -1,4 +1,4 @@
-#include "projection_timing.h"
+#include "diagnostics/ProjectionTiming.h"
 
 #include <cassert>
 #include <cmath>

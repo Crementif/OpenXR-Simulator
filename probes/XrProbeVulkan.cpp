@@ -1,4 +1,4 @@
-// Vulkan counterpart of xr_probe.cpp: replays the OpenXR sequence a native-Vulkan
+// Vulkan counterpart of XrProbe.cpp: replays the OpenXR sequence a native-Vulkan
 // BetterVR would run against whatever runtime XR_RUNTIME_JSON points at.
 //
 // XR_KHR_vulkan_enable2 by default, XR_KHR_vulkan_enable with SIMXR_PROBE_ENABLE1=1.
@@ -1313,7 +1313,7 @@ static int Run(std::span<const std::string> arguments, WindowsPendingDelivery* p
 			quad.pose.position.z = -2.0f;
 			quad.size = {1.6f, 0.9f};
 
-			// The same three extra quads xr_probe.cpp submits, so the two probes composite the
+			// The same three extra quads XrProbe.cpp submits, so the two probes composite the
 			// same scene and their preview output can be diffed pixel for pixel.
 			XrCompositionLayerQuad angled = quad;
 			angled.pose.position = {-1.1f, eyeY, -1.6f};
