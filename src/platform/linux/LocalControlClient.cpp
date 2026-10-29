@@ -17,7 +17,7 @@ using Clock = std::chrono::steady_clock;
 
 static void Ready(int socket, int stopping, short events, Clock::time_point deadline, RequestId request)
 {
-	for (;;)
+	while (true)
 	{
 		const auto remaining = deadline - Clock::now();
 		if (remaining <= Clock::duration::zero())
@@ -246,7 +246,7 @@ struct LocalControlClient::State
 	{
 		const auto deadline = Clock::now() + timeout;
 		Send(deadline);
-		for (;;)
+		while (true)
 		{
 			Receive(deadline);
 			auto decoded = Decode(pending->received);

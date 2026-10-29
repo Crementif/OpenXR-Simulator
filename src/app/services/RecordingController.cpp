@@ -81,7 +81,7 @@ void RecordingController::Run()
 {
 	std::uint64_t bound = 0;
 	std::shared_ptr<WorkerConnection> connection;
-	for (;;)
+	while (true)
 	{
 		std::optional<Job> job;
 		bool rebind = false;

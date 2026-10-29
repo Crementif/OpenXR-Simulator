@@ -108,7 +108,7 @@ static StereoEncoded StereoImage(ArtifactCalls& calls, std::uint64_t reader, std
 		try
 		{
 			wire::Message info;
-			for (;;)
+			while (true)
 			{
 				info = calls.Request(wire::OpCode::ExportInfo, {wire::Field::U64(tag::ExportId, ticket, true)});
 				const auto phase = panel::Text(info, tag::Phase);
@@ -270,7 +270,7 @@ std::optional<Json> CaptureSequence(McpApplication& app, McpDebug& debug, const 
 			if (progress)
 				progress(manifest);
 			std::uint64_t cursor = 0, bytes = 0;
-			for (;;)
+			while (true)
 			{
 				calls.Check();
 				const auto result =

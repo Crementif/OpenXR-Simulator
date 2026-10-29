@@ -8,7 +8,7 @@ namespace simxr::windows
 static std::wstring Environment(const wchar_t* name)
 {
 	std::wstring value;
-	for (;;)
+	while (true)
 	{
 		SetLastError(ERROR_SUCCESS);
 		const auto count = GetEnvironmentVariableW(name, value.data(), static_cast<DWORD>(value.size()));

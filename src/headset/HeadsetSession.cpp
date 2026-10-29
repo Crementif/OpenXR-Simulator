@@ -137,7 +137,7 @@ void HeadsetSession::Open(std::optional<HeadsetImageSource> source, bool tracker
 
 void HeadsetSession::PollEvents()
 {
-	for (;;)
+	while (true)
 	{
 		XrEventDataBuffer event{XR_TYPE_EVENT_DATA_BUFFER};
 		const auto result = xrPollEvent(m_runtime.Instance(), &event);

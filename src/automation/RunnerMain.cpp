@@ -143,7 +143,7 @@ int simxr::automation::RunRunner(int argc, char** argv)
 			request.message.fields = std::move(fields);
 			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
 			bool retry = false;
-			for (;;)
+			while (true)
 			{
 				try
 				{
@@ -187,7 +187,7 @@ int simxr::automation::RunRunner(int argc, char** argv)
 		runner.Start(std::move(options));
 		std::signal(SIGINT, Interrupt);
 		std::signal(SIGTERM, Interrupt);
-		for (;;)
+		while (true)
 		{
 			const auto phase = runner.Phase();
 			if (phase != simxr::automation::RigPhase::Running && phase != simxr::automation::RigPhase::Paused)

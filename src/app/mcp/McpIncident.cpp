@@ -30,7 +30,7 @@ public:
 	IncidentPermit()
 	{
 		auto count = s_incidents.load();
-		for (;;)
+		while (true)
 		{
 			if (count >= 2)
 				throw std::runtime_error("Incident capture capacity is busy; retry explicitly");
@@ -179,7 +179,7 @@ std::optional<IncidentCapture> CaptureIncident(McpApplication& application, cons
 	const auto connection = opened.id;
 	const auto target = ui ? "quad_layers" : "composed_eyes";
 	wire::Message started;
-	for (;;)
+	while (true)
 	{
 		try
 		{
@@ -200,7 +200,7 @@ std::optional<IncidentCapture> CaptureIncident(McpApplication& application, cons
 		throw std::runtime_error("Runtime omitted the incident window identity");
 	wire::Message windowInfo;
 	Json document;
-	for (;;)
+	while (true)
 	{
 		windowInfo = calls.Request(connection, wire::OpCode::ReadImageWindow,
 								   {wire::Field::U64(tag::ImageWindowId, window, true)});

@@ -195,7 +195,7 @@ void LibraryCatalog::Scan(LibraryResult& result, std::stop_token stop)
 
 void LibraryCatalog::Run(std::stop_token stop)
 {
-	for (;;)
+	while (true)
 	{
 		Job job{LibraryAction::Scan, {}, {}};
 		{

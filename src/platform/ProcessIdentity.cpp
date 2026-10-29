@@ -8,7 +8,7 @@ static std::atomic<std::uint64_t> s_nextIdentity{1};
 std::uint64_t AllocateProcessIdentity()
 {
 	auto identity = s_nextIdentity.load(std::memory_order_relaxed);
-	for (;;)
+	while (true)
 	{
 		if (identity == std::numeric_limits<std::uint64_t>::max())
 			throw std::overflow_error("Process identities exhausted");

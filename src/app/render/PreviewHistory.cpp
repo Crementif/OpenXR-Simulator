@@ -304,7 +304,7 @@ void PreviewHistory::Offer(PreviewTexture& source, std::uint32_t layer, FrameIde
 		{
 			auto layers = static_cast<std::uint32_t>(
 				std::min<std::size_t>(ChunkLayers, resources.capacity - resources.chunks.size() * ChunkLayers));
-			for (;;)
+			while (true)
 			{
 				try
 				{

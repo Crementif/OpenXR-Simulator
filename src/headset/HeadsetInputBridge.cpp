@@ -196,7 +196,7 @@ void HeadsetInputBridge::Run(std::stop_token stop) noexcept
 			if (phase(claimed) != "queued" && phase(claimed) != "rescheduled")
 				return false;
 			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-			for (;;)
+			while (true)
 			{
 				const auto status = phase(
 					call(wire::OpCode::SimulationStatus, {wire::Field::U64(wire::tag::TransactionId, transaction)}));

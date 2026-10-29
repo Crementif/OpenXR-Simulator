@@ -14,7 +14,7 @@ static std::atomic<unsigned> s_imageWorkers{0};
 ImageEncodingPermit::ImageEncodingPermit()
 {
 	auto active = s_imageWorkers.load();
-	for (;;)
+	while (true)
 	{
 		if (active >= 2)
 			throw std::runtime_error("Image encoding capacity is busy; retry explicitly");

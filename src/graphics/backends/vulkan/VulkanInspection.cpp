@@ -21,7 +21,7 @@ static FramePool& DeliveryBudget()
 static std::uint64_t Identity(std::atomic<std::uint64_t>& next)
 {
 	auto value = next.load();
-	for (;;)
+	while (true)
 	{
 		if (value == std::numeric_limits<std::uint64_t>::max())
 			throw VulkanError(VK_ERROR_TOO_MANY_OBJECTS, "Shared image identity exhausted");
@@ -265,7 +265,7 @@ private:
 
 	void Run() noexcept
 	{
-		for (;;)
+		while (true)
 		{
 			{
 				std::unique_lock lock(m_mutex);
@@ -839,7 +839,7 @@ VkResult VulkanInspection::Drain(std::uint64_t timeout)
 	const auto deadline =
 		std::chrono::steady_clock::now() + std::chrono::nanoseconds(std::min<std::uint64_t>(timeout, 5000000000ULL));
 	std::unique_lock lock(m_mutex);
-	for (;;)
+	while (true)
 	{
 		if (m_workerStopped.load())
 		{
@@ -938,7 +938,7 @@ std::shared_ptr<VulkanInspectionTransfer::State> VulkanInspection::Poll()
 
 void VulkanInspection::Run() noexcept
 {
-	for (;;)
+	while (true)
 	{
 		std::shared_ptr<VulkanInspectionTransfer::State> next;
 		try

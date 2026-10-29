@@ -319,7 +319,7 @@ void PilotLiveRuntime(const char* endpoint)
 		auto* popup = ImGui::GetCurrentContext()->OpenPopupStack.back().Window;
 		Require(popup, "Save popover has no window");
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
-		for (;;)
+		while (true)
 		{
 			frame();
 			if (const auto take = std::get_if<TakeSel>(&test.workspace.State().selection))

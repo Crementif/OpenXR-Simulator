@@ -33,7 +33,7 @@ wire::ControlPacket Finish(wire::LocalControlClient& client, wire::ControlPacket
 {
 	bool retry = false;
 	const auto deadline = native::Clock::now() + 3s;
-	for (;;)
+	while (true)
 	{
 		try
 		{
@@ -149,7 +149,7 @@ struct Mock
 		channel->Connect(native::Clock::time_point::max(), stop.value);
 		std::vector<std::byte> bytes(wire::HeaderSize);
 		std::size_t offset = 0;
-		for (;;)
+		while (true)
 		{
 			while (offset < bytes.size())
 				offset += channel->Transfer(false, std::span<std::byte>{bytes}.subspan(offset),
@@ -369,7 +369,7 @@ void RetryAndPartialBytes()
 	Require(rejected && client.Pending() == pending, "New requests cannot replace a pending exchange");
 	wire::ControlPacket response;
 	const auto deadline = native::Clock::now() + 3s;
-	for (;;)
+	while (true)
 	{
 		try
 		{

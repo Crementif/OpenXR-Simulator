@@ -672,7 +672,7 @@ public:
 		};
 		auto await = [&](DebugOperationId id) {
 			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-			for (;;)
+			while (true)
 			{
 				const auto operation = debugger->Read(id);
 				Require(operation && operation->phase != DebugPhase::Failed &&
@@ -686,7 +686,7 @@ public:
 		};
 		auto admit = [&](DebugOperationId operation) {
 			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-			for (;;)
+			while (true)
 			{
 				const auto status = debugger->Read(operation);
 				Require(status && status->phase != DebugPhase::Failed, "Production capture reservation failed");
@@ -795,7 +795,7 @@ public:
 			}
 		}
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-		for (;;)
+		while (true)
 		{
 			const auto state = session.Display().Snapshot();
 			if (state.latest && state.latest->source == key)
@@ -1146,7 +1146,7 @@ static void CompletedProducerReclamation(const VulkanBinding& binding)
 				backend.Submit(output) == XR_SUCCESS,
 			"Submit capacity-one GPU producer");
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-	for (;;)
+	while (true)
 	{
 		const auto completion = output->PollCompletion();
 		Require(completion != CompletionStatus::Failed, "Capacity-one producer failed");

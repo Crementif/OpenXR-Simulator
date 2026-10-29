@@ -21,7 +21,7 @@ static void Require(bool condition, const char* message)
 static void Await(const GpuCompletion& output)
 {
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-	for (;;)
+	while (true)
 	{
 		const auto status = output.PollCompletion();
 		Require(status != CompletionStatus::Failed, "Owned composition failed");

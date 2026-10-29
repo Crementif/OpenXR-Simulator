@@ -200,7 +200,7 @@ void FramePreviewHistory::TrimRam()
 			return;
 		m_trimming = true;
 	}
-	for (;;)
+	while (true)
 	{
 		std::shared_ptr<Entry> retired;
 		FramePreview decoded;
@@ -304,7 +304,7 @@ FramePreview FramePreviewHistory::Find(FrameKey key)
 void FramePreviewHistory::Run() noexcept
 {
 	bool worked = false, retry = false;
-	for (;;)
+	while (true)
 	{
 		std::shared_ptr<Entry> encode, decode;
 		FramePreview retired;

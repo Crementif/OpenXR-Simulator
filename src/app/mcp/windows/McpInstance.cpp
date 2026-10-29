@@ -175,7 +175,7 @@ static std::optional<McpFileIdentity> FileIdentity(const std::filesystem::path& 
 std::filesystem::path McpOwnExecutable()
 {
 	std::vector<wchar_t> buffer(512);
-	for (;;)
+	while (true)
 	{
 		const auto count = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
 		if (!count)

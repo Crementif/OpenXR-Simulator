@@ -320,7 +320,7 @@ static int Run(const std::vector<std::filesystem::path>& arguments)
 	{
 		auto restartWindow = std::chrono::steady_clock::now();
 		unsigned restarts = 0;
-		for (;;)
+		while (true)
 		{
 			bool rebuild = false;
 			HeadsetSession session(runtime, graphics);

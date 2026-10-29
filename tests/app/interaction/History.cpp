@@ -221,7 +221,7 @@ void CheckSnapshotRetention(Interaction& test)
 {
 	const auto wait = [&](const auto& ready, const char* failure) {
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
-		for (;;)
+		while (true)
 		{
 			test.Frame();
 			const auto state = test.runtime.Snapshot();

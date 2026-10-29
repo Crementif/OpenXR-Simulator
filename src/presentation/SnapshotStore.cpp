@@ -11,7 +11,7 @@ static CaptureId NextCapture()
 {
 	static std::atomic<std::uint64_t> s_nextCapture{1};
 	auto value = s_nextCapture.load();
-	for (;;)
+	while (true)
 	{
 		if (value == std::numeric_limits<std::uint64_t>::max())
 			throw std::overflow_error("Capture identities exhausted");
@@ -600,7 +600,7 @@ void SnapshotStore::Poll() noexcept
 		for (const auto& entry : m_entries)
 			limit = std::max(limit, entry.record.id);
 	}
-	for (;;)
+	while (true)
 	{
 		CaptureId id;
 		std::shared_ptr<const FrameOutput> output;

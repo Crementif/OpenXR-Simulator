@@ -1017,7 +1017,7 @@ static int RunProbe()
 	const auto readPreview = [&](std::uint64_t frame) {
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 		wire::Message retained;
-		for (;;)
+		while (true)
 		{
 			wire::ControlPacket request;
 			request.message.opcode = static_cast<std::uint16_t>(wire::OpCode::RetainPreview);
@@ -1057,7 +1057,7 @@ static int RunProbe()
 			CHECK(started.Find(tag::ExportId) && started.Find(tag::TotalBytes));
 			const auto ticket = started.Find(tag::ExportId)->AsU64();
 			CHECK(ticket && started.Find(tag::TotalBytes)->AsU64() == 64 * 48 * 4);
-			for (;;)
+			while (true)
 			{
 				const auto status = exchange(wire::OpCode::ExportInfo, {wire::Field::U64(tag::ExportId, *ticket)});
 				CHECK(status.Find(tag::Phase));

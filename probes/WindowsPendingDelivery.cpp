@@ -96,7 +96,7 @@ static PendingPreview RetainPreview(control::LocalControlClient& client)
 	session.fields = std::move(entry.fields);
 	PendingPreview result{Id(session, tag::Session), Id(session, tag::Generation), 0, {}};
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-	for (;;)
+	while (true)
 	{
 		const auto retained = Exchange(client, control::OpCode::RetainPreview,
 									   {control::Field::U64(tag::Session, result.session),
@@ -264,7 +264,7 @@ static void Release(control::LocalControlClient& client, const PendingPreview& p
 static void AwaitConsumers(std::span<const std::unique_ptr<control::VulkanImageConsumer>> consumers)
 {
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-	for (;;)
+	while (true)
 	{
 		bool complete = true;
 		for (const auto& consumer : consumers)
@@ -340,7 +340,7 @@ void WindowsPendingDelivery::Command(std::uint8_t command) const
 			"Cannot send pending-consumer command");
 	std::array<char, 1024> response{};
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
-	for (;;)
+	while (true)
 	{
 		DWORD available = 0;
 		Require(PeekNamedPipe(m_pipe.value, nullptr, 0, nullptr, &available, nullptr),
@@ -363,7 +363,7 @@ int RunWindowsPendingConsumer(bool gated, std::uint32_t runtimeProcess)
 											  nullptr, OPEN_EXISTING, 0, nullptr));
 	Require(pipe.value != INVALID_HANDLE_VALUE, "Cannot connect pending-consumer command pipe");
 	WindowsPendingDelivery consumer(gated, runtimeProcess);
-	for (;;)
+	while (true)
 	{
 		std::uint8_t command = 0;
 		DWORD transferred = 0;
@@ -622,7 +622,7 @@ void WindowsPendingDelivery::ReleaseAndVerify()
 	{
 		m_consumers[index] = std::make_unique<control::VulkanImageConsumer>(m_device, m_extensions, VK_API_VERSION_1_1,
 																			m_completion, m_timelineEnabled);
-		for (;;)
+		while (true)
 		{
 			const auto shared = Share(client, preview, *m_consumers[index]);
 			if (Result(shared) != control::ErrorCode::Capacity)

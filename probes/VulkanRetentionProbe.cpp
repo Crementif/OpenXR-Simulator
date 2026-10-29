@@ -22,7 +22,7 @@ static void Require(bool value, const char* message)
 static void Await(const GpuCompletion& output)
 {
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-	for (;;)
+	while (true)
 	{
 		const auto status = output.PollCompletion();
 		if (status == CompletionStatus::Complete)

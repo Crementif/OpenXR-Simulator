@@ -323,7 +323,7 @@ void CheckUpdateStartup()
 	IgnoreRealPointer();
 	Interaction test(true);
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(12);
-	for (;;)
+	while (true)
 	{
 		test.Frame();
 		const auto* notice = FindPanel("##Notices");

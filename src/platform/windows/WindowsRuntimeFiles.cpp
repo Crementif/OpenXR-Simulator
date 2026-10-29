@@ -88,7 +88,7 @@ void WindowsRuntimeFiles::Run() noexcept
 	{
 		std::vector<std::string> logs;
 		logs.reserve(s_maxLogs);
-		for (;;)
+		while (true)
 		{
 			std::optional<std::string> document;
 			bool stopping;

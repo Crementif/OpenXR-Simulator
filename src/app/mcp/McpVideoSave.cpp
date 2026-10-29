@@ -25,7 +25,7 @@ public:
 	VideoSavePermit()
 	{
 		auto count = s_videoSaves.load();
-		for (;;)
+		while (true)
 		{
 			if (count >= 2)
 				throw std::runtime_error("Video save capacity is busy; retry explicitly");
@@ -124,7 +124,7 @@ std::optional<Json> SaveVideo(McpApplication& app, McpDebug& debug, const Json& 
 			if (!ticket)
 				throw std::runtime_error("Invalid video export identity");
 			wire::Message info;
-			for (;;)
+			while (true)
 			{
 				info = calls.Request(wire::OpCode::ExportInfo, {wire::Field::U64(tag::ExportId, ticket, true)});
 				const auto phase = panel::Text(info, tag::Phase);

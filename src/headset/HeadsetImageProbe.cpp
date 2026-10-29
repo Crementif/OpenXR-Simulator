@@ -93,7 +93,7 @@ void VerifyHeadsetImageCopy(HeadsetGraphics& graphics, const HeadsetImageSource&
 		consumer.Import(description, shared.handles);
 		consumer.Submit();
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-		for (;;)
+		while (true)
 		{
 			const auto status = consumer.Poll();
 			if (status == CompletionStatus::Complete)

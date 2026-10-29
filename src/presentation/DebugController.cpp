@@ -272,7 +272,7 @@ DebugControllerSnapshot DebugController::Snapshot() const
 
 void DebugController::Run() noexcept
 {
-	for (;;)
+	while (true)
 	{
 		Poll();
 		std::unique_lock lock(m_state);

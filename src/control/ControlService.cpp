@@ -1015,7 +1015,7 @@ ControlPacket ControlService::HandlePacket(ConnectionId connection, const Contro
 
 void ControlService::Close() noexcept
 {
-	for (;;)
+	while (true)
 	{
 		ConnectionId id;
 		{

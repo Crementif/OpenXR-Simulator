@@ -69,7 +69,7 @@ void CheckDebuggerWorkflow(const char* endpoint)
 				request.message.fields = std::move(fields);
 				const auto ticket = observer.Submit(std::move(request));
 				Require(ticket != 0, "Timeout observer request was not admitted");
-				for (;;)
+				while (true)
 				{
 					for (auto& reply : observer.Poll())
 						if (reply.ticket == ticket)

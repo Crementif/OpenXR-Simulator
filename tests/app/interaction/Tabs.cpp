@@ -70,7 +70,7 @@ int RunTabLaunchFixture()
 	control::ControlService service{engine};
 	control::LocalControlServer server{
 		service, (std::filesystem::path(data) / ("control." + std::to_string(::getpid()) + ".sock")).string()};
-	for (;;)
+	while (true)
 		std::this_thread::sleep_for(100ms);
 }
 

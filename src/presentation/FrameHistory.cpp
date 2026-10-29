@@ -7,7 +7,7 @@ static SessionGeneration NextGeneration()
 {
 	static std::atomic<std::uint64_t> s_nextGeneration{1};
 	auto value = s_nextGeneration.load();
-	for (;;)
+	while (true)
 	{
 		if (value == std::numeric_limits<std::uint64_t>::max())
 			throw std::overflow_error("Session generations exhausted");

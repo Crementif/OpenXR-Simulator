@@ -268,7 +268,7 @@ XrResult FrameScheduler::WaitFrame(FramePrediction& prediction,
 	const auto revision = m_revision;
 	try
 	{
-		for (;;)
+		while (true)
 		{
 			m_changed.wait(lock, [&] {
 				return m_revision != revision || (!m_state.waited && (!m_state.paused || m_state.permits));

@@ -73,7 +73,7 @@ void ManualInputController::RunChecked()
 	std::optional<wire::Message> waiting;
 	bool waitingPose = false;
 	auto nextRead = Clock::time_point::max();
-	for (;;)
+	while (true)
 	{
 		std::shared_ptr<WorkerConnection> retired;
 		ManualInputTarget selected;

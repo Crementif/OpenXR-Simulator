@@ -206,7 +206,7 @@ struct Channel::Native
 
 DWORD Channel::Finish(Clock::time_point deadline, HANDLE stop)
 {
-	for (;;)
+	while (true)
 	{
 		if (stop && WaitForSingleObject(stop, 0) == WAIT_OBJECT_0)
 			throw Interrupted{};

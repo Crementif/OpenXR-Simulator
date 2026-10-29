@@ -68,7 +68,7 @@ void TimeoutAndPartialRights()
 			std::vector<std::byte> bytes(wire::HeaderSize);
 			std::size_t offset = 0;
 			std::vector<std::shared_ptr<wire::TransferHandle>> incoming;
-			for (;;)
+			while (true)
 			{
 				alignas(cmsghdr) std::array<std::byte, CMSG_SPACE(sizeof(int) * 4)> ancillary{};
 				iovec data{bytes.data() + offset, bytes.size() - offset};

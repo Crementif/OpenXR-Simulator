@@ -117,7 +117,7 @@ void McpConnector::Invalidate(std::uint64_t generation)
 
 void McpConnector::Monitor()
 {
-	for (;;)
+	while (true)
 	{
 		std::optional<Connection> current;
 		Json initializationParams;
@@ -394,7 +394,7 @@ void McpConnector::Handle(const std::shared_ptr<Job>& job)
 
 void McpConnector::Work(bool notifications)
 {
-	for (;;)
+	while (true)
 	{
 		std::shared_ptr<Job> job;
 		{
@@ -555,7 +555,7 @@ void McpConnector::Stop() noexcept
 	}
 	if (current)
 		DeleteSession(current->endpoint.port, current->endpoint.token, current->session, current->version);
-	for (;;)
+	while (true)
 	{
 		std::vector<std::shared_ptr<httplib::Client>> active;
 		{

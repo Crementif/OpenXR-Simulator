@@ -337,7 +337,7 @@ static void GameEvidence()
 		archive::RecordingArchiveWriter writer(root.path / "sdk", start, origin);
 		for (unsigned index = 0; index < (gap ? 1100u : 2u); ++index)
 			Require(runtime.Game().Publish(game, std::to_string(index)), "SDK journal setup");
-		for (;;)
+		while (true)
 		{
 			const auto message = read(writer.State().game->next, 16);
 			const auto decoded = archive::DecodeRecordedGamePage(message);

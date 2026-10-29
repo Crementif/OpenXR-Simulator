@@ -272,7 +272,7 @@ void HeadsetHost::Run(std::stop_token stop, HeadsetHostOptions options)
 		auto outputDeadline = std::chrono::steady_clock::time_point{};
 		auto trackerDeadline = std::chrono::steady_clock::time_point{};
 		auto deadline = std::chrono::steady_clock::time_point::max();
-		for (;;)
+		while (true)
 		{
 			const bool exited = SDL_WaitProcess(process.get(), false, &result.exitCode);
 			// Bound each drain as well as retained bytes so a noisy child cannot starve stop.

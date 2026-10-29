@@ -507,7 +507,7 @@ static wire::Message Exchange(const std::shared_ptr<wire::LocalControlClient>& c
 	bool retry = false;
 	try
 	{
-		for (;;)
+		while (true)
 		{
 			try
 			{
@@ -605,7 +605,7 @@ std::optional<McpConnection> McpDebug::Connect(McpApplication& application, cons
 	try
 	{
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-		for (;;)
+		while (true)
 		{
 			if (entry->closed.load())
 				throw std::runtime_error("MCP session is closed");

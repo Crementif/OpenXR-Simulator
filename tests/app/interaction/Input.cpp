@@ -521,7 +521,7 @@ void CheckInputTake(Interaction& test, const std::filesystem::path& directory)
 	bool checkedHold = false;
 	std::optional<std::size_t> anchor;
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-	for (;;)
+	while (true)
 	{
 		pump(1);
 		if (!anchor)
@@ -1478,7 +1478,7 @@ void CheckInputPad(Interaction& test)
 	ImVec2 pointerPosition;
 	const auto settle = [&](const auto& ready, const char* failure) {
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-		for (;;)
+		while (true)
 		{
 			const auto controls = observed();
 			if (ready(controls))

@@ -148,7 +148,7 @@ static void VerifyPreservationOwnership()
 static void Await(const std::function<CompletionStatus()>& poll, const char* message)
 {
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-	for (;;)
+	while (true)
 	{
 		const auto status = poll();
 		if (status == CompletionStatus::Complete)
@@ -199,7 +199,7 @@ public:
 static std::shared_ptr<VulkanImageDelivery> ShareEventually(const std::shared_ptr<VulkanInspectionFrame>& frame)
 {
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-	for (;;)
+	while (true)
 	{
 		try
 		{
@@ -223,7 +223,7 @@ static void VerifyKnownSubmissionFailure(const std::shared_ptr<VulkanInspectionF
 	{
 		const auto expected = attempt % 2 ? VK_ERROR_OUT_OF_DEVICE_MEMORY : VK_ERROR_OUT_OF_HOST_MEMORY;
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-		for (;;)
+		while (true)
 		{
 			bool fired = false;
 			VkResult result = VK_SUCCESS;

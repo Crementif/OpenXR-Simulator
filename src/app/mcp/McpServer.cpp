@@ -449,7 +449,7 @@ void McpServer::DownloadArtifact(const httplib::Request& request, httplib::Respo
 		session->lastUsed = std::chrono::steady_clock::now();
 	}
 	auto active = m_activeDownloads.load();
-	for (;;)
+	while (true)
 	{
 		if (active >= 2)
 		{

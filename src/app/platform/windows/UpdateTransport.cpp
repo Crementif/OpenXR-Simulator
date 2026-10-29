@@ -67,7 +67,7 @@ std::string windows::FetchUpdateResponse(std::wstring_view host, std::uint16_t p
 		throw std::runtime_error("GitHub releases returned HTTP " + std::to_string(status));
 	std::string response;
 	std::array<char, 8192> buffer{};
-	for (;;)
+	while (true)
 	{
 		if (std::chrono::steady_clock::now() - started > std::chrono::seconds(8))
 			throw std::runtime_error("Update request timed out");

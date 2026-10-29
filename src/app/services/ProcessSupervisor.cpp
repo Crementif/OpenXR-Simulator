@@ -209,7 +209,7 @@ ProcessSupervisor::~ProcessSupervisor()
 
 void ProcessSupervisor::Run()
 {
-	for (;;)
+	while (true)
 	{
 		std::array<Job*, s_capacity> observed{};
 		std::array<std::unique_ptr<Job>, s_capacity> retired;

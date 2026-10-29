@@ -160,7 +160,7 @@ void RigRuntime::Wait(std::chrono::milliseconds duration)
 	if (duration.count() < 0 || duration > std::chrono::hours{1})
 		throw std::invalid_argument("Rig wait must be between zero and one hour");
 	const auto target = std::chrono::steady_clock::now() + duration;
-	for (;;)
+	while (true)
 	{
 		m_progress.Check();
 		RenewLease();
@@ -191,7 +191,7 @@ control::Message RigRuntime::Debug(control::CommandKind kind, Fields extra)
 	fields.insert(fields.end(), std::make_move_iterator(extra.begin()), std::make_move_iterator(extra.end()));
 	const auto submitted = Call(control::OpCode::Submit, std::move(fields));
 	const auto operation = Number(submitted, tag::OperationId);
-	for (;;)
+	while (true)
 	{
 		auto query = Session();
 		query.push_back(control::Field::U64(tag::OperationId, operation, true));
@@ -236,7 +236,7 @@ std::uint64_t RigRuntime::Schedule(CommandTarget target, CommandLatePolicy polic
 
 std::vector<std::byte> RigRuntime::AwaitTransaction(std::uint64_t transaction)
 {
-	for (;;)
+	while (true)
 	{
 		auto fields = Source();
 		fields.push_back(control::Field::U64(tag::TransactionId, transaction, true));
@@ -349,7 +349,7 @@ void RigRuntime::AdvanceToFrame(FrameId target)
 		if (const auto step = StepApplication({}); step.capture)
 			ReleaseCapture(*step.capture);
 		current = CurrentFrame();
-		for (;;)
+		while (true)
 		{
 			const auto displayed = StepDisplay();
 			if (displayed.capture)
@@ -641,7 +641,7 @@ ScriptGameOperation RigRuntime::GameCommand(std::uint32_t kind, std::string payl
 
 std::vector<std::byte> RigRuntime::AwaitGame(std::uint64_t game, std::uint64_t operation)
 {
-	for (;;)
+	while (true)
 	{
 		auto fields = Session();
 		fields.push_back(control::Field::U64(tag::GameId, game));

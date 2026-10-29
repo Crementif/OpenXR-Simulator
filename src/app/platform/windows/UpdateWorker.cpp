@@ -136,7 +136,7 @@ std::string RunUpdateWorker(std::wstring_view argument, std::wstring_view target
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
 	std::string response;
 	std::array<char, 8192> buffer{};
-	for (;;)
+	while (true)
 	{
 		if (std::chrono::steady_clock::now() >= deadline)
 			throw std::runtime_error("Update check timed out");

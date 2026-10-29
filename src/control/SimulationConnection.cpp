@@ -50,7 +50,7 @@ static InspectionValue ReadRecording(Session& session, const Message& request, M
 	auto count = request.Find(tag::Length) ? RequireRequestU64(request, tag::Length) : 16;
 	if (offset > std::numeric_limits<std::size_t>::max() || count > 16)
 		throw ControlRequestError{ErrorCode::Invalid, "Recording pages contain at most 16 transactions"};
-	for (;;)
+	while (true)
 	{
 		CommandRecording page;
 		try

@@ -127,7 +127,7 @@ void RecordingCapture::Capture(WorkerConnection& connection, const Job& job)
 	}
 	std::optional<wire::Message> stopped;
 	std::optional<std::uint64_t> gameEnd;
-	for (;;)
+	while (true)
 	{
 		bool stop;
 		{
@@ -208,7 +208,7 @@ void RecordingCapture::Capture(WorkerConnection& connection, const Job& job)
 
 void RecordingCapture::Run()
 {
-	for (;;)
+	while (true)
 	{
 		Job job;
 		std::shared_ptr<WorkerConnection> connection;

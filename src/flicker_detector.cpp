@@ -127,7 +127,7 @@ void Diagnostics::Run() noexcept
 	using Clock = std::chrono::steady_clock;
 	auto lastStatus = Clock::now() - std::chrono::milliseconds(250);
 	bool pruned = false;
-	for (;;)
+	while (true)
 	{
 		std::optional<ArtifactJob> job;
 		std::optional<DiagnosticsStatus> status;

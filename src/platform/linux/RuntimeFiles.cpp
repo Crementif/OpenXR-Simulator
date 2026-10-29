@@ -180,7 +180,7 @@ void RuntimeLog::Run() noexcept
 	{
 		std::vector<std::string> logs;
 		logs.reserve(s_maxLogMessages);
-		for (;;)
+		while (true)
 		{
 			bool stopping;
 			{

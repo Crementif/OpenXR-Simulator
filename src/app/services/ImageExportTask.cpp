@@ -73,7 +73,7 @@ std::optional<ImageExportWriteResult> ImageExportWriter::TakeResult()
 
 void ImageExportWriter::Run() noexcept
 {
-	for (;;)
+	while (true)
 	{
 		std::optional<Job> job;
 		{

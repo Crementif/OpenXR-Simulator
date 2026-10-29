@@ -151,7 +151,7 @@ static int Guard(const std::filesystem::path& installation, DWORD parentId, cons
 		return 2;
 	}
 	WriteStatus(status, "ready:" + std::to_string(GetCurrentProcessId()));
-	for (;;)
+	while (true)
 	{
 		const auto wait = WaitForSingleObject(parent.Get(), 100);
 		if (wait == WAIT_OBJECT_0)

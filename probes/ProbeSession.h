@@ -13,7 +13,7 @@ namespace simxr::probe
 template<typename Visitor>
 void PollXrEvents(XrInstance instance, Visitor&& visit)
 {
-	for (;;)
+	while (true)
 	{
 		XrEventDataBuffer event{XR_TYPE_EVENT_DATA_BUFFER};
 		const auto result = xrPollEvent(instance, &event);

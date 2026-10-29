@@ -15,7 +15,7 @@ control::Message WorkerConnection::Request(control::OpCode code, std::vector<con
 	packet.message.fields = std::move(fields);
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
 	bool retry = false;
-	for (;;)
+	while (true)
 	{
 		if (m_stopping || std::chrono::steady_clock::now() >= deadline)
 		{

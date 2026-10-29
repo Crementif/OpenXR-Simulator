@@ -54,7 +54,7 @@ public:
 	ScreenshotPermit()
 	{
 		auto count = s_screenshots.load();
-		for (;;)
+		while (true)
 		{
 			if (count >= 2)
 				throw std::runtime_error("Screenshot capacity is busy; retry explicitly");
@@ -269,7 +269,7 @@ static std::optional<CaptureResult> Capture(McpApplication& application, const J
 		Json composition = nullptr;
 		if (captureTarget == "current_display")
 		{
-			for (;;)
+			while (true)
 			{
 				try
 				{
@@ -309,7 +309,7 @@ static std::optional<CaptureResult> Capture(McpApplication& application, const J
 				 wire::Field::U32(tag::Capacity, 1, true), wire::Field::U64(tag::Length, 1, true)});
 			const auto operation = Identifier(submitted, tag::OperationId);
 			wire::Message operationState;
-			for (;;)
+			while (true)
 			{
 				maintainLease();
 				operationState = calls.Request(connection, wire::OpCode::Operation,
@@ -328,7 +328,7 @@ static std::optional<CaptureResult> Capture(McpApplication& application, const J
 			if (captures.fields.size() != 1 || !captures.fields[0].AsU64() || !*captures.fields[0].AsU64())
 				throw TransientError("Filtered capture did not reserve exactly one frame");
 			const auto capture = *captures.fields[0].AsU64();
-			for (;;)
+			while (true)
 			{
 				maintainLease();
 				const auto status =

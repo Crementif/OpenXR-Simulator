@@ -20,7 +20,7 @@ ExportReader::ExportReader(Exchange exchange, std::vector<Field> fields, const s
 		throw std::runtime_error("Runtime omitted the export identity");
 	try
 	{
-		for (;;)
+		while (true)
 		{
 			m_info = m_exchange(OpCode::ExportInfo, {Field::U64(tag::ExportId, m_id, true)});
 			const auto* field = m_info.Find(tag::Phase);

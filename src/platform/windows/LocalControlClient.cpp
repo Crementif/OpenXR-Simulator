@@ -45,7 +45,7 @@ struct LocalControlClient::State
 		const auto wide = native::PipePath(path);
 		const auto deadline = native::Clock::now() + timeout;
 		native::Handle connected;
-		for (;;)
+		while (true)
 		{
 			connected.value =
 				CreateFileW(wide.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
@@ -103,7 +103,7 @@ struct LocalControlClient::State
 					throw std::runtime_error("Windows request handle acknowledgement mismatch");
 				pipe->AcknowledgeOffer();
 			}
-			for (;;)
+			while (true)
 			{
 				while (pending->offset < pending->received.size())
 					pending->offset +=

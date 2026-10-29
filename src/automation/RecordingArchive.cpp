@@ -302,7 +302,7 @@ std::optional<control::Message> RecordingArchiveReader::Read()
 
 std::optional<RecordingPage> RecordingArchiveReader::Next(std::stop_token stop)
 {
-	for (;;)
+	while (true)
 	{
 		if (stop.stop_requested())
 			throw std::runtime_error("Recording archive read cancelled");

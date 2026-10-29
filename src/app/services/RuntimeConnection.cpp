@@ -67,7 +67,7 @@ control::ControlPacket RuntimeConnection::Exchange(control::LocalControlClient& 
 {
 	const auto deadline = Clock::now() + m_configuration.exchangeDeadline;
 	bool retry = false;
-	for (;;)
+	while (true)
 	{
 		if (!Current(epoch))
 			throw std::runtime_error("Runtime connection changed");
@@ -114,7 +114,7 @@ void RuntimeConnection::RunChecked()
 #if defined(__linux__) || defined(_WIN32)
 	std::unique_ptr<control::LocalControlClient> client;
 #endif
-	for (;;)
+	while (true)
 	{
 		Queued request;
 		std::string path;
@@ -155,7 +155,7 @@ void RuntimeConnection::RunChecked()
 			try
 			{
 				const auto connectDeadline = Clock::now() + m_configuration.exchangeDeadline;
-				for (;;)
+				while (true)
 				{
 					if (!Current(activeEpoch))
 						throw std::runtime_error("Runtime connection changed");

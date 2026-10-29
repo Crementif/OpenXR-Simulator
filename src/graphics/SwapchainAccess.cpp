@@ -56,7 +56,7 @@ XrResult SwapchainAccess::Wait(XrDuration timeout)
 XrResult SwapchainAccess::WaitForImage(std::uint32_t index, XrDuration timeout)
 {
 	const auto started = std::chrono::steady_clock::now();
-	for (;;)
+	while (true)
 	{
 		std::shared_ptr<const GpuCompletion> completion;
 		{

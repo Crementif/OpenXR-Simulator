@@ -13,7 +13,7 @@ static std::vector<std::string> Lines(const char* text)
 	std::string_view remaining(text);
 	if (remaining.empty())
 		return result;
-	for (;;)
+	while (true)
 	{
 		const auto end = remaining.find('\n');
 		result.emplace_back(remaining.substr(0, end));
