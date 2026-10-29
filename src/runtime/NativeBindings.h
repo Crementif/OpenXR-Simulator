@@ -42,7 +42,7 @@ public:
 		return {handle, std::shared_ptr<Native>(retained, retained->native.get())};
 	}
 
-	NativeRef Find(CoreRef core) const
+	NativeRef Find(const CoreRef& core) const
 	{
 		if (!core)
 			return {};

@@ -26,7 +26,7 @@ WindowsRuntimeStatus::WindowsRuntimeStatus(std::shared_ptr<WindowsRuntimeFiles> 
 		throw std::invalid_argument("Runtime status requires an output worker");
 }
 
-void WindowsRuntimeStatus::PublishStatus(FrameStatus status)
+void WindowsRuntimeStatus::PublishStatus(const FrameStatus& status)
 {
 	{
 		std::lock_guard lock(m_mutex);

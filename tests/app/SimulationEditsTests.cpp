@@ -9,6 +9,7 @@
 
 #include <iostream>
 #include <limits>
+#include <utility>
 
 namespace
 {
@@ -20,7 +21,7 @@ wire::Message Observation(const CommandScheduler& scheduler, std::optional<std::
 {
 	wire::Message result;
 	result.fields.push_back(wire::Field::Bytes(
-		wire::tag::Document, wire::SimulationState(scheduler.Snapshot(), false, {}, {}, profiles).Encode()));
+		wire::tag::Document, wire::SimulationState(scheduler.Snapshot(), false, {}, {}, std::move(profiles)).Encode()));
 	result.fields.push_back(wire::Field::Bytes(
 		wire::tag::Pipeline, wire::EncodeFields(std::array{wire::Field::U64(wire::tag::NextAdmission, 900)})));
 	return result;

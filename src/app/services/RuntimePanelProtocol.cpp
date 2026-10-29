@@ -1,9 +1,7 @@
 #include "app/services/RuntimePanelProtocol.h"
 #include "Pch.h"
 
-namespace simxr::app
-{
-namespace panel
+namespace simxr::app::panel
 {
 std::uint64_t U64(const control::Message& message, std::uint16_t name, std::uint64_t fallback)
 {
@@ -51,5 +49,4 @@ bool Terminal(std::string_view phase)
 {
 	return phase == "complete" || phase == "failed" || phase == "cancelled" || phase == "interrupted";
 }
-} // namespace panel
-} // namespace simxr::app
+} // namespace simxr::app::panel

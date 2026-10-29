@@ -33,10 +33,10 @@ def source_files(arguments):
     if arguments.files:
         files = arguments.files
     elif arguments.changed:
-        files = subprocess.check_output(["git", "diff", "--name-only", "--diff-filter=d", arguments.base, "--", *ROOTS], text=True).splitlines()
-        files += subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard", "--", *ROOTS], text=True).splitlines()
+        files = subprocess.check_output(["git", "-c", "core.safecrlf=false", "diff", "--name-only", "--diff-filter=d", arguments.base, "--", *ROOTS], text=True).splitlines()
+        files += subprocess.check_output(["git", "-c", "core.safecrlf=false", "ls-files", "--others", "--exclude-standard", "--", *ROOTS], text=True).splitlines()
     else:
-        files = subprocess.check_output(["git", "ls-files", "--", *ROOTS], text=True).splitlines()
+        files = subprocess.check_output(["git", "-c", "core.safecrlf=false", "ls-files", "--", *ROOTS], text=True).splitlines()
     return sorted({file for file in files if file.endswith(EXTENSIONS) and Path(file).is_file()})
 
 

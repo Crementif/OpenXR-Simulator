@@ -95,7 +95,7 @@ void OwnershipAndReaders()
 	}
 	Require(invalid, "Zero-sized pool accepted");
 	FramePool pool(2);
-	auto copy = pool;
+	auto copy = pool; // NOLINT(performance-unnecessary-copy-initialization)
 	FramePool foreign(1);
 	auto first = copy.Reserve();
 	auto second = pool.Reserve();

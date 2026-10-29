@@ -577,7 +577,7 @@ void FileWorkerAndChunkValidation()
 	app::RuntimePanelRequests requests;
 	app::ImageExportTask task(requests);
 	const auto start = Message({wire::Field::U64(tag::ExportId, 9), wire::Field::U64(tag::TotalBytes, 4)});
-	const auto rejected = [&](wire::Message chunk) {
+	const auto rejected = [&](const wire::Message& chunk) {
 		task.Handle({app::PanelWork::Export}, start);
 		bool threw = false;
 		try

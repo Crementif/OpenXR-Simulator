@@ -938,7 +938,7 @@ XrResult ActionSyncState::Sync(const XrActionsSyncInfo& info, const InputSnapsho
 		ActionSnapshot action;
 		action.definition = definition;
 		for (const auto& device : devices)
-			for (auto binding : m_registry.Bindings(definition.handle, device.profile))
+			for (const auto& binding : m_registry.Bindings(definition.handle, device.profile))
 			{
 				if (std::find(device.users.begin(), device.users.end(), binding.userPath) == device.users.end())
 					continue;

@@ -67,7 +67,8 @@ public:
 	void StopImageRecording() noexcept;
 	ImageRecordingSnapshot ImageRecording() const;
 	CaptureId RefillImageRecording(CaptureId released);
-	void BindIssued(std::shared_ptr<const FrameRecord> issued, std::shared_ptr<const FrameRecord> cancelled);
+	void BindIssued(const std::shared_ptr<const FrameRecord>& issued,
+					const std::shared_ptr<const FrameRecord>& cancelled);
 	void ObserveFrame(FrameKey frame);
 	std::size_t CancelQueued() noexcept;
 	Submission PrepareSubmission(std::shared_ptr<const FrameOutput> output, std::span<const CaptureOutput> captures);
@@ -110,7 +111,7 @@ public:
 	SequenceCapture(const SequenceCapture&) = delete;
 	SequenceCapture& operator=(const SequenceCapture&) = delete;
 	const std::optional<SequenceCaptureRecord>& Record() const noexcept;
-	void Bind(std::shared_ptr<const FrameRecord> issued, std::shared_ptr<const FrameRecord> cancelled);
+	void Bind(const std::shared_ptr<const FrameRecord>& issued, std::shared_ptr<const FrameRecord> cancelled);
 
 private:
 	SessionCaptureCoordinator& m_owner;
@@ -132,7 +133,7 @@ public:
 	XrResult Prepare(FrameKey frame);
 	XrResult Promote();
 	bool Requested() const;
-	void Commit(std::shared_ptr<const FrameRecord> metadata, bool includeOutputs) noexcept;
+	void Commit(const std::shared_ptr<const FrameRecord>& metadata, bool includeOutputs) noexcept;
 
 private:
 	SessionCaptureCoordinator& m_owner;

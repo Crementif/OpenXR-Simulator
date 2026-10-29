@@ -160,7 +160,7 @@ VulkanSessionGraphics::SwapchainRef VulkanSessionGraphics::FindSwapchain(XrSwapc
 	return m_swapchains.Find(handle, m_session.get());
 }
 
-void VulkanSessionGraphics::DestroySwapchain(SwapchainRef swapchain)
+void VulkanSessionGraphics::DestroySwapchain(const SwapchainRef& swapchain)
 {
 	swapchain->Close();
 	m_swapchains.Erase(swapchain);

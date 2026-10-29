@@ -64,7 +64,7 @@ private:
 	XrResult PrepareCaptures(std::span<const FrameCaptureRequest> requests);
 	XrResult PrepareCapture(const LayerImageDescription& image, const LayerDepthDescription* depth, Capture& capture,
 							std::shared_ptr<FrameReservation> reservation);
-	std::unique_ptr<VulkanInspectionTransfer> PrepareInspection(std::shared_ptr<VulkanFrame> source,
+	std::unique_ptr<VulkanInspectionTransfer> PrepareInspection(const std::shared_ptr<VulkanFrame>& source,
 																CaptureTarget target, VulkanInspectionKind kind);
 	std::function<void(SharedImageKey)> DeliveryRetirementObserver() const;
 

@@ -12,7 +12,7 @@ class VideoExport final : public ImageExport
 {
 public:
 	explicit VideoExport(std::vector<PreviewClipFrame> frames);
-	~VideoExport();
+	~VideoExport() override;
 
 	CompletionStatus PollCompletion() const noexcept override
 	{

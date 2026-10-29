@@ -65,7 +65,7 @@ public:
 			Text("kind", kind);
 	}
 
-	void Raw(std::string_view name, std::string value)
+	void Raw(std::string_view name, const std::string& value)
 	{
 		if (!m_fields.empty())
 			m_fields += ", ";
@@ -505,7 +505,7 @@ std::string EditableRig(const InputRecording& recording)
 		throw std::invalid_argument("Export requires a stopped, complete supported recording");
 	const auto initialCommands = ReplayInitialCommands(recording);
 	std::string script;
-	const auto line = [&](std::string value) {
+	const auto line = [&](const std::string& value) {
 		if (value.size() >= MaxRigSourceBytes - script.size())
 			throw std::length_error("Editable rig exceeds the runner's 64-MiB source limit");
 		script += value + '\n';

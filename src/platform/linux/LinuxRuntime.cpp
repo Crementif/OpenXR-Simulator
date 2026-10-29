@@ -10,7 +10,7 @@
 #include "simulation/HeadsetProfiles.h"
 
 #include <openxr/openxr_platform.h>
-#include <time.h>
+#include <ctime>
 #include <unistd.h>
 
 namespace simxr

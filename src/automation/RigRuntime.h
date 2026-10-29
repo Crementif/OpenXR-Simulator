@@ -112,7 +112,7 @@ public:
 	void Export(std::uint64_t capture, const std::string& path, std::optional<ScriptCaptureTarget> target,
 				std::optional<std::uint32_t> arraySlice);
 	void ReleaseCapture(std::uint64_t capture);
-	ScriptGameOperation GameCommand(std::uint32_t kind, std::string payload);
+	ScriptGameOperation GameCommand(std::uint32_t kind, const std::string& payload);
 	std::vector<std::byte> AwaitGame(std::uint64_t game, std::uint64_t operation);
 	std::vector<std::byte> GameState();
 

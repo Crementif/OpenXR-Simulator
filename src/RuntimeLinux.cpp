@@ -120,7 +120,7 @@ static XrResult XRAPI_PTR RunXrGetSystemProperties(XrInstance iHandle, XrSystemI
 	return XR_SUCCESS;
 }
 
-static XrResult ValidateViewConfiguration(simxr::LinuxRuntime::InstanceRef instance, XrSystemId system,
+static XrResult ValidateViewConfiguration(const simxr::LinuxRuntime::InstanceRef& instance, XrSystemId system,
 										  XrViewConfigurationType type)
 {
 	if (!Valid(instance))

@@ -4,7 +4,7 @@
 #include <cerrno>
 #include <exception>
 #include <poll.h>
-#include <signal.h>
+#include <csignal>
 #include <spawn.h>
 #include <stdexcept>
 #include <system_error>

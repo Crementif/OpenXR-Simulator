@@ -27,7 +27,7 @@ class VulkanReadbackBatch final : public GpuCompletion
 public:
 	static std::shared_ptr<VulkanReadbackBatch> Prepare(std::shared_ptr<VulkanDevice> device,
 														std::span<const VulkanReadbackRegion> regions);
-	~VulkanReadbackBatch();
+	~VulkanReadbackBatch() override;
 	VkResult Submit() noexcept;
 	CompletionStatus PollCompletion() const noexcept override;
 	bool NativeIdle() const noexcept;

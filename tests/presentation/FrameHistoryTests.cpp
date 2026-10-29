@@ -492,7 +492,8 @@ int main()
 	bool reservationFailed = false;
 	try
 	{
-		reserved.Issue({{3}, {3}, {Duration{121}}, Duration{10}}, [](auto, auto) { throw std::bad_alloc{}; });
+		reserved.Issue({{3}, {3}, {Duration{121}}, Duration{10}},
+					   [](const auto&, const auto&) { throw std::bad_alloc{}; });
 	}
 	catch (const std::bad_alloc&)
 	{
@@ -502,7 +503,7 @@ int main()
 				!reserved.Find({reservedGeneration, {3}}) && reserved.Snapshot().evicted == 0,
 			"Failed capture binding committed history insertion or eviction");
 	std::shared_ptr<const FrameRecord> cancellation;
-	reserved.Issue({{3}, {3}, {Duration{121}}, Duration{10}}, [&](auto issued, auto cancelled) {
+	reserved.Issue({{3}, {3}, {Duration{121}}, Duration{10}}, [&](const auto& issued, auto cancelled) {
 		Require(issued->key == FrameKey{reservedGeneration, {3}} && cancelled->stage == FrameStage::Cancelled,
 				"Reservation did not receive prepared immutable frame records");
 		cancellation = std::move(cancelled);

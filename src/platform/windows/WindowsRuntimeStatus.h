@@ -28,7 +28,7 @@ class WindowsRuntimeStatus
 {
 public:
 	explicit WindowsRuntimeStatus(std::shared_ptr<WindowsRuntimeFiles> files);
-	void PublishStatus(FrameStatus status);
+	void PublishStatus(const FrameStatus& status);
 
 private:
 	std::shared_ptr<WindowsRuntimeFiles> m_files;

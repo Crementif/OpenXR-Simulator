@@ -139,7 +139,7 @@ std::string Contents(const std::filesystem::path& path)
 }
 #ifdef SIMXR_TEST_AUTOMATION
 void Replay(RecordingHost& host, const std::string& script, std::uint64_t seed, std::uint64_t expected = 22,
-			bool expectBody = false, std::filesystem::path archive = {}, bool checkControls = true)
+			bool expectBody = false, const std::filesystem::path& archive = {}, bool checkControls = true)
 {
 	host.session->ReleaseCommandSource(host.source);
 	app::WorkerConnection connection(host.server->Path(), "recorded_rig_test",

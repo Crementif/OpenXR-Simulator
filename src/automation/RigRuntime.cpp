@@ -626,7 +626,7 @@ void RigRuntime::ReleaseCapture(std::uint64_t capture)
 	std::erase(m_captures, capture);
 }
 
-ScriptGameOperation RigRuntime::GameCommand(std::uint32_t kind, std::string payload)
+ScriptGameOperation RigRuntime::GameCommand(std::uint32_t kind, const std::string& payload)
 {
 	const auto game = Number(Call(control::OpCode::GameStatus, Session()), tag::GameId);
 	if (!game)

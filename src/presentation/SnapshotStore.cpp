@@ -208,7 +208,7 @@ bool SnapshotStore::Bind(CaptureId id, std::shared_ptr<const FrameRecord> issued
 	return true;
 }
 
-CaptureReservation SnapshotStore::Pin(std::shared_ptr<const FrameRecord> metadata,
+CaptureReservation SnapshotStore::Pin(const std::shared_ptr<const FrameRecord>& metadata,
 									  std::shared_ptr<const FrameRecord> cancelled,
 									  std::shared_ptr<const FrameOutput> output,
 									  std::shared_ptr<FrameReservation> producer, CaptureTarget target)
@@ -275,7 +275,8 @@ CaptureReservation SnapshotStore::Pin(std::shared_ptr<const FrameRecord> metadat
 	return capture;
 }
 
-void SnapshotStore::Update(std::shared_ptr<const FrameRecord> metadata, std::span<const CaptureOutput> outputs) noexcept
+void SnapshotStore::Update(const std::shared_ptr<const FrameRecord>& metadata,
+						   std::span<const CaptureOutput> outputs) noexcept
 {
 	if (!metadata)
 		return;
@@ -376,7 +377,7 @@ std::shared_ptr<FrameReservation> SnapshotStore::ProducerReservation(FrameKey fr
 	return {};
 }
 
-bool SnapshotStore::SetProducer(FrameKey frame, std::shared_ptr<FrameReservation> producer,
+bool SnapshotStore::SetProducer(FrameKey frame, const std::shared_ptr<FrameReservation>& producer,
 								CaptureTarget target) noexcept
 {
 	if (!producer)
@@ -428,7 +429,7 @@ std::vector<CaptureTarget> SnapshotStore::RequestedTargets(FrameKey frame) const
 	return result;
 }
 
-void SnapshotStore::Fail(FrameKey frame, XrResult result, std::shared_ptr<const FrameOutput> output) noexcept
+void SnapshotStore::Fail(FrameKey frame, XrResult result, const std::shared_ptr<const FrameOutput>& output) noexcept
 {
 	if (XR_SUCCEEDED(result))
 		return;

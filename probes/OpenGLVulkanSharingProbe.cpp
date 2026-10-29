@@ -137,7 +137,7 @@ public:
 		glGetIntegerv(GL_NUM_DEVICE_UUIDS_EXT, &count);
 		std::array<GLubyte, GL_UUID_SIZE_EXT> driver{};
 		GLFunction<PFNGLGETUNSIGNEDBYTEVEXTPROC>("glGetUnsignedBytevEXT")(GL_DRIVER_UUID_EXT, driver.data());
-		if (std::memcmp(driver.data(), identity.driverUUID, VK_UUID_SIZE))
+		if (std::memcmp(driver.data(), identity.driverUUID, VK_UUID_SIZE) != 0)
 			return false;
 		for (GLint index = 0; index < count; ++index)
 		{

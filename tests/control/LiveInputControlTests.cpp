@@ -91,7 +91,7 @@ static void TrackerCodec()
 					decoded.trackers->back().poseFlags == XR_SPACE_LOCATION_POSITION_VALID_BIT,
 				"Optional eye/tracker components changed during decoding");
 	}
-	const auto rejectComponents = [&](std::vector<Field> components) {
+	const auto rejectComponents = [&](const std::vector<Field>& components) {
 		Message malformed;
 		malformed.fields = EncodeLiveInput(sample);
 		std::vector<std::byte> encoded;

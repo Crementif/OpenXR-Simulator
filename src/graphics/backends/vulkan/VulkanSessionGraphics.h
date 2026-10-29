@@ -40,7 +40,7 @@ public:
 	bool SupportsReprojection() const noexcept;
 	XrResult CreateSwapchain(const XrSwapchainCreateInfo& description, XrSwapchain& output);
 	SwapchainRef FindSwapchain(XrSwapchain handle) const;
-	void DestroySwapchain(SwapchainRef swapchain);
+	void DestroySwapchain(const SwapchainRef& swapchain);
 	XrResult Acquire(VulkanSwapchain& swapchain, std::uint32_t& index);
 	std::optional<SwapchainWaits::Registration> EnterWait();
 	XrResult EndFrame(const XrFrameEndInfo& info);

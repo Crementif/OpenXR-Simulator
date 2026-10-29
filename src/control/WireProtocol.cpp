@@ -300,7 +300,6 @@ static Result DecodeFieldStorage(std::span<const std::byte> payload) noexcept
 		return {{}, error};
 	try
 	{
-		typename decltype(Result{}.fields)::value_type field;
 		decltype(Result{}.fields) result;
 		result.reserve(count);
 		std::size_t offset = 0;
@@ -311,6 +310,7 @@ static Result DecodeFieldStorage(std::span<const std::byte> payload) noexcept
 			const auto length = Read<std::uint32_t>(payload, offset + 4);
 			offset += s_fieldHeaderSize;
 			const auto value = payload.subspan(offset, length);
+			typename decltype(result)::value_type field;
 			field.tag = tag;
 			field.required = required;
 			if constexpr (std::is_same_v<Result, FieldViewsResult>)

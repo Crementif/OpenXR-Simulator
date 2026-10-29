@@ -85,7 +85,7 @@ struct VulkanDeliveryHandles
 class VulkanImageDelivery final : public GpuCompletion
 {
 public:
-	~VulkanImageDelivery();
+	~VulkanImageDelivery() override;
 	SharedImageKey Key() const noexcept;
 	ImageCompletionKind CompletionKind() const noexcept;
 	const VulkanExternalImageDescriptor& Descriptor() const noexcept;
@@ -108,7 +108,7 @@ private:
 class VulkanInspectionFrame final : public FrameOutput
 {
 public:
-	~VulkanInspectionFrame();
+	~VulkanInspectionFrame() override;
 	bool CanArchive() const noexcept override;
 	std::shared_ptr<const ArchivedFrame> Archive() const override;
 	// The caller must establish completion and GENERAL layout before publication.
@@ -170,7 +170,7 @@ public:
 	VulkanInspection(const VulkanInspection&) = delete;
 	VulkanInspection& operator=(const VulkanInspection&) = delete;
 	// Observers are installed before worker publication and never retain source images.
-	std::unique_ptr<VulkanInspectionTransfer> Prepare(std::shared_ptr<VulkanFrame> source,
+	std::unique_ptr<VulkanInspectionTransfer> Prepare(const std::shared_ptr<VulkanFrame>& source,
 													  std::function<void(CompletionStatus)> completed = {},
 													  std::function<void()> retired = {},
 													  VulkanInspectionKind kind = VulkanInspectionKind::Required,

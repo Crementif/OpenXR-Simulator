@@ -250,10 +250,10 @@ XrResult Session::WaitFrame(FramePrediction& prediction,
 			throw std::invalid_argument("Reference-space history exceeds the next frame boundary");
 		const auto reserveHistory = [this, &candidate](const AppliedCommandSnapshot& applied) {
 			auto sequenceCapture = m_captures.PrepareSequenceCapture(applied.sequenceCapture);
-			const auto reserveCaptures = [this, &sequenceCapture](std::shared_ptr<const FrameRecord> issued,
+			const auto reserveCaptures = [this, &sequenceCapture](const std::shared_ptr<const FrameRecord>& issued,
 																  std::shared_ptr<const FrameRecord> cancelled) {
 				m_captures.BindIssued(issued, cancelled);
-				sequenceCapture.Bind(std::move(issued), std::move(cancelled));
+				sequenceCapture.Bind(issued, std::move(cancelled));
 			};
 			m_history.Issue(candidate, reserveCaptures, sequenceCapture.Record());
 		};
@@ -369,10 +369,10 @@ XrResult Session::BeginFrame()
 }
 
 XrResult Session::EndFrame(FramePrediction& prediction, const XrFrameEndInfo* info,
-						   std::shared_ptr<const FrameLayers> prepared, std::shared_ptr<const FrameOutput> output,
-						   const std::function<XrResult()>& submit, std::span<const CaptureOutput> captures,
-						   FrameSubmissionPolicy policy, ReprojectionInput reprojection,
-						   std::shared_ptr<const FrameGpuTiming> gpuTiming)
+						   std::shared_ptr<const FrameLayers> prepared,
+						   const std::shared_ptr<const FrameOutput>& output, const std::function<XrResult()>& submit,
+						   std::span<const CaptureOutput> captures, FrameSubmissionPolicy policy,
+						   const ReprojectionInput& reprojection, std::shared_ptr<const FrameGpuTiming> gpuTiming)
 {
 	auto captureSubmission = m_captures.PrepareSubmission(output, captures);
 	if (XR_FAILED(captureSubmission.Validation()))

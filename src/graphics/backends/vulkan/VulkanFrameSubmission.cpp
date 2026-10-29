@@ -189,9 +189,9 @@ XrResult VulkanFrameSubmission::PrepareCaptures(std::span<const FrameCaptureRequ
 	return XR_SUCCESS;
 }
 
-std::unique_ptr<VulkanInspectionTransfer> VulkanFrameSubmission::PrepareInspection(std::shared_ptr<VulkanFrame> source,
-																				   CaptureTarget target,
-																				   VulkanInspectionKind kind)
+std::unique_ptr<VulkanInspectionTransfer>
+VulkanFrameSubmission::PrepareInspection(const std::shared_ptr<VulkanFrame>& source, CaptureTarget target,
+										 VulkanInspectionKind kind)
 {
 	const auto journal = m_session.History().DiagnosticsJournal();
 	const auto key = m_key;
@@ -206,7 +206,7 @@ std::unique_ptr<VulkanInspectionTransfer> VulkanFrameSubmission::PrepareInspecti
 							? std::string{"owned_quad_layers"}
 							: label + std::to_string(target.layer) + ":" + std::to_string(target.view);
 	return m_inspection->Prepare(
-		std::move(source),
+		source,
 		[journal, key, time, detail, producers = m_backend.LiveReservations()](CompletionStatus status) {
 			journal->Trace(status == CompletionStatus::Complete ? FrameTraceKind::GpuComplete
 																: FrameTraceKind::GpuFailed,

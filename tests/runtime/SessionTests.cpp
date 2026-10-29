@@ -15,6 +15,7 @@
 #include <latch>
 #include <memory>
 #include <stdexcept>
+#include <utility>
 
 namespace
 {
@@ -438,7 +439,7 @@ void TestSequenceCaptureUnsupportedAndOwnership()
 		sequenceId = sequence.Record()->reservation.id;
 		history.Issue(
 			prediction,
-			[&](auto issued, auto cancelled) {
+			[&](const auto& issued, const auto& cancelled) {
 				captures.BindIssued(issued, cancelled);
 				sequence.Bind(issued, cancelled);
 			},
@@ -457,7 +458,8 @@ void TestSequenceCaptureUnsupportedAndOwnership()
 				!rejected.Record()->reservation.id.value,
 			"Unsupported capture was reported as accepted");
 	unsupportedHistory.Issue(
-		prediction, [&](auto issued, auto cancelled) { rejected.Bind(issued, cancelled); }, rejected.Record());
+		prediction, [&](const auto& issued, auto cancelled) { rejected.Bind(std::move(issued), std::move(cancelled)); },
+		rejected.Record());
 	Require(unsupportedHistory.Find({unsupportedGeneration, {1}})->sequenceCapture->reservation.result ==
 				SnapshotAdmission::Unsupported,
 			"Unsupported sequence capture lost its exact-frame result");
@@ -529,8 +531,8 @@ void TestCaptureConfigurationOwnership()
 					"Configuration's last reader reentered an inconsistent or locked capture owner");
 			destroyed = true;
 		};
-		const auto configured =
-			session->ConfigureCapturePool(pool, false, [reader = std::move(reader)](const auto&, const auto&, auto) {
+		const auto configured = session->ConfigureCapturePool(
+			pool, false, [reader = std::move(reader)](const auto&, const auto&, const auto&) {
 				return SnapshotAdmission::Accepted;
 			});
 		Require(configured == (accepted ? XR_SUCCESS : XR_ERROR_CALL_ORDER_INVALID) && destroyed == !accepted,
@@ -1074,7 +1076,7 @@ void TestQuadHistoryCaptureCapacity()
 		FramePool pool(2);
 		Require(session.ConfigureCapturePool(
 					pool, true,
-					[](const auto& frame, const FramePool& budget, std::shared_ptr<FrameReservation> reserved) {
+					[](const auto& frame, const FramePool& budget, const std::shared_ptr<FrameReservation>& reserved) {
 						const auto output = std::dynamic_pointer_cast<const CaptureOutput>(frame);
 						Require(output && output->slot == reserved && budget.Consume(reserved),
 								"Promote requested capture with its reserved producer");
@@ -1172,7 +1174,7 @@ void TestQuadHistoryWithoutSnapshotCapacity()
 		FramePool pool(2);
 		Require(session.ConfigureCapturePool(
 					pool, true,
-					[](const auto&, const FramePool&, std::shared_ptr<FrameReservation>) {
+					[](const auto&, const FramePool&, const std::shared_ptr<FrameReservation>&) {
 						return SnapshotAdmission::Capacity;
 					},
 					false, true) == XR_SUCCESS &&

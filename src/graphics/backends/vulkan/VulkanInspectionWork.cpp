@@ -246,10 +246,10 @@ std::shared_ptr<const VulkanImagePixels> VulkanInspectionWork::ReadPixels() cons
 	return pixels;
 }
 
-std::shared_ptr<VulkanInspectionWork> VulkanInspectionWork::Import(std::shared_ptr<VulkanDevice> device,
+std::shared_ptr<VulkanInspectionWork> VulkanInspectionWork::Import(const std::shared_ptr<VulkanDevice>& device,
 																   const VulkanExternalDevice& external,
 																   std::shared_ptr<FrameReservation> admission,
-																   std::shared_ptr<VulkanFrame> producer)
+																   const std::shared_ptr<VulkanFrame>& producer)
 {
 	auto work = std::shared_ptr<VulkanInspectionWork>(new VulkanInspectionWork(device, std::move(admission)));
 	work->m_native->producer = producer;
@@ -273,9 +273,9 @@ std::shared_ptr<VulkanInspectionWork> VulkanInspectionWork::Import(std::shared_p
 
 std::shared_ptr<VulkanInspectionWork>
 VulkanInspectionWork::Readback(std::shared_ptr<VulkanDevice> deviceOwner, std::shared_ptr<FrameReservation> admission,
-							   std::shared_ptr<VulkanImage> source, std::shared_ptr<FrameReservation> sourceBudget,
-							   std::optional<std::uint32_t> layer, std::shared_ptr<const void> retirementOwner,
-							   std::optional<ImageRegion> region)
+							   const std::shared_ptr<VulkanImage>& source,
+							   std::shared_ptr<FrameReservation> sourceBudget, std::optional<std::uint32_t> layer,
+							   std::shared_ptr<const void> retirementOwner, std::optional<ImageRegion> region)
 {
 	const auto& image = *source;
 	const auto pixelBytes = ColorPixelBytes(image.format);
@@ -386,10 +386,12 @@ VulkanInspectionWork::Readback(std::shared_ptr<VulkanDevice> deviceOwner, std::s
 	return work;
 }
 
-std::shared_ptr<VulkanInspectionWork>
-VulkanInspectionWork::Delivery(std::shared_ptr<VulkanDevice> device, const VulkanExternalDevice& external,
-							   std::shared_ptr<FrameReservation> admission, std::shared_ptr<VulkanImage> sourceImage,
-							   std::shared_ptr<FrameReservation> sourceBudget, const VulkanExternalImageSpec& spec)
+std::shared_ptr<VulkanInspectionWork> VulkanInspectionWork::Delivery(const std::shared_ptr<VulkanDevice>& device,
+																	 const VulkanExternalDevice& external,
+																	 std::shared_ptr<FrameReservation> admission,
+																	 const std::shared_ptr<VulkanImage>& sourceImage,
+																	 std::shared_ptr<FrameReservation> sourceBudget,
+																	 const VulkanExternalImageSpec& spec)
 {
 	auto work = std::shared_ptr<VulkanInspectionWork>(new VulkanInspectionWork(device, std::move(admission)));
 	work->m_native->externalOutput = external.CreateExportable(spec);

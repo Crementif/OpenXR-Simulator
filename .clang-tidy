@@ -3,15 +3,25 @@ Checks: >
   bugprone-*,
   -bugprone-assignment-in-if-condition,
   -bugprone-branch-clone,
+  -bugprone-command-processor,
   -bugprone-easily-swappable-parameters,
   -bugprone-empty-catch,
   -bugprone-exception-escape,
   -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-inc-dec-in-conditions,
+  -bugprone-integer-division,
   -bugprone-invalid-enum-default-initialization,
+  -bugprone-macro-parentheses,
   -bugprone-narrowing-conversions,
+  -bugprone-optional-value-conversion,
+  -bugprone-random-generator-seed,
   -bugprone-reserved-identifier,
+  -bugprone-suspicious-memory-comparison,
+  -bugprone-suspicious-stringview-data-usage,
   -bugprone-switch-missing-default-case,
+  -bugprone-throwing-static-initialization,
   -bugprone-unchecked-optional-access,
+  -bugprone-unchecked-string-to-number-conversion,
   misc-redundant-expression,
   misc-unused-alias-decls,
   misc-unused-using-decls,
@@ -21,7 +31,6 @@ Checks: >
   modernize-make-unique,
   modernize-redundant-void-arg,
   modernize-use-bool-literals,
-  modernize-use-emplace,
   modernize-use-equals-default,
   modernize-use-equals-delete,
   modernize-use-nullptr,
@@ -29,6 +38,10 @@ Checks: >
   modernize-use-using,
   performance-*,
   -performance-enum-size,
+  -performance-inefficient-string-concatenation,
+  -performance-inefficient-vector-operation,
+  -performance-no-automatic-move,
+  -performance-no-int-to-ptr,
   readability-avoid-const-params-in-decls,
   readability-container-contains,
   readability-container-size-empty,
@@ -51,6 +64,7 @@ ExcludeHeaderFilterRegex: '.*/(third_party|include|shaders)/.*'
 FormatStyle: file
 
 CheckOptions:
+  performance-move-const-arg.CheckTriviallyCopyableMove: false
   performance-unnecessary-value-param.AllowedTypes: 'std::stop_token'
   readability-simplify-boolean-expr.SimplifyDeMorgan: false
   # Modern Cemu naming: PascalCase types and functions, camelCase variables, m_/s_ prefixes.

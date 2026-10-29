@@ -149,7 +149,7 @@ static const std::shared_ptr<VulkanExportBudget>& ExportBudget()
 static std::shared_ptr<const void> ReserveExport(std::uint64_t bytes, std::function<void()> collect)
 {
 	constexpr std::uint64_t limit = 512ULL * 1024 * 1024;
-	auto state = ExportBudget();
+	const auto& state = ExportBudget();
 	std::array<std::shared_ptr<VulkanExportCharge>, 8> observed;
 	{
 		std::lock_guard lock(state->mutex);

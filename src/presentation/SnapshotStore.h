@@ -137,7 +137,7 @@ public:
 	void Stop() noexcept;
 	CaptureReservation Reserve(CaptureTarget target = {}, std::shared_ptr<FrameReservation> producer = {},
 							   std::shared_ptr<FrameReservation> composedProducer = {});
-	CaptureReservation Pin(std::shared_ptr<const FrameRecord> metadata,
+	CaptureReservation Pin(const std::shared_ptr<const FrameRecord>& metadata,
 						   std::shared_ptr<const FrameRecord> cancelled = {},
 						   std::shared_ptr<const FrameOutput> output = {},
 						   std::shared_ptr<FrameReservation> producer = {}, CaptureTarget target = {});
@@ -145,15 +145,17 @@ public:
 	// by frame-history issue before committing scheduler admission.
 	bool Bind(CaptureId id, std::shared_ptr<const FrameRecord> issued,
 			  std::shared_ptr<const FrameRecord> cancelled) noexcept;
-	void Update(std::shared_ptr<const FrameRecord> metadata, std::span<const CaptureOutput> outputs = {}) noexcept;
+	void Update(const std::shared_ptr<const FrameRecord>& metadata,
+				std::span<const CaptureOutput> outputs = {}) noexcept;
 	bool PublishDisplay(CaptureId id, const PresentationTick& tick,
 						std::shared_ptr<const FrameRecord> metadata = {}) noexcept;
 	std::shared_ptr<FrameReservation> ProducerReservation(CaptureId id) const;
 	std::shared_ptr<FrameReservation> ProducerReservation(FrameKey frame, CaptureTarget target = {}) const;
-	bool SetProducer(FrameKey frame, std::shared_ptr<FrameReservation> producer, CaptureTarget target = {}) noexcept;
+	bool SetProducer(FrameKey frame, const std::shared_ptr<FrameReservation>& producer,
+					 CaptureTarget target = {}) noexcept;
 	void AbandonProducer(FrameKey frame, CaptureTarget target = {}) noexcept;
 	std::vector<CaptureTarget> RequestedTargets(FrameKey frame) const;
-	void Fail(FrameKey frame, XrResult result, std::shared_ptr<const FrameOutput> output = {}) noexcept;
+	void Fail(FrameKey frame, XrResult result, const std::shared_ptr<const FrameOutput>& output = {}) noexcept;
 	std::optional<SnapshotRecord> Read(CaptureId id) const;
 	std::optional<CaptureId> Find(FrameKey frame, CaptureTarget target = {}) const;
 	std::vector<CaptureId> FindAll(FrameKey frame) const;

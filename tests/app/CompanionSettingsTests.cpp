@@ -16,7 +16,7 @@
 #include <thread>
 #ifdef __linux__
 #include <spawn.h>
-#include <signal.h>
+#include <csignal>
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <unistd.h>

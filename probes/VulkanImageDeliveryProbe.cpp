@@ -412,8 +412,8 @@ static std::shared_ptr<VulkanDevice> ConsumerDevice(std::shared_ptr<Instance> in
 		VkPhysicalDeviceIDProperties ids{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
 		VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &ids};
 		vkGetPhysicalDeviceProperties2(physical, &properties);
-		if (std::memcmp(ids.deviceUUID, identity.deviceUuid.data(), VK_UUID_SIZE) ||
-			std::memcmp(ids.driverUUID, identity.driverUuid.data(), VK_UUID_SIZE))
+		if (std::memcmp(ids.deviceUUID, identity.deviceUuid.data(), VK_UUID_SIZE) != 0 ||
+			std::memcmp(ids.driverUUID, identity.driverUuid.data(), VK_UUID_SIZE) != 0)
 			continue;
 		const auto caps = VulkanExternalDevice::QueryFence(physical, VK_API_VERSION_1_1);
 		Require(caps.CanImport() && caps.CanExport(), "Consumer adapter lacks advertised delivery fence capability");
@@ -870,8 +870,8 @@ void VerifyConsumerImage(const std::shared_ptr<VulkanInspectionFrame>& source, s
 				original.format, expected.size());
 }
 
-void VerifyImageDelivery(std::shared_ptr<VulkanInspectionFrame> original,
-						 std::shared_ptr<VulkanInspectionFrame> resized, bool verifyPixels,
+void VerifyImageDelivery(const std::shared_ptr<VulkanInspectionFrame>& original,
+						 const std::shared_ptr<VulkanInspectionFrame>& resized, bool verifyPixels,
 						 const std::function<bool(SharedImageKey)>& retired)
 {
 	VerifyPreservationOwnership();

@@ -24,7 +24,7 @@ class VulkanFrameSync;
 class VulkanSubmission final : public GpuCompletion
 {
 public:
-	~VulkanSubmission();
+	~VulkanSubmission() override;
 	CompletionStatus PollCompletion() const noexcept override;
 	VkResult Wait(std::uint64_t timeout) const noexcept;
 	bool NativeIdle() const noexcept;

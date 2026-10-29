@@ -345,7 +345,7 @@ void CheckTimedWaits()
 {
 	for (unsigned mode = 0; mode < 3; ++mode)
 	{
-		automation::RigRunner runner([](auto opcode, auto) {
+		automation::RigRunner runner([](auto opcode, const auto&) {
 			Require(opcode == wire::OpCode::Status || opcode == wire::OpCode::ReleaseControl,
 					"An observational wait must not poll, acquire control, or step the application");
 			wire::Message response;
@@ -809,7 +809,7 @@ void CheckMonitorPolicy()
 	for (unsigned mode = 0; mode < 7; ++mode)
 	{
 		std::atomic<unsigned> reads = 0;
-		automation::RigRunner runner([&](auto opcode, auto) {
+		automation::RigRunner runner([&](auto opcode, const auto&) {
 			wire::Message response;
 			response.fields.push_back(wire::Field::U32(wire::tag::Error, 0));
 			if (opcode == wire::OpCode::ReadImageHistory)
@@ -895,7 +895,7 @@ void CheckWindowAnalysisGaps()
 											 {"target", Value::Text(ui ? "quad_layers" : "composed_eyes")},
 											 {"entries", Value::Array(std::move(entries))}})
 								  .Encode();
-		automation::RigRunner runner([&](auto opcode, auto) {
+		automation::RigRunner runner([&](auto opcode, const auto&) {
 			wire::Message response;
 			response.fields.push_back(wire::Field::U32(wire::tag::Error, 0));
 			if (opcode == wire::OpCode::ReadImageWindow)
@@ -988,7 +988,7 @@ void CheckTemporaryResourceCleanup()
 		const bool inspect = mode == 1;
 		std::atomic<bool> pending = false;
 		std::size_t releasedImages = 0, releasedExports = 0, releasedInspections = 0;
-		automation::RigRunner runner([&](auto opcode, auto) {
+		automation::RigRunner runner([&](auto opcode, const auto&) {
 			wire::Message response;
 			response.fields.push_back(wire::Field::U32(wire::tag::Error, 0));
 			switch (opcode)
@@ -1329,7 +1329,7 @@ void CheckMalformedBodyObservations()
 		  "b.skeleton[1].parent = b.skeleton[1].joint", "b.skeleton[2].joint = b.skeleton[1].joint", "b.active = nil"})
 	{
 		bool submitted = false;
-		automation::RigRunner runner([&](auto opcode, auto) {
+		automation::RigRunner runner([&](auto opcode, const auto&) {
 			submitted |= opcode == wire::OpCode::SubmitSimulation;
 			wire::Message response;
 			response.fields.push_back(wire::Field::U32(wire::tag::Error, 0));

@@ -93,7 +93,7 @@ public:
 	std::atomic<CompletionStatus> status{CompletionStatus::Pending};
 };
 
-FramePrediction Submit(wire::test::Fixture& fixture, std::shared_ptr<const FrameOutput> output)
+FramePrediction Submit(wire::test::Fixture& fixture, const std::shared_ptr<const FrameOutput>& output)
 {
 	FramePrediction prediction;
 	Require((!fixture.session->Scheduler().Snapshot().paused ||
@@ -109,7 +109,7 @@ FramePrediction Submit(wire::test::Fixture& fixture, std::shared_ptr<const Frame
 														std::vector<LayerDescription>{QuadLayerDescription{}});
 	const XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO,		   nullptr, prediction.displayTime.value.count(),
 							 XR_ENVIRONMENT_BLEND_MODE_OPAQUE, 1,		nullptr};
-	Require(fixture.session->EndFrame(prediction, &end, std::move(metadata), std::move(output)) == XR_SUCCESS,
+	Require(fixture.session->EndFrame(prediction, &end, std::move(metadata), output) == XR_SUCCESS,
 			"Submit CPU live-preview image frame");
 	return prediction;
 }

@@ -63,6 +63,7 @@ public:
 	virtual std::vector<ApplicationSnapshot> Applications() const = 0;
 	virtual bool RequestShutdown() = 0;
 
+	// NOLINTNEXTLINE(performance-unnecessary-value-param): overrides take ownership of the request
 	virtual std::uint64_t StartLuau(std::uint64_t, LuauRunRequest, const std::shared_ptr<AutomationOwner>&)
 	{
 		throw std::runtime_error("Luau automation is unavailable in this build");

@@ -204,7 +204,7 @@ const std::optional<SequenceCaptureRecord>& SessionCaptureCoordinator::SequenceC
 	return m_record;
 }
 
-void SessionCaptureCoordinator::SequenceCapture::Bind(std::shared_ptr<const FrameRecord> issued,
+void SessionCaptureCoordinator::SequenceCapture::Bind(const std::shared_ptr<const FrameRecord>& issued,
 													  std::shared_ptr<const FrameRecord> cancelled)
 {
 	if (!m_record)
@@ -392,8 +392,8 @@ CaptureId SessionCaptureCoordinator::RefillImageRecording(CaptureId released)
 	return reserved.id;
 }
 
-void SessionCaptureCoordinator::BindIssued(std::shared_ptr<const FrameRecord> issued,
-										   std::shared_ptr<const FrameRecord> cancelled)
+void SessionCaptureCoordinator::BindIssued(const std::shared_ptr<const FrameRecord>& issued,
+										   const std::shared_ptr<const FrameRecord>& cancelled)
 {
 	std::lock_guard lock(m_mutex);
 	if (!m_queued.empty())
@@ -566,7 +566,7 @@ bool SessionCaptureCoordinator::Submission::Requested() const
 	return !m_requested.empty();
 }
 
-void SessionCaptureCoordinator::Submission::Commit(std::shared_ptr<const FrameRecord> metadata,
+void SessionCaptureCoordinator::Submission::Commit(const std::shared_ptr<const FrameRecord>& metadata,
 												   bool includeOutputs) noexcept
 {
 	m_committed = true;
@@ -610,8 +610,8 @@ void SessionCaptureCoordinator::Submission::Commit(std::shared_ptr<const FrameRe
 		}
 		m_retiredImage = m_owner.m_images.Append(std::move(image));
 	}
-	m_owner.m_store.Update(std::move(metadata), includeOutputs ? std::span<const CaptureOutput>{m_outputs}
-															   : std::span<const CaptureOutput>{});
+	m_owner.m_store.Update(metadata, includeOutputs ? std::span<const CaptureOutput>{m_outputs}
+													: std::span<const CaptureOutput>{});
 }
 
 SessionCaptureCoordinator::Boundary::Boundary(SessionCaptureCoordinator& owner)

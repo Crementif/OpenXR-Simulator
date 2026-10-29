@@ -411,7 +411,8 @@ void SequenceCaptureIssueRollback()
 	commands.Apply(prediction.id, {Duration{10}}, prediction.displayTime, SequenceBaseline(), [&](const auto& applied) {
 		auto capture = captures.PrepareSequenceCapture(applied->sequenceCapture);
 		history.Issue(
-			prediction, [&](auto issued, auto cancelled) { capture.Bind(std::move(issued), std::move(cancelled)); },
+			prediction,
+			[&](const auto& issued, auto cancelled) { capture.Bind(std::move(issued), std::move(cancelled)); },
 			capture.Record());
 	});
 	const auto issued = history.Find({generation, prediction.id});
@@ -1097,7 +1098,7 @@ void AdmissionRollback()
 	FramePrediction prediction;
 	auto reserve = [&](const FramePrediction& candidate, bool fail) {
 		commands.Apply(candidate.id, {Duration{1}}, candidate.displayTime, {}, [&](const auto&) {
-			history.Issue(candidate, [&](auto, auto) {
+			history.Issue(candidate, [&](const auto&, const auto&) {
 				if (fail)
 					throw std::bad_alloc{};
 			});

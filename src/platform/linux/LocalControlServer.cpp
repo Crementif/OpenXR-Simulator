@@ -320,7 +320,7 @@ struct LocalControlServer::State
 				}
 				packet.message = std::move(*decoded.message);
 				trace("request", packet.message.opcode, packet.message.requestId.value);
-				const auto response = service.HandlePacket(connection, std::move(packet));
+				const auto response = service.HandlePacket(connection, packet);
 				if (!Write(worker.socket, response, stopping))
 				{
 					trace("response-write-failed", response.message.opcode, response.message.requestId.value);

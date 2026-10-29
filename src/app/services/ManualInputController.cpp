@@ -92,7 +92,7 @@ void ManualInputController::RunChecked()
 			if (bound != m_revision)
 			{
 				bound = m_revision;
-				retired = std::move(connection);
+				retired = std::exchange(connection, nullptr);
 				m_current.reset();
 				waiting.reset();
 				observed = receipt = {};

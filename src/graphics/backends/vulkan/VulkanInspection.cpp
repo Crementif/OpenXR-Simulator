@@ -34,7 +34,7 @@ class VulkanDeliveryNative
 {
 public:
 	static std::shared_ptr<VulkanDeliveryNative> Prepare(VulkanInspectionQueue& queue,
-														 std::shared_ptr<VulkanImage> source,
+														 const std::shared_ptr<VulkanImage>& source,
 														 std::shared_ptr<FrameReservation> sourceBudget,
 														 std::shared_ptr<FrameReservation> admission,
 														 std::function<void(SharedImageKey)> retired);
@@ -316,7 +316,7 @@ void InitializeVulkanImageDelivery()
 class VulkanInspectionQueue
 {
 public:
-	explicit VulkanInspectionQueue(VulkanInspectionDevice owner)
+	explicit VulkanInspectionQueue(const VulkanInspectionDevice& owner)
 		: m_device(owner.Device()),
 		  m_external(m_device, owner.EnabledExtensions(), VK_API_VERSION_1_1, owner.ConsumerTimelineEnabled()),
 		  m_fences(owner.ConsumerFencesEnabled()), m_timeline(owner.ConsumerTimelineEnabled())
@@ -423,26 +423,26 @@ public:
 							  "Submit retained composition");
 	}
 
-	std::shared_ptr<VulkanInspectionWork> ImportFrame(std::shared_ptr<VulkanFrame> source)
+	std::shared_ptr<VulkanInspectionWork> ImportFrame(const std::shared_ptr<VulkanFrame>& source)
 	{
-		return VulkanInspectionWork::Import(m_device, m_external, ReserveWork(), std::move(source));
+		return VulkanInspectionWork::Import(m_device, m_external, ReserveWork(), source);
 	}
 
-	std::shared_ptr<VulkanInspectionWork> Readback(std::shared_ptr<VulkanImage> source,
+	std::shared_ptr<VulkanInspectionWork> Readback(const std::shared_ptr<VulkanImage>& source,
 												   std::shared_ptr<FrameReservation> sourceBudget,
 												   std::optional<std::uint32_t> layer,
 												   std::shared_ptr<const void> owner, std::optional<ImageRegion> region)
 	{
-		return VulkanInspectionWork::Readback(m_device, ReserveWork(), std::move(source), std::move(sourceBudget),
-											  layer, std::move(owner), region);
+		return VulkanInspectionWork::Readback(m_device, ReserveWork(), source, std::move(sourceBudget), layer,
+											  std::move(owner), region);
 	}
 
-	std::shared_ptr<VulkanInspectionWork> Delivery(std::shared_ptr<VulkanImage> source,
+	std::shared_ptr<VulkanInspectionWork> Delivery(const std::shared_ptr<VulkanImage>& source,
 												   std::shared_ptr<FrameReservation> sourceBudget,
 												   const VulkanExternalImageSpec& spec)
 	{
-		return VulkanInspectionWork::Delivery(m_device, m_external, ReserveWork(), std::move(source),
-											  std::move(sourceBudget), spec);
+		return VulkanInspectionWork::Delivery(m_device, m_external, ReserveWork(), source, std::move(sourceBudget),
+											  spec);
 	}
 
 	SharedImageKey DeliveryKey(const VulkanExternalImageSpec& spec)
@@ -508,7 +508,7 @@ private:
 };
 
 std::shared_ptr<VulkanDeliveryNative> VulkanDeliveryNative::Prepare(VulkanInspectionQueue& queue,
-																	std::shared_ptr<VulkanImage> source,
+																	const std::shared_ptr<VulkanImage>& source,
 																	std::shared_ptr<FrameReservation> sourceBudget,
 																	std::shared_ptr<FrameReservation> admission,
 																	std::function<void(SharedImageKey)> retired)
@@ -524,7 +524,7 @@ std::shared_ptr<VulkanDeliveryNative> VulkanDeliveryNative::Prepare(VulkanInspec
 	spec.arrayLayers = source->layers;
 	spec.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
 	delivery->m_key = queue.DeliveryKey(spec);
-	payload.work = queue.Delivery(std::move(source), std::move(sourceBudget), spec);
+	payload.work = queue.Delivery(source, std::move(sourceBudget), spec);
 	payload.image = payload.work->ExternalOutput();
 	if (retired)
 		payload.image->Image()->retired = [retired = std::move(retired), key = delivery->m_key] {
@@ -1228,7 +1228,7 @@ VulkanInspection::~VulkanInspection()
 	Close();
 }
 
-std::unique_ptr<VulkanInspectionTransfer> VulkanInspection::Prepare(std::shared_ptr<VulkanFrame> source,
+std::unique_ptr<VulkanInspectionTransfer> VulkanInspection::Prepare(const std::shared_ptr<VulkanFrame>& source,
 																	std::function<void(CompletionStatus)> completed,
 																	std::function<void()> retired,
 																	VulkanInspectionKind kind,
