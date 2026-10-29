@@ -91,61 +91,61 @@ class BlockingReader final : public wire::ImageReader
 {
 public:
 	BlockingReader(std::shared_ptr<wire::ImageReader> reader, std::shared_ptr<Gate> gate)
-		: reader(std::move(reader)), gate(std::move(gate))
+		: m_reader(std::move(reader)), m_gate(std::move(gate))
 	{}
 
 	wire::ImageDescription Description() const override
 	{
-		gate->Wait();
-		return reader->Description();
+		m_gate->Wait();
+		return m_reader->Description();
 	}
 
 	wire::ImageCapabilities Capabilities() const noexcept override
 	{
-		return reader->Capabilities();
+		return m_reader->Capabilities();
 	}
 
 	CompletionStatus PollCompletion() const noexcept override
 	{
-		return reader->PollCompletion();
+		return m_reader->PollCompletion();
 	}
 
 	std::shared_ptr<wire::ImageDelivery> Share(const wire::ImageDeviceIdentity& identity,
 											   const std::shared_ptr<wire::TransferHandle>& consumer) const override
 	{
-		return reader->Share(identity, consumer);
+		return m_reader->Share(identity, consumer);
 	}
 
 	std::shared_ptr<wire::ImageExport> Export(std::optional<std::uint32_t> layer) const override
 	{
-		return reader->Export(layer);
+		return m_reader->Export(layer);
 	}
 
 private:
-	std::shared_ptr<wire::ImageReader> reader;
-	std::shared_ptr<Gate> gate;
+	std::shared_ptr<wire::ImageReader> m_reader;
+	std::shared_ptr<Gate> m_gate;
 };
 
 class BlockingProvider final : public wire::ImageInspectionProvider
 {
 public:
 	BlockingProvider(std::shared_ptr<wire::test::State> state, std::shared_ptr<Gate> gate)
-		: provider(std::make_shared<wire::test::Provider>(std::move(state))), gate(std::move(gate))
+		: m_provider(std::make_shared<wire::test::Provider>(std::move(state))), m_gate(std::move(gate))
 	{}
 
 	wire::ImageCapabilities Capabilities(XrSession session) const noexcept override
 	{
-		return provider->Capabilities(session);
+		return m_provider->Capabilities(session);
 	}
 
 	std::shared_ptr<wire::ImageReader> Retain(std::shared_ptr<const FrameOutput> output) const override
 	{
-		return std::make_shared<BlockingReader>(provider->Retain(std::move(output)), gate);
+		return std::make_shared<BlockingReader>(m_provider->Retain(std::move(output)), m_gate);
 	}
 
 private:
-	std::shared_ptr<wire::ImageInspectionProvider> provider;
-	std::shared_ptr<Gate> gate;
+	std::shared_ptr<wire::ImageInspectionProvider> m_provider;
+	std::shared_ptr<Gate> m_gate;
 };
 
 std::uint64_t Id(const wire::Message& message, std::uint16_t tag)
@@ -205,18 +205,18 @@ wire::ControlPacket Retain(Source source, CaptureId capture)
 class StopExposure final : public wire::PacketExposure
 {
 public:
-	explicit StopExposure(app::RuntimeConnection& connection) : connection(connection) {}
+	explicit StopExposure(app::RuntimeConnection& connection) : m_connection(connection) {}
 
 	void MarkTransferred() noexcept override
 	{
-		connection.Close();
+		m_connection.Close();
 		stopped.store(true);
 	}
 
 	std::atomic<bool> stopped{false};
 
 private:
-	app::RuntimeConnection& connection;
+	app::RuntimeConnection& m_connection;
 };
 
 void ConnectionAndHandles()
@@ -360,11 +360,11 @@ void ReconnectRejectsStaleReplies()
 class ReentrantHandle final : public wire::TransferHandle
 {
 public:
-	explicit ReentrantHandle(std::function<void()> release) : release(std::move(release)) {}
+	explicit ReentrantHandle(std::function<void()> release) : m_release(std::move(release)) {}
 
 	~ReentrantHandle() override
 	{
-		release();
+		m_release();
 	}
 
 	wire::TransferHandleKind Kind() const noexcept override
@@ -383,7 +383,7 @@ public:
 	}
 
 private:
-	std::function<void()> release;
+	std::function<void()> m_release;
 };
 
 void ResponsiveShutdownAndDeadline()

@@ -114,7 +114,7 @@ private:
 	unsigned m_slowFrames = 0;
 	unsigned m_fastFrames = 0;
 	DisplayTimeline m_timeline;
-	HostTime m_hostEpoch{};
+	HostTime m_hostEpoch;
 	DisplayTick m_hostTick;
 	FramePipelineState m_state;
 	std::uint64_t m_revision = 0;

@@ -115,9 +115,9 @@ private:
 	double m_sumFrameMs = 0.0;
 	double m_latestFrameMs = 0.0;
 	bool m_hasLastProjection = false;
-	Clock::time_point m_lastProjection{};
+	Clock::time_point m_lastProjection;
 	bool m_hasTitleUpdate = false;
-	Clock::time_point m_lastTitleUpdate{};
+	Clock::time_point m_lastTitleUpdate;
 };
 
 } // namespace perf

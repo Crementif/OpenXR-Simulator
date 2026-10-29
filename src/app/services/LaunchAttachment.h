@@ -70,7 +70,7 @@ private:
 	std::string m_lastFailure;
 	std::set<std::string> m_previous;
 	std::chrono::steady_clock::time_point m_deadline;
-	std::chrono::steady_clock::time_point m_retryAfter{};
+	std::chrono::steady_clock::time_point m_retryAfter;
 	std::variant<WaitingForProcess, WaitingForEndpoint, Connecting, WaitingForSession, Complete> m_state;
 	std::optional<std::uint64_t> m_process;
 	void Initialize(const LaunchProfile& profile);

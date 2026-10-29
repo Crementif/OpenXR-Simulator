@@ -42,10 +42,10 @@ class RecordingHost
 public:
 	explicit RecordingHost(ExecutionMode mode = ExecutionMode::Deterministic)
 	{
-		static std::atomic<std::uint64_t> serial{0};
+		static std::atomic<std::uint64_t> s_serial{0};
 		const auto name = "simxr-recording-" +
 						  std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
-						  std::to_string(++serial);
+						  std::to_string(++s_serial);
 		path = std::filesystem::temp_directory_path() / name;
 		Require(std::filesystem::create_directory(path), "Create recording test directory");
 		XrInstanceCreateInfo create{XR_TYPE_INSTANCE_CREATE_INFO};

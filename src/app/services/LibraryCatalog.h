@@ -19,7 +19,7 @@ struct LibraryEntry
 	std::string path, name, error;
 	bool take = false, archive = false;
 	std::uint64_t seed = 0, firstFrame = 0, lastFrame = 0;
-	std::filesystem::file_time_type modified{};
+	std::filesystem::file_time_type modified;
 	std::uintmax_t bytes = 0;
 };
 enum class LibraryAction

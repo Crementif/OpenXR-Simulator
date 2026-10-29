@@ -342,7 +342,7 @@ void ScenarioOriginAndSharedCoreReplay()
 			TakeControl{ControlChannel::Session}, SetScenario{FailureScenario::Unfocused, true},
 			SetScenario{FailureScenario::Recenter, true}});
 	tick(source);
-	Require(source.Input().Snapshot().controllers[0].connected == false, "Source scenario did not disconnect");
+	Require(!source.Input().Snapshot().controllers[0].connected, "Source scenario did not disconnect");
 	source.StartCommandRecording();
 	const auto origin = source.Commands().Recorder().Snapshot(0, 0).origin;
 	Require(origin.frame.value == 1 && origin.scenarios[static_cast<std::size_t>(FailureScenario::HeadUntracked)] &&

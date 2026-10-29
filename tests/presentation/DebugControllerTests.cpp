@@ -881,13 +881,13 @@ class BlockingClock final : public Clock
 public:
 	HostTime Now() const override
 	{
-		std::unique_lock lock(mutex);
-		if (armed)
+		std::unique_lock lock(m_mutex);
+		if (m_armed)
 		{
-			armed = false;
-			entered = true;
-			changed.notify_all();
-			changed.wait_for(lock, 2s, [&] { return released; });
+			m_armed = false;
+			m_entered = true;
+			m_changed.notify_all();
+			m_changed.wait_for(lock, 2s, [&] { return m_released; });
 		}
 		return HostTime{Duration{0}};
 	}
@@ -899,28 +899,28 @@ public:
 
 	void Arm()
 	{
-		std::lock_guard lock(mutex);
-		armed = true;
-		entered = released = false;
+		std::lock_guard lock(m_mutex);
+		m_armed = true;
+		m_entered = m_released = false;
 	}
 
 	bool Entered() const
 	{
-		std::lock_guard lock(mutex);
-		return entered;
+		std::lock_guard lock(m_mutex);
+		return m_entered;
 	}
 
 	void Release()
 	{
-		std::lock_guard lock(mutex);
-		released = true;
-		changed.notify_all();
+		std::lock_guard lock(m_mutex);
+		m_released = true;
+		m_changed.notify_all();
 	}
 
 private:
-	mutable std::mutex mutex;
-	mutable std::condition_variable changed;
-	mutable bool armed = false, entered = false, released = false;
+	mutable std::mutex m_mutex;
+	mutable std::condition_variable m_changed;
+	mutable bool m_armed = false, m_entered = false, m_released = false;
 };
 
 void BoundLeaseGeneration()

@@ -5,8 +5,6 @@
 #include <spawn.h>
 #include <sys/wait.h>
 
-extern char** environ;
-
 namespace simxr::app
 {
 class ChildEnvironment

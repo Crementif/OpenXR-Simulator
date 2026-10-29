@@ -12,8 +12,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-extern char** environ;
-
 namespace simxr::probe
 {
 ConsumerUnavailable::ConsumerUnavailable()

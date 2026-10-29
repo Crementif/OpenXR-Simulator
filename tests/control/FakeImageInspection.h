@@ -81,15 +81,16 @@ class Delivery final : public ImageDelivery
 {
 public:
 	Delivery(std::shared_ptr<State> state, std::shared_ptr<Data> data, std::shared_ptr<TransferHandle> consumer)
-		: state(std::move(state)), data(std::move(data)), consumer(std::move(consumer)), image(this->state->nextImage++)
+		: m_state(std::move(state)), m_data(std::move(data)), m_consumer(std::move(consumer)),
+		  m_image(this->m_state->nextImage++)
 	{
-		memory = OwnControlFd(::memfd_create("simxr-cpu-image-fixture", MFD_CLOEXEC));
-		Require(::write(static_cast<int>(memory->Value()), this->data->pixels.data(), this->data->pixels.size()) ==
-					static_cast<ssize_t>(this->data->pixels.size()),
+		m_memory = OwnControlFd(::memfd_create("simxr-cpu-image-fixture", MFD_CLOEXEC));
+		Require(::write(static_cast<int>(m_memory->Value()), this->m_data->pixels.data(),
+						this->m_data->pixels.size()) == static_cast<ssize_t>(this->m_data->pixels.size()),
 				"Write fixture memfd");
 		int pipe[2];
 		Require(::pipe2(pipe, O_CLOEXEC | O_NONBLOCK) == 0, "Create fixture readiness pipe");
-		ready = OwnControlFd(pipe[0]);
+		m_ready = OwnControlFd(pipe[0]);
 		auto writer = OwnControlFd(pipe[1]);
 		const char value = 1;
 		Require(::write(static_cast<int>(writer->Value()), &value, 1) == 1, "Signal fixture pipe");
@@ -97,19 +98,19 @@ public:
 
 	~Delivery() override
 	{
-		++state->deliveriesDestroyed;
+		++m_state->deliveriesDestroyed;
 	}
 
 	SharedImageKey Key() const noexcept override
 	{
-		return {{0xfedcba9876543210ULL}, {image}};
+		return {{0xfedcba9876543210ULL}, {m_image}};
 	}
 
 	ImageDescription Description() const override
 	{
-		if (state->failDeliveryDescription.exchange(false))
+		if (m_state->failDeliveryDescription.exchange(false))
 			throw std::bad_alloc{};
-		return data->description;
+		return m_data->description;
 	}
 
 	CompletionStatus ProducerCompletion() const noexcept override
@@ -119,91 +120,94 @@ public:
 
 	CompletionStatus ConsumerCompletion() const noexcept override
 	{
-		return state->consumerPhase.load();
+		return m_state->consumerPhase.load();
 	}
 
 	std::vector<std::shared_ptr<TransferHandle>> PrepareHandles() override
 	{
-		return {memory->Duplicate(), ready->Duplicate()};
+		return {m_memory->Duplicate(), m_ready->Duplicate()};
 	}
 
 	void MarkTransferred() noexcept override
 	{
-		++state->exposures;
+		++m_state->exposures;
 	}
 
 private:
-	std::shared_ptr<State> state;
-	std::shared_ptr<Data> data;
-	std::shared_ptr<TransferHandle> consumer, memory, ready;
-	std::uint64_t image;
+	std::shared_ptr<State> m_state;
+	std::shared_ptr<Data> m_data;
+	std::shared_ptr<TransferHandle> m_consumer, m_memory, m_ready;
+	std::uint64_t m_image;
 };
 
 class Export final : public ImageExport
 {
 public:
 	Export(std::shared_ptr<State> state, std::shared_ptr<Data> data, std::optional<std::uint32_t> layer)
-		: state(std::move(state)), data(std::move(data)), description(this->data->description)
+		: m_state(std::move(state)), m_data(std::move(data)), m_description(this->m_data->description)
 	{
-		if (layer && *layer >= description.arrayLayers)
+		if (layer && *layer >= m_description.arrayLayers)
 			throw ImageInspectionError{ErrorCode::Invalid, "Fixture layer outside array"};
-		const auto size = this->data->pixels.size() / description.arrayLayers;
+		const auto size = this->m_data->pixels.size() / m_description.arrayLayers;
 		if (layer)
 		{
-			description.arrayLayers = 1;
-			bytes.assign(this->data->pixels.begin() + *layer * size, this->data->pixels.begin() + (*layer + 1) * size);
+			m_description.arrayLayers = 1;
+			m_bytes.assign(this->m_data->pixels.begin() + *layer * size,
+						   this->m_data->pixels.begin() + (*layer + 1) * size);
 		}
 		else
-			bytes = this->data->pixels;
+			m_bytes = this->m_data->pixels;
 	}
 
 	~Export() override
 	{
-		++state->exportsDestroyed;
+		++m_state->exportsDestroyed;
 	}
 
 	ImageDescription Description() const override
 	{
-		if (state->failExportDescription.exchange(false))
+		if (m_state->failExportDescription.exchange(false))
 			throw std::bad_alloc{};
-		return description;
+		return m_description;
 	}
 
 	std::uint64_t ByteSize() const noexcept override
 	{
-		return bytes.size();
+		return m_bytes.size();
 	}
 
 	CompletionStatus PollCompletion() const noexcept override
 	{
-		return state->exportPhase.load();
+		return m_state->exportPhase.load();
 	}
 
 	std::span<const std::byte> Read() override
 	{
-		++state->reads;
+		++m_state->reads;
 		if (PollCompletion() != CompletionStatus::Complete)
 			throw ImageInspectionError{ErrorCode::Busy, "Fixture export not ready"};
-		return bytes;
+		return m_bytes;
 	}
 
 private:
-	std::shared_ptr<State> state;
-	std::shared_ptr<Data> data;
-	ImageDescription description;
-	std::vector<std::byte> bytes;
+	std::shared_ptr<State> m_state;
+	std::shared_ptr<Data> m_data;
+	ImageDescription m_description;
+	std::vector<std::byte> m_bytes;
 };
 
 class Reader final : public ImageReader
 {
 public:
-	Reader(std::shared_ptr<State> state, std::shared_ptr<Data> data) : state(std::move(state)), data(std::move(data)) {}
+	Reader(std::shared_ptr<State> state, std::shared_ptr<Data> data)
+		: m_state(std::move(state)), m_data(std::move(data))
+	{}
 
 	~Reader() override
 	{
-		++state->readersDestroyed;
-		if (state->onReaderDestroyed)
-			state->onReaderDestroyed();
+		++m_state->readersDestroyed;
+		if (m_state->onReaderDestroyed)
+			m_state->onReaderDestroyed();
 	}
 
 	CompletionStatus PollCompletion() const noexcept override
@@ -213,9 +217,9 @@ public:
 
 	ImageDescription Description() const override
 	{
-		if (state->failReaderDescription.exchange(false))
+		if (m_state->failReaderDescription.exchange(false))
 			throw std::bad_alloc{};
-		return data->description;
+		return m_data->description;
 	}
 
 	ImageCapabilities Capabilities() const noexcept override
@@ -226,30 +230,30 @@ public:
 	std::shared_ptr<ImageDelivery> Share(const ImageDeviceIdentity& identity,
 										 const std::shared_ptr<TransferHandle>& consumer) const override
 	{
-		if (identity != data->description.identity)
+		if (identity != m_data->description.identity)
 			throw ImageInspectionError{ErrorCode::Invalid, "Fixture UUID mismatch"};
 		if (!consumer || consumer->Kind() != TransferHandleKind::OpaqueFd ||
 			::fcntl(static_cast<int>(consumer->Value()), F_GETFD) == -1)
 			throw ImageInspectionError{ErrorCode::Invalid, "Fixture consumer FD invalid"};
-		++state->shares;
-		return std::make_shared<Delivery>(state, data, consumer->Duplicate());
+		++m_state->shares;
+		return std::make_shared<Delivery>(m_state, m_data, consumer->Duplicate());
 	}
 
 	std::shared_ptr<ImageExport> Export(std::optional<std::uint32_t> layer) const override
 	{
-		++state->exports;
-		return std::make_shared<test::Export>(state, data, layer);
+		++m_state->exports;
+		return std::make_shared<test::Export>(m_state, m_data, layer);
 	}
 
 private:
-	std::shared_ptr<State> state;
-	std::shared_ptr<Data> data;
+	std::shared_ptr<State> m_state;
+	std::shared_ptr<Data> m_data;
 };
 
 class Provider final : public ImageInspectionProvider
 {
 public:
-	explicit Provider(std::shared_ptr<State> state) : state(std::move(state)) {}
+	explicit Provider(std::shared_ptr<State> state) : m_state(std::move(state)) {}
 
 	ImageCapabilities Capabilities(XrSession) const noexcept override
 	{
@@ -258,16 +262,16 @@ public:
 
 	std::shared_ptr<ImageReader> Retain(std::shared_ptr<const FrameOutput> output) const override
 	{
-		++state->retains;
+		++m_state->retains;
 		auto data = std::make_shared<Data>();
 		data->source = std::move(output);
-		data->description.completionKind = state->completionKind;
-		data->description.views = state->views;
-		return std::make_shared<Reader>(state, std::move(data));
+		data->description.completionKind = m_state->completionKind;
+		data->description.views = m_state->views;
+		return std::make_shared<Reader>(m_state, std::move(data));
 	}
 
 private:
-	std::shared_ptr<State> state;
+	std::shared_ptr<State> m_state;
 };
 
 struct Fixture

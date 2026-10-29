@@ -24,7 +24,7 @@ struct PoseSample
 	XrPosef pose{{0, 0, 0, 1}, {0, 0, 0}};
 	XrSpaceLocationFlags flags = 0;
 	RuntimeTime sampleTime{};
-	std::optional<RuntimeTime> eyeGazeSampleTime{};
+	std::optional<RuntimeTime> eyeGazeSampleTime;
 };
 
 // A value snapshot of one space lookup; it does not retain the space handle.
@@ -277,9 +277,9 @@ struct TrackerDevice
 	TrackerRole role;
 	bool connected = true;
 	bool tracked = true;
-	std::optional<BodyJoint> anchor{};
-	std::optional<XrPosef> poseOverride{};
-	std::optional<XrPosef> jointOffset{};
+	std::optional<BodyJoint> anchor;
+	std::optional<XrPosef> poseOverride;
+	std::optional<XrPosef> jointOffset;
 	XrSpaceLocationFlags poseFlags = TrackedPoseFlags;
 	TrackerSourcePath sourcePath;
 };

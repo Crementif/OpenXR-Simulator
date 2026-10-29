@@ -373,9 +373,9 @@ static int RunProbe()
 	{
 		vci.enabledLayerCount = 1;
 		vci.ppEnabledLayerNames = &validation;
-		static const char* debugExtension = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+		static const char* s_debugExtension = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
 		vci.enabledExtensionCount = 1;
-		vci.ppEnabledExtensionNames = &debugExtension;
+		vci.ppEnabledExtensionNames = &s_debugExtension;
 	}
 	VkInstance vkInstance = VK_NULL_HANDLE;
 	VkResult result;

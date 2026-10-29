@@ -84,7 +84,7 @@ private:
 	LiveInputSample m_latest;
 	LiveInputStatus m_status;
 	std::array<Transitions, 2> m_transitions;
-	LiveInputClock::time_point m_received{};
+	LiveInputClock::time_point m_received;
 	bool m_dirty = false, m_suspendedApplied = false, m_controlsSuspended = false;
 };
 } // namespace simxr

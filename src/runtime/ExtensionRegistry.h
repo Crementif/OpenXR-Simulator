@@ -25,7 +25,7 @@ struct ExtensionDefinition
 	std::string_view name;
 	std::uint32_t version;
 	std::span<const std::string_view> commands;
-	std::span<const DependencyClause> dependencies{};
+	std::span<const DependencyClause> dependencies;
 };
 
 class EnabledExtensions

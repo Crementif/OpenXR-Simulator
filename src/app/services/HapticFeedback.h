@@ -25,12 +25,12 @@ private:
 		std::uint64_t sequence = 0;
 		std::uint16_t amplitude = 0;
 		bool shortPulse = false;
-		Clock::time_point end{};
+		Clock::time_point end;
 	};
 
 	std::array<Motor, 2> m_motors{};
 	control::HapticObservation m_recent;
-	Clock::time_point m_received{};
+	Clock::time_point m_received;
 	bool m_observed = false;
 };
 } // namespace simxr::app

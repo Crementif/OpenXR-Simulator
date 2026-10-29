@@ -76,7 +76,7 @@ int ScriptEngine::AnalyzeImages(lua_State* state, std::uint64_t window)
 		{
 			control::IncidentSample sample;
 			if (phase == "clear")
-				sample.pixels.resize(std::size_t(sample.Width) * sample.Height * 4);
+				sample.pixels.resize(std::size_t(control::IncidentSample::Width) * control::IncidentSample::Height * 4);
 			else
 			{
 				std::optional<std::array<XrRect2Di, 2>> rectangles;
@@ -129,7 +129,8 @@ int ScriptEngine::AnalyzeImages(lua_State* state, std::uint64_t window)
 					sample = std::move(*observed);
 				}
 			}
-			auto observation = analysis.Observe(frame, sample.pixels, sample.Width, sample.Height, sample.Width * 4,
+			constexpr auto width = control::IncidentSample::Width;
+			auto observation = analysis.Observe(frame, sample.pixels, width, control::IncidentSample::Height, width * 4,
 												flicker::PixelOrder::Rgba, sample.rectangles);
 			frames.push_back({frame, observation.skipped, observation.reason});
 			if (!observation.reason.empty())

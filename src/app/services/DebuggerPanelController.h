@@ -72,7 +72,7 @@ private:
 	std::optional<DeferredCommand> m_deferred;
 	std::uint64_t m_lease = 0, m_command = 1, m_nextOperation = 1, m_acknowledged = 0;
 	bool m_manual = false;
-	PanelClock::time_point m_nextSessions{}, m_nextStatus{}, m_nextOperations{}, m_nextRenew{};
+	PanelClock::time_point m_nextSessions, m_nextStatus, m_nextOperations, m_nextRenew;
 	std::string m_detail;
 };
 } // namespace simxr::app
