@@ -44,7 +44,6 @@ class ArtifactCalls
 		std::optional<std::string_view> program = {});
 	nlohmann::json Sequence(control::OpCode opcode, std::vector<control::Field> fields,
 		std::optional<std::string_view> program = {});
-	std::vector<std::byte> Read(std::uint64_t ticket, std::uint64_t offset, std::uint64_t length);
 
   private:
 	std::shared_ptr<McpCancellation> Begin();

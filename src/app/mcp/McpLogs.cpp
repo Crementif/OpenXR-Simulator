@@ -16,7 +16,7 @@ static Json Result(const Json& value, bool error = false)
 
 Json LogDefinition()
 {
-	return {{"name", "read_logs"}, {"description", "Read a bounded tail of the selected runtime process's legacy text log. "
+	return {{"name", "read_logs"}, {"description", "Read a bounded tail of the selected runtime process's text log. "
 		"A launch-derived directory is inferred when possible; log contents are not independently verified against the runtime epoch."},
 		{"inputSchema", {{"type", "object"}, {"properties", {
 			{"application_id", {{"type", "string"}, {"minLength", 1}, {"maxLength", 256}}},
@@ -29,7 +29,7 @@ Json LogDefinition()
 
 Json ClearLogDefinition()
 {
-	return {{"name", "clear_logs"}, {"description", "Truncate only the selected runtime process's legacy log. "
+	return {{"name", "clear_logs"}, {"description", "Truncate only the selected runtime process's log. "
 		"Concurrent writes can add new lines immediately. The PID-named file cannot be authenticated to a runtime epoch; "
 		"a cancelled or failed request may have already cleared it. Link checks are snapshots; concurrent links or renames can change the affected file."},
 		{"inputSchema", {{"type", "object"}, {"properties", {

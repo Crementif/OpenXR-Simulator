@@ -65,13 +65,21 @@ void ExportReader::Read(const std::function<void(std::span<const std::byte>)>& c
 {
 	if (!m_id)
 		throw std::logic_error("Export was already released");
-	for (std::uint64_t offset = 0; offset < m_size;)
+	Read(m_exchange, m_id, m_size, consume);
+}
+void ExportReader::Read(const Exchange& exchange, std::uint64_t ticket, std::uint64_t size,
+	const std::function<void(std::span<const std::byte>)>& consume)
+{
+	if (!ticket)
+		throw std::invalid_argument("Export identity must be nonzero");
+	for (std::uint64_t offset = 0; offset < size;)
 	{
-		const auto length = std::min<std::uint64_t>(MaxPayload - 4096, m_size - offset);
-		const auto chunk = m_exchange(OpCode::ReadExport,
-			{Field::U64(tag::ExportId, m_id, true), Field::U64(tag::Offset, offset, true), Field::U64(tag::Length, length, true)});
+		const auto length = std::min<std::uint64_t>(MaxPayload - 4096, size - offset);
+		const auto chunk = exchange(OpCode::ReadExport,
+			{Field::U64(tag::ExportId, ticket, true), Field::U64(tag::Offset, offset, true), Field::U64(tag::Length, length, true)});
 		const auto* bytes = chunk.Find(tag::Bytes);
-		if (!bytes || bytes->value.empty() || RequiredNumber(chunk, tag::Offset) != offset || bytes->value.size() > length)
+		if (!bytes || RequiredNumber(chunk, tag::Offset) != offset ||
+			RequiredNumber(chunk, tag::Length) != length || bytes->value.size() != length)
 			throw std::runtime_error("Invalid export chunk");
 		consume(bytes->value);
 		offset += bytes->value.size();

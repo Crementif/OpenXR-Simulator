@@ -111,11 +111,4 @@ Json ArtifactCalls::Sequence(control::OpCode opcode, std::vector<control::Field>
 		throw;
 	}
 }
-std::vector<std::byte> ArtifactCalls::Read(std::uint64_t ticket, std::uint64_t offset, std::uint64_t length)
-{
-	auto response = Request(control::OpCode::ReadExport,
-		{control::Field::U64(control::tag::ExportId, ticket, true), control::Field::U64(control::tag::Offset, offset, true),
-		 control::Field::U64(control::tag::Length, length, true)});
-	return std::move(response.Find(control::tag::Bytes)->value);
-}
 }

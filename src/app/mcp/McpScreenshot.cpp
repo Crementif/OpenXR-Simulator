@@ -63,7 +63,7 @@ Json ScreenshotDefinition()
 		{"inputSchema", {{"type", "object"}, {"properties", {
 			{"application_id", {{"type", "string"}, {"minLength", 1}, {"maxLength", 256}}},
 			{"eye", {{"type", "string"}, {"enum", Json::array({"both", "left", "right"})}}},
-			{"layer", {{"type", "string"}, {"enum", Json::array({"all", "projection", "quad"})}}},
+			{"target", {{"type", "string"}, {"enum", Json::array({"current_display", "projection_layers", "quad_layers"})}}},
 			{"format", {{"type", "string"}, {"enum", Json::array({"jpeg", "png"})}}},
 			{"max_width", {{"type", "integer"}, {"minimum", 64}, {"maximum", 4096}}},
 			{"quality", {{"type", "integer"}, {"minimum", 1}, {"maximum", 100}}},
@@ -180,7 +180,7 @@ static std::optional<CaptureResult> Capture(McpApplication& application, const J
 		if (!arguments.is_object())
 			throw std::invalid_argument("Arguments must be an object");
 		for (auto it = arguments.begin(); it != arguments.end(); ++it)
-			if (it.key() != "application_id" && it.key() != "eye" && it.key() != "layer" && it.key() != "format" &&
+			if (it.key() != "application_id" && it.key() != "eye" && it.key() != "target" && it.key() != "format" &&
 				it.key() != "max_width" && it.key() != "quality" && it.key() != "timeout" &&
 				!(mode == CaptureMode::Consistency && (it.key() == "threshold" || it.key() == "include_image")))
 				throw std::invalid_argument("Unknown argument: " + it.key());
@@ -190,7 +190,7 @@ static std::optional<CaptureResult> Capture(McpApplication& application, const J
 			throw std::invalid_argument("application_id must identify a selected application");
 		const auto& target = *selected;
 		const auto eye = Option(arguments, "eye", "both", {"both", "left", "right"});
-		const auto layer = Option(arguments, "layer", "all", {"all", "projection", "quad"});
+		const auto captureTarget = Option(arguments, "target", "current_display", {"current_display", "projection_layers", "quad_layers"});
 		const auto format = Option(arguments, "format", "jpeg", {"jpeg", "png"});
 		const auto maxWidth = Integer(arguments, "max_width", 1024, 64, 4096);
 		const auto quality = Integer(arguments, "quality", 85, 1, 100);
@@ -231,7 +231,7 @@ static std::optional<CaptureResult> Capture(McpApplication& application, const J
 		wire::Message retained;
 		std::optional<FrameKey> compositionFrame;
 		Json composition = nullptr;
-		if (layer == "all")
+		if (captureTarget == "current_display")
 		{
 			for (;;)
 			{
@@ -266,7 +266,7 @@ static std::optional<CaptureResult> Capture(McpApplication& application, const J
 			const auto submitted = calls.Request(connection, wire::OpCode::Submit,
 				{wire::Field::U64(tag::Lease, lease, true), wire::Field::U64(tag::CommandId, 1, true),
 				 wire::Field::U32(tag::CommandKind, static_cast<std::uint32_t>(wire::CommandKind::StartImageRecording), true),
-				 wire::EncodeCaptureTarget({layer == "projection" ? CaptureKind::ProjectionLayers : CaptureKind::QuadLayers, 0, 0}),
+				 wire::EncodeCaptureTarget({captureTarget == "projection_layers" ? CaptureKind::ProjectionLayers : CaptureKind::QuadLayers, 0, 0}),
 				 wire::Field::U32(tag::Capacity, 1, true), wire::Field::U64(tag::Length, 1, true)});
 			const auto operation = Identifier(submitted, tag::OperationId);
 			wire::Message operationState;
@@ -452,7 +452,7 @@ static std::optional<CaptureResult> Capture(McpApplication& application, const J
 			return CaptureResult{std::move(document), std::move(content), {opened.session, opened.generation, opened.process, opened.epoch}};
 		}
 		Json metadata = {{"ok", true}, {"application_id", target}, {"session", std::to_string(opened.session)},
-			{"frame", frame}, {"layer", layer}, {"eye", eye}, {"format", format}, {"resized", resized},
+			{"frame", frame}, {"target", captureTarget}, {"eye", eye}, {"format", format}, {"resized", resized},
 			{"source_width", width}, {"source_height", height}, {"eyes", std::move(eyes)}};
 		if (!composition.is_null())
 			metadata["composition"] = std::move(composition);
@@ -487,7 +487,7 @@ std::optional<Json> ValidateStereo(McpApplication& application, const Json& argu
 			return Error("Unknown argument: " + it.key());
 	Json request = arguments;
 	request["eye"] = "both";
-	request["layer"] = "projection";
+	request["target"] = "projection_layers";
 	request["max_width"] = 640;
 	return CaptureReply(Capture(application, request, cancellation, CaptureMode::Validation));
 }
@@ -544,7 +544,7 @@ std::optional<Json> CaptureStereoConsistency(McpApplication& application, const 
 		request.erase("frames");
 		request.erase("interval");
 		request["eye"] = "both";
-		request["layer"] = "projection";
+		request["target"] = "projection_layers";
 		request["max_width"] = 480;
 		Json samples = Json::array();
 		std::optional<Json> worst, image;

@@ -49,16 +49,16 @@ def main():
         eventually(lambda: (root / 'recording.3.ready').exists(), timeout=15)
         def capture(arguments):
             return worker.rpc('tools/call', {'name': 'capture_screenshot', 'arguments': dict(application_id=application, **arguments)})
-        def inspect(response, expected_layer, eyes, expected_frame=None):
+        def inspect(response, expected_target, eyes, expected_frame=None):
             result = response['result']
             assert not result['isError'], result
             content = result['content']
             metadata = json.loads(content[0]['text'])
-            assert metadata['layer'] == expected_layer and metadata['eye'] == eyes, metadata
+            assert metadata['target'] == expected_target and metadata['eye'] == eyes, metadata
             assert metadata['frame']['generation'] == state['generation'], metadata
             if expected_frame:
                 assert metadata['frame']['frame_id'] == str(expected_frame), metadata
-            if expected_layer != 'all':
+            if expected_target != 'current_display':
                 assert metadata['composition']['frame'] == metadata['frame'] and metadata['composition']['ipd'] > 0, metadata
             expected_eyes = ['left', 'right'] if eyes == 'both' else [eyes]
             assert [eye['eye'] for eye in metadata['eyes']] == expected_eyes
@@ -69,28 +69,28 @@ def main():
                     assert picture.size == (eye['width'], eye['height']) == (64, 48), (picture.size, eye)
                     center = picture.convert('RGB').getpixel((32, 24))
                     corner = picture.convert('RGB').getpixel((56, 40))
-                    if expected_layer == 'projection':
+                    if expected_target == 'projection_layers':
                         channel = 0 if eye['eye'] == 'left' else 2
                         assert center[channel] > 240 and corner[channel] > 240, (eye, center, corner)
                         assert center[2 - channel] < 15 and corner[2 - channel] < 15, (eye, center, corner)
-                    if expected_layer == 'quad':
+                    if expected_target == 'quad_layers':
                         assert center[0] > 240 and center[2] < 15 and max(corner) < 15, (eye, center, corner)
             return metadata
         before = client.tool('debug_status', {'connection': connection})['data']
-        preview = inspect(capture({'eye': 'both', 'layer': 'all', 'format': 'png', 'max_width': 64}), 'all', 'both')
+        preview = inspect(capture({'eye': 'both', 'target': 'current_display', 'format': 'png', 'max_width': 64}), 'current_display', 'both')
         assert preview['resized'] and preview['source_width'] == 128 and preview['source_height'] == 96
         assert preview['display']['source'] == preview['frame']
         after = client.tool('debug_status', {'connection': connection})['data']
         assert before['manual'] == after['manual'] and before['pipeline']['permits'] == after['pipeline']['permits']
         assert not (root / 'recording.4.ready').exists()
-        inspect(capture({'eye': 'right', 'layer': 'all', 'format': 'jpeg', 'max_width': 64}), 'all', 'right')
+        inspect(capture({'eye': 'right', 'target': 'current_display', 'format': 'jpeg', 'max_width': 64}), 'current_display', 'right')
         owner = client.tool('debug_acquire', {'connection': connection})
         assert not owner['error'], owner
-        conflict = capture({'layer': 'projection'})
+        conflict = capture({'target': 'projection_layers'})
         assert conflict['result']['isError'], conflict
         assert not client.tool('debug_relinquish', {'connection': connection, 'lease': owner['data']['lease']})['error']
         time.sleep(.2)
-        timeout = capture({'layer': 'projection', 'timeout': 0.25})
+        timeout = capture({'target': 'projection_layers', 'timeout': 0.25})
         assert timeout['result']['isError'] and 'timed out' in timeout['result']['content'][0]['text'], timeout
         def recording_stopped():
             status = client.tool('debug_status', {'connection': connection})
@@ -113,7 +113,7 @@ def main():
         assert request('POST', {'jsonrpc': '2.0', 'method': 'notifications/initialized'})[0] == 202
         with ThreadPoolExecutor(max_workers=1) as executor:
             cancelled = executor.submit(request, 'POST', {'jsonrpc': '2.0', 'id': 17, 'method': 'tools/call',
-                'params': {'name': 'capture_screenshot', 'arguments': {'application_id': application, 'layer': 'quad', 'timeout': 10}}})
+                'params': {'name': 'capture_screenshot', 'arguments': {'application_id': application, 'target': 'quad_layers', 'timeout': 10}}})
             def recording_active():
                 status = client.tool('debug_status', {'connection': connection})
                 return not status['error'] and status['data']['image_recording']['phase'] == 'recording'
@@ -123,18 +123,18 @@ def main():
             eventually(recording_stopped, timeout=10)
         assert request('DELETE')[0] == 204
         with ThreadPoolExecutor(max_workers=1) as executor:
-            projection = executor.submit(capture, {'layer': 'projection', 'eye': 'both', 'format': 'png', 'max_width': 64, 'timeout': 10})
+            projection = executor.submit(capture, {'target': 'projection_layers', 'eye': 'both', 'format': 'png', 'max_width': 64, 'timeout': 10})
             eventually(recording_active, timeout=5)
             time.sleep(7.3)
             assert not projection.done(), 'The connector must preserve a valid long capture request'
             (root / 'recording.3.continue').touch()
-            inspect(projection.result(timeout=10), 'projection', 'both', 4)
+            inspect(projection.result(timeout=10), 'projection_layers', 'both', 4)
             eventually(lambda: (root / 'recording.4.ready').exists(), timeout=15)
             time.sleep(.2)
-            quad = executor.submit(capture, {'layer': 'quad', 'eye': 'right', 'format': 'png', 'max_width': 64, 'timeout': 10})
+            quad = executor.submit(capture, {'target': 'quad_layers', 'eye': 'right', 'format': 'png', 'max_width': 64, 'timeout': 10})
             eventually(recording_active, timeout=5)
             (root / 'recording.4.continue').touch()
-            inspect(quad.result(timeout=10), 'quad', 'right', 5)
+            inspect(quad.result(timeout=10), 'quad_layers', 'right', 5)
             eventually(lambda: (root / 'recording.5.ready').exists(), timeout=15)
             stereo = executor.submit(worker.tool, 'validate_stereo', {'application_id': application, 'timeout': 10})
             eventually(recording_active, timeout=5)

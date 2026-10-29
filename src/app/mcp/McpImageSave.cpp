@@ -1,4 +1,5 @@
 #include "app/mcp/McpPch.h"
+#include "control/ExportReader.h"
 #include "app/mcp/McpImageSave.h"
 #include "app/mcp/McpImage.h"
 #include "app/services/RuntimePanelProtocol.h"
@@ -101,14 +102,11 @@ std::optional<Json> SaveImage(McpApplication& app, McpDebug& debug, const Json& 
 			throw std::runtime_error("Choose a supported single-layer image within the 512 MiB file encoding limit");
 		std::vector<std::byte> pixels;
 		pixels.reserve(static_cast<std::size_t>(total));
-		while (pixels.size() < total)
+		control::ExportReader::Read([&](auto opcode, auto fields) { return calls.Request(opcode, std::move(fields)); },
+			ticket, total, [&](std::span<const std::byte> bytes)
 		{
-			calls.Check();
-			const auto offset = pixels.size();
-			const auto length = std::min<std::uint64_t>(control::MaxPayload - 4096, total - offset);
-			const auto bytes = calls.Read(ticket, offset, length);
 			pixels.insert(pixels.end(), bytes.begin(), bytes.end());
-		}
+		});
 		calls.Check();
 		const auto encoded = EncodeImage(pixels, format, width, height, png, quality, FileImageLimits);
 		calls.Check();

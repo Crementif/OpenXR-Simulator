@@ -154,12 +154,11 @@ def main():
                     return status["data"] if status["data"]["phase"] == "applied" else None
                 eventually(applied, timeout=15)
 
-            edit("set_head_pose", 201, x=1, y=1.7, z=2, yaw_deg=90)
-            edit("set_controller_pose", 202, hand=0, posX=0, posY=0, posZ=-1, trigger=0.4)
-            edit("hold_controller_inputs", 203, hand=0, grip=0.7)
-            edit("set_ipd", 204, ipd_mm=80)
-            edit("set_fov", 205, left_eye={"left_deg": -50, "right_deg": 40},
-                 right_eye={"left_deg": -40, "right_deg": 50})
+            edit("set_head_pose", 201, position=[1, 1.7, 2], orientation=[0, 2**-.5, 0, 2**-.5])
+            edit("set_controller_pose", 202, hand=0, position=[0, 1.7, 2])
+            edit("set_controller_controls", 203, hand=0, trigger=0.4, grip=0.7)
+            edit("set_views", 204, ipd=.08)
+            edit("set_views", 205, outer_fov=[-.8726646, .6981317, .7853982, -.7853982, -.6981317, .8726646, .7853982, -.7853982])
             config = client.tool("simulation_status", {"connection": connection})
             assert not config["error"], config
             applied_state = config["data"]["document"]["configuration"]

@@ -23,6 +23,9 @@ class ExportReader
 	std::uint64_t Size() const { return m_size; }
 	void Read(const std::function<void(std::span<const std::byte>)>& consume);
 	void Release();
+	// Read a completed caller-owned ticket without taking or releasing its ownership.
+	static void Read(const Exchange& exchange, std::uint64_t ticket, std::uint64_t size,
+		const std::function<void(std::span<const std::byte>)>& consume);
 
   private:
 	void Cleanup() noexcept;

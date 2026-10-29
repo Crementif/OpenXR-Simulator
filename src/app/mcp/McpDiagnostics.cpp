@@ -18,7 +18,7 @@ static Json Result(const Json& value, bool error = false)
 }
 bool DiagnosticsHandles(const std::string& name)
 {
-	static const std::set<std::string> names{"get_projection_log", "get_frame_info", "get_diagnostics", "diagnose_issue", "get_session_state", "get_head_tracking"};
+	static const std::set<std::string> names{"get_projection_log", "get_frame_info", "get_diagnostics", "diagnose_issue", "get_session_state", "get_head_pose"};
 	return names.contains(name);
 }
 Json DiagnosticsDefinitions()
@@ -40,7 +40,7 @@ Json DiagnosticsDefinitions()
 		tool("get_diagnostics", "Read the selected application's runtime status, bounded diagnostic events and recent projection data. Native driver validation and text logs are not included.", common, Json::array({"application_id"})),
 		tool("diagnose_issue", "Collect bounded runtime evidence and observed-state hints for the selected application. Hints are not proof of a cause.", issue, Json::array({"application_id", "symptoms"})),
 		tool("get_session_state", "Read the selected application's actual OpenXR session state.", common, Json::array({"application_id"})),
-		tool("get_head_tracking", "Read the selected application's configured simulator head pose; this is not an application-located tracking sample.", common, Json::array({"application_id"}))});
+		tool("get_head_pose", "Read the selected application's configured simulator head pose; this is not an application-located tracking sample.", common, Json::array({"application_id"}))});
 }
 static const char* SessionState(std::int64_t state)
 {
@@ -92,7 +92,7 @@ std::optional<Json> RunDiagnostics(McpApplication& application, const std::strin
 		{
 			result["runtime_available"] = false;
 			result["unavailable"] = "No connected running XR session; runtime state was not sampled.";
-			if (name == "get_projection_log" || name == "get_head_tracking" || name == "get_session_state" || name == "get_frame_info")
+			if (name == "get_projection_log" || name == "get_head_pose" || name == "get_session_state" || name == "get_frame_info")
 			{
 				result["ok"] = false;
 				return Result(result, true);
@@ -113,7 +113,7 @@ std::optional<Json> RunDiagnostics(McpApplication& application, const std::strin
 		result["session"] = std::to_string(opened.session);
 		result["generation"] = std::to_string(opened.generation);
 		result["capabilities"] = std::to_string(opened.capabilities);
-		if (name != "get_projection_log" && name != "get_head_tracking")
+		if (name != "get_projection_log" && name != "get_head_pose")
 		{
 			const auto status = McpDebug::Document(calls.Request(connection, wire::OpCode::Status, {}));
 			result["runtime"] = status;
@@ -131,12 +131,12 @@ std::optional<Json> RunDiagnostics(McpApplication& application, const std::strin
 			else
 				result["projection_unavailable"] = "The connected runtime does not advertise projection history.";
 		}
-		if (name == "get_head_tracking" || name == "get_frame_info" || name == "get_diagnostics" || name == "diagnose_issue")
+		if (name == "get_head_pose" || name == "get_frame_info" || name == "get_diagnostics" || name == "diagnose_issue")
 		{
 			if (supports(wire::Capability::SimulationCommands))
 			{
 				const auto simulation = SimulationDocument(calls.Request(connection, wire::OpCode::SimulationStatus, {})).at("document");
-				if (name == "get_head_tracking")
+				if (name == "get_head_pose")
 					result["configured_head_pose"] = simulation.at("configuration").at("head");
 				else
 					result["simulation"] = simulation;

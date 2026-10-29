@@ -437,10 +437,10 @@ if(BUILD_TESTING)
             "${PROJECT_SOURCE_DIR}/tests/app/test_mcp_flicker_monitor.py" "$<TARGET_FILE:simxr_companion>"
             "$<TARGET_FILE:simxr_mcp_connector>" "$<TARGET_FILE:xr_probe_linux>")
         set_tests_properties(companion_mcp_flicker_monitor PROPERTIES TIMEOUT 120)
-        add_test(NAME companion_mcp_compatibility COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/app/test_mcp_compatibility.py" "$<TARGET_FILE:simxr_companion>"
+        add_test(NAME companion_mcp_controls COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/app/test_mcp_controls.py" "$<TARGET_FILE:simxr_companion>"
             "$<TARGET_FILE:simxr_mcp_connector>" "$<TARGET_FILE:xr_probe_linux>")
-        set_tests_properties(companion_mcp_compatibility PROPERTIES TIMEOUT 90)
+        set_tests_properties(companion_mcp_controls PROPERTIES TIMEOUT 90)
         add_test(NAME companion_mcp_sequence COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/app/test_mcp_sequence.py" "$<TARGET_FILE:simxr_companion>"
             "$<TARGET_FILE:simxr_mcp_connector>" "$<TARGET_FILE:xr_probe_linux>")

@@ -23,7 +23,7 @@ add_library(simxr_mcp STATIC
     src/app/mcp/McpIncident.cpp
     src/app/mcp/McpIncidentSave.cpp
     src/app/mcp/McpIncidentIdentifier.cpp
-    src/app/mcp/McpCompatibility.cpp
+    src/app/mcp/McpControls.cpp
     src/app/mcp/McpImage.cpp
     src/app/mcp/McpImageCache.cpp
     src/app/mcp/McpImageSave.cpp

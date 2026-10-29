@@ -1,4 +1,5 @@
 #include "app/mcp/McpPch.h"
+#include "control/ExportReader.h"
 #include "app/mcp/McpVideoSave.h"
 #include "app/mcp/McpImage.h"
 #include "app/services/RuntimePanelProtocol.h"
@@ -107,16 +108,13 @@ std::optional<Json> SaveVideo(McpApplication& app, McpDebug& debug, const Json& 
 				throw std::runtime_error("Invalid MP4 export description");
 			SaveExportFile(destination, [&](std::ostream& output)
 			{
-				for (std::uint64_t offset = 0; offset < total;)
+				control::ExportReader::Read([&](auto opcode, auto fields) { return calls.Request(opcode, std::move(fields)); },
+					ticket, total, [&](std::span<const std::byte> bytes)
 				{
-					calls.Check();
-					const auto length = std::min<std::uint64_t>(control::MaxPayload - 4096, total - offset);
-					const auto bytes = calls.Read(ticket, offset, length);
 					output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
 					if (!output)
 						throw std::runtime_error("Cannot write video export");
-					offset += bytes.size();
-				}
+				});
 			}, overwrite, [&]
 			{
 				calls.Request(wire::OpCode::ReleaseExport, {wire::Field::U64(tag::ExportId, ticket, true)});

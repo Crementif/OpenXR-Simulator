@@ -1,4 +1,5 @@
 #include "app/mcp/McpPch.h"
+#include "control/ExportReader.h"
 #include "app/mcp/McpSequenceCapture.h"
 #include "app/mcp/McpApplication.h"
 #include "app/mcp/McpArtifactCalls.h"
@@ -127,13 +128,11 @@ static StereoEncoded StereoImage(ArtifactCalls& calls, std::uint64_t reader, std
 			}
 			std::vector<std::byte> raw;
 			raw.reserve(static_cast<std::size_t>(total));
-			while (raw.size() < total)
+			control::ExportReader::Read([&](auto opcode, auto fields) { return calls.Request(opcode, std::move(fields)); },
+				ticket, total, [&](std::span<const std::byte> bytes)
 			{
-				const auto offset = raw.size();
-				const auto length = std::min<std::uint64_t>(control::MaxPayload - 4096, total - offset);
-				const auto part = calls.Read(ticket, offset, length);
-				raw.insert(raw.end(), part.begin(), part.end());
-			}
+				raw.insert(raw.end(), bytes.begin(), bytes.end());
+			});
 			for (std::size_t i = 0; i < std::size_t{width} * height; ++i)
 			{
 				const auto color = DecodeColorPixel(format, std::span(raw).subspan(i * pixelBytes, pixelBytes));

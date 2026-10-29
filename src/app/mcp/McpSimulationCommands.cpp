@@ -44,6 +44,12 @@ static std::uint32_t Integer(const Json& object, const char* key, std::uint32_t 
 		throw std::invalid_argument(std::string(key) + " is out of range");
 	return it->get<std::uint32_t>();
 }
+static std::uint32_t Device(const Json& object, const char* key, std::uint32_t maximum)
+{
+	if (!object.contains(key))
+		throw std::invalid_argument(std::string(key) + " is required");
+	return Integer(object, key, 0, maximum);
+}
 static std::uint64_t WideInteger(const Json& object, const char* key, std::uint64_t maximum, bool allowZero = true)
 {
 	const auto it = object.find(key);
@@ -80,6 +86,13 @@ static float Float(const Json& object, const char* key, float fallback)
 {
 	const auto it = object.find(key);
 	return it == object.end() ? fallback : Float(*it);
+}
+static float Axis(const Json& object, const char* key, float minimum = 0)
+{
+	const auto value = Float(object, key, 0);
+	if (value < minimum || value > 1)
+		throw std::invalid_argument(std::string(key) + " is outside its input range");
+	return value;
 }
 template <std::size_t Size>
 static std::array<float, Size> Vector(const Json& object, const char* key, std::array<float, Size> fallback)
@@ -337,7 +350,7 @@ SimulationCommand SimulationCommandFromJson(const Json& object)
 			Keys(*aim, {"position", "orientation", "flags"});
 			value.aim = Sample(*aim);
 		}
-		return SetControllerPose{Integer(object, "hand", 0, 1), std::move(value)};
+		return SetControllerPose{Device(object, "hand", 1), std::move(value)};
 	}
 	if (kind == "controller_controls")
 	{
@@ -346,12 +359,12 @@ SimulationCommand SimulationCommandFromJson(const Json& object)
 					  "primary_touch", "secondary_touch", "trigger_touch", "thumb_touch", "trackpad_touch", "thumbrest_touch",
 					  "connected", "trigger_click", "physical_profile"});
 		ControllerControls value;
-		value.trigger = Float(object, "trigger", 0);
-		value.grip = Float(object, "grip", 0);
-		value.gripForce = Float(object, "grip_force", 0);
-		value.stick = {Float(object, "stick_x", 0), Float(object, "stick_y", 0)};
-		value.trackpad = {Float(object, "trackpad_x", 0), Float(object, "trackpad_y", 0)};
-		value.trackpadForce = Float(object, "trackpad_force", 0);
+		value.trigger = Axis(object, "trigger");
+		value.grip = Axis(object, "grip");
+		value.gripForce = Axis(object, "grip_force");
+		value.stick = {Axis(object, "stick_x", -1), Axis(object, "stick_y", -1)};
+		value.trackpad = {Axis(object, "trackpad_x", -1), Axis(object, "trackpad_y", -1)};
+		value.trackpadForce = Axis(object, "trackpad_force");
 		value.primary = Boolean(object, "primary", false);
 		value.secondary = Boolean(object, "secondary", false);
 		value.menu = Boolean(object, "menu", false);
@@ -374,12 +387,12 @@ SimulationCommand SimulationCommandFromJson(const Json& object)
 			if (!profile->get<std::string>().empty())
 				value.physicalProfile = Text(object, "physical_profile");
 		}
-		return SetControllerControls{Integer(object, "hand", 0, 1), std::move(value)};
+		return SetControllerControls{Device(object, "hand", 1), std::move(value)};
 	}
 	if (kind == "body")
 		return Body(object);
 	if (kind == "tracker")
-		return SetTracker{Integer(object, "index", 0, MaxTrackerDevices - 1), Tracker(object)};
+		return SetTracker{Device(object, "index", MaxTrackerDevices - 1), Tracker(object)};
 	if (kind == "trackers")
 	{
 		Keys(object, {"kind", "devices"});
@@ -412,7 +425,7 @@ SimulationCommand SimulationCommandFromJson(const Json& object)
 	if (kind == "controller_profile")
 	{
 		Keys(object, {"kind", "hand", "path"});
-		return SetControllerProfile{Integer(object, "hand", 0, 1), Text(object, "path")};
+		return SetControllerProfile{Device(object, "hand", 1), Text(object, "path")};
 	}
 	if (kind == "eye_views")
 	{

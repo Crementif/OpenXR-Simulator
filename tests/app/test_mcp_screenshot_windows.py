@@ -45,16 +45,16 @@ def main():
                                    'image': preview['data']['image']})['error']
             return True
         eventually(displayed, timeout=30)
-        for layer in ('all', 'projection', 'quad'):
+        for layer in ('current_display', 'projection_layers', 'quad_layers'):
             response = client.rpc('tools/call', {'name': 'capture_screenshot', 'arguments': {
-                'application_id': application, 'layer': layer, 'eye': 'both', 'format': 'png',
+                'application_id': application, 'target': layer, 'eye': 'both', 'format': 'png',
                 'max_width': 64, 'timeout': 15}})
             result = response['result']
             assert not result['isError'], (layer, result)
             content = result['content']
             metadata = json.loads(content[0]['text'])
-            assert metadata['frame']['generation'] == state['generation'] and metadata['layer'] == layer, metadata
-            if layer != 'all':
+            assert metadata['frame']['generation'] == state['generation'] and metadata['target'] == layer, metadata
+            if layer != 'current_display':
                 assert metadata['composition']['frame'] == metadata['frame'], metadata
             assert [eye['eye'] for eye in metadata['eyes']] == ['left', 'right'] and len(content) == 3
             for item, eye in zip(content[1:], metadata['eyes']):

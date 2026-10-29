@@ -105,7 +105,9 @@ def main():
                 initial = client.tool("simulation_status", {"connection": debug})
                 assert not initial["error"] and "frame_id" in initial["data"]["document"], initial
                 frame = int(initial["data"]["document"]["frame_id"]) + 1
-                assert not client.tool("simulation_start_recording", {"connection": debug})["error"]
+                started_recording = client.tool("simulation_start_recording", {"connection": debug, "drain": True})
+                assert not started_recording["error"], started_recording
+                recording_id = started_recording["data"]["document"]["recording_id"]
                 transaction = {"connection": debug, "transaction_id": "9007199254740999", "frame": str(frame),
                                "commands": [{"kind": "take_control", "channel": "head"},
                                             {"kind": "head_pose", "position": [2, 1.8, -3]},
@@ -508,7 +510,7 @@ def main():
                 assert eyes["space_revision"] == "9007199254740993"
                 assert abs(eyes["eyes"][0]["pose"]["position"][0] + 0.03) < 0.001
                 assert abs(eyes["eyes"][1]["fov"][1] - 0.8) < 0.001
-                tracking = client.tool("get_head_tracking", {"application_id": application_id})
+                tracking = client.tool("get_head_pose", {"application_id": application_id})
                 assert not tracking["error"] and abs(tracking["data"]["configured_head_pose"]["position"][0] - 2) < 0.001, tracking
                 diagnostics = client.tool("get_diagnostics", {"application_id": application_id})
                 assert not diagnostics["error"] and diagnostics["data"]["runtime_available"], diagnostics
@@ -530,13 +532,22 @@ def main():
                         abs(probe_state["leftFovRight"] - 0.9) < 0.001 else None
 
                 eventually(observed_views)
-                assert not client.tool("simulation_stop_recording", {"connection": debug})["error"]
-                recording = client.tool("simulation_read_recording", {"connection": debug})
+                assert not client.tool("simulation_stop_recording", {"connection": debug, "recording_id": recording_id})["error"]
+                recording = client.tool("simulation_read_recording", {"connection": debug, "recording_id": recording_id})
                 assert not recording["error"] and recording["data"]["document"]["total"] == 2, recording
                 records = recording["data"]["document"]["transactions"]
                 assert {record["phase"] for record in records} == {"applied", "cancelled"}, records
                 assert all(record["transaction_id"] == transaction["transaction_id"] for record in records)
                 assert len({record["source"]["id"] for record in records}) == 2, records
+                assert client.tool("simulation_read_recording", {"connection": debug})["error"]
+                assert client.tool("simulation_read_recording", {"connection": debug, "recording_id": "999999"})["error"]
+                assert other.tool("simulation_acknowledge_recording", {"connection": other_debug,
+                                  "recording_id": recording_id, "through": "2"})["error"]
+                ack = client.tool("simulation_acknowledge_recording", {"connection": debug,
+                                  "recording_id": recording_id, "through": "2"})
+                assert not ack["error"] and ack["data"]["document"]["floor"] == 2, ack
+                assert client.tool("simulation_read_recording", {"connection": debug,
+                                   "recording_id": recording_id, "offset": "0"})["error"]
                 canonical = next(record for record in records if record["phase"] == "applied")["commands"]
                 assert len(canonical) == 12 and all(item["encoding"] == "simxr-command-v1-hex" for item in canonical)
                 invalid_canonical = {"connection": debug, "transaction_id": "9007199254741001", "frame": "999999",
@@ -705,8 +716,10 @@ while true do end
                     assert client.tool("simulation_start_recording", {"connection": debug})["error"]
                     assert not client.tool("simulator_luau_cancel", {"application_id": application_id, "run_id": held_run})["error"]
                     assert eventually(lambda: script_status(client, held_run))["phase"] == "cancelled"
-                    assert not client.tool("simulation_start_recording", {"connection": debug})["error"]
-                    assert not client.tool("simulation_stop_recording", {"connection": debug})["error"]
+                    started_recording = client.tool("simulation_start_recording", {"connection": debug, "drain": True})
+                    assert not started_recording["error"], started_recording
+                    recording_id = started_recording["data"]["document"]["recording_id"]
+                    assert not client.tool("simulation_stop_recording", {"connection": debug, "recording_id": recording_id})["error"]
                     fresh = eventually(acquire_after_disconnect)
                     assert not client.tool("debug_relinquish", {"connection": debug, "lease": fresh["data"]["lease"]})["error"]
                     observed = client.tool("simulation_status", {"connection": debug})
@@ -728,7 +741,9 @@ while true do end
                     assert not client.tool("simulation_release_control", {"connection": debug})["error"]
                 observed = client.tool("simulation_status", {"connection": debug})
                 assert not observed["error"], observed
-                assert not client.tool("simulation_start_recording", {"connection": debug})["error"]
+                started_recording = client.tool("simulation_start_recording", {"connection": debug, "drain": True})
+                assert not started_recording["error"], started_recording
+                recording_id = started_recording["data"]["document"]["recording_id"]
                 provider_joints = [{"joint": joint, "position": [0, 1, 0], "orientation": [0, 0, 0, 1], "flags": 15}
                                    for joint in sorted(JOINT_SETS[2])]
                 provider = {"joint_set": 2, "requested_time": "9007199254740993", "located": True,
@@ -748,8 +763,8 @@ while true do end
                     return status["data"] if status["data"]["phase"] not in ("queued", "rescheduled") else None
 
                 assert eventually(body_result)["phase"] == "applied"
-                assert not client.tool("simulation_stop_recording", {"connection": debug})["error"]
-                recording = client.tool("simulation_read_recording", {"connection": debug})
+                assert not client.tool("simulation_stop_recording", {"connection": debug, "recording_id": recording_id})["error"]
+                recording = client.tool("simulation_read_recording", {"connection": debug, "recording_id": recording_id})
                 assert not recording["error"], recording
                 records = recording["data"]["document"]["transactions"]
                 assert len(records) == 1 and records[0]["phase"] == "applied", records

@@ -49,7 +49,7 @@ bool SimulationHandles(const std::string& name)
 {
 	static const std::set<std::string> names{"simulation_schedule", "simulation_status", "simulation_cancel",
 		"simulation_release_control", "simulation_diagnostics", "simulation_start_recording",
-		"simulation_stop_recording", "simulation_read_recording"};
+		"simulation_stop_recording", "simulation_read_recording", "simulation_acknowledge_recording"};
 	return names.contains(name);
 }
 Json SimulationDefinitions()
@@ -73,25 +73,31 @@ Json SimulationDefinitions()
 	schedule["time_ns"] = {{"type", "string"}, {"pattern", "^(0|[1-9][0-9]{0,18})$"}};
 	schedule["late_policy"] = {{"type", "string"}, {"enum", Json::array({"reject", "reschedule_next"})}};
 	schedule["commands"] = {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
-		{"items", {{"type", "object"}}}, {"description", "Typed commands include take_control, release_control, head_pose, controller_pose, controller_controls, body, tracker, trackers, gaze, views, eye_views, reference_spaces, proportions, controller_profile and scenario. A body command accepts active, confidence, preset (0 standing, 1 T-pose, 2 seated), root_pose, five controls and bounded joint overrides; optional observation carries provider joints and nanosecond times. A tracker requires identity (uint64 decimal string or safe integer), optional index, role (0-17), connected, tracked, anchor, position, orientation, joint_offset, flags and source_path. A trackers command replaces the inventory with a devices array. Eye views contain left and right position, orientation, flags and fov, plus space_revision; enabled=false clears them. Reference spaces contain local and stage poses and optional stage bounds. Recorded simxr-command-v1-hex objects are also accepted. See the automation documentation for field details."}};
+		{"items", {{"type", "object"}}}, {"description", "Typed commands include take_control, release_control, head_pose, controller_pose, controller_controls, body, tracker, trackers, gaze, views, eye_views, reference_spaces, proportions, controller_profile and scenario. A body command accepts active, confidence, preset (0 standing, 1 T-pose, 2 seated), root_pose, five controls and bounded joint overrides; optional observation carries provider joints and nanosecond times. All positions and lengths use metres, angles use radians, orientations are [x,y,z,w] quaternions, and buttons require JSON booleans. Controller commands require hand (0 left, 1 right). A tracker requires index and identity (uint64 decimal string or safe integer), role (0-17), connected, tracked, anchor, position, orientation, joint_offset, flags and source_path. A trackers command replaces the inventory with a devices array. Eye views contain left and right position, orientation, flags and fov, plus space_revision; enabled=false clears them. Reference spaces contain local and stage poses and optional stage bounds. Recorded simxr-command-v1-hex objects are also accepted. See the automation documentation for field details."}};
 	result.push_back(tool("simulation_schedule", "Schedule one atomic input transaction at an exact frame or simulated time. Include take_control before setters; admission is not application.", schedule,
 		Json::array({"connection", "transaction_id", "commands"})));
 	auto status = common;
 	status["transaction_id"] = identifier;
 	result.push_back(tool("simulation_status", "Read applied simulator state or one transaction outcome.", status, Json::array({"connection"})));
 	result.push_back(tool("simulation_cancel", "Cancel an unapplied transaction owned by this connection.", status, Json::array({"connection", "transaction_id"})));
-	result.push_back(tool("simulation_release_control", "Release this connection's input ownership and cancel pending work.", common, Json::array({"connection"})));
+	result.push_back(tool("simulation_release_control", "Release this connection's inputs, sequences and capture tickets, cancel pending commands and stop its input recording.", common, Json::array({"connection"})));
 	auto diagnostics = common;
 	diagnostics["after"] = zeroIdentifier;
 	diagnostics["frame"] = identifier;
 	diagnostics["count"] = {{"type", "integer"}, {"minimum", 0}, {"maximum", 256}};
 	result.push_back(tool("simulation_diagnostics", "Read bounded frame and simulation diagnostics.", diagnostics, Json::array({"connection"})));
-	result.push_back(tool("simulation_start_recording", "Start a session-wide recording owned by this connection, including transaction outcomes from all sources.", common, Json::array({"connection"})));
-	result.push_back(tool("simulation_stop_recording", "Stop the session-wide recording owned by this connection.", common, Json::array({"connection"})));
+	auto start = common;
+	start["drain"] = {{"type", "boolean"}};
+	result.push_back(tool("simulation_start_recording", "Start a session-wide recording owned by this connection. drain=true retains pages until acknowledged; save recording_id from the returned document.", start, Json::array({"connection"})));
 	auto recording = common;
+	recording["recording_id"] = identifier;
+	result.push_back(tool("simulation_stop_recording", "Stop this connection's recording. recording_id protects against stopping a replacement recording.", recording, Json::array({"connection", "recording_id"})));
+	auto acknowledge = recording;
+	acknowledge["through"] = zeroIdentifier;
+	result.push_back(tool("simulation_acknowledge_recording", "Acknowledge persisted draining recording entries before the exclusive through offset, releasing their native storage. Only the recording owner may acknowledge.", acknowledge, Json::array({"connection", "recording_id", "through"})));
 	recording["offset"] = zeroIdentifier;
 	recording["count"] = {{"type", "integer"}, {"minimum", 0}, {"maximum", 16}};
-	result.push_back(tool("simulation_read_recording", "Read a bounded page of recorded simulator transactions.", recording, Json::array({"connection"})));
+	result.push_back(tool("simulation_read_recording", "Read a bounded page of recorded simulator transactions.", recording, Json::array({"connection", "recording_id"})));
 	return result;
 }
 
@@ -156,8 +162,9 @@ SimulationRequest PrepareSimulation(const std::string& name, const Json& argumen
 	}
 	else if (name == "simulation_read_recording")
 	{
-		Keys(arguments, {"connection", "session", "generation", "offset", "count"});
+		Keys(arguments, {"connection", "session", "generation", "recording_id", "offset", "count"});
 		result.opcode = wire::OpCode::ReadRecording;
+		result.fields.push_back(wire::Field::U64(tag::RecordingId, Number(arguments, "recording_id"), true));
 		if (arguments.contains("offset"))
 			result.fields.push_back(wire::Field::U64(tag::Offset, Number(arguments, "offset", true)));
 		if (arguments.contains("count"))
@@ -168,18 +175,39 @@ SimulationRequest PrepareSimulation(const std::string& name, const Json& argumen
 			result.fields.push_back(wire::Field::U64(tag::Length, count));
 		}
 	}
-	else
+	else if (name == "simulation_start_recording")
+	{
+		Keys(arguments, {"connection", "session", "generation", "drain"});
+		result.opcode = wire::OpCode::StartRecording;
+		if (arguments.contains("drain"))
+		{
+			if (!arguments.at("drain").is_boolean())
+				throw std::invalid_argument("drain must be boolean");
+			result.fields.push_back(wire::Field::Bool(tag::RecordingDrain, arguments.at("drain").get<bool>()));
+		}
+	}
+	else if (name == "simulation_stop_recording" || name == "simulation_acknowledge_recording")
+	{
+		if (name == "simulation_stop_recording")
+		{
+			Keys(arguments, {"connection", "session", "generation", "recording_id"});
+			result.opcode = wire::OpCode::StopRecording;
+		}
+		else
+		{
+			Keys(arguments, {"connection", "session", "generation", "recording_id", "through"});
+			result.opcode = wire::OpCode::AcknowledgeRecording;
+			result.fields.push_back(wire::Field::U64(tag::Offset, Number(arguments, "through", true), true));
+		}
+		result.fields.push_back(wire::Field::U64(tag::RecordingId, Number(arguments, "recording_id"), true));
+	}
+	else if (name == "simulation_release_control")
 	{
 		Keys(arguments, {"connection", "session", "generation"});
-		if (name == "simulation_release_control")
-			result.opcode = wire::OpCode::ReleaseControl;
-		else if (name == "simulation_start_recording")
-			result.opcode = wire::OpCode::StartRecording;
-		else if (name == "simulation_stop_recording")
-			result.opcode = wire::OpCode::StopRecording;
-		else
-			throw std::invalid_argument("Unknown simulation tool");
+		result.opcode = wire::OpCode::ReleaseControl;
 	}
+	else
+		throw std::invalid_argument("Unknown simulation tool");
 	// Validate the complete wire payload before the caller admits a mutation.
 	(void)wire::EncodeFields(result.fields);
 	return result;

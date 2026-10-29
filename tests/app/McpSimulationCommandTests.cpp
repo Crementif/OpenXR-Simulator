@@ -1,7 +1,7 @@
 #include "Pch.h"
 #include "app/mcp/McpSimulation.h"
 #include "app/mcp/McpGame.h"
-#include "app/mcp/McpCompatibility.h"
+#include "app/mcp/McpControls.h"
 #include "control/ControlSchema.h"
 #include "control/InspectionDocument.h"
 #include "control/SimulationControl.h"
@@ -63,7 +63,7 @@ int main()
 	Json configuration = {{"views", {{"ipd", .08}, {"outer_width", 1024}, {"outer_height", 768},
 		{"inset_width", 320}, {"inset_height", 240}, {"inset_half_angle", .3},
 		{"outer_fov", {-.8, .8, .8, -.8, -.8, .8, .8, -.8}}}}};
-	const auto definitions = app::mcp::CompatibilityDefinitions();
+	const auto definitions = app::mcp::ControlsDefinitions();
 	const auto profileTool = std::find_if(definitions.begin(), definitions.end(),
 		[](const Json& value) { return value.at("name") == "set_headset_profile"; });
 	Require(profileTool != definitions.end(), "Headset profile tool is advertised");
@@ -73,8 +73,8 @@ int main()
 	{
 		Require(std::find(names.begin(), names.end(), profile.id) != names.end(), "Profile name is in schema");
 		const Json arguments = {{"name", profile.id}};
-		const auto commands = app::mcp::CompatibilityCommands("set_headset_profile", arguments, configuration);
-		const auto expected = app::mcp::CompatibilityExpectedInputs("set_headset_profile", arguments, configuration);
+		const auto commands = app::mcp::ControlsCommands("set_headset_profile", arguments, configuration);
+		const auto expected = app::mcp::ControlsExpectedInputs("set_headset_profile", configuration);
 		Require(commands.size() == 2 && expected.size() == 1 && std::abs(std::get<SetViewSettings>(expected[0]).value.ipd - .08f) < .00001f,
 				"Profile edit takes view ownership and checks its observed baseline");
 		const auto& command = commands[1];
@@ -86,9 +86,40 @@ int main()
 				"Profile optics use the shared table and preserve render dimensions");
 	}
 	bool badProfileRejected = false;
-	try { (void)app::mcp::CompatibilityCommands("set_headset_profile", {{"name", "default"}}, configuration); }
+	try { (void)app::mcp::ControlsCommands("set_headset_profile", {{"name", "default"}}, configuration); }
 	catch (const std::exception&) { badProfileRejected = true; }
 	Require(badProfileRejected, "A legacy clear alias is not mistaken for a fixed generic preset");
+	for (const auto& [name, command] : std::vector<std::pair<std::string, Json>>{
+		{"set_head_pose", {{"kind", "head_pose"}, {"position", {1, 1.7, 2}}, {"orientation", {0, .70710678, 0, .70710678}}}},
+		{"set_controller_pose", {{"kind", "controller_pose"}, {"hand", 1}, {"position", {1, 2, 3}}, {"connected", false}}},
+		{"set_controller_controls", {{"kind", "controller_controls"}, {"hand", 0}, {"primary", true}, {"stick_x", -.2}}}})
+	{
+		auto arguments = command;
+		arguments.erase("kind");
+		const auto edit = app::mcp::ControlsCommands(name, arguments, configuration);
+		Require(edit.size() == 2 && control::EncodeSimulationCommand(edit[1]).value ==
+			control::EncodeSimulationCommand(SimulationCommandFromJson(command)).value,
+			"Convenience controls and exact-frame commands share the native contract");
+		Require(app::mcp::ControlsExpectedInputs(name, configuration).empty(),
+			"Absolute replacements do not depend on unrelated applied inputs");
+	}
+	Reject({{"kind", "controller_pose"}});
+	Reject({{"kind", "controller_controls"}, {"hand", -1}});
+	Reject({{"kind", "controller_profile"}, {"path", "test"}});
+	Reject({{"kind", "tracker"}, {"identity", "1"}});
+	Reject({{"kind", "controller_controls"}, {"hand", 0}, {"primary", 1}});
+	Reject({{"kind", "controller_controls"}, {"hand", 0}, {"trigger", 2}});
+	Reject({{"kind", "controller_controls"}, {"hand", 0}, {"stick_y", -1.1}});
+	Reject({{"kind", "head_pose"}, {"yaw_deg", 90}});
+	const auto drain = app::mcp::PrepareSimulation("simulation_start_recording", {{"drain", true}}, 1, 2);
+	Require(drain.opcode == control::OpCode::StartRecording, "Native recording start is exposed");
+	const auto ack = app::mcp::PrepareSimulation("simulation_acknowledge_recording",
+		{{"recording_id", "9007199254740993"}, {"through", "7"}}, 1, 2);
+	const control::Message acknowledgement{.fields = ack.fields};
+	Require(ack.opcode == control::OpCode::AcknowledgeRecording &&
+		acknowledgement.Find(control::tag::RecordingId)->AsU64() == 9007199254740993ULL &&
+		acknowledgement.Find(control::tag::Offset)->AsU64() == 7,
+		"Recording acknowledgement preserves identity and exclusive offset");
 	for (const auto set : {BodyJointSet::UpperBodyFB, BodyJointSet::FullBodyMETA,
 						   BodyJointSet::WithoutArmsBD, BodyJointSet::FullBodyBD})
 	{

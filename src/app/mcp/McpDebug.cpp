@@ -2,7 +2,7 @@
 #include "app/mcp/McpDebug.h"
 #include "app/mcp/McpApplication.h"
 #include "app/mcp/McpCredentials.h"
-#include "app/mcp/McpCompatibility.h"
+#include "app/mcp/McpControls.h"
 #include "app/mcp/McpDiagnostics.h"
 #include "app/mcp/McpGame.h"
 #include "app/mcp/McpHistory.h"
@@ -18,6 +18,7 @@
 #include "app/mcp/McpSimulation.h"
 #include "app/mcp/McpVideoSave.h"
 #include "control/ControlPacket.h"
+#include "control/ExportReader.h"
 #include "control/ControlSchema.h"
 #include "control/ImageInspection.h"
 #include "control/LocalControlClient.h"
@@ -42,9 +43,9 @@ struct McpDebug::Entry
 	std::atomic<bool> closed{false};
 	std::string application, endpoint;
 	std::uint64_t process = 0, session = 0, generation = 0, epoch = 0, capabilities = 0;
-	std::optional<std::uint64_t> compatibilityPending;
-	std::deque<std::pair<std::uint64_t, Json>> compatibilityRequests;
-	std::uint64_t compatibilityLast = 0;
+	std::optional<std::uint64_t> controlEditPending;
+	std::deque<std::pair<std::uint64_t, Json>> controlEditRequests;
+	std::uint64_t controlEditLast = 0;
 	std::uint16_t minor = 0;
 	bool gameOnly = false, launched = false;
 
@@ -382,7 +383,7 @@ Json McpDebug::Definitions()
 		tools.push_back(std::move(definition));
 	for (auto& definition : mcp::IncidentDefinitions())
 		tools.push_back(std::move(definition));
-	for (auto& definition : mcp::CompatibilityDefinitions())
+	for (auto& definition : mcp::ControlsDefinitions())
 		tools.push_back(std::move(definition));
 	for (auto& definition : mcp::SequenceDefinitions())
 		tools.push_back(std::move(definition));
@@ -399,7 +400,7 @@ bool McpDebug::Handles(const std::string& name)
 		"debug_display_step", "debug_cancel", "debug_release", "debug_operation", "debug_capture", "debug_acknowledge",
 		"debug_inspect", "debug_revision", "debug_release_inspection", "debug_start_image_recording",
 		"debug_stop_image_recording", "debug_pin_snapshot", "debug_unpin_snapshot", "debug_configure_snapshots"};
-	return name == "read_logs" || name == "clear_logs" || name == "capture_screenshot" || name == "validate_stereo" || name == "analyze_stereo_consistency" || name == "debug_save_video" || name == "debug_save_image" || name == "capture_pose_sequence" || mcp::DiagnosticsHandles(name) || mcp::IncidentHandles(name) || mcp::CompatibilityHandles(name) || mcp::SequenceHandles(name) || names.contains(name) || mcp::SimulationHandles(name) || mcp::ImageHandles(name) || mcp::GameHandles(name) ||
+	return name == "read_logs" || name == "clear_logs" || name == "capture_screenshot" || name == "validate_stereo" || name == "analyze_stereo_consistency" || name == "debug_save_video" || name == "debug_save_image" || name == "capture_pose_sequence" || mcp::DiagnosticsHandles(name) || mcp::IncidentHandles(name) || mcp::ControlsHandles(name) || mcp::SequenceHandles(name) || names.contains(name) || mcp::SimulationHandles(name) || mcp::ImageHandles(name) || mcp::GameHandles(name) ||
 		mcp::HistoryHandles(name);
 }
 
@@ -868,23 +869,20 @@ mcp::ImageRenderResult McpDebug::Render(McpApplication& application, const std::
 		ImageEncodingPermit permit;
 		std::vector<std::byte> pixels;
 		pixels.reserve(static_cast<std::size_t>(total));
-		while (pixels.size() < total)
+		control::ExportReader::Read([&](auto opcode, auto fields)
 		{
 			check();
-			const auto offset = pixels.size();
-			const auto length = std::min<std::uint64_t>(wire::MaxPayload - 4096, total - offset);
-			auto chunk = Exchange(client, wire::OpCode::ReadExport,
-				{wire::Field::U64(tag::ExportId, render.ticket, true), wire::Field::U64(tag::Offset, offset, true),
-				 wire::Field::U64(tag::Length, length, true)});
-			ValidateExportRead(chunk, offset, length);
-			if (chunk.Find(tag::Error)->AsU32() != 0)
-			{
-				result.info = std::move(chunk);
-				return result;
-			}
-			const auto& bytes = chunk.Find(tag::Bytes)->value;
+			auto chunk = Exchange(client, opcode, std::move(fields));
+			const auto* error = chunk.Find(tag::Error);
+			if (!error || !error->AsU32())
+				throw DebugTransportFailure("Control response omitted its error code");
+			if (*error->AsU32())
+				throw std::runtime_error("Image export is unavailable or released");
+			return chunk;
+		}, render.ticket, total, [&](std::span<const std::byte> bytes)
+		{
 			pixels.insert(pixels.end(), bytes.begin(), bytes.end());
-		}
+		});
 		operation.unlock();
 		check();
 		const auto encoded = EncodeImage(pixels, description.format, description.width, description.height, render.png, render.quality);
@@ -1135,12 +1133,12 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 				throw;
 			}
 		}
-		if (mcp::CompatibilityHandles(name))
+		if (mcp::ControlsHandles(name))
 		{
 			if (!(entry->capabilities & static_cast<std::uint64_t>(wire::Capability::SimulationCommands)))
 				throw std::runtime_error("The connected runtime does not support simulation commands");
 			if (entry->minor < 17)
-				throw std::runtime_error("Compatibility controls require runtime control protocol 1.17");
+				throw std::runtime_error("Controls controls require runtime control protocol 1.17");
 			const auto transaction = Number(arguments, "transaction_id");
 			const auto read = [&](std::optional<std::uint64_t> id = {})
 			{
@@ -1162,26 +1160,26 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 					throw;
 				}
 			};
-			for (const auto& [id, saved] : entry->compatibilityRequests)
+			for (const auto& [id, saved] : entry->controlEditRequests)
 			{
 				if (id != transaction)
 					continue;
 				if (saved != Json{{"name", name}, {"arguments", arguments}})
-					throw std::invalid_argument("Transaction ID was already used for different compatibility arguments");
+					throw std::invalid_argument("Transaction ID was already used for different control arguments");
 				auto result = read(transaction);
 				result["transaction_id"] = std::to_string(transaction);
 				result["replayed_receipt"] = true;
 				return Result(result);
 			}
-			if (transaction <= entry->compatibilityLast)
+			if (transaction <= entry->controlEditLast)
 				throw std::invalid_argument("Transaction ID is retired; use a new increasing ID");
-			if (entry->compatibilityPending)
+			if (entry->controlEditPending)
 			{
-				const auto prior = read(*entry->compatibilityPending);
+				const auto prior = read(*entry->controlEditPending);
 				const auto phase = prior.value("phase", "");
 				if (phase == "queued" || phase == "rescheduled")
 					throw std::runtime_error("The previous input edit is pending; advance the application frame and retry explicitly");
-				entry->compatibilityPending.reset();
+				entry->controlEditPending.reset();
 				if (phase != "applied")
 					throw std::runtime_error("The previous input edit did not apply; inspect its transaction and retry explicitly");
 			}
@@ -1194,8 +1192,8 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 			const auto frame = Number(document, "frame_id", true);
 			if (frame == UINT64_MAX)
 				throw std::runtime_error("Simulation frame identity is exhausted");
-			const auto commands = mcp::CompatibilityCommands(name, arguments, document.at("configuration"));
-			const auto expected = mcp::CompatibilityExpectedInputs(name, arguments, document.at("configuration"));
+			const auto commands = mcp::ControlsCommands(name, arguments, document.at("configuration"));
+			const auto expected = mcp::ControlsExpectedInputs(name, document.at("configuration"));
 			std::vector<wire::Field> fields{wire::Field::U64(tag::Session, entry->session, true),
 				wire::Field::U64(tag::Generation, entry->generation, true),
 				wire::Field::U32(tag::SourceKind, static_cast<std::uint32_t>(CommandSourceKind::Mcp)),
@@ -1222,11 +1220,11 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 					const auto phase = result.value("phase", "");
 					if (phase == "queued" || phase == "rescheduled")
 					{
-						entry->compatibilityPending = transaction;
-						entry->compatibilityLast = transaction;
-						entry->compatibilityRequests.emplace_back(transaction, Json{{"name", name}, {"arguments", arguments}});
-						if (entry->compatibilityRequests.size() > 64)
-							entry->compatibilityRequests.pop_front();
+						entry->controlEditPending = transaction;
+						entry->controlEditLast = transaction;
+						entry->controlEditRequests.emplace_back(transaction, Json{{"name", name}, {"arguments", arguments}});
+						if (entry->controlEditRequests.size() > 64)
+							entry->controlEditRequests.pop_front();
 					}
 				}
 				return Result(result, !result.at("ok").get<bool>());
@@ -1240,7 +1238,7 @@ std::optional<Json> McpDebug::Call(McpApplication& application, const std::strin
 		if (mcp::SimulationHandles(name))
 		{
 			const auto required = name == "simulation_diagnostics" ? wire::Capability::FrameDiagnostics
-				: (name == "simulation_start_recording" || name == "simulation_stop_recording" || name == "simulation_read_recording")
+				: (name == "simulation_start_recording" || name == "simulation_stop_recording" || name == "simulation_read_recording" || name == "simulation_acknowledge_recording")
 					? wire::Capability::CommandRecording : wire::Capability::SimulationCommands;
 			if (!(entry->capabilities & static_cast<std::uint64_t>(required)))
 				throw std::runtime_error("The connected runtime does not support this simulation operation");
