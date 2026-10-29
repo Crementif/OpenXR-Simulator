@@ -83,6 +83,7 @@ add_library(simxr_app STATIC
 
     src/app/services/HeadsetHost.cpp
     src/app/services/HeadlessApplications.cpp
+    src/app/services/ApplicationCatalog.cpp
     src/app/services/RangeExportTask.cpp
     src/app/services/RuntimeSession.cpp
     src/app/services/RuntimeSessionFrames.cpp

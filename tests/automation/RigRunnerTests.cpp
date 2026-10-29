@@ -5,6 +5,7 @@
 #include "automation/RigProgress.h"
 #include "automation/RigReport.h"
 #include "automation/RigRunner.h"
+#include "automation/MonitorSource.h"
 #include "control/ControlSchema.h"
 #include "control/ExportReader.h"
 #include "control/ControlService.h"
@@ -741,6 +742,88 @@ void CheckLeaseRenewal()
 	}
 }
 
+void CheckMonitorCoverage()
+{
+	automation::MonitorCoverage coverage;
+	coverage.Add({{1, false, ""}, {2, true, "missing_eye"}});
+	coverage.Add({{2, false, ""}, {4, false, ""}});
+	Require(coverage.report.observed == 3 && coverage.report.skipped == 0 && coverage.report.gaps == 1,
+		"Overlapping windows recover skipped frames without double counting or hiding gaps");
+	for (std::uint64_t frame = 5; frame < 75; ++frame)
+		coverage.Add({{frame, false, "anomaly"}});
+	Require(coverage.report.events.size() == 64 && coverage.report.eventsTotal == 70 && coverage.report.eventsDropped == 6,
+		"Monitor event retention is bounded and reports overflow");
+	coverage.Add({{74, false, "anomaly"}});
+	Require(coverage.report.eventsTotal == 70, "Repeated events are not counted twice");
+}
+
+void CheckMonitorPolicy()
+{
+	using Value = wire::InspectionValue;
+	for (unsigned mode = 0; mode < 7; ++mode)
+	{
+		std::atomic<unsigned> reads = 0;
+		automation::RigRunner runner([&](auto opcode, auto)
+		{
+			wire::Message response;
+			response.fields.push_back(wire::Field::U32(wire::tag::Error, 0));
+			if (opcode == wire::OpCode::ReadImageHistory)
+			{
+				++reads;
+				if (mode == 2)
+				{
+					response.fields[0] = wire::Field::U32(wire::tag::Error, static_cast<std::uint32_t>(wire::ErrorCode::StaleGeneration));
+					return response;
+				}
+				if (mode == 3 || mode == 4)
+					std::this_thread::sleep_for(std::chrono::milliseconds{mode == 4 ? 350 : 60});
+				std::vector<Value> entries;
+				if (mode != 1 && (mode != 5 || reads > 2))
+					for (unsigned i = 0; i < 2; ++i)
+						entries.push_back(Value::Object({{"frame_id", Value::Unsigned(reads * 10 + i)},
+							{"phase", Value::Text(mode == 6 ? "ready" : "clear")}}));
+				const auto document = Value::Object({{"target", Value::Text("composed_eyes")},
+					{"entries", Value::Array(std::move(entries))}}).Encode();
+				response.fields.push_back(wire::Field::Bytes(wire::tag::Document, document));
+			}
+			else if (opcode == wire::OpCode::RetainHistoricalImage && mode == 6)
+				response.fields[0] = wire::Field::U32(wire::tag::Error, static_cast<std::uint32_t>(wire::ErrorCode::NotFound));
+			else
+				Require(opcode == wire::OpCode::Status || opcode == wire::OpCode::ReleaseControl,
+					"Monitoring must not acquire input, pause, step, or retain full image windows");
+			return response;
+		});
+		automation::RigOptions options;
+		options.session = {1};
+		options.generation = 1;
+		options.background = true;
+		options.deadline = std::chrono::milliseconds{mode == 4 ? 1000 : 40};
+		options.source = "local target = 'composed' local interval = .25 local timeout = " +
+			std::string(mode == 4 ? "1" : ".04") + "\n" + std::string(automation::MonitorSource);
+		runner.Start(options);
+		if (mode == 0 || mode >= 4)
+		{
+			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+			while (runner.Snapshot().monitor.windows < 2 && runner.Phase() == automation::RigPhase::Running &&
+				std::chrono::steady_clock::now() < deadline)
+				std::this_thread::sleep_for(std::chrono::milliseconds{5});
+			runner.Cancel();
+		}
+		runner.Join();
+		const auto result = runner.Snapshot();
+		if (mode == 0 || mode >= 4)
+			Require(result.phase == automation::RigPhase::Cancelled && result.monitor.windows >= 2 &&
+				result.monitor.gaps >= 8, "Background policy survives its per-sample timeout and reports coverage gaps");
+		else
+			Require(result.phase == automation::RigPhase::Failed, "Unavailable sessions or overdue monitoring must report failure");
+		if (mode == 4)
+			Require(result.monitor.missedCadences >= 2, "Slow observations report missed cadence without catch-up bursts");
+		if (mode == 6)
+			Require(result.monitor.observed == 0 && result.monitor.skipped >= 4,
+				"Frames evicted during sampling are reported as gaps in analyzed coverage");
+	}
+}
+
 void CheckWindowAnalysisGaps()
 {
 	using Value = wire::InspectionValue;
@@ -1334,6 +1417,8 @@ simxr.checkpoint("fresh VM, persistent IDs", applied.applied_frame == "3")
 		CheckScriptValueBoundaries();
 		CheckReportText();
 		CheckWindowAnalysisGaps();
+		CheckMonitorCoverage();
+		CheckMonitorPolicy();
 		CheckExportReader();
 		CheckTemporaryResourceCleanup();
 		CheckImageWindowCleanup();

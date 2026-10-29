@@ -17,8 +17,7 @@ add_library(simxr_mcp STATIC
     src/app/mcp/McpDebug.cpp
     src/app/mcp/McpDiagnostics.cpp
     src/app/mcp/McpGame.cpp
-    src/app/mcp/McpFlickerMonitor.cpp
-    src/app/mcp/McpFlickerCoverage.cpp
+    src/app/mcp/McpMonitoring.cpp
     src/app/mcp/McpHistory.cpp
     src/app/mcp/McpLogs.cpp
     src/app/mcp/McpIncident.cpp

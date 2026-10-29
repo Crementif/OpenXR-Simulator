@@ -1,6 +1,7 @@
 #pragma once
 
 #include "control/WireProtocol.h"
+#include "automation/MonitorReport.h"
 
 #include <chrono>
 #include <cstddef>
@@ -35,6 +36,7 @@ struct RigSnapshot
 	RigPhase phase = RigPhase::Idle;
 	std::uint64_t seed = 0, transactions = 0, captures = 0;
 	std::string error;
+	MonitorReport monitor;
 	std::vector<RigCheckpoint> checkpoints;
 	std::vector<std::string> output;
 	std::optional<std::vector<std::string>> compatibilityDeviations;
@@ -47,6 +49,8 @@ struct RigOptions
 	std::chrono::milliseconds deadline{30000};
 	std::size_t memoryLimit = 64 * 1024 * 1024;
 	std::filesystem::path recordingArchive;
+	// Only application-owned, built-in observation policy runs without a total deadline.
+	bool background = false;
 };
 // The transport belongs to this runner and is called only on its worker. It
 // must bound each exchange and preserve retry identity after a timeout.

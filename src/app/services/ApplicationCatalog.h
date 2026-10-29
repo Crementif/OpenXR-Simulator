@@ -6,12 +6,17 @@
 
 #include <cstdint>
 #include <memory>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace simxr::app
 {
+class MonitorController;
+struct MonitorOptions;
+struct MonitorStatus;
+
 struct ApplicationSnapshot
 {
 	std::uint64_t id = 0, session = 0, generation = 0, runtimeProcess = 0, runtimeEpoch = 0;
@@ -44,7 +49,12 @@ enum class LuauControl
 class ApplicationCatalog
 {
   public:
-	virtual ~ApplicationCatalog() = default;
+	ApplicationCatalog();
+	virtual ~ApplicationCatalog();
+	void StartMonitor(std::uint64_t id, MonitorOptions options);
+	MonitorStatus ReadMonitor(std::uint64_t id) const;
+	void StopMonitor(std::uint64_t id, const std::string& monitor);
+	void PollMonitors();
 	virtual std::uint64_t LaunchApplication(const LaunchProfile& profile) = 0;
 	virtual void RequestApplicationClose(std::uint64_t id) = 0;
 	virtual void RequestApplicationRestart(std::uint64_t id, std::uint64_t expectedProcess) = 0;
@@ -62,5 +72,10 @@ class ApplicationCatalog
 	{
 		throw std::runtime_error("Luau automation is unavailable in this build");
 	}
+  private:
+#ifdef SIMXR_COMPANION_AUTOMATION
+	std::map<std::uint64_t, std::unique_ptr<MonitorController>> m_monitors;
+#endif
+	std::string m_monitorTarget;
 };
 } // namespace simxr::app

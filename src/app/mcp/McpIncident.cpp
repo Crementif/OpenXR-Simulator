@@ -142,8 +142,22 @@ std::optional<IncidentCapture> CaptureIncident(McpApplication& application, cons
 	const auto opened = calls.Connect(request.application);
 	const auto connection = opened.id;
 	const auto target = ui ? "quad_layers" : "composed_eyes";
-	const auto started = calls.Request(connection, wire::OpCode::BeginImageWindow,
-		{wire::EncodeCaptureTarget({ui ? CaptureKind::QuadLayers : CaptureKind::ComposedEyes, 0, 0})});
+	wire::Message started;
+	for (;;)
+	{
+		try
+		{
+			started = calls.Request(connection, wire::OpCode::BeginImageWindow,
+				{wire::EncodeCaptureTarget({ui ? CaptureKind::QuadLayers : CaptureKind::ComposedEyes, 0, 0})});
+			break;
+		}
+		catch (const TransientError& error)
+		{
+			if (error.code != static_cast<std::uint32_t>(wire::ErrorCode::Busy))
+				throw;
+			calls.Wait();
+		}
+	}
 	const auto window = panel::U64(started, tag::ImageWindowId);
 	if (!window)
 		throw std::runtime_error("Runtime omitted the incident window identity");

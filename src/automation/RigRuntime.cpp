@@ -424,6 +424,11 @@ control::IncidentSample RigRuntime::SampleWindowImage(std::uint64_t window, std:
 {
 	const auto image = Number(Call(control::OpCode::RetainWindowImage,
 		{control::Field::U64(tag::ImageWindowId, window, true), control::Field::U64(tag::FrameId, frame, true)}), tag::ImageReaderId);
+	return SampleImage(image, rectangles);
+}
+control::IncidentSample RigRuntime::SampleImage(std::uint64_t image,
+	std::optional<std::array<XrRect2Di, 2>> rectangles)
+{
 	RemoteResource reader{*this, control::OpCode::ReleaseImage, tag::ImageReaderId, image};
 	const auto info = Call(control::OpCode::ImageInfo, {control::Field::U64(tag::ImageReaderId, image, true)});
 	const auto* descriptor = info.Find(tag::ImageDescriptor);
@@ -441,6 +446,22 @@ control::IncidentSample RigRuntime::SampleWindowImage(std::uint64_t window, std:
 	{
 		return opcode == control::OpCode::ReleaseExport ? Exchange(opcode, std::move(fields)) : Call(opcode, std::move(fields));
 	}, [&] { PollAgain(); }, image, description, *rectangles);
+}
+std::optional<control::IncidentSample> RigRuntime::SampleHistoryImage(std::uint64_t frame,
+	control::TargetKind target, std::optional<std::array<XrRect2Di, 2>> rectangles)
+{
+	m_progress.Check();
+	RenewLease();
+	auto fields = Session();
+	fields.push_back(control::Field::U64(tag::FrameId, frame, true));
+	fields.push_back(EncodeTarget({target}));
+	const auto response = m_exchange(control::OpCode::RetainHistoricalImage, std::move(fields));
+	const auto* error = response.Find(tag::Error);
+	if (error && error->AsU32() == static_cast<std::uint32_t>(control::ErrorCode::NotFound))
+		return {};
+	if (!error || error->AsU32() != static_cast<std::uint32_t>(control::ErrorCode::Ok))
+		throw std::runtime_error("Runtime control: " + Text(response, tag::Detail));
+	return SampleImage(Number(response, tag::ImageReaderId), rectangles);
 }
 void RigRuntime::ReleaseImageWindow(std::uint64_t window)
 {

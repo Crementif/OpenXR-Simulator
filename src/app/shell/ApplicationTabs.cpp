@@ -483,6 +483,7 @@ void ApplicationTabs::Draw()
 	auto& tab = *Find(m_active);
 	tab.workspace.BeginFrame(tab.runtime);
 	tab.workspace.Draw(tab.runtime);
+	PollMonitors();
 }
 std::vector<VkSemaphore> ApplicationTabs::ReadyWaits() const
 {

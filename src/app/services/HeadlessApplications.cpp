@@ -292,5 +292,6 @@ void HeadlessApplications::Poll()
 			entry->nextSessions = now + std::chrono::milliseconds(250);
 		}
 	}
+	PollMonitors();
 }
 } // namespace simxr::app

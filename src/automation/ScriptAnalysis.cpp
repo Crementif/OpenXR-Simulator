@@ -11,13 +11,28 @@
 namespace simxr::automation
 {
 using namespace script;
+int ScriptEngine::AnalyzeImageHistory(lua_State* state)
+{
+	const auto count = Integer(state, 1);
+	if (!count || count > 10)
+		throw std::invalid_argument("Analysis history count must be in [1,10]");
+	m_progress.BeginObservation();
+	PushInspection(state, m_runtime.ImageHistory(static_cast<std::uint32_t>(count), HistoryTarget(state, 2)));
+	const auto result = AnalyzeImages(state, 0);
+	m_progress.EndObservation();
+	return result;
+}
 int ScriptEngine::AnalyzeImageWindow(lua_State* state)
 {
 	const auto window = Integer(state, 1);
 	PushInspection(state, m_runtime.ImageWindow(window));
-	const auto document = lua_absindex(state, -1);
-	if (StringField(state, document, "phase") != "complete")
+	if (StringField(state, lua_absindex(state, -1), "phase") != "complete")
 		throw std::runtime_error("Image window must be complete before analysis");
+	return AnalyzeImages(state, window);
+}
+int ScriptEngine::AnalyzeImages(lua_State* state, std::uint64_t window)
+{
+	const auto document = lua_absindex(state, -1);
 	const auto target = StringField(state, document, "target");
 	if (target != "quad_layers" && target != "composed_eyes")
 		throw std::runtime_error("Unsupported analysis target");
@@ -33,6 +48,7 @@ int ScriptEngine::AnalyzeImageWindow(lua_State* state)
 		flicker::AnalysisObservation observation;
 	};
 	std::vector<Event> events;
+	std::vector<MonitorFrame> frames;
 	const auto count = lua_objlen(state, entries);
 	for (int index = 1; index <= count; ++index)
 	{
@@ -49,6 +65,7 @@ int ScriptEngine::AnalyzeImageWindow(lua_State* state)
 		{
 			analysis.Skip(frame);
 			events.push_back({frame, {true, "image_unavailable"}});
+			frames.push_back({frame, true, "image_unavailable"});
 		}
 		else
 		{
@@ -86,13 +103,30 @@ int ScriptEngine::AnalyzeImageWindow(lua_State* state)
 				{
 					analysis.Skip(frame);
 					events.push_back({frame, {true, "missing_eye"}});
+					frames.push_back({frame, true, "missing_eye"});
 					lua_pop(state, 1);
 					continue;
 				}
-				sample = m_runtime.SampleWindowImage(window, frame, rectangles);
+				if (window)
+					sample = m_runtime.SampleWindowImage(window, frame, rectangles);
+				else
+				{
+					auto observed = m_runtime.SampleHistoryImage(frame,
+						ui ? control::TargetKind::QuadLayers : control::TargetKind::ComposedEyes, rectangles);
+					if (!observed)
+					{
+						analysis.Skip(frame);
+						events.push_back({frame, {true, "evicted"}});
+						frames.push_back({frame, true, "evicted"});
+						lua_pop(state, 1);
+						continue;
+					}
+					sample = std::move(*observed);
+				}
 			}
 			auto observation = analysis.Observe(frame, sample.pixels, sample.Width, sample.Height, sample.Width * 4,
 				flicker::PixelOrder::Rgba, sample.rectangles);
+			frames.push_back({frame, observation.skipped, observation.reason});
 			if (!observation.reason.empty())
 				events.push_back({frame, std::move(observation)});
 		}
@@ -101,6 +135,8 @@ int ScriptEngine::AnalyzeImageWindow(lua_State* state)
 	lua_pop(state, 2);
 	lua_newtable(state);
 	const auto& counts = analysis.Counts();
+	if (!frames.empty())
+		m_progress.ObserveWindow(frames, counts.observations, counts.skipped, counts.temporalPairs, counts.gaps);
 	for (const auto& [name, value] : {std::pair{"frames_analyzed", counts.observations},
 		std::pair{"frames_skipped", counts.skipped}, std::pair{"temporal_pairs", counts.temporalPairs}, std::pair{"frame_gaps", counts.gaps}})
 	{

@@ -416,6 +416,17 @@ int ScriptEngine::GameState(lua_State* state)
 	return 1;
 }
 
+int ScriptEngine::MonitorCadence(lua_State* state)
+{
+	m_progress.MissedCadences(Integer(state, 1));
+	return 0;
+}
+int ScriptEngine::MonotonicTime(lua_State* state)
+{
+	lua_pushnumber(state, std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count());
+	return 1;
+}
+
 void ScriptEngine::Execute()
 {
 	std::unique_ptr<lua_State, decltype(&lua_close)> vm{lua_newstate(Allocate, this), lua_close};
@@ -434,6 +445,8 @@ void ScriptEngine::Execute()
 		lua_setfield(state, -2, name);
 	};
 	bind("wait", Binding<&ScriptEngine::Wait>);
+	bind("monotonic_time", Binding<&ScriptEngine::MonotonicTime>);
+	bind("monitor_cadence", Binding<&ScriptEngine::MonitorCadence>);
 	bind("frame_add", Binding<&ScriptEngine::FrameAdd>);
 	bind("frame_before", Binding<&ScriptEngine::FrameBefore>);
 	bind("step_display", Binding<&ScriptEngine::StepDisplay>);
@@ -457,6 +470,7 @@ void ScriptEngine::Execute()
 	bind("begin_image_window", Binding<&ScriptEngine::BeginImageWindow>);
 	bind("image_window", Binding<&ScriptEngine::ImageWindow>);
 	bind("analyze_image_window", Binding<&ScriptEngine::AnalyzeImageWindow>);
+	bind("analyze_image_history", Binding<&ScriptEngine::AnalyzeImageHistory>);
 	bind("export_window_image", Binding<&ScriptEngine::ExportWindowImage>);
 	bind("release_image_window", Binding<&ScriptEngine::ReleaseImageWindow>);
 	bind("revision", Binding<&ScriptEngine::Revision>);

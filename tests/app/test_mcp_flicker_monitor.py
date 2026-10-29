@@ -51,6 +51,10 @@ def main():
         result = eventually(analyzed, timeout=50)
         assert result['generation'] == state['generation'] and result['frames_observed'] >= 2, result
         assert result['last_analysis']['frames_analyzed'] >= 2 and result['events'], result
+        incident = client.tool('capture_flicker_window', {'application_id': application, 'timeout': 25,
+                               'max_frames': 2, 'include_image': False, 'analyze': True})
+        assert not incident['error'] and incident['data']['analysis']['frames_analyzed'] >= 2, incident
+        assert analyzed()['phase'] == 'running'
         stopped = other.tool('stop_flicker_monitor', {'application_id': application, 'monitor_id': 'first'})
         assert not stopped['error'] and stopped['data']['phase'] == 'stopped', stopped
         assert not client.tool('stop_flicker_monitor', {'application_id': application, 'monitor_id': 'first'})['error']
@@ -68,11 +72,16 @@ def main():
         before = eventually(analyzed, timeout=50)
         other.process.stdin.close()
         assert other.process.wait(timeout=15) == 0
+        client.process.stdin.close()
+        assert client.process.wait(timeout=15) == 0
+        time.sleep(.5)
+        client = test.connect(connector, '--app', app, '--windowless', log=log, name='monitor-reconnected')
         def continued():
             result = analyzed()
             return result if result and result['windows'] > before['windows'] else None
         result = eventually(continued, timeout=50)
         assert result['monitor_id'] == 'other' and result['phase'] == 'running', result
+        assert 'missed_cadences' in result and result['unobserved_frames'] >= 0, result
         assert not client.tool('stop_flicker_monitor', {'application_id': application, 'monitor_id': 'other'})['error']
         reused = client.tool('start_flicker_monitor', options)
         assert not reused['error'] and reused['data']['phase'] == 'running', reused
@@ -85,6 +94,59 @@ def main():
                 bridge.stdin.close()
             assert bridge.wait(timeout=15) == 0
         print('PASS application monitor detection, shared control, disconnect survival and shutdown')
+
+
+    with McpTest('simxr-configured-monitor-', windowless=True) as test:
+        test.env['SIMXR_MONITOR'] = 'composed'
+        log = test.log('configured.log')
+        client = test.connect(connector, '--app', app, '--windowless', log=log)
+        test.discover()
+        launched = client.tool('simulator_launch_application', {'executable': probe, 'environment': {
+            'SIMXR_PROBE_INTERACTIVE': '1', 'SIMXR_PROBE_DYNAMIC_COLOR': '1',
+            'SIMXR_PROBE_FRAMES': '120000', 'SIMXR_WIDTH': '128', 'SIMXR_HEIGHT': '96'}})
+        assert not launched['error'], launched
+        application = launched['data']['application_id']
+        state = test.connected(client, application)
+
+        def configured():
+            result = client.tool('get_flicker_status', {'application_id': application})
+            assert not result['error'] and result['data']['phase'] != 'failed', result
+            return result['data'] if result['data'].get('windows', 0) else None
+
+        before = eventually(lambda: (value if (value := configured()) and value['events'] else None), timeout=50)
+        assert before['monitor_id'].startswith('configured-') and before['events'], before
+        # Monitoring does not monopolize the independent user automation worker.
+        rig = client.tool('simulator_luau_run', {'application_id': application,
+                          'source': 'simxr.wait(50)', 'name': 'concurrent-rig'})
+        assert not rig['error'], rig
+        stopped = client.tool('stop_flicker_monitor', {'application_id': application, 'monitor_id': before['monitor_id']})
+        assert not stopped['error'] and stopped['data']['phase'] == 'stopped', stopped
+        time.sleep(.4)
+        assert configured()['phase'] == 'stopped'  # Explicit stop is respected until the next session.
+        restarted = client.tool('simulator_restart_application', {'application_id': application,
+                               'process_id': state['process_id']})
+        assert not restarted['error'], restarted
+
+        def replaced():
+            status = client.tool('simulator_application_status', {'application_id': application})
+            assert not status['error'], status
+            data = status['data']
+            return data if data['session_running'] and data['process_id'] != state['process_id'] else None
+
+        replacement = eventually(replaced, timeout=30)
+        test.track(replacement['process_id'])
+        after = eventually(lambda: (value if (value := configured()) and
+                                   value['monitor_id'] != before['monitor_id'] else None), timeout=50)
+        assert after['runtime_process_id'] == replacement['runtime_process_id'], after
+        assert not client.tool('simulator_stop_application', {'application_id': application})['error']
+        def terminal():
+            status = client.tool('get_flicker_status', {'application_id': application})
+            return status['data'] if status['data']['phase'] != 'running' else None
+        eventually(terminal)
+        assert not client.tool('simulator_shutdown', {})['error']
+        client.process.stdin.close()
+        assert client.process.wait(timeout=15) == 0
+        print('PASS configured monitoring, concurrent rig, explicit stop, restart and application lifetime')
 
 
 if __name__ == '__main__':

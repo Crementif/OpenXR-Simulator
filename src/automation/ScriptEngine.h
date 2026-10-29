@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 struct lua_State;
@@ -30,6 +31,8 @@ class ScriptEngine
 	static void Interrupt(lua_State* state, int gc);
 	template <int (ScriptEngine::*Handler)(lua_State*)> static int Binding(lua_State* state);
 	int Wait(lua_State* state);
+	int MonitorCadence(lua_State* state);
+	int MonotonicTime(lua_State* state);
 	int FrameAdd(lua_State* state);
 	int FrameBefore(lua_State* state);
 	int Schedule(lua_State* state);
@@ -49,6 +52,8 @@ class ScriptEngine
 	int BeginImageWindow(lua_State* state);
 	int ImageWindow(lua_State* state);
 	int AnalyzeImageWindow(lua_State* state);
+	int AnalyzeImageHistory(lua_State* state);
+	int AnalyzeImages(lua_State* state, std::uint64_t window);
 	int ExportWindowImage(lua_State* state);
 	int ReleaseImageWindow(lua_State* state);
 	int ProjectionHistory(lua_State* state);

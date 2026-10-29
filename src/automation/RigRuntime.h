@@ -98,6 +98,8 @@ class RigRuntime
 	control::IncidentSample SampleWindowImage(std::uint64_t window, std::uint64_t frame,
 		std::optional<std::array<XrRect2Di, 2>> rectangles);
 	void ReleaseImageWindow(std::uint64_t window);
+	std::optional<control::IncidentSample> SampleHistoryImage(std::uint64_t frame, control::TargetKind target,
+		std::optional<std::array<XrRect2Di, 2>> rectangles);
 	std::vector<std::byte> Revision(std::uint64_t revision);
 	void ReleaseInspection(std::uint64_t inspection);
 	std::vector<std::byte> State();
@@ -134,6 +136,7 @@ class RigRuntime
 	control::Message Debug(control::CommandKind kind, Fields fields = {});
 	ScriptStep CaptureStep(control::CommandKind kind, Fields fields = {});
 	void ReleaseUnchecked(control::OpCode opcode, std::uint16_t tag, std::uint64_t id) noexcept;
+	control::IncidentSample SampleImage(std::uint64_t image, std::optional<std::array<XrRect2Di, 2>> rectangles);
 	void ExportImage(std::uint64_t reader, const std::string& path, std::optional<std::uint32_t> arraySlice);
 	class RemoteResource;
 };

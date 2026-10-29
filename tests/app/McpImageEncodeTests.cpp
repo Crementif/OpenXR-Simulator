@@ -1,8 +1,6 @@
 #include "Pch.h"
 #include "app/mcp/McpImage.h"
 #include "app/mcp/McpIncident.h"
-#include "app/mcp/McpIncidentAnalysis.h"
-#include "app/mcp/McpFlickerCoverage.h"
 #include "app/mcp/McpIncidentSave.h"
 #include "app/mcp/McpImageCache.h"
 #include "app/services/ImageExport.h"
@@ -18,77 +16,8 @@ int main(int argc, char** argv)
 	using namespace simxr;
 	using namespace simxr::app;
 	using namespace simxr::app::mcp;
-	{
-		using Json = nlohmann::json;
-		FlickerCoverage coverage;
-		coverage.AddWindow(Json::array({{{"frame_id", "1"}}, {{"frame_id", "2"}}}),
-			{{"skipped_frames", Json::array({{{"frame_id", "1"}, {"reason", "missing_eye"}}})}, {"events", Json::array()}});
-		coverage.AddWindow(Json::array({{{"frame_id", "3"}}, {{"frame_id", "4"}}}),
-			{{"skipped_frames", Json::array()}, {"events", Json::array()}});
-		auto status = coverage.Report();
-		Require(status.at("frames_observed") == 3 && status.at("frames_skipped") == 1,
-			"Earlier skipped-eye coverage remains visible after a healthy window");
-		FlickerCoverage recovered;
-		recovered.AddWindow(Json::array({{{"frame_id", "1"}}, {{"frame_id", "2"}}}),
-			{{"skipped_frames", Json::array({{{"frame_id", "2"}}})}, {"events", Json::array()}});
-		recovered.AddWindow(Json::array({{{"frame_id", "2"}}, {{"frame_id", "4"}}}),
-			{{"skipped_frames", Json::array()}, {"events", Json::array()}});
-		status = recovered.Report();
-		Require(status.at("frames_observed") == 3 && status.at("frames_skipped") == 0 && status.at("unobserved_frames") == 1,
-			"Overlapping windows recover skipped frames without double-counting and preserve gaps");
-		FlickerCoverage overflow;
-		for (unsigned start = 1; start <= 70; start += 10)
-		{
-			Json entries = Json::array(), events = Json::array();
-			for (unsigned frame = start; frame < start + 10; ++frame)
-			{
-				const auto id = std::to_string(frame);
-				entries.push_back({{"frame_id", id}});
-				events.push_back({{"frame_id", id}, {"reason", "test"}});
-			}
-			overflow.AddWindow(entries, {{"skipped_frames", Json::array()}, {"events", events}});
-		}
-		status = overflow.Report();
-		Require(status.at("events").size() == 64 && status.at("events_total") == 70 && status.at("events_dropped") == 6,
-			"Monitor event overflow is bounded and explicitly reported");
-	}
 	Require(IncidentIdentifier("18446744073709551615", "frame") == UINT64_MAX,
 		"Incident frame identifiers retain full uint64 precision");
-	{
-		const std::array<std::array<std::int32_t, 4>, 2> rectangles{{{{0, 0, 160, 90}}, {{160, 0, 160, 90}}}};
-		std::vector<std::byte> cell(320 * 104 * 4, std::byte{128});
-		IncidentAnalysis preview(false);
-		for (std::uint64_t frame = 1; frame <= 5; ++frame)
-			preview.Observe(frame, cell, rectangles);
-		std::fill(cell.begin(), cell.end(), std::byte{0});
-		preview.Observe(6, cell, rectangles);
-		const auto report = preview.Report();
-		Require(report.at("detected") && report.at("frames_analyzed") == 6 &&
-			report.at("events")[0].at("frame_id") == "6" &&
-			report.at("events")[0].at("reason") == "VISIBLE_TO_BLANK_FRAME",
-			"On-demand preview analysis identifies a blank frame");
-		IncidentAnalysis ui(true);
-		std::fill(cell.begin(), cell.end(), std::byte{80});
-		ui.Observe(1, cell, rectangles);
-		std::fill(cell.begin(), cell.end(), std::byte{180});
-		ui.Observe(2, cell, rectangles);
-		std::fill(cell.begin(), cell.end(), std::byte{80});
-		ui.Observe(3, cell, rectangles);
-		ui.Observe(4, cell, {});
-		const auto uiReport = ui.Report();
-		Require(uiReport.at("detected") && uiReport.at("frames_skipped") == 1 &&
-			uiReport.at("events")[0].at("reason") == "ALTERNATING_UI_REGION",
-			"UI analysis identifies alternating crops and skips missing eyes");
-		IncidentAnalysis gaps(true);
-		gaps.Observe(1, cell, rectangles);
-		gaps.Observe(2, cell, {});
-		gaps.Observe(3, cell, rectangles);
-		gaps.Observe(8, cell, rectangles);
-		const auto incomplete = gaps.Report();
-		Require(incomplete.at("verdict") == "INCONCLUSIVE" && incomplete.at("temporal_pairs") == 0 &&
-			incomplete.at("frames_skipped") == 1 && incomplete.at("frame_gaps") == 1,
-			"Missing eyes and frame gaps cannot produce a clean temporal verdict");
-	}
 	for (const auto& invalid : {std::string("01"), std::string(100000, '0') + "1", std::string("18446744073709551616")})
 	{
 		bool rejected = false;

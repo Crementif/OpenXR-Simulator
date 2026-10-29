@@ -14,7 +14,6 @@
 
 namespace simxr::app
 {
-class McpFlickerMonitor;
 
 // Cancellation can prevent queued mutations; once admitted, their result is authoritative.
 class McpCancellation
@@ -44,8 +43,6 @@ class McpApplication
 	std::optional<nlohmann::json> Call(std::string name, nlohmann::json arguments,
 									 const std::shared_ptr<McpCancellation>& cancellation,
 									 std::shared_ptr<AutomationOwner> owner = {});
-	std::optional<nlohmann::json> MonitorCall(const std::string& name, nlohmann::json arguments,
-		const std::shared_ptr<McpCancellation>& cancellation);
 	std::optional<ApplicationSnapshot> Lookup(const std::string& application,
 		const std::shared_ptr<McpCancellation>& cancellation);
 	nlohmann::json ApplicationDocument(const ApplicationSnapshot& application) const;
@@ -58,7 +55,6 @@ class McpApplication
 	bool Wait(const std::shared_ptr<Request>& request);
 	std::mutex m_mutex;
 	std::deque<std::shared_ptr<Request>> m_pending;
-	std::unordered_map<std::string, std::shared_ptr<McpFlickerMonitor>> m_monitors;
 	std::string m_instanceId;
 	bool m_closed = false, m_windowless = false;
 };
