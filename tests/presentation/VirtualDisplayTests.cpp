@@ -443,6 +443,8 @@ void SharedManualTiming()
 			return state.latest && state.latest->tick == DisplayTick{120};
 		},
 		"Shared timing display did not progress independently of application admission");
+	// The application is late here, so an unpaused wait would admit immediately.
+	scheduler.Pause();
 	auto waiting = std::async(std::launch::async,
 							  [&]
 							  {
@@ -453,8 +455,7 @@ void SharedManualTiming()
 		{
 			return scheduler.Snapshot().waitPending;
 		},
-		"Shared timing paced wait did not enter");
-	scheduler.Pause();
+		"Shared timing paused wait did not enter");
 	Require(display.Pause(), "Shared timing display pause failed");
 	const auto boundary = std::max(scheduler.Snapshot().nextAdmission, display.NextTick());
 	Require(boundary == DisplayTick{121} && scheduler.RebasePaused(boundary) == XR_SUCCESS,
