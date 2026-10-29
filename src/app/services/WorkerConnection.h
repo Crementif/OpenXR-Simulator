@@ -28,6 +28,8 @@ class WorkerConnection
 	WorkerConnection& operator=(const WorkerConnection&) = delete;
 	control::Message Exchange(control::OpCode opcode, std::vector<control::Field> fields);
 	void Stop() noexcept;
+	// Called on the exchange worker (or after joining it) to finish native ownership.
+	void Close() noexcept;
 	bool Failed() const noexcept;
 	std::uint64_t Capabilities() const
 	{

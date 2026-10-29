@@ -160,7 +160,7 @@ class SnapshotStore
 	void SetCapacity(std::size_t capacity);
 	void RetireAll() noexcept;
 	// Marks only sequence-owned tickets; Poll releases native readers outside caller locks.
-	void RetireSequenceCaptures(CommandSource owner) noexcept;
+	void RetireSequenceCaptures(std::optional<CommandSource> owner = {}) noexcept;
 	// Observes producers outside the store mutex. It submits no graphics work.
 	void Poll() noexcept;
 

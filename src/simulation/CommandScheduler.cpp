@@ -621,6 +621,7 @@ void CommandScheduler::Start(std::uint64_t seed, std::optional<CommandConfigurat
 	retired.swap(m_sequence);
 	m_replacedSequence.reset();
 	m_recorder.Stop();
+	m_recordingOwner.reset();
 }
 void CommandScheduler::Close()
 {
@@ -638,6 +639,7 @@ void CommandScheduler::Close()
 	m_replacedSequence.reset();
 	m_closed = true;
 	m_recorder.Stop();
+	m_recordingOwner.reset();
 }
 CommandResult CommandScheduler::SubmitLiveInput(CommandSource source, const LiveInputSample& sample,
 												LiveInputClock::time_point now)
@@ -883,6 +885,11 @@ std::array<bool, ControlChannelCount> CommandScheduler::ReleaseSourceCommandsLoc
 	const auto sequenceReleased = StopPoseSequenceLocked(source);
 	for (std::size_t index = 0; index < released.size(); ++index)
 		released[index] = released[index] || sequenceReleased[index];
+	if (m_recordingOwner == source)
+	{
+		m_recorder.Stop();
+		m_recordingOwner.reset();
+	}
 	if (retire)
 		std::erase_if(m_sources,
 					  [&](const auto& value)
@@ -974,12 +981,18 @@ std::array<bool, ControlChannelCount> CommandScheduler::StopPoseSequence(Command
 		retired = m_sequence->Program();
 	return StopPoseSequenceLocked(owner);
 }
-void CommandScheduler::StartRecording(const CommandConfiguration& baseline, const ReferenceSpaceState& spaces,
-									  bool drain)
+RecordingResult CommandScheduler::StartRecording(const CommandConfiguration& baseline, const ReferenceSpaceState& spaces,
+	bool drain, CommandSource owner)
 {
 	std::lock_guard lock(m_mutex);
+	if (!ValidSource(owner))
+		return RecordingResult::Invalid;
 	if (m_closed)
-		throw std::logic_error("Cannot record a closed command scheduler");
+		return RecordingResult::Closed;
+	if (m_recordingOwner && *m_recordingOwner != owner)
+		return RecordingResult::Busy;
+	if (m_recorder.Snapshot({}, 0).active)
+		return RecordingResult::Conflict;
 	const auto latest = m_applied.empty() ? nullptr : m_applied.back();
 	auto origin = m_state.RecordingOrigin(baseline, latest ? latest->runtimeTime : RuntimeTime{Duration{1}});
 	origin.seed = m_seed;
@@ -992,7 +1005,39 @@ void CommandScheduler::StartRecording(const CommandConfiguration& baseline, cons
 	}
 	std::optional<CommandConfiguration> retainedBaseline{baseline};
 	m_recorder.Start(origin, drain);
+	m_recordingOwner = owner;
 	m_baseline.swap(retainedBaseline);
+	return RecordingResult::Ok;
+}
+RecordingResult CommandScheduler::StopRecording(CommandSource owner, std::uint64_t identity)
+{
+	std::lock_guard lock(m_mutex);
+	if (!ValidSource(owner))
+		return RecordingResult::Invalid;
+	if (m_recordingOwner && *m_recordingOwner != owner)
+		return RecordingResult::Busy;
+	const auto state = m_recorder.Snapshot({}, 0);
+	if ((state.drain || identity) && state.identity != identity)
+		return RecordingResult::Conflict;
+	m_recorder.Stop();
+	if (!state.drain)
+		m_recordingOwner.reset();
+	return RecordingResult::Ok;
+}
+RecordingResult CommandScheduler::AcknowledgeRecording(CommandSource owner, std::uint64_t identity, std::size_t through)
+{
+	std::lock_guard lock(m_mutex);
+	if (!ValidSource(owner) || !identity)
+		return RecordingResult::Invalid;
+	if (m_recordingOwner != owner)
+		return RecordingResult::Busy;
+	const auto state = m_recorder.Snapshot({}, 0);
+	if (!state.drain || state.identity != identity)
+		return RecordingResult::Conflict;
+	if (through > state.total)
+		return RecordingResult::Invalid;
+	m_recorder.Acknowledge(through);
+	return RecordingResult::Ok;
 }
 
 CommandConfiguration CommandScheduler::Merge(const CommandConfiguration& baseline) const

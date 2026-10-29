@@ -119,7 +119,6 @@ add_library(simxr_control STATIC
     src/control/ConnectionLeases.cpp
     src/control/ConnectionRequests.cpp
     src/control/DebugProtocol.cpp
-    src/control/RecordingControl.cpp
     src/control/SequenceControl.cpp
     src/control/SimulationConnection.cpp
     src/control/LiveInputControl.cpp
@@ -619,6 +618,8 @@ if(BUILD_TESTING)
     target_link_libraries(flicker_diagnostics_tests PRIVATE simxr_diagnostics simxr_core)
     simxr_add_test(legacy_input_tests tests/control/LegacyInputTests.cpp legacy_input)
     target_link_libraries(legacy_input_tests PRIVATE simxr_control)
+    simxr_add_test(automation_lifecycle_tests tests/runtime/AutomationLifecycleTests.cpp automation_lifecycle)
+    target_link_libraries(automation_lifecycle_tests PRIVATE simxr_core)
     simxr_add_test(session_tests tests/runtime/SessionTests.cpp session)
     target_link_libraries(session_tests PRIVATE simxr_core)
     simxr_add_test(frame_submission_tests tests/graphics/FrameSubmissionTests.cpp frame_submission)

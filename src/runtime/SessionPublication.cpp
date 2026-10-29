@@ -176,7 +176,7 @@ bool SessionPublication::ReleaseChannels(const std::array<bool, ControlChannelCo
 	return restoreFocus;
 }
 
-void SessionPublication::StartRecording(const ReferenceSpaceState& spaces, bool drain)
+RecordingResult SessionPublication::StartRecording(const ReferenceSpaceState& spaces, bool drain, CommandSource owner)
 {
 	auto baseline = m_baseline;
 	auto observed = m_input.Snapshot();
@@ -185,7 +185,7 @@ void SessionPublication::StartRecording(const ReferenceSpaceState& spaces, bool 
 	// Native publication may report the scenario-induced focus state. Preserve
 	// the underlying focused origin rather than baking that failure into it.
 	baseline.tracking.focused = m_sessionOverride || baseline.tracking.focused;
-	m_commands.StartRecording(baseline, spaces, drain);
+	return m_commands.StartRecording(baseline, spaces, drain, owner);
 }
 
 CommandConfiguration SessionPublication::ConfigurationSnapshot(const FramePrediction& lastIssued) const

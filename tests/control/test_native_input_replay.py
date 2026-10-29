@@ -22,7 +22,7 @@ def main(probe, executable):
             try:
                 wait_file(data / 'control.ready', host)
                 endpoint = data / f'control.{host.pid}.sock'
-                with Client(endpoint) as client:
+                with Client(endpoint) as client, Client(endpoint) as recorder:
                     session, = client.sessions()
                     steps = [{'frame': frame, 'head': {'x': .3 + .1 * frame}} for frame in range(4)]
                     steps[0]['head'].update(y=1.8, z=-.4, yaw=.2, pitch=-.1, roll=.15)
@@ -34,8 +34,9 @@ def main(probe, executable):
                         if frame != 7:
                             (data / f'recording.{frame}.continue').touch()
                     client.stop_sequence(session, sequence)
+                    # An independent recorder observes control-source retirement and its successor.
                     # Start after the probe releases its own startup controls at frame 7.
-                    client.start_recording(session)
+                    recorder.start_recording(session)
                     client.schedule(session, [{'kind': 'take_control', 'channel': 'left_controls'},
                                               {'kind': 'controller_controls', 'hand': 0, 'trigger': .75}], frame=8)
                     (data / 'recording.7.continue').touch()
@@ -49,8 +50,8 @@ def main(probe, executable):
                     require(state['configuration']['controllers'][0]['controls']['trigger'] == 0, state)
                     (data / 'recording.9.continue').touch()
                     wait_file(data / 'recording.10.ready', host)
-                    client.stop_recording(session)
-                    recording = collect_recording(client, session)
+                    recorder.stop_recording(session)
+                    recording = collect_recording(recorder, session)
                     require(recording['version'] == 3 and recording['total'] == 3, recording)
                     require(recording['transactions'][1]['phase'] == 'released' and
                             recording['transactions'][1]['after_frame'], recording)

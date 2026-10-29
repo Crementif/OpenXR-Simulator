@@ -4,6 +4,7 @@
 #include "automation/RigRuntime.h"
 #include "automation/RigTypes.h"
 
+#include <functional>
 #include <thread>
 
 namespace simxr::automation
@@ -13,7 +14,7 @@ void ValidateRigOptions(const RigOptions& options);
 class RigRunner
 {
   public:
-	explicit RigRunner(RigExchange exchange);
+	explicit RigRunner(RigExchange exchange, std::function<void()> releaseTransport = {});
 	~RigRunner();
 	// Start and Join belong to the owning controller thread; progress controls
 	// and Snapshot may be used concurrently while the worker runs.
@@ -33,6 +34,7 @@ class RigRunner
 	RigOptions m_options;
 	RigProgress m_progress;
 	RigRuntime m_runtime;
+	std::function<void()> m_releaseTransport;
 	std::thread m_worker;
 };
 } // namespace simxr::automation

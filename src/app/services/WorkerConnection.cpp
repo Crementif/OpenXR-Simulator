@@ -51,6 +51,14 @@ void WorkerConnection::Stop() noexcept
 {
 	m_stopping = true;
 }
+void WorkerConnection::Close() noexcept
+{
+	m_stopping = true;
+#if defined(__linux__) || defined(_WIN32)
+	if (m_client)
+		m_client->Close();
+#endif
+}
 bool WorkerConnection::Failed() const noexcept
 {
 	return m_failed || m_stopping;

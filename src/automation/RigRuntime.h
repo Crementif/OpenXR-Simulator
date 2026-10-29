@@ -122,7 +122,6 @@ class RigRuntime
 	std::uint64_t m_nextCommand = 1;
 	std::uint64_t m_lease = 0;
 	std::uint64_t m_imageWindow = 0;
-	bool m_inputRecording = false;
 	std::chrono::steady_clock::time_point m_nextRenew;
 	std::vector<std::uint64_t> m_captures;
 	std::vector<std::uint64_t> m_inspections;

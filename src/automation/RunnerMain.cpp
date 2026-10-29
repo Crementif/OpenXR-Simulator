@@ -181,7 +181,7 @@ int simxr::automation::RunRunner(int argc, char** argv)
 			options.session = wire::ControlSessionId{*id->AsU64()};
 			options.generation = *generation->AsU64();
 		}
-		simxr::automation::RigRunner runner(exchange);
+		simxr::automation::RigRunner runner(exchange, [&] { client.Close(); });
 		runner.Start(std::move(options));
 		std::signal(SIGINT, Interrupt);
 		std::signal(SIGTERM, Interrupt);

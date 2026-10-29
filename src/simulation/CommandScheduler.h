@@ -48,7 +48,10 @@ class CommandScheduler
 	CommandConfiguration Merge(const CommandConfiguration& baseline) const;
 	std::shared_ptr<const AppliedCommandSnapshot> At(FrameId frame) const;
 	// Capture origin and start recording under command admission serialization.
-	void StartRecording(const CommandConfiguration& baseline, const ReferenceSpaceState& spaces, bool drain = false);
+	RecordingResult StartRecording(const CommandConfiguration& baseline, const ReferenceSpaceState& spaces,
+		bool drain = false, CommandSource owner = ApplicationAutomationSource);
+	RecordingResult StopRecording(CommandSource owner, std::uint64_t identity = 0);
+	RecordingResult AcknowledgeRecording(CommandSource owner, std::uint64_t identity, std::size_t through);
 	CommandRecorder& Recorder();
 
   private:
@@ -68,6 +71,7 @@ class CommandScheduler
 	std::vector<SourceCursor> m_sources;
 	std::deque<std::shared_ptr<const AppliedCommandSnapshot>> m_applied;
 	CommandRecorder m_recorder;
+	std::optional<CommandSource> m_recordingOwner;
 	LiveInputSlot m_liveInput;
 	std::optional<PoseSequenceExecution> m_sequence;
 	std::optional<CommandSource> m_replacedSequence;

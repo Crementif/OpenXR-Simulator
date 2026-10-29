@@ -71,7 +71,7 @@ class SessionPublication
 	void PublishTracking(RuntimeTime time, TrackingState state, const ViewSettings& settings, bool focused);
 	XrResult PublishInput(InputSnapshot input);
 	CommandConfiguration ConfigurationSnapshot(const FramePrediction& lastIssued) const;
-	void StartRecording(const ReferenceSpaceState& spaces, bool drain = false);
+	RecordingResult StartRecording(const ReferenceSpaceState& spaces, bool drain, CommandSource owner);
 	void CaptureFrame(FrameId frame, FrameSubmissionState& submission) const;
 	void RecordViewQuery(ViewQuerySnapshot query);
 	bool TakeProfileChange() noexcept;

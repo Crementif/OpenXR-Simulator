@@ -32,16 +32,46 @@ void RigRunner::Run()
 		phase = RigPhase::Failed;
 		error = "Unknown rig failure";
 	}
-	const auto cleanupError = m_runtime.Cleanup();
-	if (phase == RigPhase::Complete && !cleanupError.empty())
+	const auto cleanup = [&](auto action)
 	{
-		phase = RigPhase::Failed;
-		error = cleanupError;
-	}
+		try
+		{
+			action();
+		}
+		catch (const std::exception& failure)
+		{
+			if (phase == RigPhase::Complete)
+			{
+				phase = RigPhase::Failed;
+				error = failure.what();
+			}
+		}
+		catch (...)
+		{
+			if (phase == RigPhase::Complete)
+			{
+				phase = RigPhase::Failed;
+				error = "Unknown automation cleanup failure";
+			}
+		}
+	};
+	cleanup([&]
+	{
+		const auto cleanupError = m_runtime.Cleanup();
+		if (!cleanupError.empty())
+			throw std::runtime_error(cleanupError);
+	});
+	// Terminal status is published only after the transport releases native ownership.
+	cleanup([&]
+	{
+		if (m_releaseTransport)
+			m_releaseTransport();
+	});
 	m_progress.Finish(phase, std::move(error));
 }
 
-RigRunner::RigRunner(RigExchange exchange) : m_runtime(std::move(exchange), m_progress) {}
+RigRunner::RigRunner(RigExchange exchange, std::function<void()> releaseTransport)
+	: m_runtime(std::move(exchange), m_progress), m_releaseTransport(std::move(releaseTransport)) {}
 RigRunner::~RigRunner()
 {
 	Cancel();

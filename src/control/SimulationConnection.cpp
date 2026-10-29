@@ -6,13 +6,29 @@
 #include "control/FrameInspection.h"
 #include "control/HapticObservation.h"
 #include "control/LiveInputControl.h"
-#include "control/RecordingControl.h"
 #include "control/SimulationControl.h"
 #include "runtime/Session.h"
 #include "simulation/GameBridge.h"
 
 namespace simxr::control
 {
+static void CheckRecordingResult(RecordingResult result)
+{
+	switch (result)
+	{
+	case RecordingResult::Ok:
+		return;
+	case RecordingResult::Busy:
+		throw ControlRequestError{ErrorCode::Busy, "Another automation source owns recording control"};
+	case RecordingResult::Conflict:
+		throw ControlRequestError{ErrorCode::Conflict, "Recording is active or its identity changed"};
+	case RecordingResult::Invalid:
+		throw ControlRequestError{ErrorCode::Invalid, "Recording source or acknowledgement is invalid"};
+	case RecordingResult::Closed:
+		throw ControlRequestError{ErrorCode::Closed, "Recording session is closed"};
+	}
+	throw std::logic_error("Unknown recording result");
+}
 static InspectionValue ReadDiagnostics(Session& session, const Message& request)
 {
 	const auto after = request.Find(tag::Offset) ? RequireRequestU64(request, tag::Offset) : 0;
@@ -76,8 +92,8 @@ static InspectionValue ReadRecording(Session& session, const Message& request, M
 	}
 }
 
-SimulationConnection::SimulationConnection(ConnectionId connection, RecordingControl& recordings, GameBridge& game)
-	: m_connection(connection), m_recordings(recordings), m_game(game)
+SimulationConnection::SimulationConnection(ConnectionId connection, GameBridge& game)
+	: m_connection(connection), m_game(game)
 {
 	if (!connection.value)
 		throw std::invalid_argument("A simulation source requires a connection identity");
@@ -94,7 +110,6 @@ SimulationConnection::~SimulationConnection()
 		catch (...)
 		{
 		}
-		m_recordings.Disconnect(m_connection, use.session);
 	}
 }
 std::optional<CommandSource> SimulationConnection::Source(std::optional<CommandSourceKind> requested) const
@@ -295,14 +310,9 @@ Message SimulationConnection::Dispatch(const Message& request, const ControlSess
 				drain = *field->AsBool();
 			}
 			const auto identity = request.Find(tag::RecordingId) ? RequireRequestU64(request, tag::RecordingId) : 0;
-			const auto result = opcode == OpCode::StartRecording ? m_recordings.Start(m_connection, session, drain)
-																 : m_recordings.Stop(m_connection, session, identity);
-			if (result == ErrorCode::Busy)
-				throw ControlRequestError{result, "Another connection owns recording control"};
-			if (result == ErrorCode::Conflict)
-				throw ControlRequestError{result, "Recording is active or its identity changed"};
-			if (result != ErrorCode::Ok)
-				throw ControlRequestError{result, "Recording control capacity exhausted"};
+			const auto result = opcode == OpCode::StartRecording ? session->StartCommandRecording(drain, source)
+																 : scheduler.StopRecording(source, identity);
+			CheckRecordingResult(result);
 			document = SimulationRecording(scheduler.Recorder().Snapshot({}, 0));
 			break;
 		}
@@ -311,10 +321,9 @@ Message SimulationConnection::Dispatch(const Message& request, const ControlSess
 			const auto through = RequireRequestU64(request, tag::Offset);
 			if (through > std::numeric_limits<std::size_t>::max())
 				throw ControlRequestError{ErrorCode::Invalid, "Recording offset exceeds native capacity"};
-			const auto result = m_recordings.Acknowledge(
-				m_connection, session, RequireRequestU64(request, tag::RecordingId), static_cast<std::size_t>(through));
-			if (result != ErrorCode::Ok)
-				throw ControlRequestError{result, "Recording acknowledgement owner, identity or offset is invalid"};
+			const auto result = scheduler.AcknowledgeRecording(
+				source, RequireRequestU64(request, tag::RecordingId), static_cast<std::size_t>(through));
+			CheckRecordingResult(result);
 			document = SimulationRecording(scheduler.Recorder().Snapshot({}, 0));
 			break;
 		}

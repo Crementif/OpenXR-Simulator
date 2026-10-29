@@ -66,6 +66,32 @@ class SequenceTests(unittest.TestCase):
         empty = self.client.upload_sequence(self.session, b'')
         self.assertNotEqual(self.client.start_sequence(self.session, empty)['sequence_id'], sequence)
 
+    def test_shared_source_recording_sequence_disconnect(self):
+        recording = self.client.start_recording(self.session, drain=True)['document']
+        program = self.client.upload_sequence(self.session, '{"frame":0,"head":{"x":7},"capture":true}\n')
+        sequence = self.client.start_sequence(self.session, program, loop=True)['sequence_id']
+        self.start.touch()
+        page = wait_for(lambda: self.client.sequence_status(self.session, sequence)['document'],
+                        lambda state: state['status']['last_frame'] == 6)
+        self.assertTrue(page['status']['active'])
+        self.assertEqual(len(page['held_captures']), 6)
+        identity = recording['recording_id']
+        self.client.close()
+        with Client(self.socket) as successor:
+            wait_for(lambda: successor.read_recording(self.session, recording_id=identity)['document'],
+                     lambda state: not state['active'])
+            next_program = successor.upload_sequence(self.session, '{"frame":0}\n')
+            next_sequence = successor.start_sequence(self.session, next_program)['sequence_id']
+            self.assertNotEqual(next_sequence, sequence)
+            next_recording = successor.start_recording(self.session, drain=True)['document']
+            self.assertNotEqual(next_recording['recording_id'], identity)
+            with self.assertRaises(ControlError):
+                successor.stop_recording(self.session, recording_id=identity)
+            successor.release_control(self.session)
+            self.assertFalse(successor.read_recording(self.session,
+                recording_id=next_recording['recording_id'])['document']['active'])
+            self.assertFalse(successor.sequence_status(self.session, next_sequence)['document']['status']['active'])
+
     def test_application_selector_validation(self):
         fields = self.client._session(self.session) + [Field.u64(Tag.SEQUENCE_ID, 1, True)]
         for selector in (Field.u32(Tag.APPLICATION_OWNED, 1, True),

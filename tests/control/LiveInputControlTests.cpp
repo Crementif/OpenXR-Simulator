@@ -5,7 +5,6 @@
 #include "control/ControlSchema.h"
 #include "control/ControlSessions.h"
 #include "control/LiveInputControl.h"
-#include "control/RecordingControl.h"
 #include "control/SimulationConnection.h"
 #include "control/SimulationControl.h"
 #include "math/Math.h"
@@ -143,10 +142,9 @@ static void Transport()
 	const XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
 	Require(session->Ready(timing.epoch) == XR_SUCCESS && session->Begin(begin, timing) == XR_SUCCESS, "Start session");
 	ControlSession binding{{1}, reinterpret_cast<XrSession>(992), session};
-	RecordingControl recordings;
 	GameBridge game;
 	std::vector<SnapshotRecord> held;
-	auto connection = std::make_unique<SimulationConnection>(ConnectionId{23}, recordings, game);
+	auto connection = std::make_unique<SimulationConnection>(ConnectionId{23}, game);
 	std::uint64_t requestId = 0;
 	const auto send = [&](OpCode opcode, std::vector<Field> fields = {}, std::uint16_t minor = ProtocolMinor)
 	{
@@ -304,7 +302,7 @@ static void Transport()
 	connection.reset();
 	Require(!session->Input().Snapshot().controllers[0].primary && !session->Commands().LiveInputState().owner,
 			"Connection destruction releases attachment without a game frame");
-	connection = std::make_unique<SimulationConnection>(ConnectionId{24}, recordings, game);
+	connection = std::make_unique<SimulationConnection>(ConnectionId{24}, game);
 	Require(session->RequestExit(timing.epoch) == XR_SUCCESS && session->End(timing.epoch) == XR_SUCCESS,
 			"End deterministic session before real-time clock test");
 	timing.mode = ExecutionMode::RealTime;

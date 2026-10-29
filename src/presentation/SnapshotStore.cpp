@@ -595,7 +595,7 @@ void SnapshotStore::SetCapacity(std::size_t capacity)
 	m_slots.SetCapacity(capacity);
 }
 
-void SnapshotStore::RetireSequenceCaptures(CommandSource owner) noexcept
+void SnapshotStore::RetireSequenceCaptures(std::optional<CommandSource> owner) noexcept
 {
 	std::lock_guard lock(m_mutex);
 	for (auto& entry : m_entries)
@@ -604,7 +604,7 @@ void SnapshotStore::RetireSequenceCaptures(CommandSource owner) noexcept
 		if (!metadata || !metadata->sequenceCapture)
 			continue;
 		const auto& capture = *metadata->sequenceCapture;
-		if (capture.request.owner != owner || capture.reservation.id != entry.record.id)
+		if ((owner && capture.request.owner != *owner) || capture.reservation.id != entry.record.id)
 			continue;
 		entry.released = true;
 		entry.producer.reset();

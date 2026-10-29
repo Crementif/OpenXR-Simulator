@@ -86,6 +86,76 @@ struct Fixture
 		return options;
 	}
 };
+void CheckSharedSequenceRigCancellation()
+{
+	Fixture fixture(true);
+	const auto fields = [&]
+	{
+		return std::vector{wire::Field::U64(wire::tag::Session, 1),
+			wire::Field::U64(wire::tag::Generation, fixture.session->Snapshot().generation.value),
+			wire::Field::U32(wire::tag::SourceKind, static_cast<std::uint32_t>(CommandSourceKind::Rig))};
+	};
+	const std::string program = R"({"frame":0,"head":{"x":2},"capture":true})";
+	auto upload = fields();
+	upload.push_back(wire::Field::U64(wire::tag::ProgramId, 1));
+	upload.push_back(wire::Field::U64(wire::tag::Offset, 0));
+	upload.push_back(wire::Field::U64(wire::tag::TotalBytes, program.size()));
+	upload.push_back(wire::Field::Bytes(wire::tag::Bytes, std::as_bytes(std::span(program))));
+	Require(fixture.Exchange(wire::OpCode::UploadSequence, std::move(upload)).Find(wire::tag::Error)->AsU32() == 0,
+		"Stage a native sequence on the rig connection");
+	auto start = fields();
+	start.push_back(wire::Field::U64(wire::tag::ProgramId, 1));
+	start.push_back(wire::Field::Bool(wire::tag::Loop, true));
+	Require(fixture.Exchange(wire::OpCode::StartSequence, std::move(start)).Find(wire::tag::Error)->AsU32() == 0,
+		"Start a native sequence on the rig connection");
+	automation::RigRunner runner([&](auto opcode, auto request)
+	{
+		return fixture.Exchange(opcode, std::move(request));
+	}, [&] { fixture.service.Disconnect(fixture.connection); });
+	runner.Start(fixture.Options("simxr.start_input_recording() while true do simxr.wait(0.01) end"));
+	Eventually([&] { return fixture.session->Commands().Recorder().Snapshot({}, 0).active; },
+		"Rig recording did not begin");
+	FramePrediction frame;
+	Require(fixture.session->WaitFrame(frame) == XR_SUCCESS && fixture.session->BeginFrame() == XR_SUCCESS &&
+		fixture.session->EndFrame(frame) == XR_SUCCESS && fixture.session->Captures().Snapshot().captures.size() == 1,
+		"Rig's native loop did not retain an exact capture");
+	runner.Cancel();
+	runner.Join();
+	const CommandSource owner{CommandSourceKind::Rig, fixture.connection.value};
+	Require(runner.Snapshot().phase == automation::RigPhase::Cancelled &&
+		!fixture.session->Commands().PoseSequenceStatusFor(owner)->active &&
+		!fixture.session->Commands().Recorder().Snapshot({}, 0).active &&
+		fixture.session->Captures().Snapshot().captures.empty(),
+		"Rig cancellation did not retire its native sequence, recording and captures together");
+}
+
+void CheckTransportRetirementAfterCleanupFailure()
+{
+	Fixture fixture;
+	bool disconnected = false;
+	automation::RigRunner runner([&](auto opcode, auto fields)
+	{
+		if (opcode == wire::OpCode::ReleaseControl)
+			throw std::runtime_error("Injected cleanup transport failure");
+		return fixture.Exchange(opcode, std::move(fields));
+	}, [&]
+	{
+		fixture.service.Disconnect(fixture.connection);
+		disconnected = true;
+	});
+	runner.Start(fixture.Options("simxr.start_input_recording()"));
+	runner.Join();
+	const auto status = runner.Snapshot();
+	Require(status.phase == automation::RigPhase::Failed &&
+		status.error.find("Injected cleanup transport failure") != std::string::npos && disconnected &&
+		!fixture.session->Commands().Recorder().Snapshot({}, 0).active,
+		"Rig reported completion before disconnect released recording ownership after cleanup failure");
+	const CommandSource successor{CommandSourceKind::Mcp, 52};
+	Require(fixture.session->StartCommandRecording(false, successor) == RecordingResult::Ok,
+		"Failed rig transport retained native recording ownership");
+	fixture.session->ReleaseCommandSource(successor, true);
+}
+
 void CheckControllerBindingRigOwnership()
 {
 	Fixture fixture;
@@ -1331,6 +1401,8 @@ int main()
 	{
 		CheckUnreportedCompatibility();
 		CheckSweepRigs();
+		CheckSharedSequenceRigCancellation();
+		CheckTransportRetirementAfterCleanupFailure();
 		CheckControllerBindingRigOwnership();
 		Fixture fixture;
 		automation::RigRunner runner(

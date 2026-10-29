@@ -16,15 +16,14 @@ class GameBridge;
 } // namespace simxr
 namespace simxr::control
 {
-class RecordingControl;
 struct ControlSession;
 
 // Used under the enclosing connection's single-flight gate. Destruction runs
-// after that gate and its mutex are released; recordings outlives this owner.
+// after that gate and its mutex are released.
 class SimulationConnection
 {
   public:
-	SimulationConnection(ConnectionId connection, RecordingControl& recordings, GameBridge& game);
+	SimulationConnection(ConnectionId connection, GameBridge& game);
 	~SimulationConnection();
 	SimulationConnection(const SimulationConnection&) = delete;
 	SimulationConnection& operator=(const SimulationConnection&) = delete;
@@ -43,7 +42,6 @@ class SimulationConnection
 		CommandSource source;
 	};
 	ConnectionId m_connection;
-	RecordingControl& m_recordings;
 	GameBridge& m_game;
 	std::optional<CommandSourceKind> m_kind;
 	std::vector<Use> m_uses;

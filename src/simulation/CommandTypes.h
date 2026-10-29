@@ -163,6 +163,15 @@ struct CommandTransaction
 	// Optional observed inputs that must still match at the application boundary.
 	std::vector<SimulationCommand> expected;
 };
+enum class RecordingResult
+{
+	Ok,
+	Busy,
+	Conflict,
+	Invalid,
+	Closed
+};
+
 enum class CommandResult
 {
 	Queued,

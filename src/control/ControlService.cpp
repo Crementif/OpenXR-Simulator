@@ -10,7 +10,6 @@
 #include "control/DebugProtocol.h"
 #include "control/FrameInspection.h"
 #include "control/ImageInspection.h"
-#include "control/RecordingControl.h"
 #include "control/SimulationConnection.h"
 #include "runtime/Runtime.h"
 #include "runtime/Session.h"
@@ -902,7 +901,7 @@ std::optional<ConnectionId> ControlService::Connect(bool nativeHandles)
 		return {};
 	const ConnectionId id{m_nextConnection++};
 	client->identity = id;
-	client->simulation = std::make_unique<SimulationConnection>(id, m_recordings, m_runtime.Game());
+	client->simulation = std::make_unique<SimulationConnection>(id, m_runtime.Game());
 	m_clients.push_back({id, std::move(client)});
 	return id;
 }

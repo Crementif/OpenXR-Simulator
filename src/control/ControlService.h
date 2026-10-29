@@ -2,7 +2,6 @@
 
 #include "control/ControlPacket.h"
 #include "control/ControlSessions.h"
-#include "control/RecordingControl.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -60,7 +59,6 @@ class ControlService
 	bool m_closed = false;
 	std::uint64_t m_nextConnection = 1;
 	ControlSessions m_sessions;
-	RecordingControl m_recordings;
 	std::vector<std::pair<ConnectionId, std::shared_ptr<Client>>> m_clients;
 };
 } // namespace simxr::control

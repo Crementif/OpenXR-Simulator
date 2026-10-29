@@ -131,7 +131,7 @@ class Session
 	XrResult ConfigureCommands(std::uint64_t seed, std::optional<CommandConfiguration> initial = {},
 							   bool overrideInitial = true);
 	CommandConfiguration CommandConfigurationSnapshot() const;
-	void StartCommandRecording(bool drain = false);
+	RecordingResult StartCommandRecording(bool drain = false, CommandSource owner = ApplicationAutomationSource);
 	XrResult LocateViews(const XrViewLocateInfo& info, XrViewState* state, std::uint32_t capacity, std::uint32_t* count,
 						 XrView* views);
 	XrViewConfigurationType ActiveViewConfiguration() const;

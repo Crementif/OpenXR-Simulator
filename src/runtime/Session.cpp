@@ -169,7 +169,7 @@ XrResult Session::End(RuntimeTime time)
 		m_liveInputWorker.join();
 	m_display.Stop();
 	retiredHistory = m_captures.Images().Clear();
-	m_captures.Snapshots().RetireSequenceCaptures(ApplicationAutomationSource);
+	m_captures.Snapshots().RetireSequenceCaptures();
 	return XR_SUCCESS;
 }
 
@@ -796,12 +796,12 @@ XrResult Session::ConfigureCommands(std::uint64_t seed, std::optional<CommandCon
 	return XR_SUCCESS;
 }
 
-void Session::StartCommandRecording(bool drain)
+RecordingResult Session::StartCommandRecording(bool drain, CommandSource owner)
 {
 	std::scoped_lock lock(m_mutex, m_publicationMutex);
 	if (m_state.closed || !m_state.running)
-		throw std::logic_error("Cannot record a stopped session");
-	m_publication.StartRecording(m_spaces.RecordingState(m_state.time), drain);
+		return RecordingResult::Closed;
+	return m_publication.StartRecording(m_spaces.RecordingState(m_state.time), drain, owner);
 }
 
 CommandConfiguration Session::CommandConfigurationSnapshot() const

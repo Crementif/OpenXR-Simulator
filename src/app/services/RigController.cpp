@@ -58,7 +58,8 @@ RigController::RigController()
 		  [this](auto opcode, auto fields)
 		  {
 			  return m_transport->Exchange(opcode, std::move(fields));
-		  })
+		  },
+		  [this] { m_transport->Close(); })
 {
 }
 RigController::~RigController()

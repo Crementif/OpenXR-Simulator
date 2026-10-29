@@ -99,7 +99,7 @@ RigRuntime::RigRuntime(RigExchange exchange, RigProgress& progress)
 }
 void RigRuntime::Configure(control::ControlSessionId session, std::uint64_t generation)
 {
-	if (m_lease || m_inputRecording || !m_captures.empty() || !m_inspections.empty())
+	if (m_lease || !m_captures.empty() || !m_inspections.empty())
 		throw std::logic_error("Release rig runtime resources before configuring another run");
 	m_session = session;
 	m_generation = generation;
@@ -244,13 +244,11 @@ ScriptStep RigRuntime::StepApplication(ScriptCaptureTarget target)
 std::vector<std::byte> RigRuntime::StartInputRecording()
 {
 	const auto response = Call(control::OpCode::StartRecording, Source());
-	m_inputRecording = true;
 	return Document(response);
 }
 std::vector<std::byte> RigRuntime::StopInputRecording()
 {
 	const auto response = Call(control::OpCode::StopRecording, Source());
-	m_inputRecording = false;
 	return Document(response);
 }
 std::vector<std::byte> RigRuntime::ReadInputRecording(std::uint64_t offset, std::uint64_t count)
@@ -664,16 +662,7 @@ std::string RigRuntime::Cleanup()
 								{control::Field::U64(tag::InspectionId, inspection)});
 				});
 	m_inspections.clear();
-	if (m_inputRecording)
-	{
-		attempt("Input recording stop failed",
-				[&]
-				{
-					CleanupCall(control::OpCode::StopRecording, Source());
-				});
-		m_inputRecording = false;
-	}
-	// Cancellation must not prevent releasing source-owned controls or the lease.
+	// Source retirement stops native commands, sequences and input recording together.
 	attempt("Input release failed",
 			[&]
 			{

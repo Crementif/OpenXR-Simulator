@@ -11,7 +11,7 @@ namespace simxr::app
 MonitorController::MonitorController() : m_runner([this](auto opcode, auto fields)
 {
 	return m_transport->Exchange(opcode, std::move(fields));
-}) {}
+}, [this] { m_transport->Close(); }) {}
 MonitorController::~MonitorController()
 {
 	Stop();
